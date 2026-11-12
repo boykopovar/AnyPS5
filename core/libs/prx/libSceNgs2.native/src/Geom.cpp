@@ -8,7 +8,7 @@
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
 
-static constexpr float DEFAULT_SOUND_SPEED = 343.0f;
+static constexpr float DEFAULT_SOUND_SPEED = 340.29f;
 
 namespace {
 
@@ -41,9 +41,9 @@ Vector PerpendicularHint(const Vector& front) {
 }
 
 int Ngs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListenerWork* outWork, std::uint32_t flags) {
-    if (param == nullptr) APS5_INVALID_ARG_EX;
+    if (param == nullptr) return SCE_NGS2_ERROR_INVALID_GEOM_LISTENER_ADDRESS;
     if (outWork == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    if (flags > 1) throw std::runtime_error("NGS2: unknown listener coordinate flags");
+    if (flags > 1) return SCE_NGS2_ERROR_INVALID_GEOM_FLAG;
     if (!std::isfinite(param->sound_speed) || param->sound_speed <= 0.0f) APS5_INVALID_ARG_EX;
     const Vector position = ReadVector(param->position);
     ReadVector(param->velocity);
@@ -75,30 +75,29 @@ int Ngs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListenerWor
 
 int Ngs2GeomResetListenerParam(Ngs2GeomListenerParam* out_listener_param) {
     if (out_listener_param == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    *out_listener_param = {};
-    out_listener_param->orient_front.z = 1.0f;
-    out_listener_param->orient_up.y = 1.0f;
+    out_listener_param->position = {};
+    out_listener_param->orient_front = {0.0f, 0.0f, -1.0f};
+    out_listener_param->orient_up = {0.0f, 1.0f, 0.0f};
+    out_listener_param->velocity = {};
     out_listener_param->sound_speed = DEFAULT_SOUND_SPEED;
     return SCE_NGS2_OK;
 }
 
 int Ngs2GeomResetSourceParam(Ngs2GeomSourceParam* out_source_param) {
     if (out_source_param == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    *out_source_param = {};
-    out_source_param->direction.z = 1.0f;
-    out_source_param->cone.inner_level = 1.0f;
-    out_source_param->cone.inner_angle = 360.0f;
-    out_source_param->cone.outer_level = 1.0f;
-    out_source_param->cone.outer_angle = 360.0f;
-    out_source_param->rolloff.max_distance = 1000000.0f;
-    out_source_param->rolloff.rolloff_factor = 1.0f;
-    out_source_param->rolloff.reference_distance = 1.0f;
+    out_source_param->position = {};
+    out_source_param->velocity = {};
+    out_source_param->direction = {};
+    out_source_param->cone = {1.0f, 30.0f, 0.2f, 60.0f};
+    out_source_param->rolloff = {5, 100.0f, 1.0f, 1.0f};
     out_source_param->doppler_factor = 1.0f;
     out_source_param->fbw_level = 1.0f;
-    out_source_param->lfe_level = 1.0f;
+    out_source_param->lfe_level = 0.0f;
     out_source_param->max_level = 1.0f;
-    out_source_param->num_speakers = 2;
-    out_source_param->matrix_format = 2;
+    out_source_param->min_level = 0.0f;
+    out_source_param->radius = 1.0f;
+    out_source_param->num_speakers = 7;
+    out_source_param->matrix_format = 8;
     return SCE_NGS2_OK;
 }
 

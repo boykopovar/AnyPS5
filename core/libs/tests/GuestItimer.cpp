@@ -1,5 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <climits>
 #include <csignal>
@@ -12,33 +16,14 @@
 #include <thread>
 #include <typeinfo>
 
-struct GuestItimerval {
-    KernelTimeval interval;
-    KernelTimeval value;
-};
 static_assert(sizeof(GuestItimerval) == 32 && offsetof(GuestItimerval, value) == 16);
-struct GuestSignalSet {
-    std::uint32_t bits[4];
-};
-struct GuestTimespec {
-    std::int64_t seconds;
-    std::int64_t nanoseconds;
-};
 
 using Handler = void (APS5_VABI *)(int);
 using TerminateHandler = void (*)();
 extern "C" {
-int APS5_VABI setitimer_nid_postfix(int, const GuestItimerval*, GuestItimerval*);
-int APS5_VABI getitimer_nid_postfix(int, GuestItimerval*);
+
 unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int);
-Handler APS5_VABI signal_nid_postfix(int, Handler);
-int APS5_VABI _sigprocmask_nid_postfix(int, const GuestSignalSet*, GuestSignalSet*);
-int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet*, void*, const GuestTimespec*);
-int APS5_VABI sigpending_nid_postfix(GuestSignalSet*);
-int* APS5_VABI __error_nid_postfix();
-void* APS5_VABI __cxa_current_primary_exception_nid_postfix();
-std::type_info* APS5_VABI __cxa_current_exception_type_nid_postfix();
-TerminateHandler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(TerminateHandler);
+
 }
 
 static void Require(bool value, const char* message) {
@@ -110,14 +95,36 @@ static int UnblockPendingDefault() {
     return 1;
 }
 
+static int ShortExpiries() {
+    const GuestSignalSet alarmSet{{1u << 13, 0, 0, 0}};
+    const KernelTimespec patience{2, 0};
+    const GuestItimerval shortOnce{{0, 0}, {0, 2000}};
+    Require(_sigprocmask_nid_postfix(1, &alarmSet, nullptr) == 0, "blocking SIGALRM failed");
+    std::array<std::chrono::nanoseconds, 31> samples{};
+    for (auto& sample : samples) {
+        const auto before = std::chrono::steady_clock::now();
+        Require(setitimer_nid_postfix(0, &shortOnce, nullptr) == 0, "arming the 2 ms timer failed");
+        Require(sigtimedwait_nid_postfix(&alarmSet, nullptr, &patience) == 14, "the 2 ms timer did not expire");
+        sample = std::chrono::steady_clock::now() - before;
+        Require(sample >= std::chrono::milliseconds(2), "the 2 ms timer expired early");
+    }
+    std::sort(samples.begin(), samples.end());
+    const auto median = samples[samples.size() / 2];
+    std::fprintf(stderr, "setitimer(2 ms) expiry median: %lld ns\n", static_cast<long long>(median.count()));
+    Require(median < std::chrono::milliseconds(12), "the 2 ms timer expired on a coarse tick");
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "pending-default") == 0) return UnblockPendingDefault();
+    if (argc > 1 && std::strcmp(argv[1], "short-expiry") == 0) return ShortExpiries();
     const auto ignore = reinterpret_cast<Handler>(std::uintptr_t{1});
     Require(signal_nid_postfix(14, ignore) == nullptr, "SIGALRM was not initially defaulted");
     const GuestItimerval valid{{0, 0}, {30, 0}};
     for (int invalid : {-1, 3, INT_MIN, INT_MAX}) {
         RequireFailure(invalid, &valid, 22, "an unknown timer did not report EINVAL");
         RequireFailure(invalid, nullptr, 22, "an unknown timer read did not report EINVAL");
+        RequireFailure(invalid, reinterpret_cast<const GuestItimerval*>(std::uintptr_t{0x10}), 14, "an unreadable value was not copied in before the timer was checked");
         *__error_nid_postfix() = 0;
         Require(setitimer_nid_postfix(invalid, nullptr, nullptr) == -1 && *__error_nid_postfix() == 22, "EINVAL is not checked before EFAULT");
     }
@@ -140,6 +147,7 @@ int main(int argc, char** argv) {
         bool threw = false;
         try {
             setitimer_nid_postfix(cpu, &valid, &previous);
+
         } catch (const std::runtime_error&) {
             threw = true;
         }
@@ -150,6 +158,7 @@ int main(int argc, char** argv) {
     const GuestItimerval tiny{{0, 999}, {1, 0}};
     try {
         setitimer_nid_postfix(0, &tiny, nullptr);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -189,8 +198,8 @@ int main(int argc, char** argv) {
     Require(GuestAlarm_nid_no_patch(0) == 0, "setitimer did not cancel the alarm");
 
     const GuestSignalSet alarmSet{{1u << 13, 0, 0, 0}};
-    const GuestTimespec poll{0, 0};
-    const GuestTimespec patience{2, 0};
+    const KernelTimespec poll{0, 0};
+    const KernelTimespec patience{2, 0};
     GuestSignalSet unblocked{};
     Require(_sigprocmask_nid_postfix(1, &alarmSet, &unblocked) == 0, "blocking SIGALRM failed");
     ExpireOnce();
@@ -220,6 +229,7 @@ int main(int argc, char** argv) {
 
     Require(signal_nid_postfix(14, OnAlarm) == ignore, "SIGALRM handler was not installed");
     _ZSt13set_terminatePFvvE_nid_postfix(OnTerminate);
+
     const GuestItimerval handled{{0, 250000}, {0, 50000}};
     Require(setitimer_nid_postfix(0, &handled, nullptr) == 0, "arming the handled timer failed");
     std::this_thread::sleep_for(std::chrono::seconds(2));

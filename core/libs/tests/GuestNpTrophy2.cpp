@@ -1,20 +1,47 @@
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
+#include "tests/ExportLookup.hpp"
+#include <cstddef>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceNpTrophy2RegisterUnlockCallback(void*, void*);
-int APS5_VABI sceNpTrophy2UnregisterUnlockCallback();
-int APS5_VABI sceNpTrophy2GetGameInfo(int, int, NpTrophy2GameDetails*, NpTrophy2GameData*);
-int APS5_VABI sceNpTrophy2GetGroupInfo(int, int, int, NpTrophy2GroupDetails*, NpTrophy2GroupData*);
-int APS5_VABI sceNpTrophy2GetTrophyInfo(int, int, int, NpTrophy2Details*, NpTrophy2Data*);
-int APS5_VABI sceNpTrophy2ShowTrophyList(int);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
 static void APS5_VABI OnUnlock(int, int, void*) {}
+
+static void ResolvePendingExports(const char* path) {
+    struct Export {
+        int (APS5_VABI* function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {sceNpTrophy2SystemAbortHandle, "sceNpTrophy2SystemAbortHandle"},
+        {sceNpTrophy2SystemBuildGroupIconUri, "sceNpTrophy2SystemBuildGroupIconUri"},
+        {sceNpTrophy2SystemBuildRewardIconUri, "sceNpTrophy2SystemBuildRewardIconUri"},
+        {sceNpTrophy2SystemBuildTrophyIconUri, "sceNpTrophy2SystemBuildTrophyIconUri"},
+        {sceNpTrophy2SystemCheckCallback, "sceNpTrophy2SystemCheckCallback"},
+        {sceNpTrophy2SystemCheckNetSyncTitles, "sceNpTrophy2SystemCheckNetSyncTitles"},
+        {sceNpTrophy2SystemCreateHandle, "sceNpTrophy2SystemCreateHandle"},
+        {sceNpTrophy2SystemDebugLockTrophy, "sceNpTrophy2SystemDebugLockTrophy"},
+        {sceNpTrophy2SystemDebugUnlockTrophy, "sceNpTrophy2SystemDebugUnlockTrophy"},
+        {sceNpTrophy2SystemDestroyContext, "sceNpTrophy2SystemDestroyContext"},
+        {sceNpTrophy2SystemGetTrophyDetails, "sceNpTrophy2SystemGetTrophyDetails"},
+        {sceNpTrophy2SystemGetTrophyGroupConf, "sceNpTrophy2SystemGetTrophyGroupConf"},
+        {sceNpTrophy2SystemGetTrophySetArray, "sceNpTrophy2SystemGetTrophySetArray"},
+        {sceNpTrophy2SystemGetTrophyTitleConf, "sceNpTrophy2SystemGetTrophyTitleConf"},
+        {sceNpTrophy2SystemGetTrophyTitleDetails, "sceNpTrophy2SystemGetTrophyTitleDetails"},
+        {sceNpTrophy2SystemGetTrpIconByUri, "sceNpTrophy2SystemGetTrpIconByUri"},
+        {sceNpTrophy2SystemIsServerAvailable, "sceNpTrophy2SystemIsServerAvailable"},
+        {sceNpTrophy2SystemRegisterTitleSyncedCallback, "sceNpTrophy2SystemRegisterTitleSyncedCallback"},
+        {sceNpTrophy2SystemRegisterTitleUpdateCallback, "sceNpTrophy2SystemRegisterTitleUpdateCallback"},
+        {sceNpTrophy2SystemRemoveAll, "sceNpTrophy2SystemRemoveAll"},
+        {sceNpTrophy2SystemRemoveTitleData, "sceNpTrophy2SystemRemoveTitleData"},
+        {sceNpTrophy2SystemRemoveUserData, "sceNpTrophy2SystemRemoveUserData"},
+    };
+    Require(ExportsResolveByName(path, exports, "sceNpTrophy2SystemNotExported"));
+}
 
 template <typename Call> static bool ThrowsInvalidArgument(Call call) {
     try {
@@ -25,7 +52,7 @@ template <typename Call> static bool ThrowsInvalidArgument(Call call) {
     return false;
 }
 
-int main() {
+int main(int argc, char** argv) {
     int userdata = 0;
     Require(sceNpTrophy2UnregisterUnlockCallback() == 0);
     Require(sceNpTrophy2RegisterUnlockCallback(reinterpret_cast<void*>(&OnUnlock), &userdata) == 0);
@@ -34,6 +61,10 @@ int main() {
     Require(sceNpTrophy2UnregisterUnlockCallback() == 0);
 
     Require(sceNpTrophy2ShowTrophyList(1) == 0);
+
+    auto* volatile linked = &sceNpTrophy2SystemCreateContext;
+    Require(linked != nullptr);
+    ResolvePendingExports(argc > 1 ? argv[1] : nullptr);
 
     NpTrophy2GameDetails details{};
     NpTrophy2GameData data{};
@@ -57,4 +88,17 @@ int main() {
     Require(sceNpTrophy2GetTrophyInfo(1, 1, 3, nullptr, &trophyData) == 0);
     Require(trophyData.trophy_id == 3);
     Require(ThrowsInvalidArgument([] { sceNpTrophy2GetTrophyInfo(1, 1, 3, nullptr, nullptr); }));
+    std::size_t iconSize = 1234;
+    Require(sceNpTrophy2GetRewardIcon(1, 1, 1, nullptr, &iconSize) == SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND);
+    Require(iconSize == 0);
+    Require(sceNpTrophy2GetRewardIcon(1, 1, 1, nullptr, nullptr) == SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND);
+
+    int handle = -1;
+    Require(sceNpTrophy2CreateHandle(&handle) == SCE_NP_TROPHY2_OK);
+    Require(handle == NP_TROPHY2_HANDLE_DEFAULT);
+    Require(sceNpTrophy2DestroyHandle(handle) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2RegisterContext(0, handle, 0) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2RegisterContext(-1, -1, ~0ull) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2AbortHandle(handle) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2AbortHandle(0) == SCE_NP_TROPHY2_OK);
 }

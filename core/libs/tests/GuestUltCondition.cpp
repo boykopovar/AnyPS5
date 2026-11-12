@@ -1,3 +1,4 @@
+#include "prx/libSceUlt/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
@@ -9,19 +10,8 @@
 #include <string>
 #include <thread>
 
-extern "C" {
-int APS5_VABI sceUltFinalize();
-int APS5_VABI sceUltMutexCreate(void*, const char*, void*, const UltMutexOptParam*, std::uint32_t);
-int APS5_VABI sceUltMutexLock(void*);
-int APS5_VABI sceUltMutexUnlock(void*);
-int APS5_VABI sceUltMutexDestroy(void*);
-int APS5_VABI _sceUltConditionVariableCreate(void*, const char*, void*, const void*, std::uint32_t);
-int APS5_VABI sceUltConditionVariableWait(void*);
-int APS5_VABI sceUltConditionVariableSignal(void*);
-int APS5_VABI sceUltConditionVariableDestroy(void*);
-}
-
 constexpr int Null = -2139029503;
+constexpr int Alignment = -2139029502;
 constexpr int Invalid = -2139029500;
 constexpr int Permission = -2139029499;
 constexpr int State = -2139029498;
@@ -65,6 +55,9 @@ static void Validation() {
     Object unused;
     CHECK(sceUltMutexDestroy(nullptr) == Null);
     CHECK(sceUltMutexDestroy(&unused) == State);
+    CHECK(sceUltConditionVariableCreate(nullptr, nullptr, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltConditionVariableCreate(&unused, nullptr, &unused, nullptr, 0) == Invalid);
+    CHECK(sceUltConditionVariableCreate(&f.condition, nullptr, &f.mutex, nullptr, 0) == State);
     CHECK(_sceUltConditionVariableCreate(nullptr, nullptr, nullptr, nullptr, 0) == Null);
     CHECK(_sceUltConditionVariableCreate(&unused, nullptr, &unused, nullptr, 0) == Invalid);
     CHECK(_sceUltConditionVariableCreate(&f.condition, nullptr, &f.mutex, nullptr, 0) == State);
@@ -72,6 +65,8 @@ static void Validation() {
     CHECK(sceUltConditionVariableDestroy(&unused) == State);
     CHECK(sceUltConditionVariableSignal(nullptr) == Null);
     CHECK(sceUltConditionVariableSignal(&unused) == State);
+    CHECK(sceUltConditionVariableSignal(reinterpret_cast<unsigned char*>(&unused) + 1) == Alignment);
+    CHECK(sceUltConditionVariableSignal(reinterpret_cast<unsigned char*>(&unused) + 4) == Alignment);
     CHECK(sceUltConditionVariableWait(nullptr) == Null);
     CHECK(sceUltConditionVariableWait(&unused) == State);
     CHECK(_sceUltConditionVariableCreate(&unused, nullptr, nullptr, nullptr, 0) == Null);

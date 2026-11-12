@@ -1,4 +1,4 @@
-"""Check that the Linux executable is placed at 0x400000 by default or at the --linux-fixed-base address, with every address it holds rebased, that --lazy-binding keeps it position independent and warns, and that the largest image the relinker accepts ends below the guest arena."""
+"""Check that the Linux executable is placed at 0x400000 by default or at the --linux-fixed-base address, with every address it holds rebased and p_paddr set to p_vaddr whatever the input held, that --lazy-binding keeps it position independent and warns, and that the largest image the relinker accepts ends below the guest arena."""
 
 from pathlib import Path
 import platform
@@ -20,7 +20,7 @@ HIGH_BASE = 0x400000000
 SHIFT = HIGH_BASE - BASE
 ENTRY = 0x10
 SLOT = 0x800
-ADDRESS_TAGS = {3, 4, 5, 6, 7, 23}
+ADDRESS_TAGS = {3, 4, 5, 6, 7, 23, 0x6ffffef5}
 GUEST_ARENA_START = 0x200000000
 LAZY_WARNING = "with --lazy-binding the Linux executable stays position independent"
 
@@ -152,6 +152,17 @@ def main():
         covering = next(header for header in relocated_fixed_headers if header[0] == PT_LOAD and header[3] <= relocated_entry < header[3] + header[5])
         assert covering[1] & 1, "the segment covering the entry is not executable"
 
+        unused_physical = fixture()
+        struct.pack_into("<Q", unused_physical, 64 + 24, 0xFFFFFFFFFFFFFFFF)
+        result, output = relink(relinker, work, "physical-lazy", unused_physical, "--lazy-binding")
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert [header[4] for header in headers(output.read_bytes()) if header[0] == PT_LOAD and header[3] == 0] == [0xFFFFFFFFFFFFFFFF], "--lazy-binding did not copy p_paddr unchanged"
+        for name, options in (("physical-default", ()), ("physical-high", ("--linux-fixed-base", hex(HIGH_BASE)))):
+            result, output = relink(relinker, work, name, unused_physical, *options)
+            assert result.returncode == 0, (name, result.stdout, result.stderr)
+            for header in headers(output.read_bytes()):
+                assert header[0] in (PT_NULL, PT_GNU_STACK) or header[4] == header[3], ("p_paddr is not the rebased p_vaddr", name, header)
+
         large_path = None
         for far, accepted in ((0x7F000000, True), (0x80000000, False), (GUEST_ARENA_START - BASE - 0x1000, False)):
             spanning = fixture()
@@ -186,7 +197,7 @@ def main():
         for name, image, base, error in (
             ("unaligned", fixture(alignment=0x20000), 0x410000, "is not a multiple of the PT_LOAD alignment 0x20000"),
             ("beyond-user-space", fixture(memory_size=0x100000), 0x7FFFFFFF0000, "outside the Linux user address space"),
-            ("unsupported-type", fixture(relocation_type=9), BASE, "Relocation type 9 cannot be placed at a fixed Linux base"),
+            ("unsupported-type", fixture(relocation_type=11), BASE, "Unsupported relocation type 0xb"),
             ("negative-target", fixture(addend=-16), BASE, "Relocation target -16 lies below the image at a fixed Linux base"),
         ):
             result, output = relink(relinker, work, name, image, "--linux-fixed-base", hex(base))

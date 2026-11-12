@@ -1,19 +1,14 @@
+#include "prx/libSceOpusDec/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
+#include <span>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceOpusDecInitialize(std::uint32_t*);
-int APS5_VABI sceOpusDecTerminate(const std::uint32_t*);
-int APS5_VABI sceOpusDecGetSize(int);
-int APS5_VABI sceOpusDecCreateEx(const std::uint32_t*, void*, int, int);
-int APS5_VABI sceOpusDecDecode(void*, const std::uint8_t*, int, std::int16_t*, int);
-int APS5_VABI sceOpusDecDestroy(void*);
-}
+#include <opus.h>
 
 namespace {
 
@@ -46,12 +41,56 @@ const std::uint8_t OPUS_NARROWBAND[] = {
     10, 0, 0x08, 0x85, 0x89, 0x9D, 0x73, 0x0F, 0xC2, 0xB1, 0xE2, 0x48,
 };
 
+void CheckReference(int rate, int channels) {
+    std::uint32_t context = 0;
+    std::array<std::uint8_t, 640> state{};
+    Require(sceOpusDecInitialize(&context) == 0);
+    Require(sceOpusDecCreateEx(&context, state.data(), rate, channels) == 0);
+    int error = OPUS_OK;
+    auto* reference = opus_decoder_create(rate, channels, &error);
+    Require(reference && error == OPUS_OK);
+    std::array<std::uint8_t, 1500> longPacket{};
+    auto* repacketizer = opus_repacketizer_create();
+    Require(repacketizer != nullptr);
+    for (int i = 0; i < 6; ++i) Require(opus_repacketizer_cat(repacketizer, OPUS_STEREO + 2, OPUS_STEREO[0]) == OPUS_OK);
+    const int longSize = opus_repacketizer_out(repacketizer, longPacket.data() + 2, static_cast<opus_int32>(longPacket.size() - 2));
+    Require(longSize > 0);
+    opus_repacketizer_destroy(repacketizer);
+    longPacket[0] = static_cast<std::uint8_t>(longSize);
+    longPacket[1] = static_cast<std::uint8_t>(longSize >> 8);
+    for (auto packets : {std::span<const std::uint8_t>(OPUS_NARROWBAND), std::span<const std::uint8_t>(OPUS_STEREO),
+             std::span<const std::uint8_t>(OPUS_NARROWBAND), std::span<const std::uint8_t>(longPacket.data(), longSize + 2)}) {
+        for (std::size_t offset = 0; offset < packets.size();) {
+            const int bytes = packets[offset] | (packets[offset + 1] << 8);
+            const auto* packet = packets.data() + offset + 2;
+            std::array<std::int16_t, 11520> expected{};
+            const int samples = opus_decode(reference, packet, bytes, expected.data(), 5760, 0);
+            Require(samples > 0);
+            const int count = samples * channels;
+            std::array<std::int16_t, 11522> actual{};
+            actual.fill(12345);
+            Require(sceOpusDecDecode(state.data(), packet, bytes, actual.data() + 1, count * 2 + 1) == count * 2);
+            if (!std::equal(expected.begin(), expected.begin() + count, actual.begin() + 1)) {
+                std::fprintf(stderr, "Opus PCM differs from libopus at %d Hz, %d channels, packet offset %zu\n", rate, channels, offset);
+                std::abort();
+            }
+            Require(actual.front() == 12345 && std::all_of(actual.begin() + count + 1, actual.end(), [](auto value) { return value == 12345; }));
+            offset += bytes + 2;
+        }
+    }
+    opus_decoder_destroy(reference);
+    Require(sceOpusDecDestroy(state.data()) == 0);
+    Require(sceOpusDecTerminate(&context) == 0);
+}
+
 } // namespace
 
 int main() {
     constexpr std::uint32_t errorBase = 0x81740000u;
     Require(sceOpusDecInitialize(nullptr) == static_cast<int>(errorBase + 13));
     Require(sceOpusDecDestroy(nullptr) == static_cast<int>(errorBase));
+    for (int rate : {8000, 12000, 16000, 24000, 48000})
+        for (int channels : {1, 2}) CheckReference(rate, channels);
     std::uint32_t context = 0, otherContext = 0;
     Require(sceOpusDecInitialize(&context) == 0);
     std::array<std::uint8_t, 640> invalidState{};

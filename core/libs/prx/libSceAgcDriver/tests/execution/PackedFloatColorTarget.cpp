@@ -45,6 +45,7 @@ constexpr std::uint32_t Height = 128;
 constexpr std::uint32_t ScissorWidth = 128;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t Float11_11_10Info = 0x4171cu;
+constexpr std::uint32_t StandardOrderInfo = Float11_11_10Info & ~0x1800u;
 constexpr std::uint32_t TiledAttrib3 = 0x4dc6c000u;
 constexpr std::uint32_t LinearAttrib3 = 0x09000000u;
 constexpr std::uint32_t Float32Export = 9;
@@ -58,7 +59,7 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 32> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 64>, 64> Programs{};
 std::size_t programCount = 0;
 
 std::uint32_t SmallFloat(float value, std::uint32_t mantissaBits) {
@@ -78,7 +79,8 @@ std::uint32_t SmallFloat(float value, std::uint32_t mantissaBits) {
     return (static_cast<std::uint32_t>(exponent - 1 + 15) << mantissaBits) | static_cast<std::uint32_t>(std::floor((fraction * 2.0 - 1.0) * scale));
 }
 
-std::uint32_t Packed(std::array<float, 3> rgb) {
+std::uint32_t Packed(std::array<float, 3> rgb, bool standardOrder) {
+    if (standardOrder) return SmallFloat(rgb[0], 5) | (SmallFloat(rgb[1], 6) << 10u) | (SmallFloat(rgb[2], 6) << 21u);
     return SmallFloat(rgb[2], 5) | (SmallFloat(rgb[1], 6) << 10u) | (SmallFloat(rgb[0], 6) << 21u);
 }
 
@@ -170,17 +172,17 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3, bool standardOrder) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
     cx[0x31b] = 0;
-    cx[0x31c] = Float11_11_10Info;
+    cx[0x31c] = standardOrder ? StandardOrderInfo : Float11_11_10Info;
     cx[0x31d] = 0;
     cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
     cx[0x3b8] = attrib3;
     cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
     auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
-    Require(color.format == VK_FORMAT_R32_UINT && color.elementBytes == 4 && color.componentMapping == 0xc6u && color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 && color.bytes == block.bytes, "the 11_11_10 float target did not decode as a packed R32_UINT surface");
+    Require(color.format == VK_FORMAT_R32_UINT && color.elementBytes == 4 && color.componentMapping == (standardOrder ? 0xe4u : 0xc6u) && color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 && color.bytes == block.bytes, "the 11_11_10 float target did not decode as a packed R32_UINT surface");
     return color;
 }
 
@@ -290,10 +292,10 @@ std::string Describe(std::array<float, 3> rgb) {
     return text;
 }
 
-void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t attrib3, ColorTileMode mode, const char* kind) {
+void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t attrib3, ColorTileMode mode, const char* kind, bool standardOrder) {
     const ColorTargetLayout layout(Width, Height, mode, 4);
     Require(layout.Bytes() == block.bytes, "the test surface size disagrees with its layout");
-    const auto color = DecodeTarget(block, attrib3);
+    const auto color = DecodeTarget(block, attrib3, standardOrder);
     auto before = Fill(block);
     const float nan = std::numeric_limits<float>::quiet_NaN();
     const float infinity = std::numeric_limits<float>::infinity();
@@ -311,12 +313,12 @@ void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t at
     }};
     for (const auto& rgb : cases) {
         Draw(device, color, Float32Export, Float32Program(rgb));
-        ExpectSurface(device, block, layout, before, Packed(rgb), std::string("a 32_ABGR export of ") + Describe(rgb) + " into a " + kind + " 11_11_10 float target");
+        ExpectSurface(device, block, layout, before, Packed(rgb, standardOrder), std::string("a 32_ABGR export of ") + Describe(rgb) + " into a " + kind + " 11_11_10 float target");
         before = ReadBack(device, block);
     }
     const std::array<float, 3> halves{0.5f, 0.75f, 0.125f};
     Draw(device, color, Float16Export, Float16Program(halves));
-    ExpectSurface(device, block, layout, before, Packed(halves), std::string("an FP16_ABGR export of ") + Describe(halves) + " into a " + kind + " 11_11_10 float target");
+    ExpectSurface(device, block, layout, before, Packed(halves, standardOrder), std::string("an FP16_ABGR export of ") + Describe(halves) + " into a " + kind + " 11_11_10 float target");
 }
 
 }
@@ -327,8 +329,10 @@ int main() {
         if (!device) return VulkanTestSkipped;
         Block tiled(ColorTargetLayout(Width, Height, ColorTileMode::RenderTarget, 4).Bytes());
         Block linear(ColorTargetLayout(Width, Height, ColorTileMode::Linear, 4).Bytes());
-        TargetTests(*device, tiled, TiledAttrib3, ColorTileMode::RenderTarget, "tiled");
-        TargetTests(*device, linear, LinearAttrib3, ColorTileMode::Linear, "linear");
+        for (const bool standardOrder : {false, true}) {
+            TargetTests(*device, tiled, TiledAttrib3, ColorTileMode::RenderTarget, standardOrder ? "tiled standard-order" : "tiled", standardOrder);
+            TargetTests(*device, linear, LinearAttrib3, ColorTileMode::Linear, standardOrder ? "linear standard-order" : "linear", standardOrder);
+        }
         std::puts("11_11_10 float color target tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
@@ -7,12 +9,6 @@
 #include <string>
 #include <string_view>
 
-struct GuestOption {
-    const char* name;
-    int hasArgument;
-    int* flag;
-    int value;
-};
 static_assert(sizeof(GuestOption) == 32);
 static_assert(offsetof(GuestOption, hasArgument) == 8);
 static_assert(offsetof(GuestOption, flag) == 16);
@@ -21,7 +17,6 @@ static_assert(offsetof(GuestOption, value) == 24);
 extern "C" {
 extern const char* __progname_nid_postfix;
 extern FileStream* __stderrp_nid_postfix;
-char* APS5_VABI getenv_nid_postfix(const char* name);
 
 int opterr_nid_postfix = 1;
 int optind_nid_postfix = 1;
@@ -113,7 +108,7 @@ void PermuteArguments(int nonOptionStart, int nonOptionEnd, int optionEnd, char*
     }
 }
 
-int ParseLongOptions(char* const* arguments, const char* options, const GuestOption* longOptions, int* index, const char* dash, bool shortToo, int flags) {
+int ParseLongOptions(int count, char* const* arguments, const char* options, const GuestOption* longOptions, int* index, const char* dash, bool shortToo, int flags) {
     char* const current = g_longPlace;
     int match = -1;
     bool exactMatch = false;
@@ -167,12 +162,11 @@ int ParseLongOptions(char* const* arguments, const char* options, const GuestOpt
     }
     if (option.hasArgument == RequiredArgument || option.hasArgument == OptionalArgument) {
         if (hasEqual) optarg_nid_postfix = hasEqual;
-        else if (option.hasArgument == RequiredArgument) optarg_nid_postfix = arguments[optind_nid_postfix++];
+        else if (option.hasArgument == RequiredArgument && optind_nid_postfix < count) optarg_nid_postfix = arguments[optind_nid_postfix++];
     }
     if (option.hasArgument == RequiredArgument && !optarg_nid_postfix) {
         if (PrintError(options)) Warn(std::string("option `") + dash + current + "' requires an argument");
         optopt_nid_postfix = option.flag ? 0 : option.value;
-        --optind_nid_postfix;
         return BadArgument(options);
     }
     if (index) *index = match;
@@ -253,7 +247,7 @@ int GetoptInternal(int count, char* const* arguments, const char* options, const
         } else if (*g_longPlace != ':' && std::strchr(options, *g_longPlace)) {
             shortToo = true;
         }
-        const int result = ParseLongOptions(arguments, options, longOptions, index, dash, shortToo, flags);
+        const int result = ParseLongOptions(count, arguments, options, longOptions, index, dash, shortToo, flags);
         if (result != -1) {
             g_longPlace = g_emptyMessage;
             return result;
@@ -281,7 +275,7 @@ int GetoptInternal(int count, char* const* arguments, const char* options, const
             }
             g_longPlace = Argument(arguments, optind_nid_postfix, "getopt_long");
         }
-        const int result = ParseLongOptions(arguments, options, longOptions, index, "-W ", false, flags);
+        const int result = ParseLongOptions(count, arguments, options, longOptions, index, "-W ", false, flags);
         g_longPlace = g_emptyMessage;
         return result;
     }

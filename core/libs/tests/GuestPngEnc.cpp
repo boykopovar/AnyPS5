@@ -1,3 +1,4 @@
+#include "prx/libScePngEnc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Png.hpp"
@@ -6,13 +7,6 @@
 #include <cstdlib>
 #include <utility>
 #include <vector>
-
-extern "C" {
-int APS5_VABI scePngEncQueryMemorySize(const PngEncCreateParam*);
-int APS5_VABI scePngEncCreate(const PngEncCreateParam*, void*, std::uint32_t, void**);
-int APS5_VABI scePngEncDelete(void*);
-int APS5_VABI scePngEncEncode(void*, const PngEncEncodeParam*, PngEncOutputInfo*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -30,6 +24,7 @@ int main() {
     const int memorySize = scePngEncQueryMemorySize(&create);
     Require(memorySize == 286192);
     Require(scePngEncQueryMemorySize(nullptr) == invalidAddr);
+    Require(scePngEncQueryMemorySize(reinterpret_cast<const PngEncCreateParam*>(0x10)) == invalidAddr);
     PngEncCreateParam bad = create;
     bad.attribute = 1;
     Require(scePngEncQueryMemorySize(&bad) == invalidParam);
@@ -45,13 +40,25 @@ int main() {
     bad = create;
     bad.this_size = 0;
     Require(scePngEncQueryMemorySize(&bad) == invalidSize);
+    PngEncCreateParam widest = create;
+    widest.max_image_width = 1000000;
+    Require(scePngEncQueryMemorySize(&widest) == 24285808);
     std::vector<std::uint64_t> memory((memorySize + 7) / 8);
     void* handle = nullptr;
+    Require(scePngEncCreate(nullptr, memory.data(), memorySize, &handle) == invalidAddr);
     Require(scePngEncCreate(&create, nullptr, memorySize, &handle) == invalidAddr);
+    Require(scePngEncCreate(&create, memory.data(), memorySize, nullptr) == invalidAddr);
+    Require(scePngEncCreate(reinterpret_cast<const PngEncCreateParam*>(0x10), memory.data(), memorySize, &handle) == invalidAddr);
+    Require(scePngEncCreate(&create, memory.data(), memorySize, reinterpret_cast<void**>(0x10)) == invalidAddr);
+    Require(scePngEncCreate(&create, reinterpret_cast<void*>(0x10), memorySize, &handle) == invalidAddr);
     Require(scePngEncCreate(&create, memory.data(), memorySize - 1, &handle) == invalidSize);
     Require(scePngEncCreate(&create, memory.data(), memorySize, &handle) == 0 && reinterpret_cast<std::uintptr_t>(handle) % 16 == 0);
 
     Require(scePngEncCreate(&create, memory.data(), 0, nullptr) == invalidSize);
+    Require(scePngEncCreate(&create, nullptr, 0, &handle) == invalidAddr);
+    std::vector<std::uint64_t> untouched(memory.size(), 0xA5A5A5A5A5A5A5A5ull);
+    Require(scePngEncCreate(&create, untouched.data(), memorySize, nullptr) == invalidAddr);
+    Require(std::all_of(untouched.begin(), untouched.end(), [](auto word) { return word == 0xA5A5A5A5A5A5A5A5ull; }));
     std::vector<std::uint8_t> image(pitch * height, 0xEE);
     for (std::uint32_t y = 0; y < height; ++y) {
         for (std::uint32_t x = 0; x < width; ++x) {
@@ -140,8 +147,14 @@ int main() {
     encode.png_mem_size = static_cast<std::uint32_t>(png.size());
 
     PngEncEncodeParam invalid = encode;
+    Require(scePngEncEncode(nullptr, &encode, nullptr) == invalidHandle);
     Require(scePngEncEncode(handle, nullptr, nullptr) == invalidAddr);
+    Require(scePngEncEncode(reinterpret_cast<void*>(0x20), &encode, nullptr) == invalidHandle);
+    Require(scePngEncEncode(handle, reinterpret_cast<const PngEncEncodeParam*>(0x10), nullptr) == invalidAddr);
+    Require(scePngEncEncode(handle, &encode, reinterpret_cast<PngEncOutputInfo*>(0x10)) == invalidAddr);
     invalid.image_mem_addr = nullptr;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidAddr);
+    invalid.image_mem_addr = reinterpret_cast<const std::uint8_t*>(0x10);
     Require(scePngEncEncode(handle, &invalid, nullptr) == invalidAddr);
     for (auto change : {+[](PngEncEncodeParam& p) { p.pixel_format = 2; }, +[](PngEncEncodeParam& p) { p.color_space = 4; },
                         +[](PngEncEncodeParam& p) { p.bit_depth = 16; }, +[](PngEncEncodeParam& p) { p.clut_number = 1; },
@@ -159,6 +172,27 @@ int main() {
     invalid = encode;
     invalid.image_mem_size = pitch * (height - 1) + width * 4;
     Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
+    std::vector<std::uint8_t> wide(68 * height, 0x40);
+    invalid = encode;
+    invalid.image_mem_addr = wide.data();
+    invalid.image_mem_size = static_cast<std::uint32_t>(wide.size());
+    invalid.image_width = 17;
+    invalid.image_pitch = 68;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
+    invalid = encode;
+    invalid.image_height = 0;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
+    invalid = encode;
+    invalid.image_pitch = 16;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
+    invalid = encode;
+    invalid.png_mem_addr = nullptr;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidAddr);
+    invalid.png_mem_addr = reinterpret_cast<std::uint8_t*>(0x10);
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidAddr);
+    invalid = encode;
+    invalid.image_mem_size = 0;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidSize);
     invalid = encode;
     invalid.png_mem_size = 0;
     Require(scePngEncEncode(handle, &invalid, nullptr) == invalidSize);
@@ -181,4 +215,5 @@ int main() {
     Require(scePngEncDelete(handle) == invalidHandle);
     Require(scePngEncEncode(handle, &encode, nullptr) == invalidHandle);
     Require(scePngEncDelete(nullptr) == invalidHandle);
+    Require(scePngEncDelete(reinterpret_cast<void*>(0x20)) == invalidHandle);
 }

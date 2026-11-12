@@ -5,6 +5,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -91,6 +92,8 @@ std::size_t CellPixel(std::uint32_t triangle) {
 alignas(256) std::array<Vertex, 3 * Triangles> Scrambled{};
 alignas(256) std::array<std::uint16_t, 3 * Triangles> Indices{};
 alignas(256) std::array<Vertex, 3 * Triangles> Ordered{};
+constexpr std::uint32_t WideFastLaunchSkipped = 65535;
+alignas(256) std::array<Vertex, 3 * (WideFastLaunchSkipped + Triangles)> WideFastLaunch{};
 alignas(256) std::array<Vertex, 2 * Columns + 2> Strip{};
 
 constexpr std::uint32_t LineStrips = 4;
@@ -105,10 +108,12 @@ constexpr float FanStep = 6.28318530718f / FanRim;
 alignas(256) std::array<Vertex, FanRim + 1> Fan{};
 alignas(256) std::array<Vertex, FanRim + 1> FanScrambled{};
 alignas(256) std::array<std::uint16_t, FanRim + 1> FanIndices{};
-alignas(256) std::array<std::uint16_t, FanRim + 1> FanRestart{};
+alignas(256) std::array<std::uint16_t, FanRim + 2> FanRestart{};
 alignas(256) std::array<Vertex, 4 * Columns> Quads{};
 alignas(256) std::array<std::uint16_t, 5 * Columns> QuadStrips{};
 alignas(256) std::array<std::uint32_t, 5 * Columns> QuadStrips32{};
+alignas(256) std::array<std::uint16_t, 5 * Columns> QuadFans{};
+alignas(256) std::array<std::uint32_t, 5 * Columns> QuadFans32{};
 
 std::array<std::uint32_t, 4> VertexBufferDescriptor(const void* vertices, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(vertices);
@@ -144,6 +149,7 @@ struct MeshDraw {
     VkCullModeFlags cull = VK_CULL_MODE_NONE;
     std::span<const std::uint32_t> code = {};
     std::uint32_t stagesRegister = 0x20u;
+    ShaderRecompiler::ShaderVertexStageInfo vertex{};
 };
 
 bool ReadsNumWorkgroups(std::span<const std::uint32_t> words) {
@@ -176,7 +182,7 @@ void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> geometryMemory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(std::span(code))}}};
     ShaderRecompiler::RecompileRequest geometry{
         {ShaderStage::Mesh, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
-        {setup.waveSize, 0, userData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, geometryMemory},
+        {setup.waveSize, 0, userData, std::nullopt, std::nullopt, setup.vertex, geometryMemory},
         target,
         {0, 0, 0, setup.geometryPushBytes},
         ShaderRecompiler::GraphicsCompileContext{0, {}, setup.mesh, std::nullopt, {setup.draw.indexAddress, setup.draw.indexCount, setup.draw.indexSize, setup.draw.instanceCount}}
@@ -207,6 +213,10 @@ void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
 
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Geometry, setup.stagesRegister, setup.waveSize, 64, setup.mesh, std::nullopt};
+    state.pointSize = setup.vertex.pointSize;
+    state.pointSizeMin = setup.vertex.pointSizeMin;
+    state.pointSizeMax = setup.vertex.pointSizeMax;
+    state.paClVsOutCntl = setup.vertex.paClVsOutCntl;
     state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
     state.colors = {state.color};
     state.hasColorTarget = true;
@@ -316,7 +326,7 @@ int main() {
             FanIndices[k] = static_cast<std::uint16_t>(FanRim - k);
             FanRestart[k] = FanIndices[k];
         }
-        FanRestart[FanRim] = 0xffffu;
+        FanRestart[FanRim + 1] = 0xffffu;
         for (std::uint32_t quad = 0; quad < Columns; ++quad) {
             const auto color = TriangleColor(quad);
             const std::array<float, 4> rgba{color[0] / 255.0f, color[1] / 255.0f, color[2] / 255.0f, 1.0f};
@@ -332,6 +342,13 @@ int main() {
             }
             QuadStrips[5 * quad + 4] = 0xffffu;
             QuadStrips32[5 * quad + 4] = 0xffffffffu;
+            constexpr std::array<std::uint32_t, 4> fanOrder{0u, 1u, 3u, 2u};
+            for (std::uint32_t k = 0; k < 4; ++k) {
+                QuadFans[5 * quad + k] = static_cast<std::uint16_t>(4 * quad + fanOrder[k]);
+                QuadFans32[5 * quad + k] = 4 * quad + fanOrder[k];
+            }
+            QuadFans[5 * quad + 4] = 0xffffu;
+            QuadFans32[5 * quad + 4] = 0xffffffffu;
         }
 
         const auto testDevice = OpenVulkanTestDevice();
@@ -377,6 +394,10 @@ int main() {
             const bool drawn = triangle >= Triangles / 4u && triangle < Triangles / 4u + Triangles / 2u;
             Require(PixelIs(CellPixel(triangle), drawn ? TriangleColor(triangle) : Background), "fast-launch subgroups from a start vertex: triangle " + std::to_string(triangle) + " pixel " + PixelText(CellPixel(triangle)));
         }
+        std::copy(Ordered.begin(), Ordered.end(), WideFastLaunch.begin() + 3u * WideFastLaunchSkipped);
+        ClearPixels();
+        DrawMesh(device, {FastLaunchSubgroup, {0, WideFastLaunchSkipped + Triangles, 0, 1, 0, false}, VertexBufferDescriptor(WideFastLaunch.data(), static_cast<std::uint32_t>(WideFastLaunch.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, false, 32u, VK_CULL_MODE_NONE, FastLaunchCode, 0x482030u});
+        CheckTriangles("fast-launch draw of 65,575 one-primitive groups");
         bool fastLaunchIndexedRefused = false;
         try {
             DrawMesh(device, {FastLaunchSubgroup, {reinterpret_cast<std::uintptr_t>(Indices.data()), Triangles, 2, 1, 0, true}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, false, 32u, VK_CULL_MODE_NONE, FastLaunchCode, 0x482030u});
@@ -391,6 +412,63 @@ int main() {
             DrawMesh(device, {SmallSubgroup, {indexed ? reinterpret_cast<std::uintptr_t>(Indices.data()) : 0u, 2u, indexed ? 2u : 0u, 1, 0, indexed}, VertexBufferDescriptor(indexed ? Scrambled.data() : Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))});
             for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
                 Require(PixelIs(CellPixel(triangle), Background), std::string(indexed ? "indexed" : "non-indexed") + " triangle-list draw of two vertices drew triangle " + std::to_string(triangle) + ", pixel " + PixelText(CellPixel(triangle)));
+            }
+        }
+
+        ClearPixels();
+        auto pointSubgroup = SmallSubgroup;
+        pointSubgroup.outputPrimitiveSize = 1u;
+        for (const auto pointWave : {32u, 64u}) {
+            ClearPixels();
+            DrawMesh(device, {pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, false, pointWave});
+            for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
+                const auto& position = Ordered[3u * triangle].position;
+                const auto x = static_cast<std::uint32_t>((position[0] + 1.0f) * 0.5f * Width);
+                const auto y = static_cast<std::uint32_t>((1.0f - position[1]) * 0.5f * Height);
+                const auto offset = (static_cast<std::size_t>(y) * Width + x) * 4u;
+                Require(PixelIs(offset, TriangleColor(triangle)), "mesh point missing at first exported index for primitive " + std::to_string(triangle));
+                Require(PixelIs(CellPixel(triangle), Background), "mesh point output filled the interior of its packed triangle");
+            }
+        }
+
+        for (const auto pointWave : {32u, 64u}) {
+            for (const auto size : {3.0f, 4.0f}) {
+                ClearPixels();
+                MeshDraw points{pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))};
+                points.waveSize = pointWave;
+                points.vertex.pointSize = size;
+                DrawMesh(device, points);
+                for (std::uint32_t primitive = 0; primitive < Triangles; ++primitive) {
+                    std::uint32_t covered = 0;
+                    for (std::size_t pixel = 0; pixel < Pixels.size(); pixel += 4u) covered += PixelIs(pixel, TriangleColor(primitive));
+                    Require(covered == static_cast<std::uint32_t>(size * size), "mesh point did not cover its register-sized square");
+                }
+            }
+            for (const auto exportedSize : {6.0f, -3.0f}) {
+                ClearPixels();
+                const auto& baseCode = pointWave == 32u ? Wave32GeometryCode : GeometryCode;
+                std::array<std::uint32_t, GeometryCode.size() + 4u> sizedCode{};
+                std::copy_n(baseCode.begin(), 101u, sizedCode.begin());
+                sizedCode[92] = 0xbf88000eu;
+                sizedCode[99] = 0xf80000cfu;
+                sizedCode[101] = 0x7e6802ffu;
+                sizedCode[102] = std::bit_cast<std::uint32_t>(exportedSize);
+                sizedCode[103] = 0xf80008d1u;
+                sizedCode[104] = 0x00000034u;
+                std::copy(baseCode.begin() + 101u, baseCode.end(), sizedCode.begin() + 105u);
+                MeshDraw exported{pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))};
+                exported.waveSize = pointWave;
+                exported.code = sizedCode;
+                exported.vertex.paClVsOutCntl = (1u << 16u) | (1u << 21u);
+                exported.vertex.pointSizeMin = 3.0f;
+                exported.vertex.pointSizeMax = 4.0f;
+                DrawMesh(device, exported);
+                for (std::uint32_t primitive = 0; primitive < Triangles; ++primitive) {
+                    std::uint32_t covered = 0;
+                    for (std::size_t pixel = 0; pixel < Pixels.size(); pixel += 4u) covered += PixelIs(pixel, TriangleColor(primitive));
+                    const auto side = exportedSize < 3.0f ? 3u : 4u;
+                    Require(covered == side * side, "mesh point ignored its exported size or clamp");
+                }
             }
         }
 
@@ -485,14 +563,21 @@ int main() {
         ClearPixels();
         DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(FanIndices.data()), static_cast<std::uint32_t>(FanIndices.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, true});
         CheckFan("indexed triangle fan with restart enabled and no restart index");
-        bool refused = false;
-        try {
-            DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(FanRestart.data()), static_cast<std::uint32_t>(FanRestart.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, true});
-        } catch (const std::runtime_error& error) {
-            refused = std::string(error.what()).find("primitive restart in a triangle fan") != std::string::npos;
-            if (!refused) throw;
-        }
-        Require(refused, "a triangle fan with a restart index was drawn");
+        ClearPixels();
+        DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(FanRestart.data()), static_cast<std::uint32_t>(FanRestart.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, true});
+        CheckFan("indexed triangle fan ending in a restart index");
+        ClearPixels();
+        DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(QuadFans.data()), static_cast<std::uint32_t>(QuadFans.size()), 2, 1, 0, true}, quadBuffer, ShaderRecompiler::MeshDrawPushOffsetBytes, true, 64u, VK_CULL_MODE_FRONT_BIT});
+        CheckQuads("16-bit triangle fans with restarts", 0, Columns);
+        ClearPixels();
+        DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(QuadFans32.data()), static_cast<std::uint32_t>(QuadFans32.size()), 4, 1, 0, true}, quadBuffer, ShaderRecompiler::MeshDrawPushOffsetBytes, true, 64u, VK_CULL_MODE_FRONT_BIT});
+        CheckQuads("32-bit triangle fans with restarts", 0, Columns);
+        std::copy(quadWords.begin(), quadWords.end(), record);
+        AgcDriver::Pm4::DrawParameters quadFanDraw{reinterpret_cast<std::uintptr_t>(QuadFans.data()), static_cast<std::uint32_t>(QuadFans.size()), 2, 1, 0, true};
+        quadFanDraw.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{reinterpret_cast<std::uintptr_t>(record), 0x25u, 20u, 20u, 1u, false, 0u, 0x280u, 0x280u, 0x280u, false, 0u};
+        ClearPixels();
+        DrawMesh(device, {fan, quadFanDraw, quadBuffer, ShaderRecompiler::MeshDrawPushOffsetBytes, true, 64u, VK_CULL_MODE_FRONT_BIT});
+        CheckQuads("indirect triangle fans with restarts", 1, 3);
         const std::array<std::uint32_t, 5> fanWords{static_cast<std::uint32_t>(FanIndices.size()), 1u, 0u, 0u, 0u};
         std::copy(fanWords.begin(), fanWords.end(), record);
         AgcDriver::Pm4::DrawParameters fanDraw{reinterpret_cast<std::uintptr_t>(FanIndices.data()), static_cast<std::uint32_t>(FanIndices.size()), 2, 1, 0, true};

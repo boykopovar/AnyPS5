@@ -1,6 +1,9 @@
+#include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
+#include "tests/TemporaryFile.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,26 +23,6 @@
 
 struct NpUniversalDataSystemEvent;
 struct NpUniversalDataSystemEventPropertyObject;
-
-extern "C" {
-int APS5_VABI sceNpUniversalDataSystemCreateContext(int*, int, uint32_t, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemRegisterContext(int, int, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemCreateHandle(int*);
-int APS5_VABI sceNpUniversalDataSystemCreateEvent(const char*, const NpUniversalDataSystemEventPropertyObject*, NpUniversalDataSystemEvent**, NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpUniversalDataSystemDestroyEvent(NpUniversalDataSystemEvent*);
-int APS5_VABI sceNpUniversalDataSystemPostEvent(int, int, const void*, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyObject(NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyObject(NpUniversalDataSystemEventPropertyObject*);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt32(NpUniversalDataSystemEventPropertyObject*, const char*, int32_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt32(NpUniversalDataSystemEventPropertyObject*, const char*, uint32_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt64(NpUniversalDataSystemEventPropertyObject*, const char*, int64_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt64(NpUniversalDataSystemEventPropertyObject*, const char*, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat32(NpUniversalDataSystemEventPropertyObject*, const char*, float);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetObject(NpUniversalDataSystemEventPropertyObject*, const char*, const NpUniversalDataSystemEventPropertyObject*, NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpTrophy2CreateContext(int*, int, uint32_t, uint64_t);
-int APS5_VABI sceNpTrophy2GetGameInfo(int, int, NpTrophy2GameDetails*, NpTrophy2GameData*);
-int APS5_VABI sceNpTrophy2GetTrophyInfo(int, int, int, NpTrophy2Details*, NpTrophy2Data*);
-}
 
 static constexpr int InitialUser = 0x10000000;
 
@@ -63,6 +46,20 @@ static const char StatsDefinition[] = R"({"statDefinitionArray":[
     {"statId":10,"dataType":"uint64","aggregation":"latest"},{"statId":20,"dataType":"uint64","aggregation":"latest"},
     {"statId":30,"dataType":"uint32","aggregation":"latest"},{"statId":40,"dataType":"uint32","aggregation":"latest"}]})";
 
+static const char ProgressConf[] = R"({"defaultLanguage":"en-US","trophies":[
+    {"id":"0","grade":"P"},
+    {"id":"1","grade":"B","platinumTrophyId":"0","unlockCondition":{"udsStatId":"112","comparator":"ge","targetValue":"10","progressive":true}},
+    {"id":"2","grade":"B","platinumTrophyId":"0","unlockCondition":{"udsStatId":"113","comparator":"ge","targetValue":"3","progressive":true}}
+]})";
+
+static const char ProgressDefinition[] = R"({"statDefinitionArray":[
+    {"statId":112,"dataType":"int32","aggregation":"max","minValue":"0","initialValue":"0"},
+    {"statId":113,"dataType":"int32","aggregation":"max","minValue":"0","initialValue":"0"}]})";
+
+static const char ProgressExtraction[] = R"({"statsExtractionRuleArray":[
+    {"condition":{"eventName":"_UpdateTrophyProgress","property":{"path":"$._trophy_id","comparator":"==","value":"1"}},"action":{"input":"$._trophy_progress","output":{"statId":112}}},
+    {"condition":{"eventName":"_UpdateTrophyProgress","property":{"path":"$._trophy_id","comparator":"==","value":"2"}},"action":{"input":"$._trophy_progress","output":{"statId":113}}}]})";
+
 static const char SumDefinition[] = R"({"statDefinitionArray":[{"statId":10,"dataType":"uint64","aggregation":"sum"}]})";
 
 static const char StatsExtraction[] = R"({"statsExtractionRuleArray":[
@@ -70,6 +67,24 @@ static const char StatsExtraction[] = R"({"statsExtractionRuleArray":[
     {"condition":{"eventName":"COLLECT"},"action":{"input":"$.total","output":{"statId":20}}},
     {"condition":{"eventName":"TIME"},"action":{"input":"$.seconds","output":{"statId":30}}},
     {"condition":{"eventName":"STEPS"},"action":{"input":"$.player.steps","output":{"statId":40}}}]})";
+
+static const char ActionConf[] = R"({"defaultLanguage":"en-US","trophies":[
+    {"id":"0","grade":"P"},
+    {"id":"1","grade":"B","platinumTrophyId":"0","unlockCondition":{"udsStatId":"10","comparator":"ge","targetValue":"5","progressive":true}},
+    {"id":"2","grade":"B","platinumTrophyId":"0","unlockCondition":{"udsStatId":"20","comparator":"ge","targetValue":"7","progressive":true}},
+    {"id":"3","grade":"B"}
+]})";
+
+static const char ActionDefinition[] = R"({"statDefinitionArray":[
+    {"statId":10,"dataType":"uint32","aggregation":"latest"},
+    {"statId":20,"dataType":"uint64","aggregation":"max"}]})";
+
+static const char ActionExtraction[] = R"({"statsExtractionRuleArray":[
+    {"condition":{"eventName":"ACTION"},"action":{"input":"$.steps","conversion":null,"output":{"statId":10}}},
+    {"condition":{"eventName":"OUTPUT"},"action":{"input":"$.steps","output":{"statId":20,"extension":null}}},
+    {"condition":{"eventName":"LATEST"},"action":{"input":"$.steps","output":{"statId":10}}},
+    {"condition":{"eventName":"MAX","property":{"path":"$.mode","comparator":"==","value":1}},"action":{"input":"$.steps","output":{"statId":20}}}
+]})";
 
 static void Require(bool value, const char* message) {
     if (value) return;
@@ -132,7 +147,7 @@ class StderrCapture {
 public:
     StderrCapture() {
         std::fflush(stderr);
-        file = std::tmpfile();
+        file = TemporaryFile::Open();
         Require(file != nullptr, "cannot open a temporary file for stderr");
 #ifdef _WIN32
         saved = _dup(_fileno(stderr));
@@ -165,13 +180,13 @@ private:
     int saved = -1;
 };
 
-struct Uds {
+struct UdsSession {
     int context = 0;
     int handle = 0;
 };
 
-static Uds OpenUds(std::uint32_t serviceLabel) {
-    Uds uds;
+static UdsSession OpenUds(std::uint32_t serviceLabel) {
+    UdsSession uds;
     Require(sceNpUniversalDataSystemCreateContext(&uds.context, InitialUser, serviceLabel, 0) == 0, "UDS context was not created");
     Require(sceNpUniversalDataSystemCreateHandle(&uds.handle) == 0, "UDS handle was not created");
     Require(sceNpUniversalDataSystemRegisterContext(uds.context, uds.handle, 0) == 0, "UDS context was not registered");
@@ -179,7 +194,7 @@ static Uds OpenUds(std::uint32_t serviceLabel) {
 }
 
 template <typename TSet>
-static void Post(const Uds& uds, const char* name, TSet set) {
+static void Post(const UdsSession& uds, const char* name, TSet set) {
     NpUniversalDataSystemEventPropertyObject* properties = nullptr;
     Require(sceNpUniversalDataSystemCreateEventPropertyObject(&properties) == 0, "property object was not created");
     set(properties);
@@ -326,9 +341,97 @@ static void IgnoreOtherAggregations(Unlocks& unlocks) {
         Require(sceNpUniversalDataSystemEventPropertyObjectSetUInt32(properties, "counter", 10) == 0, "counter was not set");
     });
     const auto log = capture.Finish();
-    Require(log.find("[trophy] /app0/sce_sys/uds/uds05.ucp: stat 10 has aggregation \"sum\"; only \"latest\" is supported") != std::string::npos,
+    Require(log.find("[trophy] /app0/sce_sys/uds/uds05.ucp: stat 10 has aggregation \"sum\"; only \"latest\" and \"max\" are supported") != std::string::npos,
             "a stat with a sum aggregation was not reported");
     Require(!Trophy(context, 1).unlocked && !Exists("_trophy/268435456_5.stats.txt") && unlocks.trophies.size() == 6, "a stat with a sum aggregation was stored or unlocked a trophy");
+}
+
+static void RecordTrophyProgress(Unlocks& unlocks) {
+    const auto context = TrophyContext(6);
+    const auto uds = OpenUds(6);
+    const auto progress = [&uds](std::int32_t trophy, std::int32_t value) {
+        Post(uds, "_UpdateTrophyProgress", [trophy, value](NpUniversalDataSystemEventPropertyObject* properties) {
+            Require(sceNpUniversalDataSystemEventPropertyObjectSetInt32(properties, "_trophy_id", trophy) == 0, "_trophy_id was not set");
+            Require(sceNpUniversalDataSystemEventPropertyObjectSetInt32(properties, "_trophy_progress", value) == 0, "_trophy_progress was not set");
+        });
+    };
+    progress(1, 4);
+    const auto partway = Trophy(context, 1);
+    Require(!partway.unlocked && partway.progress.type == 1 && partway.progress.value == 4 && Trophy(context, 2).progress.value == 0, "trophy progress was not recorded for its own trophy");
+    progress(1, 2);
+    Require(Trophy(context, 1).progress.value == 4, "lower trophy progress replaced higher progress");
+    progress(2, 3);
+    Require(Trophy(context, 2).unlocked && !Trophy(context, 1).unlocked && !Trophy(context, 0).unlocked, "trophy progress at its target did not unlock only that trophy");
+    progress(1, 12);
+    const auto done = Trophy(context, 1);
+    Require(done.unlocked && done.progress.value == 10 && Trophy(context, 0).unlocked, "trophy progress past its target did not unlock the trophy and the platinum");
+    Require(Read("_trophy/268435456_6.stats.txt") == "112 12\n113 3\n", "trophy progress was not stored");
+    const std::vector<std::pair<std::uint32_t, std::int32_t>> expected{{6, 2}, {6, 1}, {6, 0}};
+    Require(unlocks.trophies.size() == 9 && std::vector<std::pair<std::uint32_t, std::int32_t>>(unlocks.trophies.end() - 3, unlocks.trophies.end()) == expected,
+            "the listener did not see the progress unlocks and the platinum once, in order");
+}
+
+static void RejectUnsupportedActions(Unlocks& unlocks) {
+    const auto before = unlocks.trophies.size();
+    StderrCapture capture;
+    const auto context = TrophyContext(7);
+    const auto uds = OpenUds(7);
+    const auto steps = [&uds](const char* name, std::uint32_t value, std::uint32_t mode = 1) {
+        Post(uds, name, [value, mode](NpUniversalDataSystemEventPropertyObject* properties) {
+            Require(sceNpUniversalDataSystemEventPropertyObjectSetUInt32(properties, "steps", value) == 0, "steps were not set");
+            Require(sceNpUniversalDataSystemEventPropertyObjectSetUInt32(properties, "mode", mode) == 0, "mode was not set");
+        });
+    };
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        steps("ACTION", 100);
+        steps("OUTPUT", 100);
+    }
+    const auto log = capture.Finish();
+    Require(!Trophy(context, 1).unlocked && !Trophy(context, 2).unlocked && !Trophy(context, 0).unlocked &&
+                Trophy(context, 1).progress.value == 0 && Trophy(context, 2).progress.value == 0 &&
+                !Exists("_trophy/268435456_7.stats.txt") && unlocks.trophies.size() == before,
+            "an unsupported extraction action stored raw input or unlocked a trophy");
+    Require(log.find("statsExtractionRuleArray[0] for ACTION") != std::string::npos && log.find("conversion") != std::string::npos &&
+                log.find("statsExtractionRuleArray[1] for OUTPUT") != std::string::npos && log.find("extension") != std::string::npos,
+            "an unsupported extraction member was not identified");
+    steps("LATEST", 3);
+    steps("MAX", 4);
+    Require(Read("_trophy/268435456_7.stats.txt") == "10 3\n20 4\n", "supported rules in a partially rejected package did not persist");
+    steps("ACTION", 100);
+    steps("OUTPUT", 100);
+    steps("MAX", 100, 0);
+    steps("MAX", 2);
+    Require(Trophy(context, 1).progress.value == 3 && Trophy(context, 2).progress.value == 4 &&
+                Read("_trophy/268435456_7.stats.txt") == "10 3\n20 4\n" && unlocks.trophies.size() == before,
+            "an unsupported or filtered action replaced saved progress, or max progress decreased");
+    const auto direct = [&uds] {
+        Post(uds, "_UnlockTrophy", [](NpUniversalDataSystemEventPropertyObject* properties) {
+            Require(sceNpUniversalDataSystemEventPropertyObjectSetInt32(properties, "_trophy_id", 3) == 0, "direct trophy id was not set");
+        });
+    };
+    direct();
+    Require(Trophy(context, 3).unlocked && unlocks.trophies.size() == before + 1, "unsupported extraction rules disabled direct unlocks");
+    steps("LATEST", 5);
+    steps("MAX", 7);
+    const std::vector<std::pair<std::uint32_t, std::int32_t>> expected{{7, 3}, {7, 1}, {7, 2}, {7, 0}};
+    Require(Trophy(context, 1).unlocked && Trophy(context, 2).unlocked && Trophy(context, 0).unlocked &&
+                unlocks.trophies.size() == before + expected.size() &&
+                std::vector<std::pair<std::uint32_t, std::int32_t>>(unlocks.trophies.begin() + before, unlocks.trophies.end()) == expected,
+            "supported actions did not unlock their trophies and platinum exactly once");
+    const std::vector<std::uint64_t> ticks{Trophy(context, 0).timestamp_tick, Trophy(context, 1).timestamp_tick,
+                                         Trophy(context, 2).timestamp_tick, Trophy(context, 3).timestamp_tick};
+    const auto record = Read("_trophy/268435456_7.txt");
+    const auto statRecord = Read("_trophy/268435456_7.stats.txt");
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        direct();
+        steps("LATEST", 5);
+        steps("MAX", 7);
+    }
+    Require(unlocks.trophies.size() == before + expected.size() &&
+                ticks == std::vector<std::uint64_t>{Trophy(context, 0).timestamp_tick, Trophy(context, 1).timestamp_tick,
+                                                   Trophy(context, 2).timestamp_tick, Trophy(context, 3).timestamp_tick} &&
+                Read("_trophy/268435456_7.txt") == record && Read("_trophy/268435456_7.stats.txt") == statRecord,
+            "repeated successful events changed unlock notifications, timestamps or saved records");
 }
 
 int main() {
@@ -347,6 +450,10 @@ int main() {
     Write("app0/sce_sys/uds/uds03.ucp", rules.substr(0, rules.size() - 1));
     Write("app0/sce_sys/trophy2/trophy05.ucp", trophies);
     Write("app0/sce_sys/uds/uds05.ucp", Ucp({{"stats_definition.json", SumDefinition}, {"stats_extraction.json", StatsExtraction}}));
+    Write("app0/sce_sys/trophy2/trophy06.ucp", Ucp({{"tropconf.json", ProgressConf}, {"tropmeta_en-US.json", TropMeta}}));
+    Write("app0/sce_sys/uds/uds06.ucp", Ucp({{"stats_definition.json", ProgressDefinition}, {"stats_extraction.json", ProgressExtraction}}));
+    Write("app0/sce_sys/trophy2/trophy07.ucp", Ucp({{"tropconf.json", ActionConf}, {"tropmeta_en-US.json", TropMeta}}));
+    Write("app0/sce_sys/uds/uds07.ucp", Ucp({{"stats_definition.json", ActionDefinition}, {"stats_extraction.json", ActionExtraction}}));
     Write("_trophy/268435456_0.stats.txt", "40 2\n");
 
     Unlocks unlocks;
@@ -356,6 +463,8 @@ int main() {
     UnlockThroughStats(context, unlocks);
     IgnoreMissingAndMalformedFiles(unlocks);
     IgnoreOtherAggregations(unlocks);
+    RecordTrophyProgress(unlocks);
+    RejectUnsupportedActions(unlocks);
     NpTrophy2RemoveUnlockListener_nid_no_patch(listener);
 
     std::filesystem::current_path(previous);

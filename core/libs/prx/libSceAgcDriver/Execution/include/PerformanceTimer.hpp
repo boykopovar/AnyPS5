@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TracyZone.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -206,7 +207,7 @@ private:
         return std::chrono::duration<double, std::milli>(elapsed).count();
     }
 
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     bool localMetrics = false;
     std::map<std::pair<std::string_view, std::string_view>, Metric> metrics;
     std::map<std::pair<std::string_view, std::string_view>, Metric> asyncMetrics;

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include <cstddef>
 #ifndef _UNWIND_H
@@ -74,18 +75,22 @@ int APS5_VABI __cxa_thread_atexit_impl_nid_postfix(void (APS5_VABI *func)(void*)
     auto* context = new (std::nothrow) ThreadAtexitContext{func, arg};
     if (context == nullptr)
         return -1;
-    const int result = __cxxabiv1::__cxa_thread_atexit(
-        [](void* opaque) {
-            auto* context = static_cast<ThreadAtexitContext*>(opaque);
-            const auto destructor = context->destructor;
-            void* object = context->object;
-            delete context;
-            destructor(object);
-        },
-        context, dso);
+    const auto run = [](void* opaque) {
+        auto* context = static_cast<ThreadAtexitContext*>(opaque);
+        const auto destructor = context->destructor;
+        void* object = context->object;
+        delete context;
+        destructor(object);
+    };
+#ifdef __APPLE__
+    __cxxabiv1::__cxa_thread_atexit(run, context, dso);
+    return 0;
+#else
+    const int result = __cxxabiv1::__cxa_thread_atexit(run, context, dso);
     if (result != 0)
         delete context;
     return result;
+#endif
 }
 
 int APS5_VABI __cxa_thread_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dso) {
@@ -96,7 +101,9 @@ int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(void (APS5_VABI *destru
     return __cxa_thread_atexit_impl_nid_postfix(destructor, object, module_id);
 }
 
-const std::error_category* _ZSt17iostream_categoryv_nid_postfix() { return &std::iostream_category(); }
+const std::error_category* APS5_VABI IostreamCategory_nid_no_patch() { return &std::iostream_category(); }
+
+const std::error_category* APS5_VABI _ZSt17iostream_categoryv_nid_postfix() { return IostreamCategory_nid_no_patch(); }
 
 int APS5_VABI _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(
     int* flag, int (APS5_VABI *callback)(void*, void*, void**), void* arg

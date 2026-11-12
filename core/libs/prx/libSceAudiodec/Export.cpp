@@ -1,3 +1,4 @@
+#include "prx/libSceAudiodec/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <array>
@@ -5,6 +6,7 @@
 #include <stdexcept>
 #include <memory>
 #include <mutex>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceAudiodec/src/Codecs.hpp"
@@ -33,6 +35,8 @@ constexpr std::int32_t ERROR_M4AAC_INVALID_SAMPLING_FREQ = static_cast<std::int3
 constexpr std::int32_t ERROR_M4AAC_INVALID_ENABLE_HEAAC = static_cast<std::int32_t>(0x807F0302);
 constexpr std::int32_t ERROR_M4AAC_INVALID_CONFIG_NUMBER = static_cast<std::int32_t>(0x807F0303);
 constexpr std::int32_t ERROR_M4AAC_INVALID_MAX_CHANNELS = static_cast<std::int32_t>(0x807F0304);
+constexpr std::int32_t ERROR_M4AAC_INVALID_ENABLE_NONDELAY_OUTPUT = static_cast<std::int32_t>(0x807F0305);
+constexpr std::int32_t ERROR_M4AAC_INVALID_SURROUND_CHANNEL_INTERLEAVE_ORDER = static_cast<std::int32_t>(0x807F0306);
 constexpr std::int32_t ERROR_AT9_INVALID_CONFIG_DATA = static_cast<std::int32_t>(0x807F1000);
 
 constexpr std::uint32_t TYPE_AT9 = 1;
@@ -54,6 +58,7 @@ struct Instance {
     Audiodec::At9Format at9{};
     std::uint32_t channels = 0;
     std::uint32_t sampleRate = 0;
+    std::uint32_t surroundChannelInterleaveOrder = 0;
 };
 
 std::mutex g_mutex;
@@ -97,16 +102,33 @@ std::int32_t validateCtrl(const AudiodecCtrl* ctrl, std::uint32_t codecType) {
     return validateWordSize(wordSizeOf(ctrl->pParam), codecType);
 }
 
-std::int32_t validateBuffers(const AudiodecCtrl* ctrl) {
+bool invalidStreamSize(std::uint32_t size) {
+    return size == 0 || size == UINT32_MAX;
+}
+
+std::int32_t validateDecodeCtrl(const AudiodecCtrl* ctrl) {
+    if (!ctrl) return ERROR_INVALID_CTRL_POINTER;
+    if (!ctrl->pParam) return ERROR_INVALID_PARAM_POINTER;
+    if (!ctrl->pBsiInfo) return ERROR_INVALID_BSI_INFO_POINTER;
     if (!ctrl->pAuInfo) return ERROR_INVALID_AU_INFO_POINTER;
+    if (!ctrl->pAuInfo->p_au_addr) return ERROR_INVALID_AU_POINTER;
     if (!ctrl->pPcmItem) return ERROR_INVALID_PCM_ITEM_POINTER;
+    if (!ctrl->pPcmItem->p_pcm_addr) return ERROR_INVALID_PCM_POINTER;
+    if (invalidStreamSize(ctrl->pAuInfo->ui_au_size)) return ERROR_INVALID_AU_SIZE;
+    if (invalidStreamSize(ctrl->pPcmItem->ui_pcm_size)) return ERROR_INVALID_PCM_SIZE;
     if (ctrl->pAuInfo->ui_size != sizeof(AudiodecAuInfo)) return ERROR_INVALID_AU_INFO_SIZE;
     if (ctrl->pPcmItem->ui_size != sizeof(AudiodecPcmItem)) return ERROR_INVALID_PCM_ITEM_SIZE;
-    if (!ctrl->pAuInfo->p_au_addr) return ERROR_INVALID_AU_POINTER;
-    if (!ctrl->pPcmItem->p_pcm_addr) return ERROR_INVALID_PCM_POINTER;
-    if (ctrl->pAuInfo->ui_au_size == 0) return ERROR_INVALID_AU_SIZE;
-    if (ctrl->pPcmItem->ui_pcm_size == 0) return ERROR_INVALID_PCM_SIZE;
     return 0;
+}
+
+std::int32_t validateDecodeInfo(const AudiodecCtrl* ctrl, std::uint32_t codecType) {
+    const std::uint32_t infoSize = *static_cast<const std::uint32_t*>(ctrl->pBsiInfo);
+    if (codecType == TYPE_AT9) {
+        if (*static_cast<const std::uint32_t*>(ctrl->pParam) != sizeof(AudiodecParamAt9)) return ERROR_INVALID_PARAM_SIZE;
+        return infoSize == sizeof(AudiodecAt9Info) ? 0 : ERROR_INVALID_BSI_INFO_SIZE;
+    }
+    const std::size_t expected = codecType == TYPE_MP3 ? sizeof(AudiodecMp3Info) : sizeof(AudiodecM4aacInfo);
+    return infoSize == expected ? 0 : ERROR_INVALID_BSI_INFO_SIZE;
 }
 
 void fillAt9Info(AudiodecAt9Info* info, const Audiodec::At9Format& format) {
@@ -135,14 +157,13 @@ void fillMp3Info(AudiodecMp3Info* info, const Audiodec::Mp3Header& header) {
 }
 
 std::int32_t createAac(const AudiodecParamM4aac* param, AudiodecM4aacInfo* info, Instance& instance) {
-    std::uint32_t extensionMode = 0;
-    std::uint32_t outputMode = 0;
+    std::uint32_t enableNondelayOutput = 0;
+    std::uint32_t surroundChannelInterleaveOrder = 0;
     const auto* bytes = reinterpret_cast<const std::byte*>(param);
-    if (param->ui_size >= 28) std::memcpy(&extensionMode, bytes + 24, sizeof(extensionMode));
-    if (extensionMode > 1) return static_cast<std::int32_t>(0x807F0305);
-    if (param->ui_size == 32) std::memcpy(&outputMode, bytes + 28, sizeof(outputMode));
-    if (outputMode > 2) return static_cast<std::int32_t>(0x807F0306);
-    if (extensionMode != 0 || outputMode != 0) throw std::runtime_error("M4AAC extended decoding modes are not implemented");
+    if (param->ui_size >= 28) std::memcpy(&enableNondelayOutput, bytes + 24, sizeof(enableNondelayOutput));
+    if (enableNondelayOutput > 1) return ERROR_M4AAC_INVALID_ENABLE_NONDELAY_OUTPUT;
+    if (param->ui_size == 32) std::memcpy(&surroundChannelInterleaveOrder, bytes + 28, sizeof(surroundChannelInterleaveOrder));
+    if (surroundChannelInterleaveOrder > 2) return ERROR_M4AAC_INVALID_SURROUND_CHANNEL_INTERLEAVE_ORDER;
     if (param->ui_config_number != M4AAC_CONFIG_ADTS && param->ui_config_number != M4AAC_CONFIG_RAW) return ERROR_M4AAC_INVALID_CONFIG_NUMBER;
     const std::uint32_t sampleRate = Audiodec::AacSampleRate(param->ui_sampling_freq_index);
     if (param->ui_config_number == M4AAC_CONFIG_RAW && sampleRate == 0) return ERROR_M4AAC_INVALID_SAMPLING_FREQ;
@@ -152,6 +173,7 @@ std::int32_t createAac(const AudiodecParamM4aac* param, AudiodecM4aacInfo* info,
     instance.decoder = Audiodec::CreateAac(param->i_bw_pcm, param->ui_config_number == M4AAC_CONFIG_ADTS, param->ui_sampling_freq_index, channels, param->ui_enable_heaac == 1);
     instance.channels = channels;
     instance.sampleRate = sampleRate;
+    instance.surroundChannelInterleaveOrder = surroundChannelInterleaveOrder;
     info->ui_sampling_freq = sampleRate;
     info->ui_number_of_channels = channels;
     info->ui_heaac = 0;
@@ -226,15 +248,16 @@ int32_t APS5_VABI sceAudiodecClearContext(int32_t handle) {
 }
 
 int32_t APS5_VABI sceAudiodecDecode(int32_t handle, AudiodecCtrl* ctrl) {
+    if (const std::int32_t result = validateDecodeCtrl(ctrl); result != 0) return result;
     std::lock_guard lock(g_mutex);
     Instance* instance = find(handle);
     if (!instance) return ERROR_INVALID_HANDLE;
-    if (const std::int32_t result = validateCtrl(ctrl, instance->codecType); result != 0) return result;
-    if (const std::int32_t result = validateBuffers(ctrl); result != 0) return result;
+    if (const std::int32_t result = validateDecodeInfo(ctrl, instance->codecType); result != 0) return result;
 
     const Audiodec::DecodeResult decoded = instance->decoder->Decode(static_cast<const std::uint8_t*>(ctrl->pAuInfo->p_au_addr), ctrl->pAuInfo->ui_au_size,
                                                                      static_cast<std::uint8_t*>(ctrl->pPcmItem->p_pcm_addr), ctrl->pPcmItem->ui_pcm_size);
     if (instance->codecType == TYPE_M4AAC) {
+        if (instance->surroundChannelInterleaveOrder != 0 && decoded.channels > 2) throw std::runtime_error("M4AAC surround channel interleave order " + std::to_string(instance->surroundChannelInterleaveOrder) + " is not implemented for " + std::to_string(decoded.channels) + " decoded channels");
         auto* info = static_cast<AudiodecM4aacInfo*>(ctrl->pBsiInfo);
         info->i_result = decoded.status == Audiodec::DecodeStatus::InvalidData ? M4AAC_RESULT_DECODE_ERROR
             : decoded.status == Audiodec::DecodeStatus::PartialInput ? M4AAC_RESULT_INSUFFICIENT_DATA : 0;

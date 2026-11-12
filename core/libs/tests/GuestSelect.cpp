@@ -1,11 +1,17 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <thread>
+#include <vector>
 
 struct GuestTimeval {
     std::int64_t seconds;
@@ -23,25 +29,6 @@ struct GuestDescriptorSet {
         return ((words[descriptor / 64] >> (descriptor % 64)) & 1u) != 0;
     }
 };
-
-extern "C" {
-int APS5_VABI select_nid_postfix(int, void*, void*, void*, const void*);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI unlink_nid_postfix(const char*);
-int APS5_VABI kqueue_nid_postfix();
-int APS5_VABI kevent_nid_postfix(int, const KernelEvent*, int, KernelEvent*, int, const KernelTimespec*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -63,6 +50,33 @@ static int SelectAll(int descriptor, GuestDescriptorSet& read, GuestDescriptorSe
     return select_nid_postfix(descriptor + 1, read.words.data(), write.words.data(), except.words.data(), &limit);
 }
 
+static void SocketsShutForReading() {
+    constexpr int UnixDomain = 1, Stream = 1;
+    int pair[2];
+    Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+    Require(shutdown_nid_postfix(pair[0], 0) == 0);
+    GuestDescriptorSet read{};
+    read.Add(pair[0]);
+    const GuestTimeval zero{0, 0};
+    Require(select_nid_postfix(pair[0] + 1, read.words.data(), nullptr, nullptr, &zero) == 1 && read.Has(pair[0]));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+    read = {};
+    read.Add(pair[0]);
+    const GuestTimeval limit{5, 0};
+    const auto start = std::chrono::steady_clock::now();
+    std::thread shutter([&pair] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Require(shutdown_nid_postfix(pair[0], 0) == 0);
+    });
+    const int ready = select_nid_postfix(pair[0] + 1, read.words.data(), nullptr, nullptr, &limit);
+    const auto waited = std::chrono::steady_clock::now() - start;
+    shutter.join();
+    Require(ready == 1 && read.Has(pair[0]));
+    Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+}
+
 static KernelEvent UserEvent(std::uint16_t flags, std::uint32_t fflags) {
     KernelEvent change{};
     change.ident = 7;
@@ -70,6 +84,58 @@ static KernelEvent UserEvent(std::uint16_t flags, std::uint32_t fflags) {
     change.flags = flags;
     change.fflags = fflags;
     return change;
+}
+
+static void StandardDescriptorFile(int descriptor) {
+    const int saved = dup_nid_postfix(descriptor);
+    const std::string path = "anyps5-select-input-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const int file = open_nid_postfix(path.c_str(), 0x0002 | 0x0200, 0644);
+    Require(file >= 0);
+    Require(dup2_nid_postfix(file, descriptor) == descriptor);
+    if (file != descriptor) Require(close_nid_postfix(file) == 0);
+    GuestDescriptorSet read{};
+    GuestDescriptorSet write{};
+    GuestDescriptorSet except{};
+    const GuestTimeval zero{0, 0};
+    const int ready = SelectAll(descriptor, read, write, except, zero);
+    if (ready != 2) std::fprintf(stderr, "select on a regular file at descriptor %d returned %d instead of 2\n", descriptor, ready);
+    Require(ready == 2);
+    Require(read.Has(descriptor) && write.Has(descriptor) && !except.Has(descriptor));
+    char byte = 0;
+    Require(read_nid_postfix(descriptor, &byte, 1) == 0);
+    if (saved >= 0) {
+        Require(dup2_nid_postfix(saved, descriptor) == descriptor);
+        Require(close_nid_postfix(saved) == 0);
+    } else Require(close_nid_postfix(descriptor) == 0);
+    Require(unlink_nid_postfix(path.c_str()) == 0);
+}
+
+static void SocketClosedDuringAWait() {
+    std::vector<std::chrono::steady_clock::duration> noticed;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        const int socket = socket_nid_postfix(2, 2, 0);
+        Require(socket >= 0);
+        int result = 0;
+        int error = 0;
+        std::atomic<bool> started{false};
+        std::thread waiter([&] {
+            GuestDescriptorSet read{};
+            read.Add(socket);
+            GuestTimeval limit{2, 0};
+            started = true;
+            result = select_nid_postfix(socket + 1, read.words.data(), nullptr, nullptr, &limit);
+            error = *__error_nid_postfix();
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::microseconds(1000 + attempt * 100));
+        const auto closedAt = std::chrono::steady_clock::now();
+        Require(close_nid_postfix(socket) == 0);
+        waiter.join();
+        noticed.push_back(std::chrono::steady_clock::now() - closedAt);
+        Require(result == -1 && error == GuestEbadf);
+    }
+    std::sort(noticed.begin(), noticed.end());
+    Require(noticed[noticed.size() / 2] < std::chrono::milliseconds(35));
 }
 
 static void Kqueues() {
@@ -101,8 +167,58 @@ static void Kqueues() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void BadPointersFault() {
+    constexpr int fault = 14;
+    auto* unmapped = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    const GuestTimeval zero{};
+    GuestDescriptorSet write{};
+    write.Add(1);
+    *__error_nid_postfix() = 0;
+    Require(select_nid_postfix(2, nullptr, write.words.data(), nullptr, unmapped) == -1 && *__error_nid_postfix() == fault);
+    *__error_nid_postfix() = 0;
+    Require(select_nid_postfix(-1, nullptr, nullptr, nullptr, unmapped) == -1 && *__error_nid_postfix() == fault);
+    *__error_nid_postfix() = 0;
+    Require(select_nid_postfix(2, unmapped, nullptr, nullptr, &zero) == -1 && *__error_nid_postfix() == fault);
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    auto* readOnly = static_cast<std::uint64_t*>(page);
+    readOnly[0] = 0x2;
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(select_nid_postfix(2, nullptr, readOnly, nullptr, &zero) == -1 && *__error_nid_postfix() == fault);
+    Require(readOnly[0] == 0x2);
+}
+
+static void ClosesDuringAWait() {
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        int pair[2]{-1, -1};
+        Require(pipe_nid_postfix(pair) == 0);
+        int result = 0;
+        int error = 0;
+        std::atomic<bool> started{false};
+        std::thread waiter([&] {
+            GuestDescriptorSet read{};
+            read.Add(pair[0]);
+            GuestTimeval limit{0, 20000};
+            started = true;
+            result = select_nid_postfix(pair[0] + 1, read.words.data(), nullptr, nullptr, &limit);
+            error = *__error_nid_postfix();
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::microseconds(1000 + (attempt % 20) * 100));
+        Require(close_nid_postfix(pair[0]) == 0);
+        waiter.join();
+        Require(close_nid_postfix(pair[1]) == 0);
+        Require(result == 0 || (result == -1 && error == GuestEbadf));
+    }
+}
+
 int main() {
+    BadPointersFault();
+    for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     Kqueues();
+    SocketsShutForReading();
+    ClosesDuringAWait();
 
     int descriptors[2]{-1, -1};
     Require(pipe_nid_postfix(descriptors) == 0);
@@ -202,12 +318,41 @@ int main() {
         Require(read.Has(reader) && write.Has(writer));
     }
 
+    Require(reader < 63);
+
+    {
+        GuestDescriptorSet read{};
+        GuestDescriptorSet except{};
+        read.Add(reader);
+        read.Add(63);
+        read.Add(64);
+        except.Add(63);
+        GuestTimeval limit{0, 100000};
+        Require(select_nid_postfix(reader, read.words.data(), nullptr, except.words.data(), &limit) == 0);
+        Require(!read.Has(reader) && !read.Has(63) && read.Has(64) && !except.Has(63));
+    }
+
     {
         GuestDescriptorSet read{};
         read.Add(reader);
-        GuestTimeval limit{0, 100000};
-        Require(select_nid_postfix(reader, read.words.data(), nullptr, nullptr, &limit) == 0);
+        const GuestTimeval zero{0, 0};
+        Require(select_nid_postfix(0, read.words.data(), nullptr, nullptr, &zero) == 0);
         Require(read.Has(reader));
+    }
+
+    {
+        const char byte = 'n';
+        Require(write_nid_postfix(writer, &byte, 1) == 1);
+        GuestDescriptorSet read{};
+        read.Add(reader);
+        read.Add(63);
+        read.Add(64);
+        GuestTimeval limit{0, 200000};
+        Require(select_nid_postfix(reader + 1, read.words.data(), nullptr, nullptr, &limit) == 1);
+        Require(read.Has(reader) && !read.Has(63) && read.Has(64));
+        char buffer[8]{};
+        const auto count = read_nid_postfix(reader, buffer, sizeof(buffer));
+        Require(count >= 1 && buffer[count - 1] == byte);
     }
 
     {
@@ -266,4 +411,5 @@ int main() {
         Require(select_nid_postfix(reader + 1, read.words.data(), nullptr, nullptr, &limit) == -1);
         Require(*__error_nid_postfix() == GuestEbadf);
     }
+    SocketClosedDuringAWait();
 }

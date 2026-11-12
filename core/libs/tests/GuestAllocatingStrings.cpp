@@ -1,21 +1,24 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-char* APS5_VABI strndup_nid_postfix(const char*, std::size_t);
-char* APS5_VABI strdup_nid_postfix(const char*);
-int APS5_VABI asprintf_nid_postfix(char**, const char*, ...);
-int APS5_VABI vasprintf_nid_postfix(char**, const char*, VaList*);
-void APS5_VABI free_nid_postfix(void*);
-int* APS5_VABI __error_nid_postfix();
-}
+#include <vector>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -60,7 +63,7 @@ void InitializeHeap() {
     ApplicationHeapInitialize_nid_no_patch(process.data());
 }
 
-int CallVasprintf(char** destination, const char* format, ...) {
+static int APS5_VABI CallVasprintf(char** destination, const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
@@ -77,13 +80,26 @@ int CallVasprintf(char** destination, const char* format, ...) {
     return result;
 }
 
+static int APS5_VABI CallVdprintf(int descriptor, const char* format, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+#else
+    std::va_list args;
+    va_start(args, format);
+#endif
+    const int result = vdprintf_nid_postfix(descriptor, format, reinterpret_cast<VaList*>(args));
+#ifdef _WIN32
+    __builtin_sysv_va_end(args);
+#else
+    va_end(args);
+#endif
+    return result;
+}
+
 }
 
 int main() {
-    *__error_nid_postfix() = 0;
-    Require(strndup_nid_postfix(nullptr, 0) == nullptr);
-    Require(*__error_nid_postfix() == 22);
-
     *__error_nid_postfix() = 0;
     Require(strndup_nid_postfix(nullptr, 32) == nullptr);
     Require(*__error_nid_postfix() == 22);
@@ -109,6 +125,13 @@ int main() {
 
     InitializeHeap();
 
+    *__error_nid_postfix() = 0;
+    char* empty = strndup_nid_postfix(nullptr, 0);
+    Require(empty != nullptr);
+    Require(empty[0] == '\0');
+    Require(*__error_nid_postfix() == 0);
+    free_nid_postfix(empty);
+
     char* dup1 = strndup_nid_postfix("hello world", 5);
     Require(dup1 != nullptr);
     Require(std::strcmp(dup1, "hello") == 0);
@@ -126,12 +149,275 @@ int main() {
     Require(std::strcmp(allocated, "value=42 ok") == 0);
     free_nid_postfix(allocated);
 
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(-1, "test") == -1);
+    Require(*__error_nid_postfix() == 9);
+
+    *__error_nid_postfix() = 0;
+    Require(CallVdprintf(-1, "test") == -1);
+    Require(*__error_nid_postfix() == 9);
+
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(1, nullptr) == -1);
+    Require(*__error_nid_postfix() == 22);
+
+    *__error_nid_postfix() = 0;
+    Require(CallVdprintf(1, nullptr) == -1);
+    Require(*__error_nid_postfix() == 22);
+
+    const char tempFile[] = "guest_allocating_strings_dprintf.tmp";
+#ifdef _WIN32
+    const int fd = ::_open(tempFile, _O_CREAT | _O_TRUNC | _O_RDWR | _O_BINARY, 0600);
+#else
+    const int fd = ::open(tempFile, O_CREAT | O_TRUNC | O_RDWR, 0600);
+#endif
+    Require(fd >= 0);
+
+    Require(dprintf_nid_postfix(fd, "") == 0);
+
+    const int dwritten = dprintf_nid_postfix(fd, "hello %d %s\n", 123, "world");
+    Require(dwritten == 16);
+
+    const int vdwritten = CallVdprintf(fd, "pi=%.2f\n", 3.14159);
+    Require(vdwritten == 8);
+
+#ifdef _WIN32
+    Require(::_lseek(fd, 0, SEEK_SET) == 0);
+    char readBuffer[64]{};
+    const int readBytes = ::_read(fd, readBuffer, sizeof(readBuffer));
+    Require(readBytes == 24);
+    ::_close(fd);
+    ::_unlink(tempFile);
+#else
+    Require(::lseek(fd, 0, SEEK_SET) == 0);
+    char readBuffer[64]{};
+    const int readBytes = static_cast<int>(::read(fd, readBuffer, sizeof(readBuffer)));
+    Require(readBytes == 24);
+    ::close(fd);
+    ::unlink(tempFile);
+#endif
+    Require(std::memcmp(readBuffer, "hello 123 world\npi=3.14\n", 24) == 0);
+
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(fd, "closed") == -1);
+    Require(*__error_nid_postfix() == 9);
+
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(99999, "invalid") == -1);
+    Require(*__error_nid_postfix() == 24);
+
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(32767, "invalid") == -1);
+    Require(*__error_nid_postfix() == 9);
+
+    Require(dprintf_nid_postfix(1, "") == 0);
+    Require(dprintf_nid_postfix(2, "") == 0);
+
+    const char guestFile[] = "guest_allocating_strings_guest.tmp";
+    const int guestFd = open_nid_postfix(guestFile, 0x202, 0644);
+    Require(guestFd >= 0);
+    Require(dprintf_nid_postfix(guestFd, "guest %d %s\n", 99, "ok") == 12);
+    close_nid_postfix(guestFd);
+    const int readFd = open_nid_postfix(guestFile, 0, 0);
+    Require(readFd >= 0);
+    char guestReadBuf[32]{};
+    Require(read_nid_postfix(readFd, guestReadBuf, sizeof(guestReadBuf)) == 12);
+    Require(std::strcmp(guestReadBuf, "guest 99 ok\n") == 0);
+    close_nid_postfix(readFd);
+    unlink_nid_postfix(guestFile);
+
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(1, 1, 0, pair) == 0);
+    Require(dprintf_nid_postfix(pair[0], "socket %d %s\n", 777, "peer") == 16);
+    char sockReadBuf[32]{};
+    Require(read_nid_postfix(pair[1], sockReadBuf, sizeof(sockReadBuf)) == 16);
+    Require(std::strcmp(sockReadBuf, "socket 777 peer\n") == 0);
+    close_nid_postfix(pair[0]);
+    close_nid_postfix(pair[1]);
+
+    static int shortState = 0;
+    const auto origHook = LibcGetGuestWriteHook_nid_no_patch();
+
+    LibcSetGuestWriteHook_nid_no_patch(+[](int, const void*, std::size_t count) APS5_VABI -> std::int64_t {
+        if (shortState++ == 0 && count > 5) return 5;
+        return static_cast<std::int64_t>(count);
+    });
+    shortState = 0;
+    Require(dprintf_nid_postfix(1, "abcdefghijk") == 11);
+    Require(shortState == 2);
+
+    LibcSetGuestWriteHook_nid_no_patch(+[](int, const void*, std::size_t count) APS5_VABI -> std::int64_t {
+        if (shortState++ == 0 && count > 5) return 5;
+        errno = 5;
+        return -1;
+    });
+    shortState = 0;
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(1, "abcdefghijk") == -1);
+    Require(*__error_nid_postfix() == 5);
+
+    LibcSetGuestWriteHook_nid_no_patch(+[](int, const void*, std::size_t) APS5_VABI -> std::int64_t {
+        errno = 35;
+        return -1;
+    });
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(1, "nonblocking") == -1);
+    Require(*__error_nid_postfix() == 35);
+    *__error_nid_postfix() = 0;
+    Require(CallVdprintf(1, "nonblocking %s", "va") == -1);
+    Require(*__error_nid_postfix() == 35);
+
+    LibcSetGuestWriteHook_nid_no_patch(+[](int, const void*, std::size_t) APS5_VABI -> std::int64_t {
+        errno = 11;
+        return -1;
+    });
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(1, "deadlock") == -1);
+    Require(*__error_nid_postfix() == 11);
+    *__error_nid_postfix() = 0;
+    Require(CallVdprintf(1, "deadlock %s", "va") == -1);
+    Require(*__error_nid_postfix() == 11);
+
+    LibcSetGuestWriteHook_nid_no_patch(origHook);
+
+#ifndef _WIN32
+    LibcSetGuestWriteHook_nid_no_patch(nullptr);
+    Require(LibcGetGuestWriteHook_nid_no_patch() == nullptr);
+    int pipeFds[2] = {-1, -1};
+    Require(::pipe(pipeFds) == 0);
+    const int readFlags = ::fcntl(pipeFds[0], F_GETFL, 0);
+    Require(readFlags >= 0);
+    Require(::fcntl(pipeFds[0], F_SETFL, readFlags | O_NONBLOCK) == 0);
+    const int writeFlags = ::fcntl(pipeFds[1], F_GETFL, 0);
+    Require(writeFlags >= 0);
+    Require(::fcntl(pipeFds[1], F_SETFL, writeFlags | O_NONBLOCK) == 0);
+
+    *__error_nid_postfix() = 35;
+    Require(dprintf_nid_postfix(pipeFds[1], "a") == 1);
+    Require(*__error_nid_postfix() == 35);
+    char singleByte = 0;
+    Require(::read(pipeFds[0], &singleByte, 1) == 1);
+    Require(singleByte == 'a');
+
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(pipeFds[1], "") == 0);
+    Require(*__error_nid_postfix() == 0);
+    Require(CallVdprintf(pipeFds[1], "") == 0);
+    Require(*__error_nid_postfix() == 0);
+
+    *__error_nid_postfix() = 0;
+    Require(CallVdprintf(pipeFds[1], "bc%d", 42) == 4);
+    Require(*__error_nid_postfix() == 0);
+    char freeReadBuf[8]{};
+    Require(::read(pipeFds[0], freeReadBuf, 4) == 4);
+    Require(std::memcmp(freeReadBuf, "bc42", 4) == 0);
+
+    char fillChunk[4096]{};
+    std::memset(fillChunk, 'z', sizeof(fillChunk));
+    std::size_t totalFilled = 0;
+    bool pipeFull = false;
+    for (int i = 0; i < 512; ++i) {
+        const auto written = ::write(pipeFds[1], fillChunk, sizeof(fillChunk));
+        if (written > 0) {
+            totalFilled += static_cast<std::size_t>(written);
+        } else if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            pipeFull = true;
+            break;
+        } else if (written < 0 && errno == EINTR) {
+            continue;
+        } else {
+            Require(false);
+        }
+    }
+    Require(pipeFull);
+
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(pipeFds[1], "full direct") == -1);
+    Require(*__error_nid_postfix() == 35);
+
+    *__error_nid_postfix() = 0;
+    Require(CallVdprintf(pipeFds[1], "full %s %d", "valist", 999) == -1);
+    Require(*__error_nid_postfix() == 35);
+
+#ifdef __linux__
+    const auto pageSize = ::sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0);
+    const auto pageBytes = static_cast<std::size_t>(pageSize);
+    Require(totalFilled >= pageBytes);
+    std::vector<char> drainPage(pageBytes);
+    std::size_t drained = 0;
+    while (drained < drainPage.size()) {
+        const auto r = ::read(pipeFds[0], drainPage.data() + drained, drainPage.size() - drained);
+        if (r > 0) {
+            drained += static_cast<std::size_t>(r);
+        } else if (r < 0 && errno == EINTR) {
+            continue;
+        } else {
+            Require(false);
+        }
+    }
+    Require(drained == pageBytes);
+
+    std::vector<char> multiPage(pageBytes * 3 + 1, 'k');
+    multiPage.back() = '\0';
+
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(pipeFds[1], "%s", multiPage.data()) == -1);
+    Require(*__error_nid_postfix() == 35);
+
+    std::size_t remainingFillToDrain = totalFilled - pageBytes;
+    while (remainingFillToDrain > 0) {
+        char discard[4096]{};
+        const std::size_t toRead = remainingFillToDrain < sizeof(discard) ? remainingFillToDrain : sizeof(discard);
+        const auto r = ::read(pipeFds[0], discard, toRead);
+        if (r > 0) {
+            remainingFillToDrain -= static_cast<std::size_t>(r);
+        } else if (r < 0 && errno == EINTR) {
+            continue;
+        } else {
+            Require(false);
+        }
+    }
+
+    std::size_t transferredBytes = 0;
+    std::vector<char> verifyBuf(pageBytes);
+    while (transferredBytes < verifyBuf.size()) {
+        const auto r = ::read(pipeFds[0], verifyBuf.data() + transferredBytes, verifyBuf.size() - transferredBytes);
+        if (r > 0) {
+            transferredBytes += static_cast<std::size_t>(r);
+        } else if (r < 0 && errno == EINTR) {
+            continue;
+        } else {
+            Require(false);
+        }
+    }
+    Require(transferredBytes == pageBytes);
+    for (std::size_t i = 0; i < verifyBuf.size(); ++i) {
+        Require(verifyBuf[i] == 'k');
+    }
+
+    char emptyProbe = 0;
+    const auto probeResult = ::read(pipeFds[0], &emptyProbe, 1);
+    Require(probeResult < 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
+#endif
+
+    Require(::close(pipeFds[0]) == 0);
+    Require(::close(pipeFds[1]) == 0);
+    LibcSetGuestWriteHook_nid_no_patch(origHook);
+#endif
+
     failAllocation = true;
     allocated = nullptr;
     *__error_nid_postfix() = 0;
     Require(asprintf_nid_postfix(&allocated, "value=%d", 1) == -1);
     Require(*__error_nid_postfix() == 12);
     Require(allocated == nullptr);
+    failAllocation = false;
+
+    failAllocation = true;
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(1, "fail %d", 1) == -1);
+    Require(*__error_nid_postfix() == 12);
     failAllocation = false;
 
     return 0;

@@ -1,6 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceSysmodule/include/Api.hpp"
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <algorithm>
+#include <iterator>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -9,15 +13,17 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
-#else
+#elif defined(__APPLE__)
+#include <dlfcn.h>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#elif !defined(__EMSCRIPTEN__)
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #endif
 
 #include "SceTypes.hpp"
 #include "ModuleTable.hpp"
 #include "prx/libc/include/General.hpp"
-
-extern "C" void* APS5_VABI dlopen_nid_postfix(const char* path, int flags);
 
 namespace {
 
@@ -28,6 +34,14 @@ constexpr int kRtldNow = 2;
 const char* findModuleName(const std::uint32_t id) {
     const auto it = kModuleTable.find(id);
     return it != kModuleTable.end() ? it->second : nullptr;
+}
+
+bool isMeasuredRejectedInternalId(const std::uint32_t id) {
+    return id == 0x8000ffffu || id == 0x80ffff00u;
+}
+
+bool isPublicModuleId(const std::uint16_t id) {
+    return std::binary_search(std::begin(kPublicModuleIds), std::end(kPublicModuleIds), id);
 }
 
 std::mutex gMutex;
@@ -120,6 +134,27 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
         gRegions.insert_or_assign(begin, std::move(region));
     }
     return true;
+#elif defined(__APPLE__)
+    mach_vm_address_t region = addr;
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t host{};
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    if (mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&host), &count, &object) != KERN_SUCCESS || region > addr) {
+        return false;
+    }
+    Dl_info image{};
+    info->st_size = sizeof(ModuleInfoForUnwind);
+    std::strncpy(info->name, dladdr(reinterpret_cast<void*>(addr), &image) && image.dli_fname != nullptr ? image.dli_fname : "", sizeof(info->name) - 1);
+    info->name[sizeof(info->name) - 1] = '\0';
+    info->eh_frame_hdr_addr = 0;
+    info->eh_frame_addr = 0;
+    info->eh_frame_size = 0;
+    info->seg0_addr = region;
+    info->seg0_size = size;
+    return true;
+#elif defined(__EMSCRIPTEN__)
+    return sceKernelGetModuleInfoForUnwind(addr, 0, info) == 0;
 #else
     const auto mapping = HostMapping::Find(addr, "sceSysmoduleGetModuleInfoForUnwind");
     if (!mapping) {
@@ -143,6 +178,9 @@ extern "C" {
 
 int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info) {
     (void)flags;
+    if (!info) {
+        throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: null info");
+    }
     if (!fillModuleInfoForUnwind(addr, info)) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: address not found");
     }
@@ -181,7 +219,7 @@ int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t
 }
 
 int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
-    if (id == 0) {
+    if (!isPublicModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
@@ -197,7 +235,7 @@ int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
 }
 
 int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id) {
-    if (id == 0) {
+    if (!isPublicModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
@@ -228,7 +266,7 @@ int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, 
 }
 
 int APS5_VABI sceSysmoduleUnloadModule(std::uint16_t id) {
-    if (id == 0) {
+    if (!isPublicModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
@@ -249,6 +287,9 @@ int APS5_VABI sceSysmoduleLoadModuleInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isMeasuredRejectedInternalId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleLoadModuleInternal: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
@@ -261,6 +302,9 @@ int APS5_VABI sceSysmoduleUnloadModuleInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isMeasuredRejectedInternalId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleUnloadModuleInternal: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
@@ -299,6 +343,9 @@ int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isMeasuredRejectedInternalId(id) || id == 0x00ffffffu) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleIsLoadedInternal: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);

@@ -21,6 +21,13 @@ static Domain::ProgramHeader Load(std::uint64_t vaddr, std::uint64_t memorySize,
     return load;
 }
 
+static Domain::ProgramHeader Relro(std::uint64_t vaddr, std::uint64_t memorySize) {
+    Domain::ProgramHeader relro{};
+    relro.Type = Elfpatcher::PT_GNU_RELRO; relro.Flags = Elfpatcher::PF_R; relro.Offset = vaddr; relro.MappedAddress = vaddr;
+    relro.PhysicalAddress = vaddr; relro.FileSize = memorySize; relro.MemorySize = memorySize; relro.Alignment = 1;
+    return relro;
+}
+
 static std::vector<Domain::ProgramHeader> MappedLoads(const std::vector<std::uint8_t>& buf, std::uint64_t tableOffset, std::uint16_t count) {
     std::vector<Domain::ProgramHeader> loads;
     for (std::uint16_t index = 0; index < count; ++index) {
@@ -85,7 +92,7 @@ int main() {
         Elfpatcher::ProgramHeaderLayoutRequest valid{64, 56, 7, {load}, 0x1000, 0x2000, 0x100, 0x1000, 16, 0x1010, 8};
         std::vector<std::uint8_t> output(0x1100, 0xA5);
         Require(builder.WriteLayout(output, valid) == 7, "header count for a valid request");
-        for (int kind = 0; kind < 11; ++kind) {
+        for (int kind = 0; kind < 13; ++kind) {
             auto request = valid;
             switch (kind) {
                 case 0: request.PhEntSize = 55; break;
@@ -99,6 +106,8 @@ int main() {
                 case 8: request.ExtraBlockOffset = maximum; break;
                 case 9: request.ExtraBlockSize = 0x1000; break;
                 case 10: request.PhOff = 0xF00; break;
+                case 11: request.PhOff = 0; break;
+                case 12: request.PhOff = 63; break;
             }
             std::vector<std::uint8_t> bytes(0x1100, 0xA5);
             const auto before = bytes;
@@ -126,6 +135,24 @@ int main() {
         writeLayout({Load(0x1000, 0x1000, 0x1000, 5), Load(0x2000, 0x1000, 0x0400, 6)}, 0x8800, 0x400);
         const std::vector<Domain::ProgramHeader> singleLoad{Load(0x1000, 0x1800, 0x1800, 6)};
         Require(builder.RequiredProgramHeaderCount(singleLoad) == 7, "required count must reserve a slot for the synthetic stack");
+        auto withTwoStacks = singleLoad;
+        withTwoStacks.push_back(Domain::ProgramHeader{Elfpatcher::PT_GNU_STACK, Elfpatcher::PF_R | Elfpatcher::PF_W, 0, 0, 0, 0, 0, 16});
+        withTwoStacks.push_back(Domain::ProgramHeader{Elfpatcher::PT_GNU_STACK, Elfpatcher::PF_R | Elfpatcher::PF_W | Elfpatcher::PF_X, 0, 0, 0, 0, 0, 16});
+        Require(builder.RequiredProgramHeaderCount(withTwoStacks) == 7, "layout must collapse duplicate PT_GNU_STACK into one slot");
+        std::vector<std::uint8_t> twoStackTable(0xB000, 0);
+        Elfpatcher::ProgramHeaderLayoutRequest twoStackRequest{0x8A00, 56, 7, withTwoStacks, 0x8A00,
+            builder.ComputeExtraBlockVaddr(withTwoStacks, 0x8A00), 7 * 56 + 0x400, 0x8A00, 0x20, 0x8A20, 8};
+        const std::uint16_t twoStackWritten = builder.WriteLayout(twoStackTable, twoStackRequest);
+        Require(twoStackWritten == 7, "layout must write exactly the collapsed count");
+        std::size_t twoStackCount = 0;
+        std::uint32_t twoStackFlags = 0;
+        for (std::uint16_t index = 0; index < twoStackWritten; ++index) {
+            const auto entry = 0x8A00 + index * 56;
+            if (*reinterpret_cast<const std::uint32_t*>(twoStackTable.data() + entry) != Elfpatcher::PT_GNU_STACK) continue;
+            ++twoStackCount;
+            twoStackFlags = *reinterpret_cast<const std::uint32_t*>(twoStackTable.data() + entry + 4);
+        }
+        Require(twoStackCount == 1 && twoStackFlags == (Elfpatcher::PF_R | Elfpatcher::PF_W | Elfpatcher::PF_X), "layout must preserve only the last PT_GNU_STACK segment");
         const auto writeSingle = [&builder, &singleLoad](std::uint16_t slots) {
             std::vector<std::uint8_t> table(0xB000, 0);
             Elfpatcher::ProgramHeaderLayoutRequest request{0x8A00, 56, slots, singleLoad, 0x8A00,
@@ -149,6 +176,42 @@ int main() {
         bool stackSlotRejected = false;
         try { (void)writeSingle(6); } catch (const std::exception&) { stackSlotRejected = true; }
         Require(stackSlotRejected, "layout must refuse to drop the synthetic stack when its slot is missing");
-        std::cout << "21 program layout cases passed\n";
+
+        const std::vector<Domain::ProgramHeader> oneRelro{Load(0x1000, 0x3000, 0x3000, Elfpatcher::PF_R | Elfpatcher::PF_W), Relro(0x1000, 0x800)};
+        Require(builder.RequiredProgramHeaderCount(oneRelro) == 8, "a single RELRO range must reserve its own header slot");
+        const std::vector<Domain::ProgramHeader> twoDisjointRelros{Load(0x1000, 0x3000, 0x3000, Elfpatcher::PF_R | Elfpatcher::PF_W), Relro(0x1000, 0x800), Relro(0x2000, 0x800)};
+        bool multiRelroRejected = false;
+        try { (void)builder.RequiredProgramHeaderCount(twoDisjointRelros); } catch (const std::exception&) { multiRelroRejected = true; }
+        Require(multiRelroRejected, "layout must refuse more than one disjoint RELRO range on Linux output");
+        const std::vector<Domain::ProgramHeader> twoOverlappingRelros{Load(0x1000, 0x3000, 0x3000, Elfpatcher::PF_R | Elfpatcher::PF_W), Relro(0x1000, 0x800), Relro(0x1400, 0x800)};
+        bool overlappingRelroRejected = false;
+        try { (void)builder.RequiredProgramHeaderCount(twoOverlappingRelros); } catch (const std::exception&) { overlappingRelroRejected = true; }
+        Require(overlappingRelroRejected, "layout must refuse more than one RELRO range on Linux output even when they overlap");
+        const std::vector<Domain::ProgramHeader> twoIdenticalRelros{Load(0x1000, 0x3000, 0x3000, Elfpatcher::PF_R | Elfpatcher::PF_W), Relro(0x1000, 0x800), Relro(0x1000, 0x800)};
+        bool identicalRelroRejected = false;
+        try { (void)builder.RequiredProgramHeaderCount(twoIdenticalRelros); } catch (const std::exception&) { identicalRelroRejected = true; }
+        Require(identicalRelroRejected, "layout must refuse more than one RELRO range on Linux output even when they are identical");
+        constexpr std::uint16_t extendedCount = 0xffff;
+        std::vector<Domain::ProgramHeader> manyHeaders(extendedCount - Elfpatcher::kSyntheticProgramHeaderCount - 2);
+        manyHeaders.front() = singleLoad.front();
+        Require(builder.RequiredProgramHeaderCount(manyHeaders) == extendedCount - 1, "largest ordinary count changed");
+        const auto writeMany = [&builder](const std::vector<Domain::ProgramHeader>& headers, std::vector<std::uint8_t>& bytes, std::uint16_t count) {
+            const std::uint64_t extraOffset = 0x1000;
+            const std::uint64_t extraSize = static_cast<std::uint64_t>(count) * 56;
+            Elfpatcher::ProgramHeaderLayoutRequest request{extraOffset, 56, count, headers, extraOffset,
+                builder.ComputeExtraBlockVaddr(headers, extraOffset), extraSize, extraOffset, 16, extraOffset + 16, 8};
+            return builder.WriteLayout(bytes, request);
+        };
+        std::vector<std::uint8_t> largeOutput(0x1000 + static_cast<std::uint64_t>(extendedCount) * 56, 0xA5);
+        Require(writeMany(manyHeaders, largeOutput, extendedCount - 1) == extendedCount - 1, "largest ordinary layout rejected");
+        manyHeaders.push_back({});
+        rejected = false;
+        try { builder.RequiredProgramHeaderCount(manyHeaders); } catch (const Domain::RelinkerException&) { rejected = true; }
+        Require(rejected, "extended program header count accepted");
+        const auto beforeLarge = largeOutput;
+        rejected = false;
+        try { writeMany(manyHeaders, largeOutput, extendedCount); } catch (const Domain::RelinkerException&) { rejected = true; }
+        Require(rejected && largeOutput == beforeLarge, "extended count written without section-zero encoding");
+        std::cout << "29 program layout cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

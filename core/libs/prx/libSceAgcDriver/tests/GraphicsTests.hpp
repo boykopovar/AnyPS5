@@ -36,6 +36,7 @@ void RunTextureTilingTests();
 void RunGuestTextureResourceTests();
 void RunDepthSurfaceReuseTests();
 void RunGuestSamplerResourceTests();
+void RunLastRecordIndicesTests();
 void RunTextureDetilerTests(const AgcDriver::Graphics::Context& context, const TextureDetilerTestAccess& access);
 
 #endif

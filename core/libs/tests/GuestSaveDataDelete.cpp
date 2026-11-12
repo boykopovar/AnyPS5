@@ -1,3 +1,6 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceSaveData/include/Api.hpp"
+#include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "SceTypes.hpp"
@@ -13,20 +16,10 @@
 #include <system_error>
 #include <vector>
 
-extern "C" {
-int APS5_VABI sceSaveDataDelete(const SaveDataDelete*);
-int APS5_VABI sceSaveDataInitialize3(const void*);
-int APS5_VABI sceSaveDataMount3(const SaveDataMount3*, SaveDataMountResult*);
-int APS5_VABI sceSaveDataUmount2(std::uint32_t, const SaveDataMountPoint*);
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, FileStream*);
-std::size_t APS5_VABI fwrite_nid_postfix(const void*, std::size_t, std::size_t, FileStream*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
-}
-
 namespace {
 
 constexpr int SaveDataErrorParameter = -2137063424;
+constexpr int SaveDataErrorNotInitialized = -2137063423;
 constexpr int SaveDataErrorBusy = -2137063421;
 
 int failures = 0;
@@ -89,10 +82,18 @@ int main() {
     char unterminated[sizeof(SceSaveDataDirName::data)];
     std::memset(unterminated, 'a', sizeof(unterminated));
     Check(Delete(unterminated, sizeof(unterminated)) == SaveDataErrorParameter, "an unterminated name is rejected");
+    Check(sceSaveDataDelete(nullptr) == SaveDataErrorParameter, "null del returns PARAMETER");
+    SaveDataDelete nullDirDel{};
+    Check(sceSaveDataDelete(&nullDirDel) == SaveDataErrorParameter, "null dir_name returns PARAMETER");
+    Check(sceSaveDataDeleteTransactionResource(0) == SaveDataErrorNotInitialized, "delete transaction resource fails before initialization");
+    Check(sceSaveDataDeleteTransactionResource(1) == SaveDataErrorNotInitialized, "delete transaction resource 1 fails before initialization");
 
     constexpr char mountedPayload[] = "live mounted save";
     constexpr char updatedPayload[] = "still mounted";
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
+    Check(sceSaveDataDeleteTransactionResource(0) == 0, "delete transaction resource 0 succeeds after initialization");
+    Check(sceSaveDataDeleteTransactionResource(1) == 0, "delete transaction resource 1 succeeds after initialization");
+    Check(sceSaveDataDeleteTransactionResource(-1) == 0, "delete transaction resource -1 succeeds after initialization");
     SceSaveDataDirName dirName{};
     std::memcpy(dirName.data, "kept", sizeof("kept"));
     SaveDataMount3 mount{};
@@ -133,6 +134,8 @@ int main() {
     Check(Delete("kept", 5) == 0, "a valid name is deleted");
     Check(!std::filesystem::exists(kept.parent_path()), "the valid save directory is gone");
     Check(std::filesystem::exists(victim), "the directory beside the save root is untouched");
+    Check(sceSaveDataTerminate() == 0, "SaveData terminates");
+    Check(sceSaveDataDeleteTransactionResource(0) == SaveDataErrorNotInitialized, "delete transaction resource fails after termination");
 
     std::filesystem::current_path(previous);
     std::error_code error;

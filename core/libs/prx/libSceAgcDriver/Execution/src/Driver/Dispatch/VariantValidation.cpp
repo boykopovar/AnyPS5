@@ -9,6 +9,23 @@
 
 namespace AgcDriver::DriverDetail {
 
+namespace {
+
+enum class QueuedOverlap : std::uint8_t { None, Stored, Unknown };
+
+QueuedOverlap QueuedWritesOver(DrawPipeline& pipeline, std::span<const ShaderRecompiler::MemoryRegion> regions) {
+    auto answer = QueuedOverlap::None;
+    for (const auto& region : regions) {
+        if (region.bytes.empty()) continue;
+        const auto queued = pipeline.StoredBytes(region.guestAddress, region.bytes.size(), {});
+        if (queued == DrawPipeline::QueuedWrite::Unknown) return QueuedOverlap::Unknown;
+        if (queued == DrawPipeline::QueuedWrite::Stored) answer = QueuedOverlap::Stored;
+    }
+    return answer;
+}
+
+}
+
 void Driver::appendEntryRegions(const DispatchVariant& variant, std::vector<ShaderRecompiler::MemoryRegion>& regions, const std::vector<std::uint32_t>* words) {
     const auto& source = words != nullptr ? *words : variant.words;
     regions.reserve(regions.size() + variant.runs.size());
@@ -93,7 +110,10 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
     if (live != nullptr) live->clear();
     if (DrawPipeline::Active()) {
         auto& pipeline = DrawPipeline::Queue0();
-        if (pipeline.Busy() && std::any_of(variant.runs.begin(), variant.runs.end(), [&](const auto& run) { return pipeline.Overlaps(run.first, static_cast<std::size_t>(run.second - run.first)); })) pipeline.Drain(DrawPipeline::DrainReason::Capture);
+        if (pipeline.Busy() && pipeline.OverlapsAny(variant.runs)) {
+            if (!knownValueVerify() && QueuedWritesOver(pipeline, regions) == QueuedOverlap::Stored) return EntryOutcome::QueuedStores;
+            pipeline.Drain(DrawPipeline::DrainReason::Capture);
+        }
     }
     const bool masked = live != nullptr && !variant.dataPositions.empty();
     const DataMask mask{variant.dataPositions, live};

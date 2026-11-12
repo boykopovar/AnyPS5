@@ -4,13 +4,18 @@
 #include <algorithm>
 #include <cstdlib>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <cerrno>
+#include <csignal>
+#include <pthread.h>
+#include <system_error>
 #include <time.h>
 #endif
 
@@ -19,7 +24,7 @@ namespace TimedWait {
 namespace {
 
 constexpr std::uint64_t YIELD_BELOW_NANOS = 50000ULL;
-constexpr std::uint64_t LEAD_NANOS = 500000ULL;
+constexpr std::uint64_t LEAD_NANOS = 20000ULL;
 
 std::mutex& ChangeSleepersMutex() {
     static std::mutex mutex;
@@ -47,6 +52,14 @@ struct ThreadWaitState {
     std::atomic<int> own{0};
     std::atomic<int>* bound = &own;
 };
+
+struct DeferredDrain {
+    void (*run)(void*);
+    void* argument;
+};
+
+std::mutex drainBoxesLock;
+std::unordered_map<unsigned long, std::vector<DeferredDrain>> drainBoxes;
 ThreadWaitState& WaitState() {
 #ifdef _WIN32
     return WindowsThreadLocal<ThreadWaitState>::Get();
@@ -62,8 +75,14 @@ using NtTestAlertFunction = LONG(NTAPI*)();
 
 void DrainApcs() {
     static const auto testAlert = reinterpret_cast<NtTestAlertFunction>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtTestAlert")));
+    auto* state = WaitState().bound;
+    state->fetch_add(1, std::memory_order_seq_cst);
     if (testAlert) testAlert();
     else SleepEx(0, TRUE);
+    state->fetch_sub(1, std::memory_order_seq_cst);
+    if (testAlert) testAlert();
+    else SleepEx(0, TRUE);
+    ReapDeliveryDrain();
 }
 
 DWORD AlertableWait(DWORD count, const HANDLE* handles, DWORD milliseconds) {
@@ -150,6 +169,48 @@ struct Waiter {
         for (const auto sleepTimer : sleepTimers) if (sleepTimer) CloseHandle(sleepTimer);
     }
 };
+
+std::atomic<void (*)()>& DrainPostHook() {
+    static std::atomic<void (*)()> hook{nullptr};
+    return hook;
+}
+
+void SetDeliveryDrainPostHook(void (*hook)()) {
+    DrainPostHook().store(hook, std::memory_order_release);
+}
+
+void QueueForDeliveryDrain(unsigned long thread, const std::atomic<bool>* targetFinished, void (*run)(void*), void* argument) {
+    if (const auto hook = DrainPostHook().load(std::memory_order_acquire)) hook();
+    bool queued = false;
+    {
+        const std::lock_guard lock(drainBoxesLock);
+        if (targetFinished == nullptr || !targetFinished->load(std::memory_order_acquire)) {
+            drainBoxes[thread].push_back({run, argument});
+            queued = true;
+        }
+    }
+    if (!queued) run(argument);
+}
+
+void ReapDeliveryDrain() {
+    std::vector<DeferredDrain> deferred;
+    {
+        const std::lock_guard lock(drainBoxesLock);
+        const auto box = drainBoxes.find(GetCurrentThreadId());
+        if (box != drainBoxes.end()) {
+            deferred = std::move(box->second);
+            drainBoxes.erase(box);
+        }
+    }
+    for (const auto& entry : deferred) entry.run(entry.argument);
+}
+
+std::size_t DeliveryDrainPending() {
+    const std::lock_guard lock(drainBoxesLock);
+    std::size_t pending = 0;
+    for (const auto& box : drainBoxes) pending += box.second.size();
+    return pending;
+}
 
 namespace {
 
@@ -389,6 +450,91 @@ void Condition::NotifyAll() {
     coarse.notify_all();
 }
 
+namespace {
+
+constinit thread_local std::atomic<int> deferralDepth{0};
+constinit thread_local std::atomic<int> deferredSignal{0};
+
+class DeliveryAllowance {
+public:
+    DeliveryAllowance() : depth(deferralDepth.exchange(0)) { DeliverDeferred(); }
+    ~DeliveryAllowance() { deferralDepth.store(depth); }
+    DeliveryAllowance(const DeliveryAllowance&) = delete;
+    DeliveryAllowance& operator=(const DeliveryAllowance&) = delete;
+
+private:
+    int depth;
+};
+
+}
+
+DeliveryDeferral::DeliveryDeferral() {
+    deferralDepth.fetch_add(1);
+}
+
+DeliveryDeferral::~DeliveryDeferral() {
+    deferralDepth.fetch_sub(1);
+}
+
+void DeliverDeferred() {
+    if (deferralDepth.load() != 0) return;
+    const int signum = deferredSignal.exchange(0);
+    if (signum != 0) pthread_kill(pthread_self(), signum);
+}
+
+bool DeferDelivery(int signum) {
+    if (deferralDepth.load() == 0) return false;
+    deferredSignal.store(signum);
+    return true;
+}
+
+#ifdef __APPLE__
+SingleWaiterCondition::SingleWaiterCondition() : semaphore(dispatch_semaphore_create(0)) {
+    if (semaphore == nullptr) throw std::runtime_error("TimedWait: cannot create a wait semaphore");
+}
+
+SingleWaiterCondition::~SingleWaiterCondition() {
+    dispatch_release(semaphore);
+}
+
+void SingleWaiterCondition::NotifyOne() {
+    dispatch_semaphore_signal(semaphore);
+}
+
+bool SingleWaiterCondition::waitSignal(const std::uint64_t* deadlineNanos) {
+    DeliveryAllowance allowance;
+    if (deadlineNanos == nullptr) return dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER) == 0;
+    const std::uint64_t now = NowNanos();
+    const std::uint64_t remaining = *deadlineNanos > now ? *deadlineNanos - now : 0;
+    const dispatch_time_t deadline = remaining >= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ? DISPATCH_TIME_FOREVER : dispatch_time(DISPATCH_TIME_NOW, static_cast<std::int64_t>(remaining));
+    return dispatch_semaphore_wait(semaphore, deadline) == 0;
+}
+#else
+SingleWaiterCondition::SingleWaiterCondition() {
+    if (sem_init(&semaphore, 0, 0) != 0) throw std::system_error(errno, std::generic_category(), "TimedWait: cannot create a wait semaphore");
+}
+
+SingleWaiterCondition::~SingleWaiterCondition() {
+    sem_destroy(&semaphore);
+}
+
+void SingleWaiterCondition::NotifyOne() {
+    sem_post(&semaphore);
+}
+
+bool SingleWaiterCondition::waitSignal(const std::uint64_t* deadlineNanos) {
+    DeliveryAllowance allowance;
+    timespec deadline{};
+    if (deadlineNanos != nullptr) deadline = {static_cast<time_t>(*deadlineNanos / 1000000000ULL), static_cast<long>(*deadlineNanos % 1000000000ULL)};
+    for (;;) {
+        const int result = deadlineNanos == nullptr ? sem_wait(&semaphore) : sem_clockwait(&semaphore, CLOCK_MONOTONIC, &deadline);
+        if (result == 0) return true;
+        if (errno == ETIMEDOUT) return false;
+        if (errno != EINTR) throw std::system_error(errno, std::generic_category(), "TimedWait: cannot wait for a wait semaphore");
+    }
+}
+#endif
+
 #endif
 
 void BindThreadWaitState(std::atomic<int>* state) {
@@ -442,10 +588,14 @@ void SleepUntil(std::uint64_t deadlineNanos) {
         if (!TimerWait(timer, deadlineNanos - now - LEAD_NANOS)) AlertableSleep(WholeMilliseconds(deadlineNanos - now - LEAD_NANOS));
         now = NowNanos();
     }
-    while (now < deadlineNanos) {
-        YieldProcessor();
-        now = NowNanos();
+    {
+        DeliveryDeferral deferral;
+        while (now < deadlineNanos) {
+            YieldProcessor();
+            now = NowNanos();
+        }
     }
+    DrainApcs();
 #else
     const std::uint64_t now = NowNanos();
     if (deadlineNanos > now) SleepNanos(deadlineNanos - now);
@@ -492,12 +642,20 @@ bool SleepNanosUnlessChanged(std::uint64_t nanos, const std::atomic<std::uint64_
         if (counter.load(std::memory_order_seq_cst) != observed) return true;
         now = NowNanos();
     }
-    while (now < deadlineNanos) {
-        if (counter.load(std::memory_order_seq_cst) != observed) return true;
-        YieldProcessor();
-        now = NowNanos();
+    bool changed = false;
+    {
+        DeliveryDeferral deferral;
+        while (now < deadlineNanos) {
+            if (counter.load(std::memory_order_seq_cst) != observed) {
+                changed = true;
+                break;
+            }
+            YieldProcessor();
+            now = NowNanos();
+        }
     }
-    return false;
+    DrainApcs();
+    return changed;
 #else
     std::unique_lock lock(ChangeSleepersMutex());
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::nanoseconds(nanos);
@@ -531,10 +689,17 @@ void SleepNanos(std::uint64_t nanos) {
     }
     SleepUntil(NowNanos() + nanos);
 #else
+    struct SleepRegistration {
+        std::atomic<int>* state = WaitState().bound;
+        SleepRegistration() { state->fetch_add(1, std::memory_order_seq_cst); }
+        ~SleepRegistration() { state->fetch_sub(1, std::memory_order_seq_cst); }
+    } registration;
     struct timespec req{};
     req.tv_sec = static_cast<time_t>(nanos / 1000000000ULL);
     req.tv_nsec = static_cast<long>(nanos % 1000000000ULL);
+    const int savedErrno = errno;
     while (nanosleep(&req, &req) == -1 && errno == EINTR) {}
+    errno = savedErrno;
 #endif
 }
 

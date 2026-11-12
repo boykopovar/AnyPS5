@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
 #include "Decoder/Png.hpp"
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -11,6 +13,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -21,9 +24,9 @@ void require(bool condition, const char* message) {
 
 void setScreenshotDirectory(const std::filesystem::path& directory) {
 #ifdef _WIN32
-    require(_putenv_s("ANYPS5_SCREENSHOTS", directory.string().c_str()) == 0, "set ANYPS5_SCREENSHOTS");
+    require(_wputenv_s(L"ANYPS5_SCREENSHOTS", directory.wstring().c_str()) == 0, "set ANYPS5_SCREENSHOTS");
 #else
-    require(::setenv("ANYPS5_SCREENSHOTS", directory.string().c_str(), 1) == 0, "set ANYPS5_SCREENSHOTS");
+    require(::setenv("ANYPS5_SCREENSHOTS", directory.c_str(), 1) == 0, "set ANYPS5_SCREENSHOTS");
 #endif
 }
 
@@ -54,6 +57,30 @@ void writesRgbPng(const std::filesystem::path& directory) {
     require(image->pixels == expected, "the screenshot holds the frame's colors as opaque RGB");
 }
 
+void concurrentWritesClaimUniquePaths() {
+    constexpr std::size_t writerCount = 32;
+    constexpr int attempts = 20;
+    const std::array<std::byte, 4> bgra{std::byte{0x10}, std::byte{0x20}, std::byte{0x30}, std::byte{0x00}};
+    for (int attempt = 0; attempt < attempts; ++attempt) {
+        std::atomic<std::size_t> ready{0};
+        std::atomic<bool> start{false};
+        std::array<std::filesystem::path, writerCount> paths;
+        std::array<std::thread, writerCount> writers;
+        for (std::size_t index = 0; index < writerCount; ++index) {
+            writers[index] = std::thread([&, index] {
+                ready.fetch_add(1, std::memory_order_release);
+                while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+                paths[index] = AgcDriver::Screenshot::Write("RACE00001", 1, 1, bgra);
+            });
+        }
+        while (ready.load(std::memory_order_acquire) != writerCount) std::this_thread::yield();
+        start.store(true, std::memory_order_release);
+        for (auto& writer : writers) writer.join();
+        std::sort(paths.begin(), paths.end());
+        require(std::adjacent_find(paths.begin(), paths.end()) == paths.end(), "concurrent screenshots claim unique paths");
+    }
+}
+
 void rejectsInvalidFrames() {
     const std::array<std::byte, 4> pixel{};
     const auto rejects = [](auto write) {
@@ -73,11 +100,12 @@ void rejectsInvalidFrames() {
 
 int main() try {
     const auto root = std::filesystem::temp_directory_path() / ("anyps5_screenshot-" + std::to_string(std::random_device{}()));
-    const auto directory = root / "nested";
+    const auto directory = root / std::filesystem::path(u8"nested-a\u00e7\u00e3o-\u65e5\u672c");
     std::filesystem::remove_all(root);
     setScreenshotDirectory(directory);
     requestsMerge();
     writesRgbPng(directory);
+    concurrentWritesClaimUniquePaths();
     rejectsInvalidFrames();
     std::filesystem::remove_all(root);
     std::cout << "agc screenshot tests passed\n";

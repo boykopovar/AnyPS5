@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
@@ -7,21 +9,8 @@
 #include <cstring>
 #include <initializer_list>
 
-struct GuestSignalSet {
-    std::uint32_t bits[4];
-};
-
 extern "C" {
-int APS5_VABI sigemptyset_nid_postfix(GuestSignalSet*);
-int APS5_VABI sigfillset_nid_postfix(GuestSignalSet*);
-int APS5_VABI sigaddset_nid_postfix(GuestSignalSet*, int);
-int APS5_VABI sigdelset_nid_postfix(GuestSignalSet*, int);
-int APS5_VABI sigismember_nid_postfix(const GuestSignalSet*, int);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI _sigprocmask_nid_postfix(int, const GuestSignalSet*, GuestSignalSet*);
-int APS5_VABI sigprocmask_nid_postfix(int, const void*, void*);
-[[gnu::returns_twice]] int APS5_VABI sigsetjmp_nid_postfix(std::uint64_t* buffer, int saveMask);
-[[noreturn]] void APS5_VABI siglongjmp_nid_postfix(std::uint64_t* buffer, int value);
+
 int APS5_VABI JumpKeepingCalleeSaved(std::uint64_t* buffer);
 }
 
@@ -165,6 +154,30 @@ static void CheckSigsetjmp() {
     SetBlockedMask(0);
 }
 
+static int LongjumpBack(int value, std::uint32_t maskAtSet, std::uint32_t maskAtJump) {
+    std::uint64_t buffer[12]{};
+    volatile int jumped = 0;
+    SetBlockedMask(maskAtSet);
+    const int result = setjmp_nid_postfix(buffer);
+    if (jumped == 0) {
+        Require(result == 0);
+        Require(BufferWord(buffer, 72) == maskAtSet);
+        Require(BufferWord(buffer, 88) == 1);
+        jumped = 1;
+        SetBlockedMask(maskAtJump);
+        longjmp_nid_postfix(buffer, value);
+    }
+    return result;
+}
+
+static void CheckLongjmp() {
+    Require(LongjumpBack(0, 0x5u, 0x30u) == 1);
+    Require(BlockedMask() == 0x5u);
+    Require(LongjumpBack(7, 0x80000009u, 0u) == 7);
+    Require(BlockedMask() == 0x80000009u);
+    SetBlockedMask(0);
+}
+
 static void CheckInvalidHow() {
     SetBlockedMask(0x5u);
     const GuestSignalSet blocked{{0x30u, 0, 0, 0}};
@@ -183,9 +196,66 @@ static void CheckInvalidHow() {
     SetBlockedMask(0);
 }
 
+static void CheckBadPointers() {
+    constexpr std::size_t Page = 0x4000;
+    void* memory = mmap_nid_postfix(nullptr, 3 * Page, 3, 0x1002, -1, 0);
+    Require(memory != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    auto* unreadable = reinterpret_cast<GuestSignalSet*>(static_cast<unsigned char*>(memory));
+    auto* readOnly = reinterpret_cast<GuestSignalSet*>(static_cast<unsigned char*>(memory) + Page);
+    *readOnly = GuestSignalSet{{1u, 2u, 3u, 4u}};
+    Require(mprotect_nid_postfix(unreadable, Page, 0) == 0);
+    Require(mprotect_nid_postfix(readOnly, Page, 1) == 0);
+    const std::size_t crossing = Page - 8;
+    auto* straddling = reinterpret_cast<GuestSignalSet*>(static_cast<unsigned char*>(memory) + Page + crossing);
+    Require(mprotect_nid_postfix(static_cast<unsigned char*>(memory) + 2 * Page, Page, 0) == 0);
+    GuestSignalSet* bad[] = {nullptr, reinterpret_cast<GuestSignalSet*>(0x10), unreadable};
+    for (GuestSignalSet* set : bad) {
+        *__error_nid_postfix() = 0;
+        Require(sigemptyset_nid_postfix(set) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(sigfillset_nid_postfix(set) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(sigaddset_nid_postfix(set, 1) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(sigdelset_nid_postfix(set, 1) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(sigismember_nid_postfix(set, 1) == -1 && *__error_nid_postfix() == 14);
+        for (const int invalid : {0, -1, 129}) {
+            *__error_nid_postfix() = 0;
+            Require(sigaddset_nid_postfix(set, invalid) == -1 && *__error_nid_postfix() == 22);
+            *__error_nid_postfix() = 0;
+            Require(sigdelset_nid_postfix(set, invalid) == -1 && *__error_nid_postfix() == 22);
+            *__error_nid_postfix() = 0;
+            Require(sigismember_nid_postfix(set, invalid) == -1 && *__error_nid_postfix() == 22);
+        }
+    }
+    *__error_nid_postfix() = 0;
+    Require(sigismember_nid_postfix(readOnly, 1) == 1 && sigismember_nid_postfix(readOnly, 2) == 0);
+    Require(sigismember_nid_postfix(readOnly, 34) == 1 && sigismember_nid_postfix(readOnly, 64) == 0);
+    Require(*__error_nid_postfix() == 0);
+    Require(sigemptyset_nid_postfix(readOnly) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sigfillset_nid_postfix(readOnly) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sigaddset_nid_postfix(readOnly, 8) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sigdelset_nid_postfix(readOnly, 1) == -1 && *__error_nid_postfix() == 14);
+    Require(Equals(*readOnly, 1u, 2u, 3u, 4u));
+    *__error_nid_postfix() = 0;
+    Require(sigismember_nid_postfix(straddling, 1) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sigaddset_nid_postfix(straddling, 1) == -1 && *__error_nid_postfix() == 14);
+    Require(mprotect_nid_postfix(memory, 3 * Page, 3) == 0);
+    Require(Equals(*readOnly, 1u, 2u, 3u, 4u));
+    Require(munmap_nid_postfix(memory, 3 * Page) == 0);
+    *__error_nid_postfix() = 0;
+}
+
 int main() {
+    CheckBadPointers();
     CheckSigsetjmp();
     CheckSiglongjmp();
+    CheckLongjmp();
     CheckInvalidHow();
     static constexpr int Untouched = 5;
     GuestSignalSet set{{0x12345678u, 0x9abcdef0u, 0xffffffffu, 1u}};

@@ -4,7 +4,10 @@
 #include "Recompiler.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include <algorithm>
+#include <bit>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <type_traits>
 
@@ -53,6 +56,7 @@ public:
         append(key, request.context.vertex);
         append(key, request.context.floatMode);
         append(key, request.context.convertedSamples);
+        append(key, request.context.layerRowSamples);
         appendFallbacks(key, request);
         appendMesh(key, request);
         appendTessellation(key, request);
@@ -62,6 +66,12 @@ public:
             hash *= 0x100000001b3ull;
         }
         return hash;
+    }
+
+    static void SealFeatureDigest(SpirvTarget& target) {
+        target.featureDigest = digestFeatures(target.supportedCapabilities, target.supportedExtensions);
+        target.featureDigestSpans = featureSpans(target);
+        target.featureDigestSealed = true;
     }
 
     // A 64-bit hash of the code, two dwords per step; collisions are resolved by comparing the code.
@@ -87,6 +97,7 @@ private:
         append(key, request.context.vertex);
         append(key, request.context.floatMode);
         append(key, request.context.convertedSamples);
+        append(key, request.context.layerRowSamples);
         appendFallbacks(key, request);
         appendMesh(key, request);
         appendTessellation(key, request);
@@ -106,11 +117,16 @@ private:
             append(key, request.graphics && request.graphics->mesh);
             return;
         }
-        if (request.shader.stage != ShaderStage::Mesh) return;
         const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
+        if (request.shader.stage == ShaderStage::TessellationEvaluation && mesh != nullptr) {
+            append(key, mesh->esgsItemSize);
+            return;
+        }
+        if (request.shader.stage != ShaderStage::Mesh) return;
         append(key, mesh != nullptr);
         if (mesh == nullptr) return;
         for (const auto value : {mesh->inputPrimitive, mesh->primitivesPerGroup, mesh->verticesPerGroup, mesh->maxVertices, mesh->maxPrimitives, mesh->threadsPerGroup, mesh->ldsSizeDwords, mesh->provokingVertex, mesh->esgsItemSize, mesh->outputPrimitiveSize}) append(key, value);
+        if (request.graphics->tessellation) append(key, 0x63617074ull);
         const auto& barycentrics = request.graphics->meshBarycentrics;
         append(key, barycentrics.has_value());
         if (!barycentrics.has_value()) return;
@@ -180,6 +196,8 @@ private:
         append(key, value.threadIdComponentCount);
         append(key, value.PartialGroups());
         append(key, value.scratchDwords);
+        append(key, value.granulatedVgprCount);
+        append(key, value.sharedVgprBlocks);
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderPixelStageInfo& value) {
@@ -202,6 +220,10 @@ private:
         append(key, value.linearCentroid);
         append(key, value.pixelKillEnable);
         append(key, value.depthExportEnable);
+        if (value.depthExportEnable) {
+            append(key, std::bit_cast<std::uint32_t>(value.depthExportMin));
+            append(key, std::bit_cast<std::uint32_t>(value.depthExportMax));
+        }
         append(key, value.sampleMaskExportEnable);
         append(key, value.earlyZ);
         append(key, value.executeOnNoop);
@@ -211,12 +233,37 @@ private:
         append(key, value.stencilRefExportEnable);
         append(key, value.stencilOperationValueExport);
         append(key, value.ditheredAlphaToCoverage);
+        append(key, value.ditheredAlphaSamples);
         append(key, value.quadPixelMask);
         append(key, value.quadSampleMask);
         append(key, value.iteratesSamples);
         append(key, value.positionLocation);
         append(key, value.sampleLocations);
         append(key, value.targetOutputMode);
+        append(key, value.targetMerges.size());
+        for (const auto& merge : value.targetMerges) {
+            append(key, merge.target);
+            append(key, merge.mask);
+            append(key, merge.samples);
+            append(key, merge.packing);
+            append(key, merge.blendControl);
+            append(key, merge.layered);
+            append(key, merge.firstSlice);
+            append(key, merge.lastSlice);
+            append(key, merge.depthStencilWrites);
+            append(key, merge.depthStencilTests);
+            if (!merge.blend.enabled) continue;
+            const auto& blend = merge.blend;
+            append(key, blend.snorm);
+            append(key, blend.colorSource);
+            append(key, blend.colorDestination);
+            append(key, blend.colorOperation);
+            append(key, blend.alphaSource);
+            append(key, blend.alphaDestination);
+            append(key, blend.alphaOperation);
+            append(key, blend.writeMask);
+            append(key, blend.constants);
+        }
         append(key, value.sampleOrder);
     }
 
@@ -233,6 +280,10 @@ private:
         append(key, value.fetchEmbedded);
         append(key, value.paClVsOutCntl);
         append(key, value.depthRemapMode);
+        append(key, value.pointList);
+        append(key, std::bit_cast<std::uint32_t>(value.pointSize));
+        append(key, std::bit_cast<std::uint32_t>(value.pointSizeMin));
+        append(key, std::bit_cast<std::uint32_t>(value.pointSizeMax));
         if (value.resourcesNum > value.resources.size()) throw std::runtime_error("Shader cache: invalid vertex resource count");
         append(key, value.resourcesNum);
         for (std::uint32_t i = 0; i < value.resourcesNum; ++i) {
@@ -265,13 +316,44 @@ private:
         append(key, value.maxEvaluationOutputComponents);
     }
 
+    static std::array<std::uintptr_t, 4> featureSpans(const SpirvTarget& target) {
+        return {reinterpret_cast<std::uintptr_t>(target.supportedCapabilities.data()), target.supportedCapabilities.size(), reinterpret_cast<std::uintptr_t>(target.supportedExtensions.data()), target.supportedExtensions.size()};
+    }
+
+    static std::array<std::uint64_t, 2> digestFeatures(std::span<const std::uint32_t> capabilities, std::span<const std::string_view> extensions) {
+        std::uint64_t low = 0xcbf29ce484222325ull;
+        std::uint64_t high = 0x6a09e667f3bcc909ull;
+        const auto mix = [&](std::uint64_t value) {
+            low = (low ^ value) * 0x100000001b3ull;
+            high = (high ^ (value * 0x9e3779b97f4a7c15ull)) * 0xff51afd7ed558ccdull;
+            high ^= high >> 29u;
+        };
+        mix(capabilities.size());
+        for (const auto capability : capabilities) mix(capability);
+        mix(extensions.size());
+        for (const auto extension : extensions) {
+            mix(extension.size());
+            for (std::size_t offset = 0; offset < extension.size(); offset += sizeof(std::uint64_t)) {
+                std::uint64_t chunk = 0;
+                std::memcpy(&chunk, extension.data() + offset, std::min(sizeof(std::uint64_t), extension.size() - offset));
+                mix(chunk);
+            }
+        }
+        return {low, high};
+    }
+
+    static void appendFeatureDigest(std::vector<std::uint64_t>& key, const SpirvTarget& target) {
+        const auto digest = target.featureDigestSealed && target.featureDigestSpans == featureSpans(target) ? target.featureDigest : digestFeatures(target.supportedCapabilities, target.supportedExtensions);
+        key.push_back(digest[0]);
+        key.push_back(digest[1]);
+    }
+
     static void append(std::vector<std::uint64_t>& key, const SpirvTarget& value) {
         append(key, value.vulkanVersion);
         append(key, value.spirvVersion);
         append(key, value.subgroupSize);
         append(key, value.bdaAbiVersion);
-        append(key, value.supportedCapabilities);
-        append(key, value.supportedExtensions);
+        appendFeatureDigest(key, value);
         append(key, value.fragmentShaderBarycentricEnabled);
         append(key, value.maxWorkgroupSize);
         append(key, value.maxWorkgroupInvocations);
@@ -280,18 +362,32 @@ private:
         append(key, value.tessellation);
         append(key, value.nonConstantImageOffsets);
         append(key, value.srgbDecodeFormats);
+        append(key, value.maxImageArrayLayers);
         append(key, value.narrowSubgroupClock);
+        append(key, value.fragmentBarycentricBuiltins);
         append(key, value.float64DenormPreserve);
         append(key, value.depthRangeRemap);
         append(key, value.registrationModules);
         append(key, value.registrationWordLimit);
         append(key, value.vertexSubgroups);
+        append(key, value.tessellationEvaluationSubgroups);
         append(key, value.float16DenormPreserve);
         append(key, value.spannedWaves);
         append(key, value.robustBufferAccess2);
         append(key, value.float32FlushToZero);
         append(key, value.waveLdsMemoryBarriers);
         append(key, value.float32DenormPreserve);
+        append(key, value.exactRobustLoads);
+        append(key, value.fusedExactArithmetic);
+        append(key, value.largePixelFunctionLdsBuffer);
+        append(key, value.pixelFunctionStorageDwords);
+        append(key, value.deviceScopeLdsMemoryBarriers);
+        append(key, value.ldsLockFences);
+        append(key, value.meshWindowBuffer);
+        append(key, value.hostInterpolationFirst);
+        append(key, value.shaderImageMinLod);
+        append(key, value.float16WidenNans);
+        append(key, value.float16NarrowNans);
     }
 };
 

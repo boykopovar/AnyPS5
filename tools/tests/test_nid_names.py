@@ -1,10 +1,14 @@
 import contextlib
+import http.server
+import importlib.util
 import io
 import json
 import os
+import socket
 import subprocess
 import tempfile
 import sys
+import threading
 import unittest
 from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
@@ -14,7 +18,147 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import nid_names
 
 
+def download_response(payload, error=None):
+    class Response(io.BytesIO):
+        def read(self, size=-1):
+            if error is not None and self.tell() == len(payload):
+                raise error
+            return super().read(size)
+    response = Response(payload)
+    response.headers = {}
+    return response
+
+
 class DatabaseCacheTests(unittest.TestCase):
+    @contextlib.contextmanager
+    def database_server(self, payload):
+        state = {"payload": payload, "requests": 0}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                state["requests"] += 1
+                body = state["payload"]
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body) + state.get("extra", 0)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
+        thread.start()
+        try:
+            with patch.object(nid_names, "DB_URL", f"http://127.0.0.1:{server.server_port}/aerolib.csv"):
+                yield state
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+
+    def test_unusable_successful_downloads_are_not_cached_and_retry(self):
+        valid = b"\xef\xbb\xbf# database\nmFq1M6vw-JM ACProcessMain\n"
+        for payload in (b"", b"# comment only\n", b"not-a-database\n", b"<!doctype html>\n<html>unavailable</html>\n"):
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory, self.database_server(payload) as state:
+                cache = Path(directory) / "aerolib.csv"
+                with self.assertRaisesRegex(ValueError, "no valid NID records") as raised:
+                    nid_names.load_db(cache)
+                self.assertIn(str(cache), str(raised.exception))
+                self.assertEqual(list(cache.parent.iterdir()), [])
+                state["payload"] = valid
+                self.assertEqual(nid_names.load_db(cache), {"mFq1M6vw-JM": "ACProcessMain"})
+                self.assertEqual(cache.read_bytes(), valid)
+                self.assertEqual(state["requests"], 2)
+                self.assertEqual(nid_names.load_db(cache), {"mFq1M6vw-JM": "ACProcessMain"})
+                self.assertEqual(state["requests"], 2)
+                self.assertEqual(list(cache.parent.iterdir()), [cache])
+
+    def test_download_content_errors_are_reported_by_cli(self):
+        with tempfile.TemporaryDirectory() as directory, self.database_server(b""):
+            cache = Path(directory) / "aerolib.csv"
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                nid_names.main(["--db", str(cache), "--nid", "mFq1M6vw-JM", "--json"])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(str(cache), stderr.getvalue())
+            self.assertIn("no valid NID records", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertFalse(cache.exists())
+
+    def test_existing_database_files_require_valid_nids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "custom.csv"
+            valid_nid = "AAAAAAAAAAA"
+            for payload, expected in (
+                (f"{valid_nid} example\n".encode(), {valid_nid: "example"}),
+                (b"# comment\n" + f"{valid_nid} example\n".encode(), {valid_nid: "example"}),
+                (f"{valid_nid} example1\nBBBBBBBBBBB example2\n".encode(), {valid_nid: "example1", "BBBBBBBBBBB": "example2"}),
+            ):
+                with self.subTest(payload=payload):
+                    cache.write_bytes(payload)
+                    with patch.object(nid_names.urllib.request, "urlopen", side_effect=AssertionError("unexpected download")):
+                        self.assertEqual(nid_names.load_db(cache), expected)
+                    self.assertEqual(cache.read_bytes(), payload)
+
+    def long_cache_path(self, directory):
+        root = Path(directory)
+        if os.name == "nt":
+            root = Path("\\\\?\\" + str(root.resolve()))
+        limit = os.pathconf(root, "PC_NAME_MAX") if os.name == "posix" else 255
+        cache = root / ("n" * (limit - len(".csv")) + ".csv")
+        cache.touch()
+        cache.unlink()
+        return cache
+
+    def test_valid_long_cache_filename_can_be_downloaded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = self.long_cache_path(directory)
+
+            def complete(url, timeout):
+                self.assertEqual(timeout, nid_names.DOWNLOAD_TIMEOUT)
+                self.assertEqual(url, nid_names.DB_URL)
+                self.assertEqual(next(cache.parent.glob(".nid-db-*")).parent, cache.parent)
+                self.assertFalse(cache.exists())
+                return download_response(b'AAAAAAAAAAA sceComplete\n')
+
+            try:
+                with patch.object(nid_names.urllib.request, "urlopen", side_effect=complete) as download:
+                    self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete"})
+                    download.assert_called_once()
+                self.assertEqual(list(cache.parent.iterdir()), [cache])
+                with patch.object(nid_names.urllib.request, "urlopen") as download:
+                    self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete"})
+                    download.assert_not_called()
+            finally:
+                cache.unlink(missing_ok=True)
+
+    def test_long_cache_filename_preserves_interruption_cleanup_and_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = self.long_cache_path(directory)
+
+            def interrupted(url, timeout):
+                self.assertEqual(timeout, nid_names.DOWNLOAD_TIMEOUT)
+                return download_response(b'AAAAAAAAAAA scePartial\n', URLError("connection interrupted"))
+
+            def complete(url, timeout):
+                self.assertEqual(timeout, nid_names.DOWNLOAD_TIMEOUT)
+                return download_response(b'AAAAAAAAAAA sceComplete\n')
+
+            try:
+                with patch.object(nid_names.urllib.request, "urlopen", side_effect=interrupted):
+                    with self.assertRaises(URLError):
+                        nid_names.load_db(cache)
+                self.assertFalse(cache.exists())
+                self.assertEqual(list(cache.parent.iterdir()), [])
+                with patch.object(nid_names.urllib.request, "urlopen", side_effect=complete):
+                    self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete"})
+                self.assertEqual(list(cache.parent.iterdir()), [cache])
+            finally:
+                cache.unlink(missing_ok=True)
+
     def test_empty_symbol_filters_do_not_open_database(self):
         with tempfile.TemporaryDirectory() as directory:
             for option in ("--name", "--symbol", "--na", "--sym"):
@@ -30,15 +174,67 @@ class DatabaseCacheTests(unittest.TestCase):
                         else:
                             self.assertEqual(result.stdout.split(), ["NAME", "NID"])
 
+    def test_empty_nid_filters_do_not_open_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for option in ("--nid", "--ni"):
+                for json_output in (False, True):
+                    with self.subTest(option=option, json_output=json_output):
+                        result = subprocess.run(
+                            [sys.executable, str(Path(nid_names.__file__)), option, "--db", directory,
+                             *(["--json"] if json_output else [])], capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(result.stderr, "")
+                        if json_output:
+                            self.assertEqual(json.loads(result.stdout), {"db_entries": 0, "rows": []})
+                        else:
+                            self.assertIn("0 unknowns, 0 suggestions (0 names already in use)", result.stdout)
+
+    def test_environment_variable_selects_the_database_and_help_names_it(self):
+        script = str(Path(nid_names.__file__))
+        helped = subprocess.run([sys.executable, script, "--help"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(helped.returncode, 0, helped.stderr)
+        self.assertIn("ANYPS5_NID_DB", " ".join(helped.stdout.split()))
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "nid database.csv"
+            nid = nid_names.compute_nid("sceExample")
+            database.write_text(f"{nid} sceExample\n", encoding="utf-8")
+            scratch = str(Path(directory) / "scratch")
+            Path(scratch).mkdir()
+            tree = Path(directory) / "tree"
+            (tree / "core" / "libs" / "prx").mkdir(parents=True)
+            (tree / "tools").mkdir()
+            tool = tree / "tools" / "nid_names.py"
+            tool.write_bytes(Path(script).read_bytes())
+            environment = {**os.environ, "ANYPS5_NID_DB": str(database), "TEMP": scratch, "TMP": scratch, "TMPDIR": scratch}
+            result = subprocess.run([sys.executable, str(tool), "--nid", nid, "--json"], capture_output=True, text=True,
+                                    env=environment, timeout=20)
+            self.assertEqual(list(Path(scratch).iterdir()), [])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("downloading", result.stderr)
+        self.assertIn("sceExample", result.stdout)
+
+    def test_user_provided_database_with_no_valid_nids_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "bad.csv"
+            cache.write_text("not a valid nid\nanother bad line\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "database contains no valid NID records"):
+                nid_names.load_db(cache)
+            result = subprocess.run(
+                [sys.executable, str(Path(nid_names.__file__)), "--db", str(cache), "--nid", "ABCDEFGHIJK", "--json"],
+                capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("no valid NID records", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_interrupted_download_does_not_publish_a_partial_cache(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "cache" / "aerolib.csv"
 
-            def interrupted(url, filename):
-                Path(filename).write_text("nid1 scePartial\n", encoding="utf-8")
-                raise URLError("connection interrupted")
+            def interrupted(url, timeout):
+                self.assertEqual(timeout, nid_names.DOWNLOAD_TIMEOUT)
+                return download_response(b'AAAAAAAAAAA scePartial\n', URLError("connection interrupted"))
 
-            with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=interrupted):
+            with patch.object(nid_names.urllib.request, "urlopen", side_effect=interrupted):
                 with self.assertRaises(URLError):
                     nid_names.load_db(cache)
             self.assertFalse(cache.exists())
@@ -48,18 +244,19 @@ class DatabaseCacheTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "aerolib.csv"
 
-            def interrupted(url, filename):
-                Path(filename).write_text("nid1 scePartial\n", encoding="utf-8")
-                raise URLError("connection interrupted")
+            def interrupted(url, timeout):
+                self.assertEqual(timeout, nid_names.DOWNLOAD_TIMEOUT)
+                return download_response(b'AAAAAAAAAAA scePartial\n', URLError("connection interrupted"))
 
-            def complete(url, filename):
-                Path(filename).write_text("nid1 sceComplete\nnid2 sceOther\n", encoding="utf-8")
+            def complete(url, timeout):
+                self.assertEqual(timeout, nid_names.DOWNLOAD_TIMEOUT)
+                return download_response(b'AAAAAAAAAAA sceComplete\nBBBBBBBBBBB sceOther\n')
 
-            with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=interrupted):
+            with patch.object(nid_names.urllib.request, "urlopen", side_effect=interrupted):
                 with self.assertRaises(URLError):
                     nid_names.load_db(cache)
-            with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=complete) as download:
-                self.assertEqual(nid_names.load_db(cache), {"nid1": "sceComplete", "nid2": "sceOther"})
+            with patch.object(nid_names.urllib.request, "urlopen", side_effect=complete) as download:
+                self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete", "BBBBBBBBBBB": "sceOther"})
                 download.assert_called_once()
             self.assertEqual(list(cache.parent.iterdir()), [cache])
 
@@ -67,24 +264,25 @@ class DatabaseCacheTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "aerolib.csv"
 
-            def complete(url, filename):
+            def complete(url, timeout):
+                self.assertEqual(timeout, nid_names.DOWNLOAD_TIMEOUT)
                 self.assertEqual(url, nid_names.DB_URL)
-                self.assertNotEqual(Path(filename), cache)
-                self.assertEqual(Path(filename).parent, cache.parent)
+                self.assertNotEqual(next(cache.parent.glob(".nid-db-*")), cache)
+                self.assertEqual(next(cache.parent.glob(".nid-db-*")).parent, cache.parent)
                 self.assertFalse(cache.exists())
-                Path(filename).write_text("nid1 sceComplete\n", encoding="utf-8")
+                return download_response(b'AAAAAAAAAAA sceComplete\n')
 
-            with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=complete):
-                self.assertEqual(nid_names.load_db(cache), {"nid1": "sceComplete"})
-            self.assertEqual(cache.read_text(encoding="utf-8"), "nid1 sceComplete\n")
+            with patch.object(nid_names.urllib.request, "urlopen", side_effect=complete):
+                self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete"})
+            self.assertEqual(cache.read_text(encoding="utf-8"), "AAAAAAAAAAA sceComplete\n")
             self.assertEqual(list(cache.parent.iterdir()), [cache])
 
     def test_existing_cache_is_used_without_downloading(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "aerolib.csv"
-            cache.write_text("nid1 sceExisting\n", encoding="utf-8")
-            with patch.object(nid_names.urllib.request, "urlretrieve") as download:
-                self.assertEqual(nid_names.load_db(cache), {"nid1": "sceExisting"})
+            cache.write_text("AAAAAAAAAAA sceExisting\n", encoding="utf-8")
+            with patch.object(nid_names.urllib.request, "urlopen") as download:
+                self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceExisting"})
                 download.assert_not_called()
 
     def test_utf8_bom_does_not_change_the_first_nid(self):
@@ -107,6 +305,50 @@ class DatabaseCacheTests(unittest.TestCase):
             nid = nid_names.compute_nid("sceExample")
             cache.write_text(f"{nid}#A#B sceExample#verified\n", encoding="utf-8")
             self.assertEqual(nid_names.load_db(cache), {nid: "sceExample"})
+
+
+    def test_stalled_response_times_out_cleans_up_and_retries(self):
+        release = threading.Event()
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", "100")
+                self.end_headers()
+                self.wfile.write(b"AAAAAAAAAAA scePartial\n")
+                self.wfile.flush()
+                release.wait(3)
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01))
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                cache = Path(directory) / "aerolib.csv"
+                with patch.object(nid_names, "DOWNLOAD_TIMEOUT", 0.1), patch.object(nid_names, "DB_URL", f"http://127.0.0.1:{server.server_port}/db"):
+                    with self.assertRaises(socket.timeout):
+                        nid_names.load_db(cache)
+                self.assertEqual(list(cache.parent.iterdir()), [])
+                with self.database_server(b"AAAAAAAAAAA sceComplete\n"):
+                    self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete"})
+        finally:
+            release.set()
+            server.shutdown()
+            server.server_close()
+            thread.join(3)
+            self.assertFalse(thread.is_alive())
+
+
+    def test_premature_http_eof_does_not_publish_valid_looking_partial_records(self):
+        with tempfile.TemporaryDirectory() as directory, self.database_server(b"AAAAAAAAAAA scePartial\n") as state:
+            cache = Path(directory) / "aerolib.csv"
+            state["extra"] = 100
+            with self.assertRaisesRegex(OSError, "incomplete"):
+                nid_names.load_db(cache)
+            self.assertEqual(list(cache.parent.iterdir()), [])
+            state["extra"] = 0
+            state["payload"] = b"AAAAAAAAAAA sceComplete\n"
+            self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete"})
 
 class NidArgumentTests(unittest.TestCase):
     options = ["-h", "--help", "--db", "--nid", "--json"]
@@ -210,6 +452,19 @@ class NidArgumentTests(unittest.TestCase):
         rows = json.loads(printed.call_args.args[0])["rows"]
         self.assertEqual({row["nid"]: row["suggestion"] for row in rows}, database)
 
+    def test_symbol_file_skips_whitespace_only_lines_without_trimming_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            names = Path(directory) / "symbols.txt"
+            symbols = ["sceExample", "  literal spaces  ", "-leading-dash", "unicode_Ω"]
+            names.write_text("\ufeffsceExample\r\n \t \r\n  literal spaces  \r\n\t\r\n-leading-dash\r\nunicode_Ω\r\n", encoding="utf-8")
+            for source in (str(names), "-"):
+                with self.subTest(source=source), patch("sys.stdin", io.StringIO(names.read_text(encoding="utf-8-sig"))), \
+                        patch.object(nid_names, "load_db", side_effect=AssertionError("database used")), \
+                        contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(nid_names.main(["--from-file", source, "--json"]), 0)
+                self.assertEqual(json.loads(output.getvalue())["symbols"],
+                                 [{"name": name, "nid": nid_names.compute_nid(name)} for name in symbols])
+
     def test_symbol_files_and_stdin_compute_nids_without_a_database(self):
         with tempfile.TemporaryDirectory() as directory:
             names = Path(directory) / "symbols.txt"
@@ -234,7 +489,70 @@ class NidArgumentTests(unittest.TestCase):
 
 
 
+PUBLIC_HEADER_SPEC = importlib.util.spec_from_file_location(
+    "public_headers_audit", Path(__file__).resolve().parents[2] / "core/libs/tests/test_public_headers.py"
+)
+public_headers = importlib.util.module_from_spec(PUBLIC_HEADER_SPEC)
+PUBLIC_HEADER_SPEC.loader.exec_module(public_headers)
+
+
+class PublicHeaderDataAliases(unittest.TestCase):
+    def run_audit(self, header, source):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            libs = root / "core/libs"
+            lib = libs / "prx/libExample"
+            lib.mkdir(parents=True)
+            (lib / "libExample.hpp").write_text(header, encoding="utf-8")
+            (lib / "Export.cpp").write_text(source, encoding="utf-8")
+            public_headers.source_text.cache_clear()
+            public_headers.included_headers.cache_clear()
+            with patch.object(public_headers, "ROOT", root), patch.object(public_headers, "LIBS", libs):
+                return public_headers.audit()
+
+    def test_data_alias_requires_one_reachable_data_declaration(self):
+        source = 'APS5_EXPORT("AAAAAAAAAAA", ExampleData);\n'
+        self.run_audit('extern const char ExampleData[];\n', source)
+        with self.assertRaisesRegex(RuntimeError, "ExampleData: expected exactly one header declaration"):
+            self.run_audit('', source)
+        with self.assertRaisesRegex(RuntimeError, "ExampleData: expected exactly one header declaration"):
+            self.run_audit('extern const char ExampleData[];\nextern const char ExampleData[];\n', source)
+
+    def test_public_type_with_base_clause_is_duplicate_checked(self):
+        header = 'class ExampleBase {};\nclass ExampleType final : public ExampleBase {\n};\n'
+        self.run_audit(header, 'int placeholder = 0;\n')
+        with self.assertRaisesRegex(RuntimeError, "duplicate public type ExampleType"):
+            self.run_audit(header, 'class ExampleType final : public ExampleBase {\n};\n')
+
+    def test_function_definition_cannot_be_declared_as_data(self):
+        source = 'int APS5_VABI ExampleFunction() { return 1; }\n'
+        self.run_audit('int APS5_VABI ExampleFunction();\n', source)
+        with self.assertRaisesRegex(RuntimeError, "ExampleFunction: function definition requires a function declaration"):
+            self.run_audit('extern const char ExampleFunction[];\n', source)
+
+
 class SourceCollectionTests(unittest.TestCase):
+    def test_trailing_return_definitions_are_collected_without_declarations_or_literals(self):
+        text = ('auto APS5_VABI sceTrailing() -> int { return 0; }\n'
+                'auto APS5_VABI sceNoThrow() noexcept(true) -> unsigned long { return 0; }\n'
+                'auto APS5_VABI pointer_nid_postfix() -> const char* { return nullptr; }\n'
+                'auto APS5_VABI sceDeclaration() -> int;\n'
+                'const char* example = "auto APS5_VABI sceQuoted() -> int { return 0; }";\n'
+                '/* auto APS5_VABI sceComment() -> int { return 0; } */\n')
+        self.write_source(text)
+        expected = {"sceTrailing", "sceNoThrow", "pointer", "pointer_nid_postfix"}
+        self.assertEqual(nid_names.collect_real_names(), expected)
+        matches = list(nid_names.source_definitions(text))
+        self.assertEqual([match.group(1) for match in matches], ["sceTrailing", "sceNoThrow", "pointer_nid_postfix"])
+        self.assertTrue(all(text[match.end() - 1] == "{" for match in matches))
+
+    def test_trailing_return_export_names_reach_the_overlap_consumer(self):
+        import pr_overlap
+
+        text = "auto APS5_VABI sceTrailing() noexcept(false) -> int { return 0; }\n"
+        exports = pr_overlap.source_exports(text, "core/libs/prx/libSceExample")
+        self.assertEqual(exports, {("core/libs/prx/libSceExample", nid_names.compute_nid("sceTrailing")): {"sceTrailing"}})
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -265,12 +583,155 @@ class SourceCollectionTests(unittest.TestCase):
                               capture_output=True, timeout=10)
 
     def test_report_preserves_unicode_paths_with_legacy_stdout(self):
-        self.write_source('APS5_EXPORT("AAAAAAAAAAA", exampleUnknown00);\n', "\u8cc7\u6599.cpp")
+        self.write_source('APS5_EXPORT("P+ssLMT0p9s", exampleUnknown00);\n', "\u8cc7\u6599.cpp")
         database = self.root / "aerolib.csv"
-        database.write_bytes(b"")
+        database.write_text("P+ssLMT0p9s exampleUnknown00\n", encoding="utf-8")
         result = self.cli("--db", database)
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
         self.assertIn("core/libs/prx/libSceExample/\u8cc7\u6599.cpp", result.stdout.decode("utf-8"))
+
+    def test_named_stub_and_implementation_are_reported_as_names_in_use(self):
+        stub_name, implementation_name = "scePadPending", "scePadImplemented"
+        stub_nid = nid_names.compute_nid(stub_name)
+        implementation_nid = nid_names.compute_nid(implementation_name)
+        self.write_source(
+            f'APS5_EXPORT("{stub_nid}", exampleUnknown00);\n'
+            f'APS5_EXPORT("{implementation_nid}", exampleUnknown01);\n'
+            'int APS5_VABI scePadPending() { NotImplemented_nid_no_patch(__func__); return 0; }\n'
+            'int APS5_VABI scePadImplemented() { return 1; }\n')
+        database = self.root / "aerolib.csv"
+        database.write_text(f"{stub_nid} {stub_name}\n{implementation_nid} {implementation_name}\n", encoding="utf-8")
+
+        text_result = self.cli("--db", database)
+        self.assertEqual(text_result.returncode, 0, text_result.stderr.decode("utf-8", errors="replace"))
+        text = text_result.stdout.decode("utf-8")
+        self.assertIn(f"{stub_nid}  ", text)
+        self.assertIn(f"{implementation_nid}  ", text)
+        self.assertIn("name-in-use  scePadPending", text)
+        self.assertIn("name-in-use  scePadImplemented", text)
+        self.assertEqual(text.count("name-in-use"), 2)
+        self.assertIn("2 names already in use", text)
+
+        json_result = self.cli("--db", database, "--json")
+        self.assertEqual(json_result.returncode, 0, json_result.stderr.decode("utf-8", errors="replace"))
+        rows = json.loads(json_result.stdout.decode("utf-8"))["rows"]
+        self.assertEqual({row["nid"]: row["status"] for row in rows},
+                         {stub_nid: "name-in-use", implementation_nid: "name-in-use"})
+
+    def test_native_data_definitions_are_found_and_names_are_in_use(self):
+        self.write_source('''#define IGNORE_DATA extern "C" int macro_nid_postfix = 1;
+extern "C" GuestSignalSet _sigintr_nid_postfix{};
+extern "C" {
+char* tzname_nid_postfix[2] = {"one", "two"};
+long timezone_nid_postfix = 0;
+int daylight_nid_postfix;
+extern int initialized_nid_postfix = 1;
+int first_nid_postfix = 0, second_nid_postfix{};
+void (*callback_nid_postfix)(int) = nullptr;
+int counter_nid_disambig2_nid_postfix = 0;
+#ifdef EXAMPLE
+alignas(16) unsigned char buffer_nid_postfix[32]{};
+#endif
+}
+namespace Example {
+extern "C" { int namespaced_nid_postfix = 1; }
+}
+''')
+        names = {"_sigintr", "tzname", "timezone", "daylight", "initialized", "first", "second",
+                 "callback", "counter", "buffer", "namespaced"}
+        raw = {name + "_nid_postfix" for name in names - {"counter"}}
+        raw.add("counter_nid_disambig2_nid_postfix")
+        self.assertEqual(nid_names.collect_real_names(), names | raw)
+        for option in ("--name", "--nid"):
+            arguments = sorted(names) if option == "--name" else sorted(map(nid_names.compute_nid, names))
+            result = self.cli("--where", option, *arguments, "--json")
+            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+            rows = json.loads(result.stdout)["locations"]
+            self.assertEqual({row["name"] for row in rows}, raw)
+            self.assertEqual(len(rows), len(names))
+            self.assertTrue(all(row["path"] == "core/libs/prx/libSceExample/Export.cpp" for row in rows))
+
+    def test_data_declarations_and_references_do_not_create_definitions(self):
+        self.write_source('''// extern "C" int commented_nid_postfix = 0;
+auto text = R"test(extern "C" int literal_nid_postfix = 0;)test";
+extern "C" int declared_nid_postfix;
+extern "C" int prototype_nid_postfix();
+extern "C" {
+extern int external_nid_postfix;
+static int hidden_nid_postfix = 0;
+int ordinary = external_nid_postfix;
+int bounded[external_nid_postfix];
+struct Record { int member_nid_postfix; };
+void helper(int* parameter_nid_postfix) { int local_nid_postfix = 1; }
+auto factory = [] { int nested_nid_postfix = 0; return nested_nid_postfix; };
+int real_nid_postfix = external_nid_postfix;
+}
+extern "C++" { int cpp_nid_postfix = 0; }
+namespace Private { int internal_nid_postfix = 0; }
+''')
+        self.assertEqual(nid_names.collect_real_names(), {"real", "real_nid_postfix"})
+        requests = {nid_names.compute_nid(name) for name in ("commented", "literal", "declared", "prototype",
+                    "external", "hidden", "member", "parameter", "local", "nested", "cpp", "internal")}
+        self.assertEqual(nid_names.source_locations(requests), [])
+
+    def test_exported_data_prevents_a_conflicting_rename_suggestion(self):
+        name = "exampleData"
+        nid = nid_names.compute_nid(name)
+        self.write_source(f'APS5_EXPORT("{nid}", exampleUnknown00);\n'
+                          'extern "C" int exampleData_nid_postfix = 0;\n')
+        database = self.root / "aerolib.csv"
+        database.write_text(f"{nid} {name}\n", encoding="utf-8")
+        result = self.cli("--db", database, "--json")
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+        self.assertEqual(json.loads(result.stdout)["rows"][0]["status"], "name-in-use")
+
+    def test_helper_function_bodies_do_not_consume_following_data(self):
+        self.write_source('''void helper(int value = 0) {}
+auto trailing() -> int { return 0; }
+extern "C" {
+void inner(int value = 0) {}
+auto inner_trailing() -> int { return 0; }
+int actual_nid_postfix = 1;
+}
+''')
+        self.assertEqual(nid_names.collect_real_names(), {"actual", "actual_nid_postfix"})
+
+    def test_data_initializers_preserve_following_declarators(self):
+        self.write_source('''extern "C" {
+int first_nid_postfix = 1 < 2, second_nid_postfix = 0;
+int shift_nid_postfix = 1 << 2, last_nid_postfix = 0;
+bool low_nid_postfix = lower < upper, high_nid_postfix = upper > lower;
+bool low_braced_nid_postfix = lower < upper, high_braced_nid_postfix{upper > lower};
+int templated_nid_postfix = make<int, long>(), tail_nid_postfix = 0;
+extern void (* const callback_nid_postfix)(int) = nullptr;
+}
+extern "C" int value_nid_postfix(42);
+extern "C" int negative_nid_postfix(-1);
+extern "C" int positive_nid_postfix(+1);
+extern "C" int nested_nid_postfix((42));
+extern "C" const wchar_t *wide_nid_postfix(L"value");
+''')
+        names = {"first", "second", "shift", "last", "low", "high", "templated", "tail", "callback", "value",
+                 "negative", "positive", "nested", "wide", "low_braced", "high_braced"}
+        self.assertEqual(nid_names.collect_real_names(), names | {name + "_nid_postfix" for name in names})
+
+    def test_local_constants_are_excluded_without_losing_pointers_to_const(self):
+        self.write_source('''extern "C" {
+const int hidden_nid_postfix = 1, other_hidden_nid_postfix = 2;
+constexpr int constant_nid_postfix = 3;
+const int ordinary = 1, hidden_after_ordinary_nid_postfix = 2;
+static int ordinary_static{1}, hidden_after_static_nid_postfix = 2;
+const int ordinary_const{1}, hidden_after_const_nid_postfix = 2;
+const int first_const_nid_postfix{1}, second_const_nid_postfix = 2;
+int * const fixed_nid_postfix = nullptr;
+void (* const local_callback_nid_postfix)(int) = nullptr;
+const int *pointer_nid_postfix = nullptr, scalar_nid_postfix = 4;
+extern const int exposed_nid_postfix = 5;
+}
+extern "C" const int direct_nid_postfix = 6;
+''')
+        names = {"pointer", "exposed", "direct"}
+        self.assertEqual(nid_names.collect_real_names(), names | {name + "_nid_postfix" for name in names})
 
     def test_error_preserves_unicode_paths_with_legacy_stderr(self):
         database = self.root / "\u8cc7\u6599"
@@ -406,6 +867,69 @@ int APS5_VABI sceReal() { return 0; }
         self.write_source('// continued \\\nAPS5_EXPORT("AAAAAAAAAAA", exampleUnknown00);\nAPS5_EX\\\nPORT("BBBBBBBBBBB", exampleUnknown01);\n')
         self.assertEqual(nid_names.collect_unknowns(), {"BBBBBBBBBBB": "core/libs/prx/libSceExample/Export.cpp:exampleUnknown01"})
 
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(nid_names.sys, "stdout", out), patch.object(nid_names.sys, "stderr", err):
+            try:
+                nid_names.main(["--invalid-argument"])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
+
+
+
+class SourceLocationTests(unittest.TestCase):
+    def test_lookup_finds_named_and_explicit_aliases_without_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prx = root / "core/libs/prx"
+            file = prx / "libExample/Export.cpp"
+            file.parent.mkdir(parents=True)
+            nid = nid_names.compute_nid("sceNamed")
+            file.write_text('int APS5_VABI sceNamed_nid_postfix() { return 1; }\n'
+                            'APS5_EXPORT("3gQncidodmw", CameraImage);\n'
+                            'int APS5_VABI CameraImage() { return 1; }\n'
+                            'int APS5_VABI Helper_nid_no_patch() { return 1; }\n', encoding="utf-8")
+            output = io.StringIO()
+            with patch.object(nid_names, "ROOT", root), patch.object(nid_names, "PRX", prx), \
+                 patch.object(nid_names, "load_db", side_effect=AssertionError("unexpected database")), \
+                 contextlib.redirect_stdout(output):
+                self.assertEqual(nid_names.main(["--where", "--nid", nid, "3gQncidodmw", "--json"]), 0)
+            locations = json.loads(output.getvalue())["locations"]
+            self.assertEqual({row["name"] for row in locations}, {"sceNamed_nid_postfix", "CameraImage"})
+            self.assertTrue(all(row["path"] == "core/libs/prx/libExample/Export.cpp" for row in locations))
+
+    def test_where_requires_input_and_checks_nids(self):
+        for arguments in (["--where"], ["--where", "--nid"], ["--where", "--nid", "invalid"]):
+            with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    nid_names.main(arguments)
+
+
+class NidEncodingTests(unittest.TestCase):
+    def test_fixed_nid_vectors(self):
+        for name, expected in (("ACProcessMain", "mFq1M6vw-JM"), ("sceAmprUnknown00", "6OkOa1SOKuY"),
+                               ("", "B4c6vzgC+Xc"), ("東京", "2GKwIE7lnRc")):
+            with self.subTest(name=name):
+                self.assertEqual(nid_names.compute_nid(name), expected)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -17,14 +18,6 @@
 #include <sys/resource.h>
 #endif
 
-extern "C" {
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
-int APS5_VABI sceKernelMunmap(void*, std::size_t);
-int APS5_VABI sceKernelMprotect(const void*, std::size_t, int);
-}
-
 namespace {
 using namespace AgcDriver::GuestMemory;
 void require(bool condition, const char* reason) { if (!condition) throw std::runtime_error(reason); }
@@ -36,13 +29,14 @@ struct Mapping {
         require(sceKernelAllocateDirectMemory(0, 0x10000000000ll, size, 65536, 3, &physical) == 0, "allocate direct memory failed");
         if (sceKernelMapDirectMemory(&data, size, 3, 0, physical, 65536) != 0) {
             sceKernelReleaseDirectMemory(physical, size);
+
             throw std::runtime_error("map direct memory failed");
         }
     }
     Mapping(const Mapping&) = delete;
     Mapping& operator=(const Mapping&) = delete;
     ~Mapping() {
-        if (data != nullptr) sceKernelMunmap(data, size);
+        if (data != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(data), size);
         if (physical >= 0) sceKernelReleaseDirectMemory(physical, size);
     }
     std::uint64_t Address() const { return reinterpret_cast<std::uint64_t>(data); }
@@ -63,7 +57,7 @@ void benchmark(bool labels = false, bool backing = true) {
         std::vector<double> times;
         std::uint64_t faults = 0;
         for (unsigned pass = 0; pass < 10; ++pass) {
-#ifndef _WIN32
+#ifdef __linux__
             rusage before{}, after{};
             getrusage(RUSAGE_THREAD, &before);
 #endif
@@ -77,7 +71,7 @@ void benchmark(bool labels = false, bool backing = true) {
                 } else Write(mapping.Address(), std::span(source).first(bytes), 1);
             }
             const auto us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count() / 256;
-#ifndef _WIN32
+#ifdef __linux__
             getrusage(RUSAGE_THREAD, &after);
             if (pass != 0) faults += after.ru_minflt - before.ru_minflt;
 #endif
@@ -180,7 +174,7 @@ void partialCollect() {
     require(collect(alias, 0, mapping.size, 4, true) == std::vector<std::size_t>{page, page * 2}, "writes to two pages were not reported apart");
     require(collect(mapping.data, 0, mapping.size, 4, true) == std::vector<std::size_t>{page, page * 2}, "writes to two pages were not reported for their own view");
     require(collect(mapping.data, 0, mapping.size, 4, false).empty() && collect(alias, 0, mapping.size, 4, false).empty(), "page tracking did not settle");
-    require(sceKernelMunmap(alias, mapping.size) == 0, "partial collect alias unmap failed");
+    require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(alias), mapping.size) == 0, "partial collect alias unmap failed");
 #endif
     std::cout << "Partial shared write collection tests passed\n";
 }
@@ -191,7 +185,7 @@ template<class TAction> void fails(TAction&& fn) {
     require(failed, "invalid write was accepted");
 }
 
-#ifndef _WIN32
+#ifdef __linux__
 std::size_t directMappings() {
     std::ifstream maps("/proc/self/maps");
     require(maps.is_open(), "cannot inspect mapping lifetimes");
@@ -219,7 +213,7 @@ void run() {
         bytes[part + 456] = std::byte{91};
         CollectWritesUncached(mapping.Address(), mapping.size);
         require(!UnchangedSince(mapping.Address(), mapping.size, after), "subsequent guest write was lost");
-#ifndef _WIN32
+#ifdef __linux__
         std::size_t dirty = 0;
         const auto collect = [&] {
             return GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(mapping.Address(), mapping.size,
@@ -252,15 +246,15 @@ void run() {
         require(std::memcmp(mapping.data, across.data(), across.size()) == 0, "write across backing boundaries differs");
         require(std::memcmp(replacement.data, across.data() + part, part) == 0, "physical alias did not see the write");
         require(std::all_of(static_cast<std::byte*>(originalAlias), static_cast<std::byte*>(originalAlias) + part, [](auto x) { return x == std::byte{29}; }), "replaced virtual range wrote the old backing");
-#ifndef _WIN32
-        require(sceKernelMunmap(middle, part) == 0, "partial unmap failed");
+#ifdef __linux__
+        require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(middle), part) == 0, "partial unmap failed");
         const auto saved = bytes[0];
         across[0] = std::byte{99};
         require(!GuestArena::GuestArenaWriteSharedBacking_nid_no_patch(mapping.Address(), across.data(), across.size()), "writer accepted an unmapped gap");
         require(bytes[0] == saved, "failed shared write changed its prefix");
 #endif
         require(sceKernelMapDirectMemory(&middle, part, 3, 0x10, mapping.physical + part, part) == 0, "original backing restore failed");
-        require(sceKernelMunmap(originalAlias, part) == 0, "alias unmap failed");
+        require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(originalAlias), part) == 0, "alias unmap failed");
     }
     std::vector<std::thread> threads;
     for (unsigned i = 0; i < 8; ++i) threads.emplace_back([&, i] {
@@ -287,12 +281,12 @@ int main(int argc, char** argv) {
         else if (argc == 2 && std::string_view(argv[1]) == "--benchmark-fallback") benchmark(false, false);
         else if (argc == 2 && std::string_view(argv[1]) == "--benchmark-labels-fallback") benchmark(true, false);
         else {
-#ifndef _WIN32
+#ifdef __linux__
             const auto before = directMappings();
 #endif
             run();
             smallStores();
-#ifndef _WIN32
+#ifdef __linux__
             require(directMappings() == before, "physical backing write views leaked");
 #endif
             std::cout << "Shared backing write tests passed\n";

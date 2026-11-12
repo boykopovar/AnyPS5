@@ -1,15 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "Common.hpp"
-
-extern "C" {
-int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
-int APS5_VABI scePthreadKeyDelete(PthreadKey key);
-void* APS5_VABI scePthreadGetspecific(PthreadKey key);
-int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
-}
 
 extern "C" {
 
@@ -23,7 +17,13 @@ int APS5_VABI pthread_setspecific_nid_postfix(PthreadKey key, void* value) {
 
 int APS5_VABI pthread_key_create_nid_postfix(PthreadKey* key, pthread_key_destructor_func_t destructor) {
     if (!key) return PosixThread::GUEST_EINVAL;
-    return PosixThread::ToErrno(scePthreadKeyCreate(key, destructor));
+    PthreadKey created = 0;
+    if (const int result = scePthreadKeyCreate(&created, destructor)) return PosixThread::ToErrno(result);
+    if (!GuestCopyOut_nid_no_patch(key, &created, sizeof(created))) {
+        scePthreadKeyDelete(created);
+        return PosixThread::GUEST_EFAULT;
+    }
+    return 0;
 }
 
 int APS5_VABI pthread_key_delete_nid_postfix(PthreadKey key) {

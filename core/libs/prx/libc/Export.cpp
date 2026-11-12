@@ -1,14 +1,13 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
 
-uint32_t Need_sceLibc = 1;
+uint32_t Need_sceLibc_nid_postfix = 1;
 
 extern "C" {
-
-    int APS5_VABI _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(int*, int (APS5_VABI *)(void*, void*, void**), void*);
 
     int APS5_VABI std_execute_once_nid_postfix(int* flag, int (APS5_VABI *func)(void*, void*, void**), void* arg) {
         return _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(flag, func, arg);
@@ -17,14 +16,6 @@ extern "C" {
     void APS5_VABI LibcHeapGetTraceInfo_nid_postfix(LibcHeapInfo* info) {
         LibcHeapTraceInfo_nid_no_patch(info);
     }
-
-// Dead import of Cyberpunk 2077 (PPSA04029): no call sites, but the
-// Windows loader resolves imports strictly, so it must be present.
-int APS5_VABI _ZSt14_Atomic_assertPKcS0__nid_postfix() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
 
 APS5_EXPORT("H2e8t5ScQGc", libc___cxa_finalize);
 void APS5_VABI libc___cxa_finalize(void* dsoHandle) {
