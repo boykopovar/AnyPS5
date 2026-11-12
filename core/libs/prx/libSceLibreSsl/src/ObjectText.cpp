@@ -170,12 +170,12 @@ int NumericObjectText(char* buffer, int space, const LibreSslAsn1Object* object)
     return result;
 }
 
-int ObjectText(char* buffer, int space, const LibreSslAsn1Object* object, const char* function, bool numericOnly = false) {
+int ObjectText(char* buffer, int space, const LibreSslAsn1Object* object, const char* function) {
     if (space > 0 && !buffer) throw std::invalid_argument(std::string(function) + ": invalid buffer");
     if (space > 0) buffer[0] = '\0';
     if (!object || !object->data) return 0;
     if (space < 0) throw std::invalid_argument(std::string(function) + ": invalid buffer");
-    const int nid = numericOnly ? 0 : LibreSslObjectNid_nid_no_patch(object);
+    const int nid = LibreSslObjectNid_nid_no_patch(object);
     if (nid != 0) {
         const char* name = LibreSslObjectLongName_nid_no_patch(nid);
         if (!name) name = LibreSslObjectShortName_nid_no_patch(nid);
@@ -224,10 +224,6 @@ const char* LibreSslObjectShortName_nid_no_patch(int nid) {
 
 const char* LibreSslObjectLongName_nid_no_patch(int nid) {
     return Name(nid, true);
-}
-
-int LibreSslObjectNumericText_nid_no_patch(char* buffer, int space, const LibreSslAsn1Object* object) {
-    return ObjectText(buffer, space, object, __func__, true);
 }
 
 int APS5_VABI i2t_ASN1_OBJECT_nid_postfix(char* buffer, int length, const LibreSslAsn1Object* object) {

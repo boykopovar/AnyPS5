@@ -14,7 +14,6 @@ extern const unsigned short LibreSslObjectOrder_nid_no_patch[LibreSslObjectOrder
 extern const unsigned short LibreSslObjectShortNameOrder_nid_no_patch[LibreSslObjectShortNameOrderCount];
 
 int LibreSslObjectNid_nid_no_patch(const LibreSslAsn1Object* object);
-int LibreSslObjectNumericText_nid_no_patch(char* buffer, int space, const LibreSslAsn1Object* object);
 const char* LibreSslObjectShortName_nid_no_patch(int nid);
 const char* LibreSslObjectLongName_nid_no_patch(int nid);
 int LibreSslAddedObjectNid_nid_no_patch(const LibreSslAsn1Object* object);
