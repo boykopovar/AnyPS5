@@ -637,3 +637,13 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaises(json.JSONDecodeError):
                 performance_bisect.load_recipe(path)
 
+
+    def test_sample_rejects_multiple_title_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = self.sample_fixture()
+            run = summary["titles"]["PPSA00000"]["runs"][0]
+            summary["titles"]["PPSA00000"]["runs"] = [run, dict(run)]
+            path = self.write_summary(Path(directory), summary)
+            with self.assertRaisesRegex(ValueError, "exactly one"):
+                performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
