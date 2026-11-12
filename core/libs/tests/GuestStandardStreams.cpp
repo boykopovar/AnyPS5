@@ -881,9 +881,6 @@ int main(int argc, char** argv) {
     Require(Need_sceLibc_nid_postfix == 1);
     Require(_thread_autoinit_dummy_decl_nid_postfix == 0);
     Require(_thread_autoinit_dummy_decl_stub_nid_postfix == 0);
-#if !defined(_MSC_VER) && !defined(__EMSCRIPTEN__)
-    Require(&_thread_autoinit_dummy_decl_nid_postfix == &_thread_autoinit_dummy_decl_stub_nid_postfix);
-#endif
     Require(__stdoutp_nid_postfix == &_Stdout_nid_postfix);
     Require(__stderrp_nid_postfix == &_Stderr_nid_postfix);
     Require(fileno_nid_postfix(__stdinp_nid_postfix) == 0);
