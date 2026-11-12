@@ -2,6 +2,7 @@
 #include "prx/libSceAppContent/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -187,6 +188,9 @@ int main() {
     Require(sceAppContentAppParamGetInt(5, &paramValue) == ErrorParameter);
     Require(paramValue == 0x5a5a5a5a);
     Require(sceAppContentAppParamGetInt(0, nullptr) == ErrorParameter);
+    errno = 71;
+    Require(sceAppContentAppParamGetInt(0, reinterpret_cast<int32_t*>(0x10)) == ErrorParameter);
+    Require(errno == 71);
 
     NpUnifiedEntitlementLabel label{};
     std::memcpy(&label, "ADDCONT000000001", 16);
