@@ -1,4 +1,5 @@
 #include "prx/libcurl/src/CurlHost.hpp"
+#include "prx/libcurl/src/CurlFormat.hpp"
 #include "prx/libcurl/include/InventoryExports.hpp"
 #include "prx/libcurl/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
@@ -732,43 +733,58 @@ void APS5_VABI curl_mime_free_nid_postfix(curl_mime* mime) {
 
 
 int APS5_VABI curl_mvfprintf_nid_postfix(std::FILE* whereto, const char* format, VaList* args) {
-    NotImplemented_nid_no_patch(__func__);
+    return CurlFormat::FormatStream(reinterpret_cast<FileStream*>(whereto), format, args);
 }
 
 int APS5_VABI curl_mfprintf_nid_postfix(std::FILE* whereto, const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
+    CURL_ARGS_START(format);
+    const int result = CurlFormat::FormatStream(reinterpret_cast<FileStream*>(whereto), format, args);
+    CURL_ARGS_END();
+    return result;
 }
 
 int APS5_VABI curl_mvsprintf_nid_postfix(char* buffer, const char* format, VaList* args) {
-    NotImplemented_nid_no_patch(__func__);
+    return CurlFormat::FormatUnbounded(buffer, format, args);
 }
 
 int APS5_VABI curl_msprintf_nid_postfix(char* buffer, const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
+    CURL_ARGS_START(format);
+    const int result = CurlFormat::FormatUnbounded(buffer, format, args);
+    CURL_ARGS_END();
+    return result;
 }
 
 int APS5_VABI curl_mvsnprintf_nid_postfix(char* buffer, size_t maxlength, const char* format, VaList* args) {
-    NotImplemented_nid_no_patch(__func__);
+    return CurlFormat::FormatBounded(buffer, maxlength, format, args);
 }
 
 int APS5_VABI curl_msnprintf_nid_postfix(char* buffer, size_t maxlength, const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
+    CURL_ARGS_START(format);
+    const int result = CurlFormat::FormatBounded(buffer, maxlength, format, args);
+    CURL_ARGS_END();
+    return result;
 }
 
 int APS5_VABI curl_mvprintf_nid_postfix(const char* format, VaList* args) {
-    NotImplemented_nid_no_patch(__func__);
+    return CurlFormat::FormatStream(&_Stdout_nid_postfix, format, args);
 }
 
 int APS5_VABI curl_mprintf_nid_postfix(const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
+    CURL_ARGS_START(format);
+    const int result = CurlFormat::FormatStream(&_Stdout_nid_postfix, format, args);
+    CURL_ARGS_END();
+    return result;
 }
 
 char* APS5_VABI curl_mvaprintf_nid_postfix(const char* format, VaList* args) {
-    NotImplemented_nid_no_patch(__func__);
+    return CurlFormat::FormatAllocated(format, args);
 }
 
 char* APS5_VABI curl_maprintf_nid_postfix(const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
+    CURL_ARGS_START(format);
+    char* const result = CurlFormat::FormatAllocated(format, args);
+    CURL_ARGS_END();
+    return result;
 }
 
 std::int32_t APS5_VABI curl_share_cleanup_nid_postfix(CURLSH* share_handle) {
