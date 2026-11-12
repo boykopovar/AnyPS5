@@ -117,13 +117,23 @@ static const ChunkTable& Chunks() {
         auto& result = table.ids;
         const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         static const std::regex chunk(R"re(<chunk\s+id="(\d+)")re");
-        for (auto it = std::sregex_iterator(text.begin(), text.end(), chunk); it != std::sregex_iterator(); ++it)
-            result.insert(static_cast<uint16_t>(std::stoul((*it)[1].str())));
+        for (auto it = std::sregex_iterator(text.begin(), text.end(), chunk); it != std::sregex_iterator(); ++it) {
+            const auto token = (*it)[1].str();
+            std::uint32_t parsed = 0;
+            const auto parse = std::from_chars(token.data(), token.data() + token.size(), parsed);
+            if (parse.ec != std::errc{} || parsed > 0xFFFF)
+                throw std::runtime_error("scePlayGo: playgo-chunkdefs.xml chunk id " + token + " is not a chunk id from 0 to 65535");
+            result.insert(static_cast<uint16_t>(parsed));
+        }
         static const std::regex defaultChunk(R"re(default_chunk="(\d+)")re");
         std::smatch match;
         if (std::regex_search(text, match, defaultChunk)) {
-            const auto last = std::stoul(match[1].str());
-            for (unsigned long id = 0; id <= last && id <= 0xFFFF; ++id) result.insert(static_cast<uint16_t>(id));
+            const auto token = match[1].str();
+            std::uint32_t last = 0;
+            const auto parse = std::from_chars(token.data(), token.data() + token.size(), last);
+            if (parse.ec != std::errc{} || last > 0xFFFF)
+                throw std::runtime_error("scePlayGo: playgo-chunkdefs.xml default_chunk " + token + " is not a chunk id from 0 to 65535");
+            for (std::uint32_t id = 0; id <= last; ++id) result.insert(static_cast<uint16_t>(id));
         }
         return table;
     }();
