@@ -830,11 +830,13 @@ public:
     }
 
 private:
-    static bool isExportData(const IrValue* value, const IrValue* user, std::unordered_set<const IrValue*>& visited, bool& reached) {
+    bool isExportData(const IrValue* value, const IrValue* user, std::unordered_set<const IrValue*>& visited, bool& reached) const {
         if (visited.contains(user)) return true;
         visited.insert(user);
         if (user->Opcode() == IrOpcode::SetAttribute) {
-            if (user->Argument(0)->Resolve() == value) {
+            const auto flags = user->Flags<ExportFlags>();
+            const auto& exports = program.Metadata().exportInfo;
+            if (flags.index < exports.size() && exports.at(flags.index).kind == ExportTargetKind::Parameter && user->Argument(0)->Resolve() == value) {
                 reached = true;
                 return true;
             }
@@ -850,7 +852,7 @@ private:
         return false;
     }
 
-    static bool allUsesAreExportData(const IrValue* inst) {
+    bool allUsesAreExportData(const IrValue* inst) const {
         std::unordered_set<const IrValue*> visited;
         bool reached = false;
         for (const IrValue* user : inst->Uses()) {
