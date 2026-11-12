@@ -113,6 +113,9 @@ def render(report):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Print a readable summary of a local AnyPS5 run report.")
     parser.add_argument("report", type=Path, help="path to anyps5-report.json")
     args = parser.parse_args()
