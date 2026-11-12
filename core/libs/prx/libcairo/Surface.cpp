@@ -113,7 +113,7 @@ void APS5_VABI cairo_surface_mark_dirty_rectangle(CairoSurface* surface, int x, 
 int APS5_VABI cairo_surface_set_user_data(CairoSurface* surface, const CairoUserDataKey* key,
                                           void* data, CairoDestroyFunc destroy) {
     const auto* backendKey = reinterpret_cast<const cairo_user_data_key_t*>(key);
-    if (!data || !destroy)
+    if (!data || !destroy || aps5_cairo_surface_get_reference_count(Backend(surface)) == 0)
         return aps5_cairo_surface_set_user_data(Backend(surface), backendKey, data, nullptr);
     auto userData = std::unique_ptr<UserData>(new (std::nothrow) UserData{data, destroy});
     if (!userData) return CAIRO_STATUS_NO_MEMORY;

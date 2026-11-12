@@ -55,6 +55,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_cairo_surface_user_data PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
     endif()
+    add_test_executable(guest_cairo_surface_user_data_allocation_tests
+        ${LIBS_INCLUDE_DIR}/tests/GuestCairoSurfaceUserDataAllocation.cpp Surface.cpp)
+    target_include_directories(guest_cairo_surface_user_data_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_surface_user_data_allocation_tests PRIVATE cairo_backend libc)
+    configure_windows_unwind(guest_cairo_surface_user_data_allocation_tests)
+    add_test(NAME guest_cairo_surface_user_data_allocation COMMAND guest_cairo_surface_user_data_allocation_tests)
+    set_tests_properties(guest_cairo_surface_user_data_allocation PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_cairo_surface_user_data_allocation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_cairo_context_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoContext.cpp)
     target_include_directories(guest_cairo_context_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_cairo_context_tests PRIVATE libcairo libc)
