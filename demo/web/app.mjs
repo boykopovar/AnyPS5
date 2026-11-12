@@ -340,13 +340,17 @@ async function selectInputs(inputs) {
   $("progress").removeAttribute("value");
   lock(true);
   update();
-  const currentWorker = new Worker(new URL("./worker.mjs", import.meta.url), { type: "module" });
-  worker = currentWorker;
-  currentWorker.onmessage = event => onMessage(event, currentWorker);
-  currentWorker.onerror = event => {
-    if (currentWorker === worker) return fail(event.message || (() => translate(locale, "workerStopped")));
-  };
-  currentWorker.postMessage({ type: "inspect", inputs, locale });
+  try {
+    const currentWorker = new Worker(new URL("./worker.mjs", import.meta.url), { type: "module" });
+    worker = currentWorker;
+    currentWorker.onmessage = event => onMessage(event, currentWorker);
+    currentWorker.onerror = event => {
+      if (currentWorker === worker) return fail(event.message || (() => translate(locale, "workerStopped")));
+    };
+    currentWorker.postMessage({ type: "inspect", inputs, locale });
+  } catch (error) {
+    await fail(error.message);
+  }
 }
 
 $("choose").onclick = () => { $("file").value = ""; $("file").click(); };
