@@ -729,7 +729,7 @@ void APS5_VABI EVP_MD_CTX_init_nid_postfix(EvpMdContext* context);
 int APS5_VABI EVP_MD_size_nid_postfix(const EvpMd* md);
 int APS5_VABI EVP_PKEY_copy_parameters_nid_postfix(void* to, const void* from);
 void APS5_VABI EVP_PKEY_free_nid_postfix(void* pkey);
-int APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void);
+EcKey* APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void* pkey);
 LibreSslRsa* APS5_VABI EVP_PKEY_get1_RSA_nid_postfix(void* pkey);
 int APS5_VABI EVP_PKEY_id_nid_postfix(const void* value);
 void* APS5_VABI EVP_PKEY_new_nid_postfix(void);
