@@ -337,20 +337,18 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
 int APS5_VABI sceAppContentInitialize(const AppContentInitParam* initParam, AppContentBootParam* bootParam) {
     std::lock_guard lock(initializationMutex);
     const auto sdkVersion = compiledSdkVersion();
+    const int savedErrno = errno;
+    AppContentInitParam localInit{};
     if (sdkVersion >= 0x01500000) {
         if (initialized.load()) return SCE_APP_CONTENT_ERROR_BUSY;
         if (initParam == nullptr || bootParam == nullptr) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    }
-    if (bootParam == nullptr) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    const int savedErrno = errno;
-    AppContentInitParam localInit{};
-    if (initParam != nullptr) {
         const bool copiedInit = GuestCopyIn_nid_no_patch(&localInit, initParam, sizeof(localInit));
         errno = savedErrno;
         if (!copiedInit) {
             return SCE_APP_CONTENT_ERROR_PARAMETER;
         }
     }
+    if (bootParam == nullptr) return SCE_APP_CONTENT_ERROR_PARAMETER;
     AppContentBootParam localBoot{};
     const bool copiedBootIn = GuestCopyIn_nid_no_patch(&localBoot, bootParam, sizeof(localBoot));
     errno = savedErrno;
