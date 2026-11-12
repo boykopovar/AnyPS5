@@ -32,6 +32,10 @@ void TestDup2() {
     int first[2]{-1, -1};
     int second[2]{-1, -1};
     Require(pipe_nid_postfix(first) == 0 && pipe_nid_postfix(second) == 0, "pipe creation failed");
+    *__error_nid_postfix() = 0;
+    RequireFailure(_dup2_nid_disambig1_nid_postfix(first[1], -1), GuestEbadf, "_dup2 to negative descriptor did not fail with EBADF");
+    *__error_nid_postfix() = 0;
+    RequireFailure(_dup2_nid_disambig1_nid_postfix(-1, first[1]), GuestEbadf, "_dup2 from negative descriptor over open descriptor did not fail with EBADF");
     Require(_dup2_nid_disambig1_nid_postfix(first[0], first[0]) == first[0], "_dup2 to the same descriptor failed");
     Require(_dup2_nid_disambig1_nid_postfix(first[1], second[1]) == second[1], "_dup2 replacing a descriptor failed");
     Require(close_nid_postfix(first[1]) == 0, "closing the original write end failed");
@@ -61,7 +65,7 @@ void TestExec() {
                    "_execvpe of a missing program did not fail with ENOENT");
 }
 
-} // namespace
+}
 
 int main() {
     TestDup2();
