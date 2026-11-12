@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -74,6 +75,35 @@ static void CheckNpIdTitleContexts() {
     for (const int context : contexts) Require(sceNpTusDeleteNpTitleCtx(context) == 0);
 }
 
+static void CheckTitleContexts() {
+    unsigned char titleId[12]{};
+    unsigned char titleSecret[128]{};
+    NpId npId{};
+    Require(sceNpTusCreateTitleCtx(nullptr, titleSecret, &npId) == INSUFFICIENT_ARGUMENT);
+    Require(sceNpTusCreateTitleCtx(titleId, nullptr, &npId) == INSUFFICIENT_ARGUMENT);
+    Require(sceNpTusCreateTitleCtx(titleId, titleSecret, nullptr) == INSUFFICIENT_ARGUMENT);
+
+    const int single = sceNpTusCreateTitleCtx(titleId, titleSecret, &npId);
+    Require(single > 0);
+    const int request = sceNpTusCreateRequest(single);
+    Require(request > 0);
+    Require(sceNpTusDeleteNpTitleCtx(single) == 0);
+    Require(sceNpTusDeleteNpTitleCtx(single) == INVALID_ID);
+    Require(sceNpTusDeleteRequest(request) == INVALID_ID);
+
+    std::array<int, 32> contexts{};
+    for (std::size_t index = 0; index < contexts.size(); ++index) {
+        contexts[index] = index % 2 == 0 ? sceNpTusCreateTitleCtx(titleId, titleSecret, &npId) : sceNpTusCreateNpTitleCtxA(0, 1);
+        Require(contexts[index] > 0);
+    }
+    Require(sceNpTusCreateTitleCtx(titleId, titleSecret, &npId) == TOO_MANY_OBJECTS);
+    Require(sceNpTusCreateNpTitleCtx(0, &npId) == TOO_MANY_OBJECTS);
+    Require(sceNpTusCreateTitleCtx(nullptr, titleSecret, &npId) == INSUFFICIENT_ARGUMENT);
+    Require(sceNpTusCreateTitleCtx(titleId, nullptr, &npId) == INSUFFICIENT_ARGUMENT);
+    Require(sceNpTusCreateTitleCtx(titleId, titleSecret, nullptr) == INSUFFICIENT_ARGUMENT);
+    for (const int context : contexts) Require(sceNpTusDeleteNpTitleCtx(context) == 0);
+}
+
 static void CheckMultiSlotVariables() {
     const int context = sceNpTusCreateNpTitleCtxA(0, 1);
     Require(context > 0);
@@ -95,6 +125,9 @@ static void CheckMultiSlotVariables() {
 
     Require(sceNpTusGetMultiSlotVariableAsync(request, nullptr, nullptr, variables, sizeof(variables), 2, nullptr) == INSUFFICIENT_ARGUMENT);
     Require(sceNpTusGetMultiSlotVariableAsync(request, nullptr, slots, nullptr, sizeof(variables), 2, nullptr) == INSUFFICIENT_ARGUMENT);
+    errno = 71;
+    Require(sceNpTusGetMultiSlotVariableAsync(request, nullptr, reinterpret_cast<const std::int32_t*>(0x10), variables, sizeof(variables), 2, nullptr) == INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceNpTusGetMultiSlotVariableAsync(request, nullptr, slots, variables, sizeof(variables), 0, nullptr) == INVALID_ARGUMENT);
     Require(sceNpTusGetMultiSlotVariableAsync(request, nullptr, slots, variables, sizeof(variables), 65, nullptr) == TOO_MANY_SLOTID);
     Require(sceNpTusGetMultiSlotVariableAsync(request, nullptr, negative, variables, sizeof(variables), 1, nullptr) == INVALID_ARGUMENT);
@@ -104,6 +137,11 @@ static void CheckMultiSlotVariables() {
     result = 0;
     Require(sceNpTusWaitAsync(request, &result) == 0 && result == SIGNED_OUT);
     Require(sceNpTusWaitAsync(request, nullptr) == 0);
+    errno = 71;
+    Require(sceNpTusWaitAsync(request, reinterpret_cast<int*>(0x10)) == INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceNpTusPollAsync(request, reinterpret_cast<int*>(0x10)) == INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceNpTusGetMultiSlotVariableAsync(request, &npId, slots, variables, sizeof(variables), 2, nullptr) == 0);
     RequireFinished(request, SIGNED_OUT);
 
@@ -218,6 +256,9 @@ int main() {
     std::uint8_t variables[256] = {};
     Require(sceNpTusGetMultiSlotVariableAAsync(request, 0, nullptr, variables, sizeof(variables), 2, nullptr) == INSUFFICIENT_ARGUMENT);
     Require(sceNpTusGetMultiSlotVariableAAsync(request, 0, slots, nullptr, sizeof(variables), 2, nullptr) == INSUFFICIENT_ARGUMENT);
+    errno = 71;
+    Require(sceNpTusGetMultiSlotVariableAAsync(request, 0, reinterpret_cast<const std::int32_t*>(0x10), variables, sizeof(variables), 2, nullptr) == INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceNpTusGetMultiSlotVariableAAsync(request, 0, slots, variables, sizeof(variables), 0, nullptr) == INVALID_ARGUMENT);
     Require(sceNpTusGetMultiSlotVariableAAsync(request, 0, slots, variables, sizeof(variables), 65, nullptr) == TOO_MANY_SLOTID);
     Require(sceNpTusGetMultiSlotVariableAAsync(request, 0, slots, variables, sizeof(variables), 2, variables) == INVALID_ARGUMENT);
@@ -296,4 +337,5 @@ int main() {
     for (std::size_t index = 1; index < contexts.size(); ++index) Require(sceNpTusDeleteNpTitleCtx(contexts[index]) == 0);
     CheckTssTitleContexts();
     CheckNpIdTitleContexts();
+    CheckTitleContexts();
 }

@@ -3,6 +3,7 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cerrno>
 #include <cstdlib>
@@ -29,6 +30,7 @@ constexpr int kErrArgNull = static_cast<int>(0x80B8000Du);
 constexpr int kButtonIdOk = 1;
 constexpr int kButtonIdNo = 2;
 constexpr int kStatusRunning = 2;
+constexpr int kRaceRounds = 100000;
 
 struct UserMessage {
     std::int32_t buttonType;
@@ -80,6 +82,7 @@ void CancelAndFallbacks() {
     Require(sceMsgDialogOpen(&system) == 0 && sceMsgDialogGetStatus() == kStatusFinished && Session() != ModalDialogState::Showing);
     result = MsgDialogResult{};
     Require(sceMsgDialogGetResult(&result) == 0 && result.button_id == kButtonIdOk);
+    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(0x10)) == kErrArgNull);
 
     ModalDialogSetPresenter_nid_postfix(false);
     UserMessage focusNo{MsgDialog::ButtonTypeYesNoFocusNo, 0, "Delete?"};
@@ -204,6 +207,31 @@ void ShownDialog() {
     ModalDialogSetPresenter_nid_postfix(false);
 }
 
+void TerminateWinsOverOpen() {
+    UserMessage yesNo{MsgDialog::ButtonTypeYesNo, 0, "Continue?"};
+    UserParam param(MsgDialog::ModeUserMsg, &yesNo);
+    ModalDialogSetPresenter_nid_postfix(true);
+    std::atomic<int> round{0};
+    std::atomic<int> done{0};
+    std::thread terminator([&] {
+        for (int i = 1; i <= kRaceRounds; ++i) {
+            while (round.load() != i) std::this_thread::yield();
+            sceMsgDialogTerminate();
+            done.fetch_add(1);
+        }
+    });
+    for (int i = 1; i <= kRaceRounds; ++i) {
+        Require(sceMsgDialogInitialize() == 0);
+        round.store(i);
+        sceMsgDialogOpen(&param);
+        while (done.load() != i) std::this_thread::yield();
+        Require(sceMsgDialogGetStatus() == 0);
+        Require(Session() == ModalDialogState::Idle);
+    }
+    terminator.join();
+    ModalDialogSetPresenter_nid_postfix(false);
+}
+
 }
 
 int main() {
@@ -219,11 +247,15 @@ int main() {
     Require(sceMsgDialogGetResult(&result) == kErrNotInitialized);
     Require(sceMsgDialogUpdateStatus() == 0);
     Require(sceMsgDialogGetStatus() == 0);
+    Require(sceMsgDialogProgressBarInc(0, 10) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetMsg(0, "progress") == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetValue(0, 50) == kErrNotRunning);
 
     Require(sceMsgDialogInitialize() == 0);
     Require(sceMsgDialogInitialize() == kErrAlreadyInitialized);
     Require(sceMsgDialogClose() == kErrNotRunning);
     Require(sceMsgDialogGetResult(&result) == kErrNotFinished);
+    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(0x10)) == kErrNotFinished);
     Require(sceMsgDialogGetResult(nullptr) == kErrArgNull);
     Require(sceMsgDialogOpen(nullptr) == kErrArgNull);
     Require(sceMsgDialogUpdateStatus() == kStatusInitialized);
@@ -256,10 +288,18 @@ int main() {
     Require(sceMsgDialogGetResult(&result) == kErrNotInitialized);
     Require(sceMsgDialogClose() == kErrNotRunning);
     Require(sceMsgDialogGetStatus() == 0);
+    Require(sceMsgDialogUpdateStatus() == 0);
+    Require(sceMsgDialogProgressBarInc(0, 10) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarInc(-1, 0) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetMsg(0, "progress") == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetMsg(0, nullptr) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetValue(0, 50) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetValue(-1, 0xffffffffu) == kErrNotRunning);
 
     ShownDialog();
     CancelAndFallbacks();
     CloseAndTerminate();
     WithoutFlips();
     OtherLibraryDialog();
+    TerminateWinsOverOpen();
 }

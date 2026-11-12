@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 import nid_names
 
 PARENT = 'if .parent then "\\(.parent.owner.login)/\\(.parent.name)" else .nameWithOwner end'
-EXPORT = re.compile(r"^\+.*\bAPS5_VABI\s+(\w+)\s*\(")
+EXPORT = re.compile(r"^[+-].*\bAPS5_VABI\s+(\w+)\s*\(")
 NID_DISAMBIG = re.compile(r"_nid_disambig[0-9]+$")
 DEPENDS = re.compile(r'Depends on:[ \t]*((?:#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*|none\b)?(?:\r?\n[ \t]*[-*][ \t]*#\d+\b[^\r\n]*)*)')
 PLAIN_DEPENDS = re.compile(r'Depends on[ \t]+(#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*)')
@@ -21,6 +21,8 @@ HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))?", re.M)
 MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
 PROGRESS_EVERY = 100
+MAX_REPORT_CHARS = 60000
+EXPORT_PATHS = ("core/libs/prx/*.cpp", ":(exclude,icase)**/test/**", ":(exclude,icase)**/tests/**")
 _REPO_ROOTS = {}
 
 
@@ -377,24 +379,32 @@ def base_exports(ref):
     return found
 
 
+def merge_base(ref):
+    bases = git("merge-base", "--all", "refs/pr/base", ref).split()
+    if len(bases) == 1:
+        return bases[0]
+    return min(bases, key=lambda base: git("diff", "--name-only", "--no-renames", "-z", base, ref).count("\0"))
+
+
 def scan(pr):
     tree, conflicted = merge("refs/pr/base", pr["ref"])
     pr["tree"] = None if conflicted else commit(tree)
-    old, new = (git("merge-base", "refs/pr/base", pr["ref"]).strip(), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
+    old, new = (merge_base(pr["ref"]), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
     pr["files"], pr["added"] = set(), set()
     changes = git("diff", "--name-status", "--no-renames", "-z", old, new).split("\0")
     for status, path in zip(changes[::2], changes[1::2]):
         pr["files"].add(path)
         if status == "A":
             pr["added"].add(path)
-    diff = git("diff", "-U0", "--no-color", old, new, "--", "core/libs/prx/*.cpp")
+    diff = git("diff", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
     pr["exports"] = exports(diff)
     pr["added_exports"] = source_changed_exports(diff, "+")
     pr["removed_exports"] = source_changed_exports(diff, "-")
 
 
 def probe(pr):
-    changes = git("diff", "--name-status", "--no-renames", "-z", f"refs/pr/base...{pr['ref']}").split("\0")
+    base = merge_base(pr["ref"])
+    changes = git("diff", "--name-status", "--no-renames", "-z", base, pr["ref"]).split("\0")
     files, existing = set(), set()
     for status, path in zip(changes[::2], changes[1::2]):
         files.add(path)
@@ -402,7 +412,7 @@ def probe(pr):
             existing.add(path)
     if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
         return files, (set(), {}), existing
-    diff = git("diff", "-U0", "--no-color", f"refs/pr/base...{pr['ref']}", "--", "core/libs/prx/*.cpp")
+    diff = git("diff", "-U0", "--no-color", base, pr["ref"], "--", *EXPORT_PATHS)
     return files, (exports(diff), source_changed_exports(diff, "+")), existing
 
 
@@ -444,7 +454,8 @@ def hunks(pr, path):
 
 
 def clashes(a, b, path):
-    ranges = sorted((min(s1, s2), max(e1, e2)) for s1, e1 in hunks(a, path) for s2, e2 in hunks(b, path)
+    left, right = hunks(a, path), hunks(b, path)
+    ranges = sorted((min(s1, s2), max(e1, e2)) for s1, e1 in left for s2, e2 in right
                     if s1 <= e2 + 1 and s2 <= e1 + 1)
     merged = []
     for start, end in ranges:
@@ -546,9 +557,16 @@ def report(rows, blob, main_exports=None):
     if main_exports:
         if confirmed:
             lines.append("")
-        lines.append("Exports introduced here that are already present in `main`:")
+        lines.append("Exports with a name or library/NID already present in `main`:")
         lines.append("")
-        lines.append(f"- {cell(main_exports)}")
+        for name, finding in sorted(main_exports.items()):
+            same_key = finding.get("same_key", set())
+            other_libraries = finding.get("other_libraries", set())
+            if same_key:
+                details = ", ".join(f"{library} ({nid})" for library, nid in sorted(same_key))
+                lines.append(f"- {code_span(name)} (same library/NID already present: {details})")
+            if other_libraries:
+                lines.append(f"- {code_span(name)} (also exported by another library in `main`: {cell(other_libraries)}; may be intentional)")
     if uncompared:
         if confirmed:
             lines.append("")
@@ -561,7 +579,26 @@ def report(rows, blob, main_exports=None):
         ])
         for number, files in sorted(uncompared.items()):
             lines.append(f"| {pull(blob, number)} | {cell(files)} |")
-    return "\n".join(lines) + "\n"
+    body = "\n".join(lines) + "\n"
+    return body if len(body) <= MAX_REPORT_CHARS else truncated(lines)
+
+
+def truncated(lines):
+    cumulative = []
+    total = 0
+    for index, line in enumerate(lines):
+        if index:
+            total += 1
+        total += len(line)
+        cumulative.append(total)
+    keep = 1
+    for candidate in range(len(lines) - 1, 0, -1):
+        notice = f"_Report truncated: {len(lines) - candidate} more lines omitted._"
+        if cumulative[candidate - 1] + 1 + len(notice) + 1 <= MAX_REPORT_CHARS:
+            keep = candidate
+            break
+    notice = f"_Report truncated: {len(lines) - keep} more lines omitted._"
+    return "\n".join(lines[:keep] + [notice]) + "\n"
 
 
 def write_reports(out, rows, blob, main_exports=None):
@@ -576,13 +613,43 @@ def unverified_overlaps(rows):
 
 
 def main_export_findings(prs, current_exports):
+    by_name = {}
+    for (library, _nid), names in current_exports.items():
+        for name in names:
+            canonical = NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+            by_name.setdefault(canonical, set()).add(library)
+
     findings = {}
     for number, pr in prs.items():
-        candidates = set(pr.get("added_exports", {})) - set(pr.get("removed_exports", {}))
-        names = set()
-        for key in candidates & set(current_exports):
-            names.update(pr["added_exports"][key])
-            names.update(current_exports[key])
+        added = pr.get("added_exports", {})
+        removed = pr.get("removed_exports", {})
+        moved = {}
+        for (library, nid), removed_from in removed.items():
+            for name in removed_from:
+                canonical = NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+                moved.setdefault(canonical, set()).add(library)
+        for (library, _nid), added_to in added.items():
+            for name in added_to:
+                canonical = NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+                moved.get(canonical, set()).discard(library)
+        names = {}
+        for library, nid in added:
+            added_names = {
+                NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+                for name in added[(library, nid)]
+            }
+            removed_names = {
+                NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+                for name in removed.get((library, nid), ())
+            }
+            for canonical in added_names:
+                finding = names.setdefault(canonical, {"same_key": set(), "other_libraries": set()})
+                if (library, nid) in current_exports and (library, nid) not in removed:
+                    finding["same_key"].add((library, nid))
+                if canonical not in removed_names:
+                    finding["other_libraries"].update(by_name.get(canonical, set()) - {library} - moved.get(canonical, set()))
+                if not finding["same_key"] and not finding["other_libraries"]:
+                    names.pop(canonical)
         if names:
             findings[number] = names
     return findings

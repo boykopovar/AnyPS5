@@ -56,7 +56,7 @@ def merged_pull_requests(repo, mergebase, base, paths):
     found = {}
     if not paths:
         return found
-    for line in lines(repo, "--literal-pathspecs", "-c", "core.quotepath=off", "log", "--first-parent", "--format=%h %s", f"{mergebase}..{base}", "--", *paths):
+    for line in lines(repo, "--literal-pathspecs", "-c", "core.quotepath=off", "log", "--first-parent", "--no-renames", "--format=%h %s", f"{mergebase}..{base}", "--", *paths):
         match = PULL_REQUEST.search(line)
         if match:
             found[int(match.group(1) or match.group(2))] = line.split(" ", 1)[0]
@@ -73,8 +73,8 @@ def report(repo, base, head):
     mergebase = found.stdout.strip()
     behind = int(git(repo, "rev-list", "--count", f"{head}..{base}", "--").stdout)
     ahead = int(git(repo, "rev-list", "--count", f"{base}..{head}", "--").stdout)
-    mine = set(names(repo, "diff", "-z", "--name-only", mergebase, head, "--"))
-    theirs = set(names(repo, "diff", "-z", "--name-only", mergebase, base, "--"))
+    mine = set(names(repo, "diff", "-z", "--name-only", "--no-renames", mergebase, head, "--"))
+    theirs = set(names(repo, "diff", "-z", "--name-only", "--no-renames", mergebase, base, "--"))
     shared = sorted(mine & theirs)
     return {
         "base": base,
@@ -120,7 +120,7 @@ def main(argv=None):
             remote, _, branch = ref.partition("/")
             if not branch:
                 parser.error("--fetch needs a remote-tracking base such as upstream/main")
-            git(args.repo, "fetch", "--quiet", remote, branch)
+            git(args.repo, "fetch", "--quiet", "--refmap=", "--", remote, f"+refs/heads/{branch}:refs/remotes/{ref}")
 
         if args.fetch:
             if args.base:

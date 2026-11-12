@@ -103,7 +103,7 @@ def report_overlaps_dump(report, dump):
         return True
     exists = report.exists()
     for path in dump.rglob("*"):
-        if path.is_symlink() and path.is_dir() and destination.is_relative_to(comparison_path(path)):
+        if path.is_dir() and destination.is_relative_to(comparison_path(path)):
             return True
         if exists and path.is_file() and report.samefile(path):
             return True
@@ -126,14 +126,31 @@ def main(argv=None):
         parser.error(f"{args.relinker}: no such relinker")
     relinker = Path(args.relinker).resolve()
     dump_path = comparison_path(dump)
+    try:
+        dump_inputs = [dump / "eboot.bin", *modules_of(dump)]
+        dump_directories = []
+        for relative in STANDARD_DIRECTORIES + EXTRA_DIRECTORIES:
+            directory = dump / relative
+            if directory.is_dir():
+                dump_directories.append(directory)
+                dump_inputs.extend((directory, *modules_of(directory)))
+    except (OSError, RuntimeError) as error:
+        parser.error(f"{dump}: cannot enumerate dump inputs before cleanup: {error}")
     if args.json:
         report = Path(args.json)
         try:
             overlaps = report_overlaps_dump(report, dump)
+            relinker_alias = comparison_path(report) == comparison_path(relinker) or (report.exists() and report.samefile(relinker))
         except (OSError, RuntimeError) as error:
             parser.error(f"{report}: cannot check JSON output against the input dump: {error}")
+        if relinker_alias:
+            parser.error(f"{report}: JSON output would overwrite the relinker")
         if overlaps:
             parser.error(f"{report}: JSON output overlaps the input dump")
+        if report.is_dir():
+            parser.error(f"{report}: JSON output is a directory")
+        if not report.resolve().parent.is_dir():
+            parser.error(f"{report.resolve().parent}: no such directory")
     with tempfile.TemporaryDirectory() as temporary:
         work = Path(args.work) if args.work else Path(temporary)
         source, output = work / "source", work / "output"
@@ -144,14 +161,15 @@ def main(argv=None):
                 parser.error(f"{generated}: cannot check work directory against the input dump: {error}")
             if dump_path.is_relative_to(generated_path) or generated_path.is_relative_to(dump_path):
                 parser.error(f"{generated}: work directory overlaps the input dump")
-            for input_path in (Path(args.relinker), *(Path(library) for library in args.libs)):
+            for input_path in (Path(args.relinker), *(Path(library) for library in args.libs), *dump_inputs):
                 try:
                     resolved = comparison_path(input_path)
                 except (OSError, RuntimeError) as error:
                     parser.error(f"{input_path}: cannot check work directory against input: {error}")
                 supplied = Path(os.path.abspath(input_path))
                 generated_spelling = Path(os.path.abspath(generated))
-                if supplied.is_relative_to(generated_spelling) or resolved.is_relative_to(generated_path):
+                if (supplied.is_relative_to(generated_spelling) or resolved.is_relative_to(generated_path)
+                        or input_path in dump_directories and generated_path.is_relative_to(resolved)):
                     parser.error(f"{generated}: work directory contains input {input_path}")
         for generated in (source, output):
             try:

@@ -15,6 +15,7 @@ std::int64_t PwriteSharedMemory_nid_no_patch(int descriptor, const void* buffer,
 std::int64_t SeekSharedMemory_nid_no_patch(int descriptor, std::int64_t offset, int whence);
 int TruncateSharedMemory_nid_no_patch(int descriptor, std::int64_t length);
 #ifdef _WIN32
+bool LimitSharedMemoryWrite_nid_no_patch(int descriptor, std::size_t& size, std::int64_t offset);
 int SetSharedMemoryMode_nid_no_patch(int descriptor, int mode);
 int SharedMemoryDescriptorWritable_nid_no_patch(int descriptor);
 void TrackSharedMemoryDescriptor_nid_no_patch(int descriptor, bool writable);
