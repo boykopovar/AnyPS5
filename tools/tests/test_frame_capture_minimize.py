@@ -7,6 +7,7 @@ import re
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import frame_capture_minimize
@@ -33,7 +34,11 @@ command, source, *rest = sys.argv[1:]
 if command == 'inspect':
     print(json.dumps({'calls': [], 'chunks': []}))
 else:
-    pathlib.Path(rest[1]).mkdir(parents=True)
+    target = pathlib.Path(rest[1])
+    if target.exists() or target.is_symlink():
+        print('destination already exists', file=sys.stderr)
+        raise SystemExit(2)
+    target.mkdir(parents=True)
 """, encoding="utf-8")
         replay = root / "replay.py"
         replay.write_text(replay_source or "print('failure')\nraise SystemExit(7)\n", encoding="utf-8")
@@ -333,6 +338,23 @@ if command == 'inspect':
                 result = frame_capture_minimize.main(arguments)
             self.assertEqual(result, 0)
             self.assertTrue(output.is_dir())
+
+    def test_error_does_not_remove_output_created_after_initial_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments, _, _, output = self.empty_cli(root)
+
+            def output_appears_during_inspection(minimizer):
+                minimizer.output.mkdir()
+                (minimizer.output / "keep.txt").write_text("owned elsewhere", encoding="utf-8")
+                return {"calls": [], "chunks": []}
+
+            with patch.object(frame_capture_minimize.Minimizer, "inspect", output_appears_during_inspection):
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    result = frame_capture_minimize.main(arguments)
+
+            self.assertEqual(result, 2)
+            self.assertEqual((output / "keep.txt").read_text(encoding="utf-8"), "owned elsewhere")
 
     def test_baseline_and_final_confirmation_counts(self):
         with tempfile.TemporaryDirectory() as directory:

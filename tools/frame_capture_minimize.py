@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -28,7 +29,8 @@ class Minimizer:
         self.filter = Path(args.filter).resolve()
         self.replay = Path(args.replay).resolve()
         self.capture = Path(args.capture).resolve()
-        self.output = Path(args.output).resolve()
+        self.output = Path(os.path.abspath(args.output))
+        self.output_created = False
 
     @staticmethod
     def command(path):
@@ -206,6 +208,7 @@ class Minimizer:
             plan.unlink(missing_ok=True)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "final capture filtering failed")
+        self.output_created = True
 
 
 def parse_args(argv=None):
@@ -235,7 +238,7 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
-    if args.output.exists():
+    if args.output.exists() or args.output.is_symlink():
         print(f"output already exists: {args.output}", file=sys.stderr)
         return 2
     try:
@@ -274,13 +277,14 @@ def main(argv=None):
             if not matched:
                 print(f"final capture failed confirmation ({detail}): {minimizer.output}", file=sys.stderr)
                 shutil.rmtree(minimizer.output, ignore_errors=True)
+                minimizer.output_created = False
                 return 1
         completeness = "minimality search completed" if calls_complete and chunks_complete else "trial limit reached; result is reduced but may not be minimal"
         print(f"wrote {minimizer.output}; removed {len(removed_calls)} calls and {len(removed_chunks | auto_removed_chunks)} chunks in {minimizer.trials} trials; final predicate confirmed {args.confirm_runs} times; {completeness}")
         return 0
     except (OSError, RuntimeError, subprocess.SubprocessError, KeyError, TypeError) as error:
         print(str(error), file=sys.stderr)
-        if "minimizer" in locals():
+        if "minimizer" in locals() and minimizer.output_created:
             shutil.rmtree(minimizer.output, ignore_errors=True)
         return 2
 
