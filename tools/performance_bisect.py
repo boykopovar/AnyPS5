@@ -298,6 +298,7 @@ def bisect(repo, good, bad, recipe, output_dir, temp_dir=None):
         root = Path(temporary)
         worktree = root / "source"
         results = root / "results"
+        results.mkdir()
         git(repo, "worktree", "add", "--detach", str(worktree), good_sha)
         try:
             baseline = measure_commit(repo, worktree, results, recipe, good_sha)
