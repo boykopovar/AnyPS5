@@ -65,6 +65,54 @@ static void TestCapturedSampleFilter() {
     Require(samples == std::array<std::uint8_t, 4>{0x11, 0x22, 0x33, 0x44});
 }
 
+static void TestDiscardQueuedAudioBelowThreshold() {
+    std::array<std::uint8_t, 8> discarded{};
+    std::size_t calls = 0;
+    audioin::detail::discardQueuedAudio(0, discarded.data(), discarded.size(),
+        [&calls](std::uint8_t*, std::uint32_t) {
+            ++calls;
+            return 0u;
+        });
+    Require(calls == 0);
+}
+
+static void TestDiscardQueuedAudioInChunks() {
+    std::array<std::uint8_t, 4> discarded{};
+    std::array<std::uint32_t, 3> requested{};
+    std::size_t calls = 0;
+    audioin::detail::discardQueuedAudio(10, discarded.data(), discarded.size(),
+        [&requested, &calls](std::uint8_t*, std::uint32_t chunk) {
+            requested[calls++] = chunk;
+            return chunk;
+        });
+    Require(calls == 3);
+    Require(requested == std::array<std::uint32_t, 3>{4, 4, 2});
+}
+
+static void TestDiscardQueuedAudioStopsAtPartialRead() {
+    std::array<std::uint8_t, 4> discarded{};
+    std::array<std::uint32_t, 2> requested{};
+    std::size_t calls = 0;
+    audioin::detail::discardQueuedAudio(10, discarded.data(), discarded.size(),
+        [&requested, &calls](std::uint8_t*, std::uint32_t chunk) {
+            requested[calls++] = chunk;
+            return chunk == 4 ? 2u : chunk;
+        });
+    Require(calls == 2);
+    Require(requested == std::array<std::uint32_t, 2>{4, 4});
+}
+
+static void TestDiscardQueuedAudioStopsOnNoProgress() {
+    std::array<std::uint8_t, 4> discarded{};
+    std::size_t calls = 0;
+    audioin::detail::discardQueuedAudio(10, discarded.data(), discarded.size(),
+        [&calls](std::uint8_t*, std::uint32_t) {
+            ++calls;
+            return 0u;
+        });
+    Require(calls == 1);
+}
+
 static void TestCaptureMuteGenerations() {
     audioin::detail::CaptureMuteGenerations generations;
     Require(!generations.Observe(4, 8));
@@ -80,5 +128,9 @@ int main() {
     TestFocusMuteState();
     TestCapturedSampleFilter();
     TestCaptureMuteGenerations();
+    TestDiscardQueuedAudioBelowThreshold();
+    TestDiscardQueuedAudioInChunks();
+    TestDiscardQueuedAudioStopsAtPartialRead();
+    TestDiscardQueuedAudioStopsOnNoProgress();
     return 0;
 }
