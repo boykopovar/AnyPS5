@@ -100,12 +100,12 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
     for (const auto& directory : directories) {
         if (!std::filesystem::is_directory(directory)) throw Domain::RelinkerException("Guest module path is not a directory: " + Io::Utf8Path(directory));
         for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-            if (Io::Utf8Path(entry.path().filename()).ends_with(GuestModuleSuffix)) continue;
-            if (excludedModules.contains(Io::Utf8Path(entry.path().filename()))) {
-                unmatchedExclusions.erase(Io::Utf8Path(entry.path().filename()));
+            const auto filename = Io::Utf8Path(entry.path().filename());
+            if (filename.ends_with(GuestModuleSuffix) || !entry.is_regular_file()) continue;
+            if (excludedModules.contains(filename)) {
+                unmatchedExclusions.erase(filename);
                 continue;
             }
-            if (!entry.is_regular_file()) continue;
             if (Io::SameFile(entry.path(), inputPath)) continue;
             const auto header = ReadCandidateHeader(entry.path());
             if (header.Elf) paths.push_back(entry.path());
