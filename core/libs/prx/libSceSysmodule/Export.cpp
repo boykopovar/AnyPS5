@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceSysmodule/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -207,7 +208,12 @@ int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t
     }
     const auto existing = gHandles.find(id);
     if (existing != gHandles.end()) {
-        *handle = existing->second;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(handle, &existing->second, sizeof(existing->second));
+        errno = savedErrno;
+        if (!copied) {
+            throw std::runtime_error("sceSysmoduleGetModuleHandleInternal: invalid handle pointer");
+        }
         return 0;
     }
     void* module = openHostModule(name);
@@ -216,7 +222,12 @@ int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t
     }
     const auto value = static_cast<KernelModule>(reinterpret_cast<std::intptr_t>(module));
     gHandles.emplace(id, value);
-    *handle = value;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(handle, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error("sceSysmoduleGetModuleHandleInternal: invalid handle pointer");
+    }
     return 0;
 }
 
@@ -262,7 +273,10 @@ int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, 
     std::lock_guard<std::mutex> lock(gMutex);
     gLoadCount[id]++;
     if (ret) {
-        *ret = 0;
+        const int val = 0;
+        const int savedErrno = errno;
+        GuestCopyOut_nid_no_patch(ret, &val, sizeof(val));
+        errno = savedErrno;
     }
     return 0;
 }
@@ -335,7 +349,10 @@ int APS5_VABI sceSysmoduleUnloadModuleInternalWithArg(std::uint32_t id, int argc
     }
     it->second--;
     if (ret) {
-        *ret = 0;
+        const int val = 0;
+        const int savedErrno = errno;
+        GuestCopyOut_nid_no_patch(ret, &val, sizeof(val));
+        errno = savedErrno;
     }
     return 0;
 }
