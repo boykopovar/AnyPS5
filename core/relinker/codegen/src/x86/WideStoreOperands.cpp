@@ -83,6 +83,8 @@ std::optional<WideStoreOperands> DecodeVexWideStore(const std::uint8_t* data, co
     const std::size_t displacementSize = mod == ModRmModDisp8 ? Disp8Size : (mod == ModRmModDisp32 || ripRelative || absolute) ? Disp32Size : 0;
     if (cursor + displacementSize != length)
         return std::nullopt;
+    if (addressSize32 && !ripRelative && !absoluteNoIndex)
+        throw CodegenException("32-bit addressed 256-bit store with a base or index may wrap its upper half when split");
     std::int64_t displacement = 0;
     if (displacementSize == Disp8Size) {
         displacement = static_cast<std::int8_t>(data[cursor]);
