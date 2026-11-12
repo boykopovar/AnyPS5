@@ -1,3 +1,5 @@
+/* Derived from LibreSSL 4.0.0 (openbsd ce488b78e0bd994780569df718596b9776ff681a) src/lib/libcrypto/x509/x509_vfy.c (x509_vfy.c,v 1.145)
+ * and src/lib/libcrypto/x509/x509_vpm.c (x509_vpm.c,v 1.45) */
 /* $OpenBSD: x509_vfy.c,v 1.145 2024/08/28 07:37:50 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
