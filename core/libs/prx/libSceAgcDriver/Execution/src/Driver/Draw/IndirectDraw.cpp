@@ -49,7 +49,10 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
         } else if (conflict) fail(Path::FetchUnknown);
         else if (k < 0) {
             static const bool gpuUnfolded = std::getenv("APS5_NO_GPU_UNFOLDED_INDIRECT") == nullptr;
-            if (!gpuUnfolded) fail(Path::NotFolded);
+            const auto first = static_cast<std::int32_t>(frontProgram.firstUserSgpr);
+            const auto bit = static_cast<std::uint32_t>(p - first);
+            const bool read = p < first || bit >= 64u || (result.userDataRegisterReads & (std::uint64_t{1} << bit)) != 0;
+            if (!gpuUnfolded || read) fail(Path::NotFolded);
             rule = Rule::Constant;
             constant = x;
         } else if (k != p || shared) fail(Path::NotFolded);

@@ -576,6 +576,7 @@ std::string Run(Fixture& fixture) {
         noReads.instanceOffsetShared = false;
         noReads.vertexOffsetConflict = false;
         noReads.instanceOffsetConflict = false;
+        noReads.userDataRegisterReads &= ~((std::uint64_t{1} << (BaseVertexSgpr - 8u)) | (std::uint64_t{1} << (StartInstanceSgpr - 8u)));
         AgcDriver::Pm4::DrawParameters packet{indexAddress, static_cast<std::uint32_t>(Indices.size()), 2, 0, 0, true, 0, 0};
         packet.indirect = indexedIndirect;
         failures += Classified(fixture, what, noReads, staleUserData, packet, std::nullopt, Rule::Constant);
@@ -593,6 +594,7 @@ std::string Run(Fixture& fixture) {
         noReads.instanceOffsetShared = false;
         noReads.vertexOffsetConflict = false;
         noReads.instanceOffsetConflict = false;
+        noReads.userDataRegisterReads &= ~((std::uint64_t{1} << (BaseVertexSgpr - 8u)) | (std::uint64_t{1} << (StartInstanceSgpr - 8u)));
         auto longIndirect = indexedIndirect;
         longIndirect.count = 300;
         AgcDriver::Pm4::DrawParameters packet{indexAddress, static_cast<std::uint32_t>(Indices.size()), 2, 0, 0, true, 0, 0};
