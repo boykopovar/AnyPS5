@@ -123,9 +123,8 @@ int APS5_VABI get_sdk_compiled_version_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI get_self_auth_info_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI get_self_auth_info_nid_postfix(KernelAuthInfo* info) {
+    return get_authinfo_nid_postfix(0, info);
 }
 
 int APS5_VABI get_vm_map_timestamp_nid_postfix(void) {
@@ -182,8 +181,18 @@ int APS5_VABI openintr_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_attr_getaffinity_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_attr_getaffinity_np_nid_postfix(const PthreadAttr* attr, std::size_t cpusetSize, void* cpuset) {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestErange = 34;
+    constexpr int GuestEfault = 14;
+    if (!attr || !*attr) return GuestEinval;
+    if (cpusetSize < sizeof(KernelCpumask)) return GuestErange;
+    if (!cpuset) return GuestEfault;
+    const KernelCpumask mask = (*attr)->_affinity;
+    std::memcpy(cpuset, &mask, sizeof(mask));
+    if (cpusetSize > sizeof(mask)) {
+        std::memset(static_cast<char*>(cpuset) + sizeof(mask), 0, cpusetSize - sizeof(mask));
+    }
     return 0;
 }
 
@@ -194,8 +203,22 @@ int APS5_VABI pthread_attr_getsolosched_np_nid_postfix(const PthreadAttr* attr, 
     return 0;
 }
 
-int APS5_VABI pthread_attr_setaffinity_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_attr_setaffinity_np_nid_postfix(PthreadAttr* attr, std::size_t cpusetSize, const void* cpuset) {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestErange = 34;
+    constexpr int GuestEfault = 14;
+    if (!attr || !*attr) return GuestEinval;
+    if (cpusetSize == 0) return 0;
+    if (cpusetSize < sizeof(KernelCpumask)) return GuestErange;
+    if (!cpuset) return GuestEfault;
+    const auto* bytes = static_cast<const unsigned char*>(cpuset);
+    for (std::size_t i = sizeof(KernelCpumask); i < cpusetSize; ++i) {
+        if (bytes[i] != 0) return GuestEinval;
+    }
+    KernelCpumask mask = 0;
+    std::memcpy(&mask, bytes, sizeof(mask));
+    (*attr)->_affinity = mask;
+    (*attr)->_affinityExplicit = true;
     return 0;
 }
 
@@ -2091,16 +2114,6 @@ int APS5_VABI unmount_nid_postfix(void) {
 }
 
 int APS5_VABI vfork_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI wait3_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI wait4_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
