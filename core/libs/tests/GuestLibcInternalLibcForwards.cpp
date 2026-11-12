@@ -23,6 +23,7 @@ extern const TypeRecord _ZTISt9exception_nid_postfix;
 extern const TypeRecord _ZTISt11logic_error_nid_postfix;
 extern const TypeRecord _ZTISt13runtime_error_nid_postfix;
 extern const TypeRecord _ZTISt14overflow_error_nid_postfix;
+extern const void* const _ZTVSt18bad_variant_access_nid_postfix[5];
 
 void APS5_VABI SceV2Catch(Thrower thrower, const void* argument);
 
@@ -94,6 +95,25 @@ void CheckCategories() {
         _ZSt15system_categoryv_nid_postfix(), "system", "_System_error_category D1 frees nothing");
     CheckCompleteDestructor(&sceLibcInternalGenericErrorCategoryDestructor_nid_no_patch,
         _ZSt16generic_categoryv_nid_postfix(), "generic", "_Generic_error_category D1 frees nothing");
+    CheckDeletingDestructor(&_ZNSt23_Generic_error_categoryD0Ev_nid_postfix,
+        _ZSt16generic_categoryv_nid_postfix(), "_Generic_error_category D0 releases the object");
+    CheckCompleteDestructor(&_ZNSt22_Future_error_categoryD1Ev_nid_postfix,
+        _ZSt15future_categoryv_nid_postfix(), "future", "_Future_error_category D1 frees nothing");
+}
+
+void CheckBadVariantAccess() {
+    const void* vtable = &_ZTVSt18bad_variant_access_nid_postfix[2];
+    LibcException::ExceptionObject object{vtable, nullptr};
+    releases = 0;
+    _ZNSt18bad_variant_accessD1Ev_nid_postfix(&object);
+    Require(releases == 0 && object.vtable == vtable, "bad_variant_access D1 frees nothing");
+
+    auto* allocated = static_cast<LibcException::ExceptionObject*>(_Znwm_nid_postfix(sizeof(void*)));
+    allocated->vtable = vtable;
+    releases = 0;
+    lastReleased = nullptr;
+    _ZNSt18bad_variant_accessD0Ev_nid_postfix(allocated);
+    Require(releases == 1 && lastReleased == allocated, "bad_variant_access D0 releases the object through operator delete");
 }
 
 TypeRecord Named(const char* name) {
@@ -175,6 +195,7 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
 
     CheckCategories();
+    CheckBadVariantAccess();
     CheckOverflow();
     CheckMutex();
 
