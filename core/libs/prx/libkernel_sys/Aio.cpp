@@ -275,13 +275,24 @@ int APS5_VABI aio_suspend_nid_postfix(const GuestAiocb* const* list, int count, 
 }
 
 std::int64_t APS5_VABI aio_waitcomplete_nid_postfix(GuestAiocb** result, const KernelTimespec* timeout) {
-    if (result != nullptr) *result = nullptr;
+    KernelTimespec localTimeout{};
+    if (timeout != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&localTimeout, timeout, sizeof(localTimeout))) {
+            return Fail(GuestEfault);
+        }
+    }
+    if (result != nullptr) {
+        GuestAiocb* nullCb = nullptr;
+        if (!GuestCopyOut_nid_no_patch(result, &nullCb, sizeof(nullCb))) {
+            return Fail(GuestEfault);
+        }
+    }
     std::optional<std::uint64_t> deadline;
     bool poll = false;
     if (timeout != nullptr) {
-        poll = timeout->tv_sec == 0 && timeout->tv_nsec == 0;
+        poll = localTimeout.tv_sec == 0 && localTimeout.tv_nsec == 0;
         if (!poll) {
-            const auto wait = WaitTime(*timeout);
+            const auto wait = WaitTime(localTimeout);
             if (!wait) return Fail(GuestEinval);
             deadline = TimedWait::NowNanos() + static_cast<std::uint64_t>(wait->count());
         }
@@ -294,7 +305,12 @@ std::int64_t APS5_VABI aio_waitcomplete_nid_postfix(GuestAiocb** result, const K
         if (!deadline) aio.changed.Wait(lock);
         else if (!aio.changed.WaitUntil(lock, *deadline) && aio.done.empty()) return Fail(GuestEagain);
     }
-    if (result != nullptr) *result = aio.done.front()->user;
+    if (result != nullptr) {
+        GuestAiocb* user = aio.done.front()->user;
+        if (!GuestCopyOut_nid_no_patch(result, &user, sizeof(user))) {
+            return Fail(GuestEfault);
+        }
+    }
     return Consume(aio, aio.done.begin());
 }
 
