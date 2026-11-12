@@ -184,7 +184,7 @@ int APS5_VABI sceVideoOutSetFlipRate(int handle, int rate) try {
     if (cfg == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
-    if (rate < 0 || rate > 2) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    if (rate < 0 || rate > 3) return VIDEO_OUT_ERROR_INVALID_VALUE;
     std::lock_guard lock(cfg->mutex);
     cfg->Check();
     cfg->flipRate = rate;
