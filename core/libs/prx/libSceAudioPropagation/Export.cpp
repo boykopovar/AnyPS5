@@ -443,7 +443,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHan
     if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     if (!outPath) return ErrorNullPointer;
     if (index >= MaxPaths) return ErrorInvalidArgument;
-    *outPath = state.sourcePaths.at(source)[index];
+    if (!copyGuestOut(outPath, state.sourcePaths.at(source)[index])) return ErrorNullPointer;
     return 0;
 }
 
