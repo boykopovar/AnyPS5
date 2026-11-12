@@ -176,6 +176,7 @@ def render_probe_metadata(probe, catalog_digest):
     return {
         "schema_version": 1,
         "catalog_sha256": catalog_digest,
+        "probe_sha256": probe_digest(probe),
         "id": probe["id"],
         "instruction": probe["instruction"],
         "description": probe["description"],
@@ -187,6 +188,11 @@ def render_probe_metadata(probe, catalog_digest):
         "memory": probe["memory"],
         "rows": probe["rows"],
     }
+
+
+def probe_digest(probe):
+    encoded = json.dumps(probe, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def generate(probes, catalog_digest, output_dir):
@@ -247,6 +253,7 @@ def make_result(probe, digest, device_label, target, runtime, outputs):
         "probe_instruction": probe["instruction"],
         "probe_description": probe["description"],
         "probe_catalog_sha256": digest,
+        "probe_sha256": probe_digest(probe),
         "device_label": device_label,
         "measured_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -285,8 +292,8 @@ def read_measurement(path, probe, digest, device_label):
         report = compare_results.read_report(path)
     except (OSError, UnicodeError, ValueError) as error:
         return "invalid", str(error)
-    if report.get("probe_catalog_sha256") != digest:
-        return "stale", "catalog digest differs"
+    if report.get("probe_sha256") != probe_digest(probe):
+        return "stale", "probe definition digest differs"
     expected = {
         "probe_id": probe["id"],
         "probe_instruction": probe["instruction"],
