@@ -1,8 +1,12 @@
 # libSceNpWebApi technical debt
 
+### Functional
+
+- [sceNpWebApiGetMemoryPoolStats](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi) - returning `0x80552902` (`SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT`) when the `stats` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceNpWebApi/InventoryExports.cpp) - 38 NIDs occur as functions under the same module and logical library in both version-labelled images. The labels do not independently authenticate retail firmware provenance; the NIDs are absent from the pinned public 3.20 catalogue. Names, prototypes and behavior are unverified. These import-resolution declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Additional callable exports](../../../core/libs/prx/libSceNpWebApi/InventoryExports.cpp) - 36 NIDs occur as functions under the same module and logical library in both version-labelled images. The labels do not independently authenticate retail firmware provenance; the NIDs are absent from the pinned public 3.20 catalogue. Names, prototypes and behavior are unverified. These import-resolution declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
@@ -37,13 +41,13 @@
 | Unknown | `meMsH0c36rQ` |
 | Unknown | `nP9mHqC8v4M` |
 | Unknown | `nrDh9GesOyk` |
-| Unknown | `ojGP5vur+qM` |
 | Unknown | `ugei4b97OXE` |
 | Unknown | `vQgD7uDMKaA` |
 | Unknown | `vm9OVSS7E18` |
 | Unknown | `wNSQ60gepNA` |
 | Unknown | `wXXTksptCEo` |
-| Unknown | `zQE2rxZdLy8` |
+
+- [Unknown NIDs `ojGP5vur+qM` and `zQE2rxZdLy8`](../../../core/libs/prx/libSceNpWebApi/InventoryExports.cpp) (libSceNpWebApi) - names are unknown; the pointer parameter and `bool` result come from the bodies, not a prototype, and nothing is claimed about the object beyond the field read. In firmware 13.42's `libSceNpWebApi.sprx` (SHA-256 `682be03706848ada18ac61ba04b39bc1fbee29e6f61ef189dd6371d21463de6b`), read from disassembly and not run on a console, `ojGP5vur+qM` (`0xea70`) answers whether the 64-bit value at `+0x20` of its argument differs from -1 and `zQE2rxZdLy8` (`0xe6d0`) whether the 32-bit value at `+0xc` does; each writes only `al` and checks no pointer, so firmware faults on a bad one, and here that throws.
 
 ### Unknown function info
 
@@ -55,10 +59,10 @@
 | Name | NID |
 | --- | --- |
 | `sceNpWebApiClearAllUnusedConnection` | `KQIkDGf80PQ` |
-| `sceNpWebApiClearUnusedConnection` | `f-pgaNSd1zc` |
-| `sceNpWebApiGetConnectionStats` | `UJ8H+7kVQUE` |
 | `sceNpWebApiGetErrorCode` | `2qSZ0DgwTsc` |
 | `sceNpWebApiSetMaxConnection` | `gRiilVCvfAI` |
+
+- [sceNpWebApiClearUnusedConnection and sceNpWebApiGetConnectionStats](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi) - HTTP connections are not modelled, so a call that passes the checks throws. Only the argument widths come from the bodies; names and pointee types are unverified. In firmware 13.42's `libSceNpWebApi.sprx` (SHA-256 `682be03706848ada18ac61ba04b39bc1fbee29e6f61ef189dd6371d21463de6b`), read from disassembly and not run on a console: `0xbc0` returns `INVALID_ARGUMENT` for a null second argument and `0xbf0` for a null second or third one, before any lookup; then both look up the library context named by the top 16 bits of the 32-bit first argument (`LIB_CONTEXT_NOT_FOUND`) and the user context (`USER_CONTEXT_NOT_FOUND`), as `findUserContext` does. The third argument of `0xbc0` is a byte.
 
 - [sceNpWebApiAbortHandle, sceNpWebApiAddHttpRequestHeader, sceNpWebApiCheckTimeout, sceNpWebApiCreateMultipartRequest, sceNpWebApiSendRequest2, sceNpWebApiSetHandleTimeout, sceNpWebApiSetMultipartContentType, sceNpWebApiSetRequestTimeout](../../../core/libs/prx/libSceNpWebApi/Export.cpp) - the timeout unit is unverified: [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/1d8004a22f/src/core/libraries/np/np_web_api/np_web_api_internal.cpp) logs both timeouts as ms but adds them to microsecond process time, as done here from a request's first send. Not checked on a console; prototypes are [Orbital](https://github.com/AlexAltea/orbital/blob/b321fcdbd7/tools/ida/db_types.json#L1665-L1696)'s, checks shadPS4's. Headers, multipart types and handle timeouts go unused, as nothing is sent. `sceNpWebApiCheckTimeout` aborts expired requests at most once per 1000 µs, then a send returns `NOT_SIGNED_IN`, not `ABORTED`.
 - [sceNpWebApiAddMultipartPart, sceNpWebApiSendMultipartRequest, sceNpWebApiSendMultipartRequest2](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi, PS4) - no PSN transport is implemented: part headers and body bytes are not transmitted and `responseInformation` is not populated. After all declared parts reach `contentLength`, sending fails with `SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN`, or `SCE_NP_WEBAPI_ERROR_ABORTED` if aborted before expiry. Unmeasured on a console; parameter types, 1-based part indexing and multi-part byte accumulation follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/2183807e592b36d4440384878165b43d930c1dee/src/core/libraries/np/np_web_api/np_web_api_internal.cpp#L606-L777) (`np_web_api.h` L53-L62 and L78-L83, `np_web_api.cpp` L181-L187 and L512-L537). Non-multipart requests and non-zero `headerNum` with a null `headers` pointer are unverified in shadPS4 and throw through `NotImplemented_nid_no_patch`.

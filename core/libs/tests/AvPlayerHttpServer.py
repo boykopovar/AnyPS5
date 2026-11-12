@@ -74,6 +74,25 @@ references = {
     "network-empty": ("//{authority}?empty=network#fragment", "/?empty=network"),
 }
 redirected = set()
+empty_ranges = {
+    "lower": "bytes */0",
+    "title": "Bytes */0",
+    "upper": "BYTES */0",
+    "mixed": "bYtEs */0",
+    "padded": "bytes */000",
+    "other-unit": "items */0",
+    "bad-unit": "BYTES= */0",
+    "missing-length": "bytes */",
+    "nonzero": "bytes */1",
+    "negative": "bytes */-0",
+    "signed": "bytes */+0",
+    "suffix": "bytes */0junk",
+    "spacing": "bytes * /0",
+    "unknown": "bytes */*",
+    "overflow": "bytes */18446744073709551616",
+    "satisfied": "bytes 0-0/0",
+    "missing-header": None,
+}
 
 
 
@@ -97,8 +116,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def respond(self):
         path = urllib.parse.urlsplit(self.path).path
+        transformed = path.startswith("/transformed/")
+        if transformed:
+            path = path.removeprefix("/transformed")
         if path.startswith("/identity/"):
-            self.identity(path)
+            self.identity(path, transformed)
             return
         requests.append((path, self.headers.get("Range")))
         targets.append(self.path)
@@ -154,7 +176,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         full = path.startswith(("/ignore/", "/full/", "/full-chunk/", "/full-close/"))
         if not full and start >= len(content):
             self.send_response(416)
-            self.send_header("Content-Range", f"bytes */{len(content)}")
+            content_range = empty_ranges[path.split("/")[2]] if path.startswith("/empty-range/") else f"bytes */{len(content)}"
+            if content_range is not None:
+                self.send_header("Content-Range", content_range)
             self.send_header("Content-Length", "13")
             self.send_header("Connection", "close")
             self.end_headers()
@@ -195,7 +219,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             self.wfile.write(body)
 
-    def identity(self, path):
+    def identity(self, path, transformed=False):
         name = path.split("/")[2]
         if name == "late-target" or urllib.parse.urlsplit(self.path).query or self.headers.get("Host", "").startswith("localhost:"):
             identity_targets.append(self.path)
@@ -324,7 +348,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         chunked = trailer_response or bool(trailers) or name == "initial-chunk" or full and name in {"absent-chunk", "fallback-chunk"} or failed and name == "late-chunk"
         closed = name == "initial-close" or full and name == "absent-close"
         short = full and name == "fallback-short" or failed and name == "late-short"
-        self.send_response_only(status)
+        self.send_response_only(203 if transformed and status == 200 else status)
         if date is not None:
             self.send_header("Date", date)
         if etag is not None:
@@ -370,10 +394,13 @@ with Server(("127.0.0.1", 0), Handler) as server, Server(("127.0.0.1", 0), Handl
     if mode == "avplayer":
         assert {"/range/avplayer.mp4", "/chunk/avplayer.webm", "/ignore/avplayer.mp4", "/redirect/avplayer.mp4"}.issubset({path for path, _ in requests})
     if mode == "client":
+        for name in empty_ranges:
+            assert (f"/empty-range/{name}/empty.bin", "bytes=0-65535") in requests
         assert set(references) == redirected
         assert {target for _, target in references.values()}.issubset(targets)
         expected = {"/range/payload.bin", "/range/alternate.bin", "/full/payload.bin", "/full-chunk/payload.bin", "/full-close/payload.bin", "/client-redirect/payload.bin", "/changed/payload.bin", "/modified/payload.bin", "/bad/payload.bin", "/short/payload.bin", "/chunk-bad/payload.bin", "/stall/payload.bin", "/stall-open/payload.bin", "/sync/read", "/sync/open"}
         assert expected.issubset({path for path, _ in requests})
+    if mode in {"client", "client203"}:
         assert set(identity_requests) == fallbacks | single_responses | validated_responses | invalid_responses
         assert not identity_targets, identity_targets
         for name, history in identity_requests.items():
@@ -391,6 +418,7 @@ with Server(("127.0.0.1", 0), Handler) as server, Server(("127.0.0.1", 0), Handl
                     assert len(history) == 2, (name, history)
                 else:
                     assert history[2:] == [("bytes=0-65535", validator)], (name, history)
+    if mode == "client":
         assert sum(path == "/cache/payload.bin" for path, _ in requests) == 1
         assert any(target == "/range/payload.bin?redirected=1" for target in targets)
         assert any(target == "/range/payload.bin?token=direct" for target in targets)

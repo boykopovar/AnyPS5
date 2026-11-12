@@ -200,7 +200,10 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
     if (options.compressionLevel < 0 || options.compressionLevel > 9 || options.filters == 0 || (options.filters & ~FILTER_ALL) != 0) {
         throw std::invalid_argument("Png::Encode: unsupported options");
     }
-    const std::uint64_t rowSize = static_cast<std::uint64_t>(width) * channels;
+    if (options.bitDepth != 8 && options.bitDepth != 16)
+        throw std::invalid_argument("Png::Encode: unsupported sample depth");
+    const std::uint32_t pixelSize = channels * (options.bitDepth / 8);
+    const std::uint64_t rowSize = static_cast<std::uint64_t>(width) * pixelSize;
     if (width == 0 || height == 0 || rowSize > INT_MAX || (rowSize + 1) * height > INT_MAX) {
         throw std::invalid_argument("Png::Encode: unsupported image size");
     }
@@ -217,7 +220,7 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
         std::uint64_t bestCost = UINT64_MAX;
         for (std::uint8_t filterType = 0; filterType < FILTER_TYPE_COUNT; ++filterType) {
             if ((options.filters & (1u << filterType)) == 0) continue;
-            const std::uint64_t cost =filterRow(row, previousRow, rowSize, channels, filterType, candidate.data());
+            const std::uint64_t cost = filterRow(row, previousRow, rowSize, pixelSize, filterType, candidate.data());
             if (cost >= bestCost) continue;
             bestCost = cost;
             filteredRow[0] = filterType;
@@ -234,11 +237,16 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
     std::vector<std::uint8_t> header;
     appendBigEndian32(header, width);
     appendBigEndian32(header, height);
-    header.insert(header.end(), {8, COLOR_TYPE_BY_CHANNELS[channels], 0, 0, 0});
+    header.insert(header.end(), {options.bitDepth, COLOR_TYPE_BY_CHANNELS[channels], 0, 0, 0});
 
     std::vector<std::uint8_t> output(SIGNATURE.begin(), SIGNATURE.end());
     output.reserve(SIGNATURE.size() + 3 * CHUNK_OVERHEAD + IHDR_SIZE + static_cast<std::size_t>(compressedSize));
     appendChunk(output, "IHDR", header);
+    if (options.whiteBackground) {
+        const auto high = static_cast<std::uint8_t>(options.bitDepth == 16 ? 255 : 0);
+        const std::array<std::uint8_t, 6> background{high, 255, high, 255, high, 255};
+        appendChunk(output, "bKGD", std::span(background).first(channels < 3 ? 2 : 6));
+    }
     appendChunk(output, "IDAT", std::span<const std::uint8_t>(compressed.get(), static_cast<std::size_t>(compressedSize)));
     appendChunk(output, "IEND", {});
     return output;

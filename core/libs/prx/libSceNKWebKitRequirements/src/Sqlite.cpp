@@ -269,6 +269,11 @@ int APS5_VABI sqlite3_bind_parameter_count_nid_postfix(sqlite3_stmt* statement) 
     return sqlite3_bind_parameter_count(statement);
 }
 
+int APS5_VABI sqlite3_bind_text_nid_postfix(sqlite3_stmt* statement, int index, const char* text, int size,
+    NKWebKit::GuestSqliteDestructor destructor) {
+    return sqlite3_bind_text(statement, index, text, size, HostDestructor(destructor));
+}
+
 int APS5_VABI sqlite3_bind_text16_nid_postfix(sqlite3_stmt* statement, int index, const void* text, int size,
     NKWebKit::GuestSqliteDestructor destructor) {
     return sqlite3_bind_text16(statement, index, text, size, HostDestructor(destructor));
@@ -292,6 +297,10 @@ int APS5_VABI sqlite3_busy_handler_nid_postfix(sqlite3* db, NKWebKit::GuestSqlit
 
 int APS5_VABI sqlite3_busy_timeout_nid_postfix(sqlite3* db, int milliseconds) {
     return sqlite3_busy_timeout(db, milliseconds);
+}
+
+int APS5_VABI sqlite3_changes_nid_postfix(sqlite3* db) {
+    return sqlite3_changes(db);
 }
 
 int APS5_VABI sqlite3_clear_bindings_nid_postfix(sqlite3_stmt* statement) {
@@ -330,8 +339,16 @@ std::int64_t APS5_VABI sqlite3_column_int64_nid_postfix(sqlite3_stmt* statement,
     return sqlite3_column_int64(statement, column);
 }
 
+const char* APS5_VABI sqlite3_column_name_nid_postfix(sqlite3_stmt* statement, int column) {
+    return sqlite3_column_name(statement, column);
+}
+
 const void* APS5_VABI sqlite3_column_name16_nid_postfix(sqlite3_stmt* statement, int column) {
     return sqlite3_column_name16(statement, column);
+}
+
+const unsigned char* APS5_VABI sqlite3_column_text_nid_postfix(sqlite3_stmt* statement, int column) {
+    return sqlite3_column_text(statement, column);
 }
 
 const void* APS5_VABI sqlite3_column_text16_nid_postfix(sqlite3_stmt* statement, int column) {
@@ -373,6 +390,10 @@ int APS5_VABI sqlite3_create_function_nid_postfix(sqlite3* db, const char* name,
 
 int APS5_VABI sqlite3_data_count_nid_postfix(sqlite3_stmt* statement) {
     return sqlite3_data_count(statement);
+}
+
+int APS5_VABI sqlite3_db_release_memory_nid_postfix(sqlite3* db) {
+    return sqlite3_db_release_memory(db);
 }
 
 int APS5_VABI sqlite3_errcode_nid_postfix(sqlite3* db) {
@@ -486,6 +507,10 @@ int APS5_VABI sqlite3_stmt_busy_nid_postfix(sqlite3_stmt* statement) {
     return sqlite3_stmt_busy(statement);
 }
 
+int APS5_VABI sqlite3_stmt_readonly_nid_postfix(sqlite3_stmt* statement) {
+    return sqlite3_stmt_readonly(statement);
+}
+
 int APS5_VABI sqlite3_total_changes_nid_postfix(sqlite3* db) {
     return sqlite3_total_changes(db);
 }
@@ -494,8 +519,16 @@ void* APS5_VABI sqlite3_user_data_nid_postfix(sqlite3_context* context) {
     return static_cast<GuestFunction*>(sqlite3_user_data(context))->application;
 }
 
+int APS5_VABI sqlite3_value_bytes_nid_postfix(sqlite3_value* value) {
+    return sqlite3_value_bytes(value);
+}
+
 double APS5_VABI sqlite3_value_double_nid_postfix(sqlite3_value* value) {
     return sqlite3_value_double(value);
+}
+
+const unsigned char* APS5_VABI sqlite3_value_text_nid_postfix(sqlite3_value* value) {
+    return sqlite3_value_text(value);
 }
 
 const void* APS5_VABI sqlite3_value_text16_nid_postfix(sqlite3_value* value) {

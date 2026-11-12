@@ -87,6 +87,15 @@ if(BUILD_TESTING)
         configure_windows_unwind(guest_nk_req_${test_name}_tests)
         add_test(NAME guest_nk_req_${test_name} COMMAND guest_nk_req_${test_name}_tests)
         set_tests_properties(guest_nk_req_${test_name} PROPERTIES TIMEOUT 30)
+        if(topic STREQUAL "Jpeg")
+            add_test(NAME guest_nk_req_jpeg_diagnostic_output COMMAND guest_nk_req_jpeg_tests --diagnostic-output)
+            set_tests_properties(guest_nk_req_jpeg_diagnostic_output PROPERTIES
+                TIMEOUT 30 PASS_REGULAR_EXPRESSION "Corrupt JPEG data: 1 extraneous bytes before marker")
+            if(WIN32)
+                set_tests_properties(guest_nk_req_jpeg_diagnostic_output PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")
+            endif()
+        endif()
         if(WIN32)
             set_tests_properties(guest_nk_req_${test_name} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")

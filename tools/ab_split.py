@@ -13,7 +13,8 @@ began. Presents per 10 s and frame time come from the [ab] lines (settled line t
 and idle gaps per frame from [present], GPU time per present from [gputime] (APS5_PROFILE_GPU), the committer and
 drains from [draw] pipelined, unlocked hook waits from [syncwait] (APS5_PROFILE_DRAW). The noise column compares
 each B phase with the mean of its neighbouring A phases, which cancels a linear drift: mean difference, standard
-error, standard deviation and count. A requested program's phase metric is omitted if a report lists 12 programs
+error, standard deviation and count. A counted GPU timing report that dropped ranges refuses the comparison.
+A requested program's phase metric is omitted if a report lists 12 programs
 without it: the list may be truncated, so the program's time is unknown."""
 
 PHASE = re.compile(r"^\[ab\] phase ([AB]) (\d+) (begins|settled) at present (\d+) \(t ([\d.]+) s\)")
@@ -52,6 +53,9 @@ def parse_report(kind, text):
         total, presents = number(r"^\[gputime\] ([\d.]+) ms of GPU time", text), number(r"; (\d+) presents;", text)
         if total is None or presents is None or "; by class:" not in text:
             return None
+        dropped = re.search(r"; (\d+) ranges dropped at the \d+ cap\)", text)
+        if dropped and int(dropped.group(1)):
+            raise ValueError("GPU timing ranges were dropped in a settled A/B phase; timing statistics are incomplete")
         programs_text, classes_text = text.split("by program:", 1)[-1].split("; by class:", 1)
         programs, classes = {}, {}
         for key, ms in re.findall(r" (?<!draw )(0x[0-9a-f]+) x\d+ ([\d.]+)ms", programs_text):

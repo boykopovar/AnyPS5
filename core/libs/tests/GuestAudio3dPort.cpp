@@ -203,6 +203,7 @@ void CheckPortWrappers() {
 void CheckAttributes() {
     float value = 0.5f;
     int flag = 1;
+    const void* const unreadable = reinterpret_cast<const void*>(std::uintptr_t{0x10});
     constexpr std::uint32_t supported[]{0x10001, 0x10002, 0x10003};
     std::uint32_t num_attributes = 99;
     Require(sceAudio3dPortGetAttributesSupported(0, nullptr, &num_attributes) == 0 && num_attributes == 3, "null output reports the supported attribute count");
@@ -227,6 +228,12 @@ void CheckAttributes() {
     Require(sceAudio3dPortSetAttribute(0, 0x10003, nullptr, 4) == INVALID_PARAMETER, "height aware needs a value");
     Require(sceAudio3dPortSetAttribute(0, 0x10004, &value, 4) == INVALID_PARAMETER, "unknown attribute");
     Require(sceAudio3dPortSetAttribute(0, 0x10001, &value, 8) == INVALID_PARAMETER, "a float attribute is 4 bytes");
+    Require(sceAudio3dPortSetAttribute(1, 0x10001, unreadable, 4) == INVALID_PORT, "invalid port precedes the float pointer");
+    Require(sceAudio3dPortSetAttribute(0, 0x10004, unreadable, 4) == INVALID_PARAMETER, "unknown attribute precedes the float pointer");
+    Require(sceAudio3dPortSetAttribute(0, 0x10001, unreadable, 8) == INVALID_PARAMETER, "float size precedes the pointer read");
+    Require(sceAudio3dPortSetAttribute(0, 0x10003, unreadable, 4) == 0, "height aware does not read the value");
+    Require(sceAudio3dPortSetAttribute(0, 0x10001, unreadable, 4) == INVALID_PARAMETER, "unreadable reverb value");
+    Require(sceAudio3dPortSetAttribute(0, 0x10002, unreadable, 4) == INVALID_PARAMETER, "unreadable spread radius");
     const auto set_float = [](std::uint32_t attribute_id, float level) {
         return sceAudio3dPortSetAttribute(0, attribute_id, &level, sizeof(level));
     };

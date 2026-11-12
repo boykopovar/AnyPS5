@@ -225,6 +225,95 @@ void CheckStatements(sqlite3* db) {
     Require(sqlite3_finalize_nid_postfix(select) == SQLITE_OK, "finalize select");
 }
 
+std::string capturedText;
+int capturedBytes = -1;
+
+void APS5_VABI CaptureValue(sqlite3_context*, int count, sqlite3_value** values) {
+    Require(count == 1, "capture argument count");
+    const unsigned char* text = sqlite3_value_text_nid_postfix(values[0]);
+    capturedText = text ? reinterpret_cast<const char*>(text) : "<null>";
+    capturedBytes = sqlite3_value_bytes_nid_postfix(values[0]);
+}
+
+void CheckUtf8Adapters(sqlite3* db) {
+    Execute(db, "CREATE TABLE u(x TEXT, y INTEGER)");
+    sqlite3_stmt* insert = Prepare(db, "INSERT INTO u VALUES(?, ?)");
+    Require(sqlite3_stmt_readonly_nid_postfix(insert) == 0, "insert is not readonly");
+    auto* text = static_cast<char*>(std::malloc(8));
+    std::memcpy(text, "h\xC3\xA9\xE2\x82\xAC", 6);
+    const int destroyed = destroyedBuffers;
+    Require(sqlite3_bind_text_nid_postfix(insert, 1, text, 6, FreeBuffer) == SQLITE_OK, "bind text");
+    Require(destroyedBuffers == destroyed, "bound text stays owned by the binding");
+    Require(sqlite3_bind_int_nid_postfix(insert, 2, 41) == SQLITE_OK, "bind text row int");
+    Require(sqlite3_step_nid_postfix(insert) == SQLITE_DONE, "insert text row");
+    Require(sqlite3_changes_nid_postfix(db) == 1, "changes after insert");
+    Require(sqlite3_finalize_nid_postfix(insert) == SQLITE_OK, "finalize text insert");
+    Require(destroyedBuffers == destroyed + 1, "finalize releases the bound text");
+
+    sqlite3_stmt* failing = Prepare(db, "INSERT INTO u VALUES(?, ?)");
+    auto* dropped = static_cast<char*>(std::malloc(8));
+    std::memcpy(dropped, "dropped!", 8);
+    Require(sqlite3_bind_text_nid_postfix(failing, 5, dropped, 7, FreeBuffer) != SQLITE_OK, "bad text index");
+    Require(destroyedBuffers == destroyed + 2, "destructor runs when the text bind fails");
+    Require(sqlite3_finalize_nid_postfix(failing) == SQLITE_OK, "finalize failed bind");
+
+    sqlite3_stmt* second = Prepare(db, "INSERT INTO u VALUES(?, ?)");
+    char transientSource[8] = "plain";
+    Require(sqlite3_bind_text_nid_postfix(second, 1, transientSource, -1, SQLITE_TRANSIENT) == SQLITE_OK,
+        "transient text");
+    std::strcpy(transientSource, "XXXXXX");
+    Require(sqlite3_bind_int_nid_postfix(second, 2, 42) == SQLITE_OK, "bind second int");
+    Require(sqlite3_step_nid_postfix(second) == SQLITE_DONE, "second text insert");
+    Require(sqlite3_reset_nid_postfix(second) == SQLITE_OK, "reset second insert");
+    static const char fixedText[] = "static";
+    Require(sqlite3_bind_text_nid_postfix(second, 1, fixedText, -1, SQLITE_STATIC) == SQLITE_OK, "static text");
+    Require(sqlite3_bind_text_nid_postfix(second, 1, "a\0b", 3, SQLITE_TRANSIENT) == SQLITE_OK,
+        "rebind replaces static with embedded NUL");
+    Require(sqlite3_bind_null_nid_postfix(second, 2) == SQLITE_OK, "bind null int");
+    Require(sqlite3_step_nid_postfix(second) == SQLITE_DONE, "third text insert");
+    Require(sqlite3_reset_nid_postfix(second) == SQLITE_OK, "reset third insert");
+    Require(sqlite3_bind_text_nid_postfix(second, 1, nullptr, -1, SQLITE_STATIC) == SQLITE_OK, "null text binds null");
+    Require(sqlite3_bind_text_nid_postfix(second, 2, "", -1, SQLITE_TRANSIENT) == SQLITE_OK, "empty text");
+    Require(sqlite3_step_nid_postfix(second) == SQLITE_DONE, "fourth text insert");
+    Require(sqlite3_finalize_nid_postfix(second) == SQLITE_OK, "finalize second insert");
+    Execute(db, "UPDATE u SET y = y WHERE y < 0");
+    Require(sqlite3_changes_nid_postfix(db) == 0, "changes after empty update");
+
+    sqlite3_stmt* select = Prepare(db, "SELECT x, y FROM u ORDER BY rowid");
+    Require(sqlite3_stmt_readonly_nid_postfix(select) != 0, "select is readonly");
+    Require(sqlite3_step_nid_postfix(select) == SQLITE_ROW, "first utf8 row");
+    Require(std::strcmp(sqlite3_column_name_nid_postfix(select, 0), "x") == 0, "column name");
+    Require(std::strcmp(sqlite3_column_name_nid_postfix(select, 1), "y") == 0, "second column name");
+    const unsigned char* first = sqlite3_column_text_nid_postfix(select, 0);
+    Require(first != nullptr && std::memcmp(first, "h\xC3\xA9\xE2\x82\xAC", 7) == 0, "column text");
+    Require(sqlite3_column_bytes_nid_postfix(select, 0) == 6, "column text bytes");
+    Require(sqlite3_step_nid_postfix(select) == SQLITE_ROW, "second utf8 row");
+    const unsigned char* secondRow = sqlite3_column_text_nid_postfix(select, 0);
+    Require(secondRow != nullptr && std::strcmp(reinterpret_cast<const char*>(secondRow), "plain") == 0,
+        "transient copied before the source changed");
+    Require(sqlite3_step_nid_postfix(select) == SQLITE_ROW, "third utf8 row");
+    const unsigned char* thirdRow = sqlite3_column_text_nid_postfix(select, 0);
+    Require(thirdRow != nullptr && std::memcmp(thirdRow, "a\0b", 3) == 0, "embedded NUL text");
+    Require(sqlite3_column_bytes_nid_postfix(select, 0) == 3, "embedded NUL bytes");
+    Require(sqlite3_step_nid_postfix(select) == SQLITE_ROW, "fourth utf8 row");
+    Require(sqlite3_column_type_nid_postfix(select, 0) == SQLITE_NULL, "null text column");
+    Require(sqlite3_column_type_nid_postfix(select, 1) == SQLITE_TEXT, "empty text column");
+    const unsigned char* empty = sqlite3_column_text_nid_postfix(select, 1);
+    Require(empty != nullptr && *empty == 0 && sqlite3_column_bytes_nid_postfix(select, 1) == 0, "empty text bytes");
+    Require(sqlite3_step_nid_postfix(select) == SQLITE_DONE, "end of utf8 rows");
+    Require(sqlite3_finalize_nid_postfix(select) == SQLITE_OK, "finalize utf8 select");
+    Require(sqlite3_db_release_memory_nid_postfix(db) >= 0, "release memory");
+
+    Require(sqlite3_create_function_nid_postfix(db, "capture", 1, SQLITE_UTF8, nullptr, CaptureValue, nullptr,
+        nullptr) == SQLITE_OK, "create capture");
+    Execute(db, "SELECT capture(x) FROM u WHERE y = 41");
+    Require(capturedText == "h\xC3\xA9\xE2\x82\xAC" && capturedBytes == 6, "value text in callback");
+    Execute(db, "SELECT capture(y) FROM u WHERE y = 42");
+    Require(capturedText == "42" && capturedBytes == 2, "numeric value text in callback");
+    Execute(db, "SELECT capture(y) FROM u WHERE y IS NULL");
+    Require(capturedText == "<null>" && capturedBytes == 0, "null value in callback");
+}
+
 void CheckFunctions(sqlite3* db) {
     static int application = 0x42;
     Require(sqlite3_create_function_nid_postfix(db, "probe", 1, SQLITE_UTF8, &application, Probe, nullptr,
@@ -462,6 +551,7 @@ int main() {
     Require(sqlite3_initialize_nid_postfix() == SQLITE_OK, "initialize");
     sqlite3* db = Open(":memory:");
     CheckStatements(db);
+    CheckUtf8Adapters(db);
     CheckFunctions(db);
     CheckCollation(db);
     CheckAuthorizer(db);

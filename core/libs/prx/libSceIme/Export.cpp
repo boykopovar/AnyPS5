@@ -132,30 +132,8 @@ std::size_t TextLength(const char16_t* text, std::size_t limit) {
 
 std::u16string DecodeUtf8(const char* text, std::size_t size) {
     std::u16string units;
-    for (std::size_t i = 0; i < size;) {
-        const auto lead = static_cast<unsigned char>(text[i]);
-        std::uint32_t codePoint = 0;
-        std::size_t extra = 0;
-        if (lead < 0x80) codePoint = lead;
-        else if ((lead & 0xe0) == 0xc0) { codePoint = lead & 0x1f; extra = 1; }
-        else if ((lead & 0xf0) == 0xe0) { codePoint = lead & 0x0f; extra = 2; }
-        else if ((lead & 0xf8) == 0xf0) { codePoint = lead & 0x07; extra = 3; }
-        else throw std::invalid_argument("IME host input: invalid UTF-8 lead byte");
-        if (extra != 0 && i + extra >= size) throw std::invalid_argument("IME host input: truncated UTF-8 sequence");
-        for (std::size_t k = 1; k <= extra; ++k) {
-            const auto next = static_cast<unsigned char>(text[i + k]);
-            if ((next & 0xc0) != 0x80) throw std::invalid_argument("IME host input: invalid UTF-8 continuation byte");
-            codePoint = (codePoint << 6) | (next & 0x3f);
-        }
-        i += extra + 1;
-        if (codePoint >= 0x10000) {
-            codePoint -= 0x10000;
-            units.push_back(static_cast<char16_t>(0xd800 + (codePoint >> 10)));
-            units.push_back(static_cast<char16_t>(0xdc00 + (codePoint & 0x3ff)));
-        } else {
-            units.push_back(static_cast<char16_t>(codePoint));
-        }
-    }
+    for (const char32_t point : ImeHostText::DecodeUtf8Lenient(text, size, false))
+        ImeHostText::AppendUtf16(units, point);
     return units;
 }
 
@@ -587,6 +565,7 @@ int APS5_VABI sceImeSetCaret(const Caret* caret) {
     if (!caret) return ErrorInvalidAddress;
     if (caret->index > g_session->text.size()) return ErrorInvalidParam;
     g_session->caret = caret->index;
+    NormalizeCaret(*g_session);
     ++g_session->revision;
     return 0;
 }
@@ -605,7 +584,7 @@ int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length) {
     if (!ValidText(text, count, (session.param.option & OptionMultiline) != 0)) return ErrorInvalidText;
     session.text.assign(text, count);
     ++session.revision;
-    if (session.caret > session.text.size()) session.caret = static_cast<uint32_t>(session.text.size());
+    NormalizeCaret(session);
     SyncBuffers(session);
     return 0;
 }
@@ -761,6 +740,8 @@ int APS5_VABI sceImeConfirmCandidate(std::int32_t index) {
 }
 
 int APS5_VABI sceImeDisableController(void) {
+    std::lock_guard lock(g_imeMutex);
+    if (!g_session) return ErrorNotOpened;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

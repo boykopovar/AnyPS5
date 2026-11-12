@@ -15,6 +15,11 @@
 | `Unknown` | `mdH4mANi9GI` |
 | `Unknown` | `o0gGIp1vd6A` |
 
+### Functional
+
+- [sceAudioPropagationSourceGetAudioPath](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `ErrorNullPointer` (`0x8A700003`) when the `outPath` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceAudioPropagationPathGetNumPoints](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `ErrorNullPointer` (`0x8A700003`) when the `count` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+
 ### Silent stubs
 
 - [libSceAudioPropagation](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) lacks acoustic propagation: attributes have no effect, sources expose 36 initially empty, invalid path slots and no rays, rendering preserves the destination mix without adding path contributions, and allocated CPU work memory is mostly unused. Ray results and audio paths accept empty lists and throw otherwise; `sceAudioPropagationSourceCalculateAudioPaths` returns the initial native validation errors, then goes through `NotImplemented_nid_no_patch`, as propagation is not implemented. Room, portal, source and material handles are tracked, but destruction after their system is destroyed silently succeeds without native lifetime semantics being confirmed. Occlusion, reflections and reverb are absent.
@@ -32,3 +37,7 @@
 - [`sceAudioPropagationSystemQueryInfo`](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) at `0x3220` returns `0x8a700002` (`ErrorInvalidHandle`) unless the output pointer is nonnull, the system resolves, and the size is exactly `0x30`; it writes `1` to output offset `0x18` (`parameter24`). `sceAudioPropagationSystemQueryMemory` at `0x2f10` (NID `7xyAxrusLko`) requires the options field at offset `0x18` to equal `6`; `SystemQueryInfo`'s `1` is a different output field and is not a valid query-memory input. No binary or disassembly is included in this repository.
 - [sceAudioPropagationSystemQueryMemory](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `ErrorNullPointer` (`0x8A700003`) for an inaccessible non-null `options` or `outMemory` pointer via `GuestCopyIn_nid_no_patch` and `GuestCopyOut_nid_no_patch` is an inferred host-safety fallback matching the null-pointer check; console behavior is unmeasured.
 - [Initialization exports](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) ending in `Init`, plus `sceAudioPropagationSystem`, are not exported: the SDK declares the helpers `static inline` and none is in the SDK stub library or the supplied native module. Diagnostic layouts are recovered. The final system word and the fourth position/direction words have no confirmed semantics.
+
+### Functional
+
+- [sceAudioPropagationSystemQueryInfo](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning 0x8a700002 (ErrorInvalidHandle) for unmapped or unreadable parameter pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.

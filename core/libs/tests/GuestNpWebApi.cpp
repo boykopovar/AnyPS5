@@ -2,12 +2,15 @@
 #include "prx/libSceNpWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <climits>
 #include <cstring>
+#include <initializer_list>
 #include <thread>
 
 namespace {
@@ -68,6 +71,29 @@ void InstallProcessParameters() {
     std::memcpy(process.data(), &size, sizeof(size));
     std::memcpy(process.data() + 8, &magic, sizeof(magic));
     Require(ProcessParametersFixture::Install(process.data(), process.size()), "process parameters were not installed");
+}
+
+void TestUnknownFieldChecks() {
+    struct Object {
+        std::uint64_t words[6];
+    };
+    Object object{};
+    for (const std::int64_t value : {std::int64_t{-1}, std::int64_t{0}, std::int64_t{1}, std::int64_t{-2}, INT64_MIN, INT64_MAX}) {
+        std::memset(&object, 0xa5, sizeof(object));
+        std::memcpy(reinterpret_cast<std::byte*>(&object) + 0x20, &value, sizeof(value));
+        Require(libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(&object) == (value != -1), "ojGP5vur+qM checks the 64 bits at +0x20");
+    }
+    for (const std::int32_t value : {std::int32_t{-1}, std::int32_t{0}, std::int32_t{1}, std::int32_t{-2}, INT32_MIN, INT32_MAX}) {
+        std::memset(&object, 0xa5, sizeof(object));
+        std::memcpy(reinterpret_cast<std::byte*>(&object) + 0xc, &value, sizeof(value));
+        Require(libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(&object) == (value != -1), "zQE2rxZdLy8 checks the 32 bits at +0xc");
+    }
+    std::memset(&object, 0xff, sizeof(object));
+    const std::int32_t low = -1;
+    const std::int32_t high = 0;
+    std::memcpy(reinterpret_cast<std::byte*>(&object) + 0x20, &low, sizeof(low));
+    std::memcpy(reinterpret_cast<std::byte*>(&object) + 0x24, &high, sizeof(high));
+    Require(libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(&object), "ojGP5vur+qM compares all 64 bits");
 }
 
 void TestLibraryContexts() {
@@ -308,6 +334,8 @@ void TestConsoleMeasuredExports() {
     Require(sceNpWebApiGetMemoryPoolStats(context, &stats) == 0 && stats.poolSize == 0x10000 && stats.maxInuseSize == 0 && stats.currentInuseSize == 0, "memory pool stats of a fresh context");
     Require(sceNpWebApiGetMemoryPoolStats(0x7fff + 1, &stats) == LibContextNotFound, "memory pool stats of an unknown context");
     Require(sceNpWebApiGetMemoryPoolStats(context, nullptr) == InvalidArgument, "memory pool stats without a buffer");
+    errno = 71;
+    Require(sceNpWebApiGetMemoryPoolStats(context, reinterpret_cast<NpWebApiMemoryPoolStats*>(0x10)) == InvalidArgument && errno == 71, "memory pool stats with an unwritable buffer");
 
     Require(sceNpWebApiCreateContextA(context, -1) == InvalidArgument, "user context for a negative user");
     Require(sceNpWebApiCreateContextA(0x7fff + 1, InitialUser) == InvalidLibContextId, "user context of an unknown library context by user id");
@@ -681,11 +709,38 @@ void TestIntCreateCtxIndExtdPushEventFilter() {
     Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the extended push event filter library contexts");
 }
 
+void TestConnectionChecks() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int other = sceNpWebApiInitialize(1, 0x10000);
+    Require(context > 0 && other > 0 && sceNpWebApiTerminate(other) == 0, "library contexts for the connection checks");
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for the connection checks");
+    unsigned char stats[64] = {};
+
+    Require(sceNpWebApiClearUnusedConnection(user, nullptr, false) == InvalidArgument, "clear connections without a target");
+    Require(sceNpWebApiClearUnusedConnection(-1, nullptr, true) == InvalidArgument, "the clear target is checked before the contexts");
+    Require(sceNpWebApiClearUnusedConnection((other << 16) | 1, "group", false) == LibContextNotFound, "clear connections of a terminated library context");
+    Require(sceNpWebApiClearUnusedConnection(-1, "group", false) == LibContextNotFound, "clear connections of user context -1");
+    Require(sceNpWebApiClearUnusedConnection(user + 1, "group", true) == UserContextNotFound, "clear connections of an unknown user context");
+
+    Require(sceNpWebApiGetConnectionStats(user, nullptr, stats) == InvalidArgument, "connection stats without a target");
+    Require(sceNpWebApiGetConnectionStats(user, "group", nullptr) == InvalidArgument, "connection stats without an output");
+    Require(sceNpWebApiGetConnectionStats(-1, nullptr, nullptr) == InvalidArgument, "the stats arguments are checked before the contexts");
+    Require(sceNpWebApiGetConnectionStats((other << 16) | 1, "group", stats) == LibContextNotFound, "connection stats of a terminated library context");
+    Require(sceNpWebApiGetConnectionStats(user + 1, "group", stats) == UserContextNotFound, "connection stats of an unknown user context");
+    for (const unsigned char byte : stats) Require(byte == 0, "a failed stats call writes nothing");
+
+    Require(sceNpWebApiDeleteContext(user) == 0, "delete the user context of the connection checks");
+    Require(sceNpWebApiClearUnusedConnection(user, "group", false) == UserContextNotFound, "clear connections of a deleted user context");
+    Require(sceNpWebApiTerminate(context) == 0, "terminate the connection checks library context");
+}
+
 }
 
 int main() {
     InstallProcessParameters();
     SetSdkVersion(0x04508001);
+    TestUnknownFieldChecks();
     TestLibraryContexts();
     TestIntServicePushEventFilter();
     TestUserContexts();
@@ -701,5 +756,6 @@ int main() {
     TestMultipartParts();
     TestUtilityParseNpId();
     TestIntCreateCtxIndExtdPushEventFilter();
+    TestConnectionChecks();
     return 0;
 }

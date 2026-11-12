@@ -147,6 +147,9 @@ void CheckRecord() {
     NpScoreGameInfo info{};
     std::uint32_t tmpRank = 77;
     const int req = NewRequest();
+    errno = 71;
+    Require(sceNpScoreRecordScore(req, 1, 5, nullptr, reinterpret_cast<const NpScoreGameInfo*>(0x10), &tmpRank, nullptr, nullptr) == InvalidArgument, "sceNpScoreRecordScore", "unmapped game info was taken");
+    Require(errno == 71, "sceNpScoreRecordScore", "errno was preserved");
     info.infoSize = 190;
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, &info, &tmpRank, nullptr, &info) == InvalidArgument, "sceNpScoreRecordScore", "an option was taken");
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, &info, &tmpRank, nullptr, nullptr) == InvalidArgument, "sceNpScoreRecordScore", "190 bytes of game info were taken");

@@ -16,6 +16,7 @@
 #include <iterator>
 #include <fstream>
 #include <initializer_list>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -996,6 +997,99 @@ void TestCertificateChainFileErrorPaths() {
     Require(allocations == 0, "unsupported certificate-chain decode leaked BIO storage");
     RemovePathAlias_nid_no_patch(AliasPrefix);
 }
+
+std::uint64_t ErrorCode(int library, int reason) {
+    return (static_cast<std::uint64_t>(library) << 24) | (static_cast<std::uint64_t>(0xfff) << 12) |
+           static_cast<std::uint64_t>(reason);
+}
+
+void RequireErrorSequence(const std::vector<std::uint64_t>& expected) {
+    for (const auto code : expected) {
+        const auto actual = ERR_get_error_nid_postfix();
+        if (actual != code) std::fprintf(stderr, "certificate error: actual=%llx expected=%llx\n", static_cast<unsigned long long>(actual), static_cast<unsigned long long>(code));
+        Require(actual == code, "certificate file error order/code");
+    }
+    Require(ERR_get_error_nid_postfix() == 0, "unexpected certificate file error");
+}
+
+void TestCertificateFileLoadPaths() {
+    constexpr int BioControlSetFilename = 108;
+    constexpr int BioClose = 0x01;
+    constexpr int SslFileTypePem = 1;
+    const auto path = std::filesystem::temp_directory_path() / "anyps5-libressl-certificate-test.pem";
+    const auto directory = path.parent_path().string();
+    AddPathAlias_nid_no_patch("/anyps5-cert-test", directory.c_str());
+    const std::string filename = "/anyps5-cert-test/" + path.filename().string();
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+
+    ERR_clear_error_nid_postfix();
+    Require(SSL_CTX_use_certificate_file_nid_postfix(nullptr, filename.c_str(), SslFileTypePem) == 0,
+            "missing certificate file returns failure without reading ctx");
+    const int guestOpenError = errno;
+    RequireErrorSequence({ErrorCode(2, guestOpenError), ErrorCode(32, 2), ErrorCode(20, 2)});
+
+    ERR_clear_error_nid_postfix();
+    allocationsUntilFailure = 0;
+    Require(SSL_CTX_use_certificate_file_nid_postfix(nullptr, filename.c_str(), SslFileTypePem) == 0,
+            "BIO allocation failure returns failure without reading ctx");
+    allocationsUntilFailure = -1;
+    RequireErrorSequence({ErrorCode(32, 65), ErrorCode(20, 7)});
+    Require(allocations == 0, "failed BIO allocation leaked storage");
+
+    {
+        std::ofstream output(path, std::ios::binary);
+        Require(output.is_open(), "create empty invalid-type certificate file");
+    }
+    ERR_clear_error_nid_postfix();
+    Require(SSL_CTX_use_certificate_file_nid_postfix(nullptr, filename.c_str(), 0) == 0,
+            "invalid file type returns failure without reading ctx");
+    RequireErrorSequence({ErrorCode(20, 124)});
+    Require(std::filesystem::remove(path), "invalid-type BIO closed its file");
+
+    for (const int flags : {2, 4, 6, 8, 10, 12, 14}) {
+        { std::ofstream output(path, std::ios::binary); output << "seed"; }
+        Bio* modeBio = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
+        Require(modeBio != nullptr, "allocate filename mode BIO");
+        Require(BIO_ctrl_nid_postfix(modeBio, 108, flags | 1, const_cast<char*>(filename.c_str())) == 1,
+                "filename mode opens the stream");
+        Require(modeBio->initialized == 1 && modeBio->shutdown == 1 && modeBio->data, "filename mode state");
+        if (flags != 2) Require(BIO_write_nid_postfix(modeBio, "X", 1) == 1, "filename mode write");
+        Require(BIO_free_nid_postfix(modeBio) == 1, "close filename mode BIO");
+        std::ifstream input(path, std::ios::binary);
+        std::string result((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+        Require(result == (flags & 8 ? "seedX" : flags == 4 ? "X" : flags == 6 ? "Xeed" : "seed"), "filename mode contents");
+    }
+    Bio* replacement = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
+    Require(replacement && BIO_ctrl_nid_postfix(replacement, 108, 3, const_cast<char*>(filename.c_str())) == 1,
+            "open owned stream before replacement");
+    replacement->flags = 0x88;
+    Require(BIO_ctrl_nid_postfix(replacement, 108, 1, nullptr) == 0, "invalid replacement mode fails before filename");
+    Require(replacement->data == nullptr && replacement->initialized == 0 && replacement->flags == 0 && replacement->shutdown == 1,
+            "owned replacement clears old stream state before mode failure");
+    RequireErrorSequence({ErrorCode(32, 101)});
+    Require(BIO_free_nid_postfix(replacement) == 1, "free failed replacement BIO");
+
+    auto* borrowed = fopen_nid_postfix(filename.c_str(), "r");
+    Require(borrowed != nullptr, "open borrowed stream");
+    Bio* unowned = BIO_new_fp_nid_postfix(borrowed, 0);
+    Require(unowned != nullptr, "allocate borrowed stream BIO");
+    unowned->flags = 0x88;
+    Require(BIO_ctrl_nid_postfix(unowned, 108, 0, nullptr) == 0, "unowned invalid replacement mode");
+    Require(unowned->data == borrowed && unowned->initialized == 1 && unowned->flags == 0x88 && unowned->shutdown == 0,
+            "unowned stream state survives failed replacement");
+    RequireErrorSequence({ErrorCode(32, 101)});
+    Require(BIO_free_nid_postfix(unowned) == 1 && fclose_nid_postfix(borrowed) == 0, "borrowed stream remains caller-owned");
+    Require(std::filesystem::remove(path), "remove filename mode fixture");
+
+    Bio* fileBio = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
+    Require(fileBio != nullptr, "allocate file BIO for filename-control mode check");
+    Require(BIO_ctrl_nid_postfix(fileBio, BioControlSetFilename, BioClose, const_cast<char*>(filename.c_str())) == 0,
+            "filename control rejects missing read/write/append mode");
+    RequireErrorSequence({ErrorCode(32, 101)});
+    Require(BIO_free_nid_postfix(fileBio) == 1, "free file BIO after bad filename mode");
+    RemovePathAlias_nid_no_patch("/anyps5-cert-test");
+}
 #endif
 
 }  // namespace
@@ -1023,6 +1117,7 @@ int main(int argc, char** argv) {
     TestFileAndSocket();
     TestPrivateKeyFileErrorPaths();
     TestCertificateChainFileErrorPaths();
+    TestCertificateFileLoadPaths();
 #endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");
     Require(ERR_get_error_nid_postfix() == 0, "BIO tests left an unexpected error");

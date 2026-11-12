@@ -1807,7 +1807,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         EmitEmulatedSample(ctx, access, setup, false);
         return;
     }
-    if (!setup.dref && image.conversionFormat == IrBufferFormat::Format11_11_10UNorm) {
+    if (!setup.dref && IsConvertedUnormTextureFormat(image.conversionFormat)) {
         EmitEmulatedSample(ctx, access, setup, true);
         return;
     }

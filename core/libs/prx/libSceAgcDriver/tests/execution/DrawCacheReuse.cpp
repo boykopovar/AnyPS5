@@ -354,6 +354,42 @@ void RecordWordsReachTheShader(bool libraries) {
     Require(verified == (verify ? 4u : 0u), mode + ": " + std::to_string(verified) + " forwarded words were verified against a full build, expected " + std::to_string(verify ? 4 : 0));
 }
 
+void IndirectPointsKeepTheirPointSize(bool libraries) {
+    const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
+    Registered(OffsetTriangleVertexHeader, OffsetTriangleVertexCode.data(), sizeof(OffsetTriangleVertexCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    const auto points = [&](bool indirect) {
+        ColorMemory.fill(std::byte{0});
+        auto commands = Draws(32.0f, OffsetTriangleVertexCode.data(), 1, PixelCode.data(), 1, {});
+        Append(commands, 0x79, {0x242, 1});
+        Append(commands, 0x69, {0x280, (64u << 16u) | 64u});
+        Append(commands, 0x69, {0x281, 0xffff0000u});
+        Append(commands, 0x76, {0x00c, std::bit_cast<std::uint32_t>(1.0f)});
+        Append(commands, 0x79, {0x24a, 0});
+        if (indirect) {
+            OffsetRecord = {3, 1, 0, 0};
+            const auto records = reinterpret_cast<std::uintptr_t>(OffsetRecord.data());
+            Append(commands, 0x11, {1, static_cast<std::uint32_t>(records), static_cast<std::uint32_t>(records >> 32u)});
+            Append(commands, 0x24, {0, 0x8c, 0, 2});
+        } else {
+            Append(commands, 0x2d, {3, 2});
+        }
+        Submit(commands);
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(ColorMemory.data()), ColorMemory.size());
+        return ColorMemory;
+    };
+    const auto covered = [](const std::array<std::byte, 1024>& memory) {
+        std::size_t pixels = 0;
+        for (std::size_t pixel = 0; pixel < memory.size(); pixel += 4) pixels += std::any_of(memory.begin() + static_cast<std::ptrdiff_t>(pixel), memory.begin() + static_cast<std::ptrdiff_t>(pixel + 4), [](std::byte value) { return value != std::byte{0}; }) ? 1u : 0u;
+        return pixels;
+    };
+    const auto direct = points(false);
+    const auto indirect = points(true);
+    const auto directPixels = covered(direct);
+    Require(directPixels > 3, mode + ": a direct draw of three 8-pixel points covered " + std::to_string(directPixels) + " pixels, expected more than one per point");
+    Require(indirect == direct, mode + ": a CPU-path indirect draw of the same three 8-pixel points covered " + std::to_string(covered(indirect)) + " pixels, the direct draw " + std::to_string(directPixels));
+}
+
 void GraphicsRequestDumps(std::string_view mode) {
     const auto directory = std::filesystem::temp_directory_path() / ("agc_graphics_dump-" + std::to_string(std::random_device{}()));
     const auto previous = std::filesystem::current_path();
@@ -444,6 +480,7 @@ int main(int argc, char** argv) {
             CpuPathIndirectDrawsAreCachedWhenAsked(libraries);
             RecordsKeepThePacketsFragmentWord(libraries);
             RecordWordsReachTheShader(libraries);
+            IndirectPointsKeepTheirPointSize(libraries);
         }
         AgcDriverShutdown_nid_postfix();
         Require(AgcDriver::Graphics::PipelineLibraryWorkers() == 0, "the driver's shutdown left the pipeline library worker running");

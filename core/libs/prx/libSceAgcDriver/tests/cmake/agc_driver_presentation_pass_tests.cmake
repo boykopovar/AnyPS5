@@ -17,6 +17,7 @@ target_link_libraries(agc_driver_presentation_pass_tests PRIVATE
 
 set_target_properties(agc_driver_presentation_pass_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_presentation_pass_tests)
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/tests/PresentationPass.cpp APPEND PROPERTY COMPILE_DEFINITIONS VK_ENABLE_BETA_EXTENSIONS)
 
 if(BUILD_TESTING)
     set_target_properties(agc_driver_presentation_pass_tests PROPERTIES EXCLUDE_FROM_ALL OFF)

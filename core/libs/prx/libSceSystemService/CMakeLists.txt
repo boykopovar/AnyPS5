@@ -46,6 +46,10 @@ if(BUILD_TESTING)
             ${loadexecLibraries} ${CMAKE_CXX_COMPILER})
         set_tests_properties(loadexec_arguments PROPERTIES TIMEOUT 30)
         add_asan_test_options(loadexec_arguments verify_asan_link_order=0)
+        set(relinkerTestTemp ${CMAKE_BINARY_DIR}/core/relinker/test-temp)
+        file(MAKE_DIRECTORY ${relinkerTestTemp})
+        set_property(TEST loadexec_arguments APPEND PROPERTY ENVIRONMENT_MODIFICATION
+            "TMPDIR=set:${relinkerTestTemp};TEMP=set:${relinkerTestTemp};TMP=set:${relinkerTestTemp};PYTHONUTF8=set:1")
     endif()
     add_test_executable(guest_system_exit_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemExit.cpp)
     target_include_directories(guest_system_exit_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -158,7 +162,11 @@ if(BUILD_TESTING)
                 "1,-,-,C,es,auto,1"
                 "1,-,-,-,-,auto,1"
                 "1,-,-,lt_LT.UTF-8,-,auto,1"
-                "30,-,-,lt_LT.UTF-8,lt:uk:fr,auto,0")
+                "30,-,-,lt_LT.UTF-8,lt:uk:fr,auto,0"
+                "1,-,-,de_DE.UTF-8,lt:C:fr,auto,1"
+                "1,-,-,de_DE.UTF-8,lt:POSIX:fr,auto,1"
+                "1,-,-,de_DE.UTF-8,lt:C.UTF-8:fr,auto,1"
+                "2,-,-,de_DE.UTF-8,fr:C:de,auto,0")
             string(REPLACE "," ";" languageAutoArguments "${languageAutoCase}")
             add_test(NAME guest_system_service_language_auto_${languageAutoIndex} COMMAND guest_system_service_language_auto_tests ${languageAutoArguments})
             set_tests_properties(guest_system_service_language_auto_${languageAutoIndex} PROPERTIES TIMEOUT 20)
