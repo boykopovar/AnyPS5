@@ -709,3 +709,25 @@ class FocusedInputEdgeTests(unittest.TestCase):
                     repo, {"build_dir": "build", "build_commands": [command]},
                     GOOD, Path(directory) / "results")
 
+
+    def test_run_sample_rejects_multiple_summary_files(self):
+        from types import SimpleNamespace
+
+        def fake_runner(command, **kwargs):
+            output = Path(command[command.index("--out") + 1])
+            for name in ("first", "second"):
+                summary = output / name / "summary.json"
+                summary.parent.mkdir(parents=True)
+                summary.write_text("{}", encoding="utf-8")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            game = root / "game"
+            game.mkdir()
+            recipe = {"title_id": "PPSA00000", "games": [str(game)], "content": None,
+                      "titles": str(root / "titles.json"), "seconds": 20}
+            result = root / "result"
+            with patch.object(performance_bisect, "TOOLS_DIR", root),                     patch.object(performance_bisect.subprocess, "run", side_effect=fake_runner),                     self.assertRaisesRegex(RuntimeError, "produced 2 summary files"):
+                performance_bisect.run_sample(root, root / "build", result, recipe, GOOD)
+
