@@ -110,6 +110,8 @@ int main(int argc, char** argv) {
     Resolve<void (*)()>(module, "Ek3df14vjDk");
     Resolve<void (*)()>(module, "oa8shQdXY2A");
     Resolve<void (*)()>(module, "PFxpQ6lkQP0");
+    auto getError = Resolve<std::uint64_t (*)()>(module, "DJg+qWX1rwY", false);
+    auto clearErrors = Resolve<void (*)()>(module, "sieQ--PINWg", false);
     Require(retain(key) == 1);
     auto retained = initial;
     retained[4] = 2;
@@ -128,7 +130,10 @@ int main(int argc, char** argv) {
         Require(live == nullptr && wiped);
     }
     Require(releases == 4);
+    clearErrors();
+    Require(getError() == 0);
     failAllocation = true;
     Require(create() == nullptr && live == nullptr && releases == 4);
+    Require(getError() == 0x06fff041 && getError() == 0);
     return 0;
 }
