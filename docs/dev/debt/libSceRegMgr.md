@@ -31,7 +31,7 @@
 
 - [sceRegMgrCheckIntVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrGetBinInitVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
-- [sceRegMgrGetIntInitVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
+- [sceRegMgrGetIntInitVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - signature `(std::uint32_t optionId, std::int32_t* outInt)` as declared in `include/Api.hpp`; the body throws `NotImplemented_nid_no_patch`, and the forwarding is described under Initial values
 - [sceRegMgrGetStrInitVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrGetVersion](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - known contract, value unmeasured: [voldemort](https://github.com/exhaustiblewizard/voldemort/blob/master/src/libs/libRegMgr.cpp) IDA notes record the PS4 export forwarding `__sys_regmgr_call(cmd=0, arg=1, ...)` and returning the registry format version (NID `q+lPgqZniW4`, same NID in the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/cf6eede3f6588d779664e01874638f09484324b7/libSceRegMgr.c)); the numeric value is unmeasured on PS4 and PS5, so the export retains `NotImplemented_nid_no_patch`
 - [sceRegMgrEvtGetCnt](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
