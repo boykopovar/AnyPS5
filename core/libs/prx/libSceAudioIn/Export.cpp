@@ -1,6 +1,5 @@
 #include "prx/libSceAudioIn/include/AudioIn.hpp"
 #include "prx/libSceAudioIn/AudioInCapture.hpp"
-#include "prx/libScePad/include/HostAudioInControl.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cerrno>
@@ -14,6 +13,7 @@
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
+#include "prx/libScePad/include/HostAudioInControl.hpp"
 
 namespace {
 
