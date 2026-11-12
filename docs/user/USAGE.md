@@ -317,6 +317,14 @@ Set `APS5_NO_PAD_INPUT` to any value, an empty one included, to make the window 
 
 On Windows, set `APS5_NO_WGI` to any value to turn off SDL's Windows Gaming Input controller backend. AnyPS5 turns off DirectInput there in every case, and this variable is read once when the video output driver is created.
 
+### Host microphone selection
+
+By default, `libSceAudioIn` captures from SDL's default host input device. Set `ANYPS5_AUDIO_IN_DEVICE` to an exact capture-device name reported by SDL to select another microphone. An unset or empty value, or `default`, keeps SDL's default. If the selected name is missing, appears more than once, or cannot be opened, the game's AudioIn open call returns the invalid-device error `0x8026010F`; AnyPS5 does not silently switch to another microphone. SDL2 identifies capture devices by name, so duplicate names cannot be selected individually. The setting is read each time the game opens an AudioIn port.
+
+```sh
+ANYPS5_AUDIO_IN_DEVICE="USB Microphone" ./app.elf
+```
+
 ### Controller vibration strength
 
 Set `ANYPS5_RUMBLE` to a whole number from `0` to `100` to scale how strongly the game's vibration reaches your controller. `100`, which is also the value when the variable is unset, passes the vibration exactly as the game asks. `0` turns vibration off: the motors never receive a nonzero request, and a rumble that was running is stopped. Values in between scale the motor strength by that percentage and apply to every connected controller.
@@ -441,6 +449,8 @@ At volume 100 and not muted the audio is passed to the host device unchanged, wi
 Set `ANYPS5_MUTE_ON_FOCUS_LOSS=1` to mute the audio while the display window has no focus and restore it when the focus returns. `0` or unset leaves the audio alone. It does not change the mute set with the key: a window you muted stays muted when it regains focus. Only focus events count, so a window minimized without losing focus stays audible, and a window that opens without focus starts muted. An invalid value of either variable, including an empty one, stops the game with an error naming it.
 
 The keys work while the display window has focus. Not measured on a real audio device or on a console.
+
+Set `ANYPS5_AUDIO_IN_MUTE_ON_FOCUS_LOSS=1` to return silent microphone samples to the guest while the display window has no focus. Capture remains open in SDL, but queued samples are cleared when focus changes so speech captured while muted is not delivered after focus returns. `0` or unset leaves microphone input unchanged; an invalid value stops the game with an error naming the variable.
 
 ### GPU selection
 

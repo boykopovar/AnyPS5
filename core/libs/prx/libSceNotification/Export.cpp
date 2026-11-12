@@ -40,8 +40,16 @@ int APS5_VABI sceNotificationSendById(int type, std::uint8_t flag, std::uint8_t*
 }
 
 int APS5_VABI sceNotificationShowPsButtonPersistentBanner(std::uint8_t* jsonParam) {
-    const auto* json = jsonParam != nullptr ? reinterpret_cast<const char*>(jsonParam) : "{}";
-    APS5_LOG_OUT("banner=%s", json);
+    std::string banner = "{}";
+    if (jsonParam != nullptr) {
+        const int savedErrno = errno;
+        std::string text;
+        const int result = CopyGuestString_nid_no_patch(reinterpret_cast<const char*>(jsonParam), Notification::MessageCapacity + 1, text);
+        errno = savedErrno;
+        if (result != 0) return Notification::InvalidMessage;
+        banner = std::move(text);
+    }
+    APS5_LOG_OUT("banner=%s", banner.c_str());
     return 0;
 }
 
