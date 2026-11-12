@@ -1,5 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
-#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapWalkMemo.hpp"
+#include "HeapCacheSwitch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/RecycledShared.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
@@ -20,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <list>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -31,7 +32,6 @@ namespace {
 constexpr std::size_t ThreadCacheLimit = 65536u;
 constexpr std::uint64_t WalkPageBytes = 0x1000u;
 constexpr std::uint64_t WordBytes = sizeof(std::uint32_t);
-constexpr std::uint64_t DefaultWalkMemoMiB = 256u;
 
 std::atomic<std::uint64_t>& heapStages() {
     static std::atomic<std::uint64_t> count{0};
@@ -286,124 +286,6 @@ bool SampleHeapStageVerify() {
     return calls++ % every == 0;
 }
 
-namespace {
-
-template <typename TValue>
-std::uint64_t vectorBytes(const std::vector<TValue>& values) {
-    return static_cast<std::uint64_t>(values.capacity()) * sizeof(TValue);
-}
-
-std::uint64_t vectorBytes(const std::vector<bool>& values) {
-    return static_cast<std::uint64_t>(values.capacity() + 7u) / 8u;
-}
-
-// ElementFlags keeps up to 64 flags inline; larger sets spill every flag into a std::vector<bool>.
-std::uint64_t vectorBytes(const ShaderRecompiler::ElementFlags& flags) {
-    return flags.size() > 64u ? (static_cast<std::uint64_t>(flags.size()) + 7u) / 8u : 0u;
-}
-
-template <typename TValue>
-std::uint64_t sharedBytes(const ShaderRecompiler::SharedValues<TValue>& values) {
-    return static_cast<std::uint64_t>(values.size()) * sizeof(TValue);
-}
-
-std::uint64_t descriptorBindingBytes(const ShaderRecompiler::DescriptorBinding& binding) {
-    return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) +
-           vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) +
-           vectorBytes(binding.imageShapes) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) +
-           vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) +
-           vectorBytes(binding.samplerEmbedded) + vectorBytes(binding.samplerEmbeddedWords) +
-           vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.imageSamplers) +
-           vectorBytes(binding.bufferRead) + vectorBytes(binding.bufferExtent);
-}
-
-}
-
-std::uint64_t HeapWalkResultBytes(const ShaderRecompiler::RecompileResult& result) {
-    auto bytes = sizeof(ShaderRecompiler::RecompileResult) + vectorBytes(result.vertexInputPatches) + vectorBytes(result.runtimeImageResources) +
-                 vectorBytes(result.vertexInputs) + vectorBytes(result.parameterExports) + vectorBytes(result.fragmentParameters) +
-                 vectorBytes(result.stencilReferences) + vectorBytes(result.specialization) + vectorBytes(result.heapSlotWords) +
-                 vectorBytes(result.bindings) + vectorBytes(result.pushConstants) + vectorBytes(result.vertexAttributes) +
-                 vectorBytes(result.imageTablePoison) + vectorBytes(result.imageTableRanges) + vectorBytes(result.imageTableReadRanges) +
-                 vectorBytes(result.heapUserWords) + vectorBytes(result.shaderDataUserWords);
-    if (result.meshBarycentrics.has_value()) bytes += vectorBytes(result.meshBarycentrics->parameters);
-    for (const auto& binding : result.bindings) bytes += descriptorBindingBytes(binding);
-    for (const auto& ranges : result.imageTableReadRanges) bytes += vectorBytes(ranges);
-    return bytes;
-}
-
-std::uint64_t HeapWalkCaptureBytes(const ShaderRecompiler::ResourceCapture& capture) {
-    const auto& snapshot = capture.snapshot;
-    auto bytes = sizeof(ShaderRecompiler::ResourceCapture) + vectorBytes(snapshot.buffers) + vectorBytes(snapshot.images) +
-                 vectorBytes(snapshot.samplers) + vectorBytes(snapshot.flattenedSrt) + vectorBytes(snapshot.userData) +
-                 vectorBytes(snapshot.srtPoison) + vectorBytes(snapshot.tables.tables) + vectorBytes(snapshot.tables.ranges) +
-                 vectorBytes(capture.readTrace.leaves) + vectorBytes(capture.readTrace.otherReads) + vectorBytes(capture.userDataUse.reads);
-    for (const auto& column : snapshot.tables.tables)
-        bytes += sharedBytes(column.codes) + sharedBytes(column.words) + sharedBytes(column.readRanges);
-    return bytes;
-}
-
-std::uint64_t HeapWalkWordsBytes(const ShaderRecompiler::HeapStageWords& words) {
-    auto bytes = sizeof(ShaderRecompiler::HeapStageWords) + vectorBytes(words.userData) + vectorBytes(words.flattenedSrt) +
-                 vectorBytes(words.vertexAttributes) + vectorBytes(words.bindings);
-    for (const auto& binding : words.bindings) bytes += vectorBytes(binding);
-    return bytes;
-}
-
-std::uint64_t HeapWalkEntryOwnBytes(const HeapWalkEntry& entry) {
-    return sizeof(HeapWalkEntry) + vectorBytes(entry.userData) + (entry.ranges != nullptr ? vectorBytes(*entry.ranges) : 0u) + (entry.values != nullptr ? vectorBytes(*entry.values) : 0u) +
-           vectorBytes(entry.accessible) + vectorBytes(entry.userDataUse.reads) + vectorBytes(entry.merges);
-}
-
-std::uint64_t HeapWalkEntryBytes(const HeapWalkEntry& entry) {
-    auto bytes = HeapWalkEntryOwnBytes(entry);
-    if (entry.capture != nullptr) bytes += HeapWalkCaptureBytes(*entry.capture);
-    if (entry.result != nullptr) bytes += HeapWalkResultBytes(*entry.result);
-    if (entry.words != nullptr) bytes += HeapWalkWordsBytes(*entry.words);
-    return bytes;
-}
-
-namespace {
-
-std::atomic<std::uint64_t>& heapWalkMemoEvictions() {
-    static std::atomic<std::uint64_t> evictions{0};
-    return evictions;
-}
-
-}
-
-void NoteHeapWalkMemoEviction() {
-    heapWalkMemoEvictions().fetch_add(1, std::memory_order_relaxed);
-}
-
-std::uint64_t HeapWalkMemoEvictions() {
-    return heapWalkMemoEvictions().load(std::memory_order_relaxed);
-}
-
-std::uint64_t HeapWalkMemoBudget() {
-    static const std::uint64_t budget = [] {
-        const char* value = std::getenv("APS5_HEAP_WALK_MEMO_MB");
-        const std::uint64_t megabytes = value == nullptr || *value == '\0' ? DefaultWalkMemoMiB : std::strtoull(value, nullptr, 10);
-        return megabytes << 20u;
-    }();
-    return budget;
-}
-
-void HeapWalkMemo::trim() {
-    const auto target = budget / 4u * 3u;
-    while (heldBytes > target && order.size() > 1u) evictOldest();
-}
-
-namespace {
-
-HeapWalkMemo& heapWalkMemo() {
-    struct WalkMemoStorage {};
-    auto& memo = HostThreadLocal<HeapWalkMemo, WalkMemoStorage>();
-    return memo;
-}
-
-}
-
 void AppendWalkRead(std::vector<std::pair<std::uint64_t, std::uint64_t>>& runs, std::uint64_t address) {
     if (!runs.empty() && address >= runs.back().first && address <= runs.back().second) {
         runs.back().second = std::max(runs.back().second, address + WordBytes);
@@ -431,12 +313,10 @@ using AddressRanges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
 struct WalkReads {
     AddressRanges runs;
     std::uint64_t page = ~std::uint64_t{0};
-    AddressRanges accessible;
     bool failed = false;
 
     void Reset() {
         runs.clear();
-        accessible.clear();
         failed = false;
         page = ~std::uint64_t{0};
     }
@@ -461,8 +341,7 @@ bool readWalkWord(void* context, std::uint64_t address, std::uint32_t* value) {
 bool walkAccessible(void* context, std::uint64_t address, std::uint64_t bytes) {
     auto& reads = *static_cast<WalkReads*>(context);
     const bool accessible = GuestMemory::Accessible(reinterpret_cast<const void*>(address), static_cast<std::size_t>(bytes));
-    if (accessible) reads.accessible.emplace_back(address, bytes);
-    else reads.failed = true;
+    if (!accessible) reads.failed = true;
     return accessible;
 }
 
@@ -485,93 +364,6 @@ bool rangesSettled(const AddressRanges& ranges, const Graphics::Recorder::WriteR
 
 void guardRanges(const AddressRanges& ranges) {
     for (const auto& [begin, end] : ranges) GuestMemory::GuardRead(begin, static_cast<std::size_t>(end - begin));
-}
-
-std::span<const ShaderRecompiler::TargetMerge> targetMerges(const ShaderRecompiler::PreparedShaderInvocation& invocation) {
-    const auto& pixel = invocation.Request().context.pixel;
-    return pixel ? std::span<const ShaderRecompiler::TargetMerge>(pixel->targetMerges) : std::span<const ShaderRecompiler::TargetMerge>{};
-}
-
-std::uint64_t walkMemoKey(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
-                          std::uint64_t shaderBase) {
-    auto key = (invocation.VariantId() * 0x9e3779b97f4a7c15ull ^ shaderBase) + invocation.Request().layout.pushConstantOffsetBytes;
-    for (const auto word : userData) key = (key ^ word) * 0x100000001b3ull;
-    for (const auto& merge : targetMerges(invocation))
-        for (const auto word : merge.descriptor) key = (key ^ word) * 0x100000001b3ull;
-    return key;
-}
-
-bool sameWalkInputs(const HeapWalkEntry& entry, const ShaderRecompiler::PreparedShaderInvocation& invocation,
-                    std::span<const std::uint32_t> userData, std::uint64_t shaderBase) {
-    const bool sameStage = entry.variant == invocation.VariantId() && entry.shaderBase == shaderBase &&
-                           entry.pushOffset == invocation.Request().layout.pushConstantOffsetBytes;
-    if (!sameStage || !std::equal(entry.userData.begin(), entry.userData.end(), userData.begin(), userData.end())) return false;
-    if (!std::ranges::equal(entry.merges, targetMerges(invocation))) return false;
-    std::size_t cursor = 0;
-    for (const auto& [begin, end] : *entry.ranges) {
-        const auto count = static_cast<std::size_t>((end - begin) / WordBytes);
-        if (GuestMemory::CompareMapped(begin, std::as_bytes(std::span(entry.values->data() + cursor, count))) != GuestMemory::Compare::Equal)
-            return false;
-        cursor += count;
-    }
-    for (const auto& [address, bytes] : entry.accessible) {
-        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), static_cast<std::size_t>(bytes))) return false;
-    }
-    return true;
-}
-
-void noteMemoBytes(const HeapWalkMemo& memo, std::uint64_t heldBefore) {
-    Graphics::NoteHeapWalkMemoBytes(static_cast<std::int64_t>(memo.heldBytes) - static_cast<std::int64_t>(heldBefore));
-}
-
-void rememberWalk(std::uint64_t memoKey, const ShaderRecompiler::PreparedShaderInvocation& invocation,
-                  std::span<const std::uint32_t> userData, std::uint64_t shaderBase, const std::shared_ptr<const AddressRanges>& ranges,
-                  const std::shared_ptr<const std::vector<std::uint32_t>>& values, const AddressRanges& accessible,
-                  const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture,
-                  const std::shared_ptr<const ShaderRecompiler::RecompileResult>& result, std::shared_ptr<const ShaderRecompiler::HeapStageWords> words) {
-    HeapWalkEntry entry;
-    entry.variant = invocation.VariantId();
-    entry.pushOffset = invocation.Request().layout.pushConstantOffsetBytes;
-    entry.shaderBase = shaderBase;
-    entry.userData.assign(userData.begin(), userData.end());
-    const auto merges = targetMerges(invocation);
-    entry.merges.assign(merges.begin(), merges.end());
-    entry.ranges = ranges;
-    entry.values = values;
-    entry.accessible = accessible;
-    entry.userDataUse = capture->userDataUse;
-    entry.capture = capture;
-    entry.result = result;
-    entry.words = std::move(words);
-    auto& memo = heapWalkMemo();
-    const auto heldBefore = memo.heldBytes;
-    memo.remember(memoKey, std::move(entry));
-    noteMemoBytes(memo, heldBefore);
-}
-
-bool adoptWalk(std::uint64_t memoKey, const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
-               std::uint64_t shaderBase, const Graphics::Recorder::WriteRanges* before, std::uint64_t generation,
-               HeapStageMaterialized& adopted, bool& memoKnown) {
-    auto& memo = heapWalkMemo();
-    const auto heldBefore = memo.heldBytes;
-    auto* found = memo.find(memoKey);
-    noteMemoBytes(memo, heldBefore);
-    memoKnown = found != nullptr;
-    for (std::size_t way = 0; found != nullptr && way < found->size(); ++way) {
-        auto& entry = (*found)[way];
-        if (!sameWalkInputs(entry, invocation, userData, shaderBase)) continue;
-        if (!rangesSettled(*entry.ranges, before, generation)) break;
-        memo.touch(entry);
-        guardRanges(*entry.ranges);
-        adopted.words = entry.words;
-        adopted.reads = {entry.ranges, entry.values, entry.userDataUse, entry.capture, true};
-        adopted.result = entry.result;
-        if (way != 0)
-            std::rotate(found->begin(), found->begin() + static_cast<std::ptrdiff_t>(way),
-                        found->begin() + static_cast<std::ptrdiff_t>(way) + 1);
-        return true;
-    }
-    return false;
 }
 
 std::shared_ptr<const ShaderRecompiler::ResourceCapture>
@@ -655,21 +447,6 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     snapshotCost.Stop();
     const auto generation = GuestMemory::StableTrackerGeneration();
     const auto variant = invocation.VariantId();
-    const bool memoAllowed = !invocation.Request().context.vertex.has_value();
-    const bool memoOn = memoAllowed && heapWalkMemo().consult(variant);
-    std::uint64_t memoKey = 0;
-    bool memoKnown = false;
-    if (memoAllowed && !memoOn) heapWalkMemo().noteSkipped(variant, walkMemoKey(invocation, userData, shaderBase));
-
-    Graphics::HeapCostScope memoCost(Graphics::HeapCost::WalkMemo);
-    if (memoOn) {
-        memoKey = walkMemoKey(invocation, userData, shaderBase);
-        HeapStageMaterialized adopted;
-        const bool hit = adoptWalk(memoKey, invocation, userData, shaderBase, before.get(), generation, adopted, memoKnown);
-        heapWalkMemo().noteLookup(variant, hit);
-        if (hit) return adopted;
-    }
-    memoCost.Stop();
 
     Graphics::HeapCostScope walkCost(Graphics::HeapCost::Walk);
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
@@ -699,9 +476,6 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     auto shared = complete ? recycledValues(values) : nullptr;
     auto sharedRanges = complete ? recycledRanges(ranges) : nullptr;
     if (complete) materialized.reads = {sharedRanges, shared, capture->userDataUse, capture, true};
-    Graphics::HeapCostScope insertCost(Graphics::HeapCost::MemoInsert);
-    if (memoOn && complete && (memoKnown || heapWalkMemo().admit(memoKey)))
-        rememberWalk(memoKey, invocation, userData, shaderBase, sharedRanges, shared, reads.accessible, capture, result, words);
     materialized.result = std::move(result);
     materialized.words = std::move(words);
     return materialized;
@@ -785,6 +559,7 @@ void NoteHeapDirectVerify(const ShaderRecompiler::RecompileResult& direct, const
     if (const auto* what = resultDifference(direct, expected, index)) {
         counts.differ.fetch_add(1, std::memory_order_relaxed);
         reportHeapMismatch("heap stage vs full capture", what, expected, index);
+        throw std::runtime_error(std::string("APS5_VERIFY_GPU_HEAP: a heap stage differs from its full capture in its ") + what);
     }
 }
 
@@ -797,6 +572,7 @@ void VerifyHeapAccessor(const Graphics::CompiledShader& stage) {
         if (Graphics::DrawGuestWords(stage, stage.program->bindings[index]) == patched->bindings[index].guestDescriptor) continue;
         counts.accessorDiffer.fetch_add(1, std::memory_order_relaxed);
         reportHeapMismatch("accessor vs patched result", "binding words", *patched, index);
+        throw std::runtime_error("APS5_VERIFY_GPU_HEAP: a heap stage's binding words differ from its patched result");
     }
     const auto& attributes = Graphics::DrawVertexAttributes(stage);
     bool sameAttributes = attributes.size() == patched->vertexAttributes.size();
@@ -806,6 +582,7 @@ void VerifyHeapAccessor(const Graphics::CompiledShader& stage) {
     if (!sameAttributes) {
         counts.accessorDiffer.fetch_add(1, std::memory_order_relaxed);
         reportHeapMismatch("accessor vs patched result", "vertex attributes", *patched, 0);
+        throw std::runtime_error("APS5_VERIFY_GPU_HEAP: a heap stage's vertex attributes differ from its patched result");
     }
 }
 
@@ -820,6 +597,7 @@ void VerifyRingWords(const ShaderRecompiler::RecompileResult& kept, const Shader
     if (const auto* what = resultDifference(*reused, *expected, index)) {
         counts.ringDiffer.fetch_add(1, std::memory_order_relaxed);
         reportHeapMismatch("ring hit vs fresh build", what, *expected, index);
+        throw std::runtime_error(std::string("a ring hit's rebuilt words differ from a fresh build in its ") + what);
     }
 }
 

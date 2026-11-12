@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "HeapCacheSwitch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
@@ -5103,7 +5104,7 @@ namespace {
 // which needs the texture caches: without them every lookup makes a fresh object, so a hit could
 // never validate and would only upload everything twice.
 bool ResourceCacheEnabled() {
-    static const bool noResourceCache = std::getenv("APS5_NO_RESOURCE_CACHE") != nullptr;
+    static const bool noResourceCache = std::getenv("APS5_NO_RESOURCE_CACHE") != nullptr || ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::ResourceCache);
     static const bool noTextureCache = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     return !noResourceCache && !noTextureCache;
 }

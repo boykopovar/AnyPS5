@@ -35,26 +35,6 @@
 
 namespace AgcDriver::Graphics {
 
-namespace {
-
-std::atomic<std::int64_t>& walkMemoHeld() {
-    static std::atomic<std::int64_t> held{0};
-    return held;
-}
-
-std::atomic<std::int64_t>& walkMemoPeak() {
-    static std::atomic<std::int64_t> peak{0};
-    return peak;
-}
-
-}
-
-void NoteHeapWalkMemoBytes(std::int64_t delta) {
-    if (delta == 0) return;
-    const auto now = walkMemoHeld().fetch_add(delta, std::memory_order_relaxed) + delta;
-    auto peak = walkMemoPeak().load(std::memory_order_relaxed);
-    while (now > peak && !walkMemoPeak().compare_exchange_weak(peak, now, std::memory_order_relaxed)) {}
-}
 
 namespace {
 
@@ -798,6 +778,86 @@ std::optional<BindlessHeap::DataSpan> BindlessHeap::KeepOrAllocate(const SpanSco
     return allocateLocked(words, mark);
 }
 
+std::size_t BindlessHeap::makeTableBlockLocked(std::size_t bytes) {
+    constexpr VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    constexpr VkMemoryPropertyFlags deviceVisible = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    std::unique_ptr<Buffer> buffer;
+    try {
+        buffer = std::make_unique<Buffer>(context, bytes, usage, deviceVisible);
+    } catch (const std::exception&) {
+    }
+    if (buffer == nullptr) buffer = std::make_unique<Buffer>(context, bytes, usage);
+    const auto vacant = std::find_if(tableBlocks.begin(), tableBlocks.end(), [](const TableBlock& block) { return block.buffer == nullptr; });
+    auto& block = vacant != tableBlocks.end() ? *vacant : tableBlocks.emplace_back();
+    block.data = buffer->Bytes().data();
+    block.address = buffer->DeviceAddress();
+    block.buffer = std::move(buffer);
+    block.bytes = bytes;
+    block.cursor = 0;
+    return static_cast<std::size_t>(&block - tableBlocks.data());
+}
+
+std::optional<BindlessHeap::DataSpan> BindlessHeap::AllocateTable(const SpanScope& held, std::size_t words, TableMark& mark) {
+    Require(&held.heap == this, "a heap table was allocated under another heap's lock");
+    const auto bytes = std::max<std::size_t>(words, 1u) * sizeof(std::uint32_t);
+    std::uint32_t sizeClass = 0;
+    while (sizeClass < TableClasses && (static_cast<std::size_t>(poolAlignment) << sizeClass) < bytes) ++sizeClass;
+    const bool dedicated = sizeClass == TableClasses || (static_cast<std::size_t>(poolAlignment) << sizeClass) > TableBlockBytes;
+    std::pair<std::uint32_t, std::uint32_t> place{};
+    std::size_t placedBytes = 0;
+    if (dedicated) {
+        placedBytes = static_cast<std::size_t>(alignUp(bytes, poolAlignment));
+        place = {static_cast<std::uint32_t>(makeTableBlockLocked(placedBytes) + 1u), 0u};
+        sizeClass = TableClasses;
+    } else {
+        placedBytes = static_cast<std::size_t>(poolAlignment) << sizeClass;
+        auto& free = tableFree[sizeClass];
+        if (!free.empty()) {
+            place = free.back();
+            free.pop_back();
+        } else {
+            if (tableShared == 0u || tableBlocks[tableShared - 1u].cursor + placedBytes > tableBlocks[tableShared - 1u].bytes) tableShared = makeTableBlockLocked(TableBlockBytes) + 1u;
+            auto& block = tableBlocks[tableShared - 1u];
+            place = {static_cast<std::uint32_t>(tableShared), static_cast<std::uint32_t>(block.cursor)};
+            block.cursor += placedBytes;
+        }
+    }
+    const auto& block = tableBlocks[place.first - 1u];
+    mark = {place.first, place.second, sizeClass, block.address + place.second};
+    ++counts.spansWritten;
+    counts.poolBytes += placedBytes;
+    return DataSpan{place.second, std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.data + place.second), words), mark.address};
+}
+
+void BindlessHeap::RetireTable(const SpanScope& held, TableMark& mark) {
+    Require(&held.heap == this, "a heap table was retired under another heap's lock");
+    if (mark.address == 0u) return;
+    retiredTables.push_back({mark, nullptr, 0u, false});
+    mark = {};
+}
+
+void BindlessHeap::NoteTableKept(const SpanScope& held) {
+    Require(&held.heap == this, "a heap table was kept under another heap's lock");
+    ++counts.spansKept;
+}
+
+void BindlessHeap::reclaimTablesLocked() {
+    while (!retiredTables.empty()) {
+        const auto& front = retiredTables.front();
+        if (!front.submitted || (front.serial != 0u && !front.recorder->WaitSerialFor(front.serial, 0u))) return;
+        if (front.mark.sizeClass == TableClasses) {
+            auto& block = tableBlocks[front.mark.block - 1u];
+            block.buffer.reset();
+            block.data = nullptr;
+            block.address = 0;
+            block.bytes = 0;
+        } else {
+            tableFree[front.mark.sizeClass].emplace_back(front.mark.block, front.mark.offset);
+        }
+        retiredTables.pop_front();
+    }
+}
+
 BindlessHeap::DataSpan BindlessHeap::allocateLocked(std::size_t words, SpanMark& mark) {
     const auto bytes = alignUp(std::max<std::size_t>(words, 1u) * sizeof(std::uint32_t), SpanAlignment);
     if (poolCurrent >= poolBlocks.size() || alignUp(poolBlocks[poolCurrent].cursor, poolAlignment) + bytes > poolBlocks[poolCurrent].bytes) poolCurrent = takePoolBlockLocked(bytes);
@@ -895,9 +955,24 @@ bool BindlessHeap::TakeSlotPressure() {
     return true;
 }
 
+std::span<const std::uint32_t> BindlessHeap::DataWords(VkDeviceAddress address, std::size_t words) const {
+    SpanScope scope(*this);
+    const auto bytes = words * sizeof(std::uint32_t);
+    for (const auto& block : poolBlocks) {
+        if (block.buffer != nullptr && address >= block.address && address + bytes <= block.address + block.bytes) return {reinterpret_cast<const std::uint32_t*>(block.data + (address - block.address)), words};
+    }
+    for (const auto& block : tableBlocks) {
+        if (block.buffer != nullptr && address >= block.address && address + bytes <= block.address + block.bytes) return {reinterpret_cast<const std::uint32_t*>(block.data + (address - block.address)), words};
+    }
+    throw std::runtime_error("AGC bindless heap: the words read lie outside every data block");
+}
+
 std::pair<VkBuffer, VkDeviceSize> BindlessHeap::DataLocation(VkDeviceAddress address) const {
     SpanScope scope(*this);
     for (const auto& block : poolBlocks) {
+        if (block.buffer != nullptr && address >= block.address && address < block.address + block.bytes) return {block.buffer->Handle(), address - block.address};
+    }
+    for (const auto& block : tableBlocks) {
         if (block.buffer != nullptr && address >= block.address && address < block.address + block.bytes) return {block.buffer->Handle(), address - block.address};
     }
     throw std::runtime_error("AGC bindless heap: shader data lies outside every data pool block");
@@ -1315,8 +1390,7 @@ unsigned long long printed(std::uint64_t value) {
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeapCost::Count)> heapCostNs{};
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeapCost::Count)> heapCostCalls{};
 constexpr std::array<const char*, static_cast<std::size_t>(HeapCost::Count)> HeapCostNames{
-    "stage prepare",  "heap stage call", "stage finish", "walk memo",        "walk",        "materialize", "template find",
-    "template build", "slots",           "stage data",   "memo insert", "guards"};
+    "stage prepare", "heap stage call", "stage finish", "walk", "materialize", "template find", "template build", "slots", "stage data", "guards"};
 
 void reportHeapStatistics() {
     if (!pipelineStats()) return;
@@ -1342,9 +1416,7 @@ void reportHeapStatistics() {
         costs += cost;
     }
     if (HeapCostTimed()) {
-        const auto held = static_cast<double>(std::max<std::int64_t>(walkMemoHeld().load(std::memory_order_relaxed), 0)) / 1048576.0;
-        const auto peak = static_cast<double>(walkMemoPeak().load(std::memory_order_relaxed)) / 1048576.0;
-        std::fprintf(stderr, "[gpu-heap] cost (10 s):%s; walk memos hold %.1f MiB on all threads (peak %.1f MiB)\n", costs.c_str(), held, peak);
+        std::fprintf(stderr, "[gpu-heap] cost (10 s):%s\n", costs.c_str());
     }
     const auto heapDraws = takeCount(heapRecords[heapRecordIndex(false, true)]);
     const auto plainDraws = takeCount(heapRecords[heapRecordIndex(false, false)]);
@@ -1622,6 +1694,12 @@ void BindlessHeap::Submitted(Recorder& recorder, std::uint64_t serial) {
         block.serial = serial;
         block.open = index == poolCurrent;
     }
+    for (auto entry = retiredTables.rbegin(); entry != retiredTables.rend() && !entry->submitted; ++entry) {
+        entry->recorder = &recorder;
+        entry->serial = serial;
+        entry->submitted = true;
+    }
+    reclaimTablesLocked();
     trimPoolLocked();
 }
 

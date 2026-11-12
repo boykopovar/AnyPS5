@@ -397,22 +397,22 @@ public:
     void PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten) const;
     void writePushedData(std::span<std::byte, PipelinePushConstantBytes> bytes, const CompiledShader& shader, ShaderRecompiler::RuntimeAbi::PushedPlacement placement) const;
     void writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDeviceAddressRangeEXT>* overrides, VkDeviceAddress empty) const;
-    bool constantBufferRanges(std::uint32_t dataStage) const;
-    struct PushedRanges {
-        bool built = false;
-        bool constant = false;
-        std::vector<VkDeviceAddressRangeEXT> ranges;
-        std::vector<std::uint32_t> records;
-        std::vector<std::uint32_t> emptyRecords;
-    };
-    mutable std::array<PushedRanges, ShaderRecompiler::RuntimeAbi::StageCount> pushedRanges;
-    struct RootRoles {
+    void writeDataRoots(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten, bool cached) const;
+    struct PushImage {
+        std::array<std::byte, PipelinePushConstantBytes> bytes{};
+        std::uint64_t mask = 0;
+        std::vector<ShaderRecompiler::StagePushPlacement> placements;
         std::array<const ShaderRecompiler::RecompileResult*, 8> programs{};
-        std::size_t count = std::numeric_limits<std::size_t>::max();
-        bool table = false;
-        bool fault = false;
+        std::size_t count = 0;
+        struct Stage {
+            std::uint64_t version = ~std::uint64_t{0};
+            std::array<VkDeviceAddress, 4> addresses{};
+            bool live = true;
+        };
+        std::array<Stage, 8> stages{};
+        bool valid = false;
     };
-    mutable RootRoles rootRoles;
+    mutable PushImage pushImage;
     // Whether RefreshData would record anything for `shader` (the per-word compare; verification).
     bool DataWordsDiffer(const CompiledShader& shader) const;
     std::size_t BindingCount() const { return bindings.size(); }
@@ -752,7 +752,6 @@ private:
     mutable std::array<std::uint64_t, 3u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
     void writeHeapStage(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader);
     struct HeapStageState {
-        std::uint64_t inertProgram = 0;
         std::uint64_t slotSerial = 0;
         std::uint64_t dataOrigin = 0;
         std::uint64_t pushedUserWords = 0;
@@ -762,6 +761,14 @@ private:
         std::uint32_t pushedPlaced = 0;
         std::uint32_t userWords = 0;
         bool splitUser = false;
+        bool keyTaken = false;
+        std::uint64_t pushVersion = 0;
+        bool mapBuilt = false;
+        std::uint32_t mapTouched = 0;
+        std::vector<std::uint32_t> mapSlots;
+        std::vector<std::uint32_t> mapGenerations;
+        std::vector<std::uint32_t> mapSamplers;
+        std::vector<std::uint32_t> mapSamplerGenerations;
         std::vector<std::uint32_t> owned;
         std::vector<std::uintptr_t> key;
         struct KindRange {
@@ -777,7 +784,7 @@ private:
         std::vector<std::pair<std::uint32_t, std::uint32_t>> dataPatches;
         struct KeptSpan {
             std::vector<std::uint32_t> words;
-            BindlessHeap::SpanMark mark;
+            BindlessHeap::TableMark table;
         };
         KeptSpan data, flat, map, user;
         std::vector<std::uint32_t> dataInput;
@@ -789,7 +796,10 @@ private:
         }
     };
     std::array<HeapStageState, ShaderRecompiler::RuntimeAbi::StageCount> heapStages;
-    std::uint64_t heapSpan(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words, std::uint64_t pushed = 0);
+    std::uint64_t heapSpan(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words);
+    std::uint64_t heapTable(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words);
+    bool keptTable(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, HeapStageState::KeptSpan& kept);
+    void retireHeapTables() noexcept;
     bool ownsHeapBinding(const Binding& binding, VkShaderStageFlags stageBit) const;
     VkImageView heapPlaceholderView(std::uint32_t kind) const;
     VkImageView heapSampledView(std::size_t index) const;

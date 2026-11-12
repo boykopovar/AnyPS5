@@ -110,7 +110,10 @@ int main() {
             disjoint(stages, placements, 0, "vertex and pixel");
             require(placements[0].pushed.count == 6 && placements[1].pushed.count == 30, "stages that fit push everything they want");
             require(place({stages[1]})[0] == placements[1], "a pixel stage that fits is placed as it is alone, so its fragment library is shared");
-            require(placements[0].Item(Item::PagetableAddress) != placements[1].Item(Item::PagetableAddress), "the pre-rasterization and fragment parts hold their own globals");
+            require(placements[0].Item(Item::PagetableAddress) == placements[1].Item(Item::PagetableAddress), "the pre-rasterization and fragment parts share their globals");
+            const std::vector<Stage> fault{{ShaderStage::Vertex, vertexItems | bits({Item::FaultAddress, Item::GdsAddress}), 6}, {ShaderStage::Fragment, pixelItems, 30}};
+            disjoint(fault, place(fault), 0, "globals only the pre-rasterization part reads");
+            require(place(fault)[1] == place({fault[1]})[0], "globals only the pre-rasterization part reads do not move the fragment part's roots");
         }
         {
             const auto user = Abi::RootItemBit(Item::UserData);
@@ -137,7 +140,7 @@ int main() {
             const std::vector<Stage> stages{{ShaderStage::Vertex, vertexItems, 40}, {ShaderStage::Fragment, pixelItems, 40}};
             const auto placements = place(stages);
             disjoint(stages, placements, 0, "stages that want too much");
-            require(placements[0].pushed.count == 26 && placements[1].pushed.count == 26, "stages that want too much share the room evenly");
+            require(placements[0].pushed.count == 27 && placements[1].pushed.count == 27, "stages that want too much share the room evenly");
         }
         {
             const std::vector<Stage> stages{{ShaderStage::Local, vertexItems, 4}, {ShaderStage::TessellationControl, bits({Item::PagetableAddress, Item::ShaderData}), 3}, {ShaderStage::TessellationEvaluation, vertexItems, 10}, {ShaderStage::Fragment, pixelItems, 48}};

@@ -109,20 +109,25 @@ inline std::vector<StagePushPlacement> PlacePushData(std::span<const PushStage> 
     constexpr auto optionalItems = Abi::RootItemBit(Abi::RootItem::UserData);
     constexpr std::array parts{PushPart::Fragment, PushPart::Compute, PushPart::PreRasterization};
     std::vector<std::uint32_t> overflows(stages.size(), Abi::NoPushPosition);
+    std::uint32_t globals = 0;
+    std::uint32_t fragmentGlobals = 0;
+    for (const auto& stage : stages) {
+        globals |= stage.items & globalItems;
+        if (stage.part == PushPart::Fragment) fragmentGlobals |= stage.items & globalItems;
+    }
+    std::array<std::uint32_t, Abi::RootItemCount> shared{};
+    shared.fill(Abi::NoPushPosition);
+    placeRoot(fragmentGlobals, false, shared);
+    placeRoot(globals & ~fragmentGlobals, false, shared);
+    for (std::size_t index = 0; index < stages.size(); ++index) {
+        for (std::uint32_t item = 0; item < Abi::RootItemCount; ++item) {
+            if ((stages[index].items & globalItems & (1u << item)) != 0u) placements[index].items[item] = shared[item];
+        }
+    }
     for (const auto part : parts) {
         const bool top = part != PushPart::PreRasterization;
-        std::uint32_t globals = 0;
-        for (const auto& stage : stages) {
-            if (stage.part == part) globals |= stage.items & globalItems;
-        }
-        std::array<std::uint32_t, Abi::RootItemCount> shared{};
-        shared.fill(Abi::NoPushPosition);
-        placeRoot(globals, top, shared);
         for (std::size_t index = 0; index < stages.size(); ++index) {
             if (stages[index].part != part) continue;
-            for (std::uint32_t item = 0; item < Abi::RootItemCount; ++item) {
-                if ((stages[index].items & globalItems & (1u << item)) != 0u) placements[index].items[item] = shared[item];
-            }
             placeRoot(stages[index].items & ~globalItems & ~optionalItems, top, placements[index].items);
             placements[index].pushedBuffers = stages[index].pushedBuffers;
         }

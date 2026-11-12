@@ -8,6 +8,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "RuntimeAbi.hpp"
+#include "ImageTableAbi.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -205,6 +206,33 @@ void RefreshAfterOriginalDestroyed(const AgcDriver::VulkanDevice& device, const 
     std::printf("the heap table map refreshed for %s\n", what);
 }
 
+void RefreshAfterSlotReleased(const AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    namespace Abi = ShaderRecompiler::RuntimeAbi;
+    namespace TableAbi = ShaderRecompiler::ImageTableAbi;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto program = Compile(device, block);
+    RequireHeapTable(program);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const CompiledShader shader{ShaderStage::Compute, &program, 0};
+    auto resources = std::make_shared<ShaderResources>(context, shader);
+    Require(resources->HeapStage(), "heap table slot release: the set was not built on the heap");
+    auto& heap = AgcDriver::Graphics::BindlessHeap::For(context);
+    const auto sampledSlot = [&](std::uint64_t root) -> std::pair<std::uint32_t, const AgcDriver::Graphics::Texture*> {
+        const auto header = heap.DataWords(root, TableAbi::HeaderElementBase + 1u);
+        const auto base = header[TableAbi::HeaderElementBase];
+        const auto slot = heap.DataWords(root, base + 1u)[base];
+        return {slot, heap.SlotTexture(Abi::FirstImageBinding, slot)};
+    };
+    const auto [slot, texture] = sampledSlot(TableMapRoot(*resources, shader));
+    Require(texture != nullptr, "heap table slot release: the table's first element holds no texture");
+    heap.ReleaseSlots(texture);
+    Require(heap.SlotTexture(Abi::FirstImageBinding, slot) == nullptr, "heap table slot release: releasing the texture's slots left its slot held");
+    resources->RefreshHeapStage(std::span<const CompiledShader>(&shader, 1));
+    const auto [refreshedSlot, refreshedTexture] = sampledSlot(TableMapRoot(*resources, shader));
+    Require(refreshedTexture == texture, "heap table slot release: after the texture's slot was released the stage's table map still names slot " + std::to_string(refreshedSlot) + ", which no longer holds the texture");
+    std::puts("the heap table map was rebuilt after its texture's slot was released");
+}
+
 }
 
 int main() {
@@ -218,6 +246,7 @@ int main() {
         Prepare(block, surfaces);
         RefreshAfterOriginalDestroyed(*device, block, false);
         RefreshAfterOriginalDestroyed(*device, block, true);
+        RefreshAfterSlotReleased(*device, block);
         std::puts("heap table stage reuse tests passed");
         return 0;
     } catch (const std::exception& error) {

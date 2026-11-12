@@ -56,6 +56,7 @@ public:
     void WritePixelLdsBuffer(VkDeviceAddress address, VkDeviceSize bytes);
     void WriteMeshWindowBuffer(VkDeviceAddress address, VkDeviceSize bytes);
     std::pair<VkBuffer, VkDeviceSize> DataLocation(VkDeviceAddress address) const;
+    std::span<const std::uint32_t> DataWords(VkDeviceAddress address, std::size_t words) const;
     std::uint32_t EmbeddedSamplerCount() const;
 
     std::optional<std::uint32_t> TextureSlot(std::uint32_t kind, Texture* texture, VkImageView view, VkImageLayout layout);
@@ -106,6 +107,17 @@ public:
         bool acquired;
     };
     std::optional<DataSpan> KeepOrAllocate(const SpanScope& held, std::size_t words, SpanMark& mark, bool same);
+    struct TableMark {
+        std::uint32_t block = 0;
+        std::uint32_t offset = 0;
+        std::uint32_t sizeClass = 0;
+        VkDeviceAddress address = 0;
+    };
+    std::optional<DataSpan> AllocateTable(const SpanScope& held, std::size_t words, TableMark& mark);
+    void RetireTable(const SpanScope& held, TableMark& mark);
+    void NoteTableKept(const SpanScope& held);
+    static constexpr std::size_t TableBlockBytes = 1u << 20u;
+    static constexpr std::uint32_t TableClasses = 16u;
 
     static constexpr std::uint32_t SamplerKind = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers);
     void Submitted(Recorder& recorder, std::uint64_t serial);
@@ -152,6 +164,25 @@ private:
         bool open = false;
     };
     std::vector<PoolBlock> poolBlocks;
+    struct TableBlock {
+        std::unique_ptr<Buffer> buffer;
+        std::byte* data = nullptr;
+        VkDeviceAddress address = 0;
+        std::size_t bytes = 0;
+        std::size_t cursor = 0;
+    };
+    std::vector<TableBlock> tableBlocks;
+    std::array<std::vector<std::pair<std::uint32_t, std::uint32_t>>, TableClasses> tableFree;
+    struct RetiredTable {
+        TableMark mark;
+        Recorder* recorder = nullptr;
+        std::uint64_t serial = 0;
+        bool submitted = false;
+    };
+    std::deque<RetiredTable> retiredTables;
+    std::size_t tableShared = 0;
+    std::size_t makeTableBlockLocked(std::size_t bytes);
+    void reclaimTablesLocked();
     std::size_t poolCurrent = ~std::size_t{0};
     std::uint32_t poolAlignment = 256;
     std::size_t poolBatchBytes = 0;
@@ -314,20 +345,17 @@ enum class HeapCost : std::uint8_t {
     StagePrepare,
     HeapStageCall,
     StageFinish,
-    WalkMemo,
     Walk,
     Materialize,
     TemplateFind,
     TemplateBuild,
     Slots,
     StageData,
-    MemoInsert,
     Guards,
     Count
 };
 bool HeapCostTimed();
 
-void NoteHeapWalkMemoBytes(std::int64_t delta);
 void NoteHeapCost(HeapCost cost, std::uint64_t nanoseconds);
 class HeapCostScope {
 public:

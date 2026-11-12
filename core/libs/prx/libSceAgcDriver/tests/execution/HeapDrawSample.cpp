@@ -377,7 +377,7 @@ std::span<const std::uint32_t> PixelProgram(Mode mode, bool buffer, bool vertexS
     return PixelCode;
 }
 
-void DrawSamplesTheTexture(bool heap, Mode mode) {
+void DrawSamplesTheTexture(bool heap, Mode mode, bool repeated = false) {
     const bool buffer = mode == Mode::Buffer || mode == Mode::Bda || mode == Mode::MovedBuffer;
     const auto colorMemory = mode == Mode::MergedBlend ? MergedTarget(0) : mode == Mode::MergedBlendOther ? MergedTarget(1) : std::span<std::byte>(ColorMemory);
     std::ranges::fill(colorMemory, Kept);
@@ -425,7 +425,7 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
         ++drawn;
     }
     Require(drawn != 0, "the draw covered no pixel");
-    if (mode == Mode::Table || mode == Mode::VertexTable)
+    if ((mode == Mode::Table || mode == Mode::VertexTable) && !repeated)
         Require(AgcDriver::Graphics::ImageTableBuilds() > tablesBefore,
                 std::string("the table draw's ") + (mode == Mode::Table ? "fragment" : "vertex") + " stage bound no image table");
     if (mode == Mode::Gds) Require(*gdsCounter != 0u, "the GDS append did not count the drawn lanes");
@@ -435,7 +435,7 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
                                                                   std::to_string(StorageMemory[channel]) + ", expected the sampled " +
                                                                   std::to_string(Texel[channel]) + (heap ? " through the heap" : ""));
     }
-    if (!heap) return;
+    if (!heap || repeated) return;
     if (mode == Mode::Vertex || mode == Mode::VertexTable)
         Require(AgcDriver::DriverDetail::HeapStagesTaken() > takenBefore,
                 "the heap did not take the sampling vertex stage with descriptor memory");
@@ -542,6 +542,7 @@ int main() {
         for (const auto mode : {Mode::Texture, Mode::Buffer, Mode::Storage, Mode::Gds, Mode::Vertex, Mode::Bda, Mode::Table, Mode::VertexTable,
                                 Mode::MovedBuffer, Mode::MovedTexture, Mode::PixelLds, Mode::ConstantSampler, Mode::BorderSampler, Mode::WrapSampler, Mode::MergedBlend, Mode::MergedBlendOther, Mode::Texture})
             DrawSamplesTheTexture(heap, mode);
+        for (const auto mode : {Mode::Table, Mode::VertexTable}) DrawSamplesTheTexture(heap, mode, true);
         const bool capped = heap && std::getenv("APS5_HEAP_SLOT_CAP") != nullptr;
         if (heap && !capped) UnpreparedPairTakesTheHeap();
         if (heap) {

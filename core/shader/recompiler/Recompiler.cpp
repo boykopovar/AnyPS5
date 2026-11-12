@@ -1,4 +1,5 @@
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "HeapCacheSwitch.hpp"
 #include "Recompiler.hpp"
 #include "PushDataLayout.hpp"
 #include "HeapTemplateBudget.hpp"
@@ -1783,7 +1784,7 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
 
 // APS5_NO_RESULT_MEMO=1: every Recompile(request, capture) materializes its own result as before.
 bool ResultMemo() {
-    static const bool resultMemo = std::getenv("APS5_NO_RESULT_MEMO") == nullptr;
+    static const bool resultMemo = std::getenv("APS5_NO_RESULT_MEMO") == nullptr && !HeapCacheBypassed(HeapCache::ResultMemo);
     return resultMemo;
 }
 
@@ -2563,9 +2564,10 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     auto& entry = front.At(source.id, key);
     ++front.lookups;
     std::shared_ptr<const HeapTemplate> hit;
-    if (entry.found != nullptr && entry.source == source.id && entry.key == key) {
+    const bool templates = !HeapCacheBypassed(HeapCache::Templates);
+    if (templates && !HeapCacheBypassed(HeapCache::TemplateFront) && entry.found != nullptr && entry.source == source.id && entry.key == key) {
         hit = entry.found;
-    } else {
+    } else if (templates) {
         {
             std::lock_guard lock(source.mutex);
             const auto found = source.heapTemplates.find(key);
@@ -2589,6 +2591,10 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     auto created = std::make_shared<HeapTemplate>(HeapTemplate{std::move(built), std::move(usedPlan), perDrawBindings ? merged.buffers : std::vector<DescriptorValue>{}, perDrawBindings ? merged.images : std::vector<DescriptorValue>{}, perDrawBindings ? merged.samplers : std::vector<DescriptorValue>{}});
     created->bytes = HeapTemplateBytes(*created);
     std::shared_ptr<const HeapTemplate> shared = std::move(created);
+    if (!templates) {
+        complete(shared);
+        return shared->result;
+    }
     bool inserted = false;
     {
         std::lock_guard lock(source.mutex);

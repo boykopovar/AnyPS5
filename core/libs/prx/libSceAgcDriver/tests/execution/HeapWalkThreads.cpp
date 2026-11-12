@@ -1,5 +1,4 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
-#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapWalkMemo.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
@@ -117,9 +116,8 @@ void Work(const std::vector<std::unique_ptr<Variant>>& variants, std::size_t fir
     }
 }
 
-void TwoThreadsShareEvictedWalks(AgcDriver::VulkanDevice& device) {
+void TwoThreadsShareWalks(AgcDriver::VulkanDevice& device) {
     const auto variants = Prepare(device);
-    const auto evictionsBefore = AgcDriver::DriverDetail::HeapWalkMemoEvictions();
     Inbox first, second;
     std::atomic<bool> failed{false};
     std::string firstError, secondError;
@@ -128,20 +126,17 @@ void TwoThreadsShareEvictedWalks(AgcDriver::VulkanDevice& device) {
     one.join();
     two.join();
     Require(firstError.empty() && secondError.empty(), "a heap walk thread failed: " + firstError + secondError);
-    const auto evictions = AgcDriver::DriverDetail::HeapWalkMemoEvictions() - evictionsBefore;
-    Require(evictions != 0, "two threads walked " + std::to_string(Variants) + " stages " + std::to_string(Rounds) + " times each under a 1 MiB heap walk memo without evicting an entry");
-    std::printf("two heap walk threads: %llu memo evictions while the other thread held the stages\n", static_cast<unsigned long long>(evictions));
+    std::puts("two heap walk threads exchanged their stages");
 }
 
 }
 
 int main() {
-    SetTestEnvironment("APS5_HEAP_WALK_MEMO_MB", "1");
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        TwoThreadsShareEvictedWalks(*device);
-        std::puts("heap walk memo thread tests passed");
+        TwoThreadsShareWalks(*device);
+        std::puts("heap walk thread tests passed");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

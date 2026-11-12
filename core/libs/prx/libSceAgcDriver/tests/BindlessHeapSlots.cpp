@@ -281,6 +281,44 @@ bool dataPool(const Context& context) {
         require(counts.poolBlocksFreed != 0u && counts.poolBlockBytes <= AgcDriver::Graphics::BindlessHeap::PoolIdleBytes + AgcDriver::Graphics::BindlessHeap::PoolBlockBytes,
                 "idle blocks beyond the pool's budget are freed");
     }
+    {
+        BindlessHeap heap(context);
+        const BindlessHeap::SpanScope spans(heap);
+        BindlessHeap::TableMark table;
+        const std::vector<std::uint32_t> words(40u, 0x5au);
+        const auto first = heap.AllocateTable(spans, words.size(), table);
+        require(first.has_value() && table.address == first->address && first->words.size() == words.size(), "a stage table is allocated");
+        BindlessHeap::Write(*first, words);
+        const auto firstAddress = table.address;
+        heap.RetireTable(spans, table);
+        require(table.address == 0u, "a retired table leaves its owner");
+        BindlessHeap::TableMark unsubmitted;
+        const auto second = heap.AllocateTable(spans, words.size(), unsubmitted);
+        require(second.has_value() && second->address != firstAddress, "a table retired in the open batch is not reused before the batch is submitted");
+        heap.Submitted(recorder, recorder.Submissions() + (1ull << 40u));
+        BindlessHeap::TableMark busy;
+        const auto third = heap.AllocateTable(spans, words.size(), busy);
+        require(third.has_value() && third->address != firstAddress, "a table a batch in flight still reads is not reused");
+        heap.RetireTable(spans, unsubmitted);
+        heap.Submitted(recorder, 0u);
+        BindlessHeap::TableMark reused;
+        const auto fourth = heap.AllocateTable(spans, words.size(), reused);
+        require(fourth.has_value() && fourth->address != firstAddress, "a table waits for the batch that last read it, not a later one");
+        BindlessHeap::TableMark large;
+        const auto big = heap.AllocateTable(spans, AgcDriver::Graphics::BindlessHeap::TableBlockBytes, large);
+        require(big.has_value() && big->words.size() == AgcDriver::Graphics::BindlessHeap::TableBlockBytes && heap.DataLocation(large.address).first != VK_NULL_HANDLE, "a table larger than a shared block gets a block of its own");
+    }
+    {
+        BindlessHeap heap(context);
+        const BindlessHeap::SpanScope spans(heap);
+        BindlessHeap::TableMark table;
+        static_cast<void>(heap.AllocateTable(spans, 40u, table));
+        const auto address = table.address;
+        heap.RetireTable(spans, table);
+        heap.Submitted(recorder, 0u);
+        BindlessHeap::TableMark next;
+        require(heap.AllocateTable(spans, 40u, next).has_value() && next.address == address, "a table whose batch completed is reused");
+    }
     return true;
 }
 

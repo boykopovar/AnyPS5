@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "HeapCacheSwitch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
@@ -1119,7 +1120,7 @@ void countCache(std::uint64_t DrawProfile::*counter) {
 // every draw.
 bool ValidationKey(const Context& context, std::span<const CompiledShader> shaders, const State& state, std::vector<std::uint64_t>& key) {
     using Stage = ShaderRecompiler::ShaderStage;
-    static const bool disabled = std::getenv("APS5_NO_VALIDATE_CACHE") != nullptr;
+    static const bool disabled = std::getenv("APS5_NO_VALIDATE_CACHE") != nullptr || ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::ValidateCache);
     const auto add = [&](auto value) { key.push_back(static_cast<std::uint64_t>(value)); };
     bool keyed = !disabled;
     if (keyed) {
@@ -1283,7 +1284,7 @@ std::uint32_t CachedFragmentOutputs(const Context& context, std::span<const Comp
 // workload with such rings; in the profiled menu stage every draw was DRAW_INDEX_AUTO (index range
 // 0) onto one fixed target, so its misses come from the stages' descriptor words themselves.
 bool MovableBuffers() {
-    static const bool enabled = std::getenv("APS5_NO_MOVED_BUFFER_TEMPLATES") == nullptr;
+    static const bool enabled = std::getenv("APS5_NO_MOVED_BUFFER_TEMPLATES") == nullptr && !ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::MovedBufferTemplates);
     return enabled;
 }
 
@@ -1508,7 +1509,7 @@ std::uint64_t DrawContentKeysBuilt() {
 }
 
 bool DrawRecipes() {
-    static const bool noDrawRecipe = std::getenv("APS5_NO_DRAW_RECIPE") != nullptr;
+    static const bool noDrawRecipe = std::getenv("APS5_NO_DRAW_RECIPE") != nullptr || ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::DrawRecipe);
     return !noDrawRecipe;
 }
 
@@ -1813,7 +1814,7 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
         if (plan.retainedVertexInput == nullptr) plan.vertexInput = BuildVertexInputLayout(context, attributes);
     }
     timer.charge(PhaseVertex, layoutStart);
-    static const bool noDrawResourceCache = std::getenv("APS5_NO_DRAW_RESOURCE_CACHE") != nullptr;
+    static const bool noDrawResourceCache = std::getenv("APS5_NO_DRAW_RESOURCE_CACHE") != nullptr || ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::DrawResourceCache);
     static const bool noTextureCache = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     plan.candidate = recipe == nullptr && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; });
@@ -3277,7 +3278,7 @@ void keepHeldSpace(PreparedDraw& prepared) {
 }
 
 bool ShapeMemoEnabled() {
-    static const bool enabled = std::getenv("APS5_NO_SHAPE_MEMO") == nullptr;
+    static const bool enabled = std::getenv("APS5_NO_SHAPE_MEMO") == nullptr && !ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::ShapeMemo);
     return enabled;
 }
 

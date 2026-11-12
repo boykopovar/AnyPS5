@@ -244,6 +244,12 @@ function(add_shader_recompiler target runtimeTarget)
         string(APPEND shaderCacheExtra " system-deps=${ANYPS5_SYSTEM_DEPS_STAMP}")
     endif()
     set(shaderCacheReviewedNames
+            HeapCache
+            HeapCacheBypassed
+            HeapCacheBypassMask
+            HeapCacheNames
+            HeapOnlyCacheCount
+            ParseHeapCacheBypass
             BdaAbi::RangesOrdered
             RuntimeAbi::GpuHeapStorageKind
             RuntimeAbi::StageGroup

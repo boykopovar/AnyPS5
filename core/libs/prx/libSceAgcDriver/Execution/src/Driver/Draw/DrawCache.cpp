@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "HeapCacheSwitch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include <algorithm>
 #include <bit>
@@ -22,17 +23,17 @@ bool DrawRecipeRecord::Expired() const {
 }
 
 bool Driver::drawEntries() {
-    static const bool entries = std::getenv("APS5_NO_DRAW_SRT_ENTRIES") == nullptr && !stampValidate();
+    static const bool entries = std::getenv("APS5_NO_DRAW_SRT_ENTRIES") == nullptr && !ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::DrawSrtEntries) && !stampValidate();
     return entries;
 }
 
 bool Driver::drawDataHits() {
-    static const bool hits = std::getenv("APS5_NO_DRAW_DATA_HITS") == nullptr;
+    static const bool hits = std::getenv("APS5_NO_DRAW_DATA_HITS") == nullptr && !ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::DrawDataHits);
     return hits;
 }
 
 bool Driver::drawStageDataHits() {
-    static const bool hits = std::getenv("APS5_NO_DRAW_STAGE_DATA_HITS") == nullptr && !stampValidate();
+    static const bool hits = std::getenv("APS5_NO_DRAW_STAGE_DATA_HITS") == nullptr && !ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::DrawStageDataHits) && !stampValidate();
     return hits;
 }
 
@@ -47,7 +48,7 @@ bool Driver::verifyDrawEntries() {
 }
 
 bool Driver::registerKeyEnabled() {
-    static const bool registerKey = std::getenv("APS5_NO_DRAW_KEY") == nullptr;
+    static const bool registerKey = std::getenv("APS5_NO_DRAW_KEY") == nullptr && !ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::DrawKey);
     return registerKey;
 }
 
