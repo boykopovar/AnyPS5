@@ -2459,10 +2459,6 @@ int APS5_VABI _ZN7WebCore24CoordinatedGraphicsLayer20setReplicatedByLayerEON3WTF
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient38dispatchDecidePolicyForNewWindowActionERKNS_16NavigationActionERKNS_15ResourceRequestEPNS_9FormStateERKN3WTF6StringENS_21PolicyCheckIdentifierEONS9_8FunctionIFvNS_12PolicyActionESD_EEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore9FrameView17setScrollPositionERKNS_8IntPointENS_14ScrollClampingENS_14AnimatedScrollE() {
     NotImplemented_nid_no_patch(__func__);
 }
