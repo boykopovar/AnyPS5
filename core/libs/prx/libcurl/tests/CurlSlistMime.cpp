@@ -19,8 +19,30 @@ static guest_curl_slist* GuestNode(const char* text, guest_curl_slist* next) {
     return node;
 }
 
+static guest_curl_httppost* GuestFormNode(const char* name, const char* contents,
+    guest_curl_httppost* next, guest_curl_httppost* more, std::int64_t flags = 0) {
+    auto* form = static_cast<guest_curl_httppost*>(calloc_nid_postfix(1, sizeof(guest_curl_httppost)));
+    Require(form != nullptr);
+    form->name = name ? (flags & CURL_HTTPPOST_PTRNAME ? const_cast<char*>(name) : strdup_nid_postfix(name)) : nullptr;
+    form->contents = contents ? (flags & (CURL_HTTPPOST_PTRCONTENTS | CURL_HTTPPOST_BUFFER | CURL_HTTPPOST_CALLBACK)
+        ? const_cast<char*>(contents) : strdup_nid_postfix(contents)) : nullptr;
+    form->contenttype = strdup_nid_postfix("text/plain");
+    form->showfilename = strdup_nid_postfix("form.txt");
+    form->next = next;
+    form->more = more;
+    form->flags = flags;
+    return form;
+}
+
 int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
+    auto* borrowed = GuestFormNode("borrowed name", "borrowed contents", nullptr, nullptr,
+        CURL_HTTPPOST_PTRNAME | CURL_HTTPPOST_PTRCONTENTS | CURL_HTTPPOST_BUFFER | CURL_HTTPPOST_CALLBACK);
+    borrowed->buffer = const_cast<char*>("borrowed buffer");
+    auto* form = GuestFormNode("root", "root contents", borrowed,
+        GuestFormNode("child", "child contents", nullptr, nullptr));
+    curl_formfree_nid_postfix(form);
+    curl_formfree_nid_postfix(nullptr);
     CURL* easy = curl_easy_init_nid_postfix();
     Require(easy != nullptr);
     curl_mime* mime = curl_mime_init_nid_postfix(easy);

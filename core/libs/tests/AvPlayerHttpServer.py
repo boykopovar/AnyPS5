@@ -74,6 +74,25 @@ references = {
     "network-empty": ("//{authority}?empty=network#fragment", "/?empty=network"),
 }
 redirected = set()
+empty_ranges = {
+    "lower": "bytes */0",
+    "title": "Bytes */0",
+    "upper": "BYTES */0",
+    "mixed": "bYtEs */0",
+    "padded": "bytes */000",
+    "other-unit": "items */0",
+    "bad-unit": "BYTES= */0",
+    "missing-length": "bytes */",
+    "nonzero": "bytes */1",
+    "negative": "bytes */-0",
+    "signed": "bytes */+0",
+    "suffix": "bytes */0junk",
+    "spacing": "bytes * /0",
+    "unknown": "bytes */*",
+    "overflow": "bytes */18446744073709551616",
+    "satisfied": "bytes 0-0/0",
+    "missing-header": None,
+}
 
 
 
@@ -154,7 +173,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         full = path.startswith(("/ignore/", "/full/", "/full-chunk/", "/full-close/"))
         if not full and start >= len(content):
             self.send_response(416)
-            self.send_header("Content-Range", f"bytes */{len(content)}")
+            content_range = empty_ranges[path.split("/")[2]] if path.startswith("/empty-range/") else f"bytes */{len(content)}"
+            if content_range is not None:
+                self.send_header("Content-Range", content_range)
             self.send_header("Content-Length", "13")
             self.send_header("Connection", "close")
             self.end_headers()
@@ -370,6 +391,8 @@ with Server(("127.0.0.1", 0), Handler) as server, Server(("127.0.0.1", 0), Handl
     if mode == "avplayer":
         assert {"/range/avplayer.mp4", "/chunk/avplayer.webm", "/ignore/avplayer.mp4", "/redirect/avplayer.mp4"}.issubset({path for path, _ in requests})
     if mode == "client":
+        for name in empty_ranges:
+            assert (f"/empty-range/{name}/empty.bin", "bytes=0-65535") in requests
         assert set(references) == redirected
         assert {target for _, target in references.values()}.issubset(targets)
         expected = {"/range/payload.bin", "/range/alternate.bin", "/full/payload.bin", "/full-chunk/payload.bin", "/full-close/payload.bin", "/client-redirect/payload.bin", "/changed/payload.bin", "/modified/payload.bin", "/bad/payload.bin", "/short/payload.bin", "/chunk-bad/payload.bin", "/stall/payload.bin", "/stall-open/payload.bin", "/sync/read", "/sync/open"}
