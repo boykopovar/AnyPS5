@@ -1,5 +1,11 @@
 # libSceAgcDriver technical debt
 
+### Read-only depth bounds comparison
+
+[`APS5_READONLY_DEPTH_BOUNDS_COMPARE=1`](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) enables a workaround for depth-test errors following read-only D32S8 draws. It is disabled by default; set it before launch. Unset or `0` selects the normal path.
+
+Eligible single-sample draws retain native finite bounds inside [0, 1] and use a read-only GREATER_OR_EQUAL comparison at viewport depth 1. Every sample surviving those bounds already passes that comparison. Depth and stencil testing/writes, bias, shader depth inputs/outputs, remapping and custom sampling select the normal path, as do clamp ranges excluding depth 1. This workaround applies to draws with native depth bounds.
+
 ### Silent stubs
 
 - [sceAgcDriverInitResourceRegistration, sceAgcDriverQueryResourceRegistrationUserMemoryRequirements](../../../core/libs/prx/libSceAgcDriver/Resource/src/Lifecycle.cpp) (libSceAgcDriver) - the init call returns 0 without setting anything up. The query writes 16 KiB (0x4000) as the user memory registration needs and returns 0, and a null output returns `AGC_EINVAL` (0x80020065) without writing. I found no source for that size. Registration stays unavailable (see Resource registration), so the size is never used. Crimson Desert (PPSA25286), Call of Duty: Black Ops II (PPSA34502), Steins;Gate Re:Boot (PPSA36591) and Metal Gear Solid 4 (PPSA18194) reach both through one-instruction wrappers.

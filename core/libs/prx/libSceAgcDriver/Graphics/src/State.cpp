@@ -1481,6 +1481,20 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
     return result;
 }
 
+void ApplyReadOnlyDepthBoundsComparison(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel, bool enabled) {
+    if (!enabled || !state.depthBoundsTest || !state.depth || state.depth->format != VK_FORMAT_D32_SFLOAT_S8_UINT) return;
+    if (state.depthTest || state.depthWrite || state.stencilTest || state.depthBias || state.depthBiasPerFace || state.depthRemap.mode != 0) return;
+    if (state.samples != 1 || state.depth->samples != 1 || state.customSampleLocations || state.sampleLocationGrid) return;
+    if (pixel.posZ || pixel.depthExportEnable) return;
+    if (!std::isfinite(state.minDepthBounds) || !std::isfinite(state.maxDepthBounds) || state.minDepthBounds < 0.0f || state.maxDepthBounds > 1.0f || state.minDepthBounds > state.maxDepthBounds) return;
+    if (!std::isfinite(state.viewport.minDepth) || !std::isfinite(state.viewport.maxDepth) || state.viewport.minDepth < 0.0f || state.viewport.minDepth > 1.0f || state.viewport.maxDepth < 0.0f || state.viewport.maxDepth > 1.0f) return;
+    if (state.depthClamp && (!std::isfinite(state.depthClampMin) || !std::isfinite(state.depthClampMax) || state.depthClampMin > 1.0f || state.depthClampMax < 1.0f)) return;
+    state.depthTest = true;
+    state.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
+    state.viewport.minDepth = 1.0f;
+    state.viewport.maxDepth = 1.0f;
+}
+
 void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
     if (!state.depthBoundsTest || !state.depth || context.depthBounds) return;
     ValidateDepthBounds(context, state);
