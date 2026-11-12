@@ -40,6 +40,7 @@ RULES = {
 }
 
 CPP = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp"}
+ASSEMBLY = {".S", ".s", ".asm"}
 IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico", ".tga", ".dds"}
 NOTES = {".md", ".markdown", ".rst", ".log", ".patch", ".diff"}
 AGENT_FILES = {
@@ -59,6 +60,7 @@ DEBT_LABEL_TRAILER = re.compile(r"\bLabels:[ \t]*([^\n]*?)\.?[ \t]*$", re.M)
 
 CONVENTIONAL = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: \S")
 STRINGS = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+DIRECTIVE = re.compile(r"^[\s\ufeff]*#\s*(?:(?:if|ifdef|ifndef|elif|elifdef|elifndef|else|endif|define|undef|include|include_next|import|error|warning|pragma|line|ident|sccs|assert|unassert)\b|$)")
 ALLOWED_COMMENT = re.compile(r"^\s*(#\s*endif\b|}\s*;?\s*//\s*(end\s+)?namespace\b)")
 LICENSE_MARKER = re.compile(
     r"SPDX-License-Identifier"
@@ -73,7 +75,7 @@ IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 NID_SOURCES = r"APS5_EXPORT|APS5_VABI|_nid_postfix|ASM_FUNCTION"
 STUB_BODY = re.compile(r"^(?:\(void\)\s*\w+\s*;|static_cast<void>\(\s*\w+\s*\)\s*;)*"
                        r"(?:return\s*\(?\s*(?:-?(?:0x[0-9a-fA-F]+|\d+)[uUlL]*|nullptr|true|false|\w*_OK)?\s*\)?\s*;)?$")
-SYSTEM_DEPENDENCY = re.compile(r"\b(find_package\s*\((?!\s*(Python3|Threads|Git)\b)|pkg_check_modules\b|pkg_search_module\b|find_(library|path|program|file)\b)", re.I)
+SYSTEM_DEPENDENCY = re.compile(r"\b(find_package\s*\((?!\s*(Python3|Threads|Git|LLVM)\b)|pkg_check_modules\b|pkg_search_module\b|find_(library|path|program|file)\b)", re.I)
 TITLE = re.compile(r"\b(PPSA|CUSA)\d{5}\b")
 EXTENSION = re.compile(r"__attribute__|__declspec|#\s*pragma\s+(?!once\b)")
 INTEGER = r"(0[xX][0-9a-fA-F']+|0[bB][01']+|[0-9][0-9']*)[uUlLzZ]*"
@@ -301,6 +303,24 @@ class Check:
             for number, _ in lines:
                 bare = masked[number - 1]
                 if ("//" in bare or "/*" in bare) and not ALLOWED_COMMENT.match(bare):
+                    self.report("comment", path, number)
+
+    def assembly(self):
+        if any(is_debt(path) for path in self.status):
+            return
+        for path, lines in self.files(lambda p: p.suffix in ASSEMBLY):
+            preprocessed = PurePosixPath(path).suffix == ".S"
+            source = self.show(path).split("\n")
+            expanded = cpp_text("\n".join(source)).split("\n")
+            masked = cpp_text("\n".join(source), preserve_comments=True).split("\n")
+            directives = set()
+            for number, text in enumerate(masked, 1):
+                if preprocessed and (DIRECTIVE.match(text) or (number - 1 in directives and masked[number - 2].rstrip().endswith("\\"))):
+                    directives.add(number)
+            for number, _ in lines:
+                bare = masked[number - 1]
+                comment = "//" in bare or "/*" in bare or ("#" in bare and number not in directives)
+                if comment and not (preprocessed and ALLOWED_COMMENT.match(bare)) and not license_run(source, expanded, number - 1):
                     self.report("comment", path, number)
 
     def submodules(self):
@@ -884,6 +904,7 @@ if __name__ == "__main__":
     check.code()
     check.build()
     check.shaders()
+    check.assembly()
     check.repository()
     check.docs()
     check.debt_entries()

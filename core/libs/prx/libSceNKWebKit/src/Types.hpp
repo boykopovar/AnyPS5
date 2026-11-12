@@ -196,6 +196,19 @@ public:
     Retained<URL> absolutePDFURL;
     Retained<String> linkLabel;
     Retained<String> linkTitle;
+    Retained<String> linkSuggestedFilename;
+    bool isSelected = false;
+    bool isDownloadableMedia = false;
+    bool mediaHasAudio = false;
+    bool mediaIsInFullscreen = false;
+    std::uint32_t mediaType = 0;
+};
+
+class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+public:
+    Retained<BundleNodeHandle> document;
+    Retained<BundleFrame> documentFrame;
+    Retained<BundleFrame> htmlIFrameElementContentFrame;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
@@ -341,6 +354,24 @@ public:
 
     int width = 0;
     int height = 0;
+};
+
+class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {
+public:
+    NavigationAction() = default;
+    explicit NavigationAction(bool shouldPerformDownload) : shouldPerformDownload_(shouldPerformDownload) {}
+    bool shouldPerformDownload() const noexcept { return shouldPerformDownload_; }
+private:
+    bool shouldPerformDownload_ = false;
+};
+
+class NavigationResponse final : public ObjectOf<ObjectType::NavigationResponse> {
+public:
+    NavigationResponse() = default;
+    explicit NavigationResponse(bool canShowMIMEType) : canShowMIMEType_(canShowMIMEType) {}
+    bool canShowMIMEType() const noexcept { return canShowMIMEType_; }
+private:
+    bool canShowMIMEType_ = true;
 };
 
 }  // namespace NKWebKit

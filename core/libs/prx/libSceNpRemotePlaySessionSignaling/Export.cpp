@@ -1,5 +1,6 @@
 #include "prx/libSceNpRemotePlaySessionSignaling/include/Api.hpp"
 #include "prx/libSceNpSessionSignaling/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -60,7 +61,12 @@ int APS5_VABI sceNpRemotePlaySessionSignalingGetMemoryInfo(SessionSignalingMemor
     if (result < 0) {
         return result;
     }
-    *memoryInfo = local;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(memoryInfo, &local, sizeof(local));
+    errno = savedErrno;
+    if (!copied) {
+        return ErrorInvalidArgument;
+    }
     return 0;
 }
 

@@ -405,13 +405,16 @@ struct HttpClientState : Aps5HttpClient {
                 if (status < 100 || status >= 200) break;
                 if (status == 101) throw HttpFailure("HTTP upgrade is not a media file");
             }
+            if (status == 203) status = 200;
             if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
                 if (!headers.contains("location")) throw HttpFailure("HTTP redirect has no location");
                 if (initialized) throw HttpFailure("HTTP source redirected after opening");
                 requestUrl = Redirect(parsed, headers.at("location"));
                 continue;
             }
-            const bool empty = status == 416 && headers.contains("content-range") && headers.at("content-range") == "bytes */0";
+            const auto unsatisfied = headers.find("content-range");
+            const bool empty = status == 416 && unsatisfied != headers.end() && Lower(unsatisfied->second.substr(0, 8)) == "bytes */"
+                && Number(std::string_view(unsatisfied->second).substr(8)) == 0;
             if (status != 200 && status != 206 && !empty) throw HttpFailure("HTTP source request was refused");
             if (headers.contains("content-encoding") && Lower(headers.at("content-encoding")) != "identity") NotImplemented_nid_no_patch("HTTP client encoded HTTP representations");
             if (full && status != 200) throw HttpFailure("HTTP full source request returned partial content");

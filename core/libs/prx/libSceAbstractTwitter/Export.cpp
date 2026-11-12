@@ -4,6 +4,12 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED = static_cast<int>(0x809E0005);
+
+}
+
 extern "C" {
 
 
@@ -32,15 +38,15 @@ int APS5_VABI _ZN15AbstractStorage13TwitterFolder13RemoveContentERKSbIcSt11char_
 }
 
 int APS5_VABI _ZN15AbstractStorage13TwitterFolder4OpenENS_8ItemTypeE() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI _ZN15AbstractStorage13TwitterFolder5CloseEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI _ZN15AbstractStorage13TwitterFolder6RemoveEb() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI _ZN15AbstractStorage13TwitterFolder8NextItemEPSt10shared_ptrINS_4ItemEE() {
@@ -92,7 +98,7 @@ int APS5_VABI _ZN15AbstractStorage14TwitterContent4OpenEit() {
 }
 
 int APS5_VABI _ZN15AbstractStorage14TwitterContent4ReadEPvlPl() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI _ZN15AbstractStorage14TwitterContent5CloseEv() {
@@ -100,7 +106,7 @@ int APS5_VABI _ZN15AbstractStorage14TwitterContent5CloseEv() {
 }
 
 int APS5_VABI _ZN15AbstractStorage14TwitterContent5FlushEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI _ZN15AbstractStorage14TwitterContent5WriteEPKvlPl() {
@@ -108,7 +114,7 @@ int APS5_VABI _ZN15AbstractStorage14TwitterContent5WriteEPKvlPl() {
 }
 
 int APS5_VABI _ZN15AbstractStorage14TwitterContent6RemoveEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI _ZN15AbstractStorage14TwitterContent6RenameERKSbIcSt11char_traitsIcENS_8StlAllocIcEEE() {
@@ -120,7 +126,7 @@ int APS5_VABI _ZN15AbstractStorage14TwitterContent8SeekByteEliPl() {
 }
 
 int APS5_VABI _ZN15AbstractStorage14TwitterContent8SeekTimeElPl() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI _ZN15AbstractStorage14TwitterContentC1ERKSbIcSt11char_traitsIcENS_8StlAllocIcEEEb() {
@@ -192,7 +198,7 @@ int APS5_VABI _ZN15AbstractStorage14TwitterStorage13GetRootFolderEPSt10shared_pt
 }
 
 int APS5_VABI _ZN15AbstractStorage14TwitterStorage14GetStorageSizeEPlS1_S1_() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI _ZN15AbstractStorage14TwitterStorage15CreateRecursiveERKSbIcSt11char_traitsIcENS_8StlAllocIcEEENS_8ItemTypeEPSt10shared_ptrINS_4ItemEE() {
@@ -240,7 +246,7 @@ int APS5_VABI _ZN15AbstractStorage14TwitterStorageD2Ev() {
 }
 
 int APS5_VABI _ZNK15AbstractStorage13TwitterFolder10GetServiceEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 3;
 }
 
 int APS5_VABI _ZNK15AbstractStorage13TwitterFolder13GetCapabilityEv() {
@@ -248,27 +254,27 @@ int APS5_VABI _ZNK15AbstractStorage13TwitterFolder13GetCapabilityEv() {
 }
 
 int APS5_VABI _ZNK15AbstractStorage13TwitterFolder7GetStatEPNS_4StatE() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterContent10GetServiceEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 3;
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterContent13GetCapabilityEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0x6C0A;
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterContent7GetStatEPNS_4StatE() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterService14GetServiceTypeEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 3;
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterStorage10GetServiceEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 3;
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterStorage13GetCapabilityEv() {
@@ -276,7 +282,7 @@ int APS5_VABI _ZNK15AbstractStorage14TwitterStorage13GetCapabilityEv() {
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterStorage7GetStatEPNS_4StatE() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
 
 }

@@ -8,6 +8,7 @@
 
 using SelfCall = int (APS5_VABI*)(void*);
 using Size = std::size_t (APS5_VABI*)(const void*);
+using Empty = bool (APS5_VABI*)(const void*);
 using Element = void* (APS5_VABI*)(void*, std::uint64_t);
 
 static void Require(bool value, const char* what) {
@@ -71,6 +72,7 @@ static void TestParameterLifecycles() {
             const int result = present ? _ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer10initializeEPNS1_6Common10LibContextE(parameter, context) : ParameterInvalidArgument;
             Require(_ZNK3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer13isInitializedEv(parameter) == (before || result == 0), "isInitialized disagrees with initialize");
             Require(_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer15setserviceLabelEi(parameter, 1) == 0, "setserviceLabel failed");
+            Require(_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer15setserviceLabelEj(parameter, 1u) == 0, "setserviceLabel(unsigned) failed");
             return result;
         });
     TestParameterLifecycle(
@@ -344,6 +346,11 @@ static const Size sizes[] = {
     _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEE4sizeEv,
 };
 
+static const Empty empties[] = {
+    _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEE5emptyEv,
+    _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V120PlayerSessionForReadEEEE5emptyEv,
+};
+
 static const Element elements[] = {
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEEixEm,
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V113PlayerSessionEEEEixEm,
@@ -363,26 +370,33 @@ static void TestVectorSizeAndElements() {
     std::uint64_t context = 1;
     IntrusivePtr vector{nullptr, nullptr, &context};
     for (const auto size : sizes) Require(size(&vector) == 0, "a vector without a body has elements");
+    for (const auto empty : empties) Require(empty(&vector) == true, "a vector without a body is not empty");
     for (const auto element : elements) Require(Throws([&] { element(&vector, 0); }), "indexing a vector without a body did not throw");
 
     alignas(8) std::int32_t first[4] = {1};
     alignas(8) std::int32_t second[4] = {1};
-    const IntrusivePtr pushed[] = {{first, nullptr, &context}, {second, nullptr, &context}};
+    alignas(8) std::int32_t third[4] = {1};
+    const IntrusivePtr pushed[] = {{first, nullptr, &context}, {second, nullptr, &context}, {third, nullptr, &context}};
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEEC1EPNS2_10LibContextE(&vector, &context);
+    for (const auto empty : empties) Require(empty(&vector) == true, "a newly initialized vector is not empty");
     for (const auto& element : pushed)
         Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEE8pushBackERKS8_(&vector, &element) == 0, "pushBack failed");
-    for (const auto size : sizes) Require(size(&vector) == 2, "a vector reported the wrong size");
+    for (const auto size : sizes) Require(size(&vector) == 3, "a vector reported the wrong size");
+    for (const auto empty : empties) Require(empty(&vector) == false, "a populated vector reported empty");
     for (const auto element : elements) {
         Require(static_cast<IntrusivePtr*>(element(&vector, 0))->object == first, "operator[] returned the wrong first element");
         Require(static_cast<IntrusivePtr*>(element(&vector, 1))->object == second, "operator[] returned the wrong second element");
+        Require(static_cast<IntrusivePtr*>(element(&vector, 2))->object == third, "operator[] returned the wrong third element");
         Require(static_cast<IntrusivePtr*>(element(&vector, 1)) == static_cast<IntrusivePtr*>(element(&vector, 0)) + 1, "operator[] elements are not contiguous");
+        Require(static_cast<IntrusivePtr*>(element(&vector, 2)) == static_cast<IntrusivePtr*>(element(&vector, 1)) + 1, "operator[] elements are not contiguous");
     }
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEED1Ev(&vector);
-    Require(first[0] == 1 && second[0] == 1, "destroying the vector did not release its references");
+    Require(first[0] == 1 && second[0] == 1 && third[0] == 1, "destroying the vector did not release its references");
 
     alignas(8) unsigned char foreignBody[0x50] = {};
     IntrusivePtr foreign{foreignBody, nullptr, &context};
     for (const auto size : sizes) Require(Throws([&] { size(&foreign); }), "sizing a foreign body did not throw");
+    for (const auto empty : empties) Require(Throws([&] { empty(&foreign); }), "emptying a foreign body did not throw");
     for (const auto element : elements) Require(Throws([&] { element(&foreign, 0); }), "indexing a foreign body did not throw");
 }
 
