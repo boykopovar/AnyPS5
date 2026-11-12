@@ -1,5 +1,9 @@
 # libSceBgft technical debt
 
+### Functional
+
+- [sceBgftServiceIntInit](../../../core/libs/prx/libSceBgft/Export.cpp) - returning `0x80990004` (`SCE_BGFT_ERROR_INVALID_ARGUMENT`) for an unmapped or unreadable parameter pointer is a defensive host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 ### Silent stubs
 
 - [sceBgftServiceIntDownloadRegisterTaskByStorageEx](../../../core/libs/prx/libSceBgft/Export.cpp) - the module's own checks, read from firmware 13.42 disassembly (review of #15131): `0x80990002` before initialization, `0x80990004` for a null params or taskId, then the params pointers — +0x8 must be non-null with `strnlen(s, 0x31) <= 0x30`, and a non-null +0x10, +0x20 or +0x28 string must satisfy `strnlen(s, 0x800) <= 0x7ff`, `strnlen(s, 0x259) <= 0x258` and `strnlen(s, 0x800) <= 0x7ff` respectively, a null there skipping the check; no task id is ever written. Valid initialized input returns `0x80990006`, the service's answer the module forwards to at `10db`, per the [etaHEN writeup](https://github.com/etaHEN/etaHEN/blob/5061a853/PS5%20technical%20writeups/pkg-writeup.md), whose decompiled handler ignores both arguments; the writeup predates the 13.60 module inspected here

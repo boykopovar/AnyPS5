@@ -228,6 +228,8 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE(sceFiosCachePrefetchFileRangeSync(nullptr, file.c_str(), 0, 10) == SCE_FIOS_OK);
     REQUIRE(sceFiosCachePrefetchFile(nullptr, file.c_str()) == 0);
     REQUIRE(sceFiosCachePrefetchFileRange(nullptr, file.c_str(), 0, 10) == 0);
+    REQUIRE(sceFiosCacheContainsFileRangeSync(file.c_str(), 0, 10) == SCE_FIOS_ERROR_BAD_INDEX);
+    REQUIRE(sceFiosCacheContainsFileRangeSync((directory + "/missing").c_str(), 0, 1) == SCE_FIOS_ERROR_BAD_INDEX);
     REQUIRE(sceFiosExistsSync(nullptr, file.c_str()));
     REQUIRE(sceFiosExistsSync(nullptr, directory.c_str()));
     REQUIRE(!sceFiosExistsSync(nullptr, (directory + "/missing").c_str()));
@@ -256,6 +258,21 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE((stat.statFlags & SCE_FIOS_STAT_DIRECTORY) != 0);
     REQUIRE(sceFiosStatSync(nullptr, (directory + "/missing").c_str(), &stat) == SCE_FIOS_ERROR_BAD_PATH);
     REQUIRE(sceFiosStatSync(nullptr, file.c_str(), nullptr) == SCE_FIOS_ERROR_BAD_PTR);
+}
+
+static void CheckPathCompare() {
+    REQUIRE(sceFiosPathcmp("a/b", "a/b") == 0);
+    REQUIRE(sceFiosPathcmp("", "") == 0);
+    REQUIRE(sceFiosPathcmp("a", "b") < 0);
+    REQUIRE(sceFiosPathcmp("b", "a") > 0);
+    REQUIRE(sceFiosPathcmp("A", "a") < 0);
+    REQUIRE(sceFiosPathcmp("ab", "a") > 0);
+    REQUIRE(sceFiosPathcmp("a", "ab") < 0);
+    REQUIRE(sceFiosPathncmp("abcdef", "abcxyz", 3) == 0);
+    REQUIRE(sceFiosPathncmp("abcdef", "abcxyz", 4) < 0);
+    REQUIRE(sceFiosPathncmp("abcxyz", "abcdef", 4) > 0);
+    REQUIRE(sceFiosPathncmp("ab", "ac", 10) < 0);
+    REQUIRE(sceFiosPathncmp("abc", "xyz", 0) == 0);
 }
 
 static void CheckOperationLifecycle(const std::string& file) {
@@ -754,6 +771,7 @@ int main() {
     }
     CheckInitialization();
     CheckQueries(directory.generic_string(), file);
+    CheckPathCompare();
     CheckOperationLifecycle(file);
     CheckCallbacks(file);
     CheckSuspension(file);

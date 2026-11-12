@@ -203,7 +203,7 @@ static int AppendNop(Apr::CommandBufferObject& buffer, std::uint32_t header, con
     if (bytes > std::numeric_limits<std::uint32_t>::max()) return SCE_KERNEL_ERROR_EBUSY;
     const auto payloadBytes = static_cast<std::uint32_t>(bytes - sizeof(std::uint32_t));
     std::array<std::uint8_t, MaxNopPayloadBytes> staged{};
-    if (data && payloadBytes != 0u) std::memcpy(staged.data(), data, payloadBytes);
+    if (data && payloadBytes != 0u && !GuestCopyIn_nid_no_patch(staged.data(), data, payloadBytes)) return SCE_KERNEL_ERROR_EFAULT;
     const int capacity = EnsureCommandCapacity(&buffer, static_cast<std::uint32_t>(bytes));
     if (capacity != 0) return capacity;
     std::uint8_t* destination = buffer.base + buffer.offset;
@@ -489,8 +489,8 @@ int APS5_VABI sceAmprCommandBufferConstructNop(Apr::CommandBufferObject* buffer,
     const std::uint32_t dwords = (payloadBytes + 3u) / 4u + (word ? 1u : 0u);
     std::array<std::uint8_t, MaxNopPayloadBytes> staged{};
     std::uint32_t stagedWord = 0;
-    if (word) stagedWord = *word;
-    if (payloadBytes != 0u) std::memcpy(staged.data(), payload, payloadBytes);
+    if (word && !GuestCopyIn_nid_no_patch(&stagedWord, word, sizeof(stagedWord))) return SCE_KERNEL_ERROR_EFAULT;
+    if (payloadBytes != 0u && !GuestCopyIn_nid_no_patch(staged.data(), payload, payloadBytes)) return SCE_KERNEL_ERROR_EFAULT;
     const std::uint32_t offset = buffer->offset;
     const int result = AppendNop(*buffer, Apr::NopHeader(dwords, static_cast<std::uint32_t>(type)), nullptr);
     if (result != 0) return result;
@@ -566,8 +566,11 @@ int APS5_VABI sceAmprCommandBufferPushMarkerWithColor(Apr::CommandBufferObject* 
 
 int APS5_VABI sceAmprCommandBufferReset(Apr::CommandBufferObject* buffer) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    buffer->offset = 0;
-    buffer->numCommands = 0;
+    Apr::CommandBufferObject localBuffer{};
+    if (!GuestCopyIn_nid_no_patch(&localBuffer, buffer, sizeof(localBuffer))) return SCE_KERNEL_ERROR_EFAULT;
+    localBuffer.offset = 0;
+    localBuffer.numCommands = 0;
+    if (!GuestCopyOut_nid_no_patch(&buffer->offset, &localBuffer.offset, sizeof(std::uint32_t) * 2)) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
