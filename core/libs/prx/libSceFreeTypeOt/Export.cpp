@@ -304,10 +304,10 @@ int APS5_VABI sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch() {
 }
 APS5_EXPORT("yCEJIsjIOO8", sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtStrokerExport_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI FT_Stroker_ExportForward_nid_no_patch(void* stroker, FreeType::GuestOutline* outline) {
+    FT_Stroker_Export_nid_postfix(stroker, outline);
 }
-APS5_EXPORT("2rcvKZfm5rI", sceFreeTypeOtStrokerExport_nid_no_patch);
+APS5_EXPORT("2rcvKZfm5rI", FT_Stroker_ExportForward_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtStrokerExportBorder_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
