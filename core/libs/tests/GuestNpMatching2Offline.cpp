@@ -1,5 +1,6 @@
 #include "prx/libSceNpMatching2/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -243,6 +244,11 @@ int main() {
     }
 
     Require(sceNpMatching2CreateContext(nullptr, &context) == InvalidArgument, "sceNpMatching2CreateContext", "a null parameter was taken");
+    errno = 71;
+    Require(sceNpMatching2CreateContext(reinterpret_cast<const NpMatching2CreateContextParameter*>(0x10), &context) == InvalidArgument, "sceNpMatching2CreateContext", "an unmapped parameter was taken");
+    Require(errno == 71, "sceNpMatching2CreateContext", "errno was not preserved");
+    Require(sceNpMatching2CreateContext(&create, reinterpret_cast<std::uint16_t*>(0x10)) == InvalidArgument, "sceNpMatching2CreateContext", "an unmapped context output was taken");
+    Require(errno == 71, "sceNpMatching2CreateContext", "errno was not preserved");
     create.size = 0x30;
     Require(sceNpMatching2CreateContext(&create, &context) == InvalidArgument, "sceNpMatching2CreateContext", "parameter size 0x30 was taken");
     create.size = 0x28;
@@ -296,6 +302,11 @@ int main() {
     Require(registerLobbyMessage(1, nullptr, nullptr) == 0, "sceNpMatching2RegisterLobbyMessageCallback", "registering failed");
     created = 77;
     Require(createContextA(nullptr, &created) == InvalidArgument, "sceNpMatching2CreateContextA", "a null parameter was taken");
+    errno = 71;
+    Require(createContextA(reinterpret_cast<const NpMatching2CreateContextParameterA*>(0x10), &created) == InvalidArgument, "sceNpMatching2CreateContextA", "an unmapped parameter was taken");
+    Require(errno == 71, "sceNpMatching2CreateContextA", "errno was not preserved");
+    Require(createContextA(&createA, reinterpret_cast<std::uint16_t*>(0x10)) == InvalidArgument, "sceNpMatching2CreateContextA", "an unmapped context output was taken");
+    Require(errno == 71, "sceNpMatching2CreateContextA", "errno was not preserved");
     createA.size = 0x28;
     Require(createContextA(&createA, &created) == InvalidArgument, "sceNpMatching2CreateContextA", "parameter size 0x28 was taken");
     createA.size = 0x10;
