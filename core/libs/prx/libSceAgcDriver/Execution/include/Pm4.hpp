@@ -105,6 +105,7 @@ bool UsesGpuCacheBarrier(std::span<const std::uint32_t> packet);
 bool IsTagMarker(std::span<const std::uint32_t> packet);
 inline bool Predicated(std::uint32_t header) { return !FillerPacket(header) && (header & 1u) != 0; }
 bool PredicationPasses(const QueueState& queue);
+std::size_t PredicationBytes(const Predication& predication);
 bool WaitSatisfied(std::span<const std::uint32_t> packet);
 // WaitSatisfied for a polling loop: the caller has validated the address once, so the value is read
 // directly instead of through the checked guest memory path.
