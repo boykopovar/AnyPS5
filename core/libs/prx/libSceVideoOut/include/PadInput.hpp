@@ -58,6 +58,8 @@ private:
     void publish(std::uint64_t frame);
     void applyMappingSnapshot();
     void reloadInputMapping();
+    void dispatchPadChords(DisplayWindow& window);
+    void applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window);
     void publish(std::uint64_t frame, int slot);
     void setMouseMode(bool enabled);
     void openAvailableControllers();

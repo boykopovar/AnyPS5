@@ -119,6 +119,7 @@ bool APS5_VABI WKPreferencesGetDeveloperExtrasEnabled(const void* preferencesRef
 bool APS5_VABI WKPreferencesGetDiagnosticLoggingEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetDirectoryUploadEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetDialogElementEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetDoNotTrackEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetDownloadAttributeEnabled(const void* preferencesRef);
 WKEditableLinkBehavior APS5_VABI WKPreferencesGetEditableLinkBehavior(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetEnableInheritURIQueryComponent(const void* preferencesRef);
@@ -159,6 +160,7 @@ bool APS5_VABI WKPreferencesGetJavaScriptMarkupEnabled(const void* preferencesRe
 std::uint32_t APS5_VABI WKPreferencesGetJavaScriptRuntimeFlags(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetKeygenElementEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetLargeImageAsyncDecodingEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetLazyImageLoadingEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetLegacyEncryptedMediaAPIEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetLinkPreloadEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetLoadsImagesAutomatically(const void* preferencesRef);
@@ -312,6 +314,7 @@ void APS5_VABI WKPreferencesSetDeveloperExtrasEnabled(const void* preferencesRef
 void APS5_VABI WKPreferencesSetDiagnosticLoggingEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetDirectoryUploadEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetDialogElementEnabled(const void* preferencesRef, bool enabled);
+void APS5_VABI WKPreferencesSetDoNotTrackEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetDownloadAttributeEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetEditableLinkBehavior(const void* preferencesRef, WKEditableLinkBehavior wkBehavior);
 void APS5_VABI WKPreferencesSetEnableInheritURIQueryComponent(const void* preferencesRef, bool enabled);
@@ -357,6 +360,7 @@ void APS5_VABI WKPreferencesSetJavaScriptMarkupEnabled(const void* preferencesRe
 void APS5_VABI WKPreferencesSetJavaScriptRuntimeFlags(const void* preferencesRef, std::uint32_t javaScriptRuntimeFlagSet);
 void APS5_VABI WKPreferencesSetKeygenElementEnabled(const void* preferencesRef, bool value);
 void APS5_VABI WKPreferencesSetLargeImageAsyncDecodingEnabled(const void* preferencesRef, bool flag);
+void APS5_VABI WKPreferencesSetLazyImageLoadingEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetLegacyEncryptedMediaAPIEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetLinkPreloadEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetLoadsImagesAutomatically(const void* preferencesRef, bool loadsImagesAutomatically);
