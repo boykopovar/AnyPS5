@@ -108,6 +108,9 @@ struct HostImportCounts {
     std::uint64_t live = 0;
     std::uint64_t liveBytes = 0;
     std::array<HostImportRequesterCounts, ImportRequesterCount> requesters{};
+    std::uint64_t growing = 0;
+    std::uint64_t budgetChecks = 0;
+    std::uint64_t retiredPinnedBytes = 0;
 };
 
 const char* ImportRequesterName(ImportRequester requester);
@@ -267,6 +270,8 @@ struct AddressSpaceStats {
     std::uint64_t dissolvedOverlap = 0;
     std::uint64_t dissolvedImports = 0;
     std::uint64_t waiterDrops = 0;
+    std::uint64_t patchedEpoch = 0;
+    std::uint64_t rebuiltGrowth = 0;
 };
 AddressSpaceStats AddressSpaceCounters();
 
@@ -280,6 +285,7 @@ struct MirrorStats {
     std::uint64_t heapChecks = 0;
     std::uint64_t sparseBinds = 0;
     std::uint64_t evictions = 0;
+    std::uint64_t rangeMirrors = 0;
 };
 MirrorStats MirrorCounters();
 std::uint64_t SnapshotMismatches();
@@ -467,6 +473,7 @@ public:
     bool InPlaceReadsOverlap(std::uint64_t address, std::size_t bytes) const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const;
     void DeviceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const;
+    void AddressStores(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const;
 
 private:
     struct Region {
@@ -550,6 +557,7 @@ private:
     static ShaderRecompiler::BdaAbi::Range addressRange(const Region& region);
     static std::uint64_t servedEnd(const Region& region);
     static std::uint64_t inPlaceEnd(const Region& region);
+    static bool addressWritable(const Region& region);
     void validate(std::uint64_t address, std::size_t bytes) const;
     // The region of a descriptor-bound range (AddWritable/AddReadable), committed pages only. A
     // range inside a base region of the space adds nothing: the region serves it, as today's merge

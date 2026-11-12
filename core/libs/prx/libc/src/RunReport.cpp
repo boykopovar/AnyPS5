@@ -15,6 +15,7 @@
 #include <regex>
 #include <set>
 #include <system_error>
+#include <thread>
 #if defined(__x86_64__) || defined(__i386__)
 #include <cpuid.h>
 #endif
@@ -522,7 +523,7 @@ std::string FormatOsVersion(std::string_view name, std::string_view versionId, s
     }
     std::string result = CollapseSpaces(name);
     const auto version = CollapseSpaces(versionId);
-    if (!version.empty()) result += (result.empty() ? "" : " ") + version;
+    if (!version.empty() && SafeText(version, {}).has_value()) result += (result.empty() ? "" : " ") + version;
     if (!kernel.empty()) result += (result.empty() ? "kernel " : " (kernel ") + kernel + (result.empty() ? "" : ")");
     return result;
 }

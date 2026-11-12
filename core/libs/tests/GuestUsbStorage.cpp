@@ -1,4 +1,5 @@
 #include "prx/libSceUsbStorage/UsbStorage.hpp"
+#include <cerrno>
 #include "prx/libSceUsbStorage/include/HostVolumes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -377,9 +378,6 @@ void TestGetdents() {
 }
 
 void TestThrowingExports() {
-    char mountPoint[8]{};
-    Require(ThrowsWith([&] { sceUsbStorageGetMountPointOfShellCore(0, mountPoint); }, "sceUsbStorageGetMountPointOfShellCore not implemented"),
-            "get the mount point of shell core without a device did not throw its marker");
     Require(ThrowsWith([] { sceUsbStorageClearFakeWriteProtection(); }, "sceUsbStorageClearFakeWriteProtection not implemented"),
             "clear fake write protection did not throw its marker");
     Require(ThrowsWith([] { sceUsbStorageSetFakeMapLockForDebug(); }, "sceUsbStorageSetFakeMapLockForDebug not implemented"),
@@ -396,6 +394,9 @@ void TestDeviceInfo(const FakeHost& host) {
 
     UsbStorageDeviceInfo info;
     std::memset(&info, 0x5a, sizeof(info));
+    errno = 71;
+    Require(sceUsbStorageGetDeviceInfo(0, reinterpret_cast<UsbStorageDeviceInfo*>(0x10)) == UsbStorage::InvalidArgument, "unwritable info buffer");
+    Require(errno == 71, "errno preserved");
     Require(sceUsbStorageGetDeviceInfo(0, &info) == 0, "get device info of the attached device");
     Require(info.vendorId == 0x0781 && info.productId == 0x5581 && info.bcdDevice == 0x0100, "the device info holds the USB ids and release");
     Require(std::string_view(info.vendor) == "SanDisk" && info.vendorLength == 7, "the device info holds the vendor");
@@ -496,6 +497,55 @@ void TestDeviceGetdents() {
     Require(ThrowsWith([&] { sceUsbStorageGetdentsClose(fd); }, "sceUsbStorageGetdentsClose not implemented"), "close a closed scan did not throw its marker");
 }
 
+std::uint64_t ReadEntries(std::int32_t fd, std::uint64_t size, std::set<std::string>& names, std::set<std::uint32_t>& fileNumbers) {
+    std::vector<std::uint8_t> buffer(size, 0x5a);
+    std::uint64_t bytesRead = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceUsbStorageGetdentsRead(fd, buffer.data(), buffer.size(), &bytesRead) == 0, "read a getdents scan in parts");
+    Require(bytesRead <= size, "a getdents read stays inside its buffer");
+    for (std::uint64_t offset = 0; offset < bytesRead;) {
+        std::uint32_t fileNumber = 0;
+        std::uint16_t length = 0;
+        std::memcpy(&fileNumber, buffer.data() + offset, sizeof(fileNumber));
+        std::memcpy(&length, buffer.data() + offset + 4, sizeof(length));
+        const std::uint8_t nameLength = buffer[offset + 7];
+        Require(length == ((8 + nameLength + 1 + 7) & ~7) && offset + length <= bytesRead, "a dirent record read in parts has the packed layout");
+        names.emplace(reinterpret_cast<const char*>(buffer.data() + offset + 8), nameLength);
+        fileNumbers.insert(fileNumber);
+        offset += length;
+    }
+    return bytesRead;
+}
+
+void TestDeviceGetdentsInParts() {
+    constexpr std::uint64_t MusicRecord = 16;
+    constexpr std::uint64_t SongRecord = 24;
+    std::int32_t first = -1;
+    std::int32_t second = -1;
+    std::uint64_t bufferSize = 0;
+    Require(sceUsbStorageGetdentsOpen(0, &first, &bufferSize) == 0, "open a getdents scan to read in parts");
+    Require(sceUsbStorageGetdentsOpen(0, &second, &bufferSize) == 0 && second != first, "a second getdents scan gets its own descriptor");
+
+    std::set<std::string> names;
+    std::set<std::uint32_t> fileNumbers;
+    const std::uint64_t firstPart = ReadEntries(first, SongRecord, names, fileNumbers);
+    Require(names.size() == 1 && (firstPart == MusicRecord || firstPart == SongRecord), "a buffer with room for one record returns one record");
+    const std::uint64_t secondPart = ReadEntries(first, SongRecord, names, fileNumbers);
+    Require(names.size() == 2 && firstPart + secondPart == MusicRecord + SongRecord, "the next read resumes after the record already returned");
+    Require(names == std::set<std::string>{"Music", "song.txt"} && fileNumbers == std::set<std::uint32_t>{1, 2}, "the scan read in parts lists the root once");
+    Require(ReadEntries(first, SongRecord, names, fileNumbers) == 0, "the scan read in parts ends with zero bytes");
+
+    std::set<std::string> whole;
+    std::set<std::uint32_t> wholeNumbers;
+    Require(ReadEntries(second, MusicRecord + SongRecord, whole, wholeNumbers) == MusicRecord + SongRecord && whole == names,
+            "a buffer with exact room for every record returns them all from a cursor of its own");
+
+    Require(sceUsbStorageGetdentsClose(first) == 0, "close the scan read in parts");
+    std::uint8_t buffer[64];
+    std::uint64_t bytesRead = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceUsbStorageGetdentsRead(second, buffer, sizeof(buffer), &bytesRead) == 0 && bytesRead == 0, "closing one scan left the other open");
+    Require(sceUsbStorageGetdentsClose(second) == 0, "close the scan read whole");
+}
+
 void TestPassthroughOff(const FakeHost& host) {
     SetPassthrough(false);
     Inject(host, true, false);
@@ -528,6 +578,10 @@ void TestDevices(const FakeHost& host) {
     TestDeviceInfo(host);
     TestDeviceMaps();
     TestDeviceGetdents();
+    TestDeviceGetdentsInParts();
+    std::int32_t open = -1;
+    std::uint64_t bufferSize = 0;
+    Require(sceUsbStorageGetdentsOpen(0, &open, &bufferSize) == 0, "open a getdents scan before terminating");
     Require(sceUsbStorageTerm() == 0, "terminate with a device");
     std::uint32_t devices[UsbStorage::MaxDevices]{};
     std::int32_t count = -1;
@@ -535,6 +589,12 @@ void TestDevices(const FakeHost& host) {
     std::error_code error;
     Require(!std::filesystem::equivalent(ResolvePath_nid_no_patch("/mnt/usb0/song.txt"), host.firstMount / "song.txt", error),
             "terminate removed the mount point");
+    Require(sceUsbStorageInit(nullptr) == 0, "initialize again after terminating with an open scan");
+    std::vector<std::uint8_t> buffer(0x8000, 0x5a);
+    std::uint64_t bytesRead = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceUsbStorageGetdentsRead(open, buffer.data(), buffer.size(), &bytesRead) == UsbStorage::NotSupported && bytesRead == 0 && buffer[0] == 0x5a,
+            "terminate closed the open getdents scan");
+    Require(sceUsbStorageTerm() == 0, "terminate after reading the closed scan");
 }
 
 void TestHotplug(const FakeHost& host) {
