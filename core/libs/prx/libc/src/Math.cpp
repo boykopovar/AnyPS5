@@ -1231,11 +1231,8 @@ long double APS5_VABI hypotl_nid_postfix(long double x, long double y) {
 float APS5_VABI hypot3f_nid_postfix(float x, float y, float z) { return Hypot3(x, y, z, hypotf_nid_postfix); }
 double APS5_VABI hypot3_nid_postfix(double x, double y, double z) { return Hypot3(x, y, z, hypot_nid_postfix); }
 long double APS5_VABI hypot3l_nid_postfix(long double x, long double y, long double z) { return Hypot3(x, y, z, hypotl_nid_postfix); }
-float APS5_VABI j0f_nid_postfix(float x) { return static_cast<float>(::j0(x)); }
-float APS5_VABI j1f_nid_postfix(float x) { return static_cast<float>(::j1(x)); }
 float APS5_VABI jnf_nid_postfix(int order, float x) { return static_cast<float>(::jn(order, x)); }
 float APS5_VABI y0f_nid_postfix(float x) { return x == 0.0f ? GuestBesselSecondKindZero() : static_cast<float>(::y0(x)); }
-float APS5_VABI y1f_nid_postfix(float x) { return x == 0.0f ? GuestBesselSecondKindZero() : static_cast<float>(::y1(x)); }
 float APS5_VABI ynf_nid_postfix(int order, float x) { return x == 0.0f ? GuestBesselSecondKindZero() : static_cast<float>(::yn(order, x)); }
 
 long double APS5_VABI asinl_nid_postfix(long double x) {
@@ -1535,7 +1532,7 @@ double APS5_VABI log1p_nid_postfix(double x) {
             u = 1.0 + x;
             hu = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(u) >> 32);
             k = (hu >> 20) - 1023;
-            c = k > 0 ? 1.0 - (u - x) : x - (u - 1.0);
+            c = k > 0 ? 1.0 + (x - u) : x - (u - 1.0);
             c /= u;
         } else {
             u = x;
