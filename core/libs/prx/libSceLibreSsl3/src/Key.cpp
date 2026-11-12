@@ -162,6 +162,7 @@
 
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl3/include/Reference.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 
 #include <cstring>
 #include <stdexcept>
@@ -170,6 +171,9 @@ namespace {
 
 using PkeyBitsFunction = int (APS5_VABI *)(const LibreSsl3EvpPkey*);
 constexpr std::size_t PkeyBitsOffset = 104;
+constexpr int EvpLibrary = 6;
+constexpr int AnyFunction = 0xfff;
+constexpr int ExpectingAnEcKey = 142;
 
 static_assert(sizeof(PkeyBitsFunction) == 8);
 static_assert(offsetof(LibreSsl3EvpPkey, method) == 8);
@@ -195,8 +199,10 @@ int APS5_VABI EVP_PKEY_up_ref_nid_postfix(LibreSsl3EvpPkey* key) {
 LibreSsl3EcKey* APS5_VABI EVP_PKEY_get0_EC_KEY_nid_postfix(LibreSsl3EvpPkey* key) {
     if (!key)
         throw std::invalid_argument("EVP_PKEY_get0_EC_KEY requires a key");
-    if (key->type != 408)
+    if (key->type != 408) {
+        LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, ExpectingAnEcKey);
         return nullptr;
+    }
     return static_cast<LibreSsl3EcKey*>(key->key);
 }
 
@@ -218,7 +224,7 @@ int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSsl3SslCtx* ctx) {
     return Retain_nid_no_patch(ctx->references);
 }
 
-int APS5_VABI BIO_up_ref_nid_postfix(LibreSsl3Bio* bio) {
+int APS5_VABI BIO_up_ref_nid_postfix(LibreSsl::Bio* bio) {
     if (!bio)
         throw std::invalid_argument("BIO_up_ref requires a BIO");
     return Retain_nid_no_patch(bio->references);
