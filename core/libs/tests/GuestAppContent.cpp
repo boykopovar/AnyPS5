@@ -227,14 +227,7 @@ int main() {
     Require(sceAppContentTemporaryDataUnmount(&mountPoint) == ErrorNotMounted);
     Require(sceAppContentTemporaryDataMount2(0, nullptr) == ErrorParameter);
     Require(sceAppContentTemporaryDataMount2(2, unwritableMount) == ErrorParameter);
-    const auto notImplemented = NotImplementedCalls_nid_no_patch();
-    bool mountThrew = false;
-    try {
-        sceAppContentTemporaryDataMount2(1, unwritableMount);
-    } catch (const std::runtime_error& error) {
-        mountThrew = std::strcmp(error.what(), "sceAppContentTemporaryDataMount2 not implemented") == 0;
-    }
-    Require(mountThrew && NotImplementedCalls_nid_no_patch() == notImplemented + 1);
+    Require(sceAppContentTemporaryDataMount2(1, unwritableMount) == ErrorParameter);
     Require(std::filesystem::exists(directory / "temp0" / "old.txt"));
     Require(access_nid_postfix("/temp0/old.txt", 0) == -1);
     Require(sceAppContentTemporaryDataUnmount(&mountPoint) == ErrorNotMounted);

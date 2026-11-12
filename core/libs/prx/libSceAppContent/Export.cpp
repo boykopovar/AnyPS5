@@ -328,7 +328,7 @@ int APS5_VABI sceAppContentTemporaryDataMount2(uint32_t option, AppContentMountP
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(mountPoint, &output, sizeof(output));
     errno = savedErrno;
-    if (!copied) NotImplemented_nid_no_patch(__func__);
+    if (!copied) return SCE_APP_CONTENT_ERROR_PARAMETER;
     if (std::filesystem::create_directories(state.directory)) RecordWrittenPath_nid_no_patch(state.directory);
     if (option == TEMPORARY_DATA_OPTION_FORMAT) ClearDirectory(state.directory);
     AddPathAlias_nid_no_patch(TEMPORARY_MOUNT_POINT, state.directory.string().c_str());
