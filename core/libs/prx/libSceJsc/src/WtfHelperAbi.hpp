@@ -40,15 +40,6 @@ struct MediaTime {
     std::uint8_t timeFlags;
 };
 
-struct SHA1 {
-    std::uint8_t buffer[64];
-    std::size_t cursor;
-    std::uint64_t totalBytes;
-    std::uint32_t hash[5];
-};
-
-using SHA1Digest = std::array<std::uint8_t, 20>;
-
 static_assert(sizeof(HexConversionMode) == 4);
 static_assert(sizeof(HexResult) == 16);
 static_assert(offsetof(HexResult, first) == 0);
@@ -63,11 +54,5 @@ static_assert(alignof(MediaTime) == 8);
 static_assert(offsetof(MediaTime, timeValue) == 0);
 static_assert(offsetof(MediaTime, timeScale) == 8);
 static_assert(offsetof(MediaTime, timeFlags) == 12);
-static_assert(sizeof(SHA1) == 104);
-static_assert(offsetof(SHA1, buffer) == 0);
-static_assert(offsetof(SHA1, cursor) == 64);
-static_assert(offsetof(SHA1, totalBytes) == 72);
-static_assert(offsetof(SHA1, hash) == 80);
-static_assert(sizeof(SHA1Digest) == 20);
 
 } // namespace Jsc::WtfAbi

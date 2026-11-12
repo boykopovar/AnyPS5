@@ -12,8 +12,6 @@
 using Jsc::WtfAbi::HexResult;
 using Jsc::WtfAbi::LChar;
 using Jsc::WtfAbi::MediaTime;
-using Jsc::WtfAbi::SHA1;
-using Jsc::WtfAbi::SHA1Digest;
 
 namespace {
 
@@ -181,91 +179,11 @@ void TestMediaTime() {
     Check(ThrowsInvalidArgument([] { NotEqual(Time(std::int64_t{1} << 62, 0), Time((std::int64_t{1} << 62) + 1, 4)); }), __LINE__);
 }
 
-SHA1 InitialState() {
-    SHA1 sha1;
-    std::memset(&sha1, 0xA5, sizeof(sha1));
-    sha1.cursor = 0;
-    sha1.totalBytes = 0;
-    sha1.hash[0] = 0x67452301;
-    sha1.hash[1] = 0xEFCDAB89;
-    sha1.hash[2] = 0x98BADCFE;
-    sha1.hash[3] = 0x10325476;
-    sha1.hash[4] = 0xC3D2E1F0;
-    std::memset(sha1.buffer, 0, sizeof(sha1.buffer));
-    return sha1;
-}
-
-SHA1 StateWith(const std::string& message) {
-    auto sha1 = InitialState();
-    std::memcpy(sha1.buffer, message.data(), message.size());
-    sha1.cursor = message.size();
-    sha1.totalBytes = message.size();
-    return sha1;
-}
-
-std::string Hex(const SHA1Digest& digest) {
-    static constexpr char Digits[] = "0123456789abcdef";
-    std::string text;
-    for (auto byte : digest) {
-        text += Digits[byte >> 4];
-        text += Digits[byte & 0xF];
-    }
-    return text;
-}
-
-std::string ComputeHash(SHA1& sha1) {
-    SHA1Digest digest;
-    digest.fill(0xEE);
-    _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, &digest);
-    return Hex(digest);
-}
-
-bool IsReset(const SHA1& sha1) {
-    for (auto byte : sha1.buffer) {
-        if (byte) return false;
-    }
-    return sha1.cursor == 0 && sha1.totalBytes == 0 && sha1.hash[0] == 0x67452301 && sha1.hash[1] == 0xEFCDAB89 && sha1.hash[2] == 0x98BADCFE && sha1.hash[3] == 0x10325476 && sha1.hash[4] == 0xC3D2E1F0;
-}
-
-void TestSha1() {
-    auto sha1 = InitialState();
-    Check(ComputeHash(sha1) == "da39a3ee5e6b4b0d3255bfef95601890afd80709", __LINE__);
-    Check(IsReset(sha1), __LINE__);
-
-    sha1 = StateWith("abc");
-    Check(ComputeHash(sha1) == "a9993e364706816aba3e25717850c26c9cd0d89d", __LINE__);
-    Check(IsReset(sha1), __LINE__);
-    Check(ComputeHash(sha1) == "da39a3ee5e6b4b0d3255bfef95601890afd80709", __LINE__);
-
-    sha1 = StateWith(std::string(55, 'a'));
-    Check(ComputeHash(sha1) == "c1c8bbdc22796e28c0e15163d20899b65621d65a", __LINE__);
-
-    sha1 = StateWith("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq");
-    Check(ComputeHash(sha1) == "84983e441c3bd26ebaae4aa1f95129e5e54670f1", __LINE__);
-    Check(IsReset(sha1), __LINE__);
-
-    sha1 = StateWith(std::string(63, 'a'));
-    Check(ComputeHash(sha1) == "03f09f5b158a7a8cdad920bddc29b81c18a551f5", __LINE__);
-    Check(IsReset(sha1), __LINE__);
-
-    sha1 = StateWith("abc");
-    std::memset(sha1.buffer + 3, 0x5A, sizeof(sha1.buffer) - 3);
-    Check(ComputeHash(sha1) == "a9993e364706816aba3e25717850c26c9cd0d89d", __LINE__);
-
-    SHA1Digest digest;
-    sha1 = InitialState();
-    Check(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(nullptr, &digest); }), __LINE__);
-    Check(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, nullptr); }), __LINE__);
-    sha1.cursor = 64;
-    Check(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, &digest); }), __LINE__);
-}
-
 } // namespace
 
 int main() {
     TestSixCharacterHash();
     TestAppendHex();
     TestMediaTime();
-    TestSha1();
     return 0;
 }

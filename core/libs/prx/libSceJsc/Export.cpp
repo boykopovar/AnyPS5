@@ -1673,6 +1673,10 @@ int APS5_VABI _ZN3WTF29cryptographicallyRandomNumberEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE() {
     NotImplemented_nid_no_patch(__func__);
 }

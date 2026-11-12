@@ -1,7 +1,7 @@
 add_library(libSceJsc SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_sources(libSceJsc PRIVATE LegacyExports.cpp src/PlacementNew.cpp src/WtfStringSearch.cpp)
 target_include_directories(libSceJsc PRIVATE ${LIBS_INCLUDE_DIR})
-target_sources(libSceJsc PRIVATE src/WtfHexNumber.cpp src/WtfMediaTime.cpp src/WtfSha1.cpp src/WtfSixCharacterHash.cpp)
+target_sources(libSceJsc PRIVATE src/WtfHexNumber.cpp src/WtfMediaTime.cpp src/WtfSixCharacterHash.cpp)
 configure_windows_unwind(libSceJsc)
 
 if(BUILD_TESTING)
