@@ -424,4 +424,12 @@ public:
     }
 };
 
+class View final : public ObjectOf<ObjectType::View> {
+public:
+    double pageScaleFactor = 1.0;
+    double viewScaleFactor = 1.0;
+    bool drawsBackground = true;
+    bool isFullScreen = false;
+};
+
 }  // namespace NKWebKit
