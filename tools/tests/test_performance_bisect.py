@@ -597,3 +597,10 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "integer of at least 20"):
                 performance_bisect.load_recipe(path)
 
+
+    def test_recipe_rejects_boolean_repetitions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.recipe_path(Path(directory), repetitions=True)
+            with self.assertRaisesRegex(ValueError, "integer of at least 3"):
+                performance_bisect.load_recipe(path)
+
