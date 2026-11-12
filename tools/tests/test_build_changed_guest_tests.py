@@ -237,6 +237,7 @@ class Main(unittest.TestCase):
                 "C:/b/tests/avplayer_http_patched_modules_tests.exe",
                 "C:/b/tests/guest_http_client_tests.exe", "C:/b/tests/guest_avplayer_tests.exe",
             ]},
+            {"name": "public_headers", "command": ["C:/python.exe", "test_public_headers.py"]},
         ]})
         selections = []
         builds = []
@@ -249,8 +250,55 @@ class Main(unittest.TestCase):
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             code = self.main(build, ["core/libs/include/Changed.hpp"])
         self.assertEqual(code, 0)
-        self.assertEqual(selections, ["0,0,0,1,2,3\n"])
+        self.assertEqual(selections, ["0,0,0,1,2,3,4\n"])
         self.assertIn(["avplayer_http_patched_modules_tests"], builds)
+
+    def test_a_header_change_also_runs_the_public_header_tests(self):
+        build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
+        listing = json.dumps({"tests": [
+            {"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]},
+            {"name": "public_headers", "command": ["C:/python.exe", "test_public_headers.py"]},
+            {"name": "public_headers_compile_0", "command": ["C:/python.exe", "test_public_headers.py"]},
+            {"name": "public_headers_compile_63", "command": ["C:/python.exe", "test_public_headers.py"]},
+            {"name": "public_headers_manifest_other", "command": ["C:/python.exe", "x.py"]},
+        ]})
+        selections = []
+        def execute(cmd, **_):
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/include/Xml.hpp"]), 0)
+        self.assertEqual(selections, ["0,0,0,1,2,3,4\n"])
+
+    def test_a_production_source_change_does_not_run_the_public_header_tests(self):
+        build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
+        listing = json.dumps({"tests": [{"name": "public_headers", "command": ["C:/python.exe", "x.py"]}]})
+        selections = []
+        def execute(cmd, **_):
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/src/Xml.cpp"]), 0)
+        self.assertEqual(selections, [])
+
+    def test_a_missing_public_header_registration_is_an_error(self):
+        build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
+        listing = json.dumps({"tests": [{"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]}]})
+        def execute(cmd, **_):
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/include/Xml.hpp"]), 1)
+
+    def test_public_header_inputs(self):
+        for path in ("core/libs/prx/libSceXml/include/Xml.hpp", "core/libs/include/X.h", "core/libs/tests/test_public_headers.py",
+                     "tools/nid_names.py", "core/libs/CMakeLists.txt", "3rdparty/ZArchive"):
+            with self.subTest(path=path):
+                self.assertTrue(build_changed_guest_tests.checks_public_headers([path]))
+        for path in ("core/libs/prx/libSceXml/src/Xml.cpp", "core/libs/tests/Guest.cpp", "core/relinker/include/R.hpp", "README.md"):
+            with self.subTest(path=path):
+                self.assertFalse(build_changed_guest_tests.checks_public_headers([path]))
 
     def test_output_log_reaches_the_ctest_run(self):
         build = self.fixture([self.target("guest_pad_tests", fragment="libc.prx")])
