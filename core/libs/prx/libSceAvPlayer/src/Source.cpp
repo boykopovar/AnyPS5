@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAvPlayer/include/HttpStream.hpp"
 #include "prx/libSceAvPlayer/include/FileReplacementStream.hpp"
 #include "prx/libc/include/General.hpp"
@@ -324,9 +325,9 @@ public:
         }
         started = true;
         for (auto* decoder : {&video, &audio}) {
-            if (decoder->stream >= 0) decoder->thread = std::thread([this, decoder] { decodeLoop(*decoder); });
+            if (decoder->stream >= 0) decoder->thread = Libc::StartHostThread([this, decoder] { decodeLoop(*decoder); });
         }
-        demuxer = std::thread([this] { demuxLoop(); });
+        demuxer = Libc::StartHostThread([this] { demuxLoop(); });
         return SCE_OK;
     }
 
