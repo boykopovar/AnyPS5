@@ -83,7 +83,7 @@ public:
     int Headers(char** header, std::size_t* size);
     int TrailingHeaders(char** header, std::size_t* size);
     void Cancel();
-    void Stop();
+    void Stop(bool terminated);
 private:
     struct State;
     std::unique_ptr<State> state;
