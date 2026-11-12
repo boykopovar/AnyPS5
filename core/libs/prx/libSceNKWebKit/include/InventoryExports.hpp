@@ -1462,7 +1462,6 @@ float APS5_VABI _ZN3WTF17charactersToFloatEPKDsmPb(const char16_t* data, std::si
 float APS5_VABI _ZN3WTF17charactersToFloatEPKDsmRm(const char16_t* data, std::size_t length, std::size_t* parsedLength);
 float APS5_VABI _ZN3WTF17charactersToFloatEPKhmPb(const unsigned char* data, std::size_t length, bool* ok);
 float APS5_VABI _ZN3WTF17charactersToFloatEPKhmRm(const unsigned char* data, std::size_t length, std::size_t* parsedLength);
-int APS5_VABI _ZN3WTF17double_conversion23DoubleToStringConverter19EcmaScriptConverterEv();
 float APS5_VABI _ZN3WTF17double_conversion23StringToDoubleConverter13StringToFloatEPKcmPm(const char* buffer, std::size_t length, std::size_t* processedCharactersCount);
 float APS5_VABI _ZN3WTF17double_conversion23StringToDoubleConverter13StringToFloatEPKtmPm(const std::uint16_t* buffer, std::size_t length, std::size_t* processedCharactersCount);
 double APS5_VABI _ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKcmPm(const char* buffer, std::size_t length, std::size_t* processedCharactersCount);
@@ -5154,7 +5153,6 @@ int APS5_VABI _ZNK3WTF13MonotonicTime4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF14MediaTimeRange12toJSONStringEv();
 int APS5_VABI _ZNK3WTF15AutomaticThread19hasUnderlyingThreadERKNS_14AbstractLockerE();
 int APS5_VABI _ZNK3WTF15AutomaticThread4nameEv();
-int APS5_VABI _ZNK3WTF17double_conversion23DoubleToStringConverter13ToExponentialEdiPNS0_13StringBuilderE();
 int APS5_VABI _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv();
