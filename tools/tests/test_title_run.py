@@ -162,6 +162,26 @@ class AnalysisTests(unittest.TestCase):
         cut.write_bytes(noisy.read_bytes()[:-20])
         self.assertIsNone(title_run.frame_is_uniform(cut))
 
+    def test_malformed_bmp_headers_are_unreadable(self):
+        frame = bmp(self.root / "frame.bmp", 8, 4, lambda x, y: (0, 0, 0))
+        original = frame.read_bytes()
+        mutations = (
+            ("signature", 0, b"ZZ"),
+            ("pixel offset", 10, struct.pack("<I", 12)),
+            ("DIB size", 14, struct.pack("<I", 12)),
+            ("zero width", 18, struct.pack("<i", 0)),
+            ("negative width", 18, struct.pack("<i", -8)),
+            ("zero height", 22, struct.pack("<i", 0)),
+            ("planes", 26, struct.pack("<H", 2)),
+            ("compression", 30, struct.pack("<I", 1)),
+        )
+        for label, offset, value in mutations:
+            with self.subTest(label=label):
+                data = bytearray(original)
+                data[offset:offset + len(value)] = value
+                frame.write_bytes(data)
+                self.assertIsNone(title_run.frame_is_uniform(frame))
+
     def test_unsupported_frame_bit_depth_is_unreadable(self):
         frame = bmp(self.root / "unsupported.bmp", 8, 4, lambda x, y: (0, 0, 0))
         data = bytearray(frame.read_bytes()) + bytes(128)
