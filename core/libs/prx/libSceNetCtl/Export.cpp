@@ -962,13 +962,11 @@ static HostIpv6Selection QueryHostIpv6Selection() {
 #endif
 
 static bool WriteInfoV6Address(NetCtlInfoV6* info, const HostIpv6Address& address) {
-    NetCtlInfoV6 buffer{};
-    char text[NET_CTL_IPV6_ADDR_STR_LEN] = {};
-    inet_ntop(AF_INET6, &address.address, text, sizeof(text));
-    std::memcpy(buffer.opaque, text, sizeof(text));
-    buffer.opaque[NET_CTL_IPV6_ADDR_STR_LEN] = static_cast<std::uint8_t>(address.prefix);
+    char buffer[NET_CTL_IPV6_ADDR_STR_LEN + 1] = {};
+    inet_ntop(AF_INET6, &address.address, buffer, NET_CTL_IPV6_ADDR_STR_LEN);
+    buffer[NET_CTL_IPV6_ADDR_STR_LEN] = static_cast<char>(static_cast<std::uint8_t>(address.prefix));
     const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(info, &buffer, sizeof(buffer));
+    const bool copied = GuestCopyOut_nid_no_patch(info->opaque, buffer, sizeof(buffer));
     errno = savedErrno;
     return copied;
 }
