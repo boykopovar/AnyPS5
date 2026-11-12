@@ -238,6 +238,7 @@ int main() {
                 std::vector<std::uint32_t> code(Code.begin(), Code.end());
                 code[24] = (code[24] & ~0x1ffu) | 0xffu;
                 code.insert(code.begin() + 25, factor);
+                code.insert(code.begin() + 26, 0x101a1af4u);
                 for (const bool ieee : {false, true}) {
                     Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, ieee, false}, code);
                     for (std::uint32_t tid = 0u; tid < Threads; ++tid) {
@@ -251,7 +252,8 @@ int main() {
                             expected = IsNan32(product) ? 0xffc00000u : product;
                             if ((expected & 0x7fffffffu) < 0x00800000u) expected &= 0x80000000u;
                         }
-                        Expect(tid, Output[tid * Results + 3u], expected, "literal multiplication");
+                        if (!IsNan32(expected)) expected = std::bit_cast<std::uint32_t>(std::bit_cast<float>(expected) * 2.0f);
+                        Expect(tid, Output[tid * Results + 3u], expected, "literal multiplication chain");
                     }
                 }
             }

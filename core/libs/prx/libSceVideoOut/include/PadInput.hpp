@@ -4,6 +4,7 @@
 #include "SDL_events.h"
 #include "SDL_gamecontroller.h"
 #include "SDL_hidapi.h"
+#include "prx/libScePad/include/InputMapping.hpp"
 #include "prx/libScePad/include/KeyboardMouse.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/Pad.hpp"
@@ -14,6 +15,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <string>
 #include <thread>
 #include "prx/libSceVideoOut/include/Telemetry.hpp"
@@ -41,10 +43,12 @@ private:
         std::uint32_t outputSequence = 0;
         PadOutputState outputState{};
         bool outputPending = false;
+        bool rumbleLive = false;
         std::chrono::steady_clock::time_point nextRumbleRefresh{};
         LightBarPacer lightBar;
         TriggerEffectCache triggerEffect;
         std::uint32_t heldThroughCapture = 0;
+        SDL_hid_device* statusHid = nullptr;
         Pad::IdentifyScheduler identify;
         AgcDriver::PadKind kind = AgcDriver::PadKind::Unknown;
         std::string name;
@@ -52,6 +56,10 @@ private:
 
     explicit PadInput(Pad::InputConfiguration configuration);
     void publish(std::uint64_t frame);
+    void applyMappingSnapshot();
+    void reloadInputMapping();
+    void dispatchPadChords(DisplayWindow& window);
+    void applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window);
     void publish(std::uint64_t frame, int slot);
     void setMouseMode(bool enabled);
     void openAvailableControllers();
@@ -61,6 +69,9 @@ private:
     PadInputState handOff(int slot, PadInputState state);
     void applyOutput();
     void enableSensors(int slot);
+    void openStatus(int slot);
+    void pollStatus(int slot);
+    void closeStatus(int slot);
     AgcDriver::PadStatusSnapshot statusSnapshot() const;
     void reportStatus();
     void updatePort0();
@@ -69,6 +80,8 @@ private:
     void closeHaptics();
     void streamHaptics();
 
+    Pad::InputMappingStore mappings;
+    std::shared_ptr<const Pad::InputConfiguration> appliedMapping;
     Pad::KeyboardMouse keyboardMouse;
     Pad::IdentifyMode identifyMode = Pad::IdentifyMode::Off;
     std::array<ControllerSlot, PAD_MAX_CONTROLLERS> slots{};

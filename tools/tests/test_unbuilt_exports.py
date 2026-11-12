@@ -23,8 +23,8 @@ class UnbuiltExportTests(unittest.TestCase):
             path.write_text(content, encoding="utf-8")
         return root
 
-    def unbuilt(self, root, built):
-        return check_test_registration.unbuilt_exports(root, {(root / name).resolve() for name in built})
+    def unbuilt(self, root, built, skipped=()):
+        return check_test_registration.unbuilt_exports(root, {(root / name).resolve() for name in built}, skipped)
 
     def test_a_source_no_target_compiles_is_reported(self):
         root = self.tree({
@@ -32,6 +32,28 @@ class UnbuiltExportTests(unittest.TestCase):
             "core/libs/prx/libSceExample/src/Built.cpp": "int APS5_VABI sceExampleClose(int handle) { return handle; }\n",
         })
         self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/src/Built.cpp"]), [Path("core/libs/prx/libSceExample/Export.cpp")])
+
+    def test_a_sanitizer_build_skips_the_address_sanitizer_library(self):
+        for flag in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
+            with self.subTest(flag=flag):
+                root = self.tree({
+                    "build/CMakeCache.txt": f"{flag}:BOOL=ON\n",
+                    "core/libs/prx/libSceAddressSanitizer/Export.cpp": "int APS5_VABI sceAddressSanitizerReport(void) { return 0; }\n",
+                    "core/libs/prx/libSceExample/Built.cpp": "",
+                })
+                skipped = check_test_registration.skipped_libraries(root / "build")
+                self.assertEqual(skipped, {"libSceAddressSanitizer"})
+                self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/Built.cpp"], skipped), [])
+
+    def test_a_normal_build_still_reports_the_address_sanitizer_library(self):
+        root = self.tree({
+            "build/CMakeCache.txt": "ANYPS5_ENABLE_ASAN:BOOL=OFF\nANYPS5_ENABLE_TSAN:BOOL=OFF\n",
+            "core/libs/prx/libSceAddressSanitizer/Export.cpp": "int APS5_VABI sceAddressSanitizerReport(void) { return 0; }\n",
+            "core/libs/prx/libSceExample/Built.cpp": "",
+        })
+        skipped = check_test_registration.skipped_libraries(root / "build")
+        self.assertEqual(skipped, set())
+        self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/Built.cpp"], skipped), [Path("core/libs/prx/libSceAddressSanitizer/Export.cpp")])
 
     def test_multiline_parameters_and_qualifiers_still_count_as_definitions(self):
         root = self.tree({
@@ -111,10 +133,21 @@ class UnbuiltExportTests(unittest.TestCase):
             with self.subTest(result=result), patch.object(check_test_registration, "built", return_value={"example_tests"}), \
                     patch.object(check_test_registration, "registered", return_value={"example_tests"}), \
                     patch.object(check_test_registration, "compiled", return_value=set()), \
+                    patch.object(check_test_registration, "skipped_libraries", return_value=set()), \
                     patch.object(check_test_registration, "unbuilt_exports", return_value=result), \
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(check_test_registration.main(["build"]), expected)
             self.assertIn(line, output.getvalue())
+
+    def test_main_notes_the_library_a_sanitizer_build_skips(self):
+        with patch.object(check_test_registration, "built", return_value={"example_tests"}), \
+                patch.object(check_test_registration, "registered", return_value={"example_tests"}), \
+                patch.object(check_test_registration, "compiled", return_value=set()), \
+                patch.object(check_test_registration, "skipped_libraries", return_value={"libSceAddressSanitizer"}), \
+                patch.object(check_test_registration, "unbuilt_exports", return_value=[]), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(check_test_registration.main(["build"]), 0)
+        self.assertIn("note: libSceAddressSanitizer is not built in this ASan/TSan configuration", output.getvalue())
 
 
 if __name__ == "__main__":

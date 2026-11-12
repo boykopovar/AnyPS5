@@ -6,6 +6,7 @@
 namespace {
 
 constexpr int invalidProfile = static_cast<int>(0x805C0004);
+constexpr int invalidEncode = static_cast<int>(0x805C0014);
 constexpr int illegalCode = static_cast<int>(0x805C0015);
 constexpr int unassignedCode = static_cast<int>(0x805C0020);
 constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
@@ -121,12 +122,36 @@ int main() {
     RequireDecode(profiles[6], 0x7E7E, 0, 0x7E6B);
     RequireDecode(profiles[0], 0x7E7E, unassignedCode, 0);
     RequireDecode(profiles[7], 0x12121, illegalCode, 0);
+    RequireDecode(profiles[0], 0x82A0, 0, 0x3042);
+    RequireDecode(profiles[1], 0x82A0, 0, 0x3042);
+    RequireDecode(profiles[6], 0x82A0, 0, 0x3042);
+    RequireDecode(profiles[2], 0x82A0, illegalCode, 0);
+    RequireDecode(profiles[3], 0x82A0, illegalCode, 0);
+    RequireDecode(profiles[4], 0x82A0, illegalCode, 0);
+    RequireDecode(profiles[5], 0x82A0, illegalCode, 0);
+    RequireDecode(profiles[7], 0x82A0, illegalCode, 0);
+    RequireDecode(profiles[0], 0xA4A2, 0, 0xFF64);
+    RequireDecode(profiles[1], 0xA4A2, 0, 0xFF64);
+    RequireDecode(profiles[6], 0xA4A2, 0, 0xFF64);
+    RequireDecode(profiles[2], 0xA4A2, 0, 0x3042);
+    RequireDecode(profiles[3], 0xA4A2, 0, 0x3042);
+    RequireDecode(profiles[4], 0xA4A2, 0, 0x3042);
+    RequireDecode(profiles[5], 0xA4A2, 0, 0x3042);
+    RequireDecode(profiles[7], 0xA4A2, 0, 0x3042);
+    RequireDecode(profiles[4], 0x8FA2AF, 0, 0x02D8);
+    RequireDecode(profiles[7], 0x8FA2AF, 0, 0x02D8);
+    for (int i = 0; i < 8; ++i) RequireDecode(profiles[i], 0x8E21, invalidEncode, 0);
     RequireEncode(profiles[0], 0x3042, 0, 0x03010402);
     RequireEncode(profiles[0], 0x00A5, 0, 0x5C);
     RequireEncode(profiles[1], 0x2160, 0, 0x03010D15);
     RequireEncode(profiles[4], 0x4E02, 0, 0x04001001);
     RequireEncode(profiles[7], 0x4E02, 0, 0x03020102);
     RequireEncode(profiles[6], 0x20B9F, 0, 0x03012F34);
+    RequireEncode(profiles[0], 0x2000B, unassignedCode, 0);
+    RequireEncode(profiles[0], 0x20B9F, unassignedCode, 0);
+    RequireEncode(profiles[1], 0x2000B, unassignedCode, 0);
+    RequireEncode(profiles[2], 0x20B9F, unassignedCode, 0);
+    RequireEncode(profiles[4], 0x2000B, unassignedCode, 0);
     RequireEncode(profiles[2], 0xFF61, unassignedCode, 0);
     RequireEncode(profiles[0], 0xD800, illegalCode, 0);
     RequireEncode(profiles[0], 0x110000, illegalCode, 0);

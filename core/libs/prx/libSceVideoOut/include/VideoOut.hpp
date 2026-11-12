@@ -16,6 +16,7 @@ int APS5_VABI sceVideoOutColorSettingsSetGamma_(VideoOutColorSettings* settings,
 int APS5_VABI sceVideoOutGetDeviceCapabilityInfo_(int handle, void* info, std::uint64_t size);
 void APS5_VABI sceVideoOutModeSetAny_(void* mode, std::uint32_t size);
 int APS5_VABI sceDbgVideoOutAddOutputModeVr60Privilege();
+int APS5_VABI sceVideoOutCursorSetHotSpot();
 int APS5_VABI sceVideoOutAddVrrStatusFlagsPrivilege();
 
 }

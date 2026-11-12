@@ -20,6 +20,7 @@ int main() {
 
     Require(sceRemoteplayInitialize(nullptr, 0) == 0);
     Require(sceRemoteplayGetConnectionStatus(0, nullptr) == invalidArgument);
+    Require(sceRemoteplayGetConnectionStatus(0, reinterpret_cast<int*>(0x10)) == invalidArgument);
     status = -1;
     Require(sceRemoteplayGetConnectionStatus(0, &status) == 0 && status == connectionStatusDisconnect);
     Require(sceRemoteplayInitialize(nullptr, 0) == alreadyInitialized);
