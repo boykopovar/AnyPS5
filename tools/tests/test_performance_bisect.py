@@ -622,3 +622,10 @@ class FocusedInputEdgeTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "between 0 and 100"):
                         performance_bisect.load_recipe(path)
 
+
+    def test_recipe_rejects_missing_content_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.recipe_path(Path(directory), content="missing-content")
+            with self.assertRaisesRegex(ValueError, "existing content directory"):
+                performance_bisect.load_recipe(path)
+
