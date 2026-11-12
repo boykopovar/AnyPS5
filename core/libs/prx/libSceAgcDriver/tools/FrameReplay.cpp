@@ -696,6 +696,8 @@ struct Replay {
     std::atomic<std::uint64_t> failedRegistrations{0};
     std::atomic<std::uint64_t> submits{0};
     std::atomic<std::uint64_t> deltaBytes{0};
+    std::atomic<std::uint64_t> keptWords{0};
+    std::vector<std::byte> restoreBuffer;
     std::atomic<std::uint64_t> parkRestores{0};
     std::atomic<std::int64_t> paceWaitedNs{0};
     std::atomic<bool> stalled{false};
@@ -924,6 +926,32 @@ struct Replay {
         }
     }
 
+    static bool rewindHeader(std::uint32_t word) {
+        return (word & 0xc000ff00u) == 0xc0005900u;
+    }
+
+    static void findRewindControls(std::span<const std::byte> bytes, std::size_t first, std::vector<std::size_t>& offsets) {
+        constexpr std::size_t Block = 16;
+        const auto headers = (bytes.size() - first) / sizeof(std::uint32_t) - 1;
+        const auto* const data = bytes.data() + first;
+        std::size_t index = 0;
+        for (; index + Block <= headers; index += Block) {
+            std::array<std::uint32_t, Block> words;
+            std::memcpy(words.data(), data + index * sizeof(std::uint32_t), sizeof(words));
+            std::uint32_t hits = 0;
+            for (const auto word : words) hits += rewindHeader(word);
+            if (hits == 0) continue;
+            for (std::size_t word = 0; word < Block; ++word) {
+                if (rewindHeader(words[word])) offsets.push_back(first + (index + word + 1) * sizeof(std::uint32_t));
+            }
+        }
+        for (; index < headers; ++index) {
+            std::uint32_t word = 0;
+            std::memcpy(&word, data + index * sizeof(std::uint32_t), sizeof(word));
+            if (rewindHeader(word)) offsets.push_back(first + (index + 1) * sizeof(std::uint32_t));
+        }
+    }
+
     std::vector<StagedWord> restoreGroup(std::uint64_t group, bool again, const std::vector<AgcDriver::AwaitedWait>& held = {}) {
         std::vector<StagedWord> staged;
         const auto found = groups.find(group);
@@ -934,39 +962,52 @@ struct Replay {
         for (std::size_t slot = 0; slot < count; ++slot) {
             if (rewindWait(awaited[slot])) parked.push_back(awaited[slot].address);
         }
+        std::ranges::sort(parked);
         std::vector<std::pair<std::uint32_t*, std::uint32_t>> controls;
         std::vector<std::pair<std::uint32_t*, std::uint32_t>> releases;
+        std::vector<std::size_t> candidates;
         for (const auto* chunk : found->second) {
             if (skipped.Overlaps(*chunk)) continue;
-            auto bytes = reader.Read(*chunk);
-            std::vector<std::size_t> kept;
+            const auto size = static_cast<std::size_t>(chunk->bytes);
+            if (restoreBuffer.size() < size) restoreBuffer.resize(size);
+            const std::span bytes(restoreBuffer.data(), size);
+            reader.Read(*chunk, bytes);
             auto* const target = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk->address));
-            AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
+            AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, size);
             const auto first = static_cast<std::size_t>((4 - chunk->address % 4) % 4);
-            for (auto at = first; at + 4 <= bytes.size(); at += 4) {
-                std::uint32_t header = 0;
-                if (at > first) std::memcpy(&header, bytes.data() + at - 4, sizeof(header));
-                const bool waiting = std::find(parked.begin(), parked.end(), chunk->address + at) != parked.end();
-                if (std::any_of(held.begin(), held.end(), [&](const auto& wait) { return chunk->address + at < wait.address + wait.bytes && wait.address < chunk->address + at + sizeof(std::uint32_t); })) continue;
-                if (at > first && !waiting && ((header >> 30u) != 3u || ((header >> 8u) & 0xffu) != 0x59u)) continue;
-                std::uint32_t value = 0;
-                std::memcpy(&value, bytes.data() + at, sizeof(value));
-                if (again && (value & AgcDriver::Pm4::RewindValid) == 0) continue;
-                kept.push_back(at);
-                if (!again) (waiting ? releases : controls).emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
+            candidates.clear();
+            if (first + sizeof(std::uint32_t) <= size) {
+                candidates.push_back(first);
+                findRewindControls(bytes, first, candidates);
+                const auto scanned = candidates.size();
+                const auto pastChunk = std::ranges::lower_bound(parked, chunk->address + size - sizeof(std::uint32_t) + 1);
+                for (auto address = std::ranges::lower_bound(parked, chunk->address + first); address != pastChunk; ++address) {
+                    if ((*address - chunk->address - first) % sizeof(std::uint32_t) == 0) candidates.push_back(static_cast<std::size_t>(*address - chunk->address));
+                }
+                if (candidates.size() != scanned) {
+                    std::ranges::sort(candidates);
+                    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+                }
             }
             for (const auto& wait : held) {
-                if (wait.address < chunk->address || wait.address + wait.bytes > chunk->address + bytes.size()) continue;
+                if (wait.address < chunk->address || wait.address + wait.bytes > chunk->address + size) continue;
                 const auto offset = static_cast<std::size_t>(wait.address - chunk->address);
                 staged.push_back({wait.address, {bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.begin() + static_cast<std::ptrdiff_t>(offset + wait.bytes)}});
                 std::memcpy(bytes.data() + offset, target + offset, wait.bytes);
             }
             std::size_t from = 0;
-            for (const auto at : kept) {
+            for (const auto at : candidates) {
+                const auto address = chunk->address + at;
+                if (std::ranges::any_of(held, [&](const auto& wait) { return address < wait.address + wait.bytes && wait.address < address + sizeof(std::uint32_t); })) continue;
+                std::uint32_t value = 0;
+                std::memcpy(&value, bytes.data() + at, sizeof(value));
+                if (again && (value & AgcDriver::Pm4::RewindValid) == 0) continue;
+                if (!again) (std::ranges::binary_search(parked, address) ? releases : controls).emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
                 std::memcpy(target + from, bytes.data() + from, at - from);
                 from = at + sizeof(std::uint32_t);
+                ++keptWords;
             }
-            std::memcpy(target + from, bytes.data() + from, bytes.size() - from);
+            std::memcpy(target + from, bytes.data() + from, size - from);
             deltaBytes += chunk->bytes;
         }
         for (const auto& [control, value] : controls) std::atomic_ref<std::uint32_t>(*control).store(value, std::memory_order_release);
@@ -1683,10 +1724,10 @@ int run(const Options& options) {
         frames += measured.frames;
     }
     const auto slowest = frameMs.empty() ? 0.0 : *std::max_element(frameMs.begin(), frameMs.end());
-    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"park_restores\":%llu,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
+    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"kept_words\":%llu,\"park_restores\":%llu,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
                 frames, seconds, seconds > 0 ? static_cast<double>(frames) / seconds : 0.0, percentile(frameMs, 0.5), percentile(frameMs, 0.9), slowest, frameList.c_str(), passList.c_str(),
                 static_cast<unsigned long long>(replay.keptReservations.load()),
-                static_cast<unsigned long long>(replay.submits.load()), static_cast<double>(replay.deltaBytes.load()) / (1024.0 * 1024.0), static_cast<unsigned long long>(replay.parkRestores.load()), static_cast<unsigned long long>(replay.paceTimeouts.load()),
+                static_cast<unsigned long long>(replay.submits.load()), static_cast<double>(replay.deltaBytes.load()) / (1024.0 * 1024.0), static_cast<unsigned long long>(replay.keptWords.load()), static_cast<unsigned long long>(replay.parkRestores.load()), static_cast<unsigned long long>(replay.paceTimeouts.load()),
                 replay.paceWaitedSeconds(), static_cast<unsigned long long>(replay.staleRegistrations.load()), static_cast<unsigned long long>(replay.failedRegistrations.load()),
                 static_cast<double>(replay.skipped.bytes) / (1024.0 * 1024.0), replay.threads, static_cast<unsigned long long>(replay.earlyReleases.load()), static_cast<unsigned long long>(replay.lateReleases.load()),
                 static_cast<unsigned long long>(replay.syntheticReleases.load()),

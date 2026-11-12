@@ -522,6 +522,36 @@ void testZeroRewindControlRewritten(const std::filesystem::path& tool) {
     check(capture.replay(tool, Label) == Done, "the replay did not run the tail of a REWIND whose block was rewritten while its control stayed zero");
 }
 
+void testRewindControlsKeptAnywhere(const std::filesystem::path& tool) {
+    RewindCapture capture(rewindCaptureDirectory());
+    constexpr std::size_t Last = 4 * PageWords - 1;
+    capture.start();
+    std::vector<std::uint32_t> image(4 * PageWords);
+    for (const auto header : {std::size_t{0}, std::size_t{14}, std::size_t{15}, std::size_t{100}, std::size_t{101}, PageWords - 2, PageWords - 1, 3 * PageWords - 1, Last - 1}) image[header] = RewindHeader;
+    image[40] = 0xc0ff5902u;
+    std::size_t decoy = 200;
+    for (const auto word : {0x00590000u, 0x80005900u, 0xc0005a00u, 0x0000c059u, 0x59c00000u}) image[decoy += 2] = word;
+    for (std::size_t index = 1; index < image.size(); ++index) {
+        if (image[index] == 0 && image[index - 1] != 0) image[index] = AgcDriver::Pm4::RewindValid | static_cast<std::uint32_t>(index);
+    }
+    capture.place(0, image);
+    std::size_t expected = 0;
+    for (const auto& [first, last] : {std::pair{std::size_t{0}, PageWords}, std::pair{2 * PageWords, 4 * PageWords}}) {
+        ++expected;
+        for (auto index = first + 1; index < last; ++index) expected += (image[index - 1] >> 30u) == 3u && ((image[index - 1] >> 8u) & 0xffu) == 0x59u;
+    }
+    capture.delta(0, {{0, 1}, {2, 4}}, {});
+    const auto control = capture.replay(tool, Last);
+    check(control == image[Last], "the replay left " + std::to_string(control) + " in the REWIND control that ends a memory chunk");
+    const auto json = readFile(rewindCaptureDirectory() / "replay.json");
+    const std::string line(reinterpret_cast<const char*>(json.data()), json.size());
+    constexpr std::string_view Field = "\"kept_words\":";
+    const auto field = line.find(Field);
+    check(field != std::string::npos, "the replay JSON has no kept_words");
+    const auto kept = std::strtoull(line.c_str() + field + Field.size(), nullptr, 10);
+    check(kept == expected, "the replay stored " + std::to_string(kept) + " control words after their memory group, expected " + std::to_string(expected));
+}
+
 void testEarlyReleaseRestoredInOrder(const std::filesystem::path& tool) {
     RewindCapture capture(rewindCaptureDirectory());
     constexpr std::size_t Label = 3 * PageWords;
@@ -1309,9 +1339,9 @@ int main(int argc, char** argv) {
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
         {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}};
     const std::map<std::string, void (*)(const std::filesystem::path&)> restored{
-        {"rewind_chained", testChainedRewindGates}, {"rewind_page_start", testRewindControlAtPageStart}, {"rewind_zero_control", testZeroRewindControlRewritten}, {"rewind_in_order", testEarlyReleaseRestoredInOrder}, {"multisample_depth", testMultisampleDepthPasses}, {"single_sample_depth", testSingleSampleDepthPasses}};
+        {"rewind_chained", testChainedRewindGates}, {"rewind_page_start", testRewindControlAtPageStart}, {"rewind_zero_control", testZeroRewindControlRewritten}, {"rewind_in_order", testEarlyReleaseRestoredInOrder}, {"rewind_kept_words", testRewindControlsKeptAnywhere}, {"multisample_depth", testMultisampleDepthPasses}, {"single_sample_depth", testSingleSampleDepthPasses}};
     if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || rewound.contains(mode) || restored.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_chained|rewind_page_start|rewind_zero_control|rewind_in_order|multisample_depth|single_sample_depth]\n");
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_chained|rewind_page_start|rewind_zero_control|rewind_in_order|rewind_kept_words|multisample_depth|single_sample_depth]\n");
         return 2;
     }
     int status = 0;
