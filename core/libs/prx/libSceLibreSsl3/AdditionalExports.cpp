@@ -289,10 +289,6 @@ int APS5_VABI d2i_PUBKEY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ECDSA_do_verify_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_add1_ext_i2d_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
