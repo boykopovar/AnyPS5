@@ -257,7 +257,8 @@ public:
 
     [[nodiscard]] ConvertResult Convert(
         std::vector<std::uint8_t> fileBytes,
-        const std::vector<Domain::ProgramHeader>& segments
+        const std::vector<Domain::ProgramHeader>& segments,
+        const std::vector<Domain::CodeRange>& dataRanges
     ) const override;
 
 private:
@@ -274,6 +275,7 @@ private:
         std::vector<std::uint8_t>& fileBytes,
         const Domain::ProgramHeader& ph,
         const std::vector<Domain::ProgramHeader>& segments,
+        const std::vector<Domain::CodeRange>& dataRanges,
         ConvertResult& result,
         std::uint64_t completed,
         std::uint64_t total
@@ -347,6 +349,7 @@ void Amd64OnlyConverter::_convertSegment(
     std::vector<std::uint8_t>& fileBytes,
     const Domain::ProgramHeader& ph,
     const std::vector<Domain::ProgramHeader>& segments,
+    const std::vector<Domain::CodeRange>& dataRanges,
     ConvertResult& result,
     std::uint64_t completed,
     std::uint64_t total
@@ -361,8 +364,22 @@ void Amd64OnlyConverter::_convertSegment(
         fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset + segSize)
     );
 
+    std::vector<Domain::CodeRange> data;
+    for (const auto& range : dataRanges)
+        if (range.End > ph.MappedAddress && range.Begin < ph.MappedAddress + segSize)
+            data.push_back({range.Begin > ph.MappedAddress ? range.Begin - ph.MappedAddress : 0, std::min<std::uint64_t>(range.End - ph.MappedAddress, segSize)});
+    data = MergeCodeRanges(std::move(data));
     const auto scanner = MakeInstructionScanner([&](auto offset, auto) { if (progress) progress(completed + offset, total); });
-    const auto matches = _atFileOffset(ph.Offset, [&] { return scanner->ScanCodeSection(seg, 0, seg.size()); });
+    auto matches = _atFileOffset(ph.Offset, [&] {
+        if (data.empty()) return scanner->ScanCodeSection(seg, 0, seg.size());
+        auto masked = seg;
+        for (const auto& range : data) std::fill(masked.begin() + static_cast<std::ptrdiff_t>(range.Begin), masked.begin() + static_cast<std::ptrdiff_t>(range.End), std::uint8_t{0x90});
+        return scanner->ScanCodeSection(masked, 0, masked.size());
+    });
+    std::erase_if(matches, [&](const InstructionMatch& match) {
+        const auto range = std::upper_bound(data.begin(), data.end(), match.Offset, [](const std::uint64_t offset, const Domain::CodeRange& item) { return offset < item.End; });
+        return range != data.end() && range->Begin < match.Offset + match.Length;
+    });
 
     if (progress) progress(completed + segSize, total);
     std::vector<Pending> pending;
@@ -382,7 +399,8 @@ void Amd64OnlyConverter::_convertSegment(
     const bool needsBranchTargets = std::any_of(pending.begin(), pending.end(), [](const Pending& item) {
         return item.Substitution.Lowering == Amd64OnlyLowering::Trampoline;
     });
-    const auto branchTargets = needsBranchTargets ? _collectBranchTargets(seg, matches, ph, fileBytes, segments) : std::set<std::uint64_t>{};
+    auto branchTargets = needsBranchTargets ? _collectBranchTargets(seg, matches, ph, fileBytes, segments) : std::set<std::uint64_t>{};
+    for (const auto& range : data) branchTargets.insert(ph.MappedAddress + range.Begin);
 
     std::set<std::size_t> pendingIndices;
     for (const auto& item : pending)
@@ -501,7 +519,8 @@ void Amd64OnlyConverter::_convertSegment(
 
 ConvertResult Amd64OnlyConverter::Convert(
     std::vector<std::uint8_t> fileBytes,
-    const std::vector<Domain::ProgramHeader>& segments
+    const std::vector<Domain::ProgramHeader>& segments,
+    const std::vector<Domain::CodeRange>& dataRanges
 ) const {
     ConvertResult result{};
     std::uint64_t total = 0;
@@ -514,7 +533,7 @@ ConvertResult Amd64OnlyConverter::Convert(
     std::uint64_t completed = 0;
     for (const auto& ph : segments) {
         if (ph.Type != kLoadSegment || (ph.Flags & kExecutableSegment) == 0) continue;
-        _convertSegment(fileBytes, ph, segments, result, completed, total);
+        _convertSegment(fileBytes, ph, segments, dataRanges, result, completed, total);
         completed += 3 * ph.FileSize;
     }
     if (progress) progress(total, total);
