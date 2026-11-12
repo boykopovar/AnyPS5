@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestLongDouble.hpp"
 #include <cerrno>
+#include <cmath>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
@@ -265,13 +266,11 @@ private:
             directive.suppress = true;
             ++format;
         }
-        const char16_t* digits = format;
         for (; *format >= u'0' && *format <= u'9'; ++format) {
             const std::size_t digit = static_cast<std::size_t>(*format - u'0');
             const std::size_t limit = (std::numeric_limits<std::size_t>::max() - digit) / 10;
             directive.width = directive.width > limit ? std::numeric_limits<std::size_t>::max() : directive.width * 10 + digit;
         }
-        if (format != digits && directive.width == 0) Fail("zero field width");
         if (*format == u'h' || *format == u'l') {
             directive.length += static_cast<char>(*format++);
             if (*format == directive.length[0]) directive.length += static_cast<char>(*format++);
@@ -376,17 +375,25 @@ private:
         if (FloatFit(field) != Fit::Valid) return Outcome::Matching;
         if (target != nullptr) {
             const int savedError = errno;
+            errno = 0;
+            const long double extended = std::strtold(field.c_str(), nullptr);
+            const bool hexadecimal = field.find_first_of("xX") != std::string::npos;
+            const bool outOfRange = !hexadecimal && errno == ERANGE && (std::isinf(extended) || extended == 0.0L);
             if (directive.length == "L") {
-                LibcDetail::GuestLongDoubleStore(target, std::strtold(field.c_str(), nullptr));
+                const long double value = std::isnan(extended) ? std::numeric_limits<long double>::quiet_NaN() : extended;
+                alignas(long double) unsigned char stored[LibcDetail::GuestLongDoubleBytes]{};
+                LibcDetail::GuestLongDoubleStore(stored, value);
+                std::memcpy(target, stored, 10);
             } else if (directive.length == "l") {
-                const double value = std::strtod(field.c_str(), nullptr);
+                const double parsed = std::strtod(field.c_str(), nullptr);
+                const double value = std::isnan(parsed) ? std::numeric_limits<double>::quiet_NaN() : parsed;
                 std::memcpy(target, &value, sizeof(value));
-                errno = savedError;
             } else {
-                const float value = std::strtof(field.c_str(), nullptr);
+                const float parsed = std::strtof(field.c_str(), nullptr);
+                const float value = std::isnan(parsed) ? std::numeric_limits<float>::quiet_NaN() : parsed;
                 std::memcpy(target, &value, sizeof(value));
-                errno = savedError;
             }
+            errno = outOfRange ? ERANGE : savedError;
             ++assigned;
         }
         converted = true;
@@ -470,7 +477,8 @@ private:
     }
 
     Outcome Count(const Directive& directive) {
-        if (directive.suppress || directive.width != 0) Fail("%n with suppression or width");
+        converted = true;
+        if (directive.suppress) return Outcome::Done;
         const std::size_t size = IntegerSize(directive.length);
         void* target = args.Next<void*>();
         if (target == nullptr) return Outcome::Violation;

@@ -1,4 +1,5 @@
 #include "prx/libSceRazorCpu/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -156,7 +157,18 @@ int APS5_VABI sceRazorCpuGpuMarkerSync(void) {
 }
 
 int APS5_VABI sceRazorCpuInitializeGpuMarkerContext(const uint8_t* context) {
- if (!context || context[0] != 1) return 22;
+ if (!context) return 22;
+ const int savedErrno = errno;
+ std::uint8_t firstByte{};
+ if (!GuestCopyIn_nid_no_patch(&firstByte, context, sizeof(firstByte))) {
+  errno = savedErrno;
+  return 22;
+ }
+ if (firstByte != 1) {
+  errno = savedErrno;
+  return 22;
+ }
+ errno = savedErrno;
  return 0;
 }
 
@@ -198,31 +210,31 @@ int APS5_VABI sceRazorCpuWorkloadSubmit(void) {
 }
 
 int APS5_VABI sceRazorCpuUserSignalWaitBegin() {
-    NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 int APS5_VABI sceRazorCpuUserSignalPost() {
-    NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 int APS5_VABI sceRazorCpuWriteBookmarkEnd() {
-    NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 int APS5_VABI sceRazorCpuUserSignalWaitEnd() {
-    NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 int APS5_VABI sceRazorCpuWorkloadRunBeginEx() {
-    NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 int APS5_VABI sceRazorCpuUserSignalPostEx() {
-    NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 int APS5_VABI sceRazorCpuUserSignalWaitBeginEx() {
-    NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 }

@@ -10,6 +10,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <limits>
@@ -20,6 +21,8 @@
 #include <thread>
 #include <unordered_map>
 
+static constexpr std::size_t MaxNopPayloadBytes = 60u;
+static constexpr int SCE_KERNEL_ERROR_EFAULT = 0x8002000E;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 static constexpr int SCE_KERNEL_ERROR_EPERM = 0x80020001;
 static constexpr int SCE_KERNEL_ERROR_ESRCH = 0x80020003;
@@ -198,11 +201,14 @@ static int AppendNop(Apr::CommandBufferObject& buffer, std::uint32_t header, con
     const std::uint64_t bytes = NopBytes(Apr::NopDwords(header));
     if (!buffer.base) return SCE_KERNEL_ERROR_EPERM;
     if (bytes > std::numeric_limits<std::uint32_t>::max()) return SCE_KERNEL_ERROR_EBUSY;
+    const auto payloadBytes = static_cast<std::uint32_t>(bytes - sizeof(std::uint32_t));
+    std::array<std::uint8_t, MaxNopPayloadBytes> staged{};
+    if (data && payloadBytes != 0u && !GuestCopyIn_nid_no_patch(staged.data(), data, payloadBytes)) return SCE_KERNEL_ERROR_EFAULT;
     const int capacity = EnsureCommandCapacity(&buffer, static_cast<std::uint32_t>(bytes));
     if (capacity != 0) return capacity;
     std::uint8_t* destination = buffer.base + buffer.offset;
     std::memcpy(destination, &header, sizeof(header));
-    if (data) std::memcpy(destination + sizeof(header), data, bytes - sizeof(header));
+    if (data) std::memcpy(destination + sizeof(header), staged.data(), payloadBytes);
     buffer.offset += static_cast<std::uint32_t>(bytes);
     ++buffer.numCommands;
     return 0;
@@ -222,13 +228,14 @@ static int AppendMarker(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, co
     const std::uint64_t bytes = MarkerBytes(text);
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
     if (bytes > std::numeric_limits<std::uint32_t>::max()) return SCE_KERNEL_ERROR_EBUSY;
+    const std::string staged = text;
     const int capacity = EnsureCommandCapacity(buffer, static_cast<std::uint32_t>(bytes));
     if (capacity != 0) return capacity;
     const Apr::MarkerCommand command{{opcode, static_cast<std::uint32_t>(bytes)}};
     std::uint8_t* destination = buffer->base + buffer->offset;
     std::memset(destination, 0, bytes);
     std::memcpy(destination, &command, sizeof(command));
-    std::memcpy(destination + sizeof(command), text, std::strlen(text));
+    std::memcpy(destination + sizeof(command), staged.c_str(), staged.size());
     buffer->offset += static_cast<std::uint32_t>(bytes);
     ++buffer->numCommands;
     return 0;
@@ -387,8 +394,8 @@ int APS5_VABI sceAmprAprCommandBufferConstructor(Apr::CommandBufferObject* buffe
     if (!buffer || !gatherState || !scatterState) return SCE_KERNEL_ERROR_EINVAL;
     ReleaseExpandedCommandBuffer(buffer);
     buffer->type = Apr::BufferType::Apr;
-    *gatherState = 0;
-    *scatterState = 0;
+    const std::uint64_t zero = 0;
+    if (!GuestCopyOut_nid_no_patch(gatherState, &zero, sizeof(zero)) || !GuestCopyOut_nid_no_patch(scatterState, &zero, sizeof(zero))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -480,15 +487,19 @@ int APS5_VABI sceAmprCommandBufferConstructNop(Apr::CommandBufferObject* buffer,
     if (payloadBytes > (word ? 56u : 60u)) return SCE_KERNEL_ERROR_EINVAL;
     if (payloadBytes != 0u && !payload) throw std::invalid_argument("sceAmprCommandBufferConstructNop: null payload");
     const std::uint32_t dwords = (payloadBytes + 3u) / 4u + (word ? 1u : 0u);
+    std::array<std::uint8_t, MaxNopPayloadBytes> staged{};
+    std::uint32_t stagedWord = 0;
+    if (word && !GuestCopyIn_nid_no_patch(&stagedWord, word, sizeof(stagedWord))) return SCE_KERNEL_ERROR_EFAULT;
+    if (payloadBytes != 0u && !GuestCopyIn_nid_no_patch(staged.data(), payload, payloadBytes)) return SCE_KERNEL_ERROR_EFAULT;
     const std::uint32_t offset = buffer->offset;
     const int result = AppendNop(*buffer, Apr::NopHeader(dwords, static_cast<std::uint32_t>(type)), nullptr);
     if (result != 0) return result;
     std::uint8_t* data = buffer->base + offset + Apr::NopHeaderBytes;
     if (word) {
-        std::memcpy(data, word, sizeof(*word));
-        data += sizeof(*word);
+        std::memcpy(data, &stagedWord, sizeof(stagedWord));
+        data += sizeof(stagedWord);
     }
-    if (payloadBytes != 0u) std::memcpy(data, payload, payloadBytes);
+    if (payloadBytes != 0u) std::memcpy(data, staged.data(), payloadBytes);
     std::memset(data + payloadBytes, 0, (4u - payloadBytes % 4u) % 4u);
     return 0;
 }
@@ -496,7 +507,8 @@ int APS5_VABI sceAmprCommandBufferConstructNop(Apr::CommandBufferObject* buffer,
 int APS5_VABI sceAmprCommandBufferConstructor(Apr::CommandBufferObject* buffer) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     ReleaseExpandedCommandBuffer(buffer);
-    *buffer = {Apr::BufferType::Generic, 0, 0, 0, 0, nullptr};
+    const Apr::CommandBufferObject fresh{Apr::BufferType::Generic, 0, 0, 0, 0, nullptr};
+    if (!GuestCopyOut_nid_no_patch(buffer, &fresh, sizeof(fresh))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -506,15 +518,15 @@ int APS5_VABI sceAmprCommandBufferDestructor(Apr::CommandBufferObject* buffer) {
 }
 
 void* APS5_VABI sceAmprCommandBufferGetBufferBaseAddress(const Apr::CommandBufferObject* buffer) {
-    return buffer->base;
+    return buffer != nullptr ? buffer->base : nullptr;
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetCurrentOffset(const Apr::CommandBufferObject* buffer) {
-    return buffer->offset;
+    return buffer != nullptr ? buffer->offset : 0;
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetNumCommands(const Apr::CommandBufferObject* buffer) {
-    return buffer->numCommands;
+    return buffer != nullptr ? buffer->numCommands : 0;
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetSize(const Apr::CommandBufferObject* buffer) {
@@ -522,7 +534,7 @@ uint32_t APS5_VABI sceAmprCommandBufferGetSize(const Apr::CommandBufferObject* b
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetType(const Apr::CommandBufferObject* buffer) {
-    return static_cast<uint32_t>(buffer->type);
+    return buffer != nullptr ? static_cast<uint32_t>(buffer->type) : 0;
 }
 
 int APS5_VABI sceAmprCommandBufferNop(Apr::CommandBufferObject* buffer, std::uint32_t dwords) {
@@ -554,8 +566,11 @@ int APS5_VABI sceAmprCommandBufferPushMarkerWithColor(Apr::CommandBufferObject* 
 
 int APS5_VABI sceAmprCommandBufferReset(Apr::CommandBufferObject* buffer) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    buffer->offset = 0;
-    buffer->numCommands = 0;
+    Apr::CommandBufferObject localBuffer{};
+    if (!GuestCopyIn_nid_no_patch(&localBuffer, buffer, sizeof(localBuffer))) return SCE_KERNEL_ERROR_EFAULT;
+    localBuffer.offset = 0;
+    localBuffer.numCommands = 0;
+    if (!GuestCopyOut_nid_no_patch(&buffer->offset, &localBuffer.offset, sizeof(std::uint32_t) * 2)) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -603,6 +618,8 @@ int APS5_VABI sceAmprCommandBufferWriteAddressFromTimeCounter_04_00(Apr::Command
 }
 
 int APS5_VABI sceAmprCommandBufferWriteAddress_04_00(Apr::CommandBufferObject* buffer, uint64_t* address, uint64_t value, uint32_t flags) {
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    if ((reinterpret_cast<std::uintptr_t>(address) & 7u) != 0u) return SCE_KERNEL_ERROR_EINVAL;
     Apr::WriteAddressCommand command{};
     command.header = {Apr::Opcode::WriteAddress, sizeof(command)};
     command.address = reinterpret_cast<uint64_t>(address);
@@ -911,7 +928,14 @@ int APS5_VABI sceAmprAmmGiveDirectMemory(std::int64_t searchStart, std::int64_t 
 
 int APS5_VABI sceAmprAmmGetVirtualAddressRanges(std::uint64_t* start, std::uint64_t* end, std::uint64_t* multimapStart, std::uint64_t* multimapEnd) {
     if (!start || !end || !multimapStart || !multimapEnd) throw std::invalid_argument("sceAmprAmmGetVirtualAddressRanges: null output");
-    AmmVirtualAddressRanges_nid_no_patch(start, end, multimapStart, multimapEnd);
+    std::uint64_t localStart = 0;
+    std::uint64_t localEnd = 0;
+    std::uint64_t localMultimapStart = 0;
+    std::uint64_t localMultimapEnd = 0;
+    AmmVirtualAddressRanges_nid_no_patch(&localStart, &localEnd, &localMultimapStart, &localMultimapEnd);
+    if (!GuestCopyOut_nid_no_patch(start, &localStart, sizeof(localStart)) || !GuestCopyOut_nid_no_patch(end, &localEnd, sizeof(localEnd)) ||
+        !GuestCopyOut_nid_no_patch(multimapStart, &localMultimapStart, sizeof(localMultimapStart)) || !GuestCopyOut_nid_no_patch(multimapEnd, &localMultimapEnd, sizeof(localMultimapEnd)))
+        return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -931,8 +955,11 @@ int APS5_VABI sceAmprAmmSubmitCommandBuffer2(void* base, std::uint32_t offset, s
     if (priority > 2u) return SCE_KERNEL_ERROR_EINVAL;
     if (!base) return SCE_KERNEL_ERROR_EPERM;
     const auto submitted = AmmSubmit_nid_no_patch(ResolveBufferBase(base), offset);
-    if (result) *result = {0, 0};
-    if (id) *id = submitted;
+    if (result) {
+        const AmmSubmitResult value{0, 0};
+        if (!GuestCopyOut_nid_no_patch(result, &value, sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
+    }
+    if (id && !GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -940,7 +967,7 @@ int APS5_VABI sceAmprAmmSubmitCommandBuffer3(void* base, std::uint32_t offset, s
     if (priority > 2u) return SCE_KERNEL_ERROR_EINVAL;
     if (!base) return SCE_KERNEL_ERROR_EPERM;
     const auto submitted = AmmSubmit_nid_no_patch(ResolveBufferBase(base), offset);
-    if (id) *id = submitted;
+    if (id && !GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -977,7 +1004,7 @@ void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void) {
 
 APS5_EXPORT("0hlfW1O4Aa4", sceAmprLocaleconv);
 SonyLconv* APS5_VABI sceAmprLocaleconv(void) {
-    return SonyLocaleconv();
+    return SonyLocaleconv_nid_no_patch();
 }
 
 APS5_EXPORT("802pFCwC9w0", sceAmprUdivti3);
@@ -1007,7 +1034,7 @@ int APS5_VABI sceAmprWcscpyS(std::uint16_t* dest, std::size_t size, const std::u
 
 APS5_EXPORT("ENLfKJEZTjE", sceAmprSetConstraintHandlerS);
 void* APS5_VABI sceAmprSetConstraintHandlerS(void* handler) {
-    return SonySetConstraintHandlerS(handler);
+    return SonySetConstraintHandlerS_nid_no_patch(handler);
 }
 
 APS5_EXPORT("Jo9ON-AX9eU", sceAmprFltrounds);
@@ -1017,7 +1044,7 @@ int APS5_VABI sceAmprFltrounds(void) {
 
 APS5_EXPORT("ODGONXcSmz4", sceAmprIgnoreHandlerS);
 void APS5_VABI sceAmprIgnoreHandlerS(const char* message, void* pointer, int error) {
-    SonyIgnoreHandlerS(message, pointer, error);
+    SonyIgnoreHandlerS_nid_no_patch(message, pointer, error);
 }
 
 APS5_EXPORT("sZLrjx-yEx4", sceAmprWcstombsS);
@@ -1041,12 +1068,15 @@ int APS5_VABI sceAmprFpclassifyd(double value) {
 }
 
 int APS5_VABI sceAmprAmmGetUsageStatsData(AmmUsageStatsData* stats) {
-    if (!stats || stats->sizeInBytes > sizeof(AmmUsageStatsData)) return SCE_KERNEL_ERROR_EINVAL;
+    if (!stats) return SCE_KERNEL_ERROR_EINVAL;
+    std::uint64_t sizeInBytes = 0;
+    if (!GuestCopyIn_nid_no_patch(&sizeInBytes, stats, sizeof(sizeInBytes))) return SCE_KERNEL_ERROR_EFAULT;
+    if (sizeInBytes > sizeof(AmmUsageStatsData)) return SCE_KERNEL_ERROR_EINVAL;
     AmmUsageStatsData out{};
-    out.sizeInBytes = stats->sizeInBytes;
+    out.sizeInBytes = sizeInBytes;
     out.numPageTablePoolEntries = AmmPageTablePoolEntries;
     out.ringIdleFlags = AmmRingIdleFlags;
-    std::memcpy(stats, &out, static_cast<std::size_t>(stats->sizeInBytes));
+    if (!GuestCopyOut_nid_no_patch(stats, &out, static_cast<std::size_t>(sizeInBytes))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 }

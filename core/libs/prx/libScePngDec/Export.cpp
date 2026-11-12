@@ -404,6 +404,23 @@ bool pull(InputStream& stream, std::size_t size) {
     return stream.status == 0;
 }
 
+void pullImage(InputStream& stream) {
+    std::size_t offset = SIGNATURE.size();
+    while (stream.status == 0) {
+        const std::size_t headerEnd = offset + CHUNK_HEADER_SIZE;
+        if (stream.data.size() < headerEnd && !pull(stream, headerEnd - stream.data.size())) return;
+        const std::uint32_t length = readBigEndian32(stream.data.data() + offset);
+        if (length > MAX_CHUNK_LENGTH) return;
+        const bool isEnd = std::memcmp(stream.data.data() + offset + 4, "IEND", 4) == 0;
+        const std::size_t chunkEnd = headerEnd + length + CHUNK_CRC_SIZE;
+        while (stream.data.size() < chunkEnd && stream.status == 0) {
+            pull(stream, std::min(INPUT_BLOCK_SIZE, chunkEnd - stream.data.size()));
+        }
+        if (stream.data.size() < chunkEnd || isEnd) return;
+        offset = chunkEnd;
+    }
+}
+
 bool headerAvailable(const std::vector<std::uint8_t>& data) {
     constexpr std::size_t firstChunk = SIGNATURE.size();
     constexpr std::size_t chunkOverhead = 12;
@@ -522,9 +539,9 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
 int32_t APS5_VABI scePngDecDelete(void* handle) {
     Context* context = toContext(handle);
     if (!context) return SCE_PNG_DEC_ERROR_INVALID_HANDLE;
-    forgetStream(context);
     Context cleared{};
-    GuestCopyOut_nid_no_patch(context, &cleared, sizeof(cleared));
+    if (!GuestCopyOut_nid_no_patch(context, &cleared, sizeof(cleared))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    forgetStream(context);
     return 0;
 }
 
@@ -558,14 +575,15 @@ int32_t APS5_VABI scePngDecQueryMemorySize(const PngDecCreateParam* param) {
 int32_t APS5_VABI scePngDecDecodeWithInputControl(void* handle, const PngDecInputControlParam* param, PngDecImageInfo* imageInfo) {
     const Context* context = toContext(handle);
     if (!context) return SCE_PNG_DEC_ERROR_INVALID_HANDLE;
-    if (!param) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
-    if (!param->input) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
-    if (param->reserved != 0) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
-    if (param->operation == 0x10) {
+    PngDecInputControlParam localParam{};
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (!localParam.input) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (localParam.reserved != 0) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
+    if (localParam.operation == 0x10) {
         if (!imageInfo) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
         auto stream = std::make_shared<InputStream>();
-        stream->input = param->input;
-        stream->argument = param->input_argument;
+        stream->input = localParam.input;
+        stream->argument = localParam.input_argument;
         {
             std::lock_guard lock(streamMutex);
             streams[context] = stream;
@@ -575,28 +593,30 @@ int32_t APS5_VABI scePngDecDecodeWithInputControl(void* handle, const PngDecInpu
         if ((*use).status < 0) return (*use).status;
         const std::optional<Decoder::Png::Header> header = Decoder::Png::ParseHeader((*use).data);
         if (!header) return SCE_PNG_DEC_ERROR_INVALID_DATA;
-        fillImageInfo(*header, imageInfo);
+        PngDecImageInfo localInfo{};
+        fillImageInfo(*header, &localInfo);
+        if (!GuestCopyOut_nid_no_patch(imageInfo, &localInfo, sizeof(localInfo))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
         return 0;
     }
-    if (param->operation != 0x20) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
-    if (!param->image_mem_addr || (reinterpret_cast<std::uintptr_t>(param->image_mem_addr) & 3u) != 0) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
-    if (param->image_mem_size == 0) return SCE_PNG_DEC_ERROR_INVALID_SIZE;
-    if (param->pixel_format == 132) throw std::runtime_error("scePngDecDecodeWithInputControl: pixel format 132 is not implemented");
-    if (param->pixel_format != PIXEL_FORMAT_R8G8B8A8 && param->pixel_format != PIXEL_FORMAT_B8G8R8A8) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
-    if (param->alpha_value > 0xFF) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
+    if (localParam.operation != 0x20) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
+    if (!localParam.image_mem_addr || (reinterpret_cast<std::uintptr_t>(localParam.image_mem_addr) & 3u) != 0) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (localParam.image_mem_size == 0) return SCE_PNG_DEC_ERROR_INVALID_SIZE;
+    if (localParam.pixel_format == 132) throw std::runtime_error("scePngDecDecodeWithInputControl: pixel format 132 is not implemented");
+    if (localParam.pixel_format != PIXEL_FORMAT_R8G8B8A8 && localParam.pixel_format != PIXEL_FORMAT_B8G8R8A8) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
+    if (localParam.alpha_value > 0xFF) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
     const std::shared_ptr<InputStream> stream = findStream(context);
     if (!stream) throw std::runtime_error("scePngDecDecodeWithInputControl: decoding without a parsed header is not implemented");
     const StreamUse use(stream);
-    while ((*use).status == 0) pull(*use, INPUT_BLOCK_SIZE);
+    pullImage(*use);
     if ((*use).status < 0) return (*use).status;
     PngDecDecodeParam decode{};
     decode.png_mem_addr = (*use).data.data();
-    decode.image_mem_addr = param->image_mem_addr;
+    decode.image_mem_addr = localParam.image_mem_addr;
     decode.png_mem_size = static_cast<std::uint32_t>((*use).data.size());
-    decode.image_mem_size = param->image_mem_size;
-    decode.pixel_format = param->pixel_format;
-    decode.alpha_value = param->alpha_value;
-    decode.image_pitch = param->image_pitch;
+    decode.image_mem_size = localParam.image_mem_size;
+    decode.pixel_format = localParam.pixel_format;
+    decode.alpha_value = localParam.alpha_value;
+    decode.image_pitch = localParam.image_pitch;
     return scePngDecDecode(handle, &decode, imageInfo);
 }
 

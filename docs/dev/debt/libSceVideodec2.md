@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceVideodec2ReleaseComputeQueue](../../../core/libs/prx/libSceVideodec2/Export.cpp) (libSceVideodec2) - ignores its queue handle and returns 0, including for a handle that `sceVideodec2AllocateComputeQueue` never returned. That call only hands out increasing counter values and keeps no queue state, so there is nothing to free. What the console returns for an unknown or already released handle is not measured.
+- [sceVideodec2ReleaseComputeQueue](../../../core/libs/prx/libSceVideodec2/Export.cpp) (libSceVideodec2) - refuses handle 0 with `0x811D0110`, as a PS5 on system software 12.40 did. Any other handle is ignored and returns 0, including one that `sceVideodec2AllocateComputeQueue` never returned. That call only hands out increasing counter values and keeps no queue state, so there is nothing to free. What the console returns for an unknown or already released handle is not measured.
 
 ### Unknown function info
 
@@ -18,6 +18,8 @@
 - [sceVideodec2TermLibrary and nine other exports](../../../core/libs/prx/libSceVideodec2/Unimplemented.cpp) (libSceVideodec2) - report that they are not implemented; what they do on the console is not known. The others are `QueryLibraryInfo`, `QueryDecoderInfo`, `MapMemory`, `MapDirectMemory`, `PresetDecoderConfigInfo` (plain, `Avc`, `Hevc`, `Vp9`) and `CreateDecoderBid`. They are exported so that a title which imports them with `sceVideodec2InitLibrary` and calls none of them directly loads. Only `sceVideodec2MapDirectMemory` has a known parameter list, `(decoder, memory)`, from [EVO-PLAYER-PS5's `sce_videodec2.h`](https://github.com/sainsaji/EVO-PLAYER-PS5/blob/9715f6ee9bf9b53461d6fdf9a2e11b4c48357783/projects/evoplayer/media/include/sce/sce_videodec2.h#L173); the others take none here
 
 ### Functional
+
+- [Compute memory query](../../../core/libs/prx/libSceVideodec2/Export.cpp) probes compute memory info structures using guest copy operations, preserving caller errno across copy faults.
 
 - [HEVC decoder aliases](../../../core/libs/prx/libSceVideodec2/Export.cpp) (libSceVideodec2): whether the PS5 aliases behave exactly like the generic functions is unverified. `sceVideodec2CreateHevcDecoder` and `sceVideodec2QueryHevcDecoderMemoryInfo` forward their arguments unchanged to the generic functions, following [shadPS4's PS4 implementation at 28ad5d998fae6e4f15fd708222da9408388693fb, lines 327–339](https://github.com/shadps4-emu/shadPS4/blob/28ad5d998fae6e4f15fd708222da9408388693fb/src/core/libraries/videodec/videodec2.cpp#L327-L339).
 

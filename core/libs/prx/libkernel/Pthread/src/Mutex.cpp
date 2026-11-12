@@ -13,6 +13,7 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #if defined(__x86_64__) || defined(_M_X64)
 #include <immintrin.h>
@@ -26,6 +27,8 @@ constexpr int sceBusy = static_cast<int>(0x80020010u);
 constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
 constexpr std::int32_t posixFailure = -1;
 constexpr int posixAgain = 35;
+constexpr int posixFault = 14;
+constexpr std::size_t maxMutexName = 1024;
 std::mutex& InitializationMutex() {
     static std::mutex mutex;
     return mutex;
@@ -90,7 +93,7 @@ int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool try
     const bool owned = mutex->_owner.load(std::memory_order_acquire) == thread;
     if (owned && mutex->_type != MutexType::Recursive) {
         if (tryOnly)
-            return sceBusy;
+            return mutex->_type == MutexType::Adaptive ? SCE_KERNEL_ERROR_EINVAL : sceBusy;
         if (mutex->_type == MutexType::ErrorCheck || mutex->_type == MutexType::Adaptive)
             return sceDeadlock;
         throw std::runtime_error("Mutex is already owned by the current thread");
@@ -131,6 +134,14 @@ bool MutexOperations::IsOwned(const PthreadMutex* mutex) {
     return current->_owner.load(std::memory_order_acquire) == std::this_thread::get_id();
 }
 
+int MutexOperations::LoadAttribute(const PthreadMutexattr* attr, PthreadMutexattr& handle) {
+    if (!attr)
+        return SCE_KERNEL_ERROR_EINVAL;
+    if (!GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    return handle ? 0 : SCE_KERNEL_ERROR_EINVAL;
+}
+
 int MutexOperations::Timedlock(PthreadMutex* mutex, const KernelTimespec* abstime) {
     if (!abstime || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000)
         throw std::invalid_argument("Invalid absolute mutex timeout");
@@ -161,17 +172,22 @@ int MutexOperations::Timedlock(PthreadMutex* mutex, const KernelTimespec* abstim
 extern "C" {
 
 int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr) {
-    if (!attr)
-        throw std::invalid_argument("Mutex attribute pointer is null");
-    *attr = new PthreadMutexattrPrivate{MutexType::ErrorCheck};
+    auto created = std::make_unique<PthreadMutexattrPrivate>(PthreadMutexattrPrivate{MutexType::ErrorCheck});
+    PthreadMutexattr handle = created.get();
+    if (!GuestCopyOut_nid_no_patch(attr, &handle, sizeof(handle)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    created.release();
     return 0;
 }
 
 int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr) {
-    if (!attr || !*attr)
-        return SCE_KERNEL_ERROR_EINVAL;
-    delete *attr;
-    *attr = nullptr;
+    PthreadMutexattr handle = nullptr;
+    if (const int error = MutexOperations::LoadAttribute(attr, handle))
+        return error;
+    const PthreadMutexattr cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(attr, &cleared, sizeof(cleared)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    delete handle;
     return 0;
 }
 
@@ -184,13 +200,14 @@ int APS5_VABI scePthreadMutexattrGetkind(PthreadMutexattr attr) {
 }
 
 int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
-    if (!attr || !*attr)
-        return SCE_KERNEL_ERROR_EINVAL;
+    PthreadMutexattr handle = nullptr;
+    if (const int error = MutexOperations::LoadAttribute(attr, handle))
+        return error;
     switch (type) {
-    case 1: (*attr)->type = MutexType::ErrorCheck; break;
-    case 2: (*attr)->type = MutexType::Recursive; break;
-    case 3: (*attr)->type = MutexType::Normal; break;
-    case 4: (*attr)->type = MutexType::Adaptive; break;
+    case 1: handle->type = MutexType::ErrorCheck; break;
+    case 2: handle->type = MutexType::Recursive; break;
+    case 3: handle->type = MutexType::Normal; break;
+    case 4: handle->type = MutexType::Adaptive; break;
     default: return SCE_KERNEL_ERROR_EINVAL;
     }
     return 0;
@@ -215,17 +232,24 @@ int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* a
 int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex) {
     if (!mutex)
         throw std::invalid_argument("Mutex pointer is null");
+    PthreadMutex probe = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&probe, mutex, sizeof(probe)))
+        return SCE_KERNEL_ERROR_EFAULT;
     std::lock_guard lock(InitializationMutex());
-    if (*mutex == destroyedMutex())
+    PthreadMutex destroyed = destroyedMutex();
+    if (*mutex == destroyed)
         return SCE_KERNEL_ERROR_EINVAL;
     if (*mutex == adaptiveInitializer()) {
-        std::atomic_ref<PthreadMutex>(*mutex).store(destroyedMutex(), std::memory_order_release);
+        if (!GuestCopyOut_nid_no_patch(mutex, &destroyed, sizeof(destroyed)))
+            return SCE_KERNEL_ERROR_EFAULT;
         return 0;
     }
     if (*mutex && (*mutex)->_owner.load(std::memory_order_acquire) != std::thread::id{})
         return SCE_KERNEL_ERROR_EBUSY;
-    delete *mutex;
-    std::atomic_ref<PthreadMutex>(*mutex).store(destroyedMutex(), std::memory_order_release);
+    PthreadMutex released = *mutex;
+    if (!GuestCopyOut_nid_no_patch(mutex, &destroyed, sizeof(destroyed)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    delete released;
     return 0;
 }
 
@@ -300,6 +324,11 @@ int APS5_VABI scePthreadMutexGetspinloops(PthreadMutex* mutex, int* count) {
 }
 
 int APS5_VABI scePthreadMutexSetspinloops(PthreadMutex* mutex, int count) {
+    if (mutex) {
+        PthreadMutex probe = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&probe, mutex, sizeof(probe)))
+            return SCE_KERNEL_ERROR_EFAULT;
+    }
     auto* current = resolveMutex(mutex, true);
     if (!current)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -323,6 +352,11 @@ int APS5_VABI scePthreadMutexGetyieldloops(PthreadMutex* mutex, int* count) {
 }
 
 int APS5_VABI scePthreadMutexSetyieldloops(PthreadMutex* mutex, int count) {
+    if (mutex) {
+        PthreadMutex probe = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&probe, mutex, sizeof(probe)))
+            return SCE_KERNEL_ERROR_EFAULT;
+    }
     auto* current = resolveMutex(mutex, true);
     if (!current)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -337,6 +371,9 @@ std::uint64_t MutexYieldsForTest_nid_no_patch() {
 int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const char* name) {
     if (!mutex)
         throw std::invalid_argument("pthread_mutex_setname_np: null mutex");
+    PthreadMutex probe = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&probe, mutex, sizeof(probe)))
+        return posixFault;
     std::lock_guard lock(InitializationMutex());
     const auto current = std::atomic_ref<PthreadMutex>(*mutex).load(std::memory_order_acquire);
     if (!isInitializedMutex(current))
@@ -344,7 +381,10 @@ int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const ch
     if (current->_named)
         return posixAgain;
     if (name) {
-        current->_name = name;
+        std::string copy;
+        if (const int error = CopyGuestString_nid_no_patch(name, maxMutexName, copy))
+            return error;
+        current->_name = std::move(copy);
         current->_named = true;
     }
     return 0;

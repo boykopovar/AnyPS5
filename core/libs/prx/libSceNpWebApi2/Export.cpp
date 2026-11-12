@@ -1,5 +1,6 @@
 #include "prx/libSceNpWebApi2/include/InventoryExports.hpp"
 #include "prx/libSceNpWebApi2/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -80,7 +81,8 @@ int APS5_VABI sceNpWebApi2CreateRequest(int user_context_id, const char* api_gro
     (void)method;
     (void)content_parameter;
     if (!request_id) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
-    *request_id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    const int64_t created = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(request_id, &created, sizeof(created))) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -125,8 +127,12 @@ int APS5_VABI sceNpWebApi2GetMemoryPoolStats(int libraryContextId, NpWebApi2Memo
     const auto pool = g_pools.find(libraryContextId);
     if (pool == g_pools.end()) return SCE_NP_WEBAPI2_ERROR_INVALID_CONTEXT;
     if (!stats) return 0;
-    std::memset(stats, 0, sizeof(*stats));
-    stats->pool_size = pool->second;
+    NpWebApi2MemoryPoolStats localStats{};
+    localStats.pool_size = pool->second;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -197,6 +203,7 @@ int APS5_VABI sceNpWebApi2SendRequest(int64_t request_id, const void* data, size
 
 int APS5_VABI sceNpWebApi2Terminate(int lib_ctx_id) {
     std::lock_guard lock(g_poolsMutex);
+    if (!g_pools.contains(lib_ctx_id)) return SCE_NP_WEBAPI2_ERROR_INVALID_CONTEXT;
     std::erase_if(pushHandles, [lib_ctx_id](const auto& item) { return item.second.libraryContextId == lib_ctx_id; });
     g_pools.erase(lib_ctx_id);
     return 0;
@@ -251,7 +258,7 @@ int APS5_VABI sceNpWebApi2CreateMultipartRequest(int user_ctx_id, const char* ap
     (void)user_ctx_id;
     if (!api_group || !path || !method) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     const int64_t created = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
-    if (request_id) *request_id = created;
+    if (request_id && !GuestCopyOut_nid_no_patch(request_id, &created, sizeof(created))) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

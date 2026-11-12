@@ -1,6 +1,7 @@
 #include "prx/libSceVoice/include/Api.hpp"
 #include "prx/libSceVoiceQoS/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -38,6 +39,7 @@ int main(int argc, char** argv) {
     const auto appType = static_cast<std::int32_t>(std::strtoul(argv[1], nullptr, 16));
     std::vector<std::uint8_t> memory(0x40000, 0xAA);
     Require(sceVoiceQoSEnd() == notInitialized);
+    Require(sceVoiceQoSTerminate() == notInitialized);
     Require(sceVoiceQoSEnableChat() == notInitialized);
     Require(sceVoiceQoSDisableChat() == notInitialized);
     std::int32_t uninitLocal = -1;
@@ -130,6 +132,10 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSGetRemoteEndpoint(connection + 100, &queriedRemote) == argumentInvalid);
     Require(sceVoiceQoSGetLocalEndpoint(connection, &queriedLocal) == 0 && queriedLocal == local);
     Require(sceVoiceQoSGetRemoteEndpoint(connection, &queriedRemote) == 0 && queriedRemote == remote);
+    errno = 71;
+    Require(sceVoiceQoSGetLocalEndpoint(connection, reinterpret_cast<std::int32_t*>(0x10)) == argumentInvalid);
+    Require(sceVoiceQoSGetRemoteEndpoint(connection, reinterpret_cast<std::int32_t*>(0x10)) == argumentInvalid);
+    Require(errno == 71 && queriedLocal == local && queriedRemote == remote);
     std::int32_t duplicate = -1;
     Require(sceVoiceQoSConnect(&duplicate, local, remote) == 0 && duplicate > 0 && duplicate != connection);
     Require(sceVoiceQoSDisconnect(duplicate) == 0);
@@ -198,11 +204,16 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSDeleteRemoteEndpoint(remote) == argumentInvalid);
     Require(sceVoiceQoSEnd() == 0);
     Require(sceVoiceQoSEnd() == notInitialized);
+    Require(sceVoiceQoSTerminate() == notInitialized);
     Require(sceVoiceQoSEnableChat() == notInitialized);
     Require(sceVoiceQoSDisableChat() == notInitialized);
     Require(sceVoiceQoSInitHQ(nullptr, 0x40000, appType) == argumentInvalid);
     Require(sceVoiceQoSInitHQ(memory.data(), 0x40000, appType) == 0);
     Require(sceVoiceQoSEnd() == 0);
+    Require(sceVoiceQoSEnd() == notInitialized);
+    Require(sceVoiceQoSInitHQ(memory.data(), 0x40000, appType) == 0);
+    Require(sceVoiceQoSTerminate() == 0);
+    Require(sceVoiceQoSTerminate() == notInitialized);
     Require(sceVoiceQoSEnableChat() == notInitialized);
     Require(sceVoiceQoSDisableChat() == notInitialized);
     Require(sceVoiceQoSInit(nullptr, 0x40000, appType) == argumentInvalid);
@@ -213,6 +224,5 @@ int main(int argc, char** argv) {
     Require(NotImplemented([] { sceVoiceQoSGetStatus(1, 1, nullptr, 0); }));
     Require(NotImplemented([] { sceVoiceQoSDebugGetStatus(0, 200, nullptr, 4); }));
     Require(NotImplemented([] { sceVoiceQoSSetMode(); }));
-    Require(NotImplemented([] { sceVoiceQoSTerminate(); }));
     Require(sceVoiceEnd_nid_postfix() == voiceNotInitialized);
 }

@@ -1,5 +1,7 @@
 #include "prx/libSceNpTus/include/Api.hpp"
 #include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <mutex>
 #include <unordered_map>
@@ -51,8 +53,13 @@ int ValidateSlots(const std::int32_t* slotIds, int arrayLen, const void* option)
     if (!slotIds) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (arrayLen < 1 || option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
+    std::array<std::int32_t, MAX_SLOTS> localSlots{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(localSlots.data(), slotIds, arrayLen * sizeof(std::int32_t));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     for (int index = 0; index < arrayLen; ++index) {
-        if (slotIds[index] < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        if (localSlots[index] < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return 0;
 }
@@ -70,8 +77,19 @@ struct FriendsOptParam {
 
 int ValidateFriendsOption(const FriendsOptParam* option) {
     if (!option) return 0;
-    if (option->size != sizeof(FriendsOptParam)) return SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
-    if (option->startSerialRank && *option->startSerialRank == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    FriendsOptParam localOption{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (localOption.size != sizeof(FriendsOptParam)) return SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
+    if (localOption.startSerialRank) {
+        std::uint32_t rank = 0;
+        const int savedRankErrno = errno;
+        const bool copiedRank = GuestCopyIn_nid_no_patch(&rank, localOption.startSerialRank, sizeof(rank));
+        errno = savedRankErrno;
+        if (!copiedRank || rank == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return 0;
 }
 
@@ -114,7 +132,13 @@ int WaitOffline(int reqId, int* result) {
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (!request->second.started) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    if (result) *result = request->second.result;
+    if (result) {
+        const int outVal = request->second.result;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(result, &outVal, sizeof(outVal));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return 0;
 }
 
@@ -178,7 +202,13 @@ int APS5_VABI sceNpTusPollAsync(int reqId, int* result) {
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (!request->second.started) return POLL_RUNNING;
-    if (result) *result = request->second.result;
+    if (result) {
+        const int outVal = request->second.result;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(result, &outVal, sizeof(outVal));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return POLL_FINISHED;
 }
 
