@@ -309,9 +309,6 @@ APS5_EXPORT("HohNCzDzBW0", libreSsl3Forward_RSA_sign_nid_no_patch);
 __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_ENGINE_cleanup_nid_no_patch") "jmp *__imp_ENGINE_cleanup_nid_postfix(%rip)\n");
 APS5_EXPORT("Htr6CcbIOGQ", libreSsl3Forward_ENGINE_cleanup_nid_no_patch);
 
-__asm__(APS5_ASM_FUNCTION("libreSsl3Forward_EVP_DecryptUpdate_nid_no_patch") "jmp *__imp_EVP_DecryptUpdate_nid_postfix(%rip)\n");
-APS5_EXPORT("IXiXAHDFjeU", libreSsl3Forward_EVP_DecryptUpdate_nid_no_patch);
-
 __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_ECDSA_verify_nid_no_patch") "jmp *__imp_ECDSA_verify_nid_postfix(%rip)\n");
 APS5_EXPORT("IkWJtQkfvZs", libreSsl3Forward_ECDSA_verify_nid_no_patch);
 
@@ -413,9 +410,6 @@ APS5_EXPORT("ObitwxybGKk", libreSsl3Forward_SSL_CIPHER_get_version_nid_no_patch)
 
 __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_SSL_get0_param_nid_no_patch") "jmp *__imp_SSL_get0_param_nid_postfix(%rip)\n");
 APS5_EXPORT("OjlHVH8jjsw", libreSsl3Forward_SSL_get0_param_nid_no_patch);
-
-__asm__(APS5_ASM_FUNCTION("libreSsl3Forward_EVP_EncryptUpdate_nid_no_patch") "jmp *__imp_EVP_EncryptUpdate_nid_postfix(%rip)\n");
-APS5_EXPORT("OnoZKqFGNjA", libreSsl3Forward_EVP_EncryptUpdate_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_X509_VERIFY_PARAM_set1_ip_asc_nid_no_patch") "jmp *__imp_X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(%rip)\n");
 APS5_EXPORT("P+cIOdeN6ig", libreSsl3Forward_X509_VERIFY_PARAM_set1_ip_asc_nid_no_patch);
@@ -1121,9 +1115,6 @@ APS5_EXPORT("vn5B1QygBJM", libreSsl3Forward_PEM_read_bio_PrivateKey_nid_no_patch
 
 __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_X509_EXTENSION_get_critical_nid_no_patch") "jmp *__imp_X509_EXTENSION_get_critical_nid_postfix(%rip)\n");
 APS5_EXPORT("w+aChZeGKxo", libreSsl3Forward_X509_EXTENSION_get_critical_nid_no_patch);
-
-__asm__(APS5_ASM_FUNCTION("libreSsl3Forward_EVP_CipherUpdate_nid_no_patch") "jmp *__imp_EVP_CipherUpdate_nid_postfix(%rip)\n");
-APS5_EXPORT("w03a1pfG8oM", libreSsl3Forward_EVP_CipherUpdate_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_SSL_CTX_use_PrivateKey_file_nid_no_patch") "jmp *__imp_SSL_CTX_use_PrivateKey_file_nid_postfix(%rip)\n");
 APS5_EXPORT("wPBtYd5mlzo", libreSsl3Forward_SSL_CTX_use_PrivateKey_file_nid_no_patch);
