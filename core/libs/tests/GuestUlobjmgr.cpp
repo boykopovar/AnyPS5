@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -10,6 +12,17 @@ constexpr int efault = 14;
 constexpr int einval = 22;
 
 void Require(bool value) { if (!value) std::abort(); }
+
+template <typename TCall>
+void RequireNotImplemented(TCall call, const char* name) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == std::string(name) + " not implemented");
+        return;
+    }
+    Require(false);
+}
 
 }
 
@@ -57,4 +70,7 @@ int main() {
     Require(_sceUlobjmgrRegisterObject_nid_postfix(std::numeric_limits<std::uint64_t>::max(), std::numeric_limits<std::int32_t>::max(), nidPair) == 0);
     Require(nidPair[0] == 0 && nidPair[1] == 0x55555555u);
     Require(_sceUlobjmgrUnregisterObject_nid_postfix(nidPair[0]) == 0);
+
+    RequireNotImplemented(&ulobjmgrUnknown_HZ9Q2c_plus_4BU4_nid_no_patch, "ulobjmgrUnknown_HZ9Q2c_plus_4BU4_nid_no_patch");
+    RequireNotImplemented(&ulobjmgrUnknown_SweJO7t3pkk_nid_no_patch, "ulobjmgrUnknown_SweJO7t3pkk_nid_no_patch");
 }

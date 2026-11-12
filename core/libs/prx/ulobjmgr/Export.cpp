@@ -46,11 +46,13 @@ extern "C" {
 
 int APS5_VABI ulobjmgrUnknown_HZ9Q2c_plus_4BU4_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("HZ9Q2c+4BU4", ulobjmgrUnknown_HZ9Q2c_plus_4BU4_nid_no_patch);
 
 int APS5_VABI ulobjmgrUnknown_SweJO7t3pkk_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("SweJO7t3pkk", ulobjmgrUnknown_SweJO7t3pkk_nid_no_patch);
 
