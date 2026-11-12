@@ -1,6 +1,7 @@
 #include "prx/libSceGameLiveStreaming/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -72,6 +73,9 @@ void CheckLifecycleFirst() {
 
 void CheckString(int (APS5_VABI *call)(const char*), std::size_t limit) {
     Require(call(nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(call(reinterpret_cast<const char*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
     Require(call("") == 0);
     Require(call(std::string(limit, 'a').c_str()) == 0);
     Require(call(std::string(limit + 1, 'a').c_str()) == kInvalidArgument);
@@ -116,6 +120,12 @@ void CheckFeedbackTypes() {
     Require(sceGameLiveStreamingGetSocialFeedbackMessages(1, 1, AsMessages(messages), nullptr) == kInvalidArgument);
     Require(acquired == 0xdeadbeef);
     Require(sceGameLiveStreamingGetSocialFeedbackMessagesCount(1, nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(sceGameLiveStreamingGetSocialFeedbackMessagesCount(1, reinterpret_cast<std::uint32_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceGameLiveStreamingGetSocialFeedbackMessages(1, 1, AsMessages(messages), reinterpret_cast<std::size_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 }
 
 void CheckArrays() {

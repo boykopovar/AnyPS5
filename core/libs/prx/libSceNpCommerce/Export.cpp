@@ -106,10 +106,15 @@ int APS5_VABI sceNpCommerceDialogInitialize() {
 
 int APS5_VABI sceNpCommerceDialogOpen(const NpCommerceDialogParam* param) {
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- if (!ValidateCommonDialogBaseParam(param->base)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ NpCommerceDialogParam localParam{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+ errno = savedErrno;
+ if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
+ if (localParam.base.size != sizeof(localParam.base) || localParam.base.magic != static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param)) - 1060003575u || !std::all_of(std::begin(localParam.base.reserved), std::end(localParam.base.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (!validateParam(*param)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- g_userData = param->userData;
+ if (!validateParam(localParam)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ g_userData = localParam.userData;
  g_status = COMMON_DIALOG_STATUS_FINISHED;
  PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
  return 0;
@@ -178,10 +183,15 @@ int APS5_VABI sceNpCommerceSetPsStoreIconLayout(int layout) {
 
 int APS5_VABI sceNpCommerceDialogOpen2(const NpCommerceDialogParam2* param) {
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- if (!ValidateCommonDialogBaseParam(param->base)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ NpCommerceDialogParam2 localParam{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+ errno = savedErrno;
+ if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
+ if (localParam.base.size != sizeof(localParam.base) || localParam.base.magic != static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param)) - 1060003575u || !std::all_of(std::begin(localParam.base.reserved), std::end(localParam.base.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (!validateParam2(*param)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- g_userData = param->userData;
+ if (!validateParam2(localParam)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ g_userData = localParam.userData;
  g_status = COMMON_DIALOG_STATUS_FINISHED;
  PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
  return 0;

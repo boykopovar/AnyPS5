@@ -311,9 +311,9 @@ class AnnotateModuleTests(unittest.TestCase):
         self.assertEqual([], [path.name for path in self.root.iterdir() if path.suffix == ".bin"])
 
     def test_unknown_nid_prints_the_nid(self):
-        empty = self.root / "empty.csv"
-        empty.write_text("", encoding="utf-8")
-        self.run_tool(build_module(), "--db", str(empty))
+        db = self.root / "db.csv"
+        db.write_text("AAAAAAAAAAA some_other_name\n", encoding="utf-8")
+        self.run_tool(build_module(), "--db", str(db))
         self.assertEqual("%#x %s %s\n" % (SLOT, symbol_name(IMPORT_NAME), nid(IMPORT_NAME)), self.read(".imports.txt"))
         self.assertIn("; -> " + nid(IMPORT_NAME), self.read(".asm"))
 
@@ -662,6 +662,8 @@ class InputProtectionTests(unittest.TestCase):
             self.assertFalse((root / "report.asm").exists())
 
     def test_cli_rejects_invalid_gnu_bloom_size_without_reports(self):
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU binutils objdump (objdump or gobjdump) is required to run this test")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             module = root / "invalid.prx"

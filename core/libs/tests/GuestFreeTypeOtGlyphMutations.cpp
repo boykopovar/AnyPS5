@@ -396,7 +396,7 @@ int main(int argc, char** argv) {
     Resolve(ot.strokerDone, libraries.freeType, patched, "+RLa-6fbshA", "FT_Stroker_Done_nid_postfix");
     Resolve(ot.toBitmap, libraries.ot, patched, "c1nbr8oSWlg", "sceFreeTypeOtGlyphToBitmap_nid_no_patch");
     Resolve(ot.transform, libraries.ot, patched, "AVEEb57HhUw", "sceFreeTypeOtGlyphTransform_nid_no_patch");
-    Resolve(ot.stroke, libraries.ot, patched, "0rKmI1ZbMAc", "sceFreeTypeOtUnknown_0rKmI1ZbMAc_nid_no_patch");
+    Resolve(ot.stroke, libraries.ot, patched, "0rKmI1ZbMAc", "FT_Glyph_Stroke_nid_postfix");
     Resolve(ot.strokeBorder, libraries.ot, patched, "BBRhYfYBDgU", "sceFreeTypeOtGlyphStrokeBorder_nid_no_patch");
     try {
         BitmapConversion(ot, 0);
