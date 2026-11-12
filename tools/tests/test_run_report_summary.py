@@ -50,6 +50,21 @@ class RunReportSummaryTests(unittest.TestCase):
         summary = render(report)
         self.assertNotIn("\x1b", summary)
 
+    def test_malformed_numbers_do_not_emit_terminal_control_characters(self):
+        report = self.report("stop-none.json")
+        report["run"]["exitCode"] = "\x1b[2J"
+        report["run"]["seconds"] = "\nInjected line"
+        report["system"]["ramGiB"] = True
+        report["coverage"]["shaders"] = True
+        report["shaders"]["compiled"] = "\x1b[2J"
+        summary = render(report)
+        self.assertNotIn("\x1b", summary)
+        self.assertNotIn("Injected line", summary)
+        self.assertIn("exit code unknown", summary)
+        self.assertIn("after unknown seconds", summary)
+        self.assertIn("unknown GiB RAM", summary)
+        self.assertIn("Shaders: unknown compiled", summary)
+
     def test_rejects_other_report_formats(self):
         with self.assertRaisesRegex(ValueError, "AnyPS5 run report"):
             render({"format": "other", "version": 1})

@@ -10,8 +10,12 @@ def text(value):
     return "".join(character if character.isprintable() else " " for character in value)
 
 
+def number_text(value):
+    return str(value) if type(value) in (int, float) else "unknown"
+
+
 def count_text(value, noun):
-    return f"{value} {noun}{'' if value == 1 else 's'}"
+    return f"{number_text(value)} {noun}{'' if value == 1 else 's'}"
 
 
 def render(report):
@@ -38,9 +42,9 @@ def render(report):
 
     result = text(run.get("exit"))
     if run.get("exitCode") is not None:
-        result += f" (exit code {run['exitCode']})"
+        result += f" (exit code {number_text(run['exitCode'])})"
     lines.append(f"Result: {result}")
-    lines.append(f"Progress: {text(run.get('stage'))} after {run.get('seconds', 'unknown')} seconds")
+    lines.append(f"Progress: {text(run.get('stage'))} after {number_text(run.get('seconds'))} seconds")
 
     frames = run.get("framesPresented")
     if coverage.get("milestones"):
@@ -60,7 +64,7 @@ def render(report):
     if system.get("cpu"):
         system_summary.append(text(system["cpu"]))
     if system.get("ramGiB") is not None:
-        system_summary.append(f"{system['ramGiB']} GiB RAM")
+        system_summary.append(f"{number_text(system['ramGiB'])} GiB RAM")
     if gpu_name:
         system_summary.append(text(gpu_name))
     lines.append("System: " + ", ".join(system_summary))
@@ -86,7 +90,7 @@ def render(report):
         lines.append("Missing functions: not collected")
 
     if coverage.get("shaders"):
-        lines.append(f"Shaders: {shaders.get('compiled', 0)} compiled, {count_text(shaders.get('failed', 0), 'failure')}")
+        lines.append(f"Shaders: {number_text(shaders.get('compiled', 0))} compiled, {count_text(shaders.get('failed', 0), 'failure')}")
     else:
         lines.append("Shaders: compilation data was not collected")
     if coverage.get("unsupported"):
