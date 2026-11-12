@@ -19,7 +19,7 @@ void Format(const std::uint64_t error, char* line, const std::size_t size) {
 
 extern "C" {
 
-void APS5_VABI ERR_print_errors_cb_nid_postfix(int (*callback)(const char*, std::size_t, void*), void* userData) {
+void APS5_VABI ERR_print_errors_cb_nid_postfix(int (APS5_VABI *callback)(const char*, std::size_t, void*), void* userData) {
     if (!callback) throw std::invalid_argument("ERR_print_errors_cb requires a callback");
     char line[512];
     for (;;) {
