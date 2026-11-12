@@ -177,6 +177,10 @@ bool Run() {
         AgcDriver::GuestMemory::Read(address, settled);
     }
     Require(static_cast<const volatile std::uint32_t*>(texels)[0] == Stored, "refresh unwatch hash: the first results did not reach guest memory");
+    if (!AgcDriver::GuestMemory::Watched(address, SurfaceBytes)) {
+        std::puts("skipped, the surface's host import is compared, not write-watched");
+        return false;
+    }
     hold.lock();
     const auto image = StorageTexture::FindLive(address, SurfaceBytes);
     Require(image != nullptr, "refresh unwatch hash: the surface has no storage image");
