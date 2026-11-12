@@ -249,6 +249,30 @@ static void CheckPartialFailure() {
     fixture.CheckSlot();
 }
 
+static void CheckWideAdvances(std::vector<unsigned char> font, bool vertical) {
+    Fixture fixture(std::move(font));
+    fixture.SetSize(45000, 47000);
+    for (const std::int32_t flags : std::array<std::int32_t, 2>{FT_LOAD_DEFAULT, FT_LOAD_VERTICAL_LAYOUT}) {
+        if ((flags & FT_LOAD_VERTICAL_LAYOUT) && !vertical) continue;
+        std::array<std::int64_t, 2> expected{};
+        for (unsigned glyph = 0; glyph < expected.size(); ++glyph) {
+            Require(FT_Load_Glyph(fixture.native, glyph, flags | FT_LOAD_ADVANCE_ONLY) == 0);
+            const auto advance = (flags & FT_LOAD_VERTICAL_LAYOUT) ? fixture.native->glyph->advance.y : fixture.native->glyph->advance.x;
+            expected[glyph] = static_cast<std::int64_t>(advance) * 1024;
+            std::array<std::int64_t, 3> actual{Sentinel, Sentinel, Sentinel};
+            Require(FT_Get_Advance_nid_postfix(fixture.guest, glyph, flags, &actual[1]) == 0);
+            Require(actual.front() == Sentinel && actual.back() == Sentinel && actual[1] == expected[glyph]);
+            fixture.CheckSlot();
+        }
+        Require(expected[1] > std::numeric_limits<std::int32_t>::max() || expected[1] < std::numeric_limits<std::int32_t>::min());
+        std::array<std::int64_t, 4> actual{Sentinel, Sentinel, Sentinel, Sentinel};
+        Require(FT_Get_Advances_nid_postfix(fixture.guest, 0, 2, flags, &actual[1]) == 0);
+        Require(actual.front() == Sentinel && actual.back() == Sentinel);
+        Require(actual[1] == expected[0] && actual[2] == expected[1]);
+        fixture.CheckSlot();
+    }
+}
+
 int main() {
     Fixture fixture(SquareGlyphFont('A', 913));
     for (const unsigned size : {7u, 37u, 113u}) {
@@ -282,4 +306,6 @@ int main() {
     CheckAliasedOutput(fixture);
     CheckPartialFailure();
     CheckCff();
+    CheckWideAdvances(SquareGlyphFont('A', 913), true);
+    CheckWideAdvances(CffFont(), false);
 }

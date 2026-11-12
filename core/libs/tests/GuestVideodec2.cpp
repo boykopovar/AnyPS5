@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -1128,6 +1129,9 @@ void testParameterSetsBound() {
 void testComputeQueues() {
     SceVideodec2::ComputeMemoryInfo memory{sizeof(SceVideodec2::ComputeMemoryInfo), 0, nullptr};
     check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(nullptr) == static_cast<int>(0x811D0102u), "a null compute memory info must be refused");
+    errno = 71;
+    check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(reinterpret_cast<SceVideodec2::ComputeMemoryInfo*>(0x10)) == static_cast<int>(0x811D0102u), "an unmapped compute memory info must be refused");
+    check(errno == 71, "errno mutated on unmapped compute memory info refusal");
     SceVideodec2::ComputeMemoryInfo shortInfo{0x10, 0x5a5a5a5a5a5a5a5aull, nullptr};
     check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(&shortInfo) == static_cast<int>(0x811D0101u) && shortInfo.cpuGpuMemorySize == 0x5a5a5a5a5a5a5a5aull, "a 16-byte compute memory info must be refused");
     SceVideodec2::ComputeMemoryInfo highInfo{0xcccccccc00000018ull, 0x5a5a5a5a5a5a5a5aull, nullptr};
