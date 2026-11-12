@@ -124,17 +124,17 @@ static void TestDiscardQueuedAudioInChunks() {
     Require(requested == std::array<std::uint32_t, 3>{4, 4, 2});
 }
 
-static void TestDiscardQueuedAudioStopsAtPartialRead() {
+static void TestDiscardQueuedAudioContinuesAfterPartialRead() {
     std::array<std::uint8_t, 4> discarded{};
-    std::array<std::uint32_t, 2> requested{};
+    std::array<std::uint32_t, 3> requested{};
     std::size_t calls = 0;
     audioin::detail::discardQueuedAudio(10, discarded.data(), discarded.size(),
         [&requested, &calls](std::uint8_t*, std::uint32_t chunk) {
             requested[calls++] = chunk;
             return calls == 1 ? 2u : chunk;
         });
-    Require(calls == 2);
-    Require(requested == std::array<std::uint32_t, 2>{4, 4});
+    Require(calls == 3);
+    Require(requested == std::array<std::uint32_t, 3>{4, 4, 4});
 }
 
 static void TestDiscardQueuedAudioStopsOnNoProgress() {
@@ -170,7 +170,7 @@ int main() {
     TestCaptureMuteGenerations();
     TestDiscardQueuedAudioBelowThreshold();
     TestDiscardQueuedAudioInChunks();
-    TestDiscardQueuedAudioStopsAtPartialRead();
+    TestDiscardQueuedAudioContinuesAfterPartialRead();
     TestDiscardQueuedAudioStopsOnNoProgress();
     return 0;
 }
