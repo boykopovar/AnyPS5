@@ -2,6 +2,8 @@
 
 ### Silent stubs
 
+- [sceVrTracker2QueryMemory](../../../core/libs/prx/libSceVrTracker2/Export.cpp) - returning `0x8A740006` for an unwritable requirement pointer is a host-safety fallback with console behavior unmeasured.
+- [VrTracker2ClearWideResult and VrTracker2ClearNarrowResult](../../../core/libs/prx/libSceVrTracker2/Export.cpp) - returning `0x8A740006` for an unwritable output pointer is a host-safety fallback; console behavior for this pointer is unmeasured.
 - [libSceVrTracker2](../../../core/libs/prx/libSceVrTracker2/Export.cpp) never initializes; initialized tracking behavior is absent. Its uninitialized responses were measured without a headset: most exports return 0x8A740001 without writes, while specific output/reset helpers clear buffers or write defaults. These helpers still lack complete signatures. Named export signatures and play-area output layouts are recovered; initialization option semantics and result fields need reconstruction. Anonymous exports remain grouped by their observed response rather than their individual contracts.
 
 ### Unknown function info

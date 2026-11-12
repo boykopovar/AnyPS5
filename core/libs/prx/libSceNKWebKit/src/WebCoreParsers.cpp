@@ -99,6 +99,7 @@
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace NKWebKit::WtfAbi {
@@ -210,6 +211,50 @@ StringView Trim(StringView view) {
     return StringView{base + static_cast<std::size_t>(start) * (view.is8Bit ? 1 : 2), end - start, view.is8Bit};
 }
 
+using WebCore::XFrameOptionsDisposition;
+
+bool IsFrameOptionsWhitespace(char16_t character) {
+    return character == ' ' || (character >= '\t' && character <= '\r')
+        || character == 0x1680 || (character >= 0x2000 && character <= 0x200a)
+        || character == 0x2028 || character == 0x205f || character == 0x3000;
+}
+
+template<typename Char> bool MatchesFrameOption(std::basic_string_view<Char> value, std::string_view token) {
+    if (value.size() != token.size()) return false;
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        const char16_t character = value[i];
+        const char16_t lower = character >= 'A' && character <= 'Z' ? character + ('a' - 'A') : character;
+        if (lower != static_cast<unsigned char>(token[i])) return false;
+    }
+    return true;
+}
+
+template<typename Char> XFrameOptionsDisposition ParseFrameOption(std::basic_string_view<Char> value) {
+    while (!value.empty() && IsFrameOptionsWhitespace(value.front())) value.remove_prefix(1);
+    while (!value.empty() && IsFrameOptionsWhitespace(value.back())) value.remove_suffix(1);
+    if (MatchesFrameOption(value, "deny")) return XFrameOptionsDisposition::Deny;
+    if (MatchesFrameOption(value, "sameorigin")) return XFrameOptionsDisposition::SameOrigin;
+    if (MatchesFrameOption(value, "allowall")) return XFrameOptionsDisposition::AllowAll;
+    return XFrameOptionsDisposition::Invalid;
+}
+
+template<typename Char> XFrameOptionsDisposition ParseFrameOptions(const void* data, unsigned length) {
+    std::basic_string_view<Char> remaining(static_cast<const Char*>(data), length);
+    auto result = XFrameOptionsDisposition::None;
+    while (!remaining.empty()) {
+        const auto separator = remaining.find(',');
+        const auto token = remaining.substr(0, separator);
+        if (!token.empty()) {
+            const auto parsed = ParseFrameOption(token);
+            if (result != XFrameOptionsDisposition::None && result != parsed) return XFrameOptionsDisposition::Conflict;
+            result = parsed;
+        }
+        if (separator == remaining.npos) break;
+        remaining.remove_prefix(separator + 1);
+    }
+    return result;
+}
+
 ByteVector& Checked(ByteVector* vector) {
     if (!vector) throw std::invalid_argument("null WTF::Vector");
     return *vector;
@@ -219,6 +264,14 @@ ByteVector& Checked(ByteVector* vector) {
 
 extern "C" {
 
+WebCore::XFrameOptionsDisposition APS5_VABI _ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(const NKWebKit::WtfAbi::String& header) {
+    const auto* impl = header.impl;
+    if (!impl || !impl->length) return XFrameOptionsDisposition::None;
+    if (!impl->data) throw std::invalid_argument("null WTF::String data");
+    constexpr unsigned Is8Bit = 4;
+    if (impl->hashAndFlags & Is8Bit) return ParseFrameOptions<char>(impl->data, impl->length);
+    return ParseFrameOptions<char16_t>(impl->data, impl->length);
+}
 WebCore::ExpectedInt APS5_VABI _ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(StringView input) {
     auto result = Parse(input);
     WebCore::ExpectedInt expected{};

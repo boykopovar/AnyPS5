@@ -5,6 +5,7 @@
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include <cerrno>
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <iterator>
 #include <mutex>
@@ -79,13 +80,18 @@ int APS5_VABI sceInvitationDialogOpen(const InvitationDialogParam* param) {
         Unsettled(__func__, "status " + std::to_string(dialog.status) + " is neither INITIALIZED nor FINISHED, and the error for it is unsettled");
     }
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    if (param->size != sizeof(InvitationDialogParam)) {
-        Unsettled(__func__, "param size " + std::to_string(param->size) + " is not the " + std::to_string(sizeof(InvitationDialogParam)) + "-byte layout this library reads");
+    InvitationDialogParam localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (localParam.size != sizeof(InvitationDialogParam)) {
+        Unsettled(__func__, "param size " + std::to_string(localParam.size) + " is not the " + std::to_string(sizeof(InvitationDialogParam)) + "-byte layout this library reads");
     }
-    if (param->mode != INVITATION_DIALOG_MODE_SEND && param->mode != INVITATION_DIALOG_MODE_RECV) {
-        Unsettled(__func__, "mode " + std::to_string(param->mode) + " is neither SEND nor RECV, and the error for it is unsettled");
+    if (localParam.mode != INVITATION_DIALOG_MODE_SEND && localParam.mode != INVITATION_DIALOG_MODE_RECV) {
+        Unsettled(__func__, "mode " + std::to_string(localParam.mode) + " is neither SEND nor RECV, and the error for it is unsettled");
     }
-    dialog.callbackArg = param->callbackArg;
+    dialog.callbackArg = localParam.callbackArg;
     dialog.status = COMMON_DIALOG_STATUS_FINISHED;
     PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
     return COMMON_DIALOG_OK;

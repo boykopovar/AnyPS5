@@ -72,7 +72,6 @@ int APS5_VABI _ZN3JSC12StringObjectC1ERNS_2VMEPNS_9StructureE();
 int APS5_VABI _ZN3JSC14setNeverInlineENS_7JSValueE();
 int APS5_VABI _ZN3JSC16getFunctionRealmERNS_2VMEPNS_8JSObjectE();
 int APS5_VABI _ZN3WTF10TextStreamlsERKNS0_30FormatNumberRespectingIntegersE();
-int APS5_VABI _ZNK3WTF10StringImpl21findIgnoringASCIICaseEPKS0_();
 int APS5_VABI _ZN3JSC9Structure26flattenDictionaryStructureERNS_2VMEPNS_8JSObjectE();
 int APS5_VABI _ZN7bmalloc9Allocator14reallocateImplEPvmNS_13FailureActionE();
 int APS5_VABI _ZN3WTF13MetaAllocatorD1Ev();
