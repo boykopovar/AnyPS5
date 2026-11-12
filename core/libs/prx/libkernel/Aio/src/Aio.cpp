@@ -218,31 +218,17 @@ void RunRequest(KernelAioRwRequest& req, bool write) {
     req.result->state = AioCompleted;
 }
 
-int ValidateRequests(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, const void* id) {
+int SubmitCommands(const KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, bool write, bool multiple, std::int32_t* id) {
     if (req == nullptr || id == nullptr) return SCE_KERNEL_ERROR_EFAULT;
     if (size <= 0 || size > AioRequestNumMax || prio < AioPriorityLow || prio > AioPriorityHigh) return SCE_KERNEL_ERROR_EINVAL;
+    std::array<KernelAioRwRequest, AioRequestNumMax> requests{};
+    const auto bytes = static_cast<std::size_t>(size) * sizeof(requests[0]);
+    if (!GuestCopyIn_nid_no_patch(requests.data(), req, bytes)) return SCE_KERNEL_ERROR_EFAULT;
     for (std::int32_t i = 0; i < size; ++i) {
-        if (req[i].result == nullptr) return SCE_KERNEL_ERROR_EFAULT;
+        if (requests[i].result == nullptr) return SCE_KERNEL_ERROR_EFAULT;
     }
-    return 0;
-}
-
-int SubmitCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, bool write, std::int32_t* id) {
-    const int error = ValidateRequests(req, size, prio, id);
-    if (error != 0) return error;
-    Reservation reservation(1);
-    for (std::int32_t i = 0; i < size; ++i) RunRequest(req[i], write);
-    reservation.Publish(id);
-    return 0;
-}
-
-int SubmitCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, bool write, std::int32_t* id) {
-    const int error = ValidateRequests(req, size, prio, id);
-    if (error != 0) return error;
-    Reservation reservation(size);
-    for (std::int32_t i = 0; i < size; ++i) {
-        RunRequest(req[i], write);
-    }
+    Reservation reservation(multiple ? size : 1);
+    for (std::int32_t i = 0; i < size; ++i) RunRequest(requests[i], write);
     reservation.Publish(id);
     return 0;
 }
@@ -373,19 +359,19 @@ int APS5_VABI sceKernelAioSetParam(KernelAioSchedulingParam* param, int32_t sche
 }
 
 int APS5_VABI sceKernelAioSubmitReadCommands(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
-    return SubmitCommands(req, size, prio, false, id);
+    return SubmitCommands(req, size, prio, false, false, id);
 }
 
 int APS5_VABI sceKernelAioSubmitWriteCommands(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
-    return SubmitCommands(req, size, prio, true, id);
+    return SubmitCommands(req, size, prio, true, false, id);
 }
 
 int APS5_VABI sceKernelAioSubmitReadCommandsMultiple(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
-    return SubmitCommandsMultiple(req, size, prio, false, id);
+    return SubmitCommands(req, size, prio, false, true, id);
 }
 
 int APS5_VABI sceKernelAioSubmitWriteCommandsMultiple(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
-    return SubmitCommandsMultiple(req, size, prio, true, id);
+    return SubmitCommands(req, size, prio, true, true, id);
 }
 
 int APS5_VABI sceKernelAioPollRequest(int32_t id, int32_t* state) {

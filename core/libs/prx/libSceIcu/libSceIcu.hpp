@@ -37,3 +37,4 @@
 #include "Configuration.hpp"
 
 #include "ConverterHelpers.hpp"
+#include "RecoveredSignatures.hpp"

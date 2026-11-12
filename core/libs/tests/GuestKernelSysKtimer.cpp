@@ -185,12 +185,26 @@ void Absolute() {
 
 }
 
+static void SettimeGuestBuffers() {
+    const int id = Create();
+    auto* const badValue = reinterpret_cast<GuestItimerspec*>(1);
+    Require(ktimer_settime_nid_postfix(id, 0, badValue, nullptr) == -1 && Error() == Efault);
+    Require(ktimer_settime_nid_postfix(-1, 0, badValue, nullptr) == -1 && Error() == Efault);
+    Require(Nanoseconds(Get(id).it_value) == 0);
+    const GuestItimerspec next{{3, 0}, {20, 0}};
+    Require(ktimer_settime_nid_postfix(id, 0, &next, badValue) == -1 && Error() == Efault);
+    const auto active = Get(id);
+    Require(Nanoseconds(active.it_interval) == 3 * Second && Nanoseconds(active.it_value) > 0);
+    Require(ktimer_delete_nid_postfix(id) == 0);
+}
+
 int main() {
     Creation();
     InvalidIds();
     Values();
     Expiry();
     Absolute();
+    SettimeGuestBuffers();
     std::puts("guest_kernel_sys_ktimer passed");
     return 0;
 }
