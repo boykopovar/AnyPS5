@@ -19,7 +19,7 @@
 
 - [OpenSSL_version](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - other firmware revisions are unverified. Selectors 0 through 5 follow the public firmware 13.40 measurements in [discussion #8981](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214); unknown selectors follow LibreSSL 4.0.0 and return `not available`. No independent console test was run.
 
-- [ERR_load_crypto_strings and ERR_peek_last_error](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) have no console execution verification. [Firmware 13.42 modules run on a PC](https://github.com/boykopovar/AnyPS5/pull/9535#issuecomment-6407060914) retained numeric-only output after loaders and matched queue order/overflow; whether the two firmware modules share a queue was not tested. This implementation reads libSceLibreSsl's calling-thread queue. `ERR_print_errors_cb` remains throwing because guest thread identifiers and diagnostic metadata are unverified.
+- [ERR_load_crypto_strings and ERR_peek_last_error](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) have no console execution verification. [Firmware 13.42 modules run on a PC](https://github.com/boykopovar/AnyPS5/pull/9535#issuecomment-6407060914) retained numeric-only output after loaders and matched queue order/overflow; whether the two firmware modules share a queue was not tested. This implementation reads libSceLibreSsl's calling-thread queue.
 
 ### Unknown function info
 
@@ -182,7 +182,7 @@
 | `SSL_set_quic_transport_params` | `xf6anoZpWRM` |
 | `SSL_is_quic` | `xpB+BNkO2Z0` |
 
-- The formerly NID-only exports named in the inventory above and in [API declarations](../../../core/libs/prx/libSceLibreSsl3/include/Api.hpp) use LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior. Unimplemented entries keep the no-parameter import-resolution convention and throw through `NotImplemented_nid_no_patch`; the implemented contracts and remaining gaps are listed above. `AES_wrap_key`, `ECDSA_SIG_free`, `ECDSA_do_verify`, `ERR_load_ERR_strings`, `ERR_print_errors_fp` and `i2d_PUBKEY` also hash to the NIDs of six `unknown` rows, which keep their NID names; `PBYz0kpXwg8` hashes to no identifier of those sources.
+- The formerly NID-only exports named in the inventory above and in [API declarations](../../../core/libs/prx/libSceLibreSsl3/include/Api.hpp) use LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior. Unimplemented entries keep the no-parameter import-resolution convention and throw through `NotImplemented_nid_no_patch`; the implemented contracts and remaining gaps are listed above. The two remaining `unknown` rows (`A-Hs-8mau+8` and `PBYz0kpXwg8`) have no identifier in those sources; the other formerly NID-only names now have named rows and are counted as named.
 
 ### Functional
 
