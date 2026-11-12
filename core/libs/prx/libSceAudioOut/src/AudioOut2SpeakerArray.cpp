@@ -1,4 +1,6 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -7,6 +9,7 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "AudioOut2Internal.hpp"
 
 namespace {
 
@@ -68,7 +71,7 @@ extern "C" {
 
 int APS5_VABI sceAudioOut2SpeakerArrayCreate(AudioOut2SpeakerArrayHandle* handle, const void* vbap_params, const void* ambi_params) {
     const auto* params = static_cast<const GuestVbapParams*>(vbap_params);
-    if (handle == nullptr || params == nullptr || ambi_params == nullptr || params->positions == nullptr ||
+    if (handle == nullptr || params == nullptr || params->positions == nullptr ||
         params->numSpeakers == 0 || params->numSpeakers > MaxSpeakers || params->memory == nullptr ||
         params->memorySize < sizeof(SpeakerArray) || reinterpret_cast<std::uintptr_t>(params->memory) % alignof(SpeakerArray) != 0) {
         APS5_INVALID_ARG_EX;
@@ -120,18 +123,26 @@ size_t APS5_VABI sceAudioOut2GetSpeakerArrayMemorySize(uint32_t num_speakers, ui
 }
 
 int APS5_VABI sceAudioOut2GetSpeakerInfo(AudioOut2SpeakerInfo* info, uint32_t flags) {
-    (void)flags;
-    if (!info) return static_cast<int>(0x80260502);
+    constexpr int ErrorInvalidParam = static_cast<int>(0x80268001);
+    constexpr int ErrorNotInitialized = static_cast<int>(0x80268006);
+    constexpr int ErrorInvalidPointer = static_cast<int>(0x8026800C);
+    constexpr std::uint32_t MaxFlags = 1;
+    if (!AudioOut2IsInitialized_nid_no_patch()) return ErrorNotInitialized;
+    if (!info) return ErrorInvalidPointer;
+    if (flags > MaxFlags) return ErrorInvalidParam;
     constexpr std::uint8_t SpeakerTypeTelevision = 0;
     constexpr std::uint32_t FrontLeftAndRight = 0x3;
     constexpr AudioOut2SpeakerAngle NoSpeaker = {-360, -360};
-    *info = AudioOut2SpeakerInfo{};
-    info->type = SpeakerTypeTelevision;
-    info->available_bits = FrontLeftAndRight;
-    for (auto& angle : info->speaker_angle) angle = NoSpeaker;
-    info->speaker_angle[0] = {30, 0};
-    info->speaker_angle[1] = {-30, 0};
-    return 0;
+    AudioOut2SpeakerInfo result{};
+    result.type = SpeakerTypeTelevision;
+    result.available_bits = FrontLeftAndRight;
+    for (auto& angle : result.speaker_angle) angle = NoSpeaker;
+    result.speaker_angle[0] = {30, 0};
+    result.speaker_angle[1] = {-30, 0};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &result, sizeof(result));
+    errno = savedErrno;
+    return copied ? 0 : ErrorInvalidPointer;
 }
 
 }

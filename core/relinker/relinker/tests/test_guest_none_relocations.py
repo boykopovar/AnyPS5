@@ -18,11 +18,13 @@ NOOP = (0, 0, 0)
 IGNORED = (0xffffffffffffffff, 0xffffffff00000000, -1)
 OVERLAP = (TARGET + 1, 0xffffffff00000000, -1)
 RELATIVE = (TARGET, 8, FUNCTION)
+EARLIER_RELATIVE = (TARGET, 8, FUNCTION + 4)
+SYMBOL_POINTER = (TARGET, (1 << 32) | 1, 0)
 RELATIVE_DEFINED = (TARGET, (1 << 32) | 8, FUNCTION)
 JUMP_SLOT = (TARGET, (1 << 32) | 7, 0)
 
 
-def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, exported=True, symbol_info=0x12):
+def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, exported=True, symbol_info=0x12, preinit=False):
     image = module_with_symbol(exported)
     image[0x89c] = symbol_info
     image.extend(bytes(0xE00 - len(image)))
@@ -35,6 +37,8 @@ def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, expor
         tags += [(23, 0x2400), (2, len(plt) * 24), (20, 7), (3, TARGET)]
     if lifecycle:
         tags += [(25, TARGET), (27, 8), (26, TARGET), (28, 8)]
+    if preinit:
+        tags += [(32, TARGET), (33, 8)]
     if sce:
         struct.pack_into("<H", image, 56, 4)
         struct.pack_into("<IIQQQQQQ", image, 232, 0x61000000, 0, 0x800, 0, 0, 0x600, 0x600, 1)
@@ -75,8 +79,152 @@ def change_tag(image, tag, value=None, replacement=None):
             return image
     raise AssertionError(f"Missing dynamic tag {tag:#x}")
 
+def duplicate_dynamic_segment(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    image[insert_at:insert_at + 56] = image[176:176 + 56]
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
 
-def check_output(data, system, rela, plt, initial):
+
+def insert_dynamic_tag(image, tag, value):
+    for position in range(0x2000, 0x2200, 16):
+        current, _ = struct.unpack_from("<qQ", image, position)
+        if current == 0:
+            struct.pack_into("<qQ", image, position, tag, value)
+            struct.pack_into("<qQ", image, position + 16, 0, 0)
+            size, = struct.unpack_from("<Q", image, 176 + 32)
+            struct.pack_into("<QQ", image, 176 + 32, size + 16, size + 16)
+            return image
+    raise AssertionError("Missing dynamic terminator")
+def truncate_dynamic_terminator(image):
+    size, = struct.unpack_from("<Q", image, 176 + 32)
+    struct.pack_into("<QQ", image, 176 + 32, size - 8, size - 8)
+    return image
+
+
+def duplicate_sce_dynamic_data(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    sce_offset = None
+    for index in range(phnum):
+        offset = 64 + index * 56
+        if struct.unpack_from("<I", image, offset)[0] == 0x61000000:
+            sce_offset = offset
+            break
+    if sce_offset is None:
+        insert_at = 64 + phnum * 56
+        if insert_at + 112 > len(image):
+            image.extend(bytes(insert_at + 112 - len(image)))
+        struct.pack_into("<IIQQQQQQ", image, insert_at, 0x61000000, 0, 0x800, 0, 0, 0x600, 0x600, 1)
+        struct.pack_into("<IIQQQQQQ", image, insert_at + 56, 0x61000000, 0, 0x800, 0, 0, 0x600, 0x600, 1)
+        struct.pack_into("<H", image, 56, phnum + 2)
+        return image
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    image[insert_at:insert_at + 56] = image[sce_offset:sce_offset + 56]
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+
+def invalid_tls_segment_size(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0x2700, 0x2700, 0x2700, 16, 8, 8)
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+
+def duplicate_tls_segment(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 112 > len(image):
+        image.extend(bytes(insert_at + 112 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0, 0, 0, 0, 8, 8)
+    image[insert_at + 56:insert_at + 112] = image[insert_at:insert_at + 56]
+    struct.pack_into("<H", image, 56, phnum + 2)
+    return image
+
+
+def invalid_tls_segment_align(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0x2700, 0x2700, 0x2700, 0, 8, 6)
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+
+def invalid_tls_segment_large_align(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0x2700, 0x2700, 0x2700, 0, 8, 0x4000)
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+def invalid_tls_segment_large_memsz(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0x2700, 0x2700, 0x2700, 0, 0x80000000, 8)
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+def invalid_tls_outside_load(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0x1200, 0x1500, 0x1500, 8, 8, 8)
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+
+def invalid_tls_outside_file(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0x27f9, 0x1100, 0, 8, 8, 8)
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+
+def unsized_lifecycle(rela, sce, initial):
+    image = module(rela, sce=sce, lifecycle=True, initial=initial)
+    return change_tag(change_tag(image, 27, replacement=0x61000001), 28, replacement=0x61000001)
+
+
+def relative_module(addend, sce, encoding, lifecycle=False):
+    entries = [(TARGET, 8, addend)]
+    initial = addend if encoding == "relr" else UNCHANGED
+    image = module(entries if encoding != "repeated" else [RELATIVE, *entries], sce=sce, initial=initial, lifecycle=lifecycle)
+    if encoding == "relr":
+        for tag, replacement, value in ((7, 36, 0x2300), (8, 35, 8), (9, 37, 8)):
+            change_tag(image, {7: 0x6100002f, 8: 0x61000031, 9: 0x61000033}[tag] if sce else tag,
+                       value=value, replacement=replacement)
+        struct.pack_into("<Q", image, 0x2300, TARGET)
+    return image, initial
+
+
+def check_output(data, system, rela, plt, initial, addend=FUNCTION):
     expected_rela = [(entry[0], entry[1] & 0xffffffff, entry[2])
                      if (entry[1] & 0xffffffff) == 8 and entry[1] >> 32 else entry
                      for entry in rela if entry[1] & 0xffffffff]
@@ -101,28 +249,66 @@ def check_output(data, system, rela, plt, initial):
         pe_header, = struct.unpack_from("<I", data, 0x3C)
         base, = struct.unpack_from("<Q", data, pe_header + 24 + 24)
         value, = struct.unpack_from("<Q", data, writable[3] + TARGET - 0x2000)
-        assert value == (base + code[1] if relocated else initial), hex(value)
+        assert value == (base + code[1] + addend - FUNCTION if relocated else initial), hex(value)
     else:
         assert data.startswith(b"\xcf\xfa\xed\xfe")
         macho = MachO(data)
         code = macho.segment("__ELF0")
         writable = macho.segment("__ELF1")
         value, = struct.unpack_from("<Q", data, writable["fileoff"] + TARGET - 0x2000)
-        assert value == (code["vmaddr"] if relocated else initial), hex(value)
+        assert value == (code["vmaddr"] + addend - FUNCTION if relocated else initial), hex(value)
+
+
+def valid_cases(sce):
+    for addend in (FUNCTION, 0x1100, 0x1800, 0x2000, 0x2800):
+        for encoding in ("rela", "repeated", "relr"):
+            image, initial = relative_module(addend, sce, encoding)
+            yield f"relative-{encoding}-{addend:x}", image, [(TARGET, 8, addend)], [], initial, addend
+    cases = (("baseline", [RELATIVE], [], False, UNCHANGED),
+             ("relative-defined-symbol", [RELATIVE_DEFINED], [], False, UNCHANGED),
+             ("relative-defined-object", [RELATIVE_DEFINED], [], False, UNCHANGED),
+             ("mixed", [NOOP, OVERLAP, RELATIVE, IGNORED, (TARGET, 0, -1)], [], False, UNCHANGED),
+             ("only-none", [NOOP, IGNORED, OVERLAP], [], False, UNCHANGED),
+             ("plt-mixed", [], [NOOP, OVERLAP, JUMP_SLOT, IGNORED], False, UNCHANGED),
+             ("plt-only-none", [], [NOOP, IGNORED, OVERLAP], False, UNCHANGED),
+             ("lifecycle-zero", [(TARGET, 0xffffffff00000000, -1)], [], True, 0),
+             ("lifecycle-relative", [(TARGET, 0, -1), RELATIVE, OVERLAP], [], True, 0))
+    for name, rela, plt, lifecycle, initial in cases:
+        symbol_info = 0x11 if name == "relative-defined-object" else 0x12
+        yield name, module(rela, plt, sce, lifecycle, initial, symbol_info=symbol_info), rela, plt, initial, FUNCTION
+    for name, rela in (("relative-repeated", [RELATIVE, RELATIVE]), ("relative-rewritten", [EARLIER_RELATIVE, NOOP, RELATIVE])):
+        yield name, module(rela, sce=sce), [RELATIVE], [], UNCHANGED, FUNCTION
+    for name, rela, initial in (("unsized-lifecycle", [RELATIVE], UNCHANGED),
+                                ("unsized-lifecycle-unread", [(TARGET, 0, FUNCTION)], FUNCTION)):
+        yield name, unsized_lifecycle(rela, sce, initial), rela, [], initial, FUNCTION
 
 
 def invalid_cases(sce):
+    for encoding in ("rela", "relr"):
+        for addend in (FUNCTION - 1, 0x2801):
+            image, _ = relative_module(addend, sce, encoding)
+            yield f"relative-outside-image-{encoding}-{addend:x}", image, "Relative relocation addend is outside the ELF image"
+        image, _ = relative_module(0x1800, sce, encoding, lifecycle=True)
+        yield "gap-lifecycle-" + encoding, image, "Unmapped or inaccessible guest address"
     yield "relative-symbol-mismatched-value", module([(TARGET, (1 << 32) | 8, FUNCTION + 8)], sce=sce), "RELATIVE relocation has a symbol"
     yield "relative-symbol-undefined", module([(TARGET, (1 << 32) | 8, 0)], sce=sce, exported=False), "RELATIVE relocation has a symbol"
     yield "invalid-symbol", module([NOOP, (TARGET, (99 << 32) | 6, 0)], sce=sce), "Unsupported relocation or symbol index"
+    yield "invalid-guest-symbol-addend", module([(TARGET, (1 << 32) | 6, 1)], sce=sce), "Invalid guest symbol relocation"
     yield "invalid-target", module([NOOP, (0xffffffffffffffff, 8, FUNCTION)], sce=sce), "Unmapped or inaccessible guest address"
-    yield "overlapping-real", module([NOOP, RELATIVE, RELATIVE], sce=sce), "Overlapping guest relocations"
+    yield "overlapping-partial", module([NOOP, RELATIVE, (TARGET + 4, 8, FUNCTION)], sce=sce), "Overlapping guest relocations"
+    yield "relative-over-symbol", module([SYMBOL_POINTER, RELATIVE], sce=sce), "Overlapping guest relocations"
+    yield "symbol-over-relative", module([RELATIVE, SYMBOL_POINTER], sce=sce), "Overlapping guest relocations"
+    yield "relative-over-defined-relative", module([RELATIVE_DEFINED, RELATIVE], sce=sce), "Overlapping guest relocations"
     yield "invalid-plt-kind", module(plt=[NOOP, RELATIVE], sce=sce), "Unsupported relocation or symbol index"
     yield "unrelocated-lifecycle", module([(TARGET, 0, FUNCTION)], sce=sce, lifecycle=True, initial=FUNCTION), "Unrelocated guest lifecycle pointer"
+    yield "unaligned-lifecycle-size", change_tag(module([RELATIVE], sce=sce, lifecycle=True, initial=0), 27, 4), "Unaligned guest lifecycle array size"
+    yield "plt-lifecycle", module(plt=[JUMP_SLOT], sce=sce, lifecycle=True, initial=0), "Unsupported guest lifecycle relocation"
+    yield "invalid-lifecycle-function-addend", module([(TARGET, (1 << 32) | 1, 1)], sce=sce, lifecycle=True, initial=0), "Invalid guest lifecycle function relocation"
     size = 0x61000031 if sce else 8
     entry = 0x61000033 if sce else 9
     address = 0x6100002f if sce else 7
     plt_format = 0x6100002b if sce else 20
+    yield "lifecycle-without-address", change_tag(module([RELATIVE], sce=sce, lifecycle=True, initial=0), 25, replacement=0x61000001), "Incomplete guest lifecycle array"
     yield "partial-entry", change_tag(module([NOOP], sce=sce), size, 23), "Invalid relocation table size"
     yield "entry-size", change_tag(module([NOOP], sce=sce), entry, 16), "Invalid RELA entry size"
     yield "unmapped-table", change_tag(module([NOOP], sce=sce), address, 0xffffffffffffffff), ("SCE table exceeds" if sce else "Unmapped ELF address")
@@ -131,7 +317,33 @@ def invalid_cases(sce):
     ambiguous = module(plt=[NOOP], sce=sce)
     yield "ambiguous-plt-format", change_tag(ambiguous, 0x61000027 if sce else 3, value=7,
                                             replacement=20 if sce else 0x6100002b), "Missing or ambiguous dynamic tag"
+    yield "preinit-without-init", module([NOOP], sce=sce, preinit=True), "Guest PREINIT_ARRAY has no module initializer"
+    yield "unsupported-dynamic-flags", insert_dynamic_tag(module([NOOP], sce=sce), 30, 1), "Unsupported guest dynamic flags"
+    yield "unsupported-dynamic-tag-rpath", insert_dynamic_tag(module([NOOP], sce=sce), 15, 0), "Unsupported dynamic tag 15"
+    yield "unsupported-dynamic-tag-symbolic", insert_dynamic_tag(module([NOOP], sce=sce), 16, 0), "Unsupported dynamic tag 16"
+    yield "unsupported-dynamic-tag-rel", insert_dynamic_tag(module([NOOP], sce=sce), 17, 0), "DT_REL relocations are not supported"
+    yield "unsupported-dynamic-tag-rela", insert_dynamic_tag(module([NOOP], sce=sce), 18, 0), "DT_REL relocations are not supported"
+    yield "unsupported-dynamic-tag-unused", insert_dynamic_tag(module([NOOP], sce=sce), 19, 0), "DT_REL relocations are not supported"
+    yield "unsupported-dynamic-tag-textrel", insert_dynamic_tag(module([NOOP], sce=sce), 22, 0), "Unsupported dynamic tag 22"
+    strtab = 0x61000035 if sce else 5
+    yield "duplicate-dynamic-tag-strtab", insert_dynamic_tag(module([NOOP], sce=sce), strtab, 0), f"Duplicate dynamic tag {strtab}"
+    yield "unterminated-dynamic-segment", truncate_dynamic_terminator(module([NOOP], sce=sce)), "Unterminated dynamic segment"
+    yield "duplicate-dynamic-segment", duplicate_dynamic_segment(module([NOOP], sce=sce)), "Duplicate dynamic segment"
+    yield "duplicate-sce-dynamic-data", duplicate_sce_dynamic_data(module([NOOP], sce=sce)), "Duplicate SCE dynamic data"
+    yield "invalid-tls-segment-size", invalid_tls_segment_size(module([NOOP], sce=sce)), "Invalid or unsupported ELF TLS layout"
+    yield "duplicate-tls-segment", duplicate_tls_segment(module([NOOP], sce=sce)), "Multiple ELF TLS segments"
+    yield "invalid-tls-segment-align", invalid_tls_segment_align(module([NOOP], sce=sce)), "Invalid or unsupported ELF TLS layout"
 
+
+def invalid_cases_macos(sce):
+    yield "invalid-tls-segment-large-align", invalid_tls_segment_large_align(module([NOOP], sce=sce)), "Invalid or unsupported ELF TLS layout"
+    yield "invalid-tls-segment-large-memsz", invalid_tls_segment_large_memsz(module([NOOP], sce=sce)), "Invalid or unsupported ELF TLS layout"
+
+def invalid_cases_windows(sce):
+    yield "invalid-tls-segment-large-memsz", invalid_tls_segment_large_memsz(module([NOOP], sce=sce)), "Invalid or unsupported ELF TLS layout"
+    yield "invalid-tls-segment-large-align", invalid_tls_segment_large_align(module([NOOP], sce=sce)), "Invalid or unsupported ELF TLS layout"
+    yield "invalid-tls-segment-outside-load", invalid_tls_outside_load(module([NOOP], sce=sce)), "PT_TLS initialization image is outside PT_LOAD memory"
+    yield "invalid-tls-segment-outside-file", invalid_tls_outside_file(module([NOOP], sce=sce)), "PT_TLS initialization image is outside the file"
 
 def main():
     if sys.argv[1] == "--load":
@@ -146,51 +358,67 @@ def main():
         assert ctypes.CFUNCTYPE(ctypes.c_int)(pointer)() == 42
         return
     relinker = Path(sys.argv[1]).resolve()
-    cases = (("baseline", [RELATIVE], [], False, UNCHANGED),
-             ("relative-defined-symbol", [RELATIVE_DEFINED], [], False, UNCHANGED),
-             ("relative-defined-object", [RELATIVE_DEFINED], [], False, UNCHANGED),
-             ("mixed", [NOOP, OVERLAP, RELATIVE, IGNORED, (TARGET, 0, -1)], [], False, UNCHANGED),
-             ("only-none", [NOOP, IGNORED, OVERLAP], [], False, UNCHANGED),
-             ("plt-mixed", [], [NOOP, OVERLAP, JUMP_SLOT, IGNORED], False, UNCHANGED),
-             ("plt-only-none", [], [NOOP, IGNORED, OVERLAP], False, UNCHANGED),
-             ("lifecycle-zero", [(TARGET, 0xffffffff00000000, -1)], [], True, 0),
-             ("lifecycle-relative", [(TARGET, 0, -1), RELATIVE, OVERLAP], [], True, 0))
+    modes = {"plain": (False,), "sce": (True,), "all": (False, True)}[sys.argv[2] if len(sys.argv) > 2 else "all"]
+    group = sys.argv[3] if len(sys.argv) > 3 else "all"
+    if group not in ("all", "linux", "windows", "macos", "rejected"):
+        raise ValueError(group)
+    systems = ("linux", "windows", "macos") if group == "all" else () if group == "rejected" else (group,)
     with tempfile.TemporaryDirectory(prefix="anyps5-guest-none-") as directory:
         work = Path(directory)
 
-        def convert(name, system, image):
+        def convert_modules(name, system, images):
             case = work / name / system
             modules = case / "sce_module"
             modules.mkdir(parents=True)
-            guest = modules / "module.prx"
-            guest.write_bytes(image)
+            for stem, image in images.items():
+                (modules / f"{stem}.prx").write_bytes(image)
             source = case / "input.elf"
             source.write_bytes(main_fixture())
             output = case / ("output.exe" if system == "windows" else "output.elf")
             flags = {"linux": [], "windows": ["--windows"], "macos": ["--macos"]}[system]
             result = subprocess.run([str(relinker), *flags, str(source), str(output)],
                                     capture_output=True, text=True, timeout=10)
-            assert guest.read_bytes() == image
-            return result, case / "app0" / "sce_module" / "module.prx.guest.prx", output
+            for stem, image in images.items():
+                assert (modules / f"{stem}.prx").read_bytes() == image, stem
+            return result, case / "app0" / "sce_module", output
 
-        for sce in (False, True):
-            for name, rela, plt, lifecycle, initial in cases:
-                symbol_info = 0x11 if name == "relative-defined-object" else 0x12
-                image = module(rela, plt, sce, lifecycle, initial, symbol_info=symbol_info)
-                for system in ("linux", "windows", "macos"):
-                    result, artifact, output = convert(f"{sce}-{name}", system, image)
-                    assert result.returncode == 0, (sce, name, system, result.stdout, result.stderr)
-                    check_output(artifact.read_bytes(), system, rela, plt, initial)
+        def convert(name, system, image):
+            result, artifacts, output = convert_modules(name, system, {"module": image})
+            return result, artifacts / "module.prx.guest.prx", output
+
+        for sce in modes:
+            cases = list(valid_cases(sce))
+            assert len({name for name, *_ in cases}) == len(cases)
+            for system in systems:
+                result, artifacts, output = convert_modules(f"{sce}-valid", system, {name: image for name, image, *_ in cases})
+                assert result.returncode == 0, (sce, system, result.stdout, result.stderr)
+                for name, image, rela, plt, initial, addend in cases:
+                    artifact = artifacts / f"{name}.prx.guest.prx"
+                    try:
+                        check_output(artifact.read_bytes(), system, rela, plt, initial, addend=addend)
+                    except AssertionError as error:
+                        raise AssertionError((sce, name, system, *error.args)) from error
                     if name in ("mixed", "plt-mixed"):
                         if system == "linux" and sys.platform == "linux" and platform.machine() == "x86_64":
                             executed = subprocess.run([sys.executable, __file__, "--load", str(artifact)],
                                                       capture_output=True, text=True, timeout=10)
                             assert executed.returncode == 0, (executed.stdout, executed.stderr)
-            for name, image, error in invalid_cases(sce):
-                result, artifact, output = convert(f"{sce}-{name}", "linux", image)
-                assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
-                assert not artifact.exists() and not output.exists(), name
-    print("Guest no-op relocation tests passed")
+                    if name.startswith("unsized-lifecycle") and system == "linux":
+                        assert not {25, 26, 27, 28} & set(dynamic_tags(artifact.read_bytes())), name
+            if group in ("all", "rejected"):
+                for name, image, error in invalid_cases(sce):
+                    result, artifact, output = convert(f"{sce}-{name}", "linux", image)
+                    assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
+                    assert not artifact.exists() and not output.exists(), name
+                for name, image, error in invalid_cases_macos(sce):
+                    result, artifact, output = convert(f"{sce}-{name}", "macos", image)
+                    assert result.returncode == 2 and error in result.stderr, ("macos", sce, name, result.stderr)
+                    assert not artifact.exists() and not output.exists(), ("macos", sce, name)
+                for name, image, error in invalid_cases_windows(sce):
+                    result, artifact, output = convert(f"{sce}-{name}", "windows", image)
+                    assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
+                    assert not artifact.exists() and not output.exists(), name
+    print(f"Guest no-op relocation {group} tests passed")
 
 
 if __name__ == "__main__":

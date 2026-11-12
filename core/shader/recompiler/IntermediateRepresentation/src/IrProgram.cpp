@@ -173,6 +173,21 @@ std::string formatHex64(std::uint64_t value) {
     return stream.str();
 }
 
+bool carriesMemoryInfo(IrOpcode opcode) {
+    return opcode == IrOpcode::ReadConstBuffer || AddressOpcodeInfoOf(opcode).access != AddressAccess::None || BufferComponentCount(opcode) != 0u || SharedComponentCount(opcode) != 0u || ImageOpcodeInfoOf(opcode).access != ImageAccess::None;
+}
+
+std::string memoryToString(const IrProgram& program, const IrValue& inst) {
+    const auto flags = inst.Flags<MemoryFlags>();
+    const auto& memoryInfo = program.Resources().memoryInfo;
+    if (flags.index >= memoryInfo.size()) {
+        return " [pc=" + formatHex32(flags.pc) + " mem=?]";
+    }
+    std::ostringstream stream;
+    stream << " [pc=" << formatHex32(flags.pc) << " off=0x" << std::hex << memoryInfo[flags.index].offset << "]";
+    return stream.str();
+}
+
 std::string valueToString(const std::map<const IrValue*, std::size_t>& ids, const IrValue* value) {
     if (value == nullptr) {
         return "<null>";
@@ -209,7 +224,7 @@ std::string valueToString(const std::map<const IrValue*, std::size_t>& ids, cons
 
 std::size_t IrProgram::ReclaimUnusedValues() {
     std::vector<IrValue*> owned(nextValueId, nullptr);
-    for (const auto& value : values) owned[value->Id()] = value.get();
+    for (IrValue* value : values) owned[value->Id()] = value;
     std::vector<bool> live(nextValueId, false);
     std::unordered_set<IrValue*> liveElsewhere;
     std::vector<IrValue*> pending;
@@ -247,16 +262,19 @@ std::size_t IrProgram::ReclaimUnusedValues() {
         pending.pop_back();
         for (std::size_t index = 0; index < value->ArgumentCount(); ++index) keep(value->Argument(index));
     }
-    for (const auto& value : values) {
+    for (IrValue* value : values) {
         if (isLive(*value)) continue;
         for (std::size_t index = 0; index < value->ArgumentCount(); ++index) value->ReplaceArgument(index, nullptr);
     }
-    for (const auto& value : values) {
+    for (const IrValue* value : values) {
         if (!isLive(*value) && value->HasUses()) throw std::runtime_error("an unused IR value has an external user");
     }
-    const auto removed = std::erase_if(values, [&](const auto& value) { return !isLive(*value); });
-    values.shrink_to_fit();
-    return removed;
+    return values.EraseIf([&](const IrValue& value) { return !isLive(value); });
+}
+
+void IrProgram::ReleaseUseArena() {
+    for (const auto& value : values) value->MoveUsesToHeap();
+    useArena = IrUseArena{};
 }
 
 std::vector<std::unique_ptr<IrBlock>>& IrProgram::Blocks() {
@@ -291,7 +309,8 @@ void IrProgram::SetWaveSize(std::uint32_t waveSize) {
 }
 
 IrBlock& IrProgram::CreateBlock() {
-    auto block = std::make_unique<IrBlock>(nextBlockId);
+    if (instructionNodes == nullptr) instructionNodes = std::make_shared<std::pmr::unsynchronized_pool_resource>();
+    auto block = std::make_unique<IrBlock>(nextBlockId, instructionNodes);
     nextBlockId++;
     IrBlock& created = *block;
     blocks.push_back(std::move(block));
@@ -299,10 +318,8 @@ IrBlock& IrProgram::CreateBlock() {
 }
 
 IrValue& IrProgram::CreateValue(IrOpcode opcode, IrType type) {
-    auto value = std::make_unique<IrValue>(opcode, type, nextValueId);
+    IrValue& created = values.Create(opcode, type, nextValueId, useArena.Resource());
     nextValueId++;
-    IrValue& created = *value;
-    values.push_back(std::move(value));
     return created;
 }
 
@@ -404,7 +421,11 @@ std::string ProgramToString(const IrProgram& program) {
                     text += valueToString(ids, inst->Argument(index));
                 }
             }
-            text += " (" + TypeToString(inst->Type()) + "; uses=" + std::to_string(inst->UseCount()) + ")\n";
+            text += " (" + TypeToString(inst->Type()) + "; uses=" + std::to_string(inst->UseCount()) + ")";
+            if (carriesMemoryInfo(inst->Opcode())) {
+                text += memoryToString(program, *inst);
+            }
+            text += "\n";
         }
     }
     return text;
@@ -586,11 +607,11 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             if (fixedSignature && inst->ArgumentCount() != IrOpcodeOperandCount(inst->Opcode())) {
                 fail(std::string(IrOpcodeName(inst->Opcode())) + " has " + std::to_string(inst->ArgumentCount()) + " arguments, expected " + std::to_string(IrOpcodeOperandCount(inst->Opcode())));
             }
+            if (carriesMemoryInfo(inst->Opcode()) && inst->Flags<MemoryFlags>().index >= program.Resources().memoryInfo.size()) {
+                fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
+            }
             if (inst->Opcode() == IrOpcode::ReadConstBuffer) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if (memory.kind != ResourceKind::ScalarBuffer) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid scalar-memory resource kind");
@@ -603,9 +624,6 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             const auto addressInfo = AddressOpcodeInfoOf(inst->Opcode());
             if (addressInfo.access != AddressAccess::None) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if (!IsAddressResourceKind(memory.kind) || (memory.kind == ResourceKind::ScalarAddress && inst->Opcode() != IrOpcode::LoadAddressU32)) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid address resource kind");
@@ -620,9 +638,6 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             const auto bufferComponents = BufferComponentCount(inst->Opcode());
             if (bufferComponents != 0u) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if (memory.kind != ResourceKind::Buffer && memory.kind != ResourceKind::ScalarBuffer) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has a non-buffer resource kind");
@@ -637,9 +652,6 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             const auto sharedComponents = SharedComponentCount(inst->Opcode());
             if (sharedComponents != 0u) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if ((memory.kind != ResourceKind::Lds && memory.kind != ResourceKind::Gds) || memory.resource != 0u || memory.sampler != 0u || memory.componentCount == 0u || memory.componentIndex >= memory.componentCount) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has invalid shared-memory metadata");
@@ -657,9 +669,6 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             const auto imageInfo = ImageOpcodeInfoOf(inst->Opcode());
             if (imageInfo.access != ImageAccess::None) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if (memory.kind != ResourceKind::Image || imageInfo.resourceClass == ImageResourceClass::None) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has invalid image-memory metadata");
@@ -734,30 +743,91 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
         fail("value IR contains an unreachable block");
     }
 
-    std::vector<std::vector<bool>> dominators(blockOrder.size(), std::vector<bool>(blockOrder.size(), true));
-    dominators.front().assign(blockOrder.size(), false);
-    dominators.front().front() = true;
-    bool changed = true;
-    while (changed) {
+    const auto blockCount = blockOrder.size();
+    std::vector<std::size_t> postNumber(blockCount, 0);
+    std::vector<std::size_t> reversePostOrder;
+    reversePostOrder.reserve(blockCount);
+    {
+        std::vector<bool> visited(blockCount, false);
+        std::vector<std::pair<std::size_t, std::size_t>> walk{{0u, 0u}};
+        visited.front() = true;
+        while (!walk.empty()) {
+            const auto [blockIndex, next] = walk.back();
+            const auto& successors = blockOrder[blockIndex]->Successors();
+            if (next < successors.size()) {
+                ++walk.back().second;
+                const auto successor = blockIndices.at(successors[next]);
+                if (!visited[successor]) {
+                    visited[successor] = true;
+                    walk.push_back({successor, 0u});
+                }
+                continue;
+            }
+            postNumber[blockIndex] = reversePostOrder.size();
+            reversePostOrder.push_back(blockIndex);
+            walk.pop_back();
+        }
+        std::reverse(reversePostOrder.begin(), reversePostOrder.end());
+    }
+    constexpr std::size_t noDominator = std::numeric_limits<std::size_t>::max();
+    std::vector<std::size_t> immediateDominator(blockCount, noDominator);
+    immediateDominator.front() = 0u;
+    const auto intersect = [&](std::size_t left, std::size_t right) {
+        while (left != right) {
+            while (postNumber[left] < postNumber[right]) left = immediateDominator[left];
+            while (postNumber[right] < postNumber[left]) right = immediateDominator[right];
+        }
+        return left;
+    };
+    for (bool changed = true; changed;) {
         changed = false;
-        for (std::size_t blockIndex = 1; blockIndex < blockOrder.size(); blockIndex++) {
-            std::vector<bool> next(blockOrder.size(), true);
+        for (const auto blockIndex : reversePostOrder) {
+            if (blockIndex == 0u) {
+                continue;
+            }
+            std::size_t candidate = noDominator;
             for (const auto* predecessor : blockOrder[blockIndex]->Predecessors()) {
                 const auto predecessorIndex = blockIndices.at(predecessor);
-                for (std::size_t candidate = 0; candidate < next.size(); candidate++) {
-                    next[candidate] = next[candidate] && dominators[predecessorIndex][candidate];
+                if (immediateDominator[predecessorIndex] == noDominator) {
+                    continue;
                 }
+                candidate = candidate == noDominator ? predecessorIndex : intersect(predecessorIndex, candidate);
             }
-            next[blockIndex] = true;
-            if (next != dominators[blockIndex]) {
-                dominators[blockIndex] = std::move(next);
+            if (candidate != immediateDominator[blockIndex]) {
+                immediateDominator[blockIndex] = candidate;
                 changed = true;
             }
         }
     }
 
+    std::vector<std::vector<std::size_t>> dominatedChildren(blockCount);
+    for (std::size_t blockIndex = 1; blockIndex < blockCount; blockIndex++) {
+        dominatedChildren[immediateDominator[blockIndex]].push_back(blockIndex);
+    }
+    std::vector<std::size_t> enterNumber(blockCount, 0);
+    std::vector<std::size_t> leaveNumber(blockCount, 0);
+    {
+        std::size_t clock = 0;
+        std::vector<std::pair<std::size_t, std::size_t>> walk{{0u, 0u}};
+        enterNumber.front() = clock++;
+        while (!walk.empty()) {
+            const auto [blockIndex, next] = walk.back();
+            if (next < dominatedChildren[blockIndex].size()) {
+                ++walk.back().second;
+                const auto child = dominatedChildren[blockIndex][next];
+                enterNumber[child] = clock++;
+                walk.push_back({child, 0u});
+                continue;
+            }
+            leaveNumber[blockIndex] = clock++;
+            walk.pop_back();
+        }
+    }
+
     const auto dominates = [&](const IrBlock* definition, const IrBlock* use) {
-        return dominators[blockIndices.at(use)][blockIndices.at(definition)];
+        const auto definitionIndex = blockIndices.at(definition);
+        const auto useIndex = blockIndices.at(use);
+        return enterNumber[definitionIndex] <= enterNumber[useIndex] && leaveNumber[useIndex] <= leaveNumber[definitionIndex];
     };
     const auto controlDominates = [&](IrValue* value, const IrBlock* use) {
         return value == nullptr || value->Parent() == nullptr || value->Parent() == use || dominates(value->Parent(), use);

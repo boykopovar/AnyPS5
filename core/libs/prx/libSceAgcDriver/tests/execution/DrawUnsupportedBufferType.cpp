@@ -6,6 +6,7 @@
 #include <bit>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <initializer_list>
 #include <iostream>
@@ -92,6 +93,7 @@ void NamesShaderAndDescriptor() {
         Require(message.find("buffer descriptor uses an unsupported type") != std::string::npos, "draw failed for another reason: " + message);
         Require(message.find(shader) != std::string::npos, std::string("draw error does not name ") + shader + ": " + message);
         Require(message.find(words) != std::string::npos, std::string("draw error does not name ") + words + ": " + message);
+        if (std::getenv("APS5_DRAW_PIPELINE") != nullptr) Require(message.find("draw at submission ") != std::string::npos && message.find("(finished on the draw finisher)") != std::string::npos, "a draw finished on the draw finisher does not name its submission and offset: " + message);
         return;
     }
     throw std::runtime_error("a pixel shader read a buffer through a descriptor of type 2");

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <atomic>
@@ -11,12 +12,6 @@
 #endif
 
 using GuestDestructor = void(APS5_VABI *)(void*);
-
-extern "C" {
-int APS5_VABI __cxa_thread_atexit_impl_nid_postfix(GuestDestructor, void*, void*);
-int APS5_VABI __cxa_thread_atexit_nid_postfix(GuestDestructor, void*, void*);
-int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(GuestDestructor, void*, void*);
-}
 
 namespace {
 

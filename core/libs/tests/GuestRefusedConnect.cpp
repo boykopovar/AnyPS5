@@ -1,25 +1,12 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI sceNetInit_nid_postfix();
-int APS5_VABI sceNetSocket(const char*, int, int, int);
-int APS5_VABI sceNetConnect(int, const void*, std::uint32_t);
-int APS5_VABI sceNetSocketClose(int);
-int* APS5_VABI sceNetErrnoLoc();
-}
 
 namespace {
 
@@ -105,4 +92,16 @@ int main() {
         Require(sceNetSocketClose(descriptor) == 0);
         return connected;
     }));
+    const int nonblocking = sceNetSocket("retry", GuestInet, GuestStream, 0);
+    Require(nonblocking >= 0);
+    const int enabled = 1;
+    Require(sceNetSetsockopt(nonblocking, 0xffff, 0x1200, &enabled, sizeof(enabled)) == 0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    int result = sceNetConnect(nonblocking, address.data(), address.size());
+    while ((*sceNetErrnoLoc() == 36 || *sceNetErrnoLoc() == 37) && result != 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        result = sceNetConnect(nonblocking, address.data(), address.size());
+    }
+    Require(result == static_cast<int>(0x80410100u | GuestConnectionRefused) && *sceNetErrnoLoc() == GuestConnectionRefused);
+    Require(sceNetSocketClose(nonblocking) == 0);
 }

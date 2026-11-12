@@ -40,8 +40,6 @@ struct Case {
     std::uint32_t selectors = 0xfacu;
 };
 
-std::vector<std::uint32_t> registrationModule;
-
 std::array<std::uint32_t, 4> VertexBufferDescriptor(const Case& value) {
     const auto address = reinterpret_cast<std::uintptr_t>(Element.data());
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), value.records, (0x0104dfacu & ~0xfffu) | value.selectors | (value.select << 28u)};
@@ -77,10 +75,7 @@ void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
     vertexRequest.useCache = false;
     const auto vertexResult = ShaderRecompiler::Recompile(vertexRequest);
     Require(vertexResult.vertexAttributes.size() == 1u, std::string(value.what) + ": the fetch did not become a vertex attribute");
-    if (device.Target().registrationModules) {
-        if (registrationModule.empty()) registrationModule = vertexResult.spirv.Copy();
-        Require(std::ranges::equal(vertexResult.spirv.Words(), registrationModule), std::string(value.what) + ": registration modules: the V# specialized the vertex module");
-    }
+    if (device.Target().registrationModules) Require(!vertexResult.registrationModule, std::string(value.what) + ": registration modules: the vertex module was emitted in registration form");
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
@@ -122,6 +117,28 @@ void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
     const AgcDriver::Pm4::DrawParameters draw{0, Vertices, 0, 1, 0, false};
     device.Draw(state, draw, shaders);
     device.WaitIdle();
+}
+
+void DescriptorDiagnostics(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t component = 0; component < 4u; ++component) {
+        for (const auto selector : {2u, 3u}) {
+            const auto shift = component * 3u;
+            const Case value{3u, 16u, true, "reserved selector", (0xfacu & ~(7u << shift)) | (selector << shift)};
+            const auto fields = VertexBufferDescriptor(value);
+            char expected[192];
+            std::snprintf(expected, sizeof(expected), "reserved prepared vertex component selector %u at location 0 component %u (V#=[%08x %08x %08x %08x])",
+                selector, component, fields[0], fields[1], fields[2], fields[3]);
+            bool rejected = false;
+            try {
+                Draw(device, value);
+            } catch (const std::runtime_error& error) {
+                const std::string message(error.what());
+                Require(message.find(expected) != std::string::npos, "reserved selector error did not identify the component and descriptor: " + message);
+                rejected = true;
+            }
+            Require(rejected, "a reserved vertex component selector was accepted");
+        }
+    }
 }
 
 void Check(const Case& value) {
@@ -169,6 +186,7 @@ int main() {
             Draw(*device, value);
             Check(value);
         }
+        DescriptorDiagnostics(*device);
         std::puts("zero-stride vertex fetch tests passed");
         return 0;
     } catch (const std::exception& error) {

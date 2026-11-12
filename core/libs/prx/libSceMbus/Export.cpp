@@ -1,27 +1,13 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceMbus/include/InventoryExports.hpp"
+#include "prx/libSceMbus/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <string>
-
-struct DeviceServiceThreadParam {
-    std::uint64_t affinityMask;
-    std::int32_t priority;
-    std::uint32_t reserved;
-};
-
-struct DeviceServiceInitParam {
-    std::uint32_t size;
-    std::uint32_t reserved;
-    const DeviceServiceThreadParam* threadParam;
-};
-
-struct DeviceServiceUsageFilter {
-    std::uint16_t usagePage;
-    std::uint16_t minimumUsage;
-    std::uint16_t maximumUsage;
-};
 
 static_assert(sizeof(DeviceServiceThreadParam) == 16);
 static_assert(offsetof(DeviceServiceThreadParam, priority) == 8);
@@ -33,10 +19,15 @@ extern "C" {
 
 std::int32_t APS5_VABI sceDeviceServiceInitialize(std::int32_t mode, const DeviceServiceInitParam* param) {
     (void)mode;
+    constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
     if (param != nullptr) {
-        if (param->size != sizeof(DeviceServiceInitParam) || param->reserved != 0) return static_cast<std::int32_t>(0x809B0080u);
-        if (param->threadParam != nullptr) {
-            if (param->threadParam->reserved != 0) return static_cast<std::int32_t>(0x809B0080u);
+        DeviceServiceInitParam local{};
+        if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) return invalidArgument;
+        if (local.size != sizeof(DeviceServiceInitParam) || local.reserved != 0) return invalidArgument;
+        if (local.threadParam != nullptr) {
+            DeviceServiceThreadParam thread{};
+            if (!GuestCopyIn_nid_no_patch(&thread, local.threadParam, sizeof(thread))) return invalidArgument;
+            if (thread.reserved != 0) return invalidArgument;
             throw std::runtime_error("sceDeviceServiceInitialize: custom worker scheduling is not implemented");
         }
     }
@@ -68,19 +59,54 @@ std::int32_t APS5_VABI sceDeviceServiceQueryDeviceInfo_(std::int32_t deviceClass
     case 0x9001:
         if (filter != nullptr) return invalidArgument;
         break;
-    case 0x8001:
-        if (filter == nullptr || filter->minimumUsage > filter->maximumUsage) return invalidArgument;
+    case 0x8001: {
+        DeviceServiceUsageFilter usage{};
+        const int savedErrno = errno;
+        const bool readable = filter != nullptr && GuestCopyIn_nid_no_patch(&usage, filter, sizeof(usage));
+        errno = savedErrno;
+        if (!readable || usage.minimumUsage > usage.maximumUsage) return invalidArgument;
         break;
+    }
     default:
         return invalidArgument;
     }
     if (infoSize != 112 || maxInfos < 0 || (maxInfos != 0 && infos == nullptr)) return invalidArgument;
-    if (count != nullptr) *count = 0;
+    if (count != nullptr) {
+        const std::int32_t zero = 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(count, &zero, sizeof(zero));
+        errno = savedErrno;
+        if (!copied) return invalidArgument;
+    }
     return 0;
 }
 
 std::int32_t APS5_VABI sceDeviceServiceGetGeneration(void) {
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceMbusUnknown_0mRAu1IWNEA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("0mRAu1IWNEA", libSceMbusUnknown_0mRAu1IWNEA_nid_no_patch);
+
+int APS5_VABI libSceMbusUnknown_2qdZlkIIFDU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("2qdZlkIIFDU", libSceMbusUnknown_2qdZlkIIFDU_nid_no_patch);
+
+int APS5_VABI libSceMbusUnknown_RGJ3Rebmm2w_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("RGJ3Rebmm2w", libSceMbusUnknown_RGJ3Rebmm2w_nid_no_patch);
+
+int APS5_VABI libSceMbusUnknown_edYHYROxzx4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("edYHYROxzx4", libSceMbusUnknown_edYHYROxzx4_nid_no_patch);
 
 }

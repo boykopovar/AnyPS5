@@ -2,14 +2,20 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
 #include "ThreadOwned.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
 
 DeferredLabels& deferredLabels() {
-    static thread_local DeferredLabels* deferred = nullptr;
-    return ShaderRecompiler::ThreadOwned(deferred);
+    struct Slot {};
+    auto* deferred = HostThreadSlot<DeferredLabels*, Slot>::Get();
+    if (deferred == nullptr) {
+        ShaderRecompiler::ThreadOwned(deferred);
+        HostThreadSlot<DeferredLabels*, Slot>::Set(deferred);
+    }
+    return *deferred;
 }
 
 bool DeferLabels() {
@@ -181,6 +187,45 @@ bool Driver::recordQueuedLabelsAfterCapture(std::uint32_t queue, std::span<const
     recordDeferredLabels(localDevice.get(), queue);
     ++captureTryRecords;
     return false;
+}
+
+namespace {
+
+std::atomic<void (*)()> captureCheckHook{nullptr};
+
+bool& recapturing() {
+    static thread_local bool active = false;
+    return active;
+}
+
+}
+
+void Driver::SetCaptureCheckHook(void (*hook)()) {
+    captureCheckHook.store(hook, std::memory_order_release);
+}
+
+void Driver::runCaptureCheckHook() {
+    if (const auto hook = captureCheckHook.load(std::memory_order_acquire)) hook();
+}
+
+bool Driver::capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared) {
+    if (recapturing()) return false;
+    const bool mark = compared.size() == regions.size();
+    for (std::size_t i = 0; i < regions.size(); ++i) {
+        const auto outcome = GuestMemory::CompareMapped(regions[i].guestAddress, regions[i].bytes);
+        if (outcome == GuestMemory::Compare::Differs) return true;
+        if (mark && outcome == GuestMemory::Compare::Equal) compared[i].compared = true;
+    }
+    return false;
+}
+
+Driver::RecaptureScope::RecaptureScope() {
+    recapturing() = true;
+    ++captureChangeRetries;
+}
+
+Driver::RecaptureScope::~RecaptureScope() {
+    recapturing() = false;
 }
 
 void Driver::noteQueuedLabels(std::uint32_t queue) {

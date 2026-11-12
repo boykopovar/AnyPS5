@@ -1,3 +1,4 @@
+#include "prx/libSceJpegEnc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
@@ -7,13 +8,6 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
-
-extern "C" {
-std::int32_t APS5_VABI sceJpegEncQueryMemorySize(const JpegEncCreateParam*);
-std::int32_t APS5_VABI sceJpegEncCreate(const JpegEncCreateParam*, void*, std::uint32_t, void**);
-std::int32_t APS5_VABI sceJpegEncDelete(void*);
-std::int32_t APS5_VABI sceJpegEncEncode(void*, const JpegEncEncodeParam*, JpegEncOutputInfo*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -116,6 +110,7 @@ int main() {
     JpegEncCreateParam param{sizeof(JpegEncCreateParam), 0};
     Require(sceJpegEncQueryMemorySize(&param) == 0x800);
     Require(sceJpegEncQueryMemorySize(nullptr) == invalidAddr);
+    Require(sceJpegEncQueryMemorySize(reinterpret_cast<const JpegEncCreateParam*>(0x10)) == invalidAddr);
 
     JpegEncCreateParam badSize{sizeof(JpegEncCreateParam) - 1, 0};
     Require(sceJpegEncQueryMemorySize(&badSize) == invalidSize);
@@ -133,6 +128,9 @@ int main() {
     Require(sceJpegEncCreate(&param, nullptr, 0x800, &handle) == invalidAddr);
     Require(sceJpegEncCreate(&param, unaligned, 0x7FF, &handle) == invalidSize);
     Require(sceJpegEncCreate(&param, unaligned, 0x800, nullptr) == invalidAddr);
+    Require(sceJpegEncCreate(reinterpret_cast<const JpegEncCreateParam*>(0x10), unaligned, 0x800, &handle) == invalidAddr);
+    Require(sceJpegEncCreate(&param, unaligned, 0x800, reinterpret_cast<void**>(0x10)) == invalidAddr);
+    Require(sceJpegEncCreate(&param, reinterpret_cast<void*>(0x10), 0x800, &handle) == invalidAddr);
     Require(handle == nullptr);
 
     Require(sceJpegEncCreate(&param, unaligned, 0x800, &handle) == 0);
@@ -143,6 +141,7 @@ int main() {
 
     Require(sceJpegEncDelete(nullptr) == invalidHandle);
     Require(sceJpegEncDelete(static_cast<unsigned char*>(handle) + 1) == invalidHandle);
+    Require(sceJpegEncDelete(reinterpret_cast<void*>(0x20)) == invalidHandle);
     alignas(32) static unsigned char garbage[64] = {};
     Require(sceJpegEncDelete(garbage) == invalidHandle);
 
@@ -156,6 +155,9 @@ int main() {
 
     Require(sceJpegEncCreate(&param, unaligned, 0x800, &handle) == 0);
     Require(sceJpegEncEncode(handle, nullptr, &info) == invalidAddr);
+    Require(sceJpegEncEncode(reinterpret_cast<void*>(0x20), &valid, &info) == invalidHandle);
+    Require(sceJpegEncEncode(handle, reinterpret_cast<const JpegEncEncodeParam*>(0x10), &info) == invalidAddr);
+    Require(sceJpegEncEncode(handle, &valid, reinterpret_cast<JpegEncOutputInfo*>(0x10)) == invalidAddr);
 
     auto encodeWith = [&](auto change) {
         JpegEncEncodeParam changed = ValidEncodeParam();
@@ -165,7 +167,9 @@ int main() {
 
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image = nullptr; }) == invalidAddr);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image = image + 1; }) == invalidAddr);
+    Require(encodeWith([](JpegEncEncodeParam& p) { p.image = reinterpret_cast<void*>(0x10); }) == invalidAddr);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.jpeg = nullptr; }) == invalidAddr);
+    Require(encodeWith([](JpegEncEncodeParam& p) { p.jpeg = reinterpret_cast<void*>(0x10); }) == invalidAddr);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image_size = 0; }) == invalidSize);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.jpeg_size = 0; }) == invalidSize);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image_width = 0x10000; }) == invalidParam);
@@ -209,7 +213,7 @@ int main() {
     rgba.image_pitch = pitch;
     rgba.compression_ratio = 0;
     info = {};
-    Require(sceJpegEncEncode(handle, &rgba, &info) == 0);
+    Require(sceJpegEncEncode(handle, &rgba, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
     Require(info.height == 16);
     Require(ReadFrame(jpeg, info.size) == std::pair{3, std::uint8_t{0x22}});
     Require(AverageError(expected, DecodeOutput(info)) < 6);
@@ -225,7 +229,7 @@ int main() {
     JpegEncEncodeParam bgra = rgba;
     bgra.pixel_format = 1;
     info = {};
-    Require(sceJpegEncEncode(handle, &bgra, &info) == 0);
+    Require(sceJpegEncEncode(handle, &bgra, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
     Require(ReadFrame(jpeg, info.size) == std::pair{3, std::uint8_t{0x22}});
     Require(AverageError(expected, DecodeOutput(info)) < 6);
 
@@ -242,7 +246,7 @@ int main() {
     yuv.image_pitch = 16 * 2;
     yuv.pixel_format = 10;
     info = {};
-    Require(sceJpegEncEncode(handle, &yuv, &info) == 0);
+    Require(sceJpegEncEncode(handle, &yuv, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
     Require(AverageError(std::vector<std::uint8_t>(16 * 16 * 3, 100), DecodeOutput(info)) < 3);
 
     static unsigned char gray[16 * 16];
@@ -257,7 +261,7 @@ int main() {
     y8.color_space = 2;
     y8.sampling_type = 0;
     info = {};
-    Require(sceJpegEncEncode(handle, &y8, &info) == 0);
+    Require(sceJpegEncEncode(handle, &y8, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
     Require(ReadFrame(jpeg, info.size) == std::pair{1, std::uint8_t{0x11}});
     const auto decodedGray = DecodeOutput(info, 1);
     Require(AverageError(std::vector<std::uint8_t>(gray, gray + sizeof(gray)), decodedGray) < 6);
@@ -265,11 +269,11 @@ int main() {
     rgba.sampling_type = 1;
     rgba.compression_ratio = 0;
     info = {};
-    Require(sceJpegEncEncode(handle, &rgba, &info) == 0);
+    Require(sceJpegEncEncode(handle, &rgba, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
     Require(ReadFrame(jpeg, info.size) == std::pair{3, std::uint8_t{0x21}});
 
     std::memset(jpeg, 0, sizeof(jpeg));
-    Require(sceJpegEncEncode(handle, &rgba, nullptr) == 0);
+    Require(sceJpegEncEncode(handle, &rgba, nullptr) == static_cast<std::int32_t>(info.size));
     Require(jpeg[0] == 0xFF && jpeg[1] == 0xD8);
 
     JpegEncEncodeParam tooSmall = rgba;
@@ -303,7 +307,7 @@ int main() {
         p.jpeg_size = sizeof(restarted);
         p.restart_interval = restart;
         JpegEncOutputInfo out{};
-        Require(sceJpegEncEncode(handle, &p, &out) == 0);
+        Require(sceJpegEncEncode(handle, &p, &out) == static_cast<std::int32_t>(out.size));
         Require(IsJpeg(restarted, out.size) && out.height == wideHeight);
         const auto decoded = Decoder::Jpeg::Decode({restarted, out.size});
         Require(decoded.has_value() && decoded->width == wideWidth && decoded->height == wideHeight);

@@ -98,7 +98,7 @@ def main():
                     assert not artifact.exists(), artifact
                     assert len(list((output.parent / 'app0').rglob('*.guest.prx'))) == 1
                     if not windows:
-                        assert 'libGuest.suprx' in needed_libraries(output.read_bytes())
+                        assert 'libGuest.prx' in needed_libraries(output.read_bytes())
 
             result, output = convert(f'outside-ambiguous-{windows}', windows, 'libGuest.suprx', module_directory='.',
                 providers={'one.prx': declared_provider(22, ('libGuest',))},
@@ -187,7 +187,7 @@ def main():
                 if windows:
                     run(output, error='Failed to load module:')
                 else:
-                    assert request in needed_libraries(output.read_bytes())
+                    assert request.replace('.suprx', '.prx') in needed_libraries(output.read_bytes())
 
         providers = {'wrong.prx': declared_provider(11, ('other',)),
                      'right.prx': declared_provider(22, ('libGuest',))}

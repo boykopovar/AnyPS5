@@ -1,14 +1,11 @@
+#include "prx/libSceFontFt/include/Api.hpp"
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
-
 
 #include "prx/libSceFontFt/include/FontFtDriver.hpp"
 #include "prx/libc/include/General.hpp"
 
 #pragma GCC visibility push(default)
-
-struct FontFtAliases;
-struct FontFtGlyphSelection;
 
 extern "C" {
 
@@ -44,8 +41,7 @@ int APS5_VABI sceFontFtSupportCid(FontLibrary library) {
 }
 
 int APS5_VABI sceFontFtSupportFontFormats(FontLibrary library, std::uint32_t formats) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return FontFt::SupportFontFormats(library, formats);
 }
 
 int APS5_VABI sceFontFtSupportOpenType(FontLibrary library) {
@@ -69,8 +65,7 @@ int APS5_VABI sceFontFtSupportPfr(FontLibrary library) {
 }
 
 int APS5_VABI sceFontFtSupportSystemFonts(FontLibrary library) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return FontFt::SupportFormats(library, {"cff", "truetype"});
 }
 
 int APS5_VABI sceFontFtSupportTrueType(FontLibrary library) {
@@ -78,8 +73,7 @@ int APS5_VABI sceFontFtSupportTrueType(FontLibrary library) {
 }
 
 int APS5_VABI sceFontFtSupportTrueTypeGx(FontLibrary library) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return FontFt::SupportFormats(library, {"truetype"});
 }
 
 int APS5_VABI sceFontFtSupportType1(FontLibrary library) {
@@ -100,8 +94,8 @@ int APS5_VABI sceFontFtTermAliases(FontFtAliases** aliases) {
 }
 
 const FontFtGlyphSelection* APS5_VABI sceFontSelectGlyphsFt(std::int32_t selector) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    static const std::uint16_t glyphSelection[] = {0x0F1F, 0xF200, 0x0F03, 0xF8F0};
+    return selector == 0 ? reinterpret_cast<const FontFtGlyphSelection*>(glyphSelection) : nullptr;
 }
 
 }

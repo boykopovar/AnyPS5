@@ -11,8 +11,10 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "ShaderCacheDirectory.hpp"
 #include "../NarrowConstantStoreFixture.hpp"
 #include "Recompiler.hpp"
+#include "ShaderDiskCache.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
@@ -20,10 +22,14 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <psapi.h>
 #else
+#include <dlfcn.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #endif
 #include <array>
+#include <utility>
 #include <bit>
 #include <chrono>
 #include <cstdint>
@@ -31,6 +37,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <random>
 #include <span>
@@ -149,7 +156,7 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block) {
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::span<const std::uint32_t> pixelCode) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::span<const std::uint32_t> pixelCode, bool blended = false) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::vector<std::uint32_t> vertexUserData(4, 0u);
@@ -181,6 +188,15 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     VkPipelineColorBlendAttachmentState blend{};
     blend.colorWriteMask = 0xf;
+    if (blended) {
+        blend.blendEnable = VK_TRUE;
+        blend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        blend.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+        blend.colorBlendOp = VK_BLEND_OP_ADD;
+        blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        blend.alphaBlendOp = VK_BLEND_OP_ADD;
+    }
     state.blends = {blend};
     state.blend = blend;
     state.blendConstants = {};
@@ -238,6 +254,15 @@ std::vector<std::uint32_t> ComputeCode(std::uint32_t salt) {
     return code;
 }
 
+constexpr std::uint32_t ReplayedFirstSalt = 8;
+constexpr std::uint32_t ReplayedPrograms = 16;
+
+std::vector<std::vector<std::uint32_t>> ReplayedCodes() {
+    std::vector<std::vector<std::uint32_t>> codes;
+    for (std::uint32_t salt = ReplayedFirstSalt; salt < ReplayedFirstSalt + ReplayedPrograms; ++salt) codes.push_back(ComputeCode(salt));
+    return codes;
+}
+
 ShaderRecompiler::RecompileResult CompileCompute(AgcDriver::VulkanDevice& device, const std::vector<std::uint32_t>& code, std::span<const std::uint32_t> userData, std::uint32_t waveSize) {
     using namespace ShaderRecompiler;
     const std::span<const std::uint32_t> words(code);
@@ -262,6 +287,26 @@ void ExpectConstantStore(const Block& block, const char* what) {
 std::array<std::uint32_t, 2> AddressWords(const Block& block) {
     const auto address = block.Address();
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+}
+
+void KeepVulkanDriversLoaded() {
+#if defined(__GLIBC__)
+    static const VkInstance instance = [] {
+        VkInstance created = VK_NULL_HANDLE;
+        void* loader = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+        if (loader == nullptr) return created;
+        const auto instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(loader, "vkGetInstanceProcAddr"));
+        const auto create = instanceProc != nullptr ? reinterpret_cast<PFN_vkCreateInstance>(instanceProc(VK_NULL_HANDLE, "vkCreateInstance")) : nullptr;
+        if (create == nullptr) return created;
+        VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+        application.apiVersion = VK_API_VERSION_1_1;
+        VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+        info.pApplicationInfo = &application;
+        if (create(&info, nullptr, &created) != VK_SUCCESS) created = VK_NULL_HANDLE;
+        return created;
+    }();
+    static_cast<void>(instance);
+#endif
 }
 
 void SetEnvironment(const char* name, const std::string& value) {
@@ -342,6 +387,60 @@ void JournalTests() {
         const auto final = Snapshot();
         Require(final.journal.recordedGraphics == 1 && final.journal.recordedCompute == 1 && final.journal.recordedModules == 3, "the second run recorded pipelines the journal already held");
     }
+    constexpr std::array<std::pair<const char*, const char*>, 3> limits{{{"1", ""}, {"1", "0"}, {"0", "1"}}};
+    for (const auto& [graphicsLimit, computeLimit] : limits) {
+        SetEnvironment("APS5_PIPELINE_JOURNAL_ENTRIES", graphicsLimit);
+        SetEnvironment("APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES", computeLimit);
+        const auto before = Snapshot();
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "a bounded replay's device could not be opened");
+        device->WaitForPipelineJournalReplay();
+        const auto bounded = Snapshot();
+        const auto graphics = bounded.journal.replayedGraphics - before.journal.replayedGraphics;
+        const auto compute = bounded.journal.replayedCompute - before.journal.replayedCompute;
+        const auto wantGraphics = std::string(graphicsLimit) == "0" ? 0u : 1u;
+        const auto wantCompute = std::string(computeLimit) == "0" ? 0u : 1u;
+        Require(graphics == wantGraphics && compute == wantCompute && device->ComputePipelinesCreated() == wantCompute, "a replay bounded to " + std::string(graphicsLimit) + " graphics and " + (*computeLimit == '\0' ? std::string("the default") : std::string(computeLimit)) + " compute entries replayed " + std::to_string(graphics) + " graphics and " + std::to_string(compute) + " compute pipelines");
+    }
+    SetEnvironment("APS5_PIPELINE_JOURNAL_ENTRIES", "");
+    SetEnvironment("APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES", "");
+}
+
+void HeldModuleTests() {
+    using namespace NarrowConstantStoreFixture;
+    constexpr std::uint32_t programs = ReplayedPrograms;
+    Block compute(BlockBytes);
+    const auto words = AddressWords(compute);
+    const auto codes = ReplayedCodes();
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "no device to record the compute programs");
+        device->WaitForPipelineJournalReplay();
+        std::vector<ShaderRecompiler::RecompileResult> results;
+        for (const auto& code : codes) results.push_back(CompileCompute(*device, code, words, 32));
+        for (std::size_t index = 0; index < results.size(); ++index) device->Dispatch(results[index], 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(codes[index].data()));
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+        std::uint64_t encoded = 0;
+        for (const auto& result : results) {
+            std::vector<std::byte> bytes;
+            ShaderRecompiler::ShaderDiskCache::EncodeResult(result, bytes);
+            encoded += bytes.size();
+        }
+        const auto journalBytes = std::filesystem::file_size(AgcDriver::Graphics::PipelineJournalPath());
+        Require(journalBytes < encoded, "the journal is " + std::to_string(journalBytes) + " bytes with 16 of its modules alone encoding to " + std::to_string(encoded) + " bytes, so it does not store them compressed");
+    }
+    SetEnvironment("APS5_PIPELINE_JOURNAL_THREADS", "1");
+    const auto before = Snapshot();
+    const auto device = OpenVulkanTestDevice();
+    Require(device != nullptr, "no device to replay the compute programs");
+    device->WaitForPipelineJournalReplay();
+    const auto replayed = Snapshot();
+    SetEnvironment("APS5_PIPELINE_JOURNAL_THREADS", "2");
+    Require(replayed.journal.loadedRecipes == programs + 2 && replayed.journal.loadedModules == programs + 3 && replayed.journal.droppedRecords == 0, "the journal does not hold the 16 compute programs beside the first two pipelines");
+    Require(replayed.journal.replayedCompute - before.journal.replayedCompute == programs + 1 && replayed.journal.replayedGraphics - before.journal.replayedGraphics == 1 && replayed.journal.replayRejected == before.journal.replayRejected && replayed.journal.replayFailed == before.journal.replayFailed, "the one-thread replay did not build every recorded pipeline");
+    const auto held = replayed.journal.replayHeldPeakBytes;
+    Require(held > 0 && held * 4 < replayed.journal.loadedBytes, "the one-thread replay held " + std::to_string(held) + " bytes of modules at once from a " + std::to_string(replayed.journal.loadedBytes) + "-byte journal");
 }
 
 // --benchmark [count]: `count` distinct compute programs, dispatched for the first time on three
@@ -395,6 +494,364 @@ void Benchmark(std::uint32_t count) {
     std::printf("  warm driver cache, journal:     %llu pipelines built by the replay in %.1f ms of replay work (%.1f ms from the device opening), then %llu built at their dispatches, %u dispatches in %.1f ms (%.2f ms each)\n", static_cast<unsigned long long>(replayed.journal.replayedCompute), replayed.journal.replayMs, replayed.openMs, static_cast<unsigned long long>(replayed.created), count, replayed.dispatchMs, replayed.dispatchMs / count);
 }
 
+struct JournalRecordHeader {
+    std::uint32_t kind;
+    std::uint32_t reserved;
+    std::uint64_t payloadBytes;
+    std::uint64_t payloadHash;
+};
+static_assert(sizeof(JournalRecordHeader) == 24);
+
+constexpr std::uint32_t JournalModuleRecord = 1u;
+constexpr std::uint32_t JournalComputeRecord = 3u;
+constexpr std::uint32_t JournalHeaderBytes = 32u;
+
+void AppendJournalRecord(std::vector<std::byte>& file, std::uint32_t kind, const std::vector<std::byte>& payload) {
+    const JournalRecordHeader header{kind, 0u, payload.size(), ShaderRecompiler::HashBytes(payload)};
+    const auto offset = file.size();
+    file.resize(offset + sizeof(header) + payload.size());
+    std::memcpy(file.data() + offset, &header, sizeof(header));
+    std::memcpy(file.data() + offset + sizeof(header), payload.data(), payload.size());
+    while ((file.size() - offset - sizeof(header)) % 8u != 0) file.push_back(std::byte{0});
+}
+
+std::vector<ShaderRecompiler::PipelineIdentity> ReadJournalComputeIdentities(const std::filesystem::path& path) {
+    std::vector<std::byte> file;
+    std::ifstream input(path, std::ios::binary);
+    const std::vector<char> bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    file.reserve(bytes.size());
+    for (const auto byte : bytes) file.push_back(static_cast<std::byte>(byte));
+    std::vector<ShaderRecompiler::PipelineIdentity> identities;
+    std::size_t cursor = JournalHeaderBytes;
+    while (cursor + sizeof(JournalRecordHeader) <= file.size()) {
+        JournalRecordHeader header{};
+        std::memcpy(&header, file.data() + cursor, sizeof(header));
+        const auto payload = cursor + sizeof(header);
+        if (header.payloadBytes > file.size() - payload) break;
+        if (header.kind == JournalComputeRecord && header.payloadBytes >= 17u) {
+            ShaderRecompiler::PipelineIdentity identity;
+            std::memcpy(&identity.low, file.data() + payload, sizeof(identity.low));
+            std::memcpy(&identity.high, file.data() + payload + 8, sizeof(identity.high));
+            identities.push_back(identity);
+        }
+        cursor = payload + header.payloadBytes;
+        while (cursor % 8u != 0) ++cursor;
+    }
+    return identities;
+}
+
+void ReplayRacesDispatchTests() {
+    using namespace NarrowConstantStoreFixture;
+    Block compute(BlockBytes);
+    const auto words = AddressWords(compute);
+    const auto codes = ReplayedCodes();
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device recording the raced pipelines could not be opened");
+        device->WaitForPipelineJournalReplay();
+        for (const auto& code : codes) device->Dispatch(CompileCompute(*device, code, words, 32), 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+    }
+    const auto before = Snapshot();
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device racing the replay could not be opened");
+        std::vector<ShaderRecompiler::RecompileResult> shaders;
+        for (const auto& code : codes) shaders.push_back(CompileCompute(*device, code, words, 32));
+        for (std::size_t index = 0; index < shaders.size(); ++index) device->Dispatch(shaders[index], 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(codes[index].data()));
+        device->WaitIdle();
+        device->WaitForPipelineJournalReplay();
+        const auto after = Snapshot();
+        Require(after.journal.replayRejected == before.journal.replayRejected && after.journal.replayFailed == before.journal.replayFailed, "the raced replay rejected or failed a compute pipeline");
+        const auto visited = (after.journal.replayedCompute - before.journal.replayedCompute) + (after.journal.replayPresent - before.journal.replayPresent);
+        Require(device->ComputePipelinesCreated() == visited, "a dispatch and the replay both built a compute pipeline: " + std::to_string(device->ComputePipelinesCreated()) + " built for " + std::to_string(visited) + " replayed");
+    }
+}
+
+void NewestEntriesTests() {
+    using namespace NarrowConstantStoreFixture;
+    Block compute(BlockBytes);
+    const auto words = AddressWords(compute);
+    const auto recorded = Snapshot();
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device for the newest entries test could not be opened");
+        device->WaitForPipelineJournalReplay();
+        for (std::uint32_t salt = 1; salt <= 3; ++salt) {
+            const auto code = ComputeCode(salt);
+            const auto result = CompileCompute(*device, code, words, 32);
+            device->Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        }
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+        const auto after = Snapshot();
+        Require(after.journal.recordedCompute == recorded.journal.recordedCompute + 3, "the three compute pipelines were not recorded");
+    }
+    SetEnvironment("APS5_PIPELINE_JOURNAL_ENTRIES", "0");
+    SetEnvironment("APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES", "2");
+    const auto before = Snapshot();
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device for the newest entries replay could not be opened");
+        device->WaitForPipelineJournalReplay();
+        const auto replayed = Snapshot();
+        Require(replayed.journal.replayedCompute == before.journal.replayedCompute + 2, "the replay did not build the two newest entries: built " + std::to_string(replayed.journal.replayedCompute - before.journal.replayedCompute) + " compute and " + std::to_string(replayed.journal.replayedGraphics - before.journal.replayedGraphics) + " graphics, " + std::to_string(replayed.journal.replayRejected - before.journal.replayRejected) + " rejected, " + std::to_string(replayed.journal.replayPresent - before.journal.replayPresent) + " present, " + std::to_string(replayed.journal.replaySkipped - before.journal.replaySkipped) + " skipped");
+        Require(replayed.journal.replayedGraphics == before.journal.replayedGraphics, "the replay built an entry that is not among the newest");
+        const auto created = device->ComputePipelinesCreated();
+        const auto newest = ComputeCode(3);
+        const auto result = CompileCompute(*device, newest, words, 32);
+        device->Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(newest.data()));
+        device->WaitIdle();
+        Require(device->ComputePipelinesCreated() == created, "the newest pipeline was not built by the replay");
+        const auto oldest = ComputeCode(0);
+        const auto old = CompileCompute(*device, oldest, words, 32);
+        device->Dispatch(old, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(oldest.data()));
+        device->WaitIdle();
+        Require(device->ComputePipelinesCreated() == created + 1, "the oldest pipeline was built by the replay");
+    }
+    SetEnvironment("APS5_PIPELINE_JOURNAL_ENTRIES", "1024");
+    SetEnvironment("APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES", "");
+}
+
+void EvictionTests() {
+    using namespace NarrowConstantStoreFixture;
+    const auto path = AgcDriver::Graphics::PipelineJournalPath();
+    AgcDriver::Graphics::FlushPipelineJournal();
+    constexpr std::size_t Modules = 24;
+    constexpr std::size_t ModuleBytes = 64u * 1024u;
+    std::vector<std::byte> file;
+    for (std::size_t index = 0; index < Modules; ++index) {
+        std::vector<std::byte> module(20u + ModuleBytes, std::byte{0x5a});
+        const std::uint64_t low = index + 1u;
+        const std::uint64_t high = 0u;
+        std::memcpy(module.data(), &low, sizeof(low));
+        std::memcpy(module.data() + 8, &high, sizeof(high));
+        AppendJournalRecord(file, JournalModuleRecord, module);
+        std::vector<std::byte> compute(17u, std::byte{0});
+        std::memcpy(compute.data(), &low, sizeof(low));
+        std::memcpy(compute.data() + 8, &high, sizeof(high));
+        AppendJournalRecord(file, JournalComputeRecord, compute);
+    }
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::app);
+        Require(static_cast<bool>(out), "the synthetic journal records could not be written");
+        out.write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
+        out.flush();
+        Require(!out.fail(), "the synthetic journal records could not be written");
+    }
+    Require(std::filesystem::file_size(path) > 1024u * 1024u, "the journal is smaller than the cap");
+    const auto before = Snapshot();
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device for the eviction test could not be opened");
+        device->WaitForPipelineJournalReplay();
+        Block compute(BlockBytes);
+        Block target(ColorTargetLayout(Width, Height, ColorTileMode::Linear, 2).Bytes());
+        const auto words = AddressWords(compute);
+        const auto code = ComputeCode(7);
+        const auto result = CompileCompute(*device, code, words, 32);
+        device->Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device->WaitIdle();
+        std::memset(target.data, 0, target.bytes);
+        Draw(*device, DecodeTarget(target), Program(std::array<float, 4>{1.0f, 0.0f, 0.0f, 1.0f}));
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+    }
+    const auto after = Snapshot();
+    Require(after.journal.evictedRecords > before.journal.evictedRecords, "the journal was not rewritten when it reached its cap: " + std::to_string(after.journal.evictedRecords) + " records evicted, " + std::to_string(after.journal.writeFailures - before.journal.writeFailures) + " write failures");
+    const auto size = std::filesystem::file_size(path);
+    Require(size <= 1024u * 1024u + 64u * 1024u, "the rewritten journal is larger than the cap");
+    const auto identities = ReadJournalComputeIdentities(path);
+    Require(!identities.empty(), "the rewritten journal holds no compute pipeline");
+    bool newest = false;
+    for (const auto& identity : identities) {
+        if (identity.low == Modules) newest = true;
+        Require(identity.low != 1u, "the oldest pipeline survived the rewrite");
+    }
+    Require(newest, "the newest pipeline did not survive the rewrite");
+}
+
+void EvictionWatermarkTests() {
+    using namespace NarrowConstantStoreFixture;
+    const auto path = AgcDriver::Graphics::PipelineJournalPath();
+    const auto before = Snapshot();
+    Block compute(BlockBytes);
+    const auto words = AddressWords(compute);
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device for the eviction watermark test could not be opened");
+        device->WaitForPipelineJournalReplay();
+        for (std::uint32_t salt = 8; salt <= 10; ++salt) {
+            auto result = CompileCompute(*device, ComputeCode(salt), words, 32);
+            result.shaderDataUserWords.assign(16u * 1024u, salt);
+            AgcDriver::Graphics::RecordComputePipeline(result, true);
+        }
+        AgcDriver::Graphics::FlushPipelineJournal();
+    }
+    const auto after = Snapshot();
+    Require(after.journal.recordedCompute == before.journal.recordedCompute + 3, "the records after the rewrite were not recorded");
+    Require(after.journal.writeFailures == before.journal.writeFailures, "the records after the rewrite failed to write");
+    Require(after.journal.evictedRecords == before.journal.evictedRecords, "three consecutive records after a rewrite triggered another rewrite");
+    Require(std::filesystem::file_size(path) <= 1024u * 1024u, "the journal exceeded its cap after the consecutive records");
+}
+
+void EvictionKeepsPendingModules() {
+    using namespace NarrowConstantStoreFixture;
+    const auto path = AgcDriver::Graphics::PipelineJournalPath();
+    Block target(ColorTargetLayout(Width, Height, ColorTileMode::Linear, 2).Bytes());
+    const auto color = DecodeTarget(target);
+    const std::array<float, 4> red{1.0f, 0.0f, 0.0f, 1.0f};
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device for the pending module test could not be opened");
+        device->WaitForPipelineJournalReplay();
+        std::memset(target.data, 0, target.bytes);
+        Draw(*device, color, Program(red));
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+    }
+    constexpr std::size_t FillerBytes = 600u * 1024u;
+    {
+        std::vector<std::byte> file;
+        std::vector<std::byte> module(20u + FillerBytes, std::byte{0x5a});
+        const std::uint64_t low = 0x5a5au;
+        const std::uint64_t high = 0u;
+        std::memcpy(module.data(), &low, sizeof(low));
+        std::memcpy(module.data() + 8, &high, sizeof(high));
+        AppendJournalRecord(file, JournalModuleRecord, module);
+        std::vector<std::byte> compute(17u + FillerBytes, std::byte{0});
+        std::memcpy(compute.data(), &low, sizeof(low));
+        std::memcpy(compute.data() + 8, &high, sizeof(high));
+        AppendJournalRecord(file, JournalComputeRecord, compute);
+        std::ofstream out(path, std::ios::binary | std::ios::app);
+        Require(static_cast<bool>(out), "the filler records could not be written");
+        out.write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
+        out.flush();
+        Require(!out.fail(), "the filler records could not be written");
+    }
+    Require(std::filesystem::file_size(path) > 1024u * 1024u, "the journal is smaller than the cap");
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device for the pending module test could not be opened");
+        device->WaitForPipelineJournalReplay();
+        std::memset(target.data, 0, target.bytes);
+        Draw(*device, color, Program(red), true);
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+    }
+    const auto before = Snapshot();
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device for the pending module replay could not be opened");
+        device->WaitForPipelineJournalReplay();
+        const auto replayed = Snapshot();
+        Require(replayed.journal.replayedGraphics == before.journal.replayedGraphics + 1, "the record written after the eviction was not replayed: " + std::to_string(replayed.journal.replayedGraphics - before.journal.replayedGraphics) + " graphics built, " + std::to_string(replayed.journal.replayRejected - before.journal.replayRejected) + " rejected");
+        Require(replayed.journal.replayRejected == before.journal.replayRejected, "the record written after the eviction was rejected: the eviction dropped a module it needed");
+    }
+}
+
+void OversizedRecordKeepsTheJournal() {
+    using namespace NarrowConstantStoreFixture;
+    const auto path = AgcDriver::Graphics::PipelineJournalPath();
+    Block compute(BlockBytes);
+    const auto words = AddressWords(compute);
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device for the oversized record test could not be opened");
+        device->WaitForPipelineJournalReplay();
+        const auto code = ComputeCode(0);
+        const auto result = CompileCompute(*device, code, words, 32);
+        device->Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+    }
+    const auto before = Snapshot();
+    const auto sizeBefore = std::filesystem::file_size(path);
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device for the oversized record test could not be opened");
+        device->WaitForPipelineJournalReplay();
+        const auto code = ComputeCode(2);
+        auto result = CompileCompute(*device, code, words, 32);
+        result.shaderDataUserWords.resize(400000u);
+        std::uint32_t noise = 0x9e3779b9u;
+        for (auto& word : result.shaderDataUserWords) word = noise = noise * 1664525u + 1013904223u;
+        AgcDriver::Graphics::RecordComputePipeline(result, false);
+        AgcDriver::Graphics::FlushPipelineJournal();
+    }
+    const auto after = Snapshot();
+    Require(after.journal.writeFailures == before.journal.writeFailures + 1, "the oversized record was not counted as a write failure");
+    Require(std::filesystem::file_size(path) == sizeBefore, "the oversized record emptied the journal: " + std::to_string(sizeBefore) + " bytes became " + std::to_string(std::filesystem::file_size(path)));
+    const auto before2 = Snapshot();
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device for the oversized record replay could not be opened");
+        device->WaitForPipelineJournalReplay();
+        const auto replayed = Snapshot();
+        Require(replayed.journal.replayedCompute == before2.journal.replayedCompute + 1, "the record that was in the journal did not survive the oversized one");
+    }
+}
+
+std::uint64_t PeakResidentBytes() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS counters{};
+    counters.cb = sizeof(counters);
+    Require(K32GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)) != 0, "the process memory counters could not be read");
+    return static_cast<std::uint64_t>(counters.PeakWorkingSetSize);
+#else
+    rusage usage{};
+    Require(getrusage(RUSAGE_SELF, &usage) == 0, "the process resource usage could not be read");
+#ifdef __APPLE__
+    return static_cast<std::uint64_t>(usage.ru_maxrss);
+#else
+    return static_cast<std::uint64_t>(usage.ru_maxrss) * 1024u;
+#endif
+#endif
+}
+
+void UndecodableModuleIsNotExpanded() {
+    using namespace NarrowConstantStoreFixture;
+    const auto path = AgcDriver::Graphics::PipelineJournalPath();
+    Block compute(BlockBytes);
+    const auto words = AddressWords(compute);
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device recording the journal could not be opened");
+        device->WaitForPipelineJournalReplay();
+        const auto code = ComputeCode(0);
+        device->Dispatch(CompileCompute(*device, code, words, 32), 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+    }
+    constexpr std::uint32_t ClaimedBytes = 1u << 30u;
+    std::vector<std::byte> module(24u + 64u, std::byte{0x5a});
+    const std::uint64_t low = 0x5a5au;
+    const std::uint64_t high = 0u;
+    std::memcpy(module.data(), &low, sizeof(low));
+    std::memcpy(module.data() + 8, &high, sizeof(high));
+    std::memcpy(module.data() + 20, &ClaimedBytes, sizeof(ClaimedBytes));
+    {
+        std::vector<std::byte> file;
+        AppendJournalRecord(file, JournalModuleRecord, module);
+        std::ofstream out(path, std::ios::binary | std::ios::app);
+        Require(static_cast<bool>(out), "the undecodable module record could not be written");
+        out.write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
+        out.flush();
+        Require(!out.fail(), "the undecodable module record could not be written");
+    }
+    const auto peak = PeakResidentBytes();
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device loading the undecodable module record could not be opened");
+        device->WaitForPipelineJournalReplay();
+        const auto loaded = Snapshot();
+        Require(loaded.journal.loadedModules == 1 && loaded.journal.droppedRecords == 1, "the load did not keep the recorded module and drop the undecodable one: " + std::to_string(loaded.journal.loadedModules) + " modules loaded, " + std::to_string(loaded.journal.droppedRecords) + " records dropped");
+    }
+    const auto grown = PeakResidentBytes() - peak;
+    Require(grown < ClaimedBytes / 2u, "loading a module record whose 64-byte frame claims a 1 GiB module raised the peak resident memory by " + std::to_string(grown >> 20u) + " MiB");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -406,6 +863,7 @@ int main(int argc, char** argv) {
         SetEnvironment("APS5_NO_PIPELINE_JOURNAL", "0");
         SetEnvironment("APS5_VERIFY_SET_LAYOUTS", "1");
         SetEnvironment("APS5_PIPELINE_JOURNAL_THREADS", "2");
+        SetEnvironment("APS5_PIPELINE_JOURNAL_MAX_MIB", "1");
         struct Cleanup {
             std::filesystem::path directory;
             ~Cleanup() {
@@ -413,6 +871,7 @@ int main(int argc, char** argv) {
                 std::filesystem::remove_all(directory, error);
             }
         } cleanup{directory};
+        KeepVulkanDriversLoaded();
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
@@ -421,7 +880,19 @@ int main(int argc, char** argv) {
             Benchmark(argc >= 3 ? static_cast<std::uint32_t>(std::strtoul(argv[2], nullptr, 10)) : 24u);
             return 0;
         }
+        if (argc >= 2 && std::string(argv[1]) == "--undecodable-module") {
+            UndecodableModuleIsNotExpanded();
+            std::puts("pipeline journal undecodable module passed");
+            return 0;
+        }
         JournalTests();
+        ReplayRacesDispatchTests();
+        NewestEntriesTests();
+        EvictionTests();
+        EvictionWatermarkTests();
+        EvictionKeepsPendingModules();
+        OversizedRecordKeepsTheJournal();
+        HeldModuleTests();
         std::puts("pipeline journal record and replay passed");
         return 0;
     } catch (const std::exception& error) {

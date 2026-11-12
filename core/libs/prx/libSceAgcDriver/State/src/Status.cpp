@@ -5,6 +5,12 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int CAPTURE_UNAVAILABLE = static_cast<int>(0x8A6C1000);
+
+}
+
 extern "C" {
 
 bool APS5_VABI sceAgcDriverIsCaptureInProgress(void) {
@@ -21,18 +27,15 @@ bool APS5_VABI sceAgcDriverIsSubmitValidationEnabled(void) {
 
 int APS5_VABI sceAgcDriverRequestCaptureStart(const char* path) {
     (void)path;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return CAPTURE_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgcDriverRequestCaptureStop() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return CAPTURE_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgcDriverTriggerCapture() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return CAPTURE_UNAVAILABLE;
 }
 
 }

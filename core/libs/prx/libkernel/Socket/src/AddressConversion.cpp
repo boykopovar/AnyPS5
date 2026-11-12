@@ -1,10 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 constexpr int kGuestInet = 2;
@@ -191,17 +192,21 @@ extern "C" {
 int APS5_VABI __inet_pton_nid_postfix(int family, const char* text, void* destination) {
     if (family != kGuestInet && family != kGuestInet6) { *__error_nid_postfix() = 47; return -1; }
     if (!text) throw std::runtime_error("inet_pton: null text");
+    std::string localText;
+    const int copyError = CopyGuestString_nid_no_patch(text, kMaxText, localText);
+    if (copyError == 63) return 0;
+    if (copyError != 0) { *__error_nid_postfix() = copyError; return -1; }
     if (family == kGuestInet) {
         std::uint8_t quad[4];
-        if (!ParseQuad(text, text + std::strlen(text), quad)) return 0;
+        if (!ParseQuad(localText.data(), localText.data() + localText.size(), quad)) return 0;
         if (!destination) throw std::runtime_error("inet_pton: null destination");
-        std::memcpy(destination, quad, sizeof(quad));
+        if (!GuestCopyOut_nid_no_patch(destination, quad, sizeof(quad))) { *__error_nid_postfix() = 14; return -1; }
         return 1;
     }
     std::uint8_t address[16];
-    if (!TextToV6(text, address)) return 0;
+    if (!TextToV6(localText.c_str(), address)) return 0;
     if (!destination) throw std::runtime_error("inet_pton: null destination");
-    std::memcpy(destination, address, sizeof(address));
+    if (!GuestCopyOut_nid_no_patch(destination, address, sizeof(address))) { *__error_nid_postfix() = 14; return -1; }
     return 1;
 }
 

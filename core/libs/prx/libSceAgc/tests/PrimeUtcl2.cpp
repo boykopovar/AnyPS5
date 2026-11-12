@@ -1,3 +1,5 @@
+#include "prx/libSceAgc/DcbState/include/Display.hpp"
+#include "prx/libSceAgc/Acb/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
 #include <algorithm>
@@ -6,13 +8,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" {
-std::uint32_t* APS5_VABI sceAgcAcbPrimeUtcl2(CommandBuffer*, const volatile void*, std::uint32_t);
-std::uint32_t APS5_VABI sceAgcAcbPrimeUtcl2GetSize();
-std::uint32_t* APS5_VABI sceAgcDcbPrimeUtcl2(CommandBuffer*, const volatile void*, std::uint32_t);
-std::uint32_t APS5_VABI sceAgcDcbPrimeUtcl2GetSize();
-}
 
 namespace {
 

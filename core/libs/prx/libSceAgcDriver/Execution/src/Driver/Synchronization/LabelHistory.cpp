@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <string_view>
@@ -18,14 +20,97 @@ void Driver::noteLabelStore(std::uint64_t address, std::span<const std::byte> by
     }
 }
 
-bool Driver::storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t* writer) {
+void Driver::noteLabelPass(std::span<const std::uint32_t> packet, std::uint32_t queue) {
+    const auto opcode = (packet[0] >> 8u) & 0xffu;
+    if ((opcode != 0x3c && opcode != 0x93) || packet.size() < 7 || ((packet[1] >> 4u) & 3u) != 1u) return;
+    const auto bytes = Pm4::WaitAwaitedBytes(packet);
+    const std::uint64_t address = (packet[2] & (bytes == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u);
+    const auto passed = eventSerial.load(std::memory_order_acquire);
+    std::lock_guard lock(labelStoresMutex);
+    for (std::size_t offset = 0; offset < bytes; offset += 4) labelTakes.Pass(queue, address + offset, passed);
+}
+
+void Driver::retireLabelTakes(std::uint32_t queue, std::uint64_t received) {
+    std::lock_guard lock(labelStoresMutex);
+    labelTakes.Retire(queue, received);
+}
+
+void Driver::noteLabelIssue(std::span<const std::uint32_t> packet, std::uint32_t queue) {
+    const auto mayTake = [&](std::uint64_t address, std::uint64_t bytes) {
+        for (std::uint64_t offset = 0; offset < bytes; offset += 4) {
+            if (labelTakes.MayHavePass(queue, address + offset)) return true;
+        }
+        return false;
+    };
+    const auto take = [&](std::uint64_t address, std::uint64_t bytes) {
+        for (std::uint64_t offset = 0; offset < bytes; offset += 4) labelTakes.Take(queue, address + offset);
+    };
+    switch ((packet[0] >> 8u) & 0xffu) {
+        case 0x37: case 0x49: {
+            const auto label = Pm4::DecodeLabelWrite(packet);
+            if (!label.has_value() || !KeepsLabelStore(label->address, label->Bytes().size()) || !mayTake(label->address, label->Bytes().size())) return;
+            std::lock_guard lock(labelStoresMutex);
+            take(label->address, label->Bytes().size());
+            return;
+        }
+        case 0x40: case 0x50: case 0x83: break;
+        default: return;
+    }
+    auto stores = Pm4::DecodeStores(packet);
+    std::erase_if(stores, [&](const Pm4::PacketStore& store) { return store.conditional || !KeepsLabelStore(store.address, static_cast<std::size_t>(store.bytes)) || !mayTake(store.address, store.bytes); });
+    if (stores.empty()) return;
+    std::lock_guard lock(labelStoresMutex);
+    for (const auto& store : stores) take(store.address, store.bytes);
+}
+
+bool Driver::findWaitProducer(std::uint64_t address, std::size_t bytes, std::uint64_t& token) {
+    std::lock_guard lock(mutex);
+    token = 0;
+    std::vector<std::uint64_t> frontier{address};
+    std::unordered_set<std::uint32_t> visited;
+    bool found = false;
+    for (std::size_t depth = 0; depth < 8 && !frontier.empty(); ++depth) {
+        const std::size_t span = depth == 0 ? bytes : 8;
+        std::vector<std::uint64_t> next;
+        for (const auto current : frontier) {
+            for (const auto& [queue, worker] : workers) {
+                bool holds = false;
+                for (std::size_t offset = 0; offset < span; offset += 4) {
+                    if (worker.unfinishedWrites.contains(current + offset)) {
+                        holds = true;
+                        break;
+                    }
+                }
+                if (!holds || !visited.insert(queue).second) continue;
+                found = true;
+                std::uint64_t motion = worker.executingPacket.load(std::memory_order_relaxed) & 0xffffffffull;
+                motion |= static_cast<std::uint64_t>(worker.pending.size() & 0xffu) << 32;
+                motion |= static_cast<std::uint64_t>(queue & 0xffu) << 40;
+                motion *= 0x9e3779b97f4a7c15ull + 2ull * queue;
+                const auto shift = depth * 8;
+                token ^= shift == 0 ? motion : ((motion << shift) | (motion >> (64 - shift)));
+                if (queue != 0 && (queue < 0x20 || queue > SubmissionQueueEnd)) continue;
+                const auto slot = queue == 0 ? 0 : queue - 0x20 + 1;
+                if (const auto awaited = awaitedSlots[slot].address.load(std::memory_order_acquire); awaited != 0) next.push_back(awaited);
+            }
+        }
+        std::sort(next.begin(), next.end());
+        next.erase(std::unique(next.begin(), next.end()), next.end());
+        frontier = std::move(next);
+    }
+    return found;
+}
+
+bool Driver::storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer) {
     std::lock_guard lock(labelStoresMutex);
     const auto low = labelStores.find(address);
     if (low == labelStores.end()) return false;
     const auto high = bytes == 8 ? labelStores.find(address + 4) : labelStores.end();
     if (bytes == 8 && high == labelStores.end()) return false;
+    std::uint64_t taken = 0;
+    for (std::size_t offset = 0; offset < bytes; offset += 4) taken = std::max(taken, labelTakes.Taken(queue, address + offset));
     for (const auto& store : low->second) {
-        if (store.stamp <= received) continue;
+        if (store.stamp <= received || (store.queue != queue && store.stamp <= taken)) continue;
         std::uint64_t value = store.value;
         if (bytes == 8) {
             const auto upper = std::find_if(high->second.begin(), high->second.end(), [&](const LabelStore& other) { return other.stamp == store.stamp; });
@@ -60,8 +145,7 @@ void Driver::traceLabel(std::span<const std::uint32_t> packet, std::uint32_t que
     }
     if (kind == nullptr) return;
     if (std::string_view(kind) != "WAIT_REG_MEM") {
-        static std::mutex historyMutex;
-        std::lock_guard lock(historyMutex);
+        std::lock_guard lock(writeHistoryMutex());
         auto& entry = writeHistory()[writeCursor()++ % writeHistory().size()];
         entry = {target, length, queue, opcode};
     }
@@ -74,6 +158,11 @@ void Driver::traceLabel(std::span<const std::uint32_t> packet, std::uint32_t que
 std::array<WriteRecord, 16384>& Driver::writeHistory() {
     static std::array<WriteRecord, 16384> history{};
     return history;
+}
+
+AgcDriver::Mutex& Driver::writeHistoryMutex() {
+    static AgcDriver::Mutex mutex;
+    return mutex;
 }
 
 std::size_t& Driver::writeCursor() {

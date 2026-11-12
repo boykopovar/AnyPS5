@@ -103,6 +103,7 @@ void SectionHeaderTableBuilder::WriteTable(
     for (const char i : kShStrTabBlob)
         buf.push_back(static_cast<std::uint8_t>(i));
 
+    Io::AlignBuffer(buf, std::size_t{8});
     const auto shOff = static_cast<std::uint64_t>(buf.size());
     buf.resize(buf.size() + kShdrEntrySize * kSectionHeaderCount, 0);
 

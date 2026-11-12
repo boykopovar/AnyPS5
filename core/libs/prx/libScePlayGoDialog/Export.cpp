@@ -1,3 +1,5 @@
+#include "prx/libScePlayGoDialog/include/Api.hpp"
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <atomic>
 #include <algorithm>
 #include <iterator>
@@ -26,7 +28,6 @@ constexpr std::int32_t ERROR_NOT_INITIALIZED = static_cast<std::int32_t>(0x80B80
 constexpr std::int32_t ERROR_ALREADY_INITIALIZED = static_cast<std::int32_t>(0x80B80004);
 constexpr std::int32_t ERROR_PARAM_INVALID = static_cast<std::int32_t>(0x80B8000A);
 constexpr std::int32_t ERROR_INVALID_STATE = static_cast<std::int32_t>(0x80B80007);
-constexpr std::int32_t COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<std::int32_t>(0x80B80005u);
 
 std::atomic<int> g_status{STATUS_NONE};
 
@@ -73,15 +74,40 @@ int APS5_VABI scePlayGoDialogUpdateStatus(void) {
     return g_status.load();
 }
 
+
 int APS5_VABI scePlayGoDialogGetResult(PlayGoDialogResult* result) {
     if (result == nullptr) return ERROR_ARG_NULL;
-    if (!std::all_of(std::begin(result->reserved), std::end(result->reserved), [](std::uint8_t value) { return value == 0; })) return ERROR_PARAM_INVALID;
-    if (g_status.load() == STATUS_NONE) return ERROR_NOT_INITIALIZED;
-    if (g_status.load() != STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
-    *result = {};
-    result->result = RESULT_OK;
+
+    PlayGoDialogResult guestResult{};
+    if (!GuestCopyIn_nid_no_patch(
+            &guestResult, result, sizeof(guestResult))) {
+        return ERROR_ARG_NULL;
+    }
+
+    if (!std::all_of(
+            std::begin(guestResult.reserved),
+            std::end(guestResult.reserved),
+            [](std::uint8_t value) { return value == 0; })) {
+        return ERROR_PARAM_INVALID;
+    }
+
+    if (g_status.load() == STATUS_NONE)
+        return ERROR_NOT_INITIALIZED;
+
+    if (g_status.load() != STATUS_FINISHED)
+        return COMMON_DIALOG_ERROR_NOT_FINISHED;
+
+    PlayGoDialogResult completed{};
+    completed.result = RESULT_OK;
+
+    if (!GuestCopyOut_nid_no_patch(
+            result, &completed, sizeof(completed))) {
+        return ERROR_ARG_NULL;
+    }
+
     return 0;
 }
+
 
 int APS5_VABI scePlayGoDialogGetStatus(void) {
     return g_status.load();

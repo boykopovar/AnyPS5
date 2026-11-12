@@ -1,33 +1,13 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdlib>
 #include <cstdint>
 #include <future>
 #include <initializer_list>
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-Pthread APS5_VABI scePthreadSelf(void);
-int APS5_VABI scePthreadGetschedparam(Pthread thread, int* policy, KernelSchedParam* param);
-int APS5_VABI scePthreadSetschedparam(Pthread thread, int policy, const KernelSchedParam* param);
-int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, KernelSchedParam* param);
-int APS5_VABI pthread_getprio_nid_postfix(Pthread thread);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI pthread_setschedparam_nid_postfix(Pthread thread, int policy, const KernelSchedParam* param);
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr);
-int APS5_VABI pthread_attr_get_np_nid_postfix(Pthread thread, PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGetschedpolicy(const PthreadAttr* attr, int* policy);
-int APS5_VABI scePthreadAttrGetschedparam(const PthreadAttr* attr, KernelSchedParam* param);
-int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr* attr, int inheritSched);
-int APS5_VABI scePthreadAttrSetschedpolicy(PthreadAttr* attr, int policy);
-int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr* attr, const KernelSchedParam* param);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
-static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_SCHED_FIFO = 1;
@@ -200,7 +180,7 @@ static void* APS5_VABI Spawn(void*) {
 
 int main() {
     *__error_nid_postfix() = 1234;
-    Require(pthread_getprio_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
+    Require(pthread_getprio_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == GUEST_EINVAL);
     Require(pthread_getprio_nid_postfix(reinterpret_cast<Pthread>(std::uintptr_t{1})) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
     Pthread thread = nullptr;
     Require(scePthreadCreate(&thread, nullptr, Run, nullptr, "schedparam") == SCE_OK);
@@ -208,6 +188,16 @@ int main() {
     Require(scePthreadJoin(thread, nullptr) == SCE_OK);
     *__error_nid_postfix() = 1234;
     Require(pthread_getprio_nid_postfix(retired) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
+    *__error_nid_postfix() = 1234;
+    Require(pthread_setprio_nid_postfix(scePthreadSelf(), 100) == GUEST_EINVAL && *__error_nid_postfix() == GUEST_EINVAL);
+    *__error_nid_postfix() = 1234;
+    Require(pthread_setprio_nid_postfix(nullptr, 700) == GUEST_EINVAL && *__error_nid_postfix() == 1234);
+    Require(pthread_setprio_nid_postfix(retired, 700) == GUEST_ESRCH && *__error_nid_postfix() == 1234);
+    Require(pthread_setprio_nid_postfix(retired, 100) == GUEST_ESRCH && *__error_nid_postfix() == 1234);
+    Require(scePthreadSetprio(retired, 768) == SCE_KERNEL_ERROR_ESRCH && *__error_nid_postfix() == 1234);
+    Require(scePthreadSetprio(scePthreadSelf(), 100) == SCE_KERNEL_ERROR_EINVAL && *__error_nid_postfix() == GUEST_EINVAL);
+    *__error_nid_postfix() = 1234;
+    Require(pthread_setprio_nid_postfix(scePthreadSelf(), pthread_getprio_nid_postfix(scePthreadSelf())) == 0 && *__error_nid_postfix() == 1234);
     Require(CreatedPolicy(EXPLICIT_SCHED, GUEST_SCHED_RR) == GUEST_SCHED_RR);
     Require(CreatedPolicy(EXPLICIT_SCHED, GUEST_SCHED_FIFO) == GUEST_SCHED_FIFO);
     Require(CreatedPolicy(INHERIT_SCHED, GUEST_SCHED_RR) == GUEST_SCHED_FIFO);

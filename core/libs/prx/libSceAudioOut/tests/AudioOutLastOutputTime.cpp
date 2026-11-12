@@ -1,23 +1,16 @@
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOutOpen(int, int, int, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioOutClose(int);
-int APS5_VABI sceAudioOutOutput(int, const void*);
-int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam*, std::uint32_t);
-int APS5_VABI sceAudioOutGetPortState(int, AudioOutPortState*);
-int APS5_VABI sceAudioOutGetLastOutputTime(int, std::uint64_t*);
-std::uint64_t APS5_VABI sceKernelGetProcessTime();
-}
 
 static void Require(bool value, const char* message) {
     if (value) return;
@@ -151,6 +144,8 @@ void TestErrors() {
     Require(sceAudioOutGetLastOutputTime(-1, &destination) == invalidPort, "a negative handle must be rejected");
     Require(sceAudioOutGetLastOutputTime(handle + 1, &destination) == invalidPort, "a port that is not open must be rejected");
     Require(sceAudioOutGetLastOutputTime(1000, &destination) == invalidPort, "an out of range handle must be rejected");
+    Require(sceAudioOutGetLastOutputTime(INT_MIN, &destination) == invalidPort, "the lowest handle must be rejected");
+    Require(sceAudioOutGetLastOutputTime(INT_MAX, &destination) == invalidPort, "the highest handle must be rejected");
     Require(sceAudioOutClose(handle) == 0, "port must close");
     Require(sceAudioOutGetLastOutputTime(handle, &destination) == invalidPort, "a closed port must be rejected");
     Require(destination == untouched, "a rejected call must not write the destination");
@@ -231,6 +226,7 @@ int main() {
     setenv("SDL_AUDIODRIVER", "dummy", 1);
 #endif
     sceKernelGetProcessTime();
+
     TestOutput(portTypeMain);
     TestOutput(portTypeVibration);
     TestPortsAreIndependent();

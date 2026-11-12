@@ -1,57 +1,8 @@
+#include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
+#include "prx/libSceGnmDriverForNeoMode/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI sceGnmDebugModuleReset(void);
-int APS5_VABI sceGnmDebugReset(void);
-int APS5_VABI sceGnmDriverInternalRetrieveGnmInterface(void);
-int APS5_VABI sceGnmDriverInternalRetrieveGnmInterfaceForGpuDebugger(void);
-int APS5_VABI sceGnmDriverInternalRetrieveGnmInterfaceForReplay(void);
-int APS5_VABI sceGnmDriverInternalRetrieveGnmInterfaceForResourceRegistration(void);
-int APS5_VABI sceGnmDriverInternalRetrieveGnmInterfaceForValidation(void);
-int APS5_VABI sceGnmDriverTraceInProgress(void);
-int APS5_VABI sceGnmFindResources(void);
-int APS5_VABI sceGnmFindResourcesPublic(void);
-int APS5_VABI sceGnmGetDbgGcHandle(void);
-int APS5_VABI sceGnmGetOwnerName(void);
-int APS5_VABI sceGnmGetPhysicalCounterFromVirtualized(void);
-int APS5_VABI sceGnmGetResourceBaseAddressAndSizeInBytes(void);
-int APS5_VABI sceGnmGetResourceName(void);
-int APS5_VABI sceGnmGetResourceRegistrationBuffers(void);
-int APS5_VABI sceGnmGetResourceShaderGuid(void);
-int APS5_VABI sceGnmGetResourceType(void);
-int APS5_VABI sceGnmGetResourceUserData(void);
-int APS5_VABI sceGnmQueryResourceRegistrationUserMemoryRequirements(void);
-int APS5_VABI sceGnmRegisterGdsResource(void);
-int APS5_VABI sceGnmRegisterOwner(void);
-int APS5_VABI sceGnmRegisterOwnerForSystem(void);
-int APS5_VABI sceGnmRegisterResource(void);
-int APS5_VABI sceGnmSdmaClose(void);
-int APS5_VABI sceGnmSdmaConstFill(void);
-int APS5_VABI sceGnmSdmaCopyLinear(void);
-int APS5_VABI sceGnmSdmaCopyTiled(void);
-int APS5_VABI sceGnmSdmaCopyWindow(void);
-int APS5_VABI sceGnmSdmaFlush(void);
-int APS5_VABI sceGnmSdmaGetMinCmdSize(void);
-int APS5_VABI sceGnmSdmaOpen(void);
-int APS5_VABI sceGnmSetResourceRegistrationUserMemory(void);
-int APS5_VABI sceGnmSetResourceUserData(void);
-int APS5_VABI sceGnmSetSpiEnableSqCounters(void);
-int APS5_VABI sceGnmSetSpiEnableSqCountersForUnitInstance(void);
-int APS5_VABI sceGnmUnregisterAllResourcesForOwner(void);
-int APS5_VABI sceGnmUnregisterOwnerAndResources(void);
-int APS5_VABI sceGnmUnregisterResource(void);
-int APS5_VABI sceGnmValidateDisableDiagnostics(void);
-int APS5_VABI sceGnmValidateDisableDiagnostics2(void);
-int APS5_VABI sceGnmValidateDispatchCommandBuffers(void);
-int APS5_VABI sceGnmValidateDrawCommandBuffers(void);
-int APS5_VABI sceGnmValidateGetDiagnosticInfo(void);
-int APS5_VABI sceGnmValidateGetDiagnostics(void);
-int APS5_VABI sceGnmValidateOnSubmitEnabled(void);
-int APS5_VABI sceGnmValidateResetState(void);
-int APS5_VABI sceGnmValidationRegisterMemoryCheckCallback(void);
-}
 
 namespace {
 
@@ -84,7 +35,6 @@ int main() {
         sceGnmGetResourceUserData,
         sceGnmQueryResourceRegistrationUserMemoryRequirements,
         sceGnmRegisterGdsResource,
-        sceGnmRegisterOwner,
         sceGnmRegisterOwnerForSystem,
         sceGnmRegisterResource,
         sceGnmSetResourceRegistrationUserMemory,
@@ -104,6 +54,7 @@ int main() {
         sceGnmSetSpiEnableSqCounters,
         sceGnmSetSpiEnableSqCountersForUnitInstance,
     });
+    if (sceGnmRegisterOwner(nullptr, nullptr) != Failure) std::abort();
     RequireAll(NoInterface, {
         sceGnmDriverInternalRetrieveGnmInterface,
         sceGnmDriverInternalRetrieveGnmInterfaceForGpuDebugger,
@@ -114,7 +65,34 @@ int main() {
     RequireAll(0, {
         sceGnmDriverTraceInProgress,
         sceGnmValidateOnSubmitEnabled,
+        sceGnmDriverInternalVirtualQuery,
+        sceGnmGetCoredumpAddress,
+        sceGnmIsDebugResetAvailable,
+        sceGnmPaDisableFlipCallbacks,
+        sceGnmPaEnableFlipCallbacks,
+        sceGnmPaHeartbeat,
+        sceGnmRaiseUserExceptionEvent,
+        sceGnmValidateGetVersion,
+        libSceGnmDriverForNeoModeUnknown__minus_bNK8kTFf6s_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_2T1zOhnddFQ_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_7LTGukH_plus_M1A_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_MLr_plus_Fyrxf_plus_8_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_QP7vDGU0xDQ_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_QWuQed5Mus4_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_UGePHM7rmgA_nid_no_patch,
     });
+    RequireAll(Failure, {
+        libSceGnmDriverForNeoModeUnknown__plus_RaJBCVJZVM_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_1TRGZJsC5Y4_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_5R1E24FRI4w_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_6a3_plus_Twrkogk_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_HEOIaxbuVTA_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_epUMKkeaze8_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_gQNwGezNDgE_nid_no_patch,
+        libSceGnmDriverForNeoModeUnknown_v7QcBXR48L8_nid_no_patch,
+    });
+    libSceGnmDriverForNeoModeUnknown_8_plus_itHHi1ea0_nid_no_patch();
+    libSceGnmDriverForNeoModeUnknown_KKsYtugjKLw_nid_no_patch();
     RequireAll(-1, {
         sceGnmGetDbgGcHandle,
     });

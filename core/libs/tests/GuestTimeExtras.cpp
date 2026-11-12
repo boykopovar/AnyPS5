@@ -1,3 +1,5 @@
+#include "prx/libc/include/SonyCrt.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include <cstdint>
@@ -6,24 +8,6 @@
 #include <ctime>
 #include <limits>
 #include <random>
-
-struct Xtime {
-    std::int64_t sec;
-    std::int64_t nsec;
-};
-
-extern "C" {
-GuestTm* APS5_VABI gmtime_s_nid_postfix(const std::int64_t*, GuestTm*);
-GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t*, GuestTm*);
-GuestTm* APS5_VABI gmtime_r_nid_postfix(const std::int64_t*, GuestTm*);
-GuestTm* APS5_VABI localtime_r_nid_postfix(const std::int64_t*, GuestTm*);
-std::int64_t APS5_VABI timegm_nid_postfix(GuestTm*);
-void APS5_VABI tzset_nid_postfix();
-int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
-int APS5_VABI xtime_get_nid_postfix(Xtime*, int);
-Xtime APS5_VABI _Xtime_to_ts_nid_postfix(const Xtime*);
-Xtime APS5_VABI _Xtime_diff_to_ts_nid_postfix(const Xtime*);
-}
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -156,6 +140,7 @@ static void CheckXtime() {
 int main() {
     Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not set the time zone");
     tzset_nid_postfix();
+
     CheckReentrantConversions();
     CheckTimegmCases();
     CheckXtime();

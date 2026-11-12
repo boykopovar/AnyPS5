@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -10,15 +11,26 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-
-extern "C" {
-char* APS5_VABI realpath_nid_postfix(const char*, char*);
-int APS5_VABI chdir_nid_postfix(const char*);
-void APS5_VABI free_nid_postfix(void*);
-int* APS5_VABI __error_nid_postfix();
-}
+#include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static const char* UnreadablePage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    Require(page != nullptr);
+#else
+    void* page = mmap(nullptr, static_cast<std::size_t>(sysconf(_SC_PAGESIZE)), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    return static_cast<const char*>(page);
+}
 
 static bool Resolves(const std::string& path, const std::string& expected) {
     char out[1024];
@@ -80,6 +92,20 @@ int main() {
     free_nid_postfix(allocated);
 
     Require(Fails(nullptr, 22));
+    for (const char* unusable : {reinterpret_cast<const char*>(0x10), UnreadablePage()}) {
+        *__error_nid_postfix() = 0;
+        Require(realpath_nid_postfix(unusable, nullptr) == nullptr && *__error_nid_postfix() == 14);
+        char out[1024];
+        *__error_nid_postfix() = 0;
+        Require(realpath_nid_postfix(unusable, out) == nullptr && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(realpath_nid_postfix((guest + "/file.txt").c_str(), const_cast<char*>(unusable)) == nullptr && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(realpath_nid_postfix((guest + "/missing").c_str(), const_cast<char*>(unusable)) == nullptr && *__error_nid_postfix() == 2);
+    }
+    const std::string unbounded(4096, 'a');
+    *__error_nid_postfix() = 0;
+    Require(realpath_nid_postfix(unbounded.c_str(), nullptr) == nullptr && *__error_nid_postfix() == 63);
     Require(Fails("", 2));
     Require(Fails((guest + "/missing").c_str(), 2, guest + "/missing"));
     Require(Fails((guest + "/missing/../file.txt").c_str(), 2, guest + "/missing"));
@@ -100,6 +126,57 @@ int main() {
 
     *__error_nid_postfix() = 0;
     Require(realpath_nid_postfix((guest + "/missing").c_str(), nullptr) == nullptr && *__error_nid_postfix() == 2);
+
+    const auto createLink = [&](const std::filesystem::path& link, const std::string& target, bool toDirectory) {
+#ifdef _WIN32
+        return CreateSymbolicLinkW(link.c_str(), std::filesystem::path(target).make_preferred().c_str(),
+            (toDirectory ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0) | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+#else
+        std::error_code linkError;
+        if (toDirectory) std::filesystem::create_directory_symlink(target, link, linkError);
+        else std::filesystem::create_symlink(target, link, linkError);
+        return !linkError;
+#endif
+    };
+    std::vector<std::filesystem::path> files, directories;
+    const auto fileLink = [&](const std::filesystem::path& link, const std::string& target) {
+        files.push_back(link);
+        return createLink(link, target, false);
+    };
+    if (fileLink(directory / "file-link", "file.txt")) {
+        directories.push_back(directory / "directory-link");
+        Require(createLink(directory / "directory-link", "sub", true));
+        Require(fileLink(directory / "dangling-link", "missing"));
+        Require(fileLink(directory / "loop-a", "loop-b") && fileLink(directory / "loop-b", "loop-a"));
+        Require(fileLink(directory / "chain-link", "file-link"));
+        Require(fileLink(directory / "sub" / "up-link", "../file.txt"));
+        Require(Resolves(guest + "/file-link", guest + "/file.txt"));
+        Require(Resolves(guest + "/directory-link", guest + "/sub"));
+        Require(Resolves(guest + "/directory-link/inner.txt", guest + "/sub/inner.txt"));
+        Require(Resolves(guest + "/directory-link/../file.txt", guest + "/file.txt"));
+        Require(Resolves(guest + "/chain-link", guest + "/file.txt"));
+        Require(Resolves(guest + "/sub/up-link", guest + "/file.txt"));
+        Require(Resolves(guest + "/directory-link/up-link", guest + "/file.txt"));
+        Require(Resolves(guest + "/directory-link/", guest + "/sub"));
+        directories.push_back(directory / "absolute-link");
+        Require(createLink(directory / "absolute-link", (directory / "sub").string(), true));
+        Require(Resolves(guest + "/absolute-link/inner.txt", guest + "/absolute-link/inner.txt"));
+        Require(Resolves(guest + "/absolute-link/up-link", guest + "/absolute-link/up-link"));
+        Require(Fails((guest + "/dangling-link").c_str(), 2, guest + "/missing"));
+        Require(Fails((guest + "/dangling-link/x").c_str(), 2, guest + "/missing"));
+        Require(Fails((guest + "/loop-a").c_str(), 62));
+        Require(Fails((guest + "/file-link/x").c_str(), 20));
+        Require(Fails((guest + "/file-link/").c_str(), 20));
+        for (int index = 0; index < 34; ++index) {
+            Require(fileLink(directory / ("long-" + std::to_string(index)), index == 33 ? "file.txt" : "long-" + std::to_string(index + 1)));
+        }
+        Require(Resolves(guest + "/long-1", guest + "/file.txt"));
+        Require(Fails((guest + "/long-0").c_str(), 62));
+    }
+#ifdef _WIN32
+    for (const auto& link : files) DeleteFileW(link.c_str());
+    for (const auto& link : directories) RemoveDirectoryW(link.c_str());
+#endif
 
     std::filesystem::remove_all(directory);
     return 0;

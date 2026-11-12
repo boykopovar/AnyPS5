@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/MallocManagedSize.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -12,8 +13,6 @@
 #include <set>
 #include <stdexcept>
 #include <utility>
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 
@@ -322,6 +321,7 @@ void* APS5_VABI sceLibcPafMspaceMemalign_nid_postfix(void* handle, std::size_t a
 void APS5_VABI sceLibcPafMspaceFree_nid_postfix(void* handle, void* pointer, const void* owner) {
     (void)owner;
     sceLibcMspaceFree_nid_postfix(handle, pointer);
+
 }
 
 void* APS5_VABI sceLibcPafMspaceCalloc_nid_postfix(void* handle, std::size_t count, std::size_t size, const void* owner) {

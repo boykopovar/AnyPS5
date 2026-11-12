@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/Rwlock.hpp"
 #include "prx/libc/include/General.hpp"
@@ -6,14 +8,22 @@
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 static constexpr int SCE_OK = 0;
 static constexpr int SCE_KERNEL_ERROR_EPERM = 0x80020001;
 static constexpr int SCE_KERNEL_ERROR_ENOMEM = 0x8002000C;
 static constexpr int SCE_KERNEL_ERROR_EDEADLK = 0x8002000B;
+static constexpr int SCE_KERNEL_ERROR_EFAULT = 0x8002000E;
 static constexpr int SCE_KERNEL_ERROR_EBUSY = 0x80020010;
 static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = 0x8002003C;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
+static constexpr int FIRST_STORED_RWLOCK_TYPE = 1;
+static constexpr int LAST_STORED_RWLOCK_TYPE = 2;
+static constexpr int POSIX_EFAULT = 14;
+static constexpr std::size_t MAX_RWLOCK_NAME = 1024;
+static constexpr int POSIX_EINVAL = 22;
+static constexpr int POSIX_EAGAIN = 35;
 
 static PthreadRwlockPrivate* const DestroyedRwlock = reinterpret_cast<PthreadRwlockPrivate*>(std::uintptr_t{1});
 
@@ -54,6 +64,10 @@ static int EnterRead(PthreadRwlockPrivate* lock) {
 static int EnterWrite(PthreadRwlockPrivate* lock) {
     lock->_writer.store(std::this_thread::get_id(), std::memory_order_release);
     return SCE_OK;
+}
+
+bool RwlockOperations::LoadAttribute(const PthreadRwlockattr* attr, PthreadRwlockattr& handle) {
+    return GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle));
 }
 
 extern "C" {
@@ -102,8 +116,11 @@ int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock) {
 int APS5_VABI scePthreadRwlockTimedrdlock(PthreadRwlock* rwlock, KernelUseconds usec) {
     auto* lock = RequireRwlock(rwlock, __func__);
     if (!lock) return SCE_KERNEL_ERROR_EINVAL;
-    if (OwnsWrite(lock)) return SCE_KERNEL_ERROR_EDEADLK;
     const std::uint64_t deadline = TimedWait::DeadlineNanos(usec);
+    if (OwnsWrite(lock)) {
+        TimedWait::SleepUntil(deadline);
+        return SCE_KERNEL_ERROR_ETIMEDOUT;
+    }
     std::unique_lock state(lock->_state);
     if (!lock->_changed.WaitUntil(state, deadline, [&] { return ReaderMayEnter(lock); })) return SCE_KERNEL_ERROR_ETIMEDOUT;
     return EnterRead(lock);
@@ -131,8 +148,11 @@ int APS5_VABI scePthreadRwlockTrywrlock(PthreadRwlock* rwlock) {
 int APS5_VABI scePthreadRwlockTimedwrlock(PthreadRwlock* rwlock, KernelUseconds usec) {
     auto* lock = RequireRwlock(rwlock, __func__);
     if (!lock) return SCE_KERNEL_ERROR_EINVAL;
-    if (OwnsWrite(lock)) return SCE_KERNEL_ERROR_EDEADLK;
     const std::uint64_t deadline = TimedWait::DeadlineNanos(usec);
+    if (OwnsWrite(lock)) {
+        TimedWait::SleepUntil(deadline);
+        return SCE_KERNEL_ERROR_ETIMEDOUT;
+    }
     std::unique_lock state(lock->_state);
     ++lock->_waitingWriters;
     const bool acquired = lock->_changed.WaitUntil(state, deadline, [&] { return WriterMayEnter(lock); });
@@ -159,9 +179,14 @@ int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock) {
 }
 
 int APS5_VABI scePthreadRwlockattrDestroy(PthreadRwlockattr* attr) {
-    if (!attr || !*attr) throw std::runtime_error("scePthreadRwlockattrDestroy: null attr");
-    delete *attr;
-    *attr = nullptr;
+    if (!attr) throw std::runtime_error("scePthreadRwlockattrDestroy: null attr");
+    PthreadRwlockattr handle = nullptr;
+    if (!RwlockOperations::LoadAttribute(attr, handle)) return SCE_KERNEL_ERROR_EFAULT;
+    if (!handle) throw std::runtime_error("scePthreadRwlockattrDestroy: null attr");
+    if (handle == DESTROYED_RWLOCKATTR) throw std::runtime_error("scePthreadRwlockattrDestroy: destroyed attr");
+    const PthreadRwlockattr cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(attr, &cleared, sizeof(cleared))) return SCE_KERNEL_ERROR_EFAULT;
+    delete handle;
     return SCE_OK;
 }
 
@@ -169,13 +194,36 @@ int APS5_VABI scePthreadRwlockattrInit(PthreadRwlockattr* attr) {
     if (!attr) throw std::runtime_error("scePthreadRwlockattrInit: null attr");
     auto* p = new (std::nothrow) PthreadRwlockattrPrivate{0};
     if (!p) return SCE_KERNEL_ERROR_ENOMEM;
-    *attr = p;
+    if (!GuestCopyOut_nid_no_patch(attr, &p, sizeof(p))) {
+        delete p;
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return SCE_OK;
 }
 
 int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type) {
-    if (!attr || !*attr) throw std::runtime_error("scePthreadRwlockattrSettype: null attr");
-    (*attr)->type = type;
+    if (!attr) return SCE_KERNEL_ERROR_EINVAL;
+    PthreadRwlockattr handle = nullptr;
+    if (!RwlockOperations::LoadAttribute(attr, handle)) return SCE_KERNEL_ERROR_EFAULT;
+    if (!handle || handle == DESTROYED_RWLOCKATTR || type < FIRST_STORED_RWLOCK_TYPE || type > LAST_STORED_RWLOCK_TYPE) return SCE_KERNEL_ERROR_EINVAL;
+    handle->type = type;
+    return SCE_OK;
+}
+
+int APS5_VABI pthread_rwlock_setname_np_nid_postfix(PthreadRwlock* rwlock, const char* name) {
+    if (!rwlock) throw std::runtime_error("pthread_rwlock_setname_np: null rwlock");
+    PthreadRwlock probe = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&probe, rwlock, sizeof(probe))) return POSIX_EFAULT;
+    PthreadRwlock current = std::atomic_ref<PthreadRwlock>(*rwlock).load(std::memory_order_acquire);
+    if (current == nullptr) throw std::runtime_error("pthread_rwlock_setname_np: statically initialized rwlock");
+    if (current == DestroyedRwlock) throw std::runtime_error("pthread_rwlock_setname_np: destroyed rwlock");
+    std::lock_guard state(current->_state);
+    if (current->_named) return POSIX_EAGAIN;
+    if (!name) return POSIX_EINVAL;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, MAX_RWLOCK_NAME, copy)) return error;
+    current->_name = std::move(copy);
+    current->_named = true;
     return SCE_OK;
 }
 

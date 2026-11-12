@@ -41,8 +41,15 @@ struct MacOsTlsExport {
     std::uint64_t Flags = 0;
 };
 
+struct MacOsTraceImport {
+    std::uint32_t Rva;
+    std::string Name;
+    std::string Library;
+};
+
 struct MacOsImageInput {
     bool Executable = true;
+    bool FunctionSymbolRoots = false;
     std::string InstallName;
     const std::vector<std::uint8_t>* Source = nullptr;
     const std::vector<Domain::ProgramHeader>* Headers = nullptr;
@@ -61,6 +68,8 @@ struct MacOsImageInput {
     std::vector<MacOsTlsImport> TlsImports;
     std::vector<MacOsTlsExport> TlsExports;
     const std::vector<Codegen::TrampolineSite>* Trampolines = nullptr;
+    bool TraceImports = false;
+    std::vector<MacOsTraceImport> Traced;
     std::function<void(std::string_view)> Message;
 };
 

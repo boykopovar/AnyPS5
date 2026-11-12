@@ -1,12 +1,11 @@
 #ifndef CORE_LIBS_PRX_LIBSCEOPUSDEC_INCLUDE_OPUSDECODER_HPP
 #define CORE_LIBS_PRX_LIBSCEOPUSDEC_INCLUDE_OPUSDECODER_HPP
 
-#include <algorithm>
-#include <cmath>
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -15,10 +14,7 @@
 #include <utility>
 #include <vector>
 
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libswresample/swresample.h>
-}
+#include <opus.h>
 
 namespace {
 
@@ -32,9 +28,13 @@ public:
         for (const auto& [id, owner] : contexts)
             if (owner == context) fail("context already initialized");
         if (nextContext == 0) fail("context identifiers exhausted");
-        const auto id = nextContext++;
+        const auto id = nextContext;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(context, &id, sizeof(id));
+        errno = savedErrno;
+        if (!copied) return error(13);
+        ++nextContext;
         contexts.emplace(id, context);
-        *context = id;
         return 0;
     }
 
@@ -65,20 +65,10 @@ public:
         decoder->context = *context;
         decoder->channels = channels;
         decoder->sampleRate = sampleRate;
-        const auto* codec = avcodec_find_decoder(AV_CODEC_ID_OPUS);
-        if (!codec) fail("FFmpeg Opus decoder unavailable");
-        decoder->codec = avcodec_alloc_context3(codec);
-        if (!decoder->codec) throw std::bad_alloc();
-        av_channel_layout_default(&decoder->codec->ch_layout, channels);
-        decoder->codec->sample_rate = 48000;
-        if (avcodec_open2(decoder->codec, codec, nullptr) < 0) fail("cannot open FFmpeg decoder");
-        if (sampleRate != 48000) {
-            AVChannelLayout layout{};
-            av_channel_layout_default(&layout, channels);
-            if (swr_alloc_set_opts2(&decoder->resampler, &layout, AV_SAMPLE_FMT_FLT, sampleRate, &layout, AV_SAMPLE_FMT_FLT, 48000, 0, nullptr) < 0 ||
-                swr_init(decoder->resampler) < 0)
-                fail("cannot open FFmpeg resampler");
-        }
+        int error = OPUS_OK;
+        decoder->codec.reset(opus_decoder_create(sampleRate, channels, &error));
+        if (error == OPUS_ALLOC_FAIL) throw std::bad_alloc();
+        if (!decoder->codec || error != OPUS_OK) fail("cannot create libopus decoder");
         decoders.emplace(state, std::move(decoder));
         return 0;
     }
@@ -92,50 +82,114 @@ public:
         std::lock_guard lock(mutex);
         const auto found = decoders.find(state);
         if (found == decoders.end()) return error(1);
-        if (bytes == 0 || bytes > std::numeric_limits<int>::max() - AV_INPUT_BUFFER_PADDING_SIZE) fail("packet loss concealment or oversized packet is not implemented");
+        if (bytes == 0) fail("packet loss concealment is not implemented");
         auto& decoder = *found->second;
+        if (decoder.unknownFlag != 0) fail("decoding with request 4050 set is not implemented");
         if (celtOnly && (data[0] >> 3) < 16) fail("SILK and hybrid packets are not implemented");
-        const int samples = packetSamples(data, bytes) / (48000 / decoder.sampleRate);
+        const int samples = opus_packet_get_nb_samples(data, bytes, decoder.sampleRate);
+        if (samples <= 0) fail("invalid packet duration");
         const int outputBytes = samples * decoder.channels * 2;
-        if (capacity / 2 * 2 < outputBytes) fail("PCM buffer is too small");
-        std::unique_ptr<AVPacket, void (*)(AVPacket*)> packet(av_packet_alloc(), [](AVPacket* p) { av_packet_free(&p); });
-        std::unique_ptr<AVFrame, void (*)(AVFrame*)> frame(av_frame_alloc(), [](AVFrame* f) { av_frame_free(&f); });
-        if (!packet || !frame || av_new_packet(packet.get(), bytes) < 0) throw std::bad_alloc();
-        std::memcpy(packet->data, data, bytes);
-        if (avcodec_send_packet(decoder.codec, packet.get()) < 0 || avcodec_receive_frame(decoder.codec, frame.get()) < 0)
-            fail("FFmpeg rejected the packet");
-        const auto format = static_cast<AVSampleFormat>(frame->format);
-        if (frame->ch_layout.nb_channels != decoder.channels || frame->sample_rate != 48000 ||
-            (format != AV_SAMPLE_FMT_FLTP && format != AV_SAMPLE_FMT_FLT))
-            fail("unexpected FFmpeg PCM format");
-        std::vector<float> decoded;
-        decoded.reserve(static_cast<std::size_t>(frame->nb_samples) * decoder.channels);
-        for (int sample = 0; sample < frame->nb_samples; ++sample) {
-            for (int channel = 0; channel < decoder.channels; ++channel) {
-                const auto* source = reinterpret_cast<const float*>(frame->extended_data[format == AV_SAMPLE_FMT_FLTP ? channel : 0]);
-                decoded.push_back(source[format == AV_SAMPLE_FMT_FLTP ? sample : sample * decoder.channels + channel]);
+        if (capacity < outputBytes) fail("PCM buffer is too small");
+        std::vector<std::int16_t> decoded(static_cast<std::size_t>(samples) * decoder.channels);
+        const int result = opus_decode(decoder.codec.get(), data, bytes, decoded.data(), samples, 0);
+        if (result < 0) fail("libopus rejected the packet");
+        if (result != samples) fail("unexpected libopus PCM duration");
+        opus_uint32 range = 0;
+        if (opus_decoder_ctl(decoder.codec.get(), OPUS_GET_FINAL_RANGE(&range)) != OPUS_OK) fail("libopus did not report the final range");
+        decoder.finalRange = range;
+        decoder.decoded = true;
+        std::memcpy(pcm, decoded.data(), static_cast<std::size_t>(outputBytes));
+        return outputBytes;
+    }
+
+    struct CtlArguments {
+        std::int32_t value = 0;
+        std::int32_t* output = nullptr;
+        std::int32_t* second = nullptr;
+    };
+
+    template <typename TReadValue, typename TReadPointer>
+    static CtlArguments ReadCtlArguments(int request, TReadValue readValue, TReadPointer readPointer) {
+        CtlArguments arguments;
+        switch (request) {
+        case OPUS_SET_GAIN_REQUEST:
+        case OPUS_SET_PHASE_INVERSION_DISABLED_REQUEST:
+        case OPUS_SET_INBAND_FEC_REQUEST:
+        case unknownFlagSet: arguments.value = readValue(); break;
+        case OPUS_GET_SAMPLE_RATE_REQUEST:
+        case OPUS_GET_FINAL_RANGE_REQUEST:
+        case OPUS_GET_GAIN_REQUEST:
+        case OPUS_GET_PHASE_INVERSION_DISABLED_REQUEST:
+        case OPUS_GET_INBAND_FEC_REQUEST:
+        case unknownFlagGet: arguments.output = readPointer(); break;
+        case -1:
+            arguments.output = readPointer();
+            arguments.second = readPointer();
+            break;
+        }
+        return arguments;
+    }
+
+    int Ctl(void* state, int request, const CtlArguments& arguments) {
+        if (!state) return error(0);
+        std::lock_guard lock(mutex);
+        const auto found = decoders.find(state);
+        if (found == decoders.end()) return error(1);
+        auto& decoder = *found->second;
+        const auto value = arguments.value;
+        auto* output = arguments.output;
+        const auto get = [&](std::int32_t current) {
+            if (!output) return error(13);
+            *output = current;
+            return 0;
+        };
+        switch (request) {
+        case OPUS_RESET_STATE:
+            decoder.inbandFec = 0;
+            decoder.gain = 0;
+            decoder.unknownFlag = 0;
+            decoder.phaseInversionDisabled = 0;
+            if (opus_decoder_ctl(decoder.codec.get(), OPUS_RESET_STATE) != OPUS_OK) fail("libopus did not reset");
+            apply(decoder);
+            return 0;
+        case OPUS_GET_SAMPLE_RATE_REQUEST: return get(decoder.sampleRate);
+        case OPUS_GET_FINAL_RANGE_REQUEST: return get(static_cast<std::int32_t>(decoder.finalRange));
+        case OPUS_SET_GAIN_REQUEST:
+            if (value < -32768 || value > 32767) return error(12);
+            decoder.gain = value;
+            apply(decoder);
+            return 0;
+        case OPUS_GET_GAIN_REQUEST: return get(decoder.gain);
+        case OPUS_SET_PHASE_INVERSION_DISABLED_REQUEST:
+            if (static_cast<std::uint32_t>(value) > 1) return error(celtOnly ? 17 : 27);
+            decoder.phaseInversionDisabled = value;
+            apply(decoder);
+            return 0;
+        case OPUS_GET_PHASE_INVERSION_DISABLED_REQUEST: return get(decoder.phaseInversionDisabled);
+        case -1: {
+            auto* second = arguments.second;
+            if (!output || !second) return error(13);
+            if (decoder.decoded) fail("the AJM result words of the last batch are not modelled");
+            *output = 0;
+            *second = 0;
+            return 0;
+        }
+        }
+        if (!celtOnly) {
+            switch (request) {
+            case OPUS_SET_INBAND_FEC_REQUEST:
+                if (static_cast<std::uint32_t>(value) > 1) return error(16);
+                decoder.inbandFec = value;
+                return 0;
+            case OPUS_GET_INBAND_FEC_REQUEST: return get(decoder.inbandFec);
+            case unknownFlagSet:
+                if (static_cast<std::uint32_t>(value) > 1) return error(17);
+                decoder.unknownFlag = value;
+                return 0;
+            case unknownFlagGet: return get(decoder.unknownFlag);
             }
         }
-        if (decoder.resampler) {
-            const int capacitySamples = swr_get_out_samples(decoder.resampler, frame->nb_samples);
-            if (capacitySamples < 0) fail("FFmpeg resampler rejected the frame");
-            std::vector<float> resampled(static_cast<std::size_t>(capacitySamples) * decoder.channels);
-            auto* output = reinterpret_cast<std::uint8_t*>(resampled.data());
-            const auto* input = reinterpret_cast<const std::uint8_t*>(decoded.data());
-            const int converted = swr_convert(decoder.resampler, &output, capacitySamples, &input, frame->nb_samples);
-            if (converted < 0) fail("FFmpeg resampler rejected the frame");
-            resampled.resize(static_cast<std::size_t>(converted) * decoder.channels);
-            decoded = std::move(resampled);
-        }
-        decoder.pending.insert(decoder.pending.end(), decoded.begin(), decoded.end());
-        const auto count = static_cast<std::size_t>(samples) * decoder.channels;
-        if (decoder.pending.size() < count) decoder.pending.insert(decoder.pending.begin(), count - decoder.pending.size(), 0.0f);
-        for (std::size_t index = 0; index < count; ++index) {
-            const auto converted = static_cast<std::int16_t>(std::lrint(std::clamp(decoder.pending[index] * 32768.0f, -32768.0f, 32767.0f)));
-            std::memcpy(reinterpret_cast<std::uint8_t*>(pcm) + index * 2, &converted, 2);
-        }
-        decoder.pending.erase(decoder.pending.begin(), decoder.pending.begin() + static_cast<std::ptrdiff_t>(count));
-        return outputBytes;
+        return error(14);
     }
 
     int Destroy(void* state) {
@@ -150,14 +204,17 @@ private:
         std::uint32_t context;
         int channels;
         int sampleRate;
-        AVCodecContext* codec = nullptr;
-        SwrContext* resampler = nullptr;
-        std::vector<float> pending;
-        ~Decoder() {
-            swr_free(&resampler);
-            avcodec_free_context(&codec);
-        }
+        std::unique_ptr<OpusDecoder, void (*)(OpusDecoder*)> codec{nullptr, opus_decoder_destroy};
+        std::uint32_t finalRange = 0;
+        bool decoded = false;
+        std::int32_t inbandFec = 0;
+        std::int32_t gain = 0;
+        std::int32_t unknownFlag = 0;
+        std::int32_t phaseInversionDisabled = 0;
     };
+
+    static constexpr int unknownFlagSet = 4050;
+    static constexpr int unknownFlagGet = 4051;
 
     const char* name;
     bool celtOnly;
@@ -170,25 +227,14 @@ private:
         return static_cast<int>((celtOnly ? 0x81400000u : 0x81740000u) + offset);
     }
 
-    [[noreturn]] void fail(const char* message) const {
-        throw std::runtime_error(std::string(name) + ": " + message);
+    void apply(Decoder& decoder) const {
+        if (opus_decoder_ctl(decoder.codec.get(), OPUS_SET_GAIN(decoder.gain)) != OPUS_OK ||
+            opus_decoder_ctl(decoder.codec.get(), OPUS_SET_PHASE_INVERSION_DISABLED(decoder.phaseInversionDisabled)) != OPUS_OK)
+            fail("libopus rejected a decoder setting");
     }
 
-    int packetSamples(const std::uint8_t* packet, int size) const {
-        const unsigned config = packet[0] >> 3;
-        const int frameSamples = config < 12 ? ((config & 3) == 3 ? 2880 : 480 << (config & 3))
-                                : config < 16 ? 480 << (config & 1) : 120 << (config & 3);
-        int frames = 1;
-        switch (packet[0] & 3) {
-        case 1:
-        case 2: frames = 2; break;
-        case 3:
-            if (size < 2) fail("truncated packet frame count");
-            frames = packet[1] & 63;
-            break;
-        }
-        if (frames == 0 || frames * frameSamples > 5760) fail("invalid packet duration");
-        return frames * frameSamples;
+    [[noreturn]] void fail(const char* message) const {
+        throw std::runtime_error(std::string(name) + ": " + message);
     }
 };
 

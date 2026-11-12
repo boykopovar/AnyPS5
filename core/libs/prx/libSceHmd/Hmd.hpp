@@ -15,6 +15,7 @@ inline constexpr std::int32_t DeviceDisconnected = static_cast<std::int32_t>(0x8
 inline constexpr std::int32_t ParameterNull = static_cast<std::int32_t>(0x81110008);
 inline constexpr std::int32_t ParameterInvalid = static_cast<std::int32_t>(0x81110009);
 inline constexpr std::int32_t UnsupportedFeature = static_cast<std::int32_t>(0x81110016);
+inline constexpr std::uint32_t StartupStateSdkVersion = 0x04500000;
 
 enum class DeviceStatus : std::uint32_t {
     Ready = 0,
@@ -51,10 +52,25 @@ static_assert(offsetof(DeviceInformation, hmuMount) == 24);
 
 }
 
-struct HmdFieldOfView;
-struct HmdEyeOffset;
+struct HmdFieldOfView {
+    float angles[4];
+};
+struct HmdEyeOffset {
+    float x;
+    float y;
+    float z;
+};
 struct HmdInertialSensorData;
-struct HmdAssemblyError;
+struct HmdAssemblyError {
+    float offsets[4];
+};
+struct HmdDistortionCommandParameter;
+struct HmdWideNearDistortionCommandParameter;
+struct Hmd2dVrCommandParameter;
+struct HmdCommandBuffer {
+    const std::uint32_t* commands;
+    std::uint32_t dwordCount;
+};
 
 extern "C" {
 std::int32_t APS5_VABI sceHmdInitialize(const Hmd::InitializeParam* param);
@@ -78,6 +94,16 @@ int APS5_VABI sceHmdGetFieldOfView(std::int32_t handle, HmdFieldOfView* fieldOfV
 int APS5_VABI sceHmdGet2DEyeOffset(std::int32_t handle, HmdEyeOffset* leftOffset, HmdEyeOffset* rightOffset);
 int APS5_VABI sceHmdGetInertialSensorData(std::int32_t handle, HmdInertialSensorData* data, std::uint32_t count);
 int APS5_VABI sceHmdGetAssyError(HmdAssemblyError* data);
+int APS5_VABI sceHmdDistortionGet2dVrCommand(std::int32_t handle, const Hmd2dVrCommandParameter* parameter, HmdCommandBuffer* commandBuffer);
+int APS5_VABI sceHmdDistortionGetCorrectionCommand(std::int32_t handle, const HmdDistortionCommandParameter* parameter, HmdCommandBuffer* commandBuffer);
+int APS5_VABI sceHmdDistortionGetWideNearCorrectionCommand(std::int32_t handle, const HmdWideNearDistortionCommandParameter* parameter, HmdCommandBuffer* commandBuffer);
+int APS5_VABI sceHmdGet2dVrCommand(std::int32_t handle, const Hmd2dVrCommandParameter* parameter, HmdCommandBuffer* commandBuffer);
+int APS5_VABI sceHmdGetDistortionCorrectionCommand(std::int32_t handle, const HmdDistortionCommandParameter* parameter, HmdCommandBuffer* commandBuffer);
+int APS5_VABI sceHmdGetWideNearDistortionCorrectionCommand(std::int32_t handle, const HmdWideNearDistortionCommandParameter* parameter, HmdCommandBuffer* commandBuffer);
+bool APS5_VABI sceHmdInternalIsGameVr2d(void);
+bool APS5_VABI sceHmdInternalIsMiniAppVr2d(void);
+bool APS5_VABI sceHmdInternalIsCommonDlgVr2d(void);
+bool APS5_VABI sceHmdInternalIsCommonDlgMiniAppVr2d(void);
 }
 
 #endif

@@ -35,7 +35,8 @@ async function run(scenario) {
           return { data: scenario.commits };
         },
         getBranch: async () => ({ data: { commit: { sha: 'main' } } }),
-        getCollaboratorPermissionLevel: async () => ({ data: { permission: 'write' } })
+        getCollaboratorPermissionLevel: async () => ({ data: { permission: 'write' } }),
+        getContent: async () => ({ data: { content: Buffer.from(scenario.workflow ?? '').toString('base64') } })
       },
       search: {
         issuesAndPullRequests: async (params) => {
@@ -47,7 +48,7 @@ async function run(scenario) {
         }
       }
     },
-    paginate: async () => scenario.files.map((filename) => ({ filename }))
+    paginate: async () => scenario.files.map((file) => typeof file === 'string' ? { filename: file } : file)
   };
   const context = {
     eventName: scenario.manual ? 'workflow_dispatch' : 'pull_request',
@@ -116,9 +117,9 @@ class RelinkerEligibilityTests(unittest.TestCase):
                 cls.process.wait()
         cls.temp.cleanup()
 
-    def run_gate(self, commits, search, files=("core/relinker/main.cpp",), manual=False):
+    def run_gate(self, commits, search, files=("core/relinker/main.cpp",), manual=False, workflow=None):
         self.process.stdin.write(json.dumps({
-            "commits": commits, "search": search, "files": list(files), "manual": manual,
+            "commits": commits, "search": search, "files": list(files), "manual": manual, "workflow": workflow,
         }) + "\n")
         self.process.stdin.flush()
         response = queue.Queue(maxsize=1)
@@ -141,6 +142,11 @@ class RelinkerEligibilityTests(unittest.TestCase):
         result = self.run_gate([{"sha": "a"}], None)
         self.assertIs(result["outputs"]["relinker"], True)
         self.assertEqual(result["calls"], [["listCommits", "main", "author"]])
+
+    def test_pull_requests_run_one_macos_architecture_and_manual_runs_both(self):
+        macos = lambda result: [host.get("architectures", "native") for host in json.loads(result["outputs"]["relinker-hosts"]) if host["os"].startswith("macos")]
+        self.assertEqual(macos(self.run_gate([{"sha": "a"}], None)), ["native"])
+        self.assertEqual(macos(self.run_gate([{"sha": "a"}], None, manual=True)), ["native", "x86_64"])
 
     def test_author_with_only_merged_pull_requests_runs_the_relinker(self):
         result = self.run_gate([], {"total_count": 12, "incomplete_results": False, "items": []})
@@ -174,11 +180,82 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(result["outputs"]["write-watch"], True)
         self.assertEqual(result["calls"], [])
 
+    def test_write_watch_backing_test_runs_the_write_watch_job(self):
+        for path in ("core/libs/tests/WriteWatchBacking.cpp", "core/libs/tests/WriteWatch.cpp"):
+            with self.subTest(path=path):
+                self.assertIs(self.run_gate([], None, files=(path,))["outputs"]["write-watch"], True)
+
+    def test_relinker_build_inputs_outside_the_relinker_run_the_relinker(self):
+        for path in ("core/libs/nid/src/NidCompute.cpp", "core/libs/nid/src/Sha1.cpp",
+                     "core/libs/nid/include/nid/NidCompute.hpp", "core/libs/nid/include/nid/Sha1.hpp",
+                     "core/libs/prx/libkernel/KernelErrors.hpp", "core/libs/prx/libkernel/DirectMemory/DirectMemory.hpp",
+                     "core/libs/prx/libScePad/tests/InputCommandFile.cpp", "core/libs/prx/libScePad/include/InputCommandFile.hpp",
+                     "core/shader/recompiler/IntermediateRepresentation/src/IrValue.cpp",
+                     "core/shader/recompiler/ShaderCacheVersion.cmake", ".github/pull_request_template.md",
+                     ".github/workflows/pr-overlap.yml"):
+            with self.subTest(path=path):
+                self.assertIs(self.run_gate([{"sha": "a"}], None, files=(path,))["outputs"]["relinker"], True)
+
+    def test_files_beside_relinker_build_inputs_skip_the_relinker(self):
+        for path in ("core/libs/nid/src/ElfNidPatcher.cpp", "core/libs/prx/libkernel/DirectMemory/DirectMemory.cpp",
+                     "core/libs/prx/libScePad/include/Pad.hpp", ".github/workflows/labels.yml"):
+            with self.subTest(path=path):
+                result = self.run_gate([{"sha": "a"}], None, files=(path,))
+                self.assertIs(result["outputs"]["relinker"], False)
+                self.assertEqual(result["calls"], [])
+
+    def test_workflow_edit_runs_only_the_jobs_it_touches(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        for job, relinker, register_context in (("relinker-asan", True, False), ("register-context", False, True)):
+            with self.subTest(job=job):
+                line = next(index for index in range(lines.index(f"  {job}:"), len(lines))
+                            if lines[index].strip().startswith("timeout-minutes:")) + 1
+                patch = f"@@ -{line},1 +{line},1 @@\n-{lines[line - 1]}\n+{lines[line - 1]}"
+                result = self.run_gate([{"sha": "a"}], None, workflow=text,
+                                       files=({"filename": ".github/workflows/build.yml", "patch": patch},))
+                self.assertIs(result["outputs"]["relinker"], relinker)
+                self.assertIs(result["outputs"]["register-context"], register_context)
+                self.assertIs(result["outputs"]["write-watch"], False)
+                self.assertEqual(result["warnings"], [])
+
     def test_manual_run_checks_no_author(self):
         result = self.run_gate([], None, manual=True)
         self.assertIs(result["outputs"]["relinker"], True)
         self.assertEqual(result["calls"], [])
         self.assertIs(self.run_gate([], None, files=("README.md",), manual=True)["outputs"]["relinker"], False)
+
+
+class EligibilityJobConditionTests(unittest.TestCase):
+    def eligibility_runs(self, event_name, ref):
+        lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        job = lines.index("  eligibility:")
+        condition = next(line.split("if:", 1)[1].strip() for line in lines[job + 1:] if line.strip().startswith("if:"))
+        expression = condition.replace("github.event_name", repr(event_name)).replace("github.ref", repr(ref))
+        return eval(expression.replace("||", " or ").replace("&&", " and "), {})
+
+    def test_manual_run_from_a_branch_runs_eligibility(self):
+        self.assertTrue(self.eligibility_runs("workflow_dispatch", "refs/heads/fix/some-branch"))
+
+    def test_pull_request_and_main_push_still_run_eligibility(self):
+        self.assertTrue(self.eligibility_runs("pull_request", "refs/pull/7/merge"))
+        self.assertTrue(self.eligibility_runs("push", "refs/heads/main"))
+
+    def test_push_from_a_branch_skips_eligibility(self):
+        self.assertFalse(self.eligibility_runs("push", "refs/heads/fix/some-branch"))
+
+
+class ConcurrencyGroupTests(unittest.TestCase):
+    def workflow_line(self, prefix):
+        lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        return next(line.strip() for line in lines if line.strip().startswith(prefix))
+
+    def test_each_push_to_main_has_its_own_concurrency_group(self):
+        group = self.workflow_line("group: build-${{ github.event_name }}-")
+        self.assertIn("(github.event_name == 'push' && github.sha)", group)
+
+    def test_pushes_are_never_cancelled_by_a_later_push(self):
+        self.assertEqual(self.workflow_line("cancel-in-progress:"), "cancel-in-progress: ${{ github.event_name != 'push' }}")
 
 
 if __name__ == "__main__":

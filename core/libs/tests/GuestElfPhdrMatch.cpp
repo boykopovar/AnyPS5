@@ -1,13 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI __elf_phdr_match_addr_nid_postfix(dl_phdr_info*, void*);
-}
 
 static void Require(bool condition) {
     if (!condition) std::abort();

@@ -25,6 +25,8 @@ using UcpFiles = std::map<std::string, std::string_view, std::less<>>;
 
 UcpFiles ReadUcp(std::string_view data);
 
+struct JsonMember;
+
 class Json {
 public:
     enum class Kind { Null, Bool, Number, String, Array, Object };
@@ -33,12 +35,18 @@ public:
     bool boolean = false;
     std::string text;
     std::vector<Json> items;
-    std::vector<std::pair<std::string, Json>> members;
+    std::vector<JsonMember> members;
 
     const Json* Find(std::string_view key) const;
     bool IsTrue() const;
     std::optional<std::uint64_t> Unsigned() const;
+    std::optional<std::int64_t> Signed() const;
     std::optional<std::int32_t> Id() const;
+};
+
+struct JsonMember {
+    std::string first;
+    Json second;
 };
 
 Json ParseJson(std::string_view text);
@@ -89,17 +97,28 @@ struct TrophyPackage {
 
 TrophyPackage ParseTrophyPackage(std::string_view ucp, std::string_view language);
 
-enum class StatType { UInt32, UInt64 };
+enum class StatType { UInt32, UInt64, Int32 };
+
+enum class StatAggregation { Latest, Max };
 
 struct StatDefinition {
     StatType type = StatType::UInt64;
+    StatAggregation aggregation = StatAggregation::Latest;
     std::uint64_t minimum = 0;
     std::uint64_t maximum = UINT64_MAX;
+    std::uint64_t initial = 0;
+};
+
+struct StatFilter {
+    std::string path;
+    std::uint64_t value = 0;
+    std::optional<std::int64_t> greaterThan;
 };
 
 struct StatRule {
     std::string input;
     std::uint64_t statId = 0;
+    std::optional<StatFilter> filter;
 };
 
 struct StatRules {

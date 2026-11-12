@@ -1,10 +1,670 @@
 # libSceUserService technical debt
 
+### Functional
+
+- [sceUserServiceInitialize](../../../core/libs/prx/libSceUserService/Export.cpp) - returning `0x80960005` (`USER_SERVICE_ERROR_INVALID_ARGUMENT`) for an unmapped or unreadable parameter pointer is a defensive host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
+### Unsupported account state
+
+- [sceUserServiceIsKratosUser, sceUserServiceIsKratosPrimaryUser and sceUserServiceGetKratosPrimaryUser](../../../core/libs/prx/libSceUserService/Export.cpp) throw because the account-state backend and Cronos behavior are unavailable. A non-Cronos model alone does not establish the full export contract.
+- [sceUserServiceIsUserStorageAccountBound](../../../core/libs/prx/libSceUserService/Export.cpp) throws because linked PSN and online-storage account state is unavailable; returning false would conceal the missing backend.
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceUserService/InventoryExports.cpp) - 35 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. None of these NIDs appears in the pinned public 3.20 catalogue for this library. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `sceUserServiceGetPartyChatTranscriptionVoiceType` | `Ebq9pcMYrko` |
+| `sceUserServiceSetVoiceAgentEnableByButton` | `Jz06XYyyqGE` |
+| `Unknown` | `-JCFmPNhxY8` |
+| `Unknown` | `-dkPbHlL9O8` |
+| `Unknown` | `-o+vKoB+bIw` |
+| `Unknown` | `0rgUYD57RHc` |
+| `Unknown` | `1b1BuBizZ2Q` |
+| `Unknown` | `1fV-P4lyYAM` |
+| `Unknown` | `6Qsib4RLbFw` |
+| `Unknown` | `6erDJ4-MGCs` |
+| `Unknown` | `A-wBTL+Cs5A` |
+| `Unknown` | `BdzmN4JP3JM` |
+| `Unknown` | `Bx+ESDBWJm4` |
+| `Unknown` | `Cqt7pJZRKLI` |
+| `Unknown` | `D5lYX9Wm7PI` |
+| `Unknown` | `DL6cKVeISqs` |
+| `Unknown` | `GbRykQBfmM8` |
+| `Unknown` | `JD766DzZIIU` |
+| `Unknown` | `L9NSPGwLZTQ` |
+| `Unknown` | `PBJH7EFon8c` |
+| `Unknown` | `UKInJ0LzusI` |
+| `Unknown` | `WGYLbMB95kM` |
+| `Unknown` | `YZwUXHtKrXI` |
+| `Unknown` | `fPmaQlxVoqI` |
+| `Unknown` | `hKzuaakSOLE` |
+| `Unknown` | `iRkGgbFAhcw` |
+| `Unknown` | `isbcQWjV-qU` |
+| `Unknown` | `keFAPHk6pIc` |
+| `Unknown` | `oF3Ygwz32Bs` |
+| `Unknown` | `pfgU0SxMMxw` |
+| `Unknown` | `pr3J39r9ArQ` |
+| `Unknown` | `shuQwNy79HM` |
+| `Unknown` | `tPbEIE0wYCM` |
+| `Unknown` | `u5SR3+a0lTw` |
+| `Unknown` | `ys8aAGjUads` |
+
+- [13.60 inventory exports](../../../core/libs/prx/libSceUserService/Inventory1360Exports.cpp) - the defined function exports below, from the [PS5 13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceuserservice-ec97f04de9.jsonl), are import-resolution declarations only. Eight of the 12 named entries are not in the pinned symbol database; each name hashes to its NID, and the four that the database resolves (AccessibilityKeyremapEnableAston, Hmd2CinematicAudioRotation, IsPersonalizedHrtfEnabled, UserWithHearingAssist) are named after their resolved symbols. The other entries use literal NID aliases. None appears in the pinned public 3.20 catalogue for this library. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `sceUserServiceGetNotificationSettings_4` | `yUJo-ds9Rks` |
+| `sceUserServiceGetPartyGameIconInstallHistory` | `2Sr4VoLCSNI` |
+| `sceUserServiceSetA11yControllerInitialSetupProgress` | `P+pOA+RRvF8` |
+| `sceUserServiceSetA11yControllerLedBrightness` | `Aspwt4NNVto` |
+| `sceUserServiceSetAccessibilityKeyremapEnableAston` | `Q89EQaIzT0o` |
+| `sceUserServiceSetHmd2CinematicAudioRotation` | `1NGArQcf8aA` |
+| `sceUserServiceSetHmd2HideCameraImage` | `jNsBCHVryzs` |
+| `sceUserServiceSetIsPersonalizedHrtfEnabled` | `enesn4WCCAc` |
+| `sceUserServiceSetNotificationSettings_4` | `9Azht0PAl5Y` |
+| `sceUserServiceSetPartyGameIconInstallHistory` | `i9shhWDcEao` |
+| `sceUserServiceSetProControllerBtAddress` | `aKx9SVQFoXo` |
+| `sceUserServiceSetUserWithHearingAssist` | `O8g8pltXaSU` |
+| `Unknown` | `0VWuaS7yx4Q` |
+| `Unknown` | `0X4L-lGkR0U` |
+| `Unknown` | `0kfh-kXBoGw` |
+| `Unknown` | `1OMFZTrGEOY` |
+| `Unknown` | `213TW6eCaV0` |
+| `Unknown` | `2lFquavP21M` |
+| `Unknown` | `3eALPjo6QXU` |
+| `Unknown` | `3f6-jkXQLFk` |
+| `Unknown` | `59d4Z516iOk` |
+| `Unknown` | `59xv0xdNes0` |
+| `Unknown` | `7ZIQ70nCU3c` |
+| `Unknown` | `8HyYroq9wLo` |
+| `Unknown` | `9jQ101Vehu8` |
+| `Unknown` | `BxPuER5Yc10` |
+| `Unknown` | `Ca3vW3flGe4` |
+| `Unknown` | `DItHYL5cEC4` |
+| `Unknown` | `DJScQvHT3YY` |
+| `Unknown` | `Dnwjs7-f2GE` |
+| `Unknown` | `EN2UKJiRpps` |
+| `Unknown` | `FPLmWbOSKfU` |
+| `Unknown` | `FQbXslA0yZM` |
+| `Unknown` | `FwUItKJJWR4` |
+| `Unknown` | `GDMZXo8xr9E` |
+| `Unknown` | `IhQQePmqld0` |
+| `Unknown` | `J4pLTH8a1mc` |
+| `Unknown` | `JjxkX1xhsmk` |
+| `Unknown` | `JuN4qbB2LW8` |
+| `Unknown` | `MN7x6irI8as` |
+| `Unknown` | `NfkyXrR6zF0` |
+| `Unknown` | `OJBuVxGTYWk` |
+| `Unknown` | `P9V9+1y1ZYA` |
+| `Unknown` | `PiP-7eI7IPY` |
+| `Unknown` | `Pmp6wxMYRcI` |
+| `Unknown` | `QET6KBJeQwY` |
+| `Unknown` | `QOLeFO68FaE` |
+| `Unknown` | `QWDb1Gpriqc` |
+| `Unknown` | `RQgycMlOM8k` |
+| `Unknown` | `RwBASVJunNM` |
+| `Unknown` | `SjfUPNYJxmU` |
+| `Unknown` | `Spe5cSAxIFw` |
+| `Unknown` | `TFedVAGIeWs` |
+| `Unknown` | `V4DYvLza+hk` |
+| `Unknown` | `VYS3iJdpOPM` |
+| `Unknown` | `WhbS9jlb7To` |
+| `Unknown` | `Y1nezlvRv5I` |
+| `Unknown` | `Zh9dupumXA8` |
+| `Unknown` | `ZvAy-RmIp5U` |
+| `Unknown` | `eGAd8M8YAn8` |
+| `Unknown` | `eQBzz8K6DJU` |
+| `Unknown` | `eocuDBjKlOk` |
+| `Unknown` | `fckKicGEsqE` |
+| `Unknown` | `gmtJoK7i8fI` |
+| `Unknown` | `gtKMfHm4SzI` |
+| `Unknown` | `gvuNFHPW9D8` |
+| `Unknown` | `i1NiYr7za48` |
+| `Unknown` | `iW+LvgfcVX4` |
+| `Unknown` | `ld0saw1ClfQ` |
+| `Unknown` | `mH-AzatKOgI` |
+| `Unknown` | `ozyi9A3JfUs` |
+| `Unknown` | `qRKreqPOBh8` |
+| `Unknown` | `rd5nxid3adQ` |
+| `Unknown` | `t+lVru0bCCM` |
+| `Unknown` | `vpKwTiaFqCo` |
+| `Unknown` | `xFuJQZLWhD4` |
+| `Unknown` | `zZ0CN7-ga54` |
+| `Unknown` | `zo3J12rxOTc` |
+
 ### Unknown function info
 
-- [sceUserServiceGetNpAccountId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the account id for a user with no linked PSN account is assumed to be 0 with success; libSceNpManager's `sceNpGetAccountIdA` answers the same question with `SCE_NP_ERROR_SIGNED_OUT`
-- [sceUserServiceInitialize and sceUserServiceInitialize2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - event delivery has no background service thread, so the confirmed priority and Initialize2 CPU affinity mask do not affect host scheduling.
-- [sceUserServiceGetUserColor](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the default profile colour is assumed to be blue (0)
-- [sceUserServiceGetUserName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - `0x80960105`, which a PS5 (firmware 13.60) returns for a user id it does not know, has no known name; it is `USER_SERVICE_ERROR_UNKNOWN_USER` here. On the console a registered user who is not logged in still gets their name; here only the initial user exists
-- [sceUserServiceGetAgeLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - on a PS5 (firmware 13.60) the value is the age set in the user's parental restriction (0, 7, 12 and 15 were measured) and `0xFFFFFFFF` without one; a user who is not logged in returns `0x80960009` with or without an output. Parental restrictions are not modelled, so the initial user is always reported as unrestricted. PPSA12544 (Unity) only stores the value for its user profile
-- [sceUserServiceGetAccessibilityChatTranscription, PressAndHoldDelay, TriggerEffect, Vibration, ZoomEnabled, ZoomFollowFocus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - report 0, 0, 1, 1, 0 and 1, what a PS5 (firmware 13.60) reports for a user whose accessibility settings are all at their defaults; the console reports the user's own settings (a changed vibration intensity read 3), which are not modelled. What each number means is unknown. A user who is not logged in returns `0x80960009` with or without an output
+- [sceUserServiceGetKratosPrimaryUser, sceUserServiceIsKratosPrimaryUser and sceUserServiceIsKratosUser](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - firmware supports Kratos user queries only when the kernel reports Cronos. AnyPS5's current host model is non-Cronos, so GetKratosPrimaryUser returns `0x80960006` and both Boolean queries return false. Cronos-mode behavior remains unmodelled.
+- [sceUserServiceIsLoggedIn and sceUserServiceIsLoggedInWithoutLock](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - firmware 13.60 checks membership in its logged-in user list and returns 1 or 0 after checking initialization. AnyPS5 uses its connected-user list for the same query.
+- [sceUserServiceIsUserStorageAccountBound](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - AnyPS5 has no linked PSN or online-storage account state; the export returns false, matching its existing zero account-ID model. Bound-account behavior is not modeled.
+- [sceUserServiceIsKratosPrimaryUser](../../../core/libs/prx/libSceUserService/Export.cpp) - returns false for AnyPS5's non-Cronos host model; Cronos-mode behavior is unavailable.
+- [sceUserServiceInitializeForShellCore and sceUserServiceTerminateForShellCore](../../../core/libs/prx/libSceUserService/Export.cpp) - the shell callback table and IPMI backend remain unavailable. In firmware 13.60 `libSceUserService.sprx`, shell initialize at `0x28a0` forwards priority 700 and the table to `0x1930`; terminate aliases the ordinary routine at `0x24d0`. AnyPS5 uses its ordinary lifecycle; it does not consume the shell callback table.
+- [sceUserServiceRegisterEventCallback and sceUserServiceUnregisterEventCallback](../../../core/libs/prx/libSceUserService/Export.cpp) - only login/logout transitions have a host event source. Firmware 13.60 `libSceUserService.sprx` at `0x34d0` checks initialization, ignores null callbacks with success and stores unique callback/user-data pairs. At `0x35f0`, unregister checks initialization first, rejects null with `0x80960005` and succeeds for absent pairs. These sites establish the tested null, duplicate and pre-initialization behavior; they were read from disassembly/decompilation, not measured on a console.
+- [sceUserServiceGetLoginUserIdList and sceUserServiceGetEvent for user 0](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - under ANYPS5_PAD_PORT0_STATE=controller user 0 logs out when its controller is removed and logs in when it returns, after a hold of 500 ms that AnyPS5 chooses. Whether the console logs the initial user out on controller removal, how long it takes and which event it sends are not measured. The default mode keeps user 0 logged in as before.
+- [sceUserServiceGetNpAccountId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the account id for a logged-in user with no linked PSN account is assumed to be 0 with success; libSceNpManager's `sceNpGetAccountIdA` answers the same question with `SCE_NP_ERROR_SIGNED_OUT`. Console measurement on PS4 Pro firmware 10.71 confirms a user that is not logged in returns `0x80960105` (`USER_SERVICE_ERROR_UNKNOWN_USER`) and leaves the output untouched, differing from `sceUserServiceGetUserName`. Firmware 13.42's `libSceUserService.sprx` returns `0x80960005` for a null output before it looks at the user; while it is not initialized it returns `0x80960002` first, which is not modelled ([disassembly and a native run with stubbed imports](https://github.com/boykopovar/AnyPS5/pull/12165#issuecomment-6512375278), not measured on a console).
+- [Older settings exports](../../../core/libs/prx/libSceUserService/LegacyExports.cpp) - Forty callable NIDs are declared as throwing placeholders for older software. Their signatures and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. The corresponding NIDs are absent from the later version-labelled inventory. Representative later settings functions use a related dispatch pattern, which does not establish compatibility for these settings. No functionality is implemented.
+
+- [sceUserServiceInitialize and sceUserServiceInitialize2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - event delivery uses a host worker; the confirmed priority and Initialize2 CPU affinity mask do not configure its host scheduling. Of 23 `sceUserServiceInitialize` calls in ten titles checked, 17 pass no param, four pass priority 700 (Borderlands 4 PPSA01494, Crimson Desert PPSA25286, MXGP 26 PPSA30839, Super Meat Boy 3D PPSA31162), one passes 767 (Ghost of Tsushima PPSA02225) and one in Metal Gear Solid 4's `mgs4.elf` passes a param from a register. None calls `sceUserServiceInitialize2`.
+- [sceUserServiceGetUserColor](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the profile colour corresponds to user index (0: blue, 1: red, 2: green, 3: pink); colours 1, 2 and 3 are assumed, not measured
+- [sceUserServiceGetUserName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - `0x80960105`, which a PS5 (firmware 13.60) returns for a user id it does not know, has no known name; it is `USER_SERVICE_ERROR_UNKNOWN_USER` here. On the console a registered user who is not logged in still gets their name; here up to 4 users ("Player", "Player2", "Player3", "Player4") are supported; user names "Player2", "Player3" and "Player4" are assumed, not measured
+- [sceUserServiceGetEvent](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - login and logout events queued dynamically on controller hotplug have no source and are assumed, not measured. On a PS5 (firmware 11.60, payload process) one event with `event_type` 0 follows `sceUserServiceInitialize`, then `NO_EVENT`; here one login event per connected user, so this matches with one user. Six titles disassembled for this entry drain the queue until the call returns nonzero. PPSA01494 01.100.002 (at 0x374C0C6), PPSA30839 01.003.000 (0x4DF3F0), PPSA31162 02.000.001 (0x550ED0) and PPSA34502 01.010.000 (0x30035C, 0x300433) act only on `event_type` 0 and 1, reading `user_id` at offset 4 for both, and skip other types. PPSA18194 01.004.003 (0x16D44A3) tells `NOT_INITIALIZED` (0x80960002) and `NO_EVENT` (0x80960007) apart and logs any other error. PPSA21564 01.007.000 copies each 8-byte event into a list at one site (0x2AFCA8) and discards them at the other (0x2B6CF3)
+- [sceUserServiceGetEvent](../../../core/libs/prx/libSceUserService/Export.cpp) - the console's result and queue behavior for a non-null unwritable output are unmeasured. AnyPS5 throws through `NotImplemented_nid_no_patch` when the checked output copy fails and retains the queued event. Initialization and empty-queue checks still precede that copy.
+- [sceUserServiceGetGamePresets](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - system-wide game presets (difficulty, view inversion, subtitles, audio language) of a user's profile are unmeasured and not modelled, so all fields are reported as 0 ("not specified") allowing titles to use their defaults. PS5 firmware 13.42 disassembly verifies that checking a null presets pointer (returning 0x80960005, USER_SERVICE_ERROR_INVALID_ARGUMENT) precedes any user login check before dispatching IPC 0x30026; returning 0x80960009 (USER_SERVICE_ERROR_NOT_LOGGED_IN) for an unlogged user with a valid presets pointer is assumed from the service.
+- [sceUserServiceGetAgeLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - on a PS5 (firmware 13.60) the value is the age set in the user's parental restriction (0, 7, 12 and 15 were measured) and `0xFFFFFFFF` without one; a user who is not logged in returns `0x80960009` with or without an output. Parental restrictions are not modelled, so the initial user is always reported as unrestricted. PPSA12544 (Unity) only stores the value for its user profile. The one call in PPSA12544 (0x16a80a0), made only when bit 0x4 of its flags is set, writes the value to a field of its own object (offset 0x5170) and ends its chain of getters on any nonzero result; what it does with the value afterwards was not read.
+- [sceUserServiceGetAccessibilityChatTranscription, PressAndHoldDelay, TriggerEffect, Vibration, ZoomEnabled, ZoomFollowFocus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - report 0, 0, 1, 1, 0 and 1, what a PS5 (firmware 13.60) reports for a user whose accessibility settings are all at their defaults; the console reports the user's own settings (a changed vibration intensity read 3), which are not modelled. What each number means is unknown. A user who is not logged in returns `0x80960009` with or without an output. One title (PPSA04354) disassembled for this entry calls all six in a row (first at 0xea0efa) with its user ID, only when a flag bit (0x10) is set; a result other than 0 from any of them ends the block and is returned, and only when all six return 0 does it store the six values in its object.
+- [sceUserServiceGetAccessibilityKeyremapEnable, sceUserServiceGetAccessibilityZoom](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - return USER_SERVICE_ERROR_NOT_LOGGED_IN (0x80960009) for an unlogged user and USER_SERVICE_ERROR_INVALID_ARGUMENT (0x80960005) for a null output pointer; values reported by a console and their formats are unmeasured, so both throw for valid logged-in requests.
+- [sceUserServiceSetGlsCameraContrast](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetParentalDvdRegion](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetChatStatus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSharePlayFramerateHost](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPasscode](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetAppearOfflineSetting](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsAccessTokenUstream](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsBcTags](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpCountryCode](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetJapaneseInputType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsBroadcastersComment](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCameraTransparency](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetIsHrtfEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetCurrentUserGroupIndex](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int32_t* index)` and dispatches user group query `0x30018`; AnyPS5 reads the current index from offset `0x44` in `/system_data/priv/home/user_list.dat`, matching the SceShellCore 13.60 handler logic. AnyPS5 does not create the global user list or numbered group files: on a fresh installation this call fails with the kernel open error or reports zero groups, until those files are provided.
+- [sceUserServiceGetPbtcThursdayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcFridayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSystemLoggerHashedAccountIdTtl](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetRegisteredHomeUserIdList](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the 13.60 managed wrapper recovers `(int32_t* userIds, int32_t* count)` and returns up to 16 IDs; AnyPS5 fills the list from its existing connected-user model, matching `sceUserServiceGetRegisteredUserIdList`.
+- [sceUserServiceSetVolumeForGenericUSB](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetControlCenterFunctionControlSettings](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetAudioFocus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetFriendFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCameraTransparency](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetUserStatus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetTraditionalChineseInputType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHmd2MuteAssign](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetIsCronosEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHoldAudioOutDevice](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHearingAssistWeakenAdjustment](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetDiscPlayerFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSharePlayFramerateHost](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetCaptureStatus2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetLightBarBaseBrightness](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCameraContrast](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcWednesdayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSharePlayResolutionHost](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetParentalBdAge](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetParentalGameAgeLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNotificationSettings2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPsnPasswordForDebug](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcAdditionalTime](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsLfpsSortOrder](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpLoginId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsBroadcastersCommentColor](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetParentalBrowser](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPadSpeakerVolume](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsHintFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetIsFakePremium](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetAccessibilityKeyremapDataAston](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetKeyRepeatSpeed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetUserGroupName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int groupIndex, const char* name)` and dispatches update `0x3001c`; AnyPS5 writes names up to 128 bytes to `/system_data/priv/home/user_group_name.dat.<groupIndex>` with the recovered create, truncate, and mode flags. Missing slots are writable only when they are the next group slot.
+- [sceUserServiceGetParentalDvdRegion](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCameraDepthLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetParentalContentControl](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVoiceAgentLanguage](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVolumeForController](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsAccessTokenNiconicoLive](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsOverlayPosition](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetAppSortOrder](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCameraBgFilter](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcSaturdayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetAccountRemarks](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGazeCalibData](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsAccessTokenNiconicoLive](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHmd2GazeTarget](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpAccountUpgradeFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsMessageFilterLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetImePointerMode](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetParentalDvd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSparkEqProfile](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcTuesdayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVoiceRecognitionTutorialState](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetFriendFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetEventCalendarType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcSaturdayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSystemLoggerHashedAccountIdParam](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHearingAssistUsePreset](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetUserGroupName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int groupIndex, char* name, size_t size)` and dispatches query `0x3001b`; AnyPS5 reads up to 128 bytes from `/system_data/priv/home/user_group_name.dat.<groupIndex>`, using `User Group <groupIndex + 1>` after any name-file open error or nonpositive read. In SceShellCore 13.60, `0x9f5410` requires a 129-byte buffer and calls the slot validator before path formatting. Validator `0x9f45e0` rejects values outside unsigned 0..128 and checks the group file. The fallback at `0x9f55a1` handles open errors and nonpositive reads, including genuine I/O errors; these are observed native semantics, not just absent-file handling. A valid group slot must exist even when its name file is missing.
+- [sceUserServiceSetAutoLoginEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetIPDLeft](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHintShowFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHmd2CinematicAudioRotation](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetLoginFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcThursdayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcSundayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVoiceRecognitionLastUsedOsk](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsIsFacebookEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetShareStatus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVoiceAgentEnableFeedback](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetCreatedVersion](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSharePlayFlags](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHearingAssistUsePreset](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPartyChatTranscriptionLanguageType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetA11yControllerADeviceUniqueIds](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetA11yControllerLedBrightness](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetKeyRepeatStartingTime](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsLiveQuality](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetProControllerAlreadyNoticed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsAccessTokenUstream](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetProControllerUniqueId3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHrtf](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsTtsFlags](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpAge](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsFloatingMessage](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPlayTogetherFlags](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHmd2HideCameraImage](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsAccessTokenTwitch](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetCaptureStatus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpSubAccount](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPartyChatTranscriptionFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsIsMuteEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsBcTitle](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHmd2Vibration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsLiveQuality2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetIsQuickSignup](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNotificationSettings_2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHomeDirectory](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the chosen ABI is `(uint32_t userId, char* path, size_t size)`. Firmware 13.60 `libSceUserService.sprx` at `0x3b20` forwards a 32-bit user value and the destination/capacity to the formatting import with `/user/home/%08x`. The host rejects null and truncated buffers; native error behavior for these inputs was not established.
+- [sceUserServiceSetPbtcSundayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetIPDLeft](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpDateOfBirth](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcWednesdayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSparkEqParam](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetEventSortEvent](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsLiveQuality3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNotificationSettings_1](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcMondayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetIsFakePlus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcTuesdayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPartyMuteList](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpNpId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSystemLoggerHashedAccountIdClockType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetProControllerBtAddress](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSparkEqIndex](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPsnPasswordForDebug](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetParentalGameWhiteList](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCommunityId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGazeCalibData](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpAuthErrorFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHearingAssistUseAudiogramData](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetAccessibilityKeyremapEnable](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcFridayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsStreamingMode](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcFridayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetProControllerUniqueId1](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVoiceAgentStatusBitFactory](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetTeamShowAboutTeam](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetEventSortEvent](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsLfpsSortOrder](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHearingAssistMakeVoicesClearer](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVoiceAgentEnableByButton](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSystemLoggerHashedAccountIdClockType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetParentalMorpheus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSystemLoggerHashedAccountId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetCaptureStatus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetAgeVerified](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCameraBgFilter](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsTtsVolume](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCameraSize](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsAnonymousUserId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCameraReflection](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHmuZoom](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsBcTitle](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcFridayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetLoginFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHearingAssistAdjustmentLevelLeft](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetFaceRecognitionDeleteCount](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetTriggerEffectStrength](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsIsTwitterEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcSaturdayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHintShowFlag3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVoiceAgentSessionTimeout](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetParentalContentControl](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCameraEffect](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcTuesdayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPartyMuteListA](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCameraEliminationLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsBroadcastersCommentColor](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetParentalBrowser](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHearingAssistSeparateLR](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHmd2Brightness](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCameraChromaKeyLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetProControllerUniqueId2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsBroadcastChannel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCameraEdgeLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCameraPosition](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetA11yControllerAName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcWednesdayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetMonoOutput](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPartyChatTranscriptionVoiceType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNotificationSettings](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetTopMenuTutorialFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetIPDRight](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcSaturdayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetImeLastUnit](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpNpId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetTriggerEffectStrength](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsIsRecievedMessageHidden](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVoiceAgentSessionTimeout](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsLanguageFilter](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHmd2Vibration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcMondayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetAppSortOrder](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetMouseHandType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetIsQuickSignup](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVoiceAgentEnableWup](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCameraDepthLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHmuBrightness](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsHintFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetShareStatus3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsTtsVolume](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetMicLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetImeLastUnit](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcMode](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcThursdayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSaveDataAutoUpload](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetAccessibilityKeyremapDataAston](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVolumeForSidetone](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetProControllerUniqueId2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetFriendCustomListLastFocus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHmd2GazeTarget](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetKeyRepeatSpeed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetParentalDvd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetImePointerMode](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVolumeForController](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsBroadcastChannel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSystemLoggerHashedAccountIdParam](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHintShowFlag2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHearingAssistPresetType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNotificationSettings_3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsAnonymousUserId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetA11yControllerBDeviceUniqueIds](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVoiceAgentEnableWup](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpDateOfBirth](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetKeyboardType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetParentalGame](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHearingAssistSeparateLR](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVoiceAgentTtsVolume](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcMondayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpSubAccount](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetShareStatus2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCamCrop](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVoiceRecognitionLastUsedOsk](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSystemLoggerHashedAccountId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVoiceRecognitionTutorialState](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsLiveQuality5](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHearingAssistUseAudiogramData](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetIPDRight](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcPlayTimeLastUpdated](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcTuesdayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNotificationBehavior](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPadProfileDataHuntList](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHearingAssistAudiogramData](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHintShowFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetTopMenuLimitItem](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcSundayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetParentalBdAge](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSaveDataSort](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHrtf](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetAppearOfflineSetting](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVoiceAgentLanguage](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetIsRemotePlayAllowed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsStreamingMode](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetChatStatus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVoiceAgentStatusBit](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpCountryCode](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetParentalGameWhiteList](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHmd2ScreenSize](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetTriggerEffectEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetA11yControllerInitialSetupProgress](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVolumeForGenericUSB](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetControlCenterFunctionControlSettings](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsInitSpectating](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsIsMuteEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpLanguageCode2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetFriendCustomListLastFocus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPartyMuteList](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetAccessibilityKeyremapData](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcFridayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcMondayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetControlCenterStatus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSparkEqProfile](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsTtsPitch](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsBroadcastService](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetAutoLoginEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcSaturdayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNotificationSettings_1](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHmd2MuteAssign](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPasscode](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetMousePointerSpeed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsBroadcastUiLayout](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSharePlayFlags](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetIsFakePlus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetAccountRemarks](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetAccessibilityZoom](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSystemLoggerHashedAccountIdTtl](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSaveDataSort](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPlayTogetherFlags](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHearingAssistAdjustmentLevelRight](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsTtsSpeed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpEnv](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCameraSize](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetDiscPlayerFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHmd2PlayAreaShape](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsIsCameraHidden](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetUserStatus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetEventFilterTeamEvent](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPsCloudFeedbackTime](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetUserGroupIndex](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - firmware 13.60 validates the group slot, maps `-1` to `INT_MAX`, and writes Registry key `0x7410000`; AnyPS5 validates against `/system_data/priv/home/user_list.dat.<index>` and stores the selected index at offset `0x44` in `/system_data/priv/home/user_list.dat`. AnyPS5 does not create this file, so a fresh installation returns the kernel open error.
+- [sceUserServiceSetPartyMuteListA](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpLanguageCode2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetShareStatus2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetForegroundUser](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the 13.60 managed wrapper recovers `(int userId)`; foreground-user state is not modeled.
+- [sceUserServiceSetGlsAccessTokenTwitch](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpOfflineAccountAdult](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGamePresets](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNotificationSettings](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetImeInputType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVolumeForMorpheusSidetone](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsLiveQuality4](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHearingAssistPresetType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHearingAssistWeakenAdjustment](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcWednesdayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPadProfileDataHuntList](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetAccessibilityKeyremapData](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetCaptureStatus2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVoiceAgentTtsSpeed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcWednesdayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetAgeVerified](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCameraEdgeLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPartyChatTranscriptionLanguageType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVoiceAgentTtsVolume](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcTuesdayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetUserWithHearingAssist](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int32_t* userId)` and dispatches query `0x3002b`; the result comes from the unavailable UserService backend, so the export still throws.
+- [sceUserServiceGetNpOnlineId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHintShowFlag3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNotificationSettings_3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsIsFacebookEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpEnv](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCameraBrightness](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetTopMenuNotificationFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetCreatedVersion](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCameraChromaKeyLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpOfflineAccountId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetShareStatus3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetControlCenterStatus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetMicLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetTeamShowAboutTeam](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetEventVsh](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - firmware 13.60 filters queued events to its supported event-type set. AnyPS5 currently generates only login/logout events, so the export forwards to the local event queue implementation.
+- [sceUserServiceGetA11yControllerBName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpAge](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPlayingBigAppTitleId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHintShowFlag2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetCaptureStatus3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSparkEqIndex](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcMondayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetEventSortTitle](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpOnlineId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetA11yControllerBName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSaveDataAutoSync](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetDefaultNewUserGroupName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(char* name, size_t size)` and dispatches query `0x3001d`; AnyPS5 selects the first missing group slot among 128 using `/system_data/priv/home/user_list.dat.<index>` and formats `User Group <slot + 1>`.
+- [sceUserServiceGetHmd2Brightness](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHoldAudioOutDevice](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVibrationStrength](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetTopMenuNotificationFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcSundayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHearingAssistAudiogramData](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSaveDataAutoSync](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcFridayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsTtsSpeed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPartyChatTranscriptionFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcSaturdayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPartySettingFlags](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetImeInputSettings](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsIsRecDisabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetA11yControllerAName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetEventFilterTeamEvent](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetA11yControllerBDeviceUniqueIds](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCameraEliminationLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVibrationStrength](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpAccountUpgradeFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetDeletedUserInfo](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSecureHomeDirectory](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the chosen ABI is `(uint32_t userId, char* path, size_t size)`. Firmware 13.60 `libSceUserService.sprx` at `0x3b50` calls the sandbox-word import and formats `/<sandbox word>/priv/home/%08x`. The host rejects null and truncated buffers; native error behavior for these inputs was not established.
+- [sceUserServiceGetHearingAssistAdjustmentLevelRight](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPlatformPrivacyWs1Internal](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsIsRecDisabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCameraBrightness](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpLanguageCode](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcThursdayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGazeActivate](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPlatformPrivacyWs1](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVolumeForSidetone](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSaveDataTutorialFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcPlayTime](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsBroadcastService](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetIsFakePremium](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsLiveQuality5](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSaveDataAutoUpload](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetSaveDataTutorialFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsLiveQuality4](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpLanguageCode](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcThursdayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetFaceRecognitionDeleteCount](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVoiceAgentEnable](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetEventCalendarType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetProControllerAlreadyNoticed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsTtsFlags](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsBroadcastersComment](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcTzOffset](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcPlayTime](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVoiceAgentStatusBit](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNotificationSettings2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetEventUiFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsBroadcastUiLayout](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVibrationEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcAdditionalTime](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetMonoOutput](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpLoginId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetShareStatus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsIsRecievedMessageHidden](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsLiveQuality2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHmd2GazeActivate](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCameraPosition](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsMessageFilterLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetUserGroupNameList](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int groupIndex, char* nameList, size_t size, int32_t* count)` and dispatches query `0x3001a`; it reads up to 16 IDs from the group file (or the global list for index `-1`) and writes fixed 17-byte name slots. AnyPS5 resolves IDs supported by its user-name model; unsupported IDs return `USER_SERVICE_ERROR_UNKNOWN_USER` because shell user configuration is not modeled. The global and numbered user-list files are not created by AnyPS5; a fresh installation returns the kernel open error, including for index -1.
+- [sceUserServiceSetVoiceAgentEnableFeedback](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGazeActivate](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsIsTwitterEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetTopMenuLimitItem](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNpAuthErrorFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsIsCameraHidden](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetMousePointerSpeed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetFaceRecognitionRegisterCount](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHmd2PlayAreaShape](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetUserName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetA11yControllerADeviceUniqueIds](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsFloatingMessage](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsBcTags](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcMode](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetImeInputType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetProControllerUniqueId3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHmd2GazeActivate](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetCaptureStatus3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCameraReflection](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetNotificationSettings_2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsLiveQuality](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetFaceRecognitionRegisterCount](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetKeyRepeatStartingTime](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetIsRemotePlayAllowed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcMondayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsLiveQuality3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPsCloudFeedbackTime](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVoiceAgentTtsSpeed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVoiceAgentEnable](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcWednesdayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetTopMenuTutorialFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetIsPersonalizedHrtfEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPadSpeakerVolume](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetAccessibilityKeyremapEnableAston](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetHmd2ScreenSize](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsInitSpectating](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetLastLoginOrder](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsTtsPitch](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetMouseHandType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetEventUiFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetImeInputSettings](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetProControllerUniqueId1](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcPlayTimeLastUpdated](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHmuBrightness](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetParentalMorpheus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcTuesdayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsOverlayPosition](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetEventSortTitle](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHmuZoom](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetVolumeForMorpheusSidetone](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsLanguageFilter](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVibrationEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetSharePlayResolutionHost](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcSundayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNpOfflineAccountAdult](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetTriggerEffectEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHearingAssistAdjustmentLevelLeft](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetLightBarBaseBrightness](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetVoiceAgentStatusBitFactory](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetHearingAssistMakeVoicesClearer](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCommunityId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetGlsCamCrop](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcTzOffset](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetParentalGame](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetPbtcThursdayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetIsHrtfEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetParentalGameAgeLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetNotificationBehavior](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetUserGroupNum](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int32_t* count)` and dispatches query `0x30017`; AnyPS5 scans `/system_data/priv/home/user_list.dat.<index>` from slot 0 and counts consecutive existing slots up to 128, matching the SceShellCore 13.60 handler logic. AnyPS5 does not create the global user list or numbered group files: on a fresh installation this call fails with the kernel open error or reports zero groups, until those files are provided. An unwritable non-null count returns `USER_SERVICE_ERROR_INVALID_ARGUMENT` as a host-safety fallback; console behavior for that pointer is unmeasured.
+- [sceUserServiceSetPartySettingFlags](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetGlsCameraEffect](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetPbtcSundayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceIsGuestUser, sceUserServiceIsSharePlayClientUser and sceUserServiceGetIsSpartacusEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - which user ids the console gives guest and Share Play client users, and what Spartacus is, are unknown; no AnyPS5 user is either kind. They follow firmware 13.42's libSceUserService.sprx, read from its disassembly and run natively on x86-64 (not a console): the two checks test only the id's top three bits (`0x20000000`) and top four bits (`0x30000000`) and read no library state, and `sceUserServiceGetIsSpartacusEnabled` never reads its first argument, rejects a null output with `0x80960005` and otherwise writes true (one byte), without checking initialization
+- [sceUserServiceGetKeyboardType, sceUserServiceGetJapaneseInputType, sceUserServiceGetTraditionalChineseInputType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - AnyPS5 stores no per-user keyboard setting, so the initial user reports the keyboard type of the configured system language (`ANYPS5_LANGUAGE`, English US by default) and 0 for the two input variants, and any other user id returns `USER_SERVICE_ERROR_UNKNOWN_USER`. The language-to-keyboard-type table is the repository owner's (languages 0 to 29); a valid language outside it, such as Ukrainian (30), reports 20 (US English). A value that is not a console language number is rejected by `sceSystemServiceParamGetInt` with an error naming `ANYPS5_LANGUAGE`; the call throws it and leaves the output untouched. The input variant is 0 because the owner's table gives 0 for Japanese and Traditional Chinese, the only languages needing one. `sceConvertKeycodeGetImeKeyboardType` consumes these values.
+- [sceUserServiceGetPlatformPrivacyWs1](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the platform privacy setting for an offline user without a linked PSN account is assumed to be 0 (not permitted) with success; actual console privacy querying is not modelled. Return of `0x80960009` (`USER_SERVICE_ERROR_NOT_LOGGED_IN`) with or without an output for a user who is not logged in is borrowed from `sceUserServiceGetAgeLevel` and is not measured for this call.
+- [sceUserServiceGetAgeLevel, sceUserServiceGetInitialUser, sceUserServiceGetUserNumber, sceUserServiceGetPlatformPrivacyWs1, sceUserServiceGetForegroundUser, sceUserServiceGetRegisteredUserIdList, sceUserServiceGetUserColor, sceUserServiceGetAccessibility*, sceUserServiceGetKeyboardType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - returning `USER_SERVICE_ERROR_INVALID_ARGUMENT` for unwritable destination pointers is a host-safety fallback; console behaviour for unmapped pointers is unmeasured.
+
+### Group and home evidence limitations
+
+- [EAP home path](../../../core/libs/prx/libSceUserService/InventoryExports.cpp), NID `ErTMkmSho4E`, is implemented separately from the 35 throwing inventory entries. Firmware 13.60 `libSceUserService.sprx` at `0x3b90` rejects a null destination with `0x80960005`, rejects capacities through `0x25` with `0x8096000a`, and otherwise formats `/<sandbox word>/eap/rodata/home/%08x`. Capacity 38 succeeds even though the current host sandbox word produces a 36-character path fitting in 37 bytes; the stricter native check is retained. The three path routines establish a 32-bit user value, destination and capacity; exact source-language typedefs remain unverified. All cited sites were read from disassembly/decompilation, not measured on a console. Module SHA-256: `f56b87b4be88f988be50a358a76962ea8cedb9d858777c8737c801e7010beca1`; SceShellCore SHA-256: `15606a2cb87b73b091ed2121b37424ea8826d301ba6d07ce0a508da4979ea090`.
+
+- [Group-name write limits](../../../core/libs/prx/libSceUserService/Export.cpp) differ for short writes: host writes return EIO rather than report a truncated name as successfully stored. SceShellCore 13.60 at 0x9f5670 establishes the 128-byte limit and create/truncate flags, but accepts short nonnegative writes. Host equivalence for that case is not claimed.
+### Callback delivery limitations
+
+- [Callback dispatch](../../../core/libs/prx/libSceUserService/Export.cpp) uses one host worker, not the presentation thread. Firmware initialization at `0x1930` creates `SceUserServiceEvent` with entry `0x2380`; that worker drains messages through `0x1e10`. The message reader requests 8 bytes and dispatches a pointer to the event and the stored user-data value, releasing the callback-list lock before calling user code. Only event types 0 and 1 are modeled here; native scheduling and other event sources remain unavailable.
+- [Unregister](../../../core/libs/prx/libSceUserService/Export.cpp) deactivates a registration before draining it. Inactive registrations remain accounted for until their active call returns, including concurrent unregister and termination. The worker serializes delivery, preventing cross-callback cyclic waits; self-unregister prevents subsequent calls without waiting for its own stack frame. Snapshots and host drain accounting are implementation choices, not independently measured firmware lifecycle guarantees. Reinitialization is refused while termination drains callbacks.
+- [Callback evidence](../../../core/libs/prx/libSceUserService/Export.cpp): firmware 13.60 `libSceUserService.sprx`, SHA-256 `f56b87b4be88f988be50a358a76962ea8cedb9d858777c8737c801e7010beca1`. All cited sites were read from disassembly/decompilation, not measured on a console. Host tests validate this implementation, not console behavior.

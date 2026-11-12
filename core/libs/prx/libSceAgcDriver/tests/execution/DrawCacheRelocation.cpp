@@ -2,14 +2,27 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "Optimization/SrtWalker.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "VulkanTestDevice.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <initializer_list>
 #include <iostream>
@@ -26,6 +39,7 @@ using AgcDriver::DriverDetail::DrawMiss;
 
 alignas(256) constexpr std::array<std::uint32_t, 8> VertexCode{0x7e000208u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0xf80008cfu, 0x03020100u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 8> SecondVertexCode = VertexCode;
+alignas(256) constexpr std::array<std::uint32_t, 8> RecipeVertexCode = VertexCode;
 alignas(256) constexpr std::array<std::uint32_t, 8> PixelCode{0xf4000100u, 0xfa000000u, 0x7e000204u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 16> TriangleVertexCode{
     0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
@@ -40,6 +54,9 @@ alignas(16) std::array<float, 4> ForwardedData{};
 alignas(32) std::array<std::array<std::uint64_t, 4>, 6> AlignedTables{};
 alignas(32) std::array<std::uint64_t, 4> OffsetTable{};
 alignas(256) std::array<std::byte, 1024> ColorMemory{};
+constexpr std::uint32_t LinearAttrib3 = 0x9000000u;
+constexpr std::uint32_t RenderTargetAttrib3 = LinearAttrib3 | (0x1bu << 14u);
+constexpr std::size_t TiledTargetBytes = 65536;
 
 struct Header {
     Shader shader{};
@@ -49,6 +66,7 @@ struct Header {
 alignas(8) Header VertexHeader{};
 alignas(8) Header PixelHeader{};
 alignas(8) Header SecondVertexHeader{};
+alignas(8) Header RecipeVertexHeader{};
 alignas(8) Header TriangleVertexHeader{};
 alignas(8) Header ForwardedPixelHeader{};
 
@@ -69,8 +87,8 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-std::vector<std::uint32_t> DrawFrom(std::initializer_list<const void*> sources, const std::uint32_t* vertexCode = VertexCode.data(), const std::uint32_t* pixelCode = PixelCode.data()) {
-    const auto color = reinterpret_cast<std::uintptr_t>(ColorMemory.data());
+std::vector<std::uint32_t> DrawFrom(std::initializer_list<const void*> sources, const std::uint32_t* vertexCode = VertexCode.data(), const std::uint32_t* pixelCode = PixelCode.data(), const void* target = ColorMemory.data(), std::uint32_t attrib3 = LinearAttrib3) {
+    const auto color = reinterpret_cast<std::uintptr_t>(target);
     const auto vertex = reinterpret_cast<std::uintptr_t>(vertexCode);
     const auto pixel = reinterpret_cast<std::uintptr_t>(pixelCode);
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
@@ -83,7 +101,7 @@ std::vector<std::uint32_t> DrawFrom(std::initializer_list<const void*> sources, 
         {0x8e, 0xf}, {0x8f, 0xf}, {0x202, 0xcc0010},
         {0x1c4, 0}, {0x1c5, 9}, {0x1c3, 4}, {0x31c, 0x28028},
         {0x31b, 0}, {0x31d, 0}, {0x3b0, (63u << 14u) | 3u},
-        {0x3b8, 0x9000000}, {0x1e0, 0},
+        {0x3b8, attrib3}, {0x1e0, 0},
         {0xc, 0}, {0xd, 0x40040},
         {0x81, 0x80000000}, {0x82, 0x40040},
         {0x90, 0x80000000}, {0x91, 0x40040},
@@ -135,6 +153,69 @@ void MovedDataHitsTheCache(bool libraries) {
     Require(again.lookups == 10 && again.hits == 5, mode + ": a draw at an address seen before did not reuse the cached draw (" + std::to_string(again.hits) + " hits)");
 }
 
+void EvictedEntriesServeNoRelocation(bool libraries) {
+    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    Registered(SecondVertexHeader, SecondVertexCode.data(), sizeof(SecondVertexCode), 2);
+    const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
+    const auto draw = [&](const float* source, const std::uint32_t* vertexCode) {
+        auto commands = DrawFrom({source}, vertexCode);
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
+        AgcDriverWaitIdle_nid_postfix();
+        return AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    };
+    static std::array<std::array<float, 4>, 6> same{};
+    for (auto& entry : same) entry = {1.0f, 0.0f, 0.0f, 0.0f};
+    alignas(16) static std::array<std::array<float, 4>, 3> others{};
+    for (std::size_t i = 0; i < others.size(); ++i) others[i] = {0.25f + 0.03125f * static_cast<float>(i), 0.0f, 0.0f, 0.0f};
+    AgcDriver::DriverDetail::DrawEntryCounters counters{};
+    for (std::size_t i = 0; i < 4; ++i) counters = draw(same[i].data(), VertexCode.data());
+    Require(counters.lookups == 4 && counters.hits == 0 && counters.inserts == 2, mode + ": the draws that teach the moved pointer and its contents made " + std::to_string(counters.hits) + " hits and " + std::to_string(counters.inserts) + " inserts, expected 0 and 2");
+    const auto relocated = draw(same[4].data(), VertexCode.data());
+    Require(relocated.hits == 1, mode + ": a draw whose data moved after the teaching draws did not reuse the cached draw (" + std::to_string(relocated.hits) + " hits)");
+    auto evicted = relocated;
+    for (const auto& entry : others) {
+        draw(entry.data(), SecondVertexCode.data());
+        evicted = draw(entry.data(), SecondVertexCode.data());
+    }
+    Require(evicted.evictions - relocated.evictions >= 2 && evicted.inserts - relocated.inserts >= 2, mode + ": draws of another vertex shader did not evict the two taught entries from the draw cache (" + std::to_string(evicted.inserts - relocated.inserts) + " inserts, " + std::to_string(evicted.evictions - relocated.evictions) + " evictions; run with APS5_DRAW_CACHE_ENTRIES=2)");
+    const auto after = draw(same[5].data(), VertexCode.data());
+    Require(after.lookups == evicted.lookups + 1 && after.hits == evicted.hits, mode + ": a draw whose data moved reused a draw the cache had evicted, through its relocation alias (" + std::to_string(after.hits - evicted.hits) + " hits)");
+}
+
+void RelocatingDrawsKeepTheirDonor(bool libraries) {
+    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    Registered(SecondVertexHeader, SecondVertexCode.data(), sizeof(SecondVertexCode), 2);
+    const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
+    const auto draw = [&](const float* source, const std::uint32_t* vertexCode) {
+        auto commands = DrawFrom({source}, vertexCode);
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
+        AgcDriverWaitIdle_nid_postfix();
+        return AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    };
+    constexpr std::size_t Rounds = 3;
+    alignas(16) static std::array<std::array<float, 4>, Rounds> others{};
+    for (std::size_t i = 0; i < others.size(); ++i) others[i] = {0.25f + 0.03125f * static_cast<float>(i), 0.0f, 0.0f, 0.0f};
+    static std::array<std::array<float, 4>, 5 + Rounds> same{};
+    for (auto& entry : same) entry = {1.0f, 0.0f, 0.0f, 0.0f};
+    AgcDriver::DriverDetail::DrawEntryCounters counters{};
+    for (std::size_t i = 0; i < 4; ++i) counters = draw(same[i].data(), VertexCode.data());
+    Require(counters.lookups == 4 && counters.hits == 0 && counters.inserts == 2, mode + ": the draws that teach the moved pointer and its contents made " + std::to_string(counters.hits) + " hits and " + std::to_string(counters.inserts) + " inserts, expected 0 and 2");
+    const auto start = draw(same[4].data(), VertexCode.data());
+    Require(start.hits == 1, mode + ": a draw whose data moved after the teaching draws did not reuse the cached draw (" + std::to_string(start.hits) + " hits)");
+    auto relocated = start;
+    for (std::size_t i = 0; i < others.size(); ++i) {
+        draw(others[i].data(), SecondVertexCode.data());
+        const auto inserted = draw(others[i].data(), SecondVertexCode.data());
+        relocated = draw(same[5 + i].data(), VertexCode.data());
+        Require(relocated.hits == inserted.hits + 1, mode + ": a draw whose data moved again lost the cached draw it reused before each of " + std::to_string(i + 1) + " rounds of another vertex shader's draws (" + std::to_string(inserted.inserts - start.inserts) + " inserts, " + std::to_string(inserted.evictions - start.evictions) + " evictions)");
+    }
+    Require(relocated.evictions - start.evictions >= 2, mode + ": draws of another vertex shader evicted " + std::to_string(relocated.evictions - start.evictions) + " entries, expected at least 2 (run with APS5_DRAW_CACHE_ENTRIES=2)");
+}
+
 void SplitRunsNameTheirSharedWords() {
     alignas(16) static std::array<std::uint32_t, 4> data{1u, 2u, 3u, 4u};
     auto table = std::make_shared<ShaderRecompiler::SrtGuestWords>();
@@ -154,6 +235,62 @@ void SplitRunsNameTheirSharedWords() {
     std::size_t first = 0;
     for (std::size_t run = 0; run < shared.region && run < variant.runs.size(); ++run) first += static_cast<std::size_t>((variant.runs[run].second - variant.runs[run].first) / sizeof(std::uint32_t));
     Require(shared.region < variant.runs.size() && variant.runs[shared.region].first == tableAddress && first == shared.first, "the shared words of a variant whose runs were split for relocation name run " + std::to_string(shared.region) + " of " + std::to_string(variant.runs.size()) + ", not the table's run " + std::to_string(variant.runs.size() - 1u));
+}
+
+class TiledTarget {
+public:
+    TiledTarget() {
+#ifdef _WIN32
+        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(TiledTargetBytes, TiledTargetBytes));
+        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, TiledTargetBytes, PAGE_READWRITE, TiledTargetBytes);
+#else
+        void* mapped = mmap(nullptr, TiledTargetBytes * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mapped != MAP_FAILED) {
+            const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
+            const auto aligned = (begin + TiledTargetBytes - 1) & ~(static_cast<std::uintptr_t>(TiledTargetBytes) - 1);
+            if (aligned != begin) munmap(mapped, aligned - begin);
+            if (aligned != begin + TiledTargetBytes) munmap(reinterpret_cast<void*>(aligned + TiledTargetBytes), begin + TiledTargetBytes - aligned);
+            block = reinterpret_cast<std::uint8_t*>(aligned);
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, TiledTargetBytes);
+        }
+#endif
+        Require(block != nullptr, "cannot allocate the tiled color target");
+        std::memset(block, 0, TiledTargetBytes);
+        GuestAllocations::Mutation().Add(block, TiledTargetBytes, true, true, true);
+    }
+
+    TiledTarget(const TiledTarget&) = delete;
+    TiledTarget& operator=(const TiledTarget&) = delete;
+
+    const void* Data() const { return block; }
+
+private:
+    std::uint8_t* block = nullptr;
+};
+
+void RelocatedDrawsReuseTheirRecipe(bool libraries) {
+    Registered(RecipeVertexHeader, RecipeVertexCode.data(), sizeof(RecipeVertexCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
+    static const TiledTarget target;
+    const auto draw = [&](const float* source) {
+        auto commands = DrawFrom({source}, RecipeVertexCode.data(), PixelCode.data(), target.Data(), RenderTargetAttrib3);
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
+        AgcDriverWaitIdle_nid_postfix();
+        return AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    };
+    alignas(16) static std::array<std::array<float, 4>, 10> moved{};
+    for (auto& entry : moved) entry = {0.75f, 0.0f, 0.0f, 0.0f};
+    for (std::size_t i = 0; i < 4; ++i) draw(moved[i].data());
+    const auto start = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    const auto recipesBefore = AgcDriver::VulkanDevice::DrawRecipeHits();
+    AgcDriver::DriverDetail::DrawEntryCounters counters = start;
+    for (std::size_t i = 4; i < moved.size(); ++i) counters = draw(moved[i].data());
+    const auto recipeHits = AgcDriver::VulkanDevice::DrawRecipeHits() - recipesBefore;
+    const auto hits = counters.hits - start.hits;
+    Require(hits == moved.size() - 4, mode + ": draws whose data moved again made " + std::to_string(hits) + " draw-cache hits, expected " + std::to_string(moved.size() - 4));
+    Require(recipeHits == hits, mode + ": " + std::to_string(recipeHits) + " of " + std::to_string(hits) + " draws served by a relocated entry were recorded from the cached draw's recipe, expected all");
 }
 
 void UnrelocatedAliasesStayOut(bool libraries) {
@@ -228,9 +365,11 @@ void MovedForwardedWordReachesStageDataHit(bool libraries) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
-        SplitRunsNameTheirSharedWords();
+        const bool evicted = argc == 2 && std::string(argv[1]) == "--evicted";
+        const bool kept = argc == 2 && std::string(argv[1]) == "--kept";
+        if (!evicted && !kept) SplitRunsNameTheirSharedWords();
         bool libraries = false;
         {
             const auto device = OpenVulkanTestDevice();
@@ -238,9 +377,26 @@ int main() {
             libraries = device->GraphicsPipelineLibraries();
         }
         if (!libraries && std::getenv("APS5_NO_GPL") == nullptr) return VulkanTestSkipped;
+        if (evicted) {
+            EvictedEntriesServeNoRelocation(libraries);
+            AgcDriverShutdown_nid_postfix();
+            std::cout << "An evicted draw served no relocation " << (libraries ? "with" : "without") << " graphics pipeline libraries\n";
+            return 0;
+        }
+        if (kept) {
+            RelocatingDrawsKeepTheirDonor(libraries);
+            AgcDriverShutdown_nid_postfix();
+            std::cout << "A draw relocated from a cached draw kept it cached " << (libraries ? "with" : "without") << " graphics pipeline libraries\n";
+            return 0;
+        }
         MovedDataHitsTheCache(libraries);
+        RelocatedDrawsReuseTheirRecipe(libraries);
         UnrelocatedAliasesStayOut(libraries);
         MovedForwardedWordReachesStageDataHit(libraries);
+        if (std::getenv("APS5_VERIFY_DRAW_RECIPE") != nullptr) {
+            const auto counters = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+            Require(counters.verifyDecodeMismatches == 0, "the effective relocated draw decode differed from its full decode");
+        }
         AgcDriverShutdown_nid_postfix();
         std::cout << "A draw whose data moved reused the cached draw " << (libraries ? "with" : "without") << " graphics pipeline libraries\n";
         return 0;

@@ -1,15 +1,11 @@
+#include "prx/libSceAgc/DcbDraw/include/IndexBuffer.hpp"
+#include "prx/libSceAgc/DcbDraw/include/DrawIndexed.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include <array>
 #include <cstdlib>
 #include <stdexcept>
 
-extern "C" {
-std::uint32_t* APS5_VABI sceAgcDcbSetIndexCount(CommandBuffer*, std::uint32_t);
-std::uint32_t APS5_VABI sceAgcDcbSetIndexCountGetSize();
-std::uint32_t* APS5_VABI sceAgcDcbDrawIndex(CommandBuffer*, std::uint32_t, const volatile void*, std::uint64_t);
-std::uint32_t APS5_VABI sceAgcDcbDrawIndexGetSize();
-}
 static void Require(bool condition) { if (!condition) std::abort(); }
 template<typename TAction> static void Reject(TAction action) {
     bool rejected = false;
@@ -53,6 +49,8 @@ int main() {
     draw[1] = 3; draw[4] = 3;
     draw[4]=4;
     Reject([&]{AgcDriver::Pm4::Validate({draw,6},0);});
+    draw[4]=0xffffffffu;
+    Reject([&]{AgcDriver::Pm4::Validate({draw,6},0);});
     draw[4]=3;
     draw[5]=2;
     Reject([&]{AgcDriver::Pm4::Validate({draw,6},0);});
@@ -63,12 +61,33 @@ int main() {
     Reject([&]{AgcDriver::Pm4::Validate({draw,6},0);});
     draw[2]=1; draw[3]=0; queue.indexType=1;
     Reject([&]{AgcDriver::Pm4::ResolveDraw({draw,6},queue);});
+    draw[2]=0; draw[3]=0;
+    Reject([&]{AgcDriver::Pm4::ResolveDraw({draw,6},queue);});
+    draw[2]=static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(indices.data()));
+    draw[3]=static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(indices.data())>>32u);
+    queue.indexBase=0;
+    Reject([&]{AgcDriver::Pm4::ResolveDraw(offsetDraw,queue);});
+    queue.indexBase=reinterpret_cast<std::uintptr_t>(indices.data());
+    const std::array<std::uint32_t,5> invalidOffsetCount{0xc0033500u,2,1,3,0};
+    Reject([&]{AgcDriver::Pm4::Validate(invalidOffsetCount,0);});
+    const std::array<std::uint32_t,5> maxOffsetCount{0xc0033500u,2,1,0xffffffffu,0};
+    Reject([&]{AgcDriver::Pm4::Validate(maxOffsetCount,0);});
     auto* saved=buffer.cursor_up;
     Reject([&]{sceAgcDcbDrawIndex(&buffer,3,nullptr,0);});
     Reject([&]{sceAgcDcbDrawIndex(&buffer,3,indices.data(),1ull<<40);});
     Require(buffer.cursor_up==saved);
     buffer.cursor_down=buffer.cursor_up+5;
     Reject([&]{sceAgcDcbDrawIndex(&buffer,3,indices.data(),0);});
+    Require(buffer.cursor_up==saved);
+    buffer.cursor_down=words.data()+words.size();
+    Reject([&]{sceAgcDcbDrawIndex(nullptr,3,indices.data(),0);});
+    Reject([&]{sceAgcDcbSetIndexCount(nullptr,3);});
+    Reject([&]{sceAgcDcbSetIndexBuffer(nullptr,reinterpret_cast<std::uintptr_t>(indices.data()));});
+    Reject([&]{sceAgcDcbDrawIndexAuto(nullptr,3,0);});
+    Reject([&]{sceAgcDcbDrawIndexOffset(nullptr,0,3,0);});
+    Reject([&]{sceAgcDcbDrawIndexIndirect(nullptr,0,0);});
+    Reject([&]{sceAgcDcbDrawIndexIndirectMulti(nullptr,0,0,1,nullptr,20,0);});
+    Reject([&]{sceAgcDcbDrawIndexMultiInstanced(nullptr,3,indices.data(),nullptr,1,0);});
     Require(buffer.cursor_up==saved);
     return 0;
 }

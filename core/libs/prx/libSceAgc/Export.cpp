@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/include/Agc.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"

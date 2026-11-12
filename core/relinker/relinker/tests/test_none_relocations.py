@@ -127,16 +127,39 @@ def main():
         assert overflow_result.returncode == 2 and "Relocation target address overflow" in overflow_result.stderr, overflow_result.stderr
         assert not overflow_output.exists()
         page_image = image_with_relocations([(0xffc, 8, 0x210)], False, False)
+        page_image[0x200:0x206] = b"\xff\x25" + struct.pack("<i", 0xffc - 0x206)
         page_image.extend(bytes(0x1000))
         struct.pack_into("<QQ", page_image, 64 + 32, len(page_image), len(page_image))
-        page_source = work / "invalid-base-relocation-page-crossing.elf"
+        page_source = work / "base-relocation-page-crossing.elf"
         page_source.write_bytes(page_image)
-        page_output = work / "invalid-base-relocation-page-crossing.exe"
+        page_output = work / "base-relocation-page-crossing.exe"
         page_result = subprocess.run([str(relinker), "--skip-sce-module", "--windows",
                                       str(page_source), str(page_output)],
                                      capture_output=True, text=True, timeout=20)
-        assert page_result.returncode == 2 and "Base relocation target crosses a page boundary" in page_result.stderr, page_result.stderr
-        assert not page_output.exists()
+        assert page_result.returncode == 0 and page_output.read_bytes().startswith(b"MZ"), page_result.stderr
+        if os.name == "nt":
+            run = subprocess.run([str(page_output)], capture_output=True, timeout=20)
+            assert run.returncode == 42, ("page-crossing relocation", run.returncode, run.stderr)
+            moved = bytearray(page_output.read_bytes())
+            optional_header = struct.unpack_from("<I", moved, 0x3c)[0] + 24
+            characteristics = struct.unpack_from("<H", moved, optional_header + 70)[0]
+            struct.pack_into("<H", moved, optional_header + 70, characteristics | 0x40)
+            moved_output = work / "base-relocation-page-crossing-moved.exe"
+            moved_output.write_bytes(moved)
+            for _ in range(3):
+                run = subprocess.run([str(moved_output)], capture_output=True, timeout=20)
+                assert run.returncode == 42, ("page-crossing relocation after the loader moved the image", run.returncode, run.stderr)
+        past_end_image = image_with_relocations([(0x1ffc, 8, 0x210)], False, False)
+        past_end_image.extend(bytes(0x1000))
+        struct.pack_into("<QQ", past_end_image, 64 + 32, len(past_end_image), len(past_end_image))
+        past_end_source = work / "invalid-base-relocation-past-end.elf"
+        past_end_source.write_bytes(past_end_image)
+        past_end_output = work / "invalid-base-relocation-past-end.exe"
+        past_end_result = subprocess.run([str(relinker), "--skip-sce-module", "--windows",
+                                          str(past_end_source), str(past_end_output)],
+                                         capture_output=True, text=True, timeout=20)
+        assert past_end_result.returncode == 2 and "ELF address is not contained in PT_LOAD memory" in past_end_result.stderr, past_end_result.stderr
+        assert not past_end_output.exists()
     print("No-op executable relocation tests passed")
 
 

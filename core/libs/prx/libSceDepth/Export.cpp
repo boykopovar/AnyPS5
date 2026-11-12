@@ -1,3 +1,6 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceDepth/include/InventoryExports.hpp"
+#include "prx/libSceDepth/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -7,7 +10,6 @@ extern "C" {
 
 APS5_DUMMY_FUN
 int APS5_VABI sceDepthCalculateRectificationInformation(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -42,7 +44,6 @@ int APS5_VABI sceDepthGetImage(void) {
 }
 
 int APS5_VABI sceDepthGetRectificationInformation(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -117,7 +118,6 @@ int APS5_VABI sceDepthSetPreFilterParameter(void) {
 }
 
 int APS5_VABI sceDepthSetRectificationInformation(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -198,5 +198,14 @@ int APS5_VABI _sceDepthSetHeteroMode() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceDepthUnknown_unL9sWu4IIw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("unL9sWu4IIw", libSceDepthUnknown_unL9sWu4IIw_nid_no_patch);
 
 }

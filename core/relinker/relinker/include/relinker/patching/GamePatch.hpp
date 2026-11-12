@@ -1,6 +1,7 @@
 #pragma once
 
 #include <codegen/CodegenTypes.hpp>
+#include <codegen/x86/RedZoneFramer.hpp>
 #include <relinker/domain/RelinkResult.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <cstdint>
@@ -83,6 +84,8 @@ struct WriterSites {
     std::span<const WriterRange> Traps;
     std::span<const std::uint8_t> RelaData;
     std::span<const std::uint8_t> RelaPltData;
+    std::span<const Codegen::TrampolineSite> RedZoneSites = {};
+    std::span<const Codegen::RedZoneDisplacement> RedZoneDisplacements = {};
 };
 
 enum class VerifyStatus { Applicable, Applied, NotChecked, Mismatch };

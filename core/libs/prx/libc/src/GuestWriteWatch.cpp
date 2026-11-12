@@ -1,12 +1,14 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <iterator>
 #include <map>
 #include <mutex>
 #include <shared_mutex>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -29,8 +31,11 @@
 #include <cstring>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <mach/semaphore.h>
 #include <pthread.h>
+#include <sched.h>
 #include <sys/mman.h>
+#include <sys/ucontext.h>
 #include <unistd.h>
 #endif
 
@@ -60,6 +65,7 @@ public:
         std::unique_lock lock(_lock);
         remove(_ranges, begin, end);
         remove(_fresh, begin, end);
+        cut(begin, end);
         uffdio_register registration{};
         registration.range.start = begin;
         registration.range.len = end - begin;
@@ -81,7 +87,17 @@ public:
         std::unique_lock lock(_lock);
         const bool watched = remove(_ranges, begin, end);
         remove(_fresh, begin, end);
+        cut(begin, end);
         return watched;
+    }
+
+    bool Alias(std::uintptr_t first, std::uintptr_t second, std::uintptr_t bytes) {
+        if (!Available() || bytes == 0 || first == second || (first | second | bytes) % PageBytes != 0) return false;
+        std::unique_lock lock(_lock);
+        if (!covers(first, first + bytes) || !covers(second, second + bytes)) return false;
+        link(first, first + bytes, second);
+        link(second, second + bytes, first);
+        return true;
     }
 
     bool Covers(std::uintptr_t begin, std::uintptr_t end) {
@@ -102,8 +118,14 @@ public:
         begin &= ~(PageBytes - 1);
         end = (end + PageBytes - 1) & ~(PageBytes - 1);
         if (end <= begin) return true;
-        if (!takeFresh(begin, end, true, written, context)) return false;
-        return scanWritten(begin, end, written, context);
+        const auto plan = aliasPlan(begin, end);
+        Fanout fanout{&plan.own, written, context};
+        if (!takeFresh(begin, end, true, &Fanout::Report, &fanout) || !scanWritten(begin, end, &Fanout::Report, &fanout)) return false;
+        for (const auto& alias : plan.aliases) {
+            Fanout through{&alias.translations, written, context};
+            if (!takeFresh(alias.begin, alias.end, false, &Fanout::Report, &through) || !scanWritten(alias.begin, alias.end, &Fanout::Report, &through)) return false;
+        }
+        return true;
     }
 
     bool CollectFresh(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
@@ -111,14 +133,21 @@ public:
         begin &= ~(PageBytes - 1);
         end = (end + PageBytes - 1) & ~(PageBytes - 1);
         if (end <= begin) return true;
-        {
+        const auto plan = aliasPlan(begin, end);
+        if (plan.aliases.empty()) {
             std::shared_lock lock(_lock);
             auto it = _fresh.upper_bound(begin);
             if (it != _fresh.begin()) --it;
             while (it != _fresh.end() && it->first < end && it->second <= begin) ++it;
             if (it == _fresh.end() || it->first >= end) return true;
         }
-        return takeFresh(begin, end, false, written, context);
+        Fanout fanout{&plan.own, written, context};
+        if (!takeFresh(begin, end, false, &Fanout::Report, &fanout)) return false;
+        for (const auto& alias : plan.aliases) {
+            Fanout through{&alias.translations, written, context};
+            if (!takeFresh(alias.begin, alias.end, false, &Fanout::Report, &through)) return false;
+        }
+        return true;
     }
 
     bool CollectArmed(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
@@ -127,26 +156,140 @@ public:
         end = (end + PageBytes - 1) & ~(PageBytes - 1);
         if (end <= begin) return true;
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> armed;
+        AliasPlan plan;
+        std::vector<std::vector<std::pair<std::uintptr_t, std::uintptr_t>>> aliasArmed;
         {
             std::shared_lock lock(_lock);
             if (!covers(begin, end)) return false;
-            auto cursor = begin;
-            auto it = _fresh.upper_bound(begin);
-            if (it != _fresh.begin()) --it;
-            for (; it != _fresh.end() && it->first < end; ++it) {
-                if (it->second <= cursor) continue;
-                if (it->first > cursor) armed.emplace_back(cursor, it->first);
-                cursor = std::max(cursor, it->second);
-            }
-            if (cursor < end) armed.emplace_back(cursor, end);
+            armed = armedParts(begin, end);
+            plan = aliasPlanLocked(begin, end);
+            for (const auto& alias : plan.aliases) aliasArmed.push_back(armedParts(alias.begin, alias.end));
         }
+        Fanout fanout{&plan.own, written, context};
         for (const auto& [from, to] : armed) {
-            if (!scanWritten(from, to, written, context)) return false;
+            if (!scanWritten(from, to, &Fanout::Report, &fanout)) return false;
+        }
+        for (std::size_t index = 0; index < plan.aliases.size(); ++index) {
+            Fanout through{&plan.aliases[index].translations, written, context};
+            for (const auto& [from, to] : aliasArmed[index]) {
+                if (!scanWritten(from, to, &Fanout::Report, &through)) return false;
+            }
         }
         return true;
     }
 
 private:
+    struct Translation {
+        std::uintptr_t begin;
+        std::uintptr_t end;
+        std::uintptr_t partner;
+    };
+
+    struct AliasRange {
+        std::uintptr_t begin;
+        std::uintptr_t end;
+        std::vector<Translation> translations;
+    };
+
+    struct AliasPlan {
+        std::vector<Translation> own;
+        std::vector<AliasRange> aliases;
+    };
+
+    struct Fanout {
+        const std::vector<Translation>* translations;
+        void (*written)(void*, std::uintptr_t, std::uintptr_t);
+        void* context;
+
+        static void Report(void* self, std::uintptr_t begin, std::uintptr_t end) {
+            auto& fanout = *static_cast<Fanout*>(self);
+            fanout.written(fanout.context, begin, end);
+            for (const auto& [from, to, partner] : *fanout.translations) {
+                const auto left = std::max(from, begin);
+                const auto right = std::min(to, end);
+                if (left < right) fanout.written(fanout.context, partner + (left - from), partner + (right - from));
+            }
+        }
+    };
+
+    struct Link {
+        std::uintptr_t end;
+        std::uintptr_t partner;
+    };
+
+    AliasPlan aliasPlan(std::uintptr_t begin, std::uintptr_t end) {
+        std::shared_lock lock(_lock);
+        return aliasPlanLocked(begin, end);
+    }
+
+    AliasPlan aliasPlanLocked(std::uintptr_t begin, std::uintptr_t end) const {
+        AliasPlan plan;
+        plan.own = translations(begin, end);
+        for (const auto& [from, to, partner] : plan.own) {
+            const auto stop = partner + (to - from);
+            plan.aliases.push_back({partner, stop, translations(partner, stop)});
+        }
+        return plan;
+    }
+
+    std::vector<Translation> translations(std::uintptr_t begin, std::uintptr_t end) const {
+        std::vector<Translation> found;
+        if (_links.empty()) return found;
+        for (auto it = _links.lower_bound(begin > _linkBytes ? begin - _linkBytes : 0); it != _links.end() && it->first < end; ++it) {
+            const auto from = std::max(it->first, begin);
+            const auto to = std::min(it->second.end, end);
+            if (from < to) found.push_back({from, to, it->second.partner + (from - it->first)});
+        }
+        return found;
+    }
+
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> armedParts(std::uintptr_t begin, std::uintptr_t end) const {
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> armed;
+        auto cursor = begin;
+        auto it = _fresh.upper_bound(begin);
+        if (it != _fresh.begin()) --it;
+        for (; it != _fresh.end() && it->first < end; ++it) {
+            if (it->second <= cursor) continue;
+            if (it->first > cursor) armed.emplace_back(cursor, it->first);
+            cursor = std::max(cursor, it->second);
+        }
+        if (cursor < end) armed.emplace_back(cursor, end);
+        return armed;
+    }
+
+    void link(std::uintptr_t begin, std::uintptr_t end, std::uintptr_t partner) {
+        _links.emplace(begin, Link{end, partner});
+        _linkBytes = std::max(_linkBytes, end - begin);
+    }
+
+    void cut(std::uintptr_t begin, std::uintptr_t end) {
+        std::vector<std::pair<std::uintptr_t, Link>> kept;
+        for (auto it = _links.begin(); it != _links.end();) {
+            const auto from = it->first;
+            const auto bytes = it->second.end - from;
+            const auto partner = it->second.partner;
+            if (!(from < end && begin < from + bytes) && !(partner < end && begin < partner + bytes)) {
+                ++it;
+                continue;
+            }
+            it = _links.erase(it);
+            std::vector<std::pair<std::uintptr_t, std::uintptr_t>> pieces{{0, bytes}};
+            for (const auto base : {from, partner}) {
+                const auto low = std::min(bytes, begin > base ? begin - base : 0);
+                const auto high = std::min(bytes, end > base ? end - base : 0);
+                if (low >= high) continue;
+                std::vector<std::pair<std::uintptr_t, std::uintptr_t>> remaining;
+                for (const auto& [left, right] : pieces) {
+                    if (left < low) remaining.emplace_back(left, std::min(right, low));
+                    if (right > high) remaining.emplace_back(std::max(left, high), right);
+                }
+                pieces = std::move(remaining);
+            }
+            for (const auto& [left, right] : pieces) kept.emplace_back(from + left, Link{from + right, partner + left});
+        }
+        for (const auto& [from, piece] : kept) _links.emplace(from, piece);
+    }
+
     bool takeFresh(std::uintptr_t begin, std::uintptr_t end, bool whole, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> fresh;
         {
@@ -321,6 +464,8 @@ private:
     std::shared_mutex _lock;
     std::map<std::uintptr_t, std::uintptr_t> _ranges;
     std::map<std::uintptr_t, std::uintptr_t> _fresh;
+    std::multimap<std::uintptr_t, Link> _links;
+    std::uintptr_t _linkBytes = 0;
 };
 
 const bool g_opened = (Watch::Get(), true);
@@ -364,9 +509,10 @@ public:
             auto& entry = pages[(page - begin) / _page];
             const std::uint8_t recorded = state & ProtectionMask;
             const bool armed = (state & Protected) != 0 && (entry & ProtectionMask) == (recorded & ~PROT_WRITE);
-            if (armed || !queried[(page - begin) / _page]) entry = static_cast<std::uint8_t>(Written | Fresh | recorded);
+            if (armed || (state & ReadTrapped) != 0 || !queried[(page - begin) / _page]) entry = static_cast<std::uint8_t>(Written | Fresh | recorded);
             else state = static_cast<std::uint8_t>(state & ~Protected);
         });
+        dropTraps(begin, end);
         erase(begin, end);
         _ranges.emplace(begin, Range{end, std::move(pages)});
     }
@@ -377,6 +523,7 @@ public:
         end = pageEnd(end);
         if (end <= begin) return false;
         const Lock lock(_lock);
+        dropTraps(begin, end);
         return erase(begin, end);
     }
 
@@ -391,6 +538,10 @@ public:
         const Lock lock(_lock);
         const auto next = _ranges.upper_bound(begin);
         return (next != _ranges.begin() && std::prev(next)->second.end > begin) || (next != _ranges.end() && next->first < end);
+    }
+
+    bool HandleFault(std::uintptr_t address) {
+        return _available && record(address);
     }
 
     enum class Take { All, Armed, Fresh };
@@ -427,9 +578,25 @@ public:
         begin = pageStart(begin);
         end = pageEnd(end);
         if (end <= begin) return;
-        const Lock lock(_lock);
-        forEachPage(begin, end, [&](std::uintptr_t, std::uint8_t& state) {
-            state = static_cast<std::uint8_t>(Written | (state & Fresh) | (protection & ProtectionMask));
+        withoutTraps(begin, end, false, [&] {
+            forEachPage(begin, end, [&](std::uintptr_t, std::uint8_t& state) {
+                state = static_cast<std::uint8_t>(Written | (state & Fresh) | (protection & ProtectionMask));
+            });
+        });
+    }
+
+    int Protect(std::uintptr_t begin, std::uintptr_t end, int protection) {
+        if (!_available) return ::mprotect(reinterpret_cast<void*>(begin), end - begin, protection) == 0 ? 0 : errno;
+        const auto first = pageStart(begin);
+        const auto last = pageEnd(end);
+        return withoutTraps(first, last, true, [&] {
+            if (::mprotect(reinterpret_cast<void*>(begin), end - begin, protection) != 0) return errno;
+            if (first < last) {
+                forEachPage(first, last, [&](std::uintptr_t, std::uint8_t& state) {
+                    state = static_cast<std::uint8_t>(Written | (state & Fresh) | (protection & ProtectionMask));
+                });
+            }
+            return 0;
         });
     }
 
@@ -438,11 +605,12 @@ public:
         begin = pageStart(begin);
         end = pageEnd(end);
         if (end <= begin) return;
-        const Lock lock(_lock);
-        _hostWrites.emplace_back(begin, end);
-        forEachPage(begin, end, [&](std::uintptr_t page, std::uint8_t& state) {
-            if ((state & Protected) != 0) ::mprotect(reinterpret_cast<void*>(page), _page, state & ProtectionMask);
-            state = static_cast<std::uint8_t>((state & (ProtectionMask | Fresh)) | Written);
+        withoutTraps(begin, end, true, [&] {
+            _hostWrites.emplace_back(begin, end);
+            forEachPage(begin, end, [&](std::uintptr_t page, std::uint8_t& state) {
+                if ((state & Protected) != 0) ::mprotect(reinterpret_cast<void*>(page), _page, state & ProtectionMask);
+                state = static_cast<std::uint8_t>((state & (ProtectionMask | Fresh)) | Written);
+            });
         });
     }
 
@@ -473,11 +641,79 @@ public:
         return -1;
     }
 
+    bool SetReadTrapResolver(void (*resolver)(std::uintptr_t, std::uintptr_t)) {
+        if (!_available || resolver == nullptr) return false;
+        std::call_once(_resolverStarted, [this] { startResolver(); });
+        if (!_resolverRunning.load(std::memory_order_acquire)) return false;
+        _resolver.store(resolver, std::memory_order_release);
+        return true;
+    }
+
+    void SetReadTrapBypass(bool (*bypass)()) {
+        _bypass.store(bypass, std::memory_order_release);
+    }
+
+    bool TrapReads(std::uintptr_t begin, std::uintptr_t end) {
+        if (!_available || end <= begin || _resolver.load(std::memory_order_acquire) == nullptr) return false;
+        const auto first = pageStart(begin);
+        const auto last = pageEnd(end);
+        const Lock lock(_lock);
+        if (!covers(first, last)) return false;
+        const auto [same, other] = _traps.equal_range(begin);
+        if (std::any_of(same, other, [&](const auto& trap) { return trap.second == end; })) return true;
+        for (const auto& [hostBegin, hostEnd] : _hostWrites)
+            if (hostBegin < last && first < hostEnd) return false;
+        if (::mprotect(reinterpret_cast<void*>(first), last - first, PROT_NONE) != 0) return false;
+        _traps.emplace(begin, end);
+        forEachPage(first, last, [](std::uintptr_t, std::uint8_t& state) { state |= ReadTrapped; });
+        _trapping.store(true, std::memory_order_release);
+        return true;
+    }
+
+    void ReleaseReads(std::uintptr_t begin, std::uintptr_t end) {
+        if (!_available || end <= begin) return;
+        const Lock lock(_lock);
+        const auto [first, last] = _traps.equal_range(begin);
+        const auto found = std::find_if(first, last, [&](const auto& trap) { return trap.second == end; });
+        if (found == last) return;
+        _traps.erase(found);
+        untrap(begin, end);
+    }
+
 private:
     static constexpr std::uint8_t ProtectionMask = PROT_READ | PROT_WRITE | PROT_EXEC;
     static constexpr std::uint8_t Written = 0x10;
     static constexpr std::uint8_t Protected = 0x20;
     static constexpr std::uint8_t Fresh = 0x40;
+    static constexpr std::uintptr_t FaultAheadBlock = 65536;
+    static constexpr std::uint8_t ReadTrapped = 0x80;
+    static constexpr std::size_t ResolveSlots = 32;
+    static constexpr std::size_t RetrySlots = 64;
+    static constexpr unsigned UntrappedRetries = 16;
+    static constexpr unsigned GenerationRetries = RetrySlots * UntrappedRetries;
+
+    enum SlotState : unsigned { Free, Claimed, Queued, Running, Done };
+    enum class Owner { Any, Self, Others };
+
+    struct Slot {
+        std::atomic<unsigned> state{Free};
+        std::uintptr_t page = 0;
+        semaphore_t done = MACH_PORT_NULL;
+    };
+
+    struct Resolving {
+        std::uintptr_t begin;
+        std::uintptr_t end;
+        pthread_t owner;
+    };
+
+    struct Retry {
+        std::uintptr_t page = 0;
+        pthread_t thread = nullptr;
+        std::uint64_t generation = 0;
+        std::uint64_t used = 0;
+        unsigned count = 0;
+    };
 
     struct Range {
         std::uintptr_t end;
@@ -522,6 +758,7 @@ private:
     };
 
     Watch() {
+        if (const char* ahead = std::getenv("APS5_WRITE_WATCH_FAULT_AHEAD")) _faultAhead = static_cast<std::size_t>(std::strtoul(ahead, nullptr, 0));
         if (std::getenv("APS5_NO_WRITE_WATCH") != nullptr) return;
         struct sigaction action {};
         action.sa_sigaction = &Watch::fault;
@@ -534,9 +771,29 @@ private:
         _available = true;
     }
 
+    static bool isWriteFault(const siginfo_t* info, void* context) {
+        if (info->si_code <= 0 || info->si_code >= SI_USER || context == nullptr) return false;
+        const auto state = static_cast<ucontext_t*>(context)->uc_mcontext;
+        if (state == nullptr) return false;
+#if defined(__x86_64__)
+        constexpr unsigned PageFault = 14;
+        constexpr unsigned WriteAccess = 1u << 1;
+        return state->__es.__trapno == PageFault && (state->__es.__err & WriteAccess) != 0;
+#elif defined(__aarch64__)
+        constexpr unsigned DataAbort = 0x24;
+        constexpr unsigned ExceptionClassShift = 26;
+        constexpr unsigned WriteAccess = 1u << 6;
+        return (state->__es.__esr >> ExceptionClassShift) == DataAbort && (state->__es.__esr & WriteAccess) != 0;
+#else
+        return false;
+#endif
+    }
+
     static void fault(int signal, siginfo_t* info, void* context) {
         auto& watch = Get();
-        if (watch.record(reinterpret_cast<std::uintptr_t>(info->si_addr))) return;
+        const bool write = isWriteFault(info, context);
+        if (info->si_code > 0 && info->si_code < SI_USER && watch.resolveTrap(reinterpret_cast<std::uintptr_t>(info->si_addr), write)) return;
+        if (write && watch.record(reinterpret_cast<std::uintptr_t>(info->si_addr))) return;
         const auto& previous = signal == SIGBUS ? watch._previousBus : watch._previousSegv;
         if ((previous.sa_flags & SA_SIGINFO) != 0 && previous.sa_sigaction != nullptr) {
             previous.sa_sigaction(signal, info, context);
@@ -547,6 +804,7 @@ private:
             return;
         }
         ::signal(signal, SIG_DFL);
+        if (previous.sa_handler == SIG_DFL) ::raise(signal);
     }
 
     bool record(std::uintptr_t address) {
@@ -556,13 +814,220 @@ private:
         if (it == _ranges.begin()) return false;
         --it;
         if (page >= it->second.end) return false;
-        auto& state = it->second.pages[(page - it->first) / _page];
+        auto& pages = it->second.pages;
+        const auto index = static_cast<std::size_t>((page - it->first) / _page);
+        auto& state = pages[index];
         if ((state & Protected) != 0) {
-            state = static_cast<std::uint8_t>((state & (ProtectionMask | Fresh)) | Written);
-            ::mprotect(reinterpret_cast<void*>(page), _page, state & ProtectionMask);
+            const auto protection = state & ProtectionMask;
+            const auto writtenOpen = [&](std::size_t at) { return (pages[at] & (Written | Protected)) == Written && (pages[at] & ProtectionMask) == protection; };
+            std::size_t count = 1;
+            if (_faultAhead > 1 && index >= 2 && writtenOpen(index - 1) && writtenOpen(index - 2)) {
+                const auto blockPages = static_cast<std::size_t>(((page | (FaultAheadBlock - 1)) + 1 - page) / _page);
+                const auto limit = std::min({_faultAhead, blockPages, pages.size() - index});
+                while (count < limit && (pages[index + count] & (Protected | ReadTrapped)) == Protected && (pages[index + count] & ProtectionMask) == protection) ++count;
+            }
+            if (::mprotect(reinterpret_cast<void*>(page), count * _page, protection) != 0) return false;
+            for (std::size_t at = index; at < index + count; ++at) pages[at] = static_cast<std::uint8_t>((pages[at] & (ProtectionMask | Fresh)) | Written);
             return true;
         }
-        return (state & PROT_WRITE) != 0;
+        if ((state & PROT_WRITE) == 0) return false;
+        std::uint8_t value = 0;
+        mach_vm_size_t copied = 0;
+        return mach_vm_read_overwrite(mach_task_self(), address, sizeof(value), reinterpret_cast<mach_vm_address_t>(&value), &copied) == KERN_SUCCESS && copied == sizeof(value);
+    }
+
+    bool resolveTrap(std::uintptr_t address, bool write) {
+        if (!_trapping.load(std::memory_order_acquire)) return false;
+        const auto page = pageStart(address);
+        {
+            const FaultLock lock(_lock);
+            auto* state = pageState(page);
+            if (state == nullptr) return false;
+            if ((*state & ReadTrapped) == 0) return retryUntrapped(page, *state, write);
+            const auto bypass = _bypass.load(std::memory_order_acquire);
+            if (resolvingCovers(page, page + _page, Owner::Self) || pthread_equal(pthread_self(), _resolverThread) || (bypass != nullptr && bypass()) || (!trapCovers(page, page + _page) && !resolvingCovers(page, page + _page, Owner::Any))) {
+                *state = static_cast<std::uint8_t>(*state & ~ReadTrapped);
+                ++_untrapGeneration;
+                return ::mprotect(reinterpret_cast<void*>(page), _page, untrappedProtection(*state)) == 0;
+            }
+        }
+        Slot* slot = nullptr;
+        while (slot == nullptr) {
+            for (auto& candidate : _slots) {
+                unsigned expected = Free;
+                if (candidate.state.compare_exchange_strong(expected, Claimed, std::memory_order_acq_rel)) {
+                    slot = &candidate;
+                    break;
+                }
+            }
+            if (slot == nullptr) sched_yield();
+        }
+        slot->page = page;
+        slot->state.store(Queued, std::memory_order_release);
+        semaphore_signal(_wake);
+        while (semaphore_wait(slot->done) == KERN_ABORTED) {}
+        slot->state.store(Free, std::memory_order_release);
+        return true;
+    }
+
+    void startResolver() {
+        if (semaphore_create(mach_task_self(), &_wake, SYNC_POLICY_FIFO, 0) != KERN_SUCCESS) return;
+        for (auto& slot : _slots)
+            if (semaphore_create(mach_task_self(), &slot.done, SYNC_POLICY_FIFO, 0) != KERN_SUCCESS) return;
+        pthread_attr_t attributes;
+        pthread_attr_init(&attributes);
+        pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+        const bool created = pthread_create(&_resolverThread, &attributes, [](void* watch) -> void* {
+            static_cast<Watch*>(watch)->resolveLoop();
+            return nullptr;
+        }, this) == 0;
+        pthread_attr_destroy(&attributes);
+        _resolverRunning.store(created, std::memory_order_release);
+    }
+
+    void resolveLoop() {
+        pthread_setname_np("write watch read traps");
+        for (;;) {
+            if (semaphore_wait(_wake) != KERN_SUCCESS) continue;
+            for (auto& slot : _slots) {
+                unsigned expected = Queued;
+                if (!slot.state.compare_exchange_strong(expected, Running, std::memory_order_acq_rel)) continue;
+                const auto page = slot.page;
+                waitForResolving(page, page + _page);
+                resolve(page, page + _page);
+                {
+                    const Lock lock(_lock);
+                    untrap(page, page + _page);
+                }
+                slot.state.store(Done, std::memory_order_release);
+                semaphore_signal(slot.done);
+            }
+        }
+    }
+
+    void resolve(std::uintptr_t begin, std::uintptr_t end) {
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> taken;
+        const auto self = pthread_self();
+        {
+            const Lock lock(_lock);
+            taken = takeTraps(begin, end);
+            for (const auto& [first, last] : taken) _resolving.push_back({first, last, self});
+        }
+        if (taken.empty()) return;
+        const auto resolver = _resolver.load(std::memory_order_acquire);
+        for (const auto& [first, last] : taken) resolver(first, last);
+        const Lock lock(_lock);
+        for (const auto& [first, last] : taken) {
+            const auto found = std::find_if(_resolving.begin(), _resolving.end(), [&](const Resolving& entry) { return entry.begin == first && entry.end == last && pthread_equal(entry.owner, self); });
+            if (found != _resolving.end()) _resolving.erase(found);
+        }
+        for (const auto& [first, last] : taken) untrap(first, last);
+    }
+
+    void waitForResolving(std::uintptr_t begin, std::uintptr_t end) {
+        for (;;) {
+            {
+                const Lock lock(_lock);
+                if (!resolvingCovers(begin, end, Owner::Others)) return;
+            }
+            sched_yield();
+        }
+    }
+
+    bool resolvingCovers(std::uintptr_t begin, std::uintptr_t end, Owner owner) const {
+        const auto self = pthread_self();
+        return std::any_of(_resolving.begin(), _resolving.end(), [&](const Resolving& entry) {
+            if (pageStart(entry.begin) >= end || begin >= pageEnd(entry.end)) return false;
+            return owner == Owner::Any || (pthread_equal(entry.owner, self) != 0) == (owner == Owner::Self);
+        });
+    }
+
+    bool retryUntrapped(std::uintptr_t page, std::uint8_t state, bool write) {
+        if ((untrappedProtection(state) & (write ? PROT_WRITE : PROT_READ)) == 0) return false;
+        if (_retryGeneration != _untrapGeneration) {
+            _retryGeneration = _untrapGeneration;
+            _generationRetries = 0;
+        }
+        if (++_generationRetries > GenerationRetries) return false;
+        const auto thread = pthread_self();
+        auto found = std::find_if(_retries.begin(), _retries.end(), [&](const Retry& retry) { return retry.used != 0 && retry.page == page && pthread_equal(retry.thread, thread); });
+        if (found == _retries.end()) found = std::min_element(_retries.begin(), _retries.end(), [](const Retry& left, const Retry& right) { return left.used < right.used; });
+        if (found->used == 0 || found->page != page || !pthread_equal(found->thread, thread) || found->generation != _untrapGeneration) *found = {page, thread, _untrapGeneration, 0, 0};
+        found->used = ++_retryUses;
+        return ++found->count <= UntrappedRetries;
+    }
+
+    template <typename TFunction>
+    std::invoke_result_t<TFunction> withoutTraps(std::uintptr_t begin, std::uintptr_t end, bool restore, TFunction function) {
+        for (;;) {
+            if (_trapping.load(std::memory_order_acquire)) {
+                waitForResolving(begin, end);
+                resolve(begin, end);
+            }
+            const Lock lock(_lock);
+            if (trapCovers(pageStart(begin), pageEnd(end)) || resolvingCovers(pageStart(begin), pageEnd(end), Owner::Others)) continue;
+            if (restore) untrap(begin, end);
+            else forEachPage(pageStart(begin), pageEnd(end), [](std::uintptr_t, std::uint8_t& state) { state = static_cast<std::uint8_t>(state & ~ReadTrapped); });
+            return function();
+        }
+    }
+
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> takeTraps(std::uintptr_t begin, std::uintptr_t end) {
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> taken;
+        auto first = pageStart(begin);
+        auto last = pageEnd(end);
+        for (bool grew = true; grew;) {
+            grew = false;
+            for (auto it = _traps.begin(); it != _traps.end();) {
+                if (it->first >= last || it->second <= first) {
+                    ++it;
+                    continue;
+                }
+                first = std::min(first, pageStart(it->first));
+                last = std::max(last, pageEnd(it->second));
+                taken.emplace_back(*it);
+                it = _traps.erase(it);
+                grew = true;
+            }
+        }
+        return taken;
+    }
+
+    void dropTraps(std::uintptr_t begin, std::uintptr_t end) {
+        for (const auto& [first, last] : takeTraps(begin, end)) untrap(first, last);
+        untrap(begin, end);
+    }
+
+    bool trapCovers(std::uintptr_t begin, std::uintptr_t end) const {
+        return std::any_of(_traps.begin(), _traps.end(), [&](const auto& trap) { return trap.first < end && begin < trap.second; });
+    }
+
+    void untrap(std::uintptr_t begin, std::uintptr_t end) {
+        const auto first = pageStart(begin);
+        const auto last = pageEnd(end);
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> remaining;
+        for (const auto& trap : _traps)
+            if (trap.first < last && first < trap.second) remaining.push_back(trap);
+        forEachPage(first, last, [&](std::uintptr_t page, std::uint8_t& state) {
+            if ((state & ReadTrapped) == 0) return;
+            if (std::any_of(remaining.begin(), remaining.end(), [&](const auto& trap) { return trap.first < page + _page && page < trap.second; })) return;
+            if (resolvingCovers(page, page + _page, Owner::Others)) return;
+            state = static_cast<std::uint8_t>(state & ~ReadTrapped);
+            ::mprotect(reinterpret_cast<void*>(page), _page, untrappedProtection(state));
+            ++_untrapGeneration;
+        });
+    }
+
+    static int untrappedProtection(std::uint8_t state) {
+        return (state & Protected) != 0 ? (state & ProtectionMask & ~PROT_WRITE) : (state & ProtectionMask);
+    }
+
+    std::uint8_t* pageState(std::uintptr_t page) {
+        auto it = _ranges.upper_bound(page);
+        if (it == _ranges.begin()) return nullptr;
+        --it;
+        if (page >= it->second.end) return nullptr;
+        return &it->second.pages[(page - it->first) / _page];
     }
 
     std::uintptr_t pageStart(std::uintptr_t address) const {
@@ -593,7 +1058,7 @@ private:
             runProtection = -1;
         };
         forEachPage(begin, end, [&](std::uintptr_t page, std::uint8_t& state) {
-            const int wanted = (state & Protected) != 0 ? (state & ProtectionMask & ~PROT_WRITE) : -1;
+            const int wanted = (state & ReadTrapped) != 0 ? PROT_NONE : (state & Protected) != 0 ? (state & ProtectionMask & ~PROT_WRITE) : -1;
             if (wanted != runProtection || page != previous) {
                 flush(previous);
                 runStart = page;
@@ -634,7 +1099,7 @@ private:
             const auto cutEnd = std::min(end, rangeEnd);
             for (auto page = cutBegin; page < cutEnd; page += _page) {
                 const auto state = pages[(page - rangeBegin) / _page];
-                if ((state & Protected) != 0) ::mprotect(reinterpret_cast<void*>(page), _page, state & ProtectionMask);
+                if ((state & (Protected | ReadTrapped)) != 0) ::mprotect(reinterpret_cast<void*>(page), _page, state & ProtectionMask);
             }
             if (rangeBegin < cutBegin) _ranges.emplace(rangeBegin, Range{cutBegin, std::vector<std::uint8_t>(pages.begin(), pages.begin() + (cutBegin - rangeBegin) / _page)});
             if (cutEnd < rangeEnd) it = _ranges.emplace(cutEnd, Range{rangeEnd, std::vector<std::uint8_t>(pages.begin() + (cutEnd - rangeBegin) / _page, pages.end())}).first;
@@ -643,10 +1108,26 @@ private:
     }
 
     const std::uintptr_t _page = static_cast<std::uintptr_t>(::getpagesize());
+    std::size_t _faultAhead = 32;
     bool _available = false;
     Mutex _lock;
     std::map<std::uintptr_t, Range> _ranges;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _hostWrites;
+    std::multimap<std::uintptr_t, std::uintptr_t> _traps;
+    std::vector<Resolving> _resolving;
+    std::array<Retry, RetrySlots> _retries{};
+    std::uint64_t _retryUses = 0;
+    std::uint64_t _retryGeneration = 0;
+    unsigned _generationRetries = 0;
+    std::uint64_t _untrapGeneration = 0;
+    std::atomic<bool> _trapping{false};
+    std::atomic<void (*)(std::uintptr_t, std::uintptr_t)> _resolver{nullptr};
+    std::atomic<bool (*)()> _bypass{nullptr};
+    std::once_flag _resolverStarted;
+    std::atomic<bool> _resolverRunning{false};
+    pthread_t _resolverThread{};
+    semaphore_t _wake = MACH_PORT_NULL;
+    std::array<Slot, ResolveSlots> _slots;
     struct sigaction _previousBus {};
     struct sigaction _previousSegv {};
 };
@@ -685,6 +1166,17 @@ bool GuestWriteWatchUnregister_nid_postfix(const void* pointer, std::size_t byte
 #endif
 }
 
+bool GuestWriteWatchAlias_nid_postfix(const void* first, const void* second, std::size_t bytes) {
+#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
+    return Watch::Get().Alias(reinterpret_cast<std::uintptr_t>(first), reinterpret_cast<std::uintptr_t>(second), bytes);
+#else
+    static_cast<void>(first);
+    static_cast<void>(second);
+    static_cast<void>(bytes);
+    return false;
+#endif
+}
+
 bool GuestWriteWatchCovers_nid_postfix(std::uintptr_t address, std::size_t bytes) {
 #ifdef APS5_GUEST_WRITE_WATCH
     return bytes != 0 && address + bytes > address && Watch::Get().Covers(address, address + bytes);
@@ -701,6 +1193,15 @@ bool GuestWriteWatchOverlaps_nid_postfix(std::uintptr_t address, std::size_t byt
 #else
     static_cast<void>(address);
     static_cast<void>(bytes);
+    return false;
+#endif
+}
+
+bool GuestWriteWatchHandleFault_nid_postfix(std::uintptr_t address) {
+#if defined(__APPLE__)
+    return Watch::Get().HandleFault(address);
+#else
+    static_cast<void>(address);
     return false;
 #endif
 }
@@ -749,6 +1250,18 @@ void GuestWriteWatchProtectionChanged_nid_postfix(const void* pointer, std::size
 #endif
 }
 
+int GuestWriteWatchProtect_nid_postfix(void* pointer, std::size_t bytes, int protection) {
+#if defined(__APPLE__)
+    const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
+    return Watch::Get().Protect(begin, begin + bytes, protection);
+#else
+    static_cast<void>(pointer);
+    static_cast<void>(bytes);
+    static_cast<void>(protection);
+    return ENOSYS;
+#endif
+}
+
 int GuestWriteWatchProtection_nid_postfix(std::uintptr_t address, std::uintptr_t limit, std::uintptr_t* runEnd) {
 #if defined(__APPLE__)
     return Watch::Get().Protection(address, limit, runEnd);
@@ -788,6 +1301,42 @@ bool GuestWriteWatchCollectArmed_nid_postfix(std::uintptr_t address, std::size_t
     static_cast<void>(written);
     static_cast<void>(context);
     return false;
+#endif
+}
+
+bool GuestWriteWatchSetReadTrapResolver_nid_postfix(void (*resolve)(std::uintptr_t begin, std::uintptr_t end)) {
+#if defined(__APPLE__)
+    return Watch::Get().SetReadTrapResolver(resolve);
+#else
+    static_cast<void>(resolve);
+    return false;
+#endif
+}
+
+void GuestWriteWatchSetReadTrapBypass_nid_postfix(bool (*bypass)()) {
+#if defined(__APPLE__)
+    Watch::Get().SetReadTrapBypass(bypass);
+#else
+    static_cast<void>(bypass);
+#endif
+}
+
+bool GuestWriteWatchTrapReads_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+#if defined(__APPLE__)
+    return bytes != 0 && address + bytes > address && Watch::Get().TrapReads(address, address + bytes);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    return false;
+#endif
+}
+
+void GuestWriteWatchReleaseReads_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+#if defined(__APPLE__)
+    if (bytes != 0 && address + bytes > address) Watch::Get().ReleaseReads(address, address + bytes);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
 #endif
 }
 

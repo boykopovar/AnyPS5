@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Shader/include/LinkShaders.hpp"
 #include "SceShaders.hpp"
 #include "prx/libSceAgc/Shader/include/PrimState.hpp"
 #include "prx/libSceAgc/Shader/include/InterpolantMapping.hpp"
@@ -10,10 +11,6 @@
 #include <stdexcept>
 #include <string>
 #include <iostream>
-
-extern "C" int APS5_VABI sceAgcLinkShaders(ShaderRegister*, ShaderRegister*, const void*, const Shader*, const Shader*, std::uint32_t);
-extern "C" int APS5_VABI sceAgcCreatePrimState(ShaderRegister*, ShaderRegister*, const Shader*, const Shader*, std::uint32_t);
-extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister*, const Shader*, const Shader*);
 
 namespace {
 std::array<ShaderRegister, 2> preparedContext;
@@ -73,6 +70,26 @@ void HandBuiltUserVgprRegister() {
     try { static_cast<void>(sceAgcCreatePrimState(context.data(), primitive.data(), nullptr, &preRaster, 4)); }
     catch (const std::runtime_error& error) { message = error.what(); }
     Require(message.find("GE_CNTL") != std::string::npos && message.find("0x25c") != std::string::npos);
+}
+
+void UpdatedPrimitiveType() {
+    using namespace ShaderRegs;
+    std::array<ShaderRegister, 2> context{ShaderRegister{VGT_SHADER_STAGES_EN, 0x2412010u}, ShaderRegister{VGT_GS_OUT_PRIM_TYPE, 0xa5a5a5a0u}};
+    std::array<ShaderRegister, 3> primitive{ShaderRegister{GE_CNTL, 0x100u}, ShaderRegister{GE_USER_VGPR1, 0}, ShaderRegister{VGT_PRIMITIVE_TYPE, 0x5a5a5a40u}};
+    Require(sceAgcUpdatePrimState(context.data(), primitive.data(), static_cast<std::uint32_t>(PrimitiveType::LineStrip)) == 0);
+    Require(context[1].value == (0xa5a5a5a0u | static_cast<std::uint32_t>(GsOutputPrimitiveType::Lines)) && primitive[2].value == (0x5a5a5a40u | 3u));
+    Require(context[0].offset == VGT_SHADER_STAGES_EN && context[0].value == 0x2412010u && context[1].offset == VGT_GS_OUT_PRIM_TYPE);
+    Require(primitive[0].value == 0x100u && primitive[1].value == 0 && primitive[2].offset == VGT_PRIMITIVE_TYPE);
+    Require(sceAgcUpdatePrimState(context.data(), nullptr, static_cast<std::uint32_t>(PrimitiveType::RectList)) == 0);
+    Require(context[1].value == (0xa5a5a5a0u | static_cast<std::uint32_t>(GsOutputPrimitiveType::Rectangle2D)) && primitive[2].value == (0x5a5a5a40u | 3u));
+    Require(sceAgcUpdatePrimState(nullptr, primitive.data(), static_cast<std::uint32_t>(PrimitiveType::TriStrip)) == 0);
+    Require(context[1].value == (0xa5a5a5a0u | static_cast<std::uint32_t>(GsOutputPrimitiveType::Rectangle2D)) && primitive[2].value == (0x5a5a5a40u | 6u));
+    for (const auto stage : {VGT_SHADER_STAGES_GS_BIT, VGT_SHADER_STAGES_HS_BIT}) {
+        context[0].value = 0x2412010u | stage;
+        const auto kept = context[1].value;
+        Require(sceAgcUpdatePrimState(context.data(), primitive.data(), static_cast<std::uint32_t>(PrimitiveType::PointList)) == 0);
+        Require(context[1].value == kept && primitive[2].value == (0x5a5a5a40u | 1u));
+    }
 }
 }
 
@@ -195,6 +212,7 @@ int main() {
         Require(preparations == 0 && mappings == 0 && links == 0);
         OptionalGeometryOutputRegister(special, vertex, hull);
         HandBuiltUserVgprRegister();
+        UpdatedPrimitiveType();
         LibcRunShutdown_nid_postfix();
         std::cout << "shader helper preparation tests passed\n";
     } catch (const std::exception& error) {

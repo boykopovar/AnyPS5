@@ -1,39 +1,15 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "ProcessParametersFixture.hpp"
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI sceHttpInit_nid_postfix(int, int, std::uint64_t);
-int APS5_VABI sceHttpTerm_nid_postfix(int);
-int APS5_VABI sceHttpCreateTemplate(int, const char*, int, int);
-int APS5_VABI sceHttpDeleteTemplate(int);
-int APS5_VABI sceHttpCreateConnectionWithURL(int, const char*, int);
-int APS5_VABI sceHttpDeleteConnection(int);
-int APS5_VABI sceHttpCreateRequestWithURL(int, int, const char*, std::uint64_t);
-int APS5_VABI sceHttpDeleteRequest(int);
-int APS5_VABI sceHttpSetAutoRedirect(int, int);
-int APS5_VABI sceHttpGetAutoRedirect(int, int*);
-int APS5_VABI sceHttpSetNonblock(int, int);
-int APS5_VABI sceHttpGetNonblock(int, int*);
-int APS5_VABI sceHttpTrySetNonblock(int, int);
-int APS5_VABI sceHttpTryGetNonblock(int, int*);
-int APS5_VABI sceHttpSetAcceptEncodingGZIPEnabled(int, int);
-int APS5_VABI sceHttpGetAcceptEncodingGZIPEnabled(int, int*);
-int APS5_VABI sceHttpSetDefaultAcceptEncodingGZIPEnabled(int, int);
-int APS5_VABI sceHttpCreateEpoll(int, HttpEpollHandle*);
-int APS5_VABI sceHttpDestroyEpoll(int, HttpEpollHandle);
-int APS5_VABI sceHttpSetEpoll(int, HttpEpollHandle, void*);
-int APS5_VABI sceHttpUnsetEpoll(int);
-int APS5_VABI sceHttpGetEpoll(int, HttpEpollHandle*, void**);
-int APS5_VABI sceHttpCacheRedirectedConnectionEnabled(int, int);
-int APS5_VABI sceHttpsEnableOptionPrivate(int, std::uint32_t);
-int APS5_VABI sceHttpsDisableOptionPrivate(int, std::uint32_t);
-int APS5_VABI sceHttpAbortRequestForce(int);
-int APS5_VABI sceHttpSetProxy(int, int, int, const char*, std::uint16_t);
-}
+#include <stdexcept>
 
 namespace {
 
@@ -73,6 +49,40 @@ void CheckAutoRedirect(int context) {
     Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
 }
 
+void CheckAuthEnabled(int context) {
+    const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
+    Require(Get(sceHttpGetAuthEnabled, pattern) == 0, "authentication is enabled by default");
+    Require(sceHttpSetAuthEnabled(pattern, 1) == 0 && Get(sceHttpGetAuthEnabled, pattern) == 1, "sceHttpGetAuthEnabled did not return the set value");
+    const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
+    const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    Require(Get(sceHttpGetAuthEnabled, connection) == 1 && Get(sceHttpGetAuthEnabled, request) == 1, "a child did not inherit its parent's authentication option");
+    Require(sceHttpSetAuthEnabled(request, 0) == 0 && Get(sceHttpGetAuthEnabled, request) == 0, "authentication could not be disabled on a request");
+    Require(Get(sceHttpGetAuthEnabled, connection) == 1 && Get(sceHttpGetAuthEnabled, pattern) == 1, "setting a request changed its parent options");
+    int value = -1;
+    Require(sceHttpGetAuthEnabled(request, nullptr) == InvalidValue, "a null authentication output was not refused");
+    Require(sceHttpGetAuthEnabled(UnknownId, nullptr) == InvalidValue, "the authentication output pointer is not checked before the id");
+    Require(sceHttpGetAuthEnabled(UnknownId, &value) == InvalidId && sceHttpSetAuthEnabled(UnknownId, 1) == InvalidId, "an unknown id was not refused for authentication options");
+    Require(sceHttpDeleteRequest(request) == 0 && sceHttpGetAuthEnabled(request, &value) == InvalidId, "a deleted request still has authentication options");
+    Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+}
+
+void CheckCookieEnabled(int context) {
+    const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
+    Require(Get(sceHttpGetCookieEnabled, pattern) == 0, "a template enables cookies by default");
+    Require(sceHttpSetCookieEnabled(pattern, 1) == 0 && Get(sceHttpGetCookieEnabled, pattern) == 1, "the cookie-enabled getter does not return what was set");
+    const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
+    const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    Require(Get(sceHttpGetCookieEnabled, connection) == 1 && Get(sceHttpGetCookieEnabled, request) == 1, "a child did not inherit its parent's cookie option");
+    Require(sceHttpSetCookieEnabled(request, 0) == 0 && Get(sceHttpGetCookieEnabled, request) == 0, "the cookie option could not be disabled on a child");
+    Require(Get(sceHttpGetCookieEnabled, connection) == 1 && Get(sceHttpGetCookieEnabled, pattern) == 1, "changing a child changed its parent or sibling");
+    int value = -1;
+    Require(sceHttpGetCookieEnabled(request, nullptr) == InvalidValue, "a null cookie output was not refused");
+    Require(sceHttpSetCookieEnabled(pattern, -1) == InvalidValue && sceHttpSetCookieEnabled(pattern, 2) == InvalidValue, "an invalid cookie-enabled value was accepted");
+    Require(sceHttpGetCookieEnabled(UnknownId, &value) == InvalidId && sceHttpSetCookieEnabled(UnknownId, 1) == InvalidId, "an unknown id was not refused for cookie options");
+    Require(sceHttpDeleteRequest(request) == 0 && sceHttpGetCookieEnabled(request, &value) == InvalidId, "a deleted request retained its cookie option");
+    Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+}
+
 void CheckNonblock(int context) {
     const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
     Require(Get(sceHttpGetNonblock, pattern) == 0 && Get(sceHttpTryGetNonblock, pattern) == 0, "a template is nonblocking by default");
@@ -86,6 +96,51 @@ void CheckNonblock(int context) {
     Require(sceHttpGetNonblock(UnknownId, &value) == InvalidId && sceHttpTryGetNonblock(UnknownId, &value) == InvalidId, "an unknown id was not refused by the getters");
     Require(sceHttpSetNonblock(UnknownId, 1) == InvalidId && sceHttpTrySetNonblock(UnknownId, 1) == InvalidId, "an unknown id was not refused by the setters");
     Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+}
+
+std::array<std::byte, 64> g_process{};
+
+void SetSdkVersion(std::uint32_t version) {
+    std::memcpy(g_process.data() + 16, &version, sizeof(version));
+}
+
+void APS5_VABI SocketCreated(std::int32_t, std::int32_t, void*) {
+}
+
+void CheckOfflineSetters(int context) {
+    Require(ProcessParametersFixture::Install(g_process.data(), g_process.size()), "the process parameters were not installed");
+    const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
+    const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
+    const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    for (const int id : {pattern, connection, request}) {
+        Require(sceHttpSetHttp09Enabled(id, 1) == 0 && sceHttpSetHttp09Enabled(id, 0) == 0 && sceHttpSetHttp09Enabled(id, 2) == 0, "sceHttpSetHttp09Enabled refused a live object");
+        Require(sceHttpSetPriorityOption(id, 3) == 0 && sceHttpSetPriorityOption(id, -1) == 0, "sceHttpSetPriorityOption refused a live object");
+        Require(sceHttpSetPolicyOption(id, 1) == 0 && sceHttpSetPolicyOption(id, -1) == 0, "sceHttpSetPolicyOption refused a live object");
+    }
+    Require(sceHttpSetHttp09Enabled(UnknownId, 1) == InvalidId, "sceHttpSetHttp09Enabled took an unknown id");
+    Require(sceHttpSetPriorityOption(UnknownId, 1) == InvalidId, "sceHttpSetPriorityOption took an unknown id");
+    Require(sceHttpSetPolicyOption(UnknownId, 1) == InvalidId, "sceHttpSetPolicyOption took an unknown id");
+    int marker = 0;
+    SetSdkVersion(0x014FFFFFu);
+    for (const int id : {pattern, connection, request}) {
+        Require(sceHttpSetSocketCreationCallback(id, SocketCreated, &marker) == InvalidValue, "a title built before SDK 1.50 set a socket creation callback");
+    }
+    Require(sceHttpSetSocketCreationCallback(UnknownId, SocketCreated, &marker) == InvalidId, "the id is not checked before the SDK version");
+    SetSdkVersion(0x01500000u);
+    for (const int id : {pattern, connection, request}) {
+        Require(sceHttpSetSocketCreationCallback(id, SocketCreated, &marker) == 0, "sceHttpSetSocketCreationCallback refused a live object");
+        Require(sceHttpSetSocketCreationCallback(id, nullptr, nullptr) == 0, "a null socket creation callback was refused");
+    }
+    Require(sceHttpSetSocketCreationCallback(UnknownId, SocketCreated, &marker) == InvalidId, "sceHttpSetSocketCreationCallback took an unknown id");
+    Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+    Require(sceHttpSetHttp09Enabled(request, 1) == InvalidId && sceHttpSetSocketCreationCallback(pattern, SocketCreated, &marker) == InvalidId, "a deleted object still took an option");
+}
+
+void CheckOfflineSettersBeforeInit() {
+    Require(sceHttpSetHttp09Enabled(UnknownId, 1) == BeforeInit, "sceHttpSetHttp09Enabled answered before sceHttpInit");
+    Require(sceHttpSetPriorityOption(UnknownId, 1) == BeforeInit, "sceHttpSetPriorityOption answered before sceHttpInit");
+    Require(sceHttpSetPolicyOption(UnknownId, 1) == BeforeInit, "sceHttpSetPolicyOption answered before sceHttpInit");
+    Require(sceHttpSetSocketCreationCallback(UnknownId, nullptr, nullptr) == BeforeInit, "sceHttpSetSocketCreationCallback answered before sceHttpInit");
 }
 
 void CheckAcceptEncodingGzip(int context) {
@@ -135,6 +190,7 @@ void CheckEpoll(int context) {
     Require(sceHttpSetEpoll(request, epoll, &marker) == InvalidId, "sceHttpSetEpoll took a destroyed epoll");
     Require(sceHttpGetEpoll(request, &bound, &argument) == 0 && bound == nullptr, "a refused sceHttpSetEpoll changed the binding");
     Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+    Require(sceHttpSetDelayBuildRequestEnabled(request, 1) == InvalidId, "a deleted request still accepted delay build request");
 }
 
 void CheckTermEndsOptions() {
@@ -145,6 +201,8 @@ void CheckTermEndsOptions() {
     int value = -1;
     HttpEpollHandle bound = nullptr;
     Require(sceHttpGetAutoRedirect(pattern, &value) == BeforeInit && sceHttpSetAutoRedirect(pattern, 0) == BeforeInit, "the redirect option outlived the last sceHttpTerm");
+    Require(sceHttpGetAuthEnabled(pattern, &value) == BeforeInit && sceHttpSetAuthEnabled(pattern, 0) == BeforeInit, "the authentication option outlived the last sceHttpTerm");
+    Require(sceHttpGetCookieEnabled(pattern, &value) == BeforeInit && sceHttpSetCookieEnabled(pattern, 0) == BeforeInit, "the cookie option outlived the last sceHttpTerm");
     Require(sceHttpGetNonblock(connection, &value) == BeforeInit && sceHttpTryGetNonblock(connection, &value) == BeforeInit, "the nonblocking getters work after the last sceHttpTerm");
     Require(sceHttpSetNonblock(connection, 1) == BeforeInit && sceHttpTrySetNonblock(connection, 1) == BeforeInit, "the nonblocking setters work after the last sceHttpTerm");
     Require(sceHttpGetAcceptEncodingGZIPEnabled(pattern, &value) == BeforeInit && sceHttpSetAcceptEncodingGZIPEnabled(pattern, 1) == BeforeInit, "the gzip option outlived the last sceHttpTerm");
@@ -159,12 +217,44 @@ void CheckTermEndsOptions() {
     Require(sceHttpTerm_nid_postfix(next) == 0, "sceHttpTerm failed");
 }
 
+bool RefusesNull(int context, int* netPoolId, int* sslContextId) {
+    try {
+        sceHttpGetRegisteredCtxIds(context, netPoolId, sslContextId);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+void CheckRegisteredCtxIds() {
+    int netPoolId = -1;
+    int sslContextId = -1;
+    Require(sceHttpGetRegisteredCtxIds(UnknownId, &netPoolId, &sslContextId) == BeforeInit, "sceHttpGetRegisteredCtxIds answered before sceHttpInit");
+    const int first = sceHttpInit_nid_postfix(3, 7, 0x10000);
+    const int second = sceHttpInit_nid_postfix(5, 9, 0x20000);
+    Require(sceHttpGetRegisteredCtxIds(first, &netPoolId, &sslContextId) == 0 && netPoolId == 3 && sslContextId == 7, "the ids given to the first sceHttpInit were not reported");
+    Require(sceHttpGetRegisteredCtxIds(second, &netPoolId, &sslContextId) == 0 && netPoolId == 5 && sslContextId == 9, "the ids given to the second sceHttpInit were not reported");
+    Require(RefusesNull(second, nullptr, &sslContextId) && RefusesNull(second, &netPoolId, nullptr), "a null output was taken");
+    netPoolId = -1;
+    sslContextId = -1;
+    Require(sceHttpGetRegisteredCtxIds(UnknownId, &netPoolId, &sslContextId) == InvalidId, "sceHttpGetRegisteredCtxIds took an unknown id");
+    Require(sceHttpTerm_nid_postfix(first) == 0, "sceHttpTerm failed");
+    Require(sceHttpGetRegisteredCtxIds(first, &netPoolId, &sslContextId) == InvalidId, "a terminated context still reported its ids");
+    Require(netPoolId == -1 && sslContextId == -1, "a refused query wrote its outputs");
+    Require(sceHttpTerm_nid_postfix(second) == 0, "sceHttpTerm failed");
+    Require(sceHttpGetRegisteredCtxIds(second, &netPoolId, &sslContextId) == BeforeInit, "sceHttpGetRegisteredCtxIds answered after the last sceHttpTerm");
+}
+
 void CheckUnobservedOptions(int context) {
     const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
     const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
     const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    Require(sceHttpAddRequestHeader(request, "X-Test", "value", 0) == 0 && sceHttpRemoveRequestHeader(request, "X-Test") == 0, "offline request header calls failed");
+    Require(sceHttpRemoveRequestHeader(UnknownId, nullptr) == 0, "offline header removal started validating arguments");
     Require(sceHttpCacheRedirectedConnectionEnabled(pattern, 0) == 0 && sceHttpCacheRedirectedConnectionEnabled(request, 1) == 0, "sceHttpCacheRedirectedConnectionEnabled refused a live object");
     Require(sceHttpCacheRedirectedConnectionEnabled(UnknownId, 1) == InvalidId, "sceHttpCacheRedirectedConnectionEnabled took an unknown id");
+    Require(sceHttpSetDelayBuildRequestEnabled(pattern, 1) == 0 && sceHttpSetDelayBuildRequestEnabled(request, 0) == 0, "sceHttpSetDelayBuildRequestEnabled refused a live object");
+    Require(sceHttpSetDelayBuildRequestEnabled(UnknownId, 1) == InvalidId, "sceHttpSetDelayBuildRequestEnabled took an unknown id");
     for (const auto option : {sceHttpsEnableOptionPrivate, sceHttpsDisableOptionPrivate}) {
         Require(option(connection, 0x2dffu) == 0 && option(connection, 0) == 0, "a private SSL option within the mask was refused");
         Require(option(connection, 0x0100u) == 0 && option(connection, 0x2000u) == 0, "a private-only SSL flag was refused");
@@ -180,21 +270,28 @@ void CheckUnobservedOptions(int context) {
     Require(sceHttpSetProxy(UnknownId, 1, 1, "proxy.example", 8080) == InvalidId, "sceHttpSetProxy took an unknown id");
     Require(sceHttpAbortRequestForce(request) == 0, "sceHttpAbortRequestForce failed on a live request");
     Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+    Require(sceHttpSetDelayBuildRequestEnabled(request, 1) == InvalidId, "a deleted request still accepted delay build request");
 }
 
 }
 
 int main() {
+    Require(sceHttpSetDelayBuildRequestEnabled(UnknownId, 1) == BeforeInit, "delay build request was taken before sceHttpInit");
     const int context = sceHttpInit_nid_postfix(1, 1, 0x10000);
     Require(context > 0, "sceHttpInit failed");
     CheckAutoRedirect(context);
+    CheckAuthEnabled(context);
+    CheckCookieEnabled(context);
     CheckNonblock(context);
     CheckAcceptEncodingGzip(context);
     CheckEpoll(context);
     CheckUnobservedOptions(context);
+    CheckOfflineSetters(context);
     Require(sceHttpTerm_nid_postfix(context) == 0, "sceHttpTerm failed");
     Require(sceHttpSetDefaultAcceptEncodingGZIPEnabled(context, 1) == BeforeInit, "a gzip default was taken before sceHttpInit");
     CheckTermEndsOptions();
+    CheckRegisteredCtxIds();
+    CheckOfflineSettersBeforeInit();
     std::puts("HTTP option tests passed");
     return 0;
 }

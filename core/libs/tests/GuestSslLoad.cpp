@@ -1,7 +1,9 @@
+#include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libSceSsl/SslTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SslCertificateFixture.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -9,32 +11,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceSslInit_nid_postfix(std::uint64_t);
-int APS5_VABI sceSslTerm_nid_postfix(int);
-int APS5_VABI sceSslGetMemoryPoolStats(int, SceSsl::MemoryPoolStats*);
-int APS5_VABI sceSslLoadCert(int, int, SceSsl::Data**, SceSsl::Data*, SceSsl::Data*);
-int APS5_VABI sceSslUnloadCert(int);
-int APS5_VABI sceSslGetCaList(int, SceSsl::CaList*);
-int APS5_VABI sceSslFreeCaList(int, SceSsl::CaList*);
-int APS5_VABI sceSslGetCaCerts(int, SceSsl::CaCerts*);
-int APS5_VABI sceSslFreeCaCerts(int, SceSsl::CaCerts*);
-int APS5_VABI sceSslCreateConnection(int, int, const char*);
-int APS5_VABI sceSslDeleteConnection(int);
-int APS5_VABI sceSslSetVerifyCallback(int, int (APS5_VABI *)(int, unsigned int, void**, int, void*), void*);
-int APS5_VABI sceSslGetSerialNumber(int, void*, unsigned char*, std::size_t*);
-void* APS5_VABI sceSslGetSubjectName(int, void*);
-void* APS5_VABI sceSslGetIssuerName(int, void*);
-int APS5_VABI sceSslGetNameEntryCount(int, void*);
-int APS5_VABI sceSslGetNameEntryInfo(int, void*, int, char*, std::size_t, char*, std::size_t, std::size_t*);
-int APS5_VABI sceSslFreeSslCertName(int, void*);
-int APS5_VABI sceSslClose(int);
-int APS5_VABI sceSslGetNotBefore(int, void*, SceSsl::RtcTick*);
-int APS5_VABI sceSslGetNotAfter(int, void*, SceSsl::RtcTick*);
-int APS5_VABI sceSslGetFingerprint(int, void*, int, unsigned char*);
-int APS5_VABI sceSslGetPem(int, void*, char*, std::size_t*);
-}
 
 namespace {
 
@@ -276,6 +252,9 @@ void CertificateReaders() {
     Check(sceSslGetNotBefore(id, nullptr, &begin) == static_cast<int>(0x8095f007), "null certificate date error mismatch");
     Throws([&] { sceSslGetNotBefore(id, fake, &begin); });
     Check(sceSslGetNotBefore(9999, cert, &begin) == InvalidId, "invalid date context error mismatch");
+    errno = 71;
+    Check(sceSslGetNotBefore(id, cert, reinterpret_cast<SceSsl::RtcTick*>(0x10)) == static_cast<int>(0x8095f007), "unreadable begin accepted");
+    Check(errno == 71, "errno modified by unreadable begin check");
 
     SceSsl::RtcTick limit{};
     Check(sceSslGetNotAfter(id, cert, &limit) == 0, "get not after failed");
@@ -284,6 +263,9 @@ void CertificateReaders() {
     Check(sceSslGetNotAfter(id, nullptr, &limit) == static_cast<int>(0x8095f007), "null certificate date error mismatch");
     Throws([&] { sceSslGetNotAfter(id, fake, &limit); });
     Check(sceSslGetNotAfter(9999, cert, &limit) == InvalidId, "invalid date context error mismatch");
+    errno = 71;
+    Check(sceSslGetNotAfter(id, cert, reinterpret_cast<SceSsl::RtcTick*>(0x10)) == static_cast<int>(0x8095f007), "unreadable limit accepted");
+    Check(errno == 71, "errno modified by unreadable limit check");
 
     unsigned char md5[16]{};
     Check(sceSslGetFingerprint(id, cert, 0, md5) == 0, "get md5 fingerprint failed");

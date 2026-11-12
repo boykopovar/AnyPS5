@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
@@ -12,24 +13,9 @@
 #include <string_view>
 
 extern "C" {
-int APS5_VABI sceKernelConfiguredFlexibleMemorySize(std::size_t*);
-int APS5_VABI sceKernelAvailableFlexibleMemorySize(std::size_t*);
-int APS5_VABI sceKernelMapFlexibleMemory(void**, std::size_t, int, int);
-int APS5_VABI sceKernelReleaseFlexibleMemory(void*, std::size_t);
-int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
-int APS5_VABI sceKernelVirtualQuery(const void*, int, VirtualQueryInfo*, std::uint64_t);
+
 std::uint64_t GuestImageSegmentBytes_nid_no_patch();
-void* APS5_VABI dlopen_nid_postfix(const char*, int);
-char* APS5_VABI dlerror_nid_postfix();
-int APS5_VABI dlclose_nid_postfix(void*);
-std::size_t APS5_VABI sceKernelGetDirectMemorySize();
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelMapDirectMemory2(void**, std::size_t, int, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelMapNamedDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t, const char*);
-int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry*, int, int*, int);
-int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
-int APS5_VABI sceKernelVirtualQuery(const void*, int, VirtualQueryInfo*, std::uint64_t);
+
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -93,6 +79,16 @@ int main(int argc, char** argv) {
     }
     const std::size_t expected = (mode == "declared" ? 800u : mode == "limited" ? 16u : 448u) * 1024u * 1024u;
     Require(sceKernelConfiguredFlexibleMemorySize(&configured) == 0 && configured == expected);
+    const std::size_t direct = sceKernelGetDirectMemorySize();
+    Require(direct == (std::getenv("APS5_DIRECT_MEMORY_FROM_FLEXIBLE") != nullptr ? GAME_MEMORY_SIZE - configured : DIRECT_MEMORY_SIZE));
+    std::int64_t physical = -7;
+    Require(sceKernelAllocateDirectMemory(static_cast<std::int64_t>(direct), INT64_MAX, PS5_PAGE_SIZE, 0, 0, &physical) == SCE_KERNEL_ERROR_EAGAIN && physical == -7);
+    Require(sceKernelMemoryPoolExpand(static_cast<std::int64_t>(direct), INT64_MAX, 0x200000, 0, &physical) == SCE_KERNEL_ERROR_EAGAIN && physical == -7);
+    Require(sceKernelAllocateDirectMemory(static_cast<std::int64_t>(direct) - PS5_PAGE_SIZE, INT64_MAX, PS5_PAGE_SIZE, 0, 0, &physical) == 0 && physical == static_cast<std::int64_t>(direct) - PS5_PAGE_SIZE);
+    std::int64_t freeStart = -7;
+    std::size_t freeSize = 0;
+    Require(sceKernelAvailableDirectMemorySize(0, INT64_MAX, 0, &freeStart, &freeSize) == 0 && static_cast<std::size_t>(freeStart) + freeSize == direct - PS5_PAGE_SIZE);
+    Require(sceKernelReleaseDirectMemory(physical, PS5_PAGE_SIZE) == 0);
     std::size_t before = 0;
     Require(sceKernelAvailableFlexibleMemorySize(&before) == 0);
     Require(before + GuestImageSegmentBytes_nid_no_patch() == configured);

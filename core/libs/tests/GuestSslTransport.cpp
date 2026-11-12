@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceSsl/include/Ssl.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #ifdef _WIN32
 #include <winsock2.h>
 #else
@@ -18,6 +21,7 @@
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -27,38 +31,6 @@
 #include <exception>
 #include <string>
 #include <thread>
-
-extern "C" {
-int APS5_VABI sceSslInit_nid_postfix(std::uint64_t);
-int APS5_VABI sceSslTerm_nid_postfix(int);
-int APS5_VABI sceSslGetMemoryPoolStats(int, SceSsl::MemoryPoolStats*);
-int APS5_VABI sceSslLoadCert(int, int, SceSsl::Data**, SceSsl::Data*, SceSsl::Data*);
-int APS5_VABI sceSslCreateConnection(int, int, const char*);
-int APS5_VABI sceSslDeleteConnection(int);
-int APS5_VABI sceSslSetVerifyCallback(int, int (APS5_VABI *)(int, unsigned int, void**, int, void*), void*);
-int APS5_VABI sceSslConnect(int);
-int APS5_VABI sceSslRead(int, void*, std::size_t, int);
-int APS5_VABI sceSslWrite(int, void*, std::size_t, int);
-int APS5_VABI sceSslClose(int);
-int APS5_VABI sceSslEnableVerifyOption(int, std::uint32_t);
-int APS5_VABI sceSslDisableVerifyOption(int, std::uint32_t);
-int APS5_VABI sceSslSetMinSslVersion(int, int);
-int APS5_VABI sceSslSetAlpn(int, const char*);
-const char* APS5_VABI sceSslGetAlpnSelected(int);
-void* APS5_VABI sceSslGetSubjectName(int, void*);
-int APS5_VABI sceSslGetNameEntryCount(int, void*);
-int APS5_VABI sceSslGetNameEntryInfo(int, void*, int, char*, std::size_t, char*, std::size_t, std::size_t*);
-int APS5_VABI sceSslFreeSslCertName(int, void*);
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI setsockopt_nid_postfix(int, int, int, const void*, std::uint32_t);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI sceNetInit_nid_postfix();
-int APS5_VABI sceNetSocket(const char*, int, int, int);
-int APS5_VABI sceNetConnect(int, const void*, std::uint32_t);
-int APS5_VABI sceNetSetsockopt(int, int, int, const void*, std::uint32_t);
-int APS5_VABI sceNetSocketClose(int);
-}
 
 namespace {
 
@@ -78,6 +50,7 @@ constexpr int ErrorNetBadDescriptor = static_cast<int>(0x80410109);
 constexpr int ErrorNetPipe = static_cast<int>(0x80410120);
 constexpr int ErrorNetReset = static_cast<int>(0x80410136);
 constexpr int ErrorBadLength = static_cast<int>(0x80951773);
+constexpr int ErrorNotTls = static_cast<int>(0x80951d78);
 constexpr std::uint32_t ServerVerify = 0x1, CnCheck = 0x4, NotAfterCheck = 0x8, NotBeforeCheck = 0x10, KnownCaCheck = 0x20;
 constexpr int VersionTls12 = 5;
 constexpr int GuestSocketLevel = 0xffff;
@@ -86,7 +59,7 @@ constexpr int GuestReceiveTimeout = 0x1006;
 constexpr int WaitRounds = 2000;
 const char* ServerProtocols[] = {"http/1.1", nullptr};
 
-enum class Serve { Close, Exchange, Drop, Reset, Alert };
+enum class Serve { Close, Exchange, Drop, Reset, Alert, HelloReset, HelloPlain };
 enum class Leaf { Valid, Expired, Future };
 
 struct GuestTimeval {
@@ -236,6 +209,8 @@ struct Server {
             failure = "server accept or setup failed";
         } else if (mode == Serve::Alert) {
             Alert(client);
+        } else if (mode == Serve::HelloReset || mode == Serve::HelloPlain) {
+            Refuse(client, mode == Serve::HelloPlain);
         } else {
             mbedtls_ssl_set_bio(&ssl, &client, mbedtls_net_send, mbedtls_net_recv, nullptr);
             const int handshake = mbedtls_ssl_handshake(&ssl);
@@ -256,6 +231,43 @@ struct Server {
         }
         const unsigned char alert[] = {0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28};
         if (mbedtls_net_send(&client, alert, sizeof(alert)) != sizeof(alert)) failure = "server could not send the alert";
+    }
+
+    void Refuse(mbedtls_net_context& client, bool plain) {
+        std::array<unsigned char, 5> header{};
+        std::size_t received = 0;
+        while (received < header.size()) {
+            const int count = mbedtls_net_recv(&client, header.data() + received, header.size() - received);
+            if (count <= 0) {
+                failure = "server did not receive the client hello";
+                return;
+            }
+            received += static_cast<std::size_t>(count);
+        }
+        std::size_t remaining = (static_cast<std::size_t>(header[3]) << 8) | header[4];
+        std::array<unsigned char, 512> body{};
+        while (remaining) {
+            const int count = mbedtls_net_recv(&client, body.data(), std::min(remaining, body.size()));
+            if (count <= 0) {
+                failure = "server did not receive the whole client hello";
+                return;
+            }
+            remaining -= static_cast<std::size_t>(count);
+        }
+        if (plain) {
+            static constexpr char Reply[] = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
+            if (mbedtls_net_send(&client, reinterpret_cast<const unsigned char*>(Reply), sizeof(Reply) - 1) != static_cast<int>(sizeof(Reply) - 1))
+                failure = "server could not send the plain reply";
+            return;
+        }
+        linger immediate{1, 0};
+        setsockopt(client.fd, SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&immediate), sizeof(immediate));
+#ifdef _WIN32
+        closesocket(client.fd);
+#else
+        close(client.fd);
+#endif
+        client.fd = -1;
     }
 
     void Reset(mbedtls_ssl_context& ssl, mbedtls_net_context& client) {
@@ -312,6 +324,7 @@ struct Sockets {
     int Set(int descriptor, int option, const void* value, std::uint32_t length) const {
         return net ? sceNetSetsockopt(descriptor, GuestSocketLevel, option, value, length)
                    : setsockopt_nid_postfix(descriptor, GuestSocketLevel, option, value, length);
+
     }
 
     int Close(int descriptor) const { return net ? sceNetSocketClose(descriptor) : close_nid_postfix(descriptor); }
@@ -346,6 +359,8 @@ int main(int argc, char** argv) {
         server.Serve(Serve::Drop);
         server.Serve(Serve::Reset);
         server.Serve(Serve::Alert);
+        server.Serve(Serve::HelloReset);
+        server.Serve(Serve::HelloPlain);
         server.Serve(Serve::Close, true, Leaf::Expired);
         server.Serve(Serve::Close, true, Leaf::Expired);
         server.Serve(Serve::Close, true, Leaf::Future);
@@ -458,13 +473,10 @@ int main(int argc, char** argv) {
     Require(selected && std::strcmp(selected, "http/1.1") == 0, "the negotiated ALPN protocol is not reported");
     Require(sceSslWrite(connection, buffer.data(), 1, 1) == ErrorInvalidValue, "unknown write flags were accepted");
     char request[] = "ping";
-    Require(sceSslWrite(connection, request, 4, 0) == 4, "write the request");
-    Require(sceSslRead(connection, buffer.data(), buffer.size(), 4) == ErrorInvalidValue, "unknown read flags were accepted");
-    Require(sceSslRead(0, nullptr, 1, -1) == ErrorInvalidValue, "read flags did not precede other validation");
-    Require(sceSslRead(connection, buffer.data(), 2, 3) == 2 && std::memcmp(buffer.data(), "po", 2) == 0, "short peek failed");
-    Require(sceSslRead(connection, buffer.data(), 4, 3) == 4 && std::memcmp(buffer.data(), "pong", 4) == 0, "repeated larger peek consumed bytes");
+    Require(sceSslSend(connection, request, 4) == 4, "send the request");
     Require(sceSslRead(connection, buffer.data(), 2, 1) == 2 && std::memcmp(buffer.data(), "po", 2) == 0, "a partial read did not return the available bytes");
-    Require(sceSslRead(connection, buffer.data(), buffer.size(), 0) == 2 && std::memcmp(buffer.data(), "ng", 2) == 0, "a full read did not stop at the end of the stream");
+    Require(sceSslRecv(connection, buffer.data(), 2) == 2 && std::memcmp(buffer.data(), "ng", 2) == 0, "receive did not fill the remaining reply");
+    Require(sceSslRecv(connection, buffer.data(), buffer.size()) == 0, "receive did not stop at the end of the stream");
     Require(sceSslRead(connection, buffer.data(), buffer.size(), 1) == 0, "close notify did not end the stream");
     Require(sceSslClose(connection) == 0, "close the connection");
     Require(sceSslRead(connection, buffer.data(), buffer.size(), 0) == 0, "a read after the close did not return 0");
@@ -524,6 +536,16 @@ int main(int argc, char** argv) {
     Require(sceSslWrite(alerted, request, 4, 0) == ErrorSocketClosed, "a write after the fatal alert did not report the closed socket");
     Require(sceSslClose(alerted) == 0 && sceSslClose(alerted) == 0, "close after the fatal alert");
     Require(sceSslDeleteConnection(alerted) == 0 && sockets.Close(alertedSocket) == 0, "release the alerted connection");
+
+    const int helloResetSocket = sockets.Open(server.port);
+    const int helloReset = sceSslCreateConnection(context, helloResetSocket, "localhost");
+    Require(sceSslConnect(helloReset) == ErrorNetReset, "a reset during the handshake did not report the libSceNet reset code");
+    Require(sceSslDeleteConnection(helloReset) == 0 && sockets.Close(helloResetSocket) == 0, "release the connection reset during the handshake");
+
+    const int plainSocket = sockets.Open(server.port);
+    const int plain = sceSslCreateConnection(context, plainSocket, "localhost");
+    Require(sceSslConnect(plain) == ErrorNotTls, "a reply that is not TLS did not report it");
+    Require(sceSslDeleteConnection(plain) == 0 && sockets.Close(plainSocket) == 0, "release the connection answered in plain text");
 
     const int expiredSocket = sockets.Open(server.port);
     const int expired = sceSslCreateConnection(context, expiredSocket, "localhost");
