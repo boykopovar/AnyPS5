@@ -173,7 +173,7 @@ int APS5_VABI pthread_switch_add_np_nid_postfix(void);
 int APS5_VABI pthread_switch_delete_np_nid_postfix(void);
 int APS5_VABI ptrace_nid_postfix(void);
 std::int64_t APS5_VABI pwrite_nid_postfix(int d, const void* buf, std::size_t nbytes, std::int64_t offset);
-int APS5_VABI reboot_nid_postfix(void);
+int APS5_VABI reboot_nid_postfix(int options);
 int APS5_VABI revoke_nid_postfix(const char* path);
 int APS5_VABI rtld_printf_nid_postfix(void);
 int APS5_VABI sceCoredumpDebugForceCoredumpOnAppClose(void);

@@ -60,7 +60,12 @@ static std::int64_t NativeLseek(int fd, std::int64_t offset, int whence) {
     const auto positioned = File::LockPositionedTransfer(fd);
     const auto result = File::SeekSharedMemory_nid_no_patch(fd, offset, whence);
     if (result != -2) return result;
-    if (GetFileType(WindowsDescriptorHandle_nid_no_patch(fd)) == FILE_TYPE_PIPE) {
+    const auto handle = WindowsDescriptorHandle_nid_no_patch(fd);
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
+    }
+    if (GetFileType(handle) == FILE_TYPE_PIPE) {
         errno = ESPIPE;
         return -1;
     }
@@ -75,6 +80,10 @@ static int NativeRead(int fd, void* buf, std::size_t n) {
         return -1;
     }
     const auto positioned = File::LockPositionedTransfer(fd);
+    if (WindowsDescriptorHandle_nid_no_patch(fd) == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
+    }
     const int result = ::_read(fd, buf, static_cast<unsigned int>(n));
     if (result < 0 && _doserrno == ERROR_NO_DATA) errno = EAGAIN;
     return result;
@@ -94,6 +103,10 @@ static int NativeWrite(int fd, const void* buf, std::size_t n) {
     if (File::Appends(fd)) {
         const auto appended = File::WriteAtEnd(fd, buf, n);
         if (appended != -2) return static_cast<int>(appended);
+    }
+    if (WindowsDescriptorHandle_nid_no_patch(fd) == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
     }
     const int result = ::_write(fd, buf, static_cast<unsigned int>(n));
     if (result < 0 && errno == ENOSPC && _doserrno == 0 && ::GetFileType(reinterpret_cast<HANDLE>(::_get_osfhandle(fd))) == FILE_TYPE_PIPE) errno = EAGAIN;

@@ -424,6 +424,17 @@ class HostOnlyTargets(unittest.TestCase):
             ["first_tests", "second_tests"],
         )
 
+    def test_a_cmake_fragment_change_checks_all_host_targets(self):
+        first = self.target("first_tests")
+        second = self.target("second_tests", source="core/libs/tests/Second.cpp")
+        build_dir = self.fixture([first, second])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        fragment = "core/libs/prx/libSceAgcDriver/tests/cmake/agc_frame_limit_tests.cmake"
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(source_root, targets, [fragment]),
+            ["first_tests", "second_tests"],
+        )
+
     def test_build_wide_inputs_check_all_host_targets(self):
         first = self.target("first_tests")
         second = self.target("second_tests", source="core/libs/tests/Second.cpp")

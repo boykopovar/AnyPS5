@@ -94,6 +94,17 @@ class TimelinePreviewTests(unittest.TestCase):
                 self.assertEqual(result.stdout, b"")
                 self.assertNotIn(b"Traceback", result.stderr)
 
+    def test_duplicate_json_fields_are_not_previewed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            timeline = Path(directory) / "timeline.json"
+            timeline.write_text('{"version":1,"events":[{"at_ms":0,"hold_ms":100,"buttons":["cross"],"buttons":["circle"]}]}',
+                                encoding="utf-8")
+            result = subprocess.run([sys.executable, str(Path(preview_pad_timeline.__file__)), str(timeline), "--json"],
+                                    capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn(b"duplicate timeline field 'buttons'", result.stderr)
+            self.assertEqual(result.stdout, b"")
+
 
 if __name__ == "__main__":
     unittest.main()

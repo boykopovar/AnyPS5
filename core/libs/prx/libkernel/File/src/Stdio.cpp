@@ -141,7 +141,7 @@ static std::optional<std::filesystem::path> HandlePath(HANDLE handle) {
     return path;
 }
 std::optional<std::filesystem::path> File::WindowsDescriptorPath_nid_no_patch(int descriptor) {
-    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    const auto handle = WindowsDescriptorHandle_nid_no_patch(descriptor);
     if (handle == INVALID_HANDLE_VALUE) {
         errno = EBADF;
         return std::nullopt;
@@ -257,7 +257,7 @@ static int NativeUtimes(const std::filesystem::path& path, const KernelTimeval* 
 static int NativeFutimes(int descriptor, const KernelTimeval* times) {
     if (const auto directory = File::DirectoryDescriptorPath(descriptor)) return NativeUtimes(*directory, times);
 
-    const auto original = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    const auto original = WindowsDescriptorHandle_nid_no_patch(descriptor);
     if (original == INVALID_HANDLE_VALUE) { errno = EBADF; return -1; }
     if (GetFileType(original) != FILE_TYPE_DISK) { errno = EINVAL; return -1; }
     const auto handle = ReOpenFile(original, FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
@@ -277,7 +277,8 @@ static int NativeSync(int descriptor) {
     } else {
         const int previous = errno;
         const auto pipe = reinterpret_cast<HANDLE>(WithoutParameterHandler([descriptor] { return ::_get_osfhandle(descriptor); }));
-        if (pipe != INVALID_HANDLE_VALUE && GetFileType(pipe) == FILE_TYPE_PIPE) { errno = EINVAL; return -1; }
+        if (pipe == INVALID_HANDLE_VALUE) { errno = EBADF; return -1; }
+        if (GetFileType(pipe) == FILE_TYPE_PIPE) { errno = EINVAL; return -1; }
         if (::_commit(descriptor) == 0) return 0;
         const auto original = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
         if (original == INVALID_HANDLE_VALUE || GetFileType(original) != FILE_TYPE_DISK) { errno = EBADF; return -1; }
@@ -407,6 +408,10 @@ static std::int64_t NativeTransferBuffer(int descriptor, void* buf, std::size_t 
             if (appended != -2) return appended;
         }
     }
+    if (WindowsDescriptorHandle_nid_no_patch(descriptor) == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
+    }
     if (!write) return ::_read(descriptor, buf, static_cast<unsigned int>(nbytes));
     const int result = ::_write(descriptor, buf, static_cast<unsigned int>(nbytes));
     if (result < 0 && (_doserrno == ERROR_NO_DATA || _doserrno == ERROR_BROKEN_PIPE) && ::GetFileType(reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor))) == FILE_TYPE_PIPE) errno = EPIPE;
@@ -417,7 +422,7 @@ static std::int64_t NativeTransfer(int descriptor, void* buf, std::size_t nbytes
     return NativeTransferBuffer(descriptor, buf, nbytes, write);
 }
 static bool NativeIsDisk(int descriptor) {
-    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    const auto handle = WindowsDescriptorHandle_nid_no_patch(descriptor);
     return handle != INVALID_HANDLE_VALUE && ::GetFileType(handle) == FILE_TYPE_DISK;
 }
 static bool NativePipeHasData(int descriptor) {
@@ -1173,6 +1178,11 @@ int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
         return PosixFailure(GUEST_EFAULT);
     }
     FileStat result{};
+    if (IsKqueueDescriptor_nid_no_patch(d)) {
+        result.st_mode = 0010000;
+        if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return PosixFailure(GUEST_EFAULT);
+        return 0;
+    }
     if (GuestSockets::IsOpen(d)) {
         if (const int error = GuestSockets::Stat(d, &result)) return PosixFailure(error);
     } else if (!File::FillFileStatFromDescriptor(d, &result)) {
@@ -1384,6 +1394,11 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
         return SceErrorFromErrno(GUEST_EFAULT);
     }
     FileStat result{};
+    if (IsKqueueDescriptor_nid_no_patch(d)) {
+        result.st_mode = 0010000;
+        if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GUEST_EFAULT);
+        return 0;
+    }
     if (GuestSockets::IsOpen(d)) {
         const int error = GuestSockets::Stat(d, &result);
         if (error != 0) return SceErrorFromErrno(error);
@@ -2043,7 +2058,7 @@ int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
 
 int APS5_VABI sceKernelFchmod(int d, std::uint16_t mode) {
     if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(d)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return SceErrorFromErrno(GUEST_EINVAL);
     if (IsPipeDescriptor(d)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "fchmod");
 #ifdef _WIN32
