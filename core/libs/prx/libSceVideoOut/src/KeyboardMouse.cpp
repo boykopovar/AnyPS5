@@ -122,6 +122,14 @@ const Pad::InputConfiguration& Pad::KeyboardMouse::Configuration() const {
     return configuration;
 }
 
+void Pad::KeyboardMouse::Replace(InputConfiguration next) {
+    Release();
+    configuration = std::move(next);
+    pressed.assign(configuration.bindings.size(), false);
+    wheelReleaseTimes.assign(configuration.bindings.size(), Clock::time_point{});
+    mouse = MouseStick(configuration.settings);
+}
+
 bool Pad::KeyboardMouse::MouseMode() const {
     return mouseMode;
 }
@@ -275,6 +283,7 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
         if (binding.control == InputControl::VolumeDown && keyboard && down && !pressed[index]) requests.volumeDown = true;
         if (binding.control == InputControl::ToggleMute && keyboard && down && !pressed[index]) requests.toggleMute = true;
         if (binding.control == InputControl::ToggleMouse && down && !pressed[index]) requests.toggleMouse = true;
+        if (binding.control == InputControl::ReloadInputMapping && keyboard && down && !pressed[index]) requests.reloadInputMapping = true;
         pressed[index] = down;
     }
     return requests;
@@ -318,6 +327,7 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
             case InputControl::VolumeUp: break;
             case InputControl::VolumeDown: break;
             case InputControl::ToggleMute: break;
+            case InputControl::ReloadInputMapping: break;
         }
     }
     const auto input = stickInput();
