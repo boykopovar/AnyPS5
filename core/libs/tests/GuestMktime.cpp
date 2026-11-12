@@ -301,6 +301,7 @@ static void CheckTimegm() {
         GuestTm expected{};
         Require(gmtime_s_nid_postfix(&timer, &expected) == &expected, "gmtime conversion failed");
         GuestTm input = expected;
+        expected.tm_isdst = 0;
         input.tm_sec += 60;
         --input.tm_min;
         input.tm_wday = -1;
