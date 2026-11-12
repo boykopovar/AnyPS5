@@ -89,6 +89,21 @@ static void TestFloatSize() {
     Require(AlmostEqual(clamped.m_height, 60.0f));
 }
 
+static void TestFloatSizeFromIntSize() {
+    WebCore::IntSize dimensions{-17, 23};
+
+    WebCore::FloatSize c1{};
+    _ZN7WebCore9FloatSizeC1ERKNS_7IntSizeE(&c1, dimensions);
+    Require(c1.m_width == -17.0f);
+    Require(c1.m_height == 23.0f);
+
+    dimensions = {std::numeric_limits<int>::min(), std::numeric_limits<int>::max()};
+    WebCore::FloatSize c2{};
+    _ZN7WebCore9FloatSizeC2ERKNS_7IntSizeE(&c2, dimensions);
+    Require(c2.m_width == static_cast<float>(std::numeric_limits<int>::min()));
+    Require(c2.m_height == static_cast<float>(std::numeric_limits<int>::max()));
+}
+
 static void TestFloatRect() {
     WebCore::IntRect ir{WebCore::IntPoint{5, 10}, WebCore::IntSize{20, 30}};
     WebCore::FloatRect fr1;
@@ -686,6 +701,7 @@ static void TestIntRectScaleOverflowGivesIntMin() {
 int main() {
     TestFloatPoint();
     TestFloatSize();
+    TestFloatSizeFromIntSize();
     TestFloatRect();
     TestFloatQuad();
     TestFloatRoundedRect();
