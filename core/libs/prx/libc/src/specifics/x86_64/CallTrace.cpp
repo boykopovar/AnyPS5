@@ -36,6 +36,7 @@
 #include <fstream>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -266,19 +267,25 @@ bool WriteCallGraph(const std::filesystem::path& path) {
 }
 
 void StartCallCountWriter() {
+    std::filesystem::path countsPath;
+    std::optional<std::filesystem::path> graphPath;
 #ifdef _WIN32
     const wchar_t* value = _wgetenv(L"APS5_TRACE_CALLS_FILE");
-    if (value == nullptr || *value == L'\0') return;
-    std::filesystem::path path(value);
+    if (value != nullptr && *value != L'\0') countsPath = value;
+    const wchar_t* graph = _wgetenv(L"APS5_TRACE_CALLS_GRAPH_FILE");
+    if (graph != nullptr && *graph != L'\0') graphPath = std::filesystem::path(graph);
 #else
     const char* value = std::getenv("APS5_TRACE_CALLS_FILE");
-    if (value == nullptr || *value == '\0') return;
-    std::filesystem::path path(value);
+    if (value != nullptr && *value != '\0') countsPath = value;
+    const char* graph = std::getenv("APS5_TRACE_CALLS_GRAPH_FILE");
+    if (graph != nullptr && *graph != '\0') graphPath = std::filesystem::path(graph);
 #endif
-    std::thread([path = std::move(path)] {
+    if (countsPath.empty() && !graphPath) return;
+    std::thread([countsPath = std::move(countsPath), graphPath = std::move(graphPath)] {
         for (;;) {
             std::this_thread::sleep_for(std::chrono::seconds(10));
-            WriteCallCounts(path);
+            if (!countsPath.empty()) WriteCallCounts(countsPath);
+            if (graphPath) WriteCallGraph(*graphPath);
         }
     }).detach();
 }
