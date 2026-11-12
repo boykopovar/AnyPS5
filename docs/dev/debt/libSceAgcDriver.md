@@ -442,6 +442,7 @@
   measured.
 
 - [Stale depth planes over reused guest memory](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) (libSceAgcDriver): a depth surface outlives the guest memory it mirrors, so a flush over a later allocation stores pending results into it; a pending fast clear used to skip the guest-write check and write zero there. A flush now drops a unit whose recorded allocation (`backingSerial`) changed, and a storing sync drops the units the guest wrote and forgets the clear. Not covered: reuse inside one unchanged registration with no write since the last sync, and the stencil plane, which compares bytes with its last mark. Closes when: surfaces are retired on allocation changes (an unmap hook that keeps the `surfacesMutex`/`GuestAllocations` lock order) instead of at flush time. PPSA27616 reached this through a cubemap of 128x128 depth faces whose memory its heap had taken back.
+- [Plain label read in the PM4 wait](../../../core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp) (libSceAgcDriver) - `Pm4::WaitSatisfiedUnchecked` reads the awaited label with a volatile load, not an atomic one, so ThreadSanitizer reports it against a title store made atomically (`agc_driver_pm4_rewind_trace` fails under it). An aligned 4 or 8 byte load on x86-64 and arm64 is not torn, so the wait sees the old or the new value. Closes when: the read is an `atomic_ref` acquire load.
 
 ### Opt-in draw paths
 
