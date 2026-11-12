@@ -158,6 +158,8 @@ static void CheckPointer() {
         buffer == std::u16string(u"[     ][  01f][1f]"), "vswprintf %p width beside a zero precision, 0 beside a precision, and %.0p of a pointer");
     Require(snwprintf_s_nid_postfix(buffer, 16, u"[%lp]", address(0x1f)) == 4 && buffer == std::u16string(u"[1f]"), "snwprintf_s %lp prints the pointer as %p does");
     Require(snwprintf_s_nid_postfix(buffer, 16, u"[%lp]", address(0)) == 3 && buffer == std::u16string(u"[0]"), "snwprintf_s %lp of a null pointer");
+    Require(snwprintf_s_nid_postfix(buffer, 64, u"%hf|%llf|%jf|%Ld|%Lc", 1.5, 2.5, 3.5, 12, 0x41) == 31 &&
+        buffer == std::u16string(u"1.500000|2.500000|3.500000|12|A"), "snwprintf_s ignores lengths that do not apply");
 }
 
 static void CheckCount() {
