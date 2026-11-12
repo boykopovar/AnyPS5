@@ -94,6 +94,10 @@ static void TestRequestLifecycle(int notFound) {
     Require(sceGameUpdateCreateRequest() == tooManyRequests);
 
     errno = 71;
+    Require(sceGameUpdateCheck(ids[0], reinterpret_cast<const GameUpdateCheckParam*>(std::uintptr_t{0x10}), &result) == invalidArgument);
+    Require(errno == 71);
+
+    errno = 71;
     Require(sceGameUpdateCheck(ids[0], &param, reinterpret_cast<GameUpdateCheckResult*>(0x10)) == invalidArgument);
     Require(errno == 71);
 
