@@ -45,3 +45,24 @@ def parse_events(lines):
         events.append(MappingEvent(number, operation, int(address["address"], 16),
                                    int(address["size"], 16), detail))
     return events
+
+
+def parse_range(address, size):
+    try:
+        start = int(address, 0)
+        length = int(size, 0)
+    except ValueError as error:
+        raise ValueError("address and byte count must be decimal or 0x-prefixed integers") from error
+    if start < 0 or start >= 1 << 64:
+        raise ValueError("address must be an unsigned 64-bit value")
+    if length <= 0 or length >= 1 << 64 or start + length > 1 << 64:
+        raise ValueError("byte count must be positive and the queried range must fit in 64 bits")
+    return start, length
+
+
+def overlaps(event, start, size):
+    return event.address < start + size and start < event.address + event.size
+
+
+def select_events(events, start, size):
+    return [event for event in events if overlaps(event, start, size)]
