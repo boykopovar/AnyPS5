@@ -52,6 +52,30 @@ void* APS5_VABI _ZN7WebCore9GLContextnaEmPv(std::size_t, void* location) {
     return location;
 }
 
+void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernwEm(std::size_t size) {
+    return _ZN3WTF10fastMallocEm(size);
+}
+
+void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernaEm(std::size_t size) {
+    return _ZN3WTF10fastMallocEm(size);
+}
+
+void APS5_VABI _ZN7WebCore17LibWebRTCProviderdlEPv(void* ptr) {
+    _ZN3WTF8fastFreeEPv(ptr);
+}
+
+void APS5_VABI _ZN7WebCore17LibWebRTCProviderdaEPv(void* ptr) {
+    _ZN3WTF8fastFreeEPv(ptr);
+}
+
+void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernwEmPv(std::size_t, void* location) {
+    return location;
+}
+
+void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernaEmPv(std::size_t, void* location) {
+    return location;
+}
+
 void* APS5_VABI _ZN7WebCore6ISOBoxnwEm(std::size_t size) {
     return _ZN3WTF10fastMallocEm(size);
 }

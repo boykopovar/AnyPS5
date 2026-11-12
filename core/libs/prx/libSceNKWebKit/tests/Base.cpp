@@ -1179,6 +1179,15 @@ static void TestBundleHitTestResult() {
     Require(unsetTitle != nullptr);
     Require(WKStringIsEqualToUTF8CString(unsetTitle, ""));
     WKRelease(unsetTitle);
+    auto* unsetSuggestedFilename = WKBundleHitTestResultCopyLinkSuggestedFilename(ref);
+    Require(unsetSuggestedFilename != nullptr);
+    Require(WKStringIsEqualToUTF8CString(unsetSuggestedFilename, ""));
+    WKRelease(unsetSuggestedFilename);
+    Require(!WKBundleHitTestResultGetIsSelected(ref));
+    Require(WKBundleHitTestResultGetMediaType(ref) == 0);
+    Require(!WKBundleHitTestResultIsDownloadableMedia(ref));
+    Require(!WKBundleHitTestResultMediaHasAudio(ref));
+    Require(!WKBundleHitTestResultMediaIsInFullscreen(ref));
 
     hit->absoluteImageURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/img.png");
     hit->absoluteLinkURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/link");
@@ -1225,9 +1234,74 @@ static void TestBundleHitTestResult() {
     Require(WKStringIsEqualToUTF8CString(title, "Example Title"));
     WKRelease(title);
 
+    hit->linkSuggestedFilename = NKWebKit::String::FromUtf8("example_file.pdf");
+    hit->isSelected = true;
+    hit->mediaType = 1;
+    hit->isDownloadableMedia = true;
+    hit->mediaHasAudio = true;
+    hit->mediaIsInFullscreen = true;
+
+    auto* suggestedFilename = WKBundleHitTestResultCopyLinkSuggestedFilename(ref);
+    Require(suggestedFilename != nullptr);
+    Require(WKStringIsEqualToUTF8CString(suggestedFilename, "example_file.pdf"));
+    WKRelease(suggestedFilename);
+    Require(WKBundleHitTestResultGetIsSelected(ref));
+    Require(WKBundleHitTestResultGetMediaType(ref) == 1);
+    Require(WKBundleHitTestResultIsDownloadableMedia(ref));
+    Require(WKBundleHitTestResultMediaHasAudio(ref));
+    Require(WKBundleHitTestResultMediaIsInFullscreen(ref));
+
     bool threw = false;
     try {
         WKBundleHitTestResultCopyLinkLabel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultCopyLinkSuggestedFilename(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetIsSelected(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetMediaType(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultIsDownloadableMedia(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultMediaHasAudio(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultMediaIsInFullscreen(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -1793,6 +1867,38 @@ static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient36transitionToCommittedFromCachedFrameEPNS_11CachedFrameE();
 }
 
+template <typename Function>
+static bool HasNamedLoadLifecycleThrow(Function function, const char* name) {
+    try {
+        function();
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()).find(name) == std::string::npos) {
+            throw std::runtime_error(std::string("UNEXPECTED_LOAD_LIFECYCLE_THROW: ") + error.what());
+        }
+        std::fprintf(stderr, "EXPECTED_LOAD_LIFECYCLE_THROW %s\n", name);
+        return true;
+    } catch (const std::exception& error) {
+        throw std::runtime_error(std::string("UNEXPECTED_LOAD_LIFECYCLE_EXCEPTION: ") + error.what());
+    } catch (...) {
+        throw std::runtime_error("UNEXPECTED_LOAD_LIFECYCLE_EXCEPTION: non-standard exception");
+    }
+    return false;
+}
+
+static void TestEmptyFrameLoaderLifecycleCallbacks() {
+#define CheckLoadLifecycleCallback(function) HasNamedLoadLifecycleThrow([] { function(); }, #function)
+    const bool willSendRequestThrew = CheckLoadLifecycleCallback(_ZN7WebCore22EmptyFrameLoaderClient23dispatchWillSendRequestEPNS_14DocumentLoaderEmRNS_15ResourceRequestERKNS_16ResourceResponseE);
+    const bool authenticationChallengeThrew = CheckLoadLifecycleCallback(_ZN7WebCore22EmptyFrameLoaderClient41dispatchDidReceiveAuthenticationChallengeEPNS_14DocumentLoaderEmRKNS_23AuthenticationChallengeE);
+    const bool receiveResponseThrew = CheckLoadLifecycleCallback(_ZN7WebCore22EmptyFrameLoaderClient26dispatchDidReceiveResponseEPNS_14DocumentLoaderEmRKNS_16ResourceResponseE);
+    const bool receiveContentLengthThrew = CheckLoadLifecycleCallback(_ZN7WebCore22EmptyFrameLoaderClient31dispatchDidReceiveContentLengthEPNS_14DocumentLoaderEmi);
+    const bool finishLoadingThrew = CheckLoadLifecycleCallback(_ZN7WebCore22EmptyFrameLoaderClient24dispatchDidFinishLoadingEPNS_14DocumentLoaderEm);
+    const bool failLoadingThrew = CheckLoadLifecycleCallback(_ZN7WebCore22EmptyFrameLoaderClient22dispatchDidFailLoadingEPNS_14DocumentLoaderEmRKNS_13ResourceErrorE);
+#undef CheckLoadLifecycleCallback
+    if (willSendRequestThrew || authenticationChallengeThrew || receiveResponseThrew || receiveContentLengthThrew || finishLoadingThrew || failLoadingThrew) {
+        throw std::runtime_error("EXPECTED_LOAD_LIFECYCLE_RED: one or more callbacks still throw");
+    }
+}
+
 static void TestSessionState() {
     Require(WKSessionStateCreateFromData(nullptr) == nullptr);
     Require(WKSessionStateCopyData(nullptr) == nullptr);
@@ -2186,6 +2292,12 @@ int main() {
     TestSessionState();
     TestSerializedScriptValue();
     TestRunLoop();
+    try {
+        TestEmptyFrameLoaderLifecycleCallbacks();
+    } catch (const std::runtime_error& error) {
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
     TestFrame();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;

@@ -28,7 +28,6 @@ int APS5_VABI _ZNSt18bad_variant_accessD1Ev_nid_postfix();
 int APS5_VABI _reclaim_telldir_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE9_EndwriteEv_nid_postfix();
 int APS5_VABI _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix();
-int APS5_VABI malloc_stats_nid_postfix();
 int APS5_VABI _ZNSt8messagesIcEC1ERKSt8_Locinfom_nid_postfix();
 int APS5_VABI _ZNSt10moneypunctIwLb1EED0Ev_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE9underflowEv_nid_postfix();

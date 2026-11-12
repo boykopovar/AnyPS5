@@ -572,11 +572,11 @@ KernelTimeval ItimerTimeval(std::chrono::microseconds duration) {
 }
 
 extern "C" int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* value, GuestItimerval* previous) {
+    GuestItimerval requested{};
+    if (value != nullptr && !GuestCopyIn_nid_no_patch(&requested, value, sizeof(requested))) { *__error_nid_postfix() = 14; return -1; }
     if (which < ItimerReal || which > ItimerProf) { *__error_nid_postfix() = 22; return -1; }
     if (value == nullptr && previous == nullptr) { *__error_nid_postfix() = 14; return -1; }
-    GuestItimerval requested{};
     if (value != nullptr) {
-        if (!GuestCopyIn_nid_no_patch(&requested, value, sizeof(requested))) { *__error_nid_postfix() = 14; return -1; }
         if (!ValidItimer(requested.value)) { *__error_nid_postfix() = 22; return -1; }
         if (!ItimerSet(requested.value)) requested.interval = {};
         else if (!ValidItimer(requested.interval)) { *__error_nid_postfix() = 22; return -1; }

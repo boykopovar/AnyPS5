@@ -64,6 +64,12 @@ const void* APS5_VABI WKBundleHitTestResultCopyAbsoluteMediaURL(const void* hitT
 const void* APS5_VABI WKBundleHitTestResultCopyAbsolutePDFURL(const void* hitTestResultRef);
 const void* APS5_VABI WKBundleHitTestResultCopyLinkLabel(const void* hitTestResultRef);
 const void* APS5_VABI WKBundleHitTestResultCopyLinkTitle(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultCopyLinkSuggestedFilename(const void* hitTestResultRef);
+bool APS5_VABI WKBundleHitTestResultGetIsSelected(const void* hitTestResultRef);
+std::uint32_t APS5_VABI WKBundleHitTestResultGetMediaType(const void* hitTestResultRef);
+bool APS5_VABI WKBundleHitTestResultIsDownloadableMedia(const void* hitTestResultRef);
+bool APS5_VABI WKBundleHitTestResultMediaHasAudio(const void* hitTestResultRef);
+bool APS5_VABI WKBundleHitTestResultMediaIsInFullscreen(const void* hitTestResultRef);
 std::uint32_t APS5_VABI WKBundleInspectorGetTypeID();
 std::uint32_t APS5_VABI WKBundleNavigationActionGetTypeID();
 std::uint32_t APS5_VABI WKBundleNodeHandleGetTypeID();

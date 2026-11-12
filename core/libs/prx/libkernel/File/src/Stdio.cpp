@@ -690,7 +690,7 @@ static bool NativeIsPipe(int descriptor) {
 #endif
 }
 
-static int FillStatfs(const struct statvfs& host, KernelStatfs* fs);
+static int FillStatfs(const struct statvfs& host, bool noexec, KernelStatfs* fs);
 
 static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     struct stat file{};
@@ -705,18 +705,19 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     if (S_ISCHR(file.st_mode)) return DeviceFilesystem(fs);
     struct statvfs host{};
     if (::fstatvfs(descriptor, &host) != 0) return SceErrorFromErrno(errno) & 0xffff;
-    return FillStatfs(host, fs);
-}
-
-static int FillStatfs(const struct statvfs& host, KernelStatfs* fs) {
-    if (host.f_flag & ST_RDONLY) fs->f_flags |= KERNEL_MNT_RDONLY;
-    if (host.f_flag & ST_NOSUID) fs->f_flags |= KERNEL_MNT_NOSUID;
 #ifdef __APPLE__
     struct statfs mount{};
-    if (::fstatfs(descriptor, &mount) == 0 && (mount.f_flags & MNT_NOEXEC)) fs->f_flags |= KERNEL_MNT_NOEXEC;
+    const bool noexec = ::fstatfs(descriptor, &mount) == 0 && (mount.f_flags & MNT_NOEXEC);
 #else
-    if (host.f_flag & ST_NOEXEC) fs->f_flags |= KERNEL_MNT_NOEXEC;
+    const bool noexec = (host.f_flag & ST_NOEXEC) != 0;
 #endif
+    return FillStatfs(host, noexec, fs);
+}
+
+static int FillStatfs(const struct statvfs& host, bool noexec, KernelStatfs* fs) {
+    if (host.f_flag & ST_RDONLY) fs->f_flags |= KERNEL_MNT_RDONLY;
+    if (host.f_flag & ST_NOSUID) fs->f_flags |= KERNEL_MNT_NOSUID;
+    if (noexec) fs->f_flags |= KERNEL_MNT_NOEXEC;
     fs->f_bsize = host.f_frsize != 0 ? host.f_frsize : host.f_bsize;
     fs->f_iosize = host.f_bsize;
     fs->f_blocks = host.f_blocks;
@@ -731,7 +732,13 @@ static int FillStatfs(const struct statvfs& host, KernelStatfs* fs) {
 static int NativeStatfs(const std::filesystem::path& path, KernelStatfs* fs) {
     struct statvfs host{};
     if (::statvfs(path.c_str(), &host) != 0) return SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(path) : errno) & 0xffff;
-    return FillStatfs(host, fs);
+#ifdef __APPLE__
+    struct statfs mount{};
+    const bool noexec = ::statfs(path.c_str(), &mount) == 0 && (mount.f_flags & MNT_NOEXEC);
+#else
+    const bool noexec = (host.f_flag & ST_NOEXEC) != 0;
+#endif
+    return FillStatfs(host, noexec, fs);
 }
 
 
@@ -1414,6 +1421,7 @@ int APS5_VABI sceKernelFdatasync(int fd) {
 }
 
 int APS5_VABI sceKernelWriteThrottlingStatus(std::uint64_t* status) {
+    if (status == nullptr) return SceErrorFromErrno(GUEST_EINVAL);
     const std::uint64_t values[4]{std::numeric_limits<std::uint32_t>::max(), 0, 0, 0};
     if (!GuestCopyOut_nid_no_patch(status, values, sizeof(values))) return SceErrorFromErrno(GUEST_EFAULT);
     return 0;
@@ -1702,6 +1710,11 @@ static bool OpenIovecs(const KernelIovec* iov, int iovcnt, std::deque<GuestArena
     return true;
 }
 
+static std::int64_t KqueueIovecsResult(const KernelIovec* iov, int iovcnt, bool write) {
+    const bool empty = std::none_of(iov, iov + iovcnt, [](const KernelIovec& vector) { return vector.length != 0; });
+    return write || !empty ? SCE_KERNEL_ERROR_EOPNOTSUPP : 0;
+}
+
 static void PrepareWriteIovecs(const KernelIovec* iov, int iovcnt) {
     for (int i = 0; i < iovcnt; ++i) GuestArena::GuestArenaPrepareHostRead_nid_no_patch(iov[i].base, iov[i].length);
 }
@@ -1740,6 +1753,7 @@ static std::int64_t TransferIovecs(int d, const KernelIovec* guestIov, int iovcn
     if (offset != nullptr) {
         if (const int error = PositionedArgumentError(d, write, false, *offset)) return SceErrorFromErrno(error);
     }
+    if (offset == nullptr && IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, write);
     std::size_t total = 0;
     for (int i = 0; i < iovcnt; ++i) {
         if (iov[i].base == nullptr && iov[i].length != 0) return SceErrorFromErrno(GUEST_EFAULT);
@@ -1859,6 +1873,7 @@ int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* guestIov, int iovcnt)
     std::vector<KernelIovec> vectors;
     if (const int error = CopyIovecs(guestIov, iovcnt, vectors)) return error;
     const auto* iov = vectors.data();
+    if (IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, false);
     std::deque<GuestArena::HostWrite> destinations;
     if (!OpenIovecs(iov, iovcnt, destinations)) return SceErrorFromErrno(GUEST_EFAULT);
     if (GuestSockets::IsOpen(d)) {
@@ -1879,6 +1894,7 @@ int64_t APS5_VABI sceKernelWritev(int d, const KernelIovec* guestIov, int iovcnt
     std::vector<KernelIovec> vectors;
     if (const int error = CopyIovecs(guestIov, iovcnt, vectors)) return error;
     const auto* iov = vectors.data();
+    if (IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, true);
     if (GuestSockets::IsOpen(d)) {
         const auto result = GuestSockets::Writev(d, reinterpret_cast<const GuestSockets::Iovec*>(iov), iovcnt);
         return result < 0 ? SceKernelError(*__error_nid_postfix()) : result;
