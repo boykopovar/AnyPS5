@@ -519,6 +519,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             const auto destination = (packet[1] >> 8u) & 3u;
             require(destination <= 1u, "scratch or reserved COND_WRITE destination is not implemented");
             require(destination != 0 || (packet[7] == 0 && registerBankBase(packet[6]) != 0), "COND_WRITE destination outside modeled banks is not implemented");
+            if (destination == 0 && registerBankBase(packet[6]) != ShaderRegisterBase) graphics();
             require((!memoryPoll || (packet[2] & 3u) == 0) && (destination != 1 || (packet[6] & 3u) == 0), "misaligned COND_WRITE address");
             break;
         }

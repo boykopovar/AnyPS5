@@ -233,6 +233,8 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                     const auto found = submission.registerLists.find(scan);
                     if (count != 5 || found == submission.registerLists.end() || found->second.size() != static_cast<std::size_t>(packet[4]) * 2 || !Pm4::IndirectRegistersValid(found->second)) break;
                     Pm4::ExecuteIndirectRegisters(packet, found->second, preview);
+                } else if (opcode == 0x45 && ((packet[1] >> 8u) & 3u) == 0) {
+                    break;
                 } else if (!Pm4::AccessesMemory(header) && opcode != 0x3c && opcode != 0x93 && opcode != 0x37 && opcode != 0x42 && opcode != 0x46 && opcode != 0x49 && opcode != 0x58) {
                     try {
                         Pm4::Execute(packet, preview);
