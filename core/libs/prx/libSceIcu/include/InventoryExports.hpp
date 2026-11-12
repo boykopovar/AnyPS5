@@ -40,7 +40,7 @@ int APS5_VABI udata_setFileAccess();
 int APS5_VABI uloc_addLikelySubtags();
 std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 int APS5_VABI uloc_countAvailable();
-int APS5_VABI uloc_forLanguageTag();
+std::int32_t APS5_VABI uloc_forLanguageTag(const char* langtag, char* localeID, std::int32_t capacity, std::int32_t* parsedLength, std::int32_t* status);
 int APS5_VABI uloc_getAvailable();
 std::int32_t APS5_VABI uloc_getBaseName(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 int APS5_VABI uloc_getCharacterOrientation();

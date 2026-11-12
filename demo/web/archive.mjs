@@ -1,5 +1,6 @@
 import { BlobReader, Uint8ArrayReader, ZipReader, ZipWriter, configure } from "https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2.7.57/lib/zip-no-worker.js/+esm";
 import { batchMemoryEstimate, batchOutputDirectory, MEMORY_LIMIT, memoryEstimate } from "./batch.mjs";
+import { translate } from "./i18n.mjs";
 
 configure({ useWebWorkers: false, useCompressionStream: false, chunkSize: 65536 });
 
@@ -10,21 +11,21 @@ const MAX_ENTRIES = 100000;
 
 class BoundedBlobReader extends BlobReader {
   async readUint8Array(offset, length) {
-    if (length > 16 * 1024 * 1024) throw new Error("ZIP directory metadata exceeds 16 MiB");
+    if (length > 16 * 1024 * 1024) throw new Error(translate(this.locale, "zipMetadataTooLarge"));
     return super.readUint8Array(offset, length);
   }
 }
 
 
-export function validPath(name) {
-  if (!name || name.includes("\\") || /[\x00-\x1f<>:"|?*]/u.test(name)) throw new Error(`Unsafe ZIP path: ${name}`);
+export function validPath(name, locale = "en") {
+  if (!name || name.includes("\\") || /[\x00-\x1f<>:"|?*]/u.test(name)) throw new Error(translate(locale, "unsafeZipPath", { name }));
   const parts = name.replace(/\/$/u, "").split("/");
-  if (parts.some(part => !part || part === "." || part === ".." || /[. ]$/u.test(part) || /^(con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)/iu.test(part))) throw new Error(`Unsafe ZIP path: ${name}`);
+  if (parts.some(part => !part || part === "." || part === ".." || /[. ]$/u.test(part) || /^(con|conin\$|conout\$|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu.test(part))) throw new Error(translate(locale, "unsafeZipPath", { name }));
   return name;
 }
 
-function safeSize(value) {
-  if (!Number.isSafeInteger(value) || value < 0) throw new Error("ZIP contains an unsupported file size");
+function safeSize(value, locale) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(translate(locale, "unsupportedFileSize"));
   return value;
 }
 
@@ -82,18 +83,18 @@ function isSelf(header) {
   return header !== null && SELF_MAGICS.some(magic => magic.every((byte, index) => header[index] === byte));
 }
 
-async function boundedBytes(entry, limit) {
-  if (entry.uncompressedSize > limit) throw new Error(`${entry.filename} exceeds the conversion memory limit`);
+async function boundedBytes(entry, limit, locale) {
+  if (entry.uncompressedSize > limit) throw new Error(translate(locale, "memoryLimitExceeded", { name: entry.filename }));
   let size = 0;
   const chunks = [];
   await entry.getData(new WritableStream({
     write(chunk) {
       size += chunk.byteLength;
-      if (size > limit || size > entry.uncompressedSize) throw new Error(`Unexpected expanded size: ${entry.filename}`);
+      if (size > limit || size > entry.uncompressedSize) throw new Error(translate(locale, "unexpectedSize", { name: entry.filename }));
       chunks.push(chunk);
     }
   }), { checkSignature: true });
-  if (size !== entry.uncompressedSize) throw new Error(`Incorrect expanded size: ${entry.filename}`);
+  if (size !== entry.uncompressedSize) throw new Error(translate(locale, "incorrectSize", { name: entry.filename }));
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
@@ -101,13 +102,14 @@ async function boundedBytes(entry, limit) {
 }
 
 class FolderReader {
-  constructor(files) {
+  constructor(files, locale) {
     this.files = files;
+    this.locale = locale;
   }
 
   async *getEntriesGenerator() {
     for (const { path, file } of this.files) {
-      if (!(file instanceof Blob)) throw new Error(`Invalid folder file: ${path}`);
+      if (!(file instanceof Blob)) throw new Error(translate(this.locale, "invalidFolderFile", { path }));
       yield {
         filename: path, uncompressedSize: file.size, directory: false, compressionMethod: 0,
         externalFileAttributes: (0o100644 << 16) >>> 0,
@@ -121,39 +123,47 @@ class FolderReader {
   async close() {}
 }
 
+function boundedBlobReader(file, locale) {
+  const reader = new BoundedBlobReader(file);
+  reader.locale = locale;
+  return reader;
+}
+
 export class Archive {
-  constructor(file) {
-    this.reader = Array.isArray(file) ? new FolderReader(file) : new ZipReader(new BoundedBlobReader(file));
+  constructor(file, locale = "en") {
+    this.locale = locale;
+    this.reader = Array.isArray(file) ? new FolderReader(file, locale) : new ZipReader(boundedBlobReader(file, locale));
     this.entries = [];
   }
 
   async inspect(report) {
+    const locale = this.locale;
     const paths = new Map();
     let total = 0;
     for await (const entry of this.reader.getEntriesGenerator()) {
-      if (this.entries.length >= MAX_ENTRIES) throw new Error("Input contains more than 100,000 entries");
+      if (this.entries.length >= MAX_ENTRIES) throw new Error(translate(locale, "tooManyEntries"));
       if (Number.isInteger(entry.versionMadeBy) && entry.versionMadeBy >> 8 === 0 && entry.filename.includes("\\")) {
         entry.filename = entry.filename.replaceAll("\\", "/");
         if (entry.filename.endsWith("/")) entry.directory = true;
       }
-      validPath(entry.filename);
+      validPath(entry.filename, locale);
       const key = entry.filename.replace(/\/$/u, "").toLowerCase();
-      if (paths.has(key)) throw new Error(`Duplicate ZIP path: ${entry.filename}`);
-      if (entry.encrypted) throw new Error(`Encrypted ZIP entries are not supported: ${entry.filename}`);
-      if (!entry.directory && entry.compressionMethod !== 0 && entry.compressionMethod !== 8) throw new Error(`Unsupported ZIP compression: ${entry.filename}`);
+      if (paths.has(key)) throw new Error(translate(locale, "duplicateZipPath", { name: entry.filename }));
+      if (entry.encrypted) throw new Error(translate(locale, "encryptedEntry", { name: entry.filename }));
+      if (!entry.directory && entry.compressionMethod !== 0 && entry.compressionMethod !== 8) throw new Error(translate(locale, "unsupportedCompression", { name: entry.filename }));
       const mode = (entry.externalFileAttributes >>> 16) & 0xf000;
-      if (mode && mode !== 0x8000 && mode !== 0x4000) throw new Error(`Links and special files are not supported: ${entry.filename}`);
+      if (mode && mode !== 0x8000 && mode !== 0x4000) throw new Error(translate(locale, "unsupportedSpecialFile", { name: entry.filename }));
       paths.set(key, entry.directory);
-      total = safeSize(total + safeSize(entry.uncompressedSize));
+      total = safeSize(total + safeSize(entry.uncompressedSize, locale), locale);
       this.entries.push(entry);
     }
-    if (!this.entries.some(entry => !entry.directory)) throw new Error("No files were selected");
+    if (!this.entries.some(entry => !entry.directory)) throw new Error(translate(locale, "noFilesSelected"));
     const directories = new Set();
     for (const entry of this.entries) {
       const parts = entry.filename.split("/");
       for (let index = 1; index < parts.length; index++) {
         const parent = parts.slice(0, index).join("/").toLowerCase();
-        if (paths.get(parent) === false) throw new Error(`A file is also used as a folder: ${entry.filename}`);
+        if (paths.get(parent) === false) throw new Error(translate(locale, "fileUsedAsFolder", { name: entry.filename }));
         if (!entry.filename.toLowerCase().startsWith("__macosx/")) directories.add(parent);
       }
     }
@@ -171,7 +181,7 @@ export class Archive {
       if (!companion || (!applicationPaths.has(companion) && !directories.has(companion)) || !await isAppleDouble(entry)) { appleDouble = false; break; }
     }
     if (appleDouble) this.entries = this.entries.filter(entry => !entry.filename.startsWith("__MACOSX/"));
-    if (!this.entries.some(entry => !entry.directory)) throw new Error("No files were selected");
+    if (!this.entries.some(entry => !entry.directory)) throw new Error(translate(locale, "noFilesSelected"));
     let prefix = "";
     const files = this.entries.filter(entry => !entry.directory);
     while (files.every(entry => entry.filename.slice(prefix.length).includes("/"))) {
@@ -183,14 +193,14 @@ export class Archive {
     this.files = this.entries.filter(entry => entry.filename.startsWith(prefix) && entry.filename !== prefix).map(entry => ({ entry, name: entry.filename.slice(prefix.length) }));
     const moduleDirs = ["sce_module", "sce_modules", "prx"];
     const present = directory => this.files.some(item => item.name.startsWith(directory + "/"));
-    if (present("sce_module") && present("sce_modules")) throw new Error("Both sce_module and sce_modules exist in the app root");
+    if (present("sce_module") && present("sce_modules")) throw new Error(translate(locale, "duplicateModuleDirs"));
     const executables = [];
     this.modules = [];
     const selfContainers = [];
     const selfModules = [];
     for (let index = 0; index < this.files.length; index++) {
       const item = this.files[index];
-      report({ phase: "Inspecting files", input: item.name, completed: index, total: this.files.length });
+      report({ phase: translate(locale, "inspectingFiles"), input: item.name, completed: index, total: this.files.length });
       if (item.entry.directory || item.name.startsWith("sce_sys/")) continue;
       const moduleDir = moduleDirs.find(directory => item.name.startsWith(directory + "/"));
       if (!moduleDir && item.name.includes("/")) continue;
@@ -206,39 +216,40 @@ export class Archive {
       }
     }
     if (executables.length !== 1) {
-      if (selfContainers.length > 0) throw new Error(`${selfContainers.join(", ")} is a SELF container, not an ELF: unwrap the app before converting it`);
-      if (executables.length === 0 && !this.files.some(item => item.name.startsWith("sce_sys/"))) throw new Error("This doesn't look like a PS5 app. Choose the dumped game folder (the one containing sce_sys and sce_module), or a ZIP of it.");
-      if (executables.length === 0) throw new Error("No game executable (eboot.bin) was found next to sce_sys. Make sure the dump is complete and decrypted.");
-      throw new Error(`Found ${executables.length} executables next to sce_sys (${executables.map(item => item.name).join(", ")}). The app folder should contain exactly one, usually eboot.bin.`);
+      if (selfContainers.length > 0) throw new Error(translate(locale, "selfNotElf", { names: selfContainers.join(", ") }));
+      if (executables.length === 0 && !this.files.some(item => item.name.startsWith("sce_sys/"))) throw new Error(translate(locale, "notPs5App"));
+      if (executables.length === 0) throw new Error(translate(locale, "noExecutableFound"));
+      throw new Error(translate(locale, "multipleExecutables", { count: executables.length, names: executables.map(item => item.name).join(", ") }));
     }
     this.executable = executables[0];
-    if (this.executable.name.includes("/")) throw new Error("Place the executable next to sce_sys and sce_module, not inside another folder");
+    if (this.executable.name.includes("/")) throw new Error(translate(locale, "executableNested"));
     this.icon = this.files.find(item => item.name === "sce_sys/icon0.png" && !item.entry.directory);
     this.selectedBytes = [this.executable, ...this.modules].reduce((sum, item) => sum + item.entry.uncompressedSize, 0);
     this.windowsSelectedBytes = this.selectedBytes + (this.icon?.entry.uncompressedSize ?? 0);
-    if (this.selectedBytes > CONVERSION_LIMIT) throw new Error("Executable and modules exceed the 256 MiB conversion limit. Use the native relinker for this app.");
+    if (this.selectedBytes > CONVERSION_LIMIT) throw new Error(translate(locale, "conversionTooLargeStatic"));
     const warnings = [];
-    if (!this.files.some(item => item.name.startsWith("sce_sys/"))) warnings.push("sce_sys is missing. The Windows executable will have no app icon.");
-    else if (!this.icon) warnings.push("sce_sys/icon0.png is missing. The Windows executable will have no app icon.");
-    if (!moduleDirs.some(present)) warnings.push("sce_module, sce_modules and prx are missing. If the original app included a module folder, leaving it out can prevent the app from starting.");
-    if (selfModules.length > 0) warnings.push(`${selfModules.join(", ")} is a SELF container and was skipped: unwrap it to include that module.`);
+    if (!this.files.some(item => item.name.startsWith("sce_sys/"))) warnings.push(translate(locale, "warnSceSysMissing"));
+    else if (!this.icon) warnings.push(translate(locale, "warnIconMissing"));
+    if (!moduleDirs.some(present)) warnings.push(translate(locale, "warnModulesMissing"));
+    if (selfModules.length > 0) warnings.push(translate(locale, "warnSelfModuleSkipped", { names: selfModules.join(", ") }));
     this.totalBytes = total;
     return { name: this.executable.name, files: files.length, modules: this.modules.length, totalBytes: total, selectedBytes: this.selectedBytes, windowsSelectedBytes: this.windowsSelectedBytes, windowsIconTooLarge: (this.icon?.entry.uncompressedSize ?? 0) > ICON_LIMIT, root: prefix, warnings };
   }
 
   selectedBytesForTarget(target) {
-    if (target !== "linux" && target !== "windows") throw new Error(`Unsupported conversion target: ${target}`);
-    if (target === "windows" && (this.icon?.entry.uncompressedSize ?? 0) > ICON_LIMIT) throw new Error("sce_sys/icon0.png exceeds 16 MiB");
+    if (target !== "linux" && target !== "windows") throw new Error(translate(this.locale, "unsupportedTarget", { target }));
+    if (target === "windows" && (this.icon?.entry.uncompressedSize ?? 0) > ICON_LIMIT) throw new Error(translate(this.locale, "iconTooLargeStatic"));
     return target === "windows" ? this.windowsSelectedBytes : this.selectedBytes;
   }
 
   async conversionInput(target, toIntel, report) {
+    const locale = this.locale;
     let remaining = CONVERSION_LIMIT;
     const selectedBytes = this.selectedBytesForTarget(target);
-    if (selectedBytes > CONVERSION_LIMIT) throw new Error(`Selected ${target} conversion input exceeds the 256 MiB conversion limit. Use the native relinker for this app.`);
+    if (selectedBytes > CONVERSION_LIMIT) throw new Error(translate(locale, "selectedTooLarge", { target }));
     const read = async item => {
-      report({ phase: "Reading conversion input", input: item.name });
-      const bytes = await boundedBytes(item.entry, remaining);
+      report({ phase: translate(locale, "phaseReadingInput"), input: item.name });
+      const bytes = await boundedBytes(item.entry, remaining, locale);
       remaining -= bytes.length;
       return bytes;
     };
@@ -258,21 +269,21 @@ export function createPackageWriter(destination) {
   return new ZipWriter(destination, { level: 9, zip64: true, bufferedWrite: false, useWebWorkers: false, useCompressionStream: false, preventClose: true });
 }
 
-async function appendEntry(writer, name, entry, report) {
+async function appendEntry(writer, name, entry, report, locale) {
   const stream = new TransformStream();
   let produced = 0;
   const limit = new TransformStream({ transform(chunk, controller) {
     produced += chunk.length;
-    if (produced > entry.uncompressedSize) throw new Error(`Unexpected expanded size: ${name}`);
+    if (produced > entry.uncompressedSize) throw new Error(translate(locale, "unexpectedSize", { name }));
     controller.enqueue(chunk);
   }, flush() {
-    if (produced !== entry.uncompressedSize) throw new Error(`Incorrect expanded size: ${name}`);
+    if (produced !== entry.uncompressedSize) throw new Error(translate(locale, "incorrectSize", { name }));
   } });
   await Promise.all([
     entry.getData(stream.writable, { checkSignature: true }),
     writer.add(name, stream.readable.pipeThrough(limit), {
       versionMadeBy: 0x31e, externalFileAttributes: entry.externalFileAttributes >>> 16 ? entry.externalFileAttributes : ((0o100644 << 16) | (entry.externalFileAttributes & 0xffff)) >>> 0,
-      onprogress: completed => report({ phase: writer instanceof DirectoryWriter ? "Writing files" : "Compressing ZIP", input: name, completed, total: entry.uncompressedSize })
+      onprogress: completed => report({ phase: writer instanceof DirectoryWriter ? translate(locale, "phaseWritingFiles") : translate(locale, "phaseCompressingZip"), input: name, completed, total: entry.uncompressedSize })
     })
   ]);
 }
@@ -331,30 +342,30 @@ export class DirectoryWriter {
   async close() {}
 }
 
-export async function packageArchive(archive, converted, outputName, libraryFile, destination, report, directory = false, options = {}) {
-  const libraries = new ZipReader(new BoundedBlobReader(libraryFile));
+export async function packageArchive(archive, converted, outputName, libraryFile, destination, report, directory = false, options = {}, locale = "en") {
+  const libraries = new ZipReader(boundedBlobReader(libraryFile, locale));
   const ownsWriter = !options.writer;
   const writer = options.writer ?? (directory ? new DirectoryWriter(destination) : createPackageWriter(destination));
   const outputPath = name => {
     const path = options.prefix ? `${options.prefix}${name}` : name;
-    validPath(path);
+    validPath(path, locale);
     return path;
   };
   const names = new Set();
   const claim = name => {
     const path = outputPath(name);
     const key = path.replace(/\/$/u, "").toLowerCase();
-    if (names.has(key)) throw new Error(`Output path collision: ${name}`);
+    if (names.has(key)) throw new Error(translate(locale, "outputPathCollision", { name }));
     names.add(key);
   };
   try {
     const libraryEntries = await libraries.getEntries();
-    if (!libraryEntries.length || libraryEntries.length > 4096) throw new Error("Invalid library archive");
+    if (!libraryEntries.length || libraryEntries.length > 4096) throw new Error(translate(locale, "invalidLibraryArchive"));
     for (const entry of libraryEntries) {
-      if (!entry.filename.startsWith("libs/") || entry.encrypted || ((entry.externalFileAttributes >>> 16) & 0xf000) === 0xa000) throw new Error("Invalid library archive layout");
-      if (entry.compressionMethod !== 0 && entry.compressionMethod !== 8) throw new Error(`Unsupported ZIP compression: ${entry.filename}`);
+      if (!entry.filename.startsWith("libs/") || entry.encrypted || ((entry.externalFileAttributes >>> 16) & 0xf000) === 0xa000) throw new Error(translate(locale, "invalidLibraryLayout"));
+      if (entry.compressionMethod !== 0 && entry.compressionMethod !== 8) throw new Error(translate(locale, "unsupportedCompression", { name: entry.filename }));
       const mode = (entry.externalFileAttributes >>> 16) & 0xf000;
-      if (mode && mode !== 0x8000 && mode !== 0x4000) throw new Error(`Links and special files are not supported: ${entry.filename}`);
+      if (mode && mode !== 0x8000 && mode !== 0x4000) throw new Error(translate(locale, "unsupportedSpecialFile", { name: entry.filename }));
       claim(entry.filename);
     }
     const replaced = new Set(converted.modules.map(module => module.name));
@@ -363,7 +374,7 @@ export async function packageArchive(archive, converted, outputName, libraryFile
     claim(outputName);
     if (converted.diagnostics) claim("windows-diagnostics-imports.txt");
     for (const module of converted.modules) {
-      if (!["app0/sce_module/", "app0/sce_modules/", "app0/prx/"].some(prefix => module.name.startsWith(prefix))) throw new Error("Invalid converted module path");
+      if (!["app0/sce_module/", "app0/sce_modules/", "app0/prx/"].some(prefix => module.name.startsWith(prefix))) throw new Error(translate(locale, "invalidModulePath"));
       claim(module.name);
     }
     const outputEntries = [
@@ -378,7 +389,7 @@ export async function packageArchive(archive, converted, outputName, libraryFile
       const parts = name.replace(/\/$/u, "").toLowerCase().split("/");
       for (let index = 1; index < parts.length; index++) {
         const parent = parts.slice(0, index).join("/");
-        if (files.has(parent)) throw new Error(`Output path collision: ${parent}`);
+        if (files.has(parent)) throw new Error(translate(locale, "outputPathCollision", { name: parent }));
       }
     }
     const binary = { versionMadeBy: 0x31e, externalFileAttributes: (0o100755 << 16) >>> 0 };
@@ -387,11 +398,11 @@ export async function packageArchive(archive, converted, outputName, libraryFile
     for (const module of converted.modules) await writer.add(outputPath(module.name), new Uint8ArrayReader(module.bytes), binary);
     for (const entry of libraryEntries) {
       if (entry.directory) await writer.add(outputPath(entry.filename), undefined, { directory: true });
-      else await appendEntry(writer, outputPath(entry.filename), entry, report);
+      else await appendEntry(writer, outputPath(entry.filename), entry, report, locale);
     }
     for (const { entry, name } of originalFiles) {
       if (entry.directory) await writer.add(outputPath("app0/" + name), undefined, { directory: true });
-      else await appendEntry(writer, outputPath("app0/" + name), entry, report);
+      else await appendEntry(writer, outputPath("app0/" + name), entry, report, locale);
     }
     if (ownsWriter) await writer.close();
   } finally {

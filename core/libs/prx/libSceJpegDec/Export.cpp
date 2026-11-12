@@ -49,6 +49,7 @@ constexpr std::uint16_t DOWN_SCALE_EIGHTH = 8;
 
 constexpr std::uint16_t PIXEL_FORMAT_R8G8B8A8 = 0;
 constexpr std::uint16_t PIXEL_FORMAT_B8G8R8A8 = 1;
+constexpr std::uint16_t PIXEL_FORMAT_Y8 = 11;
 
 constexpr std::uint16_t COLOR_SPACE_UNKNOWN = 0;
 constexpr std::uint16_t COLOR_SPACE_YCBCR = 1;
@@ -169,7 +170,7 @@ struct DecodeTarget {
 };
 
 std::uint64_t imagePitch(const DecodeTarget& target, std::uint32_t outputWidth) {
-    const std::uint64_t rowSize = static_cast<std::uint64_t>(outputWidth) * BYTES_PER_PIXEL;
+    const std::uint64_t rowSize = static_cast<std::uint64_t>(outputWidth) * (target.pixelFormat == PIXEL_FORMAT_Y8 ? 1 : BYTES_PER_PIXEL);
     return target.pitch == 0 ? rowSize : target.pitch;
 }
 
@@ -182,10 +183,10 @@ std::int32_t checkTarget(const Context& context, const Decoder::Jpeg::Header& he
     const std::uint32_t outputWidth = Decoder::Jpeg::ScaledDimension(header.width, downScale);
     const std::uint32_t outputHeight = Decoder::Jpeg::ScaledDimension(header.height, downScale);
 
-    const std::uint64_t rowSize = static_cast<std::uint64_t>(outputWidth) * BYTES_PER_PIXEL;
+    const std::uint64_t rowSize = static_cast<std::uint64_t>(outputWidth) * (target.pixelFormat == PIXEL_FORMAT_Y8 ? 1 : BYTES_PER_PIXEL);
     const std::uint64_t pitch = imagePitch(target, outputWidth);
     if (target.pitch != 0) {
-        if (pitch < rowSize || pitch % 4 != 0 || pitch * outputHeight >= 0x80000000 || pitch * outputHeight > target.imageSize) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
+        if (pitch < rowSize || (target.pixelFormat != PIXEL_FORMAT_Y8 && pitch % 4 != 0) || pitch * outputHeight >= 0x80000000 || pitch * outputHeight > target.imageSize) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
     } else if (pitch * outputHeight > target.imageSize) {
         return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
     }
@@ -205,11 +206,18 @@ std::int32_t writeImage(const Decoder::Jpeg::Header& header, std::span<const std
     const bool swapRedBlue = target.pixelFormat == PIXEL_FORMAT_B8G8R8A8;
     const auto alpha = static_cast<std::uint8_t>(target.alpha);
     auto* output = static_cast<std::uint8_t*>(target.image);
-    const std::uint64_t rowSize = static_cast<std::uint64_t>(outputWidth) * BYTES_PER_PIXEL;
+    const std::uint64_t rowSize = static_cast<std::uint64_t>(outputWidth) * (target.pixelFormat == PIXEL_FORMAT_Y8 ? 1 : BYTES_PER_PIXEL);
     std::vector<std::uint8_t> rowBuffer(rowSize);
     for (std::uint32_t y = 0; y < image->height; ++y) {
         for (std::uint32_t x = 0; x < image->width; ++x) {
             const std::uint8_t* in = image->pixels.data() + (static_cast<std::size_t>(y) * image->width + x) * image->channels;
+            if (target.pixelFormat == PIXEL_FORMAT_Y8) {
+                const std::uint32_t red = in[0];
+                const std::uint32_t green = in[image->channels == 1 ? 0 : 1];
+                const std::uint32_t blue = in[image->channels == 1 ? 0 : 2];
+                rowBuffer[x] = static_cast<std::uint8_t>((77 * red + 150 * green + 29 * blue) >> 8);
+                continue;
+            }
             std::uint8_t* pixel = rowBuffer.data() + x * BYTES_PER_PIXEL;
             if (image->channels == 1) {
                 pixel[0] = in[0];
@@ -273,6 +281,8 @@ void forgetStream(const Context* context) {
     streams.erase(context);
 }
 
+bool endFound(InputStream& stream);
+
 void pull(InputStream& stream, std::uint32_t size) {
     while (size > 0 && stream.status == 0) {
         if (stream.chunkSize == 0) {
@@ -296,6 +306,7 @@ void pull(InputStream& stream, std::uint32_t size) {
         stream.chunk += count;
         stream.chunkSize -= count;
         size -= count;
+        if (endFound(stream) && stream.end) return;
     }
 }
 
@@ -370,7 +381,7 @@ std::int32_t decodeStream(const Context* context, const JpegDecInputControlParam
     if (format != 0 && format != 1 && format != 9 && format != 10 && format != 11) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
     if (param->alpha_value > 255) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
     requireDecodeMode("sceJpegDecDecodeWithInputControl", param->operation & 1);
-    if (format != PIXEL_FORMAT_R8G8B8A8 && format != PIXEL_FORMAT_B8G8R8A8) throw std::runtime_error("sceJpegDecDecodeWithInputControl: pixel format is not implemented");
+    if (format != PIXEL_FORMAT_R8G8B8A8 && format != PIXEL_FORMAT_B8G8R8A8 && format != PIXEL_FORMAT_Y8) throw std::runtime_error("sceJpegDecDecodeWithInputControl: pixel format is not implemented");
     std::shared_ptr<InputStream> found;
     {
         std::lock_guard lock(streamMutex);
@@ -439,7 +450,7 @@ int32_t APS5_VABI sceJpegDecDecode(void* handle, const JpegDecDecodeParam* param
     if (localParam.pixel_format != 0 && localParam.pixel_format != 1 && localParam.pixel_format != 9 && localParam.pixel_format != 10 && localParam.pixel_format != 11) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
     if (localParam.alpha_value > 255) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
     requireDecodeMode(__func__, localParam.decode_mode);
-    if (localParam.pixel_format != PIXEL_FORMAT_R8G8B8A8 && localParam.pixel_format != PIXEL_FORMAT_B8G8R8A8) throw std::runtime_error("sceJpegDecDecode: pixel format is not implemented");
+    if (localParam.pixel_format != PIXEL_FORMAT_R8G8B8A8 && localParam.pixel_format != PIXEL_FORMAT_B8G8R8A8 && localParam.pixel_format != PIXEL_FORMAT_Y8) throw std::runtime_error("sceJpegDecDecode: pixel format is not implemented");
 
     std::vector<std::uint8_t> jpegBytes(localParam.jpeg_mem_size);
     if (!GuestCopyIn_nid_no_patch(jpegBytes.data(), localParam.jpeg_mem_addr, jpegBytes.size())) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
