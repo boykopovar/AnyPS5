@@ -980,6 +980,7 @@ void TestCallouts() {
 struct SelfTermination {
     NpCalloutContext* context {};
     std::atomic<int> finished {0};
+    std::atomic<int> reused {0};
     std::string message;
 };
 
@@ -994,6 +995,10 @@ void APS5_VABI TerminateOwnContext(void*) {
     g_selfTermination.finished.store(1, std::memory_order_release);
 }
 
+void APS5_VABI MarkReused(void*) {
+    g_selfTermination.reused.store(1, std::memory_order_release);
+}
+
 void TestCalloutSelfTermination() {
     NpCalloutContext context {};
     NpCallout callout {};
@@ -1003,12 +1008,19 @@ void TestCalloutSelfTermination() {
     for (int i = 0; i < 2000 && g_selfTermination.finished.load(std::memory_order_acquire) == 0; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     Require(g_selfTermination.finished.load(std::memory_order_acquire) == 1, "the terminating callout returns");
-    Require(g_selfTermination.message.find("sceNpCalloutTermCtx") == 0, "terminating a context from its own callout is refused");
-    Require(context.initialized == 1, "a refused termination leaves the context running");
-
+    Require(g_selfTermination.message.empty(), "terminating a context from its own callout returns");
+    Require(context.initialized == 0, "a callout's termination of its own context clears it");
     sceNpCalloutTermCtx(&context);
 
-    Require(context.initialized == 0, "the context terminates from another thread");
+    NpCallout again {};
+    Require(sceNpCalloutInitCtx(&context, "np-self-term-again", 0x4000, 0, 0) == 0, "the context starts again");
+    Require(sceNpCalloutStartOnCtx(&context, &again, 0, MarkReused, nullptr) == 0, "a callout is queued on the restarted context");
+    for (int i = 0; i < 2000 && g_selfTermination.reused.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(g_selfTermination.reused.load(std::memory_order_acquire) == 1, "a callout runs on the restarted context");
+    sceNpCalloutTermCtx(&context);
+
+    Require(context.initialized == 0, "the restarted context terminates from another thread");
 }
 
 bool Equals(const char* actual, const char* expected) {
