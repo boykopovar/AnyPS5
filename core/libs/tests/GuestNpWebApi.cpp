@@ -7,7 +7,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <climits>
 #include <cstring>
+#include <initializer_list>
 #include <thread>
 
 namespace {
@@ -33,6 +35,7 @@ constexpr int NpUserNotFound = static_cast<int>(0x80960105u);
 constexpr int InitialUser = 0x10000000;
 constexpr int HttpInvalidId = static_cast<int>(0x80431100u);
 constexpr int HttpInvalidResponse = static_cast<int>(0x80432060u);
+constexpr int NpInvalidArgument = static_cast<int>(0x80550003u);
 
 constexpr int MethodGet = 0;
 constexpr int MethodPost = 1;
@@ -69,6 +72,29 @@ void InstallProcessParameters() {
     Require(ProcessParametersFixture::Install(process.data(), process.size()), "process parameters were not installed");
 }
 
+void TestUnknownFieldChecks() {
+    struct Object {
+        std::uint64_t words[6];
+    };
+    Object object{};
+    for (const std::int64_t value : {std::int64_t{-1}, std::int64_t{0}, std::int64_t{1}, std::int64_t{-2}, INT64_MIN, INT64_MAX}) {
+        std::memset(&object, 0xa5, sizeof(object));
+        std::memcpy(reinterpret_cast<std::byte*>(&object) + 0x20, &value, sizeof(value));
+        Require(libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(&object) == (value != -1), "ojGP5vur+qM checks the 64 bits at +0x20");
+    }
+    for (const std::int32_t value : {std::int32_t{-1}, std::int32_t{0}, std::int32_t{1}, std::int32_t{-2}, INT32_MIN, INT32_MAX}) {
+        std::memset(&object, 0xa5, sizeof(object));
+        std::memcpy(reinterpret_cast<std::byte*>(&object) + 0xc, &value, sizeof(value));
+        Require(libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(&object) == (value != -1), "zQE2rxZdLy8 checks the 32 bits at +0xc");
+    }
+    std::memset(&object, 0xff, sizeof(object));
+    const std::int32_t low = -1;
+    const std::int32_t high = 0;
+    std::memcpy(reinterpret_cast<std::byte*>(&object) + 0x20, &low, sizeof(low));
+    std::memcpy(reinterpret_cast<std::byte*>(&object) + 0x24, &high, sizeof(high));
+    Require(libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(&object), "ojGP5vur+qM compares all 64 bits");
+}
+
 void TestLibraryContexts() {
     const int context = sceNpWebApiInitialize(1, 0x10000);
     Require(context > 0 && context <= 0x7fff, "library context id out of range");
@@ -101,6 +127,24 @@ void TestLibraryContexts() {
     Require(sceNpWebApiTerminate(context) == LibContextNotFound, "library context terminated twice");
     Require(sceNpWebApiCreateHandle(context) == LibContextNotFound, "handle of a terminated context");
     Require(sceNpWebApiTerminate(other) == 0, "terminate the second library context");
+}
+
+void TestIntServicePushEventFilter() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int other = sceNpWebApiInitialize(1, 0x10000);
+    Require(context > 0 && other > 0, "library contexts for int service filter");
+    const int handle = sceNpWebApiCreateHandle(context);
+    Require(handle > 0, "handle for int service filter");
+
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, "service", 0, nullptr, 1) == InvalidArgument, "int service filter without filter parameter");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, "service", 0, filterParam, 0) == InvalidArgument, "int service filter with count 0");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(0x7fff + 1, handle, "service", 0, filterParam, 1) == LibContextNotFound, "int service filter of an unknown context");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(other, handle, "service", 0, filterParam, 1) == HandleNotFound, "int service filter with another context's handle");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, "service", 0xffffffffu, filterParam, 1) == SignedInUserNotFound, "int service filter with invalid service label");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, "service", 0, filterParam, 1) == SignedInUserNotFound, "int service filter without signed-in user");
+
+    Require(sceNpWebApiDeleteHandle(context, handle) == 0, "delete the handle for int service filter");
+    Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the int service filter library contexts");
 }
 
 void TestUserContexts() {
@@ -609,12 +653,67 @@ void TestMultipartParts() {
     Require(sceNpWebApiTerminate(context) == 0, "terminate multipart parts library context");
 }
 
+void TestUtilityParseNpId() {
+    NpId npId{};
+    Require(sceNpWebApiUtilityParseNpId(nullptr, &npId) == NpInvalidArgument, "null jsonNpId");
+    Require(sceNpWebApiUtilityParseNpId(nullptr, nullptr) == NpInvalidArgument, "null jsonNpId and null npId");
+    Require(sceNpWebApiUtilityParseNpId("cGxheWVy", nullptr) == 0, "null npId with valid jsonNpId");
+
+    std::memset(&npId, 0xCC, sizeof(npId));
+    Require(sceNpWebApiUtilityParseNpId("cGxheWVyQHNlZzEvc2VnMi5zZWcz", &npId) == 0, "parse serialized npId");
+    Require(std::strcmp(npId.handle.data, "player") == 0, "handle matches string before at");
+    Require(std::memcmp(npId.opt, "seg1seg2", 8) == 0, "opt concatenates segments");
+    Require(npId.reserved[0] == 0x01, "reserved 0 is 1");
+    for (std::size_t i = 1; i < sizeof(npId.reserved); ++i) {
+        Require(npId.reserved[i] == 0, "reserved bytes zeroed");
+    }
+
+    std::memset(&npId, 0xCC, sizeof(npId));
+    Require(sceNpWebApiUtilityParseNpId("dXNlcjEyMw==", &npId) == 0, "parse serialized npId without at");
+    Require(std::strcmp(npId.handle.data, "user123") == 0, "handle without at");
+    for (std::size_t i = 0; i < sizeof(npId.opt); ++i) {
+        Require(npId.opt[i] == 0, "opt zeroed without at");
+    }
+    Require(npId.reserved[0] == 0x01, "reserved 0 is 1 without at");
+
+    std::memset(&npId, 0xCC, sizeof(npId));
+    Require(sceNpWebApiUtilityParseNpId("MDEyMzQ1Njc4OWFiY2RlZkVYVFJBQDEyLzM0", &npId) == 0, "parse long handle");
+    Require(std::memcmp(npId.handle.data, "0123456789abcdef", 16) == 0, "handle truncated to 16");
+    Require(npId.handle.data[16] == '\0', "handle null terminated");
+    Require(std::memcmp(npId.opt, "1234\0\0\0\0", 8) == 0, "opt with separators removed");
+    Require(npId.reserved[0] == 0x01, "reserved 0 is 1 for long handle");
+
+    std::memset(&npId, 0xCC, sizeof(npId));
+    Require(sceNpWebApiUtilityParseNpId("dXNlckBhL2IuYy9kLmU=", &npId) == 0, "filter slashes and dots");
+    Require(std::strcmp(npId.handle.data, "user") == 0, "handle is user");
+    Require(std::memcmp(npId.opt, "abcde\0\0\0", 8) == 0, "opt filters separators");
+    Require(npId.reserved[0] == 0x01, "reserved 0 is 1");
+}
+
+void TestIntCreateCtxIndExtdPushEventFilter() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int other = sceNpWebApiInitialize(1, 0x10000);
+    const int handle = sceNpWebApiCreateHandle(context);
+    Require(context > 0 && other > 0 && handle > 0, "library contexts and handle for extended push event filter");
+    unsigned char filterParam[64] = {};
+
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(context, handle, nullptr, 1) == InvalidArgument, "extended push event filter without its parameter");
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(context, handle, filterParam, 0) == InvalidArgument, "extended push event filter with no parameters");
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(0x7fff + 1, handle, nullptr, 1) == InvalidArgument, "the argument is checked before the library context");
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(0x7fff + 1, handle, filterParam, 1) == LibContextNotFound, "extended push event filter of an unknown context");
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(other, handle, filterParam, 1) == HandleNotFound, "extended push event filter with another context's handle");
+
+    Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the extended push event filter library contexts");
+}
+
 }
 
 int main() {
     InstallProcessParameters();
     SetSdkVersion(0x04508001);
+    TestUnknownFieldChecks();
     TestLibraryContexts();
+    TestIntServicePushEventFilter();
     TestUserContexts();
     TestRequests();
     TestResponses();
@@ -626,5 +725,7 @@ int main() {
     TestMultipartRequests();
     TestRequestTimeouts();
     TestMultipartParts();
+    TestUtilityParseNpId();
+    TestIntCreateCtxIndExtdPushEventFilter();
     return 0;
 }

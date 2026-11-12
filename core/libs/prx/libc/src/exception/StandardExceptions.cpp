@@ -932,7 +932,7 @@ const ExceptionVtable FilesystemError {0, &FilesystemErrorType, GuestDestroyFile
 const TypeRecord SceV2FilesystemErrorType {SingleTypeVtable + 2, "NSt8__sce_v210filesystem16filesystem_errorE", &SceV2::SystemErrorType};
 const ExceptionVtable SceV2FilesystemError {0, &SceV2FilesystemErrorType, GuestDestroyFilesystemError_nid_no_patch, GuestDeleteFilesystemError_nid_no_patch, GuestMessageWhat_nid_no_patch};
 
-[[noreturn]] void ThrowFilesystemError(const ExceptionVtable& table, const char* message, const GuestLocale::String* path, ErrorCode code) {
+[[noreturn]] void ThrowFilesystemError(const ExceptionVtable& table, const char* message, const GuestLocale::String* path1, const GuestLocale::String* path2, ErrorCode code) {
     if (!message) throw std::invalid_argument("_Xfilesystem_error: null message");
     if (!code.category) throw std::invalid_argument("_Xfilesystem_error: null error category");
     std::string what = message;
@@ -943,8 +943,8 @@ const ExceptionVtable SceV2FilesystemError {0, &SceV2FilesystemErrorType, GuestD
     Construct(&object->base.base, table, what.c_str());
     object->base.code = code;
     object->code = code;
-    object->path1 = CopyGuestString(path);
-    object->path2 = CopyGuestString(nullptr);
+    object->path1 = CopyGuestString(path1);
+    object->path2 = CopyGuestString(path2);
     __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)),
         reinterpret_cast<decltype(Header::destructor)>(DestroyThrownFilesystemError_nid_no_patch));
 }
@@ -952,17 +952,25 @@ const ExceptionVtable SceV2FilesystemError {0, &SceV2FilesystemErrorType, GuestD
 
 extern "C" {
 [[noreturn]] void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcSt10error_code_nid_postfix(const char* message, LibcException::ErrorCode code) {
-    LibcException::ThrowFilesystemError(LibcException::FilesystemError, message, nullptr, code);
+    LibcException::ThrowFilesystemError(LibcException::FilesystemError, message, nullptr, nullptr, code);
 }
 [[noreturn]] void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathESt10error_code_nid_postfix(const char* message, const GuestLocale::String* path, LibcException::ErrorCode code) {
     if (!path) throw std::invalid_argument("_Xfilesystem_error: null path");
-    LibcException::ThrowFilesystemError(LibcException::FilesystemError, message, path, code);
+    LibcException::ThrowFilesystemError(LibcException::FilesystemError, message, path, nullptr, code);
+}
+[[noreturn]] void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathES4_St10error_code_nid_postfix(const char* message, const GuestLocale::String* path1, const GuestLocale::String* path2, LibcException::ErrorCode code) {
+    if (!path1 || !path2) throw std::invalid_argument("_Xfilesystem_error: null path");
+    LibcException::ThrowFilesystemError(LibcException::FilesystemError, message, path1, path2, code);
 }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcNS_10error_codeE_nid_postfix(const char* message, LibcException::ErrorCode code) {
-    LibcException::ThrowFilesystemError(LibcException::SceV2FilesystemError, message, nullptr, code);
+    LibcException::ThrowFilesystemError(LibcException::SceV2FilesystemError, message, nullptr, nullptr, code);
 }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathENS_10error_codeE_nid_postfix(const char* message, const GuestLocale::String* path, LibcException::ErrorCode code) {
     if (!path) throw std::invalid_argument("_Xfilesystem_error: null path");
-    LibcException::ThrowFilesystemError(LibcException::SceV2FilesystemError, message, path, code);
+    LibcException::ThrowFilesystemError(LibcException::SceV2FilesystemError, message, path, nullptr, code);
+}
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathES5_NS_10error_codeE_nid_postfix(const char* message, const GuestLocale::String* path1, const GuestLocale::String* path2, LibcException::ErrorCode code) {
+    if (!path1 || !path2) throw std::invalid_argument("_Xfilesystem_error: null path");
+    LibcException::ThrowFilesystemError(LibcException::SceV2FilesystemError, message, path1, path2, code);
 }
 }
