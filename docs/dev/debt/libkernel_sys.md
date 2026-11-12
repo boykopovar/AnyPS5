@@ -54,7 +54,6 @@
 | `__sys_suspend_process` | `-rXkJO1hOk0` |
 | `__sys_test_debug_rwmem` | `EeVthQocE3Y` |
 | `__sys_workaround8849` | `jTPE1AS7uak` |
-| `_wait4` | `RFlsu7nfopM` |
 | `mmap2` | `tGtH2GTWbyE` |
 | `pthread_setschedother_np` | `ymCrwbFD4fk` |
 | `sceKernelAddDynlibEvent` | `dGFwUPT+BK8` |
@@ -360,6 +359,7 @@ The following eight candidate spellings are absent from that aerolib revision. T
 ### Functional
 
 - [wait3 and wait4](../../../core/libs/prx/libkernel_sys/Wait.cpp) (libkernel_sys) - Windows child resource accounting is not implemented: requesting it for a completed matching child throws before reaping, preserving the child for another wait. Console resource-accounting behaviour is unverified.
+- [_wait4](../../../core/libs/prx/libkernel_sys/AdditionalExports.cpp) (libkernel_sys) is unverified on the console. It follows FreeBSD 11.4, where [`_wait4`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/sys/wait.2) is the wait4 system call under its underscore name, and forwards to libkernel_sys wait4, inheriting its limits (Windows child resource accounting throws).
 - [__ubsan_handle_cfi_check_fail and __ubsan_handle_cfi_check_fail_abort](../../../core/libs/prx/libkernel_sys/include/CfiCheckFail.hpp) (libkernel_sys, also libSceNKWebKitRequirements) - the console's handlers are not measured; they follow LLVM 18.1.8 compiler-rt's standalone UBSan on clang's LP64 `CFICheckFailData`. Each source location is reported once to stderr; the plain handler then returns, and the `_abort` one throws where compiler-rt exits. No symbolizer runs, so the call target prints as `(unknown)`, module notes and the summary line are omitted, and the dynamic type behind a valid vtable is not read. An unknown check kind throws.
 - [statfs and futimesat](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) are not console-verified. `statfs` shares libkernel's host-volume statistics and incomplete guest mount identity fields with `_fstatfs`; archive-only paths throw because they have no host volume lookup. On Linux, FIFO and socket paths report their containing filesystem; this special-file behaviour is not independently measured on console. `futimesat` shares the existing timestamp implementation; descriptor-relative paths use the same host directory paths and guest-root limitations as `openat`, including Windows rename-after-open limits. A null path is `EFAULT`, as FreeBSD 11.4 `kern_utimesat`, not Linux's descriptor-only extension.
 - [symlinkat](../../../core/libs/prx/libkernel_sys/Export.cpp) shares `symlink`'s target restrictions: absolute targets throw; a parent-directory target throws when the host would not follow it to the guest path it names. Descriptor-relative destination paths have the same guest-root limitations as `mkdirat`; Windows requires symbolic-link privileges. Console behaviour is unverified.

@@ -47,5 +47,44 @@ int main() {
             correct = false;
         }
     }
+    struct WideCase {
+        const char* text;
+        std::int64_t value;
+        int error;
+    };
+    constexpr WideCase wideCases[] = {
+        {"0", 0, SavedError},
+        {" \t+42tail", 42, SavedError},
+        {"", 0, SavedError},
+        {"words", 0, SavedError},
+        {"9223372036854775807", INT64_MAX, SavedError},
+        {"-9223372036854775808", INT64_MIN, SavedError},
+        {"9223372036854775808", INT64_MIN, SavedError},
+        {"-9223372036854775809", INT64_MAX, SavedError},
+        {"18446744073709551615", -1LL, SavedError},
+        {"-18446744073709551615", 1LL, SavedError},
+        {"18446744073709551616", -1LL, 34},
+        {"999999999999999999999999999999999999", -1LL, 34},
+        {"-999999999999999999999999999999999999", -1LL, 34},
+    };
+    for (const auto& test : wideCases) {
+        *__error_nid_postfix() = SavedError;
+        const std::int64_t lvalue = atol_nid_postfix(test.text);
+        const int lerror = *__error_nid_postfix();
+        if (lvalue != test.value || lerror != test.error) {
+            std::fprintf(stderr, "atol(%s): expected %lld, errno %d; received %lld, errno %d\n",
+                test.text, static_cast<long long>(test.value), test.error,
+                static_cast<long long>(lvalue), lerror);
+            correct = false;
+        }
+        *__error_nid_postfix() = SavedError;
+        const long long llvalue = atoll_nid_postfix(test.text);
+        const int llerror = *__error_nid_postfix();
+        if (llvalue != static_cast<long long>(test.value) || llerror != test.error) {
+            std::fprintf(stderr, "atoll(%s): expected %lld, errno %d; received %lld, errno %d\n",
+                test.text, static_cast<long long>(test.value), test.error, llvalue, llerror);
+            correct = false;
+        }
+    }
     return correct ? 0 : 1;
 }

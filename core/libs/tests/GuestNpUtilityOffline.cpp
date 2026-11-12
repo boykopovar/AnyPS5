@@ -366,6 +366,21 @@ void CheckLookupNet() {
     Require(sceNpLookupNetTerm() == NotInitialized, "sceNpLookupNetTerm", "a terminated service was terminated again");
 }
 
+void CheckLookupNetInitVariants() {
+    constexpr int NotInitialized = static_cast<int>(0x80550702u);
+    int initialized = -1;
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetIsInit", "a terminated service reported itself initialized");
+    Require(sceNpLookupNetTerm() == NotInitialized, "sceNpLookupNetTerm", "terminating an uninitialized service was taken");
+    Require(sceNpLookupNetInitWithFunctionPointer(nullptr, nullptr) == 0, "sceNpLookupNetInitWithFunctionPointer", "initialization with null arguments failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetInitWithFunctionPointer", "the service did not report itself initialized");
+    Require(sceNpLookupNetInitWithMemoryPool(nullptr, nullptr) == 0, "sceNpLookupNetInitWithMemoryPool", "a second initialization through the memory pool variant was refused");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetInitWithMemoryPool", "the service did not report itself initialized after both variants");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the first termination failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "the reference count did not keep the service initialized after one variant init");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the second termination failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetTerm", "the service stayed initialized after both terminations");
+}
+
 void CheckBandwidthTestInitStart() {
     Require(sceNpBandwidthTestInitStart() == SignedOut, "sceNpBandwidthTestInitStart", "starting a test while signed out did not return SIGNED_OUT");
     Require(sceNpBandwidthTestInitStart() == sceNpBandwidthTestInitStartDownload(nullptr), "sceNpBandwidthTestInitStart", "the answer differs from sceNpBandwidthTestInitStartDownload");
@@ -504,6 +519,7 @@ int main() {
     std::memset(selfNpId, 0, sizeof(selfNpId));
     std::strcpy(reinterpret_cast<char*>(selfNpId), "player_1");
     CheckLookupNet();
+    CheckLookupNetInitVariants();
     CheckBandwidthTestInitStart();
     CheckBandwidthTestShutdownWithDetailedInfo();
     CheckNpUtilityLifecycles();

@@ -97,7 +97,8 @@ def replay(binary, modules, golden, skip, timeout, run=subprocess.run):
         for line in output.splitlines():
             fields = line.split("\t")
             if fields[0] in ("DIFF", "MISSING", "BADSPEC") and len(fields) > 2:
-                findings[fields[1]] = (fields[0].lower(), "\t".join(fields[2:]))
+                detail = "\t".join(fields[2:])
+                findings[fields[1]] = ("throw" if fields[0] == "DIFF" and " threw '" in detail else fields[0].lower(), detail)
             elif fields[0] == "SUMMARY":
                 summary = " ".join(fields[1:])
         if not hung and code == 0 and summary is not None:
