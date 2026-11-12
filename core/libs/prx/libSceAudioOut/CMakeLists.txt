@@ -44,6 +44,13 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(audio_out_output_device_tests tests/OutputDevice.cpp)
+    target_include_directories(audio_out_output_device_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out_output_device_tests PRIVATE libc)
+    configure_windows_unwind(audio_out_output_device_tests)
+    add_test(NAME audio_out_output_device COMMAND audio_out_output_device_tests)
+    set_tests_properties(audio_out_output_device PROPERTIES TIMEOUT 5)
+
     add_test_executable(audio_out_host_gain_tests tests/HostGain.cpp)
     target_include_directories(audio_out_host_gain_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(audio_out_host_gain_tests PRIVATE libc)
@@ -350,6 +357,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_audio_out COMMAND guest_audio_out_tests)
     if(WIN32)
         set_tests_properties(guest_audio_out PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
+    add_test_executable(guest_audio_out_ports_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutPorts.cpp)
+    target_include_directories(guest_audio_out_ports_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_out_ports_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(guest_audio_out_ports_tests)
+    add_test(NAME guest_audio_out_ports COMMAND guest_audio_out_ports_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio_out_ports PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 

@@ -10,7 +10,9 @@
 #include <cstring>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -76,6 +78,57 @@ void CheckRetain(TRetain retain, std::size_t referenceOffset) {
     const std::int32_t finalCount = 4001;
     std::memcpy(expected.data() + offset, &finalCount, sizeof(finalCount));
     Require(Same(guarded, expected), "concurrent count or adjacent bytes changed");
+}
+
+void CheckVersionName() {
+    const std::array<std::pair<std::int32_t, const char*>, 10> cases = {{{0x0301, "TLSv1"},
+                                                                         {0x0302, "TLSv1.1"},
+                                                                         {0x0303, "TLSv1.2"},
+                                                                         {0x0304, "TLSv1.3"},
+                                                                         {0xFEFF, "DTLSv1"},
+                                                                         {0xFEFD, "DTLSv1.2"},
+                                                                         {0x0300, "unknown"},
+                                                                         {0x0305, "unknown"},
+                                                                         {0xFEFE, "unknown"},
+                                                                         {0, "unknown"}}};
+    for (const auto& [version, name] : cases) {
+        Guarded<LibreSsl3Ssl> guarded;
+        std::memset(&guarded, 0x5A, sizeof(guarded));
+        guarded.object.version = version;
+        const auto expected = Bytes(guarded);
+        Require(std::strcmp(SSL_get_version_nid_postfix(&guarded.object), name) == 0, "version name");
+        Require(Same(guarded, expected), "version name changed the connection");
+    }
+    bool threw = false;
+    try {
+        SSL_get_version_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null connection");
+}
+
+void APS5_VABI InfoLine(const LibreSsl3Ssl*, int, int) {}
+
+void CheckInfoCallback() {
+    Guarded<LibreSsl3Ssl> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    auto expected = Bytes(guarded);
+    const auto offset = offsetof(Guarded<LibreSsl3Ssl>, object) + 312;
+    const LibreSsl3InfoCallback callback = InfoLine;
+    SSL_set_info_callback_nid_postfix(&guarded.object, callback);
+    std::memcpy(expected.data() + offset, &callback, sizeof(callback));
+    Require(Same(guarded, expected), "callback stored outside offset 312");
+    SSL_set_info_callback_nid_postfix(&guarded.object, nullptr);
+    std::memset(expected.data() + offset, 0, sizeof(callback));
+    Require(Same(guarded, expected), "null callback did not clear offset 312");
+    bool threw = false;
+    try {
+        SSL_set_info_callback_nid_postfix(nullptr, callback);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null SSL");
 }
 
 struct Versions {
@@ -218,7 +271,8 @@ struct VersionResult {
 };
 
 VersionResult ReadVersion(Asn1String* version) {
-    LibreSsl3X509CertInfo info{version};
+    LibreSsl3X509CertInfo info{};
+    info.version = version;
     LibreSsl3X509 certificate;
     std::memset(&certificate, 0xA5, sizeof(certificate));
     certificate.certInfo = &info;
@@ -235,6 +289,21 @@ void CheckVersion(std::int32_t type, std::vector<unsigned char> bytes, std::int6
     Asn1String integer{static_cast<std::int32_t>(bytes.size()), type, bytes.data(), 0};
     const auto result = ReadVersion(&integer);
     Require(result.value == value && result.error == error && result.following == 0, message, location);
+}
+
+void CheckTlsMethod() {
+    const auto* method = TLS_method_nid_postfix();
+    Require(method != nullptr, "TLS method");
+    Require(method->dtls == 0 && method->server == 1, "TLS method role");
+    Require(method->version == 0x0304, "TLS method version");
+    Require(method->minTlsVersion == 0x0301 && method->maxTlsVersion == 0x0304, "TLS method range");
+    Require(TLS_method_nid_postfix() == method, "TLS method is shared");
+    Require(TLS_server_method_nid_postfix() == method, "TLS server method is the TLS method");
+    const Versions full{0x0301, 0x0304, 0, 0};
+    CheckBound(SSL_CTX_set_min_proto_version_nid_postfix, *method, full, 0x0303, 1, {0x0303, 0x0304, 0x0303, 0},
+               "TLS method minimum");
+    CheckBound(SSL_CTX_set_max_proto_version_nid_postfix, *method, full, 0x0303, 1, {0x0301, 0x0303, 0, 0x0303},
+               "TLS method maximum");
 }
 
 void CheckX509Version() {
@@ -275,15 +344,42 @@ void CheckX509Version() {
     CheckVersion(0x102, {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}, -1, TooSmall, "negative value below the minimum");
 }
 
+void APS5_VABI KeylogLine(const LibreSsl3Ssl*, const char*) {}
+
+void CheckKeylogCallback() {
+    Guarded<LibreSsl3SslCtx> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    auto expected = Bytes(guarded);
+    const auto offset = offsetof(Guarded<LibreSsl3SslCtx>, object) + 552;
+    const LibreSsl3KeylogCallback callback = KeylogLine;
+    SSL_CTX_set_keylog_callback_nid_postfix(&guarded.object, callback);
+    std::memcpy(expected.data() + offset, &callback, sizeof(callback));
+    Require(Same(guarded, expected), "callback stored outside offset 552");
+    SSL_CTX_set_keylog_callback_nid_postfix(&guarded.object, nullptr);
+    std::memset(expected.data() + offset, 0, sizeof(callback));
+    Require(Same(guarded, expected), "null callback did not clear offset 552");
+    bool threw = false;
+    try {
+        SSL_CTX_set_keylog_callback_nid_postfix(nullptr, callback);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null context");
+}
+
 } // namespace
 
 int main() {
     CheckRetain<LibreSsl3Ssl>(SSL_up_ref_nid_postfix, 176);
     CheckRetain<LibreSsl3SslSession>(SSL_SESSION_up_ref_nid_postfix, 184);
+    CheckVersionName();
+    CheckInfoCallback();
     CheckVersionBounds();
     CheckClientRandom();
     CheckContextTimeout();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
+    CheckTlsMethod();
     CheckX509Version();
+    CheckKeylogCallback();
     return 0;
 }

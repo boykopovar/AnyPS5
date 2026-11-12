@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "prx/libSceAudioOut/include/InventoryExports.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
@@ -277,11 +278,14 @@ int APS5_VABI sceAudioOut2PortGetState(AudioOut2PortHandle port, AudioOut2PortSt
     const auto* entry = FromHandle(port);
     if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!state) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
-    *state = AudioOut2PortState{};
-    state->output = OUTPUT_MAIN;
-    state->num_channels = static_cast<std::uint8_t>(entry->channels);
-    state->volume = VOLUME_MAX;
-    return 0;
+    AudioOut2PortState result{};
+    result.output = OUTPUT_MAIN;
+    result.num_channels = static_cast<std::uint8_t>(entry->channels);
+    result.volume = VOLUME_MAX;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &result, sizeof(result));
+    errno = savedErrno;
+    return copied ? 0 : SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
@@ -333,9 +337,16 @@ int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut
     if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!attributes && num != 0) return ErrorInvalidParam;
     for (uint32_t index = 0; index < num; index++) {
-        const auto& attribute = attributes[index];
+        AudioOut2Attribute attribute{};
+        const int savedReadErrno = errno;
+        const bool read = GuestCopyIn_nid_no_patch(&attribute, attributes + index, sizeof(attribute));
+        errno = savedReadErrno;
+        if (!read) return ErrorInvalidParam;
         if (attribute.attribute_id == ATTRIBUTE_VOLUME && attribute.value != nullptr) {
-            std::memcpy(const_cast<void*>(attribute.value), entry->volume, entry->channels * sizeof(float));
+            const int savedWriteErrno = errno;
+            const bool written = GuestCopyOut_nid_no_patch(const_cast<void*>(attribute.value), entry->volume, entry->channels * sizeof(float));
+            errno = savedWriteErrno;
+            if (!written) return ErrorInvalidParam;
         } else if (attribute.attribute_id == 9 || attribute.attribute_id == 0xa || attribute.attribute_id == 0x21) {
             NotImplemented_nid_no_patch(__func__);
         } else {

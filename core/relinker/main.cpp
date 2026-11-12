@@ -391,8 +391,8 @@ int Run(const int argc, char* argv[]) {
             checkOutputInputs(desktopEntry->IconPath, "Icon");
             checkOutputInputs(desktopEntry->EntryPath, "Desktop entry");
         }
-        if (args.windowsDiagnostics)
-            checkOutputInputs(std::filesystem::absolute("windows-diagnostics-imports.txt"), "Windows import diagnostics");
+        const auto windowsDiagnosticsPath = Io::NativePath(absPath).parent_path() / "windows-diagnostics-imports.txt";
+        if (args.windowsDiagnostics) checkOutputInputs(windowsDiagnosticsPath, "Windows import diagnostics");
 
         std::vector<std::filesystem::path> registryPaths;
         std::vector<std::filesystem::path> neededPaths;
@@ -427,7 +427,7 @@ int Run(const int argc, char* argv[]) {
             outputPaths.push_back(desktopEntry->IconPath);
             outputPaths.push_back(desktopEntry->EntryPath);
         }
-        if (args.windowsDiagnostics) outputPaths.push_back(std::filesystem::absolute("windows-diagnostics-imports.txt"));
+        if (args.windowsDiagnostics) outputPaths.push_back(windowsDiagnosticsPath);
         std::vector<std::filesystem::path> canonicalOutputPaths(outputPaths.size());
         for (std::size_t index = 0; index < outputPaths.size(); ++index) {
             for (std::size_t previous = 0; previous < index; ++previous) {
@@ -449,7 +449,7 @@ int Run(const int argc, char* argv[]) {
             return 0;
         }
 
-        if (args.windowsDiagnostics) fileWriter.Write("windows-diagnostics-imports.txt", executables.front().Diagnostics);
+        if (args.windowsDiagnostics) fileWriter.Write(Io::Utf8Path(windowsDiagnosticsPath), executables.front().Diagnostics);
         const auto outputCount = guestArtifacts.size() + executables.size();
         progress.Report({Domain::ProgressStage::Write, absPath, 0, outputCount});
         std::size_t written = 0;
