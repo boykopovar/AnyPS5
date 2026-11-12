@@ -1,3 +1,6 @@
+#ifndef _WIN32
+#include "prx/libc/include/general/LogMacros.hpp"
+#endif
 #include "prx/libSceNotification/include/Api.hpp"
 
 #include <cstdint>
@@ -17,6 +20,15 @@ void Require(bool condition, const char* message) {
 std::uint8_t* Pointer(std::string& value) {
     return reinterpret_cast<std::uint8_t*>(value.data());
 }
+
+#ifndef _WIN32
+std::string BannerLog;
+
+int CaptureBannerLine(std::FILE*, const char* text, std::size_t length) {
+    BannerLog.append(text, length);
+    return 0;
+}
+#endif
 
 void TestSend() {
     std::string message = "Hello from the guest test";
@@ -64,6 +76,16 @@ void TestBanner() {
     Require(sceNotificationShowPsButtonPersistentBanner(Pointer(config)) == 0, "show the persistent banner");
     Require(sceNotificationShowPsButtonPersistentBanner(nullptr) == 0,
             "show the persistent banner with a null configuration");
+
+#ifndef _WIN32
+    BannerLog.clear();
+    LogSink().store(&CaptureBannerLine, std::memory_order_release);
+    sceNotificationShowPsButtonPersistentBanner(nullptr);
+    sceNotificationShowPsButtonPersistentBanner(Pointer(config));
+    LogSink().store(nullptr, std::memory_order_release);
+    Require(BannerLog.find("banner={}") != std::string::npos, "a null banner configuration logs the default object");
+    Require(BannerLog.find(config) != std::string::npos, "a non-null banner configuration is logged verbatim");
+#endif
 }
 
 void TestHide() {
