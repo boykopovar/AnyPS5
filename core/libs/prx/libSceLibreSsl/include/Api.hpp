@@ -676,7 +676,7 @@ int APS5_VABI EC_KEY_set_group_nid_postfix(EcKey* key, const EcGroup* group);
 int APS5_VABI EC_KEY_set_private_key_nid_postfix(void);
 int APS5_VABI EC_KEY_set_public_key_nid_postfix(EcKey* key, const EcPoint* point);
 void APS5_VABI EC_POINT_free_nid_postfix(EcPoint* point);
-int APS5_VABI EC_POINT_mul_nid_postfix(void);
+int APS5_VABI EC_POINT_mul_nid_postfix(const EcGroup* group, EcPoint* result, const Bignum* generatorScalar, const EcPoint* point, const Bignum* pointScalar, BignumContext* context);
 EcPoint* APS5_VABI EC_POINT_new_nid_postfix(const EcGroup* group);
 int APS5_VABI EC_POINT_oct2point_nid_postfix(const EcGroup* group, EcPoint* point, const unsigned char* buffer, std::size_t length, void* context);
 std::size_t APS5_VABI EC_POINT_point2oct_nid_postfix(const EcGroup* group, const EcPoint* point, int form, unsigned char* buffer, std::size_t length, void* context);
