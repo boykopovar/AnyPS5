@@ -371,8 +371,11 @@ void SummaryFields() {
     counted[0].totals.push_back({"Graphics.Barrier.draw", nullptr, {}, 4});
     counted[1].totals.push_back({"Graphics.Barrier.draw", nullptr, {}, 3});
     counted[1].totals.push_back({"Graphics.Copy.bytes", nullptr, {}, 65536});
+    counted[0].totals.push_back({"Graphics.RenderPass", nullptr, {}, 2});
+    counted[0].totals.push_back({"Graphics.Draw", nullptr, milliseconds(5), 1});
     const auto graphicsLine = TraceFormat::Summary(summary, counted, presents);
-    Check(graphicsLine.find("\"graphics_track\":{\"Graphics.Barrier.draw\":7,\"Graphics.Copy.bytes\":65536}") != std::string::npos, "graphics counts were not summed across threads");
+    Check(graphicsLine.find("\"graphics_track\":{\"Graphics.Barrier.draw\":7,\"Graphics.Copy.bytes\":65536,\"Graphics.RenderPass\":2}") != std::string::npos, "graphics counts were not summed across threads");
+    Check(graphicsLine.find("\"Graphics.Draw\":2.500") != std::string::npos, "a timed Graphics scope was taken out of the phases");
     const std::vector<TraceThread::Total> before{{"OwnedDraw.arm_attempt", nullptr, {}, 2}};
     const std::vector<TraceThread::Total> after{{"OwnedDraw.arm_attempt", nullptr, {}, 5}};
     const auto countDelta = TraceFormat::Since(after, before);

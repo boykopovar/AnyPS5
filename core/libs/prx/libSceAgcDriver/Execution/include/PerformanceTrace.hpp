@@ -643,6 +643,12 @@ public:
         return result;
     }
 
+    static bool GraphicsTrackScope(const std::string_view scope) {
+        return scope == "Graphics.RenderPass" || scope == "Graphics.RenderPass.Continued" ||
+               scope.starts_with("Graphics.RenderPass.Close.") || scope.starts_with("Graphics.Barrier.") ||
+               scope.starts_with("Graphics.BarrierMerged.") || scope == "Graphics.Copy" || scope == "Graphics.Copy.bytes";
+    }
+
     static std::string Summary(const TraceSummary& summary, std::span<const TraceThread::Snapshot> threads, std::span<const Clock::time_point> presents) {
         const auto count = presents.empty() ? std::size_t{0} : presents.size() - 1;
         const auto span = presents.empty() ? Clock::duration{} : presents.back() - presents.front();
@@ -708,7 +714,7 @@ public:
             for (const auto& total : thread.totals) {
                 const std::string_view scope = total.scope;
                 if (total.stage == nullptr && std::find(WorkerBusyScopes.begin(), WorkerBusyScopes.end(), scope) != WorkerBusyScopes.end()) busy += total.length;
-                if (scope.starts_with("Graphics.") && total.stage == nullptr) graphicsCounts[std::string(scope)] += total.count;
+                if (total.stage == nullptr && GraphicsTrackScope(scope)) graphicsCounts[std::string(scope)] += total.count;
                 else if (scope.starts_with("OwnedDraw.") && total.stage == nullptr) ownedCounts[std::string(scope)] += total.count;
                 else if (scope != WorkerWaitScope) phases[Name(total.scope, total.stage)] += total.length;
             }
