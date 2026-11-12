@@ -89,10 +89,6 @@ int APS5_VABI tls_write_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EC_KEY_set_asn1_flag_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
