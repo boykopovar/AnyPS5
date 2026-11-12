@@ -364,6 +364,7 @@ struct SpirvTarget {
     bool tessellationEvaluationSubgroups = true;
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
+    bool spannedAnySubgroup = false;
     bool robustBufferAccess2 = false;
     bool exactRobustLoads = false;
     bool depthRangeRemap = false;
