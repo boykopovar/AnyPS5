@@ -442,6 +442,10 @@
 
 - [Stale depth planes over reused guest memory](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) (libSceAgcDriver): a depth surface outlives the guest memory it mirrors, so a flush over a later allocation stores pending results into it; a pending fast clear used to skip the guest-write check and write zero there. A flush now drops a unit whose recorded allocation (`backingSerial`) changed, and a storing sync drops the units the guest wrote and forgets the clear. Not covered: reuse inside one unchanged registration with no write since the last sync, and the stencil plane, which compares bytes with its last mark. Closes when: surfaces are retired on allocation changes (an unmap hook that keeps the `surfacesMutex`/`GuestAllocations` lock order) instead of at flush time. PPSA27616 reached this through a cubemap of 128x128 depth faces whose memory its heap had taken back.
 
+#### Packet cache operations
+
+- [RELEASE_MEM GL2 write-back](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketMemory.cpp) throws for nonzero GL2_US/RANGE/DISCARD/SEQ, non-EOP event/index pairs except ACE CS_DONE, queued draw reads, and another thread's unfinished image publication. Those scopes, graphics EOS cache operations and cross-queue ownership are not modeled. Global write-back uses existing image/depth/shadow publication before completion. [AMD PAL](https://github.com/GPUOpen-Drivers/pal/blob/c5e800072a32f68b6ccc4422936d96167c6e0728/src/core/hw/gfxip/gfx9/gfx9CmdUtil.cpp#L3132) establishes the event/GCR fields; no PS5 comparison was run. GPU-ordered host imports, concurrent CPU-store races and title performance remain unverified.
+
 ### Opt-in draw paths
 
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.

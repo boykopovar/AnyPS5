@@ -155,7 +155,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
             const auto count = Pm4::PacketWords(header);
             if (limit + count > commands.size()) break;
             const auto opcode = (header >> 8u) & 0xffu;
-            if (header == FlipPacketHeader || header == RenderingWaitPacketHeader || opcode == 0x22 || opcode == 0x3f || opcode == 0x3c || opcode == 0x93) break;
+            if (header == FlipPacketHeader || header == RenderingWaitPacketHeader || opcode == 0x22 || opcode == 0x3f || opcode == 0x3c || opcode == 0x93 || Pm4::ReleaseWritesBackL2(std::span(commands).subspan(limit, count))) break;
             if (opcode == 0x15 || opcode == 0x16) hasFurtherDispatch = true;
             limit += count;
         }
@@ -258,7 +258,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
         const auto packet = std::span(commands).subspan(cursor, count);
         const auto opcode = (header >> 8u) & 0xffu;
         const auto next = cursor + count;
-        if (header == FlipPacketHeader || header == RenderingWaitPacketHeader || opcode == 0x22 || (Pm4::Predicated(header) && scratch.predication.operation != 0)) break;
+        if (header == FlipPacketHeader || header == RenderingWaitPacketHeader || opcode == 0x22 || Pm4::ReleaseWritesBackL2(packet) || (Pm4::Predicated(header) && scratch.predication.operation != 0)) break;
         if (opcode == 0x3c || opcode == 0x93) {
             if (!Pm4::WaitSatisfiedUnchecked(packet) && !WrittenByRun(packet, labels)) break;
         } else if (opcode == 0x15 || opcode == 0x16) {
