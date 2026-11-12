@@ -12272,6 +12272,19 @@ void validationTests() {
         Require(AgcDriver::Graphics::VertexBufferReadOffset(attribute, 2, 7) == 64, "vertex range includes records before the first vertex");
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 112, "an index past the records still spans its fetch");
         {
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(attribute, 0) == 0x1000 + 80, "a descriptor's end is not its last record's end");
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(attribute, 4) == 0x1000 + 84, "a descriptor's end left out the widened bytes");
+            auto instanced = attribute;
+            instanced.fetchIndex = 1;
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(instanced, 0) == 0x1000 + 80, "an instance attribute's descriptor end differs");
+            auto empty = attribute;
+            empty.resource.fields[2] = 0;
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(empty, 0) == 0, "a descriptor without records has an end");
+            auto constant = attribute;
+            constant.resource.fields[1] = 0;
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(constant, 0) == 0, "a zero-stride descriptor has an end");
+        }
+        {
             auto wider = attribute;
             wider.resource.fields[2] = 9;
             auto instanced = attribute;

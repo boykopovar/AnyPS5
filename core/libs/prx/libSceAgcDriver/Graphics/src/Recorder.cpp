@@ -3316,6 +3316,18 @@ void Recorder::NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t byte
     unwrittenBytes += bytes;
 }
 
+bool Recorder::ShorterDrawSnapshotKept(std::uint64_t address, std::size_t bytes, SnapshotUse use) const {
+    const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    for (auto entry = drawSnapshots.lower_bound({address, use, 0}); entry != drawSnapshots.end() && std::get<0>(entry->first) == address && std::get<1>(entry->first) == use && std::get<2>(entry->first) < bytes; ++entry) {
+        if (entry->second.owned.words.empty() && entry->second.registryGeneration == registry && GuestMemory::UnchangedSince(address, std::get<2>(entry->first), entry->second.generation)) return true;
+    }
+    return false;
+}
+
+bool Recorder::GuestWritesPendingIn(std::uint64_t address, std::size_t bytes) const {
+    return PendingWriteOverlaps(address, bytes) || PendingLabelIn(address, bytes) || QueuedStoreOverlaps(address, bytes) || (!QueuedLabelRanges().empty() && QueuedLabelOverlaps(address, bytes));
+}
+
 std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived, std::uint64_t generation, VkDeviceSize* offset) {
     auto found = use == SnapshotUse::Vertex ? drawSnapshots.lower_bound({address, use, bytes}) : drawSnapshots.find({address, use, bytes});
     if (found == drawSnapshots.end() || std::get<0>(found->first) != address || std::get<1>(found->first) != use) {

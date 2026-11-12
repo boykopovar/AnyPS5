@@ -5692,6 +5692,63 @@ void paddedVertexSnapshotTests(const Device& device) {
     Require(cache.ReusableDrawSnapshot(address, padded, Recorder::SnapshotUse::Vertex) == nullptr, "a padded copy served an unpadded vertex input");
 }
 
+void growingVertexCopyTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    using AgcDriver::Graphics::CopyDrawInput;
+    using AgcDriver::Graphics::KeepDrawInput;
+    constexpr std::size_t bytes = 4 * 65536;
+    void* block = WriteWatched() ? AllocateWatched(bytes, 65536) : nullptr;
+    if (block == nullptr) {
+        std::cout << "write watching unavailable: growing vertex copies not tested\n";
+        return;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    Recorder cache(device.GetContext());
+    auto context = device.GetContext();
+    context.recorder = &cache;
+    auto* guest = static_cast<std::byte*>(block);
+    for (std::size_t i = 0; i < bytes; ++i) guest[i] = static_cast<std::byte>(i * 7u);
+    CollectWrites(address, bytes);
+    const auto copyOf = [&](std::size_t requested, std::size_t limit, Recorder::SnapshotUse use) {
+        auto copy = CopyDrawInput(context, &cache, address, requested, 1, use, limit);
+        KeepDrawInput(&cache, address, copy, use, 0);
+        return copy;
+    };
+    const auto matches = [&](const DrawInputCopy& copy) {
+        const auto held = copy.buffer->Bytes();
+        return std::memcmp(held.data(), guest, held.size()) == 0;
+    };
+    const auto vertex = Recorder::SnapshotUse::Vertex;
+    const auto first = copyOf(120000, bytes, vertex);
+    Require(!first.reused && first.buffer->Bytes().size() == 120000 && matches(first), "a first vertex copy took headroom");
+    guest[150000] = std::byte{0x5a};
+    const auto grown = copyOf(131072, bytes, vertex);
+    Require(!grown.reused && grown.buffer->Bytes().size() == 131072 + 131072 / 4 && matches(grown), "a vertex copy past an unchanged shorter one took no headroom");
+    const auto inside = copyOf(160000, bytes, vertex);
+    Require(inside.reused && inside.buffer == grown.buffer, "a longer vertex read inside the headroom was copied again");
+    cache.NotePendingWrite(address + 180000, 16);
+    const auto pending = copyOf(163841, bytes, vertex);
+    Require(!pending.reused && pending.buffer->Bytes().size() == 163841 && matches(pending), "a vertex copy grew over a pending GPU write");
+    cache.Sync();
+    const auto beyond = copyOf(163842, bytes, vertex);
+    Require(!beyond.reused && beyond.buffer->Bytes().size() == 163842 + 163842 / 4 && matches(beyond), "a vertex read past the headroom did not grow again");
+    const auto capped = copyOf(210000, 220000, vertex);
+    Require(!capped.reused && capped.buffer->Bytes().size() == 220000 && matches(capped), "a vertex copy's headroom passed its limit");
+    guest[16] = std::byte{0x33};
+    const auto changed = copyOf(230000, bytes, vertex);
+    Require(!changed.reused && changed.buffer->Bytes().size() == 230000 && matches(changed), "a vertex copy grew past a changed shorter one");
+    const auto unlimited = copyOf(235000, 0, vertex);
+    Require(!unlimited.reused && unlimited.buffer->Bytes().size() == 235000 && matches(unlimited), "a vertex copy without a limit took headroom");
+    const auto index = Recorder::SnapshotUse::Index16;
+    copyOf(65536, bytes, index);
+    const auto longerIndex = copyOf(70000, bytes, index);
+    Require(!longerIndex.reused && longerIndex.buffer->Bytes().size() == 70000 && matches(longerIndex), "an index copy took headroom");
+}
+
 void containingSnapshotTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t bytes = 131072;
@@ -16386,6 +16443,7 @@ int main(int argc, char** argv) {
         drawSnapshotCapTests(device, recorder);
         drawSnapshotEvictionTests(device);
         paddedVertexSnapshotTests(device);
+        growingVertexCopyTests(device);
         containingSnapshotTests(device);
         unwrittenSnapshotTests(device);
         drawSnapshotUploadTests(device, recorder);

@@ -1445,11 +1445,21 @@ void reportDrawEnd(const State& state, const DrawTimer& timer, const ShaderResou
     reportDraw(timer.us, built, outcome);
 }
 
+bool vertexCopyTailReadable(const Recorder& recorder, std::uint64_t address, std::size_t bytes, std::size_t grown) {
+    const auto tail = address + bytes;
+    const auto extra = grown - bytes;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), grown) || recorder.GuestWritesPendingIn(tail, extra)) return false;
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{tail, tail + extra}}};
+    if (StorageTexture::AnyPendingOverlaps(range) || AnyShadowedOverlaps(range) || ResidentDepthGuardOverlaps_nid_no_patch(tail, extra)) return false;
+    return HostOnlySampleRanges(tail, extra).empty();
 }
 
-DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use) {
+}
+
+DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t growLimit) {
     Require(use != Recorder::SnapshotUse::Storage, "a draw input is a vertex or index buffer");
     DrawInputCopy copy;
+    std::size_t copied = bytes;
     if (recorder != nullptr && bytes != 0) {
         GuestMemory::FlushGpuWrites(address, bytes);
 #ifdef _WIN32
@@ -1470,9 +1480,20 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
             copy.reused = true;
             return copy;
         }
+        if (copy.generation != 0 && use == Recorder::SnapshotUse::Vertex && growLimit > bytes && recorder->ShorterDrawSnapshotKept(address, bytes, use)) {
+            const auto grown = bytes + std::min(bytes / 4u, growLimit - bytes);
+            if (grown > bytes && grown <= Recorder::DrawInputBudget && vertexCopyTailReadable(*recorder, address, bytes, grown)) {
+                if (const auto generation = GuestMemory::CollectWrites(address, grown); generation != 0) {
+                    copy.generation = generation;
+                    copied = grown;
+                }
+            }
+        }
     }
-    copy.buffer = std::make_shared<Buffer>(context, bytes, use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-    GuestMemory::Read(address, copy.buffer->Bytes(), alignment);
+    copy.buffer = std::make_shared<Buffer>(context, copied, use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    const auto held = copy.buffer->Bytes();
+    GuestMemory::Read(address, held.first(bytes), alignment);
+    if (copied > bytes) GuestMemory::CopyGuestBytes(held.data() + bytes, reinterpret_cast<const void*>(address + bytes), copied - bytes);
     return copy;
 }
 
@@ -1929,8 +1950,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     }
     std::vector<VertexFetch> fetches;
     std::vector<std::size_t> fetchValid;
+    std::vector<std::uint64_t> fetchLimit;
     fetches.reserve(attributes.size());
     fetchValid.reserve(attributes.size());
+    fetchLimit.reserve(attributes.size());
     std::vector<std::size_t> fetchOf(attributes.size(), 0);
     std::vector<std::shared_ptr<Buffer>> zeroed(attributes.size());
     const auto& layout = inputs.VertexLayout();
@@ -1955,6 +1978,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         fetches.push_back({address, address + bytes, stride, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
         const auto recordBytes = static_cast<std::uint64_t>(fields[2]) * stride;
         fetchValid.push_back(args == nullptr && stride != 0 ? static_cast<std::size_t>(std::min(recordBytes, static_cast<std::uint64_t>(bytes))) : bytes);
+        fetchLimit.push_back(args == nullptr ? std::max<std::uint64_t>(VertexDescriptorEnd(attribute, widened), address + bytes) : address + bytes);
     }
     const auto soloFetches = SoloZeroPaddedFetchIndices(fetches, fetchValid);
     std::vector<bool> isSolo(fetches.size(), false);
@@ -1968,6 +1992,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         plannedFetches.push_back(fetches[f]);
     }
     const auto plan = PlanVertexCopies(plannedFetches);
+    std::vector<std::uint64_t> rangeLimit(plan.copies.size(), std::numeric_limits<std::uint64_t>::max());
+    for (std::size_t f = 0; f < fetches.size(); ++f) {
+        if (!isSolo[f]) rangeLimit[plan.copyOf[plannedOf[f]]] = std::min(rangeLimit[plan.copyOf[plannedOf[f]]], fetchLimit[f]);
+    }
     std::vector<VkBuffer> rangeHandles;
     std::vector<VkDeviceSize> rangeOffsets;
     rangeHandles.reserve(plan.copies.size());
@@ -1983,7 +2011,18 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             inputs.inPlaceReads.emplace_back(begin, end);
             continue;
         }
-        auto copy = CopyDrawInput(context, context.recorder, begin, bytes, 1, Recorder::SnapshotUse::Vertex);
+        auto limit = std::max<std::uint64_t>(rangeLimit[range], end);
+        const auto cut = [&](std::uint64_t target) {
+            if (target >= end && target < limit) limit = target;
+        };
+        if (state.hasColorTarget) cut(state.color.MemoryAddress());
+        for (const auto& color : state.colors) cut(color.MemoryAddress());
+        if (state.depth) {
+            cut(state.depth->address);
+            cut(state.depth->stencilAddress);
+            cut(state.depth->htileAddress);
+        }
+        auto copy = CopyDrawInput(context, context.recorder, begin, bytes, 1, Recorder::SnapshotUse::Vertex, static_cast<std::size_t>(limit - begin));
         KeepDrawInput(context.recorder, begin, copy, Recorder::SnapshotUse::Vertex, 0);
         rangeHandles.push_back(copy.buffer->Handle());
         rangeOffsets.push_back(0);
