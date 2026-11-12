@@ -1607,6 +1607,8 @@ static void CheckInetPtonEx() {
     address.fill(0);
     Require(sceNetInetPtonEx(28, "fe80::1:2", address.data(), 0) == 1 && address == expected);
     Require(sceNetInetPtonEx(2, "not an address", address.data(), 0) == 0);
+    Require(Failed(sceNetInetPtonEx(2, "127.0.0.1", reinterpret_cast<void*>(0x10), 0), 14));
+    Require(Failed(sceNetInetPton(28, "::1", reinterpret_cast<void*>(0x10)), 14));
     Require(Failed(sceNetInetPtonEx(99, "127.0.0.1", address.data(), 0), 47));
     Require(Failed(sceNetInetPtonEx(2, nullptr, address.data(), 0), 22));
     *sceNetErrnoLoc() = 123;
