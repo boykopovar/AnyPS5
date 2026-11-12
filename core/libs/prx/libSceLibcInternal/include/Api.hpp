@@ -179,6 +179,14 @@ GuestLocale::String* APS5_VABI _ZNSs6appendEmc_nid_postfix(GuestLocale::String* 
 GuestLocale::String* APS5_VABI _ZNSs6assignEPKcm_nid_postfix(GuestLocale::String* self, const char* source, std::size_t count);
 GuestLocale::String* APS5_VABI _ZNSs6assignERKSsmm_nid_postfix(GuestLocale::String* self, const GuestLocale::String* source, std::size_t position, std::size_t count);
 GuestLocale::String* APS5_VABI _ZNSs6assignEmc_nid_postfix(GuestLocale::String* self, std::size_t count, char character);
+GuestLocale::String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE5eraseEmm_nid_postfix(GuestLocale::String* self, std::size_t position, std::size_t count);
+GuestLocale::String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6appendERKS2_mm_nid_postfix(GuestLocale::String* self, const GuestLocale::String* source, std::size_t position, std::size_t count);
+GuestLocale::String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6appendEmw_nid_postfix(GuestLocale::String* self, std::size_t count, std::uint16_t character);
+GuestLocale::String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6assignEPKwm_nid_postfix(GuestLocale::String* self, const std::uint16_t* source, std::size_t count);
+GuestLocale::String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6assignERKS2_mm_nid_postfix(GuestLocale::String* self, const GuestLocale::String* source, std::size_t position, std::size_t count);
+GuestLocale::String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6assignEmw_nid_postfix(GuestLocale::String* self, std::size_t count, std::uint16_t character);
+GuestLocale::String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6insertEmmw_nid_postfix(GuestLocale::String* self, std::size_t position, std::size_t count, std::uint16_t character);
+GuestLocale::String* APS5_VABI _ZNSs6insertEmmc_nid_postfix(GuestLocale::String* self, std::size_t position, std::size_t count, char character);
 void APS5_VABI sceLibcInternalFundamentalTypeInfoBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalFundamentalTypeInfoCompleteDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalFundamentalTypeInfoDeletingDestructor_nid_no_patch(void* self);
