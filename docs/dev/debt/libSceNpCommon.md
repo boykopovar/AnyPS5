@@ -12,6 +12,7 @@ These two exports were reconstructed from a **static reading of the disassembly*
 
 - [sceNpGetSandboxMode](../../../core/libs/prx/libSceNpCommon/PendingExports.cpp) (NID `N59Z0D0WTuQ`) - signature and behavior are unknown. The parameterless import-resolution placeholder throws through `NotImplemented_nid_no_patch`.
 - [sceNpUtilGetSandboxMode](../../../core/libs/prx/libSceNpCommon/PendingExports.cpp) (NID `0rqvzrXUR5Y`) - signature and behavior are unknown. The parameterless import-resolution placeholder throws through `NotImplemented_nid_no_patch`.
+- [Integer-to-string guest outputs](../../../core/libs/prx/libSceNpCommon/Strings.cpp) - `sceNpUInt32ToStr`, `sceNpUInt64ToStr`, `sceNpInt32ToStr` and `sceNpInt64ToStr` stage at most 66 formatted bytes before a checked guest write, then checked-write the optional length. A non-null unwritable output returns `0x80558009` (invalid argument) instead of faulting the host. The console's result for unwritable pointers and the precedence between two unwritable outputs were not measured; the host-safety fallback retains the existing order of string output before length output.
 
 Pending import declarations are matched to names in the local libSceNpCommon.sprx export table and the public [PS5 3.20 libSceNpCommon export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/main/libSceNpCommon.c); their NIDs are recomputed with tools/nid_names.py. Prototypes and behavior are unknown. Each remaining parameterless, unimplemented declaration exists for import resolution and throws if called.
 

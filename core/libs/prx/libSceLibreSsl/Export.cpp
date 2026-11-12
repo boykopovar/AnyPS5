@@ -266,11 +266,6 @@ int APS5_VABI ENGINE_set_default_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 
 int APS5_VABI OBJ_obj2nid_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -403,11 +398,6 @@ int APS5_VABI SSL_CTX_set_alpn_protos_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_CTX_set_cipher_list_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 
 
 int APS5_VABI SSL_CTX_use_PrivateKey_nid_postfix(LibreSslCtx*, void* pkey) {
@@ -536,11 +526,6 @@ void APS5_VABI SSL_SESSION_free_nid_postfix(void* session) {
 }
 
 int APS5_VABI SSL_accept_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_check_private_key_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
