@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #include <type_traits>
 
 namespace {
@@ -249,6 +251,7 @@ struct TestDrawupPool {
     std::uint32_t entryCount;
     std::uint32_t used;
     std::uint32_t maximum;
+    std::uint8_t* limit;
     TestDrawupEntry entries[1];
 };
 
@@ -319,7 +322,7 @@ struct TestSegmentStop {
 
 static_assert(sizeof(TestDrawupRecord) == 0x80);
 static_assert(sizeof(TestDrawupEntry) == 0x30);
-static_assert(offsetof(TestDrawupPool, entries) == 0x18);
+static_assert(offsetof(TestDrawupPool, entries) == 0x20);
 static_assert(offsetof(TestDrawupOwner, pool) == 0x160);
 static_assert(offsetof(TestDrawupObject, head) == 0x28 && offsetof(TestDrawupObject, tail) == 0x30);
 static_assert(offsetof(TestDrawupFrame, object) == 0x8 && offsetof(TestDrawupFrame, sequence) == 0x28);
@@ -838,6 +841,442 @@ void DrawupGradientSegments() {
     }
 }
 
+
+constexpr int AllocationFailed = static_cast<int>(0x80460010);
+constexpr int InvalidService = static_cast<int>(0x80460080);
+constexpr std::uint32_t TestInstanceSize = 0x1000;
+
+struct ServiceAllocations {
+    int live = 0;
+    bool fail = false;
+};
+
+void* APS5_VABI ServiceAllocate(void* object, std::uint32_t size) {
+    auto& state = *static_cast<ServiceAllocations*>(object);
+    if (state.fail) return nullptr;
+    ++state.live;
+    void* allocation = std::malloc(size);
+    std::memset(allocation, 0xcd, size);
+    return allocation;
+}
+
+void APS5_VABI ServiceDeallocate(void* object, void* allocation) {
+    --static_cast<ServiceAllocations*>(object)->live;
+    std::free(allocation);
+}
+
+struct BackendCalls {
+    int inits = 0;
+    int terminates = 0;
+    int initResult = 0;
+    void* instance = nullptr;
+    void* data = nullptr;
+    std::uint64_t size = 0;
+    void* terminated = nullptr;
+    void* dispatch = nullptr;
+    FontGraphicsBackendSink sink = nullptr;
+};
+
+BackendCalls g_backend;
+void* g_backendSlot = nullptr;
+
+int APS5_VABI BackendInit(void* instance, void* data, std::uint64_t size) {
+    ++g_backend.inits;
+    g_backend.instance = instance;
+    g_backend.data = data;
+    g_backend.size = size;
+    return g_backend.initResult;
+}
+
+void APS5_VABI BackendTerminate(void* instance) {
+    ++g_backend.terminates;
+    g_backend.terminated = instance;
+}
+
+const FontGraphicsBackendEntry BackendEntries[] = {
+    {0x47000099, 0, 1},
+    {0x470000c0, 0, 0},
+    {0x47000002, 0, reinterpret_cast<std::uint64_t>(&BackendTerminate)},
+    {0x47000004, 0, 0x1111222233334444},
+    {0x470000f0, 0, 0x55},
+    {0x47000001, 0, reinterpret_cast<std::uint64_t>(&BackendInit)},
+};
+
+const FontGraphicsBackendList BackendList = {0, 6, BackendEntries};
+
+int APS5_VABI BackendEnumerate(void* dispatch, FontGraphicsBackendSink sink) {
+    g_backend.dispatch = dispatch;
+    g_backend.sink = sink;
+    sink(dispatch, &BackendList);
+    return 0x400;
+}
+
+std::uint64_t Read64At(const void* base, std::size_t offset) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const std::uint8_t*>(base) + offset, sizeof(value));
+    return value;
+}
+
+std::uint32_t Read32At(const void* base, std::size_t offset) {
+    std::uint32_t value;
+    std::memcpy(&value, static_cast<const std::uint8_t*>(base) + offset, sizeof(value));
+    return value;
+}
+
+struct ServiceFixture {
+    ServiceAllocations allocations;
+    FontMemoryInterface iface{ServiceAllocate, ServiceDeallocate, nullptr, nullptr, nullptr, nullptr};
+    FontMemory memory{};
+    FontGraphicsServiceParam param{0x0e08, 4, 0x200, &g_backendSlot, TestInstanceSize, 0, BackendEnumerate};
+
+    ServiceFixture() {
+        Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, &allocations, nullptr, nullptr) == SCE_FONT_OK);
+        g_backend = {};
+        g_backendSlot = nullptr;
+    }
+};
+
+void GraphicsServiceValidation() {
+    ServiceFixture f;
+    FontGraphicsService* service = reinterpret_cast<FontGraphicsService*>(0x1);
+    RequireError(sceFontCreateGraphicsService(nullptr, &f.param, &service), InvalidParameter);
+    Require(service == nullptr);
+    FontMemory badMemory = f.memory;
+    badMemory.mem_kind = 0;
+    RequireError(sceFontCreateGraphicsService(&badMemory, &f.param, &service), InvalidParameter);
+    FontMemoryInterface noFree{ServiceAllocate, nullptr, nullptr, nullptr, nullptr, nullptr};
+    badMemory = f.memory;
+    badMemory.iface = &noFree;
+    RequireError(sceFontCreateGraphicsService(&badMemory, &f.param, &service), InvalidParameter);
+    RequireError(sceFontCreateGraphicsService(&f.memory, nullptr, &service), InvalidParameter);
+    FontGraphicsServiceParam param = f.param;
+    param.tag = 0x0e09;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &param, &service), InvalidParameter);
+    RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, nullptr), InvalidParameter);
+    param = f.param;
+    param.level = 0xff;
+    RequireError(sceFontCreateGraphicsServiceWithEdition(&f.memory, &param, 0, &service), Uninitialized);
+    f.allocations.fail = true;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, &service), AllocationFailed);
+    f.allocations.fail = false;
+    param = f.param;
+    param.instanceSlot = nullptr;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &param, &service), InvalidParameter);
+    param = f.param;
+    param.instanceSize = 0x118;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &param, &service), InvalidParameter);
+    Require(f.allocations.live == 0 && g_backend.inits == 0 && service == nullptr);
+
+    RequireError(sceFontDestroyGraphicsService(nullptr), InvalidParameter);
+    service = nullptr;
+    RequireError(sceFontDestroyGraphicsService(&service), InvalidService);
+    std::uint8_t fake[0x100] = {};
+    service = reinterpret_cast<FontGraphicsService*>(fake);
+    RequireError(sceFontDestroyGraphicsService(&service), InvalidService);
+    Require(service == reinterpret_cast<FontGraphicsService*>(fake));
+}
+
+void GraphicsServiceLifecycle() {
+    ServiceFixture f;
+    FontGraphicsService* first = nullptr;
+    Require(sceFontCreateGraphicsServiceWithEdition(&f.memory, &f.param, 0, &first) == SCE_FONT_OK);
+    Require(f.allocations.live == 1 && g_backend.inits == 1);
+    auto* const instance = static_cast<std::uint8_t*>(g_backendSlot);
+    Require(instance != nullptr && g_backend.instance == instance);
+    Require(g_backend.data == instance + 0x118 && g_backend.size == TestInstanceSize - 0x118);
+    Require(g_backend.dispatch == instance + 0x38);
+    Require(Read32At(instance, 0) == 0 && Read32At(instance, 4) == 1 && instance[0x14] == 1);
+    Require(Read64At(instance, 0x18) == reinterpret_cast<std::uint64_t>(instance) && Read64At(instance, 0x20) == 0x10000);
+    Require(Read64At(instance, 0x38) == reinterpret_cast<std::uint64_t>(&BackendInit));
+    Require(Read64At(instance, 0x40) == reinterpret_cast<std::uint64_t>(&BackendTerminate));
+    Require(Read64At(instance, 0x50) == 0x3333444411112222 && Read64At(instance, 0xd8) == 0x55);
+    for (std::size_t offset = 0x48; offset < 0x118; offset += 8)
+        if (offset != 0x50 && offset != 0xd8) Require(Read64At(instance, offset) == 0);
+    const auto* const bytes = reinterpret_cast<const std::uint8_t*>(first);
+    Require(Read32At(bytes, 0) == 0x00040f0e && Read64At(bytes, 4) == 0 && Read32At(bytes, 0xc) == 0);
+    Require(std::memcmp(bytes + 0x10, &f.memory, 0x18) == 0 && std::memcmp(bytes + 0x30, reinterpret_cast<const std::uint8_t*>(&f.memory) + 0x20, 0x20) == 0);
+    Require(Read64At(bytes, 0x28) == reinterpret_cast<std::uint64_t>(bytes + 0x50));
+    Require(std::memcmp(bytes + 0x50, &f.iface, sizeof(f.iface)) == 0);
+    Require(Read64At(bytes, 0x80) == reinterpret_cast<std::uint64_t>(&g_backendSlot));
+    Require(std::all_of(bytes + 0x88, bytes + 0x100, [](std::uint8_t v) { return v == 0; }));
+
+    FontGraphicsService* second = nullptr;
+    Require(sceFontCreateGraphicsService(&f.memory, &f.param, &second) == SCE_FONT_OK);
+    Require(g_backend.inits == 1 && g_backendSlot == instance && Read32At(instance, 4) == 2);
+    Require(sceFontDestroyGraphicsService(&first) == SCE_FONT_OK);
+    Require(first == nullptr && Read32At(instance, 4) == 1 && g_backend.terminates == 0 && g_backendSlot == nullptr);
+    Require(sceFontDestroyGraphicsService(&second) == SCE_FONT_OK);
+    Require(second == nullptr && Read32At(instance, 4) == 1 && f.allocations.live == 0);
+
+    FontGraphicsService* third = nullptr;
+    Require(sceFontCreateGraphicsService(&f.memory, &f.param, &third) == SCE_FONT_OK);
+    void* const replacement = g_backendSlot;
+    Require(g_backend.inits == 2 && replacement != nullptr && replacement != instance);
+    Require(sceFontDestroyGraphicsService(&third) == SCE_FONT_OK);
+    Require(g_backend.terminates == 1 && g_backend.terminated == replacement && g_backendSlot == nullptr && f.allocations.live == 0);
+}
+
+void GraphicsServiceInstanceStates() {
+    ServiceFixture f;
+    FontGraphicsService* service = nullptr;
+    g_backend.initResult = 1;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, &service), Uninitialized);
+    Require(g_backend.inits == 1 && g_backendSlot == nullptr && f.allocations.live == 0 && service == nullptr);
+
+    std::uint8_t instance[0x118] = {};
+    std::uint32_t references = 0xffffffff;
+    std::memcpy(instance + 4, &references, sizeof(references));
+    g_backendSlot = instance;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, &service), Uninitialized);
+    Require(g_backendSlot == instance && f.allocations.live == 0 && g_backend.inits == 1);
+
+    references = 0;
+    std::memcpy(instance + 4, &references, sizeof(references));
+    auto* const data = static_cast<std::uint8_t*>(ServiceAllocate(&f.allocations, 0x100));
+    std::memset(data, 0, 0x100);
+    std::memcpy(data + 0x10, &f.memory, sizeof(f.memory));
+    void** const slot = &g_backendSlot;
+    std::memcpy(data + 0x80, &slot, sizeof(slot));
+    service = reinterpret_cast<FontGraphicsService*>(data);
+    Require(sceFontDestroyGraphicsService(&service) == SCE_FONT_OK);
+    Require(service == nullptr && g_backendSlot == instance && g_backend.terminates == 0 && f.allocations.live == 0);
+    g_backendSlot = nullptr;
+}
+
+void GraphicsServiceDispatchFill() {
+    ServiceFixture f;
+    FontGraphicsService* service = nullptr;
+    Require(sceFontCreateGraphicsService(&f.memory, &f.param, &service) == SCE_FONT_OK);
+    const FontGraphicsBackendSink sink = g_backend.sink;
+    Require(sink != nullptr);
+    std::uint64_t dispatch[0x1d];
+    std::memset(dispatch, 0xee, sizeof(dispatch));
+    const FontGraphicsBackendList empty = {0, 0, nullptr};
+    Require(sink(dispatch, &empty) == Uninitialized);
+    Require(std::all_of(dispatch, dispatch + 0x1c, [](std::uint64_t v) { return v == 0; }) && dispatch[0x1c] == 0xeeeeeeeeeeeeeeee);
+    const FontGraphicsBackendEntry onlyInit[] = {{0x47000001, 0, 7}, {0x47000002, 0, 0}};
+    const FontGraphicsBackendList partial = {0, 2, onlyInit};
+    Require(sink(dispatch, &partial) == Uninitialized && dispatch[0] == 7 && dispatch[1] == 0);
+    const FontGraphicsBackendEntry all[] = {
+        {0x47000001, 0, 1}, {0x47000002, 0, 2}, {0x47000003, 0, 3}, {0x47000004, 0, 4}, {0x47000005, 0, 5}, {0x4700000b, 0, 6},
+        {0x4700002d, 0, 7}, {0x4700002e, 0, 8}, {0x470000c0, 0, 9}, {0x470000cb, 0, 10}, {0x470000ce, 0, 11}, {0x470000d1, 0, 12},
+        {0x470000d2, 0, 13}, {0x470000d4, 0, 14}, {0x470000e0, 0, 15}, {0x470000e1, 0, 16}, {0x470000e2, 0, 17}, {0x470000ec, 0, 18},
+        {0x470000d0, 0, 19}, {0x470000e3, 0, 20}, {0x470000f0, 0, 21}, {0x47000006, 0, 22}, {0x470000ff, 0, 23}};
+    const FontGraphicsBackendList full = {0, 23, all};
+    Require(sink(dispatch, &full) == SCE_FONT_OK);
+    for (std::uint64_t i = 0; i < 21; ++i) Require(dispatch[i] == (i == 3 ? std::uint64_t{4} << 32 : i + 1));
+    Require(std::all_of(dispatch + 21, dispatch + 0x1c, [](std::uint64_t v) { return v == 0; }));
+    const FontGraphicsBackendList negative = {0, -1, all};
+    Require(sink(dispatch, &negative) == Uninitialized && dispatch[0] == 0);
+    Require(sceFontDestroyGraphicsService(&service) == SCE_FONT_OK && g_backend.terminates == 1 && g_backendSlot == nullptr);
+}
+
+
+constexpr int InvalidDevice = static_cast<int>(0x80460081);
+constexpr int InvalidSurface = static_cast<int>(0x80460092);
+
+struct TestGraphicsDevice {
+    std::uint16_t tag;
+    std::uint8_t reserved2[0x76];
+    void* service;
+    std::uint8_t reserved80[0xd0];
+    PthreadMutex* surfaceMutex;
+    std::uint8_t reserved158[8];
+    TestDrawupPool* pool;
+    TestDrawupPool* payloadPool;
+};
+
+static_assert(offsetof(TestGraphicsDevice, service) == 0x78 && offsetof(TestGraphicsDevice, pool) == 0x160);
+static_assert(offsetof(TestGraphicsDevice, payloadPool) == 0x168);
+
+struct TextureCalls {
+    int calls = 0;
+    void* object = nullptr;
+    void* surface = nullptr;
+    std::uint64_t base = 0;
+};
+
+TextureCalls g_texture;
+
+int APS5_VABI StructureTexture(void* object, void* surface, std::uint64_t base) {
+    ++g_texture.calls;
+    g_texture.object = object;
+    g_texture.surface = surface;
+    g_texture.base = base;
+    std::memset(static_cast<std::uint8_t*>(object) + 0x40, 0x5a, 0x20);
+    return 0x20;
+}
+
+void InitPool(TestDrawupPool& pool, PthreadMutex* mutex, std::uint8_t* memory, std::uint16_t* nodes) {
+    nodes[0] = TotalSlots << 1;
+    pool.mutex = mutex;
+    pool.reserved8 = TotalSlots * 0x80;
+    pool.entryCount = 1;
+    pool.limit = memory + TotalSlots * 0x80;
+    pool.entries[0] = {memory, 0, 0x80, TotalSlots, 0, nodes, nodes, 0};
+}
+
+struct SurfaceTextureFixture {
+    PthreadMutex mutex{};
+    PthreadMutex payloadMutex{};
+    std::uint8_t memory[TotalSlots * 0x80]{};
+    std::uint8_t payloadMemory[TotalSlots * 0x80]{};
+    std::uint16_t nodes[TotalSlots]{};
+    std::uint16_t payloadNodes[TotalSlots]{};
+    TestDrawupPool pool{};
+    TestDrawupPool payloadPool{};
+    TestGraphicsDevice device{};
+    std::uint8_t service[0x100]{};
+    std::uint8_t instance[0x118]{};
+    void* slot = nullptr;
+    std::uint8_t surface[0x100]{};
+
+    SurfaceTextureFixture() {
+        scePthreadMutexInit(&mutex, nullptr, "surface");
+        scePthreadMutexInit(&payloadMutex, nullptr, "payload");
+        InitPool(pool, &mutex, memory, nodes);
+        InitPool(payloadPool, &payloadMutex, payloadMemory, payloadNodes);
+        device.tag = 0xf50;
+        device.service = service;
+        device.pool = &pool;
+        device.payloadPool = &payloadPool;
+        const std::uint16_t serviceTag = 0xf0e;
+        std::memcpy(service, &serviceTag, sizeof(serviceTag));
+        void** const slotPointer = &slot;
+        std::memcpy(service + 0x80, &slotPointer, sizeof(slotPointer));
+        slot = instance;
+        const std::uint64_t sizes = 0x2000000040;
+        std::memcpy(instance + 0x50, &sizes, sizeof(sizes));
+        const auto handler = reinterpret_cast<std::uint64_t>(&StructureTexture);
+        std::memcpy(instance + 0x58, &handler, sizeof(handler));
+        for (std::size_t i = 0; i < sizeof(surface); ++i) surface[i] = static_cast<std::uint8_t>(i * 7);
+        const std::uint64_t base = 0x12345600;
+        std::memcpy(surface, &base, sizeof(base));
+        const std::uint16_t tag = 0x47e5;
+        std::memcpy(surface + 0x0e, &tag, sizeof(tag));
+        g_texture = {};
+    }
+
+    ~SurfaceTextureFixture() {
+        scePthreadMutexDestroy(&mutex);
+        scePthreadMutexDestroy(&payloadMutex);
+    }
+
+    FontGraphicsDevice* Device() { return reinterpret_cast<FontGraphicsDevice*>(&device); }
+    const FontGraphicsSurface* Surface() const { return reinterpret_cast<const FontGraphicsSurface*>(surface); }
+};
+
+void SurfaceTextureValidation() {
+    SurfaceTextureFixture f;
+    FontGraphicsSurfaceTexture* texture = reinterpret_cast<FontGraphicsSurfaceTexture*>(0x1);
+    RequireError(sceFontGraphicsStructureSurfaceTexture(nullptr, f.Surface(), &texture), InvalidDevice);
+    Require(texture == nullptr);
+    RequireError(sceFontGraphicsStructureSurfaceTexture(reinterpret_cast<FontGraphicsDevice*>(~std::uintptr_t{0}), f.Surface(), &texture),
+                 InvalidDevice);
+    f.device.tag = 0xf51;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), InvalidDevice);
+    f.device.tag = 0xf50;
+    f.service[0] = 0x0f;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), InvalidDevice);
+    f.service[0] = 0x0e;
+    f.slot = nullptr;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), nullptr, &texture), Uninitialized);
+    f.slot = f.instance;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), nullptr, &texture), InvalidSurface);
+    f.surface[0x0e] = 0xf0;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), nullptr), InvalidSurface);
+    f.surface[0x0e] = 0xe5;
+    std::uint8_t fill[4];
+    std::memcpy(fill, f.surface + 0x28, sizeof(fill));
+    std::memset(f.surface + 0x28, 0, 4);
+    f.surface[0x2c] = 1;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), InvalidSurface);
+    std::memcpy(f.surface + 0x28, fill, sizeof(fill));
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), nullptr), InvalidParameter);
+    f.device.pool = nullptr;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), NoRecordSpace);
+    f.device.pool = &f.pool;
+    f.pool.entries[0].total = 2;
+    f.nodes[0] = 2 << 1;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), NoRecordSpace);
+    Require(f.pool.used == 2 && f.pool.maximum == 2 && f.pool.entries[0].used == 2 && f.nodes[0] == 5 && f.nodes[1] == 1);
+    f.pool.used = f.pool.entries[0].used = 0;
+    f.pool.entries[0].total = 1;
+    f.nodes[0] = 1 << 1;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), NoRecordSpace);
+    Require(texture == nullptr && g_texture.calls == 0);
+}
+
+void SurfaceTextureLifecycle() {
+    SurfaceTextureFixture f;
+    FontGraphicsSurfaceTexture* texture = nullptr;
+    const int errors = g_errorCount;
+    Require(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture) == SCE_FONT_OK && g_errorCount == errors);
+    auto* const object = reinterpret_cast<std::uint8_t*>(texture);
+    Require(object == f.memory + 0x100 && f.pool.used == 3 && f.pool.maximum == 3 && f.pool.entries[0].used == 3);
+    Require(Read32At(object, 0) == 0xf82 && Read32At(object, 4) == 0x20);
+    Require(Read64At(object, 8) == reinterpret_cast<std::uint64_t>(&f.device) && Read64At(object, 0x10) == 0);
+    Require(Read64At(object, 0x18) == reinterpret_cast<std::uint64_t>(f.memory));
+    Require(AllBytes(*reinterpret_cast<std::uint8_t(*)[0x40]>(object + 0x20), 0, 0x20, 0));
+    Require(AllBytes(*reinterpret_cast<std::uint8_t(*)[0x20]>(object + 0x40), 0, 0x20, 0x5a));
+    Require(std::memcmp(f.memory, f.surface, sizeof(f.surface)) == 0);
+    Require(g_texture.calls == 1 && g_texture.object == object && g_texture.surface == f.memory + 0x40 && g_texture.base == 0x12345600);
+    Require(reinterpret_cast<const std::uint8_t*>(sceFontGraphicsTextureRefersSurface(texture)) == f.memory);
+    Require(sceFontGraphicsTextureRefersSurface(nullptr) == nullptr);
+
+    TestDrawupObject drawup{};
+    drawup.owner = reinterpret_cast<TestDrawupOwner*>(&f.device);
+    TestDrawupFrame frame{};
+    frame.tag = 0xf53;
+    frame.object = &drawup;
+    const float color[4] = {1.0f, 0.5f, 0.25f, 1.0f};
+    void* out = nullptr;
+    Require(sceFontGraphicsDrawupFillFlatColor(reinterpret_cast<FontGraphicsFrame*>(&frame), color, &out) == SCE_FONT_OK);
+    auto* const record = static_cast<TestDrawupRecord*>(out);
+    Require(reinterpret_cast<std::uint8_t*>(record) == f.memory + 0x180 && record->sizeTag == 0x80 && f.pool.used == 4);
+    record->type = 0x40;
+    record->flags = 0x30;
+    void* const payload = f.payloadMemory;
+    std::memcpy(reinterpret_cast<std::uint8_t*>(record) + 0x50, &payload, sizeof(payload));
+    f.payloadNodes[0] = (1 << 1) | 1;
+    f.payloadNodes[1] = TotalSlots << 1;
+    f.payloadPool.used = f.payloadPool.entries[0].used = 1;
+    std::memcpy(object + 0x10, &out, sizeof(out));
+
+    void* released = texture;
+    Require(sceFontGraphicsRelease(&released) == SCE_FONT_OK && released == nullptr && g_errorCount == errors);
+    Require(Read32At(object, 0) == 0 && Read64At(object, 0x10) == 0 && sceFontGraphicsTextureRefersSurface(texture) == nullptr);
+    Require(f.pool.used == 0 && f.pool.entries[0].used == 0 && f.payloadPool.used == 0 && f.payloadPool.entries[0].used == 0);
+    Require(f.payloadNodes[0] == TotalSlots << 1);
+}
+
+void SurfaceTextureRelease() {
+    SurfaceTextureFixture f;
+    RequireError(sceFontGraphicsRelease(nullptr), InvalidParameter);
+    void* object = nullptr;
+    RequireError(sceFontGraphicsRelease(&object), InvalidParameter);
+    std::uint8_t fake[0x60] = {};
+    object = fake;
+    for (const std::uint16_t tag : {0x0f50, 0x0f53, 0x0f6f, 0x0f7f, 0x0f83, 0x8f82}) {
+        std::memcpy(fake, &tag, sizeof(tag));
+        RequireError(sceFontGraphicsRelease(&object), InvalidParameter);
+    }
+    const std::uint16_t texture = 0xf82;
+    std::memcpy(fake, &texture, sizeof(texture));
+    RequireError(sceFontGraphicsRelease(&object), Uninitialized);
+    TestGraphicsDevice* device = &f.device;
+    std::memcpy(fake + 8, &device, sizeof(device));
+    f.slot = nullptr;
+    RequireError(sceFontGraphicsRelease(&object), Uninitialized);
+    Require(object == fake && Read32At(fake, 0) == 0xf82);
+    f.slot = f.instance;
+    f.device.pool = nullptr;
+    std::uint8_t copy[0x100] = {};
+    std::uint8_t* copyPointer = copy;
+    std::memcpy(fake + 0x18, &copyPointer, sizeof(copyPointer));
+    Require(sceFontGraphicsRelease(&object) == SCE_FONT_OK && object == nullptr && Read32At(fake, 0) == 0);
+}
+
 }
 
 int main() {
@@ -849,6 +1288,13 @@ int main() {
     DrawupTextureRecords();
     DrawupFillRecords();
     DrawupGradientSegments();
+    GraphicsServiceValidation();
+    GraphicsServiceLifecycle();
+    GraphicsServiceInstanceStates();
+    GraphicsServiceDispatchFill();
+    SurfaceTextureValidation();
+    SurfaceTextureLifecycle();
+    SurfaceTextureRelease();
     Require(g_errorCount == g_expectedErrors);
     sceFontSetGraphicsErrorCallback(nullptr);
     const int before = g_errorCount;

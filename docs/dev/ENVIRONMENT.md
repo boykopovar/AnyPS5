@@ -601,6 +601,12 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 |------|------|--------|---------|-------------|
 | `ANYPS5_SYSTEM_FONTS` | string | `core/libs/prx/libSceFont/src/SystemFont.cpp` |  | directory holding the system fonts, defaulting to anyps5-fonts beside the executable |
 
+### libSceFontGs
+
+| Name | Kind | Source | Default | Description |
+|------|------|--------|---------|-------------|
+| `ANYPS5_SYSTEM_MODULES` | string | `core/libs/prx/libSceFontGs/Export.cpp` |  | directory holding system modules decrypted from the user's own console, defaulting to anyps5-modules beside the executable; the GNM font backend reads the shaders of `libSceFontGs.sprx` from it and stops with an error naming the file when it is missing, still encrypted or another build; anything other than a directory is refused |
+
 ### libSceGnmDriver
 
 | Name | Kind | Source | Default | Description |
