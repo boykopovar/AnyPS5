@@ -1216,7 +1216,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_V9t7N6GTEX4_nid_no_patch();
 int APS5_VABI _ZN7WebCore16comparePositionsERKNS_8PositionES2_();
 int APS5_VABI _ZN7WebCore12KeyedDecoder7decoderEPKhm();
 int APS5_VABI _ZN7WebCore6Path2D6createERKN3WTF6StringE();
-int APS5_VABI _ZN7WebCore21DiagnosticLoggingKeys34resourceLoadStatisticsTelemetryKeyEv();
 int APS5_VABI _ZNK7WebCore26Matrix3DTransformOperation19isRepresentableIn2DEv();
 int APS5_VABI WKPreferencesGetJavaEnabledForLocalFiles();
 int APS5_VABI _ZN7WebCore11DisplayList8DrawPathD1Ev();
