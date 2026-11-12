@@ -9746,10 +9746,6 @@ int APS5_VABI WKNotificationManagerProviderDidUpdateNotificationPolicy() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore29isCharacterSmartReplaceExemptEib() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore26Matrix3DTransformOperationC2ERKNS_20TransformationMatrixE() {
     NotImplemented_nid_no_patch(__func__);
 }
