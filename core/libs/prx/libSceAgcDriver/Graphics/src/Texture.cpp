@@ -261,7 +261,6 @@ struct LiveImages {
 };
 
 std::atomic<void (*)()> publishHookForTest{nullptr};
-std::atomic<void (*)(std::uint64_t, std::size_t)> refreshUnchangedHookForTest{nullptr};
 
 LiveImages& Live() {
     static LiveImages live;
@@ -2425,6 +2424,14 @@ LookupOutcomes& ThreadLookupOutcomes() {
     return outcomes;
 }
 
+namespace {
+std::atomic<void (*)(std::uint64_t, std::size_t)> refreshUnchangedHookForTest{nullptr};
+}
+
+void StorageTexture::SetRefreshUnchangedHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes)) {
+    refreshUnchangedHookForTest.store(hook, std::memory_order_release);
+}
+
 bool StorageTexture::Refresh() {
     return refresh(0, trackedLayers);
 }
@@ -3033,11 +3040,6 @@ void StorageTexture::hashBeforeUnwatch(std::uint64_t address, std::size_t bytes,
         }
         unwatchHash[unit] = {unitContentHash(unit), layerGeneration[unit]};
     }
-}
-
-std::uint64_t StorageTexture::advanceUnchanged(std::uint32_t unit, std::uint64_t to) {
-    if (unit < unwatchHash.size() && unwatchHash[unit].generation != 0 && unwatchHash[unit].generation == layerGeneration[unit]) unwatchHash[unit].generation = to;
-    return to;
 }
 
 void StorageTexture::forgetUnwatchHash(std::uint32_t first, std::uint32_t count) {
@@ -4329,6 +4331,11 @@ bool StorageTexture::anyLayerPending() const {
     return layerPending.Any();
 }
 
+std::uint64_t StorageTexture::advanceUnchanged(std::uint32_t unit, std::uint64_t to) {
+    if (unit < unwatchHash.size() && unwatchHash[unit].generation != 0 && unwatchHash[unit].generation == layerGeneration[unit]) unwatchHash[unit].generation = to;
+    return to;
+}
+
 void StorageTexture::refreshGeneration() {
     generation = *std::min_element(layerGeneration.begin(), layerGeneration.end());
 }
@@ -5100,10 +5107,6 @@ bool StorageTexture::hashedAtUnwatch(std::uint64_t address, std::size_t bytes) c
 
 void StorageTexture::SetPublishHookForTest(void (*hook)()) {
     publishHookForTest.store(hook, std::memory_order_release);
-}
-
-void StorageTexture::SetRefreshUnchangedHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes)) {
-    refreshUnchangedHookForTest.store(hook, std::memory_order_release);
 }
 
 bool StorageTexture::UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
