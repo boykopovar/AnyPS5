@@ -1,6 +1,7 @@
 #include "prx/libfreetype/libfreetype.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_PARAMETER_TAGS_H
@@ -36,6 +37,30 @@ std::int32_t SetProperty(FreeType::GuestFaceRec* face, std::uint64_t tag, void* 
 int main() {
     FreeType::GuestLibrary* library = nullptr;
     Require(FT_Init_FreeType_nid_postfix(&library) == 0);
+    FT_UInt interpreterVersion = 40;
+    Require(FT_Property_Set_nid_postfix(library, "truetype", "interpreter-version", &interpreterVersion) == 0);
+    Require(FT_Property_Get_nid_postfix(library, "truetype", "interpreter-version", &interpreterVersion) == 0);
+    Require(interpreterVersion == 40);
+#ifdef _WIN32
+    Require(_putenv_s("FREETYPE_PROPERTIES", "truetype:interpreter-version=38") == 0);
+#else
+    Require(setenv("FREETYPE_PROPERTIES", "truetype:interpreter-version=38", 1) == 0);
+#endif
+    Require(setenv_nid_postfix("FREETYPE_PROPERTIES", "truetype:interpreter-version=35", 1) == 0);
+    FT_Set_Default_Properties_nid_postfix(library);
+    Require(FT_Property_Get_nid_postfix(library, "truetype", "interpreter-version", &interpreterVersion) == 0);
+    Require(interpreterVersion == 35);
+    Require(unsetenv_nid_postfix("FREETYPE_PROPERTIES") == 0);
+    interpreterVersion = 40;
+    Require(FT_Property_Set_nid_postfix(library, "truetype", "interpreter-version", &interpreterVersion) == 0);
+    FT_Set_Default_Properties_nid_postfix(library);
+    Require(FT_Property_Get_nid_postfix(library, "truetype", "interpreter-version", &interpreterVersion) == 0);
+    Require(interpreterVersion == 40);
+#ifdef _WIN32
+    Require(_putenv_s("FREETYPE_PROPERTIES", "") == 0);
+#else
+    Require(unsetenv("FREETYPE_PROPERTIES") == 0);
+#endif
     const auto bytes = ReadFont("varc-reset-only.ttf");
     FreeType::GuestFaceRec* face = nullptr;
     Require(FT_New_Memory_Face_nid_postfix(library, bytes.data(), static_cast<std::int64_t>(bytes.size()), 0, &face) == 0);

@@ -1,6 +1,7 @@
 #pragma once
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 #include "ConstrainedFieldPosition.hpp"
+#include "TerminateBuffer.hpp"
 #include "Enumeration.hpp"
 #include "ErrorName.hpp"
 #include "CharacterNames.hpp"
@@ -16,6 +17,7 @@
 #include "CString.hpp"
 #include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "Space.hpp"
+#include "LocaleMap.hpp"
 #include "Unescape.hpp"
 #include "Properties.hpp"
 #include "CaseMapping.hpp"
@@ -35,5 +37,6 @@
 #include "Configuration.hpp"
 
 #include "ConverterHelpers.hpp"
+#include "RecoveredSignatures.hpp"
 #include "BreakIterator.hpp"
 #include "Data.hpp"

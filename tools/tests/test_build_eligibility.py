@@ -226,6 +226,25 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(self.run_gate([], None, files=("README.md",), manual=True)["outputs"]["relinker"], False)
 
 
+class EligibilityJobConditionTests(unittest.TestCase):
+    def eligibility_runs(self, event_name, ref):
+        lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        job = lines.index("  eligibility:")
+        condition = next(line.split("if:", 1)[1].strip() for line in lines[job + 1:] if line.strip().startswith("if:"))
+        expression = condition.replace("github.event_name", repr(event_name)).replace("github.ref", repr(ref))
+        return eval(expression.replace("||", " or ").replace("&&", " and "), {})
+
+    def test_manual_run_from_a_branch_runs_eligibility(self):
+        self.assertTrue(self.eligibility_runs("workflow_dispatch", "refs/heads/fix/some-branch"))
+
+    def test_pull_request_and_main_push_still_run_eligibility(self):
+        self.assertTrue(self.eligibility_runs("pull_request", "refs/pull/7/merge"))
+        self.assertTrue(self.eligibility_runs("push", "refs/heads/main"))
+
+    def test_push_from_a_branch_skips_eligibility(self):
+        self.assertFalse(self.eligibility_runs("push", "refs/heads/fix/some-branch"))
+
+
 class ConcurrencyGroupTests(unittest.TestCase):
     def workflow_line(self, prefix):
         lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
