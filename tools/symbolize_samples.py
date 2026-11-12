@@ -140,10 +140,12 @@ class PeModule:
             index += 1 + aux
             if storage not in (IMAGE_SYM_CLASS_EXTERNAL, IMAGE_SYM_CLASS_STATIC) or not 1 <= section <= len(self.sections):
                 continue
-            start, _, _, _, characteristics = self.sections[section - 1]
+            start, section_size, _, _, characteristics = self.sections[section - 1]
             if not characteristics & IMAGE_SCN_CNT_CODE:
                 continue
             if storage == IMAGE_SYM_CLASS_STATIC and (kind >> 4) != 2 and value == 0:
+                continue
+            if value >= section_size:
                 continue
             if name[:4] == b"\0\0\0\0":
                 offset = struct.unpack_from("<I", name, 4)[0]

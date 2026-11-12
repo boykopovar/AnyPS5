@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -10,9 +11,11 @@ using FcBool = int;
 
 struct FcLangSet;
 struct FcPattern;
+struct FcObjectSet;
 using CharSetLeaf = std::array<uint32_t, 8>;
 
 struct FcCharSet {
+    std::atomic<unsigned> references{1};
     std::map<uint16_t, CharSetLeaf> leaves;
 };
 struct FcRange;
