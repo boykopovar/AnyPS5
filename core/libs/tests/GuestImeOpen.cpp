@@ -221,6 +221,14 @@ void CheckValidation() {
     errno = 71;
     Require(sceImeOpen_nid_postfix(reinterpret_cast<const Param*>(0x10), nullptr) == InvalidAddress, "unmapped param");
     Require(errno == 71, "preserve errno on unmapped param");
+    Param validParam = MakeParam(buffers, 16);
+    errno = 71;
+    Require(sceImeOpen_nid_postfix(&validParam, reinterpret_cast<const ExtendedParam*>(0x10)) == InvalidAddress, "unmapped extended param");
+    Require(errno == 71, "preserve errno on unmapped extended param");
+    validParam.input_text_buffer = reinterpret_cast<char16_t*>(0x10);
+    errno = 71;
+    Require(sceImeOpen_nid_postfix(&validParam, nullptr) == InvalidAddress, "unmapped input text buffer");
+    Require(errno == 71, "preserve errno on unmapped input text buffer");
     Require(sceImeUpdate(nullptr) == NotOpened, "null handler with nothing open");
     auto expect = [&](auto change, int error, const char* message) {
         Param param = MakeParam(buffers, 16);
