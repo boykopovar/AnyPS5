@@ -357,6 +357,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
+        add_test(NAME forced_include_paths COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_forced_include_paths.py
+            --cmake "${CMAKE_COMMAND}" --compiler "${CMAKE_CXX_COMPILER}"
+            --generator "${CMAKE_GENERATOR}" --make-program "${CMAKE_MAKE_PROGRAM}")
+        set_tests_properties(forced_include_paths PROPERTIES TIMEOUT 30)
         add_test(NAME ffmpeg_cache_keys COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ffmpeg_cache_keys.py)
         add_test(NAME winlibs_digest COMMAND ${Python3_EXECUTABLE}
