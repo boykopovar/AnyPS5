@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommandEncoder.hpp"
 #include "prx/libSceAgcDriver/tests/AllocationFailure.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <csignal>
 #include <chrono>
@@ -985,8 +986,92 @@ void ReplayFailureNeedsNoAllocation() {
     Compare({{healthy, {"draw 2 1 0 0"}}}, "a replay after a failure stored without allocating");
 }
 
+std::atomic<std::uint64_t> replayed{0};
+
+VKAPI_ATTR void VKAPI_CALL NopDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {
+    replayed.fetch_add(1, std::memory_order_relaxed);
+}
+
+VKAPI_ATTR void VKAPI_CALL NopBindPipeline(VkCommandBuffer, VkPipelineBindPoint, VkPipeline) {
+    replayed.fetch_add(1, std::memory_order_relaxed);
+}
+
+VKAPI_ATTR void VKAPI_CALL NopPushConstants(VkCommandBuffer, VkPipelineLayout, VkShaderStageFlags, std::uint32_t, std::uint32_t, const void*) {
+    replayed.fetch_add(1, std::memory_order_relaxed);
+}
+
+VKAPI_ATTR void VKAPI_CALL NopBindDescriptorSets(VkCommandBuffer, VkPipelineBindPoint, VkPipelineLayout, std::uint32_t, std::uint32_t, const VkDescriptorSet*, std::uint32_t, const std::uint32_t*) {
+    replayed.fetch_add(1, std::memory_order_relaxed);
+}
+
+DeviceFunctions NopTable() {
+    DeviceFunctions table{};
+    table.cmdDraw = &NopDraw;
+    table.cmdBindPipeline = &NopBindPipeline;
+    table.cmdPushConstants = &NopPushConstants;
+    table.cmdBindDescriptorSets = &NopBindDescriptorSets;
+    return table;
+}
+
+void RecordOneDraw(const DeviceFunctions& table, VkCommandBuffer commands) {
+    const std::array<std::uint8_t, 16> constants{};
+    const VkDescriptorSet set = Handle<VkDescriptorSet>(0x77);
+    table.cmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, Handle<VkPipeline>(0x66));
+    table.cmdPushConstants(commands, Handle<VkPipelineLayout>(0x55), VK_SHADER_STAGE_ALL_GRAPHICS, 0, static_cast<std::uint32_t>(constants.size()), constants.data());
+    table.cmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, Handle<VkPipelineLayout>(0x55), 0, 1, &set, 0, nullptr);
+    table.cmdDraw(commands, 3, 1, 0, 0);
+}
+
+double NanosecondsSince(std::chrono::steady_clock::time_point start) {
+    return static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+}
+
+int HandoffBench() {
+    constexpr std::uint32_t Windows = 200000;
+    constexpr std::uint32_t Batches[] = {1, 8, 64, 512};
+    const auto commands = Handle<VkCommandBuffer>(0x1700);
+    const auto device = Handle<VkDevice>(0x57);
+    {
+        auto table = NopTable();
+        for (std::uint32_t round = 0; round < 3; ++round) {
+            const auto start = std::chrono::steady_clock::now();
+            for (std::uint32_t index = 0; index < Windows; ++index) RecordOneDraw(table, commands);
+            const double ns = NanosecondsSince(start) / Windows;
+            if (round == 2) std::cout << "bench inline ns_per_draw=" << ns << "
+";
+        }
+    }
+    for (const auto batch : Batches) {
+        auto table = NopTable();
+        const auto attached = Attached(device, table);
+        auto& encoder = *attached;
+        double best = 0;
+        CommandEncoder::Statistics counts{};
+        for (std::uint32_t round = 0; round < 3; ++round) {
+            Reset();
+            const auto before = encoder.Counts();
+            const auto start = std::chrono::steady_clock::now();
+            for (std::uint32_t index = 0; index < Windows; ++index) {
+                encoder.Open(commands, RecordingOf(commands));
+                RecordOneDraw(table, commands);
+                encoder.Close();
+                if ((index + 1) % batch == 0) encoder.Quiesce();
+            }
+            encoder.Quiesce();
+            const double ns = NanosecondsSince(start) / Windows;
+            const auto after = encoder.Counts();
+            counts = {after.posts - before.posts, after.commands - before.commands, after.waits - before.waits, after.waitNs - before.waitNs, after.encodeNs - before.encodeNs, after.parks - before.parks};
+            if (round == 2) best = ns;
+        }
+        std::cout << "bench encoded batch=" << batch << " ns_per_draw=" << best << " chunks_per_draw=" << static_cast<double>(counts.posts) / Windows << " parks_per_draw=" << static_cast<double>(counts.parks) / Windows << " waits_per_draw=" << static_cast<double>(counts.waits) / Windows << " wait_ns_per_draw=" << static_cast<double>(counts.waitNs) / Windows << " encode_ns_per_draw=" << static_cast<double>(counts.encodeNs) / Windows << "
+";
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
     try {
+        if (argc > 1 && std::string(argv[1]) == "--bench") return HandoffBench();
         if (argc > 1 && std::string(argv[1]) == "--wait-on-the-encoder-thread") {
             std::signal(SIGABRT, [](int) { std::_Exit(0); });
             WaitOnTheEncoderThread();
