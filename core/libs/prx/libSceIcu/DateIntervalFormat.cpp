@@ -1,7 +1,14 @@
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
+#include "prx/libSceIcu/ResultHandles.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstdint>
+
+namespace {
+
+Icu::ResultHandles<UFormattedDateInterval> g_results;
+
+}
 
 extern "C" {
 
@@ -11,8 +18,7 @@ void APS5_VABI udtitvfmt_close_nid_postfix(UDateIntervalFormat* formatter) {
 }
 
 void APS5_VABI udtitvfmt_closeResult_nid_postfix(UFormattedDateInterval* result) {
-    if (!result) return;
-    NotImplemented_nid_no_patch(__func__);
+    g_results.Close(result);
 }
 
 void APS5_VABI udtitvfmt_formatCalendarToResult_nid_postfix(const UDateIntervalFormat*, UCalendar*, UCalendar*, UFormattedDateInterval* result, std::int32_t* status) {
@@ -43,8 +49,7 @@ UDateIntervalFormat* APS5_VABI udtitvfmt_open_nid_postfix(const char*, const cha
 }
 
 UFormattedDateInterval* APS5_VABI udtitvfmt_openResult_nid_postfix(std::int32_t* status) {
-    if (Icu::Failure(status)) return nullptr;
-    NotImplemented_nid_no_patch(__func__);
+    return g_results.Open(status);
 }
 
 }

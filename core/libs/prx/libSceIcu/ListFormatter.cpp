@@ -1,7 +1,14 @@
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
+#include "prx/libSceIcu/ResultHandles.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstdint>
+
+namespace {
+
+Icu::ResultHandles<UFormattedList> g_results;
+
+}
 
 extern "C" {
 
@@ -11,8 +18,7 @@ void APS5_VABI ulistfmt_close_nid_postfix(UListFormatter* listfmt) {
 }
 
 void APS5_VABI ulistfmt_closeResult_nid_postfix(UFormattedList* result) {
-    if (!result) return;
-    NotImplemented_nid_no_patch(__func__);
+    g_results.Close(result);
 }
 
 std::int32_t APS5_VABI ulistfmt_format_nid_postfix(const UListFormatter*, const char16_t* const[],
@@ -44,8 +50,7 @@ UListFormatter* APS5_VABI ulistfmt_openForType_nid_postfix(const char*, UListFor
 }
 
 UFormattedList* APS5_VABI ulistfmt_openResult_nid_postfix(std::int32_t* status) {
-    if (Icu::Failure(status)) return nullptr;
-    NotImplemented_nid_no_patch(__func__);
+    return g_results.Open(status);
 }
 
 }
