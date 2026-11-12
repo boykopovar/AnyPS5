@@ -365,7 +365,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
-    add_test_executable(guest_audio_out2_mastering_state_bounds_tests ../tests/GuestAudioOut2MasteringStateBounds.cpp)
+    add_test_executable(guest_audio_out2_mastering_state_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOut2MasteringStateBounds.cpp)
     target_include_directories(guest_audio_out2_mastering_state_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_audio_out2_mastering_state_bounds_tests PRIVATE libSceAudioOut libc)
     configure_windows_unwind(guest_audio_out2_mastering_state_bounds_tests)
