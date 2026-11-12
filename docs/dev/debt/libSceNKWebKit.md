@@ -164,6 +164,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
 - [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5949 of the 8703 inventory declarations listed below throw through NotImplemented_nid_no_patch; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Injected bundle inspector controls](../../../core/libs/prx/libSceNKWebKit/src/BundleInspector.cpp) (libSceNKWebKit) - `WKBundleInspectorShow`, `WKBundleInspectorClose`, `WKBundleInspectorEvaluateScriptForTest` and `WKBundleInspectorSetPageProfilingEnabled` record visibility, page profiling state, and test scripts on the host `BundleInspector` without driving an active inspector frontend.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5961 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -241,10 +243,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleHitTestResultGetFrame` | `mGM-NRBuZvE` |
 | `WKBundleHitTestResultGetImageRect` | `CHPZFRIZO7o` |
 | `WKBundleHitTestResultGetTargetFrame` | `w32pxSSQ4Rs` |
-| `WKBundleInspectorClose` | `xTfnxYXtinY` |
-| `WKBundleInspectorEvaluateScriptForTest` | `b6+hAoAkJl8` |
-| `WKBundleInspectorSetPageProfilingEnabled` | `-r23ePSw30o` |
-| `WKBundleInspectorShow` | `KVehJeKp2gE` |
 | `WKBundleIsPageBoxVisible` | `ysYpNHM+f2U` |
 | `WKBundleIsProcessingUserGesture` | `flLt+xWYloc` |
 | `WKBundleNodeHandleCopySnapshotWithOptions` | `splXjoRt+jY` |

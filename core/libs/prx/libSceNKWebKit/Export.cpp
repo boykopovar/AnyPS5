@@ -10138,22 +10138,6 @@ int APS5_VABI WKBundleHitTestResultGetTargetFrame() {
 
 
 
-int APS5_VABI WKBundleInspectorClose() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleInspectorEvaluateScriptForTest() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleInspectorSetPageProfilingEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleInspectorShow() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleIsPageBoxVisible() {
     NotImplemented_nid_no_patch(__func__);
 }
