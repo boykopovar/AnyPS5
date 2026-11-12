@@ -131,7 +131,7 @@ static void TestDiscardQueuedAudioStopsAtPartialRead() {
     audioin::detail::discardQueuedAudio(10, discarded.data(), discarded.size(),
         [&requested, &calls](std::uint8_t*, std::uint32_t chunk) {
             requested[calls++] = chunk;
-            return chunk == 4 ? 2u : chunk;
+            return calls == 1 ? 2u : chunk;
         });
     Require(calls == 2);
     Require(requested == std::array<std::uint32_t, 2>{4, 4});
