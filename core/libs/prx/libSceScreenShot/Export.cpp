@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceScreenShot/include/Api.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -32,7 +33,28 @@ T Field(const void* block, std::size_t offset) {
 }
 
 bool StringFits(const char* text, std::size_t maxLength) {
-    return text == nullptr || strnlen(text, maxLength + 1) <= maxLength;
+    if (!text) return true;
+    const int savedErrno = errno;
+    std::size_t copied = 0;
+    while (copied <= maxLength) {
+        const auto addr = reinterpret_cast<std::uintptr_t>(text + copied);
+        const std::size_t pageOffset = addr & 0xFFF;
+        const std::size_t bytesToPageEnd = 0x1000 - pageOffset;
+        const std::size_t chunkSize = std::min(bytesToPageEnd, maxLength + 1 - copied);
+        char chunk[512];
+        if (!GuestCopyIn_nid_no_patch(chunk, text + copied, chunkSize)) {
+            errno = savedErrno;
+            return false;
+        }
+        const void* const nullPos = std::memchr(chunk, '\0', chunkSize);
+        if (nullPos) {
+            errno = savedErrno;
+            return true;
+        }
+        copied += chunkSize;
+    }
+    errno = savedErrno;
+    return false;
 }
 
 [[noreturn]] void ScreenShotService(const char* function) {
@@ -126,6 +148,7 @@ int APS5_VABI sceScreenShotSetDrcParam(const void* param) {
         errno = savedErrno;
         return ErrorArgument;
     }
+    errno = savedErrno;
     if (Field<std::uint64_t>(buffer, 0x28) != 0 || Field<std::uint32_t>(buffer, 0x00) != 0x30) return ErrorArgument;
     if (!Field<const void*>(buffer, 0x08) || !Field<const void*>(buffer, 0x18)) return ErrorArgument;
     if (Field<std::uint32_t>(buffer, 0x10) != 0x400 || Field<std::uint32_t>(buffer, 0x20) != 0x8000) return ErrorArgument;
@@ -138,6 +161,7 @@ int APS5_VABI sceScreenShotSetParam(const void* param) {
         errno = savedErrno;
         return ErrorArgument;
     }
+    errno = savedErrno;
     if (Field<std::uint64_t>(buffer, 0x20) != 0 || Field<std::uint32_t>(buffer, 0x00) != 0x28) return ErrorArgument;
     if (!StringFits(Field<const char*>(buffer, 0x08), 255) || !StringFits(Field<const char*>(buffer, 0x10), 255) || !StringFits(Field<const char*>(buffer, 0x18), 511)) return ErrorArgument;
     ScreenShotService(__func__);
