@@ -4,8 +4,15 @@
 #include <cstddef>
 #include <climits>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
+
+#ifndef _WIN32
+#include <langinfo.h>
+#include <locale.h>
+#endif
 
 namespace {
 
@@ -33,6 +40,54 @@ void Check(const char* name, const GuestTm& time, const char* format, const char
         std::fprintf(stderr, "strftime %s (\"%s\"): expected \"%s\", received \"%s\" (%zu)\n", name, format, expected, length == 0 ? "" : text, length);
         correct = false;
     }
+}
+
+std::string Render(const char* format, const GuestTm& time) {
+    char text[256];
+    strftime_nid_postfix(text, sizeof(text), format, &time);
+    return text;
+}
+
+void CheckDateConversions(const GuestTm& time) {
+    Check("default %c", time, "%c", "Fri Oct  2 13:05:09 2026");
+    Check("default %x", time, "%x", "10/02/26");
+    Check("default %X", time, "%X", "13:05:09");
+    Check("default %D", time, "%D", "10/02/26");
+}
+
+void CheckHostDateConversions(const GuestTm& time) {
+#ifndef _WIN32
+    locale_t host = newlocale(LC_TIME_MASK, "", static_cast<locale_t>(0));
+    if (host == static_cast<locale_t>(0)) {
+        std::fprintf(stderr, "host date check: newlocale failed\n");
+        correct = false;
+        return;
+    }
+    const std::string dateTime = nl_langinfo_l(D_T_FMT, host);
+    const std::string date = nl_langinfo_l(D_FMT, host);
+    const std::string clock = nl_langinfo_l(T_FMT, host);
+    freelocale(host);
+    setenv("ANYPS5_TIME_FORMAT", "host", 1);
+    if (Render("%c", time) != Render(dateTime.c_str(), time)) {
+        std::fprintf(stderr, "host %%c: expected the host D_T_FMT rendering\n");
+        correct = false;
+    }
+    if (Render("%x", time) != Render(date.c_str(), time)) {
+        std::fprintf(stderr, "host %%x: expected the host D_FMT rendering\n");
+        correct = false;
+    }
+    if (Render("%X", time) != Render(clock.c_str(), time)) {
+        std::fprintf(stderr, "host %%X: expected the host T_FMT rendering\n");
+        correct = false;
+    }
+    if (Render("%D", time) != "10/02/26") {
+        std::fprintf(stderr, "host %%D: must stay %%m/%%d/%%y\n");
+        correct = false;
+    }
+    unsetenv("ANYPS5_TIME_FORMAT");
+#else
+    (void)time;
+#endif
 }
 
 void CheckAsctime(const char* name, const GuestTm& time, const char* expected) {
@@ -298,5 +353,7 @@ int main() {
     CheckAsctime("year 10000", year, "Fri Oct  2 13:05:09 0000\n");
     year.tm_year = -1901;
     CheckAsctime("year -1", year, "Fri Oct  2 13:05:09 0000\n");
+    CheckDateConversions(MakeTime());
+    CheckHostDateConversions(MakeTime());
     return correct ? 0 : 1;
 }

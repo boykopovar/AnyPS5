@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/Submission.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
@@ -104,6 +105,10 @@ bool EopRelease(std::span<const std::uint32_t> words) {
 
 std::uint64_t Driver::FlipSubmissions() const {
     return flipSubmissionsOfThread();
+}
+
+std::uint64_t Driver::RewindTailFlips() const {
+    return rewindTailFlips.load(std::memory_order_acquire);
 }
 
 std::deque<const std::uint32_t*>& Driver::releasedTails() {
@@ -550,6 +555,7 @@ void Driver::executeRewindTail(const Submission& stalled) {
         rethrowFailure();
         checkStopping();
         reserveOutputs(tail);
+        if (!tail.flips.empty()) rewindTailFlips.fetch_add(1, std::memory_order_acq_rel);
         tail.shaders = shaders;
         tail.serial = stalled.serial;
         tail.received = ++eventSerial;
@@ -799,7 +805,7 @@ void Driver::enqueue(Submission submission) {
     for (const auto dword : submission.labelWrites) ++worker.unfinishedWrites[dword];
     worker.pending.push_back(std::move(submission));
     worker.queued.fetch_add(1, std::memory_order_acq_rel);
-    if (!worker.thread.joinable()) worker.thread = std::thread([this, queue] {
+    if (!worker.thread.joinable()) worker.thread = Libc::StartHostThread([this, queue] {
         char role[32];
         std::snprintf(role, sizeof(role), "queue 0x%x worker", queue);
         try {
