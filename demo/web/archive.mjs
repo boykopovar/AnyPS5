@@ -20,7 +20,7 @@ class BoundedBlobReader extends BlobReader {
 export function validPath(name, locale = "en") {
   if (!name || name.includes("\\") || /[\x00-\x1f<>:"|?*]/u.test(name)) throw new Error(translate(locale, "unsafeZipPath", { name }));
   const parts = name.replace(/\/$/u, "").split("/");
-  if (parts.some(part => !part || part === "." || part === ".." || /[. ]$/u.test(part) || /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu.test(part))) throw new Error(translate(locale, "unsafeZipPath", { name }));
+  if (parts.some(part => !part || part === "." || part === ".." || /[. ]$/u.test(part) || /^(con|conin\$|conout\$|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu.test(part))) throw new Error(translate(locale, "unsafeZipPath", { name }));
   return name;
 }
 

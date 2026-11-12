@@ -70,7 +70,6 @@ int APS5_VABI cairo_scaled_font_get_font_options();
 int APS5_VABI cairo_in_stroke();
 int APS5_VABI cairo_scaled_font_get_ctm();
 int APS5_VABI cairo_set_font_size();
-int APS5_VABI cairo_surface_write_to_png_stream();
 int APS5_VABI cairo_pattern_set_extend();
 int APS5_VABI cairo_set_source_rgba();
 int APS5_VABI cairo_ft_font_face_create_for_pattern();
