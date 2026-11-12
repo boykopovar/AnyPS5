@@ -1,5 +1,7 @@
 #include "prx/libSceNpTus/include/Api.hpp"
 #include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <mutex>
 #include <unordered_map>
@@ -54,8 +56,13 @@ int ValidateSlots(const std::int32_t* slotIds, int arrayLen, const void* option)
     if (!slotIds) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (arrayLen < 1 || option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
+    std::array<std::int32_t, MAX_SLOTS> localSlots{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(localSlots.data(), slotIds, arrayLen * sizeof(std::int32_t));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     for (int index = 0; index < arrayLen; ++index) {
-        if (slotIds[index] < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        if (localSlots[index] < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return 0;
 }
@@ -74,7 +81,13 @@ struct FriendsOptParam {
 int ValidateFriendsA(std::int32_t slotId, std::int32_t sortType, std::int32_t minSortType, std::int32_t maxSortType, const void* array, std::uint64_t arraySize, int arrayLen, std::uint64_t entrySize, std::uint64_t longEntrySize, const FriendsOptParam* option) {
     if (!array) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (arrayLen == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    if (option && option->size != sizeof(FriendsOptParam)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (option) {
+        FriendsOptParam localOption{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
+        errno = savedErrno;
+        if (!copied || localOption.size != sizeof(FriendsOptParam)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     if (sortType < minSortType || sortType > maxSortType) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_FRIENDS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_NPID;
     const auto count = static_cast<std::uint64_t>(arrayLen);
@@ -114,7 +127,13 @@ int WaitOffline(int reqId, int* result) {
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (!request->second.started) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    if (result) *result = request->second.result;
+    if (result) {
+        const int outVal = request->second.result;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(result, &outVal, sizeof(outVal));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return 0;
 }
 
@@ -178,7 +197,13 @@ int APS5_VABI sceNpTusPollAsync(int reqId, int* result) {
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (!request->second.started) return POLL_RUNNING;
-    if (result) *result = request->second.result;
+    if (result) {
+        const int outVal = request->second.result;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(result, &outVal, sizeof(outVal));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return POLL_FINISHED;
 }
 
@@ -229,9 +254,9 @@ int APS5_VABI sceNpTssCreateNpTitleCtxA(std::uint32_t serviceLabel, int userId) 
     return sceNpTusCreateNpTitleCtxA(serviceLabel, userId);
 }
 
-int APS5_VABI sceNpTusCreateTitleCtx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTusCreateTitleCtx(const void* titleId, const void* titleSecret, const void* selfNpId) {
+    if (!titleId || !titleSecret || !selfNpId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    return CreateTitleContext();
 }
 
 int APS5_VABI sceNpTusSetTimeout(void) {

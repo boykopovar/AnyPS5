@@ -708,7 +708,7 @@ std::uint32_t LoadedTexelResult(SpirvValueEmitContext& ctx, const ImageEmitAcces
 
 SpirvBufferFormatInfo PackedTexelFormat(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     const auto format = access.image.packedFormat;
-    if (format == IrBufferFormat::Invalid || access.image.table != NoTable || access.image.depthBits || access.image.conversionFormat != IrBufferFormat::Invalid) {
+    if (format == IrBufferFormat::Invalid || access.image.depthBits || access.image.conversionFormat != IrBufferFormat::Invalid) {
         ctx.Fail(access.inst, "accesses packed texels of an image without a packed format");
     }
     const auto info = GetFormatInfo(format);
@@ -1806,7 +1806,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         EmitEmulatedSample(ctx, access, setup, false);
         return;
     }
-    if (!setup.dref && image.conversionFormat == IrBufferFormat::Format11_11_10UNorm) {
+    if (!setup.dref && IsConvertedUnormTextureFormat(image.conversionFormat)) {
         EmitEmulatedSample(ctx, access, setup, true);
         return;
     }

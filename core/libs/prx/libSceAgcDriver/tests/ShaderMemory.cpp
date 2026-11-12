@@ -546,7 +546,7 @@ void verifyResultMemoBudgetMasked() {
     const auto first = ResultMemoBytes();
     require(!compileResultMemoPixel(2u), "result memo budget masked: a new snapshot hit the memo");
     const auto second = ResultMemoBytes() - first;
-    require(second != 0u && second < first, std::string("result memo budget masked: the masked table's entry was not counted (first result " + std::to_string(first) + " bytes, patched result " + std::to_string(second) + ")").c_str());
+    require(second == 0u, std::string("result memo budget masked: a patched result was inserted into the memo (" + std::to_string(second) + " bytes)").c_str());
     SetResultMemoBudget(1u);
     require(ResultMemoBytes() == 0u, std::string("result memo budget masked: a trim to one byte left " + std::to_string(ResultMemoBytes()) + " bytes").c_str());
     SetResultMemoBudget(0u);
@@ -5177,14 +5177,14 @@ void verifyImageTableUnkeyedAccess() {
 }
 
 struct TableManyGuest {
-    std::array<std::array<std::uint32_t, 8>, 128> heap{};
+    std::array<std::array<std::uint32_t, 8>, 256> heap{};
     std::array<std::uint32_t, 4> output{};
-    std::array<std::uint32_t, 160> srt{};
+    std::array<std::uint32_t, 224> srt{};
 };
 
-constexpr std::uint32_t TableManyDirectWord = 96u;
-constexpr std::uint32_t TableManyExtraSamplerWord = 112u;
-constexpr std::uint32_t TableManyMoreSamplerWord = 116u;
+constexpr std::uint32_t TableManyDirectWord = 160u;
+constexpr std::uint32_t TableManyExtraSamplerWord = 176u;
+constexpr std::uint32_t TableManyMoreSamplerWord = 180u;
 constexpr std::array<std::uint32_t, 8> TableManySamplerSgprs{8u, 12u, 64u, 68u, 72u, 76u, 80u, 84u};
 
 std::vector<std::uint32_t> TableManyKeyCode(std::uint32_t first, std::uint32_t second, std::uint32_t samplers, std::uint32_t direct = 0u, bool extraSampler = false) {
@@ -5285,10 +5285,12 @@ void verifySelectedRecordsWithinLimits(bool pairs, bool direct) {
     }
     require(snapshot.codes.at(1) == outside && snapshot.codes.at(limit + 3u) == outside, (name + ": a key no read selects was bound").c_str());
     if (pairs) return;
-    const auto split = TableManyKeyCode(40u, 30u, 1u);
+    const auto larger = limit * 5u / 8u;
+    const auto smaller = limit * 15u / 32u;
+    const auto split = TableManyKeyCode(larger, smaller, 1u);
     const auto twoHeaps = GetResourcePlan(TableRequest(split, userData));
     const auto unselected = std::find_if(twoHeaps->info.images.begin(), twoHeaps->info.images.end(), [&](const ImageResource& image) { return !columnOf(*twoHeaps, image).selected; });
-    require(twoHeaps->info.images.size() == 31u && selectedTables(*twoHeaps) == 30u && unselected != twoHeaps->info.images.end() && columnOf(*twoHeaps, *unselected).keyDomains.size() == 40u, (name + ": the larger heap was not merged first, or the smaller one lost its split").c_str());
+    require(twoHeaps->info.images.size() == smaller + 1u && selectedTables(*twoHeaps) == smaller && unselected != twoHeaps->info.images.end() && columnOf(*twoHeaps, *unselected).keyDomains.size() == larger, (name + ": the larger heap was not merged first, or the smaller one lost its split").c_str());
 }
 
 struct SamplerLimitGuest {
@@ -5430,6 +5432,139 @@ void verifySamplerLimits() {
 
 }
 
+struct ImageLimitGuest {
+    std::array<std::uint32_t, 2048> record{};
+    std::array<std::uint32_t, 4> output{};
+    std::array<std::uint32_t, 528> srt{};
+};
+
+constexpr std::uint32_t ImageLimitDirectWord = 16u;
+
+std::vector<std::uint32_t> ImageLimitCode(std::uint32_t tableImages, std::uint32_t directImages = 0u, std::uint32_t loadedImages = 0u) {
+    std::vector<std::uint32_t> code{0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080200u, 0xfa000020u, 0x7e200500u, 0x8f108d10u, 0x7e100280u};
+    for (std::uint32_t image = 0; image < tableImages; image++) code.insert(code.end(), {0xf42c0502u, 0x20000000u | (image * 32u), 0xf09c0f08u, 0x00450400u, 0x06100908u});
+    for (std::uint32_t image = 0; image < directImages; image++) code.insert(code.end(), {0xf40c0b00u, 0xfa000000u | ((ImageLimitDirectWord + image * 8u) * 4u), 0xf09c0f08u, 0x004b0400u, 0x06100908u});
+    for (std::uint32_t image = 0; image < loadedImages; image++) code.insert(code.end(), {0xf40c0b00u, 0xfa000000u | ((ImageLimitDirectWord + image * 8u) * 4u), 0xf0001108u, 0x000b0402u, 0x06100908u});
+    code.insert(code.end(), {0xe0700000u, 0x80070800u, 0xbf810000u});
+    return code;
+}
+
+void verifyImageLimits(std::string_view part) {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[4];
+    alignas(4096) static ImageLimitGuest guest;
+    constexpr std::uint32_t Capacity = 128u;
+    for (std::uint32_t image = 0; image < guest.record.size() / 8u; image++) {
+        const auto words = TableT(textures[image % 4u].bytes.data(), TableFormat8888UNorm, TableType2D, image + 1u);
+        std::copy(words.begin(), words.end(), guest.record.begin() + image * 8u);
+    }
+    guest.srt = {};
+    const auto heapV = TableV(guest.record.data(), static_cast<std::uint32_t>(guest.record.size() * 4u), 1u);
+    const auto outputV = TableV(guest.output.data(), 0u, 16u);
+    std::copy(heapV.begin(), heapV.end(), guest.srt.begin());
+    std::copy(outputV.begin(), outputV.end(), guest.srt.begin() + 4);
+    guest.srt[SamplerLimitDirectSamplerWord] = 0x92u;
+    for (std::uint32_t image = 0; image < Capacity / 2u; image++) {
+        const auto words = TableT(textures[image % 4u].bytes.data(), TableFormat8888UNorm, TableType2D, image + 1u);
+        std::copy(words.begin(), words.end(), guest.srt.begin() + ImageLimitDirectWord + image * 8u);
+    }
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.srt.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    const auto tableImages = [](const IrResourcePlan& plan) {
+        return static_cast<std::uint32_t>(std::count_if(plan.info.images.begin(), plan.info.images.end(), [](const ImageResource& image) { return image.table != NoTable; }));
+    };
+    if (part == "table") {
+        for (const auto images : {Capacity / 2u + 1u, Capacity}) {
+            const auto code = ImageLimitCode(images);
+            const auto request = TableRequest(code, userData);
+            std::shared_ptr<const IrResourcePlan> plan;
+            try {
+                plan = GetResourcePlan(request);
+            } catch (const std::runtime_error& error) {
+                throw std::runtime_error("image limits: " + std::to_string(images) + " images were not planned: " + error.what());
+            }
+            require(plan->info.images.size() == images && tableImages(*plan) == images && plan->info.samplers.size() == 1u && plan->info.sampledPairs.size() == images, ("image limits: " + std::to_string(images) + " images planned as " + std::to_string(plan->info.images.size()) + " images (" + std::to_string(tableImages(*plan)) + " through the table) and " + std::to_string(plan->info.sampledPairs.size()) + " pairs").c_str());
+            const auto compiled = CompileTable(request);
+            const auto* table = TableBinding(*compiled.result, DescriptorRole::ImageTable);
+            require(table != nullptr && table->count == images && table->imageSamplers.size() == images, ("image limits: the image table does not bind the " + std::to_string(images) + " images").c_str());
+            std::vector<bool> bound(images);
+            for (std::uint32_t element = 0; element < images; element++) {
+                const auto image = SamplerLimitImageOf(table->guestDescriptor.data() + element * 8u);
+                require(image < images && !bound[image] && table->imageSamplers[element] == 3u, ("image limits: image table element " + std::to_string(element) + " of " + std::to_string(images) + " does not hold its own image paired with the sampler").c_str());
+                bound[image] = true;
+            }
+            std::cout << "image limits: " << images << " images planned and bound as " << table->count << " image table elements\n";
+        }
+    }
+    if (part == "mixed") {
+        const auto mixedCode = ImageLimitCode(Capacity / 2u, Capacity / 2u);
+        const auto mixedRequest = TableRequest(mixedCode, userData);
+        const auto mixedPlan = GetResourcePlan(mixedRequest);
+        require(mixedPlan->info.images.size() == Capacity && tableImages(*mixedPlan) == Capacity / 2u, "image limits: 64 table images and 64 direct images were not planned as 128 images");
+        const auto mixed = CompileTable(mixedRequest);
+        const auto* mixedTable = TableBinding(*mixed.result, DescriptorRole::ImageTable);
+        std::uint32_t heapElements = 0u;
+        for (const auto& binding : mixed.result->bindings) {
+            if (binding.kind == DescriptorKind::SampledImage && binding.role == DescriptorRole::GuestImages) heapElements += binding.count;
+        }
+        require(mixedTable != nullptr && mixedTable->count == Capacity / 2u && heapElements == Capacity / 2u, "image limits: 64 table images and 64 direct images are not bound as 64 table elements and 64 heap elements");
+        const auto prepared = DescriptorBindingBuilder{}.Prepare(IrBindingLayout{}, mixedPlan->info, IrShaderStage::Compute, mixed.capture->snapshot);
+        std::map<std::uint32_t, std::uint32_t> constants;
+        for (const auto& constant : prepared.specialization) constants[constant.id]++;
+        require(std::ranges::all_of(constants, [](const auto& entry) { return entry.second == 1u; }), "image limits: a specialization constant of the 128 images was emitted twice");
+        std::uint32_t lastDirect = 0u;
+        for (std::uint32_t image = 0; image < Capacity; image++) {
+            if (mixedPlan->info.images[image].table != NoTable) continue;
+            const auto first = PipelineSpecialization::ImageBase + image * PipelineSpecialization::ImageWords;
+            bool complete = first + PipelineSpecialization::ImageWords <= PipelineSpecialization::VertexBase;
+            for (std::uint32_t word = 0; word < PipelineSpecialization::ImageWords; word++) complete = complete && constants.contains(first + word);
+            require(complete, ("image limits: direct image " + std::to_string(image) + " does not have its image specialization constants").c_str());
+            lastDirect = image;
+        }
+        require(lastDirect == Capacity - 1u, "image limits: the direct images do not follow the table images up to image 127");
+        std::cout << "image limits: 64 table images and 64 direct images bound as 64 table and 64 heap elements; direct image 127 has image specialization constants " << PipelineSpecialization::ImageBase + lastDirect * PipelineSpecialization::ImageWords << " to " << PipelineSpecialization::ImageBase + Capacity * PipelineSpecialization::ImageWords - 1u << '\n';
+        const std::vector<std::uint32_t> sampled(guest.srt.begin() + ImageLimitDirectWord, guest.srt.begin() + ImageLimitDirectWord + 8u);
+        auto fmaskWords = TableT(textures[0].bytes.data(), static_cast<std::uint32_t>(IrBufferFormat::Fmask8_S2_F1), TableType2D, 1u);
+        fmaskWords[3] = (fmaskWords[3] & ~0xfffu) | 0x4u;
+        std::copy(fmaskWords.begin(), fmaskWords.end(), guest.srt.begin() + ImageLimitDirectWord);
+        const auto fmaskCode = ImageLimitCode(Capacity / 2u, 0u, 1u);
+        const auto fmaskRequest = TableRequest(fmaskCode, userData);
+        const auto fmaskPlan = GetResourcePlan(fmaskRequest);
+        constexpr std::uint32_t FmaskImage = Capacity / 2u;
+        require(fmaskPlan->info.images.size() == FmaskImage + 1u && tableImages(*fmaskPlan) == FmaskImage, ("image limits: 64 table images and a direct FMASK image were planned as " + std::to_string(fmaskPlan->info.images.size()) + " images, " + std::to_string(tableImages(*fmaskPlan)) + " of them in the table").c_str());
+        const auto& fmaskModes = fmaskPlan->info.runtimeImageModes.at(FmaskImage);
+        std::string fmaskConversions;
+        for (const auto& mode : fmaskModes) fmaskConversions += " " + std::to_string(static_cast<std::uint32_t>(mode.conversionFormat));
+        const auto& fmaskResource = fmaskPlan->info.images[FmaskImage];
+        require(std::ranges::any_of(fmaskModes, [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; }), ("image limits: direct image 64 (resource class " + std::to_string(static_cast<std::uint32_t>(fmaskResource.resourceClass)) + ", FMASK-compatible " + std::to_string(fmaskResource.fmaskCompatible) + ") has no FMASK expansion among its " + std::to_string(fmaskModes.size()) + " runtime modes, whose conversions are" + fmaskConversions).c_str());
+        require(fmaskPlan->info.samplers.size() == 1u, ("image limits: the FMASK case planned " + std::to_string(fmaskPlan->info.samplers.size()) + " samplers, not one").c_str());
+        auto fmaskInfo = fmaskPlan->info;
+        fmaskInfo.samplers[0].uses = SamplerUseExplicitLod;
+        require(MirrorsIfUnnormalized(fmaskInfo.samplers[0]), "image limits: the FMASK case's sampler 0, used by explicit-LOD samples, does not mirror when unnormalized");
+        AgcDriver::ShaderMemory fmaskMemory({});
+        const auto fmaskCapture = fmaskMemory.Capture(fmaskRequest);
+        const auto fmaskPrepared = DescriptorBindingBuilder{}.Prepare(IrBindingLayout{}, fmaskInfo, IrShaderStage::Compute, fmaskCapture->snapshot);
+        std::map<std::uint32_t, std::uint32_t> fmaskConstants;
+        for (const auto& constant : fmaskPrepared.specialization) fmaskConstants[constant.id]++;
+        require(fmaskConstants.contains(PipelineSpecialization::FmaskFormatBase + FmaskImage) && fmaskConstants.contains(PipelineSpecialization::MirrorUnnormalizedBase), "image limits: image 64's FMASK format or sampler 0's mirror axes has no specialization constant");
+        require(std::ranges::all_of(fmaskConstants, [](const auto& entry) { return entry.second == 1u; }), "image limits: image 64's FMASK format shares a specialization ID with another constant, such as sampler 0's mirror axes");
+        std::copy(sampled.begin(), sampled.end(), guest.srt.begin() + ImageLimitDirectWord);
+        std::cout << "image limits: direct FMASK image 64 has FMASK format constant " << PipelineSpecialization::FmaskFormatBase + FmaskImage << ", apart from sampler 0's mirror axes at " << PipelineSpecialization::MirrorUnnormalizedBase << '\n';
+    }
+    if (part != "refusals") return;
+    const auto pastCode = ImageLimitCode(Capacity + 1u);
+    expectFailure([&] { static_cast<void>(GetResourcePlan(TableRequest(pastCode, userData))); }, "image resource limit exceeded (129 of 128)", "image limits: 129 images were planned");
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.numericClass = IrTextureNumericClass::Float;
+    image.dimension = RdnaImageDimension::Dim2D;
+    image.read = true;
+    ShaderInfo info;
+    info.images.assign(Capacity + 1u, image);
+    expectFailure([&] { static_cast<void>(DescriptorBindingBuilder{}.Prepare(IrBindingLayout{}, info, IrShaderStage::Compute, ResourceSnapshot{})); }, "runtime image count exceeds the static capacity (129 of 128)", "image limits: 129 runtime images were prepared");
+    std::cout << "image limits: 129 images are refused by the tracker and by the binding builder\n";
+}
+
 void verifyImageTableSrtKey() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -5568,7 +5703,16 @@ void verifyImageTableRegistration() {
     const auto atomic64Fault = atomic64Map[Abi::TableHeader(0) + Abi::TableFault];
     const auto* atomic64Table = TableBinding(*atomic64.result, DescriptorRole::ImageStorageTable);
     require((atomic64Fault & Abi::PoisonFlag) == 0u && atomic64Table != nullptr && atomic64Table->count != 0u && atomic64Table->imageAtomic64.size() == atomic64Table->count && std::all_of(atomic64Table->imageAtomic64.begin(), atomic64Table->imageAtomic64.end(), [](bool atomic) { return atomic; }), "image table registration: the image_atomic64_add table was not bound as 64-bit atomic storage elements");
-    const std::array<std::pair<std::uint32_t, const char*>, 2> unsupportedStores{{{0xf0240f08u, "image_store_mip"}, {0xf0280f08u, "image_store_pck"}}};
+    auto packedStoreCode = storeCode;
+    packedStoreCode[8] = 0xf0280f08u;
+    const auto packedStore = CompileTable(TableRequest(packedStoreCode, userData));
+    const auto& packedStorePlan = *packedStore.capture->plan;
+    require(packedStorePlan.info.images.size() == 1u && packedStorePlan.info.images[0].table == 0u && packedStorePlan.info.images[0].tableOperation == TableOperation::Supported, "image table registration: a table T# feeding image_store_pck was not a supported table operation");
+    const auto packedStoreFault = TableMap(*packedStore.result)[Abi::TableHeader(0) + Abi::TableFault];
+    const auto* packedStoreTable = TableBinding(*packedStore.result, DescriptorRole::ImageStorageTable);
+    require((packedStoreFault & Abi::PoisonFlag) == 0u && packedStoreTable != nullptr && packedStoreTable->count != 0u && std::all_of(packedStoreTable->imageWritten.begin(), packedStoreTable->imageWritten.end(), [](bool written) { return written; }), "image table registration: the image_store_pck table was not bound as written storage elements");
+    require(TableBinding(*packedStore.result, DescriptorRole::ImageTable) == nullptr || TableBinding(*packedStore.result, DescriptorRole::ImageTable)->count == 0u, "image table registration: a packed store-only table bound sampled elements");
+    const std::array<std::pair<std::uint32_t, const char*>, 1> unsupportedStores{{{0xf0240f08u, "image_store_mip"}}};
     for (const auto& [instruction, name] : unsupportedStores) {
         auto code = storeCode;
         code[8] = instruction;
@@ -6046,7 +6190,7 @@ void verifySelectedRecordDirectOperations() {
         require(word0 == 0xf0440308u || (TableBinding(*compiled.result, DescriptorRole::ImageTable) == nullptr && compiled.result->imageTableFaults == 0u && TableCovered(compiled.regions, &heap[2], sizeof(heap[2]))), (what + " through a T# whose record the CPU evaluates was not bound from its record").c_str());
         const auto wholeCode = WithImageOperation(TableWholeCode, word0, false);
         const auto whole = GetResourcePlan(TableRequest(wholeCode, userData));
-        require(whole->info.images.size() == 1u && whole->info.images[0].table == 0u && whole->info.images[0].tableOperation == (word0 == 0xf0200f08u || word0 == 0xf0440108u || word0 == 0xf0440308u ? TableOperation::Supported : TableOperation::Unsupported), (what + " through a T# keyed per lane left the image table or has the wrong table operation").c_str());
+        require(whole->info.images.size() == 1u && whole->info.images[0].table == 0u && whole->info.images[0].tableOperation == TableOperation::Supported,(what + " through a T# keyed per lane left the image table or has the wrong table operation").c_str());
     }
     const auto mixedCode = WithImageOperation(TableSrtKeyCode, 0xf0200f08u, true);
     const auto mixed = GetResourcePlan(TableRequest(mixedCode, userData));
@@ -7437,6 +7581,129 @@ void verifyNarrowVertexWave() {
     require(GetPreparedArtifact(*PrepareShader(vertex(wave32, 32u, 32u, 8u))).spirv == GetPreparedArtifact(*PrepareShader(vertex(wave32, 32u, 64u, 8u))).spirv, "narrow vertex wave: s3 of a wave32 vertex program depended on the subgroup width");
 }
 
+void verifySingleLaneCrossLaneReads() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityClipDistance};
+    struct alignas(256) Texture { std::array<std::uint8_t, 4096> bytes{}; };
+    static Texture texture;
+    const auto textureBase = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
+    const std::array<std::uint32_t, 12> userData{
+        static_cast<std::uint32_t>(textureBase >> 8u), static_cast<std::uint32_t>((textureBase >> 40u) & 0xffu) | (56u << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u,
+        0x00000092u, 0x00fff000u, 0x05500000u, 0u};
+    const auto compiled = [&userData](std::span<const std::uint32_t> code, bool vertexSubgroups) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Vertex, 0x5a000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.userDataBaseRegister = 8;
+        request.context.userData = userData;
+        request.context.vertex = ShaderVertexStageInfo{};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32u;
+        request.target.supportedCapabilities = capabilities;
+        request.target.vertexSubgroups = vertexSubgroups;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return Recompile(request).spirv.Copy();
+    };
+    const auto usesSubgroups = [](std::span<const std::uint32_t> spirv) {
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            const auto op = spirv[cursor] & 0xffffu;
+            if (op == spv::OpCapability && spirv[cursor + 1u] >= spv::CapabilityGroupNonUniform && spirv[cursor + 1u] <= spv::CapabilityGroupNonUniformQuad) return true;
+            if (op >= spv::OpGroupNonUniformElect && op <= spv::OpGroupNonUniformQuadSwap) return true;
+            if (op == spv::OpDecorate && spirv[cursor + 2u] == spv::DecorationBuiltIn && (spirv[cursor + 3u] == spv::BuiltInSubgroupLocalInvocationId || spirv[cursor + 3u] == spv::BuiltInSubgroupSize)) return true;
+        }
+        return false;
+    };
+    const auto exported = [](std::initializer_list<std::uint32_t> words) {
+        std::vector<std::uint32_t> code(words);
+        code.insert(code.end(), {0xf80008cfu, 0x01010101u, 0xbf810000u});
+        return code;
+    };
+    const std::array<std::pair<const char*, std::vector<std::uint32_t>>, 9> accepted{{
+        {"a DPP quad_perm:[0,0,2,2]", exported({0x7e0202fau, 0xff00a005u})},
+        {"a DPP row_shr:1", exported({0x7e0202fau, 0xff011105u})},
+        {"a DPP row_share:0", exported({0x7e0202fau, 0xff015005u})},
+        {"a DPP8 [0,0,0,0,4,4,4,4]", exported({0x7e0202e9u, 0x92400005u})},
+        {"ds_swizzle_b32 swizzle(BROADCAST,4,0)", exported({0xd8d4001cu, 0x01000005u})},
+        {"ds_swizzle_b32 in FFT mode at offset 0xffe0", exported({0xd8d4ffe0u, 0x01000005u})},
+        {"ds_bpermute_b32 of address 0", exported({0x7e040280u, 0xdacc0000u, 0x01000502u})},
+        {"v_permlane16_b32 with lane selects 0x76543210", exported({0xbe8003ffu, 0x76543210u, 0xd7770001u, 0x00040105u})},
+        {"image_sample_cd, whose derivatives come from the quad's first active lane", {0x7e020280u, 0x7e040280u, 0x7e060280u, 0x7e080280u, 0x7e0c0280u, 0xf1a00108u, 0x00820801u, 0xbf8c3f70u, 0xf80008cfu, 0x08080808u, 0xbf810000u}},
+    }};
+    for (const auto& [name, code] : accepted) {
+        const auto spirv = compiled(code, false);
+        require(!spirv.empty() && !usesSubgroups(spirv), (std::string("single-lane cross-lane reads: ") + name + " did not build without subgroup operations").c_str());
+    }
+    const std::array<std::tuple<const char*, std::vector<std::uint32_t>, const char*>, 17> rejected{{
+        {"a DPP quad_perm:[1,0,3,2]", exported({0x7e0202fau, 0xff00b105u}), "DPP read of lane 1 "},
+        {"a DPP row_shl:1", exported({0x7e0202fau, 0xff010105u}), "DPP read of lane 1 "},
+        {"a DPP row_ror:4", exported({0x7e0202fau, 0xff012405u}), "DPP read of lane 12 "},
+        {"a DPP row_mirror", exported({0x7e0202fau, 0xff014005u}), "DPP read of lane 15 "},
+        {"a fetch-inactive DPP row_xmask:2", exported({0x7e0202fau, 0xff056205u}), "DPP read of lane 2 "},
+        {"a DPP8 [7,6,5,4,3,2,1,0]", exported({0x7e0202e9u, 0x05397705u}), "DPP read of lane 7 "},
+        {"ds_swizzle_b32 swizzle(SWAP,1)", exported({0xd8d4041fu, 0x01000005u}), "ds_swizzle_b32 of lane 1 "},
+        {"ds_swizzle_b32 swizzle(QUAD_PERM,2,1,0,3)", exported({0xd8d480c6u, 0x01000005u}), "ds_swizzle_b32 of lane 2 "},
+        {"ds_bpermute_b32 of address 4", exported({0x7e040284u, 0xdacc0000u, 0x01000502u}), "ds_bpermute_b32 of lane 1 "},
+        {"ds_bpermute_b32 at offset 4", exported({0x7e040280u, 0xdacc0004u, 0x01000502u}), "ds_bpermute_b32 of lane 1 "},
+        {"ds_bpermute_b32 of the vertex index", exported({0xdacc0000u, 0x01000505u}), "ds_bpermute_b32 of a register-selected lane "},
+        {"ds_bpermute_b32 of the v_mbcnt lane id plus the vertex index", exported({0xd7650002u, 0x000100c1u, 0xd7660002u, 0x000204c1u, 0x4a040b02u, 0x34040482u, 0xdacc0000u, 0x01000502u}), "ds_bpermute_b32 of a register-selected lane "},
+        {"ds_bpermute_b32 of the vertex index plus 32", exported({0x4a040aa0u, 0x34040482u, 0xdacc0000u, 0x01000502u}), "ds_bpermute_b32 of a register-selected lane "},
+        {"ds_bpermute_b32 of the vertex index or 32", exported({0x38040aa0u, 0x34040482u, 0xdacc0000u, 0x01000502u}), "ds_bpermute_b32 of a register-selected lane "},
+        {"ds_bpermute_b32 of the vertex index at offset 128", exported({0x34040a82u, 0xdacc0080u, 0x01000502u}), "ds_bpermute_b32 of a register-selected lane "},
+        {"v_permlane16_b32 with lane selects 1", exported({0xbe800381u, 0xd7770001u, 0x00040105u}), "v_permlane16_b32 of lane 1 "},
+        {"v_permlane16_b32 with lane selects v_readfirstlane_b32 took from the vertex index", exported({0x7e000505u, 0xd7770001u, 0x00040105u}), "v_permlane16_b32 of a register-selected lane "},
+    }};
+    for (const auto& [name, code, reason] : rejected) {
+        expectFailure([&] { static_cast<void>(compiled(code, false)); }, (std::string(reason) + "is outside the 1-lane host subgroup").c_str(), (std::string("single-lane cross-lane reads: ") + name + " built without vertex subgroups").c_str());
+        require(!compiled(code, true).empty(), (std::string("single-lane cross-lane reads: ") + name + " did not build on a 32-lane vertex subgroup").c_str());
+    }
+    enum class FirstActiveAddress { Translated, ShiftedBy3, NextQuad };
+    const auto emitted = [](FirstActiveAddress shape) {
+        IrProgram program;
+        IrBuilder builder{program};
+        program.SetWaveSize(64);
+        program.Resources().stage = IrShaderStage::Vertex;
+        program.Resources().srtPlanComplete = true;
+        program.Resources().resourceTrackingComplete = true;
+        program.Metadata().shaderInfoComplete = true;
+        program.Metadata().bindingLayoutComplete = true;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        BlockInfo info;
+        info.id = block.Id();
+        program.Metadata().blockInfo.push_back(info);
+        builder.SetInsertionPoint(block);
+        auto& ballot = builder.Emit(IrOpcode::Ballot, IrType::U32x4, {&builder.ConstantBool(true)});
+        auto& lane = builder.Emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& quad = builder.BitwiseAnd(lane, builder.Constant(~3u));
+        auto& word = builder.Select(builder.ULessThan(lane, builder.Constant(32u)), builder.CompositeExtract(ballot, 0u), builder.CompositeExtract(ballot, 1u));
+        auto& active = builder.BitwiseAnd(builder.ShiftRightLogical(word, builder.BitwiseAnd(quad, builder.Constant(31u))), builder.Constant(15u));
+        auto& first = builder.Emit(IrOpcode::FindILsb32, IrType::U32, {&active});
+        auto& base = shape == FirstActiveAddress::NextQuad ? builder.IAdd(quad, builder.Constant(4u)) : quad;
+        auto& source = builder.Select(builder.INotEqual(active, builder.Constant(0u)), builder.IAdd(base, first), lane);
+        auto& address = builder.ShiftLeftLogical(source, builder.Constant(shape == FirstActiveAddress::ShiftedBy3 ? 3u : 2u));
+        auto& read = builder.Emit(IrOpcode::BpermuteU32, IrType::U32, {&lane, &address, &builder.ConstantBool(true)});
+        static_cast<void>(builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&read}));
+        ShaderVertexInputInfo vertex;
+        ShaderStageInputInfo inputs;
+        inputs.vertex = &vertex;
+        CompiledBindingLayout bindings;
+        bindings.layout = program.Metadata().bindings;
+        SpirvTargetOptions target{};
+        target.vulkanVersion = 0x00401000u;
+        target.spirvVersion = 0x00010300u;
+        target.subgroupSize = 1u;
+        return SpirvEmitter().Emit(program, inputs, bindings, target);
+    };
+    require(!emitted(FirstActiveAddress::Translated).empty(), "single-lane cross-lane reads: the image_sample_*_cd address did not build in a one-lane IR program");
+    const std::array<std::pair<FirstActiveAddress, const char*>, 2> addresses{{{FirstActiveAddress::ShiftedBy3, "the quad's first active lane shifted left by 3"}, {FirstActiveAddress::NextQuad, "the next quad's first active lane"}}};
+    for (const auto& [shape, name] : addresses) {
+        expectFailure([&] { static_cast<void>(emitted(shape)); }, "ds_bpermute_b32 of a register-selected lane is outside the 1-lane host subgroup", (std::string("single-lane cross-lane reads: ds_bpermute_b32 of ") + name + " built in a one-lane IR program").c_str());
+    }
+}
+
 void verifySingleLaneVertexWave() {
     using namespace ShaderRecompiler;
     static constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityClipDistance};
@@ -7480,13 +7747,19 @@ void verifySingleLaneVertexWave() {
     };
     static constexpr std::array<std::uint32_t, 11> waterfall{0xbe80047eu, 0xbe821400u, 0xd7600003u, 0x00000500u, 0xbe801c02u, 0xbf138000u, 0xbf85fffau, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
     static constexpr std::array<std::uint32_t, 6> lane31{0xd7600006u, 0x00013f00u, 0x7e020206u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 12> comparedWaterfall{0x7d880a84u, 0x87806a7eu, 0xbe821400u, 0xd7600003u, 0x00000505u, 0xbe801c02u, 0xbf138000u, 0xbf85fffau, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 11> everyLaneWaterfall{0xbe8004c1u, 0xbe821400u, 0xd7600003u, 0x00000505u, 0xbe801c02u, 0xbf138000u, 0xbf85fffau, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 7> selectedLane{0x7e040505u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 13> guardedWaterfall{0x7d880a84u, 0x87806a7eu, 0xbf840006u, 0xbe821400u, 0xd7600003u, 0x00000505u, 0xbe801c02u, 0xbf138000u, 0xbf85fffau, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 7> execLane{0xbe82137eu, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 10> conditionalLane{0xbe82137eu, 0x7e080505u, 0xbf068004u, 0x8502c102u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
 
     const auto single = compiled(waveInfo, 32u, false);
     const auto wide = compiled(waveInfo, 64u, true);
     require(hasConstant(single, 0x0101u) && !hasConstant(single, 0x4040u) && !hasConstant(single, 0x2020u), "single-lane vertex wave: s3 of a vertex program without vertex subgroups was not one vertex and one primitive");
     require(hasConstant(wide, 0x4040u) && !hasConstant(wide, 0x0101u), "single-lane vertex wave: s3 of a vertex program with vertex subgroups on 64 lanes changed");
     require(single == compiled(waveInfo, 4u, false), "single-lane vertex wave: the program without vertex subgroups depended on the device subgroup size");
-    for (const auto code : {std::span<const std::uint32_t>(laneOps), std::span<const std::uint32_t>(waterfall)}) {
+    for (const auto code : {std::span<const std::uint32_t>(laneOps), std::span<const std::uint32_t>(waterfall), std::span<const std::uint32_t>(guardedWaterfall), std::span<const std::uint32_t>(execLane)}) {
         const auto withSubgroups = compiled(code, 32u, true);
         const auto withoutSubgroups = compiled(code, 32u, false);
         require(usesSubgroups(withSubgroups), "single-lane vertex wave: the program did not use subgroup operations with vertex subgroups");
@@ -7494,6 +7767,44 @@ void verifySingleLaneVertexWave() {
     }
     expectFailure([&] { static_cast<void>(compiled(lane31, 32u, false)); }, "v_readlane_b32 of lane 31 is outside the 1-lane host subgroup", "single-lane vertex wave: a vertex program without vertex subgroups read lane 31");
     require(!compiled(lane31, 32u, true).empty(), "single-lane vertex wave: lane 31 of a 32-lane vertex subgroup did not build");
+    const char* registerLane = "v_readlane_b32 of a register-selected lane is outside the 1-lane host subgroup";
+    expectFailure([&] { static_cast<void>(compiled(selectedLane, 32u, false)); }, registerLane, "single-lane vertex wave: a vertex program without vertex subgroups read the lane v_readfirstlane_b32 took from the vertex index");
+    expectFailure([&] { static_cast<void>(compiled(everyLaneWaterfall, 32u, false)); }, registerLane, "single-lane vertex wave: a vertex program without vertex subgroups ran an s_ff1 waterfall over every lane instead of the exec mask");
+    expectFailure([&] { static_cast<void>(compiled(comparedWaterfall, 32u, false)); }, registerLane, "single-lane vertex wave: a vertex program without vertex subgroups entered an s_ff1 waterfall over a compare result that can be empty, which reads lane 63");
+    expectFailure([&] { static_cast<void>(compiled(conditionalLane, 32u, false)); }, registerLane, "single-lane vertex wave: a vertex program without vertex subgroups read the lane s_cselect_b32 took from s_ff1_i32_b32 of EXEC or -1 on a test of the vertex index");
+    require(!compiled(selectedLane, 32u, true).empty(), "single-lane vertex wave: the lane v_readfirstlane_b32 took from the vertex index did not build on a 32-lane vertex subgroup");
+    const auto firstLaneRead = [](std::initializer_list<std::uint32_t> mask, bool guarded) {
+        std::vector<std::uint32_t> code(mask);
+        if (guarded) code.insert(code.end(), {0xbf078000u, 0xbf840003u});
+        code.insert(code.end(), {0xbe821300u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u});
+        return code;
+    };
+    const std::array<std::pair<const char*, std::vector<std::uint32_t>>, 3> ownMasks{{
+        {"a compare result tested for zero before s_ff1_i32_b32", firstLaneRead({0x7d880a84u, 0xbe80036au}, true)},
+        {"a copy of EXEC", firstLaneRead({0xbe80037eu}, false)},
+        {"a copy of EXEC ORed with a compare result", firstLaneRead({0x7d880a84u, 0xbe87036au, 0xbe86037eu, 0x88000706u}, false)},
+    }};
+    for (const auto& [name, code] : ownMasks) {
+        const auto spirv = compiled(code, 32u, false);
+        require(!spirv.empty() && !usesSubgroups(spirv), (std::string("single-lane vertex wave: the lane s_ff1 took from ") + name + " did not build without subgroup operations").c_str());
+    }
+    const std::array<std::pair<const char*, std::vector<std::uint32_t>>, 12> otherMasks{{
+        {"an AND of two words v_readfirstlane_b32 took from the vertex index, tested for zero", firstLaneRead({0x7e080505u, 0x80058104u, 0x87000504u}, true)},
+        {"a copy of EXEC ORed with a word v_readfirstlane_b32 took from the vertex index, tested for zero", firstLaneRead({0x7e080505u, 0xbe86037eu, 0x88000406u}, true)},
+        {"a copy of EXEC XORed with a word v_readfirstlane_b32 took from the vertex index, tested for zero", firstLaneRead({0x7e080505u, 0xbe86037eu, 0x89000406u}, true)},
+        {"an s_cselect_b32 of a copy of EXEC or a word v_readfirstlane_b32 took from the vertex index, tested for zero", firstLaneRead({0x7e080505u, 0xbe86037eu, 0xbf068004u, 0x85000406u}, true)},
+        {"a copy of EXEC ANDed with a word v_readfirstlane_b32 took from the vertex index", firstLaneRead({0x7e080505u, 0xbe86037eu, 0x87000406u}, false)},
+        {"an s_cselect_b32 of a copy of EXEC or 0", firstLaneRead({0x7e080505u, 0xbe86037eu, 0xbf068004u, 0x85008006u}, false)},
+        {"an OR of two compare results", firstLaneRead({0x7d880a84u, 0xbe87036au, 0x7d880a88u, 0xbe88036au, 0x88000807u}, false)},
+        {"a compare result in the low word and EXEC in the high word, tested for zero by s_cmp_lg_u64", {0x7d880a84u, 0xbe80036au, 0xbe81037eu, 0xbf138000u, 0xbf840003u, 0xbe821400u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u}},
+        {"a compare result in the low word and EXEC in the high word, tested for zero by the SCC of s_and_b64", {0x7d880a84u, 0xbe82036au, 0xbe83037eu, 0x87800202u, 0xbf840003u, 0xbe821400u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u}},
+        {"a compare result read only when s_cmp_lg_u32 found it zero", {0x7d880a84u, 0xbe80036au, 0xbf078000u, 0xbf850003u, 0xbe821300u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u}},
+        {"a copy of EXEC behind an s_cselect_b32 on s_cmp_lg_u32 of a word v_readfirstlane_b32 took from the vertex index", {0x7e080505u, 0xbe80037eu, 0xbe821300u, 0xbf078004u, 0x8502c102u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u}},
+        {"a copy of EXEC behind an s_cselect_b32 on s_cmp_eq_u32 of that copy and 0", {0xbe80037eu, 0xbe821300u, 0xbf068000u, 0x8502c102u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u}},
+    }};
+    for (const auto& [name, code] : otherMasks) {
+        expectFailure([&] { static_cast<void>(compiled(code, 32u, false)); }, registerLane, (std::string("single-lane vertex wave: the lane s_ff1 took from ") + name + " was accepted").c_str());
+    }
 
     ShaderPixelStageInfo info{};
     info.inputAddr = PixelInputBit(PixelInput::PerspectiveCenter);
@@ -7640,6 +7951,7 @@ void verifySingleLaneDomainWave() {
     };
     static constexpr std::array<std::uint32_t, 11> waterfall{0xbe80047eu, 0xbe821400u, 0xd7600003u, 0x00000505u, 0xbe801c02u, 0xbf138000u, 0xbf85fffau, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
     static constexpr std::array<std::uint32_t, 6> lane31{0xd7600006u, 0x00013f05u, 0x7e020206u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 7> selectedLane{0x7e040505u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
 
     for (const auto code : {std::span<const std::uint32_t>(laneOps), std::span<const std::uint32_t>(waterfall)}) {
         const auto withSubgroups = compiled(code, 32u, true);
@@ -7657,6 +7969,8 @@ void verifySingleLaneDomainWave() {
     }
     expectFailure([&] { static_cast<void>(compiled(lane31, 32u, false)); }, "v_readlane_b32 of lane 31 is outside the 1-lane host subgroup", "single-lane domain wave: a domain program without tessellation evaluation subgroups read lane 31");
     require(!compiled(lane31, 32u, true).empty(), "single-lane domain wave: lane 31 of a 32-lane tessellation evaluation subgroup did not build");
+    expectFailure([&] { static_cast<void>(compiled(selectedLane, 32u, false)); }, "v_readlane_b32 of a register-selected lane is outside the 1-lane host subgroup", "single-lane domain wave: a domain program without tessellation evaluation subgroups read the lane v_readfirstlane_b32 took from v5");
+    require(!compiled(selectedLane, 32u, true).empty(), "single-lane domain wave: the lane v_readfirstlane_b32 took from v5 did not build on a 32-lane tessellation evaluation subgroup");
 
     auto request = domain(laneOps, 32u, false);
     const auto replay = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(request));
@@ -8074,7 +8388,7 @@ void verifyPixelRequestSerialization() {
     pixel.stencilRefExportEnable = true;
     pixel.ditheredAlphaToCoverage = true;
     pixel.reversedBlend = 0x570001u;
-    pixel.targetMerges = {{1u, 0x0ff0u, 1u, {0x100u, 0x2u, 0x3u, 0x4u, 0x5u, 0x6u, 0x7u, 0x8u}}};
+    pixel.targetMerges = {{.target = 1u, .mask = 0x0ff0u, .samples = 1u, .descriptor = {0x100u, 0x2u, 0x3u, 0x4u, 0x5u, 0x6u, 0x7u, 0x8u}}};
     const std::array<std::array<std::uint8_t, 8>, 3> mappings{{
         {0x00u, 0xe4u, 0xc6u, 0x1bu, 0xffu, 0x80u, 0x55u, 0xaau},
         {0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u},
@@ -8140,7 +8454,7 @@ void verifyPixelRequestSerialization() {
             require(blendKey != replayKey, "a field of the unclamped color target blend did not change the static shader identity");
         }
         auto second = blending;
-        second.context.pixel->targetMerges.push_back({3u, 0xffffu, 1u, {0x300u}, false, false, {true, false, 4u, 5u, 0u, 4u, 5u, 0u, 0xfu, {}}});
+        second.context.pixel->targetMerges.push_back({.target = 3u, .mask = 0xffffu, .samples = 1u, .descriptor = {0x300u}, .depthStencilWrites = false, .depthStencilTests = false, .blend = {true, false, 4u, 5u, 0u, 4u, 5u, 0u, 0xfu, {}}});
         RecompileCacheKey::Build(second, replayKey);
         const auto secondKey = replayKey;
         require(secondKey != blendKey && RecompileCacheKey::ContextHash(second) != RecompileCacheKey::ContextHash(blending), "a second merged target did not change the static shader identity");
@@ -8194,7 +8508,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTYAAAA=", "new requests did not use serialization version 54");
+    require(requestPrefix(encoded, 8u) == "NVNQQTkAAAA=", "new requests did not use serialization version 57");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -8315,7 +8629,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTcAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -8369,6 +8683,13 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
             bytes.push_back(static_cast<std::uint8_t>((chunk >> bits) & 0xffu));
         }
     }
+    return bytes;
+}
+
+std::vector<std::uint8_t> version56Bytes(std::vector<std::uint8_t> bytes) {
+    require(bytes.size() > 13u && bytes[4] == 57u, "a legacy fixture did not start from serialization version 57");
+    bytes.resize(bytes.size() - 5u);
+    bytes[4] = 56u;
     return bytes;
 }
 
@@ -8434,10 +8755,26 @@ void verifyDepthExportClamp() {
         const auto both = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(tail));
         require(both.request.target.largePixelFunctionLdsBuffer && both.request.target.pixelFunctionStorageDwords == 2048u &&
                     both.request.context.pixel->depthExportMin == 0.25f && both.request.context.pixel->depthExportMax == 0.75f,
-            "depth export: a version 54 request lost the bounds or the version 45 target tail");
-        auto bytes = decodeBase64(RequestSerializer{}.Serialize(tail));
-        require(bytes.size() > 8u && bytes[4] == 54u, "depth export: a depth exporting request did not use serialization version 54");
+            "depth export: a version 55 request lost the bounds or the version 45 target tail");
+        auto bytes = version56Bytes(decodeBase64(RequestSerializer{}.Serialize(tail)));
+        require(bytes.size() > 8u && bytes[4] == 56u, "depth export: a depth exporting request did not use serialization version 56");
+        const auto eraseVersion55MergeFields = [](std::vector<std::uint8_t>& serialized, RecompileRequest marked) {
+            static constexpr std::array<std::uint8_t, 4> marker{0xefu, 0xcdu, 0xabu, 0x89u};
+            marked.context.pixel->targetMerges.assign(1u, {});
+            marked.context.pixel->targetMerges.front().descriptor[7] = 0x89abcdefu;
+            const auto markedBytes = version56Bytes(decodeBase64(RequestSerializer{}.Serialize(marked)));
+            const auto descriptorEnd = std::search(markedBytes.begin(), markedBytes.end(), marker.begin(), marker.end()) - markedBytes.begin() + 4;
+            const auto fields = serialized.begin() + descriptorEnd + 2;
+            require(markedBytes.size() == serialized.size() && serialized.end() - fields > 15 && std::all_of(fields, fields + 15, [](std::uint8_t value) { return value == 0u; }), "the version 55 color target merge fields do not follow the merge's depth and stencil flags");
+            serialized.erase(fields, fields + 15);
+        };
+        eraseVersion55MergeFields(bytes, tail);
         static constexpr std::array<std::uint8_t, 8> boundBytes{0x00u, 0x00u, 0x80u, 0x3eu, 0x00u, 0x00u, 0x40u, 0x3fu};
+        auto version49 = bytes;
+        version49.resize(version49.size() - 5u);
+        version49[4] = 49u;
+        const auto replay49 = RequestSerializer{}.Deserialize(encodeBase64(version49));
+        require(replay49.request.context.pixel->depthExportMin == 0.25f && replay49.request.context.pixel->depthExportMax == 0.75f && replay49.request.target.pixelFunctionStorageDwords == 2048u, "depth export: a version 49 request lost the bounds or the version 45 target tail");
         const auto found = std::search(bytes.begin(), bytes.end(), boundBytes.begin(), boundBytes.end());
         require(found != bytes.end() && std::search(found + 1, bytes.end(), boundBytes.begin(), boundBytes.end()) == bytes.end(),
             "depth export: the clamp bounds were not written exactly once");
@@ -8465,8 +8802,9 @@ void verifyDepthExportClamp() {
             ditheredPixel.ditheredAlphaToCoverage = true;
             ditheredPixel.ditheredAlphaSamples = 2u;
             dithered.context.pixel = ditheredPixel;
-            auto ditheredBytes = decodeBase64(RequestSerializer{}.Serialize(dithered));
-            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 54u, "a two-sample dithered request did not use serialization version 54");
+            auto ditheredBytes = version56Bytes(decodeBase64(RequestSerializer{}.Serialize(dithered)));
+            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 56u, "a two-sample dithered request did not use serialization version 56");
+            eraseVersion55MergeFields(ditheredBytes, dithered);
             if (depthExport) {
                 const auto bounds = std::search(ditheredBytes.begin(), ditheredBytes.end(), boundBytes.begin(), boundBytes.end());
                 require(bounds != ditheredBytes.end(), "a two-sample dithered depth exporting request lacks the clamp bounds");
@@ -8541,7 +8879,7 @@ void verifyVertexInfoVersion19() {
     while (offset < plain.size() && plain[offset] == flagged[offset]) ++offset;
     require(offset + 4u <= plain.size() && flagged[offset] == 0xefu && flagged[offset + 1u] == 0xcdu && flagged[offset + 2u] == 0xabu && flagged[offset + 3u] == 0x89u, "PA_CL_VS_OUT_CNTL is not the four bytes the version 20 vertex info adds");
     require(std::equal(plain.begin() + offset + 4u, plain.end(), flagged.begin() + offset + 4u), "PA_CL_VS_OUT_CNTL moved the fields after it");
-    auto version20Vertex = flagged;
+    auto version20Vertex = version56Bytes(flagged);
     version20Vertex.pop_back();
     version20Vertex.pop_back();
     version20Vertex.pop_back();
@@ -8559,7 +8897,7 @@ void verifyVertexInfoVersion19() {
     vertex.context.vertex->paClVsOutCntl = (1u << 18u) | (1u << 21u) | 0xfu;
     const auto layered = serializer.Deserialize(serializer.Serialize(vertex));
     require(layered.request.context.vertex.has_value() && layered.request.context.vertex->paClVsOutCntl == vertex.context.vertex->paClVsOutCntl, "a layered vertex info lost its clip distances or render target index");
-    auto legacy = plain;
+    auto legacy = version56Bytes(plain);
     legacy.pop_back();
     legacy.pop_back();
     legacy.pop_back();
@@ -8607,26 +8945,71 @@ void verifyVertexInfoVersion19() {
     require(blendOffset == allBitsOffset + 18u, "the reversed-order blend code is not serialized after the front-face all-bits flag, quad pixel mask and quad sample masks");
     constexpr std::size_t iterationBytes = 35u;
     constexpr std::size_t sampleOrderBytes = 16u;
-    constexpr std::size_t mergeBytes = 40u;
+    constexpr std::size_t mergeBytes = 55u;
     constexpr std::size_t sampleMaskBytes = 16u;
     const auto orderOffset = blendOffset + 4u + iterationBytes;
     const auto mergeOffset = static_cast<std::ptrdiff_t>(orderOffset + sampleOrderBytes);
     auto merging = pixel;
-    merging.context.pixel->targetMerges = {{3u, 0xf00fu, 2u, {1u, 2u, 3u, 4u, 5u, 6u, 7u, 0x89abcdefu}, true, true}};
+    merging.context.pixel->targetMerges = {{.target = 3u, .mask = 0xf00fu, .samples = 2u, .packing = ColorExportPacking::Float11_11_10, .blendControl = 0x20010001u, .layered = true, .firstSlice = 2u, .lastSlice = 0x105u, .descriptor = {1u, 2u, 3u, 4u, 5u, 6u, 7u, 0x89abcdefu}, .depthStencilWrites = true, .depthStencilTests = true}};
     const auto mergingBytes = decodeBase64(serializer.Serialize(merging));
-    require(mergingBytes.size() == plainPixel.size() && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, mergingBytes.begin()) && mergingBytes[mergeOffset] == 3u && mergingBytes[mergeOffset + 1] == 0x0fu && mergingBytes[mergeOffset + 2] == 0xf0u && mergingBytes[mergeOffset + 5] == 2u && mergingBytes[mergeOffset + 6] == 1u && mergingBytes[mergeOffset + 34] == 0xefu && mergingBytes[mergeOffset + 37] == 0x89u && mergingBytes[mergeOffset + 38] == 1u && mergingBytes[mergeOffset + 39] == 1u && std::equal(plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), plainPixel.end(), mergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes)), "the color target merge is not the 40 bytes the version 46 pixel info adds after the sample order");
+    require(mergingBytes.size() == plainPixel.size() && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, mergingBytes.begin()) && mergingBytes[mergeOffset] == 3u && mergingBytes[mergeOffset + 1] == 0x0fu && mergingBytes[mergeOffset + 2] == 0xf0u && mergingBytes[mergeOffset + 5] == 2u && mergingBytes[mergeOffset + 6] == 1u && mergingBytes[mergeOffset + 34] == 0xefu && mergingBytes[mergeOffset + 37] == 0x89u && mergingBytes[mergeOffset + 38] == 1u && mergingBytes[mergeOffset + 39] == 1u && mergingBytes[mergeOffset + 40] == 0u && mergingBytes[mergeOffset + 41] == static_cast<std::uint8_t>(ColorExportPacking::Float11_11_10) && mergingBytes[mergeOffset + 42] == 0x01u && mergingBytes[mergeOffset + 45] == 0x20u && mergingBytes[mergeOffset + 46] == 1u && mergingBytes[mergeOffset + 47] == 2u && mergingBytes[mergeOffset + 51] == 0x05u && mergingBytes[mergeOffset + 52] == 0x01u && std::equal(plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), plainPixel.end(), mergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes)), "the color target merge is not the 55 bytes the version 54 pixel info adds after the sample order");
     require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerges == merging.context.pixel->targetMerges, "a serialized request lost its color target merge");
+    auto version54 = mergingBytes;
+    version54.resize(version54.size() - 5u);
+    version54.erase(version54.begin() + mergeOffset + 40, version54.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
+    version54[4] = 54u;
+    auto version53 = version54;
+    version53.resize(version53.size() - 2u);
+    version53[4] = 53u;
+    auto version49 = version53;
+    version49.resize(version49.size() - 3u);
+    version49[4] = 49u;
+    auto mergeAt49 = merging.context.pixel->targetMerges.front();
+    mergeAt49.packing = ColorExportPacking::Unorm4_4_4_4;
+    mergeAt49.blendControl = 0u;
+    mergeAt49.layered = false;
+    mergeAt49.firstSlice = 0u;
+    mergeAt49.lastSlice = 0u;
+    require(serializer.Deserialize(encodeBase64(version49)).request.context.pixel->targetMerges == std::vector{mergeAt49}, "a version 49 color target merge was not read as a single-slice 4_4_4_4 merge without blending");
+    require(serializer.Deserialize(encodeBase64(version54)).request.context.pixel->targetMerges == std::vector{mergeAt49}, "a version 54 color target merge, as main writes it, was not read as a single-slice 4_4_4_4 merge without blending");
+    require(serializer.Deserialize(encodeBase64(version53)).request.context.pixel->targetMerges == std::vector{mergeAt49}, "a version 53 color target merge, as main writes it, was not read as a single-slice 4_4_4_4 merge without blending");
+    version49[static_cast<std::size_t>(mergeOffset) + 4u] = 1u;
+    expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(version49))); }, "target merge mask", "a version 49 color target merge word with a bit above the blend flag and the further merge count was accepted");
+    auto wideMerging = merging;
+    wideMerging.context.pixel->targetMerges.front().mask = 0xffe003ffu;
+    require(serializer.Deserialize(serializer.Serialize(wideMerging)).request.context.pixel->targetMerges == wideMerging.context.pixel->targetMerges, "a version 55 color target merge lost the upper half of its 32-bit mask");
     auto blendMerging = pixel;
-    blendMerging.context.pixel->targetMerges = {{1u, 0xffffu, 1u, {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}, true, false, {true, true, 6u, 7u, 1u, 1u, 0u, 4u, 0xbu, {0x3fc00000u, 0xbe800000u, 0x3f000000u, 0x40000000u}}}};
+    blendMerging.context.pixel->targetMerges = {{.target = 1u, .mask = 0xffffu, .samples = 1u, .descriptor = {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}, .depthStencilWrites = true, .depthStencilTests = false, .blend = {true, true, 6u, 7u, 1u, 1u, 0u, 4u, 0xbu, {0x3fc00000u, 0xbe800000u, 0x3f000000u, 0x40000000u}}}};
     const auto blendMergingBytes = decodeBase64(serializer.Serialize(blendMerging));
     constexpr std::size_t blendPayloadBytes = 24u;
-    require(blendMergingBytes.size() == plainPixel.size() + blendPayloadBytes && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, blendMergingBytes.begin()) && blendMergingBytes[mergeOffset] == 1u && blendMergingBytes[mergeOffset + 1] == 0xffu && blendMergingBytes[mergeOffset + 2] == 0xffu && blendMergingBytes[mergeOffset + 3] == 0x01u && blendMergingBytes[mergeOffset + 4] == 0x00u, "a color target blend is not flagged in the merge mask word, or changed the bytes before the merge");
+    require(blendMergingBytes.size() == plainPixel.size() + blendPayloadBytes && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, blendMergingBytes.begin()) && blendMergingBytes[mergeOffset] == 1u && blendMergingBytes[mergeOffset + 1] == 0xffu && blendMergingBytes[mergeOffset + 2] == 0xffu && blendMergingBytes[mergeOffset + 3] == 0u && blendMergingBytes[mergeOffset + 4] == 0u && blendMergingBytes[mergeOffset + 40] == 1u && blendMergingBytes[mergeOffset + 41] == 1u, "a color target blend is not flagged after the merge's depth and stencil flags, or changed the bytes before the merge");
     require(serializer.Deserialize(serializer.Serialize(blendMerging)).request.context.pixel->targetMerges == blendMerging.context.pixel->targetMerges, "a serialized request lost its color target blend");
+    const auto blendRecordToVersion49 = [&](std::vector<std::uint8_t>& bytes, std::ptrdiff_t record) {
+        const auto at = bytes.begin() + record;
+        const auto flags = at[40];
+        bytes.erase(at + 41 + static_cast<std::ptrdiff_t>(blendPayloadBytes), at + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes));
+        bytes.erase(at + 40);
+        at[3] = flags;
+    };
+    auto blendVersion49 = blendMergingBytes;
+    blendVersion49.resize(blendVersion49.size() - 5u);
+    blendRecordToVersion49(blendVersion49, mergeOffset);
+    blendVersion49.resize(blendVersion49.size() - 5u);
+    blendVersion49[4] = 49u;
+    require(serializer.Deserialize(encodeBase64(blendVersion49)).request.context.pixel->targetMerges == blendMerging.context.pixel->targetMerges, "a version 49 color target blend flagged in the merge mask word was not read as an unpacked blend");
     auto twoMerging = blendMerging;
-    twoMerging.context.pixel->targetMerges.push_back({3u, 0xffffu, 1u, {9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u}, true, false, {true, false, 4u, 5u, 0u, 4u, 5u, 0u, 0x3u, {}}});
+    twoMerging.context.pixel->targetMerges.push_back({.target = 3u, .mask = 0xffffu, .samples = 1u, .descriptor = {9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u}, .depthStencilWrites = true, .depthStencilTests = false, .blend = {true, false, 4u, 5u, 0u, 4u, 5u, 0u, 0x3u, {}}});
     const auto twoMergingBytes = decodeBase64(serializer.Serialize(twoMerging));
-    require(twoMergingBytes.size() == blendMergingBytes.size() + mergeBytes + blendPayloadBytes && twoMergingBytes[mergeOffset + 3] == 0x03u && std::equal(blendMergingBytes.begin() + mergeOffset + 4, blendMergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes), twoMergingBytes.begin() + mergeOffset + 4), "a second color target merge did not follow the first, counted in the first merge word");
+    const auto twoMergingFlags = mergeOffset + 40;
+    require(twoMergingBytes.size() == blendMergingBytes.size() + mergeBytes + blendPayloadBytes && twoMergingBytes[static_cast<std::size_t>(twoMergingFlags)] == 0x03u && std::equal(blendMergingBytes.begin() + mergeOffset, blendMergingBytes.begin() + twoMergingFlags, twoMergingBytes.begin() + mergeOffset) && std::equal(blendMergingBytes.begin() + twoMergingFlags + 1, blendMergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes), twoMergingBytes.begin() + twoMergingFlags + 1), "a second color target merge did not follow the first, counted in the first merge's flags");
     require(serializer.Deserialize(serializer.Serialize(twoMerging)).request.context.pixel->targetMerges == twoMerging.context.pixel->targetMerges, "a serialized request lost its second color target merge");
+    auto twoVersion49 = twoMergingBytes;
+    twoVersion49.resize(twoVersion49.size() - 5u);
+    blendRecordToVersion49(twoVersion49, mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes));
+    blendRecordToVersion49(twoVersion49, mergeOffset);
+    twoVersion49.resize(twoVersion49.size() - 5u);
+    twoVersion49[4] = 49u;
+    require(serializer.Deserialize(encodeBase64(twoVersion49)).request.context.pixel->targetMerges == twoMerging.context.pixel->targetMerges, "a version 49 request with a second color target merge counted in the first merge word was not read as two unpacked blends");
     auto unmasked = twoMergingBytes;
     const auto secondMask = mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes) + 1;
     unmasked[secondMask] = unmasked[secondMask + 1] = 0u;
@@ -8639,6 +9022,7 @@ void verifyVertexInfoVersion19() {
     require(serializer.Serialize(disabledBlend) == serializer.Serialize(merging), "a disabled color target blend changed the serialized request");
     // A version 43 request: no color target merge, and no fused arithmetic flag, pixel function LDS flag, storage size, barycentric built-ins flag, host interpolation first flag or shader image minimum LOD flag at the end.
     const auto version43Bytes = [&](std::vector<std::uint8_t> bytes) {
+        bytes = version56Bytes(std::move(bytes));
         require(bytes.end() - bytes.begin() > mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes) && std::equal(plainPixel.begin() + mergeOffset, plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), bytes.begin() + mergeOffset), "a replay fixture does not hold the default color target merge after the sample order");
         bytes.erase(bytes.begin() + mergeOffset, bytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
         bytes.resize(bytes.size() - sizeof(std::uint32_t) - 8u);
@@ -8800,8 +9184,8 @@ void verifyDepthRemapRequests() {
     require(replay.request.target.depthRangeRemap && replay.request.context.vertex.has_value() && replay.request.context.vertex->paClVsOutCntl == 0x89abcdefu, "the depth remap target flag or the vertex info did not round-trip");
     require(replay.request.context.vertex->depthRemapMode == 2u, "the depth remap mode did not round-trip");
     require(serializer.Serialize(replay.request) == remapped, "the depth remap request changed on re-serialization");
-    const auto plainBytes = decodeBase64(plain);
-    const auto remappedBytes = decodeBase64(remapped);
+    const auto plainBytes = version56Bytes(decodeBase64(plain));
+    const auto remappedBytes = version56Bytes(decodeBase64(remapped));
     constexpr std::size_t pointTailBytes = 13u;
     require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 19u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 19 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 12 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 12 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size, the barycentric built-in flag, the tessellation evaluation subgroup flag, the host interpolation first flag, the shader image minimum LOD flag and the f16 conversion NaN flags of a vertex request");
     for (const std::uint8_t legacyVersion : {32u, 34u}) {
@@ -8879,8 +9263,8 @@ void verifyMergedHullConfiguration() {
     require(replay.request.graphics.has_value() && replay.request.graphics->tessellation.has_value() && replay.request.graphics->tessellation->mergedHull, "a merged hull configuration was lost in serialization");
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
-    auto legacy = decodeBase64(merged);
-    require(legacy.size() > 60u + pointTailBytes && legacy[4] == 54u, "a merged hull request did not use serialization version 54");
+    auto legacy = version56Bytes(decodeBase64(merged));
+    require(legacy.size() > 60u + pointTailBytes && legacy[4] == 56u, "a merged hull request did not use serialization version 56");
     legacy.resize(legacy.size() - sizeof(std::uint32_t) - 7u - pointTailBytes);
     legacy.pop_back();
     legacy.pop_back();
@@ -11190,27 +11574,60 @@ void verifyFmaskImageMode() {
         require(expanded != selected && modes[expanded].numericClass == IrTextureNumericClass::Uint && modes[expanded].conversionFormat == FmaskExpansion && modes[expanded].dimension == RdnaImageDimension::Dim2D, "an FMASK format of up to 8 samples did not select the FMASK expansion mode");
     }
     require(std::ranges::count_if(modes, [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; }) == 1, "FMASK expansion needs exactly one runtime image mode");
-    for (const auto format : {161u, 166u}) {
-        descriptor.dwords[1] = format << 20u;
-        descriptor.dwords[3] = 0x91800005u;
-        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK destination channel selector is not implemented", "an FMASK load selecting Y was accepted");
-    }
-    descriptor.dwords[3] = 0x91800004u;
-    for (const auto format : {162u, 164u, 167u, 168u}) {
-        descriptor.dwords[1] = format << 20u;
-        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK format is not implemented", "an unsupported FMASK format was accepted");
-    }
+    descriptor.dwords[1] = 159u << 20u;
+    descriptor.dwords[6] = (1u << 21u) | (1u << 24u);
+    require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].numericClass == IrTextureNumericClass::Uint, "a two-fragment CMASK FMASK did not select a bound integer image mode");
     descriptor.dwords[1] = 166u << 20u;
-    for (const auto compression : {1u << 20u, 1u << 21u}) {
-        descriptor.dwords[6] = compression;
-        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK CMASK compression is not implemented", "compressed FMASK was accepted without decoding its metadata");
-    }
+    descriptor.dwords[6] = 1u << 21u;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK CMASK compression is not implemented", "compressed FMASK was accepted without readable metadata");
     descriptor.dwords[6] = 0u;
-    image.packed = true;
-    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "packed FMASK image reads are not implemented", "packed FMASK was accepted");
-    image.packed = false;
     image.fmaskCompatible = false;
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK requires a direct 32-bit image load", "an incompatible FMASK operation was accepted");
+}
+
+void verifyPixelQuadPermReads() {
+    using namespace ShaderRecompiler;
+    constexpr std::array<std::uint32_t, 6> shuffleCapabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
+    constexpr std::array<std::uint32_t, 7> quadCapabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityGroupNonUniformQuad};
+    constexpr std::array<std::uint32_t, 6> quadPerm{0xbefe0ac1u, 0x7e0202fau, 0xff00b100u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    constexpr std::array<std::uint32_t, 6> quadPermRowMask{0xbefe0ac1u, 0x7e0202fau, 0x5f00b100u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    constexpr std::array<std::uint32_t, 6> rowShift{0xbefe0ac1u, 0x7e0202fau, 0xff011100u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    const auto compile = [&](std::span<const std::uint32_t> code, bool quad) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Fragment, 0x58000u, code, 0, {}};
+        request.context.waveSize = 32u;
+        request.context.pixel = ShaderPixelStageInfo{};
+        request.context.pixel->inputAddr = PixelInputBit(PixelInput::PositionX);
+        request.context.pixel->posX = true;
+        request.context.pixel->quadPixelMask = 0xfu;
+        request.context.pixel->targetOutputMode[0] = 9u;
+        request.context.pixel->targetExportMapping.fill(0xe4u);
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32u;
+        request.target.supportedCapabilities = quad ? std::span<const std::uint32_t>(quadCapabilities) : std::span<const std::uint32_t>(shuffleCapabilities);
+        request.layout.pushConstantSizeBytes = 128u;
+        request.useCache = false;
+        return Recompile(request);
+    };
+    const auto declares = [](const RecompileResult& result, spv::Op opcode) {
+        const auto& words = result.spirv.Words();
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "quad perm: truncated SPIR-V instruction");
+            if ((words[cursor] & 0xffffu) == static_cast<std::uint32_t>(opcode)) return true;
+            cursor += count;
+        }
+        return false;
+    };
+    for (const auto code : {std::span<const std::uint32_t>(quadPerm), std::span<const std::uint32_t>(quadPermRowMask)}) {
+        const auto quad = compile(code, true);
+        require(declares(quad, spv::OpGroupNonUniformQuadBroadcast) && !declares(quad, spv::OpGroupNonUniformShuffle), "a pixel quad_perm read did not go through quad operations");
+        const auto shuffle = compile(code, false);
+        require(declares(shuffle, spv::OpGroupNonUniformShuffle) && !declares(shuffle, spv::OpGroupNonUniformQuadBroadcast), "a pixel quad_perm read without quad operations did not keep its shuffle");
+    }
+    const auto shifted = compile(rowShift, true);
+    require(declares(shifted, spv::OpGroupNonUniformShuffle) && !declares(shifted, spv::OpGroupNonUniformQuadBroadcast), "a pixel row shift read went through quad operations");
 }
 
 void verifyCubeDepthCompareMode() {
@@ -11765,6 +12182,12 @@ int main(int argc, char** argv) {
             std::cout << "Sampler limits passed\n";
             return 0;
         }
+        for (const std::string_view part : {"table", "mixed", "refusals"}) {
+            if (argc != 2 || std::string_view(argv[1]) != "--image-limits-" + std::string(part)) continue;
+            verifyImageLimits(part);
+            std::cout << "Image limits (" << part << ") passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {
             verifyUniformVectorComponents();
             verifyWaterfallRuntimeValues();
@@ -11830,6 +12253,7 @@ int main(int argc, char** argv) {
         verifyHalfWaveReduction();
         verifyFusedExactArithmetic();
         verifyNarrowVertexWave();
+        verifySingleLaneCrossLaneReads();
         verifySingleLaneVertexWave();
         verifySingleLaneElectedAtomicMax();
         verifySingleLaneDomainWave();
@@ -11877,6 +12301,7 @@ int main(int argc, char** argv) {
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
+        verifyPixelQuadPermReads();
         verifyCoherentGds();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         const std::vector<std::uint32_t> minimalSpirv{

@@ -3,6 +3,7 @@
 ### Silent stubs
 
 - [libSceGameCustomDataDialog](../../../core/libs/prx/libSceGameCustomDataDialog/Export.cpp) - the game custom data dialog (`sceGameCustomDataDialogOpenA` and `sceGameCustomDataDialogGetResultA`) runs the common-dialog state machine but shows nothing and reports the user as having cancelled, as there is no PSN game custom data. The signatures are from [Orbital's type database](https://github.com/AlexAltea/orbital/blob/b321fcdbd700cc02da1cb1ad25412781d5ec73c6/tools/ida/db_types.json); the result layout beyond the leading `int32_t` result code is not known, so nothing else is written.
+- [sceGameCustomDataDialogGetResultA](../../../core/libs/prx/libSceGameCustomDataDialog/Export.cpp) - returning `COMMON_DIALOG_ERROR_ARG_NULL` for an unwritable result pointer is a host-safety fallback with console behavior unmeasured.
 
 ### Unknown function info
 

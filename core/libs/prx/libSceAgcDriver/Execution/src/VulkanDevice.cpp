@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
@@ -39,9 +40,11 @@
 #include "prx/libSceAgcDriver/Execution/include/PadStatusOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PresentationUpscaler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubmissionSnapshots.hpp"
 #include "prx/libSceAgcDriver/TraceRevision.hpp"
+#include "prx/libSceAgcDriver/Execution/include/UpscaleMode.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -110,7 +113,17 @@ void ResetCheckpointSnapshots() noexcept;
 #include <vector>
 #include <utility>
 
+#ifndef _WIN32
+extern char** environ;
+#endif
+
 namespace AgcDriver {
+
+std::string SoftwareFallbackWarning(VkPhysicalDeviceType selectedType, std::string_view selectedName, std::string_view hardwareName, PresentationRejection rejection, bool requested) {
+    if (requested || selectedType != VK_PHYSICAL_DEVICE_TYPE_CPU || hardwareName.empty() || rejection == PresentationRejection::None) return {};
+    const auto reason = rejection == PresentationRejection::MissingSwapchain ? "does not support VK_KHR_swapchain" : "cannot present to this window with a graphics and compute queue";
+    return "Vulkan warning: selected software device " + std::string(selectedName) + " because hardware GPU " + std::string(hardwareName) + " " + reason + "; performance may be poor";
+}
 
 DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding, bool presents) {
     DeviceQueuePlan plan;
@@ -353,7 +366,7 @@ public:
         require(pixels.size() <= maxBytes, "a frame dump exceeds the 64 MiB queue");
         changed.wait(lock, [&] { return stopping || pixels.size() <= maxBytes - queuedBytes; });
         require(!stopping, "frame dump writer has stopped");
-        if (!worker.joinable()) worker = std::thread([this] { run(); });
+        if (!worker.joinable()) worker = Libc::StartHostThread([this] { run(); });
         const auto bytes = pixels.size();
         pending.push_back({index, width, height, screenshot, std::move(pixels)});
         queuedBytes += bytes;
@@ -409,6 +422,7 @@ private:
 
 // The [present] line's counters (see the header); mutated under State::presentMutex.
 VulkanDevice::PresentStatistics presentCounters{};
+std::atomic<std::uint64_t> upscaledPresents{0};
 
 }
 
@@ -573,6 +587,7 @@ struct VulkanDevice::State {
     bool float16DenormPreserve = false;
     bool float32FlushToZeroCandidate = false;
     bool float32FlushToZero = false;
+    bool float32FlushComputeOnly = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
     bool float32DenormPreserve = false;
@@ -602,6 +617,7 @@ struct VulkanDevice::State {
     bool depthClipControl = false;
     bool graphicsPipelineLibrary = false;
     bool pipelineLinkTimeOptimization = true;
+    bool dynamicColorWriteMask = false;
     bool imageViewMinLod = false;
     bool shaderResourceMinLod = false;
     bool shaderImageMinLod = false;
@@ -725,6 +741,7 @@ struct VulkanDevice::State {
     std::unique_ptr<PresentationPass> presentation;
     std::unique_ptr<PresentationPass> planePass;
     std::unique_ptr<PerformanceOverlay> overlay;
+    std::unique_ptr<PresentationUpscaler> upscaler;
     std::unique_ptr<PerformanceOverlay> keyboard;
     std::unique_ptr<PerformanceOverlay> padStatus;
     VkFormat surfaceFormat = VK_FORMAT_B8G8R8A8_UNORM;
@@ -1013,6 +1030,7 @@ struct VulkanDevice::State {
     void RetireSlot(PresentSlot& slot) {
         slot.inFlight = false;
         if (presentation) presentation->Release(static_cast<std::size_t>(&slot - presentSlots.data()));
+        if (upscaler) upscaler->Release(static_cast<std::size_t>(&slot - presentSlots.data()));
         if (planePass) planePass->Release(static_cast<std::size_t>(&slot - presentSlots.data()));
         slot.kept.reset();
         slot.keptPlane.reset();
@@ -1197,6 +1215,7 @@ struct VulkanDevice::State {
             detiler.reset();
             colorTransfer.reset();
             overlay.reset();
+            upscaler.reset();
             planePass.reset();
             keyboard.reset();
             padStatus.reset();
@@ -1494,6 +1513,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     };
     std::string candidateNames;
     std::vector<std::string> candidateList;
+    std::string rejectedHardwareName;
+    PresentationRejection rejectedHardwareReason = PresentationRejection::None;
+    int rejectedHardwareRank = -1;
     const auto rankDeviceType = [](VkPhysicalDeviceType type) {
         switch (type) {
             case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 3;
@@ -1518,34 +1540,44 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (rank <= selectedRank) {
             continue;
         }
+        bool swapchain = true;
         if (window != nullptr) {
             std::uint32_t extensionCount = 0;
             auto enumerateExtensions = state->InstanceFunction<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             check(enumerateExtensions(physical, nullptr, &extensionCount, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> extensions(extensionCount);
             check(enumerateExtensions(physical, nullptr, &extensionCount, extensions.data()), "vkEnumerateDeviceExtensionProperties");
-            const bool supported = std::all_of(presentationExtensions.begin(), presentationExtensions.end(), [&](const char* name) {
+            swapchain = std::all_of(presentationExtensions.begin(), presentationExtensions.end(), [&](const char* name) {
                 return std::any_of(extensions.begin(), extensions.end(), [&](const auto& item) { return std::strcmp(item.extensionName, name) == 0; });
             });
-            if (!supported) continue;
         }
         std::uint32_t families = 0;
         auto getFamilies = state->InstanceFunction<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
         getFamilies(physical, &families, nullptr);
         std::vector<VkQueueFamilyProperties> queues(families);
         getFamilies(physical, &families, queues.data());
+        bool graphicsCompute = false;
+        bool presentable = false;
         for (std::uint32_t i = 0; i < families; ++i) {
             if (queues[i].queueCount != 0 && (queues[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) == (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) {
+                graphicsCompute = true;
                 if (window != nullptr) {
+                    if (!swapchain) continue;
                     VkBool32 supported = VK_FALSE;
                     check(state->InstanceFunction<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>("vkGetPhysicalDeviceSurfaceSupportKHR")(physical, i, state->surface, &supported), "vkGetPhysicalDeviceSurfaceSupportKHR");
                     if (!supported) continue;
                 }
+                presentable = true;
                 selected = physical;
                 family = i;
                 selectedRank = rank;
                 break;
             }
+        }
+        if (window != nullptr && requestedName == nullptr && rank >= 2 && rank > rejectedHardwareRank && graphicsCompute && !presentable) {
+            rejectedHardwareName = properties.deviceName;
+            rejectedHardwareReason = swapchain ? PresentationRejection::NoSurfaceQueue : PresentationRejection::MissingSwapchain;
+            rejectedHardwareRank = rank;
         }
     }
     if (selected == VK_NULL_HANDLE && requestedName != nullptr) {
@@ -1560,6 +1592,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
     state->properties = properties.properties;
     state->physical = selected;
+    if (window != nullptr) {
+        const auto warning = SoftwareFallbackWarning(state->properties.deviceType, state->properties.deviceName, rejectedHardwareName, rejectedHardwareReason, requestedName != nullptr);
+        if (!warning.empty()) std::fprintf(stderr, "%s\n", warning.c_str());
+    }
     state->srgbDecodeFormats = Graphics::SrgbDecodeFormats(state->InstanceFunction<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties"), selected);
     state->srgbCopyFormats = Graphics::SrgbCopyFormats(state->InstanceFunction<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties"), selected, state->srgbDecodeFormats);
     if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_BASIC_BIT) != 0) {
@@ -1567,6 +1603,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_BALLOT_BIT) != 0) state->capabilities.push_back(spv::CapabilityGroupNonUniformBallot);
         if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_BIT) != 0) state->capabilities.push_back(spv::CapabilityGroupNonUniformShuffle);
         if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) != 0) state->capabilities.push_back(spv::CapabilityGroupNonUniformArithmetic);
+        if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_QUAD_BIT) != 0) state->capabilities.push_back(spv::CapabilityGroupNonUniformQuad);
     }
     APS5_LOG_OUT("Selected GPU name=%s vendor=0x%x device=0x%x subgroup=%u", state->properties.deviceName, state->properties.vendorID, state->properties.deviceID, state->subgroup.subgroupSize);
     state->InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(selected, &state->memoryProperties);
@@ -1782,6 +1819,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         floatControls.denormBehaviorIndependence == VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL;
     const auto float32Flush = Float32FlushControlFor(driverId, floatControls.shaderDenormFlushToZeroFloat32, floatControls.denormBehaviorIndependence);
     state->float32FlushToZeroCandidate = float32Flush.probe && std::getenv("APS5_NO_HW_F32_FLUSH") == nullptr;
+    state->float32FlushComputeOnly = float32Flush.computeOnly;
     if (state->float32FlushToZeroCandidate && float32Flush.declared) state->capabilities.push_back(spv::CapabilityDenormFlushToZero);
     state->float32DenormPreserve = floatControls.shaderDenormPreserveFloat32 == VK_TRUE && floatControls.denormBehaviorIndependence != VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE && std::getenv("APS5_NO_HW_F32_PRESERVE") == nullptr;
     if ((state->float16DenormPreserve || state->float32DenormPreserve) && std::find(state->capabilities.begin(), state->capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDenormPreserve)) == state->capabilities.end()) state->capabilities.push_back(spv::CapabilityDenormPreserve);
@@ -2020,6 +2058,15 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     maintenance5Features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR};
     maintenance5Features.maintenance5 = VK_TRUE;
+    VkPhysicalDeviceExtendedDynamicState3FeaturesEXT dynamicState3Features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
+    if (hasExtension(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME)) {
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &dynamicState3Features};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
+        state->dynamicColorWriteMask = dynamicState3Features.extendedDynamicState3ColorWriteMask == VK_TRUE && std::getenv("APS5_NO_DYNAMIC_COLOR_WRITE_MASK") == nullptr;
+        if (state->dynamicColorWriteMask) deviceExtensions.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
+    }
+    dynamicState3Features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
+    dynamicState3Features.extendedDynamicState3ColorWriteMask = VK_TRUE;
     renderingFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR, nullptr, VK_TRUE};
     libraryFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT, &dynamicStateFeatures, VK_TRUE};
     dynamicStateFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &renderingFeatures, VK_TRUE};
@@ -2055,6 +2102,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     require(available.vertexPipelineStoresAndAtomics && available.fragmentStoresAndAtomics, "graphics shader buffer writes and atomics are unavailable");
     VkPhysicalDeviceFeatures enabled{};
     enabled.shaderInt64 = VK_TRUE;
+    enabled.shaderInt16 = available.shaderInt16;
+    if (enabled.shaderInt16) state->capabilities.push_back(spv::CapabilityInt16);
     enabled.shaderFloat64 = available.shaderFloat64 && floatControls.shaderSignedZeroInfNanPreserveFloat64;
     if (enabled.shaderFloat64) state->capabilities.push_back(spv::CapabilityFloat64);
     state->float64DenormPreserve = enabled.shaderFloat64 && floatControls.shaderDenormPreserveFloat64 == VK_TRUE &&
@@ -2077,6 +2126,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     require(available.samplerAnisotropy && available.textureCompressionBC, "device lacks sampler anisotropy or BC texture compression support required for texture sampling");
     enabled.samplerAnisotropy = VK_TRUE;
     enabled.textureCompressionBC = VK_TRUE;
+    require(available.independentBlend, "device lacks independentBlend, required for color targets with different blend states");
+    enabled.independentBlend = VK_TRUE;
     // Guest shaders routinely read past descriptor ranges; robust access turns that into zeros
     // instead of a GPU fault that loses the device.
     enabled.robustBufferAccess = available.robustBufferAccess;
@@ -2249,6 +2300,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (state->maintenance5) {
         maintenance5Features.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &maintenance5Features;
+    }
+    if (state->dynamicColorWriteMask) {
+        dynamicState3Features.pNext = const_cast<void*>(deviceInfo.pNext);
+        deviceInfo.pNext = &dynamicState3Features;
     }
     if (state->maintenance8) {
         maintenance8Features.pNext = const_cast<void*>(deviceInfo.pNext);
@@ -2499,7 +2554,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (deviceFault || queueCheckpoints || bufferMarkers) {
         const auto faultInfo = deviceFault ? state->DeviceFunction<PFN_vkGetDeviceFaultInfoEXT>("vkGetDeviceFaultInfoEXT") : nullptr;
         const auto checkpointData = queueCheckpoints ? state->DeviceFunction<PFN_vkGetQueueCheckpointDataNV>("vkGetQueueCheckpointDataNV") : nullptr;
-        Graphics::DeviceLostHook() = [device = state->device, queue = state->queue, present = state->presentQueue, settle = state->settleQueue, sparse = state->sparseQueue, faultInfo, checkpointData, vendorDump = vendorBinary, owner = state.get()] noexcept {
+        Graphics::DeviceLostHook() = [device = state->device, queue = state->queue, present = state->presentQueue, settle = state->settleQueue, sparse = state->sparseQueue, faultInfo, checkpointData, vendorDump = vendorBinary, owner = state.get(), reportResidency = checkpointsRequested] noexcept {
             owner->hookActive.fetch_add(1, std::memory_order_acq_rel);
             try {
                 if (!owner->hookRetired.load(std::memory_order_acquire)) {
@@ -2567,7 +2622,24 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
                         }
                     }
                     std::fprintf(stderr, "[device-fault] queue main\n");
-                    for (const auto& line : DeviceFaultReport(device, faultInfo, queue, checkpointData, submitSerial, &AgcDriver::SubmissionSnapshots::DeviceSnapshots(), bracket, AgcDriver::FaultTokenRing::Instance())) std::fprintf(stderr, "%s\n", line.c_str());
+                    if (reportResidency) {
+                        const std::uint64_t shadowRefused = Graphics::StagingShadowsRefused();
+                        if (shadowRefused != 0) std::fprintf(stderr, "[device-fault] staging shadow copies refused: %llu (process-wide total)\n", static_cast<unsigned long long>(shadowRefused));
+                        for (const auto& line : DeviceFaultReport(device, faultInfo, queue, checkpointData, submitSerial, &AgcDriver::SubmissionSnapshots::DeviceSnapshots(), bracket, AgcDriver::FaultTokenRing::Instance(), [](std::uint64_t va) noexcept {
+                            AgcDriver::DeviceFaultResidencyProbe probe{};
+                            try {
+                                if (const auto space = Graphics::GuestBufferMemory::TrySnapshotAddressSpace(); space.has_value() && space->second != nullptr) {
+                                    for (const auto& range : *space->second) {
+                                        if (range.begin <= va && va < range.end) { probe.boundNow = true; break; }
+                                    }
+                                }
+                            } catch (...) {
+                            }
+                            return probe;
+                        })) std::fprintf(stderr, "%s\n", line.c_str());
+                    } else {
+                        for (const auto& line : DeviceFaultReport(device, faultInfo, queue, checkpointData, submitSerial, &AgcDriver::SubmissionSnapshots::DeviceSnapshots(), bracket, AgcDriver::FaultTokenRing::Instance())) std::fprintf(stderr, "%s\n", line.c_str());
+                    }
                     const VkQueue extraQueues[] = {present, settle, sparse};
                     for (VkQueue extra : extraQueues) {
                         if (extra == VK_NULL_HANDLE || extra == queue) continue;
@@ -2692,6 +2764,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         }
         state->scaler = std::make_unique<PresentationScaler>(graphicsContext(), VK_FORMAT_B8G8R8A8_UNORM, state->surfaceFormat);
         state->presentation = std::make_unique<PresentationPass>(graphicsContext(), state->presentSlots.size());
+        const auto upscale = SelectUpscaleMode(std::getenv("ANYPS5_UPSCALE"), std::getenv("ANYPS5_FSR_SHARPNESS"));
+        if (upscale.fsr) {
+            state->upscaler = std::make_unique<PresentationUpscaler>(graphicsContext(), state->presentSlots.size(), upscale.sharpness);
+            std::fprintf(stderr, "[present] ANYPS5_UPSCALE=fsr: FSR 1 EASU and RCAS when the window is larger than the display buffer, the normal scaler otherwise; RCAS sharpness %.2f\n", static_cast<double>(upscale.sharpness));
+        }
     }
     if (state->float32FlushToZeroCandidate) {
         const auto probeStart = std::chrono::steady_clock::now();
@@ -4077,7 +4154,7 @@ bool VulkanDevice::AcquireImage() {
     std::uint32_t index = 0;
     timing.Mark("fence_reset");
     // An out-of-date swapchain (the window changed) drops this frame; the next Resize recreates it.
-    const auto acquired = state->DeviceFunction<PFN_vkAcquireNextImageKHR>("vkAcquireNextImageKHR")(state->device, state->swapchain, 0, VK_NULL_HANDLE, state->acquireFence, &index);
+    const auto acquired = state->DeviceFunction<PFN_vkAcquireNextImageKHR>("vkAcquireNextImageKHR")(state->device, state->swapchain, AgcDriver::SwapchainAcquireTimeoutNs, VK_NULL_HANDLE, state->acquireFence, &index);
     if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
         state->extent = {0, 0};
         return false;
@@ -4134,6 +4211,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     // wait for every slot first. The game path did so before taking the mutex
     // (PresentWaitsForSlots); this is the fallback.
     const bool shared = !clearOnly && !direct && !drawn;
+    const bool upscaled = state->upscaler != nullptr && !clearOnly && PresentationUpscaler::Upscales(width, height, state->extent);
     if (shared && state->SharedSlotInFlight()) RetirePresents(0);
     // The next slot is the oldest; a caller that did not retire it first (PresentPixels) waits here.
     if (state->presentSlots[state->presentCursor].inFlight) RetirePresents(state->presentSlots.size() - 1);
@@ -4223,7 +4301,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         bindPlane();
         state->planePass->RecordOverlay(commands, planeSlot, image, format, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     };
-    if (!drawn) {
+    if (!drawn && !upscaled) {
         pipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
         Graphics::Recorder::CountBarriers(CommandClass::PresentBlit);
     }
@@ -4268,7 +4346,21 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
             if (uniform != nullptr) scaler->RecordClear(commands, *uniform);
             else scaler->RecordUpload(commands, display != nullptr ? state->colorTransfer->LinearBuffer() : state->uploadBuffer);
         }
-        if (drawn) {
+        if (upscaled) {
+            const auto stageExtent = PresentationUpscaler::StageExtent(width, height, state->extent);
+            const auto stage = state->upscaler->Stage(slotIndex, state->surfaceFormat, stageExtent);
+            if (drawn) {
+                state->presentation->Bind(slotIndex, resident->Image(), width, height, display->pixelFormat, whiteNits, residentLayer);
+                state->presentation->RecordStage(commands, slotIndex, stage, state->surfaceFormat, state->surfaceColorSpace, stageExtent, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            } else {
+                const AspectFitRect whole{0, 0, stageExtent.width, stageExtent.height};
+                state->upscaler->RecordStageTransferDestination(commands, slotIndex);
+                if (direct) PresentationScaler::RecordStretchFrom(graphicsContext(), commands, resident->Image(), VK_IMAGE_LAYOUT_GENERAL, width, height, residentFilter, stage, whole, residentLayer);
+                else scaler->RecordStretch(commands, stage, whole);
+                state->upscaler->RecordStageWritten(commands, slotIndex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            }
+            state->upscaler->RecordPresent(commands, slotIndex, width, height, barrier.image, state->extent, drawsOver ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        } else if (drawn) {
             state->presentation->Bind(slotIndex, resident->Image(), width, height, display->pixelFormat, whiteNits, residentLayer);
             state->presentation->RecordPresent(commands, slotIndex, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawsOver ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         } else {
@@ -4314,7 +4406,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     }
     if (plane != nullptr) {
         bindPlane();
-        state->planePass->RecordOverlay(commands, planeSlot, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay || keyboard || padStatusShown ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        state->planePass->RecordOverlay(commands, planeSlot, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || upscaled ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay || keyboard || padStatusShown ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         if (planeSource.resident != nullptr) {
             planeBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
             planeBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -4324,17 +4416,17 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     }
     if (keyboard) {
         if (!state->keyboard) state->keyboard = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
-        state->keyboard->RecordRects(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || plane != nullptr ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, *systemLayout);
+        state->keyboard->RecordRects(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || upscaled || plane != nullptr ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, *systemLayout);
     }
     if (padStatusShown) {
         if (!state->padStatus) state->padStatus = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
-        state->padStatus->RecordRects(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || plane != nullptr ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, LayOutPadStatus(*padStatusLines, state->extent, PerformanceOverlay::Corner()));
+        state->padStatus->RecordRects(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || upscaled || plane != nullptr ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, LayOutPadStatus(*padStatusLines, state->extent, PerformanceOverlay::Corner()));
     }
     if (overlay) {
         if (!state->overlay) state->overlay = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
         state->overlay->NotePresent(std::chrono::steady_clock::now(), clearOnly ? VkExtent2D{} : VkExtent2D{width, height}, OverlayPresentInfo{std::exchange(state->presentedAddress, 0), state->presentMode, presentCounters.acquireDrops, ConfiguredFrameLimit() ? ConfiguredFrameLimit()->FramesPerSecond() : 0.0});
-        state->overlay->Record(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || plane != nullptr || keyboard || padStatusShown ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-    } else if (!drawn && plane == nullptr && !keyboard && !padStatusShown) {
+        state->overlay->Record(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || upscaled || plane != nullptr || keyboard || padStatusShown ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    } else if (!drawn && !upscaled && plane == nullptr && !keyboard && !padStatusShown) {
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = 0;
         barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -4379,6 +4471,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         state->queueGuestFrame = state->presentingGuestFrame;
         state->queueIndex = index;
         ++presentCounters.presents;
+        if (upscaled) upscaledPresents.fetch_add(1, std::memory_order_relaxed);
         if (plane != nullptr) ++presentCounters.planes;
         if (auto* frame = PerformanceContext::Current()) {
             frame->NoteBlit(batchesAtBlit, lastSubmittedAt, submittedAt);
@@ -4407,6 +4500,10 @@ std::size_t VulkanDevice::FlipInFlight() {
         return std::size_t{1};
     }();
     return count;
+}
+
+std::uint64_t VulkanDevice::UpscaledPresents() {
+    return upscaledPresents.load(std::memory_order_relaxed);
 }
 
 std::uint64_t VulkanDevice::FillCompletionSyncCount() { return fillCompletionSyncs; }
@@ -4500,6 +4597,7 @@ bool VulkanDevice::PresentsOnOwnQueue() const {
 
 ShaderRecompiler::SpirvTarget VulkanDevice::ComputeTarget(std::uint32_t waveSize) const {
     auto target = Target();
+    target.float32FlushToZero = state->float32FlushToZero;
     if (waveSize == 32u && state->computeWave32) target.subgroupSize = 32u;
     return target;
 }
@@ -4561,7 +4659,7 @@ bool VulkanDevice::SupportsImageFormat(VkFormat format, VkImageUsageFlags usage)
 ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     require(state->shaderProfile != nullptr, "shader device profile is unavailable");
     auto target = state->shaderProfile->Target();
-    target.float32FlushToZero = state->float32FlushToZero;
+    target.float32FlushToZero = state->float32FlushToZero && !state->float32FlushComputeOnly;
     target.fusedExactArithmetic = state->fusedExactArithmetic;
     target.hostInterpolationFirst = state->hostInterpolationFirst;
     target.float32DenormPreserve = state->float32DenormPreserve;
@@ -4732,8 +4830,10 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.provokingVertexLast = state->provokingVertexLast;
     context.graphicsPipelineLibrary = state->graphicsPipelineLibrary;
     context.pipelineLinkTimeOptimization = state->pipelineLinkTimeOptimization;
+    context.dynamicColorWriteMask = state->dynamicColorWriteMask;
     context.drawInputsInPlace = state->drawInputsInPlace;
     context.discreteGpu = state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+    context.integratedGpu = state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
     context.provokingVertexModePerPipeline = state->provokingVertexModePerPipeline;
     context.drawIndirectCount = state->drawIndirectCount;
     context.occlusionQueryPrecise = state->occlusionQueryPrecise;
@@ -5402,6 +5502,10 @@ void VulkanDevice::NoteDrawRecipeMiss(DrawRecipePrecheck miss) {
     counters.precheckMisses[miss == DrawRecipePrecheck::NoRecipe ? MissNoRecipe : MissDevice].fetch_add(1, std::memory_order_relaxed);
 }
 
+std::uint64_t VulkanDevice::DrawRecipeHits() {
+    return Recipes().kinds[static_cast<std::size_t>(RecipeKind::Draw)].hits.load(std::memory_order_relaxed);
+}
+
 RecipeOutcome VulkanDevice::DrawFromRecipe(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const DrawTraceContext* trace) {
     PerformanceTimer timing("Vulkan.DrawFromRecipe");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -5871,7 +5975,38 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
                 entry->submitSerial = recorder.OpenSerial();
                 entry->programAddress = record.programAddress;
                 entry->variantId = record.shader != nullptr && record.shader->program != nullptr ? record.shader->program->variantId : 0;
-                std::snprintf(entry->desc, sizeof(entry->desc), "dispatch %ux%ux%u", record.x, record.y, record.z);
+                entry->stage = static_cast<std::uint32_t>(AgcDriver::FaultStage::compute);
+                entry->argBuffer = 0;
+                entry->argOffset = 0;
+                entry->argStride = 0;
+                entry->argCount = 0;
+                for (auto& word : entry->argWords) word = 0;
+                if (record.arguments != 0) {
+                    entry->argBuffer = record.arguments;
+                    entry->argOffset = 0;
+                    std::array<std::uint32_t, 3> groups{};
+                    entry->argStride = static_cast<std::uint32_t>(sizeof(groups));
+                    try {
+                        GuestMemory::ReadCommittedUnsynced(record.arguments, std::as_writable_bytes(std::span(groups)));
+                        entry->argWords[0] = groups[0];
+                        entry->argWords[1] = groups[1];
+                        entry->argWords[2] = groups[2];
+                        entry->argCount = static_cast<std::uint32_t>(groups.size());
+                    } catch (...) {
+                        entry->argCount = 0;
+                    }
+                } else if (record.cpuArguments != 0) {
+                    constexpr std::uint32_t groupDwords = 3;
+                    entry->argBuffer = record.cpuArguments;
+                    entry->argOffset = 0;
+                    entry->argStride = static_cast<std::uint32_t>(sizeof(std::uint32_t) * groupDwords);
+                    entry->argWords[0] = record.x;
+                    entry->argWords[1] = record.y;
+                    entry->argWords[2] = record.z;
+                    entry->argCount = groupDwords;
+                }
+                if (record.arguments != 0) std::snprintf(entry->desc, sizeof(entry->desc), "dispatch indirect");
+                else std::snprintf(entry->desc, sizeof(entry->desc), "dispatch %ux%ux%u", record.x, record.y, record.z);
                 recorder.NoteFaultToken(faultToken);
                 std::atomic_ref<AgcDriver::FaultToken>(entry->token).store(faultToken, std::memory_order_release);
             }

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 register("./cdn-loader.mjs", import.meta.url, { data: { url: process.env.ANYPS5_TEST_ZIP_URL, path: process.env.ANYPS5_TEST_ZIP_PATH } });
-const { Archive, validPath } = await import(pathToFileURL(path.join(process.argv[2], "archive.mjs")));
+const webRoot = process.argv[2] ?? fileURLToPath(new URL("..", import.meta.url));
+const { Archive, validPath } = await import(pathToFileURL(path.join(webRoot, "archive.mjs")));
 const { BlobWriter, Uint8ArrayReader, ZipWriter } = await import(process.env.ANYPS5_TEST_ZIP_URL);
 const header = new Uint8Array([127, 69, 76, 70]);
 
@@ -26,6 +27,22 @@ const archive = new Archive(await writer.close());
 try { await assert.rejects(archive.inspect(() => {}), /Unsafe ZIP path/); }
 finally { await archive.close(); }
 
-for (const name of ["COM10", "COM\u2074.txt", "COM\u00b9-extra", "content/ordinary.txt"]) {
+for (const device of ["CONIN$", "conout$", "CoNiN$", "CoNoUt$"]) {
+  for (const name of [device, device + ".txt", "content/" + device + "/data.bin"]) {
+    assert.throws(() => validPath(name), /Unsafe ZIP path/);
+    const folder = new Archive([{ path: "main.elf", file: new Blob([header]) }, { path: name, file: new Blob(["resource"]) }]);
+    try { await assert.rejects(folder.inspect(() => {}), /Unsafe ZIP path/); }
+    finally { await folder.close(); }
+
+    const zip = new ZipWriter(new BlobWriter(), { useWebWorkers: false, useCompressionStream: false });
+    await zip.add("main.elf", new Uint8ArrayReader(header));
+    await zip.add(name, new Uint8ArrayReader(new Uint8Array([1])));
+    const selected = new Archive(await zip.close());
+    try { await assert.rejects(selected.inspect(() => {}), /Unsafe ZIP path/); }
+    finally { await selected.close(); }
+  }
+}
+
+for (const name of ["COM10", "COM\u2074.txt", "COM\u00b9-extra", "CONIN$-extra", "CONOUT$-extra.txt", "CONINPUT.txt", "content/ordinary.txt"]) {
   assert.equal(validPath(name), name);
 }

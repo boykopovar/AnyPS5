@@ -2,7 +2,7 @@
 
 ### Functional
 
-- [sceSrcUtilityGetHandleSize, sceSrcUtilitySetPriority and sceSrcUtilityGetPriority](../../../core/libs/prx/libSceSrcUtl/Export.cpp) (libSceSrcUtl) - follow firmware 13.42's libSceSrcUtl.sprx, read from disassembly and not measured on a console, on its PS5 process path; their argument names are inferred from its checks. `sceSrcUtilityGetHandleSize` validates channels (1 to 8), mode (0 to 2), and supported input and output sample rates, returning 0x9678 bytes. `sceSrcUtilitySetPriority` and `sceSrcUtilityGetPriority` validate the handle pointer and its `0xDEADBEEFBAADF00D` initialization magic at offset 0x9470, reading and writing the 32-bit priority at offset 0x2C. For a PS4 process the module allows only 1 or 2 channels and refuses 22050 Hz to 192000 Hz, which is not modelled.
+- [sceSrcUtilityGetHandleSize, sceSrcUtilitySetPriority and sceSrcUtilityGetPriority](../../../core/libs/prx/libSceSrcUtl/Export.cpp) (libSceSrcUtl) - follow firmware 13.42's libSceSrcUtl.sprx, read from disassembly and not measured on a console, on its PS5 process path; their argument names are inferred from its checks. `sceSrcUtilityGetHandleSize` validates channels (1 to 8), mode (0 to 2), and supported input and output sample rates, returning 0x9678 bytes. `sceSrcUtilitySetPriority` and `sceSrcUtilityGetPriority` validate the handle pointer and its `0xDEADBEEFBAADF00D` initialization magic at offset 0x9470, reading and writing the 32-bit priority at offset 0x2C. Unit tests cover handle sizing, rates, error precedence, null and uninitialized handles, priority read and write, and magic corruption. For a PS4 process the module allows only 1 or 2 channels and refuses 22050 Hz to 192000 Hz, which is not modelled.
 
 ### Unknown function info
 

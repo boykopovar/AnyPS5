@@ -4,6 +4,7 @@
 #include "prx/libc/include/ChildProcesses.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostExecutable.hpp"
 #include "prx/libc/include/HostErrno.hpp"
 #ifdef _WIN32
 #include "prx/libc/include/WindowsDescriptor.hpp"
@@ -100,48 +101,11 @@ bool ProgramFound(std::string_view name, bool searchesPath, std::string& found) 
     }
 }
 
-std::string FlattenedExecutableName(const std::string& guest, const char* function) {
-    std::string_view relative(guest);
-    if (!relative.starts_with(ApplicationRoot)) NotImplemented_nid_no_patch((std::string(function) + ": executables outside /app0 (" + guest + ")").c_str());
-    relative.remove_prefix(ApplicationRoot.size());
-    std::string name;
-    while (true) {
-        const std::size_t separator = relative.find('/');
-        const std::string_view component = relative.substr(0, separator);
-        if (component.empty() || component == "." || component == "..") NotImplemented_nid_no_patch((std::string(function) + ": a path with an empty, . or .. component (" + guest + ")").c_str());
-        name += (name.empty() ? "" : ".") + std::string(component);
-        if (separator == std::string_view::npos) return name;
-        relative.remove_prefix(separator + 1);
-    }
-}
-
-std::filesystem::path OwnExecutable() {
-#if defined(_WIN32)
-    std::wstring own(32768, L'\0');
-    const DWORD length = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
-    if (length == 0 || length >= own.size()) throw std::system_error(GetLastError(), std::system_category(), "posix_spawn: GetModuleFileNameW");
-    own.resize(length);
-    return std::filesystem::path(own);
-#elif defined(__APPLE__)
-    std::uint32_t size = 0;
-    _NSGetExecutablePath(nullptr, &size);
-    std::vector<char> executable(size);
-    std::error_code error;
-    if (_NSGetExecutablePath(executable.data(), &size) == 0) return std::filesystem::canonical(executable.data(), error);
-    throw std::runtime_error("posix_spawn: cannot locate the executable");
-#else
-    std::error_code error;
-    const auto own = std::filesystem::read_symlink("/proc/self/exe", error);
-    if (error) throw std::system_error(error, "posix_spawn: cannot read /proc/self/exe");
-    return own;
-#endif
-}
-
 std::filesystem::path ConvertedExecutableTarget(const char* function, const std::string& guest) {
-    const auto own = OwnExecutable();
+    const auto own = HostExecutable::Own("posix_spawn");
     if (guest == MainExecutable) return own;
     std::error_code error;
-    const auto name = std::filesystem::path(reinterpret_cast<const char8_t*>((FlattenedExecutableName(guest, function) + own.extension().string()).c_str()));
+    const auto name = std::filesystem::path(reinterpret_cast<const char8_t*>((HostExecutable::ConvertedName(guest, [function](const std::string& reason) { NotImplemented_nid_no_patch((std::string(function) + ": " + reason).c_str()); }) + own.extension().string()).c_str()));
     const auto target = own.parent_path() / name;
     if (!std::filesystem::is_regular_file(target, error))
         NotImplemented_nid_no_patch((std::string(function) + ": " + guest + " without its converted executable; relink with --executable " + std::string(guest.substr(ApplicationRoot.size()))).c_str());
@@ -171,34 +135,6 @@ int HostOpenFlags(std::int32_t sceFlags) {
 }
 
 #ifdef _WIN32
-std::wstring Utf16(const std::string& text) {
-    if (text.empty()) return {};
-    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (size <= 0) throw std::runtime_error("posix_spawn: argument is not valid UTF-8");
-    std::wstring wide(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), wide.data(), size);
-    return wide;
-}
-
-std::wstring QuotedArgument(const std::wstring& argument) {
-    if (!argument.empty() && argument.find_first_of(L" \t\n\v\"") == std::wstring::npos) return argument;
-    std::wstring quoted = L"\"";
-    for (std::size_t index = 0;; ++index) {
-        std::size_t backslashes = 0;
-        while (index < argument.size() && argument[index] == L'\\') {
-            ++backslashes;
-            ++index;
-        }
-        if (index == argument.size()) {
-            quoted.append(backslashes * 2, L'\\');
-            break;
-        }
-        quoted.append(argument[index] == L'"' ? backslashes * 2 + 1 : backslashes, L'\\');
-        quoted.push_back(argument[index]);
-    }
-    quoted.push_back(L'"');
-    return quoted;
-}
 #endif
 
 std::string HexFlag(std::uint32_t value) {
@@ -294,7 +230,7 @@ std::vector<wchar_t> ChildEnvironment(char* const* environment) {
     };
     if (environment != nullptr)
         for (std::size_t index = 0; environment[index] != nullptr; ++index) {
-            const std::wstring entry = Utf16(environment[index]);
+            const std::wstring entry = HostExecutable::Wide(environment[index], "posix_spawn");
             if (missesMarkers(entry))
                 entries.push_back(entry);
         }
@@ -346,7 +282,7 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
     }
     std::wstring command = L"\"" + target.wstring() + L"\"";
     for (std::size_t index = 0; arguments[index] != nullptr; ++index)
-        command += L" " + QuotedArgument(Utf16(arguments[index]));
+        command += L" " + HostExecutable::QuotedArgument(HostExecutable::Wide(arguments[index], "posix_spawn"));
     if (command.size() >= 32767) throw std::runtime_error("posix_spawn: command line is too long");
     auto environmentBlock = ChildEnvironment(environment);
     PROCESS_INFORMATION process{};

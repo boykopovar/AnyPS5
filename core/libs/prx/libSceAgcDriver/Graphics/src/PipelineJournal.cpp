@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -42,7 +43,7 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 944, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(State) == 952, "State changed: update CanonicalPipelineState and the recipe codec");
 static_assert(sizeof(ShaderStages) == 164, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
@@ -51,7 +52,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 16u;
+constexpr std::uint32_t FileFormat = 17u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -209,6 +210,7 @@ void encodeState(Writer& writer, const State& state) {
         writer.U32(color.exportIndex);
         writer.Raw(color.componentMapping);
         writer.Raw(color.partialWriteMask);
+        writer.Raw(color.mergeBlend);
     }
     writer.Raws(std::span<const VkPipelineColorBlendAttachmentState>(state.blends));
     for (const auto value : state.blendConstants) writer.Raw(value);
@@ -281,7 +283,8 @@ void decodeState(Reader& reader, State& state) {
         color.format = static_cast<VkFormat>(reader.U32());
         color.exportIndex = reader.U32();
         color.componentMapping = reader.Raw<std::uint8_t>();
-        color.partialWriteMask = reader.Raw<std::uint16_t>();
+        color.partialWriteMask = reader.Raw<std::uint32_t>();
+        color.mergeBlend = reader.Raw<std::uint32_t>();
         state.colors.push_back(color);
     }
     reader.Raws(state.blends, 8u);
@@ -549,8 +552,9 @@ bool expandModule(std::span<const std::byte> payload, std::vector<std::byte>& mo
     if (payload.size() < ModuleHeaderBytes) return false;
     std::uint32_t bytes = 0;
     std::memcpy(&bytes, payload.data() + 20, sizeof(bytes));
-    module.resize(bytes);
     const auto frame = payload.subspan(ModuleHeaderBytes);
+    if (ZSTD_getFrameContentSize(frame.data(), frame.size()) != bytes) return false;
+    module.resize(bytes);
     const auto expanded = ZSTD_decompress(module.data(), module.size(), frame.data(), frame.size());
     return !ZSTD_isError(expanded) && expanded == bytes;
 }
@@ -900,7 +904,7 @@ private:
         path = directory / "pipelines.journal";
         lockPath = directory / "pipelines.journal.lock";
         maxBytes = configured("APS5_PIPELINE_JOURNAL_MAX_MIB", 1024u) << 20u;
-        std::thread([this] { run(); }).detach();
+        Libc::StartHostThread([this] { run(); }).detach();
     }
 
     // Parses the file: with `loaded` set every record is decoded, otherwise only the index (the
@@ -1365,7 +1369,7 @@ public:
         replayCounters().threads.store(threads, std::memory_order_relaxed);
         replayCounters().heldPeak.store(0, std::memory_order_relaxed);
         workers.reserve(threads);
-        for (unsigned index = 0; index < threads; ++index) workers.emplace_back([this] { run(); });
+        for (unsigned index = 0; index < threads; ++index) workers.push_back(Libc::StartHostThread([this] { run(); }));
     }
 
     ~Replay() override {
@@ -1572,6 +1576,7 @@ State CanonicalPipelineState(const State& state) {
         canonicalColor.exportIndex = color.exportIndex;
         canonicalColor.componentMapping = color.componentMapping;
         canonicalColor.partialWriteMask = color.partialWriteMask;
+        canonicalColor.mergeBlend = color.mergeBlend;
         canonical.colors.push_back(canonicalColor);
     }
     canonical.blends = state.blends;

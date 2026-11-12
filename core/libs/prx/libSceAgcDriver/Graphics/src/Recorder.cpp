@@ -1,8 +1,10 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ReferenceStorage.hpp"
@@ -26,6 +28,7 @@
 #include "prx/libc/include/CpuTopology.hpp"
 #include "prx/libc/include/RunReport.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/DispatchArguments_spv.h"
 #include <algorithm>
 #include <array>
@@ -144,10 +147,10 @@ AgcDriver::Mutex threadSyncsMutex;
 
 // This thread's fence and timeline waits in total (Recorder::ThreadWaitedMs): a caller times a span
 // of its own work and reads the difference to learn how much of it was waiting for the GPU.
-thread_local double threadWaitedMs = 0;
+struct ThreadWaitedSlot {};
 
 void CountThreadSync(int source, double ms) {
-    threadWaitedMs += ms;
+    HostThreadSlot<double, ThreadWaitedSlot>::Set(HostThreadSlot<double, ThreadWaitedSlot>::Get() + ms);
     const auto tag = GuestMemory::GpuLockThreadTag();
     std::lock_guard lock(threadSyncsMutex);
     auto it = std::find_if(threadSyncs.begin(), threadSyncs.end(), [&](const ThreadSyncs& thread) { return thread.tag == tag; });
@@ -249,7 +252,11 @@ bool RecorderAlive(std::uint64_t id) {
 
 // Completion actions in progress on this thread (finish()): a pending-write sync the flush hook
 // makes from inside one (a copied buffer's write-back store) is skipped, see SyncThrough.
-thread_local int completionDepth = 0;
+struct CompletionDepthSlot {};
+
+int completionDepth() {
+    return HostThreadSlot<int, CompletionDepthSlot>::Get();
+}
 // This thread's hook syncs that waited for an unsignaled target (Recorder::ThreadHookWaits).
 thread_local std::uint64_t hookRealWaits = 0;
 
@@ -260,7 +267,7 @@ bool Recorder::Alive(std::uint64_t id) {
 }
 
 bool Recorder::InCompletion() {
-    return completionDepth != 0;
+    return completionDepth() != 0;
 }
 
 namespace {
@@ -498,7 +505,7 @@ void ReleaseDeferredKeeps() {
             // The thread before the items: items queued with no thread to take them would keep
             // `deferredPending` up and ~Recorder waiting forever.
             if (!queue.started) {
-                queue.thread = std::thread(&ReleaseThreadMain);
+                queue.thread = Libc::StartHostThread(&ReleaseThreadMain);
                 queue.started = true;
             }
             // The allocation before any move: a failure here leaves `releasing` intact for the
@@ -1041,7 +1048,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     // rest of this one's, and this queue's queued label follows every batch of its own in flight
     // anyway, so the write-back landing first is the order the hardware gives.
     if (!QueuedLabelRanges().empty() && QueuedLabelOverlaps(address, bytes)) {
-        if (completionDepth != 0 && HookCompletionGuard()) {
+        if (completionDepth() != 0 && HookCompletionGuard()) {
             queuedLabelHookInCompletion.fetch_add(1, std::memory_order_relaxed);
         } else if (auto* record = queuedLabelRecorder.load(std::memory_order_acquire); record != nullptr) {
             queuedLabelHookRecords.fetch_add(1, std::memory_order_relaxed);
@@ -1062,7 +1069,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     }
     const auto site = GuestMemory::CurrentReadSite();
     const auto scope = site != GuestMemory::ReadSite::Store ? PublishScope::Whole : PublishScope::PartialUnits;
-    const bool waited = completionDepth != 0;
+    const bool waited = completionDepth() != 0;
     bool published = false;
     // The classification is made before the store (the store changes what it measures); profile only.
     StorageTexture::AccessClassification classification{};
@@ -1082,7 +1089,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     } else {
         stored = StorageTexture::FlushPending(address, bytes, nullptr, "memory access", scope, &published, waited);
     }
-    if (stored || published || (completionDepth == 0 && SnapshotOverlaps(address, bytes))) {
+    if (stored || published || (completionDepth() == 0 && SnapshotOverlaps(address, bytes))) {
         // Stores into imported memory were only recorded; the CPU is about to read them. The wait
         // targets the batch holding them (the open one: SyncThrough submits it) and runs with the
         // mutex released when this acquisition is the outermost; a nested hook waits locked through
@@ -1094,7 +1101,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
         if (auto* recorder = Recorder::Active(); recorder != nullptr) {
             const RecordedStoreSyncScope attribution(*recorder, address, bytes, classification, stored, HookSyncProfiled() ? RecordedStoreKey() : HookSyncKey{});
             Recorder::CountSync(2);
-            if (HookFullSync() || completionDepth != 0) recorder->Sync();
+            if (HookFullSync() || completionDepth() != 0) recorder->Sync();
             else recorder->SyncThrough(address, bytes, true);
         }
     }
@@ -1286,10 +1293,9 @@ void TeardownCheckpointMarkers() noexcept {
 }
 
 struct Recorder::ProgressWatcher {
-    std::mutex mutex;
-    std::condition_variable wake;
-    std::uint64_t submitted = 0;
-    bool stop = false;
+    std::atomic<std::uint64_t> submitted{0};
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint32_t> wakes{0};
     std::thread thread;
 
     ProgressWatcher(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphoresKHR waitSemaphores, PFN_vkGetSemaphoreCounterValueKHR counterValue) {
@@ -1297,10 +1303,11 @@ struct Recorder::ProgressWatcher {
             CpuTopology::PinHelperThread("GPU progress watcher");
             std::uint64_t seen = 0;
             for (;;) {
-                {
-                    std::unique_lock lock(mutex);
-                    wake.wait(lock, [&] { return stop || submitted > seen; });
-                    if (stop) return;
+                const auto token = wakes.load(std::memory_order_acquire);
+                if (stop.load(std::memory_order_acquire)) return;
+                if (submitted.load(std::memory_order_acquire) <= seen) {
+                    wakes.wait(token, std::memory_order_acquire);
+                    continue;
                 }
                 const std::uint64_t target = seen + 1;
                 VkSemaphoreWaitInfoKHR info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR};
@@ -1322,19 +1329,15 @@ struct Recorder::ProgressWatcher {
     }
 
     void Submitted(std::uint64_t serial) {
-        {
-            std::lock_guard lock(mutex);
-            submitted = serial;
-        }
-        wake.notify_one();
+        submitted.store(serial, std::memory_order_release);
+        wakes.fetch_add(1, std::memory_order_release);
+        wakes.notify_one();
     }
 
     ~ProgressWatcher() {
-        {
-            std::lock_guard lock(mutex);
-            stop = true;
-        }
-        wake.notify_one();
+        stop.store(true, std::memory_order_release);
+        wakes.fetch_add(1, std::memory_order_release);
+        wakes.notify_one();
         thread.join();
     }
 };
@@ -1653,6 +1656,13 @@ void Recorder::ForgetQueuedLabels() {
     labelTableOwner->recordedLabels.store(recorded.size(), std::memory_order_relaxed);
 }
 
+bool Recorder::QueuedLabelsPending() {
+    std::lock_guard tableLock(labelTableMutex);
+    if (labelTableOwner == nullptr) return false;
+    const auto& recorded = labelTableOwner->labels;
+    return !labelTableOwner->queuedLabels.empty() || std::any_of(recorded.begin(), recorded.end(), [](const auto& entry) { return entry.second.batch == nullptr; });
+}
+
 void Recorder::SetQueuedLabelRecorder(void (*recorder)()) {
     queuedLabelRecorder.store(recorder, std::memory_order_release);
 }
@@ -1807,7 +1817,7 @@ void Recorder::AnnounceSyncSite(const void* site) {
 }
 
 double Recorder::ThreadWaitedMs() {
-    return threadWaitedMs;
+    return HostThreadSlot<double, ThreadWaitedSlot>::Get();
 }
 
 std::uint64_t Recorder::ReapsWithWork() {
@@ -2422,7 +2432,8 @@ void Recorder::AddGpuTiming(CommandClass which, double nanoseconds, std::uint64_
 
 std::uint32_t Recorder::BeginGpuTiming(std::uint64_t key) {
     if (!GpuTimingEnabled()) return NoTiming;
-    Commands();
+    ensureOpen();
+    if (open->queries == VK_NULL_HANDLE && open->renderPass.open) return NoTiming;
     return beginTiming(key);
 }
 
@@ -3264,6 +3275,7 @@ void Recorder::eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterat
     auto& pool = drawSnapshotPools[SnapshotPool(std::get<1>(entry->first))];
     pool.bytes -= std::get<2>(entry->first);
     pool.recency.erase(entry->second.recent);
+    if (!entry->second.owned.words.empty()) --ownedDrawInputs;
     drawSnapshots.erase(entry);
 }
 
@@ -3311,6 +3323,10 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
         return containingDrawSnapshot(address, bytes, offset);
     }
     if (offset != nullptr) *offset = 0;
+    if (!found->second.owned.words.empty()) {
+        eraseDrawSnapshot(found);
+        return {};
+    }
     const bool sameRegistry = found->second.registryGeneration == GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto guestBytes = use == SnapshotUse::PaddedVertex ? static_cast<std::size_t>(found->second.derived) : bytes;
     if (!sameRegistry || !GuestMemory::UnchangedSince(address, guestBytes, found->second.generation)) {
@@ -3390,7 +3406,11 @@ bool Recorder::refreshDrawSnapshot(DrawSnapshot& entry, std::uint64_t address, s
     return true;
 }
 
-void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived) {
+static void OwnedDrawTraceCount(const char* name, std::uint64_t amount = 1) {
+    PerformanceTrace::CountOwnedDraw(name, amount);
+}
+
+void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived, bool ownedInsertion) {
     const bool storage = use == SnapshotUse::Storage;
     const auto budget = storage ? DrawSnapshotBudget : DrawInputBudget;
     const auto maxEntries = storage ? DrawSnapshotEntries : DrawInputEntries;
@@ -3401,7 +3421,15 @@ void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::u
     } else if (const auto found = drawSnapshots.find({address, use, bytes}); found != drawSnapshots.end()) {
         eraseDrawSnapshot(found);
     }
-    while (!pool.recency.empty() && (pool.bytes + bytes > budget || pool.recency.size() >= maxEntries)) eraseDrawSnapshot(drawSnapshots.find(pool.recency.front()));
+    while (!pool.recency.empty() && (pool.bytes + bytes > budget || pool.recency.size() >= maxEntries)) {
+        const auto victim = drawSnapshots.find(pool.recency.front());
+        if (!storage) {
+            const bool ownedVictim = !victim->second.owned.words.empty();
+            OwnedDrawTraceCount(ownedVictim ? "OwnedDraw.evicted_owned" : "OwnedDraw.evicted_other");
+            if (ownedInsertion) OwnedDrawTraceCount(ownedVictim ? "OwnedDraw.evicted_owned_by_owned" : "OwnedDraw.evicted_other_by_owned");
+        }
+        eraseDrawSnapshot(victim);
+    }
     const DrawSnapshotKey key{address, use, bytes};
     pool.recency.push_back(key);
     try {
@@ -3411,6 +3439,80 @@ void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::u
         throw;
     }
     pool.bytes += bytes;
+}
+
+Recorder::OwnedDrawInputProof Recorder::ArmOwnedDrawInput(std::uint64_t address, std::size_t bytes) const {
+    GuestMemory::AssertGpuLockHeld("arm owned draw input");
+    OwnedDrawTraceCount("OwnedDraw.arm_attempt");
+    if (bytes == 0 || bytes > DrawInputBudget || bytes > std::numeric_limits<std::uint64_t>::max() - address || !GuestMemory::WriteWatched() || PendingWriteOverlaps(address, bytes)) {
+        OwnedDrawTraceCount("OwnedDraw.arm_refused");
+        return {};
+    }
+    OwnedDrawInputProof proof;
+    proof.words.resize((address + bytes - 1) / 65536 - address / 65536 + 1);
+    OwnedDrawTraceCount("OwnedDraw.arm_blocks_requested", proof.words.size());
+    if (!GuestArena::GuestArenaArmOwned_nid_no_patch(static_cast<std::uintptr_t>(address), bytes, proof.words.data(), proof.words.size(), 1)) {
+        OwnedDrawTraceCount("OwnedDraw.arm_refused");
+        return {};
+    }
+    proof.registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    proof.forget = GuestMemory::ForgetSerial();
+    proof.since = GuestMemory::TrackerGeneration();
+    proof.note = NewestWriteNote(address, bytes);
+    if (proof.since == 0 || (proof.forget & 1u) != 0) {
+        OwnedDrawTraceCount("OwnedDraw.arm_refused");
+        return {};
+    }
+    OwnedDrawTraceCount("OwnedDraw.arm_success");
+    return proof;
+}
+
+bool Recorder::ownedDrawInputHolds(std::uint64_t address, std::size_t bytes, const OwnedDrawInputProof& proof) const {
+    GuestMemory::AssertGpuLockHeld("check owned draw input");
+    OwnedDrawTraceCount("OwnedDraw.proof_check");
+    if (proof.words.empty() || proof.since == 0 || (proof.forget & 1u) != 0 || !GuestMemory::WriteWatched()) return false;
+    if (proof.registry != GuestAllocations::GuestAllocationsGeneration_nid_postfix() || proof.forget != GuestMemory::ForgetSerial()) return false;
+    if (PendingWriteOverlaps(address, bytes) || proof.note != NewestWriteNote(address, bytes) || GuestMemory::NewestStamp(address, bytes) > proof.since) return false;
+    OwnedDrawTraceCount("OwnedDraw.arena_check");
+    OwnedDrawTraceCount("OwnedDraw.check_blocks_requested", proof.words.size());
+    return GuestArena::GuestArenaOwnedUnchanged_nid_no_patch(static_cast<std::uintptr_t>(address), bytes, proof.words.data(), proof.words.size());
+}
+
+std::shared_ptr<Buffer> Recorder::ReusableOwnedDrawInput(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived) {
+    GuestMemory::AssertGpuLockHeld("reuse owned draw input");
+    Require(use != SnapshotUse::Storage, "an owned draw input is a vertex or index buffer");
+    const auto found = drawSnapshots.find({address, use, bytes});
+    if (found == drawSnapshots.end() || found->second.owned.words.empty()) return {};
+    if (!ownedDrawInputHolds(address, bytes, found->second.owned)) {
+        OwnedDrawTraceCount("OwnedDraw.invalidated");
+        eraseDrawSnapshot(found);
+        return {};
+    }
+    static const bool verify = std::getenv("APS5_VERIFY_OWNED_DRAW_INPUTS") != nullptr;
+    if (verify) {
+        const bool equal = GuestMemory::EqualsCommittedUnsynced(address, found->second.buffer->Bytes());
+        if (!ownedDrawInputHolds(address, bytes, found->second.owned)) {
+            eraseDrawSnapshot(found);
+            return {};
+        }
+        Require(equal, "an owned draw input differs while its proof holds");
+    }
+    auto& recency = drawSnapshotPools[SnapshotPool(use)].recency;
+    recency.splice(recency.end(), recency, found->second.recent);
+    if (derived != nullptr) *derived = found->second.derived;
+    OwnedDrawTraceCount("OwnedDraw.reused");
+    return found->second.buffer;
+}
+
+void Recorder::KeepOwnedDrawInput(std::uint64_t address, std::size_t bytes, const OwnedDrawInputProof& proof, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived) {
+    Require(use != SnapshotUse::Storage, "an owned draw input is a vertex or index buffer");
+    if (buffer == nullptr || buffer->Bytes().size() != bytes || !ownedDrawInputHolds(address, bytes, proof)) return;
+    auto kept = proof;
+    KeepDrawSnapshot(address, bytes, proof.since, proof.registry, std::move(buffer), use, derived, true);
+    if (const auto found = drawSnapshots.find({address, use, bytes}); found != drawSnapshots.end()) {
+        found->second.owned = std::move(kept);
+        ++ownedDrawInputs;
+    }
 }
 
 bool Recorder::KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest) {
@@ -3457,6 +3559,7 @@ void Recorder::OnComplete(std::function<void()> action) {
 bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel, int value, std::int64_t word) {
     CaptureTrace::Log("buffer-write batch=%llu address=%llx bytes=%zu label=%d", static_cast<unsigned long long>(submissions + 1), static_cast<unsigned long long>(address), bytes, ownLabel);
     if (bytes == 0) return false;
+    GuestMemory::ForgetKnownZero(address, bytes);
     ensureOpen();
     const auto end = address + bytes;
     open->writes.emplace_back(address, end);
@@ -3478,6 +3581,7 @@ bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel
 
 void Recorder::noteWriteOn(Batch& batch, std::uint64_t address, std::size_t bytes, bool ownLabel) {
     if (bytes == 0) return;
+    if (&batch != open.get()) GuestMemory::ForgetKnownZero(address, bytes);
     if (&batch == open.get()) {
         if (!noteWrite(address, bytes, ownLabel)) return;
         const std::array ranges{std::pair{address, address + bytes}};
@@ -3537,9 +3641,17 @@ void Recorder::NotePendingWordFill(std::uint64_t address, std::size_t bytes, std
 }
 
 void Recorder::NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    notePendingRanges(ranges, -1);
+}
+
+void Recorder::NotePendingReach(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    notePendingRanges(ranges, ReachValue);
+}
+
+void Recorder::notePendingRanges(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, int value) {
     bool publish = false;
     for (const auto& [begin, end] : ranges) {
-        if (end > begin && noteWrite(begin, static_cast<std::size_t>(end - begin))) publish = true;
+        if (end > begin && noteWrite(begin, static_cast<std::size_t>(end - begin), false, value)) publish = true;
     }
     if (!publish) return;
     publishPendingWrites(ranges);
@@ -3616,6 +3728,20 @@ bool Recorder::PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) co
     return false;
 }
 
+bool Recorder::PendingStoreOverlaps(std::uint64_t address, std::size_t bytes) const {
+    if (bytes == 0) return false;
+    if (published != nullptr && !SnapshotOverlaps(published.get(), address, bytes)) return false;
+    const auto end = address + bytes;
+    const auto stores = [&](const Batch& batch) {
+        for (std::size_t index = 0; index < batch.writes.size(); ++index) {
+            if (batch.writeValues[index] != ReachValue && address < batch.writes[index].second && batch.writes[index].first < end) return true;
+        }
+        return false;
+    };
+    if (open != nullptr && stores(*open)) return true;
+    return std::any_of(inFlight.begin(), inFlight.end(), [&](const auto& batch) { return stores(*batch); });
+}
+
 bool Recorder::OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const {
     return bytes != 0 && open != nullptr && overlaps(*open, address, address + bytes);
 }
@@ -3683,12 +3809,20 @@ std::uint64_t Recorder::LastWriteNote(std::uint64_t address, std::size_t bytes) 
 }
 
 std::uint64_t Recorder::NewestWriteNote(std::uint64_t address, std::size_t bytes) const {
+    return newestNote(address, bytes, true);
+}
+
+std::uint64_t Recorder::NewestStoreNote(std::uint64_t address, std::size_t bytes) const {
+    return newestNote(address, bytes, false);
+}
+
+std::uint64_t Recorder::newestNote(std::uint64_t address, std::size_t bytes, bool reach) const {
     if (bytes == 0) return 0;
     const auto end = address + bytes;
     std::uint64_t newest = 0;
     const auto scan = [&](const Batch& batch) {
         for (std::size_t i = 0; i < batch.writes.size(); ++i) {
-            if (address < batch.writes[i].second && batch.writes[i].first < end) newest = std::max(newest, batch.writeNotes[i]);
+            if ((reach || batch.writeValues[i] != ReachValue) && address < batch.writes[i].second && batch.writes[i].first < end) newest = std::max(newest, batch.writeNotes[i]);
         }
     };
     if (open != nullptr) scan(*open);
@@ -4355,7 +4489,7 @@ void Recorder::FlushDeferredReleases() {
 void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUnlocked) {
     if (bytes == 0) return;
     const auto end = address + bytes;
-    if (completionDepth != 0 && !CompletionStoreSyncs()) {
+    if (completionDepth() != 0 && !CompletionStoreSyncs()) {
         // A store made by a completion action (a copied buffer's write-back, GuestBufferMemory::
         // WriteBack) reached the flush hook, and a batch still in flight notes the range. Every
         // batch in flight now was recorded after the completing one (finish runs front to back),
@@ -4371,8 +4505,8 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
         ++holdCounters.completionSyncsSkipped;
         return;
     }
-    if (completionDepth != 0) ++holdCounters.completionSyncsWaited;
-    const auto completionWaitStart = completionDepth != 0 && DrawProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    if (completionDepth() != 0) ++holdCounters.completionSyncsWaited;
+    const auto completionWaitStart = completionDepth() != 0 && DrawProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     struct CompletionWait {
         std::chrono::steady_clock::time_point start;
         ~CompletionWait() {
@@ -4385,7 +4519,7 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
         const void* site = announcedSite != nullptr ? announcedSite : __builtin_return_address(0);
         if (syncThroughUnlocked(address, end, source, site)) return;
         // A completion-store wait (kill switch above) is already counted as 'waited'.
-        if (completionDepth == 0) ++holdCounters.hookLockedWaits;
+        if (completionDepth() == 0) ++holdCounters.hookLockedWaits;
     }
     if (!SyncThroughEnabled() || (open != nullptr && overlaps(*open, address, end))) {
         // The announced site (or this call's caller) names the sync, not this function.
@@ -4731,8 +4865,8 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
     const auto completionStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     {
         struct InCompletion {
-            InCompletion() { ++completionDepth; }
-            ~InCompletion() { --completionDepth; }
+            InCompletion() { HostThreadSlot<int, CompletionDepthSlot>::Set(completionDepth() + 1); }
+            ~InCompletion() { HostThreadSlot<int, CompletionDepthSlot>::Set(completionDepth() - 1); }
         } inCompletion;
         for (auto& action : batch->completions) {
             try {

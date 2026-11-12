@@ -16,6 +16,7 @@ jobs:
     concurrency:
       group: progress-comment-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
       cancel-in-progress: true
+    timeout-minutes: 15
     steps:
       - uses: actions/download-artifact@v8
         with:
