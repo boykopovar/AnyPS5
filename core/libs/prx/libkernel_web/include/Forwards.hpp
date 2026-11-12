@@ -112,7 +112,7 @@ int APS5_VABI get_authinfo_nid_disambig1_nid_postfix(int pid, KernelAuthInfo* in
 int APS5_VABI get_module_info_list_nid_disambig1_nid_postfix(void);
 int APS5_VABI get_page_table_stats_nid_disambig1_nid_postfix(void);
 int APS5_VABI get_sdk_compiled_version_nid_disambig1_nid_postfix(void);
-int APS5_VABI get_self_auth_info_nid_disambig1_nid_postfix(void);
+int APS5_VABI get_self_auth_info_nid_disambig1_nid_postfix(KernelAuthInfo* info);
 int APS5_VABI get_vm_map_timestamp_nid_disambig1_nid_postfix(void);
 int APS5_VABI getargc_nid_disambig1_nid_postfix(void);
 const char** APS5_VABI getargv_nid_disambig1_nid_postfix(void);
@@ -192,7 +192,7 @@ int APS5_VABI profil_nid_disambig1_nid_postfix(void* samples, std::size_t size, 
 int APS5_VABI pselect_nid_disambig1_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout, const void* sigmask);
 int APS5_VABI pthread_attr_destroy_nid_disambig1_nid_postfix(PthreadAttr* attr);
 int APS5_VABI pthread_attr_get_np_nid_disambig1_nid_postfix(Pthread thread, PthreadAttr* attr);
-int APS5_VABI pthread_attr_getaffinity_np_nid_disambig1_nid_postfix(void);
+int APS5_VABI pthread_attr_getaffinity_np_nid_disambig1_nid_postfix(const PthreadAttr* attr, std::size_t cpusetSize, void* cpuset);
 int APS5_VABI pthread_attr_getdetachstate_nid_disambig1_nid_postfix(const PthreadAttr* attr, int* state);
 int APS5_VABI pthread_attr_getguardsize_nid_disambig1_nid_postfix(const PthreadAttr* attr, size_t* guard_size);
 int APS5_VABI pthread_attr_getinheritsched_nid_disambig1_nid_postfix(const PthreadAttr* attr, int* inherit_sched);
@@ -204,7 +204,7 @@ int APS5_VABI pthread_attr_getstack_nid_disambig1_nid_postfix(const PthreadAttr*
 int APS5_VABI pthread_attr_getstackaddr_nid_disambig1_nid_postfix(const PthreadAttr* __restrict attr, void** __restrict stack_addr);
 int APS5_VABI pthread_attr_getstacksize_nid_disambig1_nid_postfix(const PthreadAttr* attr, size_t* stack_size);
 int APS5_VABI pthread_attr_init_nid_disambig1_nid_postfix(PthreadAttr* attr);
-int APS5_VABI pthread_attr_setaffinity_np_nid_disambig1_nid_postfix(void);
+int APS5_VABI pthread_attr_setaffinity_np_nid_disambig1_nid_postfix(PthreadAttr* attr, std::size_t cpusetSize, const void* cpuset);
 int APS5_VABI pthread_attr_setcreatesuspend_np_nid_disambig1_nid_postfix(PthreadAttr* attr);
 int APS5_VABI pthread_attr_setdetachstate_nid_disambig1_nid_postfix(PthreadAttr* attr, int state);
 int APS5_VABI pthread_attr_setguardsize_nid_disambig1_nid_postfix(PthreadAttr* attr, size_t guard_size);

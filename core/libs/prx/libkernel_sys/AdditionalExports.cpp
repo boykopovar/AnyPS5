@@ -1997,8 +1997,8 @@ int APS5_VABI get_sdk_compiled_version_nid_no_patch(void) {
     return get_sdk_compiled_version_nid_postfix();
 }
 
-int APS5_VABI get_self_auth_info_nid_no_patch(void) {
-    return get_self_auth_info_nid_postfix();
+int APS5_VABI get_self_auth_info_nid_no_patch(KernelAuthInfo* info) {
+    return get_self_auth_info_nid_postfix(info);
 }
 
 int APS5_VABI get_vm_map_timestamp_nid_no_patch(void) {
@@ -2037,16 +2037,16 @@ int APS5_VABI profil_nid_no_patch(void* samples, std::size_t size, std::size_t o
     return profil_nid_postfix(samples, size, offset, scale);
 }
 
-int APS5_VABI pthread_attr_getaffinity_np_nid_no_patch(void) {
-    return pthread_attr_getaffinity_np_nid_postfix();
+int APS5_VABI pthread_attr_getaffinity_np_nid_no_patch(const PthreadAttr* attr, std::size_t cpusetSize, void* cpuset) {
+    return pthread_attr_getaffinity_np_nid_postfix(attr, cpusetSize, cpuset);
 }
 
 int APS5_VABI pthread_attr_getsolosched_np_nid_no_patch(const PthreadAttr* attr, int* solosched) {
     return pthread_attr_getsolosched_np_nid_postfix(attr, solosched);
 }
 
-int APS5_VABI pthread_attr_setaffinity_np_nid_no_patch(void) {
-    return pthread_attr_setaffinity_np_nid_postfix();
+int APS5_VABI pthread_attr_setaffinity_np_nid_no_patch(PthreadAttr* attr, std::size_t cpusetSize, const void* cpuset) {
+    return pthread_attr_setaffinity_np_nid_postfix(attr, cpusetSize, cpuset);
 }
 
 int APS5_VABI pthread_attr_setcreatesuspend_np_nid_no_patch(PthreadAttr* attr) {
