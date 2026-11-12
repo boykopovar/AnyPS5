@@ -254,6 +254,14 @@ float SinhfExp(float x) {
 }
 
 float GuestTgammaf(float x) {
+    if (std::isgreater(static_cast<double>(x), 171.63)) {
+        static volatile double zero = 0.0;
+        return static_cast<float>(static_cast<double>(x) / zero);
+    }
+    if (std::isfinite(x) && std::isless(static_cast<double>(x), -190.0) && std::trunc(x) != x) {
+        const double interval = std::floor(-static_cast<double>(x));
+        return std::fmod(interval, 2.0) == 0.0 ? -0.0f : 0.0f;
+    }
     const int savedErrno = errno;
     const float result = static_cast<float>(std::tgamma(static_cast<double>(x)));
     errno = std::isfinite(x) && x < 0.0f && std::trunc(x) == x ? EDOM : savedErrno;
