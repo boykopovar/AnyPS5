@@ -1702,6 +1702,11 @@ static bool OpenIovecs(const KernelIovec* iov, int iovcnt, std::deque<GuestArena
     return true;
 }
 
+static std::int64_t KqueueIovecsResult(const KernelIovec* iov, int iovcnt, bool write) {
+    const bool empty = std::none_of(iov, iov + iovcnt, [](const KernelIovec& vector) { return vector.length != 0; });
+    return write || !empty ? SCE_KERNEL_ERROR_EOPNOTSUPP : 0;
+}
+
 static void PrepareWriteIovecs(const KernelIovec* iov, int iovcnt) {
     for (int i = 0; i < iovcnt; ++i) GuestArena::GuestArenaPrepareHostRead_nid_no_patch(iov[i].base, iov[i].length);
 }
@@ -1740,6 +1745,7 @@ static std::int64_t TransferIovecs(int d, const KernelIovec* guestIov, int iovcn
     if (offset != nullptr) {
         if (const int error = PositionedArgumentError(d, write, false, *offset)) return SceErrorFromErrno(error);
     }
+    if (offset == nullptr && IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, write);
     std::size_t total = 0;
     for (int i = 0; i < iovcnt; ++i) {
         if (iov[i].base == nullptr && iov[i].length != 0) return SceErrorFromErrno(GUEST_EFAULT);
@@ -1859,6 +1865,7 @@ int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* guestIov, int iovcnt)
     std::vector<KernelIovec> vectors;
     if (const int error = CopyIovecs(guestIov, iovcnt, vectors)) return error;
     const auto* iov = vectors.data();
+    if (IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, false);
     std::deque<GuestArena::HostWrite> destinations;
     if (!OpenIovecs(iov, iovcnt, destinations)) return SceErrorFromErrno(GUEST_EFAULT);
     if (GuestSockets::IsOpen(d)) {
@@ -1879,6 +1886,7 @@ int64_t APS5_VABI sceKernelWritev(int d, const KernelIovec* guestIov, int iovcnt
     std::vector<KernelIovec> vectors;
     if (const int error = CopyIovecs(guestIov, iovcnt, vectors)) return error;
     const auto* iov = vectors.data();
+    if (IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, true);
     if (GuestSockets::IsOpen(d)) {
         const auto result = GuestSockets::Writev(d, reinterpret_cast<const GuestSockets::Iovec*>(iov), iovcnt);
         return result < 0 ? SceKernelError(*__error_nid_postfix()) : result;

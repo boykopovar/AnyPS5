@@ -22,6 +22,17 @@ else()
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_freetype_ot_stroker_export_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtStrokerExport.cpp)
+    target_include_directories(guest_freetype_ot_stroker_export_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_ot_stroker_export_tests PRIVATE libSceFreeTypeOt libSceFreeType freetype)
+    configure_windows_unwind(guest_freetype_ot_stroker_export_tests)
+    add_test(NAME guest_freetype_ot_stroker_export COMMAND guest_freetype_ot_stroker_export_tests)
+    set_tests_properties(guest_freetype_ot_stroker_export PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_ot_stroker_export PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
+    endif()
+
     add_test_executable(guest_freetype_ot_constants_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtConstants.cpp)
     target_include_directories(guest_freetype_ot_constants_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_ot_constants_tests PRIVATE libSceFreeTypeOt)

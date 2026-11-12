@@ -1,5 +1,6 @@
 import argparse
 import collections
+import functools
 import importlib.util
 import json
 import os
@@ -37,7 +38,12 @@ class Build:
                               encoding=self.encoding, check=True).stdout
 
     def absolute(self, path):
-        return os.path.normpath(path if os.path.isabs(path) else os.path.join(self.path, path))
+        absolute = os.path.normpath(path if os.path.isabs(path) else os.path.join(self.path, path))
+        for root in (self.path, self.source):
+            real = real_path(root)
+            if inside(absolute, real) and not inside(absolute, root):
+                return root.rstrip(os.sep) + absolute[len(real.rstrip(os.sep)):]
+        return absolute
 
     def key(self, path):
         return os.path.normcase(self.absolute(path))
@@ -138,6 +144,11 @@ class Build:
     def target(self, test):
         command = test.get("command") or []
         return self.output(command[0]) if command else None
+
+
+@functools.lru_cache(maxsize=None)
+def real_path(path):
+    return os.path.realpath(path)
 
 
 def inside(path, root):
