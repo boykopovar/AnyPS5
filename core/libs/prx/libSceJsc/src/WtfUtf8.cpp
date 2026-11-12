@@ -52,11 +52,22 @@
  * Derived from Source/WTF/wtf/text/StringImpl.cpp@c55364d53f971f63a709976f168d932d558b8909
  */
 /*
- * Copyright (C) 1999-2015, International Business Machines Corporation and others.
- * Copyright (C) 2016 and later: Unicode, Inc. and others.
+ * © 2016 and later: Unicode, Inc. and others.
  * License & terms of use: http://www.unicode.org/copyright.html
  *
- * Derived from Source/WTF/icu/unicode/utf8.h and utf16.h@c55364d53f971f63a709976f168d932d558b8909
+ *   Copyright (C) 1999-2015, International Business Machines
+ *   Corporation and others.  All Rights Reserved.
+ *
+ * Derived from Source/WTF/icu/unicode/utf8.h@c55364d53f971f63a709976f168d932d558b8909
+ */
+/*
+ * © 2016 and later: Unicode, Inc. and others.
+ * License & terms of use: http://www.unicode.org/copyright.html
+ *
+ *   Copyright (C) 1999-2012, International Business Machines
+ *   Corporation and others.  All Rights Reserved.
+ *
+ * Derived from Source/WTF/icu/unicode/utf16.h@c55364d53f971f63a709976f168d932d558b8909
  */
 
 #include "prx/libc/include/general/VabiMacros.hpp"
