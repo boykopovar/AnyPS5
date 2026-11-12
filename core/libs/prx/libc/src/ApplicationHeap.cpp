@@ -29,6 +29,7 @@ using UsableSize = std::size_t (APS5_VABI *)(void*);
 
 std::mutex heapMutex;
 std::array<void*, 10> heapApi{};
+std::atomic<const std::array<void*, 10>*> publishedApi{nullptr};
 std::atomic<int> heapKind{0};
 std::once_flag heapInitialization;
 std::exception_ptr heapFailure;
@@ -91,13 +92,17 @@ void ensureInitialized(std::unique_lock<std::mutex>& lock) {
 
 template<typename TCallback>
 TCallback callback(std::size_t index) {
+    static_assert(sizeof(TCallback) == sizeof(void*));
+    TCallback result;
+    if (const auto* api = publishedApi.load(std::memory_order_acquire); api != nullptr && (*api)[index] != nullptr) {
+        std::memcpy(&result, &(*api)[index], sizeof(result));
+        return result;
+    }
     std::unique_lock lock(heapMutex);
     ensureInitialized(lock);
     if (heapFailure) std::rethrow_exception(heapFailure);
     if (heapFinalized) throw std::runtime_error("application heap: allocator has been finalized");
     if (heapApi[index] == nullptr) throw std::runtime_error("application heap: allocator API is not registered");
-    static_assert(sizeof(TCallback) == sizeof(void*));
-    TCallback result;
     std::memcpy(&result, &heapApi[index], sizeof(result));
     return result;
 }
@@ -121,6 +126,7 @@ void finalize() {
     if (finalizeCallback != nullptr) finalizeCallback();
     std::lock_guard lock(heapMutex);
     heapFinalized = true;
+    publishedApi.store(nullptr, std::memory_order_release);
 }
 
 struct HeapFinalizerRegistration {
@@ -147,8 +153,9 @@ void ApplicationHeapRegister_nid_no_patch(void* const* api) {
     if (heapFailure) std::rethrow_exception(heapFailure);
     if (heapFinalized) throw std::runtime_error("application heap: allocator has been finalized");
     if (heapApi[0] != nullptr && heapApi != replacement) throw std::runtime_error("application heap: cannot replace an active allocator");
-    heapApi = replacement;
+    if (heapApi[0] == nullptr) heapApi = replacement;
     heapKind.store(replacement == defaultApi() ? 1 : 2, std::memory_order_release);
+    publishedApi.store(&heapApi, std::memory_order_release);
 }
 
 bool ApplicationHeapDefault_nid_no_patch() {
@@ -192,6 +199,7 @@ void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
         } catch (...) {
             std::lock_guard lock(heapMutex);
             heapFailure = std::current_exception();
+            publishedApi.store(nullptr, std::memory_order_release);
         }
     });
     std::lock_guard lock(heapMutex);
