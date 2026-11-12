@@ -424,6 +424,17 @@ class HostOnlyTargets(unittest.TestCase):
             ["first_tests", "second_tests"],
         )
 
+    def test_a_cmake_fragment_change_checks_all_host_targets(self):
+        first = self.target("first_tests")
+        second = self.target("second_tests", source="core/libs/tests/Second.cpp")
+        build_dir = self.fixture([first, second])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        fragment = "core/libs/prx/libSceAgcDriver/tests/cmake/agc_frame_limit_tests.cmake"
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(source_root, targets, [fragment]),
+            ["first_tests", "second_tests"],
+        )
+
     def test_build_wide_inputs_check_all_host_targets(self):
         first = self.target("first_tests")
         second = self.target("second_tests", source="core/libs/tests/Second.cpp")
@@ -556,7 +567,7 @@ class WindowsPullRequestGateTests(unittest.TestCase):
     def test_build_wide_inputs_start_the_windows_pull_request_job(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/build.yml").read_text(encoding="utf-8")
         gate = workflow.split("mingwHostTests: ", 1)[1].split("),", 1)[0]
-        for item in ("'core/CMakeLists.txt'", "'cmake/'", "'3rdparty/'", "'.gitmodules'",
+        for item in ("'CMakeLists.txt'", "'cmake/'", "'3rdparty/'", "'.gitmodules'",
                      "'tools/select_tests.py'", "'tools/configure_seed.py'"):
             with self.subTest(item=item):
                 self.assertIn(item, gate)

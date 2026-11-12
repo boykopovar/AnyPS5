@@ -15,7 +15,7 @@ namespace Relinker {
 
 class RelinkerPipeline : public IRelinkerPipeline {
 public:
-    RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress);
+    RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress, bool functionSymbolRoots = false);
 
     RelinkResult Relink() override;
 
@@ -28,6 +28,7 @@ private:
     std::shared_ptr<IUnusedNidFilter> unusedNidFilter;
     std::uint32_t unusedFilterLevel;
     Domain::IProgress& progress;
+    bool functionSymbolRoots;
 
     static std::string relocationTypeName(std::uint32_t type);
 };
