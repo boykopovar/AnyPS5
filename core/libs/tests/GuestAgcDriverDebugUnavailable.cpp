@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 
 static constexpr int DebugUnavailable = static_cast<int>(0x8A6C1000);
 static constexpr int FeatureUnavailable = static_cast<int>(0x8A6D0001);
@@ -13,8 +14,10 @@ int main() {
 
     Require(sceAgcDriverSetValidationErrorOutputFrequency(0u) == DebugUnavailable);
     Require(sceAgcDriverSetValidationErrorOutputFrequency(60u) == DebugUnavailable);
+    Require(sceAgcDriverSetValidationErrorOutputFrequency(std::numeric_limits<std::uint32_t>::max()) == DebugUnavailable);
     Require(sceAgcDriverSetSubmitValidationMode(0u) == DebugUnavailable);
     Require(sceAgcDriverSetSubmitValidationMode(1u) == DebugUnavailable);
+    Require(sceAgcDriverSetSubmitValidationMode(std::numeric_limits<std::uint32_t>::max()) == DebugUnavailable);
 
     std::uint32_t mode = 0xA5A5A5A5u;
     Require(sceAgcDriverGetSubmitValidationMode(&mode) == DebugUnavailable);
@@ -42,6 +45,7 @@ int main() {
 
     std::uint32_t coredumpMode = 0xA5A5A5A5u;
     Require(sceAgcDriverGetCoredumpMode(nullptr) == static_cast<int>(0x8A6D0003));
+    Require(coredumpMode == 0xA5A5A5A5u);
     Require(sceAgcDriverGetCoredumpMode(&coredumpMode) == 0 && coredumpMode == 0);
 
     std::array<std::uint8_t, 16> range{};
