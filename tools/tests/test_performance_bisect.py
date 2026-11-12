@@ -647,3 +647,12 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "exactly one"):
                 performance_bisect.sample_summary(path, "PPSA00000", GOOD)
 
+
+    def test_sample_requires_gpu_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = self.sample_fixture()
+            del summary["machine"]["gpu"]
+            path = self.write_summary(Path(directory), summary)
+            with self.assertRaisesRegex(ValueError, "missing machine"):
+                performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
