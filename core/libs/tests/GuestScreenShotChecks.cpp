@@ -121,6 +121,15 @@ int main() {
     drc = DrcParam(out, out);
     drc.Set<std::uint32_t>(0x20, 0x7fff);
     Require(setDrcParam(&drc) == ErrorArgument, "SetDrcParam took a second count other than 0x8000");
+    drc = DrcParam(out, out);
+    drc.Set<std::uint32_t>(0x00, 0x31);
+    Require(setDrcParam(&drc) == ErrorArgument, "SetDrcParam took a size above the limit");
+    drc = DrcParam(out, out);
+    drc.Set<std::uint32_t>(0x10, 0x401);
+    Require(setDrcParam(&drc) == ErrorArgument, "SetDrcParam took a first count above the limit");
+    drc = DrcParam(out, out);
+    drc.Set<std::uint32_t>(0x20, 0x8001);
+    Require(setDrcParam(&drc) == ErrorArgument, "SetDrcParam took a second count above the limit");
 
     std::puts("ScreenShot checks passed");
     return 0;
