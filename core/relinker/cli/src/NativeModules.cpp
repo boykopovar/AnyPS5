@@ -142,16 +142,6 @@ void ReportUnconvertedNeeded(const NativeModules& modules, const std::vector<std
     std::vector<Found> found;
     std::error_code error;
     for (auto entry = std::filesystem::recursive_directory_iterator(modules.Root, std::filesystem::directory_options::skip_permission_denied, error); !error && entry != std::filesystem::recursive_directory_iterator(); entry.increment(error)) {
-        const bool directory = entry->is_directory(error);
-        if (error) {
-            error.clear();
-            continue;
-        }
-        if (directory) {
-            if (std::any_of(modules.Directories.begin(), modules.Directories.end(), [&](const auto& scanned) { return std::filesystem::equivalent(scanned, entry->path(), error) && !error; })) entry.disable_recursion_pending();
-            error.clear();
-            continue;
-        }
         const auto filename = FoldedName(Io::Utf8Path(entry->path().filename()), foldCase);
         if (Domain::ModuleSuffix(filename).empty()) continue;
         const auto stem = stems.find(std::string(ModuleStem(filename)));
@@ -162,6 +152,11 @@ void ReportUnconvertedNeeded(const NativeModules& modules, const std::vector<std
         }
         const auto header = TryReadCandidateHeader(entry->path());
         if (!header || (!header->Self && !(header->Elf && header->Type == 0xfe18))) continue;
+        const auto parent = entry->path().parent_path();
+        if (std::any_of(modules.Directories.begin(), modules.Directories.end(), [&](const auto& scanned) {
+            std::error_code identityError;
+            return std::filesystem::equivalent(scanned, parent, identityError);
+        })) continue;
         for (const auto& name : stem->second) found.push_back({entry->path().lexically_relative(modules.Root), name, header->Self});
     }
     std::sort(found.begin(), found.end(), [](const auto& left, const auto& right) { return std::tie(left.Relative, left.Name) < std::tie(right.Relative, right.Name); });
