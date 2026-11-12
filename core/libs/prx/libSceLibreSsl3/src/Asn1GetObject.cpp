@@ -18,7 +18,7 @@ bool Consume(std::uint64_t& remaining) {
     return true;
 }
 
-bool ReadLength(const unsigned char*& cursor, int maximum, bool& indefinite, std::int64_t& length) {
+bool ReadLength(const unsigned char*& cursor, std::uint64_t maximum, bool& indefinite, std::int64_t& length) {
     if (maximum < 1) return false;
     --maximum;
     const unsigned char* position = cursor;
@@ -30,7 +30,7 @@ bool ReadLength(const unsigned char*& cursor, int maximum, bool& indefinite, std
         indefinite = false;
         unsigned int count = *position & 0x7f;
         if ((*position++ & 0x80) != 0) {
-            if (maximum < static_cast<int>(count)) return false;
+            if (maximum < static_cast<std::uint64_t>(count)) return false;
             while (count != 0 && *position == 0) {
                 ++position;
                 --count;
@@ -60,7 +60,7 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** pointer, std::in
         throw std::invalid_argument(std::string(__func__) + ": null argument");
     const unsigned char* start = *pointer;
     if (!start) throw std::invalid_argument(std::string(__func__) + ": null pointer");
-    if (maximum == 0) return ErrorResult;
+    if (maximum <= 0) return ErrorResult;
 
     std::uint64_t remaining = static_cast<std::uint64_t>(maximum);
     int result = *start & ConstructedBit;
@@ -87,10 +87,10 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** pointer, std::in
     *tag = parsedTag;
     *objectClass = parsedClass;
     bool indefinite = false;
-    if (!ReadLength(cursor, static_cast<int>(remaining), indefinite, *length)) return ErrorResult;
+    if (!ReadLength(cursor, remaining, indefinite, *length)) return ErrorResult;
     if (indefinite && (result & ConstructedBit) == 0) return ErrorResult;
     const auto headerLength = static_cast<std::int64_t>(cursor - start);
-    if (maximum < 0 || headerLength > maximum || *length > maximum - headerLength) result |= ErrorResult;
+    if (headerLength > maximum || *length > maximum - headerLength) result |= ErrorResult;
     *pointer = cursor;
     return result | (indefinite ? 1 : 0);
 }

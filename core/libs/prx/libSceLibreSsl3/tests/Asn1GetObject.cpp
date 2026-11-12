@@ -144,6 +144,24 @@ void ZeroMaximum() {
     Require(parsed.pointer == encoded && parsed.length == -1 && parsed.tag == -1 && parsed.objectClass == -1);
 }
 
+void NegativeMaximum() {
+    const unsigned char encoded[] = {0x30, 0x00};
+    const Parsed parsed = Parse(encoded, -1);
+    Require(parsed.result == 0x80);
+    Require(parsed.pointer == encoded && parsed.length == -1 && parsed.tag == -1 && parsed.objectClass == -1);
+}
+
+void LargeMaximum() {
+    const unsigned char encoded[] = {0x05, 0x00};
+    for (const std::int64_t maximum : {std::int64_t{3221225472}, std::int64_t{4294967298}}) {
+        const Parsed parsed = Parse(encoded, maximum);
+        Require(parsed.result == 0x00);
+        Require(parsed.tag == 0x05 && parsed.objectClass == 0x00);
+        Require(parsed.length == 0);
+        Require(parsed.pointer == encoded + 2);
+    }
+}
+
 void IndefinitePrimitive() {
     const unsigned char encoded[] = {0x02, 0x80};
     const Parsed parsed = Parse(encoded, static_cast<std::int64_t>(sizeof(encoded)));
@@ -179,6 +197,8 @@ int main() {
     Tags();
     TooLongLength();
     ZeroMaximum();
+    NegativeMaximum();
+    LargeMaximum();
     IndefinitePrimitive();
     NullArguments();
     std::puts("libSceLibreSsl3 ASN1_get_object tests passed");
