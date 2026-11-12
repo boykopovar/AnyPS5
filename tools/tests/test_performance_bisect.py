@@ -526,3 +526,19 @@ class FirstParentEndpointTests(GitHistoryTests):
         bad = performance_bisect.git(self.repo, "rev-parse", "HEAD")
         with self.assertRaisesRegex(ValueError, "first-parent history"):
             performance_bisect.first_parent_commits(self.repo, side_good, bad)
+
+
+class FocusedInputEdgeTests(unittest.TestCase):
+    def recipe_path(self, root, **updates):
+        recipe = RecipeTests().make_recipe(root)
+        recipe.update(updates)
+        path = root / "recipe.json"
+        path.write_text(json.dumps(recipe), encoding="utf-8")
+        return path
+
+    def test_recipe_root_must_be_an_object(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recipe.json"
+            path.write_text("[]", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "JSON object"):
+                performance_bisect.load_recipe(path)
