@@ -96,6 +96,16 @@ constexpr std::uint32_t ExpectedM2Abs2[RowCount] = {
     0x01000000u, 0x40000000u, 0x7f800000u, 0x00000000u,
 };
 
+struct SplitRow {
+    std::uint32_t row;
+    std::uint32_t separate;
+};
+
+constexpr SplitRow SplitRows[] = {
+    {13u, 0x00000000u},
+    {14u, 0x7f800000u},
+};
+
 struct Variant {
     const char* name;
     std::uint32_t abs;
@@ -156,7 +166,7 @@ void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::ShaderFloatMod
     device.WaitIdle();
 }
 
-std::uint32_t Check(const char* mode, const Variant& variant, const std::uint32_t* expected, bool skipDenormals) {
+std::uint32_t Check(const char* mode, const Variant& variant, const std::uint32_t* expected, bool skipDenormals, bool hostFuses) {
     std::uint32_t skipped = 0u;
     for (std::uint32_t tid = 0; tid < RowCount; ++tid) {
         const Row& row = Rows[tid];
@@ -164,10 +174,16 @@ std::uint32_t Check(const char* mode, const Variant& variant, const std::uint32_
             ++skipped;
             continue;
         }
+        std::uint32_t wanted = expected[tid];
+        if (!hostFuses && variant.abs == 0u && variant.neg == 0u) {
+            for (const SplitRow& split : SplitRows) {
+                if (split.row == tid) wanted = split.separate;
+            }
+        }
         const std::uint32_t actual = Output[tid * Results];
-        Require(actual == expected[tid], std::string("v_fmac_f32 ") + variant.name + " " + mode + ": lane " + std::to_string(tid) + " of " +
-                                             Hex(Rows[tid].a) + " * " + Hex(Rows[tid].b) + " + " + Hex(Rows[tid].accumulator) + " is " + Hex(actual) +
-                                             ", expected " + Hex(expected[tid]));
+        Require(actual == wanted, std::string("v_fmac_f32 ") + variant.name + " " + mode + ": lane " + std::to_string(tid) + " of " +
+                                      Hex(Rows[tid].a) + " * " + Hex(Rows[tid].b) + " + " + Hex(Rows[tid].accumulator) + " is " + Hex(actual) +
+                                      ", expected " + Hex(wanted));
     }
     return skipped;
 }
@@ -180,11 +196,16 @@ int main() {
         if (!device) return VulkanTestSkipped;
         const bool keepsDenormals = device->Target().float32DenormPreserve;
         std::uint32_t skipped = 0u;
+        std::optional<bool> hostFuses;
         for (const Variant& variant : Variants) {
             Run(*device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false}, variant);
-            skipped += Check("M1", variant, variant.expectedM1, !keepsDenormals);
+            if (!hostFuses.has_value()) {
+                hostFuses = Output[SplitRows[0].row * Results] == variant.expectedM1[SplitRows[0].row];
+                if (!*hostFuses) std::puts("the device splits fma into a multiply and an add, so plain rows 13 and 14 are checked against the separately rounded results");
+            }
+            skipped += Check("M1", variant, variant.expectedM1, !keepsDenormals, *hostFuses);
             Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}, variant);
-            Check("M2", variant, variant.expectedM2, false);
+            Check("M2", variant, variant.expectedM2, false, *hostFuses);
         }
         std::printf("v_fmac_f32 accumulator modifiers tests passed (%u M1 lanes with an f32 denormal not checked; they need DenormPreserve 32)\n", skipped);
         return 0;
