@@ -27,12 +27,13 @@ def document(edges=None):
                                    address="0x1050", name="sceAudioOutInit"), *(edges or [])]}
 
 
-class RuntimeCallGraphTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        if runtime_call_graph is None:
-            raise AssertionError("runtime_call_graph.py must be available to its test suite")
+class RuntimeCallGraphModuleTests(unittest.TestCase):
+    def test_graph_module_is_available(self):
+        self.assertIsNotNone(runtime_call_graph, "runtime_call_graph.py must be available to its test suite")
 
+
+@unittest.skipIf(runtime_call_graph is None, "runtime_call_graph.py is not present")
+class RuntimeCallGraphTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
