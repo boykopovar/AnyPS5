@@ -148,6 +148,9 @@ void APS5_VABI sceLibcInternalIosBaseDeletingDestructor_nid_no_patch(void* self)
 int APS5_VABI __std_init_once_begin_initialize_clr_nid_postfix(void** once, unsigned long flags, int* pending, void** context);
 int APS5_VABI __std_init_once_complete_clr_nid_postfix(void** once, unsigned long flags, void* context);
 [[noreturn]] void APS5_VABI __std_init_once_link_alternate_names_and_abort_nid_postfix();
+void APS5_VABI sceLibcInternalLocinfoBaseConstructor_nid_no_patch(void* self, const char* localeName);
+void APS5_VABI sceLibcInternalLocinfoBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalLocimpBaseCopyConstructor_nid_no_patch(void* self, const void* source);
 int APS5_VABI _Mtxinit_nid_postfix(PthreadMutex* mutex, const char* name);
 int APS5_VABI _ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name);
 int APS5_VABI _Mtxlock_nid_postfix(PthreadMutex* mutex);
