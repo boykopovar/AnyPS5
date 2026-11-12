@@ -22,6 +22,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <source_location>
 
 namespace {
@@ -1423,6 +1424,122 @@ void TestFileNameHelpers() {
     Throws([&] { LastComponent(nullptr); });
 }
 
+const auto ParserEqual = &_ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_;
+const auto ParserConsistent = &_ZN3WTF9URLParser24internalValuesConsistentERKNS_3URLE;
+
+void TestURLParserChecks() {
+    constexpr unsigned valid = 1U;
+    constexpr unsigned http = 2U;
+    constexpr unsigned opaque = 4U;
+    auto text = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frag"));
+    const std::string raw = Bytes(UTF8(&text, 1));
+    const unsigned hostEnd = static_cast<unsigned>(raw.find(":8443"));
+    URL url{text.impl, valid | (5U << 3) | (5U << 6), 8, 12, 17, hostEnd,
+        static_cast<unsigned>(raw.rfind('/') + 1), static_cast<unsigned>(raw.find('?')), static_cast<unsigned>(raw.find('#'))};
+    Check(ParserEqual(&url, &url) && ParserConsistent(&url));
+
+    auto copy = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frag"));
+    Check(copy.impl != text.impl);
+    URL same = url;
+    same.impl = copy.impl;
+    Check(ParserEqual(&url, &same) && ParserEqual(&same, &url));
+    auto wide = Create16(u"https://u%20:p%40@example.test:8443/a/b?q=1#frag", 48);
+    Check(!(wide.impl->hashAndFlags & 4));
+    same.impl = wide.impl;
+    Check(ParserEqual(&url, &same) && ParserEqual(&same, &url));
+    auto other = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frog"));
+    same.impl = other.impl;
+    Check(!ParserEqual(&url, &same) && ParserConsistent(&same));
+    auto shorter = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#fra"));
+    same.impl = shorter.impl;
+    Check(!ParserEqual(&url, &same));
+
+    for (unsigned flip : {valid, http, opaque, 1U << 3, 4U << 3, 1U << 6, 1U << 31}) {
+        URL changed = url;
+        changed.bits ^= flip;
+        Check(!ParserEqual(&url, &changed) && !ParserEqual(&changed, &url));
+    }
+    unsigned URL::* const offsets[] = {&URL::userStart, &URL::userEnd, &URL::passwordEnd, &URL::hostEnd,
+        &URL::pathAfterLastSlash, &URL::pathEnd, &URL::queryEnd};
+    for (auto offset : offsets) {
+        URL changed = url;
+        changed.*offset += 1;
+        Check(!ParserEqual(&url, &changed) && !ParserEqual(&changed, &url));
+    }
+
+    URL absent{};
+    URL absentCopy{};
+    Check(ParserEqual(&absent, &absentCopy) && ParserConsistent(&absent));
+    auto empty = FromUTF8Z(U8(""));
+    Check(empty.impl && empty.impl->length == 0);
+    URL emptyURL{empty.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    Check(!ParserEqual(&absent, &emptyURL) && !ParserEqual(&emptyURL, &absent));
+    Check(ParserConsistent(&emptyURL));
+    absent.queryEnd = 1;
+    Check(!ParserConsistent(&absent));
+
+    {
+        URL changed = url;
+        changed.bits = (changed.bits & 63U) | ((changed.userStart + 1) << 6);
+        Check(!ParserConsistent(&changed));
+        changed.bits = (changed.bits & 63U) | (changed.userStart << 6);
+        Check(ParserConsistent(&changed));
+    }
+    const std::pair<unsigned URL::*, unsigned URL::*> orders[] = {{&URL::userStart, &URL::userEnd},
+        {&URL::userEnd, &URL::passwordEnd}, {&URL::passwordEnd, &URL::hostEnd}, {&URL::pathAfterLastSlash, &URL::pathEnd},
+        {&URL::pathEnd, &URL::queryEnd}};
+    for (const auto& [lower, upper] : orders) {
+        URL changed = url;
+        changed.*lower = changed.*upper + 1;
+        Check(!ParserConsistent(&changed));
+        changed.*lower = changed.*upper;
+        Check(ParserConsistent(&changed));
+    }
+    {
+        URL changed = url;
+        changed.pathAfterLastSlash = changed.hostEnd + 4;
+        Check(!ParserConsistent(&changed));
+        changed.pathAfterLastSlash = changed.hostEnd + 5;
+        Check(ParserConsistent(&changed));
+        changed.bits &= ~(7U << 3);
+        changed.pathAfterLastSlash = changed.hostEnd;
+        Check(ParserConsistent(&changed));
+    }
+    {
+        URL changed = url;
+        changed.queryEnd = text.impl->length;
+        Check(ParserConsistent(&changed));
+        changed.queryEnd = text.impl->length + 1;
+        Check(!ParserConsistent(&changed));
+        changed.queryEnd = url.queryEnd;
+        changed.bits &= ~(valid | http | opaque);
+        Check(ParserConsistent(&changed));
+        changed.bits |= http | opaque;
+        Check(ParserConsistent(&changed));
+    }
+    {
+        auto abc = FromUTF8Z(U8("abc"));
+        URL wrapped{abc.impl, valid | (1U << 3), 0, 0, 0, 0xFFFFFFFFU, 0, 0, 0};
+        Check(ParserConsistent(&wrapped));
+        wrapped.bits = valid | (2U << 3);
+        Check(!ParserConsistent(&wrapped));
+        wrapped.pathAfterLastSlash = 1;
+        wrapped.pathEnd = 1;
+        wrapped.queryEnd = 1;
+        Check(ParserConsistent(&wrapped));
+    }
+
+    StringImpl corrupt{2, 3, nullptr, 4};
+    StringImpl corruptCopy{2, 3, nullptr, 4};
+    URL broken{&corrupt, 0, 0, 0, 0, 0, 0, 0, 0};
+    URL brokenCopy{&corruptCopy, 0, 0, 0, 0, 0, 0, 0, 0};
+    Throws([&] { ParserEqual(&broken, &brokenCopy); });
+    Check(ParserEqual(&broken, &broken));
+    Throws([&] { ParserEqual(nullptr, &url); });
+    Throws([&] { ParserEqual(&url, nullptr); });
+    Throws([&] { ParserConsistent(nullptr); });
+}
+
 void TestURLsAndReallocation() {
     struct PinnedBits {
         unsigned valid : 1;
@@ -1873,6 +1990,7 @@ void TestURLsAndReallocation() {
     Check(memory[0] == 'h' && memory[1] == 'e');
     Check(!JSRealloc(memory, 0));
     TestURLStringHelpers();
+    TestURLParserChecks();
 }
 
 void TestURLLastPathComponentAndReferrer() {

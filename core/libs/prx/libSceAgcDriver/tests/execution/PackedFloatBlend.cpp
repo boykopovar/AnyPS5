@@ -496,8 +496,8 @@ int OverdrawBenchmark() {
 #endif
     const auto device = OpenVulkanTestDevice();
     if (!device) return VulkanTestSkipped;
-    if (!TargetHasCapability(device->Target(), spv::CapabilityFragmentShaderPixelInterlockEXT)) {
-        std::puts("skipped, the device lacks fragmentShaderPixelInterlock");
+    if (!TargetHasCapability(device->Target(), spv::CapabilityFragmentShaderPixelInterlockEXT) || !TargetHasCapability(device->Target(), spv::CapabilityStorageImageReadWithoutFormat)) {
+        std::puts("skipped, the device lacks fragmentShaderPixelInterlock or shaderStorageImageReadWithoutFormat");
         return VulkanTestSkipped;
     }
     constexpr std::uint32_t Side = 2048;

@@ -206,13 +206,21 @@ static void TestUserFxChain() {
     Require(calls.processFlags == (std::vector<std::uint32_t>{3, 2, 0}));
 
     Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 0, Ngs2CustomVoiceUserFx2Param{{}, &gain, sizeof(gain) - 1}));
+#ifndef APS5_NGS2_PS4_LIBRARY
     for (const std::uint32_t id : {SCE_NGS2_CUSTOM_VOICE_PARAM_REVERB, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX, SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER, SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN,
                                    SCE_NGS2_CUSTOM_VOICE_PARAM_DELAY | 1, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 2}) {
         Require(ControlResult(custom, id, AnyModuleParam{}) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
     }
+#else
+    Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 2, Ngs2CustomVoiceUserFx2Param{{}, &gain, sizeof(gain)}));
+#endif
     Require(ControlThrows<std::runtime_error>(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 2, 1, 0, 0}));
     Require(ControlThrows<std::runtime_error>(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 2, 2, 1, 0}));
+#ifdef APS5_NGS2_PS4_LIBRARY
+    Require(ControlResult(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 3, 3, 0, 0}) == SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS);
+#else
     Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 3, 3, 0, 0}));
+#endif
     Require(ControlThrows<std::invalid_argument>(sampler, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 0, Ngs2CustomVoiceUserFx2Param{{}, &gain, sizeof(gain)}));
 
     calls.processResult = -1;
@@ -238,7 +246,11 @@ static void TestWideCustomSubmixer() {
     option.max_channels = 12;
     const auto rack = CustomRack(system, option);
     const auto custom = Voice(rack);
+#ifdef APS5_NGS2_PS4_LIBRARY
+    Require(ControlResult(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 12, 12, 0, 0}) == SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS);
+#else
     Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 12, 12, 0, 0}));
+#endif
     Control(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 8, 8, 0, 0});
     const std::vector<float> toMaster {
         1, 0, 0, 0, 0, 0, 0, 0,
@@ -747,11 +759,17 @@ static void TestCustomLegacyUserFx(std::uint32_t moduleIndex) {
         std::uint8_t dummy[10];
     };
     Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | 0, BadSizeParam{}));
+#ifndef APS5_NGS2_PS4_LIBRARY
     Require(ControlResult(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | 31, Ngs2CustomVoiceUserFxParam{{}, ProcessLegacy, 0, 0, 0}) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
+#else
+    Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | 31, Ngs2CustomVoiceUserFxParam{{}, ProcessLegacy, 0, 0, 0}));
+#endif
 
     Require(CreateThrows<std::runtime_error>(LegacyRackOption(&header, moduleIndex)));
+#ifndef APS5_NGS2_PS4_LIBRARY
     Require(ControlResult(custom, 0x40001d00, Ngs2CustomVoiceUserFxParam{{}, ProcessLegacy, reinterpret_cast<std::uintptr_t>(&state), 123, 456}) ==
             SCE_NGS2_ERROR_INVALID_PARAM_ID);
+#endif
 
     state.result = -1;
     bool failed = false;
@@ -860,6 +878,44 @@ static Ngs2CustomSubmixerRackOption DelayRackOption(const DelayOption& delay, st
     return option;
 }
 
+static void TestCustomDelayOptionErrors(std::uint32_t count) {
+    const auto system = CreateSystem();
+    const DelayOption valid{};
+    const auto good = DelayRackOption(valid, count);
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &good.custom_rack_option.rack_option, &query) == SCE_NGS2_OK);
+    const auto info = Buffer(query);
+    const Ngs2BufferAllocator allocator{CountAlloc, CountFree, 0};
+    allocCalls = 0;
+    const auto check = [&](const DelayOption& invalid, int expected) {
+        auto option = good;
+        option.custom_rack_option.module[count - 1].option = reinterpret_cast<const Ngs2CustomModuleOption*>(&invalid);
+        uintptr_t rack = 0x1234;
+        Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option, &info, &rack) == expected);
+        Require(rack == 0x1234);
+        Require(sceNgs2RackCreateWithAllocator(system, SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option, &allocator, &rack) == expected);
+        Require(rack == 0x1234 && allocCalls == 0);
+    };
+    for (const auto size : {0u, 4u, 19u, 21u, 24u, std::numeric_limits<std::uint32_t>::max()}) {
+        check(DelayOption{size}, static_cast<int>(0x804a8013u));
+    }
+    for (const auto type : {2u, std::numeric_limits<std::uint32_t>::max()}) {
+        check(DelayOption{20, type}, static_cast<int>(0x804a8095u));
+    }
+    for (const auto type : {0u, 1u}) {
+        for (const auto taps : {0u, 9u, std::numeric_limits<std::uint32_t>::max()}) {
+            check(DelayOption{20, type, taps}, static_cast<int>(0x804a8096u));
+        }
+        for (const auto length : {-std::numeric_limits<float>::max(), -1.0f, 0.0f, std::nextafter(1.0f, 0.0f),
+                                  std::nextafter(20000.0f, std::numeric_limits<float>::infinity()), std::numeric_limits<float>::max()}) {
+            check(DelayOption{20, type, 4, length}, static_cast<int>(0x804a8097u));
+        }
+    }
+    const auto rack = CustomRack(system, good);
+    Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestCustomDelay(std::uint32_t count, const DelayOption& delay) {
     const auto system = CreateSystem();
     const auto master = Mastering(system, 2);
@@ -888,6 +944,7 @@ static void TestCustomDelay(std::uint32_t count, const DelayOption& delay) {
     };
     for (std::uint32_t grain = 0; grain < 3; ++grain) checkGrain(grain);
 
+#ifndef APS5_NGS2_PS4_LIBRARY
     LegacyUserFxState state{};
     for (std::uint32_t index = 0; index < 256; ++index) {
         Ngs2CustomVoiceUserFxParam param{{sizeof(Ngs2CustomVoiceUserFxParam), 0, 0x40001d00 | index},
@@ -906,8 +963,11 @@ static void TestCustomDelay(std::uint32_t count, const DelayOption& delay) {
         }
         Require(rejected);
     }
+#endif
     checkGrain(3);
+#ifndef APS5_NGS2_PS4_LIBRARY
     Require(state.calls == 0);
+#endif
     Event(sampler, SCE_NGS2_VOICE_EVENT_STOP_IMM);
     for (const float sample : Render(system)) Require(sample == 0.0f);
 
@@ -925,9 +985,7 @@ static void TestCustomDelay(std::uint32_t count, const DelayOption& delay) {
     samplerOption.max_channel_works = 1;
     samplerOption.max_waveform_blocks = 1;
     Require(CreateSamplerThrows<std::runtime_error>(samplerOption));
-    for (const auto invalid : {DelayOption{19}, DelayOption{24}, DelayOption{20, 2}, DelayOption{20, 0, 0},
-                               DelayOption{20, 0, 9}, DelayOption{20, 0, 4, 0.0f}, DelayOption{20, 0, 4, 20001.0f},
-                               DelayOption{20, 0, 4, std::numeric_limits<float>::quiet_NaN()},
+    for (const auto invalid : {DelayOption{20, 0, 4, std::numeric_limits<float>::quiet_NaN()},
                                DelayOption{20, 0, 4, std::numeric_limits<float>::infinity()}, DelayOption{20, 0, 4, 1000.0f, 1}}) {
         Require(CreateThrows<std::runtime_error>(DelayRackOption(invalid, count)));
     }
@@ -1244,6 +1302,7 @@ static void TestCustomMastering() {
 
 int main() {
     for (const auto count : {1u, 2u, 24u}) {
+        TestCustomDelayOptionErrors(count);
         for (const auto delay : {DelayOption{}, DelayOption{20, 1, 1, 1.0f, 0}, DelayOption{20, 1, 8, 20000.0f, 0}}) {
             TestCustomDelay(count, delay);
         }
@@ -1252,16 +1311,22 @@ int main() {
     TestWideCustomSubmixer();
     TestRackOptions();
     TestCustomRackChecks();
+#ifndef APS5_NGS2_PS4_LIBRARY
     TestCustomFilterResetIndex();
+#endif
     TestCustomSampler();
+#ifndef APS5_NGS2_PS4_LIBRARY
     TestCustomFilter();
+#endif
     for (const auto moduleIndex : {0u, 1u, 23u}) TestCustomLegacyUserFx(moduleIndex);
     for (const auto moduleIndex : {0u, 1u}) TestCustomSamplerLegacyUserFx(moduleIndex);
     TestCustomSamplerGain();
     TestCustomGain();
     TestCustomUserFxBuffers();
     TestCustomModuleInfo();
+#ifndef APS5_NGS2_PS4_LIBRARY
     TestCustomFilterCodes();
+#endif
     TestCustomMastering();
     return 0;
 }

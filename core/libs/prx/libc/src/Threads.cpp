@@ -27,6 +27,12 @@
 #include <windows.h>
 #endif
 
+extern "C" {
+
+extern FileStream* __stderrp_nid_postfix;
+[[noreturn]] void abort_nid_postfix(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
+}
+
 namespace {
 
 constexpr std::int64_t nanosPerSecond = 1000000000;
@@ -556,7 +562,7 @@ static void LaunchPad_nid_no_patch(GuestPad* pad, void** attrSlot, void** thread
     if (!pad || !thread) APS5_INVALID_ARG_EX;
     const auto create = registeredPthreadCreate.load(std::memory_order_acquire);
     if (!create) throw std::runtime_error("_Pad::_Launch: pthread_create is not registered");
-    const int created = create(thread, attrSlot, PadEntry_nid_no_patch, pad);
+    const int created = create(thread, attrSlot, PadEntry_nid_no_patch, pad, nullptr);
     if (created != 0) ThrowCppError_nid_no_patch(6);
     while (!pad->started) RequireThrd(_Cnd_wait_nid_postfix(&pad->condition, &pad->mutex), "_Pad::_Launch: _Cnd_wait");
 }
@@ -598,6 +604,101 @@ static const ThreadForwards_nid_no_patch& ThreadForwards(const char* function) {
     const auto* forwards = registeredThreadForwards.load(std::memory_order_acquire);
     if (!forwards) throw std::runtime_error(std::string(function) + ": libkernel threads are not registered");
     return *forwards;
+}
+
+namespace {
+
+constexpr int detachedState = 1;
+
+int StartThread(void** thread, void* attribute, void* (APS5_VABI* entry)(void*), void* argument, const char* name) {
+    const auto create = registeredPthreadCreate.load(std::memory_order_acquire);
+    if (!create) throw std::runtime_error("_Thrd_start: pthread_create is not registered");
+    bool detached = false;
+    if (attribute) {
+        int state = 0;
+        detached = ThreadForwards("_Thrd_start").attrDetachState(attribute, &state) == 0 && state == detachedState;
+    }
+    const int created = create(thread, attribute, entry, argument, name);
+    if (detached) *thread = nullptr;
+    return created == 0 ? threadSuccess : threadError;
+}
+
+struct StartGate {
+    void* (APS5_VABI* entry)(void*);
+    void* argument;
+    void** condition;
+    void** mutex;
+    std::atomic<int>* started;
+};
+
+void* APS5_VABI StartGateEntry_nid_no_patch(void* argument) {
+    auto* gate = static_cast<StartGate*>(argument);
+    void** const condition = gate->condition;
+    void** const mutex = gate->mutex;
+    std::atomic<int>* const started = gate->started;
+    void* (APS5_VABI* const entry)(void*) = gate->entry;
+    void* const value = gate->argument;
+    RequireThrd(_Mtx_lock_nid_postfix(mutex), "_Thrd_create: _Mtx_lock");
+    started->store(1, std::memory_order_release);
+    RequireThrd(_Cnd_signal_nid_postfix(condition), "_Thrd_create: _Cnd_signal");
+    RequireThrd(_Mtx_unlock_nid_postfix(mutex), "_Thrd_create: _Mtx_unlock");
+    void* const result = entry(value);
+    _Cnd_do_broadcast_at_thread_exit_nid_postfix();
+    return result;
+}
+
+}
+
+int APS5_VABI _Thrd_start_with_name_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name, void* attribute) {
+    if (!thread || !entry) APS5_INVALID_ARG_EX;
+    return StartThread(thread, attribute, entry, argument, name && *name ? name : nullptr);
+}
+
+int APS5_VABI _Thrd_start_with_name_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name) {
+    return _Thrd_start_with_name_attr_nid_postfix(thread, entry, argument, name, nullptr);
+}
+
+int APS5_VABI _Thrd_start_with_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, void* attribute) {
+    return _Thrd_start_with_name_attr_nid_postfix(thread, entry, argument, nullptr, attribute);
+}
+
+int APS5_VABI _Thrd_start_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument) {
+    return _Thrd_start_with_name_attr_nid_postfix(thread, entry, argument, nullptr, nullptr);
+}
+
+int APS5_VABI _Thrd_create_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument) {
+    if (!thread || !entry) APS5_INVALID_ARG_EX;
+    std::atomic<int> started{0};
+    void* condition = nullptr;
+    void* mutex = nullptr;
+    if (_Cnd_init_nid_postfix(&condition) != threadSuccess) return threadError;
+    if (_Mtx_init_nid_postfix(&mutex, 1) != threadSuccess) {
+        _Cnd_destroy_nid_postfix(&condition);
+        return threadError;
+    }
+    StartGate gate{entry, argument, &condition, &mutex, &started};
+    int result = threadError;
+    try {
+        RequireThrd(_Mtx_lock_nid_postfix(&mutex), "_Thrd_create: _Mtx_lock");
+        result = StartThread(thread, nullptr, StartGateEntry_nid_no_patch, &gate, nullptr);
+        if (result == threadSuccess)
+            while (started.load(std::memory_order_acquire) == 0)
+                RequireThrd(_Cnd_wait_nid_postfix(&condition, &mutex), "_Thrd_create: _Cnd_wait");
+        RequireThrd(_Mtx_unlock_nid_postfix(&mutex), "_Thrd_create: _Mtx_unlock");
+    } catch (...) {
+        _Cnd_destroy_nid_postfix(&condition);
+        _Mtx_destroy_nid_postfix(&mutex);
+        throw;
+    }
+    _Cnd_destroy_nid_postfix(&condition);
+    _Mtx_destroy_nid_postfix(&mutex);
+    return result;
+}
+
+[[noreturn]] void APS5_VABI _Thrd_abort_nid_postfix(const char* message) {
+    fputs_nid_postfix(message ? message : "", __stderrp_nid_postfix);
+    fputc_nid_postfix('\n', __stderrp_nid_postfix);
+    abort_nid_postfix(0, 0, 0, 0, 0, 0);
 }
 
 void APS5_VABI _Call_once_nid_postfix(std::int32_t* flag, void (APS5_VABI* function)(void)) {
@@ -878,6 +979,18 @@ void APS5_VABI _ZNSt8__sce_v211_Thrd_yieldEv_nid_postfix() {
 
 void* APS5_VABI _ZNSt8__sce_v28_Thrd_idEv_nid_postfix() {
     return _Thrd_current_nid_postfix();
+}
+
+int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_nameEPP7pthreadPFPvS3_ES3_PKc_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name) {
+    return _Thrd_start_with_name_nid_postfix(thread, entry, argument, name);
+}
+
+int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_attrEPP7pthreadPFPvS3_ES3_PP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, void* attribute) {
+    return _Thrd_start_with_attr_nid_postfix(thread, entry, argument, attribute);
+}
+
+int APS5_VABI _ZNSt8__sce_v226_Thrd_start_with_name_attrEPP7pthreadPFPvS3_ES3_PKcPP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name, void* attribute) {
+    return _Thrd_start_with_name_attr_nid_postfix(thread, entry, argument, name, attribute);
 }
 
 }
