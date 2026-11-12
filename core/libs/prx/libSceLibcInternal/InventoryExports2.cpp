@@ -418,33 +418,4 @@ int APS5_VABI _ZNKSt5ctypeIwE9do_narrowEwc_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNKSt7_MpunctIcE11do_groupingEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIcE13do_neg_formatEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIcE13do_pos_formatEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIcE14do_curr_symbolEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIcE14do_frac_digitsEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIcE16do_decimal_pointEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 }

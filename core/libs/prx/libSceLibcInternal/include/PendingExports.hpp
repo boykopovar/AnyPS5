@@ -52,17 +52,5 @@ int APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6appendEmw_nid_postfix();
 int APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6assignEPKwm_nid_postfix();
 int APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6assignERKS2_mm_nid_postfix();
 int APS5_VABI _ZNSoD0Ev_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb0EEC1ERKSt8_Locinfomb_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb0EEC1Em_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb0EEC2EPKcm_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb0EEC2ERKSt8_Locinfomb_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb0EEC2Em_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb0EED0Ev_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb1EEC2EPKcm_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb1EEC2ERKSt8_Locinfomb_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb1EEC2Em_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb1EED0Ev_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb1EED1Ev_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb1EED2Ev_nid_postfix();
 
 }
