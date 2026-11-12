@@ -215,6 +215,45 @@ class HistoryDateWindowTests(unittest.TestCase):
 
 
 class ProgressHistoryTests(unittest.TestCase):
+    def test_git_measurement_failure_preserves_reports_and_cache_until_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "reports"
+            cache = root / "counts.json"
+            args = [str(output), "--cache", str(cache)]
+            subprocess.run(["git", "init", "-q", directory], check=True)
+            commit(root, "2026-01-01", "first", "int APS5_VABI A() { return 0; }\n")
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    progress_history.main(args)
+                previous = {path: path.read_bytes() for path in (cache, *output.iterdir())}
+                commit(root, "2026-01-02", "second", "int APS5_VABI B() { return 0; }\n")
+                sha = progress_history.daily_commits("HEAD")[-1][1]
+                run = subprocess.run
+
+                for command in ("ls-tree", "archive"):
+                    def fail_once(argv, **kwargs):
+                        if argv[3] == command:
+                            raise subprocess.CalledProcessError(128, argv, stderr=b"object unavailable")
+                        return run(argv, **kwargs)
+
+                    with self.subTest(command=command):
+                        stderr = io.StringIO()
+                        with patch.object(subprocess, "run", side_effect=fail_once), \
+                                contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                            progress_history.main(args)
+                        self.assertEqual(raised.exception.code, 2)
+                        self.assertIn(f"git {command}", stderr.getvalue())
+                        self.assertIn(sha, stderr.getvalue())
+                        self.assertIn("object unavailable", stderr.getvalue())
+                        self.assertEqual({path: path.read_bytes() for path in previous}, previous)
+
+                with contextlib.redirect_stdout(io.StringIO()):
+                    progress_history.main(args)
+                points = json.loads((output / "history.json").read_text(encoding="utf-8"))
+                self.assertEqual([point["date"] for point in points], ["2026-01-01", "2026-01-02"])
+                self.assertEqual(points[-1]["commit"], sha)
+
     @unittest.skipUnless(os.name == "nt", "requires Windows read-only replacement semantics")
     def test_readonly_cache_failure_cleans_temporary_and_can_retry(self):
         with tempfile.TemporaryDirectory() as directory:

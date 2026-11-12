@@ -2,7 +2,7 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceNpWebApi/InventoryExports.cpp) - 38 NIDs occur as functions under the same module and logical library in both version-labelled images. The labels do not independently authenticate retail firmware provenance; the NIDs are absent from the pinned public 3.20 catalogue. Names, prototypes and behavior are unverified. These import-resolution declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Additional callable exports](../../../core/libs/prx/libSceNpWebApi/InventoryExports.cpp) - 36 NIDs occur as functions under the same module and logical library in both version-labelled images. The labels do not independently authenticate retail firmware provenance; the NIDs are absent from the pinned public 3.20 catalogue. Names, prototypes and behavior are unverified. These import-resolution declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
@@ -37,13 +37,13 @@
 | Unknown | `meMsH0c36rQ` |
 | Unknown | `nP9mHqC8v4M` |
 | Unknown | `nrDh9GesOyk` |
-| Unknown | `ojGP5vur+qM` |
 | Unknown | `ugei4b97OXE` |
 | Unknown | `vQgD7uDMKaA` |
 | Unknown | `vm9OVSS7E18` |
 | Unknown | `wNSQ60gepNA` |
 | Unknown | `wXXTksptCEo` |
-| Unknown | `zQE2rxZdLy8` |
+
+- [Unknown NIDs `ojGP5vur+qM` and `zQE2rxZdLy8`](../../../core/libs/prx/libSceNpWebApi/InventoryExports.cpp) (libSceNpWebApi) - names are unknown; the pointer parameter and `bool` result come from the bodies, not a prototype, and nothing is claimed about the object beyond the field read. In firmware 13.42's `libSceNpWebApi.sprx` (SHA-256 `682be03706848ada18ac61ba04b39bc1fbee29e6f61ef189dd6371d21463de6b`), read from disassembly and not run on a console, `ojGP5vur+qM` (`0xea70`) answers whether the 64-bit value at `+0x20` of its argument differs from -1 and `zQE2rxZdLy8` (`0xe6d0`) whether the 32-bit value at `+0xc` does; each writes only `al` and checks no pointer, so firmware faults on a bad one, and here that throws.
 
 ### Unknown function info
 

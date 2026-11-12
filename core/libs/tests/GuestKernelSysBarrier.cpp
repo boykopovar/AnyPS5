@@ -85,6 +85,7 @@ int main() {
     PthreadBarrierPrivate* single = nullptr;
     Require(scePthreadBarrierInit(&single, nullptr, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL && single == nullptr);
     Require(pthread_barrier_init_nid_postfix(&single, nullptr, 0) == 22 && single == nullptr);
+    Require(scePthreadBarrierInit(&single, nullptr, 1, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn") == SCE_KERNEL_ERROR_ENAMETOOLONG);
     Require(scePthreadBarrierInit(&single, nullptr, 1, nullptr) == 0);
     Require(scePthreadBarrierWait(&single) == BARRIER_SERIAL_THREAD);
     Require(scePthreadBarrierDestroy(&single) == 0);

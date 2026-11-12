@@ -247,6 +247,7 @@ int APS5_VABI _ZNSt8__sce_v210filesystem10_Close_dirEPv_nid_postfix(void* handle
 bool APS5_VABI _ZNSt8__sce_v210filesystem12_Current_getERA260_c_nid_postfix(char* target);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcNS_10error_codeE_nid_postfix(const char* message, LibcException::ErrorCode code);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathENS_10error_codeE_nid_postfix(const char* message, const GuestLocale::String* path, LibcException::ErrorCode code);
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathES5_NS_10error_codeE_nid_postfix(const char* message, const GuestLocale::String* path1, const GuestLocale::String* path2, LibcException::ErrorCode code);
 int APS5_VABI _ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsEPi_nid_postfix(const char* path, int* perms, int* error);
 int APS5_VABI _ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsE_nid_postfix(const char* path, int* perms);
 std::uint64_t APS5_VABI _ZNSt8__sce_v210filesystem10_File_sizeEPKcPi_nid_postfix(const char* path, int* error);
@@ -289,6 +290,7 @@ int APS5_VABI fsetpos_nid_postfix(FileStream* stream, const std::int64_t* positi
 void APS5_VABI rewind_nid_postfix(FileStream* stream);
 int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream);
 int APS5_VABI fflush_nid_postfix(FileStream* stream);
+int APS5_VABI malloc_stats_nid_postfix(void* stats);
 int APS5_VABI malloc_stats_fast_nid_postfix(void* stats);
 void APS5_VABI malloc_initialize_nid_postfix();
 void APS5_VABI malloc_finalize_nid_postfix();
@@ -1629,6 +1631,7 @@ _Unwind_Ptr APS5_VABI _Unwind_GetLanguageSpecificData_nid_postfix(_Unwind_Contex
 _Unwind_Ptr APS5_VABI _Unwind_GetRegionStart_nid_postfix(_Unwind_Context* context);
 _Unwind_Ptr APS5_VABI _Unwind_GetDataRelBase_nid_postfix(_Unwind_Context* context);
 _Unwind_Ptr APS5_VABI _Unwind_GetTextRelBase_nid_postfix(_Unwind_Context* context);
+_Unwind_Ptr APS5_VABI _Unwind_FindEnclosingFunction_nid_postfix(void* pc);
 _Unwind_Reason_Code APS5_VABI _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception* exception, _Unwind_Stop_Fn stop, void* argument);
 _Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn trace, void* argument);
 int APS5_VABI dl_iterate_phdr_nid_postfix(int (*callback)(dl_phdr_info*, std::size_t, void*), void* data);
@@ -1642,6 +1645,7 @@ void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
 [[noreturn]] void APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(int code);
 [[noreturn]] void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcSt10error_code_nid_postfix(const char* message, LibcException::ErrorCode code);
 [[noreturn]] void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathESt10error_code_nid_postfix(const char* message, const GuestLocale::String* path, LibcException::ErrorCode code);
+[[noreturn]] void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathES4_St10error_code_nid_postfix(const char* message, const GuestLocale::String* path1, const GuestLocale::String* path2, LibcException::ErrorCode code);
 [[noreturn]] void APS5_VABI _Thrd_exit_nid_postfix(int code);
 [[noreturn]] void APS5_VABI _ZSt17rethrow_exceptionNSt15__exception_ptr13exception_ptrE_nid_postfix(GuestExceptionPointerArgument exception);
 [[noreturn]] void APS5_VABI _ZSt19_Throw_future_errorRKSt10error_code_nid_postfix(const LibcException::ErrorCode* code);
