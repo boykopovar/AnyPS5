@@ -85,6 +85,22 @@ void TestMasteringBeforeInitialize() {
     Require(sceAudioOut2MasteringSetParam(nullptr, 0, 2) == errorNotInitialized, "the AudioOut2 initialization check comes before the parameter checks");
 }
 
+void TestSystemBeforeInitialize() {
+    std::uint32_t loudness[2] = {1, 0};
+    const auto set = [](std::uint32_t id, void* data, std::size_t size) {
+        const AudioOut2SystemDebugStateParam param{id, 0, data, size};
+        return sceAudioOut2SetSystemDebugState(&param);
+    };
+    Require(set(1, loudness, 8) == errorNotInitialized, "a debug state before AudioOut2 initialization is refused");
+    Require(sceAudioOut2SetSystemDebugState(nullptr) == errorNotInitialized, "the AudioOut2 initialization check comes before the null debug state check");
+    Require(set(2, loudness, 8) == errorNotInitialized, "the AudioOut2 initialization check comes before the debug state id check");
+    Require(set(1, loudness, 4) == errorNotInitialized, "the AudioOut2 initialization check comes before the debug state size check");
+    Require(set(0x20, loudness, 4) == errorNotInitialized, "debug state id 0x20 of size 4 before AudioOut2 initialization is refused");
+    Require(set(1, nullptr, 8) == errorNotInitialized, "a loudness debug state without a param before AudioOut2 initialization is refused");
+    Require(sceAudioOut2EnableChat() == errorNotInitialized, "enabling chat before AudioOut2 initialization is refused");
+    Require(sceAudioOut2DisableChat() == errorNotInitialized, "disabling chat before AudioOut2 initialization is refused");
+}
+
 void TestMasteringInit() {
     const AudioOut2MasteringParamsHeader params{1u};
     AudioOut2MasteringStates storage{};
@@ -145,7 +161,7 @@ void TestMasteringGetState() {
 
 void TestLegacyMasteringInit() {
     Require(sceAudioOutMasteringInit(0) == 0, "legacy flags 0 must be accepted");
-    Require(ThrowsException([] { sceAudioOutMasteringInit(1); }), "legacy flags SwapEqCompressor must throw");
+    Require(sceAudioOutMasteringInit(1) == static_cast<int>(0x80260201), "legacy flags 1 are refused with 0x80260201");
     Require(sceAudioOutMasteringInit(0) == 0, "a repeated legacy initialization must be accepted");
     Require(ThrowsException([] { sceAudioOutMasteringInit(2); }), "legacy flags bit 1 must throw");
     Require(ThrowsException([] { sceAudioOutMasteringInit(3); }), "legacy flags bits 0 and 1 must throw");
@@ -154,8 +170,8 @@ void TestLegacyMasteringInit() {
 }
 
 void TestLegacyMasteringTerm() {
-    Require(sceAudioOutMasteringTerm() == 0, "legacy termination must be accepted");
-    Require(sceAudioOutMasteringTerm() == 0, "legacy termination must be accepted for each initialization");
+    Require(sceAudioOutMasteringTerm() == 0, "legacy termination after an initialization must be accepted");
+    Require(sceAudioOutMasteringTerm() == static_cast<int>(0x80260203), "legacy termination without an initialization is refused");
 }
 
 void TestLegacyMasteringSetParam() {
@@ -184,6 +200,9 @@ void TestLegacyMasteringGetState() {
     auto* header = reinterpret_cast<std::uint32_t*>(storage);
     std::fill(storage, storage + size, 0xA5);
     *header = 1u;
+    Require(sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)) == static_cast<int>(0x80260203), "legacy states id 1 before an initialization is refused");
+    Require(std::all_of(storage + 4, storage + size, [](std::uint8_t byte) { return byte == 0xA5; }), "a refused legacy state leaves the buffer unmodified");
+    Require(sceAudioOutMasteringInit(0) == 0, "legacy flags 0 must be accepted");
     Require(sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)) == 0, "legacy states id 1 must be accepted");
     Require(*header == 1u, "legacy states id 1 is kept");
     const std::pair<std::size_t, std::size_t> meters[] = {{32, 128}, {128, 224}, {240, 272}, {272, 304}, {304, 336}};
@@ -198,10 +217,13 @@ void TestLegacyMasteringGetState() {
     for (std::uint32_t id : {0u, 2u, 3u, 0x01010001u, 0xFFFFFFFFu}) {
         std::fill(storage, storage + size, 0xA5);
         *header = id;
-        Require(ThrowsException([&] { sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)); }), "an unknown legacy states id must throw");
+        Require(sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)) == static_cast<int>(0x80260204), "an unknown legacy states id is refused with 0x80260204");
         Require(*header == id && std::all_of(storage + 4, storage + size, [](std::uint8_t byte) { return byte == 0xA5; }), "a refused legacy states id leaves the buffer unmodified");
     }
     Require(ThrowsException([] { sceAudioOutMasteringGetState(nullptr); }), "a null legacy state must throw");
+    Require(sceAudioOutMasteringTerm() == 0, "legacy termination must be accepted");
+    *header = 1u;
+    Require(sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)) == static_cast<int>(0x80260203), "legacy states id 1 after termination is refused");
 }
 
 void TestSetSystemDebugState() {
@@ -216,13 +238,15 @@ void TestSetSystemDebugState() {
     Require(set(1, loudness, 4) == errorInvalidParam, "a loudness debug state of size 4 is refused");
     Require(set(1, loudness, 16) == errorInvalidParam, "a loudness debug state of size 16 is refused");
     Require(set(0, loudness, 8) == errorInvalidParam, "debug state id 0 is refused");
-    Require(set(2, loudness, 8) == errorInvalidParam, "debug state id 2 is refused");
+    Require(set(2, loudness, 8) == static_cast<int>(0x80268000), "debug state id 2 with an 8-byte param returns 0x80268000");
     Require(set(0x21, loudness, 8) == errorInvalidParam, "debug state id 0x21 is refused");
     Require(set(0xFFFFFFFFu, loudness, 8) == errorInvalidParam, "a large debug state id is refused");
     Require(set(0x20, loudness, 8) == errorInvalidParam, "debug state id 0x20 of size 8 is refused");
     Require(set(0x20, loudness, 0) == errorInvalidParam, "debug state id 0x20 of size 0 is refused");
     Require(ThrowsRuntimeError([&] { set(0x20, loudness, 4); }), "debug state id 0x20 of size 4 must throw");
-    Require(ThrowsRuntimeError([&] { set(1, nullptr, 8); }), "a loudness debug state without a param must throw");
+    Require(set(1, nullptr, 8) == errorInvalidPointer, "a loudness debug state without a param returns the invalid pointer error");
+    Require(set(1, nullptr, 4) == errorInvalidPointer, "the param pointer of debug state 1 is checked before its size");
+    Require(set(2, nullptr, 8) == errorInvalidPointer, "the param pointer of debug state 2 is checked before its id");
     Require(sceAudioOut2SetSystemDebugState(nullptr) == errorInvalidPointer, "a null debug state is refused");
 }
 
@@ -239,13 +263,14 @@ void TestLowLatencyService() {
     Require(sceAudioOut2LoInit() == 0, "starting the low-latency service again must be accepted");
     Require(sceAudioOut2LoTerminate() == 0, "stopping the low-latency service returns 0");
     Require(sceAudioOut2LoTerminate() == 0, "stopping a stopped low-latency service returns 0");
-    Require(sceAudioOut2InitializeEx(0) == 0 && sceAudioOut2InitializeEx(1) == 0, "the extended initialization succeeds");
+    Require(sceAudioOut2InitializeEx(0) == static_cast<int>(0x80268004) && sceAudioOut2InitializeEx(1) == static_cast<int>(0x80268004), "the extended initialization fails after sceAudioOutInit and when repeated");
 }
 
 }
 
 int main() {
     TestMasteringBeforeInitialize();
+    TestSystemBeforeInitialize();
     Require(sceAudioOut2Initialize() == 0, "initialization must succeed");
     Require(sceAudioOut2Initialize() == static_cast<int>(0x80268004), "a second AudioOut2 initialization fails");
     Require(sceAudioOutInit() == 0, "the first legacy initialization succeeds after AudioOut2's");

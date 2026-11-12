@@ -1,0 +1,6 @@
+# libScePngParser technical debt
+
+### Callable exports
+
+- [Callable exports](../../../core/libs/prx/libScePngParser/Export.cpp) - Seven 3.20 callable NIDs are import-resolution declarations only. One NID also appears in the 13.60-labelled inventory; other NIDs differ across versions. Their signatures and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry except `suBT1aYALqA` throws through `NotImplemented_nid_no_patch`. Data exports require separate layout and ownership analysis.
+- [Firmware 13.42 exports](../../../core/libs/prx/libScePngParser/Export.cpp) (libScePngParser) - the 13.42 `libScePngParser.sprx` exports seven function NIDs; `suBT1aYALqA` is the only one also in the 3.20 set above, and its decoder exports `MBQfjtzRyh0`, `pLHjV7MzAKI` and `1rmPs1bYWKA` are not declared. Read from disassembly, not measured on a console: `0Imz9zU-Wgk` returns `0x809D4019` and `5XfcHLzGE6E` returns `0x809D4054`; `vJpgNFIBlCk` copies the caller's 0x58-byte configuration into both of the module's copies and returns 0; `suBT1aYALqA` clears the first copy and returns 0. The configuration is eleven function pointers that the module's helpers jump through without a null check; nothing reads it here until the decoder is implemented. A null or unreadable configuration, which the module reads through, throws.

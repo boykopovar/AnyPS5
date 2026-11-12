@@ -1,19 +1,25 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceGnmDriverForNeoMode/include/InventoryExports.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include <cstdint>
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <initializer_list>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/EmbeddedShaders.hpp"
 
 namespace {
 
+constexpr int CommandFailed = -1;
 constexpr std::uint32_t InitPacketWords = 0x100;
 
 template <std::size_t Words>
 int WriteHardwareState(std::uint32_t* cmdbuf, std::uint32_t size, const std::array<std::uint32_t, Words>& state) {
+    if (!cmdbuf) return CommandFailed;
     if (size < InitPacketWords) return 0;
     auto* at = std::copy(GnmNeo::ClearState.begin(), GnmNeo::ClearState.end(), cmdbuf);
     at = std::copy(state.begin(), state.end(), at);
@@ -25,9 +31,19 @@ int WriteHardwareState(std::uint32_t* cmdbuf, std::uint32_t size, const std::arr
 
 template <std::size_t Words>
 int WriteContextState(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t packetWords, const std::array<std::uint32_t, Words>& state) {
+    if (!cmdbuf) return CommandFailed;
     if (size != packetWords) return 0;
     std::copy(state.begin(), state.end(), cmdbuf);
     return static_cast<int>(packetWords);
+}
+
+constexpr std::uint32_t ContextState400SdkVersion = 0x04000000;
+
+std::uint32_t CompiledSdkVersion() {
+    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t version;
+    std::memcpy(&version, process + 0x10, sizeof(version));
+    return version;
 }
 
 constexpr std::uint32_t OpSetContextReg = 0x69;
@@ -51,7 +67,6 @@ constexpr int Failure = static_cast<int>(0x8EEE00FFu);
 constexpr int NoInterface = static_cast<int>(0x80000000u);
 constexpr int ValidationNotEnabled = static_cast<int>(0x80D13FFFu);
 
-constexpr int CommandFailed = -1;
 constexpr std::uint32_t OpNop = 0x10;
 constexpr std::uint32_t NeoDrawFlags = 0xe0000000u;
 constexpr std::uint32_t AutoIndex = 2;
@@ -103,6 +118,10 @@ std::uint32_t* UpdatePsRegisters(std::uint32_t* cmdbuf, const std::uint32_t* reg
 } // namespace
 
 extern "C" {
+
+int APS5_VABI sceGnmIsDebugResetAvailable() {
+    return 0;
+}
 
 int APS5_VABI sceGnmBeginWorkload(std::uint32_t stream, std::uint64_t* workload) {
     if (!workload) return 3;
@@ -330,13 +349,13 @@ int APS5_VABI sceGnmDrawInitToDefaultContextState400(std::uint32_t* cmdbuf, std:
 }
 
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalCommand(std::uint32_t* cmdbuf, std::uint32_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (CompiledSdkVersion() < ContextState400SdkVersion) return sceGnmDrawInitToDefaultContextState(cmdbuf, size);
+    return sceGnmDrawInitToDefaultContextState400(cmdbuf, size);
 }
 
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalSize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (CompiledSdkVersion() < ContextState400SdkVersion) return 0x20;
+    return 0x100;
 }
 
 int APS5_VABI sceGnmDrawOpaqueAuto(void) {
@@ -365,7 +384,6 @@ int APS5_VABI sceGnmDriverInternalRetrieveGnmInterfaceForValidation(void) {
 }
 
 int APS5_VABI sceGnmDriverInternalVirtualQuery(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -387,7 +405,6 @@ int APS5_VABI sceGnmFindResourcesPublic(void) {
 }
 
 int APS5_VABI sceGnmGetCoredumpAddress(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -520,17 +537,14 @@ int APS5_VABI sceGnmMapComputeQueueWithPriority(void) {
 }
 
 int APS5_VABI sceGnmPaDisableFlipCallbacks(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmPaEnableFlipCallbacks(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmPaHeartbeat(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -539,7 +553,6 @@ int APS5_VABI sceGnmQueryResourceRegistrationUserMemoryRequirements(void) {
 }
 
 int APS5_VABI sceGnmRaiseUserExceptionEvent(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -620,6 +633,7 @@ int APS5_VABI sceGnmSetCsShaderWithModifier(std::uint32_t* cmdbuf, std::uint32_t
 }
 
 int APS5_VABI sceGnmSetEmbeddedPsShader(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
+    if (!cmdbuf) return CommandFailed;
     if (shaderId > 1) return Failure;
     const bool black = shaderId == 0;
     const auto* code = black ? GnmNeo::BlackPs.data() : GnmNeo::DepthOnlyPs.data();
@@ -637,6 +651,7 @@ int APS5_VABI sceGnmSetEmbeddedPsShader(std::uint32_t* cmdbuf, std::uint32_t, st
 }
 
 int APS5_VABI sceGnmSetEmbeddedVsShader(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
+    if (!cmdbuf) return CommandFailed;
     if (shaderId != 0) return Failure;
     const auto* code = GnmNeo::FullscreenVs.data();
     auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x48, AddressLo(code), AddressHi(code)});
@@ -818,7 +833,6 @@ int APS5_VABI sceGnmValidateGetDiagnostics(void) {
 }
 
 int APS5_VABI sceGnmValidateGetVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -833,5 +847,105 @@ int APS5_VABI sceGnmValidateResetState(void) {
 int APS5_VABI sceGnmValidationRegisterMemoryCheckCallback(void) {
     return ValidationNotEnabled;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown__plus_RaJBCVJZVM_nid_no_patch() {
+    return Failure;
+}
+APS5_EXPORT("+RaJBCVJZVM", libSceGnmDriverForNeoModeUnknown__plus_RaJBCVJZVM_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown__minus_bNK8kTFf6s_nid_no_patch() {
+    return 0;
+}
+APS5_EXPORT("-bNK8kTFf6s", libSceGnmDriverForNeoModeUnknown__minus_bNK8kTFf6s_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_1TRGZJsC5Y4_nid_no_patch() {
+    return Failure;
+}
+APS5_EXPORT("1TRGZJsC5Y4", libSceGnmDriverForNeoModeUnknown_1TRGZJsC5Y4_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_2T1zOhnddFQ_nid_no_patch() {
+    return 0;
+}
+APS5_EXPORT("2T1zOhnddFQ", libSceGnmDriverForNeoModeUnknown_2T1zOhnddFQ_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_5R1E24FRI4w_nid_no_patch() {
+    return Failure;
+}
+APS5_EXPORT("5R1E24FRI4w", libSceGnmDriverForNeoModeUnknown_5R1E24FRI4w_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_6a3_plus_Twrkogk_nid_no_patch() {
+    return Failure;
+}
+APS5_EXPORT("6a3+Twrkogk", libSceGnmDriverForNeoModeUnknown_6a3_plus_Twrkogk_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_7LTGukH_plus_M1A_nid_no_patch() {
+    return 0;
+}
+APS5_EXPORT("7LTGukH+M1A", libSceGnmDriverForNeoModeUnknown_7LTGukH_plus_M1A_nid_no_patch);
+
+void APS5_VABI libSceGnmDriverForNeoModeUnknown_8_plus_itHHi1ea0_nid_no_patch() {}
+APS5_EXPORT("8+itHHi1ea0", libSceGnmDriverForNeoModeUnknown_8_plus_itHHi1ea0_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_HEOIaxbuVTA_nid_no_patch() {
+    return Failure;
+}
+APS5_EXPORT("HEOIaxbuVTA", libSceGnmDriverForNeoModeUnknown_HEOIaxbuVTA_nid_no_patch);
+
+void APS5_VABI libSceGnmDriverForNeoModeUnknown_KKsYtugjKLw_nid_no_patch() {}
+APS5_EXPORT("KKsYtugjKLw", libSceGnmDriverForNeoModeUnknown_KKsYtugjKLw_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_MLr_plus_Fyrxf_plus_8_nid_no_patch() {
+    return 0;
+}
+APS5_EXPORT("MLr+Fyrxf+8", libSceGnmDriverForNeoModeUnknown_MLr_plus_Fyrxf_plus_8_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_QP7vDGU0xDQ_nid_no_patch() {
+    return 0;
+}
+APS5_EXPORT("QP7vDGU0xDQ", libSceGnmDriverForNeoModeUnknown_QP7vDGU0xDQ_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_QWuQed5Mus4_nid_no_patch() {
+    return 0;
+}
+APS5_EXPORT("QWuQed5Mus4", libSceGnmDriverForNeoModeUnknown_QWuQed5Mus4_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_R3TYO7Tdv5o_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("R3TYO7Tdv5o", libSceGnmDriverForNeoModeUnknown_R3TYO7Tdv5o_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_UGePHM7rmgA_nid_no_patch() {
+    return 0;
+}
+APS5_EXPORT("UGePHM7rmgA", libSceGnmDriverForNeoModeUnknown_UGePHM7rmgA_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_epUMKkeaze8_nid_no_patch() {
+    return Failure;
+}
+APS5_EXPORT("epUMKkeaze8", libSceGnmDriverForNeoModeUnknown_epUMKkeaze8_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_gQNwGezNDgE_nid_no_patch() {
+    return Failure;
+}
+APS5_EXPORT("gQNwGezNDgE", libSceGnmDriverForNeoModeUnknown_gQNwGezNDgE_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_sKhoi2ectC0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("sKhoi2ectC0", libSceGnmDriverForNeoModeUnknown_sKhoi2ectC0_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_ut57TBmRQN0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ut57TBmRQN0", libSceGnmDriverForNeoModeUnknown_ut57TBmRQN0_nid_no_patch);
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_v7QcBXR48L8_nid_no_patch() {
+    return Failure;
+}
+APS5_EXPORT("v7QcBXR48L8", libSceGnmDriverForNeoModeUnknown_v7QcBXR48L8_nid_no_patch);
 
 }

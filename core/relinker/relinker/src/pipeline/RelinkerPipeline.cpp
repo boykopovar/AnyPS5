@@ -29,7 +29,7 @@ constexpr std::uint16_t kEtSceDynamic = 0xfe18;
 
 }
 
-RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress, std::optional<std::vector<CodeRange>> dataTables)
+RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress, const bool functionSymbolRoots, std::optional<std::vector<CodeRange>> dataTables)
     : elfReader(std::move(elfReader))
     , syscallScanner(std::move(syscallScanner))
     , callSiteResolver(std::move(callSiteResolver))
@@ -38,6 +38,7 @@ RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::s
     , unusedNidFilter(std::move(unusedNidFilter))
     , unusedFilterLevel(unusedFilterLevel)
     , progress(progress)
+    , functionSymbolRoots(functionSymbolRoots)
     , knownDataTables(std::move(dataTables))
 {
     if (!this->elfReader || !this->syscallScanner || !this->callSiteResolver || !this->validationPolicy || !this->dynamicSectionBuilder || !this->unusedNidFilter) throw RelinkerException("Missing relinker pipeline dependency");
@@ -87,6 +88,8 @@ RelinkResult RelinkerPipeline::Relink() {
     ByteCount gotSize = 0;
 
     for (const auto& ph : programHeaders) {
+        if (ph.Type == PT_LOAD && (ph.Flags & ~7u) != 0)
+            throw RelinkerException("Unsupported PT_LOAD permission flags", ph.Offset);
         if (ph.Type == PT_LOAD && (ph.Flags & PF_X) != 0) {
             auto segment = elfReader->ReadSegment(ph);
             if (!segment.empty()) {
@@ -125,6 +128,15 @@ RelinkResult RelinkerPipeline::Relink() {
 
     if (!hasDynamicSegment)
         throw RelinkerException("No PT_DYNAMIC segment found");
+
+    bool hasEhFrameSegment = false;
+    for (const auto& ph : programHeaders) {
+        if (ph.Type != PT_GNU_EH_FRAME)
+            continue;
+        if (hasEhFrameSegment)
+            throw RelinkerException("Multiple PT_GNU_EH_FRAME segments", ph.Offset);
+        hasEhFrameSegment = true;
+    }
 
     auto hasTag = [&](const std::int64_t tag) {
         for (const auto& t : dynTags)
@@ -347,9 +359,12 @@ RelinkResult RelinkerPipeline::Relink() {
         const FileByteOffset symOff = symbolEntryPos(symIdx);
         std::uint16_t section = 0;
         std::memcpy(&section, raw.data() + symOff + 6, sizeof(section));
+        const auto type = raw[symOff + 4] & 15;
+        if (section == SHN_UNDEF && type != STT_TLS)
+            throw RelinkerException("TLS relocation names an undefined symbol that is not STT_TLS", pos);
         if (section == SHN_UNDEF)
             return std::nullopt;
-        if ((raw[symOff + 4] & 15) != STT_TLS)
+        if (type != STT_TLS)
             throw RelinkerException("TLS relocation names a defined symbol that is not STT_TLS", pos);
         if (section >= SHN_LORESERVE)
             throw RelinkerException("Unsupported executable TLS symbol section", pos);
@@ -511,10 +526,11 @@ RelinkResult RelinkerPipeline::Relink() {
                 if (section >= SHN_LORESERVE)
                     throw RelinkerException("Unsupported executable export section: " + name, entryOffset);
                 const std::uint32_t flags = type == STT_FUNC ? PF_X : 0;
-                const auto extent = std::max<std::uint64_t>(size, 1);
+                const bool functionRoot = functionSymbolRoots && type == STT_FUNC;
+                const auto extent = functionRoot ? 1 : std::max<std::uint64_t>(size, 1);
                 const bool mapped = std::any_of(programHeaders.begin(), programHeaders.end(), [&](const ProgramHeader& ph) {
                     return ph.Type == PT_LOAD && (ph.Flags & flags) == flags && value >= ph.MappedAddress &&
-                           value - ph.MappedAddress < ph.MemorySize && extent <= ph.MemorySize - (value - ph.MappedAddress);
+                           value - ph.MappedAddress < (functionRoot ? ph.FileSize : ph.MemorySize) && extent <= (functionRoot ? ph.FileSize : ph.MemorySize) - (value - ph.MappedAddress);
                 });
                 if (!mapped) {
                     std::ostringstream message;
@@ -526,7 +542,7 @@ RelinkResult RelinkerPipeline::Relink() {
             }
             exportedSymbols.emplace_back(off, std::move(name));
             const auto binding = symbol[4] >> 4;
-            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC)
+            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC && section != SHN_ABS)
                 exportedFunctions.push_back(value);
         }
     }

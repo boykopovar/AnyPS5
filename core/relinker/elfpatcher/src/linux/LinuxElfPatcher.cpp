@@ -1,4 +1,5 @@
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
+#include <elfpatcher/general/AddressDistance.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutRequest.hpp>
 #include <elfpatcher/general/SectionHeaderTableRequest.hpp>
@@ -24,6 +25,22 @@ namespace {
 constexpr std::uint64_t kLinuxUserAddressEnd = 0x800000000000;
 constexpr std::uint64_t kLazyPltGotBytes = 24;
 constexpr std::uint64_t kPltGotEntryBytes = 8;
+
+std::uint32_t GnuHash(std::string_view name) {
+    std::uint32_t h = 5381;
+    for (unsigned char c : name)
+        h = (h * 33) + c;
+    return h;
+}
+
+std::uint32_t ElfHash(std::string_view name) {
+    std::uint32_t h = 0;
+    for (unsigned char c : name) {
+        h = (h << 4) + c;
+        h = (h ^ ((h & 0xf0000000u) >> 24u)) & 0x0fffffffu;
+    }
+    return h;
+}
 
 std::string Hex(const std::uint64_t value) {
     std::ostringstream text;
@@ -124,7 +141,7 @@ std::uint64_t RelocationWidth(const std::vector<std::uint8_t>& relocations, cons
     return type == R_X86_64_PC32 || type == R_X86_64_32 ? 4 : 8;
 }
 
-void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain::ProgramHeader>& headers) {
+std::uint64_t SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain::ProgramHeader>& headers) {
     std::vector<std::size_t> loads;
     for (std::size_t index = 0; index < headers.size(); ++index) {
         if (headers[index].Type == PT_LOAD && headers[index].MemorySize != 0) {
@@ -136,14 +153,49 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
         return headers[left].MappedAddress < headers[right].MappedAddress;
     });
     for (std::size_t position = 1; position < loads.size(); ++position) {
-        const auto& previous = headers[loads[position - 1]];
-        if (headers[loads[position]].MappedAddress - previous.MappedAddress < previous.MemorySize)
-            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", headers[loads[position]].MappedAddress);
+        auto& previous = headers[loads[position - 1]];
+        const auto& current = headers[loads[position]];
+        if (current.MappedAddress - previous.MappedAddress >= previous.MemorySize)
+            continue;
+        const auto previousEnd = previous.MappedAddress + previous.MemorySize;
+        if (current.MappedAddress == previous.MappedAddress || previousEnd > current.MappedAddress + current.MemorySize)
+            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", current.MappedAddress);
+        if (((previous.Flags | current.Flags) & (PF_W | PF_X)) == (PF_W | PF_X)
+            && current.MappedAddress % kDefaultLoadAlignment != 0)
+            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", current.MappedAddress);
+        const auto previousFileEnd = previous.MappedAddress + previous.FileSize;
+        const auto currentFileEnd = current.MappedAddress + current.FileSize;
+        const auto compareEnd = std::min(previousEnd, std::max(previousFileEnd, currentFileEnd));
+        for (auto address = current.MappedAddress; address < compareEnd;) {
+            const bool previousBacked = address < previousFileEnd;
+            const bool currentBacked = address < currentFileEnd;
+            auto runEnd = compareEnd;
+            if (previousBacked)
+                runEnd = std::min(runEnd, previousFileEnd);
+            if (currentBacked)
+                runEnd = std::min(runEnd, currentFileEnd);
+            const auto length = static_cast<std::size_t>(runEnd - address);
+            const auto previousAt = static_cast<std::size_t>(previous.Offset + (address - previous.MappedAddress));
+            const auto currentAt = static_cast<std::size_t>(current.Offset + (address - current.MappedAddress));
+            const bool congruent = previousBacked && currentBacked
+                ? std::equal(buf.begin() + previousAt, buf.begin() + previousAt + length, buf.begin() + currentAt)
+                : previousBacked
+                    ? std::all_of(buf.begin() + previousAt, buf.begin() + previousAt + length, [](const std::uint8_t byte) { return byte == 0; })
+                    : std::all_of(buf.begin() + currentAt, buf.begin() + currentAt + length, [](const std::uint8_t byte) { return byte == 0; });
+            if (!congruent)
+                throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", current.MappedAddress);
+            address = runEnd;
+        }
+        previous.MemorySize = current.MappedAddress - previous.MappedAddress;
+        if (previous.FileSize > previous.MemorySize)
+            previous.FileSize = previous.MemorySize;
     }
+    std::uint64_t lowered = 0;
     for (std::size_t position = 0; position < loads.size(); ++position) {
         auto& load = headers[loads[position]];
         const auto prefix = load.MappedAddress % kDefaultLoadAlignment;
-        if (prefix == 0 || load.FileSize == 0 || load.Offset % kDefaultLoadAlignment != prefix)
+        const bool congruent = load.Offset % kDefaultLoadAlignment == prefix;
+        if (load.FileSize == 0 || (congruent && prefix == 0))
             continue;
         const auto pageStart = load.MappedAddress - prefix;
         std::vector<std::uint8_t> image(static_cast<std::size_t>(prefix), 0);
@@ -158,20 +210,22 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
             }
         }
         const auto mapped = load.Offset - prefix;
-        bool differs = false;
+        bool differs = !congruent;
         for (std::size_t index = 0; index < image.size() && !differs; ++index)
             differs = covered[index] && buf[static_cast<std::size_t>(mapped) + index] != image[index];
         if (!differs)
             continue;
-        const auto alignment = std::max<std::uint64_t>(load.Alignment, kDefaultLoadAlignment);
-        while ((buf.size() + prefix) % alignment != load.MappedAddress % alignment)
-            buf.push_back(0);
+        Io::AlignBuffer(buf, static_cast<std::size_t>(kDefaultLoadAlignment));
         buf.insert(buf.end(), image.begin(), image.end());
         const auto offset = static_cast<std::uint64_t>(buf.size());
         buf.resize(static_cast<std::size_t>(offset + load.FileSize));
         std::copy_n(buf.begin() + static_cast<std::ptrdiff_t>(load.Offset), static_cast<std::size_t>(load.FileSize), buf.begin() + static_cast<std::ptrdiff_t>(offset));
         load.Offset = offset;
+        if (load.Alignment > kDefaultLoadAlignment && (load.Alignment & (load.Alignment - 1)) == 0)
+            lowered = std::max(lowered, load.Alignment);
+        load.Alignment = std::min(load.Alignment, kDefaultLoadAlignment);
     }
+    return lowered;
 }
 
 struct TracedImport {
@@ -259,28 +313,39 @@ Domain::SysVDynamicSection ImportsByNid(Domain::SysVDynamicSection dynSection) {
     return dynSection;
 }
 
-std::vector<std::uint8_t> TracePrologue(const std::uint64_t vaddr, const std::uint64_t table, const std::uint64_t tableEnd, const std::uint64_t function) {
+std::vector<std::uint8_t> TracePrologue(const std::uint64_t vaddr, const std::uint64_t pages, const std::uint64_t table, const std::uint64_t tableEnd, const std::uint64_t function) {
     std::vector<std::uint8_t> code = {0x52, 0x53, 0x41, 0x54, 0x48, 0x83, 0xec, 0x08};
     const auto rip = [&](std::initializer_list<std::uint8_t> opcode, const std::uint64_t target) {
         code.insert(code.end(), opcode);
-        const auto displacement = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(vaddr + code.size() + 4);
-        if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+        std::int64_t displacement = 0;
+        if (!SignedDistance(target, vaddr + code.size() + 4, displacement) || displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
             throw Domain::RelinkerException("Import trace table exceeds rel32 range");
         Io::AppendU32(code, static_cast<std::uint32_t>(displacement));
     };
-    rip({0x48, 0x8d, 0x1d}, table);
+    rip({0x48, 0x8d, 0x1d}, pages);
+    rip({0x4c, 0x8d, 0x25}, table);
+    const auto pageLoop = code.size();
+    code.insert(code.end(), {0x4c, 0x39, 0xe3, 0x73, 0x00});
+    const auto pageExit = code.size();
+    code.insert(code.end(), {0x48, 0x8b, 0x3b, 0x48, 0x01, 0xdf, 0xbe, 0x00, 0x10, 0x00, 0x00, 0x8b, 0x53, 0x08, 0xb8, 0x0a, 0x00, 0x00, 0x00, 0x0f, 0x05, 0x48, 0x83, 0xc3, 0x10, 0xeb});
+    code.push_back(static_cast<std::uint8_t>(static_cast<std::int8_t>(static_cast<std::int64_t>(pageLoop) - static_cast<std::int64_t>(code.size() + 1))));
+    code[pageExit - 1] = static_cast<std::uint8_t>(code.size() - pageExit);
     rip({0x4c, 0x8d, 0x25}, tableEnd);
     const auto loop = code.size();
     code.insert(code.end(), {0x4c, 0x39, 0xe3, 0x73, 0x00});
     const auto exit = code.size();
     code.insert(code.end(), {0x48, 0x8b, 0x03, 0x48, 0x8b, 0x3c, 0x03, 0x48, 0x8b, 0x73, 0x08, 0x48, 0x01, 0xde, 0x48, 0x8b, 0x53, 0x10, 0x48, 0x01, 0xda});
     rip({0xff, 0x15}, function);
-    code.insert(code.end(), {0x48, 0x8b, 0x3b, 0x48, 0x01, 0xdf, 0x48, 0x81, 0xe7, 0x00, 0xf0, 0xff, 0xff, 0xbe, 0x00, 0x10, 0x00, 0x00, 0xba, 0x07, 0x00, 0x00, 0x00, 0x50, 0xb8, 0x0a, 0x00, 0x00, 0x00, 0x0f, 0x05, 0x58});
     code.insert(code.end(), {0x48, 0x8b, 0x0b, 0x48, 0x89, 0x04, 0x0b, 0x48, 0x83, 0xc3, 0x18, 0xeb});
     code.push_back(static_cast<std::uint8_t>(static_cast<std::int8_t>(static_cast<std::int64_t>(loop) - static_cast<std::int64_t>(code.size() + 1))));
     code[exit - 1] = static_cast<std::uint8_t>(code.size() - exit);
     code.insert(code.end(), {0x48, 0x83, 0xc4, 0x08, 0x41, 0x5c, 0x5b, 0x5a});
     return code;
+}
+
+void RequireBaseAlignment(const std::uint64_t base, const std::uint64_t alignment) {
+    if (alignment > 1 && base % alignment != 0)
+        throw Domain::RelinkerException("Fixed Linux base " + Hex(base) + " is not a multiple of the PT_LOAD alignment " + Hex(alignment));
 }
 
 void RebaseProgramHeaders(std::vector<std::uint8_t>& buf, const std::uint64_t tableOffset, const std::uint16_t entrySize, const std::uint16_t count, const std::uint64_t base) {
@@ -290,16 +355,13 @@ void RebaseProgramHeaders(std::vector<std::uint8_t>& buf, const std::uint64_t ta
         if (type == PT_NULL || type == PT_GNU_STACK)
             continue;
         const auto address = Rebased(base, Io::ReadU64(buf, header + kPhdrVaddrOffset), "Program header address");
-        const auto physical = Rebased(base, Io::ReadU64(buf, header + kPhdrPaddrOffset), "Program header physical address");
         if (type == PT_LOAD) {
-            const auto alignment = Io::ReadU64(buf, header + kPhdrAlignOffset);
-            if (alignment > 1 && base % alignment != 0)
-                throw Domain::RelinkerException("Fixed Linux base " + Hex(base) + " is not a multiple of the PT_LOAD alignment " + Hex(alignment));
+            RequireBaseAlignment(base, Io::ReadU64(buf, header + kPhdrAlignOffset));
             if (Io::ReadU64(buf, header + kPhdrMemSizeOffset) > kLinuxUserAddressEnd - address)
                 throw Domain::RelinkerException("PT_LOAD at " + Hex(address) + " ends outside the Linux user address space");
         }
         Io::WriteU64(buf, header + kPhdrVaddrOffset, address);
-        Io::WriteU64(buf, header + kPhdrPaddrOffset, physical);
+        Io::WriteU64(buf, header + kPhdrPaddrOffset, address);
     }
 }
 
@@ -352,9 +414,8 @@ void LinuxElfPatcher::_appendTrampoline(
     const auto inRange = [](const std::int64_t displacement) {
         return displacement >= std::numeric_limits<std::int32_t>::min() && displacement <= std::numeric_limits<std::int32_t>::max();
     };
-    const auto returnDisplacement = static_cast<std::int64_t>(site.Address + site.Length) - static_cast<std::int64_t>(bodyVaddr + site.ReturnBranchOffset + kJmpRel32.Size);
-    const auto jumpDisplacement = static_cast<std::int64_t>(bodyVaddr) - static_cast<std::int64_t>(site.Address + kJmpRel32.Size);
-    if (!inRange(returnDisplacement) || !inRange(jumpDisplacement))
+    std::int64_t returnDisplacement = 0, jumpDisplacement = 0;
+    if (!SignedDistance(site.Address + site.Length, bodyVaddr + site.ReturnBranchOffset + kJmpRel32.Size, returnDisplacement) || !SignedDistance(bodyVaddr, site.Address + kJmpRel32.Size, jumpDisplacement) || !inRange(returnDisplacement) || !inRange(jumpDisplacement))
         throw Domain::RelinkerException("AMD-only stub exceeds rel32 range", site.Offset);
     _byteWriter->WriteU32(buf, static_cast<std::size_t>(bodyOff + site.ReturnBranchOffset + 1), static_cast<std::uint32_t>(returnDisplacement));
 
@@ -423,9 +484,31 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
             b.push_back(0);
     };
 
+    const std::uint64_t extraBlockOff = static_cast<std::uint64_t>(buf.size());
+    const std::uint64_t extraBlockVaddr = _programHeaderLayoutBuilder->ComputeExtraBlockVaddr(originalHeaders, extraBlockOff);
+
+    const auto vaddrOfExtraBlockOffset = [extraBlockOff, extraBlockVaddr](std::uint64_t fileOffset) -> std::uint64_t {
+        if (fileOffset < extraBlockOff)
+            throw Domain::RelinkerException("Extra block member offset lies before the extra block");
+        return extraBlockVaddr + (fileOffset - extraBlockOff);
+    };
+
+    const auto& neededLibraries = dynSection.NeededLibraries;
+    const bool mainStackEntry = std::find(neededLibraries.begin(), neededLibraries.end(), kGuestMainStackEntryLibrary) != neededLibraries.end();
+    std::optional<std::uint64_t> mainStackSlotOff;
+    if (mainStackEntry) {
+        alignBuf(buf, sizeof(std::uint64_t));
+        mainStackSlotOff = static_cast<std::uint64_t>(buf.size());
+        buf.resize(buf.size() + sizeof(std::uint64_t), 0);
+    }
+
     const auto dynStrOff = static_cast<std::uint64_t>(buf.size());
     for (std::uint8_t b : dynSection.DynStrData)
         buf.push_back(b);
+    const std::uint64_t mainStackNameOff = static_cast<std::uint64_t>(buf.size()) - dynStrOff;
+    if (mainStackEntry)
+        for (char c : kGuestMainStackEntrySymbol)
+            buf.push_back(static_cast<std::uint8_t>(c));
     const std::uint64_t runPathStrOff = static_cast<std::uint64_t>(buf.size()) - dynStrOff;
     for (char c : runPath)
         buf.push_back(static_cast<std::uint8_t>(c));
@@ -450,17 +533,130 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         Io::AppendU64(symbols, 0);
         Io::AppendU64(symbols, 0);
     }
+    std::uint64_t mainStackSymbol = 0;
+    if (mainStackEntry) {
+        RequireWholeEntries(symbols, kSymEntrySize, "Dynamic symbol table");
+        if (symbols.empty())
+            symbols.resize(kSymEntrySize, 0);
+        mainStackSymbol = symbols.size() / kSymEntrySize;
+        const auto mainStackSymbolOff = symbols.size();
+        symbols.resize(symbols.size() + kSymEntrySize, 0);
+        Io::WriteU32(symbols, mainStackSymbolOff, static_cast<std::uint32_t>(mainStackNameOff));
+        symbols[mainStackSymbolOff + 4] = static_cast<std::uint8_t>((STB_GLOBAL << 4) | STT_FUNC);
+    }
     for (std::uint8_t b : symbols)
         buf.push_back(b);
     alignBuf(buf, kDynSymAlignment);
 
     const auto hashOff = static_cast<std::uint64_t>(buf.size());
     const auto symbolCount = static_cast<std::uint32_t>(symbols.size() / kSymEntrySize);
-    Io::AppendU32(buf, 1);
-    Io::AppendU32(buf, symbolCount);
-    Io::AppendU32(buf, symbolCount > 1 ? 1 : 0);
-    for (std::uint32_t index = 0; index < symbolCount; ++index)
-        Io::AppendU32(buf, index != 0 && index + 1 < symbolCount ? index + 1 : 0);
+    std::vector<std::uint32_t> definedSymbols;
+    for (std::uint32_t index = 1; index < symbolCount; ++index) {
+        if (Io::ReadU16(symbols, index * kSymEntrySize + 6) != SHN_UNDEF)
+            definedSymbols.push_back(index);
+    }
+    const auto numDefined = static_cast<std::uint32_t>(definedSymbols.size());
+    const std::uint32_t symoffset = definedSymbols.empty() ? symbolCount : definedSymbols.front();
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> symHashes;
+    if (!definedSymbols.empty()) {
+        for (std::size_t i = 1; i < definedSymbols.size(); ++i) {
+            if (definedSymbols[i] != definedSymbols[i - 1] + 1)
+                throw Domain::RelinkerException("Defined dynamic symbols are not contiguous");
+        }
+        for (const auto* relocationTable : {&dynSection.RelaData, &dynSection.RelaPltData}) {
+            for (std::size_t entry = 0; entry < relocationTable->size(); entry += kRelaEntrySize) {
+                const auto r_sym = static_cast<std::uint32_t>(Io::ReadU64(*relocationTable, entry + 8) >> 32);
+                if (r_sym >= symoffset && r_sym < symoffset + numDefined)
+                    throw Domain::RelinkerException("Relocation references a defined dynamic symbol");
+            }
+        }
+        symHashes.reserve(numDefined);
+        for (const std::uint32_t symIdx : definedSymbols) {
+            const auto offset = Io::ReadU32(symbols, symIdx * kSymEntrySize);
+            const char* name = offset < dynStrSize ? reinterpret_cast<const char*>(buf.data() + dynStrOff + offset) : "";
+            symHashes.emplace_back(symIdx, GnuHash(name));
+        }
+        std::stable_sort(symHashes.begin(), symHashes.end(), [numDefined](const auto& a, const auto& b) {
+            return (a.second % numDefined) < (b.second % numDefined);
+        });
+        std::vector<std::uint8_t> sortedSymbols;
+        sortedSymbols.reserve(numDefined * kSymEntrySize);
+        for (const auto& [origIdx, hash] : symHashes) {
+            const auto* src = symbols.data() + origIdx * kSymEntrySize;
+            sortedSymbols.insert(sortedSymbols.end(), src, src + kSymEntrySize);
+        }
+        std::copy(sortedSymbols.begin(), sortedSymbols.end(), symbols.begin() + static_cast<std::ptrdiff_t>(symoffset * kSymEntrySize));
+        std::copy(sortedSymbols.begin(), sortedSymbols.end(), buf.begin() + static_cast<std::ptrdiff_t>(dynSymOff + symoffset * kSymEntrySize));
+    }
+    if (definedSymbols.empty()) {
+        Io::AppendU32(buf, 1);
+        Io::AppendU32(buf, symbolCount);
+        Io::AppendU32(buf, 0);
+        for (std::uint32_t index = 0; index < symbolCount; ++index)
+            Io::AppendU32(buf, 0);
+    } else {
+        const auto bucketCount = numDefined;
+        std::vector<std::uint32_t> sysvBuckets(bucketCount, 0), sysvChains(symbolCount, 0);
+        for (std::uint32_t i = 0; i < numDefined; ++i) {
+            const auto symIdx = symoffset + i;
+            const auto offset = Io::ReadU32(symbols, symIdx * kSymEntrySize);
+            const char* name = offset < dynStrSize ? reinterpret_cast<const char*>(buf.data() + dynStrOff + offset) : "";
+            const auto hash = ElfHash(name);
+            sysvChains[symIdx] = sysvBuckets[hash % bucketCount];
+            sysvBuckets[hash % bucketCount] = symIdx;
+        }
+        Io::AppendU32(buf, bucketCount);
+        Io::AppendU32(buf, symbolCount);
+        for (auto b : sysvBuckets) Io::AppendU32(buf, b);
+        for (auto c : sysvChains) Io::AppendU32(buf, c);
+    }
+    alignBuf(buf, 8);
+
+    const auto gnuHashOff = static_cast<std::uint64_t>(buf.size());
+    if (definedSymbols.empty()) {
+        Io::AppendU32(buf, 1);
+        Io::AppendU32(buf, symbolCount);
+        Io::AppendU32(buf, 1);
+        Io::AppendU32(buf, 6);
+        Io::AppendU64(buf, 0);
+        Io::AppendU32(buf, 0);
+    } else {
+        const auto nbuckets = numDefined;
+        constexpr std::uint32_t bloomShift = 6;
+        std::uint32_t bloomSize = 1;
+        while (bloomSize * 64 < numDefined * 8)
+            bloomSize <<= 1;
+
+        std::vector<std::uint64_t> bloom(bloomSize, 0);
+        for (const auto& [origIdx, hash] : symHashes) {
+            const auto wordIdx = (hash / 64) % bloomSize;
+            const auto bit1 = hash % 64;
+            const auto bit2 = (hash >> bloomShift) % 64;
+            bloom[wordIdx] |= (static_cast<std::uint64_t>(1) << bit1) | (static_cast<std::uint64_t>(1) << bit2);
+        }
+
+        std::vector<std::uint32_t> buckets(nbuckets, 0);
+        std::vector<std::uint32_t> chains(numDefined, 0);
+        std::uint32_t prevBucket = nbuckets;
+        for (std::uint32_t i = 0; i < numDefined; ++i) {
+            const auto hash = symHashes[i].second;
+            const auto b = hash % nbuckets;
+            if (b != prevBucket) {
+                buckets[b] = symoffset + i;
+                prevBucket = b;
+            }
+            const bool isLast = (i + 1 == numDefined) || ((symHashes[i + 1].second % nbuckets) != b);
+            chains[i] = (hash & ~1u) | (isLast ? 1u : 0u);
+        }
+
+        Io::AppendU32(buf, nbuckets);
+        Io::AppendU32(buf, symoffset);
+        Io::AppendU32(buf, bloomSize);
+        Io::AppendU32(buf, bloomShift);
+        for (auto w : bloom) Io::AppendU64(buf, w);
+        for (auto b : buckets) Io::AppendU32(buf, b);
+        for (auto c : chains) Io::AppendU32(buf, c);
+    }
     alignBuf(buf, kDynSymAlignment);
 
     const auto relaOff = static_cast<std::uint64_t>(buf.size());
@@ -470,6 +666,12 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         Io::AppendU64(relocations, 0);
         Io::AppendU64(relocations, (static_cast<std::uint64_t>(traceSymbol) << 32) | R_X86_64_GLOB_DAT);
         Io::AppendU64(relocations, 0);
+    }
+    if (mainStackSlotOff) {
+        const auto mainStackRelocationOff = relocations.size();
+        relocations.resize(relocations.size() + kRelaEntrySize, 0);
+        Io::WriteU64(relocations, mainStackRelocationOff, address(vaddrOfExtraBlockOffset(*mainStackSlotOff)));
+        Io::WriteU64(relocations, mainStackRelocationOff + 8, (mainStackSymbol << 32) | R_X86_64_GLOB_DAT);
     }
     for (std::uint8_t b : relocations)
         buf.push_back(b);
@@ -481,15 +683,6 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         buf.push_back(b);
     alignBuf(buf, kRelaPltAlignment);
 
-    const std::uint64_t extraBlockOff = dynStrOff;
-    const std::uint64_t extraBlockVaddr = _programHeaderLayoutBuilder->ComputeExtraBlockVaddr(originalHeaders, extraBlockOff);
-
-    const auto vaddrOfExtraBlockOffset = [extraBlockOff, extraBlockVaddr](std::uint64_t fileOffset) -> std::uint64_t {
-        if (fileOffset < extraBlockOff)
-            throw Domain::RelinkerException("Extra block member offset lies before the extra block");
-        return extraBlockVaddr + (fileOffset - extraBlockOff);
-    };
-
     std::vector<std::uint8_t> dynSegBuf;
     for (std::uint8_t b : dynSection.DynamicSegmentData)
         dynSegBuf.push_back(b);
@@ -498,6 +691,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     _appendDynEntry(dynSegBuf, DT_SYMTAB, address(vaddrOfExtraBlockOffset(dynSymOff)));
     _appendDynEntry(dynSegBuf, DT_SYMENT, kSymEntrySize);
     _appendDynEntry(dynSegBuf, DT_HASH, address(vaddrOfExtraBlockOffset(hashOff)));
+    _appendDynEntry(dynSegBuf, DT_GNU_HASH, address(vaddrOfExtraBlockOffset(gnuHashOff)));
     _appendDynEntry(dynSegBuf, DT_DEBUG, 0);
     if (!relocations.empty()) {
         _appendDynEntry(dynSegBuf, DT_RELA, address(vaddrOfExtraBlockOffset(relaOff)));
@@ -520,8 +714,10 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         buf.push_back(b);
 
     std::uint64_t traceFunctionVaddr = 0;
+    std::uint64_t tracePagesVaddr = 0;
     std::uint64_t traceTableVaddr = 0;
     std::uint64_t traceTableEndVaddr = 0;
+    std::map<std::uint64_t, std::size_t> tracePages;
     std::vector<std::size_t> traceEntries;
     if (_traceImports) {
         alignBuf(buf, 8);
@@ -529,6 +725,16 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         traceFunctionVaddr = vaddrOfExtraBlockOffset(functionOff);
         Io::AppendU64(buf, 0);
         Io::WriteU64(buf, static_cast<std::size_t>(relaOff + traceRelocation), address(traceFunctionVaddr));
+        tracePagesVaddr = vaddrOfExtraBlockOffset(buf.size());
+        for (const auto& import : traced) {
+            tracePages.emplace(import.Slot & ~(kDefaultLoadAlignment - 1), 0);
+            tracePages.emplace((import.Slot + kPltGotEntryBytes - 1) & ~(kDefaultLoadAlignment - 1), 0);
+        }
+        for (auto& [page, offset] : tracePages) {
+            offset = buf.size();
+            buf.resize(buf.size() + 16);
+            Io::WriteU64(buf, offset, page - vaddrOfExtraBlockOffset(offset));
+        }
         traceTableVaddr = vaddrOfExtraBlockOffset(buf.size());
         for (std::size_t index = 0; index < traced.size(); ++index) {
             traceEntries.push_back(buf.size());
@@ -558,11 +764,14 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const auto stubOff = static_cast<std::uint64_t>(buf.size());
     const auto stubVaddr = vaddrOfExtraBlockOffset(stubOff);
     if (_traceImports) {
-        for (std::uint8_t b : TracePrologue(stubVaddr, traceTableVaddr, traceTableEndVaddr, traceFunctionVaddr))
+        for (std::uint8_t b : TracePrologue(stubVaddr, tracePagesVaddr, traceTableVaddr, traceTableEndVaddr, traceFunctionVaddr))
             buf.push_back(b);
     }
     const auto entryStubVaddr = vaddrOfExtraBlockOffset(buf.size());
-    for (std::uint8_t b : _entryStubBuilder->BuildEntryStub(address(entryStubVaddr), address(realEntryVaddr)))
+    std::optional<std::uint64_t> mainStackSlotVaddr;
+    if (mainStackSlotOff)
+        mainStackSlotVaddr = address(vaddrOfExtraBlockOffset(*mainStackSlotOff));
+    for (std::uint8_t b : _entryStubBuilder->BuildEntryStub(address(entryStubVaddr), address(realEntryVaddr), mainStackSlotVaddr))
         buf.push_back(b);
     const auto stubSize = static_cast<std::uint64_t>(buf.size()) - stubOff;
     _byteWriter->WriteU64(buf, kEhdrEntryOffset, address(stubVaddr));
@@ -589,7 +798,11 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const std::uint64_t extraBlockSize = static_cast<std::uint64_t>(buf.size()) - extraBlockOff;
 
     auto headers = originalHeaders;
-    SeparateSharedLoadPages(buf, headers);
+    if (_fixedBase)
+        for (const auto& header : headers)
+            if (header.Type == PT_LOAD)
+                RequireBaseAlignment(*_fixedBase, header.Alignment);
+    const auto movedLoadAlignment = SeparateSharedLoadPages(buf, headers);
 
     ProgramHeaderLayoutRequest layoutRequest{};
     layoutRequest.PhOff = tableOff;
@@ -603,11 +816,39 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     layoutRequest.DynamicSegmentSize = dynSegBuf.size();
     layoutRequest.InterpOffset = interpOff;
     layoutRequest.InterpSize = interpSize;
+    layoutRequest.MovedLoadAlignment = movedLoadAlignment;
 
     const std::uint16_t writtenPh = _programHeaderLayoutBuilder->WriteLayout(buf, layoutRequest);
     _byteWriter->WriteU16(buf, kEhdrPhNumOffset, writtenPh);
     if (_fixedBase)
         RebaseProgramHeaders(buf, tableOff, phEntSize, writtenPh, base);
+
+    std::uint64_t relroStart = 0;
+    std::uint64_t relroEnd = 0;
+    for (std::uint16_t index = 0; index < writtenPh; ++index) {
+        const auto header = static_cast<std::size_t>(tableOff + static_cast<std::uint64_t>(index) * phEntSize);
+        if (Io::ReadU32(buf, header + kPhdrTypeOffset) != PT_GNU_RELRO)
+            continue;
+        const auto start = Io::ReadU64(buf, header + kPhdrVaddrOffset);
+        const auto size = Io::ReadU64(buf, header + kPhdrMemSizeOffset);
+        relroStart = start & ~(kDefaultLoadAlignment - 1);
+        relroEnd = (start + size) & ~(kDefaultLoadAlignment - 1);
+    }
+    for (const auto& [page, offset] : tracePages) {
+        std::uint32_t flags = 0;
+        for (std::uint16_t index = 0; index < writtenPh; ++index) {
+            const auto header = static_cast<std::size_t>(tableOff + static_cast<std::uint64_t>(index) * phEntSize);
+            if (Io::ReadU32(buf, header + kPhdrTypeOffset) != PT_LOAD)
+                continue;
+            const auto start = Io::ReadU64(buf, header + kPhdrVaddrOffset);
+            const auto size = Io::ReadU64(buf, header + kPhdrMemSizeOffset);
+            if (size != 0 && address(page) >= (start & ~(kDefaultLoadAlignment - 1)) && address(page) < start + size)
+                flags = Io::ReadU32(buf, header + kPhdrFlagsOffset);
+        }
+        if (address(page) >= relroStart && address(page) < relroEnd)
+            flags &= ~PF_X;
+        Io::WriteU32(buf, offset + 8, 3 | ((flags & PF_X) != 0 ? 4 : 0));
+    }
 
     SectionHeaderTableRequest sectionRequest{};
     sectionRequest.DynStrOffset = dynStrOff;

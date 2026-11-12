@@ -1,4 +1,4 @@
-[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | **简体中文** | [Русский](README.ru.md)
+[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | [Català](README.ca.md) | [Italiano](README.it.md) | **简体中文** | [Русский](README.ru.md) | [Bahasa Indonesia](README.id.md) | [Polski](README.pl.md) | [日本語](README.ja.md)
 
 # 简介
 
@@ -12,11 +12,11 @@
 
 包含一个 [relinker](../../core/relinker)，可将可执行文件转换为目标系统的原生格式，以及适用于动态链接的[系统 prx 库](../../core/libs/prx)实现。无需模拟，也没有独立的运行时进程。
 
-[**Discord**](https://discord.gg/BHFztBPUe)、[使用说明](USAGE.md)、[构建说明](../dev/BUILD.md)、[架构](../dev/ARCHITECTURE.md)、[项目技术债务](../dev/TechnicalDebt.md)、[代码风格约定](../dev/CONVENTIONS.md)、[贡献指南](../../CONTRIBUTING.md)
+[**Discord**](https://discord.gg/x9naWVzC6A)、[使用说明](USAGE.md)、[构建说明](../dev/BUILD.md)、[架构](../dev/ARCHITECTURE.md)、[项目技术债务](../dev/TechnicalDebt.md)、[代码风格约定](../dev/CONVENTIONS.md)、[贡献指南](../../CONTRIBUTING.md)
 
 ## 状态
 
-[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shaders](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
+[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shader forms decoded, counted from the code](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![implemented in 7 days](https://boykopovar.github.io/AnyPS5/badge-week.svg)](https://boykopovar.github.io/AnyPS5/history.html)
 
 [![progress map](https://boykopovar.github.io/AnyPS5/progress.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
 
@@ -24,7 +24,7 @@
 
 <sub>* 系统库：项目目前已知函数（在 [core/libs/prx](../../core/libs/prx) 中声明）的百分比，而非 PS5 全部系统函数的百分比。随着声明的函数增多，总数会增长。</sub>
 
-不支持或意外的状态一律抛出 `std::runtime_error`。`what()` 会输出到 stderr，然后进程终止。
+不支持或意外的状态会抛出 C++ 异常，通常是 `std::runtime_error`。没有被捕获的异常会把其 `what()` 输出到 stderr，然后进程终止。
 
 [着色器重编译器](../../core/shader/recompiler/Recompiler.cpp)可成功生成 SPIR-V（使用 `ANYPS5_ENABLE_SPIRV_TOOLS` 构建时通过 [Spirv-Tools](../../3rdparty/SPIRV-Tools) 验证）。
 

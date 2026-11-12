@@ -243,10 +243,6 @@ int APS5_VABI getenv_np() {
 }
 
 APS5_EXPORT("dt8ermYp-Wc", scePosixForWebKit_gethostbyname_r);
-int APS5_VABI scePosixForWebKit_gethostbyname_r() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI mmap_np() {
     NotImplemented_nid_no_patch(__func__);
@@ -282,4 +278,19 @@ int APS5_VABI pthread_setname_np_nid_postfix(Pthread thread, const char* name) {
     return 0;
 }
 
+void* APS5_VABI opendir_nid_disambig1_nid_postfix(const char* path) {
+    return opendir_nid_postfix(path);
+}
+
+int APS5_VABI closedir_nid_disambig1_nid_postfix(void* handle) {
+    return closedir_nid_postfix(handle);
+}
+
+GuestDirectoryEntry* APS5_VABI readdir_nid_disambig1_nid_postfix(void* handle) {
+    return readdir_nid_postfix(handle);
+}
+
+int APS5_VABI readdir_r_nid_disambig1_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result) {
+    return readdir_r_nid_postfix(handle, entry, result);
+}
 }
