@@ -173,6 +173,7 @@ class ProbeGenerationTests(unittest.TestCase):
             self.assertEqual(rows[0], "0x00000000 0x00000000 0x00000000 0x00000000")
             metadata = json.loads((case / "probe.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["catalog_sha256"], self.digest)
+            self.assertEqual(metadata["probe_sha256"], probe_catalog.probe_digest(probe))
             self.assertEqual(metadata["rows"], probe["rows"])
 
     def test_every_curated_input_bundle_passes_the_existing_oracle_validator(self):
@@ -291,12 +292,22 @@ class ProbeCoverageTests(unittest.TestCase):
             results = probe_catalog.coverage([probe], self.digest, temporary, "rx-6750-xt")
             self.assertEqual(results, [{"id": probe["id"], "status": "measured", "detail": ""}])
 
-    def test_coverage_marks_reports_from_an_older_catalog_stale(self):
+    def test_coverage_keeps_unchanged_probes_when_catalog_gains_another_entry(self):
         probe = self.catalog["probes"][0]
         with tempfile.TemporaryDirectory() as temporary:
             self.write_report(temporary, probe, digest="0" * 64)
             results = probe_catalog.coverage([probe], self.digest, temporary, "rx-6750-xt")
+            self.assertEqual(results[0]["status"], "measured")
+
+    def test_coverage_marks_changed_probe_definitions_stale(self):
+        original = self.catalog["probes"][0]
+        changed = copy.deepcopy(original)
+        changed["description"] += " Updated definition."
+        with tempfile.TemporaryDirectory() as temporary:
+            self.write_report(temporary, original)
+            results = probe_catalog.coverage([changed], self.digest, temporary, "rx-6750-xt")
             self.assertEqual(results[0]["status"], "stale")
+            self.assertIn("probe definition digest", results[0]["detail"])
 
     def test_coverage_rejects_reports_for_different_inputs_or_settings(self):
         probe = self.catalog["probes"][0]
