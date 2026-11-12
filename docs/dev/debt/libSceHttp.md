@@ -42,6 +42,8 @@ Sony guest HTTP requests still do not reach the network. The separate `Aps5HttpC
 - [sceHttpGetRegisteredCtxIds](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - not measured on a console. It reports the libnet memory pool id and the SSL context id given to `sceHttpInit` for the context, in the order of the recovered prototype `(int contextId, int* netPoolId, int* sslContextId)`; no public source names its outputs, and neither id is checked against libSceNet or libSceSsl. No live context returns `BEFORE_INIT` and an unknown or terminated id `INVALID_ID`, as in `sceHttpGetMemoryPoolStats`, with the outputs untouched; both codes are unmeasured. A null output throws, as its error code is unknown
 
 - [sceHttpSetDelayBuildRequestEnabled](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - sets the delay-build option on templates, connections or requests following the object option lifecycle. The options change no request, as none reaches the network.
+- [sceHttpsEnableOption, sceHttpsDisableOption](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - the public TLS option toggles return 0 for any id and keep nothing, since no request reaches the network. Unlike the `*Private` variants above, they do not reject flags outside the `0x2dff` mask: the `ssl_flags` argument is ignored outright.
+- [sceHttpSetConnectTimeOut](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - returns 0 for any id and keeps the microsecond connection timeout nowhere, since no connection is made, as the send and receive timeout setters do. Call of Duty: Black Ops II (PPSA34502) imports it.
 
 ### Functional
 
