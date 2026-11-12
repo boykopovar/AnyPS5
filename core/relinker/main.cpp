@@ -15,9 +15,9 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
-#include <memory>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -44,6 +44,11 @@ struct ConvertedExecutable {
     std::string Diagnostics;
     std::vector<Relinker::GamePatch::AppliedPatch> AppliedPatches;
     std::optional<std::uint64_t> LinuxBase;
+};
+
+struct RegistryContents {
+    std::string Registry;
+    std::string Needed;
 };
 
 ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath, const std::string& absPath, const bool mainExecutable, const std::string& targetName, const std::vector<Relinker::GamePatch::PatchEntry>& patches, Cli::ConsoleProgress& progress) {
@@ -418,6 +423,18 @@ int Run(const int argc, char* argv[]) {
         if (!manifestPath.empty()) checkOutputInputs(manifestPath, "Patch manifest");
         for (const auto& artifact : guestArtifacts) checkOutputInputs(artifact.Path, "Guest module");
 
+        std::vector<RegistryContents> registryContents;
+        if (args.writeRegistry) {
+            Relinker::CallRegistryWriter registryWriter;
+            registryContents.reserve(registryPaths.size());
+            for (const auto& executable : executables)
+                registryContents.push_back({registryWriter.WriteCallRegistry(executable.Result.RegistryEntries),
+                                            registryWriter.WriteNeededLibraries(executable.Result.DynamicSection.NeededLibraries)});
+            for (const auto& artifact : guestArtifacts)
+                registryContents.push_back({registryWriter.WriteModuleImports(artifact.Imports),
+                                            registryWriter.WriteNeededLibraries(artifact.NeededLibraries)});
+        }
+
         std::vector<std::filesystem::path> outputPaths;
         for (const auto& executable : executables) outputPaths.push_back(Io::NativePath(executable.OutputPath));
         for (const auto& artifact : guestArtifacts) outputPaths.push_back(artifact.Path);
@@ -468,16 +485,9 @@ int Run(const int argc, char* argv[]) {
             }
             progress.Report({Domain::ProgressStage::Write, absPath, ++written, outputCount});
         }
-        if (args.writeRegistry) {
-            const auto registryWriter = std::make_shared<Relinker::CallRegistryWriter>();
-            for (std::size_t index = 0; index < executables.size(); ++index) {
-                fileWriter.Write(Io::Utf8Path(registryPaths[index]), registryWriter->WriteCallRegistry(executables[index].Result.RegistryEntries));
-                fileWriter.Write(Io::Utf8Path(neededPaths[index]), registryWriter->WriteNeededLibraries(executables[index].Result.DynamicSection.NeededLibraries));
-            }
-            for (std::size_t index = 0; index < guestArtifacts.size(); ++index) {
-                fileWriter.Write(Io::Utf8Path(registryPaths[executables.size() + index]), registryWriter->WriteModuleImports(guestArtifacts[index].Imports));
-                fileWriter.Write(Io::Utf8Path(neededPaths[executables.size() + index]), registryWriter->WriteNeededLibraries(guestArtifacts[index].NeededLibraries));
-            }
+        for (std::size_t index = 0; index < registryContents.size(); ++index) {
+            fileWriter.Write(Io::Utf8Path(registryPaths[index]), registryContents[index].Registry);
+            fileWriter.Write(Io::Utf8Path(neededPaths[index]), registryContents[index].Needed);
         }
         if (!manifestPath.empty()) fileWriter.Write(Io::Utf8Path(manifestPath), manifestText);
         progress.Finish();
