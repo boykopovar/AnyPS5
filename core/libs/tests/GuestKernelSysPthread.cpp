@@ -78,8 +78,9 @@ static void TestThreadAttrCreateSuspend() {
 }
 
 static void TestConcurrency() {
-    Require(scePthreadSetconcurrency(3) == 0 && scePthreadGetconcurrency() == 3);
-    Require(scePthreadSetconcurrency(-1) == SCE_KERNEL_ERROR_EINVAL && scePthreadGetconcurrency() == 3);
+    Require(scePthreadSetconcurrency(3) == 0 && scePthreadGetconcurrency() == static_cast<int>(0x80020003));
+    Require(scePthreadSetconcurrency(1000) == 0 && scePthreadGetconcurrency() == static_cast<int>(0x800203E8));
+    Require(scePthreadSetconcurrency(-1) == SCE_KERNEL_ERROR_EINVAL && scePthreadGetconcurrency() == static_cast<int>(0x800203E8));
     Require(scePthreadSetconcurrency(0) == 0 && scePthreadGetconcurrency() == 0);
 }
 

@@ -417,6 +417,46 @@ static void TestHeldBlock() {
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
 }
 
+static void TestDecryptFinalErrors() {
+    auto cipher = XorBlockCipher();
+    for (const auto final : {EVP_DecryptFinal_ex_nid_postfix, EVP_CipherFinal_ex_nid_postfix}) {
+        for (int scenario = 0; scenario < 9; ++scenario) {
+            cipher.blockSize = 16;
+            ResetCalls();
+            ERR_clear_error_nid_postfix();
+            unsigned char context[ContextBytes] {};
+            unsigned char out[32];
+            std::memset(out, 0xEE, sizeof(out));
+            Require(EVP_DecryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 1);
+            Bytes block(16, 16);
+            if (scenario == 0) block[15] = 0;
+            if (scenario == 1) block[15] = 17;
+            if (scenario == 2) { block[14] = 3; block[15] = 2; }
+            if (scenario == 3 || scenario == 7) Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 0) == 1);
+            int written = -1;
+            const int length = scenario == 3 || scenario == 5 ? 15 : scenario == 4 ? 0 : 16;
+            const auto encrypted = Xor(block);
+            Require(EVP_DecryptUpdate_nid_postfix(Context(context), out, &written, encrypted.data(), length) == 1);
+            std::memset(out, 0xEE, sizeof(out));
+            if (scenario == 8) cipher.blockSize = 64;
+            written = 123;
+            const int result = final(Context(context), out, &written);
+            const auto error = ERR_get_error_nid_postfix();
+            const int reason = scenario < 3 ? 100 : scenario == 3 ? 138 : scenario < 6 ? 109 : scenario == 8 ? 136 : 0;
+            Require(result == (reason == 0 ? 1 : 0));
+            Require(written == 0);
+            for (const auto byte : out) Require(byte == 0xEE);
+            if (error != (reason ? (UINT64_C(6) << 24 | UINT64_C(0xfff) << 12 | reason) : 0))
+                std::fprintf(stderr, "decrypt final scenario %d: ret=%d length=%d error=0x%llx expected EVP/fff/%d\n", scenario, result, written, static_cast<unsigned long long>(error), reason);
+            Require((error >> 24 & 0xff) == (reason ? 6 : 0));
+            Require((error >> 12 & 0xfff) == (reason ? 0xfff : 0));
+            Require((error & 0xfff) == static_cast<unsigned>(reason));
+            Require(ERR_get_error_nid_postfix() == 0);
+            Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+        }
+    }
+}
+
 static void TestBadPadding() {
     const auto cipher = XorBlockCipher();
     ResetCalls();
@@ -1198,6 +1238,7 @@ int main() {
     TestCtrl();
     TestPadding();
     TestHeldBlock();
+    TestDecryptFinalErrors();
     TestBadPadding();
     TestNoPadding();
     TestInitFields();

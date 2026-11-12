@@ -687,10 +687,6 @@ int APS5_VABI curl_formget_nid_postfix(struct guest_curl_httppost* form, void* a
     NotImplemented_nid_no_patch(__func__);
 }
 
-void APS5_VABI curl_formfree_nid_postfix(struct guest_curl_httppost* form) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::int32_t APS5_VABI curl_multi_socket_action_nid_postfix(CURLM* multi_handle, int s, int ev_bitmask, int* running_handles) {
     NotImplemented_nid_no_patch(__func__);
 }

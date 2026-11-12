@@ -755,6 +755,9 @@ int main() {
     int state = -1;
     Require(sceNetCtlGetState(&state) == 0 && state == kStateIpObtained);
 
+    errno = 71;
+    for (const int code : {1, 2, 12, 14}) Require(sceNetCtlGetInfo(code, reinterpret_cast<NetCtlInfo*>(0x10)) == kErrInvalidAddr);
+    Require(errno == 71);
     Require(QueryWord(1) == 0);
     const auto ether = Query(2);
     const std::uint8_t mac[6] = {0x02, 0x50, 0x53, 0x35, 0x00, 0x01};

@@ -723,10 +723,13 @@ void OsVersionFormatTest() {
     Require(RunReport::FormatOsVersion("Ubuntu", "24.04", "5.15.153.1-microsoft-standard-WSL2") == "Ubuntu 24.04 (kernel 5.15.153)", "a WSL2 kernel release was not cut to three numbers");
     Require(RunReport::FormatOsVersion("", "", "6.1") == "kernel 6.1", "a two-number release without a name was wrong");
     Require(RunReport::FormatOsVersion("Fedora Linux", "40", "") == "Fedora Linux 40", "a missing kernel release broke the name");
+    Require(RunReport::FormatOsVersion("Arch Linux", "20261011.0.609700", "6.18.50-arch1-1") == "Arch Linux (kernel 6.18.50)", "a version id the report refuses was kept: " + RunReport::FormatOsVersion("Arch Linux", "20261011.0.609700", "6.18.50-arch1-1"));
     const RunReport::HostIdentifiers none;
     auto machine = CleanMachine();
     machine.osVersion = RunReport::FormatOsVersion("Ubuntu", "24.04", "5.15.153.1-microsoft-standard-WSL2");
     Require(Contains(RunReport::Serialize(MachineReport(machine), none), "\"osVersion\": \"Ubuntu 24.04 (kernel 5.15.153)\""), "a WSL2 host lost its OS version");
+    machine.osVersion = RunReport::FormatOsVersion("Arch Linux", "20261011.0.609700", "6.18.50-arch1-1");
+    Require(Contains(RunReport::Serialize(MachineReport(machine), none), "\"osVersion\": \"Arch Linux (kernel 6.18.50)\""), "an Arch container image lost its OS version");
 }
 
 void HostProbeTest() {
