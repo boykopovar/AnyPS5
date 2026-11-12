@@ -112,6 +112,7 @@ bool APS5_VABI WKPreferencesGetDOMPasteAllowed(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetDOMTimersThrottlingEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetDataTransferItemsEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetDatabasesEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetDeferredCSSParserEnabled(const void* preferencesRef);
 std::uint32_t APS5_VABI WKPreferencesGetDefaultFixedFontSize(const void* preferencesRef);
 std::uint32_t APS5_VABI WKPreferencesGetDefaultFontSize(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetDeveloperExtrasEnabled(const void* preferencesRef);
@@ -303,6 +304,7 @@ void APS5_VABI WKPreferencesSetDOMPasteAllowed(const void* preferencesRef, bool 
 void APS5_VABI WKPreferencesSetDOMTimersThrottlingEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetDataTransferItemsEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetDatabasesEnabled(const void* preferencesRef, bool databasesEnabled);
+void APS5_VABI WKPreferencesSetDeferredCSSParserEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetDefaultFixedFontSize(const void* preferencesRef, std::uint32_t size);
 void APS5_VABI WKPreferencesSetDefaultFontSize(const void* preferencesRef, std::uint32_t size);
 void APS5_VABI WKPreferencesSetDefaultTextEncodingName(const void* preferencesRef, const void* name);

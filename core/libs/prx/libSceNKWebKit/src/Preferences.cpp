@@ -132,6 +132,7 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"DefaultTextEncodingName", {Preferences::StringValue{u"ISO-8859-1"}, FeatureKind::None}},
         {u"DeprecateRSAESPKCSWebCryptoEnabled", {true, FeatureKind::Testable}},
         {u"DeprecationReportingEnabled", {false, FeatureKind::Testable}},
+        {u"DeferredCSSParserEnabled", {false, FeatureKind::Boolean}},
         {u"DeveloperExtrasEnabled", {false, FeatureKind::Boolean}},
         {u"DeviceHeight", {std::uint32_t{0}, FeatureKind::None}},
         {u"DeviceWidth", {std::uint32_t{0}, FeatureKind::None}},
@@ -632,6 +633,14 @@ void APS5_VABI WKPreferencesSetDatabasesEnabled(const void* preferencesRef, bool
 
 bool APS5_VABI WKPreferencesGetDatabasesEnabled(const void* preferencesRef) {
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"DatabasesEnabled");
+}
+
+void APS5_VABI WKPreferencesSetDeferredCSSParserEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"DeferredCSSParserEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetDeferredCSSParserEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"DeferredCSSParserEnabled");
 }
 
 void APS5_VABI WKPreferencesSetFrameFlatteningEnabled(const void* preferencesRef, bool frameFlatteningEnabled) {

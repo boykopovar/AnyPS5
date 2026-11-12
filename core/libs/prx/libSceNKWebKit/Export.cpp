@@ -3754,10 +3754,6 @@ int APS5_VABI _ZN7WebCore20TransformationMatrix5blendERKS0_d() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPreferencesGetDeferredCSSParserEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList8DrawLineC2ERKNS_10FloatPointES4_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8324,10 +8320,6 @@ int APS5_VABI _ZN7WebCore11JSDOMMatrixC1EPN3JSC9StructureERNS_17JSDOMGlobalObjec
 }
 
 int APS5_VABI _ZN7WebCore11DisplayList11DrawPatternC2ERNS_5ImageERKNS_9FloatRectES6_RKNS_15AffineTransformERKNS_10FloatPointERKNS_9FloatSizeERKNS_20ImagePaintingOptionsE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPreferencesSetDeferredCSSParserEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
