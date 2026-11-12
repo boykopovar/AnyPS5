@@ -69,47 +69,56 @@ int APS5_VABI sceAvPlayerStreamingRegisterVprinf() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceTsCloseFile(void) {
+int APS5_VABI sceTsCloseFile(void* file) {
+    if (file == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsDisableRepresentation(void) {
+int APS5_VABI sceTsDisableRepresentation(void* file) {
+    if (file == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsEnableRepresentation(void) {
+int APS5_VABI sceTsEnableRepresentation(void* file) {
+    if (file == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsEnableStream(void) {
+int APS5_VABI sceTsEnableStream(void* file) {
+    if (file == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsGetAvailableBW(void) {
+int APS5_VABI sceTsGetAvailableBW(void* file, void* bandwidth) {
+    if (file == nullptr || bandwidth == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsGetLiveStatus(void) {
+int APS5_VABI sceTsGetLiveStatus(void* file, void* status) {
+    if (file == nullptr || status == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsGetNextAuInfo(void) {
+int APS5_VABI sceTsGetNextAuInfo(void* file, void* info) {
+    if (file == nullptr || info == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsGetNextUnitData(void) {
+int APS5_VABI sceTsGetNextUnitData(void* file, void* data) {
+    if (file == nullptr || data == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsGetRepresentationCount(void) {
+int APS5_VABI sceTsGetRepresentationCount(void* file) {
+    if (file == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -119,22 +128,26 @@ int APS5_VABI sceTsGetRepresentationInfo(void) {
     return 0;
 }
 
-int APS5_VABI sceTsGetSeekWindow(void) {
+int APS5_VABI sceTsGetSeekWindow(void* file, void* start, void* end) {
+    if (file == nullptr || start == nullptr || end == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsGetStreamInfo(void) {
+int APS5_VABI sceTsGetStreamInfo(void* file, std::uint32_t index, void* info) {
+    if (file == nullptr || info == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsGetUrlEncryptionType(void) {
+int APS5_VABI sceTsGetUrlEncryptionType(void* file) {
+    if (file == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsJumpPTS(void) {
+int APS5_VABI sceTsJumpPTS(void* file) {
+    if (file == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -159,22 +172,26 @@ int APS5_VABI sceTsRepresentationIsEnabled(void) {
     return 0;
 }
 
-int APS5_VABI sceTsSetAvailableBW(void) {
+int APS5_VABI sceTsSetAvailableBW(void* file) {
+    if (file == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsSetStartingBW(void) {
+int APS5_VABI sceTsSetStartingBW(void* file) {
+    if (file == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsStartFileStreaming(void) {
+int APS5_VABI sceTsStartFileStreaming(void* file, void* first, void* second) {
+    if (file == nullptr || first == nullptr || second == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceTsStopFileStreaming(void) {
+int APS5_VABI sceTsStopFileStreaming(void* file) {
+    if (file == nullptr) return static_cast<int>(0xF0000200u);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
