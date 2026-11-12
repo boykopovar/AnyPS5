@@ -270,7 +270,7 @@ static void SocketTransfer(bool callbacks) {
     Require(curl_multi_setopt_nid_postfix(state.multi, CURLMOPT_TIMERFUNCTION, Timer) == CURLM_OK);
     Require(curl_multi_setopt_nid_postfix(state.multi, CURLMOPT_TIMERDATA, &state) == CURLM_OK);
     state.redirectPort = callbacks ? server.Port() : 0;
-    auto* easy = Easy(callbacks ? "http://127.0.0.1:1/redirected" : server.Url("localhost"), state, callbacks);
+    auto* easy = Easy(callbacks ? "http://127.0.0.1:1/redirected" : server.Url(), state, callbacks);
     Require(curl_multi_add_handle_nid_postfix(state.multi, easy) == CURLM_OK);
     int running = -1;
     Require(curl_multi_socket_action_nid_postfix(state.multi, -1, 0, &running) == CURLM_OK);
@@ -298,7 +298,9 @@ static void SocketTransfer(bool callbacks) {
         }
     }
     Done(state.multi, easy);
-    Require(state.output == Body && state.notifications > 0 && state.timers > 0);
+    Require(state.output == Body);
+    Require(state.notifications > 0);
+    Require(state.timers > 0);
     Require(curl_multi_remove_handle_nid_postfix(state.multi, easy) == CURLM_OK);
     State replacement;
     if (callbacks) Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_CLOSESOCKETDATA, &replacement) == CURLE_OK);
