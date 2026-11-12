@@ -3,11 +3,24 @@
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include <cstdlib>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
 void Require(bool value) {
     if (!value) std::abort();
+}
+
+template <typename TCall>
+void RequireNotImplemented(TCall call, const char* name) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == std::string(name) + " not implemented");
+        return;
+    }
+    Require(false);
 }
 
 constexpr int kErrAlreadySystemInitialized = static_cast<int>(0x80B80002);
@@ -60,4 +73,17 @@ int main() {
     Require(!ValidateCommonDialogBaseParam(base));
     base.reserved[35] = 0;
     Require(ValidateCommonDialogBaseParam(base));
+
+    RequireNotImplemented(&libSceCommonDialogUnknown_8q7icGBWIrA_nid_no_patch, "libSceCommonDialogUnknown_8q7icGBWIrA_nid_no_patch");
+    RequireNotImplemented(&libSceCommonDialogUnknown_D_minus_V35OhFeIM_nid_no_patch, "libSceCommonDialogUnknown_D_minus_V35OhFeIM_nid_no_patch");
+    RequireNotImplemented(&libSceCommonDialogUnknown_QXFsLON5QWw_nid_no_patch, "libSceCommonDialogUnknown_QXFsLON5QWw_nid_no_patch");
+    RequireNotImplemented(&libSceCommonDialogUnknown_SDpCfY9uB0g_nid_no_patch, "libSceCommonDialogUnknown_SDpCfY9uB0g_nid_no_patch");
+    RequireNotImplemented(&libSceCommonDialogUnknown_Zaa6fhiKQDE_nid_no_patch, "libSceCommonDialogUnknown_Zaa6fhiKQDE_nid_no_patch");
+    RequireNotImplemented(&libSceCommonDialogUnknown_aUS4PgJye98_nid_no_patch, "libSceCommonDialogUnknown_aUS4PgJye98_nid_no_patch");
+    RequireNotImplemented(&libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch, "libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch");
+    RequireNotImplemented(&libSceCommonDialogUnknown_mVRnPerBcK0_nid_no_patch, "libSceCommonDialogUnknown_mVRnPerBcK0_nid_no_patch");
+    RequireNotImplemented(&libSceCommonDialogUnknown_p9TTq4bLdFU_nid_no_patch, "libSceCommonDialogUnknown_p9TTq4bLdFU_nid_no_patch");
+    RequireNotImplemented(&libSceCommonDialogUnknown_q3_minus_8WWCG2N0_nid_no_patch, "libSceCommonDialogUnknown_q3_minus_8WWCG2N0_nid_no_patch");
+    RequireNotImplemented(&libSceCommonDialogUnknown_txNJzxX6yrA_nid_no_patch, "libSceCommonDialogUnknown_txNJzxX6yrA_nid_no_patch");
+    RequireNotImplemented(&libSceCommonDialogUnknown_yxjgDvqUbGQ_nid_no_patch, "libSceCommonDialogUnknown_yxjgDvqUbGQ_nid_no_patch");
 }
