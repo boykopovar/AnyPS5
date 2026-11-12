@@ -142,6 +142,11 @@ static Stream OpenStream(bool net) {
     Require((net ? sceNetConnect(stream.client, local.data(), 16) : connect_nid_postfix(stream.client, local.data(), 16)) == 0);
     stream.accepted = net ? sceNetAccept(stream.listener, nullptr, nullptr) : accept_nid_postfix(stream.listener, nullptr, nullptr);
     Require(stream.accepted >= 0);
+    std::array<unsigned char, 16> peer{};
+    size = peer.size();
+    Require(getpeername_nid_postfix(stream.client, peer.data(), &size) == 0);
+    Require(size == local.size() && peer == local);
+    Require(Failed(getpeername_nid_postfix(stream.client, nullptr, &size), 14));
     return stream;
 }
 
