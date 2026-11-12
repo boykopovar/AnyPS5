@@ -1,4 +1,5 @@
 #include "State.hpp"
+#include "prx/libc/include/General.hpp"
 
 using namespace Slim;
 
@@ -76,8 +77,10 @@ EGLBoolean APS5_VABI eglGetConfigs_nid_postfix(EGLDisplay display, EGLConfig* co
     std::lock_guard lock(mutex);
     if (!Display_nid_no_patch(display)) return 0;
     if (!count || (configs && size < 0)) return EglError_nid_no_patch(0x300c);
-    *count = configs ? std::min(size, 1) : 1;
-    if (configs && size) configs[0] = &configToken;
+    const EGLConfig config = &configToken;
+    if (configs && size && !GuestCopyOut_nid_no_patch(configs, &config, sizeof(config))) return EglError_nid_no_patch(0x300c);
+    const EGLint writtenCount = configs ? std::min(size, 1) : 1;
+    if (!GuestCopyOut_nid_no_patch(count, &writtenCount, sizeof(writtenCount))) return EglError_nid_no_patch(0x300c);
     return 1;
 }
 

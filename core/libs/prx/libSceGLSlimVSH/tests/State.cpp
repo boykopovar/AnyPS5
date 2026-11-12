@@ -1,5 +1,6 @@
 #include "prx/libSceGLSlimVSH/libSceGLSlimVSH.hpp"
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -939,6 +940,14 @@ int main() {
     Require(eglInitialize_nid_postfix(display, &major, &minor));
     Require(major == 1 && minor == 4);
     Require(eglGetConfigs_nid_postfix(display, &config, 1, &count) && count == 1);
+    {
+        const std::uintptr_t badCount = ~std::uintptr_t{0xfff};
+        const std::uintptr_t badConfigs = ~std::uintptr_t{0xfff};
+        Require(!eglGetConfigs_nid_postfix(display, &config, 1, reinterpret_cast<EGLint*>(badCount)));
+        Require(eglGetError_nid_postfix() == 0x300c);
+        Require(!eglGetConfigs_nid_postfix(display, reinterpret_cast<EGLConfig*>(badConfigs), 1, &count));
+        Require(eglGetError_nid_postfix() == 0x300c);
+    }
     EGLint attribute;
     Require(eglGetConfigAttrib_nid_postfix(display, config, 0x3029, &attribute) && attribute == 0);
     Require(eglGetConfigAttrib_nid_postfix(display, config, 0x302c, &attribute) && attribute == 2048);
