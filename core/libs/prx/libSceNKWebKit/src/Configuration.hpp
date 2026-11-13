@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <cstdint>
@@ -50,12 +51,40 @@ public:
     std::vector<std::u16string> overrideLanguages;
 };
 
+struct WKNotificationProviderBase {
+    int version = 0;
+    const void* clientInfo = nullptr;
+};
+
+struct WKNotificationProviderV0 {
+    WKNotificationProviderBase base;
+    void (APS5_VABI *show)(const void* page, const void* notification, const void* clientInfo) = nullptr;
+    void (APS5_VABI *cancel)(const void* notification, const void* clientInfo) = nullptr;
+    void (APS5_VABI *didDestroyNotification)(const void* notification, const void* clientInfo) = nullptr;
+    void (APS5_VABI *addNotificationManager)(const void* manager, const void* clientInfo) = nullptr;
+    void (APS5_VABI *removeNotificationManager)(const void* manager, const void* clientInfo) = nullptr;
+    const void* (APS5_VABI *notificationPermissions)(const void* clientInfo) = nullptr;
+    void (APS5_VABI *clearNotifications)(const void* notificationIDs, const void* clientInfo) = nullptr;
+};
+
+class NotificationManager final : public ObjectOf<ObjectType::NotificationManager> {
+public:
+    std::optional<WKNotificationProviderV0> provider;
+    std::vector<std::uint64_t> shownNotifications;
+    std::vector<std::uint64_t> clickedNotifications;
+    std::vector<Retained<Object>> closedNotificationBatches;
+    std::vector<std::pair<Retained<Object>, bool>> originPolicies;
+    std::vector<Retained<Object>> removedPolicyBatches;
+};
+
 class ProcessPool final : public ObjectOf<ObjectType::ProcessPool> {
 public:
-    ProcessPool() : configuration(Make<ProcessPoolConfiguration>()) {}
-    explicit ProcessPool(Retained<ProcessPoolConfiguration> config) : configuration(std::move(config)) {}
+    ProcessPool() : configuration(Make<ProcessPoolConfiguration>()), notificationManager(Make<NotificationManager>()) {}
+    explicit ProcessPool(Retained<ProcessPoolConfiguration> config)
+        : configuration(std::move(config)), notificationManager(Make<NotificationManager>()) {}
 
     Retained<ProcessPoolConfiguration> configuration;
+    Retained<NotificationManager> notificationManager;
     bool usesSingleWebProcess = false;
     std::uint32_t cacheModel = 0;
     bool accessibilityEnabled = false;
