@@ -3,6 +3,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -212,8 +213,13 @@ int APS5_VABI sceNpGetSystemClockUsec(std::int64_t* usec) {
     if (usec == nullptr) return NP_ERROR_INVALID_ARGUMENT;
     KernelTimespec now{};
     const int result = sceKernelClockGettime(CLOCK_MONOTONIC_ID, &now);
-    if (result == 0) *usec = now.tv_sec * 1000000 + now.tv_nsec / 1000;
-    return result;
+    if (result != 0) return result;
+    const std::int64_t val = now.tv_sec * 1000000 + now.tv_nsec / 1000;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(usec, &val, sizeof(val));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
+    return 0;
 }
 
 void APS5_VABI sceNpGetSdkVersion(char* version) {
