@@ -34,6 +34,7 @@ std::vector<std::uint32_t> shaderKey(bool dataWords, bool movable, const std::ve
         key.push_back(0u);
         key.push_back(static_cast<std::uint32_t>(binding.shapes.size()));
         key.insert(key.end(), binding.shapes.begin(), binding.shapes.end());
+        key.push_back(0u);
     }
     return key;
 }
