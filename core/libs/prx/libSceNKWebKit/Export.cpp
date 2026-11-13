@@ -11215,48 +11215,7 @@ int APS5_VABI WKImeEventRelease() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKInspectorAttach() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorClose() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorConnect() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorDetach() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
-int APS5_VABI WKInspectorHide() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorShowConsole() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKInspectorShowMainResourceForFrame() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorShow() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorShowResources() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorToggleElementSelection() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorTogglePageProfiling() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -11481,10 +11440,6 @@ int APS5_VABI WKPageGetGapBetweenPages() {
 }
 
 int APS5_VABI WKPageGetImageForFindMatch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageGetInspector() {
     NotImplemented_nid_no_patch(__func__);
 }
 
