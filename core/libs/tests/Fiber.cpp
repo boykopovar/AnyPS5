@@ -78,6 +78,8 @@ void APS5_VABI FirstEntry(std::uint64_t argOnInitialize, std::uint64_t argOnRun)
     framePointer = 0;
     Require(_sceFiberGetThreadFramePointerAddress(nullptr) == FiberErrorNull, "underscore frame pointer null");
     Require(_sceFiberGetThreadFramePointerAddress(&framePointer) == 0 && framePointer == g_threadFramePointer, "underscore thread frame pointer");
+    errno = 71;
+    Require(sceFiberGetThreadFramePointerAddress(reinterpret_cast<std::uint64_t*>(0x10)) == FiberErrorInvalid && errno == 71, "unwritable frame pointer");
     volatile double carried = 1.5;
     std::uint64_t received = 0;
     Require(sceFiberSwitch(g_second, 200, &received) == 0, "switch to second fiber");
@@ -284,9 +286,13 @@ void RunAttachedContext() {
     FiberInfo info{};
     info.size = sizeof(info);
     Require(sceFiberGetInfo(g_attached, &info) == 0 && info.addr_context == nullptr && info.size_context == 0, "fiber without a context reports none");
+    errno = 71;
+    Require(sceFiberGetInfo(g_attached, reinterpret_cast<FiberInfo*>(0x10)) == FiberErrorInvalid && errno == 71, "unwritable fiber info");
     alignas(16) unsigned char notFiber[512] = {};
     Require(sceFiberRename(nullptr, "renamed") == FiberErrorNull, "rename a null fiber");
     Require(sceFiberRename(g_attached, nullptr) == FiberErrorNull, "rename to a null name");
+    errno = 71;
+    Require(sceFiberRename(g_attached, reinterpret_cast<const char*>(0x10)) == FiberErrorInvalid && errno == 71, "rename to an unreadable name");
     Require(sceFiberRename(reinterpret_cast<FiberObject*>(notFiber), "renamed") == FiberErrorInvalid, "rename an object that is not a fiber");
     Require(sceFiberRename(g_attached, "renamed") == 0, "rename a fiber");
     Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strcmp(info.name, "renamed") == 0, "the new name is reported");
