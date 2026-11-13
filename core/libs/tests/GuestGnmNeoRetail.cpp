@@ -21,6 +21,7 @@ void RequireAll(int expected, std::initializer_list<Query> queries) {
 } // namespace
 
 int main() {
+    for (int iter = 0; iter < 2; ++iter)
     RequireAll(Failure, {
         sceGnmDebugModuleReset,
         sceGnmDebugReset,
