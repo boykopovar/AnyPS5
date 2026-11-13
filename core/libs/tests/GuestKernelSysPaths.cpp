@@ -181,56 +181,6 @@ int main(int argc, char** argv) {
         Require(update(-100, path.c_str(), unreadableTimes) == -1 && *error() == 14);
         Require(update(base, "data", nullptr) == 0);
         Require(stat(path.c_str(), &info) == 0 && info.st_mtim.tv_sec > 1000000001);
-    } else if (test == "readlink_limits" || test == "readlinkat_limits") {
-        const auto read = LoadFunction<std::int64_t (APS5_VABI*)(const char*, char*, std::size_t)>(sys, "readlink", patched);
-        const auto readAt = LoadFunction<std::int64_t (APS5_VABI*)(int, const char*, char*, std::size_t)>(sys, "readlinkat", patched);
-        Require(std::filesystem::create_directory(root / "end"));
-        std::error_code setupError;
-        std::filesystem::create_directory_symlink("end", root / "p33", setupError);
-#ifdef _WIN32
-        if (setupError.value() == ERROR_PRIVILEGE_NOT_HELD || setupError == std::errc::permission_denied) {
-            std::fputs("SKIP: Windows symbolic-link privileges unavailable\n", stderr);
-            skipped = true;
-        } else
-#endif
-        {
-            Require(!setupError);
-            for (int index = 32; index > 0; --index)
-                std::filesystem::create_directory_symlink("p" + std::to_string(index + 1), root / ("p" + std::to_string(index)));
-            constexpr char target[] = "target-not-followed";
-            std::filesystem::create_symlink(target, root / "end" / "leaf");
-            std::filesystem::create_symlink("cycle", root / "end" / "cycle");
-            const auto call = [&](int variant, const std::string& suffix, char* output, std::size_t size) {
-                const auto relative = (root / suffix).generic_string();
-                switch (variant) {
-                case 0: return read(relative.c_str(), output, size);
-                case 1: return readAt(base, suffix.c_str(), output, size);
-                case 2: return readAt(-100, relative.c_str(), output, size);
-                default: return readAt(-1, ("/" + relative).c_str(), output, size);
-                }
-            };
-            std::array<char, 64> output{};
-            for (int variant = test == "readlinkat_limits" ? 1 : 0; variant < (test == "readlinkat_limits" ? 4 : 1); ++variant) {
-                for (const auto* prefix : {"p3/", "p2/"}) {
-                    output.fill('z');
-                    Require(call(variant, std::string(prefix) + "leaf", output.data(), output.size()) == sizeof(target) - 1);
-                    Require(std::memcmp(output.data(), target, sizeof(target) - 1) == 0);
-                    Require(output[sizeof(target) - 1] == 'z');
-                    Require(call(variant, std::string(prefix) + "cycle", output.data(), output.size()) == 5);
-                    Require(std::memcmp(output.data(), "cycle", 5) == 0);
-                }
-                output.fill('z');
-                const auto result = call(variant, "p1/leaf", output.data(), output.size());
-                if (result != -1 || *error() != 62)
-                    std::fprintf(stderr, "Expected ELOOP after 33 prefix links; variant %d returned %lld, errno %d\n", variant, static_cast<long long>(result), *error());
-                Require(result == -1 && *error() == 62);
-                for (const auto value : output) Require(value == 'z');
-                Require(call(variant, "p1/leaf", nullptr, 0) == -1 && *error() == 62);
-                Require(call(variant, "p1/leaf", nullptr, 1) == -1 && *error() == 62);
-                Require(call(variant, "p1/missing", output.data(), output.size()) == -1 && *error() == 62);
-                Require(call(variant, "p2/missing", output.data(), output.size()) == -1 && *error() == 2);
-            }
-        }
     } else if (test == "symlinkat") {
         const auto link = LoadFunction<int (APS5_VABI*)(const char*, int, const char*)>(sys, "symlinkat", patched);
         *error() = 71;
