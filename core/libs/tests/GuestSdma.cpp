@@ -60,6 +60,38 @@ void RequireOpen() {
     }
 }
 
+void RequireNullHandle() {
+    std::uint8_t bytes[16]{};
+    void* handle = nullptr;
+    Require(sceSdmaClose(handle) == InvalidArgument);
+    Require(sceSdmaBeginQueueMode(handle) == InvalidArgument);
+    Require(sceSdmaCancelQueue(handle) == InvalidArgument);
+    Require(sceSdmaConstantFill(handle, 0, Address(bytes), 16, 0) == InvalidArgument);
+    Require(sceSdmaConstantFillNonBlocking(handle, 0, Address(bytes), 16, 0) == InvalidArgument);
+    Require(sceSdmaCopyLinear(handle, Address(bytes), Address(bytes), 8) == InvalidArgument);
+    Require(sceSdmaCopyLinearNonBlocking(handle, Address(bytes), Address(bytes), 8) == InvalidArgument);
+    Require(sceSdmaCopyWindowL2L(handle, Address(bytes), Address(bytes), 8, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0) == InvalidArgument);
+    Require(sceSdmaCopyWindowL2LNonBlocking(handle, Address(bytes), Address(bytes), 8, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0) == InvalidArgument);
+    Require(sceSdmaEndQueueMode(handle) == InvalidArgument);
+    Require(sceSdmaFenceNonBlocking(handle) == InvalidArgument);
+    Require(sceSdmaFlushAll(handle) == InvalidArgument);
+    Require(sceSdmaKickQueue(handle) == InvalidArgument);
+    Require(sceSdmaTryFlush(handle) == InvalidArgument);
+}
+
+void RequireClosedHandle() {
+    Engine engine(12, 0x8000);
+    void* closed = engine.handle;
+    Require(sceSdmaClose(closed) == 0);
+    std::uint8_t source[16]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    std::uint8_t destination[16]{};
+    Require(sceSdmaConstantFill(closed, 0x5a5a5a5au, Address(destination), 16, 0) == InvalidArgument);
+    Require(sceSdmaCopyLinear(closed, Address(source), Address(destination), 16) == InvalidArgument);
+    Require(sceSdmaCopyLinearNonBlocking(closed, Address(source), Address(destination), 16) == InvalidArgument);
+    Require(sceSdmaCopyWindowL2L(closed, Address(source), Address(destination), 8, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0) == InvalidArgument);
+    for (std::uint8_t byte : destination) Require(byte == 0);
+}
+
 void RequireLinear() {
     Engine engine(13, 0x8000);
     const auto source = Pattern(0x400000 + 0x1234, 7);
@@ -201,6 +233,8 @@ void RequireRing() {
 
 int main() {
     RequireOpen();
+    RequireNullHandle();
+    RequireClosedHandle();
     RequireLinear();
     RequireFill();
     RequireWindow();
