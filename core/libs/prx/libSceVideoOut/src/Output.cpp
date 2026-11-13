@@ -384,8 +384,12 @@ int APS5_VABI sceVideoOutWaitVblank(int handle) try {
 
 int APS5_VABI sceVideoOutInitializeOutputOptions(VideoOutOutputOptions* options) {
     if (options == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
-    std::memset(options, 0, sizeof(VideoOutOutputOptions));
-    options->internalData[0] = VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD;
+    VideoOutOutputOptions localOptions{};
+    localOptions.internalData[0] = VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(options, &localOptions, sizeof(localOptions));
+    errno = savedErrno;
+    if (!copied) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     return 0;
 }
 
