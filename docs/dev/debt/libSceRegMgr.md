@@ -2,18 +2,11 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceRegMgr/InventoryExports.cpp) - 8 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceRegMgr/InventoryExports.cpp) - 1 entry present in both version-labelled images is an import-resolution declaration only. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 | Name | NID |
 | --- | --- |
-| `Unknown` | `JfNNpUQdhQw` |
 | `Unknown` | `UuGXdpQj1Aw` |
-| `Unknown` | `YtmvqKL9PEo` |
-| `Unknown` | `csy-cEETOKg` |
-| `Unknown` | `iHi1Omn25M4` |
-| `Unknown` | `wpJW0oIM6rg` |
-| `Unknown` | `x0YJQilTJDo` |
-| `Unknown` | `x9WN+tFTY34` |
 
 ### Functional
 
@@ -32,7 +25,7 @@
 
 - [sceRegMgrCheckIntVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrGetBinInitVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
-- [sceRegMgrGetIntInitVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
+- [sceRegMgrGetIntInitVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - signature `(std::uint32_t optionId, std::int32_t* outInt)` as declared in `include/Api.hpp`; the body throws `NotImplemented_nid_no_patch`, and the forwarding is described under Initial values
 - [sceRegMgrGetStrInitVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrGetVersion](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - known contract, value unmeasured: [voldemort](https://github.com/exhaustiblewizard/voldemort/blob/master/src/libs/libRegMgr.cpp) IDA notes record the PS4 export forwarding `__sys_regmgr_call(cmd=0, arg=1, ...)` and returning the registry format version (NID `q+lPgqZniW4`, same NID in the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/cf6eede3f6588d779664e01874638f09484324b7/libSceRegMgr.c)); the numeric value is unmeasured on PS4 and PS5, so the export retains `NotImplemented_nid_no_patch`
 - [sceRegMgrEvtGetCnt](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
@@ -79,3 +72,4 @@
 - [sceRegMgrCntlStopHdd](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrPrintInfo](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrLogStart](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature; the name is the PS5 3.20 import whose NID the export carries ([PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs))
+- [Removed-range key exports](../../../core/libs/prx/libSceRegMgr/InventoryExports.cpp) (libSceRegMgr) - the NID-only `JfNNpUQdhQw`, `x9WN+tFTY34`, `YtmvqKL9PEo`, `x0YJQilTJDo`, `csy-cEETOKg`, `iHi1Omn25M4` and `wpJW0oIM6rg` follow firmware 13.42's `libSceRegMgr.sprx` in full (read from disassembly and run under a CPU emulator on x86-64, not measured on a console): keys outside 0x07800000 to 0x0783ffff give 0x800D0105, a null value 0x800D0202, a size outside 1 to 0x7ff 0x800D0208, and the writers zero the value (a 32-bit word, one byte, or `size` bytes). Their names are unknown. An unwritable value throws, where the console faults.
