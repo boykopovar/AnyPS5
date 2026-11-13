@@ -1345,6 +1345,7 @@ int runLoadingProcess() {
     const auto compiled = Recompile(fresh.request);
     requireSameResult(compiled, loaded, "loaded against compiled");
     require(!loaded.spirv.empty(), "the loaded SPIR-V is empty");
+    require(!loaded.bufferBaseSlots.empty(), "the disk-loaded invocation lost its buffer-base patch slots");
     std::cout << "second process loaded " << loaded.spirv.size() << " SPIR-V words from the disk cache\n";
     return 0;
 }
@@ -1357,6 +1358,7 @@ void verifyAcrossProcesses(const char* self) {
     const auto after = ShaderDiskCache::Totals();
     require(after.misses == before.misses + 1 && after.writes == before.writes + 1, "the first compile was not looked up and stored");
     require(!compiled.spirv.empty(), "the compile produced no SPIR-V");
+    require(!compiled.bufferBaseSlots.empty(), "the cold invocation has no buffer-base patch slots");
     const std::string command = "\"" + std::string(self) + "\" --load";
     require(std::system(command.c_str()) == 0, "the loading process failed");
 }
