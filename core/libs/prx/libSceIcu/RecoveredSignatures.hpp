@@ -1,4 +1,5 @@
 #pragma once
+#include "ResourceBundle.hpp"
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIcu/Enumeration.hpp"
