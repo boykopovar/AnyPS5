@@ -1283,7 +1283,7 @@ int APS5_VABI sceSslGetNameEntryInfo(int sslCtxId, void* certName, int entryNum,
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (!state.contexts.contains(sslCtxId)) return ErrorInvalidId;
-    if (!certName || !oidname || !value || !valueLen) return ErrorInvalidValue;
+    if (!certName || !oidname || !value || !valueLen || maxOidnameLen > 65535u) return ErrorInvalidValue;
     auto& context = GetContext(sslCtxId);
     const auto found = context.certNames.find(certName);
     if (found == context.certNames.end() || found->second->owner.expired()) throw std::invalid_argument("sceSslGetNameEntryInfo: unknown or expired cert name");

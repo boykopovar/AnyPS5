@@ -72,6 +72,11 @@ void Readers() {
     Check(sceSslGetPem(context, certificate, small.data(), &length) == static_cast<int>(0x8095f008) && length == expectedPem.size() + 1, "short PEM error or size mismatch");
     Check(small == std::array<char, 4>{0, 0, 'x', 'x'}, "short PEM clearing or guards mismatch");
     Throws([&] { sceSslGetPem(other, certificate, nullptr, &length); });
+    std::array<char, 8> oidGuard{'o', 'o', 'o', 'o', 'o', 'o', 'o', 'o'};
+    std::array<char, 8> valGuard{'v', 'v', 'v', 'v', 'v', 'v', 'v', 'v'};
+    std::size_t outLen = 777;
+    Check(sceSslGetNameEntryInfo(context, subject, 0, oidGuard.data(), std::numeric_limits<std::size_t>::max(), valGuard.data(), valGuard.size(), &outLen) == static_cast<int>(0x8095f007), "oversized maxOidnameLen should fail");
+    Check(outLen == 777 && valGuard[0] == 'v', "oversized maxOidnameLen should not write value outputs");
     Check(sceSslUnloadCert(context) == 0, "unload failed");
     Check(sceSslGetSerialNumber(context, certificate, nullptr, &length) == 0 && length == 3, "CA snapshot lost its certificate on unload");
     Check(sceSslFreeCaList(context, &list) == 0, "CA list free failed");
