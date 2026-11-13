@@ -1107,9 +1107,6 @@ void HandoffPolicyFollowsItsMeasuredCost() {
     RunPattern({"waits in every window", 1000000, 0, 0, true, 20000}, CommandEncoder::Handoff::Adaptive, Draws, counts);
     Require(counts.inlined * 10 >= static_cast<std::uint64_t>(Draws) * 9, "the adaptive hand-off kept " + std::to_string(Draws - counts.inlined) + " of " + std::to_string(Draws) + " draws on the encoder although every window waited for the encoder thread's own time");
     Reset();
-    RunPattern({"long batches", 512, 4000, 3300}, CommandEncoder::Handoff::Adaptive, Draws, counts);
-    Require(counts.inlined * 100 <= static_cast<std::uint64_t>(Draws) * 15, "the adaptive hand-off recorded " + std::to_string(counts.inlined) + " of " + std::to_string(Draws) + " draws inline although the encoder took each draw's recording off the producer");
-    Reset();
     RunPattern({"first block", 64, 0, 0}, CommandEncoder::Handoff::Adaptive, CommandEncoder::ProbeBlock, counts);
     Require(counts.inlined == 0, "the adaptive hand-off recorded " + std::to_string(counts.inlined) + " draws of its first probe block inline");
 }
@@ -1165,6 +1162,18 @@ void HandoffPolicyDecidesFromTheCostItIsGiven() {
             Require(run.decisions.size() == probe && run.decisions.back().encode == encodedWins && run.decisions.back().span == span, "probe " + std::to_string(probe) + " of a " + mode + " run did not keep its choice and double its span to " + std::to_string(span));
         }
         Require(Half * 1000 / (Max + Probe) < 8, "a settled hand-off spends more than 0.8 percent of its windows in the losing mode");
+    }
+    {
+        constexpr std::uint64_t Batch = 512;
+        constexpr std::uint64_t Batches = 12;
+        PolicyRun run;
+        for (std::uint64_t batch = 0; batch < Batches; ++batch) {
+            run.Windows(Batch - 1, 500, 3300);
+            run.Windows(1, 500, 3300, 3300);
+        }
+        const auto windows = Batch * Batches;
+        Require(!run.decisions.empty() && std::ranges::all_of(run.decisions, [](const auto& decision) { return decision.encode; }), "a long-batch run whose encoded windows and batch-end drains cost less than recording inline did not keep the encoder");
+        Require(run.inlined * 100 <= windows * 15, "a long-batch run recorded " + std::to_string(run.inlined) + " of " + std::to_string(windows) + " windows inline although the encoder took each draw's recording off the producer");
     }
     {
         PolicyRun run;

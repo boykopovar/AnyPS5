@@ -2874,6 +2874,7 @@ void Recorder::endSegment(Batch& batch, std::source_location where) {
         function(cmdEndQuery, "vkCmdEndQuery")(batch.commands.Get(BatchCommands::Use::Quiesced), batch.segments, batch.segmentSlot);
     }
     batch.segmentActive = false;
+    reserveSampleRestore(batch);
     pendingSamples.push_back({batch.segmentPool, batch.segments, batch.segmentSlot, batch.sampleBatch});
     segmentsClosed.fetch_add(1, std::memory_order_relaxed);
 }
@@ -2889,6 +2890,11 @@ void Recorder::copySegments(VkCommandBuffer commands, std::uint32_t count) {
         copy(commands, first.handle, first.slot, run, sampleCounter->Handle(), 16 + 8 * static_cast<VkDeviceSize>(i), 8, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
         i += run;
     }
+}
+
+void Recorder::reserveSampleRestore(const Batch& batch) {
+    const auto needed = pendingSamples.size() + batch.foldedSamples.size() + 1;
+    if (needed > pendingSamples.capacity()) pendingSamples.reserve(std::max(needed, 2 * pendingSamples.capacity()));
 }
 
 void Recorder::retireSegments(std::uint32_t count) {
@@ -2966,7 +2972,10 @@ void Recorder::endSamples(Batch& batch) {
     if (!batch.sampleActive) return;
     function(cmdEndQuery, "vkCmdEndQuery")(batch.commands.Get(BatchCommands::Use::Quiesced), batch.samples, 0);
     batch.sampleActive = false;
-    if (sampleCounterState > 0 && batch.samplesDrawn) pendingSamples.push_back({batch.samplePool, batch.samples, 0, batch.sampleBatch});
+    if (sampleCounterState > 0 && batch.samplesDrawn) {
+        reserveSampleRestore(batch);
+        pendingSamples.push_back({batch.samplePool, batch.samples, 0, batch.sampleBatch});
+    }
     batch.samplesDrawn = false;
 }
 
@@ -5026,10 +5035,10 @@ void Recorder::discard(std::unique_ptr<Batch> batch) noexcept {
     if (encoder != nullptr) encoder->Quiesce();
     std::erase_if(pendingSamples, [&](const SampleSegment& sample) { return sample.batch == batch->sampleBatch; });
     std::erase_if(batch->foldedSamples, [&](const SampleSegment& sample) { return sample.batch == batch->sampleBatch; });
-    try {
+    if (pendingSamples.size() + batch->foldedSamples.size() <= pendingSamples.capacity()) {
         pendingSamples.insert(pendingSamples.begin(), std::make_move_iterator(batch->foldedSamples.begin()), std::make_move_iterator(batch->foldedSamples.end()));
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "[samples] %zu occlusion samples folded by a discarded batch are lost: %s\n", batch->foldedSamples.size(), error.what());
+    } else {
+        std::fprintf(stderr, "[samples] %zu occlusion samples folded by a discarded batch are lost: no capacity was reserved to restore them\n", batch->foldedSamples.size());
     }
     removeLabels(*batch);
     if (batch->completionLabelCount != 0) completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);

@@ -26,6 +26,7 @@
 #include <utility>
 #include <string>
 #include <vector>
+#include <type_traits>
 
 namespace AgcDriver::Graphics {
 
@@ -659,6 +660,7 @@ private:
         std::uint32_t slot = 0;
         std::uint64_t batch = 0;
     };
+    static_assert(std::is_nothrow_move_constructible_v<SampleSegment> && std::is_nothrow_move_assignable_v<SampleSegment>);
     struct Batch {
         CommandEncoder::Recording recording;
         std::uint64_t sampleBatch = 0;
@@ -834,6 +836,7 @@ private:
     void beginSegment(Batch& batch);
     void endSegment(Batch& batch, std::source_location where = std::source_location::current());
     void copySegments(VkCommandBuffer commands, std::uint32_t count);
+    void reserveSampleRestore(const Batch& batch);
     void retireSegments(std::uint32_t count);
     void recordQueuedDumps(VkCommandBuffer commands, std::span<const Batch::StoreRun::Queued> writes);
     void dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, std::uint32_t dumps, std::uint32_t firstSegment, std::uint32_t lastSegment);
