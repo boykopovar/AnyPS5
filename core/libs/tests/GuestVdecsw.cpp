@@ -1,6 +1,7 @@
 #include "prx/libSceVdecsw/libSceVdecsw.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -619,6 +620,29 @@ int main() {
         testSyncWrappers();
         testVp9PictureInfo();
         testVp9PictureInfoOfAvcPicture();
+        {
+            Session session;
+            errno = 71;
+            check(throws([&] {
+                      std::uint64_t handle = 0;
+                      sceVdecswCreateDecoder(nullptr, reinterpret_cast<const SceVideodec2::DecoderMemoryInfo*>(static_cast<std::uintptr_t>(0x10)), &handle);
+                  }) && errno == 71,
+                  "unreadable memory info must throw without changing errno");
+            errno = 71;
+            check(throws([&] {
+                      sceVdecswSetDecodeInput(session.decoder, reinterpret_cast<const SceVideodec2::InputData*>(static_cast<std::uintptr_t>(0x10)));
+                  }) && errno == 71,
+                  "unreadable decode input must throw without changing errno");
+            const SceVideodec2::InputData badAu{sizeof(SceVideodec2::InputData), reinterpret_cast<const std::uint8_t*>(static_cast<std::uintptr_t>(0x10)), 16, 0, 0, 0};
+            errno = 71;
+            check(throws([&] { sceVdecswSetDecodeInput(session.decoder, &badAu); }) && errno == 71,
+                  "unreadable AU data must throw without changing errno");
+            errno = 71;
+            check(throws([&] {
+                      sceVdecswSetDecodeOutput(session.decoder, reinterpret_cast<const FrameBuffer*>(static_cast<std::uintptr_t>(0x10)));
+                  }) && errno == 71,
+                  "unreadable decode output must throw without changing errno");
+        }
         std::puts("Vdecsw tests passed");
         return 0;
     } catch (const std::exception& error) {
