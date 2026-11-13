@@ -353,6 +353,7 @@ void SummaryFields() {
         "\"resolution\":\"1920x1080\",\"window\":{\"spec\":\"frames 3:2\",\"first_present\":3,\"ms\":40.000},\"presents\":2,"
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":35.000},"
+        "\"phase_totals_ms\":{\"Driver.Completion\":2.000,\"Driver.Packet\":12.000,\"Driver.Packet.draw\":10.000,\"Driver.Present\":6.000,\"Driver.Present.inflight_wait\":4.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000,\"Driver.Packet.draw\":5.000,\"Driver.Present\":3.000,\"Driver.Present.inflight_wait\":2.000,\"Driver.Completion\":1.000},"
         "\"owned_draw_counts\":{},\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
     Check(line == expected, "summary line changed");
@@ -392,6 +393,23 @@ void SummaryFields() {
     const auto merged = TraceFormat::Summary(summary, shared, presents);
     Check(merged.find("\"trace_dropped_threads\":{\"shader prepare\":{\"events_full_after_s\":0.010,\"events_lost\":12,\"totals_full\":true}},\"trace\":") != std::string::npos, "threads with one name were not merged into one entry");
     Check(merged.find("shader prepare") == merged.rfind("shader prepare"), "threads with one name were listed twice");
+}
+
+void SummaryRetainsAllPhases() {
+    const auto origin = Clock::now();
+    AgcDriver::TraceSummary summary;
+    const std::array<const char*, 9> names{"phase0", "phase1", "phase2", "phase3", "phase4", "phase5", "phase6", "phase7", "rare"};
+    std::vector<TraceThread::Snapshot> threads{{"worker", {}, {}, false}, {"another worker", {}, {{"rare", nullptr, milliseconds(1), 1}}, false}};
+    for (std::size_t index = 0; index < names.size(); ++index) threads[0].totals.push_back({names[index], nullptr, milliseconds(10 - index), 1});
+    const std::vector<Clock::time_point> presents{origin, origin + milliseconds(16), origin + milliseconds(32)};
+    const auto line = TraceFormat::Summary(summary, threads, presents);
+    const auto totals = line.substr(line.find("\"phase_totals_ms\":"), line.find("\"top_phases_ms_per_frame\":") - line.find("\"phase_totals_ms\":"));
+    Check(totals.find("\"phase0\":10.000") != std::string::npos, "raw totals were divided by the present count");
+    Check(totals.find("\"rare\":3.000") != std::string::npos, "a phase outside the top eight was lost or not summed across threads");
+    Check(line.substr(line.find("\"top_phases_ms_per_frame\":")).find("\"rare\"") == std::string::npos, "the top eight phases no longer have their original limit");
+    const auto empty = TraceFormat::Summary(summary, threads, {});
+    Check(empty.find(totals) != std::string::npos, "raw totals were lost without presents");
+    Check(TraceFormat::Summary(summary, {}, {}).find("\"phase_totals_ms\":{}") != std::string::npos, "empty totals did not produce an empty object");
 }
 
 void GpuClock() {
@@ -474,6 +492,7 @@ void IntervalSummaryFields() {
         "\"resolution\":\"1920x1080\",\"window\":{\"spec\":\"summary_every 30\",\"first_present\":120,\"ms\":40.000},\"interval_start_s\":30.500,\"interval_end_s\":60.250,\"presents\":2,"
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":30.000},"
+        "\"phase_totals_ms\":{\"Driver.Packet\":12.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000},"
         "\"owned_draw_counts\":{},\"trace_dropped\":false,\"trace\":\"\"}\n";
     Check(line == expected, "interval summary line changed");
@@ -839,6 +858,7 @@ int main() {
         EventsShape();
         BatchIds();
         SummaryFields();
+        SummaryRetainsAllPhases();
         GpuClock();
         IntervalDue();
         SummaryOnlyThread();

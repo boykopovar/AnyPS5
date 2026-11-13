@@ -165,8 +165,9 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
     def run_cli(self, timeline, output):
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
         return subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output)],
-                              capture_output=True, text=True, timeout=5)
+                              capture_output=True, encoding="utf-8", timeout=5, env=env)
 
     def test_cli_roundtrip_and_invalid_input_preservation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -178,6 +179,22 @@ class TimelineTests(unittest.TestCase):
             timeline.write_text('{"version":2}', encoding="utf-8")
             self.assertEqual(self.run_cli(timeline, output).returncode, 2)
             self.assertEqual(output.read_bytes(), original)
+
+    def test_duplicate_timeline_fields_do_not_replace_a_queued_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            original = b"777 0 100\n"
+            output.write_bytes(original)
+            for text, field in (
+                    ('{"version":1,"events":[],"events":[{"at_ms":0,"hold_ms":100,"buttons":["cross"]}]}', "events"),
+                    ('{"version":1,"events":[{"at_ms":0,"hold_ms":100,"buttons":["cross"],"buttons":["circle"]}]}', "buttons")):
+                with self.subTest(field=field):
+                    timeline.write_text(text, encoding="utf-8")
+                    result = self.run_cli(timeline, output)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn(f"duplicate timeline field '{field}'", result.stderr)
+                    self.assertEqual(output.read_bytes(), original)
 
     def test_input_alias_protection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -272,6 +289,18 @@ class TimelineTests(unittest.TestCase):
             result = self.run_cli(timeline, nonexistent_parent)
             self.assertEqual(result.returncode, 2)
             self.assertIn(f"directory does not exist: {nonexistent_parent.parent}", result.stderr)
+
+    def test_cli_diagnostics_keep_unicode_paths_with_inherited_encodings(self):
+        with tempfile.TemporaryDirectory(prefix="timeline-é-") as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "output_dir"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            output.mkdir()
+            for encoding in ("utf-8", "cp1252"):
+                with self.subTest(encoding=encoding), mock.patch.dict(os.environ, PYTHONIOENCODING=encoding):
+                    result = self.run_cli(timeline, output)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(f"{output} is a directory", result.stderr)
 
     def test_sequence_advances_past_existing_command_after_clock_reset(self):
         with tempfile.TemporaryDirectory() as directory:
