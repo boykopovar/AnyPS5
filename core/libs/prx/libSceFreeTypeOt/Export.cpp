@@ -370,8 +370,6 @@ int APS5_VABI sceFreeTypeOtUnknown_uSNqxrARpEQ_nid_no_patch() {
 }
 APS5_EXPORT("uSNqxrARpEQ", sceFreeTypeOtUnknown_uSNqxrARpEQ_nid_no_patch);
 
-}
-
 int APS5_VABI sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
     return FT_Set_Var_Design_Coordinates_nid_postfix(face, count, coordinates);
 }
@@ -397,3 +395,5 @@ int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch(FreeType::GuestLibrary*
     return FT_Outline_Get_Bitmap_nid_postfix(library, outline, bitmap);
 }
 APS5_EXPORT("4RRjK-Wd1lU", sceFreeTypeOtOutlineGetBitmap_nid_no_patch);
+
+}
