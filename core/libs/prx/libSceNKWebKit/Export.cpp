@@ -22117,22 +22117,6 @@ int APS5_VABI _ZN7WebCore21RemoteCommandListener6createERNS_27RemoteCommandListe
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore21SQLiteDatabaseTracker24hasTransactionInProgressEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21SQLiteDatabaseTracker35decrementTransactionInProgressCountEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21SQLiteDatabaseTracker35incrementTransactionInProgressCountEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21SQLiteDatabaseTracker9setClientEPNS_27SQLiteDatabaseTrackerClientE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore21SerializedScriptValue11deserializeEPK15OpaqueJSContextPPK13OpaqueJSValue() {
     NotImplemented_nid_no_patch(__func__);
 }
