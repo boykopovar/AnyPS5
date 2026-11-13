@@ -227,15 +227,35 @@ int main() {
     }
     {
         Bn* r = BN_new_nid_postfix();
+        Require(ERR_get_error_nid_postfix() == 0);
         Bn* three = FromHex("3");
         Bn* eleven = FromHex("B");
         Require(BN_mod_inverse_nid_postfix(r, three, eleven, ctx) == r && Hex(r) == "4");
         Bn* seven = FromHex("7");
         Bn* forty = FromHex("28");
         Require(BN_mod_inverse_nid_postfix(r, seven, forty, ctx) == r && Hex(r) == "17");
+        Require(ERR_get_error_nid_postfix() == 0);
         Bn* four = FromHex("4");
         Bn* eight = FromHex("8");
         Require(BN_mod_inverse_nid_postfix(r, four, eight, ctx) == nullptr);
+        Require(Hex(r) == "17");
+        constexpr std::uint64_t noInverse = ((3u & 0xffu) << 24) | ((0xfffu & 0xfffu) << 12) | (108u & 0xfffu);
+        Require(ERR_get_error_nid_postfix() == noInverse);
+        Require(ERR_get_error_nid_postfix() == 0);
+        const char* operands[][2] = {{"2", "4"}, {"6", "9"}, {"0", "B"}, {"2", "-4"}, {"-6", "-9"}};
+        for (const auto& pair : operands) {
+            Bn* operand = FromHex(pair[0]);
+            Bn* modulus = FromHex(pair[1]);
+            for (bool supplied : {false, true}) {
+                Require(BN_set_word_nid_postfix(r, 0x1234) == 1);
+                Require(BN_mod_inverse_nid_postfix(supplied ? r : nullptr, operand, modulus, ctx) == nullptr);
+                Require(Hex(r) == "1234");
+                Require(ERR_get_error_nid_postfix() == noInverse);
+                Require(ERR_get_error_nid_postfix() == 0);
+            }
+            BN_free_nid_postfix(operand);
+            BN_free_nid_postfix(modulus);
+        }
         Bn* allocated = BN_mod_inverse_nid_postfix(nullptr, three, eleven, ctx);
         Require(allocated && Hex(allocated) == "4");
         Bn* minusThree = FromHex("-3");
@@ -249,6 +269,7 @@ int main() {
         Bn* a = FromHex("123456789ABCDEF0FEDCBA9876543210");
         Bn* inverse = BN_mod_inverse_nid_postfix(nullptr, a, prime, ctx);
         Require(inverse && Hex(inverse) == "62CFEFE6EB41053969967BD711C5169F");
+        Require(ERR_get_error_nid_postfix() == 0);
         Bn* product = BN_new_nid_postfix();
         Require(BN_mul_nid_postfix(product, a, inverse, ctx) == 1);
         Bn* quotient = FromHex("E0DA4F6BE78BFD74B8C9F95AF178811");

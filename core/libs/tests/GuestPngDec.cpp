@@ -458,7 +458,11 @@ int main() {
     Require(scePngDecCreate(&badSize, unaligned, static_cast<std::uint32_t>(memorySize), &handle) == invalidSize);
     Require(scePngDecCreate(&overWidth, unaligned, static_cast<std::uint32_t>(memorySize), &handle) == invalidParam);
     Require(scePngDecCreate(&param, nullptr, static_cast<std::uint32_t>(memorySize), &handle) == invalidAddr);
+    Require(scePngDecCreate(&param, nullptr, 0, &handle) == invalidAddr);
     Require(scePngDecCreate(&param, unaligned, static_cast<std::uint32_t>(memorySize), nullptr) == invalidAddr);
+    std::vector<unsigned char> untouchedMemory(memory.size(), 0xCC);
+    Require(scePngDecCreate(&param, untouchedMemory.data(), static_cast<std::uint32_t>(memorySize), nullptr) == invalidAddr);
+    Require(std::all_of(untouchedMemory.begin(), untouchedMemory.end(), [](unsigned char byte) { return byte == 0xCC; }));
     Require(scePngDecCreate(reinterpret_cast<const PngDecCreateParam*>(0x10), unaligned, static_cast<std::uint32_t>(memorySize), &handle) == invalidAddr);
     Require(scePngDecCreate(&param, unaligned, static_cast<std::uint32_t>(memorySize), reinterpret_cast<void**>(0x10)) == invalidAddr);
     Require(scePngDecCreate(&param, reinterpret_cast<void*>(0x10), static_cast<std::uint32_t>(memorySize), &handle) == invalidAddr);
@@ -496,6 +500,13 @@ int main() {
     const std::uint8_t garbage[40] = {1, 2, 3};
     const PngDecParseParam parseGarbage{garbage, sizeof(garbage), 0};
     Require(scePngDecParseHeader(&parseGarbage, &info) == invalidData);
+    Require(scePngDecParseHeader(&parseGarbage, nullptr) == invalidAddr);
+    const PngDecParseParam parseNullEmpty{nullptr, 0, 0};
+    Require(scePngDecParseHeader(&parseNullEmpty, &info) == invalidAddr);
+    const PngDecParseParam parseReserved{rgbPng.data(), static_cast<std::uint32_t>(rgbPng.size()), 1};
+    info = {};
+    Require(scePngDecParseHeader(&parseReserved, &info) == invalidParam);
+    Require(info.image_width == 0 && info.image_height == 0);
 
     std::vector<std::uint8_t> image(3 * 2 * 4);
     PngDecDecodeParam decode = DecodeParam(rgbPng, image);
@@ -568,6 +579,21 @@ int main() {
     decode.image_pitch = pitch;
     Require(scePngDecDecode(handle, &decode, &info) == (3 << 16 | 2));
 
+    std::vector<std::uint8_t> opaqueAlphaImage(3 * 2 * 4, 0xCC);
+    decode = DecodeParam(rgbPng, opaqueAlphaImage);
+    decode.alpha_value = 0xFF;
+    Require(scePngDecDecode(handle, &decode, &info) == (3 << 16 | 2));
+    for (std::size_t pixel = 0; pixel < 6; ++pixel) Require(opaqueAlphaImage[pixel * 4 + 3] == 0xFF);
+
+    std::vector<std::uint8_t> exactPitchImage(3 * 2 * 4, 0xCC);
+    decode = DecodeParam(rgbPng, exactPitchImage);
+    decode.image_pitch = 3 * 4;
+    Require(scePngDecDecode(handle, &decode, &info) == (3 << 16 | 2));
+    for (std::size_t pixel = 0; pixel < 6; ++pixel) {
+        for (std::size_t c = 0; c < 3; ++c) Require(exactPitchImage[pixel * 4 + c] == static_cast<std::uint8_t>(10 + (pixel * 3 + c) * 13));
+        Require(exactPitchImage[pixel * 4 + 3] == 0x77);
+    }
+
     const std::vector<std::uint8_t> palettePng(PALETTE_TRNS, PALETTE_TRNS + sizeof(PALETTE_TRNS));
     std::vector<std::uint8_t> paletteImage(2 * 2 * 4);
     decode = DecodeParam(palettePng, paletteImage);
@@ -605,6 +631,10 @@ int main() {
     Require(scePngDecDecode(handle, &decode, &info) == invalidAddr);
     decode = DecodeParam(rgbPng, image);
     decode.image_mem_addr = nullptr;
+    Require(scePngDecDecode(handle, &decode, &info) == invalidAddr);
+    decode = DecodeParam(rgbPng, image);
+    decode.png_mem_addr = nullptr;
+    decode.png_mem_size = 0;
     Require(scePngDecDecode(handle, &decode, &info) == invalidAddr);
     std::vector<std::uint8_t> misalignedImage(3 * 2 * 4 + 1, 0xCC);
     decode = DecodeParam(rgbPng, misalignedImage);

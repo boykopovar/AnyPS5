@@ -17,10 +17,11 @@ import progress
 
 LIBRARY_SERIES = ("libraries", "System library functions", "#2f81f7")
 SHADER_SERIES = (
-    ("decoded", "Decoded shader forms", "#2ea043"),
+    ("decoded", "RDNA2 reference shader forms", "#2ea043"),
+    ("gfx1013", "gfx1013 reference shader forms", "#a371f7"),
     ("legacy", "Legacy shader opcode names", "#d29922"),
 )
-SHADER_METRICS = {metric for metric, _, _ in SHADER_SERIES}
+SHADER_METRICS = {"decoded", "legacy"}
 WIDTH, LEFT, RIGHT, TITLE, PANEL, GAP, AXIS = 900, 56, 190, 34, 150, 16, 32
 MAX_DOTS = 45
 BACKGROUND, GRID, TEXT, MUTED = "#0d1117", "#30363d", "#c9d1d9", "#8b949e"
@@ -41,15 +42,15 @@ SVG_STYLE = (
 
 
 def git(*args):
-    return subprocess.run(["git", "-C", str(progress.ROOT), *args], check=True, capture_output=True).stdout
+    try:
+        return subprocess.run(["git", "-C", str(progress.ROOT), *args], check=True, capture_output=True).stdout
+    except subprocess.CalledProcessError as error:
+        reason = error.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"git {' '.join(args)} failed: {reason}") from error
 
 
 def daily_commits(ref):
-    try:
-        log = git("log", "--first-parent", "--format=%H %ct", ref)
-    except subprocess.CalledProcessError as error:
-        reason = error.stderr.decode("utf-8", errors="replace").strip()
-        raise ValueError(f"cannot read the history of {ref}: {reason}") from error
+    log = git("log", "--first-parent", "--format=%H %ct", ref)
     seen = {}
     for line in log.decode("utf-8").splitlines():
         sha, timestamp = line.split()
@@ -64,10 +65,7 @@ def measure(sha):
         progress.shader_scan.RECOMPILER.rstrip("/"),
         progress.shader_scan.AGC_DRIVER.rstrip("/"),
     ]
-    try:
-        tree = git("ls-tree", "-r", "--name-only", sha, "--", *candidate_paths).decode("utf-8").splitlines()
-    except subprocess.CalledProcessError:
-        return None
+    tree = git("ls-tree", "-r", "--name-only", sha, "--", *candidate_paths).decode("utf-8").splitlines()
     tree = set(tree)
     required_paths = candidate_paths[:2]
     if any(not any(name == path or name.startswith(path + "/") for name in tree) for path in required_paths):
@@ -78,14 +76,11 @@ def measure(sha):
     ]
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        try:
-            archive = tarfile.open(fileobj=io.BytesIO(git("archive", sha, "--", *paths)))
-            if hasattr(tarfile, "data_filter"):
-                archive.extractall(root, filter="data")
-            else:
-                archive.extractall(root)
-        except subprocess.CalledProcessError:
-            return None
+        archive = tarfile.open(fileobj=io.BytesIO(git("archive", sha, "--", *paths)))
+        if hasattr(tarfile, "data_filter"):
+            archive.extractall(root, filter="data")
+        else:
+            archive.extractall(root)
         saved = progress.PRX, progress.OPCODES
         progress.PRX, progress.OPCODES = root / paths[0], root / paths[1]
         try:
@@ -109,11 +104,19 @@ def measure(sha):
         }
     else:
         shaders = {key: legacy[key] for key in ("done", "total", "percent")}
-    return {
+    result = {
         "libraries": {key: libraries[key] for key in ("done", "total", "percent")},
         "shaders": shaders,
         "shader_metric": "decoded" if shader_source else "legacy",
     }
+    profile = shader_source.get("profiles", {}).get("gfx1013") if shader_source else None
+    if profile:
+        result["gfx1013"] = {
+            "done": profile["instructions"]["decoded"],
+            "total": profile["instructions"]["total"],
+            "percent": progress.shader_source_percent(profile),
+        }
+    return result
 
 
 def cache_signature():
@@ -125,6 +128,8 @@ def cache_signature():
         Path(progress.tokenizer_spec.origin),
         progress.ISA,
         progress.ISA_FORMS,
+        Path(progress.isa_profiles.__file__),
+        progress.ISA_GFX1013,
     ):
         content = path.read_bytes()
         digest.update(len(content).to_bytes(8, "little"))
@@ -154,11 +159,15 @@ def load_cache(path, signature):
             raise ValueError(f"{path}: invalid cached commit")
         if counts is None:
             continue
-        if not isinstance(counts, dict) or counts.keys() != {"libraries", "shaders", "shader_metric"}:
+        required = {"libraries", "shaders", "shader_metric"}
+        if not isinstance(counts, dict) or not required <= counts.keys() <= required | {"gfx1013"}:
             raise ValueError(f"{path}: invalid cached counts for {sha}")
         if not isinstance(counts["shader_metric"], str) or counts["shader_metric"] not in SHADER_METRICS:
             raise ValueError(f"{path}: invalid cached shader metric for {sha}")
-        for metric in (counts["libraries"], counts["shaders"]):
+        metrics = [counts["libraries"], counts["shaders"]]
+        if "gfx1013" in counts:
+            metrics.append(counts["gfx1013"])
+        for metric in metrics:
             if not isinstance(metric, dict) or metric.keys() != {"done", "total", "percent"}:
                 raise ValueError(f"{path}: invalid cached metric for {sha}")
             done, total, percent = (metric[key] for key in ("done", "total", "percent"))
@@ -168,17 +177,20 @@ def load_cache(path, signature):
 
 
 def save_cache(path, signature, commits):
-    path.parent.mkdir(parents=True, exist_ok=True)
+    target = Path(os.path.realpath(path))
+    if target.is_symlink():
+        raise ValueError(f"{path}: history cache is a symbolic link loop")
+    target.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=path.parent,
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=target.parent,
                                          prefix=".history-", delete=False) as output:
             temporary = Path(output.name)
             json.dump({"schema_version": 2, "rules": signature, "commits": commits}, output, sort_keys=True)
             output.write("\n")
-        if os.name != "nt" and path.exists():
-            temporary.chmod(stat.S_IMODE(path.stat().st_mode))
-        os.replace(temporary, path)
+        if os.name != "nt" and target.exists():
+            temporary.chmod(stat.S_IMODE(target.stat().st_mode))
+        os.replace(temporary, target)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -239,8 +251,14 @@ def shader_metric(point):
     return point.get("shader_metric", "decoded")
 
 
+def shader_counts(point, metric):
+    if metric == "gfx1013":
+        return point.get("gfx1013")
+    return point["shaders"] if shader_metric(point) == metric else None
+
+
 def used_shader_metrics(points):
-    return [metric for metric, _, _ in SHADER_SERIES if any(shader_metric(p) == metric for p in points)]
+    return [metric for metric, _, _ in SHADER_SERIES if any(shader_counts(p, metric) is not None for p in points)]
 
 
 def chart(points):
@@ -262,8 +280,9 @@ def chart(points):
     for index, (name, title, color, metric) in enumerate(panels):
         top = index * (TITLE + PANEL + GAP) + TITLE
         base = top + PANEL
-        shown = [(x, p) for x, p in zip(xs, points) if metric is None or shader_metric(p) == metric]
-        step, peak = scale(max(p[name][key] for _, p in shown for key in ("done", "total")))
+        counts = lambda p: p[name] if metric is None else shader_counts(p, metric)
+        shown = [(x, counts(p)) for x, p in zip(xs, points) if counts(p) is not None]
+        step, peak = scale(max(p[key] for _, p in shown for key in ("done", "total")))
         py = lambda v: base - v / peak * PANEL
         out.append(f'<text x="{LEFT}" y="{top - 12}" font-size="13" font-weight="bold">{title}</text>')
         for tick in range(0, peak + 1, step):
@@ -272,25 +291,26 @@ def chart(points):
         for x, label in labels:
             if label:
                 out.append(f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{top}" y2="{base}" stroke="{GRID}" stroke-width="0.5"/>')
-        done = [(x, py(p[name]["done"])) for x, p in shown]
-        total = [(x, py(p[name]["total"])) for x, p in shown]
+        done = [(x, py(p["done"])) for x, p in shown]
+        total = [(x, py(p["total"])) for x, p in shown]
         line = lambda coords: " ".join(f"{x:.1f},{y:.1f}" for x, y in coords)
         out.append(f'<polygon points="{shown[0][0]:.1f},{base} {line(done)} {shown[-1][0]:.1f},{base}" fill="{color}" opacity="0.15"/>')
         out.append(f'<polyline points="{line(total)}" fill="none" stroke="{MUTED}" stroke-width="2" stroke-dasharray="6 4"/>')
         out.append(f'<polyline points="{line(done)}" fill="none" stroke="{color}" stroke-width="2"/>')
         if len(shown) <= MAX_DOTS:
             out += [f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="{color}"/>' for x, y in done]
-        last = shown[-1][1][name]
+        last = shown[-1][1]
         declared_y, implemented_y = spread([total[-1][1], done[-1][1]])
         out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{declared_y + 4:.1f}" fill="{MUTED}">Declared {last["total"]:,}</text>'
                    f'<text x="{WIDTH - RIGHT + 8}" y="{implemented_y + 4:.1f}" fill="{TEXT}" font-weight="bold">'
                    f'<tspan fill="{color}">\u25cf</tspan> Implemented {last["done"]:,} ({last["percent"]:.0f}%)</text>')
         for (left, right), (_, p) in zip(zip(edges, edges[1:]), zip(xs, points)):
-            if metric is not None and shader_metric(p) != metric:
+            measured = counts(p)
+            if measured is None:
                 continue
             out.append(f'<rect class="hit" x="{left:.1f}" y="{top}" width="{right - left:.1f}" height="{PANEL}">'
-                       f'<title>{p["date"]} · {title}\nImplemented {p[name]["done"]:,} of {p[name]["total"]:,} declared '
-                       f'({p[name]["percent"]}%)</title></rect>')
+                       f'<title>{p["date"]} · {title}\nImplemented {measured["done"]:,} of {measured["total"]:,} declared '
+                       f'({measured["percent"]}%)</title></rect>')
     axis = height - AXIS + 18
     out += [f'<text class="x" x="{x:.1f}" y="{axis}" text-anchor="middle" font-size="11" fill="{MUTED}">{label}</text>'
             for x, label in labels if label]
@@ -347,13 +367,14 @@ def daily(points):
 def page(points):
     metrics = used_shader_metrics(points)
     labels = {metric: title for metric, title, _ in SHADER_SERIES}
+    changes = ["n/a"] + [f'{p["libraries"]["done"] - q["libraries"]["done"]:+,}' for q, p in zip(points, points[1:])]
     rows = "\n".join(
         f'<tr><td>{p["date"]}</td><td>{p["libraries"]["done"]}/{p["libraries"]["total"]}</td>'
-        f'<td>{p["libraries"]["percent"]}%</td>'
-        + "".join(f'<td>{p["shaders"]["done"]}/{p["shaders"]["total"]}</td><td>{p["shaders"]["percent"]}%</td>'
-                  if shader_metric(p) == metric else '<td>—</td><td>—</td>' for metric in metrics)
+        f'<td>{p["libraries"]["percent"]}%</td><td>{change}</td>'
+        + "".join(f'<td>{counts["done"]}/{counts["total"]}</td><td>{counts["percent"]}%</td>'
+                  if (counts := shader_counts(p, metric)) is not None else '<td>—</td><td>—</td>' for metric in metrics)
         + '</tr>'
-        for p in reversed(points))
+        for p, change in reversed(list(zip(points, changes))))
     return "\n".join([
         '<!DOCTYPE html>',
         '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -370,18 +391,21 @@ def page(points):
         daily(points),
         f'<p>Each panel has its own scale: the solid line is what is implemented, the dashed line what is declared. Library '
         'functions are declared in the <code>prx</code> sources. Shader history keeps the metrics separate: '
-        '"Decoded shader forms" counts the AMD RDNA 2 instruction forms decoded by the current scanner '
+        '"RDNA2 reference shader forms" counts the AMD RDNA 2 instruction forms decoded by the current scanner '
         f'(<a href="{progress.SOURCE}/tools/rdna2_isa_forms.txt">tools/rdna2_isa_forms.txt</a>); '
+        '"gfx1013 reference shader forms" counts the separate gfx1013 profile '
+        f'(<a href="{progress.SOURCE}/tools/gfx1013_isa_forms.txt">tools/gfx1013_isa_forms.txt</a>) and is absent when '
+        'that profile cannot be measured. It does not replace the RDNA2 reference. '
         '"Legacy shader opcode names" counts the archived decoder opcode table against the current AMD RDNA 1 + RDNA 2 '
         f'instruction list (<a href="{progress.SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>) and is used only when '
         'the current scanner cannot read the archived source. Their totals differ, so compare points only within the same '
         'shader panel. One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point '
         f'is measured with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> and '
         f'<a href="{progress.SOURCE}/tools/shader_scan.py">tools/shader_scan.py</a> rules, '
-        'so points within each series are comparable across days. The bars are the change in implemented library functions '
-        'from one point to the next. Hover a day for the exact numbers. <a href="history.json">history.json</a> records the '
+        'so points within each series are comparable across days. The bars and the Functions implemented column show the net change '
+        'in implemented library functions from one point to the next; the first point is n/a. Hover a day for the exact numbers. <a href="history.json">history.json</a> records the '
         'shader metric for each point. <a href="progress.html">Back to the current progress</a>.</p>',
-        '<table><tr><th>Date</th><th>System library functions</th><th>%</th>'
+        '<table><tr><th>Date</th><th>System library functions</th><th>%</th><th>Functions implemented</th>'
         + "".join(f'<th>{escape(labels[metric])}</th><th>%</th>' for metric in metrics) + '</tr>',
         rows,
         '</table>',
@@ -432,11 +456,11 @@ def main(argv=None):
         if args.csv:
             with (args.output / "history.csv").open("w", encoding="utf-8", newline="") as output:
                 writer = csv.writer(output)
-                writer.writerow(["date", "commit"] + [f"{name}_{key}" for name, _, _ in SERIES
-                                                      for key in ("done", "total", "percent")])
+                writer.writerow(["date", "commit"] + [f"{name}_{key}" for name in ("libraries", "shaders")
+                                                      for key in ("done", "total", "percent")] + ["shader_metric"])
                 writer.writerows([point["date"], point["commit"]] +
-                                 [point[name][key] for name, _, _ in SERIES for key in ("done", "total", "percent")]
-                                 for point in points)
+                                 [point[name][key] for name in ("libraries", "shaders") for key in ("done", "total", "percent")] +
+                                 [shader_metric(point)] for point in points)
     except OSError as error:
         parser.error(f"{error.filename or args.output}: {error.strerror or error}")
     print(f"{len(points)} days, {points[0]['date']} .. {points[-1]['date']}")
