@@ -298,6 +298,33 @@ void TestInvalidArguments() {
     Check(!_ZN3WTF10protocolIsENS_10StringViewEPKc(View(" "), nullptr), __LINE__);
 }
 
+void TestDefaultWritingDirection() {
+    bool strong = false;
+    StringImpl latin = Make8("  123 abc");
+    Check(_ZN3WTF10StringImpl23defaultWritingDirectionEPb(&latin, &strong) == 0 && strong, __LINE__);
+    const std::u16string hebrewText = u" 12 \u05D0\u05D1 a";
+    StringImpl hebrew = Make16(hebrewText);
+    strong = false;
+    Check(_ZN3WTF10StringImpl23defaultWritingDirectionEPb(&hebrew, &strong) == 1 && strong, __LINE__);
+    const std::u16string arabicText = u"(\u0627)";
+    StringImpl arabic = Make16(arabicText);
+    strong = false;
+    Check(_ZN3WTF10StringImpl23defaultWritingDirectionEPb(&arabic, &strong) == 1 && strong, __LINE__);
+    const std::u16string neutralText = u" 42 !?";
+    StringImpl neutral = Make16(neutralText);
+    strong = true;
+    Check(_ZN3WTF10StringImpl23defaultWritingDirectionEPb(&neutral, &strong) == 0 && !strong, __LINE__);
+    StringImpl empty = Make8("");
+    strong = true;
+    Check(_ZN3WTF10StringImpl23defaultWritingDirectionEPb(&empty, &strong) == 0 && !strong, __LINE__);
+    Check(_ZN3WTF10StringImpl23defaultWritingDirectionEPb(&hebrew, nullptr) == 1, __LINE__);
+    const std::u16string surrogateText = u"\U00010900";
+    StringImpl surrogate = Make16(surrogateText);
+    strong = false;
+    Check(_ZN3WTF10StringImpl23defaultWritingDirectionEPb(&surrogate, &strong) == 0 && strong, __LINE__);
+    Check(ThrowsInvalidArgument([] { _ZN3WTF10StringImpl23defaultWritingDirectionEPb(nullptr, nullptr); }), __LINE__);
+}
+
 } // namespace
 
 int main() {
@@ -309,5 +336,6 @@ int main() {
     TestStringView();
     TestProtocolIs();
     TestInvalidArguments();
+    TestDefaultWritingDirection();
     return 0;
 }

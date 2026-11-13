@@ -1517,10 +1517,6 @@ int APS5_VABI _ZN3WTF10StringImpl20createWithoutCopyingEPKhj() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF10StringImpl23defaultWritingDirectionEPb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF10StringImpl6createEPKh() {
     NotImplemented_nid_no_patch(__func__);
 }
