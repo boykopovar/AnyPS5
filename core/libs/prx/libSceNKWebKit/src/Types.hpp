@@ -307,6 +307,13 @@ public:
     bool isVisible = false;
 };
 
+class BundleInspector final : public ObjectOf<ObjectType::BundleInspector> {
+public:
+    bool isVisible = false;
+    bool isProfilingPage = false;
+    std::vector<std::string> evaluatedScriptsForTest;
+};
+
 class Connection final : public ObjectOf<ObjectType::Connection> {
 public:
     Retained<Object> lastMessageName;
