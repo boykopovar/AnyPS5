@@ -135,7 +135,7 @@ int APS5_VABI sceVideoOutAddOutputModeEvent(KernelEqueue eq, int handle, void* u
 }
 
 int APS5_VABI sceVideoOutAddSetModeEvent(KernelEqueue eq, int handle, void* udata) try {
-    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata);
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
@@ -159,7 +159,7 @@ int APS5_VABI sceVideoOutDeleteOutputModeEvent(KernelEqueue eq, int handle) try 
 }
 
 int APS5_VABI sceVideoOutDeleteSetModeEvent(KernelEqueue eq, int handle) try {
-    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE);
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
