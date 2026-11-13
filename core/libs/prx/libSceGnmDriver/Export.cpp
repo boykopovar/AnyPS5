@@ -511,6 +511,14 @@ int APS5_VABI sceGnmGetEqEventType(const KernelEvent* ev) {
     return static_cast<int>(ev->ident);
 }
 
+int APS5_VABI sceGnmGetOffChipTessellationBufferSize_nid_disambig1(void) {
+    return 0x800000;
+}
+
+bool APS5_VABI sceGnmDriverTraceInProgress_nid_disambig1(void) {
+    return false;
+}
+
 bool APS5_VABI sceGnmIsUserPaEnabled() {
     return false;
 }
