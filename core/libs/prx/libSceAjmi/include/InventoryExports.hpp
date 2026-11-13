@@ -6,7 +6,6 @@ extern "C" {
 
 int APS5_VABI sceAjmiBatchCancel();
 int APS5_VABI sceAjmiBatchWait();
-int APS5_VABI libSceAjmiUnknown_4MsUK9kAnKg_nid_no_patch();
 int APS5_VABI sceAjmiModuleUnregister();
 int APS5_VABI sceAjmiBatchStartBuffer();
 int APS5_VABI sceAjmiFinalize();
@@ -22,7 +21,6 @@ int APS5_VABI sceAjmiInstanceDestroy();
 int APS5_VABI sceAjmiDecMp3ParseFrame();
 int APS5_VABI sceAjmiMemoryRegister();
 int APS5_VABI sceAjmiModuleRegister();
-int APS5_VABI libSceAjmiUnknown_m0xisYC6U2w_nid_no_patch();
 int APS5_VABI sceAjmiInstanceCreate();
 int APS5_VABI sceAjmiInstanceExtend();
 int APS5_VABI sceAjmiBatchJobRunSplitBufferRa();
