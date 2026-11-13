@@ -146,6 +146,14 @@ inline std::optional<CoreReservation> ChooseReservedCore(const std::vector<CpuSe
     return result;
 }
 
+inline std::vector<std::uint32_t> ReservedThreadCpus(const std::vector<CpuSet>& sets, const CoreReservation& reservation) {
+    std::vector<std::uint32_t> allowed = reservation.others;
+    for (const auto& set : sets) {
+        if (set.group == reservation.chosen.group && set.core == reservation.chosen.core) allowed.push_back(set.id);
+    }
+    return allowed;
+}
+
 inline std::vector<std::uint32_t> PipelineCacheSet(const std::vector<CpuSet>& sets, const std::vector<CpuSet>& reserved) {
     if (reserved.empty()) return {};
     const auto& home = reserved.front();

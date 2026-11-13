@@ -1,0 +1,13 @@
+add_test_executable(agc_worker_affinity_tests EXCLUDE_FROM_ALL tests/WorkerAffinity.cpp)
+target_sources(agc_worker_affinity_tests PRIVATE Execution/src/Driver/Queues/WorkerAffinity.cpp)
+target_include_directories(agc_worker_affinity_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+target_link_libraries(agc_worker_affinity_tests PRIVATE libSceAgcDriver libc)
+set_target_properties(agc_worker_affinity_tests PROPERTIES CXX_EXTENSIONS OFF)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_worker_affinity_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_worker_affinity COMMAND agc_worker_affinity_tests)
+    add_test(NAME agc_worker_affinity_explicit COMMAND agc_worker_affinity_tests)
+    set_tests_properties(agc_worker_affinity agc_worker_affinity_explicit PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    set_tests_properties(agc_worker_affinity_explicit PROPERTIES ENVIRONMENT "APS5_COMMITTER_CPU=1")
+endif()

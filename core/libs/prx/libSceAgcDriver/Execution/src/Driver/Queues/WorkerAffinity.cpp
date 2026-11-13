@@ -214,10 +214,7 @@ void Reserve(std::size_t slot, const char* role, std::optional<unsigned> logical
     }
     const char* processState = process ? "set" : "failed";
 #else
-    std::vector<std::uint32_t> allowed = reservation->others;
-    for (const auto& set : sets) {
-        if (set.group == reservation->chosen.group && set.core == reservation->chosen.core) allowed.push_back(set.id);
-    }
+    const auto allowed = logical.has_value() ? std::vector<std::uint32_t>{reservation->chosen.id} : CpuTopology::ReservedThreadCpus(sets, *reservation);
     own = Reservation{reservation->chosen, CurrentThread(), allowed};
     const bool thread = PinTo(0, allowed);
     if (DIR* tasks = opendir("/proc/self/task"); tasks != nullptr) {
