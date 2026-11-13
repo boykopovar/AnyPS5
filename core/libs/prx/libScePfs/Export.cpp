@@ -1,4 +1,5 @@
 #include "prx/libScePfs/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include "SceTypes.hpp"
@@ -16,6 +17,13 @@ constexpr std::uint32_t PfsMagic = 0x43534650;
 constexpr std::uint64_t OffsetMask48 = 0xffffffffffffULL;
 constexpr std::uint64_t OffsetMask44 = 0xfffffffffffULL;
 constexpr std::uint64_t IndexEntryTypeMask = 0xffULL;
+
+bool CopyOut(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
 
 struct PfsHeaderLayout {
     std::uint32_t magic;
@@ -119,8 +127,7 @@ int APS5_VABI scePfsGetPreadBlockRange(std::uint64_t size, std::uint64_t offset,
         }
         first -= found != offset;
         last -= endFound != offset;
-        *firstBlockOut = first;
-        *lastBlockOut = last;
+        if (!CopyOut(firstBlockOut, &first, sizeof(first)) || !CopyOut(lastBlockOut, &last, sizeof(last))) return InvalidArgument;
         return 0;
     }
     if (layout->layoutTag != 2) return UnsupportedLayout;
@@ -129,8 +136,9 @@ int APS5_VABI scePfsGetPreadBlockRange(std::uint64_t size, std::uint64_t offset,
     const std::uint64_t firstIndex = offset >> 0x12;
     const std::uint64_t lastIndex = end ? (end - 1) >> 0x12 : 0xffffffffULL;
     if (firstIndex > 0xffffffffULL || lastIndex > 0xffffffffULL) return OutOfRange;
-    *firstBlockOut = static_cast<std::uint32_t>(firstIndex);
-    *lastBlockOut = static_cast<std::uint32_t>(lastIndex);
+    const auto first = static_cast<std::uint32_t>(firstIndex);
+    const auto last = static_cast<std::uint32_t>(lastIndex);
+    if (!CopyOut(firstBlockOut, &first, sizeof(first)) || !CopyOut(lastBlockOut, &last, sizeof(last))) return InvalidArgument;
     return 0;
 }
 
@@ -188,13 +196,13 @@ int APS5_VABI scePfsGetUncompressedSize(const void* header, std::uint64_t* sizeO
     if (layout->magic != PfsMagic) return UnsupportedFormat;
     const std::uint16_t version = layout->version;
     if (version == 3) {
-        *sizeOut = layout->uncompressedSize;
-        return 0;
+        const std::uint64_t size = layout->uncompressedSize;
+        return CopyOut(sizeOut, &size, sizeof(size)) ? 0 : InvalidArgument;
     }
     if (version != 2) return UnsupportedFormat;
     if (layout->layoutTag != 2) return UnsupportedLayout;
-    *sizeOut = layout->uncompressedSize;
-    return 0;
+    const std::uint64_t size = layout->uncompressedSize;
+    return CopyOut(sizeOut, &size, sizeof(size)) ? 0 : InvalidArgument;
 }
 
 std::int64_t APS5_VABI scePfsGetWorkBufferSize(void) {

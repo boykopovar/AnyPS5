@@ -210,5 +210,10 @@ int main() {
         const auto* dataBytes = reinterpret_cast<const unsigned char*>(readBuffer);
         for (std::size_t index = 0; index < sizeof(readBuffer); ++index) Require(dataBytes[index] == 0xb7);
     }
+    errno = 71;
+    Require(sceNpWebApi2IntInitialize(reinterpret_cast<const NpWebApi2IntInitializeArgs*>(std::uintptr_t{0x10})) == static_cast<int>(0x80553402));
+    Require(errno == 71);
+    Require(sceNpWebApi2IntInitialize2(reinterpret_cast<const NpWebApi2IntInitialize2Args*>(std::uintptr_t{0x10})) == static_cast<int>(0x80553402));
+    Require(errno == 71);
     return 0;
 }

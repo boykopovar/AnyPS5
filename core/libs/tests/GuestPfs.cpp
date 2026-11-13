@@ -344,5 +344,18 @@ int main() {
     Validate();
     ValidateV2Table();
     ValidateV3();
+    {
+        PfsHeader header = HeaderV2(4, 0x80000, 0x200);
+        std::uint64_t table[5] = {0, 0x20000, 0x40000, 0x60000, 0x80000};
+        std::uint32_t first = 0;
+        std::uint32_t last = 0;
+        errno = 71;
+        Require(scePfsGetUncompressedSize(&header, reinterpret_cast<std::uint64_t*>(std::uintptr_t{0x10})) == InvalidArgument);
+        Require(errno == 71);
+        Require(scePfsGetPreadBlockRange(0x1000, 0, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), &last, &header, table) == InvalidArgument);
+        Require(errno == 71);
+        Require(scePfsGetPreadBlockRange(0x1000, 0, &first, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), &header, table) == InvalidArgument);
+        Require(errno == 71);
+    }
     return 0;
 }

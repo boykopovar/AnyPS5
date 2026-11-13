@@ -506,11 +506,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "embedded-space": "{n} 0, {n}",
             "embedded-tab": "{n}\t0, {n}",
         }
+        repeated = {
+            "repeat-exact": ["{n}", "{n}"],
+            "repeat-ows": ["{n}", " \t{n}\t "],
+            "repeat-zeros": ["{n}", "000{n}"],
+            "repeat-zeros-first": ["000{n}", "{n}"],
+            "repeat-list-second": ["{n}", "{n}, {n}"],
+            "repeat-list-first": ["{n}, {n}", "{n}"],
+            "repeat-two-lists": ["{n},{n}", "000{n}, {n}"],
+            "repeat-many": ["{n}", "000{n}", "{n}, {n}"],
+            "repeat-whitespace-lists": [" \t{n}\t,\t{n} ", "{n}"],
+            "repeat-different": ["{n}", "{other}"],
+            "repeat-mismatch-list": ["{n}", "{n}, {other}"],
+            "repeat-mismatch-first": ["{n}, {other}", "{n}"],
+            "repeat-mismatch-identical": ["{n}, {other}", "{n}, {other}"],
+            "repeat-empty-first": ["", "{n}"],
+            "repeat-empty-second": ["{n}", ""],
+            "repeat-signed": ["{n}", "+{n}"],
+            "repeat-overflow": ["{n}", "18446744073709551616"],
+            "repeat-suffix": ["{n}", "{n}x"],
+            "repeat-last": ["{n}", "000{n}", "{other}"],
+            "etag-duplicate": ["{n}", "{n}"],
+            "repeat-late-mismatch": ["{n}", "000{n}", "{other}" if start else "{n}"],
+        }
         self.send_response(206 if mode == "range" else 200)
         if mode == "range":
             self.send_header("Content-Range", f"bytes {start}-{end - 1}/{len(content)}")
         self.send_header("ETag", '"length-v1"')
-        self.send_header("Content-Length", fields[name].format(n=len(body), other=len(body) + 1))
+        if name == "etag-duplicate":
+            self.send_header("ETag", '"length-v2"')
+        for value in repeated[name] if name in repeated else [fields[name]]:
+            self.send_header("Content-Length", value.format(n=len(body), other=len(body) + 1))
         self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
