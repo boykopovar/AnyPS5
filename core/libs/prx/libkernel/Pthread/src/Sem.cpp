@@ -177,7 +177,7 @@ int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, KernelUseconds usec) {
         const auto acquired = ThreadCancel::WaitUntil(current->_cv, lock, TimedWait::DeadlineNanos(usec), [&] { return current->_count > 0 || current->_destroyed; });
         if (current->_destroyed) {
             finishSemaphoreWait(current, cleanupContext, cleanupMark);
-            return SCE_KERNEL_ERROR_EINVAL;
+            return sceTimedOut;
         }
         if (!acquired) {
             finishSemaphoreWait(current, cleanupContext, cleanupMark);
