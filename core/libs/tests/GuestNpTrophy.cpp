@@ -1,4 +1,5 @@
 #include "prx/libSceNpTrophy/include/Api.hpp"
+#include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstdint>
@@ -124,6 +125,9 @@ int main() {
 
     int context = 0, handle = 0, missing = 0, platinum = 0;
     Require(sceNpTrophyCreateContext(nullptr, 1, 0, 0) == InvalidArgument, "null context");
+    errno = 71;
+    Require(sceNpTrophyCreateContext(reinterpret_cast<int*>(0x10), 1, 0, 0) == InvalidArgument, "unwritable context");
+    Require(errno == 71, "errno preserved");
     Require(sceNpTrophyCreateContext(&context, 1, 0, 1) == InvalidArgument, "context options");
     Require(sceNpTrophyCreateContext(&context, 1, 0, 0) == 0, "create the context");
     Require(sceNpTrophyCreateContext(&missing, 1, 0, 0) == ContextAlreadyExists, "second context for the same user and label");

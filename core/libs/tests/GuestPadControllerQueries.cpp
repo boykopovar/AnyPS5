@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 
@@ -41,12 +42,23 @@ int main() {
     Require(scePadGetControllerBusType(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetControllerBusType(handle, &busType) == PAD_OK);
     Require(busType == PAD_CONNECT_TYPE_BLUETOOTH);
-    Require(scePadGetJackState(handle, &jack) == PAD_OK);
-    Require(jack == 0);
+    Require(scePadGetJackState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadGetJackState(handle, reinterpret_cast<int*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    alignas(16) int jackBuffer[3] = {-1, -1, -1};
+    Require(scePadGetJackState(handle, &jackBuffer[1]) == PAD_OK);
+    Require(jackBuffer[0] == -1 && jackBuffer[1] == 0 && jackBuffer[2] == -1);
     Require(scePadIsControllerUpdateRequired(handle) == 0);
     std::memset(&container, 0x5a, sizeof(container));
     Require(scePadGetContainerIdInformation(handle, &container) == PAD_OK);
     Require(container.size == 0 && container.id[0] == '\0');
+    for (size_t i = 1; i < sizeof(container.id); ++i) {
+        Require(static_cast<unsigned char>(container.id[i]) == 0x5a);
+    }
+    errno = 71;
+    Require(scePadGetContainerIdInformation(handle, reinterpret_cast<PadContainerIdInformation*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
 
     PadSetPortConnected_nid_postfix(0, false);
     Require(scePadGetControllerBusType(handle, &busType) == static_cast<int>(0x80920007));
