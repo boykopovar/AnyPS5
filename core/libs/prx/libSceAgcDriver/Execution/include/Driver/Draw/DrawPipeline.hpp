@@ -78,6 +78,7 @@ private:
         bool draw = false;
         bool store = false;
         CommitKind kind = CommitKind::Other;
+        std::uint64_t storeSerial = 0;
     };
     DrawPipeline() = default;
     void enqueue(Item item);
@@ -138,6 +139,7 @@ public:
     bool PendingOverlaps(std::uint64_t begin, std::uint64_t end);
     LabelLookup PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t& value);
     bool PendingOverlapsAny(std::span<const Range> ranges);
+    bool AnyPendingOverlaps(std::span<const Range> ranges);
     bool PendingKey(std::uint64_t key, std::uint64_t shape);
     enum class DrainSite : std::uint32_t { Lookup, Reads, Packet, Kept, Count };
     static void NoteDrain(DrainSite site, bool drained);
@@ -162,6 +164,7 @@ private:
     std::condition_variable idle;
     std::deque<Job> jobs;
     std::deque<Pending> pending;
+    std::deque<std::uint64_t> storeSerials;
     std::vector<Job> ran;
     std::exception_ptr failure;
     bool running = false;

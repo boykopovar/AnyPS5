@@ -62,6 +62,11 @@ bool DrawProfiled() {
     return profiled;
 }
 
+std::uint64_t completionStoreSerial() {
+    const auto serial = GuestMemory::CurrentStoreSerial();
+    return serial == GuestMemory::TitleCallStoreSerial ? 0 : serial;
+}
+
 std::uint64_t syncCounts[5] = {};
 // Fence wait time by sync source (APS5_PROFILE_DRAW), and the source CountSync announced for the
 // Sync/SyncThrough that follows it on this thread.
@@ -3560,7 +3565,14 @@ void Recorder::KeepHighestIndex(std::uint64_t address, std::size_t bytes, Snapsh
 
 void Recorder::OnComplete(std::function<void()> action) {
     ensureOpen();
-    open->completions.push_back(std::move(action));
+    if (const auto serial = completionStoreSerial(); serial != 0 && GuestMemory::DriverStoreObserved()) {
+        open->completions.push_back([action = std::move(action), serial] {
+            const GuestMemory::StoreSerialScope stores(serial);
+            action();
+        });
+    } else {
+        open->completions.push_back(std::move(action));
+    }
     ++open->writeBackCompletionCount;
     writeBackCompletions.fetch_add(1, std::memory_order_acq_rel);
 }
@@ -4166,7 +4178,8 @@ void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte
         std::lock_guard ringLock(writtenBackMutex);
         return writtenBackSequence;
     }();
-    batch.completions.push_back([this, address, copy = std::move(copy), sequence, storedOnGpu] {
+    batch.completions.push_back([this, address, copy = std::move(copy), sequence, storedOnGpu, serial = completionStoreSerial()] {
+        const GuestMemory::StoreSerialScope stores(serial);
         if (storedOnGpu && !always && !writtenBackSince(sequence, address, address + copy.size())) {
             completionStoresSkipped.fetch_add(1, std::memory_order_relaxed);
             return;
@@ -4202,7 +4215,14 @@ void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte
 bool Recorder::AfterRecordedWork(std::function<void()> action) {
     if (Idle()) return false;
     Batch& batch = open != nullptr ? *open : *inFlight.back();
-    batch.completions.push_back(std::move(action));
+    if (const auto serial = completionStoreSerial(); serial != 0 && GuestMemory::DriverStoreObserved()) {
+        batch.completions.push_back([action = std::move(action), serial] {
+            const GuestMemory::StoreSerialScope stores(serial);
+            action();
+        });
+    } else {
+        batch.completions.push_back(std::move(action));
+    }
     ++batch.completionLabelCount;
     completionLabels.fetch_add(1, std::memory_order_acq_rel);
         GuestMemory::BreakProofs();
@@ -4877,6 +4897,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
             InCompletion() { HostThreadSlot<int, CompletionDepthSlot>::Set(completionDepth() + 1); }
             ~InCompletion() { HostThreadSlot<int, CompletionDepthSlot>::Set(completionDepth() - 1); }
         } inCompletion;
+        const GuestMemory::StoreSerialScope unattributed(0);
         for (auto& action : batch->completions) {
             try {
                 action();

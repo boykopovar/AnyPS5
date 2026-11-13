@@ -282,6 +282,7 @@ void Driver::execute(const Submission& submission) {
     auto* const executingPacket = workerPacket();
     for (std::size_t cursor = 0; cursor < submission.commands.size();) {
         if (packetEpoch()) bumpEpoch(&EpochBumps::packets);
+        ParkForRecorder();
         CheckFailure();
         const auto header = submission.commands[cursor];
         if (Pm4::FillerPacket(header)) { ++cursor; continue; }
@@ -320,6 +321,7 @@ void Driver::execute(const Submission& submission) {
                 ++waitOutcomes().fromRecorderSameQueue;
                 gateOpened() = true;
                 noteLabelPass(packet, submission.queue);
+                passAwaited(submission, packet);
                 recent.Record(cursor);
                 cursor = nextCursor;
                 continue;
@@ -329,6 +331,7 @@ void Driver::execute(const Submission& submission) {
                 ++waitOutcomes().atEntry;
                 gateOpened() = true;
                 noteLabelPass(packet, submission.queue);
+                passAwaited(submission, packet);
                 recent.Record(cursor);
                 cursor = nextCursor;
                 continue;
@@ -494,6 +497,7 @@ void Driver::execute(const Submission& submission) {
             const auto waitStart = traceGpu ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             timed(&WorkerProfile::waitMs, [&] { waitMemory(packet, submission.queue, recent, submission.received, submission.heldAtSubmit.contains(cursor)); });
             noteLabelPass(packet, submission.queue);
+            passAwaited(submission, packet);
             gateOpened() = true;
             if (traceGpu && std::chrono::steady_clock::now() - waitStart > std::chrono::milliseconds(200)) {
 
@@ -593,6 +597,7 @@ void Driver::execute(const Submission& submission) {
                     }
                 } else {
                     Pm4::Execute(packet, queue);
+                    if (opcode == 0x39) passAwaited(submission, packet);
                 }
                 if (opcode == 0x49 || opcode == 0x37) {
                     if (const auto label = Pm4::DecodeLabelWrite(packet)) noteLabelStore(label->address, label->Bytes(), ++eventSerial, submission.queue);

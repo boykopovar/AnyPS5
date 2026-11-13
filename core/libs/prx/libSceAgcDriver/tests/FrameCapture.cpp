@@ -158,7 +158,7 @@ void testRoundTrip(const std::filesystem::path& directory) {
 
     const FrameCaptureReader reader(directory);
     check(!reader.Truncated(), "a finished capture reads as truncated");
-    check(reader.Version() == 2, "a capture this build wrote reads as calls format " + std::to_string(reader.Version()) + ", not 2");
+    check(reader.Version() == 4, "a capture this build wrote reads as calls format " + std::to_string(reader.Version()) + ", not 4");
     check(reader.Header() == "{\"magic\":\"aps5-frame-capture 1\"}\n", "header does not round-trip");
     check(reader.Calls().size() == calls.size(), "call count does not round-trip");
     for (std::size_t index = 0; index < calls.size(); ++index) check(sameCall(reader.Calls()[index], calls[index]), "call " + std::to_string(index) + " does not round-trip");
@@ -202,14 +202,13 @@ void testTruncated(const std::filesystem::path& source, const std::filesystem::p
     check(reader.Chunks().back().kind != FrameMemoryKind::Delta, "a cut memory chunk is not dropped");
 }
 
-void testVersionOne(const std::filesystem::path& source, const std::filesystem::path& directory) {
+void testOlderVersion(const std::filesystem::path& source, const std::filesystem::path& directory, std::string_view magic, std::uint32_t expected) {
     std::filesystem::remove_all(directory);
     std::filesystem::copy(source, directory, std::filesystem::copy_options::recursive);
-    constexpr std::string_view VersionOne = "aps5-frame-calls 1\n";
     {
         std::fstream file(directory / FrameCaptureWriter::CallsName, std::ios::binary | std::ios::in | std::ios::out);
-        file.write(VersionOne.data(), static_cast<std::streamsize>(VersionOne.size()));
-        check(file.good(), "cannot write the calls format 1 magic");
+        file.write(magic.data(), static_cast<std::streamsize>(magic.size()));
+        check(file.good(), "cannot write the calls format " + std::to_string(expected) + " magic");
     }
     std::uint32_t version = 0;
     std::vector<FrameCall> readBack;
@@ -218,12 +217,12 @@ void testVersionOne(const std::filesystem::path& source, const std::filesystem::
         version = reader.Version();
         readBack = reader.Calls();
     } catch (const std::runtime_error& error) {
-        check(false, std::string("a calls format 1 capture does not read: ") + error.what());
+        check(false, "a calls format " + std::to_string(expected) + " capture does not read: " + error.what());
     }
-    check(version == 1, "a calls format 1 capture reads as format " + std::to_string(version));
+    check(version == expected, "a calls format " + std::to_string(expected) + " capture reads as format " + std::to_string(version));
     const auto calls = sampleCalls();
-    check(readBack.size() == calls.size(), "a calls format 1 capture reads " + std::to_string(readBack.size()) + " calls, not " + std::to_string(calls.size()));
-    for (std::size_t index = 0; index < calls.size(); ++index) check(sameCall(readBack[index], calls[index]), "call " + std::to_string(index) + " of a calls format 1 capture does not round-trip");
+    check(readBack.size() == calls.size(), "a calls format " + std::to_string(expected) + " capture reads " + std::to_string(readBack.size()) + " calls, not " + std::to_string(calls.size()));
+    for (std::size_t index = 0; index < calls.size(); ++index) check(sameCall(readBack[index], calls[index]), "call " + std::to_string(index) + " of a calls format " + std::to_string(expected) + " capture does not round-trip");
 }
 
 void testCorrupt(const std::filesystem::path& source, const std::filesystem::path& directory) {
@@ -400,7 +399,9 @@ int main(int argc, char** argv) {
     testReadAroundRanges();
     testRoundTrip(root / "capture");
     testTruncated(root / "capture", root / "truncated");
-    testVersionOne(root / "capture", root / "version-one");
+    testOlderVersion(root / "capture", root / "version-one", "aps5-frame-calls 1\n", 1);
+    testOlderVersion(root / "capture", root / "version-two", "aps5-frame-calls 2\n", 2);
+    testOlderVersion(root / "capture", root / "version-three", "aps5-frame-calls 3\n", 3);
     testCorrupt(root / "capture", root / "corrupt");
     testWriter(root / "writer");
     std::filesystem::remove_all(root);

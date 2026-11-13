@@ -57,6 +57,7 @@ void Driver::markCompleted(std::uint64_t serial) {
         completed = *completedOutOfOrder.begin();
         completedOutOfOrder.erase(completedOutOfOrder.begin());
     }
+    startedAhead.erase(startedAhead.begin(), startedAhead.upper_bound(completed));
 }
 
 bool& Driver::completionDeferred() {
@@ -118,6 +119,7 @@ void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, st
                 std::lock_guard lock(driver.mutex);
                 driver.markCompleted(serial);
                 driver.forgetUnfinishedWrites(driver.workers.at(0), labelWrites);
+                driver.finishAwaited(serial);
                 const auto found = std::find(driver.queue0Uncommitted.begin(), driver.queue0Uncommitted.end(), received);
                 if (found != driver.queue0Uncommitted.end()) driver.queue0Uncommitted.erase(found);
                 notify = driver.idleWaiters != 0 || driver.orderHolders.load(std::memory_order_acquire) != 0 || completionsPending();
@@ -261,6 +263,7 @@ void Driver::run(std::uint32_t id) noexcept {
                 submission = std::move(pending.front());
                 pending.pop_front();
                 worker.executingPacket.store(0, std::memory_order_relaxed);
+                if (submission.serial > completed) startedAhead.insert(submission.serial);
                 if (APS5_ENABLE_TIMING_LOG) submission.dequeuedAt = std::chrono::steady_clock::now();
                 if (id == 0) queue0Executing = submission.suspend ? 0 : submission.received;
                 struct OrderHold {
@@ -299,8 +302,11 @@ void Driver::run(std::uint32_t id) noexcept {
                 if (profile && submission.enqueuedAt != std::chrono::steady_clock::time_point{}) costs.dequeueNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - submission.enqueuedAt).count());
             }
             retireLabelTakes(id, submission.received);
-            execute(submission);
-            if (submission.progress && submission.rewindTail == nullptr && !completionDeferred()) submitOpenWork(submission.progress);
+            {
+                const GuestMemory::StoreSerialScope storing(submission.serial);
+                execute(submission);
+                if (submission.progress && submission.rewindTail == nullptr && !completionDeferred()) submitOpenWork(submission.progress);
+            }
             if (traceGpu) std::fprintf(stderr, "[gpu] %.1f done serial=%llu queue=0x%x\n", TraceMs(), static_cast<unsigned long long>(submission.serial), id);
             const auto completeStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             PerformanceContext completionContext(id == 0 ? frameTiming() : FrameTiming::Async());
@@ -312,6 +318,7 @@ void Driver::run(std::uint32_t id) noexcept {
                 if (!std::exchange(completionDeferred(), false)) {
                     markCompleted(submission.serial);
                     forgetUnfinishedWrites(workers.at(id), submission);
+                    finishAwaited(submission.serial);
                 }
                 if (id == 0) queue0Executing = 0;
                 if (id != 0) {
