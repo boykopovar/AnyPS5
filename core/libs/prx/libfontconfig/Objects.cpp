@@ -402,6 +402,16 @@ FcResult APS5_VABI FcPatternGetString(const FcPattern* pattern, const char* obje
     return FcResultMatch;
 }
 
+FcResult APS5_VABI FcPatternGetFTFace(const FcPattern* pattern, const char* object, int id, void** face) {
+    FcValue found{};
+    const auto result = FcPatternGet(pattern, object, id, &found);
+    if (result != FcResultMatch) return result;
+    if (found.type != FcTypeFTFace) return FcResultTypeMismatch;
+    if (!face) NotImplemented_nid_no_patch(__func__);
+    *face = found.u.f;
+    return FcResultMatch;
+}
+
 FcResult APS5_VABI FcPatternGetMatrix(const FcPattern* pattern, const char* object, int id, FcMatrix** value) {
     FcValue found{};
     const auto result = FcPatternGet(pattern, object, id, &found);

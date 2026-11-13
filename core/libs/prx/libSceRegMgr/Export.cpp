@@ -1,4 +1,5 @@
 #include "prx/libSceRegMgr/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -42,7 +43,11 @@ public:
         auto it = entries_.find(key);
         if (it == entries_.end()) return SCE_REG_MGR_ERROR_NOT_FOUND;
         if (it->second.type != TypeInt) return SCE_REG_MGR_ERROR_INVALID_TYPE;
-        *out = it->second.intVal;
+        const int32_t val = it->second.intVal;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(out, &val, sizeof(val));
+        errno = savedErrno;
+        if (!copied) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         return 0;
     }
 
@@ -54,7 +59,10 @@ public:
         if (it == entries_.end()) return SCE_REG_MGR_ERROR_NOT_FOUND;
         if (it->second.type != TypeStr) return SCE_REG_MGR_ERROR_INVALID_TYPE;
         if (static_cast<size_t>(len) <= it->second.strVal.size()) return SCE_REG_MGR_ERROR_BUFFER_TOO_SMALL;
-        std::memcpy(out, it->second.strVal.c_str(), it->second.strVal.size() + 1);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(out, it->second.strVal.c_str(), it->second.strVal.size() + 1);
+        errno = savedErrno;
+        if (!copied) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         return 0;
     }
 
@@ -66,7 +74,10 @@ public:
         if (it == entries_.end()) return SCE_REG_MGR_ERROR_NOT_FOUND;
         if (it->second.type != TypeBin) return SCE_REG_MGR_ERROR_INVALID_TYPE;
         if (static_cast<size_t>(size) < it->second.binVal.size()) return SCE_REG_MGR_ERROR_BUFFER_TOO_SMALL;
-        std::memcpy(out, it->second.binVal.data(), it->second.binVal.size());
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(out, it->second.binVal.data(), it->second.binVal.size());
+        errno = savedErrno;
+        if (!copied) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         return 0;
     }
 

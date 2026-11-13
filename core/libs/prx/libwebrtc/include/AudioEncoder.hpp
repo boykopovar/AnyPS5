@@ -3,7 +3,18 @@
 #include <cstddef>
 #include <cstdint>
 
-struct WebRtcAudioEncoder;
+struct WebRtcAudioEncoder {
+    const void* vtable;
+};
+
+struct WebRtcBitrateAllocationUpdate {
+    std::int64_t targetBitrateBps;
+    std::int64_t stableTargetBitrateBps;
+    double packetLossRatio;
+    std::int64_t roundTripTimeUs;
+    std::int64_t bwePeriodUs;
+    double cwndReduceRatio;
+};
 
 struct WebRtcOptionalUint32 {
     union {
@@ -36,3 +47,32 @@ static_assert(offsetof(WebRtcOptionalUint32, engaged) == 4);
 static_assert(sizeof(WebRtcOptionalFloat) == 8);
 static_assert(sizeof(WebRtcAnaStats) == 56);
 static_assert(offsetof(WebRtcAnaStats, uplinkPacketLossFraction) == 48);
+static_assert(sizeof(WebRtcAudioEncoder) == 8);
+static_assert(sizeof(WebRtcBitrateAllocationUpdate) == 48);
+static_assert(offsetof(WebRtcBitrateAllocationUpdate, targetBitrateBps) == 0);
+static_assert(offsetof(WebRtcBitrateAllocationUpdate, bwePeriodUs) == 32);
+
+struct WebRtcAudioEncodedInfoLeaf {
+    std::size_t encodedBytes;
+    std::uint32_t encodedTimestamp;
+    int payloadType;
+    bool sendEvenIfEmpty;
+    bool speech;
+    int encoderType;
+};
+
+struct WebRtcAudioEncodedInfo {
+    WebRtcAudioEncodedInfoLeaf leaf;
+    WebRtcAudioEncodedInfoLeaf* redundantBegin;
+    WebRtcAudioEncodedInfoLeaf* redundantEnd;
+    WebRtcAudioEncodedInfoLeaf* redundantCapacity;
+};
+
+static_assert(sizeof(WebRtcAudioEncodedInfoLeaf) == 24);
+static_assert(offsetof(WebRtcAudioEncodedInfoLeaf, encodedTimestamp) == 8);
+static_assert(offsetof(WebRtcAudioEncodedInfoLeaf, payloadType) == 12);
+static_assert(offsetof(WebRtcAudioEncodedInfoLeaf, sendEvenIfEmpty) == 16);
+static_assert(offsetof(WebRtcAudioEncodedInfoLeaf, speech) == 17);
+static_assert(offsetof(WebRtcAudioEncodedInfoLeaf, encoderType) == 20);
+static_assert(sizeof(WebRtcAudioEncodedInfo) == 48);
+static_assert(offsetof(WebRtcAudioEncodedInfo, redundantBegin) == 24);

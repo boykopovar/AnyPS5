@@ -260,7 +260,7 @@ int main() {
     Require(pthread_setaffinity_np_nid_postfix(target, 8, outside) == GUEST_EDEADLK);
     Require(pthread_setaffinity_np_nid_postfix(pthread_self_nid_postfix(), 16, outside) == GUEST_EDEADLK);
     Require(ReadCpuset(target) == available && ReadCpuset(pthread_self_nid_postfix()) == first);
-    for (const std::size_t size : {std::size_t{0}, std::size_t{1}, std::size_t{4}, std::size_t{7}, std::size_t{24}, std::size_t{32}, std::size_t{64}, std::size_t{128}}) {
+    for (const std::size_t size : {std::size_t{0}, std::size_t{1}, std::size_t{4}, std::size_t{7}, std::size_t{17}, std::size_t{20}, std::size_t{23}, std::size_t{24}, std::size_t{32}, std::size_t{64}, std::size_t{128}}) {
         Require(pthread_setaffinity_np_nid_postfix(pthread_self_nid_postfix(), size, request) == GUEST_ERANGE);
         Require(pthread_setaffinity_np_nid_postfix(target, size, request) == GUEST_ERANGE);
     }
@@ -279,7 +279,7 @@ int main() {
 
     Require(ReadCpuset(pthread_self_nid_postfix()) == available);
     std::uint8_t rawSet[GUEST_CPUSET_BYTES]{};
-    for (const std::size_t size : {std::size_t{24}, std::size_t{32}, std::size_t{33}, std::size_t{64}})
+    for (const std::size_t size : {std::size_t{17}, std::size_t{20}, std::size_t{23}, std::size_t{24}, std::size_t{32}, std::size_t{33}, std::size_t{64}})
         Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), size, rawSet) == GUEST_ERANGE);
     for (const std::size_t size : {std::size_t{0}, std::size_t{1}, std::size_t{4}, std::size_t{7}})
         Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), size, rawSet) == GUEST_ERANGE);
@@ -323,6 +323,7 @@ int main() {
     };
     Require(throws([&] { cpuset_getaffinity_nid_postfix(3, 4, -1, 8, processSet); }));
     std::uint64_t pinnedSelf[4] = {available & (~available + 1), 0, 0, 0};
+    for (const std::size_t size : {std::size_t{17}, std::size_t{23}}) Require(cpuset_setaffinity_nid_postfix(3, 1, -1, size, pinnedSelf) == -1 && *__error_nid_postfix() == GUEST_ERANGE);
     Require(cpuset_setaffinity_nid_postfix(3, 1, -1, 8, pinnedSelf) == 0);
     for (const int which : {1, 2}) {
         for (const std::size_t size : {std::size_t{8}, std::size_t{16}}) {
