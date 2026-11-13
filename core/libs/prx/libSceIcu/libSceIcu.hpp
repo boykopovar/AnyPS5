@@ -41,3 +41,4 @@
 #include "RecoveredSignatures.hpp"
 #include "BreakIterator.hpp"
 #include "Data.hpp"
+#include "Copy.hpp"
