@@ -343,6 +343,122 @@ void testNativeRepeatPreflight(const std::filesystem::path& directory) {
     device->WaitIdle();
 }
 
+struct NativeUploadFailureProbe {
+    explicit NativeUploadFailureProbe(AgcDriver::Graphics::Context& context) : original(context.deviceProc) {
+        check(active == nullptr && original != nullptr, "native upload failure probe has no unique resolver");
+        copy = reinterpret_cast<PFN_vkCmdCopyBufferToImage>(original(context.device, "vkCmdCopyBufferToImage"));
+        wait = reinterpret_cast<PFN_vkWaitForFences>(original(context.device, "vkWaitForFences"));
+        check(copy != nullptr && wait != nullptr, "native upload failure probe has no native transfer or wait function");
+        fallback = original;
+        fallbackCopy = copy;
+        fallbackWait = wait;
+        active = this;
+        context.deviceProc = Resolve;
+    }
+
+    ~NativeUploadFailureProbe() { Disarm(); }
+    void Disarm() { armed = false; active = nullptr; }
+
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL Resolve(VkDevice device, const char* name) {
+        if (active != nullptr && active->armed) {
+            if (std::strcmp(name, "vkCmdCopyBufferToImage") == 0) {
+                ++active->lookups;
+                if (active->lookups == 2u) {
+                    ++active->refused;
+                    return nullptr;
+                }
+                return reinterpret_cast<PFN_vkVoidFunction>(&Copy);
+            }
+            if (std::strcmp(name, "vkWaitForFences") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&Wait);
+        }
+        return (active != nullptr ? active->original : fallback)(device, name);
+    }
+
+    static VKAPI_ATTR void VKAPI_CALL Copy(VkCommandBuffer commands, VkBuffer source, VkImage destination, VkImageLayout layout, std::uint32_t count, const VkBufferImageCopy* regions) {
+        auto* probe = active;
+        if (probe != nullptr && probe->armed) ++probe->calls;
+        (probe != nullptr ? probe->copy : fallbackCopy)(commands, source, destination, layout, count, regions);
+    }
+
+    static VKAPI_ATTR VkResult VKAPI_CALL Wait(VkDevice device, std::uint32_t count, const VkFence* fences, VkBool32 all, std::uint64_t timeout) {
+        auto* probe = active;
+        const auto result = (probe != nullptr ? probe->wait : fallbackWait)(device, count, fences, all, timeout);
+        if (probe != nullptr && probe->armed && probe->calls == 1u && probe->refused == 0u && result == VK_SUCCESS) ++probe->completedFirstUploadWaits;
+        return result;
+    }
+
+    inline static NativeUploadFailureProbe* active = nullptr;
+    inline static PFN_vkGetDeviceProcAddr fallback = nullptr;
+    inline static PFN_vkCmdCopyBufferToImage fallbackCopy = nullptr;
+    inline static PFN_vkWaitForFences fallbackWait = nullptr;
+    PFN_vkGetDeviceProcAddr original;
+    PFN_vkCmdCopyBufferToImage copy = nullptr;
+    PFN_vkWaitForFences wait = nullptr;
+    bool armed = false;
+    unsigned lookups = 0u;
+    unsigned calls = 0u;
+    unsigned refused = 0u;
+    unsigned completedFirstUploadWaits = 0u;
+};
+
+void testNativeRepeatFailure() {
+    constexpr std::size_t Step = 131072u;
+    constexpr std::size_t Bytes = 16u * Step;
+    constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
+    const auto texels = Extent.width * Extent.height;
+    const auto begin = address(allocate(Bytes));
+    auto opened = OpenVulkanTestDevice();
+    check(opened != nullptr, "native partial upload failure device unavailable");
+    auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
+    AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
+    auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    const auto shaders = DepthFastClearHarness::Compile(*device);
+    for (unsigned index = 0u; index < 2u; ++index) {
+        DepthFastClearHarness::DrawOptions options;
+        options.depthWrite = true;
+        options.depthCompare = VK_COMPARE_OP_ALWAYS;
+        options.minDepth = options.maxDepth = static_cast<float>(index + 1u) * 0.25f;
+        const DepthFastClearHarness::Surface surface{begin + index * Step, 0u, 0u, false, VK_FORMAT_D16_UNORM};
+        check(DepthFastClearHarness::Draw(*device, shaders, surface, options) == texels, "native partial upload failure source draw failed");
+    }
+    device->WaitIdle();
+    const auto captured = device->CaptureNativeDepth();
+    check(captured.size() == 2u, "native partial upload failure fixture needs two actual native planes");
+    for (unsigned index = 0u; index < 2u; ++index) {
+        const auto& snapshot = captured[index];
+        check(snapshot.target.address == begin + index * Step && snapshot.depth.size() == texels * 2u, "native partial upload failure captured the wrong plane");
+        for (std::size_t pixel = 0u; pixel < texels; ++pixel) {
+            std::uint16_t bits = 0u;
+            std::memcpy(&bits, snapshot.depth.data() + pixel * 2u, sizeof(bits));
+            check(std::abs(static_cast<float>(bits) / 65535.0f - static_cast<float>(index + 1u) * 0.25f) < 2.0f / 65535.0f, "native partial upload failure captured an unexpected texel");
+        }
+    }
+    NativeUploadFailureProbe probe(context);
+    bool rejected = false;
+    bool continued = false;
+    try {
+        exclusive([&] {
+            check(AgcDriver::Graphics::FlushExclusion::SelectionExcludedForTest() && AgcDriver::GuestMemory::GpuMutex().HeldByThisThread(), "native partial upload failure is outside the actual guest memory transaction");
+            const auto discarded = AgcDriver::DiscardNativeDepthForReplay_nid_no_patch();
+            check(discarded.depthSurfaces >= 2u, "native partial upload failure did not discard its old graph");
+            probe.armed = true;
+            AgcDriver::Graphics::RestoreNativeDepthSurfaces(context, captured);
+            continued = true;
+        });
+    } catch (const std::runtime_error& error) {
+        rejected = std::string_view(error.what()) == "AGC graphics: missing Vulkan function: vkCmdCopyBufferToImage";
+    }
+    probe.Disarm();
+    check(context.deviceProc(context.device, "vkCmdCopyBufferToImage") == reinterpret_cast<PFN_vkVoidFunction>(probe.copy), "native partial upload failure did not restore its native resolver fallback");
+    device->WaitIdle();
+    check(rejected && !continued && probe.lookups == 2u && probe.calls == 1u && probe.refused == 1u && probe.completedFirstUploadWaits >= 1u, "native partial upload failure did not reject exactly the second lookup after completing the first real upload");
+    const auto active = std::ranges::count_if(captured, [&](const auto& snapshot) { return AgcDriver::Graphics::ActiveDepthExtent(device->Device(), snapshot.target.address).has_value(); });
+    const auto owners = AgcDriver::Graphics::ResidentDepthOwnersOver(begin, Bytes, false);
+    std::printf("native partial upload failure: lookups=%u copy_calls=%u first_upload_waits=%u refused=%u continued=%u active_planes=%zu resident_owners=%zu\n", probe.lookups, probe.calls, probe.completedFirstUploadWaits, probe.refused, continued ? 1u : 0u, static_cast<std::size_t>(active), owners);
+    check(active == 0 && owners == 0u, "native restoration failure left an active partial owner graph");
+    check(AgcDriver::DriverDetail::DriverTestAccess::Device().get() == device.get(), "native partial upload failure replaced the VulkanDevice object");
+}
+
 void testMemoryOrder(const std::filesystem::path& directory) {
     constexpr std::size_t Size = 64u * 1024u * 1024u;
     auto* bytes = allocate(Size);
@@ -1716,7 +1832,8 @@ int main(int argc, char** argv) {
             writeInspectionCapture(directory);
             return 0;
         }
-        if (mode == "native_repeat_preflight") testNativeRepeatPreflight(directory);
+        if (mode == "native_repeat_failure") testNativeRepeatFailure();
+        else if (mode == "native_repeat_preflight") testNativeRepeatPreflight(directory);
         else if (mode == "native_repeat_stored_owner") testNativeRetiredStoredOwner(directory);
         else if (mode == "native_repeat_state" || mode == "native_repeat_clean" || mode == "native_repeat_companions") testNativeRepeat(directory, mode);
         else if (mode == "order") testMemoryOrder(directory);
