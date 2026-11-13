@@ -34,14 +34,30 @@ int main() {
     const void* pageRef = NKWebKit::ToRef(page);
     Require(!WKPageCanGoBack(pageRef));
     Require(!WKPageCanGoForward(pageRef));
+    Require(!WKPageIsPinnedToLeftSide(pageRef));
+    Require(!WKPageIsPinnedToRightSide(pageRef));
+    Require(!WKPageIsPinnedToTopSide(pageRef));
+    Require(!WKPageIsPinnedToBottomSide(pageRef));
 
     page->canGoBack = true;
     page->canGoForward = true;
+    page->isPinnedToLeftSide = true;
+    page->isPinnedToRightSide = true;
+    page->isPinnedToTopSide = true;
+    page->isPinnedToBottomSide = true;
     Require(WKPageCanGoBack(pageRef));
     Require(WKPageCanGoForward(pageRef));
+    Require(WKPageIsPinnedToLeftSide(pageRef));
+    Require(WKPageIsPinnedToRightSide(pageRef));
+    Require(WKPageIsPinnedToTopSide(pageRef));
+    Require(WKPageIsPinnedToBottomSide(pageRef));
 
     RequireInvalidArgument([] { WKPageCanGoBack(nullptr); });
     RequireInvalidArgument([] { WKPageCanGoForward(nullptr); });
+    RequireInvalidArgument([] { WKPageIsPinnedToLeftSide(nullptr); });
+    RequireInvalidArgument([] { WKPageIsPinnedToRightSide(nullptr); });
+    RequireInvalidArgument([] { WKPageIsPinnedToTopSide(nullptr); });
+    RequireInvalidArgument([] { WKPageIsPinnedToBottomSide(nullptr); });
 
     WKRelease(pageRef);
     return 0;
