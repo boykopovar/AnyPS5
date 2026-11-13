@@ -663,6 +663,21 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/SslMethod.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslBio.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslLifecycle.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_ssl_lifecycle_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslSslLifecycle.cpp)
+    target_include_directories(guest_libressl_ssl_lifecycle_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_ssl_lifecycle_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_ssl_lifecycle_tests)
+    add_test(NAME guest_libressl_ssl_lifecycle COMMAND guest_libressl_ssl_lifecycle_tests)
+    set_tests_properties(guest_libressl_ssl_lifecycle PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_ssl_lifecycle PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_x509_extension_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslX509Extension.cpp)
     target_include_directories(guest_libressl_x509_extension_tests PRIVATE ${LIBS_INCLUDE_DIR})
