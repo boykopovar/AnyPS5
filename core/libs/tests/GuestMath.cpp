@@ -3329,6 +3329,20 @@ static void CheckLongDoubleFunctions() {
     const float positiveGammaUnderflow = tgammaf_nid_postfix(-4261.2f);
     Require(negativeGammaUnderflow == 0.0f && std::signbit(negativeGammaUnderflow));
     Require(positiveGammaUnderflow == 0.0f && !std::signbit(positiveGammaUnderflow));
+    for (const float x : {171.63002f, 200.0f, 3.0e38f}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isinf(tgammaf_nid_postfix(x)) && std::fetestexcept(FE_DIVBYZERO) != 0 && std::fetestexcept(FE_OVERFLOW) == 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::isinf(tgammaf_nid_postfix(171.62999f)) && std::fetestexcept(FE_OVERFLOW) != 0 && std::fetestexcept(FE_DIVBYZERO) == 0);
+    for (const float x : {-190.00002f, -191.5f, -4261.2f}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(tgammaf_nid_postfix(x) == 0.0f && std::fetestexcept(FE_UNDERFLOW) == 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(tgammaf_nid_postfix(-189.5f) == 0.0f && std::fetestexcept(FE_UNDERFLOW) != 0);
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::isnan(tgammaf_nid_postfix(std::numeric_limits<float>::quiet_NaN())) && std::fetestexcept(FE_INVALID) == 0);
     for (const float x : {0.0f, -0.0f, -INFINITY, INFINITY, 40.0f, 1.0e5f, 3.0e38f, -4261.2f, 0.5f}) {
         errno = 7;
         static_cast<void>(tgammaf_nid_postfix(x));

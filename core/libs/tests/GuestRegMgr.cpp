@@ -62,6 +62,9 @@ int main() {
     Require(sceRegMgrSetStr(0x2001, "hello", 6) == 0);
     std::memset(strBuf, 0, sizeof(strBuf));
     Require(sceRegMgrGetStr(0x2001, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "hello") == 0);
+    errno = 71;
+    Require(sceRegMgrGetStr(0x2001, reinterpret_cast<char*>(0x10), sizeof(strBuf)) == static_cast<int>(0x80820001));
+    Require(errno == 71);
     Require(sceRegMgrSetStr(0x2001, "world", 6) == 0);
     Require(sceRegMgrGetStr(0x2001, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "world") == 0);
     const std::uint8_t data[] = {1, 2, 3, 4};
@@ -69,6 +72,9 @@ int main() {
     std::memset(binBuf, 0, sizeof(binBuf));
     Require(sceRegMgrGetBin(0x2002, binBuf, sizeof(binBuf)) == 0);
     Require(std::memcmp(binBuf, data, sizeof(data)) == 0);
+    errno = 71;
+    Require(sceRegMgrGetBin(0x2002, reinterpret_cast<uint8_t*>(0x10), sizeof(binBuf)) == static_cast<int>(0x80820001));
+    Require(errno == 71);
     const std::uint8_t shorter[] = {9, 8};
     Require(sceRegMgrSetBin(0x2002, shorter, sizeof(shorter)) == 0);
     std::memset(binBuf, 0, sizeof(binBuf));
