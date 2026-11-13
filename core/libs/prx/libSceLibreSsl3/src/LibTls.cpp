@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <stdexcept>
 
 namespace {
 
@@ -16,6 +17,7 @@ struct ConfigStorage {
     std::uint8_t* cert = nullptr;
     std::size_t certLength = 0;
     std::uint32_t protocols = 24;
+    char* ciphers = nullptr;
     int verifyClient = 0;
     int verifyName = 1;
     const char* error = nullptr;
@@ -79,6 +81,35 @@ int SetMemory(std::uint8_t*& destination, std::size_t& destinationLength,
     return 0;
 }
 
+constexpr const char* CiphersDefault = "TLSv1.3:TLSv1.2+AEAD+ECDHE:TLSv1.2+AEAD+DHE";
+constexpr const char* CiphersCompat = "HIGH:!aNULL";
+constexpr const char* CiphersLegacy = "HIGH:MEDIUM:!aNULL";
+constexpr const char* CiphersAll = "ALL:!aNULL:!eNULL";
+
+char LowerAscii(char value) {
+    return value >= 'A' && value <= 'Z' ? static_cast<char>(value - 'A' + 'a') : value;
+}
+
+bool EqualsIgnoringCase(const char* left, const char* right) {
+    for (; *left && *right; ++left, ++right)
+        if (LowerAscii(*left) != LowerAscii(*right)) return false;
+    return *left == *right;
+}
+
+const char* ResolveCiphers(const char* ciphers) {
+    if (!ciphers || EqualsIgnoringCase(ciphers, "default") || EqualsIgnoringCase(ciphers, "secure")) return CiphersDefault;
+    if (EqualsIgnoringCase(ciphers, "compat")) return CiphersCompat;
+    if (EqualsIgnoringCase(ciphers, "legacy")) return CiphersLegacy;
+    if (EqualsIgnoringCase(ciphers, "all") || EqualsIgnoringCase(ciphers, "insecure")) return CiphersAll;
+    return ciphers;
+}
+
+bool IsPresetCiphers(const char* ciphers) {
+    for (const char* preset : {CiphersDefault, CiphersCompat, CiphersLegacy, CiphersAll})
+        if (std::strcmp(ciphers, preset) == 0) return true;
+    return false;
+}
+
 void Retain(ConfigStorage* config) {
     config->references.fetch_add(1, std::memory_order_relaxed);
 }
@@ -90,6 +121,7 @@ void Release(ConfigStorage* config) {
     ClearKey(*config);
     ClearMemory(config->ca, config->caLength);
     ClearMemory(config->cert, config->certLength);
+    std::free(config->ciphers);
     delete config;
 }
 
@@ -196,6 +228,22 @@ int APS5_VABI tls_config_set_cert_mem_nid_postfix(TlsConfig* config, const std::
 int APS5_VABI tls_config_set_protocols_nid_postfix(TlsConfig* config, std::uint32_t protocols) {
     if (!config) return -1;
     Storage(config)->protocols = protocols;
+    return 0;
+}
+
+int APS5_VABI tls_config_set_ciphers_nid_postfix(TlsConfig* config, const char* ciphers) {
+    if (!config) return -1;
+    const char* resolved = ResolveCiphers(ciphers);
+    if (!IsPresetCiphers(resolved))
+        throw std::runtime_error("tls_config_set_ciphers: validating a cipher string other than the libtls presets is not implemented");
+    auto& state = *Storage(config);
+    std::free(state.ciphers);
+    state.ciphers = nullptr;
+    const std::size_t size = std::strlen(resolved) + 1;
+    auto* copy = static_cast<char*>(std::malloc(size));
+    if (!copy) return -1;
+    std::memcpy(copy, resolved, size);
+    state.ciphers = copy;
     return 0;
 }
 
