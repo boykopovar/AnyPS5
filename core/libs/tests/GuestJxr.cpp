@@ -990,6 +990,25 @@ void TestDecodeRelease() {
 int main() {
     InitializeHeap();
     TestFormatConverterGetResolution();
+    {
+        std::array<std::uint8_t, 16> decoder {};
+        std::array<std::uint8_t, 16> rect {};
+        std::array<std::uint8_t, 16> buffer {};
+        decoder.fill(0x35);
+        rect.fill(0x6a);
+        buffer.fill(0xc7);
+        const auto decoderBefore = decoder;
+        const auto rectBefore = rect;
+        const auto bufferBefore = buffer;
+        Require(PKImageDecode_Copy_nid_postfix(nullptr, nullptr, nullptr, 0) == -3);
+        for (const auto stride : {std::uint32_t{0}, std::uint32_t{1}, std::uint32_t{0xffffffff}}) {
+            Require(PKImageDecode_Copy_nid_postfix(decoder.data(), rect.data(), buffer.data(), stride) == -3);
+            Require(PKImageDecode_Copy_nid_postfix(nullptr, rect.data(), buffer.data(), stride) == -3);
+            Require(PKImageDecode_Copy_nid_postfix(decoder.data(), nullptr, buffer.data(), stride) == -3);
+            Require(PKImageDecode_Copy_nid_postfix(decoder.data(), rect.data(), nullptr, stride) == -3);
+        }
+        Require(decoder == decoderBefore && rect == rectBefore && buffer == bufferBefore);
+    }
     void* memory = malloc_nid_postfix(64);
     Require(memory != nullptr);
     void* const allocated = memory;

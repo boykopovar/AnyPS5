@@ -135,10 +135,25 @@ const char* APS5_VABI FT_Get_X11_Font_FormatForward_nid_no_patch(FreeType::Guest
 }
 APS5_EXPORT("aWMUKhiwUbk", FT_Get_X11_Font_FormatForward_nid_no_patch);
 
+int APS5_VABI FT_Glyph_CopyForward_nid_no_patch(FreeType::GuestGlyphRec* source, FreeType::GuestGlyphRec** target) {
+    return FT_Glyph_Copy_nid_postfix(source, target);
+}
+APS5_EXPORT("Dr3F3qrSQ2c", FT_Glyph_CopyForward_nid_no_patch);
+
+int APS5_VABI FT_Has_PS_Glyph_NamesForward_nid_no_patch(FreeType::GuestFaceRec* face) {
+    return FT_Has_PS_Glyph_Names_nid_postfix(face);
+}
+APS5_EXPORT("x8y0qzLiYOU", FT_Has_PS_Glyph_NamesForward_nid_no_patch);
+
 int APS5_VABI FT_Init_FreeTypeForward_nid_no_patch(FreeType::GuestLibrary** alibrary) {
     return FT_Init_FreeType_nid_postfix(alibrary);
 }
 APS5_EXPORT("GNsiLzm4SH8", FT_Init_FreeTypeForward_nid_no_patch);
+
+void APS5_VABI FT_Library_VersionForward_nid_no_patch(FreeType::GuestLibrary* library, std::int32_t* major, std::int32_t* minor, std::int32_t* patch) {
+    return FT_Library_Version_nid_postfix(library, major, minor, patch);
+}
+APS5_EXPORT("5qqbXOGlHw4", FT_Library_VersionForward_nid_no_patch);
 
 void APS5_VABI FT_List_AddForward_nid_no_patch(FreeType::GuestListRec* list, FreeType::GuestListNodeRec* node) {
     return FT_List_Add_nid_postfix(list, node);
@@ -210,10 +225,25 @@ int APS5_VABI FT_Outline_CheckForward_nid_no_patch(FreeType::GuestOutline* outli
 }
 APS5_EXPORT("C4a3dGgs+Cc", FT_Outline_CheckForward_nid_no_patch);
 
+int APS5_VABI FT_Outline_DoneForward_nid_no_patch(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline) {
+    return FT_Outline_Done_nid_postfix(library, outline);
+}
+APS5_EXPORT("BqGJsJcFYaM", FT_Outline_DoneForward_nid_no_patch);
+
 void APS5_VABI FT_Outline_Get_CBoxForward_nid_no_patch(const FreeType::GuestOutline* outline, FreeType::GuestBBox* box) {
     return FT_Outline_Get_CBox_nid_postfix(outline, box);
 }
 APS5_EXPORT("8ZxmGwESvSQ", FT_Outline_Get_CBoxForward_nid_no_patch);
+
+int APS5_VABI FT_Outline_NewForward_nid_no_patch(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline) {
+    return FT_Outline_New_nid_postfix(library, numPoints, numContours, outline);
+}
+APS5_EXPORT("QH2emcgeFck", FT_Outline_NewForward_nid_no_patch);
+
+int APS5_VABI FT_Outline_RenderForward_nid_no_patch(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline, FreeType::GuestRasterParams* params) {
+    return FT_Outline_Render_nid_postfix(library, outline, params);
+}
+APS5_EXPORT("9km02mPqPJE", FT_Outline_RenderForward_nid_no_patch);
 
 void APS5_VABI FT_Outline_ReverseForward_nid_no_patch(FreeType::GuestOutline* outline) {
     return FT_Outline_Reverse_nid_postfix(outline);
@@ -225,10 +255,30 @@ void APS5_VABI FT_Outline_TranslateForward_nid_no_patch(const FreeType::GuestOut
 }
 APS5_EXPORT("7HoSJ30RWXk", FT_Outline_TranslateForward_nid_no_patch);
 
+int APS5_VABI FT_Property_GetForward_nid_no_patch(FreeType::GuestLibrary* library, const char* moduleName, const char* propertyName, void* value) {
+    return FT_Property_Get_nid_postfix(library, moduleName, propertyName, value);
+}
+APS5_EXPORT("8fAMdZCnewA", FT_Property_GetForward_nid_no_patch);
+
+int APS5_VABI FT_Property_SetForward_nid_no_patch(FreeType::GuestLibrary* library, const char* moduleName, const char* propertyName, const void* value) {
+    return FT_Property_Set_nid_postfix(library, moduleName, propertyName, value);
+}
+APS5_EXPORT("LsB538+IPrE", FT_Property_SetForward_nid_no_patch);
+
+std::int32_t APS5_VABI FT_QAllocForward_nid_no_patch(FreeType::GuestMemoryRec* memory, std::int64_t size, void** block) {
+    return FT_QAlloc_nid_postfix(memory, size, block);
+}
+APS5_EXPORT("hz-J3hohXW8", FT_QAllocForward_nid_no_patch);
+
 int APS5_VABI FT_Reference_FaceForward_nid_no_patch(FreeType::GuestFaceRec* face) {
     return FT_Reference_Face_nid_postfix(face);
 }
 APS5_EXPORT("HkSJXCHCQCU", FT_Reference_FaceForward_nid_no_patch);
+
+int APS5_VABI FT_Remove_ModuleForward_nid_no_patch(FreeType::GuestLibrary* library, void* module) {
+    return FT_Remove_Module_nid_postfix(library, module);
+}
+APS5_EXPORT("5ipBcLYVc2k", FT_Remove_ModuleForward_nid_no_patch);
 
 int APS5_VABI FT_Render_GlyphForward_nid_no_patch(FreeType::GuestGlyphSlotRec* slot, std::int32_t renderMode) {
     return FT_Render_Glyph_nid_postfix(slot, renderMode);

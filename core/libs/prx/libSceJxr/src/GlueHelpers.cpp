@@ -1,6 +1,7 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "ConverterCallbacks.h"
+#include "DecodeCallbacks.h"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceJxr/include/GuidExports.hpp"
 #include <cstddef>
@@ -34,6 +35,9 @@ std::int64_t JxrDecodeGetFrameCount_nid_no_patch(void* decoder, std::uint32_t* c
 std::int64_t JxrDecodeGetColorContext_nid_no_patch(void* decoder, std::uint8_t* buffer, std::uint32_t* size);
 std::int64_t JxrDecodeGetDescriptiveMetadata_nid_no_patch(void* decoder, void* metadata);
 std::int64_t JxrDecodeRelease_nid_no_patch(void** decoder);
+std::int64_t JxrDecodeCreateGuest_nid_no_patch(void** decoder, const JxrDecodeCallbacks* callbacks);
+std::int64_t JxrDecodeCopy_nid_no_patch(void* decoder, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride);
+std::int64_t JxrDecodeSelectFrame_nid_no_patch(void* decoder, std::uint32_t frame);
 
 void* JxrGuestCalloc_nid_no_patch(std::size_t count, std::size_t size) {
     return calloc_nid_postfix(count, size);
@@ -122,8 +126,6 @@ std::int64_t StoreIid(std::int64_t (*lookup)(const char*, std::uint32_t*), const
     return result;
 }
 
-
-
 std::int64_t InitializeConvert(JxrGuestFormatConverter* converter, JxrGuestGuid sourceFormat, char* extension,
                                JxrGuestGuid targetFormat) {
     if (!converter) throw std::invalid_argument("PKFormatConverter_InitializeConvert requires a converter");
@@ -141,6 +143,22 @@ std::int64_t InitializeConvert(JxrGuestFormatConverter* converter, JxrGuestGuid 
         }
     }
     return result;
+}
+
+std::int64_t APS5_VABI DecodeInitializeGuest(void* decoder, void* stream) {
+    return PKImageDecode_Initialize_nid_postfix(decoder, static_cast<Jxr::Stream*>(stream));
+}
+
+std::int64_t APS5_VABI DecodeGetPixelFormatGuest(void* decoder, void* format) {
+    return PKImageDecode_GetPixelFormat_nid_postfix(decoder, static_cast<JxrGuestGuid*>(format));
+}
+
+std::int64_t APS5_VABI DecodeCopyGuest(void* decoder, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride) {
+    return JxrDecodeCopy_nid_no_patch(decoder, rectangle, buffer, stride);
+}
+
+std::int64_t APS5_VABI DecodeSelectFrameGuest(void* decoder, std::uint32_t frame) {
+    return JxrDecodeSelectFrame_nid_no_patch(decoder, frame);
 }
 
 } // namespace
@@ -228,6 +246,22 @@ std::int64_t APS5_VABI PKImageDecode_Release_nid_postfix(void** decoder) {
     if (!decoder || !*decoder) throw std::invalid_argument("PKImageDecode_Release requires a decoder");
     if (!JxrDecodeHasClose_nid_no_patch(*decoder)) throw std::invalid_argument("PKImageDecode_Release requires a stream Close callback when the decoder owns its stream");
     return JxrDecodeRelease_nid_no_patch(decoder);
+}
+
+std::int64_t APS5_VABI PKImageDecode_Create_nid_postfix(void** decoder) {
+    static const JxrDecodeCallbacks callbacks{
+        DecodeInitializeGuest,
+        DecodeGetPixelFormatGuest,
+        PKImageDecode_GetSize_nid_postfix,
+        PKImageDecode_GetResolution_nid_postfix,
+        PKImageDecode_GetColorContext_nid_postfix,
+        PKImageDecode_GetDescriptiveMetadata_nid_postfix,
+        DecodeCopyGuest,
+        PKImageDecode_GetFrameCount_nid_postfix,
+        DecodeSelectFrameGuest,
+        PKImageDecode_Release_nid_postfix};
+    if (!decoder) throw std::invalid_argument("PKImageDecode_Create requires an output");
+    return JxrDecodeCreateGuest_nid_no_patch(decoder, &callbacks);
 }
 
 }

@@ -279,7 +279,12 @@ int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search
   || (len & (PS5_PAGE_SIZE - 1)) || !phys_addr_out
   || (alignment != 0 && (alignment & (PS5_PAGE_SIZE - 1))))
   return SCE_KERNEL_ERROR_EINVAL;
- return DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, memory_type, phys_addr_out);
+ int64_t physical = 0;
+ const int result = DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, memory_type, &physical);
+ if (result != 0) return result;
+ if (GuestCopyOut_nid_no_patch(phys_addr_out, &physical, sizeof(physical))) return 0;
+ DirectMemoryFree(physical, len);
+ return SCE_KERNEL_ERROR_EFAULT;
 }
 
 int APS5_VABI sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
