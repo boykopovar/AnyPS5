@@ -415,6 +415,8 @@ int main(int argc, char** argv) {
         server.Serve(Serve::Close, true, Leaf::Future);
         if (sockets.net) server.Serve(Serve::Exchange);
         for (int index = 0; index < 3; ++index) server.Serve(Serve::Exchange);
+        server.Serve(Serve::Close);
+        server.Serve(Serve::Close);
         server.Serve(Serve::Split);
         server.Serve(Serve::Exchange);
         for (int index = 0; index < ParallelConnections; ++index) server.Serve(Serve::Exchange);
@@ -671,8 +673,7 @@ int main(int argc, char** argv) {
     const int thirdSocket = sockets.Open(server.port);
     Require(sceSslReuseConnection(reused, thirdSocket) == 0, "reuse the session on a third socket");
     Require(sceSslConnect(reused) == 0 && server.resumed == resumedBefore + 1, "the server did not resume the saved session");
-    Require(resuming.calls == 3 && resuming.error == 0 && resuming.count == 1 && resuming.commonName == "commonName=localhost",
-        "the verify callback did not see the resumed session's peer chain");
+    Require(resuming.calls == 2, "the verify callback ran on a resumed handshake");
     selected = sceSslGetAlpnSelected(reused);
     Require(selected && std::strcmp(selected, "http/1.1") == 0, "the resumed handshake did not negotiate the protocol");
     Require(exchange(reused), "exchange over the resumed session");
@@ -681,6 +682,17 @@ int main(int argc, char** argv) {
     Require(sceSslReuseConnection(reused, thirdSocket) == ErrorInvalidId && sceSslReuseConnection(0, thirdSocket) == ErrorInvalidId,
         "a deleted connection or id 0 was reused");
     Require(InUse(context) == loaded, "the saved session's pool memory was not returned");
+
+    const int refusedSocket = sockets.Open(server.port);
+    const int refused = sceSslCreateConnection(context, refusedSocket, "example.com");
+    Require(sceSslConnect(refused) == ErrorCnCheck, "the handshake whose session must not be resumed passed the host name check");
+    const int refusedResumed = server.resumed;
+    const int retrySocket = sockets.Open(server.port);
+    Require(sceSslReuseConnection(refused, retrySocket) == 0, "reuse a connection that failed verification");
+    Require(sceSslConnect(refused) == ErrorCnCheck && server.resumed == refusedResumed,
+        "a session that failed verification was resumed instead of verified again");
+    Require(sceSslDeleteConnection(refused) == 0 && sockets.Close(refusedSocket) == 0 && sockets.Close(retrySocket) == 0,
+        "release the connection that failed verification");
 
     Require(sceSslCreateSslConnection(context, 1000, nullptr) == ErrorInvalidValue, "a single-transfer connection accepted a null host");
     Require(sceSslCreateSslConnection(empty, 1000, "localhost") == ErrorInvalidId, "a single-transfer connection accepted a terminated context");

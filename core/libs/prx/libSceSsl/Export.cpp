@@ -336,6 +336,8 @@ bool HostTimedOut(int error) {
 
 enum class Operation { Connect, Read, Write, Close };
 
+struct SavedSession;
+
 struct Session {
     int contextHandle;
     std::shared_ptr<Context> context;
@@ -362,6 +364,7 @@ struct Session {
     bool gone = false;
     int verifyResult = 0;
     unsigned int failedOptions = 0;
+    std::shared_ptr<SavedSession> offered;
     Random random;
     PrivateKey privateKey;
     mbedtls_x509_crt authorities;
@@ -964,6 +967,13 @@ int RunCallback(Session& session, std::unique_lock<std::mutex>& sessionLock, Ssl
     return decision < 0 ? ErrorCallbackCheck : 0;
 }
 
+bool Resumed(const Session& session) {
+    const auto* negotiated = session.ssl.MBEDTLS_PRIVATE(session);
+    if (!session.offered || !negotiated) return false;
+    const auto& master = session.offered->data.MBEDTLS_PRIVATE(master);
+    return std::memcmp(negotiated->MBEDTLS_PRIVATE(master), master, sizeof(master)) == 0;
+}
+
 int Establish(const char* function, int sslConnectionId, std::shared_ptr<Session>& session) {
     SslVerifyCallback callback = nullptr;
     void* callbackArgument = nullptr;
@@ -981,8 +991,10 @@ int Establish(const char* function, int sslConnectionId, std::shared_ptr<Session
             session = std::make_shared<Session>(connection->context, std::move(context), std::move(owner), native);
             session->singleTransfer = connection->singleTransfer;
             session->Configure(connection->host, connection->alpn, connection->verifyOptions, connection->systemRoots ? SystemRoots() : nullptr);
-            if (connection->resume)
+            if (connection->resume) {
                 CheckBackend(mbedtls_ssl_set_session(&session->ssl, &connection->resume->data), "SSL session resumption setup failed");
+                session->offered = connection->resume;
+            }
             connection->resumeOffered = true;
             connection->session = session;
         } else {
@@ -1019,6 +1031,10 @@ int Establish(const char* function, int sslConnectionId, std::shared_ptr<Session
             session->handshaken = true;
             const char* selected = mbedtls_ssl_get_alpn_protocol(&session->ssl);
             session->alpnSelected = selected ? selected : "";
+            if (Resumed(*session)) {
+                session->verified = true;
+                return 0;
+            }
         }
         session->Verify();
         if (callback && session->verifyResult == ErrorInvalidCert)
@@ -1464,6 +1480,7 @@ int APS5_VABI sceSslRecv(int sslConnectionId, void* buf, std::size_t fulllen) {
 int APS5_VABI sceSslReuseConnection(int sslConnectionId, int sockId) {
     std::shared_ptr<Session> session;
     std::shared_ptr<SavedSession> saved;
+    bool unverified = false;
     {
         std::lock_guard lock(State().mutex);
         const auto* connection = FindConnection(sslConnectionId);
@@ -1475,11 +1492,14 @@ int APS5_VABI sceSslReuseConnection(int sslConnectionId, int sockId) {
     if (session) {
         sessionLock = std::unique_lock(session->mutex, std::try_to_lock);
         if (!sessionLock.owns_lock() || session->verifying) return ErrorBusy;
-        if (session->handshaken) {
+        if (!session->handshaken) {
+            saved.reset();
+        } else if (session->verified && session->verifyResult == 0) {
             PoolScope scope(session->context->pool);
             CheckBackend(mbedtls_ssl_get_session(&session->ssl, &saved->data), "sceSslReuseConnection: the session could not be saved");
         } else {
             saved.reset();
+            unverified = true;
         }
     }
     std::lock_guard lock(State().mutex);
@@ -1487,7 +1507,7 @@ int APS5_VABI sceSslReuseConnection(int sslConnectionId, int sockId) {
     if (!connection) return ErrorInvalidId;
     if (connection->session != session) return ErrorBusy;
     if (saved) connection->resume = std::move(saved);
-    else if (!connection->resumeOffered) connection->resume.reset();
+    else if (unverified || !connection->resumeOffered) connection->resume.reset();
     connection->resumeOffered = false;
     connection->session.reset();
     connection->socket = sockId;
