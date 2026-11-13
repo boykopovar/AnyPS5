@@ -7037,9 +7037,6 @@ void descriptorSnapshotTests() {
     }
 }
 
-// A moved read-only element behind a recorded GPU write is read through its host import
-// (ShaderResources::MovedBuffer::inPlace): its descriptor names the import at the aligned offset,
-// nothing is copied, and the draw's push block carries the element's own offset past that.
 void drawMovedInPlaceTests() {
     using AgcDriver::Graphics::DescriptorCache;
     using AgcDriver::Graphics::Recorder;

@@ -229,8 +229,6 @@ public:
             std::shared_ptr<Buffer> buffer;
             VkDeviceSize offset = 0;
             std::size_t bytes = 0;
-            // Set instead of `buffer` for a range read through its host import (MovedBuffer::inPlace):
-            // the bytes are whatever the GPU finds there when the draw runs, so there is no copy.
             VkBuffer handle = VK_NULL_HANDLE;
             std::span<std::byte> Bytes() const { return buffer->Bytes().subspan(static_cast<std::size_t>(offset), bytes); }
         };
@@ -247,9 +245,6 @@ public:
         std::uint64_t address;
         std::size_t size;
         std::span<const std::uint32_t> words;
-        // A range that recorded GPU work still writes cannot be copied by the CPU: it is bound
-        // through its host import, as a build binds it, at `inPlaceOffset` (aligned), and the
-        // shader is told `adjustment`, the element's offset past that, in place of the cached one.
         VkBuffer inPlace = VK_NULL_HANDLE;
         VkDeviceSize inPlaceOffset = 0;
         std::uint32_t adjustment = 0;
@@ -387,8 +382,6 @@ public:
     void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
         for (const auto& [position, adjustment] : pushPatches) bytes[position] = static_cast<std::byte>(adjustment);
     }
-    // The offsets of the elements a draw reads in place at a moved address (MovedBuffer::inPlace),
-    // over the cached ones PatchPushConstants wrote. False when the draw has none in its push block.
     bool PatchMovedPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const MovedBuffer> moved) const {
         bool patched = false;
         for (const auto& entry : moved) {

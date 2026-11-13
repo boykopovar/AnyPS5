@@ -2112,8 +2112,6 @@ BufferWriteCounters& BufferWrites() {
     return counters;
 }
 
-// Moved read-only elements under a recorded GPU write (movedInPlace): read through the host import
-// on a cached set, or refused and rebuilt. Printed with the [buffers] line. Cumulative.
 struct MovedInPlaceCounters {
     std::atomic<std::uint64_t> taken{0};
     std::atomic<std::uint64_t> refused{0};
@@ -6768,14 +6766,6 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
     return moved;
 }
 
-// Whether a moved read-only element can be read through its host import while recorded GPU work
-// still writes its range. The CPU copy the moved path takes otherwise would miss that write, which
-// is why such a draw used to be rebuilt; a build binds the import in place (UploadFinish), and so
-// does this, as InPlaceDrawInput does for a vertex stream behind a GPU write. Results the CPU still
-// has to store (labels, queued stores, copied writers) are not in the import yet: those ranges are
-// left to a build, which waits for them. The element's offset past the storage buffer alignment
-// differs from the cached one, so it is only taken when the draw can be told (PatchMovedPushConstants,
-// or the data buffer PrepareDrawBindings uploads). APS5_NO_MOVED_BUFFERS_IN_PLACE rebuilds as before.
 bool ShaderResources::movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry) const {
     static const bool enabled = std::getenv("APS5_NO_MOVED_BUFFERS_IN_PLACE") == nullptr;
     auto& counters = MovedInPlace();
@@ -6911,8 +6901,6 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         const auto& item = allocations[index];
         const auto override = std::find_if(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
         const bool words = override != moved.end() && !override->words.empty();
-        // The shader data that holds the offset of an element read in place at a moved address is
-        // uploaded for this draw too, with that offset in it (the cached buffer keeps the cached one).
         const bool offsets = inPlaceData && !item.guest && item.buffer != nullptr && std::any_of(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return toldInData(entry, index); });
         if (words || (offsets && override == moved.end())) {
             const auto size = words ? override->size : item.size;
@@ -6935,8 +6923,6 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         if (override != moved.end() && override->inPlace != VK_NULL_HANDLE) {
             const auto begin = override->address - override->adjustment;
             const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(override->size, override->adjustment));
-            // As MarkGpuWrites notes the cached set's own in-place reads: a CPU store into the range
-            // must not land before this draw read it.
             recorder.NotePendingRead(begin, bytes, Recorder::ReadKind::DispatchElement);
             selected.push_back(index);
             keep({begin, nullptr, override->inPlaceOffset, bytes, override->inPlace});

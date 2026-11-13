@@ -2808,8 +2808,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         if (args->countIndirect) passReads.emplace_back(args->countAddress, args->countAddress + 4);
     }
     passReads.insert(passReads.end(), inputs.inPlaceReads.begin(), inputs.inPlaceReads.end());
-    // An element read in place at a moved address (ShaderResources::MovedBuffer::inPlace) is a device
-    // read of the pass at its own range, as the cached set's elements are at theirs.
     for (const auto& entry : record.moved) {
         if (entry.inPlace == VK_NULL_HANDLE) continue;
         const auto begin = entry.address - entry.adjustment;
@@ -2944,8 +2942,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, commands, record.pipeline->Layout());
     if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, record.pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
-    // Elements read in place at a moved address sit at their own offsets past the storage buffer
-    // alignment: the push block carries those in place of the cached set's.
     std::array<std::byte, PipelinePushConstantBytes> movedPush;
     const std::array<std::byte, PipelinePushConstantBytes>* pushBytes = record.pushBytes;
     VkShaderStageFlags pushStages = record.pushStages;

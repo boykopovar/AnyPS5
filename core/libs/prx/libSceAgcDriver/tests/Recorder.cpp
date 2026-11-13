@@ -4303,11 +4303,6 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
         snapshotRecorder.NotePendingWrite(element, elementBytes);
         Require(resources.PrepareDrawBindings(snapshotRecorder) == nullptr, "GPU-produced input was replaced with stale CPU memory");
         {
-            // The cached set is asked for an element elsewhere in the range that write is pending in.
-            // The CPU copy the moved path takes would miss the write, so the element is read through
-            // its host import, as a build would bind it; APS5_NO_MOVED_BUFFERS_IN_PLACE leaves the
-            // draw to a build. An element whose offset past the storage buffer alignment the shader
-            // cannot be told (no push block, no shader data) is left to a build either way.
             const bool inPlace = std::getenv("APS5_NO_MOVED_BUFFERS_IN_PLACE") == nullptr;
             constexpr std::uint32_t movedBytes = 256;
             const auto movedTo = [&](std::uint64_t where) {

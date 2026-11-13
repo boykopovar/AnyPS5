@@ -727,8 +727,6 @@ void RingOldSlotWrite(Scene& scene) {
 
 void RingRefusals(Scene& scene) {
     using AgcDriver::Graphics::AddressDrawReuse;
-    // A moved read-only element under a recorded GPU write is read through its host import on the
-    // cached build (ShaderResources::movedInPlace); with the switch it is refused and rebuilt.
     const bool inPlace = std::getenv("APS5_NO_MOVED_BUFFERS_IN_PLACE") == nullptr;
     {
         Ring ring(scene);
@@ -770,8 +768,6 @@ void RingRefusals(Scene& scene) {
         Require(outcomes[inPlace ? AddressDrawReuse::Reused : AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved read-only vertex buffer a pending GPU write overlaps counted " + outcomes.Text() + (inPlace ? ", expected one reuse with the buffer read in place" : ", expected one refusal for a moved GuestBuffers element"));
     }
     {
-        // The pending fill writes the third vertex: until it runs the buffer holds a triangle without
-        // area, so only a draw that reads the buffer after the GPU wrote it covers the target.
         constexpr std::size_t Offset = 4096;
         auto flat = Triangle;
         flat[2] = flat[0];
