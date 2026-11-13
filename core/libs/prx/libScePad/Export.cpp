@@ -583,7 +583,11 @@ int APS5_VABI scePadGetAccessibilityControllerState(int handle, std::uint32_t* s
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (state == nullptr) return PAD_ERROR_INVALID_ARG;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
-    *state = 0;
+    const std::uint32_t controllerState = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &controllerState, sizeof(controllerState));
+    errno = savedErrno;
+    if (!copied) return PAD_ERROR_INVALID_ARG;
     return PAD_OK;
 }
 
