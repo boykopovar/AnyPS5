@@ -593,6 +593,76 @@ public:
 
 private:
     AgcDriver::VulkanDevice& device;
+
+public:
+    void LiveBinds() {
+        GuestBlock block;
+        const auto target = Target(block);
+        const auto walks = GpuOwnerInventoryWalksForTest();
+        for (unsigned bind = 0; bind < 64; ++bind) {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "a rebound MSAA target has no view");
+        }
+        Sync();
+        Require(GpuOwnerInventoryWalksForTest() == walks, "binding a resident MSAA target walked the owner inventory of the replay reset");
+        const auto owned = GpuOwnedRanges(block.Address(), BlockBytes);
+        Require(GpuOwnerInventoryWalksForTest() == walks + 1u, "listing the GPU-owned ranges did not walk the owner inventory once");
+        Require(std::ranges::count_if(owned, [&](const auto& range) { return range.first == block.Address(); }) == 1, "a target bound 64 times is not listed exactly once among the GPU-owned ranges");
+        Clear();
+    }
+
+    void ReplacedPlane() {
+        constexpr std::size_t Half = BlockBytes / 2u;
+        for (const auto [offset, bytes] : {std::pair<std::size_t, std::size_t>{0u, 4096u}, {Half - 4096u, 8192u}, {BlockBytes - 4096u, 4096u}}) {
+            GuestBlock block;
+            const auto target = Target(block);
+            {
+                std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+                Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "a replaced MSAA plane has no view");
+            }
+            Sync();
+            RetireResidentImagesOver_nid_no_patch(block.Address() + offset, bytes);
+            RequireNoMultisampleTarget(block.Address(), BlockBytes, "a partly replaced plane");
+            Clear();
+        }
+        GuestBlock block;
+        const auto target = Target(block);
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "a plane replaced in two parts has no view");
+        }
+        Sync();
+        RetireResidentImagesOver_nid_no_patch(block.Address(), Half);
+        RetireResidentImagesOver_nid_no_patch(block.Address() + Half, Half);
+        RequireNoMultisampleTarget(block.Address(), BlockBytes, "a plane replaced in two parts");
+        RetireResidentImagesOver_nid_no_patch(block.Address(), BlockBytes);
+        block.Unmap();
+        Clear();
+        AwaitImages(0, "a plane replaced in two parts was not released");
+    }
+
+    void ReplacedCmask() {
+        GuestBlock block;
+        GuestBlock metadata;
+        auto target = Target(block);
+        target.cmaskAddress = metadata.Address();
+        target.cmaskBytes = CmaskBytes(Side, Side);
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "a target with CMASK and no DCC has no view");
+        }
+        Sync();
+        Require(!MultisampleColorTargetsOver(block.Address(), BlockBytes).empty(), "a drawn target with CMASK and no DCC is not resident");
+        Require(ResidentOwnersOver(block.Address() + BlockBytes - 1u, 1u, false) == 1 && ResidentOwnersOver(metadata.Address() + target.cmaskBytes - 1u, 1u, false) == 1, "a target is not resident over the last byte of its colour plane or CMASK");
+        Require(ResidentOwnersOver(metadata.Address() + target.cmaskBytes, 1u, false) == 0, "a target is resident past the end of its CMASK");
+        RetireResidentImagesOver_nid_no_patch(metadata.Address(), 4096u);
+        Require(MultisampleColorTargetsOver(block.Address(), BlockBytes).empty(), "a target whose CMASK alone was replaced stayed resident");
+        Require(!GuestAllocations::GuestAllocationsUnmapObservedForTest_nid_postfix(), "the unmap observer stayed installed after the last resident image was retired");
+        RequireNoMultisampleTarget(block.Address(), BlockBytes, "a target whose CMASK alone was replaced");
+        Clear();
+    }
+
+private:
     Context context;
 };
 
@@ -608,6 +678,9 @@ int main() {
         run.IdleRemaps();
         run.RecordedRemap();
         run.SampledRemap();
+        run.LiveBinds();
+        run.ReplacedPlane();
+        run.ReplacedCmask();
         const bool storage = context.storageImageMultisample;
         if (storage) run.StorageRemap();
         run.StorageSrgbTwin();
