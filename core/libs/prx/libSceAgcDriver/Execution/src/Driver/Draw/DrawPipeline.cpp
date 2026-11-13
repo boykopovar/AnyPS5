@@ -53,6 +53,7 @@ struct ClearOnExit {
 namespace {
 thread_local bool finisherThread = false;
 thread_local bool finisherProducer = false;
+thread_local DrawPipeline* committerPipeline = nullptr;
 }
 
 DrawFinisher& DrawFinisher::Get() {
@@ -433,6 +434,10 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 
 
 void DrawPipeline::run() {
+    struct CommitterScope {
+        explicit CommitterScope(DrawPipeline* self) { committerPipeline = self; }
+        ~CommitterScope() { committerPipeline = nullptr; }
+    } const committerScope{this};
     PerformanceTrace::BindThread("draw committer");
     ReserveCommitterCore();
     StartCommitterSampler();
@@ -538,12 +543,14 @@ bool DrawPipeline::HeldReads(std::uint64_t address, std::size_t bytes) {
     auto& pipeline = Queue0();
     std::lock_guard lock(pipeline.mutex);
     heldReadQueries.fetch_add(1, std::memory_order_relaxed);
+    const bool runningOnCommitter = committerPipeline == &pipeline;
     for (const auto& item : pipeline.items) {
         for (const auto& [begin, limit] : item.reads) {
             if (address >= limit || begin >= end) continue;
             heldReadHits.fetch_add(1, std::memory_order_relaxed);
             return true;
         }
+        if (runningOnCommitter) break;
     }
     return false;
 }
