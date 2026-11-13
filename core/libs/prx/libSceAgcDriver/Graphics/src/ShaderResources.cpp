@@ -7276,12 +7276,13 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
             overrides.push_back({selected[index], {snapshot.buffer->DeviceAddress() + snapshot.offset, snapshot.bytes}});
         }
         for (const auto& [index, range] : inPlace) overrides.push_back({index, range});
-        bool overridden = false;
-        for (const auto& [index, range] : overrides) {
-            if (index >= addressedAllocations.size() || !addressedAllocations[index]) continue;
-            const auto* last = result.AddressOverride(index);
-            overridden = overridden || last->address != 0;
+        for (std::size_t next = 1; next < overrides.size(); ++next) {
+            for (auto at = next; at > 0 && overrides[at - 1].first > overrides[at].first; --at) std::swap(overrides[at - 1], overrides[at]);
         }
+        const auto last = std::unique(overrides.rbegin(), overrides.rend(), [](const auto& a, const auto& b) { return a.first == b.first; });
+        overrides.erase(overrides.begin(), last.base());
+        bool overridden = false;
+        for (const auto& [index, range] : overrides) overridden = overridden || (index < addressedAllocations.size() && addressedAllocations[index] && range.address != 0);
         if (overridden) {
             result.heapOffsets = heapOffsets;
             result.addressOffsets = true;
@@ -7292,10 +7293,8 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
 }
 
 const VkDeviceAddressRangeEXT* ShaderResources::DrawBindings::AddressOverride(std::size_t allocation) const {
-    for (auto entry = addressOverrides.rbegin(); entry != addressOverrides.rend(); ++entry) {
-        if (entry->first == allocation) return &entry->second;
-    }
-    return nullptr;
+    const auto entry = std::lower_bound(addressOverrides.begin(), addressOverrides.end(), allocation, [](const auto& item, std::size_t index) { return item.first < index; });
+    return entry != addressOverrides.end() && entry->first == allocation ? &entry->second : nullptr;
 }
 
 void ShaderResources::writeRewrittenSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord) const {
