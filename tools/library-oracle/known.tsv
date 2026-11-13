@@ -135,9 +135,6 @@ agcbuild_DcbSetIndexIndirectArgs_b	throw	AnyPS5 throws for arguments the console
 agcbuild_DcbSetIndexIndirectArgs_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetIndexSize_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetIndexSize_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetPredication_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetPredication_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetPredication_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetShRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetShRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetShRegistersIndirect_a	throw	AnyPS5 throws for arguments the console encodes
