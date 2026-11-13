@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -78,6 +79,22 @@ constexpr std::uint64_t WordWaitNanoseconds = 50000;
 
 std::uint64_t imageViewGeneration(void*) {
     return GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+}
+
+std::uint64_t PageBacking(std::uint64_t base, std::uint64_t bytes) {
+    std::uint64_t mix = 1469598103934665603ull;
+    const auto fold = [&](std::uint64_t value) { mix = (mix ^ value) * 1099511628211ull; };
+    for (auto cursor = base; cursor < base + bytes;) {
+        const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(cursor), true);
+        if (range == nullptr || range->address >= base + bytes) break;
+        fold(range->address);
+        fold(range->bytes);
+        fold(range->allocationAddress);
+        fold(range->backingSerial);
+        fold((range->readable ? 1u : 0u) | (range->writable ? 2u : 0u) | (range->gpu ? 4u : 0u));
+        cursor = range->address + range->bytes;
+    }
+    return mix;
 }
 
 bool normalizeImageView(void*, std::uint32_t maxArrayLayers, std::array<std::uint32_t, 8>& descriptor, ShaderRecompiler::SrtImageViewIdentity& identity) {
@@ -216,7 +233,7 @@ void ShaderMemory::SetWaitedMsProvider(WaitedMsProvider provider) {
     waitedMsProvider.store(provider, std::memory_order_release);
 }
 
-ShaderMemory::ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> regions, PendingWriteQuery pendingWrite, PendingWriteObserver observe, HookWaitCounter hookWaits, PendingWriteQuery pendingSpan) : pendingWrite(pendingWrite), observe(observe), hookWaits(hookWaits), pendingSpan(pendingSpan != nullptr ? pendingSpan : pendingWrite) {
+ShaderMemory::ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> regions, PendingWriteQuery pendingWrite, PendingWriteObserver observe, HookWaitCounter hookWaits, PendingWriteQuery pendingSpan) : pendingWrite(pendingWrite), observe(observe), hookWaits(hookWaits), pendingSpan(pendingSpan != nullptr ? pendingSpan : pendingWrite), spanQuery(pendingSpan != nullptr) {
     const ShaderRecompiler::RequestMemoryView validated(regions);
     initial.reserve(regions.size());
     for (const auto& region : regions) initial.emplace_back(region.guestAddress, region.bytes);
@@ -305,6 +322,7 @@ ShaderMemory::Page& ShaderMemory::addPage(std::size_t position, std::uint64_t ba
     owned->recent.Reset();
     owned->wordwise = false;
     owned->lazy = false;
+    owned->backing = PageBacking(base, PageBytes);
     pages.insert(pages.begin() + static_cast<std::ptrdiff_t>(position), {base, owned.get()});
     lastBase = base;
     lastPage = owned.release();
@@ -321,13 +339,18 @@ ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
     }
     auto& page = addPage(position, base);
     if (CaptureProfiled()) ++CaptureTotals().pages;
+    preparePage(page, base);
+    return page;
+}
+
+void ShaderMemory::preparePage(Page& page, std::uint64_t base) {
     // A page is either mapped whole or read word by word where the guest mapped less than a page,
     // or where recorded GPU work writes into it (a whole-page read would wait for that work).
     if (GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) {
         if (WordwisePages() && pendingWrite != nullptr && pendingWrite(base, PageBytes, {}) != PendingWrite::None) {
             page.wordwise = true;
             ++CaptureTotals().pagesWordwise;
-            return page;
+            return;
         }
         const auto started = CaptureProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         GuestMemory::GuardRead(base, PageBytes);
@@ -335,7 +358,6 @@ ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
         if (CaptureProfiled()) CaptureTotals().pageReadNanoseconds += NanosecondsSince(started);
         page.lazy = true;
     }
-    return page;
 }
 
 bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* value) {
@@ -469,6 +491,27 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     page.recent.Set(index);
     *value = page.words[index];
     return true;
+}
+
+bool ShaderMemory::pagesCurrent() {
+    bool current = true;
+    for (auto& [pageBase, existing] : pages) {
+        const auto backing = PageBacking(pageBase, PageBytes);
+        if (backing == existing->backing) continue;
+        existing->valid.Reset();
+        existing->raw.Reset();
+        existing->backing = backing;
+        existing->wordwise = false;
+        existing->lazy = false;
+        preparePage(*existing, pageBase);
+        current = false;
+    }
+    return current;
+}
+
+bool ShaderMemory::snapshotCurrent(void* context, std::span<const ShaderRecompiler::RegisteredImageView> views) {
+    const bool pages = static_cast<ShaderMemory*>(context)->pagesCurrent();
+    return pages && DriverDetail::CaptureRegisteredViewsCurrent(views);
 }
 
 bool ShaderMemory::invalidateRawPages() {
@@ -619,12 +662,23 @@ ShaderRecompiler::SrtWriteStamp ShaderMemory::stampWrites(void* context, std::ui
     const auto& self = *static_cast<const ShaderMemory*>(context);
     if (bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || self.overlapsInitial(address, address + bytes)) return {};
     const auto fetched = self.pageAtOrAfter(address & ~static_cast<std::uint64_t>(PageBytes - 1));
-    if (fetched != self.pages.size() && self.pages[fetched].first < address + bytes) return {};
+    const bool anyFetched = fetched != self.pages.size() && self.pages[fetched].first < address + bytes;
+    if (anyFetched && !self.spanQuery) return {};
     GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
     const auto layout = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto generation = GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
     if (generation == 0) return {};
     if (self.pendingSpan != nullptr && self.pendingSpan(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return {};
+    if (anyFetched) {
+        std::array<std::uint32_t, PageWords> current{};
+        for (auto index = fetched; index < self.pages.size() && self.pages[index].first < address + bytes; ++index) {
+            const auto& page = *self.pages[index].second;
+            if (page.wordwise || GuestMemory::CopyMapped(self.pages[index].first, std::as_writable_bytes(std::span(current))) != GuestMemory::Compare::Equal) return {};
+            for (std::size_t word = 0; word < PageWords; ++word) {
+                if (page.valid.Test(word) && page.words[word] != current[word]) return {};
+            }
+        }
+    }
     return {generation, layout};
 }
 
@@ -835,6 +889,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.descriptorScope = &descriptorScope;
     runtime.normalizeImageView = &normalizeImageView;
     runtime.imageViewGeneration = &imageViewGeneration;
+    runtime.snapshotCurrent = &snapshotCurrent;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);
@@ -857,7 +912,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
             const auto materializeNs = ShaderRecompiler::ResourceMaterializer::MaterializeNanoseconds();
             const auto evaluateNs = ShaderRecompiler::ResourceMaterializer::EvaluateNanoseconds();
             const auto walkNs = captureNs > resolveNs + pageNs + wordNs + specializationNs ? captureNs - resolveNs - pageNs - wordNs - specializationNs : 0;
-            AgcDriver::ProfilePrint_nid_no_patch( "[capture] %llu captures: %llu word reads, %llu pages fetched (%llu read word by word over pending GPU writes: %llu words waited %.2f s, %llu read raw on evidence, %llu verified with %llu mismatches, %llu served from known values, %llu hook reads not observed: no GPU wait, %llu branch condition reads over pending GPU writes left the branch unpruned instead of waiting, %llu captures redone waiting after one failed), capture (plan lookup + materialize) %.1f s, %llu KiB registered code this capture; sub-phases (s, us per capture): source resolve %.2f/%.1f, walk %.2f/%.1f, specialization (every materialize) %.2f/%.1f, page reads %.2f/%.1f, word reads %.2f/%.1f, hook GPU waits inside %.2f/%.1f, materialize %.2f/%.1f (SRT evaluate %.2f/%.1f); source handle memo %llu hits, %llu resolves\n", static_cast<unsigned long long>(totals.captures.load()), static_cast<unsigned long long>(totals.reads.load()), static_cast<unsigned long long>(totals.pages.load()), static_cast<unsigned long long>(totals.pagesWordwise.load()), static_cast<unsigned long long>(totals.wordWaits.load()), totals.wordWaitNanoseconds.load() / 1e9, static_cast<unsigned long long>(totals.wordsRaw.load()), static_cast<unsigned long long>(totals.wordsVerified.load()), static_cast<unsigned long long>(totals.wordMismatches.load()), static_cast<unsigned long long>(totals.wordsKnown.load()), static_cast<unsigned long long>(totals.observationsSkipped.load()), static_cast<unsigned long long>(totals.branchReadsRefused.load()), static_cast<unsigned long long>(totals.branchCapturesRedone.load()), captureNs / 1e9, static_cast<unsigned long long>(initialBytes / 1024), resolveNs / 1e9, resolveNs / captures / 1e3, walkNs / 1e9, walkNs / captures / 1e3, specializationNs / 1e9, specializationNs / captures / 1e3, pageNs / 1e9, pageNs / captures / 1e3, wordNs / 1e9, wordNs / captures / 1e3, hookNs / 1e9, hookNs / captures / 1e3, materializeNs / 1e9, materializeNs / captures / 1e3, evaluateNs / 1e9, evaluateNs / captures / 1e3, static_cast<unsigned long long>(totals.handleHits.load()), static_cast<unsigned long long>(totals.handleMisses.load()));
+            AgcDriver::ProfilePrint_nid_no_patch( "[capture] %llu captures: %llu word reads, %llu pages fetched (%llu read word by word over pending GPU writes: %llu words waited %.2f s, %llu read raw on evidence, %llu verified with %llu mismatches, %llu served from known values (%llu verified, %llu mismatches), %llu hook reads not observed: no GPU wait, %llu branch condition reads over pending GPU writes left the branch unpruned instead of waiting, %llu captures redone waiting after one failed), capture (plan lookup + materialize) %.1f s, %llu KiB registered code this capture; sub-phases (s, us per capture): source resolve %.2f/%.1f, walk %.2f/%.1f, specialization (every materialize) %.2f/%.1f, page reads %.2f/%.1f, word reads %.2f/%.1f, hook GPU waits inside %.2f/%.1f, materialize %.2f/%.1f (SRT evaluate %.2f/%.1f); source handle memo %llu hits, %llu resolves\n", static_cast<unsigned long long>(totals.captures.load()), static_cast<unsigned long long>(totals.reads.load()), static_cast<unsigned long long>(totals.pages.load()), static_cast<unsigned long long>(totals.pagesWordwise.load()), static_cast<unsigned long long>(totals.wordWaits.load()), totals.wordWaitNanoseconds.load() / 1e9, static_cast<unsigned long long>(totals.wordsRaw.load()), static_cast<unsigned long long>(totals.wordsVerified.load()), static_cast<unsigned long long>(totals.wordMismatches.load()), static_cast<unsigned long long>(totals.wordsKnown.load()), static_cast<unsigned long long>(totals.wordsKnownVerified.load()), static_cast<unsigned long long>(totals.wordsKnownMismatches.load()), static_cast<unsigned long long>(totals.observationsSkipped.load()), static_cast<unsigned long long>(totals.branchReadsRefused.load()), static_cast<unsigned long long>(totals.branchCapturesRedone.load()), captureNs / 1e9, static_cast<unsigned long long>(initialBytes / 1024), resolveNs / 1e9, resolveNs / captures / 1e3, walkNs / 1e9, walkNs / captures / 1e3, specializationNs / 1e9, specializationNs / captures / 1e3, pageNs / 1e9, pageNs / captures / 1e3, wordNs / 1e9, wordNs / captures / 1e3, hookNs / 1e9, hookNs / captures / 1e3, materializeNs / 1e9, materializeNs / captures / 1e3, evaluateNs / 1e9, evaluateNs / captures / 1e3, static_cast<unsigned long long>(totals.handleHits.load()), static_cast<unsigned long long>(totals.handleMisses.load()));
         }
     }
     return capture;

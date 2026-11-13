@@ -78,18 +78,22 @@ def arguments_of(text, position, line):
             line += 1
         if character == '"':
             end = position + 1
-            while text[end] != '"':
+            while end < len(text) and text[end] != '"':
                 if text[end] == "\\":
                     end += 1
-                if text[end] == "\n":
+                if end < len(text) and text[end] == "\n":
                     line += 1
                 end += 1
+            if end >= len(text):
+                raise SplitError(f"line {line + 1}: unterminated quoted argument")
             token = (token or "") + text[position + 1:end]
             position = end + 1
             continue
         bracket = re.match(r"\[(=*)\[", text[position:position + 32])
         if bracket and token is None:
-            close = text.index("]" + bracket[1] + "]", position)
+            close = text.find("]" + bracket[1] + "]", position + len(bracket[0]))
+            if close < 0:
+                raise SplitError(f"line {line + 1}: unterminated bracket argument")
             value = text[position + len(bracket[0]):close]
             line += value.count("\n")
             arguments.append(value)
@@ -97,7 +101,15 @@ def arguments_of(text, position, line):
             continue
         if character == "#":
             comment = re.match(r"#\[(=*)\[", text[position:position + 32])
-            close = text.index("]" + comment[1] + "]", position) + len(comment[0]) if comment else text.find("\n", position)
+            if comment:
+                close = text.find("]" + comment[1] + "]", position + len(comment[0]))
+                if close < 0:
+                    raise SplitError(f"line {line + 1}: unterminated bracket comment")
+                close += len(comment[1]) + 2
+            else:
+                close = text.find("\n", position)
+                if close < 0:
+                    close = len(text)
             line += text[position:close].count("\n")
             position = close
             continue

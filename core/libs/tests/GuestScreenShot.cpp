@@ -2,6 +2,7 @@
 #include "ProcessParametersFixture.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -66,9 +67,11 @@ void TestDisableState() {
     value = 7;
     Require(sceScreenShotIsDisabled(-1, &value) == ErrorArgument && value == 7, "id -1 is rejected");
     Require(sceScreenShotIsDisabled(0, nullptr) == ErrorArgument, "null result is rejected");
+    Require(sceScreenShotIsDisabled(0, reinterpret_cast<int*>(0x10)) == ErrorArgument, "invalid pointer is rejected");
     Require(sceScreenShotDisableNotification() == 0 && sceScreenShotEnableNotification() == 0, "notification toggles");
     Require(sceScreenShotIsDisabled(1, &value) == 0 && value == 0, "positive id 1 is accepted");
     Require(sceScreenShotIsDisabled(2, &value) == 0 && value == 0, "positive id 2 is accepted");
+    Require(sceScreenShotIsDisabled(-2, &value) == 0 && value == 0, "negative id -2 is accepted");
 }
 
 void TestOverlay(bool large) {
@@ -86,6 +89,8 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImage(nullptr, 0, 0) == ErrorArgument, "null path");
     const std::string longPath(1024, 'a');
     Require(sceScreenShotSetOverlayImage(longPath.c_str(), 0, 0) == ErrorArgument, "path of 1024 characters");
+    const std::string nearLimit(1023, 'a');
+    Require(sceScreenShotSetOverlayImage(nearLimit.c_str(), 0, 0) == ErrorOverlayFile, "path of 1023 characters");
     TempPath missing("missing");
     Require(sceScreenShotSetOverlayImage(missing.c_str(), 0, 0) == ErrorOverlayFile, "missing file");
     TempPath directory("directory");
@@ -110,6 +115,19 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, maxY + 1, 1) == ErrorArgument, "y past screen with valid origin");
 }
 
+void TestSetParamUnmapped() {
+    alignas(8) std::array<std::byte, 0x28> param{};
+    const std::uint32_t size = 0x28;
+    std::memcpy(param.data(), &size, sizeof(size));
+    const auto unmapped = reinterpret_cast<const char*>(0x10);
+    for (const std::size_t offset : {0x08u, 0x10u, 0x18u}) {
+        alignas(8) std::array<std::byte, 0x28> block = param;
+        std::memcpy(block.data() + offset, &unmapped, sizeof(unmapped));
+        errno = 71;
+        Require(sceScreenShotSetParam(block.data()) == ErrorArgument && errno == 71, "SetParam took an unmapped string pointer");
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -118,5 +136,6 @@ int main(int argc, char** argv) {
     InstallProcessParameters(large ? 0x3500000u : 0x34fffffu);
     TestDisableState();
     TestOverlay(large);
+    TestSetParamUnmapped();
     return 0;
 }

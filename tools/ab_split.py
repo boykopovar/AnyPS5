@@ -13,7 +13,9 @@ began. Presents per 10 s and frame time come from the [ab] lines (settled line t
 and idle gaps per frame from [present], GPU time per present from [gputime] (APS5_PROFILE_GPU), the committer and
 drains from [draw] pipelined, unlocked hook waits from [syncwait] (APS5_PROFILE_DRAW). The noise column compares
 each B phase with the mean of its neighbouring A phases, which cancels a linear drift: mean difference, standard
-error, standard deviation and count."""
+error, standard deviation and count. A counted GPU timing report that dropped ranges refuses the comparison.
+A requested program's phase metric is omitted if a report lists 12 programs
+without it: the list may be truncated, so the program's time is unknown."""
 
 PHASE = re.compile(r"^\[ab\] phase ([AB]) (\d+) (begins|settled) at present (\d+) \(t ([\d.]+) s\)")
 KINDS = (("present", "[present] "), ("gputime", "[gputime] "), ("draw", "[draw] pipelined"), ("syncwait", "[syncwait] "))
@@ -51,13 +53,17 @@ def parse_report(kind, text):
         total, presents = number(r"^\[gputime\] ([\d.]+) ms of GPU time", text), number(r"; (\d+) presents;", text)
         if total is None or presents is None or "; by class:" not in text:
             return None
+        dropped = re.search(r"; (\d+) ranges dropped at the \d+ cap\)", text)
+        if dropped and int(dropped.group(1)):
+            raise ValueError("GPU timing ranges were dropped in a settled A/B phase; timing statistics are incomplete")
         programs_text, classes_text = text.split("by program:", 1)[-1].split("; by class:", 1)
         programs, classes = {}, {}
-        for key, ms in re.findall(r" (?<!draw )(0x[0-9a-f]+) x\d+ ([\d.]+)ms", programs_text):
+        for key, ms in re.findall(r" (?<!draw )(?<!drawset )(0x[0-9a-f]+) x\d+ ([\d.]+)ms", programs_text):
             programs[key] = programs.get(key, 0.0) + finite(float(ms))
         for name, ms in re.findall(r" ([a-z][a-z-]*) x\d+ ([\d.]+)ms [\d.]+MiB \(per present", classes_text):
             classes[name] = classes.get(name, 0.0) + finite(float(ms))
-        return {"total": total, "presents": presents, "programs": programs, "classes": classes}
+        truncated = len(re.findall(r" (?:draw )?0x[0-9a-f]+ x\d+ [\d.]+ms", programs_text)) >= 12
+        return {"total": total, "presents": presents, "programs": programs, "programs_truncated": truncated, "classes": classes}
     if kind == "draw":
         commits, per_commit = number(r": (\d+) commits at", text), number(r"commits at ([\d.]+) us each", text)
         enqueued, room = number(r"; (\d+) enqueued behind", text), number(r"waiting ([\d.]+) us per draw for room", text)
@@ -94,6 +100,9 @@ def read_log(lines):
                     raise ValueError("phase index restarts in one log (multiple A/B runs); split the captures before comparing phases")
 
                 if current is not None:
+                    previous_point = current["settled"] or current["begin"]
+                    if point[0] < previous_point[0] or point[1] < previous_point[1]:
+                        raise ValueError("phase began before the previous phase boundary")
                     current["end"] = point
 
                 current = {"kind": kind, "index": index, "begin": point, "settled": None, "end": None,
@@ -101,6 +110,8 @@ def read_log(lines):
                 phases.append(current)
 
             elif current is not None and current["index"] == index and current["kind"] == kind:
+                if current["settled"] is not None:
+                    raise ValueError("phase settled more than once")
                 previous_point = current["begin"]
                 if point[0] < previous_point[0] or point[1] < previous_point[1]:
                     raise ValueError("phase settled before it began")
@@ -138,7 +149,8 @@ def metrics(phase, programs, classes):
     if presents:
         out["gputime ms/present"] = finite_sum(row["total"] for row in rows) / presents
         for key in programs:
-            out[f"{key} ms/present"] = finite_sum(row["programs"].get(key, 0.0) for row in rows) / presents
+            if all(key in row["programs"] or not row["programs_truncated"] for row in rows):
+                out[f"{key} ms/present"] = finite_sum(row["programs"].get(key, 0.0) for row in rows) / presents
         for name in classes:
             out[f"{name} ms/present"] = finite_sum(row["classes"].get(name, 0.0) for row in rows) / presents
     rows = phase["reports"]["draw"]
@@ -236,7 +248,7 @@ def main(arguments=None):
     parser.add_argument("--class", dest="classes", action="append", default=[], help="also report this [gputime] command class per present (repeatable)")
     parser.add_argument("--json", action="store_true", help="print the phases and metrics as JSON")
     options = parser.parse_args(arguments)
-    with Path(options.log).open(encoding="utf-8", errors="replace") as source:
+    with Path(options.log).open(encoding="utf-8-sig", errors="replace") as source:
         result = split(source, options.program, options.classes)
     sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else text_report(result))
     return 0

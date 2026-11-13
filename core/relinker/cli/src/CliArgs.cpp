@@ -23,8 +23,12 @@ const char* Usage() {
            "  --windows-gui                  Select the Windows GUI subsystem. Requires --windows.\n"
            "  --to-intel                     Convert supported AMD-only instructions for Intel CPUs.\n"
            "  --to-rosetta                   Convert as --to-intel and lower what Rosetta lacks too. Implies --to-intel.\n"
+           "  --to-avx                       Convert as --to-intel and lower BMI1, BMI2, LZCNT, MOVBE, CLWB and RDPID for\n"
+           "                                 CPUs with AVX but without AVX2. Implies --to-intel. Requires --macos.\n"
            "  --frame-red-zone               Windows: give leaf functions a frame so an exception on a guest thread can unwind.\n"
            "  --rpath <path>                 System library search path. Default: $ORIGIN/libs.\n"
+           "  --omit-unavailable-dependencies Linux: leave out a module dependency that no module provides, no import uses\n"
+           "                                 and no run path directory holds at conversion time.\n"
            "  --registry                     Write <output-stem>.registry.json beside the output.\n"
            "  --autorun                      Run the output after conversion and print its exit code.\n"
            "  --dry-run                      Convert in memory and list planned outputs without writing them.\n"
@@ -57,6 +61,7 @@ const char* Usage() {
            "  --lazy-binding                 Deprecated. Enable lazy symbol binding instead of eager binding.\n"
            "\n"
            "Other:\n"
+           "  --function-symbol-roots        Analyze function symbols as entry points instead of sized ranges.\n"
            "  --help                         Print this help and exit with code 0.\n"
            "  --version                      Print the build revision and exit with code 0.\n"
            "  --                             Treat all remaining arguments as paths.\n"
@@ -69,8 +74,8 @@ namespace {
 constexpr std::string_view kVerifyRejectedOptions[] = {
     "--dry-run",
     "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base", "--macos-fixed-base",
-    "--to-intel", "--to-rosetta", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
-    "--rpath", "--registry", "--lazy-binding", "--autorun", "--patches", "--no-patches",
+    "--to-intel", "--to-rosetta", "--to-avx", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "--function-symbol-roots", "unused-filter=",
+    "--rpath", "--registry", "--omit-unavailable-dependencies", "--lazy-binding", "--autorun", "--patches", "--no-patches",
 };
 
 constexpr std::string_view kModuleDiscoveryOptions[] = {"--sce-module-path", "--module-dir", "--exclude-sce-module", "--skip-sce-module"};
@@ -143,6 +148,8 @@ Args ParseArgs(int argc, char* argv[]) {
             args.skipSyscallCheck = true;
         } else if (arg == "--trap-sdk-syscall-stubs") {
             args.trapSdkSyscallStubs = true;
+        } else if (arg == "--function-symbol-roots") {
+            args.functionSymbolRoots = true;
         } else if (arg == "--skip-sce-module") {
             args.skipSceModule = true;
         } else if (arg == "--sce-module-path") {
@@ -167,6 +174,9 @@ Args ParseArgs(int argc, char* argv[]) {
             args.frameRedZone = true;
         } else if (arg == "--to-rosetta") {
             args.toRosetta = true;
+            args.toIntel = true;
+        } else if (arg == "--to-avx") {
+            args.toAvx = true;
             args.toIntel = true;
         } else if (arg.rfind("unused-filter=", 0) == 0) {
             const std::string value = arg.substr(14);
@@ -200,6 +210,8 @@ Args ParseArgs(int argc, char* argv[]) {
             args.toMacos = true;
         } else if (arg == "--lazy-binding") {
             args.lazyBinding = true;
+        } else if (arg == "--omit-unavailable-dependencies") {
+            args.omitUnavailableDependencies = true;
         } else if (arg == "--autorun") {
             args.autorun = true;
         } else if (arg == "--dry-run") {
@@ -248,6 +260,8 @@ Args ParseArgs(int argc, char* argv[]) {
         throw std::runtime_error("--windows conflicts with --macos");
     if (args.toRosetta && args.toWindows)
         throw std::runtime_error("--to-rosetta conflicts with --windows");
+    if (args.toAvx && !args.toMacos)
+        throw std::runtime_error("--to-avx requires --macos");
     if (args.windowsDiagnostics && !args.toWindows)
         throw std::runtime_error("--windows-diagnostics requires --windows");
     if (args.frameRedZone && !args.toWindows)

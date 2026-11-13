@@ -5,7 +5,9 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include <array>
 #include <cstring>
+#include <mutex>
 #include <vector>
 
 namespace {
@@ -13,6 +15,21 @@ namespace {
 constexpr std::int32_t DefaultNativeMode = -1;
 constexpr std::uint16_t CreateMode = 0x1ff;
 constexpr std::int64_t MaxVectors = 1024;
+constexpr std::uint32_t PassthruHandleBase = 0x7fff8000u;
+
+struct PassthruHandles {
+    std::mutex mutex;
+    std::array<int, 256> descriptors = [] {
+        std::array<int, 256> values{};
+        values.fill(-1);
+        return values;
+    }();
+};
+
+PassthruHandles& Passthru() {
+    static PassthruHandles handles;
+    return handles;
+}
 
 using HandleWork = std::function<void(Fios::FileHandle&, Fios::Completion&)>;
 
@@ -206,6 +223,37 @@ std::int64_t CountSync(SceFiosOp op) {
 }
 
 extern "C" {
+
+int APS5_VABI sceFiosFHToFileno(SceFiosFH handle) {
+    const auto value = static_cast<std::uint32_t>(handle);
+    if ((value & 0x7fffc000u) != PassthruHandleBase) return -1;
+    const auto index = value & 0x3fffu;
+    if (index >= Passthru().descriptors.size()) return -1;
+    const std::lock_guard lock(Passthru().mutex);
+    return Passthru().descriptors[index];
+}
+
+SceFiosFH APS5_VABI sceFiosFilenoToFH(int descriptor) {
+    if (descriptor == -1) return 0;
+    const std::lock_guard lock(Passthru().mutex);
+    std::size_t freeIndex = Passthru().descriptors.size();
+    for (std::size_t index = 0; index < Passthru().descriptors.size(); ++index) {
+        if (Passthru().descriptors[index] == descriptor) return static_cast<SceFiosFH>(PassthruHandleBase | static_cast<std::uint32_t>(index));
+        if (freeIndex == Passthru().descriptors.size() && Passthru().descriptors[index] == -1) freeIndex = index;
+    }
+    if (freeIndex == Passthru().descriptors.size()) return 0;
+    Passthru().descriptors[freeIndex] = descriptor;
+    return static_cast<SceFiosFH>(PassthruHandleBase | static_cast<std::uint32_t>(freeIndex));
+}
+
+void APS5_VABI sceFiosDeallocatePassthruFH(SceFiosFH handle) {
+    const auto value = static_cast<std::uint32_t>(handle);
+    if ((value & 0x7fffc000u) != PassthruHandleBase) return;
+    const auto index = value & 0x3fffu;
+    if (index >= Passthru().descriptors.size()) return;
+    const std::lock_guard lock(Passthru().mutex);
+    Passthru().descriptors[index] = -1;
+}
 
 SceFiosOp APS5_VABI sceFiosFHOpen(const SceFiosOpAttr* attr, SceFiosFH* outFH, const char* path, const SceFiosOpenParams* openParams) {
     return StartOpen(attr, outFH, path, openParams, DefaultNativeMode);

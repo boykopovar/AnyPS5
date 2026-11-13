@@ -75,6 +75,7 @@ Lease GuestAllocationsAcquireMapped_nid_no_patch(const Mapped& mapped);
 Lease GuestAllocationsAcquireAll_nid_postfix();
 Lease GuestAllocationsAcquireRegistered_nid_postfix();
 std::shared_ptr<const Range> GuestAllocationsLookup_nid_postfix(std::uintptr_t address, bool next);
+void GuestAllocationsLookupEach_nid_postfix(const std::uintptr_t* addresses, std::size_t count, std::shared_ptr<const Range>* ranges);
 // Changes whenever a mutation ends, so callers can cache facts about guest mappings between changes.
 std::uint64_t GuestAllocationsGeneration_nid_postfix();
 // Precise invalidation for such caches: the callback runs, after the generation changed, for every
