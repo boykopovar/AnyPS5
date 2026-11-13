@@ -21,6 +21,7 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 48;
 constexpr float Unwritten = -7.0f;
+bool PassThrough = false;
 alignas(256) std::array<float, Width * Height * 4> Pixels{};
 
 alignas(256) constexpr std::array<std::uint32_t, 8> VertexCode{
@@ -37,6 +38,10 @@ alignas(256) constexpr std::array<std::uint32_t, 6> VertexValuePixelCode{
 
 alignas(256) constexpr std::array<std::uint32_t, 4> FlatBarycentricPixelCode{
     0xc8120002, 0xf800180f, 0x04040100, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 4> FirstVertexPixelCode{
+    0xc80a0002, 0xf800180f, 0x02020202, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 5> InterpolatedPixelCode{
@@ -111,6 +116,7 @@ ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, Emulatio
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
     pixel.interpolatorCount = 1;
     if (flat) pixel.interpolatorSettings[0] = 0x400u;
+    if (PassThrough) pixel.interpolatorSettings[0] = 0x420u;
     pixel.inputAddr = inputs;
     pixel.hasPerspectiveCenterVgpr = (inputs & PixelInputBit(PixelInput::PerspectiveCenter)) != 0u;
     pixel.noPerspective = (inputs & PixelInputBit(PixelInput::LinearCenter)) != 0u;
@@ -301,6 +307,43 @@ void CheckFlat(const std::string& what, std::size_t provoking) {
     Require(checked > 200u, what + ": too few interior pixels were checked");
 }
 
+void CheckFirstVertex(AgcDriver::VulkanDevice& device) {
+    const auto perspective = PixelInputBit(PixelInput::PerspectiveCenter);
+    PassThrough = true;
+    const auto result = Draw(device, Emulation::Tessellation, FirstVertexPixelCode, perspective);
+    Require(!result.barycentricEmulation.active, "a pass-through input read only at P0 needed generated stages");
+    Require(result.fragmentParameters.size() == 1 && result.fragmentParameters[0].flat && result.fragmentParameters[0].custom && !result.fragmentParameters[0].perVertex,
+        "a pass-through input read only at P0 was not passed as a flat input");
+    const auto positions = ClipPositions(Emulation::Geometry);
+    Require(positions[0][0] != positions[1][0] && positions[0][0] != positions[2][0], "the vertices do not differ in the read value");
+    std::uint32_t checked = 0;
+    for (std::uint32_t y = 0; y < Height; ++y) {
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            if (!BarycentricsUnsnapped(Emulation::Geometry, x, y).inside) continue;
+            for (std::uint32_t channel = 0; channel < 4; ++channel) {
+                Require(Pixel(x, y, channel) == positions[0][0], "pass-through P0: pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") channel " + std::to_string(channel) + " is " + std::to_string(Pixel(x, y, channel)) + ", not the first vertex's " + std::to_string(positions[0][0]));
+            }
+            ++checked;
+        }
+    }
+    Require(checked > 200u, "pass-through P0: too few interior pixels were checked");
+    bool refused = false;
+    try {
+        Draw(device, Emulation::Tessellation, FirstVertexPixelCode, perspective, VK_CULL_MODE_NONE, false, VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT);
+    } catch (const std::exception& error) {
+        const std::string message = error.what();
+        refused = message.find("pass-through input read only at P0") != std::string::npos || message.find("last provoking vertex requires VK_EXT_provoking_vertex") != std::string::npos;
+    }
+    Require(refused, "a pass-through input read only at P0 was drawn with the last provoking vertex");
+    if (device.Target().tessellation.has_value() || device.GeometryLimits().has_value()) {
+        const auto mixed = Draw(device, device.GeometryLimits().has_value() ? Emulation::Geometry : Emulation::Tessellation, VertexValuePixelCode, perspective);
+        Require(mixed.barycentricEmulation.active && mixed.fragmentParameters.size() == 1 && mixed.fragmentParameters[0].perVertex && !mixed.fragmentParameters[0].flat,
+            "a pass-through input read at P10, P20 and P0 stopped being read per vertex");
+    }
+    PassThrough = false;
+    std::printf("a pass-through input read only at P0 is a flat input of the first vertex: %u pixels\n", checked);
+}
+
 bool Drawn() {
     return std::any_of(Pixels.begin(), Pixels.end(), [](float value) { return value != Unwritten; });
 }
@@ -460,6 +503,7 @@ int main() {
             const auto builtinLinear = CheckBarycentrics(Emulation::Tessellation, "LINEAR_CENTER I/J from BaryCoordNoPerspKHR", false);
             std::printf("barycentric built-in tests passed: %u perspective and %u linear I/J pixels\n", builtinSmooth, builtinLinear);
         }
+        CheckFirstVertex(*device);
         const bool geometry = device->GeometryLimits().has_value();
         const bool tessellation = device->Target().tessellation.has_value();
         if (!geometry && !tessellation) {
