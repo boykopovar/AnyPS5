@@ -110,7 +110,11 @@ struct TssGetDataOptParam {
 };
 
 bool IsEmpty(const NpOnlineId* user) {
-    return !user->data[0];
+    char first = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&first, user->data, sizeof(first));
+    errno = savedErrno;
+    return !copied || first == 0;
 }
 
 int StartOffline(int reqId) {
@@ -376,8 +380,15 @@ int APS5_VABI sceNpTusDeleteMultiSlotDataVUserAsync(int reqId, const NpOnlineId*
     if (!slotIds) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option || arrayLen == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
-    for (int index = 0; index < arrayLen; ++index) {
-        if (slotIds[index] < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (arrayLen > 0) {
+        std::array<std::int32_t, MAX_SLOTS> localSlots{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(localSlots.data(), slotIds, static_cast<std::size_t>(arrayLen) * sizeof(std::int32_t));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        for (int index = 0; index < arrayLen; ++index) {
+            if (localSlots[index] < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        }
     }
     if (!targetVirtualUserId) {
         std::lock_guard lock(tusMutex);
@@ -697,7 +708,7 @@ int APS5_VABI sceNpTusGetMultiUserDataStatusAVUserAsync(int reqId, const NpOnlin
     if (option || arrayLen < 1 || slotId < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_USERS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_NPID;
     for (int index = 0; index < arrayLen; ++index) {
-        if (IsEmpty(&targetVirtualUserIdArray[index])) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        if (IsEmpty(targetVirtualUserIdArray + index)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return StartOffline(reqId);
 }
@@ -724,7 +735,7 @@ int APS5_VABI sceNpTusGetMultiUserDataStatusForCrossSaveVUserAsync(int reqId, co
     if (option || arrayLen < 1 || slotId < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_USERS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_NPID;
     for (int index = 0; index < arrayLen; ++index) {
-        if (IsEmpty(&targetVirtualUserIdArray[index])) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        if (IsEmpty(targetVirtualUserIdArray + index)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return StartOffline(reqId);
 }
@@ -735,7 +746,7 @@ int APS5_VABI sceNpTusGetMultiUserDataStatusVUserAsync(int reqId, const NpOnline
     if (option || slotId < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_USERS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_NPID;
     for (int index = 0; index < arrayLen; ++index) {
-        if (IsEmpty(&targetVirtualUserIdArray[index])) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        if (IsEmpty(targetVirtualUserIdArray + index)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return StartOffline(reqId);
 }
@@ -754,7 +765,7 @@ int APS5_VABI sceNpTusGetMultiUserVariableAVUserAsync(int reqId, const NpOnlineI
     if (option || arrayLen < 1 || slotId < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_USERS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_NPID;
     for (int index = 0; index < arrayLen; ++index) {
-        if (IsEmpty(&targetVirtualUserIdArray[index])) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        if (IsEmpty(targetVirtualUserIdArray + index)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return StartOffline(reqId);
 }
@@ -785,7 +796,7 @@ int APS5_VABI sceNpTusGetMultiUserVariableForCrossSaveVUserAsync(int reqId, cons
     if (option || arrayLen < 1 || slotId < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_USERS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_NPID;
     for (int index = 0; index < arrayLen; ++index) {
-        if (IsEmpty(&targetVirtualUserIdArray[index])) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        if (IsEmpty(targetVirtualUserIdArray + index)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return StartOffline(reqId);
 }
@@ -796,7 +807,7 @@ int APS5_VABI sceNpTusGetMultiUserVariableVUserAsync(int reqId, const NpOnlineId
     if (option || slotId < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_USERS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_NPID;
     for (int index = 0; index < arrayLen; ++index) {
-        if (IsEmpty(&targetVirtualUserIdArray[index])) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        if (IsEmpty(targetVirtualUserIdArray + index)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return StartOffline(reqId);
 }

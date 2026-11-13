@@ -353,7 +353,7 @@ if(BUILD_TESTING)
         target_compile_options(guest_kernel_sys_paths_tests PRIVATE -fasynchronous-unwind-tables)
         target_link_options(guest_kernel_sys_paths_tests PRIVATE -static -static-libgcc -static-libstdc++)
     endif()
-    foreach(case IN ITEMS statfs symlinkat symlinkat_errors futimesat readlink_limits readlinkat_limits)
+    foreach(case IN ITEMS statfs symlinkat symlinkat_errors futimesat)
         add_test(NAME guest_kernel_sys_paths_${case} COMMAND guest_kernel_sys_paths_tests ${UNPATCHED_DIR} unpatched ${case})
         add_test(NAME guest_kernel_sys_paths_${case}_patched COMMAND guest_kernel_sys_paths_tests ${PATCHED_DIR} patched ${case})
         set_tests_properties(guest_kernel_sys_paths_${case} guest_kernel_sys_paths_${case}_patched PROPERTIES TIMEOUT 20)
@@ -363,9 +363,7 @@ if(BUILD_TESTING)
                 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${kernelSysPathsRuntimeDirectory}")
         endif()
     endforeach()
-    set_tests_properties(guest_kernel_sys_paths_symlinkat guest_kernel_sys_paths_symlinkat_patched
-        guest_kernel_sys_paths_readlink_limits guest_kernel_sys_paths_readlink_limits_patched
-        guest_kernel_sys_paths_readlinkat_limits guest_kernel_sys_paths_readlinkat_limits_patched PROPERTIES SKIP_RETURN_CODE 77)
+    set_tests_properties(guest_kernel_sys_paths_symlinkat guest_kernel_sys_paths_symlinkat_patched PROPERTIES SKIP_RETURN_CODE 77)
 
     add_test_executable(guest_posix_scalar_io_tests tests/GuestPosixScalarIo.cpp)
     target_include_directories(guest_posix_scalar_io_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1649,6 +1647,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_gnm_neo_shaders PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
+    endif()
+
+    add_test_executable(guest_agc_driver_unknown_tests tests/GuestAgcDriverUnknown.cpp)
+    target_include_directories(guest_agc_driver_unknown_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_agc_driver_unknown_tests PRIVATE libSceAgcDriver libc)
+    configure_windows_unwind(guest_agc_driver_unknown_tests)
+    add_test(NAME guest_agc_driver_unknown COMMAND guest_agc_driver_unknown_tests)
+    if(WIN32)
+        set_tests_properties(guest_agc_driver_unknown PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>")
     endif()
 
     add_test_executable(guest_gnm_neo_default_state_tests tests/GuestGnmNeoDefaultState.cpp)

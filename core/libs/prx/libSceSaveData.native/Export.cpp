@@ -2045,6 +2045,7 @@ int APS5_VABI sceSaveDataIsDeletingUsbDb(void) {
 }
 
 int APS5_VABI sceSaveDataIsMounted() {
+    if (g_initializations == 0) return SAVE_DATA_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
