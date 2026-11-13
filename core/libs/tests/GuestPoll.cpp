@@ -22,6 +22,11 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#ifdef __linux__
+#include <cstdarg>
+#include <dlfcn.h>
+#include <fcntl.h>
+#endif
 
 #ifdef _WIN32
 using NativeSocket = SOCKET;
@@ -45,6 +50,20 @@ void* operator new(std::size_t bytes) {
 }
 void operator delete(void* pointer) noexcept { std::free(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+#endif
+#ifdef __linux__
+static std::atomic<int> closeBeforeStatusQuery{-1};
+extern "C" int fcntl(int descriptor, int command, ...) {
+    va_list arguments;
+    va_start(arguments, command);
+    void* argument = va_arg(arguments, void*);
+    va_end(arguments);
+    static const auto actual = reinterpret_cast<int (*)(int, int, ...)>(dlsym(RTLD_NEXT, "fcntl"));
+    Require(actual != nullptr);
+    int expected = descriptor;
+    if (command == F_GETFL && closeBeforeStatusQuery.compare_exchange_strong(expected, -1)) Require(close_nid_postfix(descriptor) == 0);
+    return actual(descriptor, command, argument);
+}
 #endif
 constexpr short In = 0x1;
 constexpr short Priority = 0x2;
@@ -388,6 +407,18 @@ static void PollsAPipeClosedDuringTheWait() {
     }
 }
 
+#ifdef __linux__
+static void PollsAPipeClosedBeforeItsStatusQuery() {
+    int pair[2]{-1, -1};
+    Require(pipe_nid_postfix(pair) == 0);
+    GuestPollDescriptor entry{pair[0], In, 0};
+    closeBeforeStatusQuery = pair[0];
+    Require(poll_nid_postfix(&entry, 1, 0) == 1 && entry.revents == Invalid);
+    Require(closeBeforeStatusQuery == -1);
+    Require(close_nid_postfix(pair[1]) == 0);
+}
+#endif
+
 static void PollsASocketClosedDuringTheWait() {
     for (int attempt = 0; attempt < 20; ++attempt) {
         const int socket = socket_nid_postfix(2, 2, 0);
@@ -447,6 +478,9 @@ int main() {
     PollsUrgentData();
     PollsAStreamWhosePeerClosed();
     PollsAPipeClosedDuringTheWait();
+#ifdef __linux__
+    PollsAPipeClosedBeforeItsStatusQuery();
+#endif
 #ifndef _WIN32
     PollsAHungUpSocketWithoutPollout();
 #endif
