@@ -2737,6 +2737,30 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi13InGameCatalog2V59Container11getChildrenEv(
     return CopyMemberIntrusivePtr(out, self, 0x228, VectorReferenceCountOffset);
 }
 
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V59Container14getDisplayNameEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x88;
+}
+
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V59Container8getLabelEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x58;
+}
+
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V59Container14getReleaseDateEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0xa8;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V59Container16releaseDateIsSetEv(const void* self) {
+    return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0xc8) != 0;
+}
+
+void* APS5_VABI _ZN3sce2Np9CppWebApi13InGameCatalog2V59Container7getSkusEv(void* out, void* self) {
+    return CopyMemberIntrusivePtr(out, self, 0x208, VectorReferenceCountOffset);
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V59Container9skusIsSetEv(const void* self) {
+    return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0x220) != 0;
+}
+
 int APS5_VABI _ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainerC1Ev(void* self) {
     ConstructParameter(self);
     return 0;
@@ -4740,6 +4764,14 @@ int APS5_VABI _ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToG
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V53Sku17displayPriceIsSetEv(const void* self) {
     return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0x100) != 0;
+}
+
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V53Sku10getEndDateEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x88;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V53Sku12endDateIsSetEv(const void* self) {
+    return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0xa8) != 0;
 }
 
 const void* APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V57Product5getIdEv(const void* self) {
