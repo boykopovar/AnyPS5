@@ -1,5 +1,6 @@
 #include <cstdint>
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libSceLibreSsl3/include/LibTls.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -65,12 +66,12 @@ int APS5_VABI i2d_X509_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI tls_read_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI tls_read_nid_postfix(TlsContext* context, void* buffer, std::size_t length) {
+    return TlsTransportRead_nid_no_patch(context, buffer, length);
 }
 
-int APS5_VABI tls_write_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI tls_write_nid_postfix(TlsContext* context, const void* buffer, std::size_t length) {
+    return TlsTransportWrite_nid_no_patch(context, buffer, length);
 }
 
 int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix() {
@@ -81,8 +82,8 @@ int APS5_VABI X509_NAME_add_entry_by_txt_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI tls_handshake_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI tls_handshake_nid_postfix(TlsContext* context) {
+    return TlsTransportHandshake_nid_no_patch(context);
 }
 
 int APS5_VABI AUTHORITY_KEYID_free_nid_postfix() {
@@ -216,8 +217,8 @@ int APS5_VABI X509_add_ext_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI tls_connect_socket_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI tls_connect_socket_nid_postfix(TlsContext* context, int socket, const char* servername) {
+    return TlsTransportConnect_nid_no_patch(context, socket, servername);
 }
 
 int APS5_VABI SSL_CTX_set_quic_method_nid_postfix() {

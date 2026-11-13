@@ -12,6 +12,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/Cipher.hpp"
 #include "prx/libSceLibreSsl3/include/EcdsaSig.hpp"
+#include "prx/libSceLibreSsl3/include/LibTls.hpp"
 
 using LibreSsl3KeylogCallback = void (APS5_VABI*)(const LibreSsl3Ssl* ssl, const char* line);
 
@@ -327,15 +328,15 @@ int APS5_VABI i2d_X509_nid_postfix();
 void APS5_VABI sk_free_nid_postfix(LibreSslStack* stack);
 LibreSslStack* APS5_VABI sk_new_nid_postfix(StackCompare compare);
 int APS5_VABI sk_push_nid_postfix(LibreSslStack* stack, void* element);
-int APS5_VABI tls_read_nid_postfix();
-int APS5_VABI tls_write_nid_postfix();
+std::int64_t APS5_VABI tls_read_nid_postfix(TlsContext* context, void* buffer, std::size_t length);
+std::int64_t APS5_VABI tls_write_nid_postfix(TlsContext* context, const void* buffer, std::size_t length);
 void APS5_VABI EC_KEY_set_asn1_flag_nid_postfix(EcKey* key, int flag);
 void APS5_VABI BIO_set_init_nid_postfix(LibreSsl::Bio* bio, int init);
 int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix();
 int APS5_VABI SSL_SESSION_get_protocol_version_nid_postfix(const void* session);
 int APS5_VABI X509_NAME_add_entry_by_txt_nid_postfix();
 void APS5_VABI BIO_meth_free_nid_postfix(LibreSsl::BioMethod* method);
-int APS5_VABI tls_handshake_nid_postfix();
+int APS5_VABI tls_handshake_nid_postfix(TlsContext* context);
 int APS5_VABI AUTHORITY_KEYID_free_nid_postfix();
 int APS5_VABI X509V3_EXT_d2i_nid_postfix();
 int APS5_VABI ASN1_INTEGER_set_nid_postfix(Asn1String* integer, std::int64_t value);
@@ -387,7 +388,7 @@ int APS5_VABI EVP_PKEY2PKCS8_nid_postfix();
 Asn1String* APS5_VABI ASN1_TIME_new_nid_postfix();
 int APS5_VABI X509_set_issuer_name_nid_postfix();
 int APS5_VABI X509_add_ext_nid_postfix();
-int APS5_VABI tls_connect_socket_nid_postfix();
+int APS5_VABI tls_connect_socket_nid_postfix(TlsContext* context, int socket, const char* servername);
 int APS5_VABI SSL_CTX_set_quic_method_nid_postfix();
 Asn1String* APS5_VABI X509_gmtime_adj_nid_postfix(Asn1String* time, std::int64_t adjustment);
 int APS5_VABI SSL_process_quic_post_handshake_nid_postfix(void* ssl);
