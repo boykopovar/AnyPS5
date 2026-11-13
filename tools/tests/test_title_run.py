@@ -361,6 +361,13 @@ class PreparationTests(unittest.TestCase):
             title_run.main(common)
         self.assertFalse((self.root / "out").exists())
 
+    def test_games_without_a_title_package_are_refused(self):
+        games = self.root / "games"
+        games.mkdir()
+        with self.assertRaisesRegex(SystemExit, "no title package under --games: .*games$"):
+            title_run.main(["--games", str(games), "--out", str(self.root / "out")])
+        self.assertFalse((self.root / "out").exists())
+
     def test_discover(self):
         package(self.root / "a/src/PPSA00001", "PPSA00001", "01.000.110", "Light")
         package(self.root / "b/PPSA00002", "PPSA00002")
