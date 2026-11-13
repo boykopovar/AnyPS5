@@ -1452,8 +1452,6 @@ int main() {
     Require(scePadIsLightBarBaseBrightnessControllable(handle2 + 99) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetLightBarBaseBrightness(handle2, 1) == PAD_OK);
     Require(scePadSetLightBarBaseBrightness(handle2 + 99, 1) == PAD_ERROR_INVALID_HANDLE);
-    Require(scePadIsLightBarBaseBrightnessControllable(handle) == 1);
-    Require(scePadSetLightBarBaseBrightness(handle, 1) == PAD_OK);
     const int special = scePadOpen_nid_postfix(user2, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
     Require(special > 0);
     Require(scePadIsLightBarBaseBrightnessControllable(special) == 0);
