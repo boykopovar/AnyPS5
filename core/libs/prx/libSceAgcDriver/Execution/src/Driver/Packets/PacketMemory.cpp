@@ -68,6 +68,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
         const bool storesNothing = (packet[2] >> 29u) == 0 || (packet[3] | (static_cast<std::uint64_t>(packet[4]) << 32u)) == 0;
         if (label.has_value() || storesNothing) {
             bumpEpoch(&EpochBumps::drains);
+            ++DrainEpochCounts().interrupts;
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
             const auto localDevice = device.Load();
@@ -278,6 +279,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
         static const bool unlockedDrain = std::getenv("APS5_NO_UNLOCKED_DRAIN") == nullptr && !drainAll;
 
         bumpEpoch(&EpochBumps::drains);
+        ++DrainEpochCounts().packets[header == FlipPacketHeader ? DrainEpochs::Flip : opcode & 0xffu];
         std::shared_ptr<VulkanDevice> draining;
         std::uint64_t epoch = 0;
         {
@@ -509,7 +511,10 @@ bool Driver::enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint
         bytes.assign(stored.begin(), stored.end());
         writes.emplace_back(address, address + bytes.size());
     }
-    if (endOfPipeInterrupt) bumpEpoch(&EpochBumps::drains);
+    if (endOfPipeInterrupt) {
+        bumpEpoch(&EpochBumps::drains);
+        ++DrainEpochCounts().queuedInterrupts;
+    }
     auto stored = bytes;
     auto labelBytes = bytes;
     auto enqueue =[this, queue, opcode, address, bytes = std::move(bytes), interrupt, writes, stored = std::move(stored)]() mutable {
