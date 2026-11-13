@@ -16,3 +16,4 @@
 #include "prx/libSceLibcInternal/include/MultiPrecision.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libSceLibcInternal/include/CodecvtUtfMetadata.hpp"
+#include "prx/libSceLibcInternal/include/TimeGetOrder.hpp"
