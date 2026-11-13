@@ -37,3 +37,37 @@
 | `_ZN15AbstractStorage14YoutubeStorageD2Ev` | `hfifwAJDCvU` |
 
 - [Older callable NIDs](../../../core/libs/prx/libSceAbstractYoutube/Export.cpp): 20 older exports are named after the mangled symbols the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for their NIDs, and the NID of each name matches. Their signatures and behavior are unverified. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory.
+
+### Exports of the 13.40 module
+
+- [Unnamed exports](../../../core/libs/prx/libSceAbstractYoutube/Export.cpp) (libSceAbstractYoutube) - the 13.40 module exports 27 NIDs that this library did not declare, listed below. They are exported as `libSceAbstractYoutubeUnknown_<nid>_nid_no_patch` under the no-parameter import-resolution convention. Nine of them return at once without reading an argument, with the values in the table; the other eighteen throw through `NotImplemented_nid_no_patch` and their parameters, return types and behavior are unknown. Read from disassembly, not measured on a console.
+
+| Export NID | 13.40 body |
+| --- | --- |
+| `26+qh3cw-Rk` | `0x809E0005` |
+| `2l4I9SCoQGo` | not immediate |
+| `2spIcbz9a4c` | not immediate |
+| `6A3QZpbCzqI` | not immediate |
+| `Bo7s49MExf4` | not immediate |
+| `C8lFlQympVw` | `0` |
+| `Cz-k0+3Ko-Y` | not immediate |
+| `Ds9ID4F7dNc` | not immediate |
+| `FkpEJ7DfAtE` | not immediate |
+| `GGzJcpDXRz4` | not immediate |
+| `HxZv0UgY+7E` | not immediate |
+| `Ix3dt-HaP9s` | not immediate |
+| `NBDWs6iIqNE` | `0x809E0005` |
+| `Pk1mFgNtLEM` | `0x809E0005` |
+| `RaO8sKI7L44` | `0x809E0005` |
+| `UJyqV64-qNQ` | `0x809E0005` |
+| `UqZVYj1m2m4` | not immediate |
+| `aVE9tVODTHw` | `0x809E0005` |
+| `cobO1RmAxN4` | not immediate |
+| `gsLtb-uKeH8` | not immediate |
+| `hdVPPVnBbZU` | not immediate |
+| `oWpmMJAVnI0` | not immediate |
+| `qrZ8UFLI1Us` | not immediate |
+| `uk6wVMRO9c0` | not immediate |
+| `uyA49-ae2+k` | not immediate |
+| `zNGleAOPtNs` | `0x809E0005` |
+| `zp94FyokDLI` | `0x809E0005` |
