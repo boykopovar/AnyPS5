@@ -282,7 +282,6 @@ int SymbolicLinkLimitError(const std::filesystem::path& native, bool followLast)
 }
 
 std::int64_t ReadNativeLink(const std::filesystem::path& native, char* buffer, std::size_t size) {
-    if (const int error = SymbolicLinkLimitError(native, false)) return Fail(error);
 #ifdef _WIN32
     const DWORD attributes = GetFileAttributesW(native.wstring().c_str());
     if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
