@@ -117,6 +117,21 @@ class ReportTests(unittest.TestCase):
                     script.write_text("changed", encoding="utf-8")
                     self.assertNotEqual(before, gate.artifact_hashes(build, tests, []))
 
+    def test_unsupported_platforms_are_refused_before_output_creation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "evidence"
+            arguments = ["--baseline", directory, "0" * 40, "--candidate", directory, "0" * 40,
+                         "--output", str(output), "--target", "fixture", "--tests", ".*", "--gpu", "fixture"]
+            for module, attribute, value in ((sys, "platform", "cygwin"), (sys, "platform", "msys"), (os, "name", "java")):
+                with self.subTest(attribute=attribute, value=value):
+                    stderr = io.StringIO()
+                    with unittest.mock.patch.object(module, attribute, value), contextlib.redirect_stderr(stderr), \
+                            self.assertRaises(SystemExit) as raised:
+                        gate.main(arguments)
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("Cygwin and MSYS", stderr.getvalue())
+                    self.assertFalse(output.exists())
+
 
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja") and shutil.which("ctest"), "requires CMake, Ninja and CTest")
 class FixtureTests(unittest.TestCase):
@@ -375,8 +390,11 @@ class CommandTests(FixtureTests):
                 self.assertFalse(marker.exists())
 
     def test_symlink_loops_are_setup_errors(self):
-        (self.root / "first").symlink_to("second")
-        (self.root / "second").symlink_to("first")
+        try:
+            (self.root / "first").symlink_to("second")
+            (self.root / "second").symlink_to("first")
+        except OSError as error:
+            self.skipTest(f"symlinks unavailable: {error}")
         loop, source = self.root / "first", self.source("base")
         for baseline, output in ((source, loop / "evidence"), ((loop, source[1]), self.root / "evidence")):
             with self.subTest(baseline=baseline[0], output=output):
@@ -387,6 +405,315 @@ class CommandTests(FixtureTests):
                     self.assertEqual(gate.main(arguments), 2)
                 self.assertIn("validation gate:", stderr.getvalue())
                 self.assertFalse((self.root / "evidence").exists())
+
+
+@unittest.skipUnless(os.name == "nt", "Windows job containment")
+class ContainmentTests(unittest.TestCase):
+    def setUp(self):
+        import ctypes
+        from ctypes import wintypes
+        self.ctypes = ctypes
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name).resolve()
+        self.kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.kernel32.OpenProcess.restype = wintypes.HANDLE
+        self.kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        self.kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        self.kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        self.kernel32.TerminateProcess.restype = wintypes.BOOL
+        self.kernel32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+        self.kernel32.CloseHandle.restype = wintypes.BOOL
+        self.kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+
+    def kill_pid(self, pid):
+        handle = self.kernel32.OpenProcess(0x00100001, False, pid)
+        if handle:
+            self.kernel32.TerminateProcess(handle, 1)
+            self.kernel32.WaitForSingleObject(handle, 2000)
+            self.kernel32.CloseHandle(handle)
+
+    def is_dead(self, pid, timeout):
+        handle = self.kernel32.OpenProcess(0x00100000, False, pid)
+        if not handle:
+            return True
+        try:
+            return self.kernel32.WaitForSingleObject(handle, int(timeout * 1000)) == 0
+        finally:
+            self.kernel32.CloseHandle(handle)
+
+    def wait_for_file(self, path, timeout=10.0):
+        deadline = time.monotonic() + timeout
+        while not path.exists():
+            if time.monotonic() >= deadline:
+                self.fail(f"timed out waiting for {path}")
+            time.sleep(0.01)
+
+    def repo(self, name):
+        source = self.root / name
+        source.mkdir()
+        (source / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\nproject(p NONE)\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", str(source)], check=True)
+        subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(source), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                        "-c", "commit.gpgSign=false", "commit", "-qm", "fixture"], check=True)
+        return source, gate.git(source, "rev-parse", "HEAD")
+
+    def test_job_assignment_failure_kills_suspended_child_and_propagates(self):
+        if hasattr(gate, "guard"):
+            gate.guard()
+        marker = self.root / "assign-marker"
+        spawned = []
+        real_popen = subprocess.Popen
+        real_win32 = gate.win32
+        current = gate.KERNEL32.GetCurrentProcess() if hasattr(gate.KERNEL32, "GetCurrentProcess") else None
+
+        def popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            if kwargs.get("creationflags") == gate.CREATE_SUSPENDED:
+                spawned.append(process.pid)
+                self.addCleanup(self.kill_pid, process.pid)
+            return process
+
+        def win32(name, *arguments, **kwargs):
+            if name == "AssignProcessToJobObject" and arguments[1] != current:
+                raise OSError("synthetic assign failure")
+            return real_win32(name, *arguments, **kwargs)
+
+        with unittest.mock.patch.object(subprocess, "Popen", popen), unittest.mock.patch.object(gate, "win32", win32):
+            with self.assertRaisesRegex(OSError, "synthetic assign failure"):
+                gate.run([sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"],
+                         self.root / "assign.log", os.environ, 5)
+            self.assertEqual(len(spawned), 1)
+            self.assertTrue(self.is_dead(spawned[0], 2.0))
+            self.assertFalse(marker.exists())
+            if shutil.which("git"):
+                baseline, candidate = self.repo("assign-base"), self.repo("assign-head")
+                output = self.root / "assign-evidence"
+                arguments = ["--baseline", str(baseline[0]), baseline[1], "--candidate", str(candidate[0]), candidate[1],
+                             "--output", str(output), "--target", "fixture", "--tests", ".*", "--gpu", "fixture",
+                             "--cmake", sys.executable]
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(gate.main(arguments), 2)
+                report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+                self.assertIn("synthetic assign failure", report["error"])
+                self.assertEqual(len(spawned), 2)
+                self.assertTrue(self.is_dead(spawned[1], 2.0))
+
+    def test_keyboard_interrupt_during_sliced_wait_cleans_up_tree(self):
+        ready = self.root / "interrupt.ready"
+        marker = self.root / "interrupt.marker"
+        child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(1); Path({str(marker)!r}).touch()"
+        parent = (f"import subprocess, sys, time; from pathlib import Path; subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+                  f"while not Path({str(ready)!r}).exists(): time.sleep(.01)\ntime.sleep(30)\n")
+        calls = 0
+        real_wait = subprocess.Popen.wait
+
+        def sliced_wait(process, timeout=None):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                self.wait_for_file(ready)
+                return real_wait(process, timeout=0.05)
+            if calls == 2:
+                raise KeyboardInterrupt
+            return real_wait(process, timeout=timeout)
+
+        with unittest.mock.patch.object(subprocess.Popen, "wait", sliced_wait):
+            with self.assertRaises(KeyboardInterrupt):
+                gate.run([sys.executable, "-c", parent], self.root / "interrupt.log", os.environ, 30)
+        self.assertTrue(ready.exists())
+        time.sleep(1.2)
+        self.assertFalse(marker.exists())
+
+    def test_surviving_job_processes_fail_normal_exit_and_preserve_timeout(self):
+        real_popen = subprocess.Popen
+        real_win32 = gate.win32
+        real_close = getattr(gate, "close", None)
+        ignore_terminate = False
+        jobs = set()
+        processes = []
+
+        def cleanup_process(process):
+            self.kill_pid(process.pid)
+            with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                process.wait(timeout=2)
+
+        def popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            processes.append(process)
+            self.addCleanup(cleanup_process, process)
+            return process
+
+        def close(handle):
+            if ignore_terminate and handle in jobs:
+                return
+            real_close(handle)
+
+        def win32(name, *arguments, **kwargs):
+            if name == "TerminateJobObject" and ignore_terminate:
+                return 1
+            if name == "CloseHandle" and ignore_terminate and arguments[0] in jobs:
+                return 1
+            if name == "QueryInformationJobObject":
+                if hasattr(gate, "Accounting"):
+                    self.ctypes.cast(arguments[2], self.ctypes.POINTER(gate.Accounting)).contents.active = 1
+                return 1
+            result = real_win32(name, *arguments, **kwargs)
+            if name == "CreateJobObjectW":
+                jobs.add(result)
+                self.addCleanup(self.kernel32.CloseHandle, result)
+            return result
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(unittest.mock.patch.object(gate, "DRAIN_SECONDS", 0.2, create=True))
+            stack.enter_context(unittest.mock.patch.object(subprocess, "Popen", popen))
+            stack.enter_context(unittest.mock.patch.object(gate, "win32", win32))
+            if real_close is not None:
+                stack.enter_context(unittest.mock.patch.object(gate, "close", close))
+            with self.assertRaisesRegex(gate.GateError, "survived job termination"):
+                gate.run([sys.executable, "-c", "pass"], self.root / "survive.log", os.environ, 5)
+            ignore_terminate = True
+            started = time.monotonic()
+            with self.assertRaises(subprocess.TimeoutExpired):
+                gate.run([sys.executable, "-c", "import time; time.sleep(5)"], self.root / "survive-timeout.log", os.environ, 0.2)
+            self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_killing_gate_process_terminates_active_command_tree(self):
+        ready = self.root / "killed-gate.ready"
+        marker = self.root / "killed-gate.marker"
+        pids = self.root / "killed-gate.pids"
+        tools_dir = str(Path(__file__).resolve().parents[1])
+        child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(1); Path({str(marker)!r}).touch()"
+        parent = (f"import os, subprocess, sys, time; from pathlib import Path\n"
+                  f"descendant = subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+                  f"Path({str(pids)!r}).write_text(f'{{os.getpid()}} {{descendant.pid}}', encoding='utf-8')\n"
+                  f"while not Path({str(ready)!r}).exists(): time.sleep(.01)\ntime.sleep(30)\n")
+        runner_code = (f"import os, sys; from pathlib import Path; sys.path.insert(0, {tools_dir!r}); "
+                       f"import vulkan_validation_gate as gate; "
+                       f"gate.run([sys.executable, '-c', {parent!r}], Path({str(self.root / 'killed-gate.log')!r}), os.environ, 30)")
+        runner = subprocess.Popen([sys.executable, "-c", runner_code])
+        self.addCleanup(self.kill_pid, runner.pid)
+        self.wait_for_file(ready)
+        self.wait_for_file(pids)
+        for pid in map(int, pids.read_text(encoding="utf-8").split()):
+            self.addCleanup(self.kill_pid, pid)
+        self.kernel32.TerminateProcess(int(runner._handle), 1)
+        runner.wait(timeout=5)
+        time.sleep(2.0)
+        self.assertFalse(marker.exists())
+
+    def test_guard_job_kills_suspended_child_when_gate_dies_before_containment(self):
+        tools_dir = str(Path(__file__).resolve().parents[1])
+        script = self.root / "guard_probe.py"
+        script.write_text(
+            "import os, sys\nfrom pathlib import Path\n"
+            f"sys.path.insert(0, {tools_dir!r})\nimport vulkan_validation_gate as gate\n"
+            "if sys.argv[1] == '0':\n    gate.guard = lambda: None\n"
+            "def stop_before_job(pid):\n"
+            "    Path(sys.argv[2]).write_text(str(pid), encoding='utf-8')\n"
+            "    os._exit(1)\n"
+            "gate.contain = stop_before_job\n"
+            "gate.run([sys.executable, '-c', 'import time; time.sleep(60)'], Path(sys.argv[3]), os.environ, 30)\n",
+            encoding="utf-8")
+        for guarded in ("1", "0"):
+            with self.subTest(guarded=guarded):
+                pid_file = self.root / f"guard-{guarded}.pid"
+                result = subprocess.run([sys.executable, str(script), guarded, str(pid_file), str(self.root / f"guard-{guarded}.log")])
+                self.assertEqual(result.returncode, 1)
+                pid = int(pid_file.read_text(encoding="utf-8"))
+                self.addCleanup(self.kill_pid, pid)
+                if guarded == "1":
+                    self.assertTrue(self.is_dead(pid, 2.0))
+                else:
+                    self.assertFalse(self.is_dead(pid, 0.3))
+                    self.kill_pid(pid)
+                    self.assertTrue(self.is_dead(pid, 2.0))
+
+    def test_unexpected_resume_suspend_count_fails_and_kills_child(self):
+        spawned = []
+        real_popen = subprocess.Popen
+        real_win32 = gate.win32
+
+        def popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            if kwargs.get("creationflags") == gate.CREATE_SUSPENDED:
+                spawned.append(process.pid)
+                self.addCleanup(self.kill_pid, process.pid)
+            return process
+
+        def win32(name, *arguments, **kwargs):
+            if name == "ResumeThread":
+                return 2
+            return real_win32(name, *arguments, **kwargs)
+
+        with unittest.mock.patch.object(subprocess, "Popen", popen), unittest.mock.patch.object(gate, "win32", win32):
+            with self.assertRaisesRegex(gate.GateError, r"\b2\b"):
+                gate.run([sys.executable, "-c", "pass"], self.root / "resume.log", os.environ, 0.5)
+        self.assertEqual(len(spawned), 1)
+        self.assertTrue(self.is_dead(spawned[0], 2.0))
+
+    def test_job_information_structures_match_win32_layout(self):
+        pointer = self.ctypes.sizeof(self.ctypes.c_void_p)
+        self.assertEqual(self.ctypes.sizeof(gate.Limits), 144 if pointer == 8 else 112)
+        self.assertEqual(gate.Limits.flags.offset, 16)
+        self.assertEqual(gate.Limits.io.offset, 64 if pointer == 8 else 48)
+        self.assertEqual(gate.Limits.memory.offset, 112 if pointer == 8 else 96)
+        self.assertEqual(self.ctypes.sizeof(gate.Accounting), 48)
+        self.assertEqual(gate.Accounting.active.offset, 40)
+
+
+@unittest.skipUnless(os.name == "nt", "Windows job containment")
+class NestedContainmentTests(FixtureTests):
+    def probe_source(self, name, body):
+        source, _ = self.source(name)
+        program = ('import os, subprocess, sys, time\nfrom pathlib import Path\n'
+                   'print(\'[Vulkan Loader] INFO | LAYER:   Insert instance layer "VK_LAYER_KHRONOS_validation" (fixture)\', file=sys.stderr)\n'
+                   + body)
+        (source / "probe.py").write_text(program, encoding="utf-8")
+        subprocess.run(["git", "-C", str(source), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                        "-c", "commit.gpgSign=false", "commit", "-qam", "custom probe"], check=True)
+        return source, gate.git(source, "rev-parse", "HEAD")
+
+    def test_ctest_descendant_with_devnull_stdio_is_terminated_after_test_exit(self):
+        ready = self.root / "nested.ready"
+        marker = self.root / "nested.marker"
+        child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(1); Path({str(marker)!r}).touch()"
+        body = (f"subprocess.Popen([sys.executable, '-c', {child!r}], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+                f"while not Path({str(ready)!r}).exists(): time.sleep(.01)\n")
+        code, report = self.execute(self.source("nested-base"), self.probe_source("nested-head", body), "--repeat", "1")
+        self.assertEqual(code, 0, report)
+        self.assertTrue(ready.exists())
+        time.sleep(1.2)
+        self.assertFalse(marker.exists())
+
+    def test_breakaway_is_refused_directly_and_contained_under_ctest(self):
+        direct_marker = self.root / "breakaway-direct.marker"
+        direct_status = self.root / "breakaway-direct.status"
+        direct_child = f"from pathlib import Path; Path({str(direct_marker)!r}).touch()"
+        direct_parent = (
+            f"import subprocess, sys; from pathlib import Path\n"
+            f"try:\n"
+            f"    subprocess.Popen([sys.executable, '-c', {direct_child!r}], stdin=subprocess.DEVNULL, "
+            f"stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x01000000)\n"
+            f"    Path({str(direct_status)!r}).write_text('spawned', encoding='utf-8')\n"
+            f"except OSError as error:\n"
+            f"    Path({str(direct_status)!r}).write_text(str(error.winerror), encoding='utf-8')\n")
+        self.assertEqual(gate.run([sys.executable, "-c", direct_parent], self.root / "breakaway-direct.log", os.environ, 10), 0)
+        self.assertEqual(direct_status.read_text(encoding="utf-8"), "5")
+        self.assertFalse(direct_marker.exists())
+
+        ready = self.root / "breakaway-ctest.ready"
+        ctest_marker = self.root / "breakaway-ctest.marker"
+        ctest_child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(1); Path({str(ctest_marker)!r}).touch()"
+        body = (f"subprocess.Popen([sys.executable, '-c', {ctest_child!r}], stdin=subprocess.DEVNULL, "
+                f"stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x01000000)\n"
+                f"while not Path({str(ready)!r}).exists(): time.sleep(.01)\n")
+        code, report = self.execute(self.source("breakaway-base"), self.probe_source("breakaway-head", body), "--repeat", "1")
+        self.assertEqual(code, 0, report)
+        self.assertTrue(ready.exists())
+        time.sleep(1.2)
+        self.assertFalse(ctest_marker.exists())
 
 
 if __name__ == "__main__":
