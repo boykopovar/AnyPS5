@@ -60,6 +60,18 @@ std::uint64_t Number(std::string_view text, int base = 10) {
     return number;
 }
 
+std::uint64_t ContentLength(std::string_view text) {
+    std::optional<std::uint64_t> length;
+    for (;;) {
+        const auto comma = text.find(',');
+        const auto number = Number(Trim(text.substr(0, comma)));
+        if (length && *length != number) throw HttpFailure("conflicting HTTP content lengths");
+        length = number;
+        if (comma == std::string_view::npos) return number;
+        text.remove_prefix(comma + 1);
+    }
+}
+
 std::optional<std::chrono::sys_seconds> HttpDate(const std::string& text) {
     if (text.size() != 29 || text[3] != ',' || text[4] != ' ' || text[7] != ' ' || text[11] != ' ' ||
         text[16] != ' ' || text[19] != ':' || text[22] != ':' || text.substr(25) != " GMT") return {};
@@ -490,7 +502,7 @@ struct HttpClientState : Aps5HttpClient {
                     connection.Append(body, count);
                     if (!connection.Line().empty()) throw HttpFailure("invalid HTTP chunk terminator");
                 }
-            } else if (headers.contains("content-length")) connection.Append(body, Number(headers.at("content-length")));
+            } else if (headers.contains("content-length")) connection.Append(body, ContentLength(headers.at("content-length")));
             else connection.UntilClosed(body);
             if (empty) body.clear();
             auto responseEtag = std::move(trailerEtag);
@@ -513,11 +525,18 @@ struct HttpClientState : Aps5HttpClient {
                 const auto& range = headers.at("content-range");
                 const auto dash = range.find('-');
                 const auto slash = range.find('/');
-                if (Lower(range.substr(0, 6)) != "bytes " || dash == std::string::npos || slash <= dash) throw HttpFailure("invalid HTTP content range");
+                if (Lower(range.substr(0, 6)) != "bytes " || dash == std::string::npos || slash == std::string::npos || slash <= dash) throw HttpFailure("invalid HTTP content range");
                 first = Number(std::string_view(range).substr(6, dash - 6));
                 const auto last = Number(std::string_view(range).substr(dash + 1, slash - dash - 1));
-                total = Number(std::string_view(range).substr(slash + 1));
-                if (first != start || last < first || last >= total || last - first + 1 != body.size() || body.size() > length) throw HttpFailure("HTTP range response does not match request");
+                if (first != start || last < first || body.empty() || body.size() > length || last - first != body.size() - 1) throw HttpFailure("HTTP range response does not match request");
+                const auto completeLength = std::string_view(range).substr(slash + 1);
+                if (completeLength == "*") {
+                    full = true;
+                    visited.clear();
+                    continue;
+                }
+                total = Number(completeLength);
+                if (last >= total) throw HttpFailure("HTTP range response does not match request");
             }
             if (total > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) || (initialized && total != size)) throw HttpFailure("HTTP source size changed or is not representable");
             std::string nextEtag = etag;
