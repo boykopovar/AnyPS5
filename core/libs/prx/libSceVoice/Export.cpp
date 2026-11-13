@@ -382,7 +382,11 @@ int APS5_VABI sceVoiceGetMuteFlag(std::uint32_t portId, bool* muted) {
     if (!muted) return InvalidArgument;
     const auto found = voice.ports.find(portId);
     if (found == voice.ports.end()) return PortNotFound;
-    *muted = found->second.muted || voice.mutedAll;
+    const bool localMuted = found->second.muted || voice.mutedAll;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(muted, &localMuted, sizeof(localMuted));
+    errno = savedErrno;
+    if (!copied) return InvalidArgument;
     return 0;
 }
 
