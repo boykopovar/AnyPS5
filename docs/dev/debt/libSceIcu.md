@@ -1,5 +1,7 @@
 # libSceIcu technical debt
 
+- [Binary property sets](../../../core/libs/prx/libSceIcu/Set.cpp) expose immutable borrowed ranges through the existing guest `USet` API. Properties that require ICU data files still throw. Ranges follow the bundled Unicode version, and console behavior is unmeasured.
+
 ### Functional locale parsing and metadata
 
 - [LocaleCore.cpp](../../../core/libs/prx/libSceIcu/LocaleCore.cpp) implements six public ICU C entry points: `uloc_getLanguage`, `uloc_getCountry`, `uloc_getScript`, `uloc_getBaseName`, `uloc_canonicalize`, and `uloc_getKeywordValue`. These use typed System V guest signatures with 32-bit length/status fields, copy and overflow semantics, case normalization, locale components, and keyword lookup. Release-active guest tests and Linux ASan/UBSan/leak checks cover bounded buffers, malformed keyword items, and status propagation; 22,647 additional input/capacity combinations were differential-checked against *native desktop ICU 74*. This is a source-compatible subset, not an assertion of PS5 firmware 68 binary equivalence. Long/host-specific aliases, obscure locale grammar, data-driven locale operations, and arbitrary malformed input remain unverified. Neither PS5 hardware calls nor a console trace was available.
