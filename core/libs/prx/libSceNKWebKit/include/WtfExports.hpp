@@ -218,6 +218,12 @@ long long APS5_VABI _ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE(int
 bool APS5_VABI _ZN3WTF14FileSystemImpl12truncateFileEix(int handle, long long offset);
 int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE(const NKWebKit::WtfAbi::String& path, int mode, unsigned lockMode);
 void APS5_VABI _ZN3WTF14FileSystemImpl18unlockAndCloseFileEi(int handle);
+bool APS5_VABI _ZN3WTF14FileSystemImpl10fileExistsERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
+bool APS5_VABI _ZN3WTF14FileSystemImpl10deleteFileERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
+bool APS5_VABI _ZN3WTF14FileSystemImpl20deleteEmptyDirectoryERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
+bool APS5_VABI _ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_(const NKWebKit::WtfAbi::String& oldPath, const NKWebKit::WtfAbi::String& newPath);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl8realPathERKNS_6StringE(const NKWebKit::WtfAbi::String& filePath);
+bool APS5_VABI _ZN3WTF14FileSystemImpl19filesHaveSameVolumeERKNS_6StringES3_(const NKWebKit::WtfAbi::String& fileA, const NKWebKit::WtfAbi::String& fileB);
 double APS5_VABI _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm( const char16_t* string, std::size_t length, std::size_t& parsedLength);
 WTF::WallTime APS5_VABI _ZN3WTF8WallTime3nowEv();
 void APS5_VABI _ZN3WTF8dataLogFEPKcz(const char* format, ...);
