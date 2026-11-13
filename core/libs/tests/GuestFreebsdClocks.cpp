@@ -99,6 +99,27 @@ static void OmittedTimeIsFaultAfterClockValidation() {
     Require(sceKernelClockGettime(21, nullptr) == fault);
 }
 
+static void BadTimePointersFault() {
+    constexpr std::size_t page = 0x4000;
+    void* memory = nullptr;
+    Require(sceKernelMapFlexibleMemory(&memory, page, 3, 0) == 0 && memory != nullptr);
+    Require(sceKernelMprotect(memory, page, 1) == 0);
+    auto* readOnly = static_cast<KernelTimespec*>(memory);
+    auto* unmapped = reinterpret_cast<KernelTimespec*>(std::uintptr_t{0x10});
+    constexpr int fault = static_cast<int>(0x8002000eu);
+    for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_MONOTONIC, GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID}) {
+        for (auto* bad : {unmapped, readOnly}) {
+            *__error_nid_postfix() = 0;
+            Require(clock_gettime_nid_postfix(clockId, bad) == -1 && *__error_nid_postfix() == 14);
+            *__error_nid_postfix() = 0;
+            Require(clock_getres_nid_postfix(clockId, bad) == -1 && *__error_nid_postfix() == 14);
+            Require(sceKernelClockGettime(clockId, bad) == fault);
+            Require(sceKernelClockGetres(clockId, bad) == fault);
+        }
+    }
+    Require(readOnly->tv_sec == 0 && readOnly->tv_nsec == 0);
+}
+
 static void InvalidClockIdFailsGettime() {
     KernelTimespec time{-1, -1};
     for (const int clockId : {-1, 999, 3, 6, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31}) {
@@ -438,6 +459,7 @@ int main() {
     KernelTimezoneIsUtc();
     UnsupportedResolutionStillThrows();
     OmittedTimeIsFaultAfterClockValidation();
+    BadTimePointersFault();
     InvalidClockIdFailsGettime();
     ClockIoErrorIds();
     Clock20UsesScaledMonotonicTime();
