@@ -1,5 +1,6 @@
 #include "prx/libSceNpUtility/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -74,6 +75,9 @@ void CheckWordFilter() {
     const int context = sceNpWordFilterCreateTitleCtx(selfNpId);
     Require(context == WordFilterTitleCtxBase + 1, "sceNpWordFilterCreateTitleCtx", "the first word filter context is not 0x01000001");
     Require(sceNpWordFilterCreateAsyncRequest(context, nullptr) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "a null parameter was taken");
+    errno = 71;
+    Require(sceNpWordFilterCreateAsyncRequest(context, reinterpret_cast<const std::uint64_t*>(0x10)) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "an unmapped parameter was taken");
+    Require(errno == 71, "sceNpWordFilterCreateAsyncRequest", "errno was not preserved");
     Require(sceNpWordFilterCreateAsyncRequest(context, wrongAsyncParam) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "a parameter size other than 0x18 was taken");
     Require(sceNpWordFilterCreateAsyncRequest(context + 100, asyncParam) == InvalidId, "sceNpWordFilterCreateAsyncRequest", "an unknown context was taken");
     const int sync = sceNpWordFilterCreateRequest(context);
@@ -103,6 +107,12 @@ void CheckWordFilter() {
     Require(sceNpWordFilterSanitizeComment(async, "word", sanitized, &result) == InvalidArgument, "sceNpWordFilterSanitizeComment", "an option was taken");
     Require(sceNpWordFilterSanitizeComment(async, "word", sanitized, nullptr) == 0, "sceNpWordFilterSanitizeComment", "the asynchronous request did not start");
     Require(sceNpWordFilterPollAsync(async, &result) == PollFinished && result == SignedOut, "sceNpWordFilterPollAsync", "the request did not finish with SIGNED_OUT");
+    errno = 71;
+    Require(sceNpWordFilterPollAsync(async, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpWordFilterPollAsync", "unwritable result was taken");
+    Require(errno == 71, "sceNpWordFilterPollAsync", "errno was modified");
+    errno = 71;
+    Require(sceNpWordFilterWaitAsync(async, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpWordFilterWaitAsync", "unwritable result was taken");
+    Require(errno == 71, "sceNpWordFilterWaitAsync", "errno was modified");
     Require(sanitized[0] == 'z' && sanitized[4] == 'z', "sceNpWordFilterSanitizeComment", "a sanitized comment was written");
     Require(sceNpWordFilterAbortRequest(async) == 0, "sceNpWordFilterAbortRequest", "aborting a finished request failed");
     Require(sceNpWordFilterPollAsync(async, &result) == PollFinished && result == SignedOut, "sceNpWordFilterAbortRequest", "aborting a finished request changed its result");
@@ -248,6 +258,8 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntInitialize() == 0, "sceNpServiceChecker2IntInitialize", "initialization failed");
     Require(sceNpServiceChecker2IntInitialize() == AlreadyInitialized, "sceNpServiceChecker2IntInitialize", "a second initialization was taken");
     Require(sceNpServiceChecker2IntCreateRequest(nullptr) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "a null output was taken");
+    Require(sceNpServiceChecker2IntCreateRequest(reinterpret_cast<int*>(1)) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "an unmapped low output was taken");
+    Require(sceNpServiceChecker2IntCreateRequest(reinterpret_cast<int*>(~0xFu)) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "an unmapped high output was taken");
     Require(sceNpServiceChecker2IntCreateRequest(&request) == 0 && request == 1, "sceNpServiceChecker2IntCreateRequest", "the first request is not id 1");
     std::uint32_t availability = 0xA5A5A5A5;
     Require(sceNpServiceChecker2IntGetServiceAvailability(request, nullptr, &availability) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailability", "a null NpId was taken");
@@ -273,6 +285,9 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 2) == 1, "sceNpServiceChecker2IntIsSetServiceType", "bit 2 was not set");
     Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 10) == 0, "sceNpServiceChecker2IntIsSetServiceType", "type 10 was taken");
     Require(sceNpServiceChecker2IntIsSetServiceType(nullptr, 0) == 0, "sceNpServiceChecker2IntIsSetServiceType", "a null mask was taken");
+    errno = 71;
+    Require(sceNpServiceChecker2IntIsSetServiceType(reinterpret_cast<const std::uint32_t*>(0x10), 0) == 0, "sceNpServiceChecker2IntIsSetServiceType", "an unmapped mask was taken");
+    Require(errno == 71, "sceNpServiceChecker2IntIsSetServiceType", "errno was not preserved");
     Require(sceNpServiceChecker2IntFinalize() == 0, "sceNpServiceChecker2IntFinalize", "finalization failed");
     Require(sceNpServiceChecker2IntInitialize() == 0, "sceNpServiceChecker2IntInitialize", "reinitialization failed");
     int boundaryId = 0;
@@ -292,6 +307,93 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntCreateRequest(&request) == NotInitialized, "sceNpServiceChecker2IntCreateRequest", "a request was created after finalization");
 }
 
+void CheckLookupNet() {
+    constexpr int NotInitialized = static_cast<int>(0x80550702u);
+    constexpr int InsufficientArgumentNet = static_cast<int>(0x8055070Cu);
+    constexpr int InvalidIdNet = static_cast<int>(0x8055070Eu);
+    constexpr int InvalidTypeNet = static_cast<int>(0x80550711u);
+    int initialized = -1;
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetIsInit", "an uninitialized service reported itself initialized");
+    Require(sceNpLookupNetIsInit(nullptr) == 0, "sceNpLookupNetIsInit", "a null output was taken");
+    Require(sceNpLookupNetTerm() == NotInitialized, "sceNpLookupNetTerm", "terminating an uninitialized service was taken");
+    Require(sceNpLookupNetCreateTitleCtx(nullptr, selfNpId) == NotInitialized, "sceNpLookupNetCreateTitleCtx", "a context was created before initialization");
+    Require(sceNpLookupNetInit() == 0, "sceNpLookupNetInit", "initialization failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetIsInit", "the service did not report itself initialized");
+    Require(sceNpLookupNetInit() == 0, "sceNpLookupNetInit", "a second initialization was refused");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the first termination failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "the reference count did not keep the service initialized");
+    Require(sceNpLookupNetInitWithFunctionPointer(nullptr, nullptr) == 0, "sceNpLookupNetInitWithFunctionPointer", "the function-pointer initialization failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetInitWithFunctionPointer", "the service dropped out of the initialized state");
+    Require(sceNpLookupNetInitWithMemoryPool(nullptr, nullptr) == 0, "sceNpLookupNetInitWithMemoryPool", "the memory-pool initialization failed");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "terminating one wrapper reference was refused");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "a wrapper reference did not join the shared count");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "terminating the second wrapper reference was refused");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "the service left the initialized state while a plain reference remained");
+    Require(sceNpLookupNetCreateTitleCtx(nullptr, nullptr) == InsufficientArgumentNet, "sceNpLookupNetCreateTitleCtx", "a null NpId was taken");
+    const int firstContext = sceNpLookupNetCreateTitleCtx(nullptr, selfNpId);
+    Require(firstContext == 1, "sceNpLookupNetCreateTitleCtx", "the first context is not id 1");
+    const int secondContext = sceNpLookupNetCreateTitleCtx(selfNpId, npId);
+    Require(secondContext == 2, "sceNpLookupNetCreateTitleCtx", "the second context is not id 2");
+    Require(sceNpLookupNetCreateRequest(firstContext + 100) == InvalidIdNet, "sceNpLookupNetCreateRequest", "an unknown context was taken");
+    const int firstRequest = sceNpLookupNetCreateRequest(firstContext);
+    Require(firstRequest == 1, "sceNpLookupNetCreateRequest", "the first request is not id 1");
+    const int secondRequest = sceNpLookupNetCreateRequest(firstContext);
+    Require(secondRequest == 2, "sceNpLookupNetCreateRequest", "the second request is not id 2");
+    Require(sceNpLookupNetSetTimeout(999, 1, 0, 0, 0, 0) == InvalidIdNet, "sceNpLookupNetSetTimeout", "an unknown id was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, -1, 0, 0, 0, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative retry count was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 1, 0, 0, 0, 0) == 0, "sceNpLookupNetSetTimeout", "a valid timeout was refused");
+    Require(sceNpLookupNetNpId(999, selfNpId, npId, nullptr) == InvalidIdNet, "sceNpLookupNetNpId", "an unknown request was taken");
+    Require(sceNpLookupNetNpId(firstRequest, nullptr, npId, nullptr) == InsufficientArgumentNet, "sceNpLookupNetNpId", "a null online ID was taken");
+    Require(sceNpLookupNetNpId(firstRequest, selfNpId, nullptr, nullptr) == InsufficientArgumentNet, "sceNpLookupNetNpId", "a null NpId output was taken");
+    Require(sceNpLookupNetNpId(firstRequest, selfNpId, npId, nullptr) == SignedOut, "sceNpLookupNetNpId", "the lookup did not return SIGNED_OUT");
+    Require(sceNpLookupNetNpId(firstRequest, selfNpId, npId, nullptr) == InvalidTypeNet, "sceNpLookupNetNpId", "a used request did not return INVALID_TYPE");
+    Require(sceNpLookupNetDeleteRequest(secondRequest) == 0, "sceNpLookupNetDeleteRequest", "deleting the request failed");
+    Require(sceNpLookupNetDeleteRequest(secondRequest) == InvalidIdNet, "sceNpLookupNetDeleteRequest", "a deleted request was found");
+    Require(sceNpLookupNetAbortRequest(firstRequest) == 0, "sceNpLookupNetAbortRequest", "aborting the request failed");
+    Require(sceNpLookupNetDeleteTitleCtx(firstContext) == 0, "sceNpLookupNetDeleteTitleCtx", "deleting the context failed");
+    Require(sceNpLookupNetDeleteTitleCtx(firstContext) == InvalidIdNet, "sceNpLookupNetDeleteTitleCtx", "a deleted context was found");
+    const int censorRequest = sceNpLookupNetCreateRequest(secondContext);
+    Require(censorRequest == 3, "sceNpLookupNetCreateRequest", "the censor request is not id 3");
+    Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, nullptr, nullptr) == InsufficientArgumentNet, "sceNpLookupNetCensorComment", "a null comment was taken");
+    Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, "word", selfNpId) == InvalidArgument, "sceNpLookupNetCensorComment", "an option was taken");
+    const std::string longComment(0x401, 'a');
+    Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, longComment.c_str(), nullptr) == InvalidArgument, "sceNpLookupNetCensorComment", "a 0x401-byte comment was taken");
+    Require(sceNpLookupNetCensorComment(censorRequest, nullptr, "word", nullptr) == InsufficientArgumentNet, "sceNpLookupNetCensorComment", "a null NpId was taken");
+    Require(sceNpLookupNetCensorComment(censorRequest + 100, selfNpId, "word", nullptr) == InvalidIdNet, "sceNpLookupNetCensorComment", "an unknown request was taken");
+    Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, "word", nullptr) == SignedOut, "sceNpLookupNetCensorComment", "the censor did not return SIGNED_OUT");
+    Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, "word", nullptr) == InvalidTypeNet, "sceNpLookupNetCensorComment", "a used request did not return INVALID_TYPE");
+    const int sanitizeRequest = sceNpLookupNetCreateRequest(secondContext);
+    Require(sanitizeRequest == 4, "sceNpLookupNetCreateRequest", "the sanitize request is not id 4");
+    char sanitized[0x402] = {};
+    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, "word", nullptr, nullptr) == InsufficientArgumentNet, "sceNpLookupNetSanitizeComment", "a null output was taken");
+    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, nullptr, sanitized, nullptr) == InsufficientArgumentNet, "sceNpLookupNetSanitizeComment", "a null comment was taken");
+    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, "word", sanitized, selfNpId) == InvalidArgument, "sceNpLookupNetSanitizeComment", "an option was taken");
+    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, longComment.c_str(), sanitized, nullptr) == InvalidArgument, "sceNpLookupNetSanitizeComment", "a 0x401-byte comment was taken");
+    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, nullptr, "word", sanitized, nullptr) == InsufficientArgumentNet, "sceNpLookupNetSanitizeComment", "a null NpId was taken");
+    Require(sceNpLookupNetSanitizeComment(sanitizeRequest + 100, selfNpId, "word", sanitized, nullptr) == InvalidIdNet, "sceNpLookupNetSanitizeComment", "an unknown request was taken");
+    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, "word", sanitized, nullptr) == SignedOut, "sceNpLookupNetSanitizeComment", "the sanitize did not return SIGNED_OUT");
+    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, "word", sanitized, nullptr) == InvalidTypeNet, "sceNpLookupNetSanitizeComment", "a used request did not return INVALID_TYPE");
+    Require(sceNpLookupNetDeleteTitleCtx(secondContext) == 0, "sceNpLookupNetDeleteTitleCtx", "deleting the second context failed");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the second termination failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetTerm", "the service stayed initialized");
+    Require(sceNpLookupNetTerm() == NotInitialized, "sceNpLookupNetTerm", "a terminated service was terminated again");
+}
+
+void CheckLookupNetInitVariants() {
+    constexpr int NotInitialized = static_cast<int>(0x80550702u);
+    int initialized = -1;
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetIsInit", "a terminated service reported itself initialized");
+    Require(sceNpLookupNetTerm() == NotInitialized, "sceNpLookupNetTerm", "terminating an uninitialized service was taken");
+    Require(sceNpLookupNetInitWithFunctionPointer(nullptr, nullptr) == 0, "sceNpLookupNetInitWithFunctionPointer", "initialization with null arguments failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetInitWithFunctionPointer", "the service did not report itself initialized");
+    Require(sceNpLookupNetInitWithMemoryPool(nullptr, nullptr) == 0, "sceNpLookupNetInitWithMemoryPool", "a second initialization through the memory pool variant was refused");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetInitWithMemoryPool", "the service did not report itself initialized after both variants");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the first termination failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "the reference count did not keep the service initialized after one variant init");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the second termination failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetTerm", "the service stayed initialized after both terminations");
+}
+
 void CheckBandwidthTestInitStart() {
     Require(sceNpBandwidthTestInitStart() == SignedOut, "sceNpBandwidthTestInitStart", "starting a test while signed out did not return SIGNED_OUT");
     Require(sceNpBandwidthTestInitStart() == sceNpBandwidthTestInitStartDownload(nullptr), "sceNpBandwidthTestInitStart", "the answer differs from sceNpBandwidthTestInitStartDownload");
@@ -307,6 +409,9 @@ void CheckBandwidthTestShutdownWithDetailedInfo() {
     Require(sceNpBandwidthTestGetStatus(0, &status) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "the status of a test that never started did not return INVALID_ARGUMENT");
     Require(status == 0, "sceNpBandwidthTestGetStatus", "the status of a test that never started was not cleared to 0");
     Require(sceNpBandwidthTestGetStatus(0, nullptr) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "a null status did not return INVALID_ARGUMENT");
+    errno = 0;
+    Require(sceNpBandwidthTestGetStatus(0, reinterpret_cast<int*>(0x10)) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "unwritable status was taken");
+    Require(errno == 0, "sceNpBandwidthTestGetStatus", "errno was modified");
 }
 
 }
@@ -345,6 +450,9 @@ void DeleteLookup(int reqId) {
 void CheckLookupAsync() {
     const int context = sceNpLookupCreateTitleCtx(selfNpId);
     Require(sceNpLookupCreateAsyncRequest(context, nullptr) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "a null parameter was taken");
+    errno = 71;
+    Require(sceNpLookupCreateAsyncRequest(context, reinterpret_cast<const std::uint64_t*>(0x10)) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "an unmapped parameter was taken");
+    Require(errno == 71, "sceNpLookupCreateAsyncRequest", "errno was not preserved");
     Require(sceNpLookupCreateAsyncRequest(context, wrongAsyncParam) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "a parameter size other than 0x18 was taken");
     Require(sceNpLookupCreateAsyncRequest(context + 100, asyncParam) == InvalidId, "sceNpLookupCreateAsyncRequest", "an unknown context was taken");
 
@@ -429,6 +537,8 @@ void CheckTitleContextsA() {
 int main() {
     std::memset(selfNpId, 0, sizeof(selfNpId));
     std::strcpy(reinterpret_cast<char*>(selfNpId), "player_1");
+    CheckLookupNet();
+    CheckLookupNetInitVariants();
     CheckBandwidthTestInitStart();
     CheckBandwidthTestShutdownWithDetailedInfo();
     CheckNpUtilityLifecycles();

@@ -188,7 +188,7 @@ bool Pad::IsInitialized() {
 }
 
 namespace {
-PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t changeTime, std::uint64_t now, const Pad::InputCommandFile::Input& injected, int port) {
+PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t changeTime, std::uint64_t fuseTime, const Pad::InputCommandFile::Input& injected, int port) {
     PadData data{};
     const bool intercepted = state.intercepted;
     data.buttons = intercepted ? kInterceptedButton : state.buttons | injected.buttons;
@@ -213,14 +213,14 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
         }
     }
     if (live) {
-        float dt = slot.lastFuseTime != 0 && now > slot.lastFuseTime ? static_cast<float>(now - slot.lastFuseTime) * 1e-6f : 0.0f;
+        float dt = slot.lastFuseTime != 0 && fuseTime > slot.lastFuseTime ? static_cast<float>(fuseTime - slot.lastFuseTime) * 1e-6f : 0.0f;
         dt = std::min(dt, 0.1f);
         fuse(slot, dt, accel, gyro);
     } else {
         slot.orientation = Quat{};
         slot.biasIntegral[0] = slot.biasIntegral[1] = slot.biasIntegral[2] = 0.0f;
     }
-    slot.lastFuseTime = now;
+    slot.lastFuseTime = std::max(slot.lastFuseTime, fuseTime);
     data.orientation_x = slot.orientation.x;
     data.orientation_y = slot.orientation.y;
     data.orientation_z = slot.orientation.z;
@@ -336,7 +336,7 @@ PadData Pad::ReadState(int port) {
     const auto injected = port == 0 ? InjectedTitleInput(now) : Pad::InputCommandFile::Input{};
     auto& slot = slots[port];
     const bool withdrawn = WithdrawnPort(port, slot);
-    PadData data = withdrawn ? WithdrawnData(slot.timestamp) : BuildData(slot, slot.state, slot.timestamp, now, injected, port);
+    PadData data = withdrawn ? WithdrawnData(slot.timestamp) : BuildData(slot, slot.state, now, now, injected, port);
     if (!withdrawn && slot.pressedSinceRead != 0 && now - slot.pressedAt <= LatchExpiry(slot)) {
         data.buttons |= slot.pressedSinceRead;
         if (slot.pressedSinceRead & 0x100u) data.analog_buttons_l2 = std::max(data.analog_buttons_l2, slot.pressedAnalogL2);
@@ -364,13 +364,14 @@ int Pad::Read(PadData* data, int num, int port) {
         return 1;
     }
     if (slot.queue.empty()) {
-        data[0] = BuildData(slot, slot.state, slot.timestamp, now, injected, port);
+        data[0] = BuildData(slot, slot.state, now, now, injected, port);
         return 1;
     }
     int count = 0;
     while (count < num && !slot.queue.empty()) {
         const QueuedInput& entry = slot.queue.front();
-        data[count++] = BuildData(slot, entry.input, port == 0 ? std::max(entry.timestamp, injectedTimestamp) : entry.timestamp, now, injected, port);
+        const std::uint64_t sample = port == 0 ? std::max(entry.timestamp, injectedTimestamp) : entry.timestamp;
+        data[count++] = BuildData(slot, entry.input, sample, sample, injected, port);
         slot.queue.pop_front();
     }
     return count;

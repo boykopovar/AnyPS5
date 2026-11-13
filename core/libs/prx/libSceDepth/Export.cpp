@@ -10,7 +10,6 @@ extern "C" {
 
 APS5_DUMMY_FUN
 int APS5_VABI sceDepthCalculateRectificationInformation(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -45,7 +44,6 @@ int APS5_VABI sceDepthGetImage(void) {
 }
 
 int APS5_VABI sceDepthGetRectificationInformation(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -120,7 +118,6 @@ int APS5_VABI sceDepthSetPreFilterParameter(void) {
 }
 
 int APS5_VABI sceDepthSetRectificationInformation(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

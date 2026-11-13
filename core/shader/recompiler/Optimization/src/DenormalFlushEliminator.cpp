@@ -63,6 +63,30 @@ const IrValue* tinyGuardedProduct(const IrValue* condition, const IrValue* arm) 
     return nullptr;
 }
 
+bool testsMagnitude(const IrValue* condition, const IrValue* bits, std::uint32_t magnitudeBits) {
+    const IrValue* magnitude = maskedOperand(condition->Resolve(), IrOpcode::IEqual32, magnitudeBits);
+    const IrValue* source = magnitude != nullptr ? maskedOperand(magnitude, IrOpcode::BitwiseAnd32, 0x7fffffffu) : nullptr;
+    return source != nullptr && bitsOf(source) == bits;
+}
+
+const IrValue* guardedTrig(const IrValue* condition, const IrValue* arm) {
+    const IrValue* value = bitsOf(arm);
+    if ((value->Opcode() == IrOpcode::SelectU32 || value->Opcode() == IrOpcode::SelectF32) && value->ArgumentCount() == 3u) {
+        const IrValue* sine = bitsOf(value->Argument(2));
+        if (sine->Opcode() != IrOpcode::FPSin || sine->ArgumentCount() != 1u) return nullptr;
+        const IrValue* source = bitsOf(sine->Argument(0));
+        if (bitsOf(value->Argument(1)) != source || !testsMagnitude(value->Argument(0), source, 0u)) return nullptr;
+        value = sine;
+    }
+    if ((value->Opcode() != IrOpcode::FPSin && value->Opcode() != IrOpcode::FPCos) || value->ArgumentCount() != 1u) return nullptr;
+    condition = condition->Resolve();
+    if (condition->Opcode() != IrOpcode::LogicalOr || condition->ArgumentCount() != 2u) return nullptr;
+    const IrValue* source = bitsOf(value->Argument(0));
+    const auto* lhs = condition->Argument(0);
+    const auto* rhs = condition->Argument(1);
+    return (testsForNan(lhs, source) && testsMagnitude(rhs, source, 0x7f800000u)) || (testsForNan(rhs, source) && testsMagnitude(lhs, source, 0x7f800000u)) ? value : nullptr;
+}
+
 bool clearsSignificand(const IrValue& value) {
     for (std::size_t index = 0; index < value.ArgumentCount(); ++index) {
         const IrValue* mask = value.Argument(index)->Resolve();
@@ -138,7 +162,9 @@ private:
                 const IrValue* condition = value.Argument(0);
                 const IrValue* product = tinyGuardedProduct(condition, value.Argument(2));
                 const bool taken = takenOnlyAsNan(condition, value.Argument(1)) || Contains(value.Argument(1));
-                return taken && (product != nullptr ? Contains(product->Argument(0)) && Contains(product->Argument(1)) : Contains(value.Argument(2)));
+                const IrValue* trig = guardedTrig(condition, value.Argument(2));
+                const bool finiteTrig = trig != nullptr && (trig->Opcode() == IrOpcode::FPCos || Contains(trig->Argument(0)));
+                return taken && (finiteTrig || (product != nullptr ? Contains(product->Argument(0)) && Contains(product->Argument(1)) : Contains(value.Argument(2))));
             }
             case IrOpcode::FPMin32:
             case IrOpcode::FPMax32:

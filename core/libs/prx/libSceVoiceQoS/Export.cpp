@@ -1,5 +1,6 @@
 #include "prx/libSceVoiceQoS/include/Api.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <stdexcept>
@@ -313,8 +314,11 @@ int APS5_VABI sceVoiceQoSGetLocalEndpoint(int32_t connectionId, int32_t* localId
     return Locked([&](QoS& qos) {
         if (!localId || connectionId < 0 || connectionId >= qos.endpointLimit) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
         const auto it = qos.connections.find(connectionId);
-        *localId = it == qos.connections.end() ? -1 : it->second.local;
-        return 0;
+        const std::int32_t value = it == qos.connections.end() ? -1 : it->second.local;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(localId, &value, sizeof(value));
+        errno = savedErrno;
+        return copied ? 0 : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
     });
 }
 
@@ -322,8 +326,11 @@ int APS5_VABI sceVoiceQoSGetRemoteEndpoint(int32_t connectionId, int32_t* remote
     return Locked([&](QoS& qos) {
         if (!remoteId || connectionId < 0 || connectionId >= qos.endpointLimit) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
         const auto it = qos.connections.find(connectionId);
-        *remoteId = it == qos.connections.end() ? -1 : it->second.remote;
-        return 0;
+        const std::int32_t value = it == qos.connections.end() ? -1 : it->second.remote;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(remoteId, &value, sizeof(value));
+        errno = savedErrno;
+        return copied ? 0 : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
     });
 }
 
@@ -363,8 +370,7 @@ int APS5_VABI sceVoiceQoSSetMode() {
 }
 
 int APS5_VABI sceVoiceQoSTerminate() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceVoiceQoSEnd();
 }
 
 }

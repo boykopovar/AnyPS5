@@ -1,5 +1,6 @@
 #include "ShaderDiskCache.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "CacheKey.hpp"
 #include "ShaderCachePack.hpp"
 #include "ShaderCacheDirectory.hpp"
@@ -23,6 +24,7 @@
 #include <unistd.h>
 #endif
 #include "ShaderCacheSourceVersion.hpp"
+#include "prx/libc/include/RemoveTree.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -90,7 +92,7 @@ static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update
 #if defined(__cpp_lib_atomic_shared_ptr)
 static_assert(sizeof(RecompileResult) == 552, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
-static_assert(sizeof(DescriptorBinding) == 656, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 864, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
@@ -304,7 +306,7 @@ public:
         out.insert(out.end(), bytes.begin(), bytes.end());
     }
 
-    void Flags(const std::vector<bool>& flags) {
+    void Flags(const ElementFlags& flags) {
         Value<std::uint64_t>(flags.size());
         for (const bool flag : flags) Value(flag);
     }
@@ -405,10 +407,10 @@ public:
         return SharedSpirv(std::move(words));
     }
 
-    void Flags(std::vector<bool>& flags) {
+    void Flags(ElementFlags& flags) {
         const auto count = Count(1);
-        flags.assign(count, false);
-        for (std::size_t i = 0; i < count; ++i) flags[i] = Get<bool>();
+        flags.clear();
+        for (std::size_t i = 0; i < count; ++i) flags.push_back(Get<bool>());
     }
 
     void Text(std::string& text) {
@@ -1271,12 +1273,13 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
             }
             const auto zigzag = code - 1u;
             const auto delta = static_cast<std::int64_t>(zigzag >> 1u) ^ -static_cast<std::int64_t>(zigzag & 1u);
-            const auto index = static_cast<std::int64_t>(current) + delta;
-            if (index < 0 || index >= static_cast<std::int64_t>(records.size())) {
+            const auto base = static_cast<std::int64_t>(current);
+            const auto limit = static_cast<std::int64_t>(records.size());
+            if (delta < -base || delta >= limit - base) {
                 in.Fail();
                 return;
             }
-            argument = static_cast<std::uint32_t>(index);
+            argument = static_cast<std::uint32_t>(base + delta);
         }
         if (record.opcode == IrOpcode::Phi) {
             record.phiBlocks.resize(record.arguments.size());
@@ -1490,7 +1493,7 @@ public:
         discoverPrebuilt();
         stopping = stopped;
         if (stopping) return;
-        writer = std::thread([this] { run(); });
+        writer = Libc::StartHostThread([this] { run(); });
         runningWriters.fetch_add(1, std::memory_order_acq_rel);
     }
 
@@ -1829,7 +1832,7 @@ private:
             if (!used) used = lastWriteTime(it->path());
             if (used && now - *used > std::chrono::hours(24 * 14)) {
                 std::error_code removeError;
-                std::filesystem::remove_all(it->path(), removeError);
+                RemoveTree(it->path(), removeError);
             }
         }
         error.clear();
