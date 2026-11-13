@@ -95,7 +95,7 @@ bool ScansWideInProcess(const char* format) {
 }
 
 
-bool HasNarrowCharacterScan(const char* format) {
+bool HasNarrowScan(const char* format, const char* conversions) {
     if (format == nullptr) return false;
     while ((format = std::strchr(format, '%')) != nullptr) {
         ++format;
@@ -108,7 +108,8 @@ bool HasNarrowCharacterScan(const char* format) {
         while (std::isdigit(static_cast<unsigned char>(*format))) ++format;
         const char* length = format;
         while (*format && std::strchr("hljztL", *format)) ++format;
-        if (*format == 'c' && !(format - length == 1 && *length == 'l')) return true;
+        if (*format != '\0' && std::strchr(conversions, *format) != nullptr &&
+                (*format != 'c' || !(format - length == 1 && *length == 'l'))) return true;
         if (*format == '[') {
             ++format;
             if (*format == '^') ++format;
@@ -120,12 +121,22 @@ bool HasNarrowCharacterScan(const char* format) {
     return false;
 }
 
+#ifndef _WIN32
+bool HasNarrowCharacterScan(const char* format) {
+    return HasNarrowScan(format, "c");
+}
+#endif
+
 bool ScansInProcess(const char* format) {
     if (HasGuestWideScan(format)) {
         LibcDetail::RequireNoPositionalWideScan(format);
         return true;
     }
+#ifdef _WIN32
+    return HasNarrowScan(format, "cxXipaAeEfFgG");
+#else
     return HasNarrowCharacterScan(format);
+#endif
 }
 
 const char* CutAtQuadScanDirective(const char* format, std::string& head) {
