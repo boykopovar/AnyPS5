@@ -32,9 +32,13 @@ public:
     enum class DrainReason : std::uint8_t { Packet, Flush, Labels, Capture, Indirect, Submission, Count };
     enum class QueuedWrite : std::uint8_t { None, Stored, Unknown };
     enum class CommitKind : std::uint8_t { Other, Draw, IndirectDraw, ColorMetadata, Dispatch, SampleDump, DmaFill, DmaWrite, DmaCopy, Store, EndOfPipe, Seal, SubmitEnd, Completion, BufferFill, Count };
+    enum class InlineReason : std::uint8_t { Unpipelined, IndirectRecord, IndirectLast, IndirectGpu, Labels, LockedPrepare, Dispatch, DispatchIndirect, Count };
 
     static DrawPipeline& Queue0();
+    static void NoteInline(InlineReason reason, std::uint32_t opcode);
+    static void ReportCommitter();
     static std::size_t Depth();
+    static bool PipelineIndirect();
     static std::size_t QueuedItems();
     static bool& Active();
     static std::atomic<std::uint64_t>& EpochToken();
@@ -119,6 +123,17 @@ private:
     std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(CommitKind::Count)> kindNs{};
     std::uint64_t depthSum = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
+    static constexpr std::size_t OpcodeSlots = 257;
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(InlineReason::Count) * OpcodeSlots> inlineCounts{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(DrainReason::Count) * OpcodeSlots> drainCounts{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(DrainReason::Count)> drainCountNs{};
+    std::atomic<std::uint64_t> queuedCount{0};
+    std::atomic<std::int64_t> committerReportNs{0};
+    std::mutex committerReportMutex;
+    std::array<std::uint64_t, static_cast<std::size_t>(InlineReason::Count) * OpcodeSlots> reportedInline{};
+    std::array<std::uint64_t, static_cast<std::size_t>(DrainReason::Count) * OpcodeSlots> reportedDrains{};
+    std::array<std::uint64_t, static_cast<std::size_t>(DrainReason::Count)> reportedDrainNs{};
+    std::uint64_t reportedQueued = 0;
 };
 
 class DrawFinisher {
