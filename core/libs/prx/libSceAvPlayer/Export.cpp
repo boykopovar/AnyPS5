@@ -102,8 +102,13 @@ int APS5_VABI sceAvPlayerEnableStream(AvPlayerInternal* h, uint32_t stream_id) {
 Bool APS5_VABI sceAvPlayerGetAudioData(AvPlayerInternal* h, AvPlayerFrameInfo* audio_info) {
     if (!h || !audio_info) return false;
     AvPlayerFrameInfo localInfo{};
-    if (!ToPlayer(h)->GetAudioData(localInfo)) return false;
     const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localInfo, audio_info, sizeof(localInfo))) {
+        errno = savedErrno;
+        return false;
+    }
+    errno = savedErrno;
+    if (!ToPlayer(h)->GetAudioData(localInfo)) return false;
     const bool copied = GuestCopyOut_nid_no_patch(audio_info, &localInfo, sizeof(localInfo));
     errno = savedErrno;
     return copied;
@@ -112,9 +117,14 @@ Bool APS5_VABI sceAvPlayerGetAudioData(AvPlayerInternal* h, AvPlayerFrameInfo* a
 int APS5_VABI sceAvPlayerGetStreamInfo(AvPlayerInternal* h, uint32_t stream_id, AvPlayerStreamInfo* info) {
     if (!h || !info) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     AvPlayerStreamInfo localInfo{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo))) {
+        errno = savedErrno;
+        return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    }
+    errno = savedErrno;
     const int res = ToPlayer(h)->GetStreamInfo(stream_id, localInfo);
     if (res != 0) return res;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
     errno = savedErrno;
     if (!copied) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
@@ -124,9 +134,14 @@ int APS5_VABI sceAvPlayerGetStreamInfo(AvPlayerInternal* h, uint32_t stream_id, 
 int APS5_VABI sceAvPlayerGetStreamInfoEx(AvPlayerInternal* h, uint32_t stream_id, AvPlayerStreamInfoEx* info) {
     if (!h || !info) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     AvPlayerStreamInfoEx localInfo{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo))) {
+        errno = savedErrno;
+        return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    }
+    errno = savedErrno;
     const int res = ToPlayer(h)->GetStreamInfoEx(stream_id, localInfo);
     if (res != 0) return res;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
     errno = savedErrno;
     if (!copied) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
@@ -136,8 +151,13 @@ int APS5_VABI sceAvPlayerGetStreamInfoEx(AvPlayerInternal* h, uint32_t stream_id
 Bool APS5_VABI sceAvPlayerGetVideoData(AvPlayerInternal* h, AvPlayerFrameInfo* video_info) {
     if (!h || !video_info) return false;
     AvPlayerFrameInfo localInfo{};
-    if (!ToPlayer(h)->GetVideoData(localInfo)) return false;
     const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localInfo, video_info, sizeof(localInfo))) {
+        errno = savedErrno;
+        return false;
+    }
+    errno = savedErrno;
+    if (!ToPlayer(h)->GetVideoData(localInfo)) return false;
     const bool copied = GuestCopyOut_nid_no_patch(video_info, &localInfo, sizeof(localInfo));
     errno = savedErrno;
     return copied;
@@ -146,8 +166,13 @@ Bool APS5_VABI sceAvPlayerGetVideoData(AvPlayerInternal* h, AvPlayerFrameInfo* v
 Bool APS5_VABI sceAvPlayerGetVideoDataEx(AvPlayerInternal* h, AvPlayerFrameInfoEx* video_info) {
     if (!h || !video_info) return false;
     AvPlayerFrameInfoEx localInfo{};
-    if (!ToPlayer(h)->GetVideoData(localInfo)) return false;
     const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localInfo, video_info, sizeof(localInfo))) {
+        errno = savedErrno;
+        return false;
+    }
+    errno = savedErrno;
+    if (!ToPlayer(h)->GetVideoData(localInfo)) return false;
     const bool copied = GuestCopyOut_nid_no_patch(video_info, &localInfo, sizeof(localInfo));
     errno = savedErrno;
     return copied;
