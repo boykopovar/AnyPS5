@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <thread>
 
 #ifdef _WIN32
@@ -48,6 +49,21 @@ std::uint64_t APS5_VABI _ZN3WTF7ramSizeEv() {
 
 void APS5_VABI _ZN3WTF29cryptographicallyRandomValuesEPvm(void* buffer, std::size_t length) {
     NKWebKit::FillRandomBytes(buffer, length);
+}
+
+WTF::StackBounds APS5_VABI _ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv() {
+    PthreadAttr attr = nullptr;
+    if (const int error = pthread_attr_init_nid_postfix(&attr))
+        throw std::runtime_error("currentThreadStackBoundsInternal: pthread_attr_init failed with " + std::to_string(error));
+    void* bound = nullptr;
+    std::size_t stackSize = 0;
+    int error = pthread_attr_get_np_nid_postfix(pthread_self_nid_postfix(), &attr);
+    if (!error) error = pthread_attr_getstack_nid_postfix(&attr, &bound, &stackSize);
+    pthread_attr_destroy_nid_postfix(&attr);
+    if (error)
+        throw std::runtime_error("currentThreadStackBoundsInternal: reading the thread stack failed with " + std::to_string(error));
+    if (!bound || !stackSize) throw std::runtime_error("currentThreadStackBoundsInternal: the thread has no stack record");
+    return WTF::StackBounds{static_cast<char*>(bound) + stackSize, bound};
 }
 
 std::size_t APS5_VABI _ZN3WTF8pageSizeEv() {

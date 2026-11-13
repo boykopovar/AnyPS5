@@ -2,6 +2,7 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -9,6 +10,9 @@
 #include <cstring>
 #include <ctime>
 #include <limits>
+#include <mutex>
+#include <stdexcept>
+#include <unordered_map>
 #include <thread>
 
 #ifdef _WIN32
@@ -206,9 +210,51 @@ static const char* parseES5TimePortion(const char* currentPosition, long& hours,
 
 }  // namespace WTF
 
+namespace {
+
+struct TimingCallData {
+    double totalDuration{0.0};
+    unsigned callCount{0};
+    double maxDuration{0.0};
+};
+
+class TimingTotals {
+public:
+    TimingCallData Add(const char* name, double duration) {
+        std::lock_guard lock(m_lock);
+        auto& result = m_totals[name];
+        ++result.callCount;
+        result.maxDuration = std::max(result.maxDuration, duration);
+        result.totalDuration += duration;
+        return result;
+    }
+
+private:
+    std::mutex m_lock;
+    std::unordered_map<const char*, TimingCallData> m_totals;
+};
+
+TimingTotals& Totals() {
+    static TimingTotals* totals = new TimingTotals();
+    return *totals;
+}
+
+}  // namespace
+
 extern "C" {
 WTF::MonotonicTime APS5_VABI _ZN3WTF13MonotonicTime3nowEv() {
     return WTF::MonotonicTime{WTF::currentMonotonicTimeSeconds()};
+}
+
+void APS5_VABI _ZN3WTF11TimingScope11scopeDidEndEv(WTF::TimingScope* self) {
+    if (!self) throw std::invalid_argument("TimingScope::scopeDidEnd: null scope");
+    if (!self->m_name) throw std::invalid_argument("TimingScope::scopeDidEnd: null name");
+    if (!self->m_logIterationInterval) throw std::invalid_argument("TimingScope::scopeDidEnd: zero log iteration interval");
+    const double duration = _ZN3WTF13MonotonicTime3nowEv().m_value - self->m_startTime.m_value;
+    const auto data = Totals().Add(self->m_name, duration);
+    if (!(data.callCount % self->m_logIterationInterval))
+        WTFLogAlways("%s: %u calls, mean duration: %.6fms, total duration: %.6fms, max duration %.6fms", self->m_name, data.callCount,
+            data.totalDuration / data.callCount * 1000.0, data.totalDuration * 1000.0, data.maxDuration * 1000.0);
 }
 
 WTF::WallTime APS5_VABI _ZN3WTF8WallTime3nowEv() {
