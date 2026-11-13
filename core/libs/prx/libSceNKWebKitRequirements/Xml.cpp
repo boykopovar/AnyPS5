@@ -1,6 +1,5 @@
 #include "prx/libSceNKWebKitRequirements/include/GuestXml.hpp"
 #include "prx/libSceNKWebKitRequirements/include/Identified.hpp"
-#include "prx/libc/include/General.hpp"
 
 #include <libxml/parser.h>
 #include <libxml/parserInternals.h>
@@ -799,7 +798,7 @@ int APS5_VABI xmlParseContent_nid_postfix(NKWebKit::GuestParserCtxt* ctxt) {
     if (!b || !b->host_ctxt) return -1;
     SyncGuestToHost(b);
     if (!b->host_ctxt->myDoc && b->host_ctxt->sax && b->host_ctxt->sax->startElementNs == xmlSAX2StartElementNs)
-        NotImplemented_nid_no_patch("xmlParseContent: libxml2 tree building without a document");
+        throw std::runtime_error("xmlParseContent: libxml2 tree building without a document");
     xmlParseContent(b->host_ctxt);
     SyncHostToGuest(b);
     return 0;
