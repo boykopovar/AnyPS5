@@ -69,9 +69,13 @@ int APS5_VABI sceAudiodecDeleteDecoderEx(void) {
 int APS5_VABI sceAudiodecGetAjmContext(const void* context, std::uint32_t* ajmiContext, std::uint32_t* ajmContext) {
     if (context == nullptr) return AudiodecErrorArgument;
     std::uint32_t ids[2];
-    std::memcpy(ids, context, sizeof(ids));
-    if (ajmiContext != nullptr) *ajmiContext = ids[0];
-    if (ajmContext != nullptr) *ajmContext = ids[1];
+    if (!GuestCopyIn_nid_no_patch(ids, context, sizeof(ids))) return AudiodecErrorArgument;
+    if (ajmiContext != nullptr && !GuestCopyOut_nid_no_patch(ajmiContext, &ids[0], sizeof(*ajmiContext))) {
+        return AudiodecErrorArgument;
+    }
+    if (ajmContext != nullptr && !GuestCopyOut_nid_no_patch(ajmContext, &ids[1], sizeof(*ajmContext))) {
+        return AudiodecErrorArgument;
+    }
     return 0;
 }
 

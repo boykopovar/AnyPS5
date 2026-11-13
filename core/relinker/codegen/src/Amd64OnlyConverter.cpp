@@ -323,7 +323,8 @@ std::set<std::uint64_t> Amd64OnlyConverter::_collectBranchTargets(
         } else if (info.HasRipRelativeDisp && info.Opcode == kLea) {
             std::int32_t displacement;
             std::memcpy(&displacement, seg.data() + match.Offset + info.RipRelativeDispOffset, sizeof(displacement));
-            const auto table = next + static_cast<std::uint64_t>(displacement);
+            auto table = next + static_cast<std::uint64_t>(displacement);
+            if (info.AddressSize32) table = static_cast<std::uint32_t>(table);
             for (const auto& data : segments) {
                 if (data.Type != kLoadSegment || table < data.MappedAddress || table - data.MappedAddress >= data.FileSize)
                     continue;
