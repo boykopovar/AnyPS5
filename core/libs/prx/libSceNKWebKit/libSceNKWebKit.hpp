@@ -29,6 +29,7 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
 #include "prx/libSceNKWebKit/include/WtfPlatformDefaultsExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfThreadFlagsExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfConcurrentPtrHashSet.hpp"
 #include "prx/libSceNKWebKit/include/ArgumentReturnExports.hpp"
 #include "prx/libSceNKWebKit/src/Preferences.hpp"

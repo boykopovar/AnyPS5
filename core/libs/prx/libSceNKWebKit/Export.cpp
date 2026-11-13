@@ -15162,10 +15162,6 @@ int APS5_VABI _ZN3WTF19ParallelEnvironmentC2EPFvPvEmi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF19isCompilationThreadEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF19numGraphemeClustersENS_10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -15470,15 +15466,7 @@ int APS5_VABI _ZN3WTF6String6numberEf() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF6Thread13mayBeGCThreadEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF6Thread14changePriorityEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF6Thread16registerGCThreadENS_12GCThreadTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -15491,10 +15479,6 @@ int APS5_VABI _ZN3WTF6Thread20initializeCurrentTLSEv() {
 }
 
 int APS5_VABI _ZN3WTF6Thread20numberOfThreadGroupsEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF6Thread27exchangeIsCompilationThreadEb() {
     NotImplemented_nid_no_patch(__func__);
 }
 
