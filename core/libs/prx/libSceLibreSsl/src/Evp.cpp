@@ -168,6 +168,7 @@
 
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/include/Evp.hpp"
 #include "prx/libSceLibreSsl/include/PkeyContext.hpp"
 #include <cstddef>
@@ -200,6 +201,15 @@ constexpr std::uint64_t DigestAlgorithmIdAbsent = 0x8;
 constexpr std::int32_t PkeyRsa = 6;
 constexpr std::int32_t PkeyRsa2 = 19;
 constexpr std::int32_t PointerSize = 8;
+constexpr int EvpLibrary = 6;
+constexpr int AnyFunction = 0xfff;
+constexpr int MessageDigestIsNull = 159;
+constexpr int MallocFailure = 65;
+constexpr int InputNotInitialized = 111;
+constexpr int BadBlockLength = 136;
+constexpr int BadKeyLength = 137;
+constexpr int NoDigestSet = 139;
+constexpr int TooLarge = 164;
 
 int APS5_VABI Md5Init(EvpMdContext* context) {
     return MD5_Init_nid_postfix(static_cast<Md5Context*>(context->mdData));
@@ -261,6 +271,11 @@ constexpr EvpMd Sha512 {
     {PkeyRsa, PkeyRsa2, 0, 0, 0}, 128, PointerSize + 216, nullptr,
 };
 
+int Fail(int reason) {
+    LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, reason);
+    return 0;
+}
+
 template<class TContext> TContext& RequireContext(TContext* context, const char* function) {
     if (!context) throw std::invalid_argument(std::string(function) + ": null context");
     return *context;
@@ -291,7 +306,7 @@ int DigestInit(EvpMdContext& context, const EvpMd* type, void* engine, const cha
     if (engine) NotImplemented_nid_no_patch((std::string(function) + ": ENGINE").c_str());
     context.flags &= ~FlagCleaned;
     if (!type) {
-        if (!context.digest) return 0;
+        if (!context.digest) return Fail(NoDigestSet);
         throw std::invalid_argument(std::string(function) + ": null digest type for a context that has one");
     }
     if (context.digest != type) {
@@ -304,7 +319,7 @@ int DigestInit(EvpMdContext& context, const EvpMd* type, void* engine, const cha
                 context.pkeyContext = nullptr;
                 context.digest = nullptr;
                 context.update = nullptr;
-                return 0;
+                return Fail(MallocFailure);
             }
             context.update = type->update;
         }
@@ -323,7 +338,7 @@ int DigestUpdate(EvpMdContext& context, const void* data, std::size_t length, co
 int DigestFinal(EvpMdContext& context, unsigned char* digest, std::uint32_t* size, const char* function) {
     if (!context.digest) throw std::invalid_argument(std::string(function) + ": context without a digest");
     const auto* type = context.digest;
-    if (static_cast<std::size_t>(type->mdSize) > MaxDigestSize) return 0;
+    if (static_cast<std::size_t>(type->mdSize) > MaxDigestSize) return Fail(TooLarge);
     if (!type->finalize) throw std::invalid_argument(std::string(function) + ": digest without a final function");
     const int result = type->finalize(&context, digest);
     if (size) *size = static_cast<std::uint32_t>(type->mdSize);
@@ -339,7 +354,7 @@ int DigestFinal(EvpMdContext& context, unsigned char* digest, std::uint32_t* siz
 }
 
 int CopyContext(EvpMdContext& to, const EvpMdContext& from, const char* function) {
-    if (!from.digest) return 0;
+    if (!from.digest) return Fail(InputNotInitialized);
     RequireNoEngineOrKey(from, function);
     void* reused = nullptr;
     if (to.digest == from.digest) {
@@ -355,7 +370,7 @@ int CopyContext(EvpMdContext& to, const EvpMdContext& from, const char* function
         if (!to.mdData) {
             to.digest = nullptr;
             to.update = nullptr;
-            return 0;
+            return Fail(MallocFailure);
         }
         std::memmove(to.mdData, from.mdData, size);
     }
@@ -399,13 +414,13 @@ int HmacInit(HmacContext& context, const void* key, int length, const EvpMd* md,
     if (key) {
         reset = true;
         const int block = md->blockSize;
-        if (static_cast<std::size_t>(block) > sizeof(context.key)) return 0;
+        if (static_cast<std::size_t>(block) > sizeof(context.key)) return Fail(BadBlockLength);
         if (block < length) {
             if (!DigestInit(context.mdContext, md, engine, function)) return 0;
             if (!DigestUpdate(context.mdContext, key, static_cast<std::size_t>(length), function)) return 0;
             if (!DigestFinal(context.mdContext, context.key, &context.keyLength, function)) return 0;
         } else {
-            if (length < 0 || static_cast<std::size_t>(length) > sizeof(context.key)) return 0;
+            if (length < 0 || static_cast<std::size_t>(length) > sizeof(context.key)) return Fail(BadKeyLength);
             std::memcpy(context.key, key, static_cast<std::size_t>(length));
             context.keyLength = static_cast<std::uint32_t>(length);
         }
@@ -464,7 +479,11 @@ const EvpMd* APS5_VABI EVP_sha512_nid_postfix(void) {
 }
 
 int APS5_VABI EVP_MD_size_nid_postfix(const EvpMd* md) {
-    return md ? md->mdSize : -1;
+    if (!md) {
+        LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, MessageDigestIsNull);
+        return -1;
+    }
+    return md->mdSize;
 }
 
 void APS5_VABI EVP_MD_CTX_init_nid_postfix(EvpMdContext* context) {
