@@ -391,6 +391,10 @@ With `APS5_PROFILE_DRAW` set (any value), the driver prints a profile line on st
 
 `[gputime]` is described above and needs `APS5_PROFILE_GPU`. Other profile lines state their window in their text or are not listed here because their counters were not checked.
 
+## macOS guest smoke
+
+`tools/macos_guest_smoke.sh` relinks `core/relinker/relinker/tests/macos/import_fixture.py` and runs that eboot. `tools/macos_moltenvk_smoke.sh` fetches MoltenVK, relinks `square.c`, and checks `frame_000.bmp`. Both need a macOS x86-64 `libs` build. `libc` still does not compile until the host thread id in `HeapDiagnostics.cpp` is fixed, and `libkernel` still calls `pthread_getattr_np` until pull request #7804. These scripts are not run in CI.
+
 ## Driver thread priority
 
 Set `APS5_THREAD_PRIORITY=high` to raise the AGC driver's queue workers and the video output presenter above the title's threads. On Linux the threads get nice `APS5_THREAD_NICE` (default -10) through rtkit; on Windows they get `THREAD_PRIORITY_HIGHEST`. `APS5_THREAD_PRIORITY=rt` asks rtkit for real-time priority `APS5_THREAD_RT` (default 10, at most rtkit's `MaxRealtimePriority`) under rtkit's policy, `SCHED_RR` by default; on Windows it sets `THREAD_PRIORITY_TIME_CRITICAL`. rtkit only grants it when the process's hard `RLIMIT_RTTIME` is at most its `RTTimeUSecMax` (200000 us by default), so a hard limit above `APS5_THREAD_RTTIME_US` (default 200000, capped at `RTTimeUSecMax`) is lowered to it and the soft limit to at most half of it. The hard limit cannot be raised again and stays lowered for the whole process even if rtkit then refuses; see [technical debt](debt/libSceAgcDriver.md#functional). There is no fallback between the modes: when rtkit or `SetThreadPriority` refuses, a queue worker reports the refusal as a driver failure, which the next submission, wait or shutdown rethrows, and the presenter's start throws it. Each raised thread logs its priority once as `[thread-priority]`. The setting is `off` by default; a value other than `off`, `high` or `rt` is reported the same way as a refusal.

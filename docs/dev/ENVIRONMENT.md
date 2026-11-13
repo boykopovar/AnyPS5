@@ -25,6 +25,8 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 |------|------|--------|---------|-------------|
 | `ANYPS5_AUTORUN_NO_PAUSE` | string | `core/relinker/cli/src/Autorun.cpp` | | exactly `1` skips the exit prompt and stdin read after autorun; unset, empty and other values keep the prompt |
 | `ANYPS5_GUEST_MODULE_ARGS` | string | `core/relinker/elfpatcher/tests/GuestModuleArgsHost.cpp` |  | path of the file the module-argument fixture appends its events to |
+| `APS5_SQUARE_FRAMES` | string | `core/relinker/relinker/tests/macos/square.c` | 180 | number of frames the square guest presents before `exit` when `APS5_SQUARE_INTERACTIVE` is off; an empty value or one that is not a positive integer uses 180 |
+| `APS5_SQUARE_INTERACTIVE` | string | `core/relinker/relinker/tests/macos/square.c` |  | a non-empty value other than 0 reads the pad and keeps the window open instead of stopping after `APS5_SQUARE_FRAMES` |
 
 ### core/shader
 
