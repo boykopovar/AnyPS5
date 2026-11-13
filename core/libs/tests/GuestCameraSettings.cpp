@@ -205,6 +205,9 @@ void CheckAttribute() {
     attribute->sizeThis = sizeof(CameraAttribute) - 4;
     Require(sceCameraGetAttribute(1, attribute) == ErrorParam && sceCameraSetAttribute(1, attribute) == ErrorParam, "an attribute of the wrong size must be rejected");
     Require(sceCameraGetAttribute(1, nullptr) == ErrorParam && sceCameraSetAttribute(1, nullptr) == ErrorParam, "a null attribute must be rejected");
+    errno = 71;
+    Require(sceCameraSetAttribute(1, reinterpret_cast<const CameraAttribute*>(0x10)) == ErrorParam, "unreadable attribute rejected");
+    Require(errno == 71, "errno preserved");
 }
 
 void CheckSetter(SetU32 set, std::uint32_t largestValue) {
