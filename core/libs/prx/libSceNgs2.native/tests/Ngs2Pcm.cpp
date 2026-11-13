@@ -290,6 +290,50 @@ static void TestNumericEdges() {
     TestFramesAndPositions(floating64, 1);
 }
 
+static void TestReportedInputLifetime(const PcmFixture& fixture, std::uint32_t channels, std::uint32_t rate, float pitch) {
+    constexpr std::uint32_t Frames = 2048;
+    constexpr std::uint32_t LateFrame = 512;
+    const auto frameBytes = channels * fixture.bytes;
+    std::vector<std::uint8_t> data(Frames * frameBytes), expected(data.size()), original(data.size());
+    for (std::uint32_t frame = 0; frame < Frames; ++frame) {
+        for (std::uint32_t channel = 0; channel < channels; ++channel) {
+            const auto index = (frame + channel) % fixture.samples.size();
+            const auto lateIndex = (index + (frame >= LateFrame ? 3u : 0u)) % fixture.samples.size();
+            const auto offset = static_cast<std::size_t>(frame * channels + channel) * fixture.bytes;
+            std::copy_n(fixture.data.data() + index * fixture.bytes, fixture.bytes, data.data() + offset);
+            std::copy_n(fixture.data.data() + lateIndex * fixture.bytes, fixture.bytes, expected.data() + offset);
+        }
+    }
+    original = data;
+    Playback playback(fixture.type, channels, rate), reference(fixture.type, channels, rate), unchanged(fixture.type, channels, rate);
+    for (const auto voice : {playback.voice, reference.voice, unchanged.voice})
+        Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_PITCH, Ngs2SamplerVoicePitchParam{{}, pitch});
+    const Ngs2WaveformBlock block{0, data.size(), 0, 0, Frames, 0, 0};
+    playback.Add(data.data(), &block, 1);
+    reference.Add(expected.data(), &block, 1);
+    unchanged.Add(original.data(), &block, 1);
+    bool lateWriteVisible = false;
+    std::uint64_t previous = 0;
+    for (unsigned grain = 0; grain < 32; ++grain) {
+        const auto output = playback.Render();
+        Require(output == reference.Render());
+        const auto baseline = unchanged.Render();
+        lateWriteVisible = lateWriteVisible || output != baseline;
+        const auto state = playback.State();
+        const auto expectedState = reference.State();
+        Require(state.decoded_data_size == expectedState.decoded_data_size);
+        Require(state.decoded_data_size >= previous && state.decoded_data_size <= data.size());
+        Require(state.decoded_data_size % frameBytes == 0);
+        if (grain == 0) {
+            Require(state.decoded_data_size > 0 && state.decoded_data_size <= LateFrame * frameBytes);
+            std::copy(expected.begin() + LateFrame * frameBytes, expected.end(), data.begin() + LateFrame * frameBytes);
+        }
+        std::fill(data.begin(), data.begin() + state.decoded_data_size, 0);
+        previous = state.decoded_data_size;
+    }
+    Require(lateWriteVisible);
+}
+
 int main() {
     TestSkipWindowContract();
     for (const auto& fixture : Fixtures) {
@@ -301,5 +345,10 @@ int main() {
         TestBounds(fixture);
     }
     TestNumericEdges();
+    for (const auto& fixture : Fixtures)
+        for (const auto channels : {1u, 2u})
+            for (const auto rate : {44100u, 48000u, 96000u})
+                for (const auto pitch : {0.75f, 1.0f, 2.0f})
+                    TestReportedInputLifetime(fixture, channels, rate, pitch);
     return 0;
 }
