@@ -116,6 +116,7 @@ int main() {
     Require(output[0] == 0x07008001, "ps4 own pid version is not ps4 sdk version");
 
     Require(sceKernelGetPs4CompiledSdkVersionByPid(getpid_nid_postfix() + 1000, output.data()) == static_cast<int>(0x80020003), "ps4 other pid is not ESRCH");
+    Require(sceKernelGetPs4CompiledSdkVersionByPid(getpid_nid_postfix() + 1001, output.data()) == static_cast<int>(0x80020003), "ps4 other pid 1001 is not ESRCH");
 
     std::puts("KERNEL SYS SDK VERSION tests passed");
     return 0;
