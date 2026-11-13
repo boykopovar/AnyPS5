@@ -1,4 +1,5 @@
 #include "unicode/udatpg.h"
+#include "unicode/uloc.h"
 #include "unicode/unorm2.h"
 #include "unicode/ures.h"
 #include "unicode/utypes.h"
@@ -65,10 +66,14 @@ void Resources() {
     }
     auto supplemental = Open(nullptr, "supplementalData", true);
     Key(supplemental.get(), "timeData");
-    for (const auto* file : {"numberingSystems", "likelySubtags", "keyTypeData", "timezoneTypes", "zoneinfo64", "metaZones", "windowsZones"}) Open(nullptr, file, true);
+    for (const auto* file : {"numberingSystems", "langInfo", "keyTypeData", "timezoneTypes", "zoneinfo64", "metaZones", "windowsZones"}) Open(nullptr, file, true);
     Open(U_ICUDATA_CURR, "supplementalData", true);
     Open(U_ICUDATA_ZONE, "tzdbNames", true);
     UErrorCode status = U_ZERO_ERROR;
+    std::array<char, 64> maximized{};
+    Require(uloc_addLikelySubtags("ja", maximized.data(), maximized.size(), &status) == 10 &&
+        U_SUCCESS(status) && std::string_view(maximized.data()) == "ja_Jpan_JP", "complete source likely-subtags data");
+    status = U_ZERO_ERROR;
     const auto* nfc = unorm2_getNFCInstance(&status);
     std::array<char16_t, 4> normalized{};
     Require(nfc && U_SUCCESS(status) && unorm2_normalize(nfc, u"e\u0301", 2, normalized.data(), normalized.size(), &status) == 1 &&
