@@ -2878,7 +2878,8 @@ bool StorageTexture::otherPendingOverlaps() const {
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     const auto other = [&](const StorageTexture* texture) { return texture != this && texture->overlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)); };
-    return pending.textures.AnyOverlapping(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), [&](const StorageTexture* texture) { return texture != this; }) || std::any_of(pending.flushing.begin(), pending.flushing.end(), other);
+    const auto pendingHere = [&](const StorageTexture* texture) { return texture != this && (texture->descriptor.dccAddress != 0 || texture->pendingUnitInside(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))); };
+    return pending.textures.AnyOverlapping(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), pendingHere) || std::any_of(pending.flushing.begin(), pending.flushing.end(), other);
 }
 
 bool StorageTexture::refreshProved() {
@@ -4523,7 +4524,8 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     }
     std::optional<MapImportGate::PublishHold> publication;
     if (!layerPending.Any()) publication.emplace(descriptor.baseAddress, guestBytes);
-    if (!layerPending.AllIn(first, count)) {
+    const bool newUnits = !layerPending.AllIn(first, count);
+    if (newUnits) {
         std::vector<bool> unsaved;
         bool anyUnsaved = false;
         const bool trims = CommitTrims();
@@ -4615,7 +4617,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     if (const auto format = ResolveTextureFormat(descriptor.format); format == VK_FORMAT_R8_UINT || format == VK_FORMAT_R8_UNORM) eightBitWrites().fetch_add(1, std::memory_order_release);
     const bool wasLent = std::exchange(lent, false);
     if (dirty) {
-        if (wasLent) BumpPendingSerial();
+        if (wasLent || newUnits) BumpPendingSerial();
         return;
     }
     dirty = true;

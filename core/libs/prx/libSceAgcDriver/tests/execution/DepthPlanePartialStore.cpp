@@ -250,6 +250,56 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        if (argc == 2 && std::string_view(argv[1]) == "--proof-under-other-pending") {
+            auto* arrayBlocks = static_cast<std::byte*>(AllocateBlocks(3u * PlaneBytes, true));
+            if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(reinterpret_cast<std::uintptr_t>(arrayBlocks), 3u * PlaneBytes)) return VulkanTestSkipped;
+            AgcDriver::Graphics::GuestTextureResource array{};
+            array.baseAddress = reinterpret_cast<std::uintptr_t>(arrayBlocks);
+            array.width = PlaneWidth;
+            array.height = PlaneHeight;
+            array.depthOrLastArray = 2;
+            array.mipCount = 1;
+            array.tileMode = AgcDriver::Graphics::TextureTileMode::kR64KBX;
+            array.dimension = AgcDriver::Graphics::TextureDimension::k2DArray;
+            array.format = 22;
+            array.dstSelX = 4;
+            array.dstSelY = 5;
+            array.dstSelZ = 6;
+            array.dstSelW = 7;
+            auto last = array;
+            last.baseAddress = array.baseAddress + 2u * PlaneBytes;
+            last.depthOrLastArray = 0;
+            last.dimension = AgcDriver::Graphics::TextureDimension::k2D;
+            const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+            const auto lookup = [&](const AgcDriver::Graphics::GuestTextureResource& resource, std::uint32_t count) {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                return AgcDriver::Graphics::CachedStorageLayers(context, resource, 0, count);
+            };
+            for (std::size_t layer = 0; layer < 3u; ++layer) Fill(reinterpret_cast<float*>(arrayBlocks + layer * PlaneBytes), 1.0f);
+            const auto whole = lookup(array, 3);
+            const auto single = lookup(last, 1);
+            Require(whole != nullptr && single != nullptr && whole != single, "the array and the image over its last layer did not get two cached images");
+            device->WaitIdle();
+            {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                whole->MarkSliceDirty(0, 1);
+            }
+            static_cast<void>(lookup(last, 1));
+            auto proved = AgcDriver::Graphics::StorageTexture::RefreshesProved();
+            Require(lookup(last, 1) == single, "a lookup of the image over the last layer replaced its cached image");
+            Require(AgcDriver::Graphics::StorageTexture::RefreshesProved() != proved, "an array pending only on its first layer kept the image over its last layer from proving its refresh");
+            {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                whole->MarkSliceDirty(2, 1);
+            }
+            proved = AgcDriver::Graphics::StorageTexture::RefreshesProved();
+            static_cast<void>(lookup(last, 1));
+            Require(AgcDriver::Graphics::StorageTexture::RefreshesProved() == proved, "an image kept its refresh proof after the array under it gained a pending write over its bytes");
+            device->WaitIdle();
+            std::puts("depth plane partial store tests passed (refresh proof under another pending image)");
+            return 0;
+        }
+
         Fill(plane, 1.0f);
         Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 did not cover the plane");
         Require(AgcDriver::Graphics::DepthPlanesStale(), "the draw writing depth left the plane unregistered");
