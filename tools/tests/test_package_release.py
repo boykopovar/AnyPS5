@@ -353,6 +353,16 @@ class ReleasePackageTests(unittest.TestCase):
         binary = self.build / "core/relinker/relinker"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"relinker bytes")
+        self.freetype_notices = {
+            "LICENSE.TXT": ("freetype-licenses.txt", b"FreeType license options"),
+            "docs/FTL.TXT": ("freetype-ftl.txt", b"FreeType project license"),
+            "src/bdf/README": ("freetype-bdf.txt", b"FreeType BDF notice"),
+            "src/pcf/README": ("freetype-pcf.txt", b"FreeType PCF notice"),
+        }
+        for source, (_, content) in self.freetype_notices.items():
+            file = self.source / "3rdparty/freetype" / source
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(content)
         self.addCleanup(patch.stopall)
         patch.object(package_release, "ROOT", self.source, create=True).start()
 
@@ -665,6 +675,55 @@ class ReleasePackageTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "COPYING"):
                     package_release.package("linux", self.build, self.output, "v1")
                 self.assertFalse(self.output.exists())
+
+    def test_freetype_notices_follow_every_font_backend(self):
+        for library in ("libSceFreeType", "libSceFreeTypeOt", "libSceFontFt", "libharfbuzz"):
+            with self.subTest(library=library):
+                (self.source / "core/libs/prx" / library).mkdir()
+                (self.library.parent / (library + ".prx")).write_bytes(b"patched font backend")
+                (self.unpatched.parent / (library + ".prx")).write_bytes(b"unpatched font backend")
+                if library == "libharfbuzz":
+                    for path in ("COPYING", "src/ms-use/COPYING"):
+                        file = self.source / "3rdparty/harfbuzz" / path
+                        file.parent.mkdir(parents=True, exist_ok=True)
+                        file.write_bytes(b"HarfBuzz notice")
+                package_release.package("linux", self.build, self.output, "v1")
+                expected = {"libs/licenses/" + name: content for name, content in self.freetype_notices.values()}
+                expected["libs/licenses/freetype-attribution.txt"] = b"This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n"
+                for variant in ("", "-unpatched"):
+                    with zipfile.ZipFile(self.output / f"prx-linux{variant}-v1.zip") as archive:
+                        for name, content in expected.items():
+                            self.assertIn(name, archive.namelist())
+                            self.assertEqual(archive.read(name), content)
+                    with tarfile.open(self.output / f"prx-linux{variant}-v1.tar.gz") as archive:
+                        for name, content in expected.items():
+                            self.assertIn(name, archive.getnames())
+                            self.assertEqual(archive.extractfile(name).read(), content)
+                self.assertEqual({file.name for file in self.output.iterdir()}, {"prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"})
+                (self.source / "core/libs/prx" / library).rmdir()
+                (self.library.parent / (library + ".prx")).unlink()
+                (self.unpatched.parent / (library + ".prx")).unlink()
+
+    def test_missing_or_empty_freetype_notices_preserve_existing_assets(self):
+        (self.source / "core/libs/prx/libSceFreeType").mkdir()
+        (self.library.parent / "libSceFreeType.prx").write_bytes(b"patched font backend")
+        (self.unpatched.parent / "libSceFreeType.prx").write_bytes(b"unpatched font backend")
+        self.output.mkdir()
+        previous = self.output / "prx-linux-v1.zip"
+        previous.write_bytes(b"previous release")
+        for path, (_, content) in self.freetype_notices.items():
+            file = self.source / "3rdparty/freetype" / path
+            for missing in (True, False):
+                with self.subTest(path=path, missing=missing):
+                    if missing:
+                        file.unlink()
+                    else:
+                        file.write_bytes(b"")
+                    with self.assertRaisesRegex(RuntimeError, "Missing or empty release file"):
+                        package_release.package("linux", self.build, self.output, "v1")
+                    self.assertEqual(list(self.output.iterdir()), [previous])
+                    self.assertEqual(previous.read_bytes(), b"previous release")
+            file.write_bytes(content)
 
     def test_opus_library_archives_include_the_bundled_license(self):
         (self.source / "core/libs/prx/libSceOpusDec").mkdir()

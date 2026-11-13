@@ -150,6 +150,10 @@ def package(platform, build, output, version):
             raise RuntimeError("Import library manifest does not match release libraries")
         unpatched.extend((imports[name], "libs/implib/" + imports[name].name) for name in sorted(imports))
     binary = build / "core/relinker" / executable
+    needs_freetype_notices = bool(expected & {"libharfbuzz.prx", "libSceFreeType.prx", "libSceFreeTypeOt.prx", "libSceFontFt.prx"})
+    if needs_freetype_notices:
+        for source, name in (("LICENSE.TXT", "freetype-licenses.txt"), ("docs/FTL.TXT", "freetype-ftl.txt"), ("src/bdf/README", "freetype-bdf.txt"), ("src/pcf/README", "freetype-pcf.txt")):
+            licenses.append((ROOT / "3rdparty/freetype" / source, "libs/licenses/" + name))
     for file in [*files, binary, *(source for source, _ in licenses), *(source for source, _ in unpatched)]:
         if not file.is_file() or file.stat().st_size == 0:
             raise RuntimeError(f"Missing or empty release file: {file}")
@@ -172,6 +176,10 @@ def package(platform, build, output, version):
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".release-", dir=output) as temporary:
         staging = Path(temporary)
+        if needs_freetype_notices:
+            attribution = staging / "freetype-attribution.txt"
+            attribution.write_text("This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n", encoding="utf-8", newline="\n")
+            licenses.append((attribution, "libs/licenses/freetype-attribution.txt"))
         for stem, entries in archives.items():
             with zipfile.ZipFile(staging / (stem + ".zip"), "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
                 for source, destination in entries + licenses:
@@ -180,6 +188,8 @@ def package(platform, build, output, version):
                 for source, destination in entries + licenses:
                     archive.add(source, arcname=destination)
         shutil.copy2(binary, staging / asset)
+        if needs_freetype_notices:
+            attribution.unlink()
         promote_native_assets(staging, output)
 
 

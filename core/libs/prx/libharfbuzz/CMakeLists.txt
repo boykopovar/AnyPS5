@@ -9,6 +9,11 @@ set_target_properties(harfbuzz_backend PROPERTIES
         VISIBILITY_INLINES_HIDDEN ON)
 install(FILES ${harfbuzzSourceDir}/COPYING DESTINATION licenses/harfbuzz)
 install(FILES ${harfbuzzSourceDir}/src/ms-use/COPYING DESTINATION licenses/harfbuzz/ms-use)
+install(FILES ${CMAKE_SOURCE_DIR}/3rdparty/freetype/LICENSE.TXT ${CMAKE_SOURCE_DIR}/3rdparty/freetype/docs/FTL.TXT DESTINATION licenses/freetype)
+install(FILES ${CMAKE_SOURCE_DIR}/3rdparty/freetype/src/bdf/README DESTINATION licenses/freetype/bdf)
+install(FILES ${CMAKE_SOURCE_DIR}/3rdparty/freetype/src/pcf/README DESTINATION licenses/freetype/pcf)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/freetype-attribution.txt "This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n")
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/freetype-attribution.txt DESTINATION licenses/freetype)
 
 add_library(libharfbuzz SHARED EXCLUDE_FROM_ALL Export.cpp Buffer.cpp FontFunctions.cpp Layout.cpp)
 target_include_directories(libharfbuzz PUBLIC ${LIBS_INCLUDE_DIR})
