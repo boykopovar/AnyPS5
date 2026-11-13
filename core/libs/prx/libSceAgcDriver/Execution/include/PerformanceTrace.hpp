@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <condition_variable>
 #include <exception>
+#include "prx/libc/include/RunReport.hpp"
 #include <filesystem>
 #include <functional>
 #include <limits>
@@ -245,6 +246,10 @@ public:
         else append({scope, stage, begin, length, TraceBatchTag});
     }
 
+    void Count(const char* scope, std::uint64_t amount = 1) {
+        if (amount != 0) account(scope, nullptr, {}, amount);
+    }
+
     Snapshot Collect() const {
         Snapshot snapshot{name, {slices.get(), used.load(std::memory_order_acquire)}, {}, false};
         for (const auto& entry : entries) {
@@ -279,7 +284,7 @@ private:
         used.store(index + 1, std::memory_order_release);
     }
 
-    void account(const char* scope, const char* stage, Clock::duration length) {
+    void account(const char* scope, const char* stage, Clock::duration length, std::uint64_t amount = 1) {
         const auto key = reinterpret_cast<std::uintptr_t>(scope) ^ (reinterpret_cast<std::uintptr_t>(stage) >> 3);
         const auto hash = static_cast<std::size_t>((static_cast<std::uint64_t>(key) * 0x9e3779b97f4a7c15ull) >> 55);
         for (std::size_t probe = 0; probe < entries.size(); ++probe) {
@@ -292,7 +297,7 @@ private:
                 continue;
             }
             entry.length.store(entry.length.load(std::memory_order_relaxed) + length.count(), std::memory_order_relaxed);
-            entry.count.store(entry.count.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+            entry.count.store(entry.count.load(std::memory_order_relaxed) + amount, std::memory_order_relaxed);
             return;
         }
         totalsFull.store(true, std::memory_order_relaxed);
@@ -338,6 +343,7 @@ struct TraceSummary {
     std::string window;
     std::uint64_t firstPresent = 0;
     double gpuBusyMs = 0;
+    std::uint64_t ownedDrawUnbound = 0;
     std::string trace;
     std::optional<std::pair<double, double>> interval;
     std::optional<TraceHost> host;
@@ -644,7 +650,7 @@ public:
         std::vector<double> frames;
         for (std::size_t index = 1; index < presents.size(); ++index) frames.push_back(milliseconds(presents[index] - presents[index - 1]));
         std::sort(frames.begin(), frames.end());
-        const auto percentile = [&](double fraction) { return frames.empty() ? 0.0 : frames[std::min(frames.size() - 1, static_cast<std::size_t>(fraction * static_cast<double>(frames.size())))]; };
+        const auto percentile = [&](double fraction) { return RunReport::FramePercentile(frames, fraction); };
         const double perPresent = count != 0 ? 1.0 / static_cast<double>(count) : 0.0;
 
         std::string output = "{\"commit\":";
@@ -679,7 +685,9 @@ public:
         output += ",\"worker_busy_pct\":{";
         bool firstWorker = true;
         std::map<std::string, Clock::duration> phases;
-        bool dropped = false;
+        std::map<std::string, std::uint64_t> ownedCounts;
+        bool dropped = summary.ownedDrawUnbound != 0;
+        if (summary.ownedDrawUnbound != 0) ownedCounts["OwnedDraw.unbound"] = summary.ownedDrawUnbound;
         struct DroppedThread {
             std::string name;
             std::uint64_t eventsLost = 0;
@@ -700,13 +708,22 @@ public:
             for (const auto& total : thread.totals) {
                 const std::string_view scope = total.scope;
                 if (total.stage == nullptr && std::find(WorkerBusyScopes.begin(), WorkerBusyScopes.end(), scope) != WorkerBusyScopes.end()) busy += total.length;
-                if (scope != WorkerWaitScope) phases[Name(total.scope, total.stage)] += total.length;
+                if (scope.starts_with("OwnedDraw.") && total.stage == nullptr) ownedCounts[std::string(scope)] += total.count;
+                else if (scope != WorkerWaitScope) phases[Name(total.scope, total.stage)] += total.length;
             }
             if (!thread.name.starts_with(WorkerPrefix)) continue;
             if (!firstWorker) output += ',';
             firstWorker = false;
             AppendString(output, thread.name);
             output += ':' + number(span != Clock::duration{} ? 100.0 * static_cast<double>(busy.count()) / static_cast<double>(span.count()) : 0.0);
+        }
+        output += "},\"phase_totals_ms\":{";
+        bool firstPhase = true;
+        for (const auto& [name, length] : phases) {
+            if (!firstPhase) output += ',';
+            firstPhase = false;
+            AppendString(output, name);
+            output += ':' + number(milliseconds(length));
         }
         output += "},\"top_phases_ms_per_frame\":{";
         std::vector<std::pair<std::string, Clock::duration>> top(phases.begin(), phases.end());
@@ -716,7 +733,17 @@ public:
             AppendString(output, top[index].first);
             output += ':' + number(milliseconds(top[index].second) * perPresent);
         }
-        output += "},\"trace_dropped\":";
+        output += "}";
+        output += ",\"owned_draw_counts\":{";
+        bool firstCount = true;
+        for (const auto& [name, value] : ownedCounts) {
+            if (!firstCount) output += ',';
+            firstCount = false;
+            AppendString(output, name);
+            output += ':' + std::to_string(value);
+        }
+        output += '}';
+        output += ",\"trace_dropped\":";
         output += dropped ? "true" : "false";
         if (!droppedList.empty()) {
             std::string droppedThreads;
@@ -885,6 +912,9 @@ public:
         if (Recording()) AgcDriverTraceCount_nid_postfix(scope);
     }
 
+    static void CountOwnedDraw(const char* scope, std::uint64_t amount = 1);
+    static std::uint64_t OwnedDrawUnbound();
+
     static void SetOverlayTotals(bool on);
     static bool OverlayTotals();
     static std::optional<std::vector<TraceThreadTotals>> ThreadTotals();
@@ -901,6 +931,7 @@ private:
     static void FlushInterval(std::chrono::steady_clock::time_point now, std::uint32_t width, std::uint32_t height, const VulkanDevice* device);
 
     static std::atomic<bool> recording;
+    static std::atomic<std::uint64_t> ownedDrawUnbound;
     inline static std::atomic<bool> buffering{false};
     inline static std::atomic<std::uint64_t> presentCount{0};
     static thread_local TraceThread* local;

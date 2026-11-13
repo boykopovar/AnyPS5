@@ -577,6 +577,15 @@ static CpuClockRegistry& CpuClocks() {
     return *registry;
 }
 
+static bool GuestThreadEnded(const PthreadPrivate* thread) {
+    if (thread->_finished.load(std::memory_order_acquire)) return true;
+#ifdef _WIN32
+    return thread->hostAdopted && WaitForSingleObject(static_cast<HANDLE>(thread->nativeHandle), 0) == WAIT_OBJECT_0;
+#else
+    return false;
+#endif
+}
+
 PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false), _retval(nullptr), _detached(false), _adopted(false), _handleStorage(nullptr), _joined(false) {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
@@ -600,7 +609,7 @@ std::unique_lock<std::mutex> LockMainGuestThread_nid_no_patch(PthreadPrivate*& t
     auto& registry = CpuClocks();
     std::unique_lock lock(registry.lock);
     for (const auto& [id, candidate] : registry.threads) {
-        if (!candidate->initialThread.load(std::memory_order_acquire) || candidate->_finished.load(std::memory_order_acquire)) continue;
+        if (!candidate->initialThread.load(std::memory_order_acquire) || GuestThreadEnded(candidate)) continue;
         thread = candidate;
         return lock;
     }
@@ -642,7 +651,7 @@ void SetLiveGuestThreadsAffinity(KernelCpumask mask) {
     std::lock_guard lock(registry.lock);
     registry.processAffinity = mask;
     for (const auto& [id, thread] : registry.threads) {
-        if (!thread->_finished.load(std::memory_order_acquire)) thread->affinity.store(mask, std::memory_order_relaxed);
+        if (!GuestThreadEnded(thread)) thread->affinity.store(mask, std::memory_order_relaxed);
     }
 }
 
@@ -651,7 +660,7 @@ KernelCpumask LiveGuestThreadsAffinity() {
     std::lock_guard lock(registry.lock);
     KernelCpumask mask = 0;
     for (const auto& [id, thread] : registry.threads) {
-        if (!thread->_finished.load(std::memory_order_acquire)) mask |= thread->affinity.load(std::memory_order_relaxed);
+        if (!GuestThreadEnded(thread)) mask |= thread->affinity.load(std::memory_order_relaxed);
     }
     return mask;
 }
@@ -660,7 +669,8 @@ std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread) {
     auto& registry = CpuClocks();
     std::unique_lock lock(registry.lock);
     for (const auto& [id, live] : registry.threads) {
-        if (live == thread && !live->_finished.load(std::memory_order_acquire)) return lock;
+        if (live != thread || GuestThreadEnded(live)) continue;
+        return lock;
     }
     return {};
 }
@@ -702,7 +712,7 @@ bool GetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask& ma
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     for (const auto& [id, thread] : registry.threads) {
-        if (thread->tid != tid || thread->_finished.load(std::memory_order_acquire)) continue;
+        if (thread->tid != tid || GuestThreadEnded(thread)) continue;
         mask = thread->affinity.load(std::memory_order_relaxed);
         return true;
     }
@@ -713,7 +723,7 @@ bool GetLiveGuestThreadSched_nid_no_patch(std::int64_t tid, int& policy, int& pr
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     for (const auto& [id, thread] : registry.threads) {
-        if (thread->tid != tid || thread->_finished.load(std::memory_order_acquire)) continue;
+        if (thread->tid != tid || GuestThreadEnded(thread)) continue;
         policy = thread->schedPolicy.load(std::memory_order_relaxed);
         priority = thread->priority.load(std::memory_order_relaxed);
         return true;
@@ -725,7 +735,7 @@ bool SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mas
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     for (const auto& [id, thread] : registry.threads) {
-        if (thread->tid != tid || thread->_finished.load(std::memory_order_acquire)) continue;
+        if (thread->tid != tid || GuestThreadEnded(thread)) continue;
         thread->affinity.store(mask, std::memory_order_relaxed);
         return true;
     }
@@ -736,9 +746,22 @@ bool LiveGuestThreadExists(std::int64_t tid) {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     for (const auto& [id, thread] : registry.threads) {
-        if (!thread->_finished.load(std::memory_order_acquire) && thread->tid == tid) return true;
+        if (!GuestThreadEnded(thread) && thread->tid == tid) return true;
     }
     return false;
+}
+
+std::vector<LiveGuestThreadName> LiveGuestThreadNames() {
+    scePthreadSelf();
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    std::vector<LiveGuestThreadName> threads;
+    for (const auto& [id, thread] : registry.threads) {
+        if (GuestThreadEnded(thread)) continue;
+        std::lock_guard nameLock(thread->nameLock);
+        threads.push_back({thread->tid, thread->name});
+    }
+    return threads;
 }
 
 bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos) {
@@ -748,7 +771,7 @@ bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos) {
     if (found == registry.threads.end())
         return false;
     PthreadPrivate* thread = found->second;
-    if (thread->_finished.load(std::memory_order_acquire))
+    if (GuestThreadEnded(thread))
         return false;
 #ifdef _WIN32
     if (thread->nativeHandle == nullptr) {
@@ -1395,6 +1418,7 @@ Pthread APS5_VABI scePthreadSelf() {
         if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &handle, 0, FALSE, DUPLICATE_SAME_ACCESS))
             throw std::system_error(GetLastError(), std::system_category(), "Adopting guest thread");
         adopted->nativeHandle = handle;
+        adopted->hostAdopted = true;
         adopted->initialThread.store(IsInitialPthread_nid_no_patch(), std::memory_order_release);
         adopted->threadId = std::this_thread::get_id();
         adopted->_detached = true;
@@ -1445,7 +1469,7 @@ void APS5_VABI scePthreadYield() {
 }
 
 int APS5_VABI scePthreadCancel(Pthread thread) {
-    if (!thread) return SCE_KERNEL_ERROR_ESRCH;
+    if (!thread) return SCE_KERNEL_ERROR_EINVAL;
     GuestThreadReference reference;
     auto registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
@@ -1531,10 +1555,13 @@ int APS5_VABI scePthreadGetthreadid(void) {
 
 int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
     if (!thread || !name) return SCE_KERNEL_ERROR_EINVAL;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, GUEST_THREAD_NAME_CAPACITY, copy))
+        return error == 14 ? SCE_KERNEL_ERROR_EFAULT : error == 63 ? SCE_KERNEL_ERROR_ENAMETOOLONG : SCE_KERNEL_ERROR_ENOMEM;
     auto registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
     std::lock_guard lock(thread->nameLock);
-    thread->name = name;
+    thread->name = std::move(copy);
 #ifdef _WIN32
     SetThreadDescription(static_cast<HANDLE>(thread->nativeHandle), ThreadDescription(thread->name).c_str());
     ApplyJobAffinity(*thread, thread->nativeHandle);
@@ -1552,7 +1579,12 @@ int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask) {
 
 int APS5_VABI scePthreadSetcancelstate(int state, int* old_state) {
     if (state != GUEST_CANCEL_ENABLE && state != GUEST_CANCEL_DISABLE) return SCE_KERNEL_ERROR_EINVAL;
-    if (old_state) *old_state = CurrentGuestState().cancelState;
+    if (old_state) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(old_state, &CurrentGuestState().cancelState, sizeof(int));
+        errno = savedErrno;
+        if (!copied) return SCE_KERNEL_ERROR_EFAULT;
+    }
     CurrentGuestState().cancelState = state;
     if (CurrentGuestState().cancelType == GUEST_CANCEL_ASYNCHRONOUS) ThreadCancel::Check();
     return SCE_OK;
@@ -1560,7 +1592,12 @@ int APS5_VABI scePthreadSetcancelstate(int state, int* old_state) {
 
 int APS5_VABI scePthreadSetcanceltype(int type, int* old_type) {
     if (type != GUEST_CANCEL_DEFERRED && type != GUEST_CANCEL_ASYNCHRONOUS) return SCE_KERNEL_ERROR_EINVAL;
-    if (old_type) *old_type = CurrentGuestState().cancelType;
+    if (old_type) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(old_type, &CurrentGuestState().cancelType, sizeof(int));
+        errno = savedErrno;
+        if (!copied) return SCE_KERNEL_ERROR_EFAULT;
+    }
     CurrentGuestState().cancelType = type;
     if (CurrentGuestState().cancelType == GUEST_CANCEL_ASYNCHRONOUS) ThreadCancel::Check();
     return SCE_OK;

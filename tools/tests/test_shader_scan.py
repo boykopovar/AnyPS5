@@ -271,6 +271,25 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(data["throws"], (3, [("Translation", 2), ("Recompiler", 1)]))
         self.assertEqual(data["formats"], [("Sampled", 6, 10), ("Typed buffer", 5, 10), ("Vulkan host format", 4, 10)])
 
+    def test_still_needed_drops_empty_lists_and_says_when_none_is_left(self):
+        def without(*kinds):
+            return {**self.SOURCE, "forms": [{**f, **{k: [] for k in kinds}} for f in self.SOURCE["forms"]]}
+
+        partial = without("missing")
+        self.assertEqual(progress.still_needed(partial)["lists"],
+                         [("Decoded, no translator case (3)", [("VOP2 vop3", ["V_A", "V_B"]), ("VOP2 dpp16", ["V_Z"])])])
+        done = without("missing", "untranslated")
+        self.assertEqual(progress.still_needed(done)["lists"], [("Every instruction form is decoded and translated", [])])
+        for source in (partial, done):
+            svg = progress.render(dict(self.GROUP), dict(self.GROUP), source)
+            html = progress.summary(dict(self.GROUP), dict(self.GROUP), source)
+            for output in (svg, html):
+                self.assertNotIn("not decoded (0)", output)
+                self.assertNotIn(">none<", output)
+                self.assertNotIn("None.", output)
+        self.assertIn("<h4>Every instruction form is decoded and translated</h4>", html)
+        self.assertIn(">Every instruction form is decoded and translated</text>", svg)
+
     def panel(self, svg):
         rows = re.findall(r'<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="14" fill="(#[0-9a-f]{6})"/>', svg)
         texts = re.findall(r'<text x="([\d.]+)" y="([\d.]+)" font-family="[\w-]+" font-size="\d+" fill="#ffffff" text-anchor="(\w+)">([^<]*)</text>', svg)

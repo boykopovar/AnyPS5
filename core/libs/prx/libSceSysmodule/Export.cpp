@@ -1,6 +1,8 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceSysmodule/include/Api.hpp"
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <algorithm>
@@ -178,6 +180,9 @@ extern "C" {
 
 int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info) {
     (void)flags;
+    if (!info) {
+        throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: null info");
+    }
     if (!fillModuleInfoForUnwind(addr, info)) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: address not found");
     }
@@ -363,9 +368,24 @@ int APS5_VABI sceSysmoduleIsCameraPreloaded() {
     return 0;
 }
 
-int APS5_VABI sceSysmoduleLoadModuleByNameInternal(std::uint8_t* fname, std::uint64_t a1, std::uint64_t a2, std::uint64_t a3, std::uint64_t a4, std::uint64_t a5) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+KernelModule APS5_VABI sceSysmoduleLoadModuleByNameInternal(const char* fname, std::size_t args, const void* argp, std::uint32_t flags, int* res) {
+    if (fname == nullptr) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EINVAL);
+    const char* sandbox = sceKernelGetFsSandboxRandomWord();
+    char path[0x100];
+    KernelModule result = static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT);
+    const auto attempt = [&](const char* root, const char* tier, const char* ext) {
+        std::snprintf(path, sizeof(path), "/%s/%s/lib/%s.%s", root, tier, fname, ext);
+        result = sceKernelLoadStartModule(path, args, argp, flags, nullptr, res);
+        return result > 0;
+    };
+    if (sandbox != nullptr &&
+        (attempt(sandbox, "priv_ex", "sprx") || attempt(sandbox, "common_ex", "sprx") ||
+         attempt(sandbox, "priv", "sprx") || attempt(sandbox, "common", "sprx"))) return result;
+    if (attempt("system_ex", "priv_ex", "sprx") || attempt("system_ex", "common_ex", "sprx") ||
+        attempt("system", "priv", "sprx") || attempt("system", "common", "sprx")) return result;
+    if (sandbox != nullptr && (attempt(sandbox, "priv", "prx") || attempt(sandbox, "common", "prx"))) return result;
+    if (attempt("system", "priv", "prx") || attempt("system", "common", "prx")) return result;
+    return result;
 }
 
 int APS5_VABI sceSysmoduleMapLibcForLibkernel() {

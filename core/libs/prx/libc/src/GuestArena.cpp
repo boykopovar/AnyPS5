@@ -799,6 +799,14 @@ void GuestArenaTakeUnreportedPages_nid_no_patch(std::uintptr_t address, std::siz
     WindowsMappings::Get().ComparedPages(address, bytes, pages, count, true);
 }
 
+void GuestArenaKnownZero_nid_no_patch(std::uintptr_t address, std::size_t bytes, void (*zero)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
+    WindowsMappings::Get().KnownZero(address, bytes, zero, context);
+}
+
+void GuestArenaForgetKnownZero_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    WindowsMappings::Get().ForgetKnownZero(address, bytes);
+}
+
 void GuestArenaForgetSection_nid_postfix(void* section) {
     WindowsMappings::Get().ForgetSection(section);
 }
