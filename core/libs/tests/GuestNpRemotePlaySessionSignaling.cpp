@@ -36,6 +36,10 @@ void CheckBeforeInitialize() {
         "GetConnectionStatus before Initialize");
     Require(status == static_cast<std::int32_t>(Stale), "GetConnectionStatus: a failed call writes nothing");
     Require(sceNpRemotePlaySessionSignalingInitialize(nullptr) == InvalidArgument, "Initialize: null parameter");
+    errno = 71;
+    Require(sceNpRemotePlaySessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(0x10)) == InvalidArgument,
+        "Initialize: unmapped parameter");
+    Require(errno == 71, "Initialize: preserves errno");
 }
 
 void CheckInitialized() {
