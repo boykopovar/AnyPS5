@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PushDataShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PatchVertexLayer.hpp"
@@ -18,6 +19,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <list>
@@ -1087,8 +1089,12 @@ void Pipeline::ContinueBackFaces(VkCommandBuffer commands, const State& state, c
 void Pipeline::PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const {
     if (stages == 0) return;
     if (descriptorHeap) {
-        const VkPushDataInfoEXT push{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {bytes.data(), bytes.size()}};
-        context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &push);
+        thread_local PushDataShadow<PipelinePushConstantBytes> shadow;
+        const auto [first, end] = shadow.Changed(commands, PushDataMark(), bytes);
+        if (first >= end) return;
+        const VkPushDataInfoEXT info{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, static_cast<std::uint32_t>(first), {bytes.data() + first, end - first}};
+        context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &info);
+        shadow.Pushed(NotePushDataWritten());
         return;
     }
     if (dynamicRendering) {

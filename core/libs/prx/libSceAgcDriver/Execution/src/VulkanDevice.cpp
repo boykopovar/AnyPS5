@@ -6142,8 +6142,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         recorder.Keep(std::move(pool));
     }
     if (record.objects->descriptorHeap && record.pushStages == 0 && (workgroupAddress != 0 || record.shader->program->scratchPoolSlotDwords != 0)) {
-        const VkPushDataInfoEXT push{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, Graphics::ComputePushConstantBytes, {stageAddresses.data(), stageAddresses.size()}};
-        context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &push);
+        Graphics::CmdPushData(context, commands, static_cast<std::uint32_t>(stageAddresses.size()), stageAddresses.data(), Graphics::ComputePushConstantBytes);
     }
     if (record.pushStages != 0) {
         std::array<std::byte, Graphics::PipelinePushConstantBytes> patchedBytes;
@@ -6155,8 +6154,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         }
         if (record.objects->descriptorHeap) {
             std::memcpy(patchedBytes.data() + Graphics::ComputePushConstantBytes, stageAddresses.data(), stageAddresses.size());
-            const VkPushDataInfoEXT push{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {patchedBytes.data(), patchedBytes.size()}};
-            context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &push);
+            Graphics::CmdPushData(context, commands, static_cast<std::uint32_t>(patchedBytes.size()), patchedBytes.data());
         } else {
             Graphics::CmdPushConstants(context, commands, record.objects->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes, pushed);
         }

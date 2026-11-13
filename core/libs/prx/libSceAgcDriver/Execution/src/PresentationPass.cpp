@@ -412,8 +412,7 @@ void PresentationPass::draw(VkCommandBuffer commands, Slot& slot, const Target& 
         Graphics::BindlessHeap::For(context).BindDescriptorHeaps(commands);
         HeapPush pushed{{}, 0u, pqNits->DeviceAddress(), *heapSlot, 0u};
         std::copy(std::begin(parameters), std::end(parameters), pushed.parameters);
-        const VkPushDataInfoEXT data{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {&pushed, sizeof(pushed)}};
-        context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &data);
+        Graphics::CmdPushData(context, commands, sizeof(pushed), &pushed);
     } else {
         Graphics::CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &slot.set, Graphics::SetBindSite::Presentation);
         Graphics::CmdPushConstants(context, commands, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), parameters);

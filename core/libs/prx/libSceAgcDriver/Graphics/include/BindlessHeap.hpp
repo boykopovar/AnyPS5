@@ -401,7 +401,9 @@ VkDescriptorSetAndBindingMappingEXT HeapPushIndexMapping(const BindlessHeap& hea
                                                          std::uint32_t pushOffset);
 VkPipeline CreateHeapComputePipeline(const Context& context, VkComputePipelineCreateInfo info, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings);
 VkPipeline CreateHeapGraphicsPipeline(const Context& context, VkGraphicsPipelineCreateInfo info, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings);
-void CmdPushData(const Context& context, VkCommandBuffer commands, std::uint32_t bytes, const void* values);
+void CmdPushData(const Context& context, VkCommandBuffer commands, std::uint32_t bytes, const void* values, std::uint32_t offset = 0);
+std::uint64_t NotePushDataWritten() noexcept;
+std::uint64_t PushDataMark() noexcept;
 
 }
 

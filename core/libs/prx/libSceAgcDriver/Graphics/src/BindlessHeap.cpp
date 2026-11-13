@@ -1488,6 +1488,7 @@ void reportHeapStatistics() {
 
 void forgetHeapBinding(VkCommandBuffer commands) {
     if (!DescriptorHeapEnabled()) return;
+    static_cast<void>(NotePushDataWritten());
     std::lock_guard lock(boundHeapsMutex);
     if (boundHeaps.erase(commands) != 0) boundHeapsEpoch.fetch_add(1, std::memory_order_release);
 }
@@ -1633,9 +1634,32 @@ VkPipeline CreateHeapGraphicsPipeline(const Context& context, VkGraphicsPipeline
     return pipeline;
 }
 
-void CmdPushData(const Context& context, VkCommandBuffer commands, std::uint32_t bytes, const void* values) {
-    const VkPushDataInfoEXT data{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {values, bytes}};
+namespace {
+
+std::atomic<std::uint64_t>& pushDataMark() {
+    static std::atomic<std::uint64_t> mark{0};
+    return mark;
+}
+
+}
+
+std::uint64_t NotePushDataWritten() noexcept {
+    static std::atomic<std::uint64_t> threads{0};
+    thread_local const std::uint64_t base = (threads.fetch_add(1, std::memory_order_relaxed) + 1u) << 40u;
+    thread_local std::uint64_t sequence = 0;
+    const auto mark = base | (++sequence & ((std::uint64_t{1} << 40u) - 1u));
+    pushDataMark().store(mark, std::memory_order_relaxed);
+    return mark;
+}
+
+std::uint64_t PushDataMark() noexcept {
+    return pushDataMark().load(std::memory_order_relaxed);
+}
+
+void CmdPushData(const Context& context, VkCommandBuffer commands, std::uint32_t bytes, const void* values, std::uint32_t offset) {
+    const VkPushDataInfoEXT data{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, offset, {values, bytes}};
     context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &data);
+    static_cast<void>(NotePushDataWritten());
 }
 
 void BindlessHeap::BindDescriptorHeaps(VkCommandBuffer commands) const {

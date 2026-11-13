@@ -548,6 +548,9 @@ int main() {
         if (heap) {
             OversizedStageFails();
             UnmappableStageFails();
+            const auto mark = AgcDriver::Graphics::PushDataMark();
+            AgcDriver::Graphics::NoteCommandBufferBegun(VK_NULL_HANDLE);
+            Require(AgcDriver::Graphics::PushDataMark() != mark, "beginning a command buffer kept the push data recorded before it");
         }
         if (excluded)
             Require(AgcDriver::Graphics::HeapExcludedCount(AgcDriver::Graphics::HeapExcluded::Draw) != 0u,

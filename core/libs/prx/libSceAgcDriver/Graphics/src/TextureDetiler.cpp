@@ -606,8 +606,7 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
         BindlessHeap::For(context).BindDescriptorHeaps(commands);
         context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, cmaskHeapPipeline);
         const HeapCmaskPush pushed{push, 0u, cmaskAddress + descriptorOffset, errorsAddress, *slot, 0u};
-        const VkPushDataInfoEXT data{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {&pushed, sizeof(pushed)}};
-        context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &data);
+        CmdPushData(context, commands, sizeof(pushed), &pushed);
     } else {
         context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, cmaskPipeline);
         CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, cmaskPipelineLayout, 0, 1, &set, SetBindSite::Detiler);
@@ -662,8 +661,7 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
         bindless.BindDescriptorHeaps(commands);
         context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, heapPipeline);
         const HeapImagePush pushed{push, tiledAddress + descriptorOffset, *slot, 0u};
-        const VkPushDataInfoEXT data{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {&pushed, sizeof(pushed)}};
-        context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &data);
+        CmdPushData(context, commands, sizeof(pushed), &pushed);
     } else {
         const auto target = pipeline(MipTileMode(tileMode, layout), elementBytes, retile, false, true);
         const auto set = allocateSet(true);

@@ -3083,8 +3083,7 @@ void Recorder::pushOnlyParameters(VkCommandBuffer commands, VkPipeline heapPipel
         CmdPushConstants(context, commands, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, bytes, values);
         return;
     }
-    const VkPushDataInfoEXT data{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {values, bytes}};
-    context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &data);
+    CmdPushData(context, commands, bytes, values);
 }
 
 bool Recorder::RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter) {
