@@ -1632,7 +1632,7 @@ void CheckStorageAliasRetirement() {
     std::puts("cached storage span retires only intersecting native depth owners");
 }
 
-enum class ClearFault { None, PartialStore, CpuWrite, DepthWrite, BadMetadata, UnprovenDispatch, PendingWrite, Overlap, PossibleStore, CompletedPossibleStore, DriverDispatch, ImportWindowWrite, FillDuringClear, DriverBufferDispatch };
+enum class ClearFault { None, PartialStore, CpuWrite, DepthWrite, BadMetadata, UnprovenDispatch, PendingWrite, Overlap, PossibleStore, CompletedPossibleStore, DriverDispatch, ImportWindowWrite, FillDuringClear, DriverBufferDispatch, DiscardedDispatch, DiscardedArm };
 enum class ClearSource { HtileDispatch, Fill, QueuedFill };
 
 void CheckClearDispatch() {
@@ -1686,7 +1686,7 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
     const bool filling = source != ClearSource::HtileDispatch;
     const VkExtent2D extent{5u, 3u};
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, format == VK_FORMAT_D16_UNORM ? 2u : 4u, fragments));
-    TargetMemory memory(bytes), metadata(65536u, fault == ClearFault::DriverDispatch || fault == ClearFault::DriverBufferDispatch);
+    TargetMemory memory(bytes), metadata(65536u, fault == ClearFault::DriverDispatch || fault == ClearFault::DriverBufferDispatch || fault == ClearFault::DiscardedDispatch);
     const auto metadataBytes = HtileMetadataBytes(extent);
     const bool depthOnly = depthOnlyOverride.value_or(one);
     const std::uint32_t pattern = one ? (depthOnly ? 0xfffffff0u : 0xfffc00f0u) : 0u;
@@ -1825,6 +1825,28 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                 Require(DepthSurfaceView(context, target) == view, "updating the native clear value replaced its attachment");
                 const std::uint32_t clearPattern = clearOne ? (depthOnly ? 0xfffffff0u : 0xfffc00f0u) : 0u;
                 if (source == ClearSource::HtileDispatch) {
+                    if (fault == ClearFault::DiscardedDispatch && clearOne) {
+                        struct ShutdownDriver {
+                            ~ShutdownDriver() {
+                                Recorder::FailNextSubmitsForTest(0u);
+                                try { AgcDriverShutdown_nid_postfix(); } catch (...) {}
+                            }
+                        } shutdownDriver;
+                        Recorder::FailNextSubmitsForTest(1u);
+                        std::string failure;
+                        try { static_cast<void>(SubmitDriverHtileClear(target.htileAddress, gpuLock, false)); }
+                        catch (const std::exception& error) { failure = error.what(); }
+                        Recorder::FailNextSubmitsForTest(0u);
+                        recorder.Activate();
+                        Require(failure.find("injected failure") != std::string::npos, "the HTILE clear dispatch's batch was not discarded ('" + failure + "')");
+                        if (!AgcDriver::GuestMemory::Watched(target.htileAddress, metadataBytes)) {
+                            std::puts("skipped native HTILE discarded dispatch: the write tracker does not cover the imported metadata range, so the clear was never armed");
+                            return;
+                        }
+                        TargetRefuses([&] { CachedSampledTexture(context, words); }, "native multisample depth clear dispatch was discarded before it ran");
+                        std::puts("Native HTILE clear dispatch discarded and refused");
+                        return;
+                    }
                     if ((fault == ClearFault::DriverDispatch || fault == ClearFault::DriverBufferDispatch) && clearOne) {
                         struct ShutdownDriver {
                             ~ShutdownDriver() {
@@ -1877,6 +1899,24 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                             Require(DepthSurfaceAt(target.address), "an accepted HTILE buffer access retired its native depth owner");
                         }
                         if (completionCandidate) ArmHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+                        if (fault == ClearFault::DiscardedArm) {
+                            Require(completionCandidate, "a full HTILE mask clear was not a completion candidate");
+                            const auto htileClear = std::pair{target.htileAddress, static_cast<std::size_t>(metadataBytes)};
+                            static_cast<void>(recorder.Commands());
+                            recorder.OnDiscard([htileClear] { DiscardHtileDepthClear(htileClear.first, htileClear.second); });
+                            QueueHtileDepthClear(htileClear.first, htileClear.second);
+                            recorder.NotePendingWrite(htileClear.first, htileClear.second);
+                            Recorder::FailNextSubmitsForTest(1u);
+                            std::string failure;
+                            try { recorder.Submit(); }
+                            catch (const std::exception& error) { failure = error.what(); }
+                            Recorder::FailNextSubmitsForTest(0u);
+                            Require(failure.find("injected failure") != std::string::npos, "the armed HTILE clear's batch was not discarded ('" + failure + "')");
+                            Require(!recorder.PendingWriteOverlaps(htileClear.first, htileClear.second), "a discarded HTILE clear left its write pending");
+                            TargetRefuses([&] { CachedSampledTexture(context, words); }, "native multisample depth clear dispatch was discarded before it ran");
+                            std::puts("Native HTILE clear armed in a discarded batch refused");
+                            return;
+                        }
                         if (completionCandidate && fault == ClearFault::None) {
                             TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes, std::pair{target.htileAddress, static_cast<std::size_t>(metadataBytes)}); }, "sample-preserving guest publication");
                         }
@@ -4799,6 +4839,12 @@ int main(int argc, char** argv) {
                 }
             }
             std::printf("Native depth in-place expand gate cases checked=%u unavailable=%u\n", checked, unavailable);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--discarded-clear") {
+            CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::DiscardedArm, ClearSource::HtileDispatch, lock);
+            CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::DiscardedDispatch, ClearSource::HtileDispatch, lock);
+            std::puts("Native depth clear dispatch in a discarded batch checked");
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--buffer-clear") {

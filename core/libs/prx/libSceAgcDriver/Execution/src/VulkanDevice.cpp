@@ -6077,7 +6077,10 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         recorder.MarkCovered(dispatchedAccess);
     }
     recordStep(PhaseRecordBind);
-    if (record.htileClear.has_value()) Graphics::ArmHtileDepthClear(record.htileClear->first, record.htileClear->second);
+    if (record.htileClear.has_value()) {
+        Graphics::ArmHtileDepthClear(record.htileClear->first, record.htileClear->second);
+        recorder.OnDiscard([htileClear = record.htileClear] { Graphics::DiscardHtileDepthClear(htileClear->first, htileClear->second); });
+    }
     resources.MarkGpuWrites(recorder);
     if (record.htileClear.has_value()) {
         Graphics::QueueHtileDepthClear(record.htileClear->first, record.htileClear->second);

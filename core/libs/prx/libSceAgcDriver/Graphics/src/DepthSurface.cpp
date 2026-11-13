@@ -3968,6 +3968,16 @@ void CompleteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
     }
 }
 
+void DiscardHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
+    std::lock_guard lock(surfacesMutex());
+    for (const auto& surface : surfaces()) {
+        if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress || surface->clearGeneration == 0u) continue;
+        if (bytes < surface->sampling.initial[1].bytes) continue;
+        surface->clearCompletionQueued = false;
+        surface->sampling.Refuse("native multisample depth clear dispatch was discarded before it ran");
+    }
+}
+
 void ClearDepthSurfaces(VkDevice device) {
     std::lock_guard gpu(GuestMemory::GpuMutex());
     {
