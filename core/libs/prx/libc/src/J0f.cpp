@@ -17,6 +17,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -26,6 +27,10 @@ static const volatile float huge = 1e30f;
 static const float one = 1.0f, invsqrtpi = 5.6418961287e-01f;
 static const float R02 = 1.5625000000e-02, R03 = -1.8997929874e-04, R04 = 1.8295404516e-06, R05 = -4.6183270541e-09, S01 = 1.5619102865e-02, S02 = 1.1692678527e-04,
     S03 = 5.1354652442e-07, S04 = 1.1661400734e-09;
+
+static const float tpi = 6.3661974669e-01;
+static const float u00 = -7.3804296553e-02, u01 = 1.7666645348e-01, u02 = -1.3818567619e-02, u03 = 3.4745343146e-04, u04 = -3.8140706238e-06,
+    u05 = 1.9559013964e-08, u06 = -3.9820518410e-11, v01 = 1.2730483897e-02, v02 = 7.6006865129e-05, v03 = 2.5915085189e-07, v04 = 4.4111031494e-10;
 
 static const float zero = 0.0;
 
@@ -186,4 +191,46 @@ float APS5_VABI j0f_nid_postfix(float x) {
         u = 0.5f * x;
         return ((one + u) * (one - u) + z * (r / s));
     }
+}
+
+float APS5_VABI y0f_nid_postfix(float x) {
+    using namespace FloatBessel;
+    float z, s, c, ss, cc, u, v;
+    std::int32_t hx, ix;
+
+    hx = std::bit_cast<std::int32_t>(x);
+    ix = hx & 0x7fffffff;
+    if (ix >= 0x7f800000)
+        return one / (x + x * x);
+    if (ix == 0)
+        return -std::numeric_limits<float>::infinity();
+    if (hx < 0)
+        return std::numeric_limits<float>::quiet_NaN();
+    if (ix >= 0x40000000) {
+        s = sinf_nid_postfix(x);
+        c = cosf_nid_postfix(x);
+        ss = s - c;
+        cc = s + c;
+        if (ix < 0x7f000000) {
+            z = -cosf_nid_postfix(x + x);
+            if ((s * c) < zero)
+                cc = z / ss;
+            else
+                ss = z / cc;
+        }
+        if (static_cast<std::uint32_t>(ix) > 0x80000000u)
+            z = (invsqrtpi * ss) / sqrtf_nid_postfix(x);
+        else {
+            u = PZero(x);
+            v = QZero(x);
+            z = invsqrtpi * (u * ss + v * cc) / sqrtf_nid_postfix(x);
+        }
+        return z;
+    }
+    if (ix <= 0x32000000)
+        return u00 + tpi * logf_nid_postfix(x);
+    z = x * x;
+    u = u00 + z * (u01 + z * (u02 + z * (u03 + z * (u04 + z * (u05 + z * u06)))));
+    v = one + z * (v01 + z * (v02 + z * (v03 + z * v04)));
+    return u / v + tpi * (j0f_nid_postfix(x) * logf_nid_postfix(x));
 }
