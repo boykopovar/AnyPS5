@@ -10,6 +10,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
@@ -106,6 +107,23 @@ bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
     return ok;
 }
 
+struct ErrnoGuard {
+    int saved{errno};
+    ~ErrnoGuard() { errno = saved; }
+};
+
+template <typename T>
+bool CopyGuestIn(T& dst, const void* src) {
+    const ErrnoGuard guard;
+    return GuestCopyIn_nid_no_patch(&dst, src, sizeof(T));
+}
+
+template <typename T>
+bool CopyGuestOut(void* dst, const T& src) {
+    const ErrnoGuard guard;
+    return GuestCopyOut_nid_no_patch(dst, &src, sizeof(T));
+}
+
 std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
     const int savedErrno = errno;
     if (!info) return Hmd2::ParameterNull;
@@ -137,14 +155,14 @@ int APS5_VABI sceHmd2ReprojectionGetStatus(Hmd2::ReprojectionStatus* status) {
     std::lock_guard lock(reprojectionMutex);
     if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
     if (status == nullptr) return Hmd2::ParameterNull;
-    auto* bytes = reinterpret_cast<std::byte*>(status);
-    std::memset(bytes, 0, 0x68);
+    std::array<std::byte, 0x68> localStatus{};
     const std::uint64_t now = sceKernelGetProcessTime();
     const std::uint64_t step = reprojectionState->timingUs != 0 ? reprojectionState->timingUs : Hmd2::ReprojectionTimingDefault;
     for (std::size_t index = 0; index < 4; ++index) {
         const std::uint64_t timestamp = now + index * step;
-        std::memcpy(bytes + 0x28 + index * 8, &timestamp, sizeof(timestamp));
+        std::memcpy(localStatus.data() + 0x28 + index * 8, &timestamp, sizeof(timestamp));
     }
+    if (!CopyGuestOut(status, localStatus.data(), localStatus.size())) return Hmd2::ParameterNull;
     return 0;
 }
 
@@ -192,11 +210,12 @@ std::int32_t APS5_VABI sceHmd2Close(std::int32_t handle) {
 
 static std::int32_t Hmd2GazeHandle(const Hmd2::GazeResultParameter* param, const void* result, std::uint32_t resultSize, const char* name) {
     if (!param || !result) return Hmd2::ParameterNull;
-    std::uint32_t size;
-    std::memcpy(&size, result, sizeof(size));
-    if (param->size != sizeof(Hmd2::GazeResultParameter) || size != resultSize) return Hmd2::ParameterInvalid;
+    Hmd2::GazeResultParameter localParam{};
+    std::uint32_t size = 0;
+    if (!CopyGuestIn(localParam, param) || !CopyGuestIn(size, result)) return Hmd2::ParameterNull;
+    if (localParam.size != sizeof(Hmd2::GazeResultParameter) || size != resultSize) return Hmd2::ParameterInvalid;
     std::lock_guard lock(stateMutex);
-    if (openHandle == 0 || param->handle != openHandle) return Hmd2::InvalidHandle;
+    if (openHandle == 0 || localParam.handle != openHandle) return Hmd2::InvalidHandle;
     NotImplemented_nid_no_patch(name);
     return 0;
 }
@@ -213,16 +232,18 @@ static void Hmd2StoreInvalidGaze(std::byte* result, std::size_t offset) {
 int APS5_VABI sceHmd2GazeGetResult(const Hmd2::GazeResultParameter* param, Hmd2::GazeResult* result) {
     const std::int32_t status = Hmd2GazeHandle(param, result, 0x38, __func__);
     if (status != Hmd2::InvalidHandle) return status;
-    auto* bytes = reinterpret_cast<std::byte*>(result);
-    std::memset(bytes + 4, 0, 0x38 - 4);
-    Hmd2StoreInvalidGaze(bytes, 0x14);
+    std::array<std::byte, 0x38> localResult{};
+    Hmd2StoreInvalidGaze(localResult.data(), 0x14);
+    if (!CopyGuestOut(reinterpret_cast<std::byte*>(result) + 4, localResult.data() + 4, localResult.size() - 4)) return Hmd2::ParameterNull;
     return status;
 }
 
 int APS5_VABI sceHmd2GazeGetResultForFoveatedRendering(const Hmd2::GazeResultParameter* param, Hmd2::FoveatedRenderingResult* result) {
     const std::int32_t status = Hmd2GazeHandle(param, result, 0x18, __func__);
     if (status != Hmd2::InvalidHandle) return status;
-    Hmd2StoreInvalidGaze(reinterpret_cast<std::byte*>(result), 8);
+    std::array<std::byte, 0x14> localResult{};
+    Hmd2StoreInvalidGaze(localResult.data(), 8);
+    if (!CopyGuestOut(reinterpret_cast<std::byte*>(result) + 4, localResult.data() + 4, localResult.size() - 4)) return Hmd2::ParameterNull;
     return status;
 }
 
