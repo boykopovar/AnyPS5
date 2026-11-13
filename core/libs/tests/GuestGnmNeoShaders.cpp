@@ -181,5 +181,6 @@ int main() {
     CheckEmbeddedShaders();
     CheckWorkloads();
     Require(sceGnmGetGpuCoreClockFrequency() == 911000000);
+    Require(sceGnmGetGpuCoreClockFrequency() == 911000000);
     Require(sceGnmGetOffChipTessellationBufferSize() == 0x800000);
 }
