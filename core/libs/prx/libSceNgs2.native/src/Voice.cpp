@@ -1,5 +1,6 @@
 #include "prx/libSceNgs2.native/include/Api.hpp"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -601,6 +602,23 @@ static void CheckFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterPara
     }
 }
 
+static bool IsMasteringEffect(const Ngs2Voice& voice, std::uint32_t id) {
+    return !PS4_LIBRARY && voice.rack->rackId == SCE_NGS2_RACK_ID_MASTERING &&
+        (id == SCE_NGS2_MASTERING_VOICE_PARAM_LFE || id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER || id == SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER);
+}
+
+static void CheckMasteringEffect(const Ngs2VoiceParamHeader& param) {
+    if (param.size < sizeof(Ngs2MasteringVoiceEffectParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
+    const auto& effect = reinterpret_cast<const Ngs2MasteringVoiceEffectParam&>(param);
+    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER) {
+        if (effect.enable_flag > 2) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE};
+        return;
+    }
+    if (effect.enable_flag == 0) return;
+    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER && std::isnan(std::bit_cast<float>(effect.value))) return;
+    throw std::runtime_error("NGS2: enabled voice param " + Ngs2Hex(param.id) + " is not implemented");
+}
+
 static Ngs2SamplerVoiceFilterParam SamplerFilterParam(const Ngs2VoiceParamHeader& param) {
     if (!PS4_LIBRARY || param.size == sizeof(Ngs2SamplerVoiceFilterParam)) {
         if (param.size < sizeof(Ngs2SamplerVoiceFilterParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
@@ -656,6 +674,10 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
         value.fbw_level = std::clamp(value.fbw_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN);
         value.lfe_level = std::clamp(value.lfe_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN);
         return value;
+    }
+    if (IsMasteringEffect(voice, param.id)) {
+        CheckMasteringEffect(param);
+        return CopyParam(param);
     }
     if ((param.id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_PITCH_SHIFT) {
         const auto index = param.id & 0x1fu;
@@ -1155,6 +1177,10 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_OUTPUT) {
                 voice.outputId = ParamAs<Ngs2MasteringVoiceOutputParam>(param).output_id;
+                return;
+            }
+            if (IsMasteringEffect(voice, param.id)) {
+                CheckMasteringEffect(param);
                 return;
             }
             break;
