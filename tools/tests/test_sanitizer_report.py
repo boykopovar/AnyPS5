@@ -296,7 +296,6 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("| Failed test |\n| - |\n| `plain` |\n", stdout)
 
-
     def test_table_details_preserve_html_text_and_backslashes_before_pipes(self):
         text, failing = sanitizer_report.summarize(
             "ASan", {"unexpected": "failed", "known": "failed"},

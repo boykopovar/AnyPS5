@@ -84,6 +84,10 @@ def load_known(path, sanitizers):
 
 
 def cell(text):
+    return " ".join(text.split()).replace("|", "\\|")
+
+
+def detail_cell(text):
     literal = html.escape(" ".join(text.split()), quote=False)
     literal = re.sub(r"\\+(?=\|)", lambda match: "&#92;" * len(match[0]), literal)
     return literal.replace("|", "\\|")
@@ -107,14 +111,14 @@ def summarize(title, found, known=None, details=None):
              f"{len(found)} tests: {counts['passed']} passed, {counts['skipped']} skipped, {tally}.", ""]
     if failed and any(name in details for name in failed):
         lines += ["| Failed test | First sanitizer report |", "| - | - |"]
-        lines += [f"| {test_name(name)} | {cell(details.get(name, ''))} |" for name in failed] + [""]
+        lines += [f"| {test_name(name)} | {detail_cell(details.get(name, ''))} |" for name in failed] + [""]
     elif failed:
         lines += ["| Failed test |", "| - |"] + [f"| {test_name(name)} |" for name in failed] + [""]
     if expected:
-        lines += ["| Known failure | Reason |", "| - | - |"] + [f"| {test_name(name)} | {cell(known[name])} |" for name in expected] + [""]
+        lines += ["| Known failure | Reason |", "| - | - |"] + [f"| {test_name(name)} | {detail_cell(known[name])} |" for name in expected] + [""]
     recovered = sorted(name for name in known if found.get(name) == "passed")
     if recovered:
-        lines += ["| Listed as known but passed | Reason |", "| - | - |"] + [f"| {test_name(name)} | {cell(known[name])} |" for name in recovered] + [""]
+        lines += ["| Listed as known but passed | Reason |", "| - | - |"] + [f"| {test_name(name)} | {detail_cell(known[name])} |" for name in recovered] + [""]
     absent = sorted(name for name in known if name not in found)
     if absent:
         lines += ["| Listed as known but not in this run |", "| - |"] + [f"| {test_name(name)} |" for name in absent] + [""]
