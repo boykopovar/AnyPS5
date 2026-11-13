@@ -310,6 +310,8 @@ std::int64_t APS5_VABI sceUsbdGetDeviceList(void*** list) {
         *list = g_emptyDeviceList;
         return 0;
     }
+    void** previous = nullptr;
+    if (!readGuest(list, previous) || !writeGuest(list, &previous, sizeof(previous))) return SCE_USBD_ERROR_INVALID_ARG;
     libusb_device** devices = nullptr;
     const ssize_t count = libusb_get_device_list(state.context, &devices);
     if (count < 0) return ToGuestError(static_cast<int>(count));
