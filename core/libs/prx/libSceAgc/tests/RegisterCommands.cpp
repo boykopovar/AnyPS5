@@ -340,6 +340,42 @@ void testRegisterListRuns() {
     }
 }
 
+void testRegisterWritesAtInlineLimits() {
+    std::array<std::uint32_t, 200> values{};
+    for (std::uint32_t i = 0; i < values.size(); ++i) values[i] = 0x1000u + i;
+    for (const auto count : {64u, 65u, 130u}) {
+        for (const auto sh : {true, false}) {
+            const auto opcode = sh ? 0x7600u : 0x7900u;
+            std::vector<std::uint32_t> words(count + 6u, 0xabcdef01u);
+            CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+            const auto before = allocations;
+            auto* packet = (sh ? sceAgcCbSetShRegisterRangeDirect : sceAgcCbSetUcRegisterRangeDirect)(&buffer, 0x30u, values.data(), count);
+            check(count > 64u || allocations == before, "a register range of at most 64 values allocated");
+            check(packet == words.data() && buffer.cursor_up == packet + count + 2u, "register range length mismatch");
+            check(packet[0] == (0xc0000000u | (count << 16u) | opcode) && packet[1] == 0x30u, "register range header mismatch");
+            check(std::equal(values.begin(), values.begin() + count, packet + 2), "register range contents mismatch");
+            check(std::all_of(words.begin() + count + 2u, words.end(), [](std::uint32_t word) { return word == 0xabcdef01u; }), "register range overwrote following words");
+        }
+    }
+    for (const auto count : {32u, 33u, 64u, 65u, 130u}) {
+        for (const auto contiguous : {true, false}) {
+            std::vector<ShaderRegister> registers;
+            for (std::uint32_t i = 0; i < count; ++i) registers.push_back({0x20u + i * (contiguous ? 1u : 2u), 0x2000u + i});
+            for (const auto sh : {true, false}) {
+                const auto expected = referenceRuns(sh ? 0x7600u : 0x7900u, registers);
+                std::vector<std::uint32_t> words(expected.size() + 4u, 0xabcdef01u);
+                CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+                const auto before = allocations;
+                auto* packet = (sh ? sceAgcCbSetShRegistersDirect : sceAgcCbSetUcRegistersDirect)(&buffer, registers.data(), count);
+                check(count > 32u || allocations == before, "a register list of at most 32 registers allocated");
+                check(packet == words.data() && buffer.cursor_up == packet + expected.size(), "register list length mismatch");
+                check(std::equal(expected.begin(), expected.end(), packet), "register list contents mismatch");
+                check(std::all_of(words.begin() + expected.size(), words.end(), [](std::uint32_t word) { return word == 0xabcdef01u; }), "register list overwrote following words");
+            }
+        }
+    }
+}
+
 void testRegisterWritesDoNotAllocate() {
     std::array<std::uint32_t, 8> values{1, 2, 3, 4, 5, 6, 7, 8};
     std::array<ShaderRegister, 12> registers;
@@ -374,6 +410,7 @@ int main() {
         testValuesSurviveBufferGrowth();
         testRegisterListRuns();
         testRegisterWritesDoNotAllocate();
+        testRegisterWritesAtInlineLimits();
         std::puts("AGC register command tests passed");
         return 0;
     } catch (const std::exception& error) {
