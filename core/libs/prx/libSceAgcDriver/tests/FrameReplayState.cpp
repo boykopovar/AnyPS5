@@ -519,6 +519,92 @@ void testNativeRepeatPipelines(const std::filesystem::path& directory) {
     }
 }
 
+void testNativeRepeatHtileOrphan(const std::filesystem::path& directory) {
+    constexpr std::size_t Block = 65536u;
+    constexpr std::size_t CapturedBytes = 2u * Block;
+    constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
+    constexpr float CapturedDepth = 0.25f;
+    const auto texels = Extent.width * Extent.height;
+    auto* bytes = allocate(8u * Block);
+    const auto begin = address(bytes);
+    for (std::size_t pair = 0u; pair < 4u; ++pair) {
+        for (std::size_t offset = pair * 2u * Block; offset < (pair * 2u + 1u) * Block; offset += sizeof(float)) std::memcpy(bytes + offset, &CapturedDepth, sizeof(float));
+        std::fill_n(bytes + (pair * 2u + 1u) * Block, Block, std::byte{0xff});
+    }
+    const std::vector<std::byte> expected(bytes, bytes + CapturedBytes);
+    std::uintptr_t arena = 0;
+    std::size_t arenaSize = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arena, &arenaSize);
+    FrameCaptureWriter writer(directory);
+    writer.WriteRange(begin, CapturedBytes, FrameRangeKind::Watched, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable | FrameRangeAccess::Gpu);
+    writer.WriteSnapshot(begin, expected);
+    writer.Finish("{\"arena_base\":" + std::to_string(arena) + "}");
+    const FrameCaptureReader reader(directory);
+    const auto skipped = restoreMemory(reader);
+    check(skipped.bytes == 0u && std::equal(expected.begin(), expected.end(), bytes), "orphan HTILE fixture did not restore captured raw depth and expanded metadata");
+    auto since = watchBaseline(reader, skipped);
+    auto opened = OpenVulkanTestDevice();
+    check(opened != nullptr, "orphan HTILE fixture device unavailable");
+    auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
+    AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    const auto shaders = DepthFastClearHarness::Compile(*device);
+    const auto swizzle = AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX);
+    const auto firstHtileBind = [&](std::uint64_t depth) {
+        AgcDriver::Graphics::GuestTextureResource resource{};
+        resource.baseAddress = depth;
+        resource.width = Extent.width;
+        resource.height = Extent.height;
+        resource.mipCount = resource.allocatedMipCount = 1u;
+        resource.tileMode = AgcDriver::Graphics::TextureTileMode::kZ64KBX;
+        resource.dimension = AgcDriver::Graphics::TextureDimension::k2D;
+        resource.format = 22u;
+        resource.dstSelX = 4u;
+        resource.dstSelY = 5u;
+        resource.dstSelZ = 6u;
+        resource.dstSelW = 7u;
+        auto storage = AgcDriver::Graphics::StorageTexture::Create(context, *context.detiler, resource, 0u);
+        check(storage != nullptr, "orphan HTILE fixture could not import captured raw depth through the existing storage path");
+        AgcDriver::Graphics::DepthTarget imported{depth, 0u, Extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0u};
+        imported.depthSwizzle = swizzle;
+        static_cast<void>(AgcDriver::Graphics::DepthSurfaceView(context, imported, false, false));
+        DepthFastClearHarness::DrawOptions options;
+        options.depthCompare = VK_COMPARE_OP_EQUAL;
+        options.minDepth = options.maxDepth = CapturedDepth;
+        const DepthFastClearHarness::Surface plain{depth, 0u, 0u, false, VK_FORMAT_D32_SFLOAT, 0u, 0u, swizzle};
+        check(DepthFastClearHarness::Draw(*device, shaders, plain, options) == texels, "orphan HTILE fixture did not establish raw captured A before the first metadata bind");
+        const DepthFastClearHarness::Surface htiled{depth, 0u, depth + Block, false, VK_FORMAT_D32_SFLOAT, 0u, 0u, swizzle};
+        const auto captured = DepthFastClearHarness::Draw(*device, shaders, htiled, options);
+        options.minDepth = options.maxDepth = 1.0f;
+        const auto cleared = DepthFastClearHarness::Draw(*device, shaders, htiled, options);
+        return std::pair{captured, cleared};
+    };
+    const auto unnoted = firstHtileBind(begin + 2u * Block);
+    check(unnoted.first == texels && unnoted.second == 0u, "orphan HTILE unnoted control did not retain raw captured A");
+    check(!AgcDriver::Graphics::NoteHtileDepthClear(begin + 5u * Block, DepthFastClearHarness::HtileBytes), "orphan HTILE noted control unexpectedly found a native completion owner");
+    const auto noted = firstHtileBind(begin + 4u * Block);
+    check(noted.first == 0u && noted.second == texels, "orphan HTILE noted control did not apply remembered clear B at its first metadata bind");
+    std::printf("orphan HTILE independent controls: unnoted_A=%u unnoted_B=%u noted_A=%u noted_B=%u\n", unnoted.first, unnoted.second, noted.first, noted.second);
+    check(!AgcDriver::Graphics::ActiveDepthExtent(device->Device(), begin).has_value() && AgcDriver::Graphics::ResidentDepthOwnersOver(begin, CapturedBytes, false) == 0u, "orphan HTILE tested range already has a resident owner before reset");
+    check(!AgcDriver::Graphics::NoteHtileDepthClear(begin + Block, DepthFastClearHarness::HtileBytes), "orphan HTILE tested note unexpectedly found a native completion owner");
+    check(!AgcDriver::Graphics::NoteHtileDepthClear(begin + 7u * Block, DepthFastClearHarness::HtileBytes), "orphan HTILE outside-range note unexpectedly found a native completion owner");
+    Runs changed;
+    static_cast<void>(changedSince(begin, CapturedBytes, since, changed));
+    Runs owned;
+    std::exception_ptr failure;
+    AgcDriverGpuOwnedRanges_nid_no_patch(begin, CapturedBytes, owned, &failure);
+    rethrowDriverFailure(failure);
+    check(changed.empty() && owned.empty() && std::equal(expected.begin(), expected.end(), bytes), "orphan HTILE control changed guest bytes or created reset candidates in the tested range");
+    const std::vector<AgcDriver::NativeDepthSnapshot> emptyNative;
+    const auto reset = resetMemory(reader, skipped, since, ResetFault::None, true, &emptyNative);
+    check(reset.compared == 0u && reset.rewritten == 0u && std::equal(expected.begin(), expected.end(), bytes), "orphan HTILE reset test became covered by generic changed-page retirement or altered captured bytes");
+    const auto restored = firstHtileBind(begin);
+    const auto outside = firstHtileBind(begin + 6u * Block);
+    std::printf("orphan HTILE reset: changed=0 owned=0 compared=%llu rewritten=%llu restored_A=%u restored_B=%u outside_A=%u outside_B=%u\n", static_cast<unsigned long long>(reset.compared), static_cast<unsigned long long>(reset.rewritten), restored.first, restored.second, outside.first, outside.second);
+    check(restored.first == texels && restored.second == 0u, "native replay reset retained an orphan HTILE clear over unchanged captured memory");
+    check(outside.first == 0u && outside.second == texels, "native replay reset globally erased an HTILE note outside captured ranges");
+}
+
 void testMemoryOrder(const std::filesystem::path& directory) {
     constexpr std::size_t Size = 64u * 1024u * 1024u;
     auto* bytes = allocate(Size);
@@ -1892,7 +1978,8 @@ int main(int argc, char** argv) {
             writeInspectionCapture(directory);
             return 0;
         }
-        if (mode == "native_repeat_pipelines") testNativeRepeatPipelines(directory);
+        if (mode == "native_repeat_htile_orphan") testNativeRepeatHtileOrphan(directory);
+        else if (mode == "native_repeat_pipelines") testNativeRepeatPipelines(directory);
         else if (mode == "native_repeat_failure") testNativeRepeatFailure();
         else if (mode == "native_repeat_preflight") testNativeRepeatPreflight(directory);
         else if (mode == "native_repeat_stored_owner") testNativeRetiredStoredOwner(directory);
