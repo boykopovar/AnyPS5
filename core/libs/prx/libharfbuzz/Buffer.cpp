@@ -63,6 +63,11 @@ void APS5_VABI hb_buffer_set_script_nid_postfix(hb_buffer_t* buffer, std::uint32
     hb_buffer_set_script(buffer, static_cast<hb_script_t>(script));
 }
 
+void APS5_VABI hb_buffer_set_unicode_funcs_nid_postfix(hb_buffer_t* buffer, hb_unicode_funcs_t* unicode_funcs) {
+    if (!buffer) NotImplemented_nid_no_patch(__func__);
+    hb_buffer_set_unicode_funcs(buffer, unicode_funcs);
+}
+
 void APS5_VABI hb_buffer_guess_segment_properties_nid_postfix(hb_buffer_t* buffer) {
     if (!buffer) NotImplemented_nid_no_patch(__func__);
     hb_buffer_guess_segment_properties(buffer);

@@ -108,6 +108,18 @@ void otherWindowEventsAreIgnored() {
     require(HostVolumeGain_nid_no_patch() == HostVolume::UnityGain, "the output is still at unity");
 }
 
+void focusStateIsPublishedWithoutTheMuteOption() {
+    HostVolumeConfigure_nid_no_patch(nullptr, nullptr);
+    HostVolume after;
+    require(HostVolumeFocused_nid_no_patch(), "the window starts with focus");
+    require(ApplyHostFocusEvent(windowEvent(7, SDL_WINDOWEVENT_FOCUS_LOST), 7, &after) == false && !HostVolumeFocused_nid_no_patch(), "losing focus is published even when nothing mutes");
+    require(!after.Focused() && HostVolumeGain_nid_no_patch() == HostVolume::UnityGain, "losing focus leaves the gain alone without the option");
+    ApplyHostFocusEvent(windowEvent(7, SDL_WINDOWEVENT_FOCUS_GAINED), 7, &after);
+    require(HostVolumeFocused_nid_no_patch() && after.Focused(), "gaining focus is published");
+    HostVolumeConfigure_nid_no_patch(nullptr, nullptr);
+    require(HostVolumeFocused_nid_no_patch(), "a configure starts with focus");
+}
+
 void focusMuteKeepsTheUsersMute() {
     HostVolumeConfigure_nid_no_patch(nullptr, "1");
     HostVolume after;
@@ -131,6 +143,7 @@ int main() try {
     focusLossMutesAndGainRestores();
     otherWindowEventsAreIgnored();
     focusMuteKeepsTheUsersMute();
+    focusStateIsPublishedWithoutTheMuteOption();
     HostVolumeConfigure_nid_no_patch(nullptr, nullptr);
     std::puts("host volume input tests passed");
     return 0;
