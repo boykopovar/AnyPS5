@@ -155,6 +155,23 @@ void Open() {
             Oracle::Close(native);
         }
     }
+    for (const auto style : {0, 9}) {
+        const auto* pattern = style == 9 ? u"%main: 0: =0=;" : u"0.00";
+        for (const auto length : {-1, -2, INT32_MIN}) {
+            Guarded<Oracle::Parse> actual;
+            auto expected = actual;
+            std::int32_t status = 0;
+            std::int32_t nativeStatus = 0;
+            auto* native = Oracle::Open(style, pattern, length, "en_US", &expected.value, &nativeStatus);
+            auto* guest = unum_open_nid_postfix(style, pattern, length, "en_US", reinterpret_cast<UParseError*>(&actual.value), &status);
+            Require(guest && native && status == nativeStatus, "all negative pattern lengths preserve native NUL semantics");
+            Require(std::memcmp(&actual.value, &expected.value, sizeof(actual.value)) == 0, "decimal untouched parse record and rule-based zeroing match native");
+            Compare(guest, native, 0, 42.5);
+            unum_close_nid_postfix(guest);
+            Oracle::Close(native);
+            actual.Check();
+        }
+    }
     const std::u16string pattern{u'0', u'.', u'0', 0, u'X'};
     Guarded<Oracle::Parse> actual;
     auto expected = actual;
@@ -315,6 +332,10 @@ void Memory() {
     std::memcpy(locale, "en_US", 6);
     auto* handle = unum_open_nid_postfix(1, nullptr, -1, locale, nullptr, status);
     Require(handle && *status <= 0, "mapped locale with NUL exactly at page end opens");
+    *status = 0;
+    auto* ignored = unum_open_nid_postfix(1, badText, INT32_MAX, "en_US", reinterpret_cast<UParseError*>(data), status);
+    Require(ignored && *status <= 0, "nonpattern style ignores inaccessible pattern and parse record");
+    unum_close_nid_postfix(ignored);
     auto* output = reinterpret_cast<char16_t*>(data + page + 512);
     auto* field = reinterpret_cast<Oracle::Field*>(data + page + 256);
     *field = {0, -1, -1};
@@ -324,6 +345,9 @@ void Memory() {
     Require(std::u16string_view(output + 1, 7) == u"1,234.5" && output[0] == 0xa5a5 && output[8] == 0 && output[9] == 0xa5a5,
         "mapped number output literal, terminator and tail guards");
     Require(field->field == 0 && field->begin == 0 && field->end == 5, "mapped integer field includes grouping separator");
+    *status = 0;
+    Require(unum_formatDouble_nid_postfix(handle, 1234.5, output + 1, INT32_MAX, nullptr, status) == 7 && *status <= 0,
+        "large declared output capacity is bounded by actual formatted output");
     const auto refuses = [&](auto&& function) {
         *status = 0;
         Refuses(function);
