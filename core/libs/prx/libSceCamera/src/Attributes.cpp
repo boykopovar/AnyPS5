@@ -1,5 +1,7 @@
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceCamera/libSceCamera.hpp"
 #include "prx/libSceCamera/include/Camera.hpp"
 
@@ -115,7 +117,13 @@ int APS5_VABI sceCameraGetExposureGain(std::int32_t handle, std::uint32_t channe
 }
 
 int APS5_VABI sceCameraGetWhiteBalance(std::int32_t handle, std::uint32_t channel, CameraWhiteBalance* whiteBalance, void* option) {
-    return Report(handle, channel, whiteBalance, option, DEFAULT_WHITE_BALANCE);
+    if (const int error = CheckGet(handle, channel, whiteBalance, option)) return error;
+    const CameraWhiteBalance value = DEFAULT_WHITE_BALANCE;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(whiteBalance, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return SCE_CAMERA_ERROR_PARAM;
+    return 0;
 }
 
 int APS5_VABI sceCameraGetGamma(std::int32_t handle, std::uint32_t channel, CameraGamma* gamma, void* option) {
