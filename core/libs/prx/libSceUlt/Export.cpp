@@ -1092,12 +1092,13 @@ int APS5_VABI sceUltGetConditionVariableInfo(void* object, UltConditionVariableI
     std::lock_guard stateLock(state->_mutex->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
     if (capacity != 0 && !state->_queue.empty()) NotImplemented_nid_no_patch(__func__);
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltConditionVariableInfo);
-    info->object = object;
-    std::memcpy(info->name, state->_name, sizeof(info->name));
-    info->mutex = state->_mutexObject;
-    info->waitingThreads = static_cast<std::uint32_t>(state->_queue.size());
+    UltConditionVariableInfo localInfo{};
+    localInfo.size = sizeof(UltConditionVariableInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
+    localInfo.mutex = state->_mutexObject;
+    localInfo.waitingThreads = static_cast<std::uint32_t>(state->_queue.size());
+    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -1114,7 +1115,9 @@ int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThr
     std::lock_guard stateLock(state->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
     for (std::uint32_t index = 0; index < capacity; ++index) {
-        if (waitingThreads[index].size != sizeof(UltWaitingThreadInfo)) return ULT_ERROR_INVALID;
+        std::uint64_t recordSize = 0;
+        if (!GuestCopyIn_nid_no_patch(&recordSize, &waitingThreads[index].size, sizeof(recordSize))) return ULT_ERROR_NULL;
+        if (recordSize != sizeof(UltWaitingThreadInfo)) return ULT_ERROR_INVALID;
     }
     if (capacity != 0 && state->_waiters != 0) NotImplemented_nid_no_patch(__func__);
     if (state->_lockCount != 0 && (state->_attribute != 0 || state->_lockCount > 1 || state->_ownerIdentity.type != 1)) NotImplemented_nid_no_patch(__func__);
@@ -1144,20 +1147,21 @@ int APS5_VABI sceUltGetQueueDataResourcePoolInfo(void* object, UltQueueDataResou
         state = it->second;
     }
     std::lock_guard poolLock(state->_mutex);
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltQueueDataResourcePoolInfo);
-    info->object = object;
-    std::memcpy(info->name, state->_name, sizeof(info->name));
-    info->waitingQueuePool = state->_waitingPool;
-    info->dataSize = state->_dataSize;
-    info->maxItems = state->_numData;
-    info->maxQueues = state->_numQueueObject;
-    info->availableQueues = state->_numQueueObject > state->_queues ? state->_numQueueObject - state->_queues : 0;
+    UltQueueDataResourcePoolInfo localInfo{};
+    localInfo.size = sizeof(UltQueueDataResourcePoolInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
+    localInfo.waitingQueuePool = state->_waitingPool;
+    localInfo.dataSize = state->_dataSize;
+    localInfo.maxItems = state->_numData;
+    localInfo.maxQueues = state->_numQueueObject;
+    localInfo.availableQueues = state->_numQueueObject > state->_queues ? state->_numQueueObject - state->_queues : 0;
     std::uint32_t freeCount = 0;
     for (auto next = state->_free; next != UINT32_MAX; next = state->_next[next]) {
         ++freeCount;
     }
-    info->availableItems = freeCount;
+    localInfo.availableItems = freeCount;
+    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -1175,16 +1179,17 @@ int APS5_VABI sceUltGetQueueInfo(void* object, UltQueueInfo* info, UltWaitingThr
     std::lock_guard poolLock(pool._mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
     if (capacity != 0 && (state->_waitingPushers != 0 || state->_waitingPoppers != 0)) NotImplemented_nid_no_patch(__func__);
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltQueueInfo);
-    info->object = object;
-    std::memcpy(info->name, state->_name, sizeof(info->name));
-    info->waitingQueuePool = state->_waitingPool;
-    info->dataPool = state->_dataPool;
-    info->dataSize = state->_dataSize;
-    info->queuedItems = state->_queuedItems;
-    info->waitingPushers = state->_waitingPushers;
-    info->waitingPoppers = state->_waitingPoppers;
+    UltQueueInfo localInfo{};
+    localInfo.size = sizeof(UltQueueInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
+    localInfo.waitingQueuePool = state->_waitingPool;
+    localInfo.dataPool = state->_dataPool;
+    localInfo.dataSize = state->_dataSize;
+    localInfo.queuedItems = state->_queuedItems;
+    localInfo.waitingPushers = state->_waitingPushers;
+    localInfo.waitingPoppers = state->_waitingPoppers;
+    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -1201,13 +1206,14 @@ int APS5_VABI sceUltGetSemaphoreInfo(void* object, UltSemaphoreInfo* info, UltWa
     std::lock_guard stateLock(state->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
     if (capacity != 0 && state->_waiters != 0) NotImplemented_nid_no_patch(__func__);
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltSemaphoreInfo);
-    info->object = object;
-    std::memcpy(info->name, state->_name, sizeof(info->name));
-    info->waitingQueuePool = state->_waitingPool;
-    info->resources = static_cast<std::uint32_t>(state->_resources);
-    info->waitingThreads = state->_waiters;
+    UltSemaphoreInfo localInfo{};
+    localInfo.size = sizeof(UltSemaphoreInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
+    localInfo.waitingQueuePool = state->_waitingPool;
+    localInfo.resources = static_cast<std::uint32_t>(state->_resources);
+    localInfo.waitingThreads = state->_waiters;
+    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -1251,9 +1257,7 @@ int APS5_VABI sceUltGetUlthreadRuntimeInfo(void* runtime, UltUlthreadRuntimeInfo
     std::uint32_t count = 0;
     for (const auto& [obj, ulthread] : gUlthreads) {
         if (ulthread->_runtime == runtime && !ulthread->_exited.load(std::memory_order_acquire)) {
-            if (ulthreads != nullptr && count < ulthreadCapacity) {
-                ulthreads[count] = obj;
-            }
+            if (ulthreads != nullptr && count < ulthreadCapacity && !GuestCopyOut_nid_no_patch(&ulthreads[count], &obj, sizeof(obj))) return ULT_ERROR_NULL;
             ++count;
         }
     }
@@ -1271,14 +1275,15 @@ int APS5_VABI sceUltGetWaitingQueueResourcePoolInfo(void* object, UltWaitingQueu
     const auto it = gResourcePools.find(object);
     if (it == gResourcePools.end()) return ULT_ERROR_STATE;
     const auto& state = it->second;
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltWaitingQueueResourcePoolInfo);
-    info->object = object;
-    std::memcpy(info->name, state._name, sizeof(info->name));
-    info->maxThreads = state._numThreads;
-    info->availableThreads = state._numThreads;
-    info->maxSyncObjects = state._numSyncObjects;
-    info->availableSyncObjects = state._numSyncObjects;
+    UltWaitingQueueResourcePoolInfo localInfo{};
+    localInfo.size = sizeof(UltWaitingQueueResourcePoolInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state._name, sizeof(localInfo.name));
+    localInfo.maxThreads = state._numThreads;
+    localInfo.availableThreads = state._numThreads;
+    localInfo.maxSyncObjects = state._numSyncObjects;
+    localInfo.availableSyncObjects = state._numSyncObjects;
+    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 

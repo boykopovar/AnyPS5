@@ -87,6 +87,8 @@ static void VerifyPeriodicTimer() {
     Require(count == 1 && sceKernelGetEventId(&events[0]) == 14 && sceKernelGetEventData(&events[0]) >= 1);
     Require(sceKernelDeleteTimerEvent(eq, 14) == SCE_OK);
     const KernelTimespec soon{0, 1000000};
+    Require(sceKernelAddHRTimerEvent(eq, 15, reinterpret_cast<const KernelTimespec*>(1), &second) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(sceKernelAddHRTimerEvent(eq, 15, &soon, &second) == SCE_OK);
     Require(sceKernelWaitEqueue(eq, events, 2, &count, nullptr) == SCE_OK);
     Require(count == 1 && sceKernelGetEventId(&events[0]) == 15 && sceKernelGetEventFilter(&events[0]) == EVFILT_HRTIMER);

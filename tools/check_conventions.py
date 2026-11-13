@@ -125,6 +125,7 @@ class Check:
         self.findings = []
         self.added = defaultdict(list)
         self.status = {}
+        self.renamed_from = set()
         self.numstat = {}
         entries = [(metadata.split(), path) for metadata, path in
                    (entry.split("\t", 1) for entry in git("ls-tree", "-rz", "--full-tree", head).split("\0") if entry)]
@@ -138,6 +139,7 @@ class Check:
         for status in statuses:
             path = next(statuses)
             if status.startswith("R"):
+                self.renamed_from.add(path)
                 path = next(statuses)
             self.status[path] = status[0]
         statistics = iter(git("diff", "--numstat", "-z", *diff).split("\0")[:-1])
@@ -369,7 +371,8 @@ class Check:
                 for target, resolved in links(path, text):
                     if resolved not in self.tree and resolved not in self.dirs:
                         self.report("doc-link", path, number, target)
-        deleted = {path for path, status in self.status.items() if status == "D"}
+        deleted = {path for path, status in self.status.items() if status == "D"} | self.renamed_from
+        deleted |= {str(parent) for path in deleted for parent in PurePosixPath(path).parents}
         if deleted:
             for path in sorted(self.tree):
                 if path.startswith("3rdparty/") or PurePosixPath(path).suffix != ".md" or path in deleted:
