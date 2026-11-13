@@ -90,7 +90,7 @@ static void CheckFpuControl() {
 }
 
 int main() {
-    CheckDefaultStackSize();
+    for (int iter = 0; iter < 2; ++iter) CheckDefaultStackSize();
     CheckSetName();
     CheckFpuControl();
     return 0;
