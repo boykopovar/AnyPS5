@@ -1,0 +1,17 @@
+add_library(libSceNKWeb SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNKWeb PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceNKWeb PRIVATE libc)
+configure_windows_unwind(libSceNKWeb)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_nkweb_tests ${LIBS_INCLUDE_DIR}/tests/GuestNKWeb.cpp)
+    target_include_directories(guest_nkweb_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_nkweb_tests PRIVATE libSceNKWeb libc)
+    configure_windows_unwind(guest_nkweb_tests)
+    add_test(NAME guest_nkweb COMMAND guest_nkweb_tests)
+    set_tests_properties(guest_nkweb PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_nkweb PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWeb>")
+    endif()
+endif()

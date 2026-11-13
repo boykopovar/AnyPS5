@@ -1,20 +1,27 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNKWeb/include/InventoryExports.hpp"
 #include "prx/libSceNKWeb/include/Api.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+std::atomic<bool> s_initialized{false};
+
+} // namespace
+
 extern "C" {
 
 int APS5_VABI sceNKWebInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+    s_initialized.store(true, std::memory_order_release);
     return 0;
 }
 
 int APS5_VABI sceNKWebTerminate() {
-    NotImplemented_nid_no_patch(__func__);
+    s_initialized.store(false, std::memory_order_release);
     return 0;
 }
 

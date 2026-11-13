@@ -1,8 +1,8 @@
 # libSceNKWeb technical debt
 
-### Functional
+### Silent stubs
 
-- [sceNKWebInitialize and sceNKWebTerminate](../../../core/libs/prx/libSceNKWeb/Export.cpp) remain throwing stubs. Both native exports take no input arguments and return a 32-bit status; decompiler SIMD parameters are unused register propagation through initialization and cleanup helpers.
+- [sceNKWebInitialize and sceNKWebTerminate](../../../core/libs/prx/libSceNKWeb/Export.cpp) (libSceNKWeb) - return 0 and manage initialization state without initializing the underlying web environment. Both native exports take no input arguments and return a 32-bit status.
 
 ### Additional callable exports
 
