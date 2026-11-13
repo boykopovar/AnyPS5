@@ -87,14 +87,9 @@ std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sou
         const auto value = Io::ReadU64(symbols, offset + 8);
         const auto flags = (info >> 4) == STB_WEAK ? ExportWeakDefinition : std::uint64_t{0};
         if ((info & 15) == STT_TLS) {
-            if (section >= SHN_LORESERVE) throw Domain::RelinkerException("Unsupported macOS executable TLS export section: " + name);
-            const auto tls = std::find_if(originalHeaders.begin(), originalHeaders.end(), [](const auto& header) { return header.Type == 7; });
-            if (tls != originalHeaders.end() && (value > tls->MemorySize || Io::ReadU64(symbols, offset + 16) > tls->MemorySize - value))
-                throw Domain::RelinkerException("macOS executable TLS export exceeds PT_TLS: " + name);
             input.TlsExports.push_back({name, value, flags});
         } else if (section == SHN_ABS) input.Exports.push_back({name, value, flags | ExportKindAbsolute});
         else {
-            if (section >= SHN_LORESERVE) throw Domain::RelinkerException("Unsupported macOS executable export section: " + name);
             input.Exports.push_back({name, image.GetRva(value, functionSymbolRoots && (info & 15) == STT_FUNC ? 1 : std::max<std::uint64_t>(Io::ReadU64(symbols, offset + 16), 1)), flags});
         }
     }
