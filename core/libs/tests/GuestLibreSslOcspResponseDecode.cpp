@@ -282,6 +282,25 @@ void TestReuse() {
     RequireErrors({123, 102, 58});
 
     target = nullptr;
+    input = Successful;
+    response = d2i_OCSP_RESPONSE_nid_postfix(&target, &input, sizeof(Successful));
+    Require(response && target == response);
+    type = ResponseBytes(response)->responseType;
+    Free(const_cast<unsigned char*>(type->data));
+    unsigned char borrowed[sizeof(BasicResponseType)];
+    std::memcpy(borrowed, BasicResponseType, sizeof(borrowed));
+    type->data = borrowed;
+    type->flags = 0x01;
+    input = Successful;
+    RequireThrows([&] { d2i_OCSP_RESPONSE_nid_postfix(&target, &input, sizeof(Successful)); });
+    Require(target == response && input == Successful && type->data == borrowed);
+    Require(std::memcmp(borrowed, BasicResponseType, sizeof(borrowed)) == 0);
+    type->data = nullptr;
+    OCSP_RESPONSE_free_nid_postfix(response);
+    Require(live.empty());
+    RequireErrors({});
+
+    target = nullptr;
     input = TryLater;
     response = d2i_OCSP_RESPONSE_nid_postfix(&target, &input, sizeof(TryLater));
     Require(response && !response->responseBytes);

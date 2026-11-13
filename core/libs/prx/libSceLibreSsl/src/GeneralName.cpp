@@ -208,6 +208,14 @@ void APS5_VABI GENERAL_NAMES_free_nid_postfix(LibreSslStack* names) {
     });
 }
 
+void LibreSslWipe_nid_no_patch(void* pointer, std::size_t size) {
+    Wipe(pointer, size);
+}
+
+void LibreSslAsn1StringFree_nid_no_patch(Asn1String* string) {
+    FreeString(string);
+}
+
 void LibreSslOcspResponseBytesFree_nid_no_patch(LibreSslOcspResponseBytes* bytes) {
     if (!bytes) return;
     CheckResponseBytes(bytes);

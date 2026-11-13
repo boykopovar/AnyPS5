@@ -404,11 +404,6 @@ bool Fail(int reason) {
     return false;
 }
 
-void Wipe(void* pointer, std::size_t size) {
-    auto* bytes = static_cast<volatile unsigned char*>(pointer);
-    for (std::size_t index = 0; index < size; ++index) bytes[index] = 0;
-}
-
 bool ReadLength(const unsigned char*& in, int& indefinite, std::int64_t& result, int max) {
     const unsigned char* p = in;
     std::uint64_t value = 0;
@@ -546,15 +541,6 @@ Asn1String* NewString(int type) {
     return string;
 }
 
-void FreeString(Asn1String* string) {
-    if (string->data && !(string->flags & 0x10)) {
-        if (string->length < 0) throw std::invalid_argument("d2i_OCSP_RESPONSE: negative owned string length");
-        Wipe(string->data, static_cast<std::size_t>(string->length));
-        free_nid_postfix(string->data);
-    }
-    free_nid_postfix(string);
-}
-
 bool DecodeInteger(Asn1String*& slot, const unsigned char* content, std::int64_t length) {
     Asn1String* target = slot;
     if (!target && !(target = NewString(IntegerType))) return false;
@@ -614,8 +600,9 @@ bool DecodeObject(LibreSslAsn1Object*& slot, const unsigned char* content, std::
         *target = {nullptr, nullptr, 0, 0, nullptr, ObjectDynamic};
     }
     if (target->data) {
+        if (!(target->flags & ObjectDynamicData)) throw std::invalid_argument("d2i_OCSP_RESPONSE: reused object has borrowed data");
         if (target->length < 0) throw std::invalid_argument("d2i_OCSP_RESPONSE: negative owned object length");
-        Wipe(const_cast<unsigned char*>(target->data), static_cast<std::size_t>(target->length));
+        LibreSslWipe_nid_no_patch(const_cast<unsigned char*>(target->data), static_cast<std::size_t>(target->length));
     }
     free_nid_postfix(const_cast<unsigned char*>(target->data));
     target->data = nullptr;
@@ -655,7 +642,7 @@ bool DecodeOctetString(Asn1String*& slot, const unsigned char* content, std::int
         if (!grown) {
             Fail(MallocFailure);
             Fail(MallocFailure);
-            FreeString(slot);
+            LibreSslAsn1StringFree_nid_no_patch(slot);
             slot = nullptr;
             return false;
         }
