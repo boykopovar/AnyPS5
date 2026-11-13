@@ -40,7 +40,7 @@ int main() {
     Require(adjtime_nid_postfix(reinterpret_cast<const KernelTimeval*>(1), &remaining) == -1 && *__error_nid_postfix() == GuestEfault, "adjtime with an unreadable delta did not fail with EFAULT");
     Require(remaining.tv_sec == -3 && remaining.tv_usec == -2, "adjtime wrote oldDelta before reading delta");
     Require(adjtime_nid_postfix(reinterpret_cast<const KernelTimeval*>(1), reinterpret_cast<KernelTimeval*>(1)) == -1 && *__error_nid_postfix() == GuestEfault, "adjtime checked privileges before reading delta");
-    for (const KernelTimeval delta : {KernelTimeval{2, 0}, KernelTimeval{0, -1}, KernelTimeval{0, 0},
+    for (const KernelTimeval delta : {KernelTimeval{2, 0}, KernelTimeval{1, 0}, KernelTimeval{10, 500}, KernelTimeval{0, -1}, KernelTimeval{0, 0},
             KernelTimeval{std::numeric_limits<std::int64_t>::max(), std::numeric_limits<std::int64_t>::max()},
             KernelTimeval{std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::min()}}) RequirePermissionDenied(delta);
     Require(adjtime_nid_postfix(nullptr, &remaining) == 0 && remaining.tv_sec == 0 && remaining.tv_usec == 0, "denied adjustment changed the pending query result");
