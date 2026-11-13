@@ -225,6 +225,7 @@ int main() {
     constexpr int alreadyInitialized = static_cast<int>(0x80A00003);
     constexpr int notInitialized = static_cast<int>(0x80A00004);
     Require(sceGameLiveStreamingTerminate() == notInitialized);
+    Require(sceGameLiveStreamingTerminate() == notInitialized);
     Require(sceGameLiveStreamingGetCurrentStatus2(nullptr) == notInitialized);
     Require(sceGameLiveStreamingGetCurrentStatus(nullptr) == notInitialized);
     GameLiveStreamingStatus liveStatus{};
@@ -298,5 +299,6 @@ int main() {
     for (const std::uint8_t byte : programInfo) Require(byte == 0x7f);
     Require(sceGameLiveStreamingRegisterCallback(nullptr, nullptr) == notInitialized);
     Require(sceGameLiveStreamingUnregisterCallback() == notInitialized);
+    Require(sceGameLiveStreamingTerminate() == notInitialized);
     Require(sceGameLiveStreamingTerminate() == notInitialized);
 }
