@@ -59,6 +59,12 @@ const void* APS5_VABI WKBundleDOMWindowExtensionCreate(const void* frameRef, con
 const void* APS5_VABI WKBundleDOMWindowExtensionGetFrame(const void* extensionRef);
 const void* APS5_VABI WKBundleDOMWindowExtensionGetScriptWorld(const void* extensionRef);
 std::uint32_t APS5_VABI WKBundleFrameGetTypeID();
+NKWebKit::RectValue APS5_VABI WKBundleFrameGetContentBounds(const void* frameRef);
+NKWebKit::RectValue APS5_VABI WKBundleFrameGetVisibleContentBounds(const void* frameRef);
+NKWebKit::RectValue APS5_VABI WKBundleFrameGetVisibleContentBoundsExcludingScrollbars(const void* frameRef);
+NKWebKit::SizeValue APS5_VABI WKBundleFrameGetScrollOffset(const void* frameRef);
+bool APS5_VABI WKBundleFrameHasHorizontalScrollbar(const void* frameRef);
+bool APS5_VABI WKBundleFrameHasVerticalScrollbar(const void* frameRef);
 std::uint32_t APS5_VABI WKBundleGetTypeID();
 std::uint32_t APS5_VABI WKBundleHitTestResultGetTypeID();
 const void* APS5_VABI WKBundleHitTestResultCopyAbsoluteImageURL(const void* hitTestResultRef);

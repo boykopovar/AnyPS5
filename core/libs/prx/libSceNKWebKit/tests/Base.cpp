@@ -1200,6 +1200,50 @@ static void TestBundleNodeHandle() {
     Require(threw);
 }
 
+static void TestBundleFrameScroll() {
+    Require(WKBundleFrameGetTypeID() == 119);
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    const void* ref = frame.Get();
+
+    auto cb = WKBundleFrameGetContentBounds(ref);
+    Require(cb.origin.x == 0.0 && cb.size.width == 0.0);
+    auto vcb = WKBundleFrameGetVisibleContentBounds(ref);
+    Require(vcb.origin.x == 0.0 && vcb.size.width == 0.0);
+    auto vcbes = WKBundleFrameGetVisibleContentBoundsExcludingScrollbars(ref);
+    Require(vcbes.origin.x == 0.0 && vcbes.size.width == 0.0);
+    auto so = WKBundleFrameGetScrollOffset(ref);
+    Require(so.width == 0.0 && so.height == 0.0);
+    Require(!WKBundleFrameHasHorizontalScrollbar(ref));
+    Require(!WKBundleFrameHasVerticalScrollbar(ref));
+
+    frame->contentBounds = NKWebKit::RectValue{{1.0, 2.0}, {800.0, 600.0}};
+    frame->visibleContentBounds = NKWebKit::RectValue{{3.0, 4.0}, {400.0, 300.0}};
+    frame->visibleContentBoundsExcludingScrollbars = NKWebKit::RectValue{{5.0, 6.0}, {390.0, 290.0}};
+    frame->scrollOffset = NKWebKit::SizeValue{10.0, 20.0};
+    frame->hasHorizontalScrollbar = true;
+    frame->hasVerticalScrollbar = true;
+
+    auto cb2 = WKBundleFrameGetContentBounds(ref);
+    Require(cb2.origin.x == 1.0 && cb2.size.width == 800.0);
+    auto vcb2 = WKBundleFrameGetVisibleContentBounds(ref);
+    Require(vcb2.origin.x == 3.0 && vcb2.size.width == 400.0);
+    auto vcbes2 = WKBundleFrameGetVisibleContentBoundsExcludingScrollbars(ref);
+    Require(vcbes2.origin.x == 5.0 && vcbes2.size.width == 390.0);
+    auto so2 = WKBundleFrameGetScrollOffset(ref);
+    Require(so2.width == 10.0 && so2.height == 20.0);
+    Require(WKBundleFrameHasHorizontalScrollbar(ref));
+    Require(WKBundleFrameHasVerticalScrollbar(ref));
+
+    bool threw = false;
+    try {
+        WKBundleFrameGetContentBounds(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -2614,6 +2658,7 @@ int main() {
     TestBundleDOMWindowExtension();
     TestBundleHitTestResult();
     TestBundleNodeHandle();
+    TestBundleFrameScroll();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();
