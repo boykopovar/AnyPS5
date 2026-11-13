@@ -104,13 +104,14 @@ void EmitBls(StubBodyBuilder& body, const BlsOperands& operands) {
     auto used = operands.Memory ? UsedRegisters({operands.Destination}, operands.Memory) : UsedRegisters({operands.Destination, operands.Source}, std::nullopt);
     const auto result = Scratch(used, name);
     const auto temporary = Scratch(used, name);
-    StackSlot(body, 0x8D, true, Stack, -FrameSize);
+    const auto frame = SelectFrame(operands.Memory, operands.Wide, FrameSize, 16);
+    StackSlot(body, 0x8D, true, Stack, -frame);
     StackSlot(body, 0x89, true, result, 0);
     StackSlot(body, 0x89, true, temporary, 8);
     if (operands.Memory)
-        Memory(body, 0x8B, operands.Wide, *operands.Memory, result, name);
+        Memory(body, 0x8B, operands.Wide, *operands.Memory, result, name, frame);
     else if (operands.Source == Stack)
-        StackSlot(body, 0x8D, true, result, FrameSize);
+        StackSlot(body, 0x8D, true, result, frame);
     else
         Register(body, 0x8B, operands.Wide, result, operands.Source);
     Register(body, 0x85, operands.Wide, result, result);
@@ -129,7 +130,7 @@ void EmitBls(StubBodyBuilder& body, const BlsOperands& operands) {
     if (operands.Destination == Stack)
         StackSlot(body, 0x8B, operands.Wide, Stack, 8);
     else
-        StackSlot(body, 0x8D, true, Stack, FrameSize);
+        StackSlot(body, 0x8D, true, Stack, frame);
 }
 
 }

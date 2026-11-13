@@ -2,6 +2,7 @@
 #include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -56,6 +57,9 @@ AudioOut2PortState StateOfPort(AudioOut2ContextHandle context, std::uint32_t for
     AudioOut2PortState state;
     std::memset(&state, 0xAB, sizeof(state));
     Require(sceAudioOut2PortGetState(port, &state) == 0);
+    errno = 73;
+    Require(sceAudioOut2PortGetState(port, reinterpret_cast<AudioOut2PortState*>(0x10)) == errorInvalidArgument);
+    Require(errno == 73);
     Require(sceAudioOut2PortDestroy(port) == 0);
     return state;
 }
@@ -112,6 +116,10 @@ void SpeakerInfoReportsTheFrontPair() {
     Require(info.speaker_angle[1].azimuth == -30 && info.speaker_angle[1].elevation == 0);
     for (int index = 2; index < 16; index++) Require(info.speaker_angle[index].azimuth == -360 && info.speaker_angle[index].elevation == -360);
     Require(sceAudioOut2GetSpeakerInfo(nullptr, 0) == errorInvalidPointer);
+    auto* const invalidOutput = reinterpret_cast<AudioOut2SpeakerInfo*>(0x10);
+    errno = 73;
+    Require(sceAudioOut2GetSpeakerInfo(invalidOutput, 0) == errorInvalidPointer);
+    Require(errno == 73);
 }
 
 void SpeakerInfoRequiresInitialization() {
@@ -144,6 +152,7 @@ void SpeakerInfoRejectsBadFlags() {
     Require(sceAudioOut2GetSpeakerInfo(&info, 2) == errorInvalidParam);
     Require(sceAudioOut2GetSpeakerInfo(&info, 0x80000000) == errorInvalidParam);
     Require(sceAudioOut2GetSpeakerInfo(nullptr, 2) == errorInvalidPointer);
+    Require(sceAudioOut2GetSpeakerInfo(reinterpret_cast<AudioOut2SpeakerInfo*>(0x10), 2) == errorInvalidParam);
     Require(std::memcmp(&info, &untouched, sizeof(info)) == 0);
     Require(sceAudioOut2GetSpeakerInfo(&info, 1) == 0);
     Require(info.type == 0);
@@ -156,7 +165,12 @@ void SystemStateIsSilentAndRejectsNull() {
     std::memset(&state, 0xAB, sizeof(state));
     Require(sceAudioOut2GetSystemState(&state) == 0);
     Require(state.loudness == 0.0f);
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&state);
+    for (std::size_t index = sizeof(state.loudness); index < sizeof(state); ++index) Require(bytes[index] == 0xAB);
     Require(sceAudioOut2GetSystemState(nullptr) == errorInvalidArgument);
+    errno = 73;
+    Require(sceAudioOut2GetSystemState(reinterpret_cast<AudioOut2SystemState*>(0x10)) == errorInvalidArgument);
+    Require(errno == 73);
 }
 
 }

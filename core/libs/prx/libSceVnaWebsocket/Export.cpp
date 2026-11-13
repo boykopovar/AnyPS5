@@ -2,6 +2,8 @@
 #include "prx/libSceVnaWebsocket/include/InventoryExports.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -38,8 +40,17 @@ int APS5_VABI libSceVnaWebsocketUnknown_DP4477brt60_nid_no_patch() {
 }
 APS5_EXPORT("DP4477brt60", libSceVnaWebsocketUnknown_DP4477brt60_nid_no_patch);
 
-int APS5_VABI libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void* APS5_VABI libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch(void* destination, const void* source) {
+    if (destination == nullptr || source == nullptr) throw std::invalid_argument("J3fL2giuM+0: null object");
+    auto* to = static_cast<unsigned char*>(destination);
+    const auto* from = static_cast<const unsigned char*>(source);
+    unsigned char tail[8];
+    std::memcpy(tail, from + 16, sizeof(tail));
+    std::memcpy(to + 16, tail, sizeof(tail));
+    unsigned char head[16];
+    std::memcpy(head, from, sizeof(head));
+    std::memcpy(to, head, sizeof(head));
+    return destination;
 }
 APS5_EXPORT("J3fL2giuM+0", libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch);
 
@@ -93,13 +104,15 @@ int APS5_VABI libSceVnaWebsocketUnknown_es11O5Z1er4_nid_no_patch() {
 }
 APS5_EXPORT("es11O5Z1er4", libSceVnaWebsocketUnknown_es11O5Z1er4_nid_no_patch);
 
-int APS5_VABI libSceVnaWebsocketUnknown_fxgYzL5aGyw_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void* APS5_VABI libSceVnaWebsocketUnknown_fxgYzL5aGyw_nid_no_patch(void* destination, const void* source) {
+    if (destination == nullptr || source == nullptr) throw std::invalid_argument("fxgYzL5aGyw: null object");
+    std::memmove(destination, source, 44);
+    return destination;
 }
 APS5_EXPORT("fxgYzL5aGyw", libSceVnaWebsocketUnknown_fxgYzL5aGyw_nid_no_patch);
 
-int APS5_VABI libSceVnaWebsocketUnknown_hSnmIgcBCMk_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void* APS5_VABI libSceVnaWebsocketUnknown_hSnmIgcBCMk_nid_no_patch(void* value) {
+    return value;
 }
 APS5_EXPORT("hSnmIgcBCMk", libSceVnaWebsocketUnknown_hSnmIgcBCMk_nid_no_patch);
 
@@ -118,8 +131,8 @@ int APS5_VABI libSceVnaWebsocketUnknown_qUkQKyPORE8_nid_no_patch() {
 }
 APS5_EXPORT("qUkQKyPORE8", libSceVnaWebsocketUnknown_qUkQKyPORE8_nid_no_patch);
 
-int APS5_VABI libSceVnaWebsocketUnknown_t534VXlYZI8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void* APS5_VABI libSceVnaWebsocketUnknown_t534VXlYZI8_nid_no_patch(void* value) {
+    return value;
 }
 APS5_EXPORT("t534VXlYZI8", libSceVnaWebsocketUnknown_t534VXlYZI8_nid_no_patch);
 

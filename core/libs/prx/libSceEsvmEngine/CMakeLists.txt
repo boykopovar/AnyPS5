@@ -1,0 +1,15 @@
+add_library(libSceEsvmEngine SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceEsvmEngine PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceEsvmEngine)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_esvm_engine_tests ${LIBS_INCLUDE_DIR}/tests/GuestEsvmEngine.cpp)
+    target_include_directories(guest_esvm_engine_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_esvm_engine_tests PRIVATE libSceEsvmEngine libc)
+    configure_windows_unwind(guest_esvm_engine_tests)
+    add_test(NAME guest_esvm_engine COMMAND guest_esvm_engine_tests)
+    if(WIN32)
+        set_tests_properties(guest_esvm_engine PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceEsvmEngine>")
+    endif()
+endif()
