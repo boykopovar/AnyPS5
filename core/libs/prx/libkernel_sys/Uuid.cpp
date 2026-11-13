@@ -1,4 +1,6 @@
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <array>
@@ -40,12 +42,7 @@ std::uint64_t UuidTime() {
     return ticks & UuidTimeMask;
 }
 
-}
-
-extern "C" {
-
-int APS5_VABI uuidgen_nid_postfix(GuestUuid* store, int count) {
-    if (count < 1 || count > UuidgenMaxCount) return Fail(GuestEinval);
+void GenerateUuidV1(GuestUuid* destination, int count) {
     std::uint64_t time = 0;
     std::uint16_t sequence = 0;
     std::array<std::uint8_t, 6> node{};
@@ -53,7 +50,7 @@ int APS5_VABI uuidgen_nid_postfix(GuestUuid* store, int count) {
         std::lock_guard lock(uuidMutex);
         if (!uuidNodeReady) {
             HostEntropy_nid_no_patch(uuidNode.data(), uuidNode.size());
-            uuidNode[0] |= 0x01;
+            uuidNode[0] &= 0xfe;
             uuidNodeReady = true;
         }
         node = uuidNode;
@@ -69,18 +66,49 @@ int APS5_VABI uuidgen_nid_postfix(GuestUuid* store, int count) {
         uuidLastSequence = sequence;
         uuidLastTime = (time + static_cast<std::uint64_t>(count) - 1) & UuidTimeMask;
     }
-    std::vector<GuestUuid> generated(static_cast<std::size_t>(count));
     const auto variantSequence = static_cast<std::uint16_t>(sequence | 0x8000);
     for (int index = 0; index < count; ++index, ++time) {
-        generated[index].timeLow = static_cast<std::uint32_t>(time);
-        generated[index].timeMid = static_cast<std::uint16_t>(time >> 32);
-        generated[index].timeHiAndVersion = static_cast<std::uint16_t>(((time >> 48) & 0x0fff) | 0x1000);
-        generated[index].clockSeqHiAndReserved = static_cast<std::uint8_t>(variantSequence >> 8);
-        generated[index].clockSeqLow = static_cast<std::uint8_t>(variantSequence);
-        std::memcpy(generated[index].node, node.data(), node.size());
+        destination[index].timeLow = static_cast<std::uint32_t>(time);
+        destination[index].timeMid = static_cast<std::uint16_t>(time >> 32);
+        destination[index].timeHiAndVersion = static_cast<std::uint16_t>(((time >> 48) & 0x0fff) | 0x1000);
+        destination[index].clockSeqHiAndReserved = static_cast<std::uint8_t>(variantSequence >> 8);
+        destination[index].clockSeqLow = static_cast<std::uint8_t>(variantSequence);
+        std::memcpy(destination[index].node, node.data(), node.size());
     }
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI uuidgen_nid_postfix(GuestUuid* store, int count) {
+    if (count < 1 || count > UuidgenMaxCount) return Fail(GuestEinval);
+    std::vector<GuestUuid> generated(static_cast<std::size_t>(count));
+    GenerateUuidV1(generated.data(), count);
     if (!GuestCopyOut_nid_no_patch(store, generated.data(), sizeof(GuestUuid) * static_cast<std::size_t>(count))) {
         return Fail(GuestEfault);
+    }
+    return 0;
+}
+
+int APS5_VABI sceKernelCreateUuidV1(std::uint8_t* uuid) {
+    if (!uuid) return SCE_KERNEL_ERROR_EINVAL;
+    GuestUuid generated{};
+    GenerateUuidV1(&generated, 1);
+    std::array<std::uint8_t, 16> bytes{};
+    bytes[0] = static_cast<std::uint8_t>(generated.timeLow >> 24);
+    bytes[1] = static_cast<std::uint8_t>(generated.timeLow >> 16);
+    bytes[2] = static_cast<std::uint8_t>(generated.timeLow >> 8);
+    bytes[3] = static_cast<std::uint8_t>(generated.timeLow);
+    bytes[4] = static_cast<std::uint8_t>(generated.timeMid >> 8);
+    bytes[5] = static_cast<std::uint8_t>(generated.timeMid);
+    bytes[6] = static_cast<std::uint8_t>(generated.timeHiAndVersion >> 8);
+    bytes[7] = static_cast<std::uint8_t>(generated.timeHiAndVersion);
+    bytes[8] = generated.clockSeqHiAndReserved;
+    bytes[9] = generated.clockSeqLow;
+    std::memcpy(&bytes[10], generated.node, sizeof(generated.node));
+    if (!GuestCopyOut_nid_no_patch(uuid, bytes.data(), bytes.size())) {
+        return SCE_KERNEL_ERROR_EFAULT;
     }
     return 0;
 }

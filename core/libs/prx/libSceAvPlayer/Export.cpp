@@ -1,4 +1,5 @@
 #include "prx/libSceAvPlayer/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -7,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
 #include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
@@ -143,7 +145,14 @@ int APS5_VABI sceAvPlayerInitEx(const AvPlayerInitDataEx* init_ex, AvPlayerInter
         init.auto_start = init_ex->auto_start;
     }
     init.default_language = init_ex->default_language;
-    *handle = new Player(init, VideoBufferCount(init.num_output_video_framebuffers));
+    auto* player = new Player(init, VideoBufferCount(init.num_output_video_framebuffers));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(handle, &player, sizeof(player));
+    errno = savedErrno;
+    if (!copied) {
+        delete player;
+        return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    }
     return SCE_OK;
 }
 
