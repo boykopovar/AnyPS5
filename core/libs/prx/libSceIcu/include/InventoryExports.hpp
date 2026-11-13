@@ -61,8 +61,6 @@ int APS5_VABI uloc_minimizeSubtags();
 void APS5_VABI uloc_setDefault_nid_postfix(const char* newDefaultLocale, std::int32_t* status);
 int APS5_VABI uloc_toLanguageTag();
 int APS5_VABI uloc_toUnicodeLocaleType();
-int APS5_VABI unorm2_getNFKCInstance();
-int APS5_VABI unorm2_getNFKDInstance();
 const char* APS5_VABI uprv_getDefaultLocaleID_nid_postfix();
 int APS5_VABI ures_getByKey();
 int APS5_VABI ures_getStringByKey();

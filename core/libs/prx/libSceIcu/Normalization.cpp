@@ -2,12 +2,16 @@
 #include "prx/libSceIcu/Set.hpp"
 #include "prx/libc/include/General.hpp"
 #include "unicode/normalizer2.h"
+#include "unicode/uchar.h"
 #include "unicode/uniset.h"
 #include "unicode/unorm.h"
 #include "unicode/unorm2.h"
 #include <cstdint>
 #include <cstring>
 #include <memory>
+
+#undef unorm2_getNFKCInstance
+#undef unorm2_getNFKDInstance
 
 namespace {
 
@@ -109,6 +113,24 @@ void APS5_VABI unorm2_close_nid_postfix(Icu::Normalizer2* normalizer) {
     delete owned;
 }
 
+const Icu::Normalizer2* APS5_VABI unorm2_getNFKCInstance(std::int32_t* error) {
+    return Guest(U_ICU_ENTRY_POINT_RENAME(unorm2_getNFKCInstance)(&Status(error)));
+}
+
+const Icu::Normalizer2* APS5_VABI unorm2_getNFKDInstance(std::int32_t* error) {
+    return Guest(U_ICU_ENTRY_POINT_RENAME(unorm2_getNFKDInstance)(&Status(error)));
+}
+
+const Icu::Normalizer2* APS5_VABI unorm2_getNFKCCasefoldInstance_nid_postfix(std::int32_t* error) {
+    return Guest(unorm2_getNFKCCasefoldInstance(&Status(error)));
+}
+
+std::int32_t APS5_VABI u_getFC_NFKC_Closure_nid_postfix(std::int32_t character, char16_t* destination,
+                                                      std::int32_t capacity, std::int32_t* error) {
+    if (!error) return 0;
+    return u_getFC_NFKC_Closure(character, destination, capacity, &Status(error));
+}
+
 const Icu::Normalizer2* APS5_VABI unorm2_getNFCInstance_nid_postfix(std::int32_t* error) {
     return Guest(unorm2_getNFCInstance(&Status(error)));
 }
@@ -120,7 +142,9 @@ const Icu::Normalizer2* APS5_VABI unorm2_getNFDInstance_nid_postfix(std::int32_t
 const Icu::Normalizer2* APS5_VABI unorm2_getInstance_nid_postfix(const char* package, const char* name, std::int32_t mode,
                                                                  std::int32_t* error) {
     auto& status = Status(error);
-    if (U_SUCCESS(status) && name && *name && (package || std::strcmp(name, "nfc") != 0)) {
+    if (U_SUCCESS(status) && name && *name &&
+        (package || (std::strcmp(name, "nfc") != 0 && std::strcmp(name, "nfkc") != 0 &&
+                     std::strcmp(name, "nfkc_cf") != 0))) {
         NotImplemented_nid_no_patch("unorm2_getInstance: normalization data file");
     }
     return Guest(unorm2_getInstance(package, name, static_cast<UNormalization2Mode>(mode), &status));
