@@ -55,13 +55,14 @@ public:
         recorder.HoldNextSubmit(semaphore, 1);
     }
 
-    void ReleaseAfterSubmission(AgcDriver::Graphics::Recorder& recorder, std::uint64_t serial) {
-        worker = std::jthread([this, &recorder, serial](std::stop_token stop) {
+    void ReleaseAfterSubmission(AgcDriver::Graphics::Recorder& recorder, std::uint64_t serial, const std::atomic<bool>* consumerRead = nullptr) {
+        worker = std::jthread([this, &recorder, serial, consumerRead](std::stop_token stop) {
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-            while (!stop.stop_requested() && recorder.NewestSubmitted() < serial && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::microseconds(100));
+            while (!stop.stop_requested() && (recorder.NewestSubmitted() < serial || (consumerRead != nullptr && !consumerRead->load())) && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::microseconds(100));
             producerSubmitted = recorder.NewestSubmitted() >= serial;
+            const bool consumerObserved = consumerRead == nullptr || consumerRead->load();
             Release();
-            if (!producerSubmitted && !stop.stop_requested()) std::fprintf(stderr, "pending producer gate: watchdog expired with producer batch %llu unsubmitted (vkSignalSemaphore %d)\n", static_cast<unsigned long long>(serial), static_cast<int>(releaseResult));
+            if ((!producerSubmitted || !consumerObserved) && !stop.stop_requested()) std::fprintf(stderr, "pending producer gate: watchdog expired for producer batch %llu (submitted %u, consumer observed %u, vkSignalSemaphore %d)\n", static_cast<unsigned long long>(serial), producerSubmitted ? 1u : 0u, consumerObserved ? 1u : 0u, static_cast<int>(releaseResult));
         });
     }
 
