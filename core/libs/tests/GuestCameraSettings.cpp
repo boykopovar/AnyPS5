@@ -117,6 +117,12 @@ void CheckGetters() {
     CheckGetter(sceCameraGetAutoWhiteBalance, 0, "automatic white balance must be off");
     CheckGetter(sceCameraGetDefectivePixelCancellation, 0, "defective pixel cancellation must be off");
     CheckGetter(sceCameraGetLensCorrection, 0, "lens correction must be off");
+    errno = 71;
+    Require(sceCameraGetLensCorrection(1, Channel0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == ErrorParam, "an unwritable lens correction pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable lens correction pointer");
+    alignas(16) std::uint32_t lensBuffer[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    Require(sceCameraGetLensCorrection(1, Channel0, &lensBuffer[1], nullptr) == 0, "reading lens correction to buffer failed");
+    Require(lensBuffer[0] == 0x5a5a5a5a && lensBuffer[1] == 0 && lensBuffer[2] == 0x5a5a5a5a, "adjacent memory was corrupted");
     CheckGetter(sceCameraGetContrast, 32, "the contrast must be 32");
     CheckGetter(sceCameraGetSaturation, 64, "the saturation must be 64");
     CheckGetter(sceCameraGetSharpness, 1, "the sharpness must be 1");
