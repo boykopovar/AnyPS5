@@ -14,9 +14,28 @@ Select or drop multiple app ZIP archives to convert them into one ZIP bundle. Th
 
 The relinker does not extract or decrypt package files. It needs an extracted, decrypted ELF executable and its bundled modules.
 
-The SELF unwrapper refuses containers requiring more than 64 MiB of total alignment padding before allocating the output buffer. This limit counts padding across file-backed and empty segments, not segment data; a refusal preserves the input and any existing output file.
+### SELF size limit
 
-Use a clean ELF executable. Place its bundled ELF modules in `sce_module/`, `sce_modules/`, or `prx/` beside the input executable, or under the parent directory selected with `--sce-module-path <path>`. The option accepts absolute paths and paths relative to the current working directory; do not include the `sce_module` directory itself. Only files directly inside the module directories are processed. SELF/fSELF containers are skipped with a warning; unwrap them before relinking if they need to be included. `tools/unwrap_self.py <input.self> <output.elf>` does that for a decrypted container: it places the segments at the offsets of the SELF segment records and restores `p_offset % p_align == p_vaddr % p_align`, and it refuses a container whose load segments all look encrypted. The relinker, on the command line and in the online converter, skips an ELF module as a backup copy, with a message, when its file name extends the name of another ELF module in the same directory and both have the same SONAME, such as a dumper's `libX.prx.esbak` or `libX.prxbak` beside an ELF `libX.prx`; a single backup beside a SELF container is still relinked. `prx/` can coexist with either `sce_module/` or `sce_modules/`. Both `sce_module/` and `sce_modules/` present is an error. All three absent is an error unless an explicit `--module-dir` is supplied. On Linux, macOS and Windows, when the executable imports `sceKernelLoadStartModule`, a bundled module that neither the executable nor a required module needs is not started at launch; it initializes when the title loads it, with the arguments from `sceKernelLoadStartModule`. Without that import every bundled module starts at launch. On macOS, loading a deferred module that way has not been run.
+The SELF unwrapper refuses a container that needs more than 64 MiB of total alignment padding. It checks this before it allocates the output buffer. The limit counts padding across file-backed and empty segments, not segment data. If it refuses, your input and any existing output file stay untouched.
+
+### Where to put the files
+
+Use a clean ELF executable. Put its bundled ELF modules in `sce_module/`, `sce_modules/`, or `prx/` beside the input executable, or under the parent directory selected with `--sce-module-path <path>`.
+
+- `--sce-module-path` accepts absolute paths and paths relative to the current working directory. Give the parent directory, not the `sce_module` directory itself.
+- Only files directly inside the module directories are processed.
+- SELF/fSELF containers are skipped with a warning. Unwrap them before relinking if they need to be included.
+  - `tools/unwrap_self.py <input.self> <output.elf>` does that for a decrypted container. It places the segments at the offsets of the SELF segment records and restores `p_offset % p_align == p_vaddr % p_align`. It refuses a container whose load segments all look encrypted.
+- Backup copies are skipped with a message, both on the command line and in the online converter. An ELF module counts as a backup when its file name extends the name of another ELF module in the same directory and both have the same SONAME. Example: a dumper's `libX.prx.esbak` or `libX.prxbak` beside an ELF `libX.prx`. A single backup beside a SELF container is still relinked.
+- `prx/` can exist together with either `sce_module/` or `sce_modules/`.
+- Having both `sce_module/` and `sce_modules/` is an error.
+- Having none of the three is an error, unless you give an explicit `--module-dir`.
+
+### Module start-up on Linux, macOS and Windows
+
+If the executable imports `sceKernelLoadStartModule`, a bundled module that neither the executable nor a required module needs is not started at launch. It initializes when the title loads it, with the arguments from `sceKernelLoadStartModule`. Without that import, every bundled module starts at launch. On macOS, loading a deferred module this way has not been run.
+
+### Layout and command
 
 ```text
 source/
@@ -29,11 +48,30 @@ source/
 relinker [options] <input.elf> <output>
 ```
 
-`relinker --dry-run [options] <input.elf> <output>` runs conversion in memory, including bundled modules, extra executables, import analysis and byte patches. It lists every planned output, including registry files, needed-library files, patch manifests, Windows diagnostics and Linux desktop metadata, without creating directories, writing files or changing permissions. Existing outputs are preserved. Conversion failures return `2`, as in a normal run. The output path is still required because it determines the layout. This mode does not check destination write access or probe filesystem aliases of files that do not yet exist; those checks require a normal conversion. `--dry-run` conflicts with `--autorun` and `--verify-patches`.
+### Dry run
 
-An explicit `--module-dir` also works when the module parent has no `sce_module`, `sce_modules` or `prx` directory. For a homebrew bundle with shared libraries beside its executable, use `--module-dir .`; no empty standard directory is required. Without an explicit module directory, the standard-directory requirement remains.
+`relinker --dry-run [options] <input.elf> <output>` runs the conversion in memory, including bundled modules, extra executables, import analysis and byte patches.
 
-A module the executable needs that is not converted is looked for under the module parent directory, outside the module directories. Each SELF container or `ET_SCE_DYNAMIC` ELF found there whose name matches, up to the `.prx`, `.sprx`, `.suprx` or `.debug_prx` suffix (ignoring case with `--windows`, as the guest module match does), is reported after the conversion with the `--module-dir` that would include it; the output still refers to a host library of that name. A file that cannot be read is not reported.
+- It lists every planned output: registry files, needed-library files, patch manifests, Windows diagnostics and Linux desktop metadata.
+- It creates no directories, writes no files and changes no permissions. Existing outputs are kept.
+- Conversion failures return `2`, as in a normal run.
+- The output path is still required because it decides the layout.
+- It does not check write access to the destination, and it does not probe filesystem aliases of files that do not exist yet. Only a normal conversion does those checks.
+- `--dry-run` conflicts with `--autorun` and `--verify-patches`.
+
+### Module directories without a standard name
+
+An explicit `--module-dir` also works when the module parent has no `sce_module`, `sce_modules` or `prx` directory. For a homebrew bundle with shared libraries beside its executable, use `--module-dir .`. No empty standard directory is needed. Without an explicit module directory, the standard-directory requirement remains.
+
+### Needed modules that were not converted
+
+A module the executable needs but that is not converted is looked for under the module parent directory, outside the module directories. A file counts as a match if it is a SELF container or an `ET_SCE_DYNAMIC` ELF whose name matches, up to the `.prx`, `.sprx`, `.suprx` or `.debug_prx` suffix. Case is ignored with `--windows`, as in the guest module match.
+
+- Each match is reported after the conversion, together with the `--module-dir` that would include it.
+- The output still refers to a host library of that name.
+- A file that cannot be read is not reported.
+
+### Example commands
 
 Linux output:
 
@@ -53,17 +91,38 @@ macOS output (x86-64 Mach-O, which runs under Rosetta on Apple silicon):
 relinker --macos source/input.elf eboot
 ```
 
-The executable and the module libraries carry an ad-hoc code signature, so they run without `codesign`. Signing one again with `codesign -s - -f` or your own identity replaces it; after editing one with `install_name_tool` or `strip`, sign it again.
+The executable and the module libraries carry an ad-hoc code signature, so they run without `codesign`. Signing one again with `codesign -s - -f` or your own identity replaces it. After editing one with `install_name_tool` or `strip`, sign it again.
 
-Add `--to-intel` for Intel hosts, or `--to-rosetta` for Rosetta; a title that runs under Rosetta on Apple silicon is relinked with `--macos --to-rosetta`. `--to-intel` rewrites AMD-specific instructions found in the executable and bundled modules; it cannot translate AMD-specific instructions generated by a title at runtime, so such titles require an AMD host. The output format defaults to Linux ELF regardless of the filename; `.exe` alone does not select Windows.
+Add `--to-intel` for Intel hosts, or `--to-rosetta` for Rosetta. A title that runs under Rosetta on Apple silicon is relinked with `--macos --to-rosetta`.
 
-A converted title is an ordinary program: it runs with your user account's permissions and can read and write whatever your account can, with none of the console's sandbox. Convert and run only titles and modules you trust, and run them as a separate user or in a container or virtual machine to keep them away from your files. Its executable is not placed by address space layout randomization either: Linux loads it at `0x400000` or at the `--linux-fixed-base` address, unless the deprecated `--lazy-binding` keeps it position independent; Windows loads its lowest ELF load page at the preferred `0x400000` when that range is free, or at the `--windows-fixed-base` address, without `DYNAMIC_BASE`; and the macOS executable is written without `MH_PIE`.
+- `--to-intel` rewrites AMD-specific instructions found in the executable and bundled modules. It cannot translate AMD-specific instructions that a title generates at runtime, so such titles need an AMD host.
+- The output format defaults to Linux ELF whatever the filename is. `.exe` alone does not select Windows.
 
-Titles run natively, so the host CPU needs the extensions of the PS5's Zen 2 CPU that compiled code uses without checking, among them AVX2, FMA, F16C, BMI1, BMI2, LZCNT and MOVBE. On Linux and Windows a converted title logs the host CPU's extensions at start-up and stops before running any title code, naming the CPU and the missing extensions, if one is absent ([list](../dev/debt/libkernel.md)).
+### Security warning
 
-The executable, registry, Windows import diagnostics, icon and desktop entry output files must not refer to the input executable or a bundled module being converted, including through a hard link or symbolic link. These collisions fail before any output is written. An existing output file can be replaced if it is separate from those inputs. An output path that is an existing directory also fails before any output is written.
+A converted title is an ordinary program. It runs with your user account's permissions and can read and write whatever your account can. It has none of the console's sandbox. Convert and run only titles and modules you trust. Run them as a separate user, or in a container or virtual machine, to keep them away from your files.
 
-On Linux and macOS, replacing a regular output file requires write access to its directory. A failed temporary-file creation or replacement reports an error instead of writing over the previous file in place.
+Its executable is also not placed by address space layout randomization:
+
+- **Linux:** loaded at `0x400000` or at the `--linux-fixed-base` address, unless the deprecated `--lazy-binding` keeps it position independent.
+- **Windows:** the lowest ELF load page is loaded at the preferred `0x400000` when that range is free, or at the `--windows-fixed-base` address, without `DYNAMIC_BASE`.
+- **macOS:** the executable is written without `MH_PIE`.
+
+### CPU requirements
+
+Titles run natively, so the host CPU needs the extensions of the PS5's Zen 2 CPU that compiled code uses without checking. Among them are AVX2, FMA, F16C, BMI1, BMI2, LZCNT and MOVBE.
+
+On Linux and Windows, a converted title logs the host CPU's extensions at start-up. If one is absent, it stops before running any title code and names the CPU and the missing extensions ([list](../dev/debt/libkernel.md)).
+
+### Output file collisions
+
+The executable, registry, Windows import diagnostics, icon and desktop entry output files must not refer to the input executable or to a bundled module being converted. This includes hard links and symbolic links.
+
+- These collisions fail before any output is written.
+- An existing output file can be replaced if it is separate from those inputs.
+- An output path that is an existing directory also fails before any output is written.
+
+On Linux and macOS, replacing a regular output file requires write access to its directory. If creating the temporary file or replacing the old file fails, you get an error. The previous file is never overwritten in place.
 
 ## Options
 
