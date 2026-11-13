@@ -42,6 +42,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     static_assert(std::endian::native == std::endian::little);
     if (options.Target != TargetSystem::Linux && options.Target != TargetSystem::Windows && options.Target != TargetSystem::MacOs) throw Domain::RelinkerException("Unknown target system");
     if (options.ToRosetta && (!options.ToIntel || options.Target == TargetSystem::Windows)) throw Domain::RelinkerException("Rosetta conversion requires Intel lowering and a non-Windows target");
+    if (options.ToAvx && (!options.ToIntel || options.Target != TargetSystem::MacOs)) throw Domain::RelinkerException("AVX conversion requires Intel lowering and a macOS target: only the macOS runtime skips the host CPU check");
     if (options.UnusedFilterLevel > 2) throw Domain::RelinkerException("Unused NID filter level must be 0, 1 or 2");
     if (options.FrameRedZone && options.Target != TargetSystem::Windows) throw Domain::RelinkerException("Red-zone framing requires a Windows target: only Windows exception dispatch writes below RSP");
     if (input.InputPath.empty() || input.OutputPath.empty()) throw Domain::RelinkerException("Input and output names are required");
@@ -70,7 +71,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     std::vector<Codegen::TrampolineSite> trampolines;
     if (options.ToIntel) {
         const auto segments = Relinker::ElfReader(sourceBytes).ReadProgramHeaders();
-        auto converted = Codegen::MakeAmd64OnlyConverter(options.ToRosetta ? Codegen::Amd64OnlyTarget::Rosetta : Codegen::Amd64OnlyTarget::Intel, [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); })->Convert(std::move(sourceBytes), segments);
+        auto converted = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); })->Convert(std::move(sourceBytes), segments);
         sourceBytes = std::move(converted.Bytes);
         trampolines = std::move(converted.Trampolines);
         GamePatch::CheckOverlaps(options.TargetName, patchedRanges, {.Reports = converted.Reports, .Trampolines = trampolines});
@@ -147,7 +148,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
 
     std::vector<Relinker::GuestArtifact> guestArtifacts;
     if (!input.Modules.empty()) {
-        guestArtifacts = Relinker::GuestModuleBuilder().Build(input.InputPath, input.OutputPath, result.DynamicSection, windows, macos, options.ToIntel, options.ToRosetta, *syscallScanner, options.LazyBinding, options.OmitUnavailableDependencies, options.RunPath, options.ExcludedModules, input.ModuleRoot, input.RuntimeDirectories, std::move(input.Modules), inputProgress, options.FunctionSymbolRoots);
+        guestArtifacts = Relinker::GuestModuleBuilder().Build(input.InputPath, input.OutputPath, result.DynamicSection, windows, macos, options.ToIntel, Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), *syscallScanner, options.LazyBinding, options.OmitUnavailableDependencies, options.RunPath, options.ExcludedModules, input.ModuleRoot, input.RuntimeDirectories, std::move(input.Modules), inputProgress, options.FunctionSymbolRoots);
     }
 
     auto byteWriter = std::make_shared<Io::ByteWriter>();
@@ -159,7 +160,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
         inputProgress.Message("Warning: with --lazy-binding the Linux executable stays position independent and is not placed at 0x400000; a title whose own sceLibcMspaceCreate checks the 40-bit address window stops at start-up\n");
     std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
     if (macos) {
-        patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>(options.MacosFixedBase, [&](std::string_view text) { inputProgress.Message(text); }, options.TraceImports, options.FunctionSymbolRoots);
+        patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>(options.MacosFixedBase, [&](std::string_view text) { inputProgress.Message(text); }, options.TraceImports, options.FunctionSymbolRoots, Io::Utf8Path(input.OutputPath.filename()));
     } else if (windows) {
         patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(options.WindowsGui, std::move(input.Icon), input.InputPath.parent_path() / "sce_sys" / "icon0.png", [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Image, {}, completed, total}); }, options.WindowsFixedBase, options.TraceImports, [&](std::string_view text) { inputProgress.Message(text); }, Io::Utf8Path(input.OutputPath.filename()), options.FunctionSymbolRoots);
     } else {

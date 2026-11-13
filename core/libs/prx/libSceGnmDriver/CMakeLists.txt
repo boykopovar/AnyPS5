@@ -45,4 +45,15 @@ if(BUILD_TESTING)
         set_tests_properties(gnm_driver_packets gnm_driver_submit_wait PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+
+    add_test_executable(gnm_shader_writer_tests tests/ShaderWriters.cpp)
+    target_include_directories(gnm_shader_writer_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(gnm_shader_writer_tests PRIVATE libSceGnmDriver libc)
+    configure_windows_unwind(gnm_shader_writer_tests)
+    add_test(NAME gnm_shader_writers COMMAND gnm_shader_writer_tests)
+    set_tests_properties(gnm_shader_writers PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(gnm_shader_writers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriver>")
+    endif()
 endif()
