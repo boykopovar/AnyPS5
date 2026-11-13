@@ -14399,10 +14399,6 @@ int APS5_VABI _ZN3PAL13SleepDisablerD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3PAL19fileSizeDescriptionEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3PAL8KillRing16setToYankedStateEv() {
     NotImplemented_nid_no_patch(__func__);
 }
