@@ -93,7 +93,7 @@ void Literals() {
     }
     for (const auto* locale : {"en_US", "de_DE", "ja_JP", "fr_FR", "ar_EG", "th_TH@calendar=buddhist", "en_US@hours=h23", "zz_ZZ"}) {
         Handle handle(locale);
-        for (const auto* skeleton : {u"yMd", u"GyMMMd", u"jmm", u"Hms", u"EEEEyMMMMd", u"'é' yyyy-MM-dd"})
+        for (const auto* skeleton : {u"yMd", u"GyMMMd", u"jmm", u"Hms", u"HHHmmmsss", u"EEEEyMMMMd", u"'é' yyyy-MM-dd"})
             for (auto option : {0, 1 << 11, 1 << 12, 1 << 13, 65535, 1 << 20})
                 Compare(handle, 1, skeleton, -1, option, 0, 0, 128);
         for (int field = 0; field < 16; ++field)
@@ -101,12 +101,12 @@ void Literals() {
     }
     Handle handle("en_US");
     const std::array<std::pair<std::int32_t, std::u16string_view>, 5> options{{
-        {0, u"HH:mm:ss"}, {1 << 11, u"H:mm:ss"}, {1 << 12, u"HH:m:ss"},
-        {1 << 13, u"HH:mm:s"}, {65535, u"H:m:s"}}};
+        {0, u"HH:mm:ss"}, {1 << 11, u"HHH:mm:ss"}, {1 << 12, u"HH:mmm:ss"},
+        {1 << 13, u"HH:mm:sss"}, {65535, u"HHH:mmm:sss"}}};
     for (const auto& [option, expected] : options) {
         std::array<char16_t, 32> output{};
         std::int32_t status = 0;
-        const auto count = udatpg_getBestPatternWithOptions_nid_postfix(handle.guest, u"Hms", 3,
+        const auto count = udatpg_getBestPatternWithOptions_nid_postfix(handle.guest, u"HHHmmmsss", 9,
             static_cast<UDateTimePatternMatchOptions>(option), output.data(), output.size(), &status);
         Require(status <= 0 && std::u16string_view(output.data(), count) == expected, "fixed hour/minute/second option-width literal");
     }

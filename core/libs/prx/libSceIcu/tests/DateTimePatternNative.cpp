@@ -57,6 +57,23 @@ void Field(const char* locale, std::u16string_view expected) {
         std::u16string_view(output.data(), count) == expected, locale);
 }
 
+void Options() {
+    UErrorCode status = U_ZERO_ERROR;
+    Generator generator(udatpg_open("en_US", &status), udatpg_close);
+    Require(generator && U_SUCCESS(status), "native option generator opens");
+    const std::array<std::pair<std::int32_t, std::u16string_view>, 5> cases{{
+        {0, u"HH:mm:ss"}, {1 << 11, u"HHH:mm:ss"}, {1 << 12, u"HH:mmm:ss"},
+        {1 << 13, u"HH:mm:sss"}, {65535, u"HHH:mmm:sss"}}};
+    for (const auto& [option, expected] : cases) {
+        std::array<char16_t, 32> output{};
+        status = U_ZERO_ERROR;
+        const auto count = udatpg_getBestPatternWithOptions(generator.get(), u"HHHmmmsss", 9,
+            static_cast<UDateTimePatternMatchOptions>(option), output.data(), output.size(), &status);
+        Require(U_SUCCESS(status) && std::u16string_view(output.data(), count) == expected,
+            "native source-derived option-width literal");
+    }
+}
+
 void Resources() {
     for (const auto* locale : {"root", "en", "de", "ja", "fr"}) {
         auto bundle = Open(nullptr, locale);
@@ -95,6 +112,7 @@ int main() {
         Field("de", u"Jahr");
         Field("ja", u"年");
         Field("fr", u"année");
+        Options();
         std::puts("native pattern fixtures and complete calendar/currency/zone resources passed");
         return 0;
     } catch (const std::exception& error) {

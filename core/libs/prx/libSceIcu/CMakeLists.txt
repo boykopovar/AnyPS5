@@ -532,6 +532,7 @@ if(BUILD_TESTING)
 endif()
 
 set(ICU_RECOVERED_SOURCES
+    DateTimePatternGeneratorBackend.cpp
     Calendar.cpp
     Collator.cpp
     DateFormat.cpp
