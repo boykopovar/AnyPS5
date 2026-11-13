@@ -28,6 +28,7 @@ struct CountingWrapper {
     std::atomic<bool> calledOnMainThread{false};
     std::thread::id callingThread;
     bool stopLoop = false;
+    bool throwFromCall = false;
 };
 
 std::atomic<int> s_liveWrappers{0};
@@ -52,6 +53,9 @@ void APS5_VABI Call(VoidCallableWrapper* self) {
     wrapper->calls.fetch_add(1);
     if (wrapper->stopLoop) {
         WKRunLoopStopMain();
+    }
+    if (wrapper->throwFromCall) {
+        throw std::runtime_error("callable threw");
     }
 }
 
@@ -158,6 +162,26 @@ void TestNullFunctionThrows(void (APS5_VABI* entry)(VoidFunction*), const char* 
     Require(threwForEmptyFunction, name);
 }
 
+void TestThrowingCallableIsDestroyed(void (APS5_VABI* dispatch)(VoidFunction*), const char* name) {
+    WKRunLoopInitializeMain();
+    CountingWrapper wrapper;
+    Arm(wrapper, false);
+    wrapper.throwFromCall = true;
+    VoidFunction function{&wrapper.base};
+    dispatch(&function);
+    Require(function.callableWrapper == nullptr, name);
+    bool propagated = false;
+    try {
+        WKRunLoopRunMain();
+    } catch (const std::runtime_error&) {
+        propagated = true;
+    }
+    Require(propagated, name);
+    Require(wrapper.calls.load() == 1, name);
+    Require(wrapper.deletingDestructions.load() == 1, name);
+    Require(wrapper.completeDestructions.load() == 0, name);
+}
+
 }
 
 int main() {
@@ -175,6 +199,9 @@ int main() {
     TestNullFunctionThrows(_ZN3WTF17callOnMainRunLoopEONS_8FunctionIFvvEEE, "callOnMainRunLoop null");
     TestNullFunctionThrows(_ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE, "callOnMainThreadAndWait null");
     TestNullFunctionThrows(_ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE, "callOnMainRunLoopAndWait null");
+
+    TestThrowingCallableIsDestroyed(_ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE, "callOnMainThread throwing callable");
+    TestThrowingCallableIsDestroyed(_ZN3WTF17callOnMainRunLoopEONS_8FunctionIFvvEEE, "callOnMainRunLoop throwing callable");
 
     Require(s_liveWrappers.load() == 0, "every taken wrapper was deleted");
 

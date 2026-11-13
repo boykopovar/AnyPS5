@@ -17,8 +17,18 @@ std::atomic<bool> s_mainThreadInitialized{false};
 std::thread::id s_mainThreadId;
 
 struct MainTask {
-    VoidCallableWrapper* callableWrapper;
-    std::binary_semaphore* semaphore;
+    VoidCallableWrapper* callableWrapper = nullptr;
+    std::binary_semaphore* semaphore = nullptr;
+
+    MainTask() = default;
+    MainTask(const MainTask&) = delete;
+    MainTask& operator=(const MainTask&) = delete;
+
+    ~MainTask() {
+        if (callableWrapper) {
+            callableWrapper->vtable->deletingDestructor(callableWrapper);
+        }
+    }
 };
 
 VoidCallableWrapper* RequireCallable(const VoidFunction* function) {
@@ -43,11 +53,15 @@ void APS5_VABI RunMainTask(void* context) {
     if (task->semaphore) {
         task->semaphore->release();
     }
-    task->callableWrapper->vtable->deletingDestructor(task->callableWrapper);
 }
 
-void DispatchToMain(VoidCallableWrapper* callableWrapper, std::binary_semaphore* semaphore) {
-    WKRunLoopCallOnMainThread(RunMainTask, new MainTask{callableWrapper, semaphore});
+void DispatchToMain(VoidFunction* function, std::binary_semaphore* semaphore) {
+    RequireCallable(function);
+    auto task = std::make_unique<MainTask>();
+    task->semaphore = semaphore;
+    task->callableWrapper = TakeCallable(function);
+    WKRunLoopCallOnMainThread(RunMainTask, task.get());
+    task.release();
 }
 
 void CallOnMainAndWait(VoidFunction* function, bool isMain) {
@@ -57,7 +71,7 @@ void CallOnMainAndWait(VoidFunction* function, bool isMain) {
         return;
     }
     std::binary_semaphore semaphore{0};
-    DispatchToMain(TakeCallable(function), &semaphore);
+    DispatchToMain(function, &semaphore);
     semaphore.acquire();
 }
 
@@ -88,11 +102,11 @@ bool APS5_VABI _ZN3WTF22isMainThreadOrGCThreadEv() {
 }
 
 void APS5_VABI _ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE(VoidFunction* function) {
-    DispatchToMain(TakeCallable(function), nullptr);
+    DispatchToMain(function, nullptr);
 }
 
 void APS5_VABI _ZN3WTF17callOnMainRunLoopEONS_8FunctionIFvvEEE(VoidFunction* function) {
-    DispatchToMain(TakeCallable(function), nullptr);
+    DispatchToMain(function, nullptr);
 }
 
 void APS5_VABI _ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE(VoidFunction* function) {
