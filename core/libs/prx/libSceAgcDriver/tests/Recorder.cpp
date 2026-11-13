@@ -4560,6 +4560,31 @@ bool carriedShadowTests(const Device& device, Recorder& recorder) {
     Require(GuestBufferMemory::CarriedShadowCopies() == beforeRemap, "a range registered again was copied in from its released import's device shadow");
     recorder.Sync();
     kept.clear();
+    const auto grew = [](std::uint64_t before, std::uint64_t after) { return after >= before ? after - before : after; };
+    ClearResidentRanges(context.device);
+    const auto promotedBefore = ResidentCounts().promoted;
+    for (std::uint32_t staging = 0; staging < 16 && grew(promotedBefore, ResidentCounts().promoted) == 0; ++staging) {
+        use(recorder);
+    }
+    Require(grew(promotedBefore, ResidentCounts().promoted) == 1, "the carried shadow element never became a resident range");
+    const auto skippedBefore = ResidentCounts().skipped;
+    const auto carriedBeforeResident = GuestBufferMemory::CarriedShadowCopies();
+    for (std::uint32_t round = 0; round < 3; ++round) {
+        use(recorder);
+    }
+    Require(grew(skippedBefore, ResidentCounts().skipped) >= 3, "a resident range over unchanged memory was copied in again");
+    Require(GuestBufferMemory::CarriedShadowCopies() == carriedBeforeResident, "a resident range over unchanged memory was copied in from a carried device shadow");
+    std::memset(reinterpret_cast<void*>(element + 8192), 0x33, 4096);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto copiedBefore = ResidentCounts().copied;
+    const auto carriedBeforeStore = GuestBufferMemory::CarriedShadowCopies();
+    use(recorder);
+    recorder.Sync();
+    Require(grew(copiedBefore, ResidentCounts().copied) >= 1, "a resident range the CPU wrote was not copied in again");
+    Require(GuestBufferMemory::CarriedShadowCopies() == carriedBeforeStore, "a resident range the CPU wrote was copied in from a carried device shadow");
+    Require(std::all_of(reinterpret_cast<const std::byte*>(element + 8192), reinterpret_cast<const std::byte*>(element + 12288), [](std::byte value) { return value == std::byte{0x33}; }), "the copy-back after a CPU store into a resident range stored stale bytes");
+    kept.clear();
+    ClearResidentRanges(context.device);
     struct Reactivate {
         Recorder& recorder;
         ~Reactivate() { recorder.Activate(); }
