@@ -4481,6 +4481,10 @@ bool carriedShadowTests(const Device& device, Recorder& recorder) {
         std::cout << "host import of the test block refused: carried shadows not tested\n";
         return false;
     }
+    if (!AgcDriver::GuestMemory::Watched(address, bytes)) {
+        std::cout << "host imports are compared, not watched: carried shadows not tested\n";
+        return false;
+    }
     const auto element = address + 4096;
     constexpr std::size_t elementBytes = 1u << 20u;
     std::vector<std::unique_ptr<GuestBufferMemory>> kept;
