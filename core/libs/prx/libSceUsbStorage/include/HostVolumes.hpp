@@ -4,7 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace UsbStorage {
@@ -33,6 +35,8 @@ std::vector<HostVolume> ScanSysfsVolumes(const std::filesystem::path& mountInfo,
 std::vector<HostVolume> ScanWindowsVolumes();
 #endif
 std::vector<HostVolume> ScanHostVolumes();
+std::optional<HostVolume> HostFolderVolume(std::string_view folder);
+std::vector<HostVolume> HostFolderVolumes();
 
 }
 
