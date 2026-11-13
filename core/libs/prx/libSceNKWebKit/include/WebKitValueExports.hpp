@@ -365,5 +365,8 @@ void APS5_VABI WKContextSetJavaScriptConfigurationFileEnabled(const void* contex
 void APS5_VABI WKContextSetJavaScriptGarbageCollectorTimerEnabled(const void* contextRef, bool enable);
 void APS5_VABI WKContextGarbageCollectJavaScriptObjects(const void* contextRef);
 void APS5_VABI WKContextSetStorageAccessAPIEnabled(const void* contextRef, bool enable);
+void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
+void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
+void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, void (*callback)(const void*, const void*, void*));
 
 }
