@@ -6150,7 +6150,7 @@ bool residentCurrent(std::uint64_t begin, std::uint64_t end, const std::shared_p
     return true;
 }
 
-void residentCopied(std::uint64_t begin, std::uint64_t end, const std::shared_ptr<Buffer>& buffer, std::span<const std::byte> copied, std::uint64_t generation) {
+void residentCopied(std::uint64_t begin, std::uint64_t end, const std::shared_ptr<Buffer>& buffer) {
     auto& residents = Residents();
     std::lock_guard lock(residents.mutex);
     const auto found = residents.ranges.find({begin, end});
@@ -6158,14 +6158,10 @@ void residentCopied(std::uint64_t begin, std::uint64_t end, const std::shared_pt
     ++residents.copied;
     auto& range = found->second;
     const auto bytes = static_cast<std::size_t>(end - begin);
-    range.syncGeneration = copied.empty() ? GuestMemory::CollectWrites(begin, bytes) : generation;
+    range.syncGeneration = GuestMemory::CollectWrites(begin, bytes);
     if (range.syncGeneration != 0 || bytes > ResidentShadowMaxBytes) {
         range.shadow.clear();
         range.shadow.shrink_to_fit();
-        return;
-    }
-    if (!copied.empty()) {
-        range.shadow.assign(copied.begin(), copied.end());
         return;
     }
     const auto* guest = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(begin));
@@ -7063,9 +7059,8 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
         std::shared_ptr<Buffer> inputSnapshot;
         auto copySource = region->copySource;
         auto copyOffset = region->begin - region->copySourceBase;
-        std::uint64_t residentGeneration = 0;
+        Require(!region->resident || writable, "a resident range lost its descriptor write before its copy-in");
         if (!pendingWriter && !writable) {
-            if (region->resident) residentGeneration = GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
             inputSnapshot = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             std::memcpy(inputSnapshot->Bytes().data(), reinterpret_cast<const void*>(address), static_cast<std::size_t>(bytes));
             copySource = inputSnapshot->Handle();
@@ -7098,7 +7093,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
             CopyBuffer(context, commands, copySource, copyOffset, region->buffer->Handle(), 0, bytes);
         }
         if (region->resident) {
-            residentCopied(region->begin, region->end, region->buffer, inputSnapshot != nullptr ? std::span<const std::byte>(inputSnapshot->Bytes()) : std::span<const std::byte>{}, residentGeneration);
+            residentCopied(region->begin, region->end, region->buffer);
             if (residentCopyHook != nullptr) residentCopyHook(region->begin, region->end);
         }
         if (!expected.empty()) {
