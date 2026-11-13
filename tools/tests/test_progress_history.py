@@ -216,6 +216,34 @@ class HistoryDateWindowTests(unittest.TestCase):
 
 
 class ProgressHistoryTests(unittest.TestCase):
+    def test_cache_symlink_updates_target_without_replacing_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "shared" / "counts.json"
+            target.parent.mkdir()
+            progress_history.save_cache(target, "old", {})
+            alias = root / "counts-link.json"
+            try:
+                alias.symlink_to(target)
+            except OSError as error:
+                self.skipTest(f"cannot create a cache symlink: {error}")
+            progress_history.save_cache(alias, "new", {})
+            self.assertTrue(alias.is_symlink())
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8"))["rules"], "new")
+            self.assertEqual(json.loads(alias.read_text(encoding="utf-8"))["rules"], "new")
+            self.assertEqual(list(target.parent.iterdir()), [target])
+
+    def test_cache_symlink_loop_is_not_replaced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loop = Path(directory) / "counts-link.json"
+            try:
+                loop.symlink_to(loop)
+            except OSError as error:
+                self.skipTest(f"cannot create a cache symlink: {error}")
+            with self.assertRaisesRegex(ValueError, "symbolic link loop"):
+                progress_history.save_cache(loop, "rules", {})
+            self.assertTrue(loop.is_symlink())
+            self.assertEqual(list(Path(directory).iterdir()), [loop])
     def test_git_measurement_failure_preserves_reports_and_cache_until_retry(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
