@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceSharePlay/include/InventoryExports.hpp"
 #include "prx/libSceSharePlay/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
@@ -35,9 +36,13 @@ int APS5_VABI sceSharePlayGetCurrentConnectionInfoA(SharePlayConnectionInfoA* in
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
     if (info == nullptr) return SCE_SHARE_PLAY_ERROR_INVALID_ARGS;
-    *info = {};
-    info->hostUserId = SCE_USER_SERVICE_USER_ID_INVALID;
-    info->visitorUserId = SCE_USER_SERVICE_USER_ID_INVALID;
+    SharePlayConnectionInfoA out{};
+    out.hostUserId = SCE_USER_SERVICE_USER_ID_INVALID;
+    out.visitorUserId = SCE_USER_SERVICE_USER_ID_INVALID;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &out, sizeof(out));
+    errno = savedErrno;
+    if (!copied) return SCE_SHARE_PLAY_ERROR_INVALID_ARGS;
     return 0;
 }
 
@@ -57,9 +62,13 @@ int APS5_VABI sceSharePlayGetCurrentConnectionInfo(SharePlayConnectionInfo* info
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
     if (info == nullptr) return SCE_SHARE_PLAY_ERROR_INVALID_ARGS;
-    *info = {};
-    info->hostUserId = SCE_USER_SERVICE_USER_ID_INVALID;
-    info->visitorUserId = SCE_USER_SERVICE_USER_ID_INVALID;
+    SharePlayConnectionInfo out{};
+    out.hostUserId = SCE_USER_SERVICE_USER_ID_INVALID;
+    out.visitorUserId = SCE_USER_SERVICE_USER_ID_INVALID;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &out, sizeof(out));
+    errno = savedErrno;
+    if (!copied) return SCE_SHARE_PLAY_ERROR_INVALID_ARGS;
     return 0;
 }
 

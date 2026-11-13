@@ -5,8 +5,10 @@ import subprocess
 import sys
 import tempfile
 
+from test_windows_import_modules import consumer
+
 from test_guest_intel_trampolines import PLAIN_SITE, guest_fixture, main_fixture
-from test_guest_module_directories import module_with_symbol, needed_libraries
+from test_guest_module_directories import module_with_soname, module_with_symbol, needed_libraries
 
 
 NEEDED = b"needed.prx"
@@ -116,6 +118,16 @@ def check_needed_outside(relinker, work):
     assert convert(case, ["--module-dir", "Media/Modules"]) == []
     assert (case / "app0" / "Media" / "Modules" / "needed.sprx.guest.prx").is_file()
 
+    for scanned, options in (("sce_module", []), ("prx", []), ("Plugins", ["--module-dir", "Plugins"])):
+        case = work / f"beneath-scanned-{scanned}"
+        nested = f"{scanned}/nested"
+        (case / nested).mkdir(parents=True)
+        (case / scanned / "needed.prx").write_bytes(self_container)
+        (case / nested / "needed.sprx").write_bytes(sce_module)
+        assert convert(case, options) == [message + f"needed.prx at {nested}/needed.sprx; add --module-dir {nested}"]
+        assert convert(case, [*options, "--module-dir", nested]) == []
+        assert (case / "app0" / nested / "needed.sprx.guest.prx").is_file()
+
     case = work / "outside-two-copies"
     (case / "sce_module").mkdir(parents=True)
     for name in ("first", "second"):
@@ -184,12 +196,51 @@ def check_needed_outside(relinker, work):
                 (case / "locked").chmod(0o755)
 
 
+def check_unavailable_unused(relinker, work):
+    kernel, plugin = b"libkernel.prx", b"missingPlugin.prx"
+
+    def convert(label, files, options, module):
+        case = work / f"unavailable-{label}"
+        (case / "prx").mkdir(parents=True)
+        if files is not None:
+            (case / "libs").mkdir()
+            for name in files:
+                (case / "libs" / name).write_bytes(b"")
+        source = case / "input.elf"
+        source.write_bytes(main_fixture())
+        (case / "prx" / "consumer.prx").write_bytes(module)
+        output = case / "output.elf"
+        result = subprocess.run([str(relinker), "--rpath", "$ORIGIN/libs", *options, str(source), str(output)],
+                                capture_output=True, text=True, encoding="utf-8", timeout=30)
+        assert result.returncode == 0, (label, result.stdout, result.stderr)
+        artifact = needed_libraries((case / "app0" / "prx" / "consumer.prx.guest.prx").read_bytes())
+        hosts = [name for name in needed_libraries(output.read_bytes()) if not name.startswith("$ORIGIN")]
+        return artifact, hosts, result.stdout + result.stderr
+
+    unused = module_with_needed((kernel, plugin), (0, 1))
+    both = [kernel.decode(), plugin.decode()]
+    omit = ["--omit-unavailable-dependencies"]
+    for label, files, options, expected, message in (
+            ("absent", ("libkernel.prx",), omit, [kernel.decode()], "it is left out of the needed libraries"),
+            ("absent-default", ("libkernel.prx",), [], both, "--omit-unavailable-dependencies leaves it out"),
+            ("present", ("libkernel.prx", "missingPlugin.prx"), omit, both, None),
+            ("no-directory", None, omit, both, None)):
+        artifact, hosts, output = convert(label, files, options, unused)
+        assert artifact == expected and hosts == expected, (label, artifact, hosts)
+        assert (message is not None and message in output) or (message is None and "missingPlugin.prx, which" not in output), (label, output)
+    imported = consumer(plugin.decode(), symbol="CCCCCCCCCCC#A#B", module_name="missingPlugin")
+    artifact, hosts, output = convert("imported", (), omit, imported)
+    assert plugin.decode() in artifact and plugin.decode() in hosts, ("imported", artifact, hosts)
+    assert "missingPlugin.prx, which" not in output, ("imported", output)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-needed-modules-") as directory:
         work = Path(directory)
         check_guest_needed(relinker, work)
         check_needed_outside(relinker, work)
+        check_unavailable_unused(relinker, work)
 
         def convert(case, windows, needed=NEEDED, repeats=1):
             if not (case / "sce_modules").exists():
@@ -286,6 +337,22 @@ def main():
             assert not list((case / "app0").rglob("*.guest.prx"))
             if not windows:
                 assert needed_libraries(output.read_bytes()) == ["needed.prx"]
+
+            case = work / f"{windows}-debug-name-soname"
+            (case / "sce_module").mkdir(parents=True)
+            (case / "sce_module" / "needed.prx").write_bytes(module_with_symbol(True))
+            (case / "sce_module" / "needed.sprx").write_bytes(module_with_soname("needed.debug_prx"))
+            result, output = convert(case, windows, b"needed.debug_prx")
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            assert output.exists(), output
+
+            case = work / f"{windows}-debug-name-same-stem"
+            (case / "sce_module").mkdir(parents=True)
+            (case / "sce_module" / "needed.prx").write_bytes(module_with_symbol(True))
+            (case / "sce_module" / "needed.sprx").write_bytes(module_with_symbol(True))
+            result, output = convert(case, windows, b"needed.debug_prx")
+            assert result.returncode == 2 and "Ambiguous needed module: needed.debug_prx" in result.stderr, (result.stdout, result.stderr)
+            assert not output.exists(), output
 
             case = work / f"{windows}-ambiguous"
             for name in ("first", "second"):

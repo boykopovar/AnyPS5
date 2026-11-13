@@ -5,7 +5,12 @@
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
-#include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int SCE_OK = 0;
@@ -17,14 +22,96 @@ static constexpr int GuestSched_Rr = 3;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-template <typename Call>
-static bool Throws(Call call) {
-    try {
-        call();
-    } catch (const std::exception&) {
-        return true;
+static constexpr int GUEST_EFAULT = 14;
+static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000Eu);
+
+class GuardPage {
+public:
+    GuardPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        page = static_cast<std::size_t>(size);
+        memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
     }
-    return false;
+
+    ~GuardPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * page);
+#endif
+    }
+
+    GuardPage(const GuardPage&) = delete;
+    GuardPage& operator=(const GuardPage&) = delete;
+
+    void* Unreadable() const { return memory + page; }
+
+private:
+    char* memory = nullptr;
+    std::size_t page = 0;
+};
+
+static void CheckBadPointers() {
+    GuardPage guard;
+    void* const bad[] = {nullptr, reinterpret_cast<void*>(0x10), guard.Unreadable()};
+    for (void* pointer : bad) {
+        const bool null = pointer == nullptr;
+        auto* attrs = static_cast<PthreadMutexattr*>(pointer);
+        auto* out = static_cast<int*>(pointer);
+        const int attrError = null ? GUEST_EINVAL : GUEST_EFAULT;
+        const int sceAttrError = null ? SCE_KERNEL_ERROR_EINVAL : SCE_KERNEL_ERROR_EFAULT;
+        *__error_nid_postfix() = 0;
+        Require(pthread_mutexattr_destroy_nid_postfix(attrs) == attrError);
+        Require(pthread_mutexattr_settype_nid_postfix(attrs, 2) == attrError);
+        Require(pthread_mutexattr_setpshared_nid_postfix(attrs, 0) == attrError);
+        Require(pthread_mutexattr_setprotocol_nid_postfix(attrs, PRIO_NONE) == attrError);
+        Require(pthread_mutexattr_setprioceiling_nid_postfix(attrs, 300) == attrError);
+        int value = -1;
+        Require(pthread_mutexattr_gettype_nid_postfix(attrs, &value) == attrError);
+        Require(pthread_mutexattr_getpshared_nid_postfix(attrs, &value) == attrError);
+        Require(pthread_mutexattr_getprotocol_nid_postfix(attrs, &value) == attrError);
+        Require(pthread_mutexattr_getprioceiling_nid_postfix(attrs, &value) == attrError);
+        Require(value == -1);
+        Require(pthread_mutexattr_setkind_np_nid_postfix(attrs, 2) == -1 && *__error_nid_postfix() == attrError);
+        Require(scePthreadMutexattrDestroy(attrs) == sceAttrError);
+        Require(scePthreadMutexattrSettype(attrs, 2) == sceAttrError);
+        Require(scePthreadMutexattrGettype(attrs, &value) == sceAttrError);
+        Require(scePthreadMutexattrSetprotocol(attrs, PRIO_NONE) == sceAttrError);
+        Require(scePthreadMutexattrGetprotocol(attrs, &value) == sceAttrError);
+        Require(scePthreadMutexattrSetprioceiling(attrs, 300) == sceAttrError);
+        Require(scePthreadMutexattrGetprioceiling(attrs, &value) == sceAttrError);
+        Require(scePthreadMutexattrSetpshared(attrs, 0) == sceAttrError);
+        Require(scePthreadMutexattrGetpshared(attrs, &value) == sceAttrError);
+        Require(value == -1);
+        Require(pthread_mutexattr_init_nid_postfix(attrs) == GUEST_EFAULT);
+        Require(scePthreadMutexattrInit(attrs) == SCE_KERNEL_ERROR_EFAULT);
+
+        PthreadMutexattr attr = nullptr;
+        Require(pthread_mutexattr_init_nid_postfix(&attr) == 0);
+        Require(pthread_mutexattr_setprotocol_nid_postfix(&attr, PRIO_PROTECT) == 0);
+        Require(pthread_mutexattr_gettype_nid_postfix(&attr, out) == GUEST_EFAULT);
+        Require(pthread_mutexattr_getpshared_nid_postfix(&attr, out) == GUEST_EFAULT);
+        Require(pthread_mutexattr_getprotocol_nid_postfix(&attr, out) == GUEST_EFAULT);
+        Require(pthread_mutexattr_getprioceiling_nid_postfix(&attr, out) == GUEST_EFAULT);
+        Require(scePthreadMutexattrGettype(&attr, out) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadMutexattrGetpshared(&attr, out) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadMutexattrGetprotocol(&attr, out) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadMutexattrGetprioceiling(&attr, out) == SCE_KERNEL_ERROR_EFAULT);
+        Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
+    }
 }
 
 static constexpr KernelTimespec INVALID_DEADLINE{0, 1000000000};
@@ -48,6 +135,8 @@ static void CheckTimedlockInvalidDeadline() {
 
 static void CheckType() {
     PthreadMutexattr attr = nullptr;
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
     Require(pthread_mutexattr_init_nid_postfix(&attr) == 0);
     int type = -1;
     Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == 1);
@@ -55,10 +144,13 @@ static void CheckType() {
         Require(pthread_mutexattr_settype_nid_postfix(&attr, set) == 0);
         Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == set);
     }
+    Require(pthread_mutexattr_settype_nid_postfix(nullptr, 1) == GUEST_EINVAL);
     Require(pthread_mutexattr_settype_nid_postfix(&attr, 5) == GUEST_EINVAL);
     Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == 1);
-    Require(Throws([&] { pthread_mutexattr_gettype_nid_postfix(&attr, nullptr); }));
+    Require(pthread_mutexattr_gettype_nid_postfix(&attr, nullptr) == GUEST_EFAULT);
     Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
     type = -1;
     Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == GUEST_EINVAL && type == -1);
     Require(pthread_mutexattr_gettype_nid_postfix(nullptr, &type) == GUEST_EINVAL && type == -1);
@@ -125,6 +217,8 @@ static void CheckKind() {
 static void CheckSceAccessors() {
     PthreadMutexattr attr = nullptr;
     int value = -1;
+    Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrGettype(nullptr, &value) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrGettype(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrSetprotocol(&attr, PRIO_NONE) == SCE_KERNEL_ERROR_EINVAL);
@@ -138,7 +232,7 @@ static void CheckSceAccessors() {
     Require(scePthreadMutexattrGettype(&attr, &value) == SCE_OK && value == 1);
     Require(scePthreadMutexattrSettype(&attr, 3) == SCE_OK);
     Require(scePthreadMutexattrGettype(&attr, &value) == SCE_OK && value == 3);
-    Require(Throws([&] { scePthreadMutexattrGettype(&attr, nullptr); }));
+    Require(scePthreadMutexattrGettype(&attr, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Require(scePthreadMutexattrGetprotocol(&attr, &value) == SCE_OK && value == PRIO_NONE);
     for (const int invalid : {-1, 3})
         Require(scePthreadMutexattrSetprotocol(&attr, invalid) == SCE_KERNEL_ERROR_EINVAL);
@@ -158,12 +252,16 @@ static void CheckSceAccessors() {
     Require(scePthreadMutexattrSetpshared(&attr, 0) == SCE_OK);
     Require(scePthreadMutexattrGetpshared(&attr, &value) == SCE_OK && value == 0);
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+    Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrGettype(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
 }
 
 static void CheckProcessSharing() {
     PthreadMutexattr attr = nullptr;
     int sharing = -1;
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
     Require(pthread_mutexattr_getpshared_nid_postfix(nullptr, &sharing) == GUEST_EINVAL && sharing == -1);
     Require(pthread_mutexattr_getpshared_nid_postfix(&attr, &sharing) == GUEST_EINVAL && sharing == -1);
     Require(pthread_mutexattr_setpshared_nid_postfix(nullptr, 0) == GUEST_EINVAL);
@@ -178,7 +276,7 @@ static void CheckProcessSharing() {
     Require(pthread_mutexattr_getpshared_nid_postfix(&attr, &sharing) == 0 && sharing == 0);
     int type = -1;
     Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == 2);
-    Require(Throws([&] { pthread_mutexattr_getpshared_nid_postfix(&attr, nullptr); }));
+    Require(pthread_mutexattr_getpshared_nid_postfix(&attr, nullptr) == GUEST_EFAULT);
     PthreadMutex mutex = nullptr;
     Require(pthread_mutex_init_nid_postfix(&mutex, &attr) == 0);
     Require(pthread_mutex_lock_nid_postfix(&mutex) == 0);
@@ -189,6 +287,8 @@ static void CheckProcessSharing() {
     Require(pthread_mutexattr_setpshared_nid_postfix(&attr, 0) == 0);
     Require(pthread_mutexattr_getpshared_nid_postfix(&attr, &sharing) == 0 && sharing == 0);
     Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
     sharing = -1;
     Require(pthread_mutexattr_getpshared_nid_postfix(&attr, &sharing) == GUEST_EINVAL && sharing == -1);
     Require(pthread_mutexattr_setpshared_nid_postfix(&attr, 0) == GUEST_EINVAL);
@@ -197,6 +297,8 @@ static void CheckProcessSharing() {
 static void CheckInvalidPriorityAttribute(PthreadMutexattr* attr) {
     int ceiling = -1;
     int protocol = -1;
+    Require(pthread_mutexattr_destroy_nid_postfix(attr) == GUEST_EINVAL);
+    Require(scePthreadMutexattrDestroy(attr) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_mutexattr_setprotocol_nid_postfix(attr, PRIO_PROTECT) == GUEST_EINVAL);
     Require(pthread_mutexattr_setprotocol_nid_postfix(attr, -1) == GUEST_EINVAL);
     Require(pthread_mutexattr_getprotocol_nid_postfix(attr, &protocol) == GUEST_EINVAL && protocol == -1);
@@ -206,12 +308,34 @@ static void CheckInvalidPriorityAttribute(PthreadMutexattr* attr) {
     Require(pthread_mutexattr_getprioceiling_nid_postfix(attr, nullptr) == GUEST_EINVAL);
 }
 
+static void CheckDestroy() {
+    PthreadMutexattr attr = nullptr;
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
+    Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_mutexattr_init_nid_postfix(&attr) == 0);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
+    Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrInit(&attr) == SCE_OK);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
+    Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
+}
+
 int main() {
     CheckType();
     CheckKind();
     CheckSceAccessors();
     CheckProcessSharing();
     CheckTimedlockInvalidDeadline();
+    CheckDestroy();
+    CheckBadPointers();
     PthreadMutexattr attr = nullptr;
     CheckInvalidPriorityAttribute(nullptr);
     CheckInvalidPriorityAttribute(&attr);
@@ -243,8 +367,8 @@ int main() {
     Require(pthread_mutexattr_setprotocol_nid_postfix(&attr, PRIO_NONE) == 0);
     Require(pthread_mutexattr_getprotocol_nid_postfix(&attr, &protocol) == 0 && protocol == PRIO_NONE);
     Require(pthread_mutexattr_getprioceiling_nid_postfix(&attr, &ceiling) == GUEST_EINVAL);
-    Require(Throws([&] { pthread_mutexattr_getprotocol_nid_postfix(&attr, nullptr); }));
-    Require(Throws([&] { pthread_mutexattr_getprioceiling_nid_postfix(&attr, nullptr); }));
+    Require(pthread_mutexattr_getprotocol_nid_postfix(&attr, nullptr) == GUEST_EFAULT);
+    Require(pthread_mutexattr_getprioceiling_nid_postfix(&attr, nullptr) == GUEST_EINVAL);
     Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
     CheckInvalidPriorityAttribute(&attr);
     return 0;

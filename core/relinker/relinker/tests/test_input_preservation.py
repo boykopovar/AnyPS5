@@ -100,10 +100,10 @@ def check_diagnostic_inputs(relinker, work):
                             raise
                         print("Diagnostic symbolic-link case skipped: Windows symlink privilege unavailable")
                         continue
-                output = case / "output.exe"
+                output = diagnostics.parent / "output.exe"
                 previous_output = b"previous executable"
                 output.write_bytes(previous_output)
-                registry_path = case / "output.registry.json"
+                registry_path = diagnostics.parent / "output.registry.json"
                 previous_registry = b"previous registry"
                 registry_path.write_bytes(previous_registry)
                 options = [] if bundled else ["--skip-sce-module"]
@@ -118,7 +118,7 @@ def check_diagnostic_inputs(relinker, work):
                 assert source.read_bytes() == original and module.read_bytes() == module_original
                 assert diagnostics.read_bytes() == (module_original if bundled else original)
                 assert output.read_bytes() == previous_output and registry_path.read_bytes() == previous_registry
-                assert not (case / "app0").exists()
+                assert not (diagnostics.parent / "app0").exists()
 
     for enabled in (False, True):
         for existing in (False, True):

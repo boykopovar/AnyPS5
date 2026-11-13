@@ -20,7 +20,7 @@ DATA_DECLARATION = re.compile(
     r"^[ \t]*extern\s+(?:const\s+)?[A-Za-z_][\w:<>]*(?:\s+(?:const|volatile))?\s+\**\s*(\w+)\s*(?:\[[^;\]\n]*\])?\s*;", re.M
 )
 INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
-TYPE_TOKEN = re.compile(r"\bnamespace\s*([\w:]*)\s*\{|\bextern\s*\{|\b(?:struct|union|class)\s+(\w+)\s*([;{])|\busing\s+(\w+)\s*=|[{}]")
+TYPE_TOKEN = re.compile(r"\bnamespace\s*([\w:]*)\s*\{|\bextern\s*\{|\b(?:struct|union|class)\s+(\w+)\s*(?:final\s*)?(?::(?!:)[^;{]*)?([;{])|\busing\s+(\w+)\s*=|[{}]")
 
 
 @cache

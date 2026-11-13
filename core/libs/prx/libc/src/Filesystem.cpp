@@ -8,15 +8,19 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #else
 #include <unistd.h>
 #endif
 
 #ifdef _WIN32
 static std::filesystem::path FollowedPath(const std::filesystem::path& path) {
-    const DWORD attributes = GetFileAttributesW(path.c_str());
-    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return path;
-    const HANDLE handle = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+    std::error_code pathError;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, pathError);
+    const auto& targetPath = pathError ? path : verbatim;
+    const DWORD attributes = GetFileAttributesW(targetPath.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return targetPath;
+    const HANDLE handle = CreateFileW(targetPath.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
         OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (handle == INVALID_HANDLE_VALUE) return {};
     std::wstring target(MAX_PATH, L'\0');
@@ -39,9 +43,11 @@ static std::filesystem::path FollowedPath(const std::filesystem::path& path) {
 extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
     if (mode < 0 || (mode & ~7)) { errno = 22; return -1; }
     if (!path) { errno = 14; return -1; }
-    if (!*path) { errno = 2; return -1; }
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return -1; }
+    if (copy.empty()) { errno = 2; return -1; }
     try {
-        const auto resolved = ResolvePath_nid_no_patch(path);
+        const auto resolved = ResolvePath_nid_no_patch(copy.c_str());
 #ifdef _WIN32
         const auto target = FollowedPath(resolved);
         const DWORD attributes = target.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(target.c_str());
@@ -133,10 +139,12 @@ extern "C" bool ExecutePermission_nid_no_patch(const std::filesystem::path& nati
 
 extern "C" int APS5_VABI remove_nid_postfix(const char* path) {
     if (!path) { errno = 14; return -1; }
-    if (!*path) { errno = 2; return -1; }
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return -1; }
+    if (copy.empty()) { errno = 2; return -1; }
     try {
-        const auto resolved = ResolvePath_nid_no_patch(path);
-        if (FinalPathComponentIsDot_nid_no_patch(path)) {
+        const auto resolved = ResolvePath_nid_no_patch(copy.c_str());
+        if (FinalPathComponentIsDot_nid_no_patch(copy.c_str())) {
             std::error_code statusError;
             const auto status = std::filesystem::status(resolved, statusError);
             if (statusError) { errno = FilesystemError(statusError); return -1; }
@@ -147,17 +155,20 @@ extern "C" int APS5_VABI remove_nid_postfix(const char* path) {
         }
         std::error_code error;
 #ifdef _WIN32
-        const DWORD attributes = GetFileAttributesW(resolved.c_str());
+        std::error_code pathError;
+        const auto verbatim = NativeVerbatimPath_nid_no_patch(resolved, pathError);
+        const auto& targetPath = pathError ? resolved : verbatim;
+        const DWORD attributes = GetFileAttributesW(targetPath.c_str());
         bool removed = false;
         if (attributes != INVALID_FILE_ATTRIBUTES) {
             const DWORD writable = attributes & ~FILE_ATTRIBUTE_READONLY;
             const bool unlocked = writable != attributes &&
-                SetFileAttributesW(resolved.c_str(), writable ? writable : FILE_ATTRIBUTE_NORMAL);
+                SetFileAttributesW(targetPath.c_str(), writable ? writable : FILE_ATTRIBUTE_NORMAL);
             removed = (attributes & FILE_ATTRIBUTE_DIRECTORY) ?
-                RemoveDirectoryW(resolved.c_str()) != 0 : DeleteFileW(resolved.c_str()) != 0;
+                RemoveDirectoryW(targetPath.c_str()) != 0 : DeleteFileW(targetPath.c_str()) != 0;
             if (!removed && unlocked) {
                 const DWORD nativeError = GetLastError();
-                SetFileAttributesW(resolved.c_str(), attributes);
+                SetFileAttributesW(targetPath.c_str(), attributes);
                 SetLastError(nativeError);
             }
         }

@@ -12,6 +12,7 @@ public:
     ~Buffer();
     Buffer(const Buffer&) = delete;
     Buffer& operator=(const Buffer&) = delete;
+    static std::shared_ptr<Buffer> WithinDeviceLocalHeadroom(const Context& context, std::size_t size, VkBufferUsageFlags usage);
     VkBuffer Handle() const;
     VkDeviceAddress DeviceAddress() const;
     // Host-visible buffers only: a device-local one (properties without HOST_VISIBLE, the staging
@@ -21,6 +22,7 @@ public:
     void Invalidate();
 
 private:
+    Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, bool headroom);
     void initializeAddress(VkBufferUsageFlags usage);
     void release() noexcept;
     Context context;
@@ -91,7 +93,11 @@ private:
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceSize memoryBytes = 0;
+    std::uint32_t memoryType = 0;
 };
+
+void NoteGuestWorkOnCommandBuffer(VkCommandBuffer commands);
 
 class CommandBatch {
 public:

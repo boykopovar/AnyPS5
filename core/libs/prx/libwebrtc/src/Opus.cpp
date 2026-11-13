@@ -76,6 +76,8 @@ std::int16_t APS5_VABI WebRtcOpus_EncoderFree_nid_postfix(WebRtcOpusEncInst* ins
 std::int16_t APS5_VABI WebRtcOpus_EncoderCreate_nid_postfix(WebRtcOpusEncInst** inst, std::size_t channels, std::int32_t application, int sampleRateHz) {
     if (!inst)
         return -1;
+    if (channels != 1 && channels != 2)
+        return -1;
     int opusApplication = 0;
     switch (application) {
     case 0:
