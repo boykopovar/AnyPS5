@@ -444,6 +444,13 @@ WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix8multi
     return *self;
 }
 
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix16applyPerspectiveEd(
+    WebCore::TransformationMatrix* self, double perspective) {
+    WebCore::TransformationMatrix mat;
+    if (perspective != 0.0) mat.m_matrix[2][3] = -1.0 / perspective;
+    return _ZN7WebCore20TransformationMatrix8multiplyERKS0_(self, mat);
+}
+
 WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix8rotate3dEddd(
     WebCore::TransformationMatrix* self, double rx, double ry, double rz) {
     double radX = WebCore::Deg2Rad(rx);

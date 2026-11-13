@@ -94,6 +94,10 @@ int main() {
     const std::uint64_t wrongConnectSize = sizeof(info);
     std::memcpy(connect, &wrongConnectSize, sizeof(wrongConnectSize));
     Require(sceNetCtlApGetConnectInfo(option, connect) == kErrInvalidSize);
+    errno = 71;
+    Require(sceNetCtlApGetConnectInfo(reinterpret_cast<const char*>(0x10), connect) == kErrInvalidAddr);
+    Require(sceNetCtlApGetConnectInfo(reinterpret_cast<const char*>(0x10), nullptr) == kErrInvalidAddr);
+    Require(errno == 71);
 
     Require(sceNetCtlApStop() == kErrNotStarted);
 

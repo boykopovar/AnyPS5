@@ -248,6 +248,7 @@ HexPrefix CheckHexPrefix(const char* field, unsigned long width, bool floating) 
 
 bool DecimalOutOfRange(const std::string& field) {
     if (field.find_first_of("xX") != std::string::npos) return false;
+    if (field.find_first_of("eE") == std::string::npos && field.size() < static_cast<std::size_t>(std::numeric_limits<long double>::max_exponent10)) return false;
     errno = 0;
     const long double value = std::strtold(field.c_str(), nullptr);
     return errno == ERANGE && (std::isinf(value) || value == 0.0L);
@@ -385,7 +386,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
                     std::memcpy(target, &value, sizeof(value));
                 } else throw std::invalid_argument("Invalid scan count length");
             }
-            if (!secure) converted = true;
+            converted = true;
             continue;
         }
         if (IsWideScan(length, conversion)) {

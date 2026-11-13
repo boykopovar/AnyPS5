@@ -333,10 +333,13 @@ static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 }
 
 extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last);
+extern "C" GuestLocale::String* LibcAssignCString_nid_no_patch(GuestLocale::String* result, const char* source);
+extern "C" GuestLocale::String* LibcAssignWideCString_nid_no_patch(GuestLocale::String* result, const std::uint16_t* source);
 
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
 extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
+extern "C" const GuestLocale::CollateVtable* GuestWideCollateVtable_nid_no_patch();
 inline constexpr std::size_t kCodecvtCharVtableSlots = 13;
 static_assert(kCodecvtCharVtableSlots * sizeof(std::uintptr_t) == 104);
 extern "C" std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots];

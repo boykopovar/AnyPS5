@@ -540,6 +540,59 @@ static void TestPublicDecrypt() {
     RSA_free_nid_postfix(rsa);
 }
 
+static void RequireX931Error(const Bytes& block, LibreSslRsa* rsa, unsigned long reason, std::source_location location = std::source_location::current()) {
+    Bytes out(200, 0xEE);
+    ERR_clear_error_nid_postfix();
+    Require(RSA_public_decrypt_nid_postfix(static_cast<int>(block.size()), block.data(), out.data(), rsa, PaddingX931) == -1, location);
+    Require((ERR_get_error_nid_postfix() & 0xfff) == reason, location);
+    Require((ERR_get_error_nid_postfix() & 0xfff) == 114, location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
+}
+
+static void TestPublicDecryptX931() {
+    const Bytes modulus(128, 0xFF);
+    const auto der = PublicKeyInfo(Concat({RsaEncryption, Null}), Concat({{0x00}, RsaKey(Concat({{0x00}, modulus}), {0x01})}));
+    auto* rsa = Decode(der, static_cast<long>(der.size()));
+    Require(rsa != nullptr);
+    const Bytes data = Hex("0102030405060708090a0b0c0d0e0f1011121314");
+
+    Bytes padded {0x6B};
+    padded.insert(padded.end(), 128 - 3 - data.size(), 0xBB);
+    padded[padded.size() - 1] = 0xBA;
+    const auto block = Concat({padded, data, {0x33, 0xCC}});
+    Require(block.size() == 128);
+    Bytes out(200, 0xEE);
+    Require(RSA_public_decrypt_nid_postfix(128, block.data(), out.data(), rsa, PaddingX931) == static_cast<int>(data.size()) + 1);
+    Require(Bytes(out.begin(), out.begin() + 20) == data && out[20] == 0x33 && out[21] == 0xEE);
+
+    Bytes flipped(128);
+    for (std::size_t index = 0; index < 128; ++index) flipped[index] = static_cast<unsigned char>(0xFF - block[index]);
+    std::fill(out.begin(), out.end(), 0xEE);
+    Require(RSA_public_decrypt_nid_postfix(128, flipped.data(), out.data(), rsa, PaddingX931) == static_cast<int>(data.size()) + 1);
+    Require(Bytes(out.begin(), out.begin() + 20) == data && out[20] == 0x33);
+
+    Bytes direct {0x6A};
+    direct.insert(direct.end(), 125, 0x5A);
+    direct.insert(direct.end(), {0x01, 0xCC});
+    std::fill(out.begin(), out.end(), 0xEE);
+    Require(RSA_public_decrypt_nid_postfix(128, direct.data(), out.data(), rsa, PaddingX931) == 126);
+    Require(out[0] == 0x5A && out[124] == 0x5A && out[125] == 0x01 && out[126] == 0xEE);
+
+    auto badHeader = block;
+    badHeader[0] = 0x6C;
+    RequireX931Error(badHeader, rsa, 137);
+    auto badPadding = block;
+    badPadding[1] = 0xBC;
+    RequireX931Error(badPadding, rsa, 138);
+    auto noPadding = block;
+    noPadding[1] = 0xBA;
+    RequireX931Error(noPadding, rsa, 138);
+    auto badTrailer = direct;
+    badTrailer[127] = 0x1C;
+    RequireX931Error(badTrailer, rsa, 139);
+    RSA_free_nid_postfix(rsa);
+}
+
 static void TestPublicEncrypt() {
     const auto spki = Hex(CavpSpki);
     auto* rsa = Decode(spki, static_cast<long>(spki.size()));
@@ -985,6 +1038,7 @@ int main() {
     TestPublicKeyInfoVariants();
     TestAddedPublicKeyObjects();
     TestPublicDecrypt();
+    TestPublicDecryptX931();
     TestPublicEncrypt();
     TestPublicKeyChecks();
     TestVerify();

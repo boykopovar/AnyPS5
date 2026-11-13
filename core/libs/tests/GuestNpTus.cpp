@@ -137,6 +137,11 @@ static void CheckMultiSlotVariables() {
     result = 0;
     Require(sceNpTusWaitAsync(request, &result) == 0 && result == SIGNED_OUT);
     Require(sceNpTusWaitAsync(request, nullptr) == 0);
+    errno = 71;
+    Require(sceNpTusWaitAsync(request, reinterpret_cast<int*>(0x10)) == INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceNpTusPollAsync(request, reinterpret_cast<int*>(0x10)) == INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceNpTusGetMultiSlotVariableAsync(request, &npId, slots, variables, sizeof(variables), 2, nullptr) == 0);
     RequireFinished(request, SIGNED_OUT);
 

@@ -879,7 +879,7 @@ static int deleteSave(const SaveDataDelete* del) {
 
 int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) {
     const int rc = deleteSave(del);
-    SAVEDATA_TRACE("delete dir=%s -> 0x%08x", del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("delete dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)", static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -2045,6 +2045,7 @@ int APS5_VABI sceSaveDataIsDeletingUsbDb(void) {
 }
 
 int APS5_VABI sceSaveDataIsMounted() {
+    if (g_initializations == 0) return SAVE_DATA_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2188,19 +2189,21 @@ int APS5_VABI sceSaveDataUmountSys(void) {
     return 0;
 }
 
-static int umountWithBackup(const SaveDataMountPoint* mount_point) {
+static int umountWithBackup(const SaveDataMountPoint* mount_point, std::string* tracePoint) {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (mount_point == nullptr) {
+    SaveDataMountPoint localPoint{};
+    if (!copy_mount_point(mount_point, &localPoint)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    if (tracePoint != nullptr) *tracePoint = localPoint.data;
     SaveDataEvent event{};
     event.type = SAVE_DATA_EVENT_TYPE_UMOUNT_BACKUP;
     event.error_code = SAVE_DATA_OK;
     {
         std::lock_guard lock(g_slots_mutex);
-        const int slot = find_slot_by_mount_point(mount_point->data);
+        const int slot = find_slot_by_mount_point(localPoint.data);
         if (slot == -1) {
             return SAVE_DATA_ERROR_NOT_MOUNTED;
         }
@@ -2227,8 +2230,9 @@ static int umountWithBackup(const SaveDataMountPoint* mount_point) {
 }
 
 int APS5_VABI sceSaveDataUmountWithBackup(const SaveDataMountPoint* mount_point) {
-    const int rc = umountWithBackup(mount_point);
-    SAVEDATA_TRACE("umountWithBackup point=%s -> 0x%08x", mount_point != nullptr ? mount_point->data : "(null)", static_cast<unsigned>(rc));
+    std::string point = "(null)";
+    const int rc = umountWithBackup(mount_point, &point);
+    SAVEDATA_TRACE("umountWithBackup point=%s -> 0x%08x", point.c_str(), static_cast<unsigned>(rc));
     return rc;
 }
 
