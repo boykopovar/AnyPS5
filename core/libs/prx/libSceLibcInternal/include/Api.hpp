@@ -226,6 +226,7 @@ const char* APS5_VABI sceLibcInternalSystemErrorCategoryName_nid_no_patch(const 
 const char* APS5_VABI sceLibcInternalGenericErrorCategoryName_nid_no_patch(const void* self) noexcept;
 const char* APS5_VABI sceLibcInternalIostreamErrorCategoryName_nid_no_patch(const void* self) noexcept;
 const char* APS5_VABI sceLibcInternalFutureErrorCategoryName_nid_no_patch(const void* self) noexcept;
+int* APS5_VABI _Geterrno_nid_postfix();
 int APS5_VABI sceLibcInternalCodecvtBaseMaxLength_nid_no_patch(const void* self) noexcept;
 int APS5_VABI sceLibcInternalCodecvtBaseEncoding_nid_no_patch(const void* self) noexcept;
 bool APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE16do_always_noconvEv_nid_postfix(const GuestLocale::Facet* self);

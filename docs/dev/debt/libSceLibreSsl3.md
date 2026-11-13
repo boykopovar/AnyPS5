@@ -24,7 +24,7 @@
 
 - [EVP_PKEY_new, EVP_PKEY_free, EVP_PKEY_set1_RSA, EVP_PKEY_copy_parameters](../../../core/libs/prx/libSceLibreSsl3/src/PkeyLifecycle.cpp) - not checked on a console. Native allocation and release follow the 32-byte [LibreSSL 4.0.0 layout and p_lib.c](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp). Allocation failure queues `ERR_R_MALLOC_FAILURE` in the libSceLibreSsl queue without file or line and returns null. Final release of a nonnull method or payload throws and restores the reference instead of calling the method; no native payload destruction is implemented. Empty objects are cleared before release. set1_RSA and copy_parameters throw locally instead of forwarding to the incompatible 56-byte legacy layout. The native RSA producers and get1_RSA remain local throwing stubs. Objects from the two modules must not be mixed.
 - [Native PKEY forwarding gaps](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) - `X509_get_pubkey` and `PEM_read_bio_PrivateKey` still forward to legacy throwing stubs. `SSL_get_privatekey` forwards to the parent library and returns its legacy PKEY. The consumers `EVP_PKEY_get1_EC_KEY`, `EVP_DigestVerifyInit`, `SSL_CTX_use_PrivateKey`, `SSL_CTX_use_PrivateKey_ASN1`, `SSL_CTX_use_PrivateKey_file` and `SSL_use_PrivateKey_ASN1` do too. Each needs a native wrapper before its legacy implementation can run, to prevent mixing the incompatible PKEY layouts.
-- [libSceLibreSsl3 pending exports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - 32 named callable exports, excluding `OCSP_resp_find_status`, `ASN1_OBJECT_free`, `CRYPTO_memcmp`, `MD5`, `SHA1`, `d2i_ASN1_INTEGER`, `EVP_PKEY_up_ref`, `EC_KEY_up_ref`, `RSA_up_ref`, `SSL_CTX_up_ref`, `SSL_up_ref`, `SSL_SESSION_up_ref`, `SSL_CTX_set_min_proto_version`, `SSL_CTX_set_max_proto_version`, `SSL_get_client_random`, `X509_up_ref`, `X509_get_version`, `EVP_PKEY_get0_RSA`, `EVP_PKEY_get0_DSA`, `EVP_PKEY_get0_DH`, `EVP_MD_CTX_new`, `EVP_MD_CTX_free`, `EVP_DigestInit`, `EVP_sha1`, `EVP_sha224`, `ERR_load_crypto_strings`, `ERR_peek_last_error`, `OpenSSL_version`, `X509_PUBKEY_get0_param`, `OBJ_cmp`, `ASN1_STRING_get0_data`, `ASN1_INTEGER_free`, `X509_get0_extensions`, `X509_get_ext_count`, `X509_get_ext`, `EVP_PKEY_size`, `X509_getm_notBefore`, `X509_getm_notAfter`, `X509_get0_notBefore`, `X509_get0_notAfter`, `X509_get0_signature`, `RSA_get0_key`, `DH_get0_pqg`, `DH_get0_key`, `DSA_get0_pqg`, `DSA_get0_key`, `BIO_up_ref`, `X509_STORE_CTX_free`, `X509_STORE_CTX_new`, `X509_STORE_up_ref` and `OCSP_CERTID_free`, remain unimplemented from the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibreSsl3.c), cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
+- [libSceLibreSsl3 pending exports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - 19 named callable exports, excluding `OCSP_resp_find_status`, `ASN1_OBJECT_free`, `CRYPTO_memcmp`, `EVP_PKEY_CTX_ctrl`, `EVP_PKEY_CTX_new`, `EVP_PKEY_decrypt`, `EVP_PKEY_decrypt_init`, `EVP_PKEY_encrypt`, `EVP_PKEY_encrypt_init`, `RSA_new`, `RSA_check_key`, `RSA_padding_add_PKCS1_PSS_mgf1`, `EVP_DigestSignInit`, `EVP_DigestSignFinal`, `EVP_SignFinal`, `EVP_VerifyFinal`, `MD5`, `SHA1`, `d2i_ASN1_INTEGER`, `EVP_PKEY_up_ref`, `EC_KEY_up_ref`, `RSA_up_ref`, `SSL_CTX_up_ref`, `SSL_up_ref`, `SSL_SESSION_up_ref`, `SSL_CTX_set_min_proto_version`, `SSL_CTX_set_max_proto_version`, `SSL_get_client_random`, `X509_up_ref`, `X509_get_version`, `EVP_PKEY_get0_RSA`, `EVP_PKEY_get0_DSA`, `EVP_PKEY_get0_DH`, `EVP_MD_CTX_new`, `EVP_MD_CTX_free`, `EVP_DigestInit`, `EVP_sha1`, `EVP_sha224`, `ERR_load_crypto_strings`, `ERR_peek_last_error`, `OpenSSL_version`, `X509_PUBKEY_get0_param`, `OBJ_cmp`, `ASN1_STRING_get0_data`, `ASN1_INTEGER_free`, `X509_get0_extensions`, `X509_get_ext_count`, `X509_get_ext`, `EVP_PKEY_size`, `X509_getm_notBefore`, `X509_getm_notAfter`, `X509_get0_notBefore`, `X509_get0_notAfter`, `X509_get0_signature`, `RSA_get0_key`, `DH_get0_pqg`, `DH_get0_key`, `DSA_get0_pqg`, `DSA_get0_key`, `BIO_up_ref`, `X509_STORE_CTX_free`, `X509_STORE_CTX_new`, `X509_STORE_up_ref` and `OCSP_CERTID_free`, remain unimplemented from the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibreSsl3.c), cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
 
 ### Functional
 
@@ -107,7 +107,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 67 still-unimplemented callable exports: 63 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp` and four client transport exports (`tls_connect_socket`, `tls_handshake`, `tls_read`, `tls_write`) in `LibTlsTransport.cpp`; title compatibility beyond tested client transport remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 61 still-unimplemented callable exports: 57 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp` and four client transport exports (`tls_connect_socket`, `tls_handshake`, `tls_read`, `tls_write`) in `LibTlsTransport.cpp`; title compatibility beyond tested client transport remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -126,7 +126,6 @@
 | `ERR_load_X509_strings` | `A0lZtFjhcTw` |
 | `X509_check_akid` | `C7eFtWPfLdk` |
 | `SSL_CTX_set_default_verify_paths` | `DZ6fywqpaik` |
-| `EVP_PKEY_verify` | `HEuvmk+aHs4` |
 | `d2i_SSL_SESSION` | `IiG4HLr+cOw` |
 | `EVP_PKEY_CTX_new_id` | `J5ZLHxWkT6k` |
 | `RSAPublicKey_dup` | `JSqFTYGaWhU` |
@@ -139,7 +138,6 @@
 | `X509_new` | `PNfwr3s6dEs` |
 | `SSL_get0_verified_chain` | `QKIOxHfZLh8` |
 | `EVP_PKEY_derive` | `QYEjNnn6PT4` |
-| `EVP_PKEY_sign` | `QhYzE+Jdvuk` |
 | `EVP_PKEY_derive_init` | `Ssfu1yw4Em4` |
 | `X509V3_EXT_conf_nid` | `TKGJOgbeyuA` |
 | `X509_sign` | `TpBvY92mrSM` |
@@ -161,18 +159,14 @@
 | `X509_CRL_get_ext_d2i` | `je-ydGAbgFg` |
 | `X509_digest` | `k1AHUWet-oU` |
 | `tls_config_set_ciphers` | `lTdt9OsPAV0` |
-| `RSA_pkey_ctx_ctrl` | `mKlCMgWMU84` |
 | `SSL_provide_quic_data` | `mhAgol4ETgY` |
 | `d2i_PUBKEY` | `o3Q8yQAMT-k` |
 | `EVP_PKEY_derive_set_peer` | `ovH4WphWIQQ` |
 | `unknown` | `qGsc6uT6p1E` |
-| `EVP_PKEY_verify_init` | `qseLIVbdvMQ` |
 | `X509_add1_ext_i2d` | `s8WMaKNjwvE` |
 | `EC_GROUP_cmp` | `sENJFZ7WbLU` |
 | `SSL_do_handshake` | `tJsbVTdWjT4` |
-| `EVP_PKEY_sign_init` | `tZG2VIefbX0` |
 | `EC_POINT_dup` | `uITUdhDDAg8` |
-| `EVP_PKEY_CTX_free` | `ulzAPWCIBkw` |
 | `d2i_ASN1_SEQUENCE_ANY` | `vR0po3nBkBs` |
 | `X509_EXTENSION_free` | `wbJDMMsje6s` |
 | `OBJ_obj2txt` | `xZ1BME5qDv0` |
