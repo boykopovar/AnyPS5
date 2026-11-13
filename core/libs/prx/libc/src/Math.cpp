@@ -159,6 +159,17 @@
  * written by Steven G. Kargl with input from Bruce D. Evans
  * and David A. Schultz.
  */
+/* Derived from FreeBSD lib/msun/src/e_hypotl.c (release/11.4.0) */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 #include "prx/libc/include/Api.hpp"
 #include <mutex>
 #include <array>
@@ -1436,8 +1447,66 @@ long double APS5_VABI lgammal_nid_postfix(long double x) { return std::lgamma(x)
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
 float APS5_VABI tgammaf_nid_postfix(float x) { return GuestTgammaf(x); }
 long double APS5_VABI hypotl_nid_postfix(long double x, long double y) {
-    if (std::isinf(x) || std::isinf(y)) return std::numeric_limits<long double>::infinity();
-    return std::hypot(x, y);
+    constexpr int Scale = 0x2058;
+    constexpr std::uint64_t IntegerBit = 0x8000000000000000ull;
+    int ha = SplitExtended(x).signExponent & 0x7fff;
+    int hb = SplitExtended(y).signExponent & 0x7fff;
+    long double a = x;
+    long double b = y;
+    if (hb > ha) {
+        a = y;
+        b = x;
+        const int exponent = ha;
+        ha = hb;
+        hb = exponent;
+    }
+    a = std::fabs(a);
+    b = std::fabs(b);
+    if (ha - hb > 71) return a + b;
+    int k = 0;
+    if (ha > 0x5ff3) {
+        if (ha == 0x7fff) {
+            const volatile long double difference = std::fabs(x + 0.0L) - std::fabs(y + 0.0L);
+            long double w = difference;
+            if (SplitExtended(a).mantissa == IntegerBit) w = a;
+            if (hb == 0x7fff && SplitExtended(b).mantissa == IntegerBit) w = b;
+            return w;
+        }
+        ha -= Scale;
+        hb -= Scale;
+        k += Scale;
+        a = JoinExtended(SplitExtended(a).mantissa, static_cast<std::uint16_t>(ha));
+        b = JoinExtended(SplitExtended(b).mantissa, static_cast<std::uint16_t>(hb));
+    }
+    if (hb < 0x200b) {
+        if (hb <= 0) {
+            if (SplitExtended(b).mantissa == 0) return a;
+            const volatile std::uint64_t scaleMantissa = 0x4000000000000000ull;
+            const long double t1 = JoinExtended(scaleMantissa, 0x7fff);
+            return t1 + t1;
+        } else {
+            ha += Scale;
+            hb += Scale;
+            k -= Scale;
+            a = JoinExtended(SplitExtended(a).mantissa, static_cast<std::uint16_t>(ha));
+            b = JoinExtended(SplitExtended(b).mantissa, static_cast<std::uint16_t>(hb));
+        }
+    }
+    long double w = a - b;
+    if (w > b) {
+        const long double t1 = ClearLowMantissaWord(a);
+        const long double t2 = a - t1;
+        w = std::sqrt(t1 * t1 - (b * (-b) - t2 * (a + t1)));
+    } else {
+        a = a + a;
+        const long double y1 = ClearLowMantissaWord(b);
+        const long double y2 = b - y1;
+        const long double t1 = ClearLowMantissaWord(a);
+        const long double t2 = a - t1;
+        w = std::sqrt(t1 * y1 - (w * (-w) - (t1 * y2 + t2 * b)));
+    }
+    if (k == 0) return w;
+    return JoinExtended(IntegerBit, static_cast<std::uint16_t>(0x3fff + k)) * w;
 }
 float APS5_VABI hypot3f_nid_postfix(float x, float y, float z) { return Hypot3(x, y, z, hypotf_nid_postfix); }
 double APS5_VABI hypot3_nid_postfix(double x, double y, double z) { return Hypot3(x, y, z, hypot_nid_postfix); }
