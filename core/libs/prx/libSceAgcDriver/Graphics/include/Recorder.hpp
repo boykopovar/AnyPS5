@@ -473,6 +473,8 @@ public:
     // The recorder of the current device, for code that only has guest addresses (the flush hook)
     // and for helpers that must not recycle resources the recorded work still uses.
     static Recorder* Active();
+    bool RenderPassOpen() const;
+    std::uint64_t RenderPassGeneration() const { return passGeneration; }
     VkDevice Device() const { return context.device; }
     std::uint64_t Id() const { return id; }
     static bool Alive(std::uint64_t id);
@@ -932,6 +934,7 @@ private:
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
     std::unique_ptr<Batch> open;
+    std::uint64_t passGeneration = 0;
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;
     std::deque<std::unique_ptr<Batch>> inFlight;
