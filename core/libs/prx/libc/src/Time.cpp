@@ -588,6 +588,7 @@ void APS5_VABI tzset_nid_postfix(void) {
     GuestTm universal{};
     GuestTm local{};
     gmtime_s_nid_postfix(&now, &universal);
+    universal.tm_isdst = 0;
     localtime_s_nid_postfix(&now, &local);
 
     daylight_nid_postfix = local.tm_isdst >= 0 ? 1 : 0;
@@ -656,8 +657,9 @@ double APS5_VABI difftime_nid_postfix(int64_t time1, int64_t time0) {
 
 GuestTm* APS5_VABI libc_gmtime_nid_postfix(const int64_t* timer) {
     static thread_local GuestTm result;
-    if (timer == nullptr) return nullptr;
-    return gmtime_s_nid_postfix(timer, &result);
+    if (timer == nullptr || gmtime_s_nid_postfix(timer, &result) == nullptr) return nullptr;
+    result.tm_isdst = 0;
+    return &result;
 }
 
 GuestTm* APS5_VABI libc_localtime_nid_postfix(const int64_t* timer) {
@@ -719,6 +721,7 @@ GuestTm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
         return nullptr;
     }
     if (!utcCalendarFields(*timer, *result)) return nullptr;
+    result->tm_isdst = -1;
     result->tm_gmtoff = 0;
     result->tm_zone = "UTC";
     return result;
