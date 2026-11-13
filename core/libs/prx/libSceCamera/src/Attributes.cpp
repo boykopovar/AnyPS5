@@ -124,7 +124,13 @@ int APS5_VABI sceCameraGetHue(std::int32_t handle, std::uint32_t channel, std::i
 }
 
 int APS5_VABI sceCameraGetExposureGain(std::int32_t handle, std::uint32_t channel, CameraExposureGain* exposureGain, void* option) {
-    return Report(handle, channel, exposureGain, option, CameraExposureGain{0, 20, 100, 0});
+    if (const int error = CheckGet(handle, channel, exposureGain, option)) return error;
+    const CameraExposureGain value{0, 20, 100, 0};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(exposureGain, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return SCE_CAMERA_ERROR_PARAM;
+    return 0;
 }
 
 int APS5_VABI sceCameraGetWhiteBalance(std::int32_t handle, std::uint32_t channel, CameraWhiteBalance* whiteBalance, void* option) {

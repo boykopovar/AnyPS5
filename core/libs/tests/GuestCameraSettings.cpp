@@ -129,8 +129,11 @@ void CheckGetters() {
     Require(sceCameraGetExposureGain(1, Channel0, &exposure, nullptr) == 0, "the exposure must be readable");
     Require(exposure.exposureControl == 0 && exposure.exposure == 20 && exposure.gain == 100 && exposure.mode == 0, "the exposure defaults are wrong");
     errno = 71;
-    Require(sceCameraGetExposureGain(1, Channel0, reinterpret_cast<CameraExposureGain*>(0x10), nullptr) == ErrorParam, "an unmapped exposure pointer must report PARAM");
-    Require(errno == 71, "errno preserved");
+    Require(sceCameraGetExposureGain(1, Channel0, reinterpret_cast<CameraExposureGain*>(0x10), nullptr) == ErrorParam, "an unwritable exposure gain pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable exposure gain pointer");
+    alignas(16) CameraExposureGain exposureBuffer[3] = {{9, 9, 9, 9}, {9, 9, 9, 9}, {9, 9, 9, 9}};
+    Require(sceCameraGetExposureGain(1, Channel0, &exposureBuffer[1], nullptr) == 0, "reading exposure gain to buffer failed");
+    Require(exposureBuffer[0].exposureControl == 9 && exposureBuffer[1].exposureControl == 0 && exposureBuffer[1].exposure == 20 && exposureBuffer[1].gain == 100 && exposureBuffer[2].exposureControl == 9, "adjacent memory was corrupted");
     CameraWhiteBalance balance{9, 9, 9, 9};
     Require(sceCameraGetWhiteBalance(1, Channel0, &balance, nullptr) == 0, "the white balance must be readable");
     Require(balance.whiteBalanceControl == 0 && balance.gainRed == 768 && balance.gainBlue == 768 && balance.gainGreen == 512, "the white balance defaults are wrong");
