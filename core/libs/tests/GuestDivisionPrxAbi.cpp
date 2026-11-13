@@ -182,6 +182,7 @@ static void Check(TFunction function, const Answer (&answers)[TSize]) {
 
 int main(int argc, char** argv) {
     Require(argc == 3);
+    Require(argc >= 3);
     for (int index = 1; index <= 2; ++index) {
         Module module(std::filesystem::absolute(argv[index]));
         const auto name = [&](const char* symbol) { return index == 1 ? std::string(symbol) + "_nid_postfix" : Nid::ComputeNid(symbol, "libc"); };
