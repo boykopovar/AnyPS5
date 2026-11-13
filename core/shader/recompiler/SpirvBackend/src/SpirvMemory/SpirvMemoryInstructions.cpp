@@ -1658,7 +1658,7 @@ std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst) {
                 const auto scope = ConstantU32(state, spv::ScopeDevice);
                 const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
                 const auto value = Binary(state, spv::OpBitwiseOr, u32, record, stage);
-                if (state.bdaStopsInvocations) {
+                if (state.bdaStopsInvocations && !state.bdaFaultMasksWrites) {
                     state.module.AddFunction(spv::OpAtomicStore, word, scope, relaxed, value);
                 } else {
                     state.module.AddFunction(spv::OpAtomicCompareExchange, u32, state.module.AllocateId(), word, scope, relaxed, relaxed, value, ConstantU32(state, 0u));
