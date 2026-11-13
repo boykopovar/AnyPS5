@@ -121,7 +121,7 @@ int APS5_VABI sceNpTrophy2GetTrophyIcon(int context, int handle, int trophy_id, 
     if (size != nullptr) {
         *size = NP_TROPHY2_ICON_SIZE_NONE;
     }
-    throw std::runtime_error(std::string(__func__) + ": icon file not found");
+    return SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND;
 }
 
 }
