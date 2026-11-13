@@ -33,6 +33,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -1353,30 +1354,32 @@ struct BufferTableRequest : ComputeRequest {
     }
 };
 
+template<class Request>
 int runLoadingProcess() {
-    BufferTableRequest cached(true);
+    Request cached(true);
     const auto loaded = Recompile(cached.request);
     const auto totals = ShaderDiskCache::Totals();
     require(totals.hits == 1 && totals.misses == 0 && totals.loadFailures == 0, "the second process did not load the stored variant (hits " + std::to_string(totals.hits) + ", misses " + std::to_string(totals.misses) + ")");
-    BufferTableRequest fresh(false);
+    Request fresh(false);
     const auto compiled = Recompile(fresh.request);
     requireSameResult(compiled, loaded, "loaded against compiled");
     require(!loaded.spirv.empty(), "the loaded SPIR-V is empty");
-    require(!loaded.bufferBaseSlots.empty(), "the disk-loaded invocation lost its buffer-base patch slots");
+    if constexpr (std::is_same_v<Request, BufferTableRequest>) require(!loaded.bufferBaseSlots.empty(), "the disk-loaded invocation lost its buffer-base patch slots");
     std::cout << "second process loaded " << loaded.spirv.size() << " SPIR-V words from the disk cache\n";
     return 0;
 }
 
-void verifyAcrossProcesses(const char* self) {
-    BufferTableRequest request(true);
+template<class Request>
+void verifyAcrossProcesses(const char* self, const char* mode) {
+    Request request(true);
     const auto before = ShaderDiskCache::Totals();
     const auto compiled = Recompile(request.request);
     ShaderDiskCache::Flush();
     const auto after = ShaderDiskCache::Totals();
     require(after.misses == before.misses + 1 && after.writes == before.writes + 1, "the first compile was not looked up and stored");
     require(!compiled.spirv.empty(), "the compile produced no SPIR-V");
-    require(!compiled.bufferBaseSlots.empty(), "the cold invocation has no buffer-base patch slots");
-    const std::string command = "\"" + std::string(self) + "\" --load";
+    if constexpr (std::is_same_v<Request, BufferTableRequest>) require(!compiled.bufferBaseSlots.empty(), "the cold invocation has no buffer-base patch slots");
+    const std::string command = "\"" + std::string(self) + "\" " + mode;
     require(std::system(command.c_str()) == 0, "the loading process failed");
 }
 
@@ -2840,7 +2843,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--large-file") return runLargeFileWrite();
-        if (argc == 2 && std::string_view(argv[1]) == "--load") return runLoadingProcess();
+        if (argc == 2 && std::string_view(argv[1]) == "--load") return runLoadingProcess<ComputeRequest>();
+        if (argc == 2 && std::string_view(argv[1]) == "--load-buffer-table") return runLoadingProcess<BufferTableRequest>();
         if (argc == 2 && std::string_view(argv[1]) == "--load-prebuilt") return runPrebuiltLoadingProcess();
         if (argc == 2 && std::string_view(argv[1]) == "--no-failure-memo") return runWithoutFailureMemo();
         if (argc == 2 && std::string_view(argv[1]).starts_with("--load-plan")) return runPlanLoadingProcess(argv[1]);
@@ -2864,7 +2868,8 @@ int main(int argc, char** argv) {
         verifySharedPlans();
         verifyStore();
         verifyPersist();
-        verifyAcrossProcesses(argv[0]);
+        verifyAcrossProcesses<ComputeRequest>(argv[0], "--load");
+        verifyAcrossProcesses<BufferTableRequest>(argv[0], "--load-buffer-table");
         verifyPrebuiltAcrossProcesses(argv[0], directory);
         verifyPlanAcrossProcesses(argv[0]);
         verifyEmissionFailureMemo();
