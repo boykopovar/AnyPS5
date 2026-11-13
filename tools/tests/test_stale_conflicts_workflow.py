@@ -35,10 +35,13 @@ class ConflictLabelConcurrencyTests(unittest.TestCase):
             "kills every scan of the open pull requests before it finishes",
         )
 
-    def test_main_pushes_and_the_hourly_fallback_still_scan(self):
+    def test_only_the_hourly_schedule_and_a_manual_run_still_scan(self):
         text = CONFLICT_WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("  push:\n    branches: [main]", text)
-        self.assertIn("  schedule:\n    - cron: '0 * * * *'", text)
+        triggers = text.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("  schedule:\n    - cron: '0 * * * *'", triggers)
+        self.assertIn("  workflow_dispatch:", triggers)
+        self.assertNotIn("push:", triggers, "a run created by a push to main replaces the pending one "
+                         "within seconds, and the runner queue waits longer than main goes between pushes")
 
 
 if __name__ == "__main__":
