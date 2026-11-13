@@ -110,6 +110,8 @@ struct FutureErrorObject { const void* vtable; GuestLocale::String message; Erro
 
 }
 
+using LibcRaiseHandler = void (APS5_VABI*)(const LibcException::ExceptionObject&);
+
 extern "C" {
 
 
@@ -1667,6 +1669,7 @@ void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
 [[noreturn]] void APS5_VABI __cxa_deleted_virtual_nid_postfix();
 [[noreturn]] void APS5_VABI _ZNKSt9exception8_DoraiseEv_nid_postfix(const LibcException::ExceptionObject* self);
 [[noreturn]] void APS5_VABI _ZNKSt9exception6_RaiseEv_nid_postfix(const LibcException::ExceptionObject* self);
+LibcRaiseHandler APS5_VABI LibcExchangeRaiseHandler_nid_no_patch(LibcRaiseHandler handler);
 [[noreturn]] void APS5_VABI _ZNKSt8bad_cast8_DoraiseEv_nid_postfix(const LibcException::ExceptionObject* self);
 [[noreturn]] void APS5_VABI _ZNKSt11logic_error8_DoraiseEv_nid_postfix(const LibcException::ExceptionObject* self);
 [[noreturn]] void APS5_VABI __cxa_bad_cast_nid_postfix();

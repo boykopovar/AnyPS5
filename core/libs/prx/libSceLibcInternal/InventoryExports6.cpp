@@ -379,11 +379,6 @@ void APS5_VABI _ZNSt8messagesIwED0Ev_nid_postfix(void* self) {
     _ZdlPv_nid_postfix(self);
 }
 
-int APS5_VABI _ZNSt9exception18_Set_raise_handlerEPFvRKS_E_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLibcInternalUnknown6_089_djHbPEpTFIo_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;

@@ -78,4 +78,8 @@ APS5_EXPORT("nWfZplDjbxQ", sceLibcInternalFutureErrorCategoryMessage_nid_no_patc
 }
 APS5_EXPORT("uWZBRxLAvEg", sceLibcInternalSystemErrorDoraise_nid_no_patch);
 
+LibcRaiseHandler APS5_VABI _ZNSt9exception18_Set_raise_handlerEPFvRKS_E_nid_postfix(LibcRaiseHandler handler) {
+    return LibcExchangeRaiseHandler_nid_no_patch(handler);
+}
+
 }
