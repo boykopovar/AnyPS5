@@ -37,6 +37,17 @@ void RequireThrows(TAction action, const char* message) {
     Require(false, message);
 }
 
+template<typename TAction>
+void RequireInvalidArgument(TAction action, const char* message) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    } catch (const std::exception&) {
+    }
+    Require(false, message);
+}
+
 Stack* Lookups(LibreSslX509Store* store) {
     return static_cast<Stack*>(store->lookupMethods);
 }
@@ -80,13 +91,85 @@ void AddLookup() {
 
 void Unsupported() {
     auto* store = X509_STORE_new_nid_postfix();
-    RequireThrows([] { X509_STORE_add_lookup_nid_postfix(nullptr, X509_LOOKUP_file_nid_postfix()); }, "null store");
-    RequireThrows([&] { X509_STORE_add_lookup_nid_postfix(store, nullptr); }, "null method");
+    RequireInvalidArgument([] { X509_STORE_add_lookup_nid_postfix(nullptr, X509_LOOKUP_file_nid_postfix()); }, "null store");
+    RequireInvalidArgument([&] { X509_STORE_add_lookup_nid_postfix(store, nullptr); }, "null method");
     X509_STORE_free_nid_postfix(store);
 
     store = X509_STORE_new_nid_postfix();
     Lookups(store)->num = 1;
-    RequireThrows([&] { X509_STORE_add_lookup_nid_postfix(store, X509_LOOKUP_file_nid_postfix()); }, "a null listed lookup");
+    RequireInvalidArgument([&] { X509_STORE_add_lookup_nid_postfix(store, X509_LOOKUP_file_nid_postfix()); }, "a null listed lookup");
+
+    store = X509_STORE_new_nid_postfix();
+    store->param->id = nullptr;
+    RequireInvalidArgument([&] { X509_STORE_free_nid_postfix(store); }, "verify parameters without an identity");
+}
+
+struct Event {
+    char kind;
+    LibreSslX509Lookup* lookup;
+    void* storeContext;
+};
+
+std::array<Event, 16> events{};
+int eventCount = 0;
+int newItemResult = 1;
+int marker = 0;
+
+void Record(char kind, LibreSslX509Lookup* lookup) {
+    Require(eventCount < static_cast<int>(events.size()), "too many callbacks");
+    events[static_cast<std::size_t>(eventCount++)] = {kind, lookup, lookup->storeContext};
+}
+
+int APS5_VABI NewItem(LibreSslX509Lookup* lookup) {
+    Record('n', lookup);
+    lookup->methodData = reinterpret_cast<char*>(&marker);
+    return newItemResult;
+}
+
+void APS5_VABI FreeItem(LibreSslX509Lookup* lookup) {
+    Record('f', lookup);
+}
+
+int APS5_VABI Shutdown(LibreSslX509Lookup* lookup) {
+    Record('s', lookup);
+    return 0;
+}
+
+void Callbacks() {
+    LibreSslX509LookupMethod full{};
+    full.newItem = reinterpret_cast<void*>(NewItem);
+    full.free = reinterpret_cast<void*>(FreeItem);
+    full.shutdown = reinterpret_cast<void*>(Shutdown);
+    LibreSslX509LookupMethod freeOnly{};
+    freeOnly.free = reinterpret_cast<void*>(FreeItem);
+
+    auto* store = X509_STORE_new_nid_postfix();
+    eventCount = 0;
+    auto* lookup = X509_STORE_add_lookup_nid_postfix(store, &full);
+    Require(lookup && eventCount == 1 && events[0].kind == 'n' && events[0].lookup == lookup && events[0].storeContext == nullptr,
+        "new_item runs once, before the store is set");
+    Require(lookup->storeContext == store && lookup->methodData == reinterpret_cast<char*>(&marker) && lookup->init == 0,
+        "the lookup keeps what new_item stored and then gets its store");
+    Require(X509_STORE_add_lookup_nid_postfix(store, &full) == lookup && eventCount == 1, "finding a lookup calls nothing");
+    auto* second = X509_STORE_add_lookup_nid_postfix(store, &freeOnly);
+    Require(second && eventCount == 1, "a method without new_item calls nothing");
+
+    eventCount = 0;
+    X509_STORE_free_nid_postfix(store);
+    Require(eventCount == 3, "freeing the store calls shutdown and free");
+    Require(events[0].kind == 's' && events[0].lookup == lookup && events[1].kind == 'f' && events[1].lookup == lookup,
+        "shutdown and then free for the first lookup, though shutdown returns 0");
+    Require(events[2].kind == 'f' && events[2].lookup == second, "only free for a method without shutdown");
+
+    store = X509_STORE_new_nid_postfix();
+    newItemResult = 0;
+    eventCount = 0;
+    Require(X509_STORE_add_lookup_nid_postfix(store, &full) == nullptr, "a failed new_item fails the call");
+    Require(eventCount == 1 && events[0].kind == 'n' && Lookups(store)->num == 0, "the refused lookup is not pushed and free is not called");
+    newItemResult = 1;
+    eventCount = 0;
+    X509_STORE_free_nid_postfix(store);
+    Require(eventCount == 0, "the refused lookup is not freed again");
 }
 
 int allocations = 0;
@@ -140,6 +223,29 @@ void Allocator() {
     X509_STORE_free_nid_postfix(store);
 
     store = X509_STORE_new_nid_postfix();
+    for (std::size_t index = 0; index < 3; ++index) X509_STORE_add_lookup_nid_postfix(store, &methods[index]);
+    LibreSslX509LookupMethod freeOnly{};
+    freeOnly.free = reinterpret_cast<void*>(FreeItem);
+    allocations = frees = eventCount = 0;
+    failRealloc = true;
+    Require(X509_STORE_add_lookup_nid_postfix(store, &freeOnly) == nullptr, "a failed growth fails the call");
+    Require(allocations == 1 && frees == 1 && eventCount == 1 && events[0].kind == 'f' && events[0].storeContext == store,
+        "a failed push frees the new lookup through the free callback");
+    failRealloc = false;
+    X509_STORE_free_nid_postfix(store);
+
+    LibreSslX509LookupMethod refusing{};
+    refusing.newItem = reinterpret_cast<void*>(NewItem);
+    refusing.free = reinterpret_cast<void*>(FreeItem);
+    store = X509_STORE_new_nid_postfix();
+    newItemResult = 0;
+    allocations = frees = eventCount = 0;
+    Require(X509_STORE_add_lookup_nid_postfix(store, &refusing) == nullptr, "a failed new_item fails the call");
+    Require(allocations == 1 && frees == 1 && eventCount == 1 && events[0].kind == 'n', "a failed new_item frees the lookup without the free callback");
+    newItemResult = 1;
+    X509_STORE_free_nid_postfix(store);
+
+    store = X509_STORE_new_nid_postfix();
     allocations = frees = 0;
     RequireThrows([&] { X509_STORE_add_lookup_nid_postfix(store, nullptr); }, "null method");
     Require(allocations == 0 && frees == 0 && Lookups(store)->num == 0, "a refused method allocates nothing");
@@ -167,4 +273,5 @@ int main(int argc, char**) {
     FileMethod();
     AddLookup();
     Unsupported();
+    Callbacks();
 }

@@ -69,6 +69,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
         const bool storesNothing = (packet[2] >> 29u) == 0 || (packet[3] | (static_cast<std::uint64_t>(packet[4]) << 32u)) == 0;
         if (label.has_value() || storesNothing) {
             bumpEpoch(&EpochBumps::drains);
+            ++DrainEpochCounts().interrupts;
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
             const auto localDevice = device.Load();
@@ -280,6 +281,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
         static const bool unlockedDrain = std::getenv("APS5_NO_UNLOCKED_DRAIN") == nullptr && !drainAll;
 
         bumpEpoch(&EpochBumps::drains);
+        ++DrainEpochCounts().packets[header == FlipPacketHeader ? DrainEpochs::Flip : opcode & 0xffu];
         std::shared_ptr<VulkanDevice> draining;
         std::uint64_t epoch = 0;
         {
@@ -345,7 +347,7 @@ bool Driver::enqueueSampleDumpPacket(std::span<const std::uint32_t> packet, std:
     if (!ordered || opcode != 0x46 || queue != 0 || packet.size() < 4 || !Pm4::SampleDump(packet) || !DrawPipeline::Active() || !deferredLabels().labels.empty()) return false;
     const auto address = Pm4::SampleDumpAddress(packet);
     if (address == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), Pm4::SampleDumpBytes, true)) return false;
-    DrawPipeline::Queue0().Enqueue([this, queue, address] {
+    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::SampleDump, [this, queue, address] {
         GuestMemory::SetCurrentPacket(0x46, queue);
         bool wrote = false;
         {
@@ -375,7 +377,7 @@ bool Driver::enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32
         const auto fillBytes = Pm4::DmaBytes(packet);
         const auto pattern = packet[2];
         if (fillAddress % 16 != 0 || fillBytes % 16 != 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(fillAddress), fillBytes, true) || !device.Load()) return false;
-        DrawPipeline::Queue0().Enqueue([this, queue, fillAddress, fillBytes, pattern] {
+        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::DmaFill, [this, queue, fillAddress, fillBytes, pattern] {
             GuestMemory::SetCurrentPacket(0x50, queue);
             if (const auto localDevice = device.Load()) {
                 storeBufferFill(queue, fillAddress, fillBytes, {pattern, pattern, pattern, pattern}, localDevice, false, true);
@@ -395,7 +397,7 @@ bool Driver::enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32
         const auto fillAddress = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u);
         const auto fillBytes = packet[6] & 0x3ffffffu;
         const auto pattern = packet[2];
-        DrawPipeline::Queue0().Enqueue([this, queue, address, bytes = std::move(bytes), gds, metadataFill, fillAddress, fillBytes, pattern] {
+        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::DmaWrite, [this, queue, address, bytes = std::move(bytes), gds, metadataFill, fillAddress, fillBytes, pattern] {
             GuestMemory::SetCurrentPacket(0x50, queue);
             if (gds) {
                 GuestMemory::Write(address, bytes, 1);
@@ -412,7 +414,7 @@ bool Driver::enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32
     if (Pm4::DmaSource(packet) == 0 || Pm4::DmaSource(packet) == 3) Graphics::RequireNoMultisampleTarget(packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u), packet[6] & 0x3ffffffu, "a DMA copy");
     const auto copy = Pm4::DecodeMemoryCopy(packet);
     if (!copy.has_value() || copy->destination % 4 != 0 || copy->bytes % 4 != 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(copy->source), copy->bytes) || !GuestMemory::Accessible(reinterpret_cast<const void*>(copy->destination), copy->bytes, true)) return false;
-    DrawPipeline::Queue0().Enqueue([this, queue, copy = *copy] {
+    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::DmaCopy, [this, queue, copy = *copy] {
         DrawPipeline::Queue0().ReleaseRunningReads();
         GuestMemory::SetCurrentPacket(0x50, queue);
         constexpr std::size_t gpuStoreLimit = 65536;
@@ -512,11 +514,14 @@ bool Driver::enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint
         bytes.assign(stored.begin(), stored.end());
         writes.emplace_back(address, address + bytes.size());
     }
-    if (endOfPipeInterrupt) bumpEpoch(&EpochBumps::drains);
+    if (endOfPipeInterrupt) {
+        bumpEpoch(&EpochBumps::drains);
+        ++DrainEpochCounts().queuedInterrupts;
+    }
     auto stored = bytes;
     auto labelBytes = bytes;
     auto enqueue =[this, queue, opcode, address, bytes = std::move(bytes), interrupt, writes, stored = std::move(stored)]() mutable {
-        DrawPipeline::Queue0().Enqueue([this, queue, opcode, address, bytes = std::move(bytes), interrupt] {
+        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::EndOfPipe, [this, queue, opcode, address, bytes = std::move(bytes), interrupt] {
             GuestMemory::SetCurrentPacket(opcode, queue);
             commitLabel(queue, address, bytes, interrupt);
         }, std::move(writes), address, std::move(stored));

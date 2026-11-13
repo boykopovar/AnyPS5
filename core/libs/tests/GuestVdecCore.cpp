@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -81,6 +82,12 @@ void CheckInstanceSize() {
     Require(sceVdecCoreQueryInstanceSize(&config, &instance, &compute, &reserved) == 0, "instance size");
     Require(instance == 0x40000 && compute == 0x10000 && reserved == 0, "instance, compute and reserved sizes");
     Require(sceVdecCoreQueryInstanceSize(&config, nullptr, nullptr, nullptr) == 0, "instance size with no outputs");
+    errno = 71;
+    Require(sceVdecCoreQueryInstanceSize(reinterpret_cast<const VdecCoreConfigInfo*>(0x10), &instance, &compute, &reserved) == InvalidArgument, "unmapped config");
+    Require(sceVdecCoreQueryInstanceSize(&config, reinterpret_cast<std::uint64_t*>(0x10), &compute, &reserved) == InvalidArgument, "unmapped instance");
+    Require(sceVdecCoreQueryInstanceSize(&config, &instance, reinterpret_cast<std::uint64_t*>(0x10), &reserved) == InvalidArgument, "unmapped compute");
+    Require(sceVdecCoreQueryInstanceSize(&config, &instance, &compute, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument, "unmapped reserved");
+    Require(errno == 71, "errno modified by unmapped instance size query");
 }
 
 void RequireFrameBuffer(const VdecCoreConfigInfo& config, std::uint32_t size, std::uint32_t minCount, std::uint32_t align, std::uint32_t width, std::uint32_t height, const char* message) {
@@ -94,7 +101,10 @@ void RequireFrameBuffer(const VdecCoreConfigInfo& config, std::uint32_t size, st
 }
 
 void CheckFrameBufferInfo() {
-    VdecCoreFrameBufferInfo info{};
+    VdecCoreFrameBufferInfo info;
+    std::memset(&info, 0xab, sizeof(info));
+    VdecCoreFrameBufferInfo untouched;
+    std::memset(&untouched, 0xab, sizeof(untouched));
     VdecCoreConfigInfo config = Config(0, 0, 0, 0);
     Require(sceVdecCoreQueryFrameBufferInfo(nullptr, &info) == InvalidArgument, "frame buffer info without a config");
     Require(sceVdecCoreQueryFrameBufferInfo(&config, nullptr) == InvalidArgument, "frame buffer info without an output");
@@ -105,6 +115,11 @@ void CheckFrameBufferInfo() {
     Require(sceVdecCoreQueryFrameBufferInfo(&config, &info) == InvalidArgument, "DPB count 17");
     config.maxDpbFrameCount = -2;
     Require(sceVdecCoreQueryFrameBufferInfo(&config, &info) == InvalidArgument, "DPB count -2");
+    Require(std::memcmp(&info, &untouched, sizeof(info)) == 0, "a refused frame buffer query leaves the output alone");
+    errno = 71;
+    Require(sceVdecCoreQueryFrameBufferInfo(reinterpret_cast<const VdecCoreConfigInfo*>(0x10), &info) == InvalidArgument, "frame buffer info unmapped config");
+    Require(sceVdecCoreQueryFrameBufferInfo(&config, reinterpret_cast<VdecCoreFrameBufferInfo*>(0x10)) == InvalidArgument, "frame buffer info unmapped output");
+    Require(errno == 71, "frame buffer info preserved errno");
 
     RequireFrameBuffer(Config(0, 0, 0, 0), 0x340000, 17, 256, 1920, 1080, "1920x1080 defaults");
     RequireFrameBuffer(Config(64, 40, 256, 0), 0x10000, 17, 256, 64, 40, "64x40, DPB 0");
@@ -117,6 +132,9 @@ void CheckFrameBufferInfo() {
 
 void CheckComputeResourceInfo() {
     Require(sceVdecCoreQueryComputeResourceInfo(nullptr) == InvalidArgument, "compute resource info without an output");
+    errno = 71;
+    Require(sceVdecCoreQueryComputeResourceInfo(reinterpret_cast<VdecCoreComputeResourceInfo*>(0x10)) == InvalidArgument, "compute resource info with unmapped output");
+    Require(errno == 71, "compute resource info preserved errno");
     VdecCoreComputeResourceInfo info{7, 7, 7, 7};
     Require(sceVdecCoreQueryComputeResourceInfo(&info) == 0, "compute resource info");
     Require(info.memoryType == 0 && info.size == 0x10000 && info.alignment == 0x10000 && info.reserved == 0, "compute resource sizes");
@@ -133,6 +151,9 @@ void CheckCreateAndDelete() {
     config.decoderType = DecoderVdec2;
     config.codecType = 5;
     Require(sceVdecCoreCreateDecoder(&config, &memory, nullptr, &decoder) == InvalidCodecType, "create with codec type 5");
+    config.decoderType = DecoderVdec2Special2 + 1;
+    Require(sceVdecCoreCreateDecoder(&config, &memory, nullptr, &decoder) == InvalidArgument, "the decoder type is checked before the codec type");
+    config.decoderType = DecoderVdec2;
     Require(decoder == &memory, "a refused create leaves the output alone");
 
     config.codecType = CodecAvc;
@@ -423,6 +444,11 @@ void CheckDestinations() {
     const VdecCoreOutputInfo slot = Output(decoder, &unaddressed);
     Require(slot.frameBuffer == slotMemory.data(), "a frame buffer without an address leaves the picture to the slots");
     RequirePicture(slot, 3, SlotSize, 1000 + H264Fixture::DisplayOrderUnits[3], 3000 + H264Fixture::DisplayOrderUnits[3], "a picture in a slot keeps the slot's size, not the caller's");
+    std::vector<std::uint8_t> unsized(SlotSize);
+    VdecCoreFrameBuffer zeroSize{unsized.data(), 0};
+    const VdecCoreOutputInfo sized = Output(decoder, &zeroSize);
+    Require(sized.frameBuffer == unsized.data(), "a caller frame buffer without a size still comes before the slots");
+    RequirePicture(sized, 4, SlotSize, 1000 + H264Fixture::DisplayOrderUnits[4], 3000 + H264Fixture::DisplayOrderUnits[4], "a caller frame buffer without a size takes the decoder's frame buffer size");
     Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete the destination decoder");
 }
 
@@ -448,6 +474,19 @@ void CheckOutputStaysInItsDestination() {
     Require(caller.pictures[0].pts == 1000 + unit && caller.pictures[0].userData == 3000 + unit, "the picture in a caller frame buffer with room for the picture only");
     Require(VisibleHash(tight.data(), caller.framePitch, caller.frameHeight) == VisiblePictureHashes[1] && ExtendsLastRows(tight.data(), caller.framePitch, caller.frameHeight), "picture information too large for the room after a picture overwrote the picture");
     Require(std::all_of(tight.begin() + static_cast<std::ptrdiff_t>(pictureSize), tight.end(), [](std::uint8_t byte) { return byte == Guard; }), "picture information was written into a caller frame buffer with no room for it after the picture");
+    std::vector<std::uint8_t> oneShort(pictureSize + sizeof(VdecCoreHwPictureInfo) - 1, Guard);
+    VdecCoreFrameBuffer shortBuffer{oneShort.data(), oneShort.size()};
+    const VdecCoreOutputInfo noInfo = Output(decoder, &shortBuffer);
+    const auto second = H264Fixture::DisplayOrderUnits[2];
+    Require(noInfo.frameBuffer == oneShort.data() && noInfo.pictures[0].pts == 1000 + second && noInfo.pictures[0].userData == 3000 + second, "the picture in a caller frame buffer one byte short of room for its information");
+    Require(VisibleHash(oneShort.data(), noInfo.framePitch, noInfo.frameHeight) == VisiblePictureHashes[2], "the picture in a caller frame buffer one byte short of room for its information was not decoded into it");
+    Require(std::all_of(oneShort.begin() + static_cast<std::ptrdiff_t>(pictureSize), oneShort.end(), [](std::uint8_t byte) { return byte == Guard; }), "picture information was written into a caller frame buffer one byte short of room for it");
+    std::vector<std::uint8_t> exact(pictureSize + sizeof(VdecCoreHwPictureInfo), Guard);
+    VdecCoreFrameBuffer exactBuffer{exact.data(), exact.size()};
+    const VdecCoreOutputInfo withInfo = Output(decoder, &exactBuffer);
+    Require(withInfo.frameBuffer == exact.data(), "a caller frame buffer with exact room for the picture and its information");
+    const auto third = H264Fixture::DisplayOrderUnits[3];
+    RequirePicture(withInfo, 3, exact.size(), 1000 + third, 3000 + third, "picture information in a caller frame buffer with exact room for it");
     Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete the bounds decoder");
 }
 
@@ -521,5 +560,53 @@ int main() {
     CheckOutputStaysInItsDestination();
     CheckFlushResetAndSync();
     CheckDeleteWithQueuedInput();
+    {
+        VdecCoreConfigInfo config = Config(DecoderVdec2, CodecAvc, 64, 64);
+        VdecCoreMemoryInfo memory{};
+        void* decoder = nullptr;
+        errno = 71;
+        Require(sceVdecCoreCreateDecoder(reinterpret_cast<const VdecCoreConfigInfo*>(static_cast<std::uintptr_t>(0x10)),
+                                         &memory, nullptr, &decoder) == InvalidArgument &&
+                    decoder == nullptr && errno == 71,
+                "unreadable config must fail without changing errno");
+        errno = 71;
+        Require(sceVdecCoreCreateDecoder(&config, &memory, nullptr,
+                                         reinterpret_cast<void**>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument &&
+                    errno == 71,
+                "unwritable decoder output must fail without changing errno");
+        Require(sceVdecCoreCreateDecoder(&config, &memory, nullptr, &decoder) == 0 && decoder != nullptr, "create decoder");
+        errno = 71;
+        Require(sceVdecCoreMapMemoryBlock(decoder,
+                                          reinterpret_cast<const VdecCoreMemoryBlock*>(static_cast<std::uintptr_t>(0x10)),
+                                          1) == InvalidArgument &&
+                    errno == 71,
+                "unreadable memory block must fail without changing errno");
+        VdecCoreMemoryBlock dummyBlock{};
+        errno = 71;
+        Require(sceVdecCoreMapMemoryBlock(decoder, &dummyBlock, 0xFFFFFFFFu) == InvalidArgument && errno == 71,
+                "oversized memory block count must fail without allocating");
+        errno = 71;
+        Require(sceVdecCoreSetDecodeInput(decoder,
+                                          reinterpret_cast<const VdecCoreInputData*>(static_cast<std::uintptr_t>(0x10)),
+                                          nullptr, nullptr) == InvalidArgument &&
+                    errno == 71,
+                "unreadable input must fail without changing errno");
+        VdecCoreInputData badAu{};
+        badAu.auData = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10));
+        badAu.auSize = 16;
+        errno = 71;
+        Require(sceVdecCoreSetDecodeInput(decoder, &badAu, nullptr, nullptr) == InvalidArgument && errno == 71,
+                "unreadable AU data must fail without changing errno");
+        std::array<std::uint8_t, 16> au{};
+        VdecCoreInputData goodAu{};
+        goodAu.auData = au.data();
+        goodAu.auSize = static_cast<std::uint32_t>(au.size());
+        errno = 71;
+        Require(sceVdecCoreSetDecodeInput(decoder, &goodAu, nullptr,
+                                          reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument &&
+                    errno == 71,
+                "unwritable status must fail without changing errno");
+        Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete decoder");
+    }
     return 0;
 }

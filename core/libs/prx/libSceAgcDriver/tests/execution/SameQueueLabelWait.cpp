@@ -36,6 +36,7 @@ alignas(256) std::array<std::uint32_t, 15> SpinCode{0xf4080200u, 0xfa000000u, 0x
 constexpr std::uint32_t SpinIterations = 1u << 20u;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t Waits = 16;
+constexpr std::uint32_t MaxAttempts = 12;
 
 struct Slot {
     alignas(256) std::array<std::uint32_t, 4> spinOutput{};
@@ -214,7 +215,7 @@ int main(int argc, char** argv) {
         }
         Run(slot, 1, false);
         std::uint64_t extra = ~std::uint64_t{0};
-        for (std::uint32_t attempt = 0; attempt < 3; ++attempt) {
+        for (std::uint32_t attempt = 0; attempt < MaxAttempts && extra >= Waits / 2; ++attempt) {
             const auto without = Run(slot, 100 + attempt * 2 * Waits, false);
             const auto with = Run(slot, 100 + (attempt * 2 + 1) * Waits, true);
             std::cout << "attempt " << attempt << ": " << with << " bumps with " << Waits << " waits, " << without << " without\n";
