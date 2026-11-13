@@ -392,7 +392,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKContextGetGeolocationManager` | `GJsL9usTdig` |
 | `WKContextGetGlobalStatistics` | `cLN+-CVotuU` |
 | `WKContextGetNotificationManager` | `ZGEEHCN2FvE` |
-| `WKContextJavaScriptConfigurationFileEnabled` | `efD5N1zaabU` |
 | `WKContextPostMessageToInjectedBundle` | `N93Nb5-YJsw` |
 | `WKContextPreconnectToServer` | `MQI+nL6CJkU` |
 | `WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy` | `FTDt5KHGsco` |
@@ -400,7 +399,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest` | `rAU9SRsnG3E` |
 | `WKContextRegisterURLSchemeAsEmptyDocument` | `ad1-t6xKVtA` |
 | `WKContextRegisterURLSchemeAsSecure` | `6P04fQkPVec` |
-| `WKContextSetAlwaysUsesComplexTextCodePath` | `Y3Z2695WJ8E` |
 | `WKContextSetCanHandleHTTPSServerTrustEvaluation` | `L205EzJvP-Q` |
 | `WKContextSetClient` | `s19dG0nY-dE` |
 | `WKContextSetConnectionClient` | `S4qCVFS2p1Y` |
@@ -408,13 +406,11 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKContextSetDiskCacheSpeculativeValidationEnabled` | `ukKiCHfFJVQ` |
 | `WKContextSetDomainRelaxationForbiddenForURLScheme` | `WxgH0vvD708` |
 | `WKContextSetFontAllowList` | `MhG9BMS7pSQ` |
-| `WKContextSetHTTPPipeliningEnabled` | `JephqDWR6Pc` |
 | `WKContextSetHistoryClient` | `voUp4sJ5mfU` |
 | `WKContextSetInitializationUserDataForInjectedBundle` | `lAIOtUCPCdo` |
 | `WKContextSetInjectedBundleClient` | `VULFTpwEXW0` |
 | `WKContextSetInvalidMessageFunction` | `v+TCMUBUWog` |
 | `WKContextSetJavaScriptConfigurationFileEnabled` | `NkDv+zQRTXw` |
-| `WKContextSetJavaScriptGarbageCollectorTimerEnabled` | `CDa5R6cq2+M` |
 | `WKContextSetMaximumNumberOfProcesses` | `zgt5jBUZjPw` |
 | `WKContextSetMemoryCacheDisabled` | `Gy--AnYjtr8` |
 | `WKContextSetPrewarmsProcessesAutomatically` | `9LzZhiXxOL8` |
@@ -659,11 +655,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKSecurityOriginCreateFromString` | `SfMLraLeAvo` |
 | `WKSendDisplayConfigurationChangedMessageForTesting` | `CQsllLq8d7I` |
 | `WKTextCheckerSetTestingMode` | `uhbwdrVWKnk` |
-| `WKURLRequestCopyFirstPartyForCookies` | `l0Hmd0lFea8` |
-| `WKURLRequestCopyHTTPMethod` | `SxWVkTIB01Y` |
-| `WKURLRequestCopySettingHTTPBody` | `LOgEfXqoLL0` |
-| `WKURLRequestCopyURL` | `n-9+9Xe90t4` |
-| `WKURLRequestCreateWithWKURL` | `TC9965WYLHM` |
 | `WKURLRequestSetDefaultTimeoutInterval` | `YXTIbI-WYtE` |
 | `WKUserContentExtensionStoreCompile` | `6g8aRptom6Y` |
 | `WKUserContentExtensionStoreLookup` | `l8gsEeVfp+s` |
