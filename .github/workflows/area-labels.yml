@@ -9,7 +9,7 @@ permissions: {}
 
 concurrency:
   group: area-labels
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   label:
