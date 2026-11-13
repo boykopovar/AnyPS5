@@ -138,9 +138,14 @@ int APS5_VABI sceCameraGetWhiteBalance(std::int32_t handle, std::uint32_t channe
 }
 
 int APS5_VABI sceCameraGetGamma(std::int32_t handle, std::uint32_t channel, CameraGamma* gamma, void* option) {
+    if (const int error = CheckGet(handle, channel, gamma, option)) return error;
     CameraGamma value{};
     value.value = DEFAULT_GAMMA;
-    return Report(handle, channel, gamma, option, value);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(gamma, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return SCE_CAMERA_ERROR_PARAM;
+    return 0;
 }
 
 int APS5_VABI sceCameraSetAttribute(std::int32_t handle, const CameraAttribute* attribute) {

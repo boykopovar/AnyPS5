@@ -144,8 +144,12 @@ void CheckGetters() {
     std::memset(&gamma, 0x5a, sizeof(gamma));
     Require(sceCameraGetGamma(1, Channel0, &gamma, nullptr) == 0 && gamma.gammaControl == 0 && gamma.value == 4 && gamma.reserved[15] == 0, "the gamma defaults are wrong");
     errno = 71;
-    Require(sceCameraGetGamma(1, Channel0, reinterpret_cast<CameraGamma*>(0x10), nullptr) == ErrorParam, "an unmapped gamma pointer must report PARAM");
-    Require(errno == 71, "errno preserved");
+    Require(sceCameraGetGamma(1, Channel0, reinterpret_cast<CameraGamma*>(0x10), nullptr) == ErrorParam, "an unwritable gamma pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable gamma pointer");
+    alignas(16) CameraGamma gammaBuffer[3];
+    std::memset(gammaBuffer, 0x5a, sizeof(gammaBuffer));
+    Require(sceCameraGetGamma(1, Channel0, &gammaBuffer[1], nullptr) == 0, "reading gamma to buffer failed");
+    Require(gammaBuffer[0].value == 0x5a5a5a5a && gammaBuffer[1].value == 4 && gammaBuffer[2].value == 0x5a5a5a5a, "adjacent memory was corrupted");
     std::uint32_t enable = 9;
     CameraAutoExposureGainTarget target{sizeof(CameraAutoExposureGainTarget), 0x10};
     Require(sceCameraGetAutoExposureGain(1, Channel0, &enable, &target) == 0 && enable == 0, "automatic exposure must be off");
