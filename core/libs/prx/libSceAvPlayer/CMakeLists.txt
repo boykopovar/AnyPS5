@@ -71,6 +71,11 @@ if(BUILD_TESTING)
                 -- "$<TARGET_FILE:avplayer_http_patched_modules_tests>"
                 "$<TARGET_FILE:guest_http_client_tests>" "$<TARGET_FILE:guest_avplayer_tests>")
             set_tests_properties(avplayer_http_patched_modules PROPERTIES TIMEOUT 60)
+            if(MINGW)
+                get_filename_component(httpPatchedRuntimeDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+                set_tests_properties(avplayer_http_patched_modules PROPERTIES
+                    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${httpPatchedRuntimeDirectory}")
+            endif()
         endif()
     endif()
     set_tests_properties(guest_avplayer_paused_first_video PROPERTIES

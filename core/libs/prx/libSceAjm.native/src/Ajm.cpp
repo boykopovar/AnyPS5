@@ -14,6 +14,7 @@ extern "C" {
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -1945,7 +1946,15 @@ extern "C" {
 int APS5_VABI sceAjmInitialize(int64_t reserved, uint32_t* context) {
     (void)reserved;
     if (!context) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    *context = g_nextContext.fetch_add(1, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(g_lock);
+    const uint32_t id = g_nextContext.fetch_add(1, std::memory_order_relaxed);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(context, &id, sizeof(id));
+    errno = savedErrno;
+    if (!copied) {
+        g_nextContext.fetch_sub(1, std::memory_order_relaxed);
+        return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     return 0;
 }
 
