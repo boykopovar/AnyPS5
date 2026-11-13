@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/NativeDepthCapture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "execution/DepthFastClearHarness.hpp"
+#include "NarrowConstantStoreFixture.hpp"
 #define main frameReplayToolMain
 #include "../tools/FrameReplay.cpp"
 #undef main
@@ -457,6 +458,65 @@ void testNativeRepeatFailure() {
     std::printf("native partial upload failure: lookups=%u copy_calls=%u first_upload_waits=%u refused=%u continued=%u active_planes=%zu resident_owners=%zu\n", probe.lookups, probe.calls, probe.completedFirstUploadWaits, probe.refused, continued ? 1u : 0u, static_cast<std::size_t>(active), owners);
     check(active == 0 && owners == 0u, "native restoration failure left an active partial owner graph");
     check(AgcDriver::DriverDetail::DriverTestAccess::Device().get() == device.get(), "native partial upload failure replaced the VulkanDevice object");
+}
+
+void testNativeRepeatPipelines(const std::filesystem::path& directory) {
+    constexpr std::size_t Bytes = 2u << 20u;
+    constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
+    auto* bytes = allocate(Bytes);
+    auto* output = allocate(65536u);
+    const auto begin = address(bytes);
+    std::uintptr_t arena = 0;
+    std::size_t arenaSize = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arena, &arenaSize);
+    FrameCaptureWriter writer(directory);
+    writer.WriteRange(begin, Bytes, FrameRangeKind::Watched, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable | FrameRangeAccess::Gpu);
+    writer.Finish("{\"arena_base\":" + std::to_string(arena) + "}");
+    const FrameCaptureReader reader(directory);
+    const auto skipped = restoreMemory(reader);
+    check(skipped.bytes == 0u, "native warm pipeline fixture skipped guest memory");
+    auto since = watchBaseline(reader, skipped);
+    auto opened = OpenVulkanTestDevice();
+    check(opened != nullptr, "native warm pipeline fixture device unavailable");
+    auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
+    AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
+    const auto graphics = DepthFastClearHarness::Compile(*device);
+    const DepthFastClearHarness::Surface surface{begin, 0u, 0u, false, VK_FORMAT_D16_UNORM};
+    DepthFastClearHarness::DrawOptions options;
+    options.depthWrite = true;
+    options.depthCompare = VK_COMPARE_OP_ALWAYS;
+    options.minDepth = options.maxDepth = 0.25f;
+    check(DepthFastClearHarness::Draw(*device, graphics, surface, options) == Extent.width * Extent.height, "native warm pipeline initial depth draw failed");
+    const auto captured = device->CaptureNativeDepth();
+    check(captured.size() == 1u && !captured.front().depth.empty(), "native warm pipeline fixture did not capture its native plane");
+    const auto destination = address(output);
+    const auto words = std::span(NarrowConstantStoreFixture::Code);
+    const std::array<std::uint32_t, 2> user{static_cast<std::uint32_t>(destination), static_cast<std::uint32_t>(destination >> 32u)};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{address(words.data()), std::as_bytes(words)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{NarrowConstantStoreFixture::Threads, 1u, 1u}, 0u, {false, false, false}, false, 1u, {}};
+    ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, address(words.data()), words, 0u, {}}, {32u, 0u, user, compute, std::nullopt, std::nullopt, memory}, device->Target(), {0u, 0u, 0u, 128u}};
+    request.useCache = false;
+    const auto shader = ShaderRecompiler::Recompile(request);
+    const auto execute = [&] {
+        std::fill_n(output, NarrowConstantStoreFixture::Threads * NarrowConstantStoreFixture::LaneBytes, std::byte{NarrowConstantStoreFixture::Fill});
+        device->Dispatch(shader, 1u, 1u, 1u, {}, request.shader.codeAddress);
+        device->WaitIdle();
+        for (std::size_t offset = 0u; offset < NarrowConstantStoreFixture::Threads * NarrowConstantStoreFixture::LaneBytes; ++offset) check(output[offset] == std::byte{NarrowConstantStoreFixture::ExpectedLane[offset % NarrowConstantStoreFixture::LaneBytes]}, "native warm pipeline dispatch did not perform the real expected stores");
+    };
+    execute();
+    device->WaitForPipelineJournalReplay();
+    const auto warmed = device->ComputePipelinesCreated();
+    check(warmed != 0u && device->HasComputePipeline(shader), "native warm pipeline fixture did not build and retain its actual compute operation");
+    for (unsigned pass = 1u; pass < 3u; ++pass) {
+        options.minDepth = options.maxDepth = 0.75f;
+        check(DepthFastClearHarness::Draw(*device, graphics, surface, options) == Extent.width * Extent.height, "native warm pipeline window mutation failed");
+        static_cast<void>(resetMemory(reader, skipped, since, ResetFault::None, true, &captured));
+        check(AgcDriver::DriverDetail::DriverTestAccess::Device().get() == device.get() && device->HasComputePipeline(shader) && device->ComputePipelinesCreated() == warmed, "native repeated reset discarded or rebuilt a warmed compute pipeline");
+        checkNativeRepeatContents(captured, device->CaptureNativeDepth());
+        execute();
+        check(device->HasComputePipeline(shader) && device->ComputePipelinesCreated() == warmed, "repeating the warmed compute operation after native reset rebuilt its pipeline");
+        std::printf("native warm pipeline pass %u: retained=1 created=%llu warmed=%llu\n", pass + 1u, static_cast<unsigned long long>(device->ComputePipelinesCreated()), static_cast<unsigned long long>(warmed));
+    }
 }
 
 void testMemoryOrder(const std::filesystem::path& directory) {
@@ -1832,7 +1892,8 @@ int main(int argc, char** argv) {
             writeInspectionCapture(directory);
             return 0;
         }
-        if (mode == "native_repeat_failure") testNativeRepeatFailure();
+        if (mode == "native_repeat_pipelines") testNativeRepeatPipelines(directory);
+        else if (mode == "native_repeat_failure") testNativeRepeatFailure();
         else if (mode == "native_repeat_preflight") testNativeRepeatPreflight(directory);
         else if (mode == "native_repeat_stored_owner") testNativeRetiredStoredOwner(directory);
         else if (mode == "native_repeat_state" || mode == "native_repeat_clean" || mode == "native_repeat_companions") testNativeRepeat(directory, mode);
