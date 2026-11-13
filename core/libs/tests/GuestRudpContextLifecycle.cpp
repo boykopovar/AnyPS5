@@ -21,9 +21,9 @@ static void APS5_VABI Handler(int, int, int, void*) {}
 static void CheckOptions(int context) {
     constexpr int invalidArgument = static_cast<int>(0x80770004u);
     constexpr int invalidOption = static_cast<int>(0x80770005u);
-    constexpr std::array<std::pair<int, std::uint32_t>, 16> defaults{{
+    constexpr std::array<std::pair<int, std::uint32_t>, 17> defaults{{
         {1, 1346}, {2, 65536}, {3, 65536}, {4, 0}, {5, 1}, {6, 1}, {7, 1}, {8, 0},
-        {9, 60000}, {10, 0}, {11, 30}, {15, 0}, {16, 0}, {17, 0}, {18, 0}, {19, 0},
+        {9, 60000}, {10, 0}, {11, 30}, {13, 10}, {15, 0}, {16, 0}, {17, 0}, {18, 0}, {19, 20000},
     }};
     int other = -1;
     Require(sceRudpCreateContext(Handler, nullptr, &other) == 0);
@@ -50,6 +50,7 @@ static void CheckOptions(int context) {
             for (auto byte : buffer) Require(byte == 0xa5);
         }
         Require(sceRudpSetOption(context, option, nullptr, sizeof(result)) == invalidArgument);
+        Require(sceRudpSetOption(context, option, reinterpret_cast<const void*>(0x10), sizeof(result)) == invalidArgument);
         Require(sceRudpGetOption(context, option, nullptr, sizeof(result)) == invalidArgument);
         Require(sceRudpGetOption(context, option, reinterpret_cast<void*>(0x10), sizeof(result)) == invalidArgument);
         Require(sceRudpGetOption(context, option, &result, sizeof(result)) == 0);
@@ -61,36 +62,29 @@ static void CheckOptions(int context) {
         Require(sceRudpGetOption(context, option, buffer.data() + 1, 4) == invalidOption);
         for (auto byte : buffer) Require(byte == 0xa5);
     }
-    for (int option : {12, 13, 14}) {
-        std::uint32_t value = 0xa5a5a5a5u;
+    std::uint32_t value = 0;
+    Require(sceRudpGetOption(context, 12, &value, sizeof(value)) == 0 && value == 1);
+    for (const std::uint32_t input : {0u, 1u, 2u, 0x100u, 0x10000u, 0x80000000u, 0xffffffffu}) {
+        Require(sceRudpSetOption(context, 12, &input, sizeof(input)) == 0);
+        Require(sceRudpGetOption(context, 12, &value, sizeof(value)) == 0 && value == (input != 0 ? 1u : 0u));
+        Require(sceRudpGetOption(other, 12, &value, sizeof(value)) == 0 && value == 1);
+    }
+    for (const std::uint32_t length : {0u, 1u, 3u, 5u, 8u, std::numeric_limits<std::uint32_t>::max()}) {
+        Require(sceRudpSetOption(context, 12, &value, length) == invalidArgument);
+        Require(sceRudpGetOption(context, 12, &value, length) == invalidArgument);
+        Require(sceRudpSetOption(context, 14, &value, length) == invalidOption);
+        Require(sceRudpSetOption(context, 14, nullptr, length) == invalidArgument);
+    }
+    Require(sceRudpSetOption(context, 12, nullptr, 4) == invalidArgument);
+    Require(sceRudpGetOption(context, 12, nullptr, 4) == invalidArgument);
+    Require(sceRudpSetOption(context, 14, &value, 4) == invalidOption);
+    Require(sceRudpSetOption(context, 14, nullptr, 4) == invalidArgument);
+    for (int current : {context, other}) {
+        value = 0xa5a5a5a5u;
         bool threw = false;
-        try {
-            sceRudpGetOption(context, option, &value, sizeof(value));
-
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
+        try { sceRudpGetOption(current, 14, &value, sizeof(value)); }
+        catch (const std::runtime_error&) { threw = true; }
         Require(threw && value == 0xa5a5a5a5u);
-        for (std::uint32_t input : {0u, 1u, 0x80000000u, 0xffffffffu}) {
-            buffer.fill(0xa5);
-            std::memcpy(buffer.data() + 1, &input, sizeof(input));
-            Require(sceRudpSetOption(context, option, buffer.data() + 1, sizeof(input)) == 0);
-            Require(buffer.front() == 0xa5 && buffer.back() == 0xa5);
-            for (int current : {context, other}) {
-                threw = false;
-                try {
-                    sceRudpGetOption(current, option, &value, sizeof(value));
-
-                } catch (const std::runtime_error&) {
-                    threw = true;
-                }
-                Require(threw && value == 0xa5a5a5a5u);
-            }
-        }
-        for (std::uint32_t length : {0u, 1u, 3u, 5u, 8u, std::numeric_limits<std::uint32_t>::max()}) {
-            Require(sceRudpSetOption(context, option, &value, length) == invalidArgument);
-        }
-        Require(sceRudpSetOption(context, option, nullptr, sizeof(value)) == invalidArgument);
     }
     Require(sceRudpTerminate(other) == 0);
 }

@@ -1203,6 +1203,10 @@ static void CheckErfConsoleBits() {
         Require(std::bit_cast<std::uint64_t>(erfc_nid_postfix(x)) == item.complement);
         Require(errno == (item.complementErrno != 0 ? item.complementErrno : 1234));
     }
+    for (const std::uint64_t input : {0x403c000000000000ull, 0x4060000000000000ull, 0x7fefffffffffffffull}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint64_t>(erfc_nid_postfix(std::bit_cast<double>(input))) == 0 && std::fetestexcept(FE_UNDERFLOW) == 0);
+    }
 }
 
 static void CheckLog10EdgeFlags() {
@@ -2254,6 +2258,45 @@ static void CheckAtanl() {
     }
     std::feclearexcept(FE_ALL_EXCEPT);
     Require(ExtendedBitsAt53Bits(atanl_nid_postfix, 0, 0x0000, 0, 0x0000) && std::fetestexcept(FE_INEXACT) == 0);
+}
+
+static void CheckExp2l() {
+    const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
+        {0, 0x0000, 0x8000000000000000ull, 0x3fff}, {0, 0x8000, 0x8000000000000000ull, 0x3fff},
+        {0x8000000000000000ull, 0x3fbd, 0x8000000000000000ull, 0x3fff}, {0x8000000000000000ull, 0x3fbe, 0x8000000000000000ull, 0x3fff},
+        {0x8000000000000000ull, 0x3ffe, 0xb504f333f9de6484ull, 0x3fff}, {0x8000000000000000ull, 0xbfff, 0x8000000000000000ull, 0x3ffe},
+        {0xa000000000000000ull, 0x4000, 0xb504f333f9de6484ull, 0x4001}, {0xc90fdaa22168c235ull, 0x4000, 0x8d331bf3337c1a6eull, 0x4002},
+        {0x8000000000000000ull, 0x400c, 0x8000000000000000ull, 0x5fff}, {0xfffe000000000000ull, 0x400c, 0xb504f333f9de6484ull, 0x7ffe},
+        {0x8000000000000000ull, 0x400d, 0x8000000000000000ull, 0x7fff}, {0x8000000000000000ull, 0xc00c, 0x8000000000000000ull, 0x1fff},
+        {0xfff8000000000000ull, 0xc00c, 0x8000000000000000ull, 0x0001}, {0x8000000000000000ull, 0xc00d, 0x2000000000000000ull, 0x0000},
+        {0x807b000000000000ull, 0xc00d, 0x0000000000000001ull, 0x0000}, {0x807c000000000000ull, 0xc00d, 0, 0x0000},
+        {0x807e000000000000ull, 0xc00d, 0, 0x0000}, {0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, 0x7fff},
+        {0x8000000000000000ull, 0xffff, 0, 0x0000}, {0xc000000000000000ull, 0x7fff, 0xc000000000000000ull, 0x7fff},
+        {0xc11f6531eb66d9a7ull, 0xbffd, 0xc51a6af3304157efull, 0x3ffe}, {0xf30567547a34c162ull, 0x3ffe, 0xf728f2c7a229ee69ull, 0x3fff},
+        {0x9e0edcc1206967ceull, 0x4001, 0xf57475578cb79c00ull, 0x4003}, {0xa42a5f87d0a7deddull, 0x3ffd, 0x9fdb53724de13c8full, 0x3fff},
+    };
+    for (const auto& test : cases) {
+        *__error_nid_postfix() = 12345;
+        const long double result = exp2l_nid_postfix(MakeExtended(test.inputMantissa, test.inputSignExponent));
+        if (!ExtendedBits(result, test.outputMantissa, test.outputSignExponent) || *__error_nid_postfix() != 12345) {
+            std::fprintf(stderr, "Guest exp2l failed for %016llx:%04x\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent);
+            std::abort();
+        }
+    }
+    *__error_nid_postfix() = 0;
+    const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } at53Bits[] = {
+        {0xc000000000000000ull, 0x3ffe, 0xd744ea8956fc0000ull, 0x3fff}, {0x8000000000000000ull, 0x3ffe, 0xb504f2289304d000ull, 0x3fff},
+        {0xc90fdaa22168c235ull, 0x4000, 0x8c3344cf06c56800ull, 0x4002}, {0xc11f6531eb66d9a7ull, 0xbffd, 0xc51a6b38147d1000ull, 0x3ffe},
+        {0xf30567547a34c162ull, 0x3ffe, 0xf72892019972a000ull, 0x3fff}, {0x9e0edcc1206967ceull, 0x4001, 0xe6d5b29a7f6f4800ull, 0x4003},
+        {0xa42a5f87d0a7deddull, 0x3ffd, 0x9fdb536691df9800ull, 0x3fff}, {0xfffe000000000000ull, 0x400c, 0xb504f51e61c60000ull, 0x7ffe},
+        {0xfff8000000000000ull, 0xc00c, 0x7fecbd8f80fea800ull, 0x0000},
+    };
+    for (const auto& test : at53Bits) {
+        if (!ExtendedBitsAt53Bits(exp2l_nid_postfix, test.inputMantissa, test.inputSignExponent, test.outputMantissa, test.outputSignExponent)) {
+            std::fprintf(stderr, "Guest exp2l at 53 bits failed for %016llx:%04x\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent);
+            std::abort();
+        }
+    }
 }
 
 static void CheckCbrtfConsoleBits() {
@@ -3325,6 +3368,20 @@ static void CheckLongDoubleFunctions() {
     const float positiveGammaUnderflow = tgammaf_nid_postfix(-4261.2f);
     Require(negativeGammaUnderflow == 0.0f && std::signbit(negativeGammaUnderflow));
     Require(positiveGammaUnderflow == 0.0f && !std::signbit(positiveGammaUnderflow));
+    for (const float x : {171.63002f, 200.0f, 3.0e38f}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isinf(tgammaf_nid_postfix(x)) && std::fetestexcept(FE_DIVBYZERO) != 0 && std::fetestexcept(FE_OVERFLOW) == 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::isinf(tgammaf_nid_postfix(171.62999f)) && std::fetestexcept(FE_OVERFLOW) != 0 && std::fetestexcept(FE_DIVBYZERO) == 0);
+    for (const float x : {-190.00002f, -191.5f, -4261.2f}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(tgammaf_nid_postfix(x) == 0.0f && std::fetestexcept(FE_UNDERFLOW) == 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(tgammaf_nid_postfix(-189.5f) == 0.0f && std::fetestexcept(FE_UNDERFLOW) != 0);
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::isnan(tgammaf_nid_postfix(std::numeric_limits<float>::quiet_NaN())) && std::fetestexcept(FE_INVALID) == 0);
     for (const float x : {0.0f, -0.0f, -INFINITY, INFINITY, 40.0f, 1.0e5f, 3.0e38f, -4261.2f, 0.5f}) {
         errno = 7;
         static_cast<void>(tgammaf_nid_postfix(x));
@@ -3961,6 +4018,7 @@ int main() {
     CheckExtendedMath();
     CheckAcosl();
     CheckAtanl();
+    CheckExp2l();
     CheckTrigfConsoleBits();
     Require(atof_nid_postfix(" -12.5tail") == -12.5);
     char* end = nullptr;

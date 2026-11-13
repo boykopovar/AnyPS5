@@ -271,12 +271,34 @@ constexpr uint8_t SJIS_X0208_TAG[8] = {'S', 'J', 'I', 'S', 'X', '2', '0', 0};
 constexpr uint8_t EUC_JIS2004_TAG[8] = {'E', 'U', 'C', 'J', 'I', 'S', '0', '4'};
 constexpr uint8_t SJIS2004_TAG[8] = {'S', 'J', 'I', 'S', '2', '0', '0', '4'};
 
+bool readGuest(const void* source, void* destination, std::size_t bytes) {
+    if (!source) return false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool writeGuest(void* destination, const void* source, std::size_t bytes) {
+    if (!destination) return false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+void* initSheetTag(void* sheet, const uint8_t (&tag)[8]) {
+    return writeGuest(sheet, tag, sizeof(tag)) ? sheet : nullptr;
+}
+
 bool hasTag(const void* profile, const uint8_t (&tag)[8]) {
-    return profile != nullptr && std::memcmp(profile, tag, sizeof(tag)) == 0;
+    uint8_t bytes[sizeof(tag)]{};
+    return readGuest(profile, bytes, sizeof(bytes)) && std::memcmp(bytes, tag, sizeof(tag)) == 0;
 }
 
 bool hasSheetTag(const void* profile, const uint8_t (&tag)[8]) {
-    return profile != nullptr && std::memcmp(profile, tag, sizeof(tag) - 1) == 0;
+    uint8_t bytes[sizeof(tag)]{};
+    return readGuest(profile, bytes, sizeof(bytes) - 1) && std::memcmp(bytes, tag, sizeof(tag) - 1) == 0;
 }
 
 bool isEucJpX0208(const void* profile) {
@@ -360,18 +382,20 @@ constexpr uint32_t GBK_UDA_DECODED_FIRST = 0xE234;
 constexpr uint32_t GB_UDA_LAST = 0xE765;
 
 bool gbUdaMapped(const void* profile) {
-    return static_cast<const uint8_t*>(profile)[GB_UDA_BYTE] != 0;
+    uint8_t uda = 0;
+    return readGuest(static_cast<const uint8_t*>(profile) + GB_UDA_BYTE, &uda, sizeof(uda)) && uda != 0;
 }
 
 bool isGbUda(uint32_t code) {
     return code >= GB_UDA_FIRST && code <= GB_UDA_LAST;
 }
 
-void initGbSheet(void* sheet, const uint8_t (&tag)[8], uint8_t range, uint8_t uda) {
-    auto* bytes = static_cast<uint8_t*>(sheet);
+bool initGbSheet(void* sheet, const uint8_t (&tag)[8], uint8_t range, uint8_t uda) {
+    uint8_t bytes[10]{};
     std::memcpy(bytes, tag, sizeof(tag));
     bytes[GB_RANGE_BYTE] = range;
     bytes[GB_UDA_BYTE] = uda;
+    return writeGuest(sheet, bytes, sizeof(bytes));
 }
 
 uint32_t gbkUserDefined(uint32_t cell);
@@ -535,7 +559,10 @@ const Gb18030Range* gb18030Range(int value) {
 }
 
 bool gb18030FourByteMapped(const void* profile, const Gb18030Tables& tables, uint32_t code) {
-    const uint8_t stored = static_cast<const uint8_t*>(profile)[GB_RANGE_BYTE];
+    uint8_t stored = 0;
+    if (!readGuest(static_cast<const uint8_t*>(profile) + GB_RANGE_BYTE, &stored, sizeof(stored))) {
+        throw std::runtime_error("GB 18030 profile: the sheet holds no valid four-byte range");
+    }
     const Gb18030Range* range = gb18030Range(stored);
     if (!range) throw std::runtime_error("GB 18030 profile: the sheet holds no valid four-byte range");
     if (code <= 0xFFFF) return range->fourByteBmp;
@@ -684,8 +711,7 @@ bool isSjisSingle(uint8_t byte) {
 
 const void* contextProfile(const void* context) {
     const void* profile = nullptr;
-    std::memcpy(&profile, context, sizeof(profile));
-    return profile;
+    return readGuest(context, &profile, sizeof(profile)) ? profile : nullptr;
 }
 
 constexpr uint8_t EUC_KR_TAG[8] = {'E', 'U', 'C', 'K', 'R', '9', '4', 0};
@@ -722,7 +748,8 @@ uint8_t sbcProfileIndex(const void* sbcs) {
 
 const uint8_t* sheetSbcs(const void* profile) {
     if (!isSheet(profile)) return nullptr;
-    const uint8_t index = static_cast<const uint8_t*>(profile)[7];
+    uint8_t index = 0;
+    if (!readGuest(static_cast<const uint8_t*>(profile) + 7, &index, sizeof(index))) return nullptr;
     return index == 0 || index > std::size(PROFILES) ? nullptr : PROFILES[index - 1];
 }
 
@@ -735,8 +762,7 @@ int setSheetSbcs(void* sheet, const void* sbcs, bool family, std::initializer_li
     if (std::find(accepted.begin(), accepted.end(), static_cast<const uint8_t*>(sbcs)) == accepted.end()) return CES_ERROR_INVALID_PROFILE;
     const uint8_t index = sbcProfileIndex(sbcs);
     if (index == 0) return CES_ERROR_INVALID_PROFILE;
-    static_cast<uint8_t*>(sheet)[7] = index;
-    return 0;
+    return writeGuest(static_cast<uint8_t*>(sheet) + 7, &index, sizeof(index)) ? 0 : CES_ERROR_INVALID_PROFILE;
 }
 
 struct Replacement {
@@ -2173,28 +2199,25 @@ const uint8_t* APS5_VABI sceCesRefersUcsProfileKsX1003Tilde0x7e(void) {
 }
 
 void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, SJIS_TAG, sizeof(SJIS_TAG));
-    return sheet;
+    return initSheetTag(sheet, SJIS_TAG);
 }
 
 void* APS5_VABI sceCesUcsProfileInitSJis1997X0208(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, SJIS_X0208_TAG, sizeof(SJIS_X0208_TAG));
-    return sheet;
+    return initSheetTag(sheet, SJIS_X0208_TAG);
 }
 
 int APS5_VABI sceCesMbcsUcsContextInit(void* context, const void* profile) {
     if (!context || !profile) return CES_ERROR_INVALID_PARAMETER;
-    std::memcpy(context, &profile, sizeof(profile));
+    if (!writeGuest(context, &profile, sizeof(profile))) return CES_ERROR_INVALID_PARAMETER;
     setContextReplacementEntry(context, Replacement{});
     return 0;
 }
 
 int APS5_VABI sceCesMbcsUcsContextInitCopy(void* context, const void* source) {
     if (!context || !source) return CES_ERROR_INVALID_PARAMETER;
-    const void* profile = contextProfile(source);
-    std::memcpy(context, &profile, sizeof(profile));
+    const void* profile = nullptr;
+    if (!readGuest(source, &profile, sizeof(profile))) return CES_ERROR_INVALID_PARAMETER;
+    if (!writeGuest(context, &profile, sizeof(profile))) return CES_ERROR_INVALID_PARAMETER;
     setContextReplacementEntry(context, contextReplacement(source));
     return 0;
 }
@@ -2251,51 +2274,40 @@ int APS5_VABI sceCesIso2022JpUcsProfileSetSbcs(void* p, const void* sbcs) {
         errno = savedErrno;
         return CES_ERROR_INVALID_PROFILE;
     }
-    static_cast<uint8_t*>(p)[8] = index;
+    if (!writeGuest(static_cast<uint8_t*>(p) + 8, &index, sizeof(index))) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_PROFILE;
+    }
     errno = savedErrno;
     return 0;
 }
 
 void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_JP_TAG, sizeof(EUC_JP_TAG));
-    return sheet;
+    return initSheetTag(sheet, EUC_JP_TAG);
 }
 
 void* APS5_VABI sceCesUcsProfileInitEucJpX0208(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_JP_X0208_TAG, sizeof(EUC_JP_X0208_TAG));
-    return sheet;
+    return initSheetTag(sheet, EUC_JP_X0208_TAG);
 }
 
 void* APS5_VABI sceCesUcsProfileInitEucJpX0208Ss2(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_JP_X0208_SS2_TAG, sizeof(EUC_JP_X0208_SS2_TAG));
-    return sheet;
+    return initSheetTag(sheet, EUC_JP_X0208_SS2_TAG);
 }
 
 void* APS5_VABI sceCesUcsProfileInitEucJpX0208Ss2Ss3(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_JP_X0208_SS3_TAG, sizeof(EUC_JP_X0208_SS3_TAG));
-    return sheet;
+    return initSheetTag(sheet, EUC_JP_X0208_SS3_TAG);
 }
 
 void* APS5_VABI sceCesUcsProfileInitEucKr(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_KR_TAG, sizeof(EUC_KR_TAG));
-    return sheet;
+    return initSheetTag(sheet, EUC_KR_TAG);
 }
 
 void* APS5_VABI sceCesUcsProfileInitUhc(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, UHC_TAG, sizeof(UHC_TAG));
-    return sheet;
+    return initSheetTag(sheet, UHC_TAG);
 }
 
 void* APS5_VABI sceCesUcsProfileInitBig5Cp950(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, BIG5_TAG, sizeof(BIG5_TAG));
-    return sheet;
+    return initSheetTag(sheet, BIG5_TAG);
 }
 
 int APS5_VABI sceCesUtf8StrToMbcsStr(void* context, const uint8_t* utf8, uint32_t utf8max, uint32_t* utf8Len, uint8_t* mbcs, uint32_t mbcsMax, uint32_t* mbcsLen) {
@@ -2780,54 +2792,41 @@ int APS5_VABI sceCesMbcsStrGetUtf32Len(void* context, const uint8_t* mbcs, uint3
 }
 
 void* APS5_VABI sceCesUcsProfileInitEucCnGb2312(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_CN_TAG, sizeof(EUC_CN_TAG));
-    return sheet;
+    return initSheetTag(sheet, EUC_CN_TAG);
 }
 
 void* APS5_VABI sceCesUcsProfileInitGbkCp936(void* sheet) {
-    if (!sheet) return nullptr;
-    initGbSheet(sheet, GBK_TAG, 0, 0);
-    return sheet;
+    return initGbSheet(sheet, GBK_TAG, 0, 0) ? sheet : nullptr;
 }
 
 void* APS5_VABI sceCesUcsProfileInitGb18030_2000(void* sheet) {
-    if (!sheet) return nullptr;
-    initGbSheet(sheet, GB18030_2000_TAG, GB18030_2000.defaultRange, 1);
-    return sheet;
+    return initGbSheet(sheet, GB18030_2000_TAG, GB18030_2000.defaultRange, 1) ? sheet : nullptr;
 }
 
 void* APS5_VABI sceCesUcsProfileInitGb18030_2005(void* sheet) {
-    if (!sheet) return nullptr;
-    initGbSheet(sheet, GB18030_2005_TAG, GB18030_2005.defaultRange, 1);
-    return sheet;
+    return initGbSheet(sheet, GB18030_2005_TAG, GB18030_2005.defaultRange, 1) ? sheet : nullptr;
 }
 
 void* APS5_VABI sceCesUcsProfileInitGb18030_2022(void* sheet) {
-    const int savedErrno = errno;
-    if (!sheet) {
-        errno = savedErrno;
-        return nullptr;
-    }
-    initGbSheet(sheet, GB18030_2022_TAG, GB18030_2022.defaultRange, 1);
-    errno = savedErrno;
-    return sheet;
+    return initGbSheet(sheet, GB18030_2022_TAG, GB18030_2022.defaultRange, 1) ? sheet : nullptr;
 }
 
 int APS5_VABI sceCesGbUcsProfileSet4ByteCharRange(void* profile, int range) {
-    if (!profile || isEucCn(profile) || isGbk(profile)) return CES_ERROR_INVALID_PROFILE;
+    uint8_t header[8]{};
+    if (!readGuest(profile, header, sizeof(header)) || isEucCn(profile) || isGbk(profile)) return CES_ERROR_INVALID_PROFILE;
     if (!isGb18030(profile)) throw std::runtime_error("sceCesGbUcsProfileSet4ByteCharRange: a profile other than the GB 18030, GBK and EUC-CN ones is not implemented");
     if (!gb18030Range(range)) return CES_ERROR_INVALID_PARAMETER;
-    static_cast<uint8_t*>(profile)[GB_RANGE_BYTE] = static_cast<uint8_t>(range);
-    return 0;
+    const uint8_t value = static_cast<uint8_t>(range);
+    return writeGuest(static_cast<uint8_t*>(profile) + GB_RANGE_BYTE, &value, sizeof(value)) ? 0 : CES_ERROR_INVALID_PROFILE;
 }
 
 int APS5_VABI sceCesGbUcsProfileSetUdaMapping(void* profile, int udaMapping) {
-    if (!profile || isEucCn(profile)) return CES_ERROR_INVALID_PROFILE;
+    uint8_t header[8]{};
+    if (!readGuest(profile, header, sizeof(header)) || isEucCn(profile)) return CES_ERROR_INVALID_PROFILE;
     if (!isGb(profile)) throw std::runtime_error("sceCesGbUcsProfileSetUdaMapping: a profile other than the GB 18030, GBK and EUC-CN ones is not implemented");
     if (udaMapping != 0 && udaMapping != 1) return CES_ERROR_INVALID_PARAMETER;
-    static_cast<uint8_t*>(profile)[GB_UDA_BYTE] = static_cast<uint8_t>(udaMapping);
-    return 0;
+    const uint8_t value = static_cast<uint8_t>(udaMapping);
+    return writeGuest(static_cast<uint8_t*>(profile) + GB_UDA_BYTE, &value, sizeof(value)) ? 0 : CES_ERROR_INVALID_PROFILE;
 }
 
 int APS5_VABI sceCesEucCnToUcs2(const void* profile, const uint8_t* eucBuffer, uint32_t eucMax, uint32_t* eucSize, uint16_t* ucs2) {
@@ -3153,19 +3152,37 @@ void* APS5_VABI sceCesUcsProfileInitSJis2004X0213(void* sheet) {
 
 int APS5_VABI sceCesJiscsToUcs(const void* profile, uint32_t jiscs, uint32_t* ucs) {
     if (!isMeasuredJiscs(jiscs)) throw std::runtime_error("sceCesJiscsToUcs: code " + hexCode(jiscs) + " is neither a single byte, a native JIS sequence, nor a row and cell 0x21-0x7E of planes 0-2; its form is not implemented");
-    if (ucs) *ucs = 0;
+    if (ucs) {
+        const uint32_t zero = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(ucs, &zero, sizeof(zero))) {
+            errno = savedErrno;
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+    }
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isJiscsProfile(profile)) throw std::runtime_error("sceCesJiscsToUcs: a profile other than the eight JIS profiles is not implemented");
     uint32_t code = 0;
     const int result = jiscsToUnicode(profile, jiscs, code);
     if (result != 0) return result;
     if (!ucs) return CES_ERROR_INVALID_DST_BUFFER;
-    *ucs = code;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(ucs, &code, sizeof(code))) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_DST_BUFFER;
+    }
     return 0;
 }
 
 int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jiscs) {
-    if (jiscs) *jiscs = 0;
+    if (jiscs) {
+        const uint32_t zero = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(jiscs, &zero, sizeof(zero))) {
+            errno = savedErrno;
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+    }
     if (!isScalar(ucs)) return CES_ERROR_ILLEGAL_CODE;
     if (ucs > 0xFFFF && ucs >> 16 != 2) throw std::runtime_error("sceCesUcsToJiscs: code point " + hexCode(ucs) + " outside the BMP and plane 2 is not implemented");
     if (!profile) return CES_ERROR_INVALID_PROFILE;
@@ -3175,43 +3192,41 @@ int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jisc
     const int result = unicodeToJiscs(profile, ucs, code);
     if (result != 0) return result;
     if (!jiscs) return CES_ERROR_INVALID_DST_BUFFER;
-    *jiscs = code;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(jiscs, &code, sizeof(code))) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_DST_BUFFER;
+    }
     return 0;
 }
 
 void* APS5_VABI sceCesUcsProfileInitIso2022JpRfc1468(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, ISO2022_RFC1468_TAG, sizeof(ISO2022_RFC1468_TAG));
-    return sheet;
+    return initSheetTag(sheet, ISO2022_RFC1468_TAG);
 }
 
 void* APS5_VABI sceCesUcsProfileInitIso2022JpCp50221(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, ISO2022_CP50221_TAG, sizeof(ISO2022_CP50221_TAG));
-    return sheet;
+    return initSheetTag(sheet, ISO2022_CP50221_TAG);
 }
 
 void* APS5_VABI sceCesUcsProfileInitIso2022JpCp50222(void* sheet) {
-    if (!sheet) return nullptr;
-    std::memcpy(sheet, ISO2022_CP50222_TAG, sizeof(ISO2022_CP50222_TAG));
-    return sheet;
+    return initSheetTag(sheet, ISO2022_CP50222_TAG);
 }
 
 int APS5_VABI sceCesIso2022UcsContextInit(void* context, const void* profile) {
     if (!context) return CES_ERROR_INVALID_PARAMETER;
     if (!profile) {
-        std::memset(context, 0, 0x100);
+        uint8_t zeros[0x100]{};
+        writeGuest(context, zeros, sizeof(zeros));
         return CES_ERROR_INVALID_PARAMETER;
     }
-    std::memcpy(context, &profile, sizeof(profile));
-    return 0;
+    return writeGuest(context, &profile, sizeof(profile)) ? 0 : CES_ERROR_INVALID_PARAMETER;
 }
 
 int APS5_VABI sceCesIso2022UcsContextInitCopy(void* context, const void* source) {
     if (!context || !source) return CES_ERROR_INVALID_PARAMETER;
-    const void* profile = contextProfile(source);
-    std::memcpy(context, &profile, sizeof(profile));
-    return 0;
+    const void* profile = nullptr;
+    if (!readGuest(source, &profile, sizeof(profile))) return CES_ERROR_INVALID_PARAMETER;
+    return writeGuest(context, &profile, sizeof(profile)) ? 0 : CES_ERROR_INVALID_PARAMETER;
 }
 
 int APS5_VABI sceCesUtf8StrToIso2022Str(void* context, const uint8_t* utf8, uint32_t utf8max, uint32_t* utf8Len, uint8_t* iso, uint32_t isoMax, uint32_t* isoLen) {

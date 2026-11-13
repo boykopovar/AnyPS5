@@ -6,16 +6,29 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
-extern "C" {
+namespace {
 
-int APS5_VABI sceTextToSpeechCancelImpl() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+constexpr int SCE_TEXT_TO_SPEECH_ERROR_INVALID_ID = static_cast<int>(0x814900FF);
+constexpr int SCE_TEXT_TO_SPEECH_ERROR_NOT_INITIALIZED = static_cast<int>(0x81490020);
+
+int checkId(std::uint32_t id) {
+    return id > 2 ? SCE_TEXT_TO_SPEECH_ERROR_INVALID_ID : SCE_TEXT_TO_SPEECH_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI sceTextToSpeechCloseImpl() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int checkPlayingId(std::uint32_t id) {
+    return id - 3 < 0xFFFFFFFEu ? SCE_TEXT_TO_SPEECH_ERROR_INVALID_ID : SCE_TEXT_TO_SPEECH_ERROR_NOT_INITIALIZED;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceTextToSpeechCancelImpl(std::uint32_t id) {
+    return checkId(id);
+}
+
+int APS5_VABI sceTextToSpeechCloseImpl(std::uint32_t id) {
+    return checkId(id);
 }
 
 int APS5_VABI sceTextToSpeechGetStatusImpl() {
@@ -28,42 +41,36 @@ int APS5_VABI sceTextToSpeechInitImpl() {
     return 0;
 }
 
-int APS5_VABI sceTextToSpeechOpenImpl() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceTextToSpeechOpenImpl(std::uint32_t id) {
+    return checkId(id);
 }
 
-int APS5_VABI sceTextToSpeechPauseImpl() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceTextToSpeechPauseImpl(std::uint32_t id) {
+    return checkPlayingId(id);
 }
 
-int APS5_VABI sceTextToSpeechResumeImpl() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceTextToSpeechResumeImpl(std::uint32_t id) {
+    return checkPlayingId(id);
 }
 
-int APS5_VABI sceTextToSpeechSpeakContinuousImpl() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceTextToSpeechSpeakContinuousImpl(int id) {
+    return id <= 0 ? SCE_TEXT_TO_SPEECH_ERROR_INVALID_ID : SCE_TEXT_TO_SPEECH_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI sceTextToSpeechSpeakImpl() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceTextToSpeechSpeakImpl(std::uint32_t id) {
+    return checkId(id);
 }
 
-int APS5_VABI sceTextToSpeechTermImpl() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceTextToSpeechTermImpl(std::uint32_t id) {
+    return checkId(id);
 }
 
 }
 
 extern "C" {
 
-int APS5_VABI libSceTextToSpeechUnknown_6ZLFpZLuqEk_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceTextToSpeechUnknown_6ZLFpZLuqEk_nid_no_patch(std::uint32_t id) {
+    return checkPlayingId(id);
 }
 APS5_EXPORT("6ZLFpZLuqEk", libSceTextToSpeechUnknown_6ZLFpZLuqEk_nid_no_patch);
 

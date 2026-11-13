@@ -1,5 +1,6 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,13 @@ int main() {
     Require(sceSystemServiceGetPSButtonEvent(nullptr, Output(buffer)) == invalidArgument);
     Require(sceSystemServiceGetPSButtonEvent(&event, nullptr) == invalidArgument);
     RequireUntouched(buffer, 0, sizeof(buffer));
+    errno = 73;
+    Require(sceSystemServiceGetPSButtonEvent(reinterpret_cast<const SystemServiceEvent*>(0x10), Output(buffer)) == invalidArgument);
+    Require(errno == 73);
+    RequireUntouched(buffer, 0, sizeof(buffer));
+    errno = 73;
+    Require(sceSystemServiceGetPSButtonEvent(&event, reinterpret_cast<SystemServicePSButtonEvent*>(0x10)) == invalidArgument);
+    Require(errno == 73);
     for (std::int32_t eventType : {0, 1, 0x10000001, 0x20000000, 0x20000003, 0x30000001, -1}) {
         FillEvent(event, eventType);
         Require(sceSystemServiceGetPSButtonEvent(&event, Output(buffer)) == invalidArgument);
