@@ -285,13 +285,21 @@ int APS5_VABI sceNpWebApi2IntCreateRequest() {
 }
 
 int APS5_VABI sceNpWebApi2IntInitialize(const NpWebApi2IntInitializeArgs* args) {
-    if (args == nullptr || args->struct_size != sizeof(NpWebApi2IntInitializeArgs)) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
-    return CreateLibraryContext(args->pool_size);
+    NpWebApi2IntInitializeArgs local{};
+    const int savedErrno = errno;
+    const bool copied = args != nullptr && GuestCopyIn_nid_no_patch(&local, args, sizeof(local));
+    errno = savedErrno;
+    if (!copied || local.struct_size != sizeof(NpWebApi2IntInitializeArgs)) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    return CreateLibraryContext(local.pool_size);
 }
 
 int APS5_VABI sceNpWebApi2IntInitialize2(const NpWebApi2IntInitialize2Args* args) {
-    if (args == nullptr || args->struct_size != sizeof(NpWebApi2IntInitialize2Args)) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
-    return CreateLibraryContext(args->pool_size);
+    NpWebApi2IntInitialize2Args local{};
+    const int savedErrno = errno;
+    const bool copied = args != nullptr && GuestCopyIn_nid_no_patch(&local, args, sizeof(local));
+    errno = savedErrno;
+    if (!copied || local.struct_size != sizeof(NpWebApi2IntInitialize2Args)) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    return CreateLibraryContext(local.pool_size);
 }
 
 int APS5_VABI sceNpWebApi2IntPushEventCreateCtxIndFilter() {
