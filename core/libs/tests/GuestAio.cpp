@@ -143,6 +143,12 @@ int main(int argc, char** argv) {
     bool nullThrew = false;
     try { sceKernelAioSetParam(nullptr, 32, 32, 1, 0x100000, 0x100000); } catch (const std::invalid_argument&) { nullThrew = true; }
     Check(nullThrew);
+    auto* const badParam = reinterpret_cast<KernelAioSchedulingParam*>(1);
+    Check(sceKernelAioSetParam(badParam, 32, 32, 1, 0x100000, 0x100000) == SCE_KERNEL_ERROR_EFAULT);
+    Check(sceKernelAioSetParam(badParam, -1, 32, 1, 0x100000, 0x100000) == SCE_KERNEL_ERROR_EINVAL);
+    bool initializeThrew = false;
+    try { sceKernelAioInitializeParam(badParam); } catch (const std::invalid_argument&) { initializeThrew = true; }
+    Check(initializeThrew);
     Check(sceKernelAioInitializeImpl(schedulingParams.data(), static_cast<std::int32_t>(sizeof(schedulingParams))) == 0);
     std::array<KernelAioSchedulingParam, 4> initParam{};
     initParam.fill({7, 7, 7, 7, 7});

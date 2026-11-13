@@ -519,6 +519,17 @@ class PadTests(unittest.TestCase):
         self.assertIsNone(result["pad_queued_s"])
         self.assertFalse((self.work / "pad-input.txt").exists())
 
+    def test_default_audio_driver_is_dummy(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SDL_AUDIODRIVER", None)
+            _, env = self.run_with(None)
+        self.assertEqual(env["SDL_AUDIODRIVER"], "dummy")
+
+    def test_inherited_audio_driver_is_preserved(self):
+        with unittest.mock.patch.dict(os.environ, {"SDL_AUDIODRIVER": "wasapi"}):
+            _, env = self.run_with(None)
+        self.assertEqual(env["SDL_AUDIODRIVER"], "wasapi")
+
 
 class SessionTests(unittest.TestCase):
     WINDOW = ("import ctypes; user32 = ctypes.WinDLL('user32'); user32.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4; "
