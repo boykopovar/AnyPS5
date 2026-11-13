@@ -43,6 +43,37 @@ static std::string Hex(const Bn* value) {
     return value->neg ? "-" + text : text;
 }
 
+static std::string Printed(const Bn* value, int expected = 1) {
+    LibreSsl::Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio && BN_print_nid_postfix(bio, value) == expected);
+    char* data = nullptr;
+    const auto length = BIO_ctrl_nid_postfix(bio, 3, 0, &data);
+    std::string text(data, static_cast<std::size_t>(length));
+    BIO_free_nid_postfix(bio);
+    return text;
+}
+
+static void Print() {
+    const char* inputs[][2] = {{"0", "0"}, {"-1A", "-1A"}, {"00F", "F"}, {"10000000000000000", "10000000000000000"},
+        {"123456789ABCDEF0FEDCBA9876543210", "123456789ABCDEF0FEDCBA9876543210"}};
+    for (const auto& [input, output] : inputs) {
+        Bn* value = FromHex(input);
+        Require(Printed(value) == output);
+        BN_free_nid_postfix(value);
+    }
+    std::uint64_t limbs[] = {0x2a, 0};
+    Bn padded{limbs, 2, 2, 0, 2};
+    Require(Printed(&padded) == "2A");
+    Bn negativeZero{limbs, 0, 2, 1, 2};
+    Require(Printed(&negativeZero) == "-0");
+    Bn negative{limbs, 1, 2, 1, 2};
+    LibreSsl::Bio* readOnly = BIO_new_mem_buf_nid_postfix("x", 1);
+    Require(readOnly && BN_print_nid_postfix(readOnly, &negative) == 0);
+    BIO_free_nid_postfix(readOnly);
+    ERR_clear_error_nid_postfix();
+    Require(BN_print_nid_postfix(nullptr, &negative) == 0);
+}
+
 static void InitializeHeap() {
     void* const api[10] {};
     ApplicationHeapRegister_nid_no_patch(api);
@@ -196,15 +227,35 @@ int main() {
     }
     {
         Bn* r = BN_new_nid_postfix();
+        Require(ERR_get_error_nid_postfix() == 0);
         Bn* three = FromHex("3");
         Bn* eleven = FromHex("B");
         Require(BN_mod_inverse_nid_postfix(r, three, eleven, ctx) == r && Hex(r) == "4");
         Bn* seven = FromHex("7");
         Bn* forty = FromHex("28");
         Require(BN_mod_inverse_nid_postfix(r, seven, forty, ctx) == r && Hex(r) == "17");
+        Require(ERR_get_error_nid_postfix() == 0);
         Bn* four = FromHex("4");
         Bn* eight = FromHex("8");
         Require(BN_mod_inverse_nid_postfix(r, four, eight, ctx) == nullptr);
+        Require(Hex(r) == "17");
+        constexpr std::uint64_t noInverse = ((3u & 0xffu) << 24) | ((0xfffu & 0xfffu) << 12) | (108u & 0xfffu);
+        Require(ERR_get_error_nid_postfix() == noInverse);
+        Require(ERR_get_error_nid_postfix() == 0);
+        const char* operands[][2] = {{"2", "4"}, {"6", "9"}, {"0", "B"}, {"2", "-4"}, {"-6", "-9"}};
+        for (const auto& pair : operands) {
+            Bn* operand = FromHex(pair[0]);
+            Bn* modulus = FromHex(pair[1]);
+            for (bool supplied : {false, true}) {
+                Require(BN_set_word_nid_postfix(r, 0x1234) == 1);
+                Require(BN_mod_inverse_nid_postfix(supplied ? r : nullptr, operand, modulus, ctx) == nullptr);
+                Require(Hex(r) == "1234");
+                Require(ERR_get_error_nid_postfix() == noInverse);
+                Require(ERR_get_error_nid_postfix() == 0);
+            }
+            BN_free_nid_postfix(operand);
+            BN_free_nid_postfix(modulus);
+        }
         Bn* allocated = BN_mod_inverse_nid_postfix(nullptr, three, eleven, ctx);
         Require(allocated && Hex(allocated) == "4");
         Bn* minusThree = FromHex("-3");
@@ -218,6 +269,7 @@ int main() {
         Bn* a = FromHex("123456789ABCDEF0FEDCBA9876543210");
         Bn* inverse = BN_mod_inverse_nid_postfix(nullptr, a, prime, ctx);
         Require(inverse && Hex(inverse) == "62CFEFE6EB41053969967BD711C5169F");
+        Require(ERR_get_error_nid_postfix() == 0);
         Bn* product = BN_new_nid_postfix();
         Require(BN_mul_nid_postfix(product, a, inverse, ctx) == 1);
         Bn* quotient = FromHex("E0DA4F6BE78BFD74B8C9F95AF178811");
@@ -230,5 +282,6 @@ int main() {
         for (Bn* value : all) BN_free_nid_postfix(value);
     }
     BN_CTX_free_nid_postfix(ctx);
+    Print();
     return 0;
 }

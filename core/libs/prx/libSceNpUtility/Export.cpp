@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpUtility/include/InventoryExports.hpp"
 #include "prx/libSceNpUtility/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <condition_variable>
@@ -230,6 +231,13 @@ int AbortRequest(Service& service, int reqId) {
     return 0;
 }
 
+bool CopyOutInt(int* dst, int value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
+
 int PollAsync(Service& service, int reqId, int* result, int synchronousError) {
     if (!result) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(service.mutex);
@@ -237,7 +245,7 @@ int PollAsync(Service& service, int reqId, int* result, int synchronousError) {
     if (request == service.requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (!request->second.async) return synchronousError;
     if (!request->second.finished) return POLL_RUNNING;
-    *result = request->second.result;
+    if (!CopyOutInt(result, request->second.result)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return POLL_FINISHED;
 }
 
@@ -252,7 +260,7 @@ int WaitAsync(Service& service, int reqId, int* result, int synchronousError) {
         return request == service.requests.end() || request->second.finished;
     });
     if (request == service.requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    *result = request->second.result;
+    if (!CopyOutInt(result, request->second.result)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -302,7 +310,7 @@ int APS5_VABI sceNpBandwidthTestAbort(int context_id) {
 
 int APS5_VABI sceNpBandwidthTestGetStatus(int context_id, int* status) {
     (void)context_id;
-    if (status) *status = 0;
+    if (status && !CopyOutInt(status, 0)) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_INVALID_ARGUMENT;
 }
 
@@ -555,9 +563,10 @@ int APS5_VABI sceNpServiceChecker2IntCreateRequest(int* requestId) {
     if (serviceChecker2.requests.size() >= MAX_SERVICE_CHECKER2_REQUESTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_OBJECTS;
     std::uint32_t id = serviceChecker2.nextRequest;
     while (serviceChecker2.requests.contains(static_cast<int>(id))) id = id >= MAX_SERVICE_CHECKER2_REQUEST_ID ? 1 : id + 1;
+    const int value = static_cast<int>(id);
+    if (!GuestCopyOut_nid_no_patch(requestId, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT;
     serviceChecker2.nextRequest = id >= MAX_SERVICE_CHECKER2_REQUEST_ID ? 1 : id + 1;
-    serviceChecker2.requests.insert(static_cast<int>(id));
-    *requestId = static_cast<int>(id);
+    serviceChecker2.requests.insert(value);
     return 0;
 }
 int APS5_VABI sceNpServiceChecker2IntDestroyRequest(int requestId) {
