@@ -113,11 +113,16 @@ def render(report):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Print a readable summary of a local AnyPS5 run report.")
     parser.add_argument("report", type=Path, help="path to anyps5-report.json")
     args = parser.parse_args()
     try:
         report = json.loads(args.report.read_text(encoding="utf-8"))
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
         print(render(report))
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError, KeyError) as error:
         print(f"run_report_summary: {error}", file=sys.stderr)
