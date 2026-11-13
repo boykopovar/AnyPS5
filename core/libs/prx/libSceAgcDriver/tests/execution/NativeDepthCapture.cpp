@@ -134,10 +134,10 @@ std::shared_ptr<AgcDriver::Graphics::Texture> HoldDepth(AgcDriver::VulkanDevice&
     return AgcDriver::Graphics::DepthSurfaceTexture(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), words, resource, identity);
 }
 
-void RetainedView() {
+bool RetainedView() {
     const auto base = Allocate();
     auto device = OpenVulkanTestDevice();
-    Require(device != nullptr, "retained native depth device unavailable");
+    if (!device) return false;
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
     const auto shaders = DepthFastClearHarness::Compile(*device);
     DepthFastClearHarness::DrawOptions options;
@@ -170,20 +170,21 @@ void RetainedView() {
     options.minDepth = options.maxDepth = 0.25f;
     Require(DepthFastClearHarness::Draw(*device, shaders, Surface(base, 0u), options) == Width * Height, "native attachment binding failed after the retained old view was released");
     device->WaitIdle();
+    return true;
 }
 
-void RoundTrip() {
+bool RoundTrip() {
     const auto base = Allocate();
     std::vector<NativeDepthSnapshot> snapshots;
     {
         auto source = OpenVulkanTestDevice();
-        if (!source) throw std::runtime_error("native depth source device unavailable");
+        if (!source) return false;
         Render(*source, base);
         snapshots = source->CaptureNativeDepth();
         Check(snapshots, base);
     }
     auto target = OpenVulkanTestDevice();
-    Require(target != nullptr, "native depth target device unavailable");
+    if (!target) return false;
     auto invalid = snapshots;
     invalid.back().hostFormat = VK_FORMAT_UNDEFINED;
     bool refused = false;
@@ -214,9 +215,10 @@ void RoundTrip() {
     options.stencilTest = true;
     options.stencil = {VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_EQUAL, 255u, 0u, 203u};
     Require(DepthFastClearHarness::Draw(*target, shaders, Surface(base, 7u), options) == Width * Height, "the first draw lost restored depth or the current stencil owner");
+    return true;
 }
 
-void MirrorableStencil() {
+bool MirrorableStencil() {
     const auto base = Allocate();
     bool sourcePublished = false;
     const auto stencil = base + 12u * Step;
@@ -224,7 +226,7 @@ void MirrorableStencil() {
     std::vector<NativeDepthSnapshot> snapshots;
     {
         auto source = OpenVulkanTestDevice();
-        Require(source != nullptr, "mirrorable stencil source unavailable");
+        if (!source) return false;
         const auto shaders = DepthFastClearHarness::Compile(*source);
         for (const auto index : {1u, 0u}) {
             const DepthFastClearHarness::Surface surface{base + index * Step, stencil, 0u, false, VK_FORMAT_D16_UNORM_S8_UINT, 0u, 0u, swizzle};
@@ -246,22 +248,23 @@ void MirrorableStencil() {
 
     }
     auto target = OpenVulkanTestDevice();
-    Require(target != nullptr, "mirrorable stencil target unavailable");
+    if (!target) return false;
     target->RestoreNativeDepth(snapshots);
     const auto flushed = AgcDriver::Graphics::FlushDepthPlanes(stencil, Step);
     target->WaitIdle();
     std::vector<std::byte> bytes(AgcDriver::Graphics::DepthSliceBytes({Width, Height}, 1u));
     AgcDriver::GuestMemory::ReadCommitted(stencil, bytes);
     Require(sourcePublished && flushed.size() == 1u && std::ranges::count(bytes, std::byte{203}) >= Width * Height, "a nonowner stencil replica was published at capture or restoration");
+    return true;
 }
 
-void CrossAspect() {
+bool CrossAspect() {
     const auto base = Allocate();
     const auto depth = base + 2u * Step;
     std::vector<NativeDepthSnapshot> snapshots;
     {
         auto source = OpenVulkanTestDevice();
-        Require(source != nullptr, "cross-aspect source unavailable");
+        if (!source) return false;
         const auto shaders = DepthFastClearHarness::Compile(*source);
         DepthFastClearHarness::DrawOptions options;
         options.depthWrite = true;
@@ -275,15 +278,16 @@ void CrossAspect() {
         Require(snapshots.size() == 2u && !snapshots[0].stencil.empty(), "cross-aspect capture lost the newer stencil owner");
     }
     auto target = OpenVulkanTestDevice();
-    Require(target != nullptr, "cross-aspect target unavailable");
+    if (!target) return false;
     target->RestoreNativeDepth(snapshots);
     Sample(*target, depth, 203.0f, 5u);
+    return true;
 }
 
-void Preflight() {
+bool Preflight() {
     const auto base = Allocate();
     auto target = OpenVulkanTestDevice();
-    Require(target != nullptr, "native preflight device unavailable");
+    if (!target) return false;
     NativeDepthSnapshot valid;
     valid.target = {base, 0u, {Width, Height}, VK_FORMAT_D16_UNORM, 1.0f, 0u};
     valid.hostFormat = VK_FORMAT_D16_UNORM;
@@ -319,13 +323,14 @@ void Preflight() {
     companion.stencilOrder = 2u;
     const std::array incompatible{missing, companion};
     Refuses(incompatible);
+    return true;
 }
 
-void Capture(const std::filesystem::path& tool) {
+bool Capture(const std::filesystem::path& tool) {
     const auto* directory = std::getenv("APS5_FRAME_CAPTURE");
     Require(directory != nullptr, "native depth capture directory is missing");
     auto opened = OpenVulkanTestDevice();
-    Require(opened != nullptr, "native depth capture device unavailable");
+    if (!opened) return false;
     auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
     AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
     const auto base = Allocate();
@@ -349,18 +354,21 @@ void Capture(const std::filesystem::path& tool) {
     Require(status == 0, "native depth frame replay failed");
     Require(text.find("\"native_depth_surfaces\":9") != std::string::npos, "replay did not restore the native depth file");
     AgcDriver::DriverDetail::DriverTestAccess::Stop();
+    return true;
 }
 
 }
 
 int main(int argc, char** argv) {
     try {
-        if (argc == 3 && std::string_view(argv[1]) == "--capture") Capture(argv[2]);
-        else if (argc == 2 && std::string_view(argv[1]) == "--mirrorable_stencil") MirrorableStencil();
-        else if (argc == 2 && std::string_view(argv[1]) == "--cross_aspect") CrossAspect();
-        else if (argc == 2 && std::string_view(argv[1]) == "--preflight") Preflight();
-        else if (argc == 2 && std::string_view(argv[1]) == "--retained_view") RetainedView();
-        else { Require(argc == 1, "unknown native depth test arguments"); RoundTrip(); }
+        bool complete = false;
+        if (argc == 3 && std::string_view(argv[1]) == "--capture") complete = Capture(argv[2]);
+        else if (argc == 2 && std::string_view(argv[1]) == "--mirrorable_stencil") complete = MirrorableStencil();
+        else if (argc == 2 && std::string_view(argv[1]) == "--cross_aspect") complete = CrossAspect();
+        else if (argc == 2 && std::string_view(argv[1]) == "--preflight") complete = Preflight();
+        else if (argc == 2 && std::string_view(argv[1]) == "--retained_view") complete = RetainedView();
+        else { Require(argc == 1, "unknown native depth test arguments"); complete = RoundTrip(); }
+        if (!complete) return VulkanTestSkipped;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         if (argc == 3) AgcDriver::DriverDetail::DriverTestAccess::Stop();

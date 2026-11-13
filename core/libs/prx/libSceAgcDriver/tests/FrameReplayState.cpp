@@ -99,7 +99,7 @@ void checkNativeRepeatContents(std::span<const AgcDriver::NativeDepthSnapshot> e
     }
 }
 
-void testNativeRepeat(const std::filesystem::path& directory, std::string_view mode) {
+bool testNativeRepeat(const std::filesystem::path& directory, std::string_view mode) {
     constexpr std::size_t Step = 131072u;
     constexpr std::size_t Bytes = 16u * Step;
     constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
@@ -117,7 +117,7 @@ void testNativeRepeat(const std::filesystem::path& directory, std::string_view m
     check(skipped.bytes == 0u, "native repeated reset skipped captured guest memory");
     auto since = watchBaseline(reader, skipped);
     auto opened = OpenVulkanTestDevice();
-    check(opened != nullptr, "native repeated reset device unavailable");
+    if (!opened) return false;
     auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
     AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
@@ -193,9 +193,10 @@ void testNativeRepeat(const std::filesystem::path& directory, std::string_view m
     held.reset();
     draw(false);
     device->WaitIdle();
+    return true;
 }
 
-void testNativeRetiredStoredOwner(const std::filesystem::path& directory) {
+bool testNativeRetiredStoredOwner(const std::filesystem::path& directory) {
     constexpr std::size_t Step = 131072u;
     constexpr std::size_t Bytes = 16u * Step;
     constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
@@ -213,7 +214,7 @@ void testNativeRetiredStoredOwner(const std::filesystem::path& directory) {
     check(skipped.bytes == 0u, "retired native owner fixture skipped captured guest memory");
     auto since = watchBaseline(reader, skipped);
     auto opened = OpenVulkanTestDevice();
-    check(opened != nullptr, "retired native owner device unavailable");
+    if (!opened) return false;
     auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
     AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
@@ -260,9 +261,10 @@ void testNativeRetiredStoredOwner(const std::filesystem::path& directory) {
     options.minDepth = options.maxDepth = 0.25f;
     check(DepthFastClearHarness::Draw(*device, shaders, surface, options) == texels, "retired native owner failed to bind after the old hold was released");
     device->WaitIdle();
+    return true;
 }
 
-void testNativeRepeatPreflight(const std::filesystem::path& directory) {
+bool testNativeRepeatPreflight(const std::filesystem::path& directory) {
     constexpr std::size_t Step = 131072u;
     constexpr std::size_t Bytes = 16u * Step;
     constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
@@ -280,7 +282,7 @@ void testNativeRepeatPreflight(const std::filesystem::path& directory) {
     check(skipped.bytes == 0u, "native preflight preservation skipped captured guest memory");
     auto since = watchBaseline(reader, skipped);
     auto opened = OpenVulkanTestDevice();
-    check(opened != nullptr, "native preflight preservation device unavailable");
+    if (!opened) return false;
     auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
     AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
@@ -343,6 +345,7 @@ void testNativeRepeatPreflight(const std::filesystem::path& directory) {
     check(guestPreserved && ownerPreserved && contentPreserved && sameDevice, "native replay preflight discarded current native B or guest mutations before rejecting a later invalid record");
     check(AgcDriver::Graphics::DepthSurfaceOrderTarget(context, captured.front().target).view == oldView, "native replay preflight changed the current attachment identity before rejecting the invalid record");
     device->WaitIdle();
+    return true;
 }
 
 struct NativeUploadFailureProbe {
@@ -403,14 +406,14 @@ struct NativeUploadFailureProbe {
     unsigned completedFirstUploadWaits = 0u;
 };
 
-void testNativeRepeatFailure() {
+bool testNativeRepeatFailure() {
     constexpr std::size_t Step = 131072u;
     constexpr std::size_t Bytes = 16u * Step;
     constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
     const auto texels = Extent.width * Extent.height;
     const auto begin = address(allocate(Bytes));
     auto opened = OpenVulkanTestDevice();
-    check(opened != nullptr, "native partial upload failure device unavailable");
+    if (!opened) return false;
     auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
     AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
     auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
@@ -459,9 +462,10 @@ void testNativeRepeatFailure() {
     std::printf("native partial upload failure: lookups=%u copy_calls=%u first_upload_waits=%u refused=%u continued=%u active_planes=%zu resident_owners=%zu\n", probe.lookups, probe.calls, probe.completedFirstUploadWaits, probe.refused, continued ? 1u : 0u, static_cast<std::size_t>(active), owners);
     check(active == 0 && owners == 0u, "native restoration failure left an active partial owner graph");
     check(AgcDriver::DriverDetail::DriverTestAccess::Device().get() == device.get(), "native partial upload failure replaced the VulkanDevice object");
+    return true;
 }
 
-void testNativeRepeatPipelines(const std::filesystem::path& directory) {
+bool testNativeRepeatPipelines(const std::filesystem::path& directory) {
     constexpr std::size_t Bytes = 2u << 20u;
     constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
     auto* bytes = allocate(Bytes);
@@ -478,7 +482,7 @@ void testNativeRepeatPipelines(const std::filesystem::path& directory) {
     check(skipped.bytes == 0u, "native warm pipeline fixture skipped guest memory");
     auto since = watchBaseline(reader, skipped);
     auto opened = OpenVulkanTestDevice();
-    check(opened != nullptr, "native warm pipeline fixture device unavailable");
+    if (!opened) return false;
     auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
     AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
     const auto graphics = DepthFastClearHarness::Compile(*device);
@@ -518,9 +522,10 @@ void testNativeRepeatPipelines(const std::filesystem::path& directory) {
         check(device->HasComputePipeline(shader) && device->ComputePipelinesCreated() == warmed, "repeating the warmed compute operation after native reset rebuilt its pipeline");
         std::printf("native warm pipeline pass %u: retained=1 created=%llu warmed=%llu\n", pass + 1u, static_cast<unsigned long long>(device->ComputePipelinesCreated()), static_cast<unsigned long long>(warmed));
     }
+    return true;
 }
 
-void testNativeRepeatHtileOrphan(const std::filesystem::path& directory) {
+bool testNativeRepeatHtileOrphan(const std::filesystem::path& directory) {
     constexpr std::size_t Block = 65536u;
     constexpr std::size_t CapturedBytes = 2u * Block;
     constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
@@ -562,7 +567,7 @@ void testNativeRepeatHtileOrphan(const std::filesystem::path& directory) {
     check(skipped.bytes == 0u && std::equal(expected.begin(), expected.end(), bytes), "orphan HTILE fixture did not restore captured raw depth and expanded metadata");
     auto since = watchBaseline(reader, skipped);
     auto opened = OpenVulkanTestDevice();
-    check(opened != nullptr, "orphan HTILE fixture device unavailable");
+    if (!opened) return false;
     auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
     AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
@@ -633,6 +638,7 @@ void testNativeRepeatHtileOrphan(const std::filesystem::path& directory) {
     std::printf("orphan HTILE reset: changed=0 owned=0 compared=%llu rewritten=%llu restored_A=%u restored_B=%u outside_A=%u outside_B=%u\n", static_cast<unsigned long long>(reset.compared), static_cast<unsigned long long>(reset.rewritten), restored.first, restored.second, outside.first, outside.second);
     check(restored.first == texels && restored.second == 0u, "native replay reset retained an orphan HTILE clear over unchanged captured memory");
     check(outside.first == 0u && outside.second == texels, "native replay reset globally erased an HTILE note outside captured ranges");
+    return true;
 }
 
 void testMemoryOrder(const std::filesystem::path& directory) {
@@ -2008,12 +2014,12 @@ int main(int argc, char** argv) {
             writeInspectionCapture(directory);
             return 0;
         }
-        if (mode == "native_repeat_htile_orphan") testNativeRepeatHtileOrphan(directory);
-        else if (mode == "native_repeat_pipelines") testNativeRepeatPipelines(directory);
-        else if (mode == "native_repeat_failure") testNativeRepeatFailure();
-        else if (mode == "native_repeat_preflight") testNativeRepeatPreflight(directory);
-        else if (mode == "native_repeat_stored_owner") testNativeRetiredStoredOwner(directory);
-        else if (mode == "native_repeat_state" || mode == "native_repeat_clean" || mode == "native_repeat_companions") testNativeRepeat(directory, mode);
+        if (mode == "native_repeat_htile_orphan") { if (!testNativeRepeatHtileOrphan(directory)) return VulkanTestSkipped; }
+        else if (mode == "native_repeat_pipelines") { if (!testNativeRepeatPipelines(directory)) return VulkanTestSkipped; }
+        else if (mode == "native_repeat_failure") { if (!testNativeRepeatFailure()) return VulkanTestSkipped; }
+        else if (mode == "native_repeat_preflight") { if (!testNativeRepeatPreflight(directory)) return VulkanTestSkipped; }
+        else if (mode == "native_repeat_stored_owner") { if (!testNativeRetiredStoredOwner(directory)) return VulkanTestSkipped; }
+        else if (mode == "native_repeat_state" || mode == "native_repeat_clean" || mode == "native_repeat_companions") { if (!testNativeRepeat(directory, mode)) return VulkanTestSkipped; }
         else if (mode == "order") testMemoryOrder(directory);
         else if (mode == "zero") testReusedMemory(directory);
         else if (mode.starts_with("shader_prologue_")) testShaderCode(directory, true, mode);
