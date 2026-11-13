@@ -59,6 +59,10 @@ void Report(const char* format, VaList* args, const int* code) {
 
 extern "C" {
 
+int* APS5_VABI _Geterrno_nid_postfix() {
+    return __error_nid_postfix();
+}
+
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream) {
     g_errFile = stream != nullptr ? stream : &_Stderr_nid_postfix;
 }

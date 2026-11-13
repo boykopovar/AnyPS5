@@ -482,7 +482,10 @@ static bool FindHostIpv4Interface(HostIpv4Interface& found) {
     if (cache.interfaceFound) found = cache.interfaceValue;
     return cache.interfaceFound;
 #else
-    return QueryHostIpv4Interface(found);
+    const int savedErrno = errno;
+    const bool queried = QueryHostIpv4Interface(found);
+    errno = savedErrno;
+    return queried;
 #endif
 }
 
