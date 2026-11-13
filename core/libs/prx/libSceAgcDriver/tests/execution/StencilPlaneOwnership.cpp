@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -90,6 +91,74 @@ struct Fixture {
     }
 };
 
+struct CopyFailureProbe {
+    explicit CopyFailureProbe(AgcDriver::Graphics::Context& context) : original(context.deviceProc) {
+        Require(active == nullptr, "a stencil copy failure probe is already active");
+        fallback = original;
+        active = this;
+        context.deviceProc = Resolve;
+    }
+
+    ~CopyFailureProbe() { active = nullptr; }
+
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL Resolve(VkDevice device, const char* name) {
+        if (active != nullptr && active->failNext && std::strcmp(name, "vkCmdCopyImage") == 0) {
+            active->failNext = false;
+            ++active->refused;
+            return nullptr;
+        }
+        return (active != nullptr ? active->original : fallback)(device, name);
+    }
+
+    inline static CopyFailureProbe* active = nullptr;
+    inline static PFN_vkGetDeviceProcAddr fallback = nullptr;
+    PFN_vkGetDeviceProcAddr original;
+    bool failNext = false;
+    unsigned refused = 0;
+};
+
+void CopyFailure(Fixture& fixture) {
+    auto context = fixture.device.graphicsContext();
+    CopyFailureProbe probe(context);
+    const auto destination = fixture.Surface(1u);
+    AgcDriver::Graphics::DepthTarget target{destination.depth, destination.stencil, Extent, destination.format, 1.0f, destination.clearStencil, destination.htile, destination.htileStencil};
+    target.depthSwizzle = destination.swizzle;
+    try {
+        Require(AgcDriver::Graphics::DepthSurfaceViewWithStencilWriteIntent(context, target, false, true, false) != VK_NULL_HANDLE, "cannot prime the stencil copy destination");
+        fixture.Write(1u, 37u);
+        fixture.Write(0u, 203u);
+        std::vector<std::byte> before(Block);
+        AgcDriver::GuestMemory::ReadCommittedUnsynced(fixture.Stencil(), before);
+        Require(!std::ranges::all_of(before, [](std::byte byte) { return byte == std::byte{203}; }), "the source stencil was published before the failed handoff");
+        const auto nativeCopy = probe.original(context.device, "vkCmdCopyImage");
+        Require(nativeCopy != nullptr, "the native image copy callback is unavailable");
+        probe.failNext = true;
+        bool rejected = false;
+        try {
+            static_cast<void>(AgcDriver::Graphics::DepthSurfaceViewWithStencilWriteIntent(context, target, false, true, false));
+        } catch (const std::runtime_error& error) {
+            rejected = std::string_view(error.what()) == "AGC graphics: missing Vulkan function: vkCmdCopyImage";
+        }
+        probe.failNext = false;
+        Require(rejected && probe.refused == 1u, "the stencil inheritance copy did not reach its injected resolver failure");
+        Require(context.deviceProc(context.device, "vkCmdCopyImage") == nativeCopy, "the native image copy callback was not restored after the failure");
+        std::printf("stencil copy failure injected=%u source=203 previous destination=37\n", probe.refused);
+        fixture.device.WaitIdle();
+        fixture.CheckStencil(203u);
+        Require(fixture.Draw(destination, Fixture::Options(203u, false)) == Texels, "stencil inheritance did not recover after its copy failed");
+        fixture.CheckStencil(203u);
+        fixture.CheckDepth(0u);
+        fixture.CheckDepth(1u);
+        fixture.device.WaitIdle();
+        AgcDriver::Graphics::ClearDepthSurfaces(context.device);
+    } catch (...) {
+        probe.failNext = false;
+        fixture.device.WaitIdle();
+        AgcDriver::Graphics::ClearDepthSurfaces(context.device);
+        throw;
+    }
+}
+
 void SharedWrites(Fixture& fixture) {
     fixture.Write(0u, 37u);
     fixture.Write(1u, 203u);
@@ -172,6 +241,7 @@ int main(int argc, char** argv) {
             CpuStore(fixture, mode == "cpu_fresh");
         } else if (mode == "clear") PendingClear(fixture);
         else if (mode == "independent") Independent(fixture);
+        else if (mode == "copy_failure") CopyFailure(fixture);
         else throw std::runtime_error("unknown stencil ownership test arguments");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
