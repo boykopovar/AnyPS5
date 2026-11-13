@@ -1,4 +1,5 @@
 #include "prx/libSceSsl/include/Ssl.hpp"
+#include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
 #include <array>
@@ -38,6 +39,11 @@ int main() {
     Require(context > 0);
     SceSsl::MemoryPoolStats stats{1, 1, 1, 1};
     Require(sceSslGetMemoryPoolStats(context, &stats) == 0);
+    errno = 71;
+    Require(sceSslGetMemoryPoolStats(context, reinterpret_cast<SceSsl::MemoryPoolStats*>(0x10)) == invalidValue);
+    Require(errno == 71);
+    Require(sceSslGetMemoryPoolStats(context + 1000, reinterpret_cast<SceSsl::MemoryPoolStats*>(0x10)) == invalidValue);
+    Require(errno == 71);
     Require(stats.poolSize == 0x10000 && stats.maxInuseSize == 0 && stats.currentInuseSize == 0 && stats.reserved == 0);
     Require(sceSslGetCaCerts(context, nullptr) == invalidValue);
     Require(sceSslFreeCaCerts(context, nullptr) == invalidArg);

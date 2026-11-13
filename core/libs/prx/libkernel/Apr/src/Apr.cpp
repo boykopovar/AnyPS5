@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include "prx/libc/include/HostThread.hpp"
 #include <optional>
 #include <deque>
 #include <condition_variable>
@@ -847,7 +848,7 @@ void _complete(bool amm, std::uint32_t id) {
 
 AprQueue* _startQueue(bool amm) {
     auto* created = new AprQueue();
-    std::thread([created, amm] {
+    Libc::StartHostThread([created, amm] {
         for (;;) {
             AprQueue::Work work;
             {
@@ -888,7 +889,7 @@ AprQueue& _queue(bool amm, std::uint32_t priority) {
     return *queue;
 }
 
-std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, std::uint32_t priority = 0) {
+std::optional<std::uint32_t> _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, std::uint32_t priority = 0, std::uint32_t* guestId = nullptr, std::uint32_t* guestResult = nullptr) {
     auto& queue = _queue(amm, priority);
     auto& completion = _completion(amm);
     std::lock_guard submitLock(queue.submit);
@@ -897,6 +898,11 @@ std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, s
         std::lock_guard lock(completion.mutex);
         id = ++completion.issued;
         completion.outstanding.insert(id);
+    }
+    const std::uint32_t succeeded = 0;
+    if ((guestId && !GuestCopyOut_nid_no_patch(guestId, &id, sizeof(id))) || (guestResult && !GuestCopyOut_nid_no_patch(guestResult, &succeeded, sizeof(succeeded)))) {
+        _complete(amm, id);
+        return std::nullopt;
     }
     bool queued;
     {
@@ -929,7 +935,7 @@ void _waitSubmitted(std::uint32_t id, bool amm) {
 }
 
 std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
-    return _submit(static_cast<const std::uint8_t*>(base), bytes, true);
+    return *_submit(static_cast<const std::uint8_t*>(base), bytes, true);
 }
 
 bool AmmSubmitted_nid_no_patch(std::uint32_t id) {
@@ -1013,35 +1019,29 @@ std::optional<std::vector<std::uint8_t>> _guestCommands(const Apr::CommandBuffer
     return commands;
 }
 
-int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
+int _submitGuest(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id, uint32_t* result) {
     if (!buffer) return _fail(GUEST_EINVAL);
     Apr::CommandBufferObject object{};
     if (!GuestCopyIn_nid_no_patch(&object, buffer, sizeof(object))) return _fail(GUEST_EFAULT);
     const auto commands = _guestCommands(object);
     if (!commands) return _fail(GUEST_EFAULT);
-    _submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority);
+    if (!_submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority, id, result)) return _fail(GUEST_EFAULT);
     return 0;
+}
+
+int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
+    return _submitGuest(buffer, priority, nullptr, nullptr);
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id) {
     if (!id) return _fail(GUEST_EINVAL);
-    if (!buffer) return _fail(GUEST_EINVAL);
-    Apr::CommandBufferObject object{};
-    if (!GuestCopyIn_nid_no_patch(&object, buffer, sizeof(object))) return _fail(GUEST_EFAULT);
-    const auto commands = _guestCommands(object);
-    if (!commands) return _fail(GUEST_EFAULT);
-    const std::uint32_t submitted = _submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority);
-    if (!GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return _fail(GUEST_EFAULT);
-    return 0;
+    return _submitGuest(buffer, priority, id, nullptr);
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* result, uint32_t* id) {
     if (!result) return _fail(GUEST_EINVAL);
-    const int submitted = sceKernelAprSubmitCommandBufferAndGetId(buffer, priority, id);
-    if (submitted != 0) return submitted;
-    const std::uint32_t succeeded = 0;
-    if (!GuestCopyOut_nid_no_patch(result, &succeeded, sizeof(succeeded))) return _fail(GUEST_EFAULT);
-    return 0;
+    if (!id) return _fail(GUEST_EINVAL);
+    return _submitGuest(buffer, priority, id, result);
 }
 
 int APS5_VABI sceKernelAprWaitCommandBuffer(uint32_t id) {

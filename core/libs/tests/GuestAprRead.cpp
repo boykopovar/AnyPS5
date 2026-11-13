@@ -432,6 +432,26 @@ void TestPriorities() {
     Require(LoadValue(&waiterDone) == 1 && LoadValue(&behindDone) == 1, "the released APR buffers did not finish in order");
 }
 
+void TestSubmitOrder() {
+    alignas(8) static std::uint64_t idSlot = 0;
+    alignas(8) static std::uint64_t resultSlot = 0;
+    constexpr std::uint64_t written = 0xA5A5A5A5A5A5A5A5ull;
+    std::vector<std::uint8_t> commands;
+    Append(commands, WriteValue(&idSlot, written));
+    Append(commands, WriteValue(&resultSlot, written));
+    Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, static_cast<std::uint32_t>(commands.size()), 2, static_cast<std::uint32_t>(commands.size()), commands.data()};
+    auto* id = reinterpret_cast<std::uint32_t*>(&idSlot);
+    auto* result = reinterpret_cast<std::uint32_t*>(&resultSlot);
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 3, result, id) == 0, "the APR buffer that writes its own id and result was not submitted");
+    for (int poll = 0; poll < 5000 && (LoadValue(&idSlot) != written || LoadValue(&resultSlot) != written); ++poll) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(LoadValue(&idSlot) == written, "APR wrote the submission id after the commands that write the same memory ran");
+    Require(LoadValue(&resultSlot) == written, "APR wrote the submission result after the commands that write the same memory ran");
+    idSlot = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&buffer, 3, id) == 0, "the APR buffer that writes its own id was not submitted");
+    for (int poll = 0; poll < 5000 && LoadValue(&idSlot) != written; ++poll) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(LoadValue(&idSlot) == written, "APR wrote the submission id after the commands that write the same memory ran");
+}
+
 #ifdef _WIN32
 std::uintptr_t faultBegin = 0;
 std::size_t faultBytes = 0;
@@ -532,6 +552,8 @@ int main(int argc, char** argv) {
             TestResolve();
         } else if (mode == "priorities") {
             TestPriorities();
+        } else if (mode == "order") {
+            TestSubmitOrder();
 #ifdef _WIN32
         } else if (mode == "fault") {
             const FaultBuffer storage;

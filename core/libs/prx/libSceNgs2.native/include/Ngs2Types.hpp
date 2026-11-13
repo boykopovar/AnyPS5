@@ -31,6 +31,7 @@ static constexpr int SCE_NGS2_ERROR_INVALID_PAN_PARAM = static_cast<int>(0x804A8
 static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_HANDLE = static_cast<int>(0x804A8203);
 static constexpr int SCE_NGS2_ERROR_PS4_INVALID_VOICE_HANDLE = static_cast<int>(0x804A0300);
 static constexpr int SCE_NGS2_ERROR_PS4_INVALID_STATE_SIZE = static_cast<int>(0x804A0054);
+static constexpr int SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS = static_cast<int>(0x804A0052);
 static constexpr int SCE_NGS2_ERROR_PS4_INVALID_VOICE_CONTROL_ID = static_cast<int>(0x804A0308);
 static constexpr int SCE_NGS2_ERROR_PS4_INVALID_VOICE_CONTROL_SIZE = static_cast<int>(0x804A030A);
 static constexpr int SCE_NGS2_ERROR_PS4_INVALID_FILTER_INDEX = static_cast<int>(0x804A0600);
@@ -48,6 +49,9 @@ static constexpr int SCE_NGS2_ERROR_INVALID_GEOM_LISTENER_ADDRESS = static_cast<
 static constexpr int SCE_NGS2_ERROR_INVALID_GEOM_FLAG = static_cast<int>(0x804A8463);
 static constexpr int SCE_NGS2_ERROR_INVALID_OPTION_SIZE = static_cast<int>(0x804A8013);
 static constexpr int SCE_NGS2_ERROR_INVALID_NUM_CHANNELS = static_cast<int>(0x804A8052);
+static constexpr int SCE_NGS2_ERROR_INVALID_DELAY_TYPE = static_cast<int>(0x804A8095);
+static constexpr int SCE_NGS2_ERROR_INVALID_DELAY_MAX_TAPS = static_cast<int>(0x804A8096);
+static constexpr int SCE_NGS2_ERROR_INVALID_DELAY_MAX_LENGTH = static_cast<int>(0x804A8097);
 static constexpr int SCE_NGS2_ERROR_INVALID_FILTER_TYPE = static_cast<int>(0x804A8060);
 static constexpr int SCE_NGS2_ERROR_INVALID_PITCH_SHIFT_OPTION = static_cast<int>(0x804A8098);
 static constexpr int SCE_NGS2_ERROR_INVALID_REVERB_OPTION = static_cast<int>(0x804A8099);
@@ -110,8 +114,11 @@ static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER = 0x20000006
 static constexpr std::uint32_t SCE_NGS2_REVERB_VOICE_PARAM_SETUP = 0x20010000;
 static constexpr std::uint32_t SCE_NGS2_REVERB_VOICE_PARAM_I3DL2 = 0x20010001;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_SETUP = 0x30000000;
+static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_LFE = 0x30000002;
+static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER = 0x30000003;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_GAIN = 0x30000004;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT = 0x30000005;
+static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER = 0x30000006;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_SAMPLER_VOICE_PARAM_SETUP = 0x40010000;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS = 0x40010001;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_SAMPLER_VOICE_PARAM_EXIT_LOOP = 0x40010004;
@@ -764,6 +771,13 @@ struct Ngs2MasteringVoiceGainParam {
     float lfe_level;
 };
 static_assert(sizeof(Ngs2MasteringVoiceGainParam) == 16);
+
+struct Ngs2MasteringVoiceEffectParam {
+    Ngs2VoiceParamHeader header;
+    std::uint32_t enable_flag;
+    std::uint32_t value;
+};
+static_assert(sizeof(Ngs2MasteringVoiceEffectParam) == 16);
 
 struct Ngs2MasteringVoiceOutputParam {
     Ngs2VoiceParamHeader header;

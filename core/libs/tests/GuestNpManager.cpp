@@ -1,13 +1,17 @@
+#include "prx/libSceNpCommon/include/Api.hpp"
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libSceNpManager/include/AdditionalExports.hpp"
 #include "prx/libSceNpManager/include/InGameMessageIds.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -84,6 +88,23 @@ void APS5_VABI SelfUnregisteringCallback(int, std::uint32_t, void* userdata) {
     auto* context = static_cast<SelfUnregister*>(userdata);
     ++context->calls;
     context->result = sceNpUnregisterStateCallbackA(context->id);
+}
+
+StateCall toolkitStateCall;
+
+void APS5_VABI ToolkitStateCallback(int userId, std::uint32_t state, void* userdata) {
+    toolkitStateCall = {toolkitStateCall.calls + 1, userId, state, nullptr, userdata};
+}
+
+struct ToolkitSelfUnregister {
+    int calls;
+    int result;
+};
+
+void APS5_VABI ToolkitSelfUnregisteringCallback(int, std::uint32_t, void* userdata) {
+    auto* context = static_cast<ToolkitSelfUnregister*>(userdata);
+    ++context->calls;
+    context->result = sceNpUnregisterStateCallbackForToolkit();
 }
 
 void CheckStateCallbacksA() {
@@ -207,6 +228,53 @@ void CheckGamePresenceCallbacksA() {
     }
     Require(sceNpUnregisterGamePresenceCallbackA(reusedId) == 0, "unregistering reused callback id");
     Require(sceNpUnregisterGamePresenceCallbackA(reusedId) == NotRegistered, "double unregistering reused id");
+}
+
+void CheckToolkitStateCallback() {
+    int userdata = 0;
+    auto* callback = reinterpret_cast<void*>(&StateCallbackA<0>);
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "unregister before any register");
+    Require(sceNpRegisterStateCallbackForToolkit(reinterpret_cast<NpStateCallbackForToolkit>(callback), &userdata) == 0, "register with a dummy callback");
+    Require(sceNpRegisterStateCallbackForToolkit(reinterpret_cast<NpStateCallbackForToolkit>(callback), nullptr) == 0, "register again (overwrite)");
+    Require(sceNpUnregisterStateCallbackForToolkit() == 0, "unregister");
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "unregister again");
+    Require(sceNpRegisterStateCallbackForToolkit(nullptr, &userdata) == 0, "register with nullptr callback");
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "unregister empty slot (callback is null)");
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &userdata) == 0, "register the toolkit callback for delivery");
+    Require(toolkitStateCall.calls == 0, "registering does not invoke the toolkit callback");
+    Require(sceNpCheckCallback() == 0, "check with a pending toolkit callback");
+    Require(SignedOutOnce(toolkitStateCall, &userdata), "the toolkit callback gets SIGNED_OUT once with its user data");
+    Require(sceNpCheckCallback() == 0, "second check with the toolkit slot already delivered");
+    Require(toolkitStateCall.calls == 1, "the toolkit callback got the state again");
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &userdata) == 0, "register again to cancel by unregistering");
+    Require(sceNpUnregisterStateCallbackForToolkit() == 0, "unregister before the check");
+    Require(sceNpCheckCallback() == 0, "check after unregistering before delivery");
+    Require(toolkitStateCall.calls == 1, "unregistering before the check cancelled the delivery");
+    int secondUserdata = 0;
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &userdata) == 0, "register before the replacement");
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &secondUserdata) == 0, "registering again overwrites the pending slot");
+    Require(sceNpCheckCallback() == 0, "check after the replacement");
+    Require(toolkitStateCall.calls == 2 && toolkitStateCall.userId == InitialUserId && toolkitStateCall.state == StateSignedOut &&
+        toolkitStateCall.userdata == &secondUserdata, "the replaced slot delivers once with the new user data");
+    Require(sceNpRegisterStateCallbackForToolkit(nullptr, &userdata) == 0, "register a null callback for delivery");
+    Require(sceNpCheckCallback() == 0, "check with a null toolkit callback");
+    Require(toolkitStateCall.calls == 2, "a null toolkit callback was called");
+    void* const aCallback = reinterpret_cast<void*>(&StateCallbackA<8>);
+    const int aId = sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(aCallback), &userdata);
+    Require(aId >= 1 && aId <= 8, "free state callback slot for the isolation check");
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &secondUserdata) == 0, "register the toolkit callback beside an A callback");
+    Require(sceNpCheckCallback() == 0, "check with the toolkit slot and one A callback");
+    Require(stateCallsA[8].calls == 1 && stateCallsA[8].userdata == &userdata, "the A callback gets its own single delivery");
+    Require(toolkitStateCall.calls == 3 && toolkitStateCall.userdata == &secondUserdata, "the toolkit callback delivers once beside the A callback");
+    Require(legacyStateCall.calls == 1, "the toolkit slot delivered to the legacy callback");
+    Require(sceNpCheckCallback() == 0, "check again after the isolation check");
+    Require(stateCallsA[8].calls == 1 && toolkitStateCall.calls == 3, "a check repeated the toolkit or A delivery");
+    Require(sceNpUnregisterStateCallbackA(aId) == 0, "unregister the A callback of the isolation check");
+    ToolkitSelfUnregister self{};
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitSelfUnregisteringCallback, &self) == 0, "register a self-unregistering toolkit callback");
+    Require(sceNpCheckCallback() == 0, "check with a toolkit callback that unregisters itself");
+    Require(self.calls == 1 && self.result == 0, "a toolkit callback must be able to unregister itself");
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "the toolkit callback did not unregister itself");
 }
 
 void CheckRequestTimeouts() {
@@ -361,6 +429,48 @@ void CheckIdMapperLookup(const char* name, decltype(&sceNpIdMapperNpIdToAccountI
     Require(std::memcmp(output, untouched, sizeof(output)) == 0, name);
 }
 
+struct TicketReleaseRecord {
+    void* pointer;
+    int calls;
+};
+
+void APS5_VABI ReleaseTicket(void* pointer, void* context) {
+    auto* record = static_cast<TicketReleaseRecord*>(context);
+    record->pointer = pointer;
+    record->calls += 1;
+}
+
+struct TicketStorage {
+    const void* const* vtable;
+    NpAllocatorEx* allocator;
+    void* data;
+    std::size_t size;
+};
+
+void CheckTicketTeardown() {
+    TicketReleaseRecord record{};
+    NpAllocatorEx allocator{};
+    allocator.allocator.release = ReleaseTicket;
+    allocator.allocator.context = &record;
+    std::uint8_t data[4] {};
+    TicketStorage ticket{};
+    ticket.allocator = &allocator;
+    ticket.data = data;
+    ticket.size = sizeof(data);
+    _ZN3sce2np8NpTicket5ClearEv(&ticket);
+    Require(record.calls == 1 && record.pointer == data, "NpTicket::Clear must release the stored data");
+    Require(ticket.data == nullptr && ticket.size == 0, "NpTicket::Clear must clear the data and size");
+    ticket.data = data;
+    ticket.size = sizeof(data);
+    _ZN3sce2np8NpTicketD1Ev(&ticket);
+    Require(record.calls == 2 && record.pointer == data, "the NpTicket destructor must release the stored data");
+    Require(ticket.vtable != nullptr, "the NpTicket destructor must restore the vtable");
+    ticket.data = nullptr;
+    ticket.size = 0;
+    _ZN3sce2np8NpTicket5ClearEv(&ticket);
+    Require(record.calls == 2, "NpTicket::Clear must not release an empty ticket");
+}
+
 struct SentinelBuffer {
     unsigned char bytes[64];
     SentinelBuffer() { std::memset(bytes, 0x5a, sizeof(bytes)); }
@@ -371,6 +481,57 @@ struct SentinelBuffer {
         return true;
     }
 };
+
+void CheckPushLifecycle() {
+    constexpr int PushAlreadyInitialized = static_cast<int>(0x8055A001u);
+    constexpr int PushNotInitialized = static_cast<int>(0x8055A002u);
+    constexpr int PushInvalidArgument = static_cast<int>(0x8055A003u);
+    constexpr int Push2NotInitialized = static_cast<int>(0x8055C002u);
+    constexpr int Push2InvalidArgument = static_cast<int>(0x8055C003u);
+    constexpr int Push2NoSlot = static_cast<int>(0x8055C005u);
+
+    Require(sceNpPushCheckCallback() == PushNotInitialized, "sceNpPushCheckCallback must refuse an uninitialized library");
+    Require(sceNpPushTerm() == PushNotInitialized, "sceNpPushTerm must refuse an uninitialized library");
+    Require(sceNpPushInit() == 0, "sceNpPushInit must initialize the library");
+    Require(sceNpPushInit() == PushAlreadyInitialized, "sceNpPushInit must refuse a second initialization");
+    std::int32_t connectionState = 0x5a5a5a5a;
+    Require(sceNpPushIntGetConnectionState(&connectionState) == 0 && connectionState == 0, "sceNpPushIntGetConnectionState must report the offline state");
+    Require(sceNpPushIntGetConnectionState(nullptr) == PushInvalidArgument, "sceNpPushIntGetConnectionState must refuse a null output");
+    Require(sceNpPushCheckCallback() == 0, "sceNpPushCheckCallback must answer an initialized library");
+    Require(sceNpPushTerm() == 0, "sceNpPushTerm must terminate the library");
+    Require(sceNpPushTerm() == PushNotInitialized, "sceNpPushTerm must refuse a second termination");
+
+    Require(!sceNpPush2IsInit(), "sceNpPush2IsInit must be false before initialization");
+    Require(sceNpPush2OptionalCheckCallback() == Push2NotInitialized, "sceNpPush2OptionalCheckCallback must refuse an uninitialized library");
+    Require(sceNpPush2TriggerEmptyUserEvent() == PushNotInitialized, "sceNpPush2TriggerEmptyUserEvent must report the uninitialized error");
+    Require(sceNpPush2Init(nullptr) == Push2InvalidArgument, "sceNpPush2Init must refuse a null parameter");
+    std::uint8_t parameter[0x18] {};
+    Require(sceNpPush2Init(parameter) == Push2InvalidArgument, "sceNpPush2Init must refuse a zero mode");
+    *reinterpret_cast<std::uint32_t*>(parameter + 0x10) = 2;
+    *reinterpret_cast<std::uint32_t*>(parameter + 0x14) = 1;
+    Require(sceNpPush2Init(parameter) == Push2InvalidArgument, "sceNpPush2Init must refuse an allocator kind above 1");
+    *reinterpret_cast<std::uint32_t*>(parameter + 0x10) = 0;
+    const int firstContext = sceNpPush2Init(parameter);
+    const int secondContext = sceNpPush2Init(parameter);
+    Require(firstContext == 1 && secondContext == 2, "sceNpPush2Init must return consecutive context ids");
+    Require(sceNpPush2IsInit(), "sceNpPush2IsInit must be true after initialization");
+    Require(sceNpPush2OptionalCheckCallback() == 0, "sceNpPush2OptionalCheckCallback must answer an initialized library");
+    Require(sceNpPush2TriggerEmptyUserEvent() == 0, "sceNpPush2TriggerEmptyUserEvent must answer an initialized library");
+    Require(sceNpPush2SetGlobalMutex(nullptr) == Push2InvalidArgument, "sceNpPush2SetGlobalMutex must refuse a null mutex");
+    int mutexToken = 0;
+    Require(sceNpPush2SetGlobalMutex(&mutexToken) == 0, "sceNpPush2SetGlobalMutex must accept a mutex");
+    Require(sceNpPush2Term(firstContext) == 0, "sceNpPush2Term must terminate a context");
+    Require(sceNpPush2IsInit(), "sceNpPush2IsInit must stay true while a context is live");
+    Require(sceNpPush2Term(secondContext) == 0, "sceNpPush2Term must terminate the second context");
+    Require(!sceNpPush2IsInit(), "sceNpPush2IsInit must be false after every context is terminated");
+    Require(sceNpPush2OptionalCheckCallback() == Push2NotInitialized, "sceNpPush2OptionalCheckCallback must refuse a terminated library");
+    for (int expected = 1; expected <= 32; ++expected) {
+        Require(sceNpPush2Init(parameter) == expected, "sceNpPush2Init must hand out every context slot");
+    }
+    Require(sceNpPush2Init(parameter) == Push2NoSlot, "sceNpPush2Init must refuse a full context table");
+    for (int contextId = 1; contextId <= 32; ++contextId) sceNpPush2Term(contextId);
+    Require(!sceNpPush2IsInit(), "sceNpPush2Term must empty the context table");
+}
 
 void CheckManagerIntProfileGetters() {
     const int live = sceNpManagerIntCreateRequest();
@@ -390,6 +551,34 @@ void CheckManagerIntProfileGetters() {
     Require(sceNpManagerIntGetAccountCountryA(-1, out.bytes) == InvalidArgument && out.Untouched(), "sceNpManagerIntGetAccountCountryA must refuse user id -1");
     Require(sceNpManagerIntGetAccountCountryA(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountCountryA must refuse a null output");
     Require(sceNpManagerIntGetAccountCountryA(InitialUserId, out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetAccountCountryA must report NP as signed out and write nothing");
+    std::uint64_t accountId = 0x5a5a5a5a5a5a5a5a;
+    Require(sceNpManagerIntGetAccountId(-1, &accountId) == InvalidArgument && accountId == 0x5a5a5a5a5a5a5a5a, "sceNpManagerIntGetAccountId must refuse user id -1");
+    Require(sceNpManagerIntGetAccountId(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountId must refuse a null output");
+    Require(sceNpManagerIntGetAccountId(InitialUserId, &accountId) == SignedOut && accountId == 0x5a5a5a5a5a5a5a5a, "sceNpManagerIntGetAccountId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetAccountIdSdk(-1, &accountId) == InvalidArgument && accountId == 0x5a5a5a5a5a5a5a5a, "sceNpManagerIntGetAccountIdSdk must refuse user id -1");
+    Require(sceNpManagerIntGetAccountIdSdk(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountIdSdk must refuse a null output");
+    Require(sceNpManagerIntGetAccountIdSdk(InitialUserId, &accountId) == SignedOut && accountId == 0x5a5a5a5a5a5a5a5a, "sceNpManagerIntGetAccountIdSdk must report NP as signed out and write nothing");
+    for (const auto getter : {sceNpManagerIntGetAccountCountrySdk, sceNpManagerIntGetAccountDateOfBirthSdk, sceNpManagerIntGetAccountNpEnv, sceNpManagerIntGetActiveSigninState, sceNpManagerIntGetAuthServerErrorFlag, sceNpManagerIntGetOnlineIdChangeFlag, sceNpManagerIntGetPlusMemberTypeNB, sceNpManagerIntGetServerError, sceNpManagerIntGetSigninState, sceNpManagerIntGetUserNum}) {
+        Require(getter(-1, out.bytes) == InvalidArgument && out.Untouched(), "an NpManagerInt profile getter must refuse user id -1");
+        Require(getter(InitialUserId, nullptr) == InvalidArgument, "an NpManagerInt profile getter must refuse a null output");
+        Require(getter(InitialUserId, out.bytes) == SignedOut && out.Untouched(), "an NpManagerInt profile getter must report NP as signed out and write nothing");
+    }
+    std::int32_t accountType = 0x5a5a5a5a;
+    Require(sceNpManagerIntGetAccountType(-1, &accountType) == InvalidArgument && accountType == 0x5a5a5a5a, "sceNpManagerIntGetAccountType must refuse user id -1");
+    Require(sceNpManagerIntGetAccountType(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountType must refuse a null output");
+    Require(sceNpManagerIntGetAccountType(InitialUserId, &accountType) == SignedOut && accountType == 0, "sceNpManagerIntGetAccountType must zero the account type");
+    SentinelBuffer npEnv;
+    Require(sceNpManagerIntGetNpEnv(nullptr) == InvalidArgument, "sceNpManagerIntGetNpEnv must refuse a null output");
+    Require(sceNpManagerIntGetNpEnv(npEnv.bytes) == SignedOut, "sceNpManagerIntGetNpEnv must report NP as signed out");
+    for (std::size_t i = 0; i < 0x18; ++i) Require(npEnv.bytes[i] == 0, "sceNpManagerIntGetNpEnv must zero the environment block");
+    for (std::size_t i = 0x18; i < sizeof(npEnv.bytes); ++i) Require(npEnv.bytes[i] == 0x5a, "sceNpManagerIntGetNpEnv must leave the tail untouched");
+    Require(sceNpManagerIntGetVshClientId(nullptr) == InvalidArgument, "sceNpManagerIntGetVshClientId must refuse a null output");
+    Require(sceNpManagerIntGetVshClientId(out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetVshClientId must report NP as signed out and write nothing");
+    std::uint64_t offlineAccountId = 0x5a5a5a5a5a5a5a5a;
+    bool offlineFlag = true;
+    Require(sceNpManagerIntGetOfflineAccountId(-1, &offlineAccountId, &offlineFlag) == InvalidArgument && offlineAccountId == 0x5a5a5a5a5a5a5a5a && offlineFlag, "sceNpManagerIntGetOfflineAccountId must refuse user id -1");
+    Require(sceNpManagerIntGetOfflineAccountId(InitialUserId, &offlineAccountId, &offlineFlag) == SignedOut && offlineAccountId == 0x5a5a5a5a5a5a5a5a && offlineFlag, "sceNpManagerIntGetOfflineAccountId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetOfflineAccountId(InitialUserId, nullptr, nullptr) == SignedOut, "sceNpManagerIntGetOfflineAccountId must accept null outputs");
     NpId* npId = reinterpret_cast<NpId*>(out.bytes);
     Require(sceNpManagerIntGetNpId(-1, npId) == InvalidArgument && out.Untouched(), "sceNpManagerIntGetNpId must refuse user id -1");
     Require(sceNpManagerIntGetNpId(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetNpId must refuse a null output");
@@ -414,6 +603,28 @@ void CheckManagerIntUserLookups() {
     Require(sceNpManagerIntGetUserIdByNpId(nullptr, &userId) == InvalidArgument && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByNpId must refuse a null NpId");
     Require(sceNpManagerIntGetUserIdByNpId(&npId, nullptr) == InvalidArgument, "sceNpManagerIntGetUserIdByNpId must refuse a null output");
     Require(sceNpManagerIntGetUserIdByNpId(&npId, &userId) == SignedOut && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByNpId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetUserIdByOnlineIdSdk(nullptr, &userId) == InvalidArgument && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByOnlineIdSdk must refuse a null online id");
+    Require(sceNpManagerIntGetUserIdByOnlineIdSdk(&onlineId, nullptr) == InvalidArgument, "sceNpManagerIntGetUserIdByOnlineIdSdk must refuse a null output");
+    Require(sceNpManagerIntGetUserIdByOnlineIdSdk(&onlineId, &userId) == SignedOut && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByOnlineIdSdk must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetNpIdByOnlineId(nullptr, &npId) == InvalidArgument, "sceNpManagerIntGetNpIdByOnlineId must refuse a null online id");
+    Require(sceNpManagerIntGetNpIdByOnlineId(&onlineId, nullptr) == InvalidArgument, "sceNpManagerIntGetNpIdByOnlineId must refuse a null output");
+    Require(sceNpManagerIntGetNpIdByOnlineId(&onlineId, &npId) == SignedOut, "sceNpManagerIntGetNpIdByOnlineId must report NP as signed out");
+    Require(sceNpManagerIntGetUserIdByAccountId(0, &userId) == InvalidArgument && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByAccountId must refuse a zero account id");
+    Require(sceNpManagerIntGetUserIdByAccountId(1, nullptr) == InvalidArgument, "sceNpManagerIntGetUserIdByAccountId must refuse a null output");
+    Require(sceNpManagerIntGetUserIdByAccountId(1, &userId) == SignedOut && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByAccountId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetOnlineIdByAccountId(0, &onlineId) == InvalidArgument, "sceNpManagerIntGetOnlineIdByAccountId must refuse a zero account id");
+    Require(sceNpManagerIntGetOnlineIdByAccountId(1, nullptr) == InvalidArgument, "sceNpManagerIntGetOnlineIdByAccountId must refuse a null output");
+    Require(sceNpManagerIntGetOnlineIdByAccountId(1, &onlineId) == SignedOut, "sceNpManagerIntGetOnlineIdByAccountId must report NP as signed out");
+    Require(sceNpManagerIntGetNpIdSdk(-1, &npId) == InvalidArgument, "sceNpManagerIntGetNpIdSdk must refuse user id -1");
+    Require(sceNpManagerIntGetNpIdSdk(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetNpIdSdk must refuse a null output");
+    Require(sceNpManagerIntGetNpIdSdk(InitialUserId, &npId) == SignedOut, "sceNpManagerIntGetNpIdSdk must report NP as signed out");
+    Require(sceNpManagerIntGetOnlineIdSdk(-1, &onlineId) == InvalidArgument, "sceNpManagerIntGetOnlineIdSdk must refuse user id -1");
+    Require(sceNpManagerIntGetOnlineIdSdk(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetOnlineIdSdk must refuse a null output");
+    Require(sceNpManagerIntGetOnlineIdSdk(InitialUserId, &onlineId) == SignedOut, "sceNpManagerIntGetOnlineIdSdk must report NP as signed out");
+    SentinelBuffer parentalFlag;
+    Require(sceNpManagerIntGetParentalControlFlag(-1, parentalFlag.bytes) == InvalidArgument && parentalFlag.Untouched(), "sceNpManagerIntGetParentalControlFlag must refuse user id -1");
+    Require(sceNpManagerIntGetParentalControlFlag(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetParentalControlFlag must refuse a null output");
+    Require(sceNpManagerIntGetParentalControlFlag(InitialUserId, parentalFlag.bytes) == SignedOut && parentalFlag.Untouched(), "sceNpManagerIntGetParentalControlFlag must report NP as signed out and write nothing");
 }
 
 void CheckManagerIntAuthorization() {
@@ -459,6 +670,9 @@ void CheckManagerIntAuthorization() {
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 0, code.bytes, 0) == InvalidSize && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a size of 0");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 0, code.bytes, 0x802) == InvalidSize && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a size above 0x801");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 4, code.bytes, 0x801) == InvalidPlatformType && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a mode other than 0, 3 or 5");
+    errno = 71;
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, reinterpret_cast<const char*>(0x10), 0, code.bytes, 0x801) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse an unreadable URI");
+    Require(errno == 71, "sceNpManagerIntGetAuthorizationCodeWithPsnoUri changed host errno on an unreadable URI");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, longUri, 0, code.bytes, 0x801) == OutOfMemory && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a URI of 0x2000 bytes");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, nullptr, 0, code.bytes, 0) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri checks a null URI before the size");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 4, code.bytes, 0) == InvalidSize && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri checks the size before the mode");
@@ -626,6 +840,8 @@ void CheckPlusAndContentRestriction() {
     bad.ageRestrictionCount = 0x101;
     bad.ageRestrictions = ages;
     Require(SetContentRestriction(bad) == InvalidArgument, "sceNpSetContentRestriction must reject more than 256 restrictions");
+    bad.ageRestrictionCount = -1;
+    Require(SetContentRestriction(bad) == InvalidArgument, "sceNpSetContentRestriction must reject a negative restriction count");
     bad.ageRestrictionCount = 0x100;
     Require(SetContentRestriction(bad) == 0, "sceNpSetContentRestriction must accept 256 restrictions");
     bad.ageRestrictions = nullptr;
@@ -888,11 +1104,44 @@ void CheckEmptyDestructors() {
     libSceNpManagerUnknown_z8eiw8_plus_UfEo_nid_no_patch();
 }
 
+void CheckUnknownFieldComparisons() {
+    struct Object {
+        std::uint64_t first;
+        std::uint64_t second;
+    };
+    Object left{0, 0};
+    Object right{0, 0};
+    const std::int32_t values[] = {0, 1, -1, 0x7fffffff, static_cast<std::int32_t>(0x80000000)};
+    for (const std::int32_t a : values) {
+        for (const std::int32_t b : values) {
+            std::memcpy(reinterpret_cast<std::byte*>(&left) + 8, &a, sizeof(a));
+            std::memcpy(reinterpret_cast<std::byte*>(&right) + 8, &b, sizeof(b));
+            Require(libSceNpManagerUnknown_Gv4cB8leZaU_nid_no_patch(&left, b) == (a == b), "Gv4cB8leZaU compares +8 with the value");
+            Require(libSceNpManagerUnknown_j6YmS_minus_P2zAA_nid_no_patch(&left, &right) == (a == b), "j6YmS-P2zAA compares +8 with +8");
+            std::int32_t plain = a;
+            Require(libSceNpManagerUnknown_b1nDsAsD4Fo_nid_no_patch(&plain, &right) == (a == b), "b1nDsAsD4Fo compares +0 with +8");
+            Require(libSceNpManagerUnknown_BQA2KNZr2H0_nid_no_patch(&plain, &right) == (a != b), "BQA2KNZr2H0 compares +0 with +8");
+        }
+    }
+    std::memset(&left, 0xa5, sizeof(left));
+    std::memset(&right, 0xa5, sizeof(right));
+    std::int32_t plain = 7;
+    const std::int32_t seven = 7;
+    std::memcpy(reinterpret_cast<std::byte*>(&right) + 8, &seven, sizeof(seven));
+    Require(libSceNpManagerUnknown_b1nDsAsD4Fo_nid_no_patch(&plain, &right), "b1nDsAsD4Fo reads only 32 bits at +8");
+    for (const std::uint64_t value : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{0x0123456789abcdefULL}, ~std::uint64_t{0}}) {
+        left.second = value;
+        Require(libSceNpManagerUnknown__minus_OrDVMqLIG4_nid_no_patch(&left) == value, "-OrDVMqLIG4 returns the 64 bits at +8");
+    }
+}
+
 int main() {
     CheckNpOfflineGetters();
     CheckAsmLifecycle();
     CheckEmptyDestructors();
     CheckSandboxInfo();
+    CheckTicketTeardown();
+    CheckPushLifecycle();
     CheckValueClasses();
     CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();
@@ -901,6 +1150,7 @@ int main() {
     CheckStateCallbacksA();
     CheckLegacyStateCallback();
     CheckGamePresenceCallbacksA();
+    CheckToolkitStateCallback();
     CheckRequestTimeouts();
     CheckAsyncRequestLifecycle();
     CheckWaitAsync();
@@ -914,6 +1164,7 @@ int main() {
     CheckManagerIntUserLookups();
     CheckManagerIntAuthorization();
     CheckPlusAndContentRestriction();
+    CheckUnknownFieldComparisons();
     NpId npId{};
     std::memset(&npId, 0x5a, sizeof(npId));
     NpId untouched{};
@@ -965,9 +1216,15 @@ int main() {
     std::uint32_t state = 0x5a5a;
     Require(sceNpGetState(0x10000, &state) == 0 && state == StateSignedOut, "sceNpGetState must report the user as signed out");
     Require(sceNpGetState(0x10000, nullptr) == InvalidArgument, "sceNpGetState must reject a null state");
+    errno = 71;
+    Require(sceNpGetState(0x10000, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable state rejected");
+    Require(errno == 71, "errno preserved");
     bool hasSignedUp = true;
     Require(sceNpHasSignedUp(0x10000, &hasSignedUp) == 0 && !hasSignedUp, "sceNpHasSignedUp must report no sign-up");
     Require(sceNpHasSignedUp(0x10000, nullptr) == InvalidArgument, "sceNpHasSignedUp must reject a null output");
+    errno = 71;
+    Require(sceNpHasSignedUp(0x10000, reinterpret_cast<bool*>(0x10)) == InvalidArgument, "unwritable has_signed_up rejected");
+    Require(errno == 71, "errno preserved");
     Require(sceNpCheckNpReachability(1, 0x10000) == SignedOut, "sceNpCheckNpReachability must report the user as signed out");
     NpCheckPremiumParameter premiumParameter{};
     NpCheckPremiumResult premiumResult{};

@@ -189,7 +189,7 @@ WTF::MediaTime APS5_VABI _ZN3WTF9MediaTime15createWithFloatEfj(float floatTime, 
     if (!timeScale) {
         return std::signbit(floatTime) ? _ZN3WTF9MediaTime20negativeInfiniteTimeEv() : _ZN3WTF9MediaTime20positiveInfiniteTimeEv();
     }
-    while (floatTime * timeScale >= maxPlusOneInt64) {
+    while (floatTime * timeScale >= maxPlusOneInt64 || floatTime * timeScale < -maxPlusOneInt64) {
         timeScale /= 2;
     }
     WTF::MediaTime value{};
@@ -229,7 +229,7 @@ WTF::MediaTime APS5_VABI _ZN3WTF9MediaTime16createWithDoubleEdj(double doubleTim
     if (!timeScale) {
         return std::signbit(doubleTime) ? _ZN3WTF9MediaTime20negativeInfiniteTimeEv() : _ZN3WTF9MediaTime20positiveInfiniteTimeEv();
     }
-    while (doubleTime * timeScale >= maxPlusOneInt64) {
+    while (doubleTime * timeScale >= maxPlusOneInt64 || doubleTime * timeScale < -maxPlusOneInt64) {
         timeScale /= 2;
     }
     WTF::MediaTime value{};
