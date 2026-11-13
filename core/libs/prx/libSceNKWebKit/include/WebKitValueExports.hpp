@@ -365,5 +365,10 @@ void APS5_VABI WKContextSetJavaScriptConfigurationFileEnabled(const void* contex
 void APS5_VABI WKContextSetJavaScriptGarbageCollectorTimerEnabled(const void* contextRef, bool enable);
 void APS5_VABI WKContextGarbageCollectJavaScriptObjects(const void* contextRef);
 void APS5_VABI WKContextSetStorageAccessAPIEnabled(const void* contextRef, bool enable);
+void APS5_VABI WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsCachePartitioned(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsEmptyDocument(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsSecure(const void* contextRef, const void* urlSchemeRef);
 
 }

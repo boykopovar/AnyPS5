@@ -69,6 +69,11 @@ public:
     bool javaScriptGarbageCollectorTimerEnabled = true;
     bool storageAccessAPIEnabled = false;
     std::uint32_t garbageCollectJavaScriptObjectsCount = 0;
+    std::vector<std::string> bypassingCSPSchemes;
+    std::vector<std::string> cachePartitionedSchemes;
+    std::vector<std::string> canDisplayOnlyIfCanRequestSchemes;
+    std::vector<std::string> emptyDocumentSchemes;
+    std::vector<std::string> secureSchemes;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
