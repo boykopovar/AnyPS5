@@ -118,6 +118,12 @@ void CheckGetters() {
     CheckGetter(sceCameraGetDefectivePixelCancellation, 0, "defective pixel cancellation must be off");
     CheckGetter(sceCameraGetLensCorrection, 0, "lens correction must be off");
     CheckGetter(sceCameraGetContrast, 32, "the contrast must be 32");
+    errno = 71;
+    Require(sceCameraGetContrast(1, Channel0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == ErrorParam, "an unwritable contrast pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable contrast pointer");
+    alignas(16) std::uint32_t contrastBuffer[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    Require(sceCameraGetContrast(1, Channel0, &contrastBuffer[1], nullptr) == 0, "reading contrast to buffer failed");
+    Require(contrastBuffer[0] == 0x5a5a5a5a && contrastBuffer[1] == 32 && contrastBuffer[2] == 0x5a5a5a5a, "adjacent memory was corrupted");
     CheckGetter(sceCameraGetSaturation, 64, "the saturation must be 64");
     CheckGetter(sceCameraGetSharpness, 1, "the sharpness must be 1");
     std::int32_t hue = 0;

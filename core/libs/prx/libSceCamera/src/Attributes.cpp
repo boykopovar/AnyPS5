@@ -108,7 +108,13 @@ int APS5_VABI sceCameraGetLensCorrection(std::int32_t handle, std::uint32_t chan
 }
 
 int APS5_VABI sceCameraGetContrast(std::int32_t handle, std::uint32_t channel, std::uint32_t* contrast, void* option) {
-    return Report(handle, channel, contrast, option, DEFAULT_CONTRAST);
+    if (const int error = CheckGet(handle, channel, contrast, option)) return error;
+    const std::uint32_t value = DEFAULT_CONTRAST;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(contrast, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return SCE_CAMERA_ERROR_PARAM;
+    return 0;
 }
 
 int APS5_VABI sceCameraGetSaturation(std::int32_t handle, std::uint32_t channel, std::uint32_t* saturation, void* option) {
