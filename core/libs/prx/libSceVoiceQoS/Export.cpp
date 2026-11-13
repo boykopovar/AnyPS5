@@ -30,6 +30,13 @@ struct Endpoint {
     std::uint32_t outPort = 0;
 };
 
+bool CopyOut(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
 struct Connection {
     std::int32_t local;
     std::int32_t remote;
@@ -124,8 +131,8 @@ int APS5_VABI sceVoiceQoSCreateLocalEndpoint(int32_t* localId, int32_t userId, i
     return Locked([&](QoS& qos) -> int {
         if (!localId) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
         if (userId == -1 || !qos.locals.empty()) {
-            *localId = -1;
-            return SCE_VOICE_ERROR_LIBVOICEQOS_LIMIT;
+            const std::int32_t invalidId = -1;
+            return CopyOut(localId, &invalidId, sizeof(invalidId)) ? SCE_VOICE_ERROR_LIBVOICEQOS_LIMIT : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
         }
         VoicePortParam inParam{};
         inParam.port_type = VOICE_PORT_IN_DEVICE;
@@ -146,8 +153,13 @@ int APS5_VABI sceVoiceQoSCreateLocalEndpoint(int32_t* localId, int32_t userId, i
             sceVoiceDeletePort(inPort);
             return result;
         }
+        const std::int32_t createdId = 0;
+        if (!CopyOut(localId, &createdId, sizeof(createdId))) {
+            sceVoiceDeletePort(inPort);
+            sceVoiceDeletePort(outPort);
+            return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        }
         qos.locals.emplace(0, Endpoint{inPort, outPort});
-        *localId = 0;
         return 0;
     });
 }
@@ -188,13 +200,13 @@ int APS5_VABI sceVoiceQoSConnect(int32_t* connectionId, int32_t localId, int32_t
         if (!qos.locals.contains(localId) || !qos.remotes.contains(remoteId)) throw std::runtime_error("sceVoiceQoSConnect: missing voice port error behavior is not implemented");
         for (std::int32_t candidate = 0; candidate < qos.endpointLimit; ++candidate) {
             if (!qos.connections.contains(candidate)) {
+                if (!CopyOut(connectionId, &candidate, sizeof(candidate))) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
                 qos.connections.emplace(candidate, Connection{localId, remoteId});
-                *connectionId = candidate;
                 return 0;
             }
         }
-        *connectionId = -1;
-        return SCE_VOICE_ERROR_LIBVOICEQOS_LIMIT;
+        const std::int32_t invalidId = -1;
+        return CopyOut(connectionId, &invalidId, sizeof(invalidId)) ? SCE_VOICE_ERROR_LIBVOICEQOS_LIMIT : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
     });
 }
 
@@ -245,8 +257,8 @@ int APS5_VABI sceVoiceQoSSetRemoteEndpointAttribute(int32_t remoteId, int32_t at
 int APS5_VABI sceVoiceQoSReadPacket(int32_t connectionId, void* buffer, uint32_t* size) {
     return Locked([&](QoS& qos) {
         if (!buffer || !size || !qos.connections.contains(connectionId)) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
-        *size = 0;
-        return 0;
+        const std::uint32_t zero = 0;
+        return CopyOut(size, &zero, sizeof(zero)) ? 0 : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
     });
 }
 

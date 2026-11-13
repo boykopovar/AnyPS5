@@ -605,29 +605,53 @@ int32_t APS5_VABI sceFiberGetSelf(FiberObject** fiber) {
     return SCE_OK;
 }
 
+static bool CopyGuestIn(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
+}
+
+static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
+}
+
 int32_t APS5_VABI sceFiberGetInfo(FiberObject* object, FiberInfo* fiber_info) {
     auto* fiber = AsFiber(object);
     if (!fiber || !fiber_info) return object && fiber_info ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
-    if (fiber_info->size != sizeof(FiberInfo)) return SCE_FIBER_ERROR_INVALID;
-    fiber_info->entry = fiber->entry;
-    fiber_info->arg_on_initialize = fiber->argOnInitialize;
-    fiber_info->addr_context = SizedWindow(fiber);
-    fiber_info->size_context = fiber->contextSize;
-    std::memcpy(fiber_info->name, fiber->name, sizeof(fiber_info->name));
-    fiber_info->size_context_margin = static_cast<uint64_t>(-1);
+    uint64_t infoSize = 0;
+    if (!CopyGuestIn(&infoSize, &fiber_info->size, sizeof(infoSize))) return SCE_FIBER_ERROR_INVALID;
+    if (infoSize != sizeof(FiberInfo)) return SCE_FIBER_ERROR_INVALID;
+    FiberInfo localInfo{};
+    localInfo.size = sizeof(FiberInfo);
+    localInfo.entry = fiber->entry;
+    localInfo.arg_on_initialize = fiber->argOnInitialize;
+    localInfo.addr_context = SizedWindow(fiber);
+    localInfo.size_context = fiber->contextSize;
+    std::memcpy(localInfo.name, fiber->name, sizeof(localInfo.name));
+    localInfo.size_context_margin = static_cast<uint64_t>(-1);
     if (fiber->contextSizeCheck && fiber->context) {
         const auto* words = SizedWindow(fiber);
         const auto* end = words + fiber->contextSize / sizeof(std::uint64_t);
-        fiber_info->size_context_margin = static_cast<uint64_t>(std::find_if(words, end, [](std::uint64_t word) { return word != FIBER_CONTEXT_FILL; }) - words) * sizeof(std::uint64_t);
+        localInfo.size_context_margin = static_cast<uint64_t>(std::find_if(words, end, [](std::uint64_t word) { return word != FIBER_CONTEXT_FILL; }) - words) * sizeof(std::uint64_t);
     }
-    return SCE_OK;
+    return CopyGuestOut(fiber_info, &localInfo, sizeof(localInfo)) ? SCE_OK : SCE_FIBER_ERROR_INVALID;
 }
 
 int32_t APS5_VABI sceFiberRename(FiberObject* object, const char* name) {
     auto* fiber = AsFiber(object);
     if (!fiber || !name) return object && name ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
-    std::memset(fiber->name, 0, sizeof(fiber->name));
-    std::strncpy(fiber->name, name, FIBER_MAX_NAME_LENGTH);
+    char localName[sizeof(fiber->name)] = {};
+    for (std::size_t i = 0; i < FIBER_MAX_NAME_LENGTH; ++i) {
+        char ch = 0;
+        if (!CopyGuestIn(&ch, name + i, 1)) return SCE_FIBER_ERROR_INVALID;
+        localName[i] = ch;
+        if (ch == '\0') break;
+    }
+    std::memcpy(fiber->name, localName, sizeof(fiber->name));
     return SCE_OK;
 }
 
@@ -646,8 +670,8 @@ int32_t APS5_VABI sceFiberOptParamInitialize(FiberOptParam* opt_param) {
 int32_t APS5_VABI sceFiberGetThreadFramePointerAddress(uint64_t* addr_frame_pointer) {
     if (!addr_frame_pointer) return SCE_FIBER_ERROR_NULL;
     if (!ThreadState().current) return SCE_FIBER_ERROR_PERMISSION;
-    *addr_frame_pointer = ThreadState().threadFramePointer;
-    return SCE_OK;
+    const uint64_t fp = ThreadState().threadFramePointer;
+    return CopyGuestOut(addr_frame_pointer, &fp, sizeof(fp)) ? SCE_OK : SCE_FIBER_ERROR_INVALID;
 }
 
 int32_t APS5_VABI _sceFiberGetThreadFramePointerAddress(uint64_t* addr_frame_pointer) {

@@ -59,6 +59,7 @@ constexpr std::uint32_t kAgcDriverModuleId = 0x80000080;
 constexpr std::uint32_t kNgs2InternalModuleId = 0x80000090;
 constexpr std::uint32_t kAgcModuleId = 0x80000094;
 constexpr std::uint32_t kHdrScopesInternalModuleId = 0x800000bd;
+constexpr std::uint32_t kMeasuredInternalUnloadedModuleId = 0x800000c4u;
 
 #ifdef __linux__
 struct Mapping {
@@ -319,6 +320,7 @@ int main() {
     }
 
     Require(sceSysmoduleIsLoadedInternal(0x00ffffffu) == kInvalidValue);
+    Require(sceSysmoduleIsLoadedInternal(kMeasuredInternalUnloadedModuleId) == kModuleUnloaded);
     Require(sceSysmoduleIsLoadedInternal(kFiberModuleId) == kModuleUnloaded);
     Require(sceSysmoduleIsLoaded(kFiberModuleId) == kModuleUnloaded);
     Require(sceSysmoduleLoadModuleInternal(kFiberModuleId) == 0);
