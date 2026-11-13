@@ -443,6 +443,7 @@ int main() {
 
     Require(sceAcmContextDestroy(context2) == 0);
     Require(sceAcmContextDestroy(context2) == BadContext);
+    Require(sceAcmContextDestroy(context2) == BadContext);
 
     return 0;
 }
