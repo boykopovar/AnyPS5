@@ -80,6 +80,48 @@ async function inspect(worker, count) {
   await worker.onmessage({ data: { type: "inspection-complete" } });
 }
 
+for (const stage of ["constructor", "postMessage"]) {
+  test(`A worker ${stage} failure restores selection and permits retry`, async t => {
+    const { get, workers } = await setup(t, `startup-${stage}`);
+    const OriginalWorker = globalThis.Worker;
+    const message = stage === "constructor" ? "Worker creation denied" : "Input could not be cloned";
+    globalThis.Worker = class extends OriginalWorker {
+      constructor() {
+        if (stage === "constructor") throw new DOMException(message, "SecurityError");
+        super();
+      }
+      postMessage() { throw new DOMException(message, "DataCloneError"); }
+    };
+    get("file").files = [{ name: "first.zip" }];
+    get("file").onchange();
+    await setImmediate();
+    globalThis.Worker = OriginalWorker;
+
+    assert.equal(get("error").hidden, false);
+    assert.equal(get("error").children[0].textContent, message);
+    assert.equal(get("status").hidden, true);
+    assert.equal(get("cancel").hidden, true);
+    assert.equal(get("drop").hidden, false);
+    for (const id of ["choose", "choose-folder", "change", "target", "save", "intel"]) {
+      assert.equal(get(id).disabled, false, id);
+    }
+    assert.equal(get("convert").disabled, true);
+    assert.equal(workers.length, stage === "constructor" ? 0 : 1);
+    for (const worker of workers) assert.equal(worker.terminated, true);
+
+    get("file").files = [{ name: "replacement.zip" }];
+    get("file").onchange();
+    const replacement = workers.at(-1);
+    assert.deepEqual(replacement.messages[0].inputs.map(input => input.name), ["replacement.zip"]);
+    await inspect(replacement, 1);
+    assert.equal(get("error").hidden, true);
+    assert.equal(get("archive-name").textContent, "replacement.zip");
+    get("acknowledge").checked = true;
+    get("acknowledge").listeners.get("change")();
+    assert.equal(get("convert").disabled, false);
+  });
+}
+
 for (const kind of ["zip", "batch", "folder"]) {
   test(`Change resets an inspected ${kind} and permits a new conversion`, async t => {
     const { get, workers } = await setup(t, kind);
@@ -277,6 +319,38 @@ test("a visible error follows a language switch", async t => {
   assert.equal(document.documentElement.lang, "de");
   assert.equal(get("error").children[0].textContent, "Release-Informationen können nicht geladen werden (404). release.json wird während des Site-Builds erzeugt und fehlt deshalb, wenn demo/web direkt bereitgestellt wird.");
   get("locale").onclick();
+  assert.equal(document.documentElement.lang, "ar");
+  assert.equal(document.documentElement.dir, "rtl");
+  assert.match(get("error").children[0].textContent, /\p{Script=Arabic}.*404/u);
+  get("locale").onclick();
   assert.equal(document.documentElement.lang, "en");
+  assert.equal(document.documentElement.dir, "ltr");
   assert.equal(get("error").children[0].textContent, "Cannot load release information (404). release.json is generated during the site build, so it is missing when serving demo/web directly.");
+});
+
+test("a browser that denies direct ZIP writes explains how to continue", async t => {
+  const denied = Object.assign(new Error("createWritable blocked"), { name: "NotAllowedError" });
+  const { get, workers } = await setup(t, "write-denied", {
+    showSaveFilePicker: async () => ({ createWritable: async () => { throw denied; } })
+  });
+  assert.equal(get("save").value, "zip");
+  await selected(get, workers, "first.zip");
+  assert.equal(get("convert").disabled, false);
+  await get("convert").onclick();
+  const message = get("error").children[0]?.textContent ?? get("error").textContent;
+  assert.match(message, /desktop Chrome or Edge/);
+  assert.doesNotMatch(message, /createWritable/);
+  assert.equal(get("selection").hidden, true);
+  assert.equal(get("convert").disabled, true);
+});
+
+test("cancelling the ZIP picker does not report a failure", async t => {
+  const { get, workers } = await setup(t, "write-cancelled", {
+    showSaveFilePicker: async () => { throw Object.assign(new Error("cancelled"), { name: "AbortError" }); }
+  });
+  await selected(get, workers, "first.zip");
+  await get("convert").onclick();
+  assert.equal(get("error").hidden, true);
+  assert.equal(get("selection").hidden, false);
+  assert.equal(get("convert").disabled, false);
 });

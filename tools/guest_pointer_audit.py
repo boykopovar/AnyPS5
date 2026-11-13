@@ -61,9 +61,11 @@ def pointer_parameters(signature):
     return names
 
 
-def quiet(body):
+def quiet(body, safe=True):
     blanked = list(body)
     for match in QUIET_CALL.finditer(body):
+        if not safe and match.group(1) in SAFE:
+            continue
         open_paren = match.end() - 1
         end = closing(body, open_paren)
         spans = [(open_paren + 1, end)]
@@ -76,6 +78,21 @@ def quiet(body):
                 if blanked[index] != "\n":
                     blanked[index] = " "
     return "".join(blanked)
+
+
+def checked_argument_dereferences(body, name):
+    found = []
+    for match in QUIET_CALL.finditer(body):
+        if match.group(1) not in SAFE:
+            continue
+        open_paren = match.end() - 1
+        arguments = split_top_level(body[open_paren + 1:closing(body, open_paren)], angles=False)
+        for position in SAFE[match.group(1)]:
+            if position < len(arguments):
+                offset, argument = arguments[position]
+                found.extend((open_paren + 1 + offset + index, kind)
+                             for index, kind in accesses(quiet(argument), name) if kind == "dereference")
+    return found
 
 
 def names_parameter(argument, name):
@@ -138,9 +155,11 @@ def audit_text(text):
         open_paren = text.index("(", match.start(1))
         close_paren = text.rindex(")", 0, match.end())
         body_start = match.end() - 1
-        body = quiet(text[body_start:progress.body_end(text, body_start) + 1])
+        original_body = text[body_start:progress.body_end(text, body_start) + 1]
+        body = quiet(original_body)
+        evaluated_body = quiet(original_body, safe=False)
         for parameter in pointer_parameters(text[open_paren + 1:close_paren]):
-            hits = accesses(body, parameter)
+            hits = sorted(accesses(body, parameter) + checked_argument_dereferences(evaluated_body, parameter))
             if hits:
                 line = text.count("\n", 0, body_start + hits[0][0]) + 1
                 results.append({"function": match.group(1), "parameter": parameter, "line": line, "kinds": sorted({kind for _, kind in hits})})
@@ -164,8 +183,9 @@ def main(argv=None):
     parser.add_argument("libraries", nargs="*", help="library directories under core/libs/prx (default: all)")
     parser.add_argument("--json", action="store_true", help="print the findings as JSON")
     args = parser.parse_args(argv)
-    names = args.libraries or sorted(path.name for path in PRX.iterdir() if path.is_dir())
-    missing = [name for name in names if not (PRX / name).is_dir()]
+    available = {path.name for path in PRX.iterdir() if path.is_dir() and not path.is_symlink()}
+    names = args.libraries or sorted(available)
+    missing = [name for name in names if name not in available]
     if missing:
         parser.error(f"not a library under core/libs/prx: {', '.join(missing)}")
     report = audit([PRX / name for name in names])

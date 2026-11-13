@@ -151,6 +151,10 @@ void CheckArrays() {
     Require(sceGameLiveStreamingSetSpoilerTag(1, tags) == 0);
     Require(sceGameLiveStreamingClearSpoilerTag() == 0);
     Require(sceGameLiveStreamingClearSpoilerTag() == 0);
+    errno = 71;
+    Require(sceGameLiveStreamingSetSpoilerTag(0, reinterpret_cast<const GameLiveStreamingSpoilerTag*>(0x10)) == 0);
+    Require(sceGameLiveStreamingSetSpoilerTag(1, reinterpret_cast<const GameLiveStreamingSpoilerTag*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 
     GameLiveStreamingPresetCommand presets[6]{};
     Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(0, nullptr) == kInvalidArgument);
@@ -172,6 +176,10 @@ void CheckArrays() {
     Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(5, presets) == 0);
     Require(sceGameLiveStreamingClearPresetSocialFeedbackCommands() == 0);
     Require(sceGameLiveStreamingClearPresetSocialFeedbackCommands() == 0);
+    errno = 71;
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(0, reinterpret_cast<const GameLiveStreamingPresetCommand*>(0x10)) == 0);
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(1, reinterpret_cast<const GameLiveStreamingPresetCommand*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 
     GameLiveStreamingCameraFrameSetting camera{};
     Require(sceGameLiveStreamingSetCameraFrameSetting(nullptr) == kInvalidArgument);
@@ -184,6 +192,9 @@ void CheckArrays() {
         Require(sceGameLiveStreamingSetCameraFrameSetting(&camera) == kInvalidArgument);
         camera.reserved[byte] = 0;
     }
+    errno = 71;
+    Require(sceGameLiveStreamingSetCameraFrameSetting(reinterpret_cast<const GameLiveStreamingCameraFrameSetting*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 }
 
 void CheckScalars() {
@@ -197,10 +208,25 @@ void CheckScalars() {
 
 void CheckSeparateModeParameter() {
     Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(reinterpret_cast<void*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
     std::array<std::uint8_t, 0x60> parameter{};
     parameter.fill(0xaa);
     Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(parameter.data()) == 0);
     for (std::size_t i = 0; i < parameter.size(); ++i) Require(parameter[i] == (i < 0x44 ? 0 : 0xaa));
+}
+
+void CheckInvalidOutputPointers() {
+    errno = 71;
+    Require(sceGameLiveStreamingGetCurrentStatus2(reinterpret_cast<GameLiveStreamingStatus2*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceGameLiveStreamingGetProgramInfo(reinterpret_cast<GameLiveStreamingProgramInfo*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceGameLiveStreamingGetCurrentStatus(reinterpret_cast<GameLiveStreamingStatus*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 }
 
 }
@@ -223,6 +249,7 @@ int main() {
     CheckSeparateModeParameter();
     for (const std::size_t size : {0u, 1u, 0x3fffu, 0x4001u, 0x100000u}) Require(sceGameLiveStreamingInitialize(size) == invalidArgument);
     Require(sceGameLiveStreamingInitialize(0x4000) == 0);
+    CheckInvalidOutputPointers();
     Require(sceGameLiveStreamingEnableLiveStreaming(true) == 0);
     Require(sceGameLiveStreamingInitialize(0) == invalidArgument);
     Require(sceGameLiveStreamingInitialize(0x4000) == alreadyInitialized);

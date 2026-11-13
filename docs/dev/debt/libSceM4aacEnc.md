@@ -2,6 +2,7 @@
 
 ### Functional
 
+- [CheckEncoderParameters, CheckEncode, CheckFlush, sceM4aacEncCreateEncoderEx, sceM4aacEncDeleteEncoderEx and libSceM4aacEncUnknown_dyjd6gEaAXw_nid_no_patch](../../../core/libs/prx/libSceM4aacEnc/Export.cpp) (libSceM4aacEnc) - returning ErrorInvalidPointer (0x80A90002) for unmapped or unreadable parameter and context pointers is a host-safety fallback preserving host errno; console behavior on unmapped memory is unmeasured.
 - [libSceM4aacEnc](../../../core/libs/prx/libSceM4aacEnc/Export.cpp): every export except `dyjd6gEaAXw` throws through `NotImplemented_nid_no_patch` once its argument checks pass. The 13.42 module (`libSceM4aacEnc.sprx`, sha256 b6bef8401753f6b283edbeab5065aaab6628ed6910be90f6b11b822d5341891c) encodes through libSceAjmi: its initializer creates the global context with it, and encoder creation, encoding, flushing, deletion and clearing are libSceAjmi instance and batch calls, none of which is modelled here. `sceM4aacEncClearContext` and `sceM4aacEncTerminate` throw for every input: the first makes its libSceAjmi call without a check, and the second returns from a null context without setting a return value. The checks and their `0x80A900xx` codes were read from disassembly up to the first libSceAjmi call, not measured on a console.
 
 ### Unknown function info
