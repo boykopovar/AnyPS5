@@ -405,7 +405,7 @@ struct Request::State {
     Limit Deadline(std::uint32_t duration, int code) const {
         Require(duration != 0, "sceHttp2: zero timeout semantics are unknown");
         const auto phase = Clock::now() + std::chrono::microseconds(duration);
-        return phase < totalDeadline ? Limit{phase, code} : Total();
+        return ignoresTotalTimeout || phase < totalDeadline ? Limit{phase, code} : Total();
     }
 
     Limit Total() const { return {ignoresTotalTimeout ? Clock::time_point::max() : totalDeadline, TimedOut}; }
@@ -444,8 +444,8 @@ struct Request::State {
     }
 
     void Check(Limit deadline) const {
-        Require(!stopped.load(), "sceHttp2: request deleted during an operation; console error mapping is unknown");
-        if (cancelled.load()) Raise(Aborted, "sceHttp2: request cancelled; console error mapping is unknown");
+        if (stopped.load()) Raise(Aborted, "sceHttp2: request deleted during an operation");
+        if (cancelled.load()) Raise(Aborted, "sceHttp2: request cancelled");
         if (Clock::now() >= deadline.at) Raise(deadline.code, "sceHttp2: request timed out; console error mapping is unknown");
     }
 
