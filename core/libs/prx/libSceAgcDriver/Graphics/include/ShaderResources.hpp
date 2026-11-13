@@ -604,6 +604,7 @@ private:
         const StorageTexture* source = nullptr;
         bool depth = false;
         bool valid = false;
+        std::array<std::uint64_t, 4> untracked{};
     };
     bool keepsTemplateRecords() const;
     void captureValidation();
@@ -763,6 +764,7 @@ private:
     bool reusable = false;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;
+    std::vector<std::array<std::uint64_t, 4>> storageUntracked;
     std::vector<ShaderRecompiler::RegisteredImageView> registeredImageViews;
     // The pending registry's serial at the last Revalidate that proved this object, taken before
     // its checks and kept only when unchanged after them (0: none): while it is still the serial,
