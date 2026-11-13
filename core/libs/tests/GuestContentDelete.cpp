@@ -61,5 +61,8 @@ int main() {
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByIdListForSf(nullptr, 0) == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByIdListForSf(validIds, 1) == static_cast<int>(0x809D5002u));
+
+    Require(sceContentDeleteInitialize(&param) == 0);
+    Require(sceContentDeleteTerminate() == 0);
     return 0;
 }

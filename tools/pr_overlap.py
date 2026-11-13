@@ -1,4 +1,5 @@
 import argparse
+import codecs
 import hashlib
 import json
 import os
@@ -229,9 +230,9 @@ def merge(*args):
     return lines[0], set(lines[1:]) if result.returncode else set()
 
 
-def commit(tree):
+def commit(tree, ref):
     return git("-c", "user.name=pr_overlap", "-c", "user.email=pr_overlap", "commit-tree", tree,
-               "-p", "refs/pr/base", "-m", "pr_overlap").strip()
+               "-p", "refs/pr/base", "-p", ref, "-m", "pr_overlap").strip()
 
 
 def exports(diff, prefix="+"):
@@ -257,12 +258,25 @@ def exports(diff, prefix="+"):
 
 def changed_source(diff, prefix):
     files, current, path = [], [], None
-    for line in diff.splitlines():
+    in_hunk = False
+    for line in diff.split("\n"):
+        line = line.removesuffix("\r")
         if line.startswith("diff --git "):
             if current and path:
                 files.append((path, "\n".join(current)))
             path = line.split(" b/", 1)[1] if " b/" in line else None
             current = []
+            in_hunk = False
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif not in_hunk and line.startswith("--- " if prefix == "-" else "+++ "):
+            path = line[4:]
+            if path.startswith('"') and path.endswith('"'):
+                path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+            if path == "/dev/null":
+                path = None
+            elif path.startswith(("a/", "b/")):
+                path = path[2:]
         elif line.startswith(prefix) and not line.startswith(prefix * 3):
             current.append(line[1:])
     if current and path:
@@ -324,7 +338,10 @@ def save_export_cache(path, version, files):
         temporary.write_text(json.dumps({"version": version, "files": files}), encoding="utf-8")
         os.replace(temporary, path)
     except OSError:
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def base_sources(root, ref):
@@ -388,7 +405,7 @@ def merge_base(ref):
 
 def scan(pr):
     tree, conflicted = merge("refs/pr/base", pr["ref"])
-    pr["tree"] = None if conflicted else commit(tree)
+    pr["tree"] = None if conflicted else commit(tree, pr["ref"])
     old, new = (merge_base(pr["ref"]), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
     pr["files"], pr["added"] = set(), set()
     changes = git("diff", "--name-status", "--no-renames", "-z", old, new).split("\0")

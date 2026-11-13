@@ -79,6 +79,7 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/unormcmp.cpp
     ${ICU_SOURCE_DIR}/common/uobject.cpp
     ${ICU_SOURCE_DIR}/common/uprops.cpp
+    ${ICU_SOURCE_DIR}/common/uscript_props.cpp
     ${ICU_SOURCE_DIR}/common/ustrcase.cpp
     ${ICU_SOURCE_DIR}/common/ustring.cpp
     ${ICU_SOURCE_DIR}/common/ustrtrns.cpp
@@ -105,7 +106,6 @@ if(WIN32)
         ${ICU_SOURCE_DIR}/common/uloc_tag.cpp
         ${ICU_SOURCE_DIR}/common/uresbund.cpp
         ${ICU_SOURCE_DIR}/common/uresdata.cpp
-        ${ICU_SOURCE_DIR}/common/uscript_props.cpp
         ${ICU_SOURCE_DIR}/common/ustrenum.cpp
         ${ICU_SOURCE_DIR}/common/utypes.cpp
         ${ICU_SOURCE_DIR}/common/wintz.cpp)

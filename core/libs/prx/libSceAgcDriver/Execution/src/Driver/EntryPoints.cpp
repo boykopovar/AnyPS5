@@ -187,6 +187,10 @@ extern "C" void AgcDriverReleaseSettled_nid_postfix() {
     AgcDriver::DriverDetail::Driver::Get().ReleaseSettled();
 }
 
+extern "C" bool AgcDriverSettledHeld_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().SettledHeld();
+}
+
 extern "C" bool AgcDriverSettled_nid_postfix() {
     return AgcDriver::DriverDetail::Driver::Get().Settled();
 }
