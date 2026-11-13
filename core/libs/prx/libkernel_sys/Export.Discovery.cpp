@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/LibKernelSysProviders.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
@@ -282,7 +283,7 @@ int APS5_VABI pthread_mutexattr_setgen_np_nid_postfix(PthreadMutexattr* attr, in
 
 void APS5_VABI pthread_resume_all_np_nid_postfix(void) {
     ResumeAllGuestThreads_nid_no_patch();
-    scePthreadTestcancel();
+    scePthreadTestcancel_nid_no_patch();
 }
 
 int APS5_VABI pthread_resume_np_nid_postfix(Pthread thread) {
@@ -335,7 +336,7 @@ int APS5_VABI ptrace_nid_postfix(void) {
 }
 
 int APS5_VABI reboot_nid_postfix(int) {
-    *__error_nid_postfix() = 1;
+    *__error_nid_no_patch() = 1;
     return -1;
 }
 
@@ -344,9 +345,9 @@ int APS5_VABI revoke_nid_postfix(const char* path) {
     constexpr std::uint16_t characterDevice = 0020000;
     constexpr int guestEinval = 22;
     FileStat status{};
-    if (stat_nid_postfix(path, &status) != 0) return -1;
+    if (stat_nid_no_patch(path, &status) != 0) return -1;
     if ((status.st_mode & typeMask) != characterDevice) {
-        *__error_nid_postfix() = guestEinval;
+        *__error_nid_no_patch() = guestEinval;
         return -1;
     }
     NotImplemented_nid_no_patch("revoke of a character device");
@@ -657,10 +658,10 @@ int APS5_VABI sceKernelGetACInfoAllForCoredump(void) {
 int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* categoryType) {
     if (categoryType == nullptr) return SCE_KERNEL_ERROR_EINVAL;
     if (pid < 0) {
-        *__error_nid_postfix() = 3;
+        *__error_nid_no_patch() = 3;
         return SCE_KERNEL_ERROR_ESRCH;
     }
-    if (pid != 0 && pid != getpid_nid_postfix()) NotImplemented_nid_no_patch(__func__);
+    if (pid != 0 && pid != getpid_nid_no_patch()) NotImplemented_nid_no_patch(__func__);
     std::uint32_t value = 0;
     if (!GetAppCategoryType_nid_no_patch(&value)) NotImplemented_nid_no_patch(__func__);
     if (!GuestCopyOut_nid_no_patch(categoryType, &value, sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
@@ -743,7 +744,7 @@ int APS5_VABI sceKernelGetCompiledSdkVersionByPath(void) {
 }
 
 int APS5_VABI sceKernelGetCompiledSdkVersionByPid(int pid, std::int32_t* version) {
-    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return static_cast<int>(0x80020003);
+    if (pid != getpid_nid_no_patch() && pid != -1 && pid != 0) return static_cast<int>(0x80020003);
     return sceKernelGetCompiledSdkVersion(version);
 }
 
@@ -1048,7 +1049,7 @@ int APS5_VABI sceKernelGetUniversalMode(void) {
 }
 
 int APS5_VABI sceKernelGetUpdVersion(std::uint32_t* version) {
-    return sysKernelGetUpdVersion_nid_postfix(version);
+    return sysKernelGetUpdVersion_nid_no_patch(version);
 }
 
 int APS5_VABI sceKernelGetUtokenDataExecutionForRcmgr(void) {
@@ -1423,7 +1424,7 @@ int APS5_VABI sceKernelMlockall(void) {
 }
 
 int APS5_VABI sceKernelMsync(void* address, std::size_t length, int flags) {
-    return msync_nid_postfix(address, length, flags) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
+    return msync_nid_no_patch(address, length, flags) == 0 ? 0 : SceKernelError(*__error_nid_no_patch());
 }
 
 int APS5_VABI sceKernelNormalizePath(void) {
@@ -1714,7 +1715,7 @@ int APS5_VABI sceKernelSetVmContainer(void) {
 }
 
 int APS5_VABI sceKernelSettimeofday(const KernelTimeval* tv, const KernelTimezone* tz) {
-    return settimeofday_nid_postfix(tv, tz) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
+    return settimeofday_nid_postfix(tv, tz) == 0 ? 0 : SceKernelError(*__error_nid_no_patch());
 }
 
 int APS5_VABI sceKernelSflashGetWritePrio(void) {
@@ -1942,11 +1943,11 @@ int APS5_VABI sceLibcMspaceCreateForMonoMutex(void) {
 }
 
 int APS5_VABI scePthreadAtfork(void (APS5_VABI* prepare)(), void (APS5_VABI* parent)(), void (APS5_VABI* child)()) {
-    return SceResult(pthread_atfork_nid_postfix(prepare, parent, child));
+    return SceResult(pthread_atfork_nid_no_patch(prepare, parent, child));
 }
 
 int APS5_VABI scePthreadAttrGetscope(const PthreadAttr* attr, int* scope) {
-    return SceResult(pthread_attr_getscope_nid_postfix(attr, scope));
+    return SceResult(pthread_attr_getscope_nid_no_patch(attr, scope));
 }
 
 int APS5_VABI scePthreadAttrSetcreatesuspend(PthreadAttr* attr) {
@@ -1955,46 +1956,46 @@ int APS5_VABI scePthreadAttrSetcreatesuspend(PthreadAttr* attr) {
 }
 
 int APS5_VABI scePthreadAttrSetscope(PthreadAttr* attr, int scope) {
-    return SceResult(pthread_attr_setscope_nid_postfix(attr, scope));
+    return SceResult(pthread_attr_setscope_nid_no_patch(attr, scope));
 }
 
 int APS5_VABI scePthreadBarrierDestroy(PthreadBarrierPrivate** barrier) {
-    return SceResult(pthread_barrier_destroy_nid_postfix(barrier));
+    return SceResult(pthread_barrier_destroy_nid_no_patch(barrier));
 }
 
 int APS5_VABI scePthreadBarrierInit(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count, const char* name) {
     if (name && std::strlen(name) >= 32) return SCE_KERNEL_ERROR_ENAMETOOLONG;
-    return SceResult(pthread_barrier_init_nid_postfix(barrier, attr, count));
+    return SceResult(pthread_barrier_init_nid_no_patch(barrier, attr, count));
 }
 
 int APS5_VABI scePthreadBarrierWait(PthreadBarrierPrivate** barrier) {
-    const int result = pthread_barrier_wait_nid_postfix(barrier);
+    const int result = pthread_barrier_wait_nid_no_patch(barrier);
     return result > 0 ? SceKernelError(result) : result;
 }
 
 int APS5_VABI scePthreadBarrierattrDestroy(PthreadBarrierattrPrivate** attr) {
-    return SceResult(pthread_barrierattr_destroy_nid_postfix(attr));
+    return SceResult(pthread_barrierattr_destroy_nid_no_patch(attr));
 }
 
 int APS5_VABI scePthreadBarrierattrGetpshared(PthreadBarrierattrPrivate* const* attr, int* pshared) {
-    return SceResult(pthread_barrierattr_getpshared_nid_postfix(attr, pshared));
+    return SceResult(pthread_barrierattr_getpshared_nid_no_patch(attr, pshared));
 }
 
 int APS5_VABI scePthreadBarrierattrInit(PthreadBarrierattrPrivate** attr) {
-    return SceResult(pthread_barrierattr_init_nid_postfix(attr));
+    return SceResult(pthread_barrierattr_init_nid_no_patch(attr));
 }
 
 int APS5_VABI scePthreadBarrierattrSetpshared(PthreadBarrierattrPrivate** attr, int pshared) {
-    return SceResult(pthread_barrierattr_setpshared_nid_postfix(attr, pshared));
+    return SceResult(pthread_barrierattr_setpshared_nid_no_patch(attr, pshared));
 }
 
 int APS5_VABI scePthreadGetconcurrency(void) {
-    const int level = pthread_getconcurrency_nid_postfix();
+    const int level = pthread_getconcurrency_nid_no_patch();
     return level == 0 ? 0 : static_cast<int>(0x80020000u | static_cast<unsigned>(level));
 }
 
 int APS5_VABI scePthreadGetcpuclockid(Pthread thread, int* clockId) {
-    return SceResult(pthread_getcpuclockid_nid_postfix(thread, clockId));
+    return SceResult(pthread_getcpuclockid_nid_no_patch(thread, clockId));
 }
 
 
@@ -2004,7 +2005,7 @@ int APS5_VABI scePthreadMulti(void) {
 }
 
 int APS5_VABI scePthreadMutexInitForInternalLibc(PthreadMutex* mutex, const PthreadMutexattr* attr) {
-    return SceResult(pthread_mutex_init_nid_postfix(mutex, attr));
+    return SceResult(pthread_mutex_init_nid_no_patch(mutex, attr));
 }
 
 int APS5_VABI scePthreadMutexattrGetgen(const PthreadMutexattr* attr, int* generation) {
@@ -2012,7 +2013,7 @@ int APS5_VABI scePthreadMutexattrGetgen(const PthreadMutexattr* attr, int* gener
 }
 
 int APS5_VABI scePthreadMutexattrInitForInternalLibc(PthreadMutexattr* attr) {
-    return SceResult(pthread_mutexattr_init_nid_postfix(attr));
+    return SceResult(pthread_mutexattr_init_nid_no_patch(attr));
 }
 
 int APS5_VABI scePthreadMutexattrSetgen(PthreadMutexattr* attr, int generation) {
@@ -2034,7 +2035,7 @@ int APS5_VABI scePthreadSetBesteffort(void) {
 }
 
 int APS5_VABI scePthreadSetconcurrency(int level) {
-    return SceResult(pthread_setconcurrency_nid_postfix(level));
+    return SceResult(pthread_setconcurrency_nid_no_patch(level));
 }
 
 int APS5_VABI scePthreadSingle(void) {
@@ -2054,7 +2055,7 @@ int APS5_VABI scePthreadSuspendAll(void) {
 
 int APS5_VABI scePthreadTimedjoin(Pthread thread, void** value, KernelUseconds usec) {
     KernelTimespec abstime{};
-    if (clock_gettime_nid_postfix(GuestClockRealtime, &abstime) != 0) {
+    if (clock_gettime_nid_no_patch(GuestClockRealtime, &abstime) != 0) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
     abstime.tv_sec += static_cast<std::int64_t>(usec / 1000000ULL);
@@ -2063,18 +2064,18 @@ int APS5_VABI scePthreadTimedjoin(Pthread thread, void** value, KernelUseconds u
         abstime.tv_sec += 1;
         abstime.tv_nsec -= 1000000000LL;
     }
-    return SceResult(pthread_timedjoin_np_nid_postfix(thread, value, &abstime));
+    return SceResult(pthread_timedjoin_np_nid_no_patch(thread, value, &abstime));
 }
 
 int APS5_VABI sched_setscheduler_nid_postfix(int pid, int, const KernelSchedParam* param) {
     constexpr int GuestEperm = 1, GuestEsrch = 3, GuestEfault = 14;
     const auto fail = [](int error) {
-        *__error_nid_postfix() = error;
+        *__error_nid_no_patch() = error;
         return -1;
     };
     KernelSchedParam requested{};
     if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return fail(GuestEfault);
-    if (pid != 0 && pid != getpid_nid_postfix()) return fail(GuestEsrch);
+    if (pid != 0 && pid != getpid_nid_no_patch()) return fail(GuestEsrch);
     return fail(GuestEperm);
 }
 

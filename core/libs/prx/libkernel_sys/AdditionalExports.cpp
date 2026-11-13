@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/LibKernelSysProviders.hpp"
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -117,11 +118,11 @@ int APS5_VABI __sys_namedobj_delete_nid_postfix() {
 
 int APS5_VABI __sys_nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
     int oldCancelState = 0;
-    scePthreadSetcancelstate(1, &oldCancelState);
-    const int result = sceKernelNanosleep(rqtp, rmtp);
-    scePthreadSetcancelstate(oldCancelState, nullptr);
+    scePthreadSetcancelstate_nid_no_patch(1, &oldCancelState);
+    const int result = sceKernelNanosleep_nid_no_patch(rqtp, rmtp);
+    scePthreadSetcancelstate_nid_no_patch(oldCancelState, nullptr);
     if (result == 0) return 0;
-    *__error_nid_postfix() = result & 0xFFFF;
+    *__error_nid_no_patch() = result & 0xFFFF;
     return -1;
 }
 
@@ -226,7 +227,7 @@ void APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix(Ubsan::CfiCheckFailData
 }
 
 int APS5_VABI _dup2_nid_postfix(int from, int to) {
-    return dup2_nid_postfix(from, to);
+    return dup2_nid_no_patch(from, to);
 }
 
 static int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* envp) {
@@ -239,7 +240,7 @@ static int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* c
     constexpr std::size_t GuestPathMax = 1024;
     constexpr std::size_t GuestArgMax = 262144;
     const auto fail = [](int error) {
-        *__error_nid_postfix() = error;
+        *__error_nid_no_patch() = error;
         return -1;
     };
     const auto gather = [](const char* guest, std::size_t maxLength, std::string& copy) -> int {
@@ -331,7 +332,7 @@ static int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* c
         std::vector<char*> environmentPointers;
         for (auto& variable : environment) environmentPointers.push_back(variable.data());
         environmentPointers.push_back(nullptr);
-        return execve_nid_postfix(fname.c_str(), argumentPointers.data(), environmentPointers.data());
+        return execve_nid_no_patch(fname.c_str(), argumentPointers.data(), environmentPointers.data());
     }
     return fail(GuestEnoexec);
 }
@@ -355,7 +356,7 @@ int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* co
     const std::string_view DefaultSearchPath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin";
     const std::string_view ShellPath = "/bin/sh";
     const auto fail = [](int error) {
-        *__error_nid_postfix() = error;
+        *__error_nid_no_patch() = error;
         return -1;
     };
     std::string searchPath;
@@ -383,7 +384,7 @@ int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* co
     bool accessFailure = false;
     const auto ladder = [&](const std::string& candidate) {
         GuestExecve_nid_no_patch(candidate.c_str(), argv, envp);
-        const int refusal = *__error_nid_postfix();
+        const int refusal = *__error_nid_no_patch();
         switch (refusal) {
         case GuestE2big:
         case GuestEnomem:
@@ -466,17 +467,17 @@ int APS5_VABI adjtime_nid_postfix(const KernelTimeval* delta, KernelTimeval* old
     constexpr int GuestEfault = 14;
     KernelTimeval adjustment{};
     if (delta != nullptr && !GuestCopyIn_nid_no_patch(&adjustment, delta, sizeof(adjustment))) {
-        *__error_nid_postfix() = GuestEfault;
+        *__error_nid_no_patch() = GuestEfault;
         return -1;
     }
     if (delta != nullptr) {
-        *__error_nid_postfix() = GuestEperm;
+        *__error_nid_no_patch() = GuestEperm;
         return -1;
     }
     if (oldDelta != nullptr) {
         const KernelTimeval pending{};
         if (!GuestCopyOut_nid_no_patch(oldDelta, &pending, sizeof(pending))) {
-            *__error_nid_postfix() = GuestEfault;
+            *__error_nid_no_patch() = GuestEfault;
             return -1;
         }
     }
@@ -1685,7 +1686,7 @@ int APS5_VABI sceKernelGetCpuCoreClock() {
 }
 
 int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion(SceKernelProsperoSystemSwVersion* version) {
-    return sceKernelGetProsperoSystemSwVersion_nid_postfix(version);
+    return sceKernelGetProsperoSystemSwVersion_nid_no_patch(version);
 }
 
 int APS5_VABI sceKernelGetNandInfo() {
@@ -1707,7 +1708,7 @@ int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version) {
 }
 
 int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid(int pid, std::int32_t* version) {
-    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return SCE_KERNEL_ERROR_ESRCH;
+    if (pid != getpid_nid_no_patch() && pid != -1 && pid != 0) return SCE_KERNEL_ERROR_ESRCH;
     return sceKernelGetProsperoCompiledSdkVersion(version);
 }
 
@@ -1722,7 +1723,7 @@ int APS5_VABI sceKernelGetPs4CompiledSdkVersion(std::int32_t* version) {
 }
 
 int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid(int pid, std::int32_t* version) {
-    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return SCE_KERNEL_ERROR_ESRCH;
+    if (pid != getpid_nid_no_patch() && pid != -1 && pid != 0) return SCE_KERNEL_ERROR_ESRCH;
     return sceKernelGetPs4CompiledSdkVersion(version);
 }
 

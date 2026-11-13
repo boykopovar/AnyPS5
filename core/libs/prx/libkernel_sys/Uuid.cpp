@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/LibKernelSysProviders.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -31,13 +32,13 @@ std::uint64_t uuidLastTime = 0;
 std::uint16_t uuidLastSequence = 0;
 
 int Fail(int error) {
-    *__error_nid_postfix() = error;
+    *__error_nid_no_patch() = error;
     return -1;
 }
 
 std::uint64_t UuidTime() {
     KernelTimespec now{};
-    if (clock_gettime_nid_postfix(GuestClockRealtime, &now) != 0) throw std::runtime_error("uuidgen: clock_gettime(CLOCK_REALTIME) failed");
+    if (clock_gettime_nid_no_patch(GuestClockRealtime, &now) != 0) throw std::runtime_error("uuidgen: clock_gettime(CLOCK_REALTIME) failed");
     const auto ticks = UuidGregorianOffset + static_cast<std::uint64_t>(now.tv_sec) * 10000000ULL + static_cast<std::uint64_t>(now.tv_nsec) / 100;
     return ticks & UuidTimeMask;
 }
