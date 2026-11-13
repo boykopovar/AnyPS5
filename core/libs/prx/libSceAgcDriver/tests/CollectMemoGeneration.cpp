@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <algorithm>
 #include <chrono>
@@ -7,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -248,9 +250,75 @@ void CheckStoreInNewEpochIsFound() {
     Require(Walked(address, Page, address), "a store in a new epoch was not found");
 }
 
+void CheckInteriorCoverageAfterRingEviction() {
+    BumpCollectEpoch();
+    Require(CollectWrites(Base, 8 * Block) != 0, "the covering collection failed");
+    for (std::uint64_t i = 0; i < 70; ++i) Require(CollectWrites(Base + (16 + i) * Block, Block) != 0, "a ring eviction collection failed");
+    const auto address = Base + 3 * Block + 3 * Page + 100;
+    Require(!Walked(address, 2 * Page, address + Page), "an interior range lost its completed observation after ring eviction");
 }
 
-int main() {
+void CheckAdjacentCoverage() {
+    BumpCollectEpoch();
+    Require(CollectWrites(Base + 2 * Block, 2 * Block) != 0, "the right collection failed");
+    Require(CollectWrites(Base, 2 * Block) != 0, "the left collection failed");
+    Require(!Walked(Base + Page, 4 * Block - 2 * Page, Base + Block + Page), "adjacent completed observations were collected again");
+
+    BumpCollectEpoch();
+    Require(CollectWrites(Base, Block) != 0, "the first collection failed");
+    Require(CollectWrites(Base + 2 * Block, Block) != 0, "the last collection failed");
+    Require(CollectWrites(Base + Block, Block) != 0, "the connecting collection failed");
+    Require(!Walked(Base, 3 * Block, Base + Block + Page), "a completed connection did not join both observations");
+}
+
+void CheckOverlappingCoverage() {
+    BumpCollectEpoch();
+    Require(CollectWrites(Base + 4 * Block, 4 * Block) != 0, "the right collection failed");
+    Require(CollectWrites(Base + 2 * Block, 4 * Block) != 0, "the overlapping collection failed");
+    Require(!Walked(Base + 3 * Block, 4 * Block, Base + 5 * Block + Page), "overlapping completed observations were collected again");
+    Require(CollectWrites(Base + Block, 8 * Block) != 0, "the containing collection failed");
+    Require(!Walked(Base + 2 * Block, 6 * Block, Base + 6 * Block + Page), "a containing observation lost its interior coverage");
+}
+
+void CheckCoverageGapsAndInvalidations() {
+    BumpCollectEpoch();
+    Require(CollectWrites(Base, 2 * Block) != 0, "the left collection failed");
+    Require(CollectWrites(Base + 3 * Block, 2 * Block) != 0, "the right collection failed");
+    Require(Walked(Base + Block, 3 * Block, Base + 2 * Block + Page), "a hole between observations was treated as observed");
+    Require(CollectWrites(Base, 0) == 0, "an empty range acquired a coverage proof");
+    Require(CollectWrites(std::numeric_limits<std::uint64_t>::max() - 31, 8) == 0, "page rounding wrapped an invalid address into observed memory");
+    Require(CollectWrites(std::numeric_limits<std::uint64_t>::max() - 31, 64) == 0, "an overflowing range acquired a coverage proof");
+
+    BumpCollectEpoch();
+    const auto probe = Base + 2 * Block + Page;
+    Require(Walked(Base + Block, 3 * Block, probe), "a new epoch inherited an old observation");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(static_cast<std::uintptr_t>(Base + 90 * Block), Page);
+    Require(Walked(Base + Block, 3 * Block, probe), "an allocation change retained an old observation");
+    Unwatch(Base + 91 * Block, Page);
+    Require(Walked(Base + Block, 3 * Block, probe), "an unwatch retained a merged observation");
+}
+
+void CheckCoverageThreadAndDriverWrites() {
+    BumpCollectEpoch();
+    Require(CollectWrites(Base, 4 * Block) != 0, "the covering collection failed");
+    bool walked = false;
+    std::thread other([&] {
+        BumpCollectEpoch();
+        walked = Walked(Base + Block, 2 * Block, Base + Block + Page);
+    });
+    other.join();
+    Require(walked, "a second worker inherited the first worker's observation");
+    const auto before = TrackerGeneration();
+    const auto written = MarkWritten(Base + 2 * Block, Page);
+    Require(written > before, "the driver write did not advance the tracker");
+    Require(CollectWrites(Base + Block, 2 * Block) >= written, "an observation hid a completed driver write generation");
+    Require(!UnchangedSince(Base + 2 * Block, Page, before), "an observation hid a driver write stamp");
+    Require(Walked(Base + Block, 2 * Block, Base + Block + Page, false), "an uncached collection reused an observation");
+}
+
+}
+
+int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
         if (!WriteWatched()) {
@@ -262,6 +330,19 @@ int main() {
         CheckMemoHitDuringWalk();
         CheckFailedWalkIsRetried();
 #endif
+        if (argc == 2) {
+            const std::string selected = argv[1];
+            if (selected == "--interior") CheckInteriorCoverageAfterRingEviction();
+            else if (selected == "--unions") {
+                CheckAdjacentCoverage();
+                CheckOverlappingCoverage();
+            } else if (selected == "--invalidation") {
+                CheckCoverageGapsAndInvalidations();
+                CheckCoverageThreadAndDriverWrites();
+            } else throw std::runtime_error("unknown collect coverage test");
+            std::cout << "collect coverage test passed\n";
+            return 0;
+        }
         CheckUnalignedRepeatReachesKernelOnce();
         CheckUncachedWalksKeepCachedEntries();
         CheckNeighbouringBlockStoreIsFound();
