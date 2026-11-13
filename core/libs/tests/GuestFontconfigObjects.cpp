@@ -253,7 +253,7 @@ static void FreeTypeFaceGetter() {
     CHECK(pattern);
     CHECK(FcPatternGetFTFace(pattern, "ftface", 0, &face) == FcResultNoMatch && face == &sentinel);
     CHECK(FcPatternAddString(pattern, "family", Text("Sans")) == 1);
-    CHECK(FcPatternAddInteger(pattern, "weight", 80) == 1);
+    CHECK(FcPatternAddInteger_nid_postfix(pattern, "weight", 80) == 1);
     CHECK(FcPatternGetFTFace(pattern, "family", 0, &face) == FcResultTypeMismatch && face == &sentinel);
     CHECK(FcPatternGetFTFace(pattern, "weight", 0, &face) == FcResultTypeMismatch && face == &sentinel);
     CHECK(FcPatternGetFTFace(pattern, "family", 0, nullptr) == FcResultTypeMismatch);
