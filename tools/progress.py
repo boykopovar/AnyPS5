@@ -121,6 +121,21 @@ def body_end(text, start):
     return len(text)
 
 
+def anonymous_spans(text):
+    spans = []
+    for match in re.finditer(r"\bnamespace\s*\{", text):
+        brace = match.end() - 1
+        spans.append((brace, body_end(text, brace)))
+    return spans
+
+
+def internal_linkage(text, start, spans):
+    if any(open_brace < start < close for open_brace, close in spans):
+        return True
+    boundary = max(text.rfind(character, 0, start) for character in ";{}")
+    return bool(re.search(r"\bstatic\b", text[boundary + 1:start]))
+
+
 def stub_calls(text):
     helpers = {}
     for match in STUB_WRAPPER.finditer(text):
@@ -207,9 +222,12 @@ def scan_library(path):
     for text in texts:
         calls = stub_calls(text)
         wrappers = inert_wrappers(text)
+        spans = anonymous_spans(text)
         for match in DEFINITION.finditer(text):
             name = match.group(1)
             if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) and name not in exported:
+                continue
+            if name not in exported and internal_linkage(text, match.start(), spans):
                 continue
             body = text[match.end() - 1:body_end(text, match.end() - 1)]
             if any(call.group(1) in calls and not QUALIFIED.search(body, 0, call.start())
