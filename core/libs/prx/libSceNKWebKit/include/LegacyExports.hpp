@@ -759,7 +759,6 @@ int APS5_VABI _ZN7Nicosia5SceneC2Ev();
 int APS5_VABI libSceNKWebKitLegacyUnknown_JEcmyPMu0mU_nid_no_patch();
 int APS5_VABI _ZN7WebCore9DOMWindowD2Ev();
 int APS5_VABI libSceNKWebKitLegacyUnknown_JML3Tj99IdM_nid_no_patch();
-int APS5_VABI _ZN3PAL12CryptoDigest6createENS0_9AlgorithmE();
 int APS5_VABI _ZN7WebCore9Scrollbar21createNativeScrollbarERNS_14ScrollableAreaENS_20ScrollbarOrientationENS_20ScrollbarControlSizeE();
 int APS5_VABI WKBundlePageGroupCopyIdentifier();
 int APS5_VABI _ZNK7WebCore26Matrix3DTransformOperationeqERKNS_18TransformOperationE();
