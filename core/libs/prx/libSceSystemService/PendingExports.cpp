@@ -556,7 +556,11 @@ int APS5_VABI sceShellCoreUtilActivateInit(std::int32_t type, std::intptr_t* han
 
 int APS5_VABI sceShellCoreUtilActivateIsActivated(std::int32_t type, bool* activated) {
     if (activated == nullptr) return ShellCoreInvalidArgument;
-    *activated = true;
+    const bool localActivated = true;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(activated, &localActivated, sizeof(localActivated));
+    errno = savedErrno;
+    if (!copied) return ShellCoreInvalidArgument;
     return 0;
 }
 
