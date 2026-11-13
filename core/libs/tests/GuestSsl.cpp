@@ -162,4 +162,22 @@ int main() {
         Require(sceSslUnloadCert(context) == (sdkVersion < 0x07500000 ? 0 : invalidId));
         Require(sceSslUnloadCert(0) == (sdkVersion < 0x07500000 ? 0 : invalidId));
     }
+
+    const int errnoCtx = sceSslInit_nid_postfix(0x10000);
+    Require(errnoCtx > 0);
+    errno = EILSEQ;
+    SceSsl::MemoryPoolStats errnoStats{};
+    Require(sceSslGetMemoryPoolStats(errnoCtx, &errnoStats) == 0);
+    Require(errno == EILSEQ);
+    const int errnoConn = sceSslCreateConnection(errnoCtx, 0, "example.com");
+    Require(errnoConn > 0);
+    errno = EILSEQ;
+    Require(sceSslSetAlpn(errnoConn, "h2,http/1.1") == 0);
+    Require(errno == EILSEQ);
+    Require(sceSslGetCaList(errnoCtx, &list) == notFound);
+    Require(errno == EILSEQ);
+    Require(sceSslGetCaCerts(errnoCtx, &certs) == notFound);
+    Require(errno == EILSEQ);
+    Require(sceSslDeleteConnection(errnoConn) == 0);
+    Require(sceSslTerm_nid_postfix(errnoCtx) == 0);
 }

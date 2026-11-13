@@ -48,6 +48,38 @@ constexpr int ErrorNotFound = static_cast<int>(0x8095f004);
 constexpr int ErrorInvalidArg = static_cast<int>(0x8095177a);
 constexpr int ErrorInvalidId = static_cast<int>(0x8095f006);
 constexpr int ErrorInvalidCert = static_cast<int>(0x8095f00a);
+
+struct ErrnoGuard {
+    int saved{errno};
+    ~ErrnoGuard() { errno = saved; }
+};
+
+template <typename T>
+bool CopyGuestIn(T& dst, const void* src) {
+    const ErrnoGuard guard;
+    return GuestCopyIn_nid_no_patch(&dst, src, sizeof(T));
+}
+
+template <typename T>
+bool CopyGuestOut(void* dst, const T& src) {
+    const ErrnoGuard guard;
+    return GuestCopyOut_nid_no_patch(dst, &src, sizeof(T));
+}
+
+bool CopyGuestInBytes(void* dst, const void* src, std::size_t bytes) {
+    const ErrnoGuard guard;
+    return GuestCopyIn_nid_no_patch(dst, src, bytes);
+}
+
+bool CopyGuestOutBytes(void* dst, const void* src, std::size_t bytes) {
+    const ErrnoGuard guard;
+    return GuestCopyOut_nid_no_patch(dst, src, bytes);
+}
+
+bool CopyGuestCString(std::string& dst, const char* src, std::size_t maximum) {
+    const ErrnoGuard guard;
+    return CopyGuestString_nid_no_patch(src, maximum, dst) == 0;
+}
 constexpr int ErrorCnCheck = static_cast<int>(0x8095f00b);
 constexpr int ErrorUnknownCa = static_cast<int>(0x8095f00c);
 constexpr int ErrorNotAfterCheck = static_cast<int>(0x8095f00d);
@@ -602,7 +634,7 @@ struct Input {
 Input CopyInput(const SceSsl::Data& data) {
     if (!data.ptr || !data.size) throw std::invalid_argument("Empty SSL certificate/key data");
     auto bytes = Allocate(Add(data.size, 1));
-    std::memcpy(bytes.get(), data.ptr, data.size);
+    if (!CopyGuestInBytes(bytes.get(), data.ptr, data.size)) throw std::invalid_argument("Invalid SSL certificate/key pointer");
     auto size = data.size;
     std::size_t first = 0;
     while (first < size && (bytes.get()[first] == ' ' || bytes.get()[first] == '\r' || bytes.get()[first] == '\n' || bytes.get()[first] == '\t')) ++first;
@@ -725,13 +757,13 @@ int APS5_VABI sceSslGetMemoryPoolStats(int sslCtxId, SceSsl::MemoryPoolStats* st
     const auto found = state.contexts.find(sslCtxId);
     if (found == state.contexts.end()) {
         const SceSsl::MemoryPoolStats zeroStats{};
-        if (!GuestCopyOut_nid_no_patch(stats, &zeroStats, sizeof(zeroStats))) return ErrorInvalidValue;
+        if (!CopyGuestOut(stats, zeroStats)) return ErrorInvalidValue;
         return ErrorInvalidId;
     }
     auto& pool = found->second->pool;
     std::lock_guard poolLock(pool.mutex);
     const SceSsl::MemoryPoolStats localStats = {pool.size, pool.peak, pool.current, 0};
-    if (!GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats))) return ErrorInvalidValue;
+    if (!CopyGuestOut(stats, localStats)) return ErrorInvalidValue;
     return 0;
 }
 
@@ -745,8 +777,11 @@ int APS5_VABI sceSslLoadCert(int sslCtxId, int caCertNum, SceSsl::Data** caList,
     std::vector<std::shared_ptr<CertificateChain>> authorities;
     std::vector<std::unique_ptr<CertificateHandle>> handles;
     for (int index = 0; caList && index < caCertNum; ++index) {
-        if (!caList[index]) throw std::invalid_argument("Missing SSL certificate descriptor");
-        auto chain = ParseCertificate(*caList[index]);
+        SceSsl::Data* entryPtr = nullptr;
+        if (!CopyGuestIn(entryPtr, caList + index) || !entryPtr) throw std::invalid_argument("Missing SSL certificate descriptor");
+        SceSsl::Data entryData{};
+        if (!CopyGuestIn(entryData, entryPtr)) throw std::invalid_argument("Invalid SSL certificate descriptor");
+        auto chain = ParseCertificate(entryData);
         for (auto* entry = &chain->root; entry; entry = entry->next) {
             auto handle = std::make_unique<CertificateHandle>(CertificateHandle{chain, entry});
             chain->handles.push_back(handle.get());
@@ -759,19 +794,23 @@ int APS5_VABI sceSslLoadCert(int sslCtxId, int caCertNum, SceSsl::Data** caList,
     for (auto& chain : authorities) context.authorities.push_back(std::move(chain));
     for (auto& handle : handles) context.certificateHandles.push_back(std::move(handle));
     if (cert) {
-        if (!cert->ptr) return static_cast<int>(0x80951771);
+        SceSsl::Data localCert{};
+        if (!CopyGuestIn(localCert, cert)) return ErrorInvalidValue;
+        if (!localCert.ptr) return static_cast<int>(0x80951771);
         context.identity = std::make_shared<Identity>();
-        context.identity->chain = ParseCertificate(*cert);
+        context.identity->chain = ParseCertificate(localCert);
     }
     if (privateKey) {
-        if (!privateKey->ptr) return static_cast<int>(0x80951771);
+        SceSsl::Data localKey{};
+        if (!CopyGuestIn(localKey, privateKey)) return ErrorInvalidValue;
+        if (!localKey.ptr) return static_cast<int>(0x80951771);
         if (!context.identity) context.identity = std::make_shared<Identity>();
         auto identity = std::make_shared<Identity>(*context.identity);
         context.identity = identity;
         identity->key.reset();
-        auto bytes = Allocate(privateKey->size);
-        std::memcpy(bytes.get(), privateKey->ptr, privateKey->size);
-        identity->key = std::make_shared<EncodedPrivateKey>(EncodedPrivateKey{std::move(bytes), privateKey->size});
+        auto bytes = Allocate(localKey.size);
+        if (localKey.size != 0 && !CopyGuestInBytes(bytes.get(), localKey.ptr, localKey.size)) return ErrorInvalidValue;
+        identity->key = std::make_shared<EncodedPrivateKey>(EncodedPrivateKey{std::move(bytes), localKey.size});
     }
     return 0;
 }
@@ -802,7 +841,8 @@ int APS5_VABI sceSslGetCaList(int sslCtxId, SceSsl::CaList* output) {
     PoolScope scope(context.pool);
     const auto count = CertificateCount(context);
     if (!count) {
-        *output = {};
+        const SceSsl::CaList empty{};
+        if (!CopyGuestOut(output, empty)) return ErrorInvalidValue;
         return ErrorNotFound;
     }
     if (count > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::length_error("Too many SSL authorities");
@@ -811,21 +851,28 @@ int APS5_VABI sceSslGetCaList(int sslCtxId, SceSsl::CaList* output) {
     std::size_t index = 0;
     for (const auto& chain : snapshot.certificates) for (auto* handle : chain->handles) pointers[index++] = handle;
     context.caLists.emplace(pointers, std::move(snapshot));
-    *output = {pointers, static_cast<int>(count)};
+    const SceSsl::CaList result{pointers, static_cast<int>(count)};
+    if (!CopyGuestOut(output, result)) {
+        context.caLists.erase(pointers);
+        return ErrorInvalidValue;
+    }
     return 0;
 }
 
 int APS5_VABI sceSslFreeCaList(int sslCtxId, SceSsl::CaList* list) {
     if (!list) return ErrorInvalidArg;
+    SceSsl::CaList local{};
+    if (!CopyGuestIn(local, list)) return ErrorInvalidArg;
     auto& state = State();
     std::lock_guard lock(state.mutex);
     auto& context = GetContext(sslCtxId);
-    if (!list->certs && list->num == 0) return 0;
-    const auto found = context.caLists.find(list->certs);
-    if (found == context.caLists.end() || list->num < 0 || static_cast<std::size_t>(list->num) != found->second.count)
+    if (!local.certs && local.num == 0) return 0;
+    const auto found = context.caLists.find(local.certs);
+    if (found == context.caLists.end() || local.num < 0 || static_cast<std::size_t>(local.num) != found->second.count)
         throw std::invalid_argument("Invalid SSL CA list allocation");
     context.caLists.erase(found);
-    *list = {};
+    const SceSsl::CaList empty{};
+    if (!CopyGuestOut(list, empty)) return ErrorInvalidArg;
     return 0;
 }
 
@@ -839,7 +886,8 @@ int APS5_VABI sceSslGetCaCerts(int sslCtxId, SceSsl::CaCerts* output) {
     PoolScope scope(context.pool);
     const auto count = CertificateCount(context);
     if (!count) {
-        *output = {};
+        const SceSsl::CaCerts empty{};
+        if (!CopyGuestOut(output, empty)) return ErrorInvalidValue;
         return ErrorNotFound;
     }
     if (count > std::numeric_limits<std::size_t>::max() / sizeof(SceSsl::Data)) throw std::length_error("Too many SSL authorities");
@@ -858,25 +906,32 @@ int APS5_VABI sceSslGetCaCerts(int sslCtxId, SceSsl::CaCerts* output) {
         }
     }
     context.caCerts.emplace(data, std::move(snapshot));
-    *output = {data, count, data};
+    const SceSsl::CaCerts result{data, count, data};
+    if (!CopyGuestOut(output, result)) {
+        context.caCerts.erase(data);
+        return ErrorInvalidValue;
+    }
     return 0;
 }
 
 int APS5_VABI sceSslFreeCaCerts(int sslCtxId, SceSsl::CaCerts* certificates) {
     if (!certificates) return ErrorInvalidArg;
+    SceSsl::CaCerts local{};
+    if (!CopyGuestIn(local, certificates)) return ErrorInvalidArg;
     auto& state = State();
     std::lock_guard lock(state.mutex);
     const auto found = state.contexts.find(sslCtxId);
     if (found != state.contexts.end()) {
         auto& snapshots = found->second->caCerts;
-        const auto allocation = snapshots.find(certificates->pool);
+        const auto allocation = snapshots.find(local.pool);
         if (allocation != snapshots.end()) {
-            if (certificates->certs != certificates->pool || certificates->num != allocation->second.count)
+            if (local.certs != local.pool || local.num != allocation->second.count)
                 throw std::invalid_argument("Invalid SSL CA certificate allocation");
             snapshots.erase(allocation);
         }
     }
-    *certificates = {};
+    const SceSsl::CaCerts empty{};
+    if (!CopyGuestOut(certificates, empty)) return ErrorInvalidArg;
     return 0;
 }
 
@@ -1129,12 +1184,14 @@ int APS5_VABI sceSslGetSerialNumber(int sslCtxId, void* sslCert, unsigned char* 
     if (!sslCert) return ErrorInvalidValue;
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
     if (!sboData) {
-        if (sboLen) *sboLen = crt->serial.len;
+        if (sboLen && !CopyGuestOut(sboLen, crt->serial.len)) return ErrorInvalidValue;
         return 0;
     }
     if (!sboLen) throw std::invalid_argument("sceSslGetSerialNumber: output buffer requires a length pointer");
-    const auto copyLength = std::min(*sboLen, crt->serial.len);
-    if (copyLength != 0) std::memcpy(sboData, crt->serial.p, copyLength);
+    std::size_t requestedLen = 0;
+    if (!CopyGuestIn(requestedLen, sboLen)) return ErrorInvalidValue;
+    const auto copyLength = std::min(requestedLen, crt->serial.len);
+    if (copyLength != 0 && !CopyGuestOutBytes(sboData, crt->serial.p, copyLength)) return ErrorInvalidValue;
     return 0;
 }
 
@@ -1182,19 +1239,19 @@ int APS5_VABI sceSslSetAlpn(int sslConnectionId, const char* proto) {
     if (!connection) return ErrorInvalidId;
     connection->alpn.clear();
     if (!proto) return 0;
-    std::size_t length = 0;
-    while (length < 65535 && proto[length] != 0) ++length;
-    if (length >= 65535) return ErrorBadLength;
+    std::string copiedProto;
+    if (!CopyGuestCString(copiedProto, proto, 65535u) || copiedProto.size() >= 65535u) return ErrorBadLength;
+    const std::size_t length = copiedProto.size();
     std::size_t tokenLength = 0;
     for (std::size_t index = 0; index <= length; ++index) {
-        if (index == length || proto[index] == ',') {
+        if (index == length || copiedProto[index] == ',') {
             if (tokenLength == 0 || tokenLength > 255) return ErrorBadLength;
             tokenLength = 0;
         } else {
             ++tokenLength;
         }
     }
-    connection->alpn.assign(proto, length);
+    connection->alpn = std::move(copiedProto);
     return 0;
 }
 
@@ -1234,11 +1291,12 @@ int APS5_VABI sceSslGetNameEntryInfo(int sslCtxId, void* certName, int entryNum,
     if (entryNum < 0 || static_cast<std::size_t>(entryNum) >= entries.size()) return ErrorInvalidValue;
     const auto& entry = entries[static_cast<std::size_t>(entryNum)];
     const auto copyLength = std::min(entry.value.size(), maxValueLen);
-    if (copyLength != 0) std::memcpy(value, entry.value.data(), copyLength);
-    *valueLen = copyLength;
+    if (copyLength != 0 && !CopyGuestOutBytes(value, entry.value.data(), copyLength)) return ErrorInvalidValue;
+    if (!CopyGuestOut(valueLen, copyLength)) return ErrorInvalidValue;
     if (maxOidnameLen != 0) {
-        std::memset(oidname, 0, maxOidnameLen);
-        std::memcpy(oidname, entry.oid.data(), std::min(entry.oid.size(), maxOidnameLen));
+        std::vector<char> oidBuffer(maxOidnameLen, 0);
+        std::memcpy(oidBuffer.data(), entry.oid.data(), std::min(entry.oid.size(), maxOidnameLen));
+        if (!CopyGuestOutBytes(oidname, oidBuffer.data(), maxOidnameLen)) return ErrorInvalidValue;
     }
     return 0;
 }
@@ -1288,7 +1346,9 @@ int APS5_VABI sceSslGetFingerprint(int sslCtxId, void* sslCert, int hashType, un
     const auto* info = mbedtls_md_info_from_type(mdType);
     if (!info) return ErrorInvalidArg;
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
-    if (mbedtls_md(info, crt->raw.p, crt->raw.len, fingerprint) != 0) return ErrorInvalidArg;
+    std::array<unsigned char, MBEDTLS_MD_MAX_SIZE> localDigest{};
+    if (mbedtls_md(info, crt->raw.p, crt->raw.len, localDigest.data()) != 0) return ErrorInvalidArg;
+    if (!CopyGuestOutBytes(fingerprint, localDigest.data(), mbedtls_md_get_size(info))) return ErrorInvalidValue;
     return 0;
 }
 
@@ -1300,23 +1360,29 @@ int APS5_VABI sceSslGetPem(int sslCtxId, void* sslCert, char* buf, std::size_t* 
     const std::size_t encodedLength = Add(crt->raw.len, 2) / 3 * 4;
     const std::size_t lineCount = Add(encodedLength, 63) / 64;
     const std::size_t required = Add(57, Add(encodedLength, lineCount * 2));
-    const std::size_t capacity = *bufLen;
-    if (buf && capacity != 0) std::memset(buf, 0, capacity);
-    *bufLen = required;
+    std::size_t capacity = 0;
+    if (!CopyGuestIn(capacity, bufLen)) return ErrorInvalidValue;
+    if (buf && capacity != 0) {
+        std::vector<char> zeros(capacity, 0);
+        if (!CopyGuestOutBytes(buf, zeros.data(), capacity)) return ErrorInvalidValue;
+    }
+    if (!CopyGuestOut(bufLen, required)) return ErrorInvalidValue;
     if (!buf) return 0;
     if (capacity < required) return static_cast<int>(0x8095f008);
     constexpr char header[] = "-----BEGIN CERTIFICATE-----\r\n";
     constexpr char footer[] = "-----END CERTIFICATE-----\r\n";
-    std::memcpy(buf, header, sizeof(header) - 1);
+    std::string pem(required, '\0');
+    std::memcpy(pem.data(), header, sizeof(header) - 1);
     std::size_t offset = sizeof(header) - 1;
     for (std::size_t position = 0; position < crt->raw.len; position += 48) {
         std::size_t written = 0;
-        CheckBackend(mbedtls_base64_encode(reinterpret_cast<unsigned char*>(buf + offset), capacity - offset, &written, crt->raw.p + position, std::min<std::size_t>(48, crt->raw.len - position)), "SSL PEM encoding failed");
+        CheckBackend(mbedtls_base64_encode(reinterpret_cast<unsigned char*>(pem.data() + offset), required - offset, &written, crt->raw.p + position, std::min<std::size_t>(48, crt->raw.len - position)), "SSL PEM encoding failed");
         offset += written;
-        buf[offset++] = '\r';
-        buf[offset++] = '\n';
+        pem[offset++] = '\r';
+        pem[offset++] = '\n';
     }
-    std::memcpy(buf + offset, footer, sizeof(footer));
+    std::memcpy(pem.data() + offset, footer, sizeof(footer));
+    if (!CopyGuestOutBytes(buf, pem.data(), required)) return ErrorInvalidValue;
     return 0;
 }
 
@@ -1326,7 +1392,7 @@ void* APS5_VABI sceSslGetSubjectName(int sslCtxId, void* sslCert) {
 
 int APS5_VABI CA_MGMT_extractKeyBlobEx(int, const void* keyBlob, std::uint32_t, void* key) {
     if (key == nullptr || keyBlob == nullptr) return ErrorInvalidArg;
-    std::memcpy(static_cast<unsigned char*>(key) + 8, &keyBlob, sizeof(keyBlob));
+    if (!CopyGuestOut(static_cast<unsigned char*>(key) + 8, keyBlob)) return ErrorInvalidArg;
     return 0;
 }
 
@@ -1342,7 +1408,7 @@ int APS5_VABI CA_MGMT_freeKeyBlob() {
 
 int APS5_VABI CRYPTO_initAsymmetricKey(void* key) {
     const std::uint32_t initialized = 1;
-    std::memcpy(key, &initialized, sizeof(initialized));
+    if (!CopyGuestOut(key, initialized)) return ErrorInvalidArg;
     return 0;
 }
 
@@ -1400,7 +1466,7 @@ int APS5_VABI sceSslEnableOptionInternal() {
 }
 
 int APS5_VABI sceSslGetNanoSSLModuleId(int sslCtxId, int* moduleId) {
-    if (moduleId != nullptr) *moduleId = sslCtxId;
+    if (moduleId != nullptr && !CopyGuestOut(moduleId, sslCtxId)) return ErrorInvalidArg;
     return 0;
 }
 
