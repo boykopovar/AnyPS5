@@ -59,6 +59,23 @@ inline unsigned ParseRumblePercent(const char* text) {
     return parsed;
 }
 
+inline bool ParseRumbleOnFocusLoss(const char* text) {
+    if (text == nullptr) return true;
+    const std::string value(text);
+    if (value == "1") return true;
+    if (value == "0") return false;
+    throw std::runtime_error("ANYPS5_RUMBLE_ON_FOCUS_LOSS must be 0 or 1, got '" + value + "'");
+}
+
+inline bool RumblePausesOnFocusLoss() {
+    static const bool pause = ParseRumbleOnFocusLoss(std::getenv("ANYPS5_RUMBLE_ON_FOCUS_LOSS"));
+    return pause;
+}
+
+constexpr bool RumbleSuppressed(bool pauseOnFocusLoss, bool focused) {
+    return pauseOnFocusLoss && !focused;
+}
+
 inline unsigned RumblePercent() {
     static const unsigned percent = ParseRumblePercent(std::getenv("ANYPS5_RUMBLE"));
     return percent;
