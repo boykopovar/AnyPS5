@@ -60,7 +60,12 @@ static std::int64_t NativeLseek(int fd, std::int64_t offset, int whence) {
     const auto positioned = File::LockPositionedTransfer(fd);
     const auto result = File::SeekSharedMemory_nid_no_patch(fd, offset, whence);
     if (result != -2) return result;
-    if (GetFileType(WindowsDescriptorHandle_nid_no_patch(fd)) == FILE_TYPE_PIPE) {
+    const auto handle = WindowsDescriptorHandle_nid_no_patch(fd);
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
+    }
+    if (GetFileType(handle) == FILE_TYPE_PIPE) {
         errno = ESPIPE;
         return -1;
     }
@@ -75,6 +80,10 @@ static int NativeRead(int fd, void* buf, std::size_t n) {
         return -1;
     }
     const auto positioned = File::LockPositionedTransfer(fd);
+    if (WindowsDescriptorHandle_nid_no_patch(fd) == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
+    }
     const int result = ::_read(fd, buf, static_cast<unsigned int>(n));
     if (result < 0 && _doserrno == ERROR_NO_DATA) errno = EAGAIN;
     return result;
@@ -94,6 +103,10 @@ static int NativeWrite(int fd, const void* buf, std::size_t n) {
     if (File::Appends(fd)) {
         const auto appended = File::WriteAtEnd(fd, buf, n);
         if (appended != -2) return static_cast<int>(appended);
+    }
+    if (WindowsDescriptorHandle_nid_no_patch(fd) == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
     }
     const int result = ::_write(fd, buf, static_cast<unsigned int>(n));
     if (result < 0 && errno == ENOSPC && _doserrno == 0 && ::GetFileType(reinterpret_cast<HANDLE>(::_get_osfhandle(fd))) == FILE_TYPE_PIPE) errno = EAGAIN;
@@ -266,13 +279,15 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
     if ((flags & SCE_KERNEL_O_NOFOLLOW) != 0 && (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) != (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) {
         constexpr int GuestEmlink = 31;
         std::error_code error;
-        if (std::filesystem::is_symlink(native, error)) return SceErrorFromErrno(GuestEmlink);
 #ifdef _WIN32
+        if (std::filesystem::is_symlink(openNative, error)) return SceErrorFromErrno(GuestEmlink);
         const DWORD attributes = GetFileAttributesW(openNative.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
             std::string junctionTarget;
             if (File::WindowsSymbolicLink::ReadJunction(openNative, junctionTarget, "open")) return SceErrorFromErrno(GuestEmlink);
         }
+#else
+        if (std::filesystem::is_symlink(native, error)) return SceErrorFromErrno(GuestEmlink);
 #endif
     }
 #ifdef _WIN32
@@ -300,7 +315,9 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         auto directory = native;
         while (!directory.has_filename() && directory.has_relative_path()) directory = directory.parent_path();
         std::error_code error;
-        if (std::filesystem::is_directory(directory, error)) {
+        std::error_code directoryPathError;
+        const auto directoryOpenPath = NativeMetadataPath(directory, directoryPathError);
+        if (std::filesystem::is_directory(directoryPathError ? directory : directoryOpenPath, error)) {
             if ((flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) errno = EEXIST;
             else if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY || (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC))) errno = EISDIR;
             else fd = File::OpenDirectoryDescriptor(directory);

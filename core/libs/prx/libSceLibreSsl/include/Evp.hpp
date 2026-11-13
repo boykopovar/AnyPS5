@@ -13,6 +13,8 @@ inline constexpr std::uint64_t CipherModeCfb = 3;
 inline constexpr std::uint64_t CipherModeOfb = 4;
 inline constexpr std::uint64_t CipherModeCtr = 5;
 inline constexpr std::uint64_t CipherModeGcm = 6;
+inline constexpr std::uint64_t CipherModeWrap = 0x10007;
+inline constexpr std::uint64_t CipherCtxFlagWrapAllow = 0x1;
 inline constexpr std::uint64_t CipherFlagCustomIv = 0x10;
 inline constexpr std::uint64_t CipherFlagAlwaysCallInit = 0x20;
 inline constexpr std::uint64_t CipherFlagCtrlInit = 0x40;
@@ -29,5 +31,11 @@ static_assert(sizeof(LibreSslEvpCipherCtx) == 168);
 static_assert(offsetof(LibreSslEvpCipherCtx, num) == 88);
 static_assert(offsetof(LibreSslEvpCipherCtx, flags) == 112);
 static_assert(offsetof(LibreSslEvpCipherCtx, final) == 136);
+
+extern "C" {
+
+int CopyContext_nid_no_patch(EvpMdContext& target, const EvpMdContext& source, const char* function);
+
+}
 
 #endif

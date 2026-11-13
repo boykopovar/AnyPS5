@@ -5,6 +5,8 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdlib>
+#include <string_view>
 #include <spirv/unified1/spirv.hpp>
 
 namespace AgcDriver::DriverDetail {
@@ -126,6 +128,11 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             codeOffset
         };
         result.resourceRegister = rsrc2;
+        if (!nullPixel) {
+            Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, rsrc2);
+            const auto resources = queue.shader.find(rsrc2);
+            require(resources == queue.shader.end() || (resources->second >> 28u) == 0u, "wave-shared VGPRs of a graphics stage (SPI_SHADER_PGM_RSRC2.SHARED_VGPR_CNT) are not modeled");
+        }
         result.nullPixel = nullPixel;
         ReadUserWords(queue, result, staticAbi);
         return result;
@@ -193,6 +200,11 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     Graphics::NormalizeUnusedViewportDepth(product->state, product->pixel);
     Graphics::ApplyDepthRemap(context, product->state);
     Graphics::ApplyDepthBoundsEmulation(context, product->state, product->pixel);
+    static const bool readOnlyDepthBoundsCompare = [] {
+        const auto* value = std::getenv("APS5_READONLY_DEPTH_BOUNDS_COMPARE");
+        return value != nullptr && std::string_view(value) == "1";
+    }();
+    Graphics::ApplyReadOnlyDepthBoundsComparison(product->state, product->pixel, readOnlyDepthBoundsCompare);
     product->pixel.targetExportPacking = Graphics::ExportPackings(product->state);
     product->pixel.dualSourceBlend = product->state.dualSourceBlend;
     product->pixel.reversedBlend = product->state.reversedBlend;

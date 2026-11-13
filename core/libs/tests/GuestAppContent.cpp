@@ -2,7 +2,9 @@
 #include "prx/libSceAppContent/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -32,15 +34,18 @@ int main() {
     Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, nullptr) == notInitialized);
     Require(sceAppContentGetEntitlementKey(0, nullptr, nullptr) == notInitialized);
     Require(sceAppContentAppParamGetInt(0, nullptr) == notInitialized);
+    Require(sceAppContentAppParamGetInt(0, reinterpret_cast<int32_t*>(std::uintptr_t{0x10})) == notInitialized);
     char appParam[8]{};
     Require(sceAppContentAppParamGetString(0, appParam, sizeof(appParam)) == notInitialized);
     Require(sceAppContentDownloadDataGetBlockSize(nullptr, nullptr) == notInitialized);
     Require(sceAppContentGetRegion(nullptr) == notInitialized);
     Require(sceAppContentRequestPatchInstall(nullptr) == notInitialized);
     AppContentMountPoint uninitializedMount{};
+    auto* const unwritableMount = reinterpret_cast<AppContentMountPoint*>(std::uintptr_t{0x10});
     Require(sceAppContentTemporaryDataMount(nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataMount(&uninitializedMount) == notInitialized);
     Require(sceAppContentTemporaryDataMount2(0, nullptr) == notInitialized);
+    Require(sceAppContentTemporaryDataMount2(1, unwritableMount) == notInitialized);
     Require(sceAppContentTemporaryDataUnmount(nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataFormat(nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataGetAvailableSpaceKb(nullptr, nullptr) == notInitialized);
@@ -179,14 +184,20 @@ int main() {
 
     const int32_t expectedParams[] = {3, 23566, -7, 0, 2147483647};
     for (uint32_t id = 0; id < 5; ++id) {
-        int32_t value = 0x5a5a5a5a;
-        Require(sceAppContentAppParamGetInt(id, &value) == 0);
-        Require(value == expectedParams[id]);
+        errno = EBUSY;
+        Require(sceAppContentAppParamGetInt(id, reinterpret_cast<int32_t*>(std::uintptr_t{0x10})) == ErrorParameter);
+        Require(errno == EBUSY);
+        std::array<int32_t, 3> values{0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+        errno = EBUSY;
+        Require(sceAppContentAppParamGetInt(id, &values[1]) == 0);
+        Require(values[0] == 0x5a5a5a5a && values[1] == expectedParams[id] && values[2] == 0x5a5a5a5a);
+        Require(errno == EBUSY);
     }
     int32_t paramValue = 0x5a5a5a5a;
     Require(sceAppContentAppParamGetInt(5, &paramValue) == ErrorParameter);
     Require(paramValue == 0x5a5a5a5a);
     Require(sceAppContentAppParamGetInt(0, nullptr) == ErrorParameter);
+    Require(sceAppContentAppParamGetInt(5, reinterpret_cast<int32_t*>(std::uintptr_t{0x10})) == ErrorParameter);
 
     NpUnifiedEntitlementLabel label{};
     std::memcpy(&label, "ADDCONT000000001", 16);
@@ -223,16 +234,23 @@ int main() {
     Require(sceAppContentTemporaryDataUnmount(nullptr) == ErrorParameter);
     Require(sceAppContentTemporaryDataUnmount(&mountPoint) == ErrorNotMounted);
     Require(sceAppContentTemporaryDataMount2(0, nullptr) == ErrorParameter);
+    Require(sceAppContentTemporaryDataMount2(2, unwritableMount) == ErrorParameter);
+    Require(sceAppContentTemporaryDataMount2(1, unwritableMount) == ErrorParameter);
+    Require(std::filesystem::exists(directory / "temp0" / "old.txt"));
+    Require(access_nid_postfix("/temp0/old.txt", 0) == -1);
+    Require(sceAppContentTemporaryDataUnmount(&mountPoint) == ErrorNotMounted);
     std::memset(&mountPoint, 0x5a, sizeof(mountPoint));
     Require(sceAppContentTemporaryDataMount2(2, &mountPoint) == ErrorParameter);
     Require(std::memcmp(&mountPoint, &untouched, sizeof(mountPoint)) == 0);
     Require(sceAppContentTemporaryDataMount2(0, &mountPoint) == 0);
     Require(std::strcmp(mountPoint.data, "/temp0") == 0);
     const auto backing = ResolvePath_nid_no_patch("/temp0");
+    Require(std::filesystem::exists(backing / "old.txt"));
     { std::ofstream file(backing / "keep.txt"); file << "retained"; }
     { std::ofstream file(directory / "temp01"); file << "unrelated"; }
     AppContentMountPoint second = untouched;
     Require(sceAppContentTemporaryDataMount2(1, &second) == ErrorBusy);
+    Require(sceAppContentTemporaryDataMount2(1, unwritableMount) == ErrorBusy);
     Require(std::memcmp(&second, &untouched, sizeof(second)) == 0);
     Require(std::filesystem::exists(backing / "keep.txt"));
     Require(sceAppContentTemporaryDataUnmount(&second) == ErrorNotMounted);
@@ -360,6 +378,9 @@ int main() {
     Require(sceAppContentGetAddcontInfoList(0, reinterpret_cast<AppContentAddcontInfo*>(info), 1, &hitNum) == 0);
     Require(hitNum == 0);
     Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0);
+    hitNum = 0x5a5a5a5a;
+    Require(sceAppContentGetAddcontInfoList(0, reinterpret_cast<AppContentAddcontInfo*>(0x10), 1, &hitNum) == 0);
+    Require(hitNum == 0);
     Require(sceAppContentGetAddcontInfoList(0, reinterpret_cast<AppContentAddcontInfo*>(info), 1, nullptr) == ErrorParameter);
     Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, nullptr) == ErrorParameter);
     Require(sceAppContentGetAddcontInfoList(0, reinterpret_cast<AppContentAddcontInfo*>(info), 0, nullptr) == ErrorParameter);

@@ -50,6 +50,7 @@ int main() {
     Require(sceRudpInit_nid_postfix(pool + 8, 0xC58) == 0);
     Require(sceRudpInit_nid_postfix(nullptr, 0) == alreadyInitialized);
     Require(sceRudpGetMaxSegmentSize(nullptr) == invalidArgument);
+    Require(sceRudpGetMaxSegmentSize(reinterpret_cast<std::uint16_t*>(0x10)) == invalidArgument);
     Require(sceRudpGetMaxSegmentSize(&mss) == 0);
     Require(mss == 1410);
     Require(sceRudpProcessEvents(0) == 0);
@@ -60,6 +61,7 @@ int main() {
     Require(sceRudpGetStatus(nullptr, 0) == invalidArgument);
     Require(sceRudpGetStatus(status.data(), 0) == invalidArgument);
     Require(sceRudpGetStatus(status.data(), statusSize + 1) == invalidArgument);
+    Require(sceRudpGetStatus(reinterpret_cast<void*>(0x10), statusSize) == invalidArgument);
     Require(status == untouched);
 
     Require(sceRudpGetStatus(status.data(), statusSize) == 0);
@@ -69,7 +71,9 @@ int main() {
     int first = -1;
     int second = -1;
     Require(sceRudpCreateContext(Handler, nullptr, &first) == 0);
+    Require(sceRudpCreateContext(Handler, nullptr, reinterpret_cast<int*>(0x10)) == invalidArgument);
     Require(sceRudpCreateContext(Handler, nullptr, &second) == 0);
+    Require(second == first + 1);
     status.fill(0x5a);
     Require(sceRudpGetStatus(status.data(), statusSize) == 0);
     std::uint32_t contexts = 0;

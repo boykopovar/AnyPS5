@@ -83,6 +83,23 @@ class OpenPullRequestsTests(unittest.TestCase):
                 pr_overlap.open_prs("main")
 
 
+class ClashDiffReadTests(unittest.TestCase):
+    def test_each_side_diff_is_read_once(self):
+        a = {"tree": "ta", "files": {"f.cpp"}, "added": set()}
+        b = {"tree": "tb", "files": {"f.cpp"}, "added": set()}
+        diffs = {"ta": "@@ -1 +1 @@\n-a\n+b\n@@ -5 +5 @@\n-c\n+d\n@@ -9 +9 @@\n-e\n+f\n",
+                 "tb": "@@ -2 +2 @@\n-g\n+h\n"}
+        calls = []
+
+        def fake_git(*args):
+            calls.append(args)
+            return diffs[args[4]]
+
+        with patch.object(pr_overlap, "git", side_effect=fake_git):
+            self.assertEqual(pr_overlap.clashes(a, b, "f.cpp"), [(1, 2)])
+        self.assertEqual(len(calls), 2)
+
+
 class TopInsertTests(unittest.TestCase):
     def test_top_of_file_insertions_clash_on_line_one(self):
         pr = {"tree": "t", "files": {"f.cpp"}, "added": set()}
