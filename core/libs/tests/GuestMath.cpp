@@ -3388,6 +3388,77 @@ static void CheckLongDoubleExponentialHyperbolic() {
     Require(ExtendedBitsAt53Bits(tanhl_nid_postfix, 0xbd70a3d70a3d70a4ull, 0x3ffd, 0xb53dad0a7672c000ull, 0x3ffd));
 }
 
+static void CheckLongDoubleErf() {
+    constexpr std::uint64_t one = 0x8000000000000000ull;
+    const ExtendedBitCase erflCases[] = {
+        {0x0000000000000000ull, 0x0000, 0x0000000000000000ull, 0x0000}, {0x0000000000000000ull, 0x8000, 0x0000000000000000ull, 0x8000},
+        {0x0000000000000001ull, 0x0000, 0x0000000000000001ull, 0x0000}, {0x0000000000000001ull, 0x8000, 0x0000000000000001ull, 0x8000},
+        {0x8000000000000000ull, 0x0003, 0x906eba8214db688eull, 0x0003}, {0x8000000000000000ull, 0x0009, 0x906eba8214db688eull, 0x0009},
+        {0x8000000000000000ull, 0x000a, 0x906eba8214db688eull, 0x000a}, {0x8000000000000000ull, 0x800a, 0x906eba8214db688eull, 0x800a},
+        {0x8000000000000000ull, 0x3fd7, 0x906eba8214db688eull, 0x3fd7}, {0x8000000000000000ull, 0xbfdb, 0x906eba8214db688eull, 0xbfdb},
+        {0x8000000000000000ull, 0x3fdc, 0x906eba8214db688eull, 0x3fdc}, {0x8000000000000000ull, 0x3fdd, 0x906eba8214db688eull, 0x3fdd},
+        {0x8000000000000000ull, 0xbfdd, 0x906eba8214db688eull, 0xbfdd}, {0xffffffffffffffffull, 0x3fdc, 0x906eba8214db688dull, 0x3fdd},
+        {0xcccccccccccccccdull, 0x3ffb, 0xe652f5127d999cf6ull, 0x3ffb}, {0x8000000000000000ull, 0x3ffe, 0x853f7ae0c76e915eull, 0x3ffe},
+        {0x999999999999999aull, 0xbffd, 0xa841c440ef507cf4ull, 0xbffd}, {0xc000000000000000ull, 0x3ffe, 0xb60e4bace872fb62ull, 0x3ffe},
+        {0xd7ffffffffffffffull, 0x3ffe, 0xc468e6a3a51702deull, 0x3ffe}, {0xd800000000000000ull, 0x3ffe, 0xc468e6a3a51702dfull, 0x3ffe},
+        {0xd800000000000000ull, 0xbffe, 0xc468e6a3a51702dfull, 0xbffe}, {0xe666666666666666ull, 0x3ffe, 0xcc022d3645172d86ull, 0x3ffe},
+        {0x8000000000000000ull, 0x3fff, 0xd7bb3d3a08445637ull, 0x3ffe}, {0x8ccccccccccccccdull, 0xbfff, 0xe1551e939815fd97ull, 0xbffe},
+        {0x9fffffffffffffffull, 0x3fff, 0xec432ecc55f00406ull, 0x3ffe}, {0xa000000000000000ull, 0x3fff, 0xec432ecc55f00406ull, 0x3ffe},
+        {0xa000000000000000ull, 0xbfff, 0xec432ecc55f00406ull, 0xbffe}, {0xc000000000000000ull, 0x3fff, 0xf752aab89bd6fd8full, 0x3ffe},
+        {0x8000000000000000ull, 0x4000, 0xfecd70a13caf1997ull, 0x3ffe}, {0xa000000000000000ull, 0xc000, 0xffe5547a64df5362ull, 0xbffe},
+        {0xb6db8bac710cafffull, 0x4000, 0xfffc819b3ab2eca0ull, 0x3ffe}, {0xb6db8bac710cb000ull, 0x4000, 0xfffc819b3ab2eca0ull, 0x3ffe},
+        {0xb6db8bac710cb001ull, 0x4000, 0xfffc819b3ab2eca0ull, 0x3ffe}, {0xc000000000000000ull, 0x4000, 0xfffe8d6209afcbddull, 0x3ffe},
+        {0x9000000000000000ull, 0xc001, 0xffffffff27d180e9ull, 0xbffe}, {0xc000000000000000ull, 0x4001, 0xfffffffffffffe73ull, 0x3ffe},
+        {0xdfffffffffffffffull, 0x4001, 0x8000000000000000ull, 0x3fff}, {0xe000000000000000ull, 0x4001, 0x8000000000000000ull, 0x3fff},
+        {0xe000000000000000ull, 0xc001, 0x8000000000000000ull, 0xbfff}, {0x8000000000000000ull, 0x4002, 0x8000000000000000ull, 0x3fff},
+        {0xc800000000000000ull, 0x4005, 0x8000000000000000ull, 0x3fff}, {0x9c40000000000000ull, 0xc00c, 0x8000000000000000ull, 0xbfff},
+        {0x8000000000000000ull, 0x7e7f, 0x8000000000000000ull, 0x3fff}, {0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, 0x3fff},
+        {0x8000000000000000ull, 0xffff, 0x8000000000000000ull, 0xbfff}, {0xc000000000000000ull, 0x7fff, 0xc000000000000000ull, 0x7fff},
+        {0xc000000000000000ull, 0xffff, 0xc000000000000000ull, 0xffff},
+    };
+    const ExtendedBitCase erfclCases[] = {
+        {0x0000000000000000ull, 0x0000, 0x8000000000000000ull, 0x3fff}, {0x0000000000000000ull, 0x8000, 0x8000000000000000ull, 0x3fff},
+        {0x0000000000000001ull, 0x0000, 0x8000000000000000ull, 0x3fff}, {0x8000000000000000ull, 0x3fd7, 0xffffffffff000000ull, 0x3ffe},
+        {0x8000000000000000ull, 0xbfdc, 0x8000000010000000ull, 0x3fff}, {0x8000000000000000ull, 0x3fdd, 0xffffffffb7c8a2bfull, 0x3ffe},
+        {0x8000000000000000ull, 0xbfdd, 0x80000000241baea1ull, 0x3fff}, {0xffffffffffffffffull, 0x3fdc, 0xffffffffc0000000ull, 0x3ffe},
+        {0xcccccccccccccccdull, 0x3ffb, 0xe335a15db04ccc61ull, 0x3ffe}, {0xffffffffffffffffull, 0x3ffc, 0xb942ac7734a7ddbfull, 0x3ffe},
+        {0x8000000000000000ull, 0x3ffd, 0xb942ac7734a7ddbfull, 0x3ffe}, {0x8000000000000000ull, 0xbffd, 0xa35ea9c465ac1120ull, 0x3fff},
+        {0x999999999999999aull, 0x3ffd, 0xabdf1ddf8857c186ull, 0x3ffe}, {0x8000000000000000ull, 0xbffe, 0xc29fbd7063b748afull, 0x3fff},
+        {0xc000000000000000ull, 0x3ffe, 0x93e368a62f1a093bull, 0x3ffd}, {0xd7ffffffffffffffull, 0x3ffe, 0xee5c65716ba3f488ull, 0x3ffc},
+        {0xd800000000000000ull, 0x3ffe, 0xee5c65716ba3f485ull, 0x3ffc}, {0xd800000000000000ull, 0xbffe, 0xe2347351d28b8170ull, 0x3fff},
+        {0xe666666666666666ull, 0x3ffe, 0xcff74b26eba349e6ull, 0x3ffc}, {0x8000000000000000ull, 0x3fff, 0xa1130b17deeea726ull, 0x3ffc},
+        {0x8ccccccccccccccdull, 0xbfff, 0xf0aa8f49cc0afeccull, 0x3fff}, {0x9fffffffffffffffull, 0x3fff, 0x9de6899d507fdfd2ull, 0x3ffb},
+        {0xa000000000000000ull, 0x3fff, 0x9de6899d507fdfceull, 0x3ffb}, {0xa000000000000000ull, 0xbfff, 0xf62197662af80203ull, 0x3fff},
+        {0xc000000000000000ull, 0x3fff, 0x8ad554764290270cull, 0x3ffa}, {0x8000000000000000ull, 0x4000, 0x9947af61a873346cull, 0x3ff7},
+        {0xa000000000000000ull, 0xc000, 0xfff2aa3d326fa9b1ull, 0x3fff}, {0xb6db8bac710cafffull, 0x4000, 0xdf99315344d81415ull, 0x3ff0},
+        {0xb6db8bac710cb000ull, 0x4000, 0xdf99315344d813feull, 0x3ff0}, {0xb6db8bac710cb001ull, 0x4000, 0xdf99315344d813eaull, 0x3ff0},
+        {0xc000000000000000ull, 0x4000, 0xb94efb281a11505full, 0x3fef}, {0x9000000000000000ull, 0xc001, 0xffffffff93e8c074ull, 0x3fff},
+        {0xc000000000000000ull, 0x4001, 0xc67c0aabe905b0d4ull, 0x3fc7}, {0xdfffffffffffffffull, 0x4001, 0xca51409b7d398aecull, 0x3fb4},
+        {0xe000000000000000ull, 0x4001, 0xca51409b7d398a92ull, 0x3fb4}, {0xa000000000000000ull, 0x4002, 0xbec53f9545167ce9ull, 0x3f6a},
+        {0xd000000000000000ull, 0x4003, 0x9425ff0e6f511d75ull, 0x3c2a}, {0xc800000000000000ull, 0x4004, 0xddb4c7bd058dd25cull, 0x31e1},
+        {0xc800000000000000ull, 0x4005, 0xbf54533bddd43963ull, 0x079c}, {0xd7ffffffffffffffull, 0x4005, 0x0000000000000000ull, 0x0000},
+        {0xd800000000000000ull, 0x4005, 0x0000000000000000ull, 0x0000}, {0xc800000000000000ull, 0x4006, 0x0000000000000000ull, 0x0000},
+        {0x9c40000000000000ull, 0x400c, 0x0000000000000000ull, 0x0000}, {0xdfffffffffffffffull, 0xc001, 0x8000000000000000ull, 0x4000},
+        {0xe000000000000000ull, 0xc001, 0x8000000000000000ull, 0x4000}, {0xe000000000000001ull, 0xc001, 0x8000000000000000ull, 0x4000},
+        {0x8000000000000000ull, 0xc002, 0x8000000000000000ull, 0x4000}, {0xc800000000000000ull, 0xc005, 0x8000000000000000ull, 0x4000},
+        {0xd600000000000000ull, 0xc005, 0x8000000000000000ull, 0x4000}, {0xd800000000000000ull, 0xc005, 0x8000000000000000ull, 0x4000},
+        {0x9c40000000000000ull, 0xc00c, 0x8000000000000000ull, 0x4000}, {0x8000000000000000ull, 0x7fff, 0x0000000000000000ull, 0x0000},
+        {0x8000000000000000ull, 0xffff, 0x8000000000000000ull, 0x4000}, {0xc000000000000000ull, 0x7fff, 0xc000000000000000ull, 0x7fff},
+        {0xc000000000000000ull, 0xffff, 0xc000000000000000ull, 0xffff},
+    };
+    RequireExtendedBitCases("erfl", erfl_nid_postfix, erflCases);
+    RequireExtendedBitCases("erfcl", erfcl_nid_postfix, erfclCases);
+    Require(RaisesOnly(erfl_nid_postfix, 10.0L, FE_INEXACT, one, 0x3fff));
+    Require(RaisesOnly(erfcl_nid_postfix, -10.0L, FE_INEXACT, one, 0x4000));
+    Require(RaisesOnly(erfcl_nid_postfix, 200.0L, FE_UNDERFLOW, 0, 0));
+    Require(ExtendedBitsAt53Bits(erfl_nid_postfix, 0x8000000000000000ull, 0x3ffe, 0x853f7ae0c76e9000ull, 0x3ffe));
+    Require(ExtendedBitsAt53Bits(erfl_nid_postfix, 0xc000000000000000ull, 0x4000, 0xfffe8dc39ec65000ull, 0x3ffe));
+    Require(ExtendedBitsAt53Bits(erfl_nid_postfix, 0x8000000000000000ull, 0x3fff, 0xd7bb3d3a08445800ull, 0x3ffe));
+    Require(ExtendedBitsAt53Bits(erfcl_nid_postfix, 0x999999999999999aull, 0x3ffd, 0xabdf1ddf8857c000ull, 0x3ffe));
+    Require(ExtendedBitsAt53Bits(erfcl_nid_postfix, 0xc000000000000000ull, 0x4000, 0xb91e309cd6d1a000ull, 0x3fef));
+    Require(ExtendedBitsAt53Bits(erfcl_nid_postfix, 0x8000000000000000ull, 0xbfff, 0xebdd9e9d04223000ull, 0x3fff));
+}
+
 static void CheckLongDoubleHyperbolic() {
     const long double infinity = std::numeric_limits<long double>::infinity();
     const long double nan = std::numeric_limits<long double>::quiet_NaN();
@@ -4479,6 +4550,7 @@ int main() {
     CheckLongDoubleFunctions();
     CheckLongDoubleHyperbolic();
     CheckLongDoubleExponentialHyperbolic();
+    CheckLongDoubleErf();
     CheckDinkumwareFloatCharacteristics();
     CheckFrexpfEnvironment();
 }
