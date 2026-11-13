@@ -89,6 +89,38 @@ public:
     }
 };
 
+static std::atomic<int> reverseLookupCalls{0};
+
+static int NamedLoopbackReverseLookup(const void* address, std::size_t addressLength, char* name, std::size_t capacity) {
+    Require(address != nullptr && name != nullptr);
+    const auto* socketAddress = static_cast<const sockaddr*>(address);
+    const std::array<std::uint8_t, 4> loopback4{127, 0, 0, 1};
+    std::array<std::uint8_t, 16> loopback6{};
+    loopback6[15] = 1;
+    if (socketAddress->sa_family == AF_INET) {
+        Require(addressLength == sizeof(sockaddr_in));
+        Require(std::memcmp(&static_cast<const sockaddr_in*>(address)->sin_addr, loopback4.data(), loopback4.size()) == 0);
+    } else {
+        Require(socketAddress->sa_family == AF_INET6 && addressLength == sizeof(sockaddr_in6));
+        Require(std::memcmp(&static_cast<const sockaddr_in6*>(address)->sin6_addr, loopback6.data(), loopback6.size()) == 0);
+    }
+    constexpr char localhost[] = "localhost";
+    Require(capacity >= sizeof(localhost));
+    std::memcpy(name, localhost, sizeof(localhost));
+    ++reverseLookupCalls;
+    return 0;
+}
+
+class ScopedResolverReverseLookupOverride {
+public:
+    explicit ScopedResolverReverseLookupOverride(GuestSceNetTest::ResolverReverseLookup lookup) {
+        GuestSceNetTest::SetResolverReverseLookupForTests_nid_no_patch(lookup);
+    }
+    ~ScopedResolverReverseLookupOverride() {
+        GuestSceNetTest::SetResolverReverseLookupForTests_nid_no_patch(nullptr);
+    }
+};
+
 static void APS5_VABI IgnoreNetCtlEvent(int, void*) {}
 
 struct NetCtlEventRecord {
@@ -3089,6 +3121,22 @@ int main(int argc, char** argv) {
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
     const int reverse_result = sceNetResolverStartAton(resolver, loopback.data(), reverse, sizeof(reverse), 5000000, 1, 0);
     Require(reverse_result == 0 || reverse_result == static_cast<int>(0x804101E1));
+    const auto* unreadableAddress = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    auto* unwritableName = reinterpret_cast<char*>(std::uintptr_t{0x10});
+    char invalidOutput[256];
+    std::memset(invalidOutput, 0x5A, sizeof(invalidOutput));
+    Require(sceNetResolverStartAton(resolver, unreadableAddress, invalidOutput, sizeof(invalidOutput), 5000000, 1, 0) ==
+        static_cast<int>(0x8041010E) && *sceNetErrnoLoc() == 14 && static_cast<unsigned char>(invalidOutput[0]) == 0x5A);
+    Require(sceNetResolverStartAton(resolver, unreadableAddress, invalidOutput, 0, 5000000, 1, 0) ==
+        static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22);
+    {
+        ScopedResolverReverseLookupOverride lookupOverride(NamedLoopbackReverseLookup);
+        const int before = reverseLookupCalls.load();
+        Require(sceNetResolverStartAton(resolver, loopback.data(), unwritableName, sizeof(reverse), 5000000, 1, 0) ==
+            static_cast<int>(0x8041010E) && *sceNetErrnoLoc() == 14);
+        Require(reverseLookupCalls.load() == before + 1);
+        Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
+    }
     Require(sceNetResolverStartNtoa(resolver, nullptr, ipv4.data(), 5000000, 1, 0) == static_cast<int>(0x80410116));
     ipv4.fill(0xA5);
     Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == static_cast<int>(0x80410104) &&
@@ -3125,7 +3173,19 @@ int main(int argc, char** argv) {
     std::memset(reverse, 0x5A, sizeof(reverse));
     const int reverse6_result = sceNetResolverStartAton6(resolver, loopback6.data(), reverse, sizeof(reverse), 5000000, 1, 0);
     Require(reverse6_result == 0 || reverse6_result == static_cast<int>(0x804101E1));
-    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == reverse6_result);
+    std::memset(invalidOutput, 0x5A, sizeof(invalidOutput));
+    Require(sceNetResolverStartAton6(resolver, unreadableAddress, invalidOutput, sizeof(invalidOutput), 5000000, 1, 0) ==
+        static_cast<int>(0x8041010E) && *sceNetErrnoLoc() == 14 && static_cast<unsigned char>(invalidOutput[0]) == 0x5A);
+    Require(sceNetResolverStartAton6(resolver, unreadableAddress, invalidOutput, 0, 5000000, 1, 0) ==
+        static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22);
+    {
+        ScopedResolverReverseLookupOverride lookupOverride(NamedLoopbackReverseLookup);
+        const int before = reverseLookupCalls.load();
+        Require(sceNetResolverStartAton6(resolver, loopback6.data(), unwritableName, sizeof(reverse), 5000000, 1, 0) ==
+            static_cast<int>(0x8041010E) && *sceNetErrnoLoc() == 14);
+        Require(reverseLookupCalls.load() == before + 1);
+    }
+    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
     char host_reverse6[256]{};
     sockaddr_in6 host_loopback6{};
     host_loopback6.sin6_family = AF_INET6;

@@ -602,6 +602,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen_stdout_newlines.py)
         add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_hw_oracle.py)
+        add_test(NAME hardware_oracle_probe_catalog COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_probe_catalog.py)
+        set_tests_properties(hardware_oracle_probe_catalog PROPERTIES TIMEOUT 30)
         add_test(NAME job_reference_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_job_reference_errors.py)
         set_tests_properties(job_reference_errors PROPERTIES TIMEOUT 20)
@@ -687,6 +690,9 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME trace_digest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py)
+        add_test(NAME memory_trace_address COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_memory_trace_address.py)
+        set_tests_properties(memory_trace_address PROPERTIES TIMEOUT 20)
         add_test(NAME symbolize_samples COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_symbolize_samples.py)
         add_test(NAME ab_split COMMAND ${Python3_EXECUTABLE}
