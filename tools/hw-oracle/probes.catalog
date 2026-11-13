@@ -1,0 +1,920 @@
+{
+  "schema_version": 1,
+  "probes": [
+    {
+      "id": "v-add-f32-edge-values",
+      "instruction": "v_add_f32",
+      "description": "Signed zero, halfway rounding, overflow, infinities and NaN payloads.",
+      "body": "v_add_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "positive-zero", "input": ["0x00000000", "0x00000000", 0, 0]},
+        {"name": "opposite-signed-zeros", "input": ["0x00000000", "0x80000000", 0, 0]},
+        {"name": "halfway-at-one", "input": ["0x3f800000", "0x33800000", 0, 0]},
+        {"name": "finite-overflow", "input": ["0x7f7fffff", "0x7f7fffff", 0, 0]},
+        {"name": "opposite-infinities", "input": ["0x7f800000", "0xff800000", 0, 0]},
+        {"name": "quiet-nan-payload", "input": ["0x7fc12345", "0x3f800000", 0, 0]},
+        {"name": "exact-cancellation", "input": ["0x3f800000", "0xbf800000", 0, 0]}
+      ]
+    },
+    {
+      "id": "v-mul-f32-edge-values",
+      "instruction": "v_mul_f32",
+      "description": "Zero, infinity, subnormal boundary and NaN operand combinations.",
+      "body": "v_mul_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "zero-times-infinity", "input": ["0x00000000", "0x7f800000", 0, 0]},
+        {"name": "negative-zero-times-two", "input": ["0x80000000", "0x40000000", 0, 0]},
+        {"name": "normal-times-half", "input": ["0x00800000", "0x3f000000", 0, 0]},
+        {"name": "infinity-times-zero", "input": ["0xff800000", "0x00000000", 0, 0]},
+        {"name": "nan-times-three", "input": ["0x7fc12345", "0x40400000", 0, 0]}
+      ]
+    },
+    {
+      "id": "v-min-f32-nan-and-zero",
+      "instruction": "v_min_f32",
+      "description": "Operand order for quiet NaNs and signed zeros, plus finite and infinite values.",
+      "body": "v_min_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "nan-first", "input": ["0x7fc12345", "0x3f800000", 0, 0]},
+        {"name": "nan-second", "input": ["0x3f800000", "0x7fc12345", 0, 0]},
+        {"name": "positive-zero-first", "input": ["0x00000000", "0x80000000", 0, 0]},
+        {"name": "negative-zero-first", "input": ["0x80000000", "0x00000000", 0, 0]},
+        {"name": "negative-and-positive", "input": ["0xc0000000", "0x40000000", 0, 0]},
+        {"name": "infinity-and-finite", "input": ["0x7f800000", "0x40400000", 0, 0]}
+      ]
+    },
+    {
+      "id": "v-max-f32-nan-and-zero",
+      "instruction": "v_max_f32",
+      "description": "Operand order for quiet NaNs and signed zeros, plus finite and infinite values.",
+      "body": "v_max_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "nan-first", "input": ["0x7fc12345", "0x3f800000", 0, 0]},
+        {"name": "nan-second", "input": ["0x3f800000", "0x7fc12345", 0, 0]},
+        {"name": "positive-zero-first", "input": ["0x00000000", "0x80000000", 0, 0]},
+        {"name": "negative-zero-first", "input": ["0x80000000", "0x00000000", 0, 0]},
+        {"name": "negative-and-positive", "input": ["0xc0000000", "0x40000000", 0, 0]},
+        {"name": "infinity-and-finite", "input": ["0xff800000", "0x40400000", 0, 0]}
+      ]
+    },
+    {
+      "id": "v-fma-f32-fused-rounding",
+      "instruction": "v_fma_f32",
+      "description": "A cancellation case that distinguishes fused from separately rounded multiply and add.",
+      "body": "v_fma_f32 v10, v4, v5, v6",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "single-rounding-cancellation", "input": ["0x3f800001", "0x3f7ffffe", "0xbf800000", 0]},
+        {"name": "zero-times-infinity-plus-one", "input": ["0x00000000", "0x7f800000", "0x3f800000", 0]},
+        {"name": "nan-payload-through-fma", "input": ["0x7fc12345", "0x3f800000", "0x40000000", 0]}
+      ]
+    },
+    {
+      "id": "v-add-f32-round-up",
+      "instruction": "v_add_f32",
+      "description": "Positive and negative halfway additions with rounding toward positive infinity.",
+      "body": "v_add_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 1,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "positive-halfway",
+          "input": [
+            "0x3f800000",
+            "0x33800000",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "negative-halfway",
+          "input": [
+            "0xbf800000",
+            "0xb3800000",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f32-round-down",
+      "instruction": "v_add_f32",
+      "description": "Positive and negative halfway additions with rounding toward negative infinity.",
+      "body": "v_add_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 2,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "positive-halfway",
+          "input": [
+            "0x3f800000",
+            "0x33800000",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "negative-halfway",
+          "input": [
+            "0xbf800000",
+            "0xb3800000",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f32-round-zero",
+      "instruction": "v_add_f32",
+      "description": "Positive and negative halfway additions with rounding toward zero.",
+      "body": "v_add_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 3,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "positive-halfway",
+          "input": [
+            "0x3f800000",
+            "0x33800000",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "negative-halfway",
+          "input": [
+            "0xbf800000",
+            "0xb3800000",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f32-denorm-flush-input-output",
+      "instruction": "v_add_f32",
+      "description": "Subnormal additions with input and output denormal handling both set to flush.",
+      "body": "v_add_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "two-smallest-subnormals",
+          "input": [
+            "0x00000001",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "largest-plus-smallest-subnormal",
+          "input": [
+            "0x007fffff",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "normal-cancels-subnormal-gap",
+          "input": [
+            "0x00800000",
+            "0x807fffff",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f32-preserve-input-flush-output",
+      "instruction": "v_add_f32",
+      "description": "Subnormal additions with denormal inputs preserved and results flushed.",
+      "body": "v_add_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 1,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "two-smallest-subnormals",
+          "input": [
+            "0x00000001",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "largest-plus-smallest-subnormal",
+          "input": [
+            "0x007fffff",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "normal-cancels-subnormal-gap",
+          "input": [
+            "0x00800000",
+            "0x807fffff",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f32-flush-input-preserve-output",
+      "instruction": "v_add_f32",
+      "description": "Subnormal additions with inputs flushed and denormal results preserved.",
+      "body": "v_add_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 2,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "two-smallest-subnormals",
+          "input": [
+            "0x00000001",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "largest-plus-smallest-subnormal",
+          "input": [
+            "0x007fffff",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "normal-cancels-subnormal-gap",
+          "input": [
+            "0x00800000",
+            "0x807fffff",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f16-round-up",
+      "instruction": "v_add_f16",
+      "description": "Positive and negative half-precision ties with rounding toward positive infinity.",
+      "body": "v_add_f16 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 1,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "positive-halfway",
+          "input": [
+            "0x00003c00",
+            "0x00001000",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "negative-halfway",
+          "input": [
+            "0x0000bc00",
+            "0x00009000",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f16-round-down",
+      "instruction": "v_add_f16",
+      "description": "Positive and negative half-precision ties with rounding toward negative infinity.",
+      "body": "v_add_f16 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 2,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "positive-halfway",
+          "input": [
+            "0x00003c00",
+            "0x00001000",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "negative-halfway",
+          "input": [
+            "0x0000bc00",
+            "0x00009000",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f16-round-zero",
+      "instruction": "v_add_f16",
+      "description": "Positive and negative half-precision ties with rounding toward zero.",
+      "body": "v_add_f16 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 3,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "positive-halfway",
+          "input": [
+            "0x00003c00",
+            "0x00001000",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "negative-halfway",
+          "input": [
+            "0x0000bc00",
+            "0x00009000",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f16-flush-denormals",
+      "instruction": "v_add_f16",
+      "description": "Half-precision subnormal additions with input and output denormals flushed.",
+      "body": "v_add_f16 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 0,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "two-smallest-subnormals",
+          "input": [
+            "0x00000001",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "largest-plus-smallest-subnormal",
+          "input": [
+            "0x000003ff",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "normal-cancels-subnormal-gap",
+          "input": [
+            "0x00000400",
+            "0x000083ff",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f16-preserve-input-flush-output",
+      "instruction": "v_add_f16",
+      "description": "Half-precision subnormal additions with denormal inputs preserved and results flushed.",
+      "body": "v_add_f16 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 1,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "two-smallest-subnormals",
+          "input": [
+            "0x00000001",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "largest-plus-smallest-subnormal",
+          "input": [
+            "0x000003ff",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "normal-cancels-subnormal-gap",
+          "input": [
+            "0x00000400",
+            "0x000083ff",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f16-flush-input-preserve-output",
+      "instruction": "v_add_f16",
+      "description": "Half-precision subnormal additions with inputs flushed and denormal results preserved.",
+      "body": "v_add_f16 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 2,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "two-smallest-subnormals",
+          "input": [
+            "0x00000001",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "largest-plus-smallest-subnormal",
+          "input": [
+            "0x000003ff",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "normal-cancels-subnormal-gap",
+          "input": [
+            "0x00000400",
+            "0x000083ff",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f16-overflow-clamp",
+      "instruction": "v_add_f16",
+      "description": "Half-precision additions at the finite overflow boundary with FP16_OVFL enabled.",
+      "body": "v_add_f16 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 1
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "largest-plus-largest",
+          "input": [
+            "0x00007bff",
+            "0x00007bff",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "largest-plus-one",
+          "input": [
+            "0x00007bff",
+            "0x00003c00",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "infinity-plus-zero",
+          "input": [
+            "0x00007c00",
+            "0x00000000",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-fma-f32-round-up",
+      "instruction": "v_fma_f32",
+      "description": "Positive and negative fused multiply-add halfway results rounded toward positive infinity.",
+      "body": "v_fma_f32 v10, v4, v5, v6",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 1,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "positive-halfway-result",
+          "input": [
+            "0x3f800001",
+            "0x3f800001",
+            "0xbf800000",
+            0
+          ]
+        },
+        {
+          "name": "negative-halfway-result",
+          "input": [
+            "0xbf800001",
+            "0x3f800001",
+            "0x3f800000",
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-fma-f32-round-down",
+      "instruction": "v_fma_f32",
+      "description": "Positive and negative fused multiply-add halfway results rounded toward negative infinity.",
+      "body": "v_fma_f32 v10, v4, v5, v6",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 2,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "positive-halfway-result",
+          "input": [
+            "0x3f800001",
+            "0x3f800001",
+            "0xbf800000",
+            0
+          ]
+        },
+        {
+          "name": "negative-halfway-result",
+          "input": [
+            "0xbf800001",
+            "0x3f800001",
+            "0x3f800000",
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-fma-f32-round-zero",
+      "instruction": "v_fma_f32",
+      "description": "Positive and negative fused multiply-add halfway results rounded toward zero.",
+      "body": "v_fma_f32 v10, v4, v5, v6",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 3,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "positive-halfway-result",
+          "input": [
+            "0x3f800001",
+            "0x3f800001",
+            "0xbf800000",
+            0
+          ]
+        },
+        {
+          "name": "negative-halfway-result",
+          "input": [
+            "0xbf800001",
+            "0x3f800001",
+            "0x3f800000",
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f16-overflow-to-infinity",
+      "instruction": "v_add_f16",
+      "description": "Half-precision additions at the finite overflow boundary with FP16_OVFL disabled.",
+      "body": "v_add_f16 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "largest-plus-largest",
+          "input": [
+            "0x00007bff",
+            "0x00007bff",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "largest-plus-one",
+          "input": [
+            "0x00007bff",
+            "0x00003c00",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "infinity-plus-zero",
+          "input": [
+            "0x00007c00",
+            "0x00000000",
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "v-add-f32-ieee-disabled",
+      "instruction": "v_add_f32",
+      "description": "Opposite infinities, quiet NaN payloads and signed zero with IEEE mode disabled.",
+      "body": "v_add_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "opposite-infinities",
+          "input": [
+            "0x7f800000",
+            "0xff800000",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "quiet-nan-payload",
+          "input": [
+            "0x7fc12345",
+            "0x3f800000",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "opposite-signed-zeros",
+          "input": [
+            "0x00000000",
+            "0x80000000",
+            0,
+            0
+          ]
+        }
+      ]
+    }
+  ]
+}
