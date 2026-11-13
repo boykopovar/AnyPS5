@@ -622,7 +622,7 @@ const std::vector<std::pair<uint32_t, uint16_t>>& gb18030Reverse(const Gb18030Ta
     };
     static const auto reverse2000 = build(GB18030_2000);
     static const auto reverse2005 = build(GB18030_2005);
-    return &tables == &GB18030_2005 ? reverse2005 : reverse2000;
+    return tables.edition2005 ? reverse2005 : reverse2000;
 }
 
 int encodeGb18030(const void* profile, const Gb18030Tables& tables, uint32_t code, uint8_t* mbcs, uint32_t& length) {
