@@ -28,4 +28,6 @@ std::int32_t APS5_VABI unorm2_spanQuickCheckYes_nid_postfix(const Icu::Normalize
 std::int8_t APS5_VABI unorm2_hasBoundaryBefore_nid_postfix(const Icu::Normalizer2*, std::int32_t);
 std::int8_t APS5_VABI unorm2_hasBoundaryAfter_nid_postfix(const Icu::Normalizer2*, std::int32_t);
 std::int8_t APS5_VABI unorm2_isInert_nid_postfix(const Icu::Normalizer2*, std::int32_t);
+std::int32_t APS5_VABI unorm_compare_nid_postfix(const char16_t*, std::int32_t, const char16_t*, std::int32_t, std::uint32_t,
+                                                 std::int32_t*);
 }

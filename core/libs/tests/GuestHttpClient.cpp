@@ -215,6 +215,52 @@ void CheckRedirects(const std::string& base) {
     }
 }
 
+void CheckUnknownRangeLengths(const std::string& base) {
+    int accepted = 0;
+    int refused = 0;
+    for (const char* name : {"known", "initial", "late", "chunked", "closed", "initial-date", "late-date", "unvalidated"}) {
+        try {
+            auto client = Create();
+            Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/unknown-range/" + name + "/payload.bin").c_str()) == 1,
+                  "unknown complete-length source open failed");
+            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000, "unknown complete-length source size differs");
+            Read(client.get(), 0, 64);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "unknown complete-length seek failed");
+            Read(client.get(), 90000, 64);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 0) == 0, "unknown complete-length rewind failed");
+            Read(client.get(), 0, 64);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 2) == 100000, "unknown complete-length end differs");
+            End(client.get());
+            ++accepted;
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "Unknown complete length %s: %s\n", name, error.what());
+        }
+    }
+    for (const char* name : {"wrong-start", "wrong-span", "empty-body", "bad-total", "missing-total", "overflow-span",
+                             "unknown-unit", "full-partial", "full-refused", "full-short"}) {
+        auto client = Create();
+        Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/unknown-range/" + name + "/payload.bin").c_str()) == 0,
+              "invalid unknown complete-length response accepted");
+        Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == -1, "failed unknown complete-length open exposes a size");
+        ++refused;
+    }
+    for (const char* name : {"late-changed", "late-size", "late-absent", "late-redirect"}) {
+        auto client = Create();
+        Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/unknown-range/" + name + "/payload.bin").c_str()) == 1,
+              "late unknown complete-length control open failed");
+        Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "late unknown complete-length seek failed");
+        bool failed = false;
+        std::array<std::uint8_t, 3> bytes{0xa5, 0xa5, 0xa5};
+        try { Aps5HttpClient_Read_nid_postfix(client.get(), bytes.data() + 1, 1); } catch (const std::exception&) { failed = true; }
+        Check(failed && bytes == std::array<std::uint8_t, 3>{0xa5, 0xa5, 0xa5}, "invalid full fallback changed the read destination");
+        Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000 &&
+              Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 1) == 90000, "failed full fallback changed size or position");
+        ++refused;
+    }
+    std::printf("Unknown complete-length source cases: %d/8; invalid cases refused: %d/14\n", accepted, refused);
+    Check(accepted == 8 && refused == 14, "unknown complete-length interoperability failed");
+}
+
 void CheckFailures(const std::string& base) {
     auto client = Create();
     for (const char* route : {"/bad/", "/short/", "/chunk-bad/"}) Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + route + "payload.bin").c_str()) == 0, "malformed HTTP response accepted");
@@ -231,6 +277,8 @@ void CheckFailures(const std::string& base) {
 
 void CheckRepresentations(const std::string& base) {
     bool passed = true;
+    int legacyPassed = 0;
+    int legacySnapshots = 0;
     const auto run = [&](const char* name, auto action) {
         try {
             action(base + "/identity/" + name + "/payload.bin");
@@ -253,10 +301,25 @@ void CheckRepresentations(const std::string& base) {
             Read(client.get(), 0, 31);
         });
     }
+    for (const char* name : {"date-rfc850", "date-asctime", "date-legacy-rfc850-date", "date-legacy-asctime-date",
+                             "date-legacy-rfc850-both", "date-legacy-asctime-both", "date-legacy-asctime-two-digit",
+                             "date-legacy-century", "date-legacy-200-match", "date-legacy-206-omit"}) {
+        run(name, [&](const std::string& url) {
+            auto client = Create();
+            Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 1, "legacy date source open failed");
+            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000, "legacy date source exposed a fallback snapshot");
+            Read(client.get(), 0, 31);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "legacy date source seek failed");
+            Read(client.get(), 90000, 67);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 0) == 0, "legacy date source rewind failed");
+            Read(client.get(), 0, 31);
+            ++legacyPassed;
+        });
+    }
     for (const char* name : {"etag-200-absent", "etag-200-changed", "etag-200-weak", "etag-200-invalid", "date-200-absent", "date-200-changed", "both-200-absent", "etag-206-changed", "date-206-changed", "late-size", "late-range", "late-short", "late-chunk", "late-redirect-path", "late-redirect-query", "late-redirect-host",
                              "etag-200-trailer-changed", "etag-200-trailer-weak", "etag-200-trailer-conflict",
                              "etag-206-trailer-conflict", "etag-206-trailer-changed", "etag-200-trailer-duplicate", "etag-200-trailer-malformed",
-                             "etag-200-trailer-name", "date-200-trailer-only"}) {
+                             "etag-200-trailer-name", "date-200-trailer-only", "date-legacy-206-changed"}) {
         run(name, [&](const std::string& url) {
             auto client = Create();
             Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 1, "changing source open failed");
@@ -283,7 +346,10 @@ void CheckRepresentations(const std::string& base) {
     for (const char* name : {"absent", "absent-chunk", "absent-close", "weak", "weak-date", "invalid-tag", "tag-space", "tag-quote", "tag-unclosed", "recent-date", "invalid-date", "date-without-date", "complete-range", "initial-full", "initial-chunk", "initial-close",
                              "date-short-year", "date-short-day", "date-short-time", "date-full-names", "date-wrong-case",
                              "date-wrong-weekday", "date-early-year", "date-invalid-day", "date-short-response-time",
-                             "date-wrong-response-weekday", "date-extra-response-space", "date-rfc850", "date-asctime",
+                             "date-wrong-response-weekday", "date-extra-response-space",
+                             "date-legacy-rfc850-weekday", "date-legacy-asctime-weekday", "date-legacy-rfc850-month", "date-legacy-asctime-month",
+                             "date-legacy-rfc850-recent", "date-legacy-asctime-recent", "date-legacy-rfc850-short-year", "date-legacy-asctime-short-year",
+                             "date-legacy-rfc850-time", "date-legacy-asctime-day",
                              "date-trailer-only", "weak-trailer-date"}) {
         run(name, [&](const std::string& url) {
             auto client = Create();
@@ -296,6 +362,7 @@ void CheckRepresentations(const std::string& base) {
             Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 0) == 0, "snapshot rewind failed");
             Read(client.get(), 0, 777, true);
             End(client.get());
+            if (std::string(name).starts_with("date-legacy-")) ++legacySnapshots;
         });
     }
     for (const char* name : {"fallback-206", "fallback-short", "fallback-chunk", "fallback-refused"}) {
@@ -316,7 +383,43 @@ void CheckRepresentations(const std::string& base) {
             End(client.get());
         });
     }
-    Check(passed, "HTTP representation integrity cases failed");
+    std::printf("HTTP legacy date cases: %d/10; conservative snapshots: %d/10\n", legacyPassed, legacySnapshots);
+    Check(passed && legacyPassed == 10 && legacySnapshots == 10, "HTTP representation integrity cases failed");
+}
+
+void CheckContentLengths(const std::string& base) {
+    int accepted = 0;
+    int refused = 0;
+    for (const std::string mode : {"full", "range", "empty"}) {
+        for (const char* name : {"single", "pair", "compact", "whitespace", "many", "zeros"}) {
+            auto client = Create();
+            const auto url = base + "/length-list/" + mode + "/" + name + "/payload.bin";
+            if (Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) != 1) {
+                std::fprintf(stderr, "Equivalent Content-Length refused: %s/%s\n", mode.c_str(), name);
+                continue;
+            }
+            const bool empty = mode == "empty";
+            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == (empty ? 0 : 100000), "Content-Length source size differs");
+            if (!empty) {
+                Read(client.get(), 0, 64);
+                Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "Content-Length source seek failed");
+                Read(client.get(), 90000, 64);
+                Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 2) == 100000, "Content-Length source end differs");
+            }
+            End(client.get());
+            ++accepted;
+        }
+        for (const char* name : {"different", "suffix", "empty", "leading-empty", "trailing-empty", "middle-empty",
+                                 "plus", "negative", "overflow", "hex", "fraction", "embedded-space", "embedded-tab"}) {
+            auto client = Create();
+            const auto url = base + "/length-list/" + mode + "/" + name + "/payload.bin";
+            const bool failed = Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 0;
+            Check(failed && Aps5HttpClient_GetSize_nid_postfix(client.get()) == -1, "invalid Content-Length accepted");
+            ++refused;
+        }
+    }
+    std::printf("Content-Length equivalent cases: %d/18; invalid cases refused: %d/39\n", accepted, refused);
+    Check(accepted == 18 && refused == 39, "Content-Length list interoperability failed");
 }
 
 void CheckCancellation(const std::string& base) {
@@ -350,21 +453,28 @@ void CheckCancellation(const std::string& base) {
 
 int main(int argc, char** argv) {
     try {
-        Check(argc == 2, "missing server URL");
+        Check(argc == 2 || (argc == 3 && std::string(argv[2]) == "--transformed"), "invalid server arguments");
         std::filesystem::create_directories("app0");
         Write("payload.bin", 100000);
         Write("alternate.bin", 777, true);
         Write("empty.bin", 0);
         const std::string base = argv[1];
+        if (argc == 3) {
+            CheckRepresentations(base + "/transformed");
+            std::puts("HTTP 203 representation tests passed");
+            return 0;
+        }
         CheckInputValidation(base);
         CheckBodies(base);
         CheckEmpty(base);
         CheckRedirects(base);
         CheckCacheAndReopen(base);
         CheckFailures(base);
+        CheckUnknownRangeLengths(base);
         CheckRepresentations(base);
         CheckCancellation(base);
         CheckRangeUnits(base);
+        CheckContentLengths(base);
         std::puts("Reusable HTTP client body, framing, range, cache, reopen, isolation and cancellation tests passed");
         return 0;
     } catch (const std::exception& error) {
