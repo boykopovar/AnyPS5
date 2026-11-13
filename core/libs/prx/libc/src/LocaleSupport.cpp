@@ -587,6 +587,14 @@ int ConvertCharacter(int value, bool upper) {
 
 }
 
+extern "C" GuestLocale::String* LibcAssignCString_nid_no_patch(GuestLocale::String* result, const char* source) {
+    return AssignCString(result, source);
+}
+
+extern "C" GuestLocale::String* LibcAssignWideCString_nid_no_patch(GuestLocale::String* result, const std::uint16_t* source) {
+    return AssignWideCString(result, source);
+}
+
 extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last) {
     const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix);
     const auto narrow = [ctype](char character) { return ctype != nullptr ? reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->narrow(ctype, character, '\0') : character; };
@@ -1132,6 +1140,10 @@ GuestLocaleFacade g_classicLocaleFacade{&g_classicLocale};
 
 GuestLocaleFacade* APS5_VABI _ZNSt6locale7classicEv_nid_postfix() {
     return &g_classicLocaleFacade;
+}
+
+const GuestLocale::CollateVtable* GuestWideCollateVtable_nid_no_patch() {
+    return &g_wideCollateVtable;
 }
 
 std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {

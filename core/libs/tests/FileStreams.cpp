@@ -1164,6 +1164,21 @@ static void CheckZeroSizedTransfers(const std::string& base) {
     Require(fclose_nid_postfix(stream) == 0 && std::remove(path.c_str()) == 0, "Removing the zero-sized transfer file");
 }
 
+static void CheckZeroSizedTransfersOnNullStream() {
+    std::array<char, 4> buffer{};
+    buffer.fill(0x5a);
+    errno = 97;
+    Require(fread_nid_postfix(buffer.data(), 0, buffer.size(), nullptr) == 0, "fread with size 0 on a null stream must return 0");
+    Require(fread_nid_postfix(buffer.data(), 1, 0, nullptr) == 0, "fread with count 0 on a null stream must return 0");
+    Require(fread_nid_postfix(nullptr, 0, 0, nullptr) == 0, "fread of nothing into nothing must return 0");
+    Require(std::memcmp(buffer.data(), "ZZZZ", buffer.size()) == 0, "fread of nothing on a null stream changed the buffer");
+    Require(fwrite_nid_postfix("xy", 0, 2, nullptr) == 0, "fwrite with size 0 on a null stream must return 0");
+    Require(fwrite_nid_postfix("xy", 1, 0, nullptr) == 0, "fwrite with count 0 on a null stream must return 0");
+    Require(fwrite_nid_postfix(nullptr, 0, 0, nullptr) == 0, "fwrite of nothing from nothing must return 0");
+    Require(fwrite_nid_postfix(buffer.data(), SIZE_MAX / 2 + 1, 2, nullptr) == 0, "fwrite whose size times count wraps to 0 must return 0");
+    Require(errno == 97, "a zero-sized transfer on a null stream changed errno");
+}
+
 static void CheckOrdinaryCharacterScans() {
 #ifndef _WIN32
     CheckShortCharacterScanLocking(false, fscanf_nid_postfix);
@@ -1204,9 +1219,8 @@ static void CheckOrdinaryCharacterScans() {
             std::uint64_t value = 0;
             char output = 'Z';
             int count = -77;
-            const std::uint64_t expected = format[2] == 'o' ? 012345670123ull : (format[2] == 'x' || format[2] == 'X' ? 0x12345670123ull : 12345670123ull);
-            Require(scan(&stream, format, &value, &output, &count) == 2 && value == expected && output == 'z' && count == 13, "Ordinary stream scan lost the host quad length");
-            Require(ftell_nid_postfix(&stream) == 13 && fgetc_nid_postfix(&stream) == '!' && ferror_nid_postfix(&stream) == 0);
+            Require(scan(&stream, format, &value, &output, &count) == 0 && value == 0 && output == 'Z' && count == -77, "Ordinary stream scan did not end at the quad length");
+            Require(ftell_nid_postfix(&stream) == 0 && fgetc_nid_postfix(&stream) == '1' && ferror_nid_postfix(&stream) == 0);
             Require(std::fclose(native) == 0);
         }
     }
@@ -1287,6 +1301,7 @@ int main(int argc, char** argv) {
     CheckReadErrnoAndStatus(argv[1]);
     CheckOrdinaryCharacterScans();
     CheckZeroSizedTransfers(argv[1]);
+    CheckZeroSizedTransfersOnNullStream();
     CheckUpdateStreamReadsAfterWrites(argv[1]);
     CheckUnbufferedStreamReadsAfterWrites(argv[1]);
     CheckStreamWritesAfterReads(argv[1]);
@@ -1316,7 +1331,7 @@ int main(int argc, char** argv) {
     Require(fread_nid_postfix(buffer.data(), 2, SIZE_MAX / 2 + 1, stream) == 0 && errno == EINVAL && ferror_nid_postfix(stream) == 0);
     errno = 0;
     Require(fread_nid_postfix(buffer.data(), 2, SIZE_MAX / 2 + 1, nullptr) == 0 && errno == EINVAL);
-    ExpectException([&] { fwrite_nid_postfix(buffer.data(), SIZE_MAX / 2 + 1, 2, stream); });
+    Require(fwrite_nid_postfix(buffer.data(), SIZE_MAX / 2 + 1, 2, stream) == 0 && ferror_nid_postfix(stream) == 0);
     errno = 0;
     Require(fseek_nid_postfix(stream, 0, -1) == -1);
     Require(errno == EINVAL);

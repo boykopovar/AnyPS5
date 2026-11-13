@@ -117,6 +117,16 @@ void EraseRangeNames(uintptr_t start, uintptr_t end) {
  }
 }
 
+int NameVirtualRange(const void* addr, uint64_t len, const char* name) {
+ const auto start = reinterpret_cast<uintptr_t>(addr);
+ if (!name) return SCE_KERNEL_ERROR_EFAULT;
+ if (!addr || len == 0 || len > UINTPTR_MAX - start) return SCE_KERNEL_ERROR_EINVAL;
+ std::lock_guard lock(g_rangeNameLock);
+ EraseRangeNames(start, start + len);
+ g_rangeNames.emplace(start, NamedRange{start + len, std::string(name, strnlen(name, 31))});
+ return 0;
+}
+
 void ApplyRangeName(uintptr_t address, VirtualQueryInfo* info) {
  std::lock_guard lock(g_rangeNameLock);
  auto next = g_rangeNames.upper_bound(address);
@@ -269,7 +279,12 @@ int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search
   || (len & (PS5_PAGE_SIZE - 1)) || !phys_addr_out
   || (alignment != 0 && (alignment & (PS5_PAGE_SIZE - 1))))
   return SCE_KERNEL_ERROR_EINVAL;
- return DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, memory_type, phys_addr_out);
+ int64_t physical = 0;
+ const int result = DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, memory_type, &physical);
+ if (result != 0) return result;
+ if (GuestCopyOut_nid_no_patch(phys_addr_out, &physical, sizeof(physical))) return 0;
+ DirectMemoryFree(physical, len);
+ return SCE_KERNEL_ERROR_EFAULT;
 }
 
 int APS5_VABI sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
@@ -348,14 +363,14 @@ int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, i
  if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
  const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
  if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
- if (result == 0 && name) sceKernelSetVirtualRangeName(*addr, len, name);
+ if (result == 0 && name) NameVirtualRange(*addr, len, name);
  return result;
 }
 
 int32_t APS5_VABI sceKernelMapNamedFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
  if (UndefinedProtection(prot) || flags == 0x8000) return SCE_KERNEL_ERROR_EINVAL;
  const int result = _mapFlexible(addr_in_out, len, prot, flags);
- if (result == 0 && name) sceKernelSetVirtualRangeName(*addr_in_out, len, name);
+ if (result == 0 && name) NameVirtualRange(*addr_in_out, len, name);
  return result;
 }
 
@@ -544,6 +559,7 @@ int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end) {
  std::uintptr_t stackEnd = 0;
  if (!GuestThreadStack(reinterpret_cast<std::uintptr_t>(addr), &stackStart, &stackEnd)) {
   VirtualQueryInfo info{};
+  if (reinterpret_cast<std::uintptr_t>(addr) == ~std::uintptr_t{0}) return SCE_KERNEL_ERROR_EINVAL;
   if (sceKernelVirtualQuery(addr, 0, &info, sizeof(info)) != 0) return SCE_KERNEL_ERROR_EACCES;
  }
  const auto startAddress = reinterpret_cast<void*>(stackStart);
@@ -576,13 +592,10 @@ int APS5_VABI sceKernelInternalMemoryGetAvailableSize(std::size_t* size) {
 }
 
 int APS5_VABI sceKernelSetVirtualRangeName(const void* addr, uint64_t len, const char* name) {
- const auto start = reinterpret_cast<uintptr_t>(addr);
  if (!name) return SCE_KERNEL_ERROR_EFAULT;
- if (!addr || len == 0 || len > UINTPTR_MAX - start) return SCE_KERNEL_ERROR_EINVAL;
- std::lock_guard lock(g_rangeNameLock);
- EraseRangeNames(start, start + len);
- g_rangeNames.emplace(start, NamedRange{start + len, std::string(name, strnlen(name, 31))});
- return 0;
+ if (strnlen(name, 32) > 31) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+ if (addr && len == 0) return 0;
+ return NameVirtualRange(addr, len, name);
 }
 
 int APS5_VABI sceKernelClearVirtualRangeName(const void* addr, uint64_t len) {
@@ -686,7 +699,7 @@ int32_t APS5_VABI sceKernelMapNamedSystemFlexibleMemory(void** addr_in_out, size
     const int result = DoMapAnon(addr_in_out, len, prot, flags);
     if (result != 0) return result;
     _releaseFlexible(reinterpret_cast<uintptr_t>(*addr_in_out), len);
-    sceKernelSetVirtualRangeName(*addr_in_out, len, name);
+    NameVirtualRange(*addr_in_out, len, name);
     return 0;
 }
 

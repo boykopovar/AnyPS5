@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -217,31 +218,17 @@ void RunRequest(KernelAioRwRequest& req, bool write) {
     req.result->state = AioCompleted;
 }
 
-int ValidateRequests(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, const void* id) {
+int SubmitCommands(const KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, bool write, bool multiple, std::int32_t* id) {
     if (req == nullptr || id == nullptr) return SCE_KERNEL_ERROR_EFAULT;
     if (size <= 0 || size > AioRequestNumMax || prio < AioPriorityLow || prio > AioPriorityHigh) return SCE_KERNEL_ERROR_EINVAL;
+    std::array<KernelAioRwRequest, AioRequestNumMax> requests{};
+    const auto bytes = static_cast<std::size_t>(size) * sizeof(requests[0]);
+    if (!GuestCopyIn_nid_no_patch(requests.data(), req, bytes)) return SCE_KERNEL_ERROR_EFAULT;
     for (std::int32_t i = 0; i < size; ++i) {
-        if (req[i].result == nullptr) return SCE_KERNEL_ERROR_EFAULT;
+        if (requests[i].result == nullptr) return SCE_KERNEL_ERROR_EFAULT;
     }
-    return 0;
-}
-
-int SubmitCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, bool write, std::int32_t* id) {
-    const int error = ValidateRequests(req, size, prio, id);
-    if (error != 0) return error;
-    Reservation reservation(1);
-    for (std::int32_t i = 0; i < size; ++i) RunRequest(req[i], write);
-    reservation.Publish(id);
-    return 0;
-}
-
-int SubmitCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, bool write, std::int32_t* id) {
-    const int error = ValidateRequests(req, size, prio, id);
-    if (error != 0) return error;
-    Reservation reservation(size);
-    for (std::int32_t i = 0; i < size; ++i) {
-        RunRequest(req[i], write);
-    }
+    Reservation reservation(multiple ? size : 1);
+    for (std::int32_t i = 0; i < size; ++i) RunRequest(requests[i], write);
     reservation.Publish(id);
     return 0;
 }
@@ -252,18 +239,40 @@ int ValidateIds(const std::int32_t* id, std::int32_t num, const void* out) {
     return 0;
 }
 
-int CopyStateOut(std::int32_t* out, std::int32_t state) {
-    return GuestCopyOut_nid_no_patch(out, &state, sizeof(state)) ? 0 : SCE_KERNEL_ERROR_EFAULT;
+using IdArray = std::array<std::int32_t, AioIdNumMax>;
+
+int CopyStateOut(std::int32_t* out, std::int32_t state, int result = 0) {
+    return GuestCopyOut_nid_no_patch(out, &state, sizeof(state)) ? result : SCE_KERNEL_ERROR_EFAULT;
+}
+
+bool CopyIdsIn(IdArray& ids, const std::int32_t* guestIds, std::int32_t num) {
+    return GuestCopyIn_nid_no_patch(ids.data(), guestIds, static_cast<std::size_t>(num) * sizeof(std::int32_t));
+}
+
+int CopyStatesOut(std::int32_t* out, const IdArray& states, std::int32_t num, int result = 0) {
+    const std::size_t bytes = static_cast<std::size_t>(num) * sizeof(std::int32_t);
+    return GuestCopyOut_nid_no_patch(out, states.data(), bytes) ? result : SCE_KERNEL_ERROR_EFAULT;
+}
+
+int WaitTimeout(const std::uint32_t* usec, std::optional<std::uint32_t>& limit, std::chrono::steady_clock::time_point start) {
+    if (usec == nullptr) return 0;
+    if (!limit) {
+        std::uint32_t value = 0;
+        if (!GuestCopyIn_nid_no_patch(&value, usec, sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
+        limit = value;
+    }
+    if (*limit == 0) return 0;
+    const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+    return elapsed > static_cast<std::int64_t>(*limit) ? SCE_KERNEL_ERROR_ETIMEDOUT : 0;
 }
 
 int ApplyToIds(const std::int32_t* guestIds, std::int32_t num, std::int32_t* out, const char* function, bool requireFinished,
     std::int32_t (*operation)(std::int32_t)) {
     const int error = ValidateIds(guestIds, num, out);
     if (error != 0) return error;
-    const std::size_t bytes = static_cast<std::size_t>(num) * sizeof(std::int32_t);
-    std::array<std::int32_t, AioIdNumMax> ids{};
-    if (!GuestCopyIn_nid_no_patch(ids.data(), guestIds, bytes)) return SCE_KERNEL_ERROR_EFAULT;
-    std::array<std::int32_t, AioIdNumMax> states{};
+    IdArray ids{};
+    if (!CopyIdsIn(ids, guestIds, num)) return SCE_KERNEL_ERROR_EFAULT;
+    IdArray states{};
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         if (requireFinished) {
@@ -271,7 +280,7 @@ int ApplyToIds(const std::int32_t* guestIds, std::int32_t num, std::int32_t* out
         }
         for (std::int32_t i = 0; i < num; ++i) states[i] = operation(ids[i]);
     }
-    return GuestCopyOut_nid_no_patch(out, states.data(), bytes) ? 0 : SCE_KERNEL_ERROR_EFAULT;
+    return CopyStatesOut(out, states, num);
 }
 
 }
@@ -329,11 +338,11 @@ int APS5_VABI sceKernelAioInitializeImpl(void* param, int32_t size) {
 
 void APS5_VABI sceKernelAioInitializeParam(void* param) {
     if (param == nullptr) throw std::invalid_argument("sceKernelAioInitializeParam: param is null");
-    auto* scheduling = static_cast<KernelAioSchedulingParam*>(param);
-    for (int index = 0; index < 3; ++index) {
-        const bool split = index < 2;
-        scheduling[index] = {AioDefaultSchedulingWindow, AioDefaultDelayedCountLimit, split ? 1u : 0u, split ? AioDefaultSplitSize : 0u, split ? AioDefaultSplitSize : 0u};
-    }
+    constexpr KernelAioSchedulingParam split{AioDefaultSchedulingWindow, AioDefaultDelayedCountLimit, 1u, AioDefaultSplitSize, AioDefaultSplitSize};
+    constexpr KernelAioSchedulingParam unsplit{AioDefaultSchedulingWindow, AioDefaultDelayedCountLimit, 0u, 0u, 0u};
+    constexpr KernelAioSchedulingParam scheduling[]{split, split, unsplit};
+    if (!GuestCopyOut_nid_no_patch(param, scheduling, sizeof(scheduling)))
+        throw std::invalid_argument("sceKernelAioInitializeParam: param is not writable");
 }
 
 int APS5_VABI sceKernelAioSetParam(KernelAioSchedulingParam* param, int32_t schedulingWindowSize, int32_t delayedCountLimit, uint32_t enableSplit, uint32_t splitSize, uint32_t splitChunkSize) {
@@ -341,28 +350,24 @@ int APS5_VABI sceKernelAioSetParam(KernelAioSchedulingParam* param, int32_t sche
     if (schedulingWindowSize < 0 || schedulingWindowSize > AioSchedulingWindowMax || delayedCountLimit < 0 || delayedCountLimit > AioDelayedCountMax || enableSplit > 1)
         return SCE_KERNEL_ERROR_EINVAL;
     if (enableSplit == 1 && (splitSize == 0 || splitSize > AioSplitSizeMax || splitChunkSize == 0 || splitChunkSize > AioSplitChunkSizeMax)) return SCE_KERNEL_ERROR_EINVAL;
-    param->schedulingWindowSize = schedulingWindowSize;
-    param->delayedCountLimit = delayedCountLimit;
-    param->enableSplit = enableSplit;
-    param->splitSize = splitSize;
-    param->splitChunkSize = splitChunkSize;
-    return 0;
+    const KernelAioSchedulingParam value{schedulingWindowSize, delayedCountLimit, enableSplit, splitSize, splitChunkSize};
+    return GuestCopyOut_nid_no_patch(param, &value, sizeof(value)) ? 0 : SCE_KERNEL_ERROR_EFAULT;
 }
 
 int APS5_VABI sceKernelAioSubmitReadCommands(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
-    return SubmitCommands(req, size, prio, false, id);
+    return SubmitCommands(req, size, prio, false, false, id);
 }
 
 int APS5_VABI sceKernelAioSubmitWriteCommands(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
-    return SubmitCommands(req, size, prio, true, id);
+    return SubmitCommands(req, size, prio, true, false, id);
 }
 
 int APS5_VABI sceKernelAioSubmitReadCommandsMultiple(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
-    return SubmitCommandsMultiple(req, size, prio, false, id);
+    return SubmitCommands(req, size, prio, false, true, id);
 }
 
 int APS5_VABI sceKernelAioSubmitWriteCommandsMultiple(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
-    return SubmitCommandsMultiple(req, size, prio, true, id);
+    return SubmitCommands(req, size, prio, true, true, id);
 }
 
 int APS5_VABI sceKernelAioPollRequest(int32_t id, int32_t* state) {
@@ -379,36 +384,43 @@ int APS5_VABI sceKernelAioWaitRequests(int32_t* id, int32_t num, int32_t* state,
     const int error = ValidateIds(id, num, state);
     if (error != 0) return error;
     if (mode != AioWaitAnd && mode != AioWaitOr) return SCE_KERNEL_ERROR_EINVAL;
+    IdArray ids{};
+    if (!CopyIdsIn(ids, id, num)) return SCE_KERNEL_ERROR_EFAULT;
+    IdArray states{};
     const auto start = std::chrono::steady_clock::now();
+    std::optional<std::uint32_t> limit;
 #ifdef ANYPS5_AIO_TESTING
     ProcessingWaiter waiter;
 #endif
     for (;;) {
         bool allDone = true;
         bool anyCompleted = false;
+        bool reported = false;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             for (int32_t i = 0; i < num; ++i) {
-                const std::int32_t current = StateLocked(id[i]);
+                const std::int32_t current = StateLocked(ids[i]);
                 if (current == AioProcessing) allDone = false;
                 if ((current & ~AioReported) == AioCompleted) anyCompleted = true;
             }
             if (allDone || (mode == AioWaitOr && anyCompleted)) {
-                for (int32_t i = 0; i < num; ++i) state[i] = ReportLocked(id[i]);
-                return 0;
+                for (int32_t i = 0; i < num; ++i) states[i] = ReportLocked(ids[i]);
+                reported = true;
             }
         }
+        if (reported) return CopyStatesOut(state, states, num);
 #ifdef ANYPS5_AIO_TESTING
         waiter.Observe();
 #endif
-        if (usec != nullptr && *usec != 0) {
-            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
-            if (elapsed > static_cast<std::int64_t>(*usec)) {
+        const int timeout = WaitTimeout(usec, limit, start);
+        if (timeout == SCE_KERNEL_ERROR_ETIMEDOUT) {
+            {
                 std::lock_guard<std::mutex> lock(g_mutex);
-                for (int32_t i = 0; i < num; ++i) state[i] = ReportLocked(id[i]);
-                return SCE_KERNEL_ERROR_ETIMEDOUT;
+                for (int32_t i = 0; i < num; ++i) states[i] = ReportLocked(ids[i]);
             }
+            return CopyStatesOut(state, states, num, timeout);
         }
+        if (timeout != 0) return timeout;
         PreciseSleepUs(10);
     }
 }
@@ -416,6 +428,7 @@ int APS5_VABI sceKernelAioWaitRequests(int32_t* id, int32_t num, int32_t* state,
 int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec) {
     if (state == nullptr) return SCE_KERNEL_ERROR_EFAULT;
     const auto start = std::chrono::steady_clock::now();
+    std::optional<std::uint32_t> limit;
 #ifdef ANYPS5_AIO_TESTING
     ProcessingWaiter waiter;
 #endif
@@ -425,20 +438,13 @@ int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec
             std::lock_guard<std::mutex> lock(g_mutex);
             current = ReportLocked(id);
         }
-        if (current != AioProcessing) {
-            *state = current;
-            return 0;
-        }
+        if (current != AioProcessing) return CopyStateOut(state, current);
 #ifdef ANYPS5_AIO_TESTING
         waiter.Observe();
 #endif
-        if (usec != nullptr && *usec != 0) {
-            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
-            if (elapsed > static_cast<std::int64_t>(*usec)) {
-                *state = current;
-                return SCE_KERNEL_ERROR_ETIMEDOUT;
-            }
-        }
+        const int timeout = WaitTimeout(usec, limit, start);
+        if (timeout == SCE_KERNEL_ERROR_ETIMEDOUT) return CopyStateOut(state, current, timeout);
+        if (timeout != 0) return timeout;
         PreciseSleepUs(10);
     }
 }
