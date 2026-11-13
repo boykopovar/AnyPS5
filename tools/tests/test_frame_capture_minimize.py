@@ -60,7 +60,7 @@ else:
         self.assertEqual(removed_chunks, {1, 5})
 
     def test_requires_repeated_confirmation_and_positive_trial_limit(self):
-        for arguments in (("--confirm-runs", "1"), ("--max-trials", "0"), ("--replay-timeout", "0")):
+        for arguments in (("--confirm-runs", "1"), ("--max-trials", "0"), ("--replay-timeout", "0"), ("--replay-timeout", "nan"), ("--replay-timeout", "inf")):
             with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
                 frame_capture_minimize.parse_args(["--capture", "in", "--replay", "run", "--filter", "filter", "--output", "out", "--match-regex", "failure", "--expect-exit-code", "1", *arguments])
 
