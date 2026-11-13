@@ -218,6 +218,42 @@ static void CheckAddressOnPairEnd() {
 #endif
 }
 
+static void CheckRecordOverSendBuffer(int type, int sendBuffer) {
+    constexpr int SolSocket = 0xffff;
+    constexpr int SendBuffer = 0x1001;
+    constexpr int MessageTooLong = 40;
+    static char record[0x8000];
+    static char received[0x8000];
+    std::memset(record, 'r', sizeof(record));
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, type, 0, pair) == 0);
+    int size = 0;
+    std::uint32_t sizeLength = sizeof(size);
+    Require(getsockopt_nid_postfix(pair[0], SolSocket, SendBuffer, &size, &sizeLength) == 0 && size == sendBuffer);
+    const auto over = static_cast<std::uint64_t>(sendBuffer) + 1;
+    Require(FailsWith(send_nid_postfix(pair[0], record, over, NoSignal), MessageTooLong));
+    Require(FailsWith(sendto_nid_postfix(pair[0], record, over, NoSignal, nullptr, 0), MessageTooLong));
+    KernelIovec pieces[2]{{record, 1}, {record + 1, static_cast<std::size_t>(sendBuffer)}};
+    GuestMsghdr message{nullptr, 0, pieces, 2, nullptr, 0, 0};
+    Require(FailsWith(sendmsg_nid_postfix(pair[0], &message, NoSignal), MessageTooLong));
+    Require(FailsWith(write_nid_postfix(pair[0], record, over), MessageTooLong));
+    Require(FailsWith(send_nid_postfix(pair[0], nullptr, over, NoSignal), MessageTooLong));
+    GuestPollDescriptor waited{pair[1], In, 0};
+    Require(poll_nid_postfix(&waited, 1, 0) == 0);
+    Require(send_nid_postfix(pair[0], record, static_cast<std::uint64_t>(sendBuffer), NoSignal) == sendBuffer && Readable(pair[1]));
+    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == sendBuffer);
+    const int larger = sendBuffer * 2;
+    Require(setsockopt_nid_postfix(pair[0], SolSocket, SendBuffer, &larger, sizeof(larger)) == 0);
+    Require(send_nid_postfix(pair[0], record, over, NoSignal) == static_cast<std::int64_t>(over) && Readable(pair[1]));
+    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == static_cast<std::int64_t>(over));
+    Require(std::memcmp(received, record, static_cast<std::size_t>(over)) == 0);
+    Require(FailsWith(send_nid_postfix(pair[0], record, static_cast<std::uint64_t>(larger) + 1, NoSignal), MessageTooLong));
+    Require(FailsWith(send_nid_postfix(pair[1], record, over, NoSignal), MessageTooLong));
+    Require(shutdown_nid_postfix(pair[0], 1) == 0);
+    Require(FailsWith(send_nid_postfix(pair[0], record, static_cast<std::uint64_t>(larger) + 1, NoSignal), 32));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "recvmsg-memory") == 0) {
         CheckReceiveMessageFaults();
@@ -378,6 +414,10 @@ int main(int argc, char** argv) {
 #endif
     CheckReceiveMessageFaults();
     CheckAddressOnPairEnd();
+    CheckRecordOverSendBuffer(Datagram, 2048);
+#if !defined(_WIN32) && !defined(__APPLE__)
+    CheckRecordOverSendBuffer(SequencedPacket, 8192);
+#endif
 
     Require(Fails(2, Stream, 0, 45));
     Require(Fails(28, Datagram, 0, 45));
