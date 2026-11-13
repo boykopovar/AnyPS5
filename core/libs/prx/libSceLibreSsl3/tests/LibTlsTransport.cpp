@@ -199,7 +199,7 @@ void TestHandshakeAndExchange(Server& server) {
     thread.join();
 }
 
-void TestImplicitHandshakeAndNoVerifyName(Server& server) {
+void TestImplicitHandshakeAndNoVerifyName(Server& server, const char* servername) {
     auto thread = server.Spawn(ServerMode::Exchange);
     const int sock = OpenGuestSocket(server.port);
     TlsConfig* config = MakeConfig(RootPem, sizeof(RootPem) - 1);
@@ -207,7 +207,7 @@ void TestImplicitHandshakeAndNoVerifyName(Server& server) {
     TlsContext* client = tls_client_nid_postfix();
     Check(client != nullptr);
     Check(tls_configure_nid_postfix(client, config) == 0);
-    Check(tls_connect_socket_nid_postfix(client, sock, "mismatch.example") == 0);
+    Check(tls_connect_socket_nid_postfix(client, sock, servername) == 0);
     Check(tls_write_nid_postfix(client, "ping", 4) == 4);
 
     std::array<char, 8> reply{};
@@ -331,7 +331,8 @@ void TestErrors(Server& server) {
 int main() {
     Server server;
     TestHandshakeAndExchange(server);
-    TestImplicitHandshakeAndNoVerifyName(server);
+    TestImplicitHandshakeAndNoVerifyName(server, "mismatch.example");
+    TestImplicitHandshakeAndNoVerifyName(server, nullptr);
     TestNonBlockingPoll(server);
     TestErrors(server);
     std::puts("libtls transport tests passed");

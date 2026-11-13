@@ -36,6 +36,7 @@ namespace {
 
 constexpr std::int64_t WantPollIn = -2;
 constexpr std::int64_t WantPollOut = -3;
+constexpr std::size_t WriteChunkSize = 16 * 1024;
 constexpr std::uint32_t TlsProtocol12 = 0x08;
 constexpr std::uint32_t TlsProtocol13 = 0x10;
 
@@ -228,6 +229,9 @@ struct Session {
             if (result != 0) return result;
         } else if (verifyName) {
             return MBEDTLS_ERR_X509_BAD_INPUT_DATA;
+        } else {
+            result = mbedtls_ssl_set_hostname(&ssl, nullptr);
+            if (result != 0) return result;
         }
         mbedtls_ssl_set_bio(&ssl, this, Send, Receive, nullptr);
         connected = true;
@@ -427,13 +431,14 @@ std::int64_t TlsTransportWrite_nid_no_patch(TlsContext* context, const void* buf
         if (result != 0) return result;
     }
     if (length == 0) return 0;
-    std::vector<unsigned char> input(length);
-    if (!GuestCopyIn_nid_no_patch(input.data(), buffer, length)) {
+    const std::size_t chunk = std::min(length, WriteChunkSize);
+    std::vector<unsigned char> input(chunk);
+    if (!GuestCopyIn_nid_no_patch(input.data(), buffer, chunk)) {
         TlsTransportSetError_nid_no_patch(context, "invalid write buffer");
         return -1;
     }
     session->hostError = 0;
-    const int result = mbedtls_ssl_write(&session->ssl, input.data(), length);
+    const int result = mbedtls_ssl_write(&session->ssl, input.data(), chunk);
     if (result >= 0) return result;
     const auto mapped = session->Map(result);
     if (mapped == WantPollIn || mapped == WantPollOut) return mapped;
