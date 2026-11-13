@@ -517,6 +517,7 @@ if(BUILD_TESTING)
     endforeach()
     add_test_executable(guest_icu_date_pattern_native_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateTimePatternNative.cpp)
     target_link_libraries(guest_icu_date_pattern_native_tests PRIVATE icu_i18n)
+    configure_host_test_executable(guest_icu_date_pattern_native_tests)
     add_test(NAME guest_icu_date_pattern_native_data COMMAND guest_icu_date_pattern_native_tests)
     add_test(NAME guest_icu_date_pattern_manifest COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateTimePatternData.py ${ICU_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${icu_host_icupkg})
