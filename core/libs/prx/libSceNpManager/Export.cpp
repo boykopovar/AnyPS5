@@ -388,12 +388,25 @@ int APS5_VABI sceNpGetAccountLanguageA(int reqId, int userId, void* language) {
 }
 int APS5_VABI sceNpGetGamePresenceStatus(const NpOnlineId* onlineId, uint32_t* status) {
     if (!onlineId || !status) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    *status = NP_GAME_PRESENCE_STATUS_OFFLINE;
+    NpOnlineId localOnlineId{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localOnlineId, onlineId, sizeof(localOnlineId))) {
+        errno = savedErrno;
+        return SCE_NP_ERROR_INVALID_ARGUMENT;
+    }
+    const uint32_t presence = NP_GAME_PRESENCE_STATUS_OFFLINE;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &presence, sizeof(presence));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 int APS5_VABI sceNpGetGamePresenceStatusA(int userId, uint32_t* status) {
     if (!status || userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    *status = NP_GAME_PRESENCE_STATUS_OFFLINE;
+    const uint32_t presence = NP_GAME_PRESENCE_STATUS_OFFLINE;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &presence, sizeof(presence));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 int APS5_VABI sceNpGetParentalControlInfoA(int reqId, int userId, int8_t* age, void* info) {
@@ -1012,14 +1025,22 @@ int APS5_VABI sceNpGetOnlineId(int user_id, NpOnlineId* online_id) {
 int APS5_VABI sceNpGetState(int user_id, uint32_t* state) {
     (void)user_id;
     if (!state) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    *state = NP_STATE_SIGNED_OUT;
+    const uint32_t localState = NP_STATE_SIGNED_OUT;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &localState, sizeof(localState));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
 int APS5_VABI sceNpHasSignedUp(int user_id, bool* has_signed_up) {
     (void)user_id;
     if (!has_signed_up) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    *has_signed_up = false;
+    const bool localSignedUp = false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(has_signed_up, &localSignedUp, sizeof(localSignedUp));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

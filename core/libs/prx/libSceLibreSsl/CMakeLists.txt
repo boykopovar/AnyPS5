@@ -442,6 +442,22 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/CipherList.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_cipher_list_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/CipherList.cpp)
+    target_include_directories(guest_libressl_cipher_list_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_cipher_list_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_cipher_list_tests)
+    add_test(NAME guest_libressl_cipher_list COMMAND guest_libressl_cipher_list_tests)
+    add_test(NAME guest_libressl_cipher_list_allocator COMMAND guest_libressl_cipher_list_tests allocator)
+    set_tests_properties(guest_libressl_cipher_list guest_libressl_cipher_list_allocator PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_cipher_list guest_libressl_cipher_list_allocator PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/OcspBasicResponse.cpp)
 
 if(BUILD_TESTING)

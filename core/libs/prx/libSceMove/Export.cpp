@@ -29,6 +29,7 @@ int32_t nextHandle = MOVE_FIRST_HANDLE;
 struct Slot {
     int32_t type;
     int32_t index;
+    int32_t calibrationMode = 0;
 };
 
 std::unordered_map<int32_t, Slot> openHandles;
@@ -125,23 +126,20 @@ int APS5_VABI sceMoveSetLightSphere(int32_t handle, uint8_t red, uint8_t green, 
 int APS5_VABI sceMoveResetLightSphere(int32_t handle) {
     return checkHandle(handle);
 }
-int APS5_VABI sceMoveGetBluetoothAddress(void) {
-    std::lock_guard lock(stateMutex);
-    if (!initialized) return MOVE_ERROR_NOT_INIT;
+int APS5_VABI sceMoveGetBluetoothAddress(int32_t handle, uint64_t* address) {
+    if (const int result = checkHandle(handle, address != nullptr); result != MOVE_OK) return result;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceMoveGetCalibrationInfo(void) {
-    std::lock_guard lock(stateMutex);
-    if (!initialized) return MOVE_ERROR_NOT_INIT;
+int APS5_VABI sceMoveGetCalibrationInfo(int32_t handle, void* info) {
+    if (const int result = checkHandle(handle, info != nullptr); result != MOVE_OK) return result;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceMoveGetDeviceId(void) {
-    std::lock_guard lock(stateMutex);
-    if (!initialized) return MOVE_ERROR_NOT_INIT;
+int APS5_VABI sceMoveGetDeviceId(int32_t handle, uint32_t* deviceId) {
+    if (const int result = checkHandle(handle, deviceId != nullptr); result != MOVE_OK) return result;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -153,11 +151,10 @@ int APS5_VABI sceMoveIsReproductionModel(void) {
     return 0;
 }
 
-int APS5_VABI sceMoveIsValidHandle(void) {
+int APS5_VABI sceMoveIsValidHandle(int32_t handle) {
     std::lock_guard lock(stateMutex);
-    if (!initialized) return 0;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!initialized || handle <= 0) return 0;
+    return openHandles.contains(handle) ? 1 : 0;
 }
 
 int APS5_VABI sceMoveReadStateRecentForTracker(void) {
@@ -167,11 +164,13 @@ int APS5_VABI sceMoveReadStateRecentForTracker(void) {
     return 0;
 }
 
-int APS5_VABI sceMoveSetCalibrationMode(void) {
+int APS5_VABI sceMoveSetCalibrationMode(int32_t handle, int32_t mode) {
     std::lock_guard lock(stateMutex);
     if (!initialized) return MOVE_ERROR_NOT_INIT;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const auto slot = openHandles.find(handle);
+    if (handle <= 0 || slot == openHandles.end()) return MOVE_ERROR_INVALID_HANDLE;
+    slot->second.calibrationMode = mode;
+    return MOVE_OK;
 }
 
 int APS5_VABI sceMoveSetExtensionPortOutput(void) {

@@ -14,6 +14,7 @@
 #include "prx/libSceLibreSsl/include/Bio.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
+#include "src/PemReadBio.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "mbedtls/des.h"
@@ -168,11 +169,6 @@ static_assert(offsetof(X509Extension, value) == 16);
 extern "C" {
 
 APS5_DUMMY_FUN
-int APS5_VABI BIO_f_ssl_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI BIO_printf_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -266,11 +262,6 @@ int APS5_VABI ENGINE_set_default_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 
 int APS5_VABI OBJ_obj2nid_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -343,9 +334,9 @@ int APS5_VABI PEM_read_bio_PrivateKey_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+LibreSslX509* APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(LibreSsl::Bio* bio, LibreSslX509** certificate,
+                                                          LibreSslPemPasswordCallback callback, void* userData) {
+    return LibreSsl::ReadPemRecord(bio, certificate, callback, userData, __func__);
 }
 
 int APS5_VABI PEM_write_bio_X509_nid_postfix(void) {
@@ -399,11 +390,6 @@ int APS5_VABI SSL_CTX_set1_groups_list_nid_postfix(void) {
 }
 
 int APS5_VABI SSL_CTX_set_alpn_protos_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_CTX_set_cipher_list_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -536,11 +522,6 @@ void APS5_VABI SSL_SESSION_free_nid_postfix(void* session) {
 }
 
 int APS5_VABI SSL_accept_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_check_private_key_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

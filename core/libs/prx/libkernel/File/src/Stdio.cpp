@@ -1178,6 +1178,11 @@ int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
         return PosixFailure(GUEST_EFAULT);
     }
     FileStat result{};
+    if (IsKqueueDescriptor_nid_no_patch(d)) {
+        result.st_mode = 0010000;
+        if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return PosixFailure(GUEST_EFAULT);
+        return 0;
+    }
     if (GuestSockets::IsOpen(d)) {
         if (const int error = GuestSockets::Stat(d, &result)) return PosixFailure(error);
     } else if (!File::FillFileStatFromDescriptor(d, &result)) {
@@ -1389,6 +1394,11 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
         return SceErrorFromErrno(GUEST_EFAULT);
     }
     FileStat result{};
+    if (IsKqueueDescriptor_nid_no_patch(d)) {
+        result.st_mode = 0010000;
+        if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GUEST_EFAULT);
+        return 0;
+    }
     if (GuestSockets::IsOpen(d)) {
         const int error = GuestSockets::Stat(d, &result);
         if (error != 0) return SceErrorFromErrno(error);
@@ -2048,7 +2058,7 @@ int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
 
 int APS5_VABI sceKernelFchmod(int d, std::uint16_t mode) {
     if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(d)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return SceErrorFromErrno(GUEST_EINVAL);
     if (IsPipeDescriptor(d)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "fchmod");
 #ifdef _WIN32
@@ -2137,6 +2147,8 @@ int APS5_VABI utimes_nid_postfix(const char* path, const KernelTimeval* times) {
 }
 
 int PosixUtimesAt_nid_no_patch(int directory, const char* path, const KernelTimeval* times) {
+    KernelTimeval local[2];
+    if (!CopyInTimes(times, local)) return PosixFailure(GUEST_EFAULT);
     if (InvalidTimes(times)) return PosixFailure(GUEST_EINVAL);
     std::string copy;
     if (const int error = PathError(path, copy)) return PosixFailure(error);

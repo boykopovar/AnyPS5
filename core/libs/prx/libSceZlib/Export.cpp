@@ -1,5 +1,6 @@
 #include "prx/libSceZlib/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "zlib.h"
@@ -66,6 +67,11 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
     if (!initialized) return NOT_INITIALIZED;
     if (!source || !sourceLength || !destination || !requestId || !destinationLength ||
         destinationLength > 65536 || destinationLength % 2048 != 0) return INVALID_ARGUMENT;
+    std::uint64_t testProbe = 0;
+    const int savedErrnoProbe = errno;
+    const bool probeSuccess = GuestCopyOut_nid_no_patch(requestId, &testProbe, sizeof(testProbe));
+    errno = savedErrnoProbe;
+    if (!probeSuccess) return INVALID_ARGUMENT;
     if (reinterpret_cast<std::uintptr_t>(destination) % 2048 != 0)
         throw std::runtime_error("sceZlibInflate: unaligned destination driver behavior is not implemented");
     if (nextId == std::numeric_limits<std::uint64_t>::max()) throw std::runtime_error("sceZlibInflate: request IDs exhausted");
@@ -85,7 +91,9 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
     results[id] = InflateResult{produced, status};
     completed.push_back(id);
     completion.NotifyOne();
-    *requestId = id;
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
+    errno = savedErrno;
     return 0;
 }
 
@@ -123,6 +131,14 @@ std::int32_t APS5_VABI sceZlibGetResult(std::uint64_t requestId, std::uint32_t* 
     const auto found = results.find(requestId);
     if (found == results.end()) return NOT_FOUND;
     const int savedErrno = errno;
+    const GuestArena::HostWrite guardLength(destinationLength, sizeof(found->second.produced));
+    const GuestArena::HostWrite guardStatus(status, sizeof(found->second.status));
+    if (!guardLength.Open() || !guardStatus.Open() ||
+        !GuestWritable_nid_no_patch(destinationLength, sizeof(found->second.produced)) ||
+        !GuestWritable_nid_no_patch(status, sizeof(found->second.status))) {
+        errno = savedErrno;
+        return INVALID_ARGUMENT;
+    }
     const bool copiedLength = GuestCopyOut_nid_no_patch(destinationLength, &found->second.produced, sizeof(found->second.produced));
     const bool copiedStatus = GuestCopyOut_nid_no_patch(status, &found->second.status, sizeof(found->second.status));
     errno = savedErrno;

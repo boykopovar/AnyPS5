@@ -1151,9 +1151,15 @@ int main() {
     std::uint32_t state = 0x5a5a;
     Require(sceNpGetState(0x10000, &state) == 0 && state == StateSignedOut, "sceNpGetState must report the user as signed out");
     Require(sceNpGetState(0x10000, nullptr) == InvalidArgument, "sceNpGetState must reject a null state");
+    errno = 71;
+    Require(sceNpGetState(0x10000, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable state rejected");
+    Require(errno == 71, "errno preserved");
     bool hasSignedUp = true;
     Require(sceNpHasSignedUp(0x10000, &hasSignedUp) == 0 && !hasSignedUp, "sceNpHasSignedUp must report no sign-up");
     Require(sceNpHasSignedUp(0x10000, nullptr) == InvalidArgument, "sceNpHasSignedUp must reject a null output");
+    errno = 71;
+    Require(sceNpHasSignedUp(0x10000, reinterpret_cast<bool*>(0x10)) == InvalidArgument, "unwritable has_signed_up rejected");
+    Require(errno == 71, "errno preserved");
     Require(sceNpCheckNpReachability(1, 0x10000) == SignedOut, "sceNpCheckNpReachability must report the user as signed out");
     NpCheckPremiumParameter premiumParameter{};
     NpCheckPremiumResult premiumResult{};

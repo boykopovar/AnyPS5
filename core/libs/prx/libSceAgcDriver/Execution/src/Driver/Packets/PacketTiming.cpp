@@ -6,6 +6,11 @@
 
 namespace AgcDriver::DriverDetail {
 
+DrainEpochs& DrainEpochCounts() {
+    static thread_local DrainEpochs counts;
+    return counts;
+}
+
 PacketTimer::~PacketTimer() {
     if (!enabled) return;
     const auto now = std::chrono::steady_clock::now();
@@ -51,6 +56,20 @@ PacketTimer::~PacketTimer() {
     profile.submissions = 0;
     profile.flushMs = 0;
     profile.dispatchOutcomes = {};
+    auto& drains = DrainEpochCounts();
+    std::vector<std::pair<std::size_t, std::uint64_t>> drained;
+    for (std::size_t i = 0; i < drains.packets.size(); ++i) {
+        if (drains.packets[i] != 0) drained.emplace_back(i, drains.packets[i]);
+    }
+    std::sort(drained.begin(), drained.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+    std::string byPacket;
+    for (const auto& [packet, count] : drained) {
+        char text[96];
+        std::snprintf(text, sizeof(text), " %s x%llu", packet == DrainEpochs::Flip ? "flip" : Pm4::Name(static_cast<std::uint32_t>(packet) << 8u).c_str(), static_cast<unsigned long long>(count));
+        byPacket += text;
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[drains] queue 0x%x epochs by site (10 s): interrupts %llu, queued label interrupts %llu, by packet:%s\n", queue, static_cast<unsigned long long>(drains.interrupts), static_cast<unsigned long long>(drains.queuedInterrupts), byPacket.c_str());
+    drains = DrainEpochs{};
 }
 
 }

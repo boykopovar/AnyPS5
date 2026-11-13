@@ -50,6 +50,11 @@ class ReplayTests(unittest.TestCase):
         findings, _ = library_oracle.replay("replay", "modules", "x.golden.tsv", set(), 5, run)
         self.assertEqual(findings, {"e": ("throw", "bad packet")})
 
+    def test_a_caught_exception_is_recorded_as_a_throw(self):
+        run = Script(Done(0, "DIFF\tg\tsceAgcCbBranch(dcb:1024) threw 'reserved bits are set'\nSUMMARY\tcompared 1\tmismatched 1\tskipped 0\n", "RUN\tg\n"))
+        findings, _ = library_oracle.replay("replay", "modules", "x.golden.tsv", set(), 5, run)
+        self.assertEqual(findings, {"g": ("throw", "sceAgcCbBranch(dcb:1024) threw 'reserved bits are set'")})
+
     def test_a_failure_before_any_case_stops(self):
         run = Script(Done(139, "", "loader error\n"))
         with self.assertRaises(SystemExit):
