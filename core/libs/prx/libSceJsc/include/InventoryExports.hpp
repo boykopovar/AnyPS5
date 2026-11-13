@@ -235,7 +235,6 @@ int APS5_VABI _ZN3WTF24acquireLineBreakIteratorENS_10StringViewERKNS_10AtomStrin
 int APS5_VABI _ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator();
 int APS5_VABI _ZN3WTF25createCanonicalUUIDStringEv();
 int APS5_VABI _ZN3WTF31integerToSixCharacterHashStringEj();
-int APS5_VABI _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE();
 int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE();
 int APS5_VABI _ZN3WTF6Logger9observersEv();
 int APS5_VABI _ZN3WTF6String23make16BitFrom8BitSourceEPKhm();

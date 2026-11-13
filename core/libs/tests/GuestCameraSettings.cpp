@@ -9,6 +9,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
 #endif
 
 using GetU32 = int(APS5_VABI*)(std::int32_t, std::uint32_t, std::uint32_t*, void*);
@@ -88,6 +89,9 @@ void CheckBeforeOpen() {
     Require(sceCameraGetDeviceInfo(0, &info) == ErrorNotInit, "device info before open must report NOT_INIT");
     Require(sceCameraGetProductInfo(&value) == ErrorNotInit, "product info before open must report NOT_INIT");
     Require(sceCameraGetRegistryInfo(&value) == ErrorNotInit, "registry info before open must report NOT_INIT");
+    errno = 71;
+    Require(sceCameraGetAttribute(1, reinterpret_cast<CameraAttribute*>(0x10)) == ErrorParam, "unmapped attribute pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
 }
 
 void CheckGetter(GetU32 get, std::uint32_t expected, const char* message) {
@@ -104,6 +108,9 @@ void CheckGetter(GetU32 get, std::uint32_t expected, const char* message) {
     Require(get(1, Channel0, nullptr, nullptr) == ErrorParam, "a getter must reject a null result");
     Require(get(1, Channel0, &value, &option) == ErrorParam, "a getter must reject an option");
     Require(value == 0x5a5a5a5a, "a refused getter must not write its result");
+    errno = 71;
+    Require(get(1, Channel0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == ErrorParam, "a getter must reject an unmapped pointer");
+    Require(errno == 71, "errno preserved");
 }
 
 void CheckGetters() {
@@ -115,15 +122,30 @@ void CheckGetters() {
     CheckGetter(sceCameraGetSharpness, 1, "the sharpness must be 1");
     std::int32_t hue = 0;
     Require(sceCameraGetHue(1, Channel0, &hue, nullptr) == 0 && hue == 1, "the hue must be 1");
+    errno = 71;
+    Require(sceCameraGetHue(1, Channel0, reinterpret_cast<std::int32_t*>(0x10), nullptr) == ErrorParam, "an unmapped hue pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
     CameraExposureGain exposure{9, 9, 9, 9};
     Require(sceCameraGetExposureGain(1, Channel0, &exposure, nullptr) == 0, "the exposure must be readable");
     Require(exposure.exposureControl == 0 && exposure.exposure == 20 && exposure.gain == 100 && exposure.mode == 0, "the exposure defaults are wrong");
+    errno = 71;
+    Require(sceCameraGetExposureGain(1, Channel0, reinterpret_cast<CameraExposureGain*>(0x10), nullptr) == ErrorParam, "an unmapped exposure pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
     CameraWhiteBalance balance{9, 9, 9, 9};
     Require(sceCameraGetWhiteBalance(1, Channel0, &balance, nullptr) == 0, "the white balance must be readable");
     Require(balance.whiteBalanceControl == 0 && balance.gainRed == 768 && balance.gainBlue == 768 && balance.gainGreen == 512, "the white balance defaults are wrong");
+    errno = 71;
+    Require(sceCameraGetWhiteBalance(1, Channel0, reinterpret_cast<CameraWhiteBalance*>(0x10), nullptr) == ErrorParam, "an unwritable white balance pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable white balance pointer");
+    alignas(16) CameraWhiteBalance balanceBuffer[3] = {{9, 9, 9, 9}, {9, 9, 9, 9}, {9, 9, 9, 9}};
+    Require(sceCameraGetWhiteBalance(1, Channel0, &balanceBuffer[1], nullptr) == 0, "reading white balance to buffer failed");
+    Require(balanceBuffer[0].whiteBalanceControl == 9 && balanceBuffer[1].whiteBalanceControl == 0 && balanceBuffer[1].gainRed == 768 && balanceBuffer[2].whiteBalanceControl == 9, "adjacent memory was corrupted");
     CameraGamma gamma;
     std::memset(&gamma, 0x5a, sizeof(gamma));
     Require(sceCameraGetGamma(1, Channel0, &gamma, nullptr) == 0 && gamma.gammaControl == 0 && gamma.value == 4 && gamma.reserved[15] == 0, "the gamma defaults are wrong");
+    errno = 71;
+    Require(sceCameraGetGamma(1, Channel0, reinterpret_cast<CameraGamma*>(0x10), nullptr) == ErrorParam, "an unmapped gamma pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
     std::uint32_t enable = 9;
     CameraAutoExposureGainTarget target{sizeof(CameraAutoExposureGainTarget), 0x10};
     Require(sceCameraGetAutoExposureGain(1, Channel0, &enable, &target) == 0 && enable == 0, "automatic exposure must be off");
@@ -134,23 +156,54 @@ void CheckGetters() {
 }
 
 void CheckAttribute() {
-    CameraAttribute attribute;
-    std::memset(&attribute, 0x5a, sizeof(attribute));
-    attribute.sizeThis = sizeof(CameraAttribute);
-    attribute.channel = Channel1;
-    Require(sceCameraGetAttribute(1, &attribute) == 0, "the attributes must be readable");
-    Require(attribute.sizeThis == sizeof(CameraAttribute) && attribute.channel == Channel1, "the attribute header must be kept");
-    Require(attribute.framePosition.x == 0 && attribute.exposureGain.exposure == 83 && attribute.exposureGain.gain == 100, "the attribute exposure is wrong");
-    Require(attribute.whiteBalance.gainRed == 768 && attribute.whiteBalance.gainGreen == 512 && attribute.gamma.value == 4, "the attribute colour defaults are wrong");
-    Require(attribute.saturation == 64 && attribute.contrast == 32 && attribute.sharpness == 1 && attribute.hue == 1 && attribute.reserved[3] == 0, "the attribute levels are wrong");
-    attribute.channel = ChannelBoth;
-    Require(sceCameraGetAttribute(1, &attribute) == ErrorParam, "reading both channels at once must be rejected");
-    Require(sceCameraSetAttribute(1, &attribute) == ErrorNotConnected, "writing both channels must report NOT_CONNECTED");
-    attribute.channel = 4;
-    Require(sceCameraSetAttribute(1, &attribute) == ErrorParam, "an unknown channel must be rejected");
-    attribute.channel = Channel0;
-    attribute.sizeThis = sizeof(CameraAttribute) - 4;
-    Require(sceCameraGetAttribute(1, &attribute) == ErrorParam && sceCameraSetAttribute(1, &attribute) == ErrorParam, "an attribute of the wrong size must be rejected");
+    alignas(CameraAttribute) std::array<std::uint8_t, 128> buffer{};
+    buffer.fill(0x5a);
+    auto* attribute = reinterpret_cast<CameraAttribute*>(buffer.data());
+    attribute->sizeThis = sizeof(CameraAttribute);
+    attribute->channel = Channel1;
+    Require(sceCameraGetAttribute(1, attribute) == 0, "the attributes must be readable");
+    Require(attribute->sizeThis == sizeof(CameraAttribute) && attribute->channel == Channel1, "the attribute header must be kept");
+    Require(attribute->framePosition.x == 0 && attribute->exposureGain.exposure == 83 && attribute->exposureGain.gain == 100, "the attribute exposure is wrong");
+    Require(attribute->whiteBalance.gainRed == 768 && attribute->whiteBalance.gainGreen == 512 && attribute->gamma.value == 4, "the attribute colour defaults are wrong");
+    Require(attribute->saturation == 64 && attribute->contrast == 32 && attribute->sharpness == 1 && attribute->hue == 1 && attribute->reserved[3] == 0, "the attribute levels are wrong");
+    for (std::size_t i = sizeof(CameraAttribute); i < buffer.size(); ++i) {
+        Require(buffer[i] == 0x5a, "bytes after 112-byte struct must stay untouched");
+    }
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr, "VirtualAlloc failed");
+#else
+    void* page = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "mmap failed");
+#endif
+    auto* roAttribute = static_cast<CameraAttribute*>(page);
+    roAttribute->sizeThis = sizeof(CameraAttribute);
+    roAttribute->channel = Channel0;
+#ifdef _WIN32
+    DWORD previousProtect;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previousProtect) != 0, "VirtualProtect failed");
+#else
+    Require(mprotect(page, 4096, PROT_READ) == 0, "mprotect failed");
+#endif
+    errno = 71;
+    Require(sceCameraGetAttribute(1, roAttribute) == ErrorParam, "read-only attribute pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, 4096);
+#endif
+    errno = 71;
+    Require(sceCameraGetAttribute(1, reinterpret_cast<CameraAttribute*>(0x10)) == ErrorParam, "an unmapped attribute pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
+    attribute->channel = ChannelBoth;
+    Require(sceCameraGetAttribute(1, attribute) == ErrorParam, "reading both channels at once must be rejected");
+    Require(sceCameraSetAttribute(1, attribute) == ErrorNotConnected, "writing both channels must report NOT_CONNECTED");
+    attribute->channel = 4;
+    Require(sceCameraSetAttribute(1, attribute) == ErrorParam, "an unknown channel must be rejected");
+    attribute->channel = Channel0;
+    attribute->sizeThis = sizeof(CameraAttribute) - 4;
+    Require(sceCameraGetAttribute(1, attribute) == ErrorParam && sceCameraSetAttribute(1, attribute) == ErrorParam, "an attribute of the wrong size must be rejected");
     Require(sceCameraGetAttribute(1, nullptr) == ErrorParam && sceCameraSetAttribute(1, nullptr) == ErrorParam, "a null attribute must be rejected");
 }
 
@@ -211,6 +264,14 @@ void CheckConfig() {
     config = SizedConfig();
     Require(sceCameraGetDeviceConfig(1, &config) == 0 && config.sizeThis == sizeof(CameraConfig) && config.configType == 0, "the device configuration must be empty");
     Require(config.extension[1].baseOption == nullptr, "the device configuration must be cleared");
+    errno = 71;
+    Require(sceCameraGetDeviceConfig(1, reinterpret_cast<CameraConfig*>(0x10)) == ErrorParam, "an unwritable device config pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable device config pointer");
+    alignas(16) CameraConfig configBuffer[3];
+    std::memset(configBuffer, 0x5a, sizeof(configBuffer));
+    configBuffer[1] = SizedConfig();
+    Require(sceCameraGetDeviceConfig(1, &configBuffer[1]) == 0, "reading device config to buffer failed");
+    Require(configBuffer[0].sizeThis == 0x5a5a5a5a && configBuffer[1].sizeThis == sizeof(CameraConfig) && configBuffer[2].sizeThis == 0x5a5a5a5a, "adjacent memory was corrupted");
     config = SizedConfig();
     Require(sceCameraGetDeviceConfigWithoutHandle(&config) == 0 && config.sizeThis == 0 && config.configType == 0, "the handleless device configuration must be cleared");
     config = SizedConfig();
