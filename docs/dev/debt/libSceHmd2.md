@@ -18,6 +18,10 @@
 | `Unknown` | `n9wYmNVt6S4` |
 | `Unknown` | `wDDAIxOeaqg` |
 
+### Functional
+
+- [sceHmd2ReprojectionInitialize](../../../core/libs/prx/libSceHmd2/Export.cpp) - returning `0x8A720008` (`PARAMETER_NULL`) for an unmapped or unreadable parameter pointer is a defensive host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 ### Silent stubs
 
 - [libSceHmd2](../../../core/libs/prx/libSceHmd2/Export.cpp) has no PS VR2 runtime: Initialize returns unsupported-feature, so normal calls never reach initialized device behavior. The reprojection session exports below answer the measured no-session behaviour; the remaining reprojection and gaze operations retain their throwing bodies. All five size/alignment queries answer measured constants. Device setup, headset tracking and rendering are not implemented.

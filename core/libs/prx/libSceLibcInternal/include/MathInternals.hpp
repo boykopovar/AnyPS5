@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -61,5 +62,17 @@ int APS5_VABI _Nnl_nid_postfix();
 int APS5_VABI _Pow_nid_postfix();
 int APS5_VABI _Quad_nid_postfix();
 int APS5_VABI _Quadph_nid_postfix();
+double APS5_VABI _Xp_getw_nid_postfix(const double* p, int n);
+double* APS5_VABI _Xp_setn_nid_postfix(double* p, int n, std::int64_t x);
+double* APS5_VABI _Xp_setw_nid_postfix(double* p, int n, double x);
+double* APS5_VABI _Xp_addh_nid_postfix(double* p, int n, double x0);
+double* APS5_VABI _Xp_mulh_nid_postfix(double* p, int n, double x0);
+double* APS5_VABI _Xp_movx_nid_postfix(double* p, int n, const double* q);
+double* APS5_VABI _Xp_addx_nid_postfix(double* p, int n, const double* q, int m);
+double* APS5_VABI _Xp_subx_nid_postfix(double* p, int n, const double* q, int m);
+double* APS5_VABI _Xp_ldexpx_nid_postfix(double* p, int n, int m);
+double* APS5_VABI _Xp_mulx_nid_postfix(double* p, int n, const double* q, int m, double* ptemp2);
+double* APS5_VABI _Xp_invx_nid_postfix(double* p, int n, double* ptemp4);
+double* APS5_VABI _Xp_sqrtx_nid_postfix(double* p, int n, double* ptemp4);
 
 }

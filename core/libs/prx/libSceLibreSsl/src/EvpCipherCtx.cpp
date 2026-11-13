@@ -7,6 +7,7 @@
 #include <string>
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceLibreSsl/include/Evp.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 
 namespace {
 
@@ -165,14 +166,30 @@ int DecryptFinal(LibreSslEvpCipherCtx* ctx, unsigned char* out, int* outl, const
         return 1;
     }
     auto block = static_cast<unsigned>(cipher.blockSize);
-    if (ctx->flags & CipherFlagNoPadding) return !ctx->bufLen;
+    if (ctx->flags & CipherFlagNoPadding) {
+        if (!ctx->bufLen) return 1;
+        LibreSslPutError_nid_no_patch(6, 0xfff, 138);
+        return 0;
+    }
     if (block <= 1) return 1;
-    if (ctx->bufLen || !ctx->finalUsed) return 0;
-    if (block > sizeof(ctx->final)) return 0;
+    if (ctx->bufLen || !ctx->finalUsed) {
+        LibreSslPutError_nid_no_patch(6, 0xfff, 109);
+        return 0;
+    }
+    if (block > sizeof(ctx->final)) {
+        LibreSslPutError_nid_no_patch(6, 0xfff, 136);
+        return 0;
+    }
     const unsigned pad = ctx->final[block - 1];
-    if (pad == 0 || pad > block) return 0;
+    if (pad == 0 || pad > block) {
+        LibreSslPutError_nid_no_patch(6, 0xfff, 100);
+        return 0;
+    }
     for (unsigned index = 0; index < pad; ++index)
-        if (ctx->final[--block] != pad) return 0;
+        if (ctx->final[--block] != pad) {
+            LibreSslPutError_nid_no_patch(6, 0xfff, 100);
+            return 0;
+        }
     const unsigned length = static_cast<unsigned>(cipher.blockSize) - pad;
     Copy(out, ctx->final, length, function);
     *outl = static_cast<int>(length);

@@ -26,6 +26,21 @@ static_assert(sizeof(FT_Bool) == 1 && sizeof(FT_Int) == 4 && sizeof(FT_UInt) == 
 
 namespace {
 
+unsigned long StreamRead(FT_Stream stream, unsigned long offset, unsigned char* buffer, unsigned long count) {
+    auto* bridge = static_cast<GuestStreamBridge*>(stream->descriptor.pointer);
+    bridge->guest->pos = stream->pos;
+    const auto read = bridge->guest->read(bridge->guest, offset, buffer, count);
+    return static_cast<unsigned long>(std::min<std::uint64_t>(read, count));
+}
+
+void StreamClose(FT_Stream stream) {
+    auto* bridge = static_cast<GuestStreamBridge*>(stream->descriptor.pointer);
+    if (bridge->closed) return;
+    bridge->closed = true;
+    bridge->guest->pos = stream->pos;
+    if (bridge->guest->close) bridge->guest->close(bridge->guest);
+}
+
 void FinalizeSlot(void* object) {
     auto* host = static_cast<FT_GlyphSlot>(object);
     auto* face = static_cast<GuestFace*>(host->generic.data);
@@ -110,7 +125,11 @@ int APS5_VABI FT_Init_FreeType_nid_postfix(GuestLibrary** alibrary) {
     auto library = std::make_unique<GuestLibrary>();
     const FT_Error error = FT_Init_FreeType(&library->host);
     if (error != 0) return error;
-    *alibrary = library.release();
+    std::unique_ptr<FT_LibraryRec_, decltype(&FT_Done_FreeType)> native(library->host, &FT_Done_FreeType);
+    GuestLibrary* result = library.get();
+    if (!GuestCopyOut_nid_no_patch(alibrary, &result, sizeof(result))) return FT_Err_Invalid_Argument;
+    native.release();
+    library.release();
     return 0;
 }
 
@@ -161,12 +180,33 @@ int APS5_VABI FT_Open_Face_nid_postfix(GuestLibrary* library, const GuestOpenArg
     if (!args) return FT_Err_Invalid_Argument;
     if (!library) return FT_Err_Invalid_Library_Handle;
     if ((args->flags & FT_OPEN_MEMORY) && (args->flags & FT_OPEN_PATHNAME)) return FT_Err_Invalid_Argument;
-    if (args->flags & (FT_OPEN_STREAM | FT_OPEN_DRIVER | FT_OPEN_PARAMS)) {
-        throw std::runtime_error("FT_Open_Face: opening from a stream, driver or parameters is not implemented");
+    if (args->flags & (FT_OPEN_DRIVER | FT_OPEN_PARAMS)) {
+        throw std::runtime_error("FT_Open_Face: opening with a driver or parameters is not implemented");
     }
     auto face = std::make_unique<GuestFace>();
     FT_Open_Args native{};
-    if (args->flags & FT_OPEN_MEMORY) {
+    if (args->flags & FT_OPEN_STREAM) {
+        if (args->flags & (FT_OPEN_MEMORY | FT_OPEN_PATHNAME)) {
+            throw std::runtime_error("FT_Open_Face: mixed stream and other source flags are not implemented");
+        }
+        if (!args->stream) return FT_Err_Invalid_Argument;
+        auto* guest = static_cast<GuestStreamRec*>(args->stream);
+        if (guest->size > std::numeric_limits<FT_ULong>::max() || guest->pos > std::numeric_limits<FT_ULong>::max()) {
+            throw std::runtime_error("FT_Open_Face: a guest stream outside the host FT_ULong range is not implemented");
+        }
+        face->stream = std::make_unique<GuestStreamBridge>();
+        auto& bridge = *face->stream;
+        bridge.guest = guest;
+        bridge.host.base = guest->base;
+        bridge.host.size = static_cast<FT_ULong>(guest->size);
+        bridge.host.pos = static_cast<FT_ULong>(guest->pos);
+        bridge.host.descriptor.pointer = &bridge;
+        bridge.host.pathname.pointer = guest->pathname;
+        bridge.host.read = guest->read ? StreamRead : nullptr;
+        bridge.host.close = StreamClose;
+        native.flags = FT_OPEN_STREAM;
+        native.stream = &bridge.host;
+    } else if (args->flags & FT_OPEN_MEMORY) {
         if (args->memory_size < std::numeric_limits<FT_Long>::min() || args->memory_size > std::numeric_limits<FT_Long>::max()) {
             throw std::runtime_error("FT_Open_Face: a font buffer size outside the host FT_Long range is not implemented");
         }
