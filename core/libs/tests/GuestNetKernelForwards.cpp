@@ -81,6 +81,14 @@ static void CheckDatagram(bool net) {
     std::memset(received, 0, sizeof(received));
     Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, from.data(), nullptr) == sizeof(payload));
     Require(std::strcmp(received, payload) == 0 && from == untouched);
+    Require(Failed(connect_nid_postfix(sender, nullptr, receiverAddress.size()), 14));
+    Require(connect_nid_postfix(sender, receiverAddress.data(), receiverAddress.size()) == 0);
+    const auto sent = net ? sceNetSend(sender, payload, sizeof(payload), 0)
+                          : sendto_nid_postfix(sender, payload, sizeof(payload), 0, nullptr, 0);
+    Require(sent == sizeof(payload));
+    std::memset(received, 0, sizeof(received));
+    Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, nullptr) == sizeof(payload));
+    Require(std::strcmp(received, payload) == 0);
     Require(Close(net, receiver) == 0 && Close(net, sender) == 0);
 }
 
@@ -101,6 +109,17 @@ static void CheckArguments(bool net) {
     std::uint32_t size = 16;
     Require(Failed(getsockname_nid_postfix(socket, nullptr, &size), 14));
     Require(Failed(getsockname_nid_postfix(socket, local.data(), nullptr), 14));
+    if (net) {
+        constexpr int SocketLevel = 0xffff;
+        constexpr int SocketType = 0x1008;
+        int type = 0;
+        size = sizeof(type);
+        Require(Failed(getsockopt_nid_postfix(socket, SocketLevel, SocketType, unreadable, &size), 14));
+        Require(size == sizeof(type));
+        Require(getsockopt_nid_postfix(socket, SocketLevel, SocketType, &type, &size) == 0);
+        Require(size == sizeof(type) && type == 2);
+        size = 16;
+    }
     Require(Failed(sendto_nid_postfix(socket, nullptr, 1, 0, local.data(), 16), 14));
     Require(Failed(sendto_nid_postfix(socket, "x", 1, 0, local.data(), 1), 22));
     Require(Failed(sendto_nid_postfix(socket, "x", 1, 0, local.data(), 17), 22));
@@ -139,6 +158,11 @@ static Stream OpenStream(bool net) {
     Require((net ? sceNetConnect(stream.client, local.data(), 16) : connect_nid_postfix(stream.client, local.data(), 16)) == 0);
     stream.accepted = net ? sceNetAccept(stream.listener, nullptr, nullptr) : accept_nid_postfix(stream.listener, nullptr, nullptr);
     Require(stream.accepted >= 0);
+    std::array<unsigned char, 16> peer{};
+    size = peer.size();
+    Require(getpeername_nid_postfix(stream.client, peer.data(), &size) == 0);
+    Require(size == local.size() && peer == local);
+    Require(Failed(getpeername_nid_postfix(stream.client, nullptr, &size), 14));
     return stream;
 }
 
@@ -187,11 +211,41 @@ static void CheckUnknownDescriptor() {
     Require(Failed(recvfrom_nid_postfix(unknown, &byte, 1, 0, nullptr, nullptr), 9));
 }
 
+static void CheckConnectedDatagramTransfer(bool net) {
+    const int receiver = Open(net, 2);
+    const int sender = Open(net, 2);
+    Require(receiver >= 0 && sender >= 0);
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0 && size == address.size());
+    Require((net ? sceNetConnect(sender, address.data(), size) : connect_nid_postfix(sender, address.data(), size)) == 0);
+    char received[4]{};
+    Require(send_nid_postfix(sender, "ping", sizeof(received), 0) == sizeof(received));
+    Require(recv_nid_postfix(receiver, received, sizeof(received), 0) == sizeof(received));
+    Require(std::memcmp(received, "ping", sizeof(received)) == 0);
+    Require(Close(net, receiver) == 0 && Close(net, sender) == 0);
+}
+
+static void CheckStreamTransfer(bool net) {
+    const auto stream = OpenStream(net);
+    char received[4]{};
+    Require(Failed(send_nid_postfix(stream.client, nullptr, 1, 0), 14));
+    Require(Failed(recv_nid_postfix(stream.accepted, nullptr, 1, 0), 14));
+    Require(Failed(recv_nid_postfix(stream.accepted, received, sizeof(received), 0x80), 35));
+    Require(send_nid_postfix(stream.client, "ping", sizeof(received), 0) == sizeof(received));
+    Require(recv_nid_postfix(stream.accepted, received, sizeof(received), 0x40) == sizeof(received));
+    Require(std::memcmp(received, "ping", sizeof(received)) == 0);
+    Require(Close(net, stream.accepted) == 0 && Close(net, stream.client) == 0 && Close(net, stream.listener) == 0);
+}
+
 int main() {
     for (const bool net : {false, true}) {
         CheckDatagram(net);
         CheckArguments(net);
         CheckStreamWaitAll(net);
+        CheckConnectedDatagramTransfer(net);
+        CheckStreamTransfer(net);
     }
     CheckUnknownDescriptor();
     return 0;
