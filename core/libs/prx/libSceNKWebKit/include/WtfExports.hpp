@@ -58,6 +58,7 @@ void APS5_VABI _ZN3JSC30waitForAsynchronousDisassemblyEv();
 unsigned int APS5_VABI _ZN3JSC31numberOfStaticOSRExitFuzzChecksEv();
 unsigned int APS5_VABI _ZN3JSC38numberOfExecutableAllocationFuzzChecksEv();
 void APS5_VABI _ZN3PAL10systemBeepEv();
+NKWebKit::WtfAbi::String APS5_VABI _ZN3PAL19fileSizeDescriptionEm(std::uint64_t size);
 void APS5_VABI _ZN3PAL9SessionID26enableGenerationProtectionEv();
 PAL::SessionID APS5_VABI _ZN3PAL9SessionID26generateEphemeralSessionIDEv();
 PAL::SessionID APS5_VABI _ZN3PAL9SessionID27generatePersistentSessionIDEv();

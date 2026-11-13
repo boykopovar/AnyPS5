@@ -146,6 +146,9 @@ int main() {
     std::filesystem::current_path(testDirectory);
     ContentExportInitParam initParam{&MockMalloc, &MockFree, nullptr};
     Require(Throws([] { sceContentExportInit(nullptr); }));
+    errno = 71;
+    Require(Throws([] { sceContentExportInit(reinterpret_cast<const ContentExportInitParam*>(0x10)); }));
+    Require(errno == 71);
     ContentExportInitParam missingMalloc = initParam;
     missingMalloc.mallocFunc = nullptr;
     Require(Throws([&] { sceContentExportInit(&missingMalloc); }));
@@ -216,6 +219,10 @@ int main() {
     chunks = DataChunks{};
     Require(sceContentExportFromData(first, &fromData, 11, ProvideChunks, &chunks, nullptr, 0) == 0);
     chunks = DataChunks{};
+    errno = 71;
+    Require(sceContentExportFromData(first, &fromData, 11, ProvideChunks, &chunks, reinterpret_cast<char*>(0x10), sizeof(exported)) == static_cast<int>(0x809D3016u));
+    Require(errno == 71);
+    chunks = DataChunks{};
     Require(sceContentExportFromData(first, &fromData, 10, ProvideChunks, &chunks, exported, sizeof(exported)) == static_cast<int>(0x809D3016u));
     Require(sceContentExportFromData(first, &fromData, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D301Bu));
     Require(sceContentExportFromData(first, &fromData, 0, NegativeChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D301Bu));
@@ -223,6 +230,9 @@ int main() {
     std::strncpy(badType.content_type, "text/plain", sizeof(badType.content_type) - 1);
     Require(sceContentExportFromData(first, &badType, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3012u));
     Require(sceContentExportFromData(first, nullptr, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));
+    errno = 71;
+    Require(sceContentExportFromData(first, reinterpret_cast<const ContentExportParam*>(0x10), 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));
+    Require(errno == 71);
     Require(sceContentExportFromData(first, &fromData, 0, nullptr, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));
     Require(sceContentExportFromData(10, &fromData, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));
     const std::uint32_t oldSdkVersion = 0x01000000;

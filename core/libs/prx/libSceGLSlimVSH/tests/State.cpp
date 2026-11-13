@@ -51,6 +51,10 @@ static void Defaults() {
     glVertexAttrib2f_nid_postfix(3, 2, -3);
     glGetVertexAttribfv_nid_postfix(3, 0x8626, attr.data());
     Require((attr == std::array<GLfloat, 4>{2, -3, 0, 1}));
+    glGetVertexAttribfv_nid_postfix(3, 0x8626, nullptr);
+    glVertexAttrib2f_nid_postfix(3, 4, -1);
+    glGetVertexAttribfv_nid_postfix(3, 0x8626, attr.data());
+    Require((attr == std::array<GLfloat, 4>{4, -1, 0, 1}));
     glVertexAttrib1f_nid_postfix(8, 1);
     Error(0x0501);
     glEnable_nid_postfix(0xffffffff);
@@ -590,6 +594,11 @@ static void Booleans() {
     glGetBooleanv_nid_postfix(0xffffffff, &untouched);
     Require(untouched == 7);
     Error(0x0500);
+    GLboolean flag = 0;
+    glGetBooleanv_nid_postfix(0x0bd0, nullptr);
+    glGetBooleanv_nid_postfix(0xffffffff, nullptr);
+    glGetBooleanv_nid_postfix(0x0bd0, &flag);
+    Require(flag == 1);
 }
 
 static void VertexAttributes() {
@@ -656,6 +665,11 @@ static void VertexAttributes() {
     glVertexAttribPointer_nid_postfix(2, 4, 0x1406, 0, 0, nullptr);
     glGetVertexAttribPointerv_nid_postfix(2, 0x8645, &pointer);
     Require(pointer == nullptr);
+
+    void* nullPointer = local;
+    glGetVertexAttribPointerv_nid_postfix(2, 0x8645, nullptr);
+    Error(0x0500);
+    Require(nullPointer == local);
 }
 
 static void TextureParameters() {
