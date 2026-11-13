@@ -260,6 +260,89 @@ void testNativeRetiredStoredOwner(const std::filesystem::path& directory) {
     device->WaitIdle();
 }
 
+void testNativeRepeatPreflight(const std::filesystem::path& directory) {
+    constexpr std::size_t Step = 131072u;
+    constexpr std::size_t Bytes = 16u * Step;
+    constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
+    const auto texels = Extent.width * Extent.height;
+    auto* bytes = allocate(Bytes);
+    const auto begin = address(bytes);
+    std::uintptr_t arena = 0;
+    std::size_t arenaSize = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arena, &arenaSize);
+    FrameCaptureWriter writer(directory);
+    writer.WriteRange(begin, Bytes, FrameRangeKind::Watched, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable | FrameRangeAccess::Gpu);
+    writer.Finish("{\"arena_base\":" + std::to_string(arena) + "}");
+    const FrameCaptureReader reader(directory);
+    const auto skipped = restoreMemory(reader);
+    check(skipped.bytes == 0u, "native preflight preservation skipped captured guest memory");
+    auto since = watchBaseline(reader, skipped);
+    auto opened = OpenVulkanTestDevice();
+    check(opened != nullptr, "native preflight preservation device unavailable");
+    auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
+    AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    const auto shaders = DepthFastClearHarness::Compile(*device);
+    const auto draw = [&](bool mutated) {
+        for (unsigned index = 0u; index < 2u; ++index) {
+            DepthFastClearHarness::DrawOptions options;
+            options.depthWrite = true;
+            options.depthCompare = VK_COMPARE_OP_ALWAYS;
+            options.minDepth = options.maxDepth = mutated ? 0.75f + static_cast<float>(index) * 0.125f : static_cast<float>(index + 1u) * 0.25f;
+            const DepthFastClearHarness::Surface surface{begin + index * Step, 0u, 0u, false, VK_FORMAT_D16_UNORM};
+            check(DepthFastClearHarness::Draw(*device, shaders, surface, options) == texels, "native preflight preservation draw did not cover its attachment");
+        }
+        device->WaitIdle();
+    };
+    const auto checkValues = [&](std::span<const AgcDriver::NativeDepthSnapshot> snapshots, bool mutated) {
+        check(snapshots.size() == 2u, "native preflight preservation fixture lost a native plane");
+        for (unsigned index = 0u; index < 2u; ++index) {
+            const auto& snapshot = snapshots[index];
+            check(snapshot.target.address == begin + index * Step && snapshot.depth.size() == texels * 2u, "native preflight preservation fixture captured the wrong plane");
+            const auto expected = mutated ? 0.75f + static_cast<float>(index) * 0.125f : static_cast<float>(index + 1u) * 0.25f;
+            for (std::size_t pixel = 0u; pixel < texels; ++pixel) {
+                std::uint16_t bits = 0u;
+                std::memcpy(&bits, snapshot.depth.data() + pixel * 2u, sizeof(bits));
+                check(std::abs(static_cast<float>(bits) / 65535.0f - expected) < 2.0f / 65535.0f, "native preflight preservation fixture captured an unexpected texel");
+            }
+        }
+    };
+    draw(false);
+    const auto captured = device->CaptureNativeDepth();
+    checkValues(captured, false);
+    draw(true);
+    const auto mutated = device->CaptureNativeDepth();
+    checkValues(mutated, true);
+    const std::array<std::uint32_t, 8> words{static_cast<std::uint32_t>(begin >> 8u), static_cast<std::uint32_t>((begin >> 40u) & 255u) | (7u << 20u) | (((Extent.width - 1u) & 3u) << 30u), ((Extent.width - 1u) >> 2u) | ((Extent.height - 1u) << 14u), 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+    auto held = AgcDriver::Graphics::DepthSurfaceTexture(context, words, resource, {});
+    check(held != nullptr && AgcDriver::Graphics::DepthSurfaceHolds(context, resource, held.get()), "native preflight preservation did not retain its live B view");
+    const auto oldView = AgcDriver::Graphics::DepthSurfaceOrderTarget(context, captured.front().target).view;
+    std::array<std::byte, 32> sentinel;
+    sentinel.fill(std::byte{0x5a});
+    std::copy(sentinel.begin(), sentinel.end(), bytes + Bytes - sentinel.size());
+    auto invalid = captured;
+    invalid.back().hostFormat = VK_FORMAT_UNDEFINED;
+    bool rejected = false;
+    bool continued = false;
+    try {
+        static_cast<void>(resetMemory(reader, skipped, since, ResetFault::None, true, &invalid));
+        continued = true;
+    } catch (const std::runtime_error& error) {
+        rejected = std::string_view(error.what()) == "native depth capture: unsupported host depth format";
+    }
+    check(rejected && !continued, "native preflight preservation did not reject the invalid later host format at its expected diagnostic");
+    const bool guestPreserved = std::equal(sentinel.begin(), sentinel.end(), bytes + Bytes - sentinel.size());
+    const bool ownerPreserved = AgcDriver::Graphics::DepthSurfaceHolds(context, resource, held.get());
+    const bool sameDevice = AgcDriver::DriverDetail::DriverTestAccess::Device().get() == device.get();
+    const auto after = device->CaptureNativeDepth();
+    const bool contentPreserved = after.size() == mutated.size() && std::ranges::equal(after, mutated, [](const auto& left, const auto& right) { return left.target.address == right.target.address && left.depth == right.depth && left.stencil == right.stencil && left.depthOrder == right.depthOrder && left.stencilOrder == right.stencilOrder; });
+    std::printf("native preflight rejected later host format: guest=%u current_B_owner=%u exact_B_contents=%u same_device=%u\n", guestPreserved ? 1u : 0u, ownerPreserved ? 1u : 0u, contentPreserved ? 1u : 0u, sameDevice ? 1u : 0u);
+    check(guestPreserved && ownerPreserved && contentPreserved && sameDevice, "native replay preflight discarded current native B or guest mutations before rejecting a later invalid record");
+    check(AgcDriver::Graphics::DepthSurfaceOrderTarget(context, captured.front().target).view == oldView, "native replay preflight changed the current attachment identity before rejecting the invalid record");
+    device->WaitIdle();
+}
+
 void testMemoryOrder(const std::filesystem::path& directory) {
     constexpr std::size_t Size = 64u * 1024u * 1024u;
     auto* bytes = allocate(Size);
@@ -1633,7 +1716,8 @@ int main(int argc, char** argv) {
             writeInspectionCapture(directory);
             return 0;
         }
-        if (mode == "native_repeat_stored_owner") testNativeRetiredStoredOwner(directory);
+        if (mode == "native_repeat_preflight") testNativeRepeatPreflight(directory);
+        else if (mode == "native_repeat_stored_owner") testNativeRetiredStoredOwner(directory);
         else if (mode == "native_repeat_state" || mode == "native_repeat_clean" || mode == "native_repeat_companions") testNativeRepeat(directory, mode);
         else if (mode == "order") testMemoryOrder(directory);
         else if (mode == "zero") testReusedMemory(directory);
