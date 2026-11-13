@@ -230,9 +230,9 @@ def merge(*args):
     return lines[0], set(lines[1:]) if result.returncode else set()
 
 
-def commit(tree):
+def commit(tree, ref):
     return git("-c", "user.name=pr_overlap", "-c", "user.email=pr_overlap", "commit-tree", tree,
-               "-p", "refs/pr/base", "-m", "pr_overlap").strip()
+               "-p", "refs/pr/base", "-p", ref, "-m", "pr_overlap").strip()
 
 
 def exports(diff, prefix="+"):
@@ -402,7 +402,7 @@ def merge_base(ref):
 
 def scan(pr):
     tree, conflicted = merge("refs/pr/base", pr["ref"])
-    pr["tree"] = None if conflicted else commit(tree)
+    pr["tree"] = None if conflicted else commit(tree, pr["ref"])
     old, new = (merge_base(pr["ref"]), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
     pr["files"], pr["added"] = set(), set()
     changes = git("diff", "--name-status", "--no-renames", "-z", old, new).split("\0")
