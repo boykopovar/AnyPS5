@@ -529,16 +529,24 @@ int APS5_VABI sceVideodec2ReleaseComputeQueue_nid_postfix(std::uint64_t queue) {
 }
 
 int APS5_VABI sceVideodec2QueryDecoderMemoryInfo_nid_postfix(const DecoderConfigInfo* config, DecoderMemoryInfo* memory) {
-    if (!config || !memory) throw std::runtime_error("Videodec2: invalid argument pointer");
-    if (Trace()) std::fprintf(stderr, "[videodec2] QueryDecoderMemoryInfo config=%llu memory=%llu codec=%u profile=%u %dx%d dpb=%d\n", static_cast<unsigned long long>(config->thisSize), static_cast<unsigned long long>(memory->thisSize), config->codecType, config->profile, config->maxFrameWidth, config->maxFrameHeight, config->maxDpbFrameCount);
-    memory->cpuMemorySize = WorkMemoryBytes;
-    memory->gpuMemorySize = WorkMemoryBytes;
-    memory->cpuGpuMemorySize = WorkMemoryBytes;
-    if (config->maxFrameWidth <= 0 || config->maxFrameHeight <= 0) throw std::runtime_error("Videodec2: invalid frame dimensions");
-    const auto width = static_cast<std::uint32_t>(config->maxFrameWidth);
-    const auto height = static_cast<std::uint32_t>(config->maxFrameHeight);
-    memory->maxFrameBufferSize = LumaBytes(width, height, ConfiguredSampleBytes(config->codecType, config->profile)) * 3 / 2;
-    memory->frameBufferAlignment = PitchAlignment;
+    DecoderConfigInfo localConfig{};
+    DecoderMemoryInfo localMemory{};
+    if (!config || !memory || !CopyInGuest(localConfig, config) || !CopyInGuest(localMemory, memory)) {
+        throw std::runtime_error("Videodec2: invalid argument pointer");
+    }
+    if (Trace()) std::fprintf(stderr, "[videodec2] QueryDecoderMemoryInfo config=%llu memory=%llu codec=%u profile=%u %dx%d dpb=%d\n", static_cast<unsigned long long>(localConfig.thisSize), static_cast<unsigned long long>(localMemory.thisSize), localConfig.codecType, localConfig.profile, localConfig.maxFrameWidth, localConfig.maxFrameHeight, localConfig.maxDpbFrameCount);
+    localMemory.cpuMemorySize = WorkMemoryBytes;
+    localMemory.gpuMemorySize = WorkMemoryBytes;
+    localMemory.cpuGpuMemorySize = WorkMemoryBytes;
+    if (localConfig.maxFrameWidth <= 0 || localConfig.maxFrameHeight <= 0) {
+        if (!CopyOutGuest(memory, localMemory)) throw std::runtime_error("Videodec2: invalid argument pointer");
+        throw std::runtime_error("Videodec2: invalid frame dimensions");
+    }
+    const auto width = static_cast<std::uint32_t>(localConfig.maxFrameWidth);
+    const auto height = static_cast<std::uint32_t>(localConfig.maxFrameHeight);
+    localMemory.maxFrameBufferSize = LumaBytes(width, height, ConfiguredSampleBytes(localConfig.codecType, localConfig.profile)) * 3 / 2;
+    localMemory.frameBufferAlignment = PitchAlignment;
+    if (!CopyOutGuest(memory, localMemory)) throw std::runtime_error("Videodec2: invalid argument pointer");
     return 0;
 }
 

@@ -1,4 +1,4 @@
-add_library(libSceLibreSsl SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Bignum.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Aes.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Error.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ocsp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Stack.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ui.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Rsa.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509StoreContext.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Pkey.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpCipherCtx.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Evp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ec.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/OcspResponse.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpCipher.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpAes.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Name.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ssl.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslCtx.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslCtxCallbacks.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslSession.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyLifecycle.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/UiString.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyId.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Engine.cpp)
+add_library(libSceLibreSsl SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Bignum.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Aes.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Error.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ocsp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Stack.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ui.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Rsa.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509StoreContext.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Pkey.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpCipherCtx.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Evp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ec.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/OcspResponse.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpCipher.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpAes.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Name.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ssl.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslCtx.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslCtxCallbacks.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslSession.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyLifecycle.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/UiString.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyId.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Engine.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PemX509.cpp)
 target_include_directories(libSceLibreSsl PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl PRIVATE mbedcrypto)
 configure_windows_unwind(libSceLibreSsl)
@@ -16,7 +16,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ExData.cpp)
-target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemReadBioX509.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemReadBioX509.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PemPrivateKey.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_bn_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslBn.cpp)
@@ -469,6 +469,22 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl_ocsp_basic_response PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_libressl_ocsp_basic_response PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Conf.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_conf_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Conf.cpp)
+    target_include_directories(guest_libressl_conf_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_conf_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_conf_tests)
+    add_test(NAME guest_libressl_conf COMMAND guest_libressl_conf_tests)
+    add_test(NAME guest_libressl_conf_allocator COMMAND guest_libressl_conf_tests allocator)
+    set_tests_properties(guest_libressl_conf guest_libressl_conf_allocator PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_conf guest_libressl_conf_allocator PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 endif()

@@ -154,7 +154,9 @@ static boolean HostResyncToRestart(j_decompress_ptr cinfo, int desired) {
     auto* gsrc = b->guest_cinfo->src;
     if (gsrc->resync_to_restart) {
         SyncSourceToGuest(b, gsrc);
+        b->guest_cinfo->unread_marker = cinfo->unread_marker;
         int32_t ret = gsrc->resync_to_restart(b->guest_cinfo, desired);
+        cinfo->unread_marker = b->guest_cinfo->unread_marker;
         b->host_src.next_input_byte = gsrc->next_input_byte;
         b->host_src.bytes_in_buffer = static_cast<size_t>(gsrc->bytes_in_buffer);
         return ret ? TRUE : FALSE;
@@ -252,6 +254,7 @@ static void SyncGuestToHost(JpegBinding* b) {
     h->raw_data_out = g->raw_data_out ? TRUE : FALSE;
     h->dct_method = static_cast<J_DCT_METHOD>(g->dct_method);
     h->do_fancy_upsampling = g->do_fancy_upsampling ? TRUE : FALSE;
+    h->CCIR601_sampling = g->CCIR601_sampling ? TRUE : FALSE;
     h->do_block_smoothing = g->do_block_smoothing ? TRUE : FALSE;
     h->quantize_colors = g->quantize_colors ? TRUE : FALSE;
     h->dither_mode = static_cast<J_DITHER_MODE>(g->dither_mode);
@@ -357,8 +360,6 @@ static void ForwardError(JpegBinding* b) {
         for (int i = 0; i < 8; ++i) {
             g->err->msg_parm.i[i] = b->host_err.msg_parm.i[i];
         }
-        g->err->num_warnings = b->host_err.num_warnings;
-        g->err->trace_level = b->host_err.trace_level;
         if (g->err->error_exit) {
             g->err->error_exit(reinterpret_cast<NKWebKit::GuestCommonPtr>(g));
         }
@@ -584,6 +585,7 @@ int APS5_VABI jpeg_resync_to_restart_nid_postfix(NKWebKit::GuestJpegDecompress* 
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
     int ret = 0;
     SyncGuestToHost(b);
+    b->host_cinfo.unread_marker = cinfo->unread_marker;
     if (!RunGuarded(b, [&] { ret = jpeg_resync_to_restart(&b->host_cinfo, desired); })) {
         HandleException(b);
         return 0;
