@@ -707,6 +707,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             VkCommandBuffer commands = VK_NULL_HANDLE;
             std::shared_ptr<DeviceBuffer> tiled;
             std::shared_ptr<DeviceBuffer> linear;
+            std::shared_ptr<DeviceBuffer> repacked;
             if (recorder != nullptr) {
                 commands = recorder->Commands();
                 if (staging != nullptr) {
@@ -739,12 +740,13 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                 }
             }
             if (IsRepackedTextureFormat(descriptor.format) || repackMode != 0u) {
+                if (repackMode == 2u) repacked = recorder != nullptr ? recorder->UploadScratchBuffer(Recorder::UploadScratch::Repack, static_cast<std::size_t>(linearBytes)) : std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
                 for (const auto& slot : uploaded) {
                     for (std::uint32_t level = skip; level < mips.size(); ++level) {
                         if (!geometry.HasLayer(level, slot.layer)) continue;
                         const auto offset = slot.linearOffset + mips[level].linearOffset;
-                        detiler.DispatchRepack(commands, linear->Handle(), offset, linear->Handle(), offset, mips[level].linearSize, repackMode);
+                        detiler.DispatchRepack(commands, linear->Handle(), offset, repacked != nullptr ? repacked->Handle() : linear->Handle(), offset, mips[level].linearSize, repackMode);
                     }
                 }
             }
@@ -775,6 +777,11 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             toTransferDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toTransferDst.image = uploadImage;
             toTransferDst.subresourceRange = layerRows ? VkImageSubresourceRange{barrierAspect, 0, 1, 0, 1} : VkImageSubresourceRange{barrierAspect, 0, descriptor.mipCount, 0, geometry.imageLayers};
+            if (repacked != nullptr) {
+                auto repackedReadBarrier = linearReadBarrier;
+                repackedReadBarrier.buffer = repacked->Handle();
+                readBarriers.push_back(repackedReadBarrier);
+            }
             context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | (zeros != nullptr ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0u), VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, static_cast<std::uint32_t>(readBarriers.size()), readBarriers.data(), 1, &toTransferDst);
 
             const auto layerRegions = [&](std::uint32_t layer, std::uint64_t linearLayerOffset, std::vector<VkBufferImageCopy>& regions) {
@@ -806,7 +813,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             if (!layerRows) {
                 for (const auto& slot : uploaded) layerRegions(slot.layer, slot.linearOffset, regions);
             }
-            if (linear != nullptr) context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, linear->Handle(), uploadImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(regions.size()), regions.data());
+            if (linear != nullptr) context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, repacked != nullptr ? repacked->Handle() : linear->Handle(), uploadImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(regions.size()), regions.data());
             std::vector<VkBufferImageCopy> zeroRegions;
             zeroRegions.reserve(zeroed.size() * mips.size());
             for (const auto layer : zeroed) layerRegions(layer, 0, zeroRegions);

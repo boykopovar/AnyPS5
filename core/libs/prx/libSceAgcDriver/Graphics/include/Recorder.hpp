@@ -115,7 +115,7 @@ public:
     void Keep(std::shared_ptr<void> object, std::size_t bytes = 0);
     void KeepThroughHold(std::shared_ptr<void> object);
     void KeepBytes(const void* owner, std::size_t bytes);
-    enum class UploadScratch : std::uint8_t { Tiled = 0, Linear, Count };
+    enum class UploadScratch : std::uint8_t { Tiled = 0, Linear, Repack, Count };
     std::shared_ptr<DeviceBuffer> UploadScratchBuffer(UploadScratch kind, std::size_t bytes);
     static constexpr VkPipelineStageFlags UploadScratchReuseStages = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     std::size_t OpenKeptBytes() const { return open != nullptr ? open->keptBytes : 0; }
