@@ -2991,7 +2991,7 @@ template<typename Text> std::uint32_t GetSceV2FloatingField(char* digits, int ma
             break;
         }
         const std::int64_t roundedUp = hex ? (std::llabs(exponent) - 1) / 4 + 1 : std::llabs(exponent);
-        const std::int64_t adjustment = std::min(roundedUp, std::llabs(power));
+        const std::int64_t adjustment = std::min<std::int64_t>(roundedUp, std::llabs(power));
         if (exponent >= 0) {
             exponent -= hex ? adjustment * 4 : adjustment;
             adjusted += adjustment;
