@@ -141,6 +141,7 @@ void APS5_VABI udtitvfmt_formatToResult_nid_postfix(const UDateIntervalFormat* f
 UDateIntervalFormat* APS5_VABI udtitvfmt_open_nid_postfix(const char* locale, const char16_t* skeleton, std::int32_t skeletonLength, const char16_t* tzID, std::int32_t tzIDLength, std::int32_t* status);
 UFormattedDateInterval* APS5_VABI udtitvfmt_openResult_nid_postfix(std::int32_t* status);
 
+std::int32_t APS5_VABI ufieldpositer_next_nid_postfix(UFieldPositionIterator*, std::int32_t*, std::int32_t*);
 void APS5_VABI ufieldpositer_close_nid_postfix(UFieldPositionIterator*);
 UFieldPositionIterator* APS5_VABI ufieldpositer_open_nid_postfix(std::int32_t*);
 
