@@ -124,6 +124,7 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"DOMTimersThrottlingEnabled", {true, FeatureKind::Boolean}},
         {u"DataTransferItemsEnabled", {false, FeatureKind::Boolean}},
         {u"DatabasesEnabled", {true, FeatureKind::Boolean}},
+        {u"DeferredCSSParserEnabled", {false, FeatureKind::Boolean}},
         {u"DeclarativeShadowDOMEnabled", {true, FeatureKind::Testable}},
         {u"DeclarativeShadowDOMInDOMParserEnabled", {false, FeatureKind::Testable}},
         {u"DefaultARIAForCustomElementsEnabled", {true, FeatureKind::Testable}},
@@ -191,12 +192,14 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"InertAttributeEnabled", {true, FeatureKind::Testable}},
         {u"InlineFormattingContextIntegrationEnabled", {true, FeatureKind::Testable}},
         {u"InlineMediaPlaybackRequiresPlaysInlineAttribute", {false, FeatureKind::Boolean}},
+        {u"InspectorAdditionsEnabled", {false, FeatureKind::Boolean}},
         {u"InlinePredictionsEnabled", {false, FeatureKind::Boolean}},
         {u"InspectorAttachedHeight", {std::uint32_t{500}, FeatureKind::None}},
         {u"InspectorAttachedWidth", {std::uint32_t{750}, FeatureKind::None}},
         {u"InspectorAttachmentSide", {std::uint32_t{0}, FeatureKind::None}},
         {u"InspectorStartsAttached", {true, FeatureKind::Boolean}},
         {u"InspectorWindowFrame", {Preferences::StringValue{u""}, FeatureKind::None}},
+        {u"InspectorUsesWebKitUserInterface", {false, FeatureKind::Boolean}},
         {u"InteractionRegionInlinePadding", {double{4}, FeatureKind::None}},
         {u"InteractionRegionMinimumCornerRadius", {double{8}, FeatureKind::None}},
         {u"InspectorAdditionsEnabled", {false, FeatureKind::Boolean}},
@@ -326,6 +329,7 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"ScrollingPerformanceTestingEnabled", {false, FeatureKind::Internal}},
         {u"SecureContextChecksEnabled", {true, FeatureKind::Internal}},
         {u"SelectTrailingWhitespaceEnabled", {false, FeatureKind::Boolean}},
+        {u"SelectionPaintingWithoutSelectionGapsEnabled", {false, FeatureKind::Boolean}},
         {u"SelectionAPIForShadowDOMEnabled", {true, FeatureKind::Testable}},
         {u"SelectionFlippingEnabled", {true, FeatureKind::Boolean}},
         {u"SendMouseEventsToDisabledFormControlsEnabled", {false, FeatureKind::Testable}},
@@ -353,6 +357,8 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"ShowModalDialogEnabled", {false, FeatureKind::Boolean}},
         {u"ShowsToolTipOverTruncatedText", {false, FeatureKind::Boolean}},
         {u"ShowsURLsInToolTipsEnabled", {false, FeatureKind::Boolean}},
+        {u"SimpleLineLayoutDebugBordersEnabled", {false, FeatureKind::Boolean}},
+        {u"SimpleLineLayoutEnabled", {true, FeatureKind::Boolean}},
         {u"ShrinksStandaloneImagesToFit", {true, FeatureKind::Boolean}},
         {u"SiteIsolationEnabled", {false, FeatureKind::Internal}},
         {u"SmartInsertDeleteEnabled", {true, FeatureKind::Boolean}},
@@ -414,6 +420,7 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"WebAnimationsEnabled", {true, FeatureKind::Testable}},
         {u"WebAnimationsIterationCompositeEnabled", {true, FeatureKind::Testable}},
         {u"WebAnimationsMutableTimelinesEnabled", {true, FeatureKind::Testable}},
+        {u"WebAuthenticationLocalAuthenticatorEnabled", {false, FeatureKind::Boolean}},
         {u"WebCryptoSafeCurvesEnabled", {false, FeatureKind::Testable}},
         {u"WebGLDraftExtensionsEnabled", {false, FeatureKind::Internal}},
         {u"WebGLEnabled", {true, FeatureKind::Testable}},
@@ -1159,6 +1166,13 @@ bool APS5_VABI WKPreferencesGetInspectorAdditionsEnabled(const void* preferences
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"InspectorAdditionsEnabled");
 }
 
+void APS5_VABI WKPreferencesSetInspectorUsesWebKitUserInterface(const void* preferencesRef, bool flag) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"InspectorUsesWebKitUserInterface", flag);
+}
+
+bool APS5_VABI WKPreferencesGetInspectorUsesWebKitUserInterface(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"InspectorUsesWebKitUserInterface");
+}
 void APS5_VABI WKPreferencesSetBeaconAPIEnabled(const void* preferencesRef, bool flag) {
     PreferencesFromRef(preferencesRef, __func__)->Set(u"BeaconAPIEnabled", flag);
 }
@@ -1197,6 +1211,14 @@ void APS5_VABI WKPreferencesSetWebAuthenticationEnabled(const void* preferencesR
 
 bool APS5_VABI WKPreferencesGetWebAuthenticationEnabled(const void* preferencesRef) {
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"WebAuthenticationEnabled");
+}
+
+void APS5_VABI WKPreferencesSetWebAuthenticationLocalAuthenticatorEnabled(const void* preferencesRef, bool flag) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"WebAuthenticationLocalAuthenticatorEnabled", flag);
+}
+
+bool APS5_VABI WKPreferencesGetWebAuthenticationLocalAuthenticatorEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"WebAuthenticationLocalAuthenticatorEnabled");
 }
 
 void APS5_VABI WKPreferencesSetInvisibleMediaAutoplayPermitted(const void* preferencesRef, bool flag) {
@@ -1479,12 +1501,36 @@ bool APS5_VABI WKPreferencesGetSelectTrailingWhitespaceEnabled(const void* prefe
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"SelectTrailingWhitespaceEnabled");
 }
 
+void APS5_VABI WKPreferencesSetSelectionPaintingWithoutSelectionGapsEnabled(const void* preferencesRef, bool flag) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"SelectionPaintingWithoutSelectionGapsEnabled", flag);
+}
+
+bool APS5_VABI WKPreferencesGetSelectionPaintingWithoutSelectionGapsEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"SelectionPaintingWithoutSelectionGapsEnabled");
+}
+
 void APS5_VABI WKPreferencesSetShowsURLsInToolTipsEnabled(const void* preferencesRef, bool enabled) {
     PreferencesFromRef(preferencesRef, __func__)->Set(u"ShowsURLsInToolTipsEnabled", enabled);
 }
 
 bool APS5_VABI WKPreferencesGetShowsURLsInToolTipsEnabled(const void* preferencesRef) {
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"ShowsURLsInToolTipsEnabled");
+}
+
+void APS5_VABI WKPreferencesSetSimpleLineLayoutDebugBordersEnabled(const void* preferencesRef, bool flag) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"SimpleLineLayoutDebugBordersEnabled", flag);
+}
+
+bool APS5_VABI WKPreferencesGetSimpleLineLayoutDebugBordersEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"SimpleLineLayoutDebugBordersEnabled");
+}
+
+void APS5_VABI WKPreferencesSetSimpleLineLayoutEnabled(const void* preferencesRef, bool flag) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"SimpleLineLayoutEnabled", flag);
+}
+
+bool APS5_VABI WKPreferencesGetSimpleLineLayoutEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"SimpleLineLayoutEnabled");
 }
 
 void APS5_VABI WKPreferencesSetHiddenPageDOMTimerThrottlingEnabled(const void* preferencesRef, bool enabled) {
