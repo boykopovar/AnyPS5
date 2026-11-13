@@ -21,6 +21,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsPeWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/macos/MacOsMachOPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/macos/MacOsImage.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/macos/MacOsCodeSignature.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/macos/MacOsGuestModuleWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SegmentFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
@@ -1069,6 +1070,13 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME input_file COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_file.py $<TARGET_FILE:relinker>)
+        if(UNIX)
+            foreach(outputFormat linux windows macos)
+                add_test(NAME output_fifo_${outputFormat} COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_output_fifo.py $<TARGET_FILE:relinker> ${outputFormat})
+                set_tests_properties(output_fifo_${outputFormat} PROPERTIES TIMEOUT 20)
+            endforeach()
+        endif()
         add_test(NAME null_symbol_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_null_symbol_relocations.py $<TARGET_FILE:relinker>)
         foreach(symbolInput IN ITEMS executable guest)
@@ -1278,9 +1286,12 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     add_test(NAME macos_guest_weak_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_weak_imports.py $<TARGET_FILE:relinker>)
     set_property(TEST macos_guest_weak_imports APPEND PROPERTY LABELS relinker)
+    add_test(NAME macos_code_signature COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_code_signature.py $<TARGET_FILE:relinker>)
+    set_tests_properties(macos_code_signature PROPERTIES TIMEOUT 60 LABELS relinker)
     if(APPLE)
         set_tests_properties(macos_trace_imports macos_guest_weak_exports macos_executable_exports macos_guest_weak_imports
-            PROPERTIES RUN_SERIAL TRUE)
+            macos_code_signature PROPERTIES RUN_SERIAL TRUE)
     endif()
 endif()
 
