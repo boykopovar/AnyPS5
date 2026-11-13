@@ -1,4 +1,5 @@
 #include "prx/libSceOpusCeltEnc/include/Api.hpp"
+#include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -125,6 +126,9 @@ int main() {
     constexpr int codecApplication = OPUS_APPLICATION_RESTRICTED_CELT;
     std::uint32_t instanceId = 1;
     Require(sceOpusCeltEncInitialize(nullptr) == static_cast<int>(errorBase + 0x19));
+    errno = 71;
+    Require(sceOpusCeltEncInitialize(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(errorBase + 0x19));
+    Require(errno == 71);
     Require(sceOpusCeltEncDestroy(nullptr) == static_cast<int>(errorBase + 0x01));
     std::uint32_t context = 0;
     Require(sceOpusCeltEncInitialize(&context) == 0);
