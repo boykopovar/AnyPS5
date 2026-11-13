@@ -375,4 +375,10 @@ private:
     bool canShowMIMEType_ = true;
 };
 
+class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
+public:
+    std::u16string path;
+    std::map<std::u16string, Retained<Object>> filters;
+};
+
 }  // namespace NKWebKit
