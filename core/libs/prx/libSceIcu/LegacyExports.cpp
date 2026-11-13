@@ -6453,10 +6453,6 @@ int APS5_VABI sceIcuLegacyUnknown_deufikfeZZI_nid_no_patch() {
 }
 APS5_EXPORT("deufikfeZZI", sceIcuLegacyUnknown_deufikfeZZI_nid_no_patch);
 
-int APS5_VABI unorm2_getNFKCCasefoldInstance_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6813UnicodeString23doCompareCodePointOrderEiiPKDsii_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -1510,7 +1510,6 @@ int APS5_VABI _ZN6icu_6810UnicodeSet16resemblesPatternERKNS_13UnicodeStringEi_ni
 int APS5_VABI sceIcuLegacyUnknown_dd_minus_z7KFYJKE_nid_no_patch();
 int APS5_VABI _ZN6icu_6824ICUResourceBundleFactory16getStaticClassIDEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_deufikfeZZI_nid_no_patch();
-int APS5_VABI unorm2_getNFKCCasefoldInstance_nid_postfix();
 int APS5_VABI _ZNK6icu_6813UnicodeString23doCompareCodePointOrderEiiPKDsii_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_dhGA36ttUs8_nid_no_patch();
 int APS5_VABI _ZNK6icu_6813ICUServiceKey17currentDescriptorERNS_13UnicodeStringE_nid_postfix();
