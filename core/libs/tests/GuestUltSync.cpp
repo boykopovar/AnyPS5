@@ -3,6 +3,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -293,6 +294,7 @@ struct alignas(8) UlthreadRuntimeObject {
 std::atomic<void*> gSelf{nullptr};
 std::atomic<int> gYield{-1};
 std::atomic<bool> gPastExit{false};
+std::atomic<bool> gRelease{false};
 
 std::int32_t APS5_VABI ExitingEntry(std::uint64_t status) {
     void* self = nullptr;
@@ -302,6 +304,11 @@ std::int32_t APS5_VABI ExitingEntry(std::uint64_t status) {
 
     gPastExit = true;
     return -1;
+}
+
+std::int32_t APS5_VABI WaitingEntry(std::uint64_t) {
+    WaitUntil(gRelease);
+    return 0;
 }
 
 void Ulthreads() {
@@ -316,6 +323,12 @@ void Ulthreads() {
     UlthreadObject first{};
     std::uint8_t context[4096];
     CHECK(sceUltUlthreadCreate(&first, "exits", ExitingEntry, 42, context, sizeof(context), &runtime, nullptr, 0) == Ok);
+    UltUlthreadInfo threadQueryInfo{};
+    CHECK(sceUltGetUlthreadInfo(&first, &threadQueryInfo) == Ok);
+    CHECK(std::strcmp(threadQueryInfo.name, "exits") == 0);
+    errno = 71;
+    CHECK(sceUltGetUlthreadInfo(&first, reinterpret_cast<UltUlthreadInfo*>(0x10)) == Null);
+    CHECK(errno == 71);
     std::int32_t status = 0;
     CHECK(sceUltUlthreadJoin(&first, &status) == Ok);
     CHECK(status == 42 && gSelf.load() == &first && gYield.load() == Ok && !gPastExit.load());
@@ -329,6 +342,17 @@ void Ulthreads() {
         if (joined == Again) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     CHECK(joined == Ok && status == 7 && gSelf.load() == &second);
+    UlthreadObject waiting{};
+    CHECK(sceUltUlthreadCreate(&waiting, "waits", WaitingEntry, 0, context, sizeof(context), &runtime, nullptr, 0) == Ok);
+    UltUlthreadRuntimeInfo runtimeInfo{};
+    errno = 71;
+    CHECK(sceUltGetUlthreadRuntimeInfo(&runtime, &runtimeInfo, reinterpret_cast<void**>(0x10), 1, nullptr, 0) == Null);
+    CHECK(errno == 71);
+    void* active[1]{};
+    CHECK(sceUltGetUlthreadRuntimeInfo(&runtime, &runtimeInfo, active, 1, nullptr, 0) == Ok);
+    CHECK(runtimeInfo.activeUlthreads == 1 && active[0] == &waiting);
+    gRelease = true;
+    CHECK(sceUltUlthreadJoin(&waiting, &status) == Ok && status == 0);
     CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
 }
 
@@ -436,6 +460,9 @@ void GetInfoTests() {
 
     CHECK(sceUltWaitingQueueResourcePoolCreate(poolObj, "test-pool", 4, 4, nullptr, nullptr, 0) == Ok);
     CHECK(sceUltGetWaitingQueueResourcePoolInfo(poolObj, &poolInfo) == Ok);
+    errno = 71;
+    CHECK(sceUltGetWaitingQueueResourcePoolInfo(poolObj, reinterpret_cast<UltWaitingQueueResourcePoolInfo*>(0x10)) == Null);
+    CHECK(errno == 71);
     CHECK(poolInfo.size == sizeof(UltWaitingQueueResourcePoolInfo));
     CHECK(poolInfo.object == poolObj);
     CHECK(std::strcmp(poolInfo.name, "test-pool") == 0);
@@ -444,6 +471,11 @@ void GetInfoTests() {
 
     CHECK(sceUltMutexCreate(mutexObj, "test-mutex", poolObj, nullptr, 0) == Ok);
     CHECK(sceUltGetMutexInfo(mutexObj, &mutexInfo, waitThreads, 4) == Ok);
+    errno = 71;
+    CHECK(sceUltGetMutexInfo(mutexObj, reinterpret_cast<UltMutexInfo*>(0x10), waitThreads, 4) == Null);
+    CHECK(errno == 71);
+    CHECK(sceUltGetMutexInfo(mutexObj, &mutexInfo, reinterpret_cast<UltWaitingThreadInfo*>(0x10), 4) == Null);
+    CHECK(errno == 71);
     CHECK(mutexInfo.size == sizeof(UltMutexInfo));
     CHECK(mutexInfo.object == mutexObj);
     CHECK(std::strcmp(mutexInfo.name, "test-mutex") == 0);
@@ -479,6 +511,9 @@ void GetInfoTests() {
 
     CHECK(sceUltConditionVariableCreate(condObj, "test-cnd", mutexObj, nullptr, 0) == Ok);
     CHECK(sceUltGetConditionVariableInfo(condObj, &condInfo, waitThreads, 4) == Ok);
+    errno = 71;
+    CHECK(sceUltGetConditionVariableInfo(condObj, reinterpret_cast<UltConditionVariableInfo*>(0x10), waitThreads, 4) == Null);
+    CHECK(errno == 71);
     CHECK(condInfo.size == sizeof(UltConditionVariableInfo));
     CHECK(condInfo.object == condObj);
     CHECK(condInfo.mutex == mutexObj);
@@ -492,9 +527,17 @@ void GetInfoTests() {
     CHECK(std::strcmp(semInfo.name, "test-sem") == 0);
     CHECK(semInfo.waitingQueuePool == poolObj);
     CHECK(semInfo.resources == 3);
+    errno = 71;
+    CHECK(sceUltGetSemaphoreInfo(semObj, reinterpret_cast<UltSemaphoreInfo*>(0x10), waitThreads, 4) == Null);
+    CHECK(errno == 71);
 
     CHECK(sceUltReaderWriterLockCreate(rwObj, "test-rw", poolObj, nullptr, 0) == Ok);
     CHECK(sceUltGetReaderWriterLockInfo(rwObj, &rwInfo, waitThreads, 4) == Ok);
+    errno = 71;
+    CHECK(sceUltGetReaderWriterLockInfo(rwObj, reinterpret_cast<UltReaderWriterLockInfo*>(0x10), waitThreads, 4) == Null);
+    CHECK(errno == 71);
+    CHECK(sceUltGetReaderWriterLockInfo(rwObj, &rwInfo, reinterpret_cast<UltWaitingThreadInfo*>(0x10), 4) == Null);
+    CHECK(errno == 71);
     CHECK(rwInfo.size == sizeof(UltReaderWriterLockInfo));
     CHECK(rwInfo.object == rwObj);
     CHECK(std::strcmp(rwInfo.name, "test-rw") == 0);
@@ -530,6 +573,9 @@ void GetInfoTests() {
 
     CHECK(sceUltQueueDataResourcePoolCreate(dataPoolObj, "test-datapool", 8, 64, 2, poolObj, nullptr, nullptr, 0) == Ok);
     CHECK(sceUltGetQueueDataResourcePoolInfo(dataPoolObj, &dataPoolInfo) == Ok);
+    errno = 71;
+    CHECK(sceUltGetQueueDataResourcePoolInfo(dataPoolObj, reinterpret_cast<UltQueueDataResourcePoolInfo*>(0x10)) == Null);
+    CHECK(errno == 71);
     CHECK(dataPoolInfo.size == sizeof(UltQueueDataResourcePoolInfo));
     CHECK(dataPoolInfo.object == dataPoolObj);
     CHECK(std::strcmp(dataPoolInfo.name, "test-datapool") == 0);
@@ -541,6 +587,9 @@ void GetInfoTests() {
 
     CHECK(sceUltQueueCreate(queueObj, "test-queue", 64, poolObj, dataPoolObj, nullptr, 0) == Ok);
     CHECK(sceUltGetQueueInfo(queueObj, &queueInfo, waitThreads, 4) == Ok);
+    errno = 71;
+    CHECK(sceUltGetQueueInfo(queueObj, reinterpret_cast<UltQueueInfo*>(0x10), waitThreads, 4) == Null);
+    CHECK(errno == 71);
     CHECK(queueInfo.size == sizeof(UltQueueInfo));
     CHECK(queueInfo.object == queueObj);
     CHECK(std::strcmp(queueInfo.name, "test-queue") == 0);
@@ -560,6 +609,9 @@ void GetInfoTests() {
     CHECK(sceUltUlthreadRuntimeCreate(rtObj, "test-rt", 2, 1, nullptr, nullptr, 0) == Ok);
     void* activeThreads[4]{};
     CHECK(sceUltGetUlthreadRuntimeInfo(rtObj, &rtInfo, activeThreads, 4, nullptr, 0) == Ok);
+    errno = 71;
+    CHECK(sceUltGetUlthreadRuntimeInfo(rtObj, reinterpret_cast<UltUlthreadRuntimeInfo*>(0x10), nullptr, 0, nullptr, 0) == Null);
+    CHECK(errno == 71);
     CHECK(rtInfo.size == sizeof(UltUlthreadRuntimeInfo));
     CHECK(rtInfo.object == rtObj);
     CHECK(std::strcmp(rtInfo.name, "test-rt") == 0);

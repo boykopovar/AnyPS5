@@ -365,7 +365,7 @@ void TestLowLatencyCallsRejectBadArguments() {
     Require(errno == 73);
     std::size_t standardSize = sizeSentinel;
     Require(sceAudioOut2ContextQueryMemory(&params, &standardSize) == 0);
-    Require(size == 0x5b1c && standardSize == 0x10000);
+    Require(size == 0x5b1c && standardSize == 61196 + 2912 * static_cast<std::size_t>(params.max_ports));
     errno = 73;
     Require(sceAudioOut2ContextQueryMemory(&params, reinterpret_cast<std::size_t*>(0x10)) == static_cast<int>(0x80260502));
     Require(errno == 73);

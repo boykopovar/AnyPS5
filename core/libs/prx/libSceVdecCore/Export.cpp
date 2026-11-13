@@ -528,10 +528,30 @@ int APS5_VABI sceVdecCoreQueryFrameBufferInfo(const VdecCoreConfigInfo* config, 
 
 int APS5_VABI sceVdecCoreQueryInstanceSize(const VdecCoreConfigInfo* config, std::uint64_t* instanceSize, std::uint64_t* computeSize, std::uint64_t* reservedSize) {
     if (config == nullptr) return VdecCoreErrorInvalidArgument;
-    if (config->codecType > MaxCodecType) return VdecCoreErrorInvalidCodecType;
-    if (instanceSize != nullptr) *instanceSize = InstanceSize;
-    if (computeSize != nullptr) *computeSize = ComputeSize;
-    if (reservedSize != nullptr) *reservedSize = 0;
+    VdecCoreConfigInfo localConfig{};
+    const int savedErrno = errno;
+    const bool readConfig = GuestCopyIn_nid_no_patch(&localConfig, config, sizeof(localConfig));
+    errno = savedErrno;
+    if (!readConfig) return VdecCoreErrorInvalidArgument;
+    if (localConfig.codecType > MaxCodecType) return VdecCoreErrorInvalidCodecType;
+    if (instanceSize != nullptr) {
+        const std::uint64_t value = InstanceSize;
+        const bool copied = GuestCopyOut_nid_no_patch(instanceSize, &value, sizeof(value));
+        errno = savedErrno;
+        if (!copied) return VdecCoreErrorInvalidArgument;
+    }
+    if (computeSize != nullptr) {
+        const std::uint64_t value = ComputeSize;
+        const bool copied = GuestCopyOut_nid_no_patch(computeSize, &value, sizeof(value));
+        errno = savedErrno;
+        if (!copied) return VdecCoreErrorInvalidArgument;
+    }
+    if (reservedSize != nullptr) {
+        const std::uint64_t value = 0;
+        const bool copied = GuestCopyOut_nid_no_patch(reservedSize, &value, sizeof(value));
+        errno = savedErrno;
+        if (!copied) return VdecCoreErrorInvalidArgument;
+    }
     return 0;
 }
 
