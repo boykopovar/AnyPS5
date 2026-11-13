@@ -130,7 +130,7 @@ static void TestTimedjoin() {
 }
 
 int main() {
-    TestScope();
+    for (int iter = 0; iter < 2; ++iter) TestScope();
     TestMutexAttributeGeneration();
     TestThreadAttrCreateSuspend();
     TestConcurrency();
