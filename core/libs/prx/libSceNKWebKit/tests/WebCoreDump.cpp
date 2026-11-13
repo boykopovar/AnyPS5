@@ -267,6 +267,36 @@ void TestChaining() {
     Check(Release(stream) == "a=(1,2) b=ROUND");
 }
 
+void TestRegionDump() {
+    alignas(alignof(WebCore::Region)) char emptyStorage[sizeof(WebCore::Region)];
+    auto* emptyRegion = reinterpret_cast<WebCore::Region*>(emptyStorage);
+    _ZN7WebCore6RegionC1Ev(emptyRegion);
+    Check(Dump([&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(s, *emptyRegion); }) == "\n");
+    _ZN7WebCore6RegionD1Ev(emptyRegion);
+
+    alignas(alignof(WebCore::Region)) char rectStorage[sizeof(WebCore::Region)];
+    auto* rectRegion = reinterpret_cast<WebCore::Region*>(rectStorage);
+    WebCore::IntRect first{WebCore::IntPoint{1, 2}, WebCore::IntSize{3, 4}};
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(rectRegion, first);
+    Check(Dump([&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(s, *rectRegion); }) == "\n  (rect (1,2) width=3 height=4)\n");
+    Check(Dump([&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(s, *rectRegion); }, SVGStyleRect) == "\n  (rect at (1,2) size 3x4)\n");
+
+    alignas(alignof(WebCore::Region)) char secondStorage[sizeof(WebCore::Region)];
+    auto* secondRegion = reinterpret_cast<WebCore::Region*>(secondStorage);
+    WebCore::IntRect second{WebCore::IntPoint{10, 20}, WebCore::IntSize{5, 6}};
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(secondRegion, second);
+    _ZN7WebCore6Region5uniteERKS0_(rectRegion, *secondRegion);
+    TextStream indented = NewStream();
+    indented.indent = 1;
+    TextStream& returned = _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(indented, *rectRegion);
+    Check(&returned == &indented);
+    Check(indented.indent == 1);
+    Check(Release(indented) == "\n    (rect (1,2) width=3 height=4)\n    (rect (10,20) width=5 height=6)\n");
+
+    _ZN7WebCore6RegionD1Ev(secondRegion);
+    _ZN7WebCore6RegionD1Ev(rectRegion);
+}
+
 }  // namespace
 
 int main() {
@@ -278,5 +308,6 @@ int main() {
     TestLayoutValues();
     TestTransforms();
     TestChaining();
+    TestRegionDump();
     return 0;
 }

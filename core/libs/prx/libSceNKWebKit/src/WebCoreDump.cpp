@@ -1,4 +1,29 @@
+/*
+ * Copyright (C) 2010, 2011 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
@@ -49,6 +74,12 @@ TextStream& RespectingIntegers(TextStream& stream, double value) {
     stream.formattingFlags |= NumberRespectingIntegers;
     return Double(stream, value);
 }
+
+struct IndentScope {
+    TextStream& stream;
+    explicit IndentScope(TextStream& s) : stream(s) { ++stream.indent; }
+    ~IndentScope() { --stream.indent; }
+};
 
 float ToFloat(WebCore::LayoutUnit value) {
     return static_cast<float>(value.m_value) / FixedPointDenominator;
@@ -363,11 +394,7 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_15
 }
 
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_20TransformationMatrixE(TextStream& stream, const WebCore::TransformationMatrix& value) {
-    struct IndentScope {
-        TextStream& stream;
-        explicit IndentScope(TextStream& s) : stream(s) { ++stream.indent; }
-        ~IndentScope() { --stream.indent; }
-    } scope{stream};
+    IndentScope scope{stream};
     Text(stream, "\n");
     for (int row = 0; row < 4; ++row) {
         _ZN3WTF10TextStream11writeIndentEv(&stream);
@@ -381,6 +408,19 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_20
     return stream;
 }
 
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(TextStream& stream, const WebCore::Region& value) {
+    Text(stream, "\n");
+    {
+        IndentScope scope{stream};
+        for (const auto& rect : _ZNK7WebCore6Region5rectsEv(&value)) {
+            _ZN3WTF10TextStream11writeIndentEv(&stream);
+            Text(stream, "(rect ");
+            _ZN7WebCorelsERN3WTF10TextStreamERKNS_7IntRectE(stream, rect);
+            Text(stream, ")\n");
+        }
+    }
+    return stream;
+}
 
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_17ScrollingNodeTypeE(TextStream& stream, WebCore::ScrollingNodeType value) {
     using WebCore::ScrollingNodeType;
