@@ -277,6 +277,11 @@ bool writesScalar(const RdnaInstruction& instruction, std::uint32_t index, std::
             break;
         case RdnaInstructionFamily::SMEM:
             if (instruction.op == RdnaOpcode::SMemtime || instruction.op == RdnaOpcode::SMemrealtime) count = 2u;
+            if (IsScalarMemoryStoreOpcode(instruction.op)) return false;
+            if (IsScalarMemoryAtomicOpcode(instruction.op)) {
+                if (!instruction.glc) return false;
+                count = ScalarMemoryAtomicReturnDwords(instruction.op);
+            }
             break;
         case RdnaInstructionFamily::VOP1:
         case RdnaInstructionFamily::VOP2:
@@ -387,14 +392,10 @@ bool readsLinkRegister(const RdnaInstruction& instruction, std::uint32_t linkReg
     std::uint32_t source0Count = 1u, source1Count = 1u, source2Count = 1u;
     switch (instruction.family) {
         case RdnaInstructionFamily::SMEM:
-            source0Count = 2u;
-            switch (instruction.op) {
-                case RdnaOpcode::SBufferLoadDword:
-                case RdnaOpcode::SBufferLoadDwordx2:
-                case RdnaOpcode::SBufferLoadDwordx4:
-                case RdnaOpcode::SBufferLoadDwordx8:
-                case RdnaOpcode::SBufferLoadDwordx16: source0Count = 4u; break;
-                default: break;
+            source0Count = IsScalarBufferMemoryOpcode(instruction.op) ? 4u : 2u;
+            if ((IsScalarMemoryStoreOpcode(instruction.op) || IsScalarMemoryAtomicOpcode(instruction.op)) &&
+                pairOverlapsRegister(instruction.destination, linkRegister, instruction.dataDwordCount)) {
+                return true;
             }
             break;
         case RdnaInstructionFamily::MUBUF:
@@ -490,7 +491,10 @@ bool overwritesScalar(const RdnaInstruction& instruction, std::uint32_t reg, std
     const auto first = scalarIndex(instruction.destination);
     switch (instruction.family) {
         case RdnaInstructionFamily::SMEM:
-            return isScalarLoad(instruction.op) && first != NoScalarRegister && reg >= first && reg - first < instruction.dataDwordCount;
+        {
+            const std::uint32_t written = isScalarLoad(instruction.op) ? instruction.dataDwordCount : instruction.glc ? ScalarMemoryAtomicReturnDwords(instruction.op) : 0u;
+            return first != NoScalarRegister && reg >= first && reg - first < written;
+        }
         case RdnaInstructionFamily::SOP1:
             switch (instruction.op) {
                 case RdnaOpcode::SMovreldB32:
@@ -636,13 +640,9 @@ bool readsScalarDword(const RdnaInstruction& instruction, std::uint32_t reg, std
     std::uint32_t source0Count = 1u, source1Count = 1u, source2Count = 1u, source3Count = 1u;
     switch (instruction.family) {
         case RdnaInstructionFamily::SMEM:
-            switch (instruction.op) {
-                case RdnaOpcode::SBufferLoadDword:
-                case RdnaOpcode::SBufferLoadDwordx2:
-                case RdnaOpcode::SBufferLoadDwordx4:
-                case RdnaOpcode::SBufferLoadDwordx8:
-                case RdnaOpcode::SBufferLoadDwordx16: source0Count = 4u; break;
-                default: source0Count = 2u; break;
+            source0Count = IsScalarBufferMemoryOpcode(instruction.op) ? 4u : 2u;
+            if ((IsScalarMemoryStoreOpcode(instruction.op) || IsScalarMemoryAtomicOpcode(instruction.op)) && overlaps(instruction.destination, instruction.dataDwordCount)) {
+                return true;
             }
             break;
         case RdnaInstructionFamily::MUBUF:
