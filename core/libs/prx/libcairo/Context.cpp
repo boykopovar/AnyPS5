@@ -21,6 +21,7 @@ constexpr int kInvalidPathData = 9;
 constexpr CairoMatrix kIdentity{1, 0, 0, 1, 0, 0};
 
 struct GraphicsStyle {
+    int compositionOperator{2};
     int antialias{};
     int fillRule{};
     int lineCap{};
@@ -156,6 +157,39 @@ void UserPoint(const ContextStorage* state, const CairoMatrix& inverse,
     x /= sx;
     y /= sy;
     cairo_matrix_transform_point(&inverse, &x, &y);
+}
+
+struct PathRange {
+    double minimum{std::numeric_limits<double>::infinity()};
+    double maximum{-std::numeric_limits<double>::infinity()};
+
+    void Add(double value) {
+        minimum = std::min(minimum, value);
+        maximum = std::max(maximum, value);
+    }
+};
+
+void AddCubicRange(PathRange& range, double start, double first, double second, double end) {
+    range.Add(start);
+    range.Add(end);
+    const double a = -start + 3 * first - 3 * second + end;
+    const double b = 2 * (start - 2 * first + second);
+    const double c = first - start;
+    const auto evaluate = [&](double t) {
+        if (t <= 0 || t >= 1) return;
+        const double u = 1 - t;
+        range.Add(Fixed(u * u * u * start + 3 * u * u * t * first +
+                        3 * u * t * t * second + t * t * t * end));
+    };
+    if (a == 0) {
+        if (b != 0) evaluate(-c / b);
+        return;
+    }
+    const double discriminant = b * b - 4 * a * c;
+    if (discriminant < 0) return;
+    const double root = std::sqrt(discriminant);
+    evaluate((-b + root) / (2 * a));
+    evaluate((-b - root) / (2 * a));
 }
 
 bool AppendMove(ContextStorage* state, double x, double y) {
@@ -499,6 +533,40 @@ int APS5_VABI cairo_get_dash_count(CairoContext* context) {
     return state ? state->style.dashCount : 0;
 }
 
+void APS5_VABI cairo_set_operator(CairoContext* context, int operation) {
+    auto* state = Valid(context);
+    if (state) state->style.compositionOperator = operation;
+}
+
+int APS5_VABI cairo_get_operator(CairoContext* context) {
+    auto* state = Valid(context);
+    return state ? state->style.compositionOperator : 2;
+}
+
+void APS5_VABI cairo_rectangle(CairoContext* context, double x, double y,
+                               double width, double height) {
+    auto* state = Valid(context);
+    if (!state) return;
+    double wx = width, wy = 0;
+    double hx = 0, hy = height;
+    cairo_matrix_transform_distance(&state->matrix, &wx, &wy);
+    cairo_matrix_transform_distance(&state->matrix, &hx, &hy);
+    double sx = 1, sy = 1;
+    cairo_surface_get_device_scale(state->target, &sx, &sy);
+    wx = Fixed(wx * sx);
+    wy = Fixed(wy * sy);
+    hx = Fixed(hx * sx);
+    hy = Fixed(hy * sy);
+    DevicePoint(state, x, y);
+    if (!AppendMove(state, x, y)) return;
+    AppendLine(state, x + wx, y + wy);
+    if (state->status != kSuccess) return;
+    AppendLine(state, x + wx + hx, y + wy + hy);
+    if (state->status != kSuccess) return;
+    AppendLine(state, x + hx, y + hy);
+    cairo_close_path(context);
+}
+
 void APS5_VABI cairo_new_path(CairoContext* context) {
     auto* state = Valid(context);
     if (!state) return;
@@ -567,6 +635,10 @@ void APS5_VABI cairo_curve_to(CairoContext* context, double x1, double y1,
 void APS5_VABI cairo_close_path(CairoContext* context) {
     auto* state = Valid(context);
     if (!state || !state->hasCurrent) return;
+    AppendLine(state, state->startX, state->startY);
+    if (state->status != kSuccess) return;
+    if (state->path && !state->path->empty() && state->path->back().type == 1)
+        state->path->pop_back();
     PathEntry close{};
     close.type = 3;
     if (!Record(state, close)) return;
@@ -632,6 +704,62 @@ CairoPath* APS5_VABI cairo_copy_path(CairoContext* context) {
     }
     result->num_data = static_cast<int>(total);
     return result;
+}
+
+void APS5_VABI cairo_path_extents(CairoContext* context, double* x1, double* y1,
+                                 double* x2, double* y2) {
+    double px1 = 0, py1 = 0, px2 = 0, py2 = 0;
+    const auto store = [&] {
+        if (x1) *x1 = px1;
+        if (y1) *y1 = py1;
+        if (x2) *x2 = px2;
+        if (y2) *y2 = py2;
+    };
+    auto* state = Valid(context);
+    if (!state || !state->path) return store();
+
+    PathRange xRange, yRange;
+    double currentX = 0, currentY = 0, startX = 0, startY = 0;
+    for (const auto& entry : *state->path) {
+        if (entry.type == 0) {
+            currentX = startX = entry.points[0];
+            currentY = startY = entry.points[1];
+        } else if (entry.type == 1) {
+            xRange.Add(currentX);
+            yRange.Add(currentY);
+            xRange.Add(entry.points[0]);
+            yRange.Add(entry.points[1]);
+            currentX = entry.points[0];
+            currentY = entry.points[1];
+        } else if (entry.type == 2) {
+            AddCubicRange(xRange, currentX, entry.points[0], entry.points[2], entry.points[4]);
+            AddCubicRange(yRange, currentY, entry.points[1], entry.points[3], entry.points[5]);
+            currentX = entry.points[4];
+            currentY = entry.points[5];
+        } else if (entry.type == 3) {
+            xRange.Add(startX);
+            yRange.Add(startY);
+            currentX = startX;
+            currentY = startY;
+        }
+    }
+    if (!std::isfinite(xRange.minimum) || !std::isfinite(yRange.minimum)) return store();
+    CairoMatrix inverse = state->matrix;
+    if (cairo_matrix_invert(&inverse) != kSuccess) return store();
+    PathRange usersX, usersY;
+    for (double deviceX : {xRange.minimum, xRange.maximum}) {
+        for (double deviceY : {yRange.minimum, yRange.maximum}) {
+            double x = deviceX, y = deviceY;
+            UserPoint(state, inverse, x, y);
+            usersX.Add(x);
+            usersY.Add(y);
+        }
+    }
+    px1 = usersX.minimum;
+    py1 = usersY.minimum;
+    px2 = usersX.maximum;
+    py2 = usersY.maximum;
+    store();
 }
 
 void APS5_VABI cairo_append_path(CairoContext* context, const CairoPath* path) {
