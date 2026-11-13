@@ -3,6 +3,7 @@
 ### Functional
 
 - [sceFontGraphicsGnmDrawupFillTextureImage](../../../core/libs/prx/libSceFontGs/Export.cpp) (libSceFontGs) - returning `FontGsInvalidParameter` (`0x80460002`) when the `output` pointer is unwritable via `GuestCopyOut_nid_no_patch` on initial zeroing or record write-back is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceFontGraphicsGnmDrawupFillTexturePattern](../../../core/libs/prx/libSceFontGs/Export.cpp) (libSceFontGs) - returning `FontGsInvalidParameter` (`0x80460002`) when the `output` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
 
 ### Unknown function info
 
