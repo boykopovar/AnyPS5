@@ -37,6 +37,13 @@ template <typename TFunction> bool foldU32(IrBuilder& builder, IrValue& inst, TF
     return true;
 }
 
+template <typename TFunction> bool foldU16x2(IrBuilder& builder, IrValue& inst, TFunction function) {
+    return foldU32(builder, inst, [&](std::uint32_t a, std::uint32_t b) {
+        const auto lane = [&](std::uint32_t shift) { return static_cast<std::uint32_t>(static_cast<std::uint16_t>(function(static_cast<std::uint16_t>(a >> shift), static_cast<std::uint16_t>(b >> shift)))); };
+        return lane(0u) | (lane(16u) << 16u);
+    });
+}
+
 template <typename TFunction> bool foldU64(IrBuilder& builder, IrValue& inst, TFunction function) {
     auto& lhs = resolveArg(inst, 0);
     auto& rhs = resolveArg(inst, 1);
@@ -1014,6 +1021,16 @@ bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
             }
             return replaceBinaryIdentity(value, IrType::U32, 0u);
         }
+        case IrOpcode::IAdd16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return a + b; });
+        case IrOpcode::ISub16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return a - b; });
+        case IrOpcode::IMul16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return static_cast<std::uint32_t>(a) * b; });
+        case IrOpcode::ShiftLeftLogical16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return static_cast<std::uint32_t>(a) << (b & 15u); });
+        case IrOpcode::ShiftRightLogical16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return static_cast<std::uint32_t>(a) >> (b & 15u); });
+        case IrOpcode::ShiftRightArithmetic16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return static_cast<std::int32_t>(static_cast<std::int16_t>(a)) >> (b & 15u); });
+        case IrOpcode::SMin16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return std::min(static_cast<std::int16_t>(a), static_cast<std::int16_t>(b)); });
+        case IrOpcode::SMax16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return std::max(static_cast<std::int16_t>(a), static_cast<std::int16_t>(b)); });
+        case IrOpcode::UMin16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return std::min(a, b); });
+        case IrOpcode::UMax16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return std::max(a, b); });
         case IrOpcode::IAdd64: {
             if (foldU64(builder, value, [](std::uint64_t a, std::uint64_t b) { return a + b; })) {
                 return true;

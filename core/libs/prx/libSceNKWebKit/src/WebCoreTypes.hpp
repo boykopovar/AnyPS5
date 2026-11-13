@@ -111,6 +111,12 @@ struct AffineTransform {
     std::array<double, 6> m_transform{1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
 };
 
+struct OptionalAffineTransform {
+    bool m_engaged;
+    std::array<std::uint8_t, 7> m_padding;
+    AffineTransform m_value;
+};
+
 struct alignas(16) TransformationMatrix {
     double m_matrix[4][4]{
         {1.0, 0.0, 0.0, 0.0},
@@ -135,6 +141,41 @@ struct MatrixTransformOperation {
 
 struct Color {
     std::uint64_t m_colorAndFlags{0};
+};
+
+template<typename T> struct SRGBA {
+    T red;
+    T green;
+    T blue;
+    T alpha;
+};
+
+template<typename T> struct LinearSRGBA {
+    T red;
+    T green;
+    T blue;
+    T alpha;
+};
+
+template<typename T> struct DisplayP3 {
+    T red;
+    T green;
+    T blue;
+    T alpha;
+};
+
+template<typename T> struct LinearDisplayP3 {
+    T red;
+    T green;
+    T blue;
+    T alpha;
+};
+
+template<typename T> struct HSLA {
+    T hue;
+    T saturation;
+    T lightness;
+    T alpha;
 };
 
 struct RedirectChainCacheStatus {
@@ -209,10 +250,32 @@ static_assert(sizeof(RoundedRect) == 48);
 static_assert(offsetof(RoundedRect, m_rect) == 0);
 static_assert(offsetof(RoundedRect, m_radii) == 16);
 static_assert(sizeof(AffineTransform) == 48);
+static_assert(sizeof(OptionalAffineTransform) == 56);
+static_assert(offsetof(OptionalAffineTransform, m_padding) == 1);
+static_assert(offsetof(OptionalAffineTransform, m_value) == 8);
 static_assert(sizeof(TransformationMatrix) == 128);
 static_assert(sizeof(MatrixTransformOperation) == 64);
 static_assert(offsetof(MatrixTransformOperation, m_a) == 16);
 static_assert(sizeof(Color) == 8);
+static_assert(sizeof(SRGBA<std::uint8_t>) == 4);
+static_assert(offsetof(SRGBA<std::uint8_t>, alpha) == 3);
+static_assert(sizeof(SRGBA<float>) == 16);
+static_assert(offsetof(SRGBA<float>, green) == 4);
+static_assert(offsetof(SRGBA<float>, blue) == 8);
+static_assert(offsetof(SRGBA<float>, alpha) == 12);
+static_assert(sizeof(LinearSRGBA<float>) == 16);
+static_assert(offsetof(LinearSRGBA<float>, alpha) == 12);
+static_assert(sizeof(DisplayP3<float>) == 16);
+static_assert(offsetof(DisplayP3<float>, alpha) == 12);
+static_assert(sizeof(LinearDisplayP3<float>) == 16);
+static_assert(offsetof(LinearDisplayP3<float>, alpha) == 12);
+static_assert(sizeof(HSLA<float>) == 16);
+static_assert(offsetof(HSLA<float>, saturation) == 4);
+static_assert(offsetof(HSLA<float>, lightness) == 8);
+static_assert(offsetof(HSLA<float>, alpha) == 12);
+static_assert(std::is_trivially_copyable_v<SRGBA<std::uint8_t>>);
+static_assert(std::is_trivially_copyable_v<SRGBA<float>>);
+static_assert(std::is_trivially_copyable_v<HSLA<float>>);
 static_assert(sizeof(RedirectChainCacheStatus) == 16);
 static_assert(offsetof(RedirectChainCacheStatus, endOfValidity) == 0);
 static_assert(offsetof(RedirectChainCacheStatus, status) == 8);

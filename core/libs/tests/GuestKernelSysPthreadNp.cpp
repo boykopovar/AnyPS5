@@ -14,6 +14,8 @@ namespace {
 
 constexpr int GUEST_EDEADLK = 11;
 constexpr int GUEST_EINVAL = 22;
+constexpr int GUEST_EFAULT = 14;
+constexpr int GUEST_ERANGE = 34;
 constexpr int SCE_FAILED_CALL = static_cast<int>(0x8001ffffu);
 constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016u);
 constexpr unsigned SCE_KERNEL_ERROR_BASE = 0x80020000u;
@@ -145,6 +147,35 @@ void TestAttr() {
         if (pthread_attr_getsolosched_np_nid_postfix(&attr, &solosched) != 0 || solosched != 0) return false;
         if (pthread_attr_setsolosched_np_nid_postfix(&attr, 16) != 0) return false;
         if (pthread_attr_getsolosched_np_nid_postfix(&attr, &solosched) != 0 || solosched != 16) return false;
+        return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+    Case("pthread_attr_affinity_np", [] {
+        PthreadAttr attr = nullptr;
+        KernelCpumask mask = 0;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(nullptr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(nullptr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_init_nid_postfix(&attr) != 0 || attr == nullptr) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(mask), nullptr) != GUEST_EFAULT) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, 0, &mask) != GUEST_ERANGE) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, 4, &mask) != GUEST_ERANGE) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, 7, &mask) != GUEST_ERANGE) return false;
+        unsigned char buffer[32] = {0xFF};
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(buffer), buffer) != 0) return false;
+        for (std::size_t i = 8; i < sizeof(buffer); ++i) {
+            if (buffer[i] != 0) return false;
+        }
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, 0, nullptr) != 0) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, 4, &mask) != GUEST_ERANGE) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(mask), nullptr) != GUEST_EFAULT) return false;
+        unsigned char badBuffer[16] = {0};
+        badBuffer[8] = 1;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(badBuffer), badBuffer) != GUEST_EINVAL) return false;
+        KernelCpumask targetMask = 0x3;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(targetMask), &targetMask) != 0) return false;
+        KernelCpumask readBack = 0;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(readBack), &readBack) != 0 || readBack != targetMask) return false;
         return pthread_attr_destroy_nid_postfix(&attr) == 0;
     });
 }
