@@ -44,6 +44,7 @@ constexpr Case KeyCodeToUnicode[] = {
     {0x01000000, 0x00000000},
     {0x01ffffff, 0x00ffffff},
     {0x02000041, 0x00000000},
+    {0x11000041, 0x00000000},
     {0xff000041, 0x00000000},
     {0xffffffff, 0x00000000},
 };
