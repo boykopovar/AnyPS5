@@ -11,6 +11,7 @@
 #endif
 
 #include "prx/libSceHttp/include/Client.hpp"
+#include "prx/libSceHttp/src/ClientParsing.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
@@ -20,19 +21,16 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
-#include <ctime>
 #include <cstring>
 #include <limits>
 #include <memory>
-#include <iomanip>
-#include <locale>
 #include <map>
 #include <set>
 #include <optional>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -43,14 +41,10 @@ public:
     explicit HttpFailure(const char* message) : std::runtime_error(message) {}
 };
 
+constexpr std::array<std::string_view, 12> HttpMonths{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
 std::string Lower(std::string text) {
     for (char& byte : text) if (byte >= 'A' && byte <= 'Z') byte += 'a' - 'A';
-    return text;
-}
-
-std::string_view Trim(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
     return text;
 }
 
@@ -61,15 +55,96 @@ std::uint64_t Number(std::string_view text, int base = 10) {
     return number;
 }
 
+std::uint64_t ContentLength(std::string_view text) {
+    std::optional<std::uint64_t> length;
+    for (;;) {
+        const auto comma = text.find(',');
+        const auto number = Number(Trim(text.substr(0, comma)));
+        if (length && *length != number) throw HttpFailure("conflicting HTTP content lengths");
+        length = number;
+        if (comma == std::string_view::npos) return number;
+        text.remove_prefix(comma + 1);
+    }
+}
+
 std::optional<std::chrono::sys_seconds> HttpDate(const std::string& text) {
-    std::tm time{};
-    std::istringstream input(text);
-    input.imbue(std::locale::classic());
-    input >> std::get_time(&time, "%a, %d %b %Y %H:%M:%S GMT");
-    if (input.fail() || input.peek() != std::char_traits<char>::eof()) return {};
-    const std::chrono::year_month_day day{std::chrono::year{time.tm_year + 1900}, std::chrono::month{static_cast<unsigned>(time.tm_mon + 1)}, std::chrono::day{static_cast<unsigned>(time.tm_mday)}};
-    if (!day.ok() || time.tm_hour > 23 || time.tm_min > 59 || time.tm_sec > 60) return {};
-    return std::chrono::sys_days{day} + std::chrono::hours{time.tm_hour} + std::chrono::minutes{time.tm_min} + std::chrono::seconds{time.tm_sec};
+    if (text.size() != 29 || text[3] != ',' || text[4] != ' ' || text[7] != ' ' || text[11] != ' ' ||
+        text[16] != ' ' || text[19] != ':' || text[22] != ':' || text.substr(25) != " GMT") return {};
+    for (const auto index : {5, 6, 12, 13, 14, 15, 17, 18, 20, 21, 23, 24})
+        if (text[index] < '0' || text[index] > '9') return {};
+    static constexpr std::array<std::string_view, 7> weekdays{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    const auto weekday = std::find(weekdays.begin(), weekdays.end(), std::string_view(text).substr(0, 3));
+    const auto month = std::find(HttpMonths.begin(), HttpMonths.end(), std::string_view(text).substr(8, 3));
+    if (weekday == weekdays.end() || month == HttpMonths.end()) return {};
+    const auto year = static_cast<int>(Number(std::string_view(text).substr(12, 4)));
+    const auto date = static_cast<unsigned>(Number(std::string_view(text).substr(5, 2)));
+    const auto hour = static_cast<int>(Number(std::string_view(text).substr(17, 2)));
+    const auto minute = static_cast<int>(Number(std::string_view(text).substr(20, 2)));
+    const auto second = static_cast<int>(Number(std::string_view(text).substr(23, 2)));
+    const std::chrono::year_month_day day{std::chrono::year{year}, std::chrono::month{static_cast<unsigned>(month - HttpMonths.begin() + 1)}, std::chrono::day{date}};
+    if (year < 1900 || !day.ok() || hour > 23 || minute > 59 || second > 60 ||
+        std::chrono::weekday{std::chrono::sys_days{day}}.c_encoding() != static_cast<unsigned>(weekday - weekdays.begin())) return {};
+    return std::chrono::sys_days{day} + std::chrono::hours{hour} + std::chrono::minutes{minute} + std::chrono::seconds{second};
+}
+
+std::string CanonicalDate(std::string text, std::chrono::sys_seconds now) {
+    if (HttpDate(text)) return text;
+    std::string canonical;
+    if (text.size() >= 30 && text.size() <= 33) {
+        const auto comma = text.find(',');
+        static constexpr std::array<std::string_view, 7> weekdays{
+            "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+        if (comma == std::string::npos || comma + 24 != text.size() || text[comma + 1] != ' ' ||
+            std::find(weekdays.begin(), weekdays.end(), std::string_view(text).substr(0, comma)) == weekdays.end()) return text;
+        const auto date = std::string_view(text).substr(comma + 2);
+        if (date[2] != '-' || date[6] != '-' || date[9] != ' ') return text;
+        for (const auto index : {0, 1, 7, 8, 10, 11, 13, 14, 16, 17})
+            if (date[index] < '0' || date[index] > '9') return text;
+        const auto month = std::find(HttpMonths.begin(), HttpMonths.end(), date.substr(3, 3));
+        if (month == HttpMonths.end()) return text;
+        const auto today = std::chrono::floor<std::chrono::days>(now);
+        const std::chrono::year_month_day current{today};
+        const std::chrono::hh_mm_ss time{now - today};
+        const int limitYear = static_cast<int>(current.year()) + 50;
+        int year = limitYear / 100 * 100 + static_cast<int>(Number(date.substr(7, 2)));
+        const auto candidate = std::tuple{static_cast<int>(month - HttpMonths.begin() + 1),
+            static_cast<int>(Number(date.substr(0, 2))), static_cast<int>(Number(date.substr(10, 2))),
+            static_cast<int>(Number(date.substr(13, 2))), static_cast<int>(Number(date.substr(16, 2)))};
+        const auto limit = std::tuple{static_cast<int>(static_cast<unsigned>(current.month())),
+            static_cast<int>(static_cast<unsigned>(current.day())), static_cast<int>(time.hours().count()),
+            static_cast<int>(time.minutes().count()), static_cast<int>(time.seconds().count())};
+        if (year > limitYear || (year == limitYear && candidate > limit)) year -= 100;
+        canonical = text.substr(0, 3) + ", " + std::string(date.substr(0, 2)) + " " + std::string(date.substr(3, 3)) +
+            " " + std::to_string(year) + " " + std::string(date.substr(10));
+    } else if (text.size() == 24 && text[3] == ' ' && text[7] == ' ' && text[10] == ' ' && text[19] == ' ') {
+        std::string day = text.substr(8, 2);
+        if (day[0] == ' ') day[0] = '0';
+        canonical = text.substr(0, 3) + ", " + day + " " + text.substr(4, 3) + " " + text.substr(20, 4) +
+            " " + text.substr(11, 8) + " GMT";
+    } else return text;
+    if (HttpDate(canonical)) return canonical;
+    return text;
+}
+
+bool StrongEtag(std::string_view text) {
+    if (text.size() < 2 || text.front() != '"' || text.back() != '"') return false;
+    for (std::size_t index = 1; index + 1 < text.size(); ++index) {
+        const auto byte = static_cast<unsigned char>(text[index]);
+        if (byte != 0x21 && (byte < 0x23 || byte == 0x7f)) return false;
+    }
+    return true;
+}
+
+std::pair<std::string, std::string> Field(const std::string& text) {
+    const auto colon = text.find(':');
+    if (colon == std::string::npos || colon == 0) throw HttpFailure("invalid HTTP field");
+    auto name = Lower(text.substr(0, colon));
+    for (const unsigned char byte : name)
+        if (!IsToken(byte)) throw HttpFailure("invalid HTTP field name");
+    std::string value(Trim(std::string_view(text).substr(colon + 1)));
+    for (const unsigned char byte : value)
+        if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP field value");
+    return {std::move(name), std::move(value)};
 }
 
 struct Url {
@@ -118,10 +193,13 @@ Url Parse(const std::string& text) {
 std::string Redirect(const Url& base, std::string location) {
     const auto fragment = location.find('#');
     if (fragment != std::string::npos) location.erase(fragment);
-    if (location.find(':') < location.find_first_of("/?")) return location;
-    if (location.starts_with("//")) return "http:" + location;
+    std::string authority = base.authority;
     std::string target;
-    if (location.empty()) target = base.target;
+    if (location.find(':') < location.find_first_of("/?") || location.starts_with("//")) {
+        auto redirected = Parse(location.starts_with("//") ? "http:" + location : location);
+        authority = std::move(redirected.authority);
+        target = std::move(redirected.target);
+    } else if (location.empty()) target = base.target;
     else if (location.front() == '/') target = location;
     else if (location.front() == '?') target = base.target.substr(0, base.target.find('?')) + location;
     else {
@@ -150,7 +228,7 @@ std::string Redirect(const Url& base, std::string location) {
             input.erase(0, next == std::string::npos ? input.size() : next);
         }
     }
-    return "http://" + base.authority + output + query;
+    return "http://" + authority + output + query;
 }
 
 class Connection {
@@ -346,58 +424,96 @@ struct HttpClientState : Aps5HttpClient {
 
     void Fetch(std::uint64_t start, std::uint64_t length) {
         CheckStopped();
+        auto requestUrl = url;
+        bool full = false;
         std::set<std::string> visited;
         for (;;) {
-            if (!visited.insert(url).second) throw HttpFailure("HTTP redirect loop");
-            const auto parsed = Parse(url);
+            if (!visited.insert(requestUrl).second) throw HttpFailure("HTTP redirect loop");
+            const auto parsed = Parse(requestUrl);
             Connection connection(parsed, stopped);
-            connection.Send("GET " + parsed.target + " HTTP/1.1\r\nHost: " + parsed.authority + "\r\nRange: bytes=" + std::to_string(start) + "-" + std::to_string(start + length - 1) + (validator.empty() ? "" : "\r\nIf-Range: " + validator) + "\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n");
+            const auto range = full ? std::string() : "\r\nRange: bytes=" + std::to_string(start) + "-" + std::to_string(start + length - 1) + (validator.empty() ? "" : "\r\nIf-Range: " + validator);
+            connection.Send("GET " + parsed.target + " HTTP/1.1\r\nHost: " + parsed.authority + range + "\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n");
             std::map<std::string, std::string> headers;
             int status;
             for (;;) {
                 const auto line = connection.Line();
                 if (line.size() < 12 || (!line.starts_with("HTTP/1.1 ") && !line.starts_with("HTTP/1.0 "))) throw HttpFailure("invalid HTTP status line");
                 status = static_cast<int>(Number(std::string_view(line).substr(9, 3)));
+                const auto responseTime = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
                 headers.clear();
                 for (;;) {
                     const auto field = connection.Line();
                     if (field.empty()) break;
-                    const auto colon = field.find(':');
-                    if (colon == std::string::npos || colon == 0) throw HttpFailure("invalid HTTP header");
-                    const auto name = Lower(field.substr(0, colon));
-                    const std::string value(Trim(std::string_view(field).substr(colon + 1)));
-                    for (const unsigned char byte : value) if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP header value");
+                    auto [name, value] = Field(field);
                     if (name != "content-range" && name != "content-length" && name != "content-encoding" && name != "transfer-encoding" && name != "location" && name != "etag" && name != "last-modified" && name != "date") continue;
+                    if (name == "last-modified" || name == "date") value = CanonicalDate(std::move(value), responseTime);
                     const auto [found, inserted] = headers.emplace(name, value);
-                    if (!inserted && found->second != value) throw HttpFailure("conflicting HTTP headers");
+                    if (!inserted && found->second != value &&
+                        (name != "content-length" || ContentLength(found->second) != ContentLength(value))) throw HttpFailure("conflicting HTTP headers");
                 }
                 if (status < 100 || status >= 200) break;
                 if (status == 101) throw HttpFailure("HTTP upgrade is not a media file");
             }
+            if (status == 203) status = 200;
             if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
                 if (!headers.contains("location")) throw HttpFailure("HTTP redirect has no location");
-                url = Redirect(parsed, headers.at("location"));
+                if (initialized) throw HttpFailure("HTTP source redirected after opening");
+                requestUrl = Redirect(parsed, headers.at("location"));
                 continue;
             }
-            const bool empty = status == 416 && headers.contains("content-range") && headers.at("content-range") == "bytes */0";
+            const auto unsatisfied = headers.find("content-range");
+            const bool empty = status == 416 && unsatisfied != headers.end() && Lower(unsatisfied->second.substr(0, 8)) == "bytes */"
+                && Number(std::string_view(unsatisfied->second).substr(8)) == 0;
             if (status != 200 && status != 206 && !empty) throw HttpFailure("HTTP source request was refused");
             if (headers.contains("content-encoding") && Lower(headers.at("content-encoding")) != "identity") NotImplemented_nid_no_patch("HTTP client encoded HTTP representations");
+            if (full && status != 200) throw HttpFailure("HTTP full source request returned partial content");
+            if (initialized && ((!etag.empty() && headers.contains("etag") && headers.at("etag") != etag) ||
+                (!modified.empty() && headers.contains("last-modified") && headers.at("last-modified") != modified))) throw HttpFailure("HTTP source representation changed");
+            if (initialized && status == 200) {
+                const bool tag = StrongEtag(validator);
+                const auto name = tag ? "etag" : "last-modified";
+                const bool mayHaveTrailer = tag && headers.contains("transfer-encoding") && Lower(headers.at("transfer-encoding")) == "chunked";
+                if (validator.empty() || (!headers.contains(name) && !mayHaveTrailer)) throw HttpFailure("HTTP full response does not establish source identity");
+            }
             std::vector<std::uint8_t> body;
+            std::optional<std::string> trailerEtag;
             if (headers.contains("transfer-encoding")) {
                 if (Lower(headers.at("transfer-encoding")) != "chunked") NotImplemented_nid_no_patch("HTTP client HTTP transfer coding");
                 for (;;) {
                     const auto chunk = connection.Line();
-                    const auto count = Number(Trim(std::string_view(chunk).substr(0, chunk.find(';'))), 16);
+                    const auto parsedSize = ChunkSize(chunk);
+                    if (!parsedSize) throw HttpFailure("invalid HTTP chunk size");
+                    const auto count = *parsedSize;
                     if (count == 0) {
-                        while (!connection.Line().empty()) {}
+                        for (;;) {
+                            const auto field = connection.Line();
+                            if (field.empty()) break;
+                            auto [name, value] = Field(field);
+                            if (name != "etag") continue;
+                            if (trailerEtag && *trailerEtag != value) throw HttpFailure("conflicting HTTP trailer ETags");
+                            trailerEtag = std::move(value);
+                        }
                         break;
                     }
                     connection.Append(body, count);
                     if (!connection.Line().empty()) throw HttpFailure("invalid HTTP chunk terminator");
                 }
-            } else if (headers.contains("content-length")) connection.Append(body, Number(headers.at("content-length")));
+            } else if (headers.contains("content-length")) connection.Append(body, ContentLength(headers.at("content-length")));
             else connection.UntilClosed(body);
             if (empty) body.clear();
+            auto responseEtag = std::move(trailerEtag);
+            if (headers.contains("etag")) {
+                if (responseEtag && *responseEtag != headers.at("etag")) throw HttpFailure("conflicting HTTP header and trailer ETags");
+                responseEtag = headers.at("etag");
+            }
+            if (initialized) {
+                if (!etag.empty() && responseEtag && *responseEtag != etag) throw HttpFailure("HTTP source representation changed");
+                if (status == 200) {
+                    const bool matches = StrongEtag(validator) ? responseEtag && *responseEtag == validator :
+                        headers.contains("last-modified") && headers.at("last-modified") == validator;
+                    if (validator.empty() || !matches) throw HttpFailure("HTTP full response does not establish source identity");
+                }
+            }
             std::uint64_t total = body.size();
             std::uint64_t first = 0;
             if (status == 206) {
@@ -405,25 +521,43 @@ struct HttpClientState : Aps5HttpClient {
                 const auto& range = headers.at("content-range");
                 const auto dash = range.find('-');
                 const auto slash = range.find('/');
-                if (!range.starts_with("bytes ") || dash == std::string::npos || slash <= dash) throw HttpFailure("invalid HTTP content range");
+                if (Lower(range.substr(0, 6)) != "bytes " || dash == std::string::npos || slash == std::string::npos || slash <= dash) throw HttpFailure("invalid HTTP content range");
                 first = Number(std::string_view(range).substr(6, dash - 6));
                 const auto last = Number(std::string_view(range).substr(dash + 1, slash - dash - 1));
-                total = Number(std::string_view(range).substr(slash + 1));
-                if (first != start || last < first || last >= total || last - first + 1 != body.size() || body.size() > length) throw HttpFailure("HTTP range response does not match request");
+                if (first != start || last < first || body.empty() || body.size() > length || last - first != body.size() - 1) throw HttpFailure("HTTP range response does not match request");
+                const auto completeLength = std::string_view(range).substr(slash + 1);
+                if (completeLength == "*") {
+                    full = true;
+                    visited.clear();
+                    continue;
+                }
+                total = Number(completeLength);
+                if (last >= total) throw HttpFailure("HTTP range response does not match request");
             }
             if (total > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) || (initialized && total != size)) throw HttpFailure("HTTP source size changed or is not representable");
-            if (initialized && ((!etag.empty() && headers.contains("etag") && headers.at("etag") != etag) || (!modified.empty() && headers.contains("last-modified") && headers.at("last-modified") != modified))) throw HttpFailure("HTTP source representation changed");
+            std::string nextEtag = etag;
+            std::string nextModified = modified;
+            std::string nextValidator = validator;
             if (!initialized) {
-                if (headers.contains("etag")) etag = headers.at("etag");
-                if (headers.contains("last-modified")) modified = headers.at("last-modified");
-                if (etag.starts_with('"') && etag.ends_with('"')) validator = etag;
-                else if (etag.empty() && headers.contains("date")) {
+                nextEtag = responseEtag.value_or("");
+                nextModified = headers.contains("last-modified") ? headers.at("last-modified") : "";
+                if (StrongEtag(nextEtag)) nextValidator = nextEtag;
+                else if (!responseEtag && headers.contains("date")) {
                     const auto date = HttpDate(headers.at("date"));
-                    const auto last = HttpDate(modified);
-                    if (date && last && *date - *last >= std::chrono::seconds{60}) validator = modified;
+                    const auto last = HttpDate(nextModified);
+                    if (date && last && *date - *last >= std::chrono::seconds{60}) nextValidator = nextModified;
+                }
+                if (status == 206 && body.size() != total && nextValidator.empty()) {
+                    full = true;
+                    visited.clear();
+                    continue;
                 }
             }
             CheckStopped();
+            url = std::move(requestUrl);
+            etag = std::move(nextEtag);
+            modified = std::move(nextModified);
+            validator = std::move(nextValidator);
             cache = std::move(body);
             cacheStart = first;
             size = total;

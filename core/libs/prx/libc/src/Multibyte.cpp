@@ -155,6 +155,14 @@ std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value
     return EncodeUtf8(destination, value);
 }
 
+std::size_t APS5_VABI _Mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state) {
+    return mbrtowc_nid_postfix(destination, source, count, state);
+}
+
+std::size_t APS5_VABI _Wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state) {
+    return wcrtomb_nid_postfix(destination, value, state);
+}
+
 int APS5_VABI mblen_nid_postfix(const char* source, std::size_t count) {
     unsigned char state[StateSize]{};
     return ToInt(LocaleToWide(nullptr, source, count, state));
