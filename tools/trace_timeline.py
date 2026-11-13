@@ -106,6 +106,8 @@ def main(arguments=None):
     if laid["left_out"]:
         notes.append(f"{laid['left_out']} shorter slices left out by --max-slices")
     output = options.output or options.trace.with_suffix(".html")
+    if output.absolute() == options.trace.absolute() or (output.exists() and output.samefile(options.trace)):
+        raise ValueError("output must not overwrite the input trace")
     output.write_text(page(svg(laid), options.trace.name, notes), encoding="utf-8")
     print(f"wrote {output}")
     return 0
