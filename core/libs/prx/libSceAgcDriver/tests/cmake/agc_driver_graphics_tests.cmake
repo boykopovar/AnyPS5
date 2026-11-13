@@ -7,6 +7,7 @@ target_include_directories(agc_driver_pm4_tests PRIVATE
 )
 
 target_link_libraries(agc_driver_pm4_tests PRIVATE
+        libSceAgc
         libSceAgcDriver
         shader_recompiler_agc_driver
         libc
@@ -218,6 +219,14 @@ if(BUILD_TESTING)
     add_test(NAME agc_descriptor_cache COMMAND agc_driver_graphics_tests --descriptor-cache)
     add_test(NAME agc_driver_address_space_teardown COMMAND agc_driver_graphics_tests --address-space-teardown)
     set_tests_properties(agc_driver_address_space_teardown PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    foreach(pm4RewindMode rewind-copy rewind-size)
+        string(REPLACE "-" "_" pm4RewindTest "agc_driver_pm4_${pm4RewindMode}")
+        add_test(NAME ${pm4RewindTest} COMMAND agc_driver_pm4_tests ${pm4RewindMode})
+        set_tests_properties(${pm4RewindTest} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30)
+        if(WIN32)
+            set_property(TEST ${pm4RewindTest} APPEND PROPERTY ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     add_test(NAME agc_driver_pm4_rewind_trace COMMAND agc_driver_pm4_tests rewind-trace)
     set_tests_properties(agc_driver_pm4_rewind_trace PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=8;APS5_TRACE_FRAMES=0:1;APS5_TRACE_DIR=${CMAKE_CURRENT_BINARY_DIR}/pm4-rewind-trace" TIMEOUT 30)
     set_property(TEST agc_driver_pm4_rewind_trace APPEND PROPERTY ENVIRONMENT_MODIFICATION

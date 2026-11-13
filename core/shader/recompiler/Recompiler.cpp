@@ -1666,8 +1666,21 @@ void NoteFailureOnce() {
     }
 }
 
+struct CompileTimer {
+    std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+    CompileTimer() = default;
+    CompileTimer(const CompileTimer&) = delete;
+    CompileTimer& operator=(const CompileTimer&) = delete;
+    ~CompileTimer() {
+        if (const auto* sink = Diagnostics(); sink != nullptr && sink->compileTime != nullptr) {
+            sink->compileTime(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
+        }
+    }
+};
+
 template <typename Compile>
 auto CountedCompile(Compile&& compile) {
+    const CompileTimer timer;
     try {
         auto result = compile();
         NoteShader(0);

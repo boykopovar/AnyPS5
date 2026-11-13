@@ -2458,6 +2458,17 @@ void Color565TargetTests() {
     queue.context[0x1e0] = 0x40000504u;
     const auto blended = AgcDriver::Graphics::DecodeState(queue);
     Require(blended.blends[0].blendEnable && blended.blends[0].srcColorBlendFactor == VK_BLEND_FACTOR_SRC_ALPHA && blended.blends[0].dstColorBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, "alpha blending into a 5_6_5 target was not decoded");
+    for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = std::bit_cast<std::uint32_t>(float(i + 1) / 8.0f);
+    queue.context[0x1e0] = (1u << 30u) | 13u;
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.125f, 0.25f, 0.375f, 0.5f}, "a 5_6_5 target with the reversed component order changed the order of its blend constants");
+    info(0, 0);
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.375f, 0.25f, 0.125f, 0.5f}, "a 5_6_5 target with the standard component order did not exchange its red and blue blend constants with the export");
+    queue.context[0x1e0] = (1u << 30u) | (14u << 8u);
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.375f, 0.25f, 0.125f, 0.5f}, "a 5_6_5 target with the standard component order did not exchange the constants of a ONE_MINUS_CONSTANT_COLOR destination factor");
+    queue.context[0x8e] = 0x3u;
+    const auto partial = AgcDriver::Graphics::DecodeState(queue).blendConstants;
+    Require(partial[1] == 0.25f && partial[2] == 0.125f && partial[3] == 0.5f, "a 5_6_5 target with the standard component order writing only X and Y did not take the constants of its written channels from their exports");
+    queue.context[0x8e] = 0xfu;
     queue.context[0x1e0] = 0;
     for (const auto& [number, swap] : {std::pair{1u, 2u}, std::pair{4u, 0u}, std::pair{0u, 1u}, std::pair{0u, 3u}}) {
         info(number, swap);
@@ -2478,6 +2489,9 @@ void Color1555TargetTests() {
     queue.context[0x1e0] = 0x40000504u;
     const auto blended = AgcDriver::Graphics::DecodeState(queue);
     Require(blended.blends[0].blendEnable && blended.blends[0].srcColorBlendFactor == VK_BLEND_FACTOR_SRC_ALPHA && blended.blends[0].dstColorBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, "alpha blending into a 1_5_5_5 target was not decoded");
+    for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = std::bit_cast<std::uint32_t>(float(i + 1) / 8.0f);
+    queue.context[0x1e0] = (1u << 30u) | 13u;
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.375f, 0.25f, 0.125f, 0.5f}, "a 1_5_5_5 target did not exchange its red and blue blend constants with the export");
     queue.context[0x1e0] = 0;
     for (const auto& [number, swap] : {std::pair{1u, 0u}, std::pair{4u, 0u}, std::pair{0u, 1u}}) {
         queue.context[0x31c] = (queue.context[0x31c] & ~((7u << 8u) | (3u << 11u))) | (number << 8u) | (swap << 11u);

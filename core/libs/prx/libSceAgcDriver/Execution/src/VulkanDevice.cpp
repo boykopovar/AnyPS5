@@ -281,6 +281,7 @@ const ShaderRecompiler::DiagnosticSink runReportSink{
     .unsupportedInstruction = LibcRunReportUnsupportedInstruction_nid_no_patch,
     .imageFormat = LibcRunReportImageFormat_nid_no_patch,
     .descriptor = CountDescriptor,
+    .compileTime = LibcRunReportShaderCompileTime_nid_no_patch,
 };
 [[maybe_unused]] const bool runReportSinkInstalled = (LibcRunReportSetDescriptorCounters_nid_no_patch(descriptorUse), ShaderRecompiler::SetDiagnosticSink(&runReportSink), true);
 
