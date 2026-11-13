@@ -4568,8 +4568,12 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
         layerPending.SetRange(first, count, true);
     }
     const auto pendingSince = GuestMemory::TrackerGeneration();
-    for (std::uint32_t layer = first; layer < first + count; ++layer) {
-        if (!keptForCpu(layer)) layerPendingSince[layer] = pendingSince;
+    if (keptAtUnwatch.empty()) {
+        std::fill(layerPendingSince.begin() + first, layerPendingSince.begin() + first + count, pendingSince);
+    } else {
+        for (std::uint32_t layer = first; layer < first + count; ++layer) {
+            if (!keptForCpu(layer)) layerPendingSince[layer] = pendingSince;
+        }
     }
     // Results of this image now cover the alias's results borrowed into these units: this image
     // stores them, the alias no longer has to (its results, unchanged since the borrow, are in
