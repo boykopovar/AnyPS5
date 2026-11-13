@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -222,4 +223,10 @@ int main() {
     Mfsr1OnBaseConsole();
     Mfsr2OnBaseConsole();
     ConcurrentCreatesUninitialized();
+    errno = 71;
+    Require(scePsmlMfsrGetSharedResourcesInitRequirement(reinterpret_cast<MfsrRequirement*>(static_cast<std::uintptr_t>(0x10)), nullptr) == kErrNotInitialized && errno == 71);
+    errno = 71;
+    Require(scePsmlMfsrCreateSharedResources(reinterpret_cast<void**>(static_cast<std::uintptr_t>(0x10)), nullptr) == kErrNotInitialized && errno == 71);
+    errno = 71;
+    Require(scePsmlMfsrCreateContext(reinterpret_cast<void**>(static_cast<std::uintptr_t>(0x10)), nullptr) == kErrNotInitialized && errno == 71);
 }

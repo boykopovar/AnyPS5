@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -11,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -89,11 +91,27 @@ void RequireMfsr(bool condition, const char* function, const char* what) {
  if (!condition) throw std::runtime_error(std::string(function) + ": " + what);
 }
 
+bool CopyIn(void* dst, const void* src, std::size_t size) {
+ const int saved = errno;
+ const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
+ errno = saved;
+ return ok;
+}
+
+bool CopyOut(void* dst, const void* src, std::size_t size) {
+ const int saved = errno;
+ const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+ errno = saved;
+ return ok;
+}
+
 void RequireBlocks(const MfsrBlock* blocks, std::uint64_t blockCount, std::uint64_t requiredCount, const char* function) {
  RequireMfsr(blockCount >= requiredCount, function, "fewer memory blocks than the requirement");
  RequireMfsr(blocks != nullptr, function, "null memory block list");
+ std::vector<MfsrBlock> localBlocks(static_cast<std::size_t>(requiredCount));
+ RequireMfsr(CopyIn(localBlocks.data(), blocks, localBlocks.size() * sizeof(MfsrBlock)), function, "unreadable memory block list");
  for (std::uint64_t i = 0; i < requiredCount; ++i) {
-  RequireMfsr(blocks[i].bytes >= MfsrBlockBytes && blocks[i].address % MfsrBlockBytes == 0, function, "memory block smaller or less aligned than the requirement");
+  RequireMfsr(localBlocks[i].bytes >= MfsrBlockBytes && localBlocks[i].address % MfsrBlockBytes == 0, function, "memory block smaller or less aligned than the requirement");
  }
 }
 
@@ -190,12 +208,15 @@ std::int32_t APS5_VABI scePsmlMfsrInit() {
 std::int32_t APS5_VABI scePsmlMfsrGetSharedResourcesInitRequirement(MfsrRequirement* requirement, const MfsrSharedResourcesParam* param) {
  if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
  RequireMfsr(requirement != nullptr && param != nullptr, __func__, "null requirement or parameter");
- if (param->type != 0) {
-  const bool gated = (param->type == 1 && (g_mfsrFeatureFlags.load() & 1u) != 0) || (param->type == 2 && (g_mfsrFeatureFlags.load() & 2u) != 0);
+ MfsrSharedResourcesParam localParam{};
+ RequireMfsr(CopyIn(&localParam, param, sizeof(localParam)), __func__, "unreadable parameter");
+ if (localParam.type != 0) {
+  const bool gated = (localParam.type == 1 && (g_mfsrFeatureFlags.load() & 1u) != 0) || (localParam.type == 2 && (g_mfsrFeatureFlags.load() & 2u) != 0);
   if (!gated) return SCE_PSML_ERROR_UNSUPPORTED_TYPE;
   NotImplemented_nid_no_patch(__func__);
  }
- *requirement = {MfsrBlockBytes, MfsrBlockBytes, MfsrSharedBlockCount};
+ const MfsrRequirement localReq{MfsrBlockBytes, MfsrBlockBytes, MfsrSharedBlockCount};
+ RequireMfsr(CopyOut(requirement, &localReq, sizeof(localReq)), __func__, "unwritable requirement");
  return 0;
 }
 
@@ -206,11 +227,17 @@ std::int32_t APS5_VABI scePsmlMfsrCreateSharedResources(void** sharedResources, 
   if (object->kind == MfsrObjectKind::SharedResources) return SCE_PSML_ERROR_SHARED_RESOURCES_BUSY;
  }
  RequireMfsr(sharedResources != nullptr && param != nullptr, __func__, "null handle or parameter");
- if (param->type != 0) return SCE_PSML_ERROR_UNSUPPORTED_TYPE;
- RequireBlocks(param->blocks, param->blockCount, MfsrSharedBlockCount, __func__);
+ MfsrSharedResourcesParam localParam{};
+ RequireMfsr(CopyIn(&localParam, param, sizeof(localParam)), __func__, "unreadable parameter");
+ if (localParam.type != 0) return SCE_PSML_ERROR_UNSUPPORTED_TYPE;
+ RequireBlocks(localParam.blocks, localParam.blockCount, MfsrSharedBlockCount, __func__);
  auto* object = new MfsrObject{MfsrObjectKind::SharedResources, nullptr, 0, 0};
+ void* outHandle = object;
+ if (!CopyOut(sharedResources, &outHandle, sizeof(outHandle))) {
+  delete object;
+  RequireMfsr(false, __func__, "unwritable handle");
+ }
  g_mfsrObjects.emplace(object, object);
- *sharedResources = object;
  return 0;
 }
 
@@ -247,10 +274,16 @@ std::int32_t APS5_VABI scePsmlMfsrCreateContextFrom2023July(void** context, cons
 std::int32_t APS5_VABI scePsmlMfsrCreateContext(void** context, const MfsrMemoryParam* param) {
  if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
  RequireMfsr(context != nullptr && param != nullptr, __func__, "null handle or parameter");
- RequireBlocks(param->blocks, param->blockCount, MfsrBlockCount, __func__);
- RequireMfsr(param->type <= 2, __func__, "unknown context type");
- if (param->type != 0) NotImplemented_nid_no_patch(__func__);
- *context = CreateMfsrContext(nullptr, __func__, Mfsr4KDimensions.first, Mfsr4KDimensions.second);
+ MfsrMemoryParam localParam{};
+ RequireMfsr(CopyIn(&localParam, param, sizeof(localParam)), __func__, "unreadable parameter");
+ RequireBlocks(localParam.blocks, localParam.blockCount, MfsrBlockCount, __func__);
+ RequireMfsr(localParam.type <= 2, __func__, "unknown context type");
+ if (localParam.type != 0) NotImplemented_nid_no_patch(__func__);
+ void* created = CreateMfsrContext(nullptr, __func__, Mfsr4KDimensions.first, Mfsr4KDimensions.second);
+ if (!CopyOut(context, &created, sizeof(created))) {
+  ReleaseMfsrObject(created, MfsrObjectKind::Context, __func__);
+  RequireMfsr(false, __func__, "unwritable handle");
+ }
  return 0;
 }
 
