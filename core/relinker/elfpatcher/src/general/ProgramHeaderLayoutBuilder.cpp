@@ -220,6 +220,8 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     };
     if (request.PhEntSize < 56)
         throw Domain::RelinkerException("Program header entry is too small");
+    if (request.PhOff < kElfHeaderSize)
+        throw Domain::RelinkerException("Program header table overlaps the ELF header");
     const std::uint64_t tableEnd = checkedEnd(request.PhOff, static_cast<std::uint64_t>(neededPh) * request.PhEntSize);
     if (tableEnd > buf.size())
         throw Domain::RelinkerException("Program header table exceeds the output file");

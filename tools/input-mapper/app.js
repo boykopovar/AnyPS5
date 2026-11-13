@@ -378,7 +378,7 @@ byId('file').addEventListener('change', async event => {
         render();
         setStatus('imported', {name: file.name});
     } catch (error) {
-        setStatus('importFailed', {message: error instanceof TypeError ? t('invalidUtf8') : error.message});
+        setStatus('importFailed', {message: error instanceof TypeError ? t('invalidUtf8') : diagnostic(locale, error.message)});
     }
 });
 byId('download').addEventListener('click', () => {

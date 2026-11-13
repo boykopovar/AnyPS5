@@ -303,8 +303,10 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
     constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
     static int sweepState = 0;
     static DWORD sweepOwner = 0;
-    thread_local std::vector<HMODULE> resolving;
-    thread_local std::map<HMODULE, int> startedResults;
+    struct ResolvingStorage {};
+    struct StartedResultsStorage {};
+    auto& resolving = HostThreadLocal<std::vector<HMODULE>, ResolvingStorage>();
+    auto& startedResults = HostThreadLocal<std::map<HMODULE, int>, StartedResultsStorage>();
     thread_local int depth = 0;
     struct Depth {
         int& value;
@@ -346,8 +348,16 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
         if (!sweeping) resolving.pop_back();
         __aps5_set_module_init_result_nid_no_patch(0);
     };
+    static std::vector<std::string> skippedSweep;
+    if (reason.empty() && initiating.argp == nullptr && !lists.sweep.empty()) {
+        std::lock_guard lock(initializedLock);
+        if (sweepState == 0 && skippedSweep.empty()) skippedSweep = lists.sweep;
+    } else if (reason.empty() && initiating.argp != nullptr && lists.sweep.empty()) {
+        std::lock_guard lock(initializedLock);
+        if (sweepState == 0) lists.sweep = skippedSweep;
+    }
     bool sweeping = false;
-    if (reason.empty() && !lists.sweep.empty()) {
+    if (reason.empty() && !lists.sweep.empty() && initiating.argp != nullptr) {
         const auto thread = GetCurrentThreadId();
         std::unique_lock lock(initializedLock);
         while (sweepState == 1 && sweepOwner != thread) initializedChanged.wait(lock);

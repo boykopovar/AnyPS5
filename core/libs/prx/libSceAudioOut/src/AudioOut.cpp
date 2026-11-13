@@ -1,5 +1,7 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
+#include "prx/libSceAudioOut/include/OutputDevice.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -145,6 +147,21 @@ static bool ensureSdlAudio() {
     return true;
 }
 
+static const char* selectedOutputDevice(const char* requested) {
+    if (requested == nullptr || *requested == '\0') return nullptr;
+    const int count = SDL_GetNumAudioDevices(0);
+    std::vector<std::string> names;
+    for (int index = 0; index < count; ++index) {
+        const char* name = SDL_GetAudioDeviceName(index, 0);
+        if (name != nullptr) names.emplace_back(name);
+    }
+    if (FindOutputDevice(names, requested)) return requested;
+    std::string listed;
+    for (const auto& name : names) listed += "\n  " + name;
+    APS5_LOG_OUT("AudioOut: ANYPS5_AUDIO_DEVICE '%s' is not an output device; using the default. Output devices:%s\n", requested, listed.c_str());
+    return nullptr;
+}
+
 static bool openDevice(Port& port) {
     if (!ensureSdlAudio() || SdlAudioReportsNoOutputEndpoint(SDL_GetCurrentAudioDriver(), SDL_GetNumAudioDevices(0))) {
         return false;
@@ -156,7 +173,7 @@ static bool openDevice(Port& port) {
     desired.samples = static_cast<Uint16>(port.samplesNum);
     desired.callback = nullptr;
     SDL_AudioSpec obtained{};
-    port.device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
+    port.device = SDL_OpenAudioDevice(selectedOutputDevice(std::getenv("ANYPS5_AUDIO_DEVICE")), 0, &desired, &obtained, 0);
     if (port.device == 0) {
         return false;
     }
@@ -361,7 +378,9 @@ static void outputVirtualPort(Port& port, const void* data, std::unique_lock<std
     paceVirtualPort(port, data != nullptr, lock);
     const auto source = static_cast<int>(&port - g_ports) + 1;
     if (port.type == PORT_TYPE_VIBRATION && data == nullptr) PadClearLegacyAudioHaptics_nid_postfix(source);
-    if (!pad.empty()) {
+    if (!pad.empty() && PadHapticStreamOpen_nid_postfix()) {
+        PadSubmitHapticFrames_nid_postfix(pad.data() + AUDIO_OUT2_PAD_VIBRATION_LEFT, pad.data() + AUDIO_OUT2_PAD_VIBRATION_RIGHT, AUDIO_OUT2_PAD_CHANNELS, port.samplesNum, port.freq);
+    } else if (!pad.empty()) {
         constexpr std::uint32_t grainFrames = 256;
         const auto begin = port.virtualQueueEnd - (1000000ULL * port.samplesNum) / port.freq;
         for (std::uint32_t frame = 0; frame < port.samplesNum;) {
@@ -383,8 +402,9 @@ static bool portTypeValid(int type) {
 }
 
 static Port* getPort(int handle) {
+    if (handle <= 0 || handle > PORTS_MAX) return nullptr;
     const int idx = handle - 1;
-    if (idx < 0 || idx >= PORTS_MAX || !g_ports[idx].used) {
+    if (!g_ports[idx].used) {
         return nullptr;
     }
     return &g_ports[idx];
@@ -441,6 +461,10 @@ void AudioOut2MarkInitialized_nid_no_patch() {
     g_audioOut2Initialized.store(true);
 }
 
+bool AudioOut2TryInitialize_nid_no_patch() {
+    return !g_audioOut2Initialized.exchange(true);
+}
+
 extern "C" {
 
 int APS5_VABI sceAudioOut2Initialize(void) {
@@ -456,6 +480,7 @@ int APS5_VABI sceAudioOutInit() {
 int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len,
     std::uint32_t freq, std::uint32_t param) {
     (void)userId;
+    (void)index;
     if (!portTypeValid(type)) {
         return -2144993270;
     }
@@ -464,9 +489,6 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
     }
     if (freq == 0) {
         return -2144993272;
-    }
-    if (index != 0) {
-        throw std::runtime_error("sceAudioOutOpen: index != 0 not supported");
     }
 
     Format format = Format::Unknown;
