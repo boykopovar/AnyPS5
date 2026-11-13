@@ -1125,7 +1125,13 @@ int APS5_VABI scePadResetOrientationForTracker(std::int32_t handle) {
 int APS5_VABI scePadGetMotionTimerUnit(std::int32_t handle, float* unit) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (unit == nullptr) return PAD_ERROR_INVALID_ARG;
-    *unit = 0.0f;
+    const float localUnit = 0.0f;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(unit, &localUnit, sizeof(localUnit))) {
+        errno = savedErrno;
+        return PAD_ERROR_INVALID_ARG;
+    }
+    errno = savedErrno;
     if (!OpenHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
