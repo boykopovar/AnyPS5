@@ -16,6 +16,7 @@
 #include <iterator>
 #include <fstream>
 #include <initializer_list>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -40,6 +41,21 @@
 using LibreSsl::Bio;
 using LibreSsl::BioBuffer;
 using LibreSsl::BioMethod;
+
+struct TestBioSslData {
+    void* ssl;
+    int renegotiates;
+    std::uint64_t renegotiateCount;
+    std::uint64_t byteCount;
+    std::uint64_t renegotiateTimeout;
+    std::int64_t lastTime;
+};
+
+static_assert(sizeof(TestBioSslData) == 48);
+static_assert(offsetof(TestBioSslData, renegotiateCount) == 16);
+static_assert(offsetof(TestBioSslData, byteCount) == 24);
+static_assert(offsetof(TestBioSslData, renegotiateTimeout) == 32);
+static_assert(offsetof(TestBioSslData, lastTime) == 40);
 
 
 #ifdef ANYPS5_BIO_DYNAMIC
@@ -562,6 +578,41 @@ void TestUnsupported() {
 }
 
 #ifndef ANYPS5_BIO_DYNAMIC
+void TestSslMethod() {
+    const BioMethod* method = BIO_f_ssl_nid_postfix();
+    Require(method && method->type == 0x207 && std::strcmp(method->name, "ssl") == 0, "SSL BIO method descriptor");
+    Require(method->write && method->read && method->puts && method->control && method->create && method->destroy && method->callbackControl,
+        "SSL BIO method has its callbacks");
+    Bio* bio = BIO_new_nid_postfix(method);
+    Require(bio && !bio->initialized && !bio->flags && bio->shutdown && bio->data, "SSL BIO creates zeroed private state");
+    const auto* state = static_cast<const TestBioSslData*>(bio->data);
+    Require(!state->ssl && !state->renegotiates && !state->renegotiateCount && !state->byteCount && !state->renegotiateTimeout && !state->lastTime,
+        "SSL BIO private state starts zeroed");
+    Require(BIO_ctrl_nid_postfix(bio, 1, 0, nullptr) == 0, "unattached reset returns zero");
+    Require(BIO_ctrl_nid_postfix(bio, 3, 0, nullptr) == 0, "unattached info returns zero");
+    Require(BIO_ctrl_nid_postfix(bio, 8, 0, nullptr) == 0, "unattached get-close returns zero");
+    Require(BIO_ctrl_nid_postfix(bio, 9, 0, nullptr) == 0 && bio->shutdown == 1,
+        "unattached set-close returns zero without changing shutdown");
+    void* sslSentinel = bio;
+    Require(BIO_ctrl_nid_postfix(bio, 110, 0, &sslSentinel) == 0 && sslSentinel == bio,
+        "unattached get-SSL returns zero without writing its output");
+    Require(BIO_ctrl_nid_postfix(bio, 119, 1, nullptr) == 0, "unattached SSL mode returns zero");
+    Require(BIO_ctrl_nid_postfix(bio, 126, 0, nullptr) == 0, "unattached renegotiate count returns zero");
+    bool nullSetThrew = false;
+    try { BIO_ctrl_nid_postfix(bio, 109, 0, nullptr); }
+    catch (const std::invalid_argument&) { nullSetThrew = true; }
+    Require(nullSetThrew && bio->shutdown == 0 && !bio->initialized && !state->ssl,
+        "setting a null SSL updates shutdown then faults before initialization");
+    Require(method->read(nullptr, nullptr, 1) == 0 && method->write(nullptr, nullptr, 1) == 0, "null SSL BIO buffers return zero before BIO or SSL access");
+    Require(BIO_free_nid_postfix(bio) == 1 && allocations == 0, "unattached SSL BIO frees its guest state");
+    LibreSslPutError_nid_no_patch(2, 3, 17);
+    allocationsUntilFailure = 1;
+    Require(BIO_new_nid_postfix(method) == nullptr, "SSL BIO state allocation failure rejects creation");
+    Require(ERR_get_error_nid_postfix() == 0x02003011, "SSL BIO allocation error preserves older FIFO entries");
+    RequireError(0x14fff041);
+    Require(allocations == 0, "failed SSL BIO creation frees its outer BIO");
+    allocationsUntilFailure = -1;
+}
 void TestPkcs12BioReadErrors() {
     constexpr std::uint64_t bioUnsupported = 0x20fff079;
     constexpr std::uint64_t notEnoughData = 0x0dfff08e;
@@ -996,6 +1047,144 @@ void TestCertificateChainFileErrorPaths() {
     Require(allocations == 0, "unsupported certificate-chain decode leaked BIO storage");
     RemovePathAlias_nid_no_patch(AliasPrefix);
 }
+
+void TestPemReadX509FileWrapper() {
+    auto* const sentinel = reinterpret_cast<LibreSslX509*>(std::uintptr_t{1});
+    LibreSslX509* output = sentinel;
+
+    ERR_clear_error_nid_postfix();
+    Require(PEM_read_X509_nid_postfix(nullptr, &output, nullptr, nullptr) == nullptr,
+            "null FILE returns null");
+    RequireError(0x09fff007);
+    Require(allocations == 0 && output == sentinel, "null FILE preserves the output");
+
+    std::FILE* native = std::tmpfile();
+    Require(native != nullptr, "open temporary PEM file");
+    FileStream stream(native);
+    allocationsUntilFailure = 0;
+    Require(PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr) == nullptr,
+            "BIO allocation failure returns null");
+    allocationsUntilFailure = -1;
+    Require(ERR_get_error_nid_postfix() == 0x20fff041, "BIO allocation error precedes the PEM wrapper error");
+    RequireError(0x09fff007);
+    Require(allocations == 0 && output == sentinel, "BIO allocation failure has no leak or output write");
+
+    Require(PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr) == nullptr,
+            "empty PEM file returns null through the reader");
+    Require(allocations == 0 && stream.IsOpen() && output == sentinel,
+            "empty PEM file frees only the borrowed BIO and keeps the stream open");
+    RequireError(0x09fff06c);
+
+    constexpr char beginLine[] = "-----BEGIN CERTIFICATE-----\n";
+    Require(fwrite_nid_postfix(beginLine, 1, sizeof(beginLine) - 1, &stream) == sizeof(beginLine) - 1,
+            "write a BEGIN line to the borrowed PEM file");
+    Require(fflush_nid_postfix(&stream) == 0, "flush the BEGIN line before reading it back");
+    Require(fseek_nid_postfix(&stream, 0, SEEK_SET) == 0, "rewind the BEGIN line file");
+    bool conversionThrew = false;
+    try {
+        static_cast<void>(PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr));
+    } catch (const std::runtime_error&) {
+        conversionThrew = true;
+    }
+    Require(conversionThrew, "a BEGIN line reaches the unsupported conversion and propagates");
+    Require(allocations == 0 && stream.IsOpen() && output == sentinel,
+            "reader exception frees only the borrowed BIO and preserves stream and output");
+    Require(ERR_get_error_nid_postfix() == 0, "the unsupported conversion queues no OpenSSL errors");
+    Require(fclose_nid_postfix(&stream) == 0, "close borrowed PEM file after the reader exception");
+}
+
+std::uint64_t ErrorCode(int library, int reason) {
+    return (static_cast<std::uint64_t>(library) << 24) | (static_cast<std::uint64_t>(0xfff) << 12) |
+           static_cast<std::uint64_t>(reason);
+}
+
+void RequireErrorSequence(const std::vector<std::uint64_t>& expected) {
+    for (const auto code : expected) {
+        const auto actual = ERR_get_error_nid_postfix();
+        if (actual != code) std::fprintf(stderr, "certificate error: actual=%llx expected=%llx\n", static_cast<unsigned long long>(actual), static_cast<unsigned long long>(code));
+        Require(actual == code, "certificate file error order/code");
+    }
+    Require(ERR_get_error_nid_postfix() == 0, "unexpected certificate file error");
+}
+
+void TestCertificateFileLoadPaths() {
+    constexpr int BioControlSetFilename = 108;
+    constexpr int BioClose = 0x01;
+    constexpr int SslFileTypePem = 1;
+    const auto path = std::filesystem::temp_directory_path() / "anyps5-libressl-certificate-test.pem";
+    const auto directory = path.parent_path().string();
+    AddPathAlias_nid_no_patch("/anyps5-cert-test", directory.c_str());
+    const std::string filename = "/anyps5-cert-test/" + path.filename().string();
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+
+    ERR_clear_error_nid_postfix();
+    Require(SSL_CTX_use_certificate_file_nid_postfix(nullptr, filename.c_str(), SslFileTypePem) == 0,
+            "missing certificate file returns failure without reading ctx");
+    const int guestOpenError = errno;
+    RequireErrorSequence({ErrorCode(2, guestOpenError), ErrorCode(32, 2), ErrorCode(20, 2)});
+
+    ERR_clear_error_nid_postfix();
+    allocationsUntilFailure = 0;
+    Require(SSL_CTX_use_certificate_file_nid_postfix(nullptr, filename.c_str(), SslFileTypePem) == 0,
+            "BIO allocation failure returns failure without reading ctx");
+    allocationsUntilFailure = -1;
+    RequireErrorSequence({ErrorCode(32, 65), ErrorCode(20, 7)});
+    Require(allocations == 0, "failed BIO allocation leaked storage");
+
+    {
+        std::ofstream output(path, std::ios::binary);
+        Require(output.is_open(), "create empty invalid-type certificate file");
+    }
+    ERR_clear_error_nid_postfix();
+    Require(SSL_CTX_use_certificate_file_nid_postfix(nullptr, filename.c_str(), 0) == 0,
+            "invalid file type returns failure without reading ctx");
+    RequireErrorSequence({ErrorCode(20, 124)});
+    Require(std::filesystem::remove(path), "invalid-type BIO closed its file");
+
+    for (const int flags : {2, 4, 6, 8, 10, 12, 14}) {
+        { std::ofstream output(path, std::ios::binary); output << "seed"; }
+        Bio* modeBio = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
+        Require(modeBio != nullptr, "allocate filename mode BIO");
+        Require(BIO_ctrl_nid_postfix(modeBio, 108, flags | 1, const_cast<char*>(filename.c_str())) == 1,
+                "filename mode opens the stream");
+        Require(modeBio->initialized == 1 && modeBio->shutdown == 1 && modeBio->data, "filename mode state");
+        if (flags != 2) Require(BIO_write_nid_postfix(modeBio, "X", 1) == 1, "filename mode write");
+        Require(BIO_free_nid_postfix(modeBio) == 1, "close filename mode BIO");
+        std::ifstream input(path, std::ios::binary);
+        std::string result((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+        Require(result == (flags & 8 ? "seedX" : flags == 4 ? "X" : flags == 6 ? "Xeed" : "seed"), "filename mode contents");
+    }
+    Bio* replacement = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
+    Require(replacement && BIO_ctrl_nid_postfix(replacement, 108, 3, const_cast<char*>(filename.c_str())) == 1,
+            "open owned stream before replacement");
+    replacement->flags = 0x88;
+    Require(BIO_ctrl_nid_postfix(replacement, 108, 1, nullptr) == 0, "invalid replacement mode fails before filename");
+    Require(replacement->data == nullptr && replacement->initialized == 0 && replacement->flags == 0 && replacement->shutdown == 1,
+            "owned replacement clears old stream state before mode failure");
+    RequireErrorSequence({ErrorCode(32, 101)});
+    Require(BIO_free_nid_postfix(replacement) == 1, "free failed replacement BIO");
+
+    auto* borrowed = fopen_nid_postfix(filename.c_str(), "r");
+    Require(borrowed != nullptr, "open borrowed stream");
+    Bio* unowned = BIO_new_fp_nid_postfix(borrowed, 0);
+    Require(unowned != nullptr, "allocate borrowed stream BIO");
+    unowned->flags = 0x88;
+    Require(BIO_ctrl_nid_postfix(unowned, 108, 0, nullptr) == 0, "unowned invalid replacement mode");
+    Require(unowned->data == borrowed && unowned->initialized == 1 && unowned->flags == 0x88 && unowned->shutdown == 0,
+            "unowned stream state survives failed replacement");
+    RequireErrorSequence({ErrorCode(32, 101)});
+    Require(BIO_free_nid_postfix(unowned) == 1 && fclose_nid_postfix(borrowed) == 0, "borrowed stream remains caller-owned");
+    Require(std::filesystem::remove(path), "remove filename mode fixture");
+
+    Bio* fileBio = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
+    Require(fileBio != nullptr, "allocate file BIO for filename-control mode check");
+    Require(BIO_ctrl_nid_postfix(fileBio, BioControlSetFilename, BioClose, const_cast<char*>(filename.c_str())) == 0,
+            "filename control rejects missing read/write/append mode");
+    RequireErrorSequence({ErrorCode(32, 101)});
+    Require(BIO_free_nid_postfix(fileBio) == 1, "free file BIO after bad filename mode");
+    RemovePathAlias_nid_no_patch("/anyps5-cert-test");
+}
 #endif
 
 }  // namespace
@@ -1018,11 +1207,14 @@ int main(int argc, char** argv) {
     TestDispatchAndReferences();
     TestUnsupported();
 #ifndef ANYPS5_BIO_DYNAMIC
+    TestSslMethod();
     TestPkcs12BioReadErrors();
     TestPemReadBioX509NoStartLine();
     TestFileAndSocket();
     TestPrivateKeyFileErrorPaths();
     TestCertificateChainFileErrorPaths();
+    TestPemReadX509FileWrapper();
+    TestCertificateFileLoadPaths();
 #endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");
     Require(ERR_get_error_nid_postfix() == 0, "BIO tests left an unexpected error");

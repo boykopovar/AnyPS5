@@ -1,6 +1,7 @@
 #include "prx/libSceNpParty/libSceNpParty.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -45,12 +46,18 @@ bool uninitializedTests() {
 bool stateTests() {
     std::uint16_t states[3];
     std::memset(states, 0xa5, sizeof(states));
-    return check(sceNpPartyGetStateAsUserA(-1, &states[1]) == kInvalidArgument && states[1] == 0xa5a5, "user -1 was not refused with INVALID_ARGUMENT")
+    errno = 71;
+    const bool unmappedOk = check(sceNpPartyGetState(reinterpret_cast<std::uint16_t*>(0x10)) == kInvalidArgument, "unmapped state was not refused")
+        && check(errno == 71, "errno was not preserved");
+    return unmappedOk
+        && check(sceNpPartyGetStateAsUserA(-1, &states[1]) == kInvalidArgument && states[1] == 0xa5a5, "user -1 was not refused with INVALID_ARGUMENT")
         && check(sceNpPartyGetState(nullptr) == kInvalidArgument, "a null state was not refused with INVALID_ARGUMENT")
         && check(sceNpPartyGetState(&states[1]) == 0 && states[1] == 2, "the state is not NOT_IN_PARTY")
         && check(states[0] == 0xa5a5 && states[2] == 0xa5a5, "sceNpPartyGetState wrote past its 16-bit state")
         && check(sceNpPartyGetStateAsUserA(1, nullptr) == kInvalidArgument, "a null user state was not refused with INVALID_ARGUMENT")
         && check(sceNpPartyGetStateAsUserA(1, &states[0]) == 0 && states[0] == 2, "the user state is not NOT_IN_PARTY")
+        && check(sceNpPartyGetStateAsUserA(0, &states[0]) == 0 && states[0] == 2, "user 0 was refused")
+        && check(sceNpPartyGetStateAsUserA(100, &states[0]) == 0 && states[0] == 2, "user 100 was refused")
         && check(states[2] == 0xa5a5, "sceNpPartyGetStateAsUserA wrote past its 16-bit state");
 }
 
@@ -60,6 +67,7 @@ bool lifecycleTests() {
     param[0] = 0x6000000;
     std::uint64_t handlers[8] = {};
     handlers[1] = 1;
+    std::uint64_t nullCallbackHandlers[8] = {};
     return check(sceNpPartyTerminate() == kNotInitialized, "terminate before initialize did not fail")
         && check(sceNpPartyCheckCallback() == kNotInitialized, "check callback before initialize did not fail")
         && check(sceNpPartyRegisterHandlerA(handlers, nullptr) == kNotInitialized, "register handler before initialize did not fail")
@@ -74,6 +82,9 @@ bool lifecycleTests() {
         && check(sceNpPartyRegisterHandlerA(handlers, param) == 0, "register handler failed")
         && check(sceNpPartyRegisterHandler(nullptr, nullptr) == kInvalidArgument, "null plain handlers were not refused")
         && check(sceNpPartyRegisterHandler(handlers, param) == 0, "the plain register handler failed")
+        && check(sceNpPartyRegisterHandler(nullCallbackHandlers, nullptr) == 0, "plain register with null callback failed")
+        && check(sceNpPartyRegisterPrivateHandler(handlers) == kHandlerState, "private handler succeeded when callback was null")
+        && check(sceNpPartyRegisterHandler(handlers, param) == 0, "restoring valid handler callback failed")
         && check(sceNpPartyRegisterHandlerA(handlers, param) == kHandlerState, "a second A registration did not fail")
         && check(sceNpPartyRegisterPrivateHandler(handlers) == 0, "register private handler failed")
         && check(sceNpPartyUnregisterPrivateHandler() == 0, "unregister private handler failed")
@@ -144,7 +155,11 @@ bool priorityTests() {
         && check(sceNpPartyGetVoiceChatPriority(&priority) == kNotInParty && priority == 0xa5a5a5a5, "get priority did not report NOT_IN_PARTY without writing")
         && check(sceNpPartySetVoiceChatPriority(0) == kInvalidArgument, "priority 0 was not refused")
         && check(sceNpPartySetVoiceChatPriority(3) == kInvalidArgument, "priority 3 was not refused")
+        && check(sceNpPartySetVoiceChatPriority(4) == kInvalidArgument, "priority 4 was not refused")
         && check(sceNpPartySetVoiceChatPriority(-1) == kInvalidArgument, "priority -1 was not refused")
+        && check(sceNpPartySetVoiceChatPriority(-2) == kInvalidArgument, "priority -2 was not refused")
+        && check(sceNpPartySetVoiceChatPriority(-2147483647 - 1) == kInvalidArgument, "INT32_MIN priority was not refused")
+        && check(sceNpPartySetVoiceChatPriority(2147483647) == kInvalidArgument, "INT32_MAX priority was not refused")
         && check(sceNpPartySetVoiceChatPriority(1) == kNotInParty, "priority 1 did not report NOT_IN_PARTY")
         && check(sceNpPartySetVoiceChatPriority(2) == kNotInParty, "priority 2 did not report NOT_IN_PARTY");
 }
