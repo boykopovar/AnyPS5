@@ -5,6 +5,7 @@
 #include "Enumeration.hpp"
 #include "ErrorName.hpp"
 #include "Invariant.hpp"
+#include "CaseProperties.hpp"
 #include "Iterator.hpp"
 #include "prx/libSceIcu/include/InventoryDispatch.hpp"
 #include "Utf8.hpp"
