@@ -74,6 +74,16 @@ def text(value):
     return value.decode("utf-8", "replace") if isinstance(value, bytes) else value
 
 
+def positive_seconds(value):
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a positive number of seconds") from None
+    if not 0 < seconds < float("inf"):
+        raise argparse.ArgumentTypeError("must be a positive number of seconds")
+    return seconds
+
+
 def environment(modules):
     copy = dict(os.environ)
     for name in ("PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
@@ -179,7 +189,7 @@ def main(argv=None):
     parser.add_argument("--modules", type=Path, help="directory of the unpatched modules (default: BUILD/core/libs/libs/unpatched)")
     parser.add_argument("--replay", type=Path, help="the library_oracle_replay executable (default: found under BUILD)")
     parser.add_argument("--known", type=Path, default=HERE / "known.tsv")
-    parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--timeout", type=positive_seconds, default=60)
     parser.add_argument("--write-known", action="store_true", help="record every current finding in the known file, keeping existing reasons")
     args = parser.parse_args(argv)
     unknown = sorted(set(args.families) - set(FAMILIES))

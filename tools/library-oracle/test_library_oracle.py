@@ -44,6 +44,18 @@ class ReplayTests(unittest.TestCase):
         findings, _ = library_oracle.replay("replay", "modules", "x.golden.tsv", set(), 5, run)
         self.assertEqual(findings, {"c": ("hang", "timed out after 5 s"), "d": ("missing", "sceMissing")})
 
+    def test_the_timeout_must_be_a_positive_finite_number(self):
+        from contextlib import redirect_stderr
+        from unittest.mock import patch
+        for value in ("0", "-5", "nan", "inf", "x"):
+            with self.subTest(value=value):
+                errors = io.StringIO()
+                with patch.object(library_oracle, "fetch") as fetch, redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                    library_oracle.main(["rtc", "--replay", "replay", "--timeout", value])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("--timeout: must be a positive number of seconds", errors.getvalue())
+                fetch.assert_not_called()
+
     def test_an_escaping_exception_is_recorded_with_its_message(self):
         run = Script(Done(3, "", "RUN\te\nterminate called after throwing an instance of 'std::runtime_error'\n  what():  bad packet\n"),
                      Done(0, "SUMMARY\tcompared 0\tmismatched 0\tskipped 1\n", ""))
