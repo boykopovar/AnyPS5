@@ -11,7 +11,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import select_tests
 
 
-EXPLICIT_ARGS = len(sys.argv) >= 3 and Path(sys.argv[1]).is_dir()
+EXPLICIT_ARGS = (
+    len(sys.argv) >= 3
+    and __name__ == "__main__"
+    and Path(sys.argv[1]).is_dir()
+)
 if EXPLICIT_ARGS:
     SOURCE = Path(sys.argv.pop(1))
     CMAKE = sys.argv.pop(1)
@@ -34,9 +38,15 @@ class Fixture:
         header = root / 'core/libs/prx/libc/include/HostThreadLocal.hpp'
         header.parent.mkdir(parents=True)
         header.write_text('struct FixtureThreadLocal {};\n', encoding='utf-8')
+        slot = root / 'core/libs/prx/libc/include/HostThreadSlot.hpp'
+        slot.write_text('struct FixtureThreadSlot {};\n', encoding='utf-8')
+        (header.parent / 'HostThread.hpp').write_text('struct FixtureHostThread {};\n', encoding='utf-8')
         shared = root / 'core/libs/prx/libc/include/general/AtomicSharedPtr.hpp'
         shared.parent.mkdir(parents=True)
         shared.write_text('struct FixtureAtomicSharedPtr {};\n', encoding='utf-8')
+        remove_tree = root / 'core/libs/prx/libc/include/RemoveTree.hpp'
+        remove_tree.parent.mkdir(parents=True, exist_ok=True)
+        remove_tree.write_text('struct FixtureRemoveTree {};\n', encoding='utf-8')
         self.guard = root / 'driver.cpp'
         self.guard.write_text('int fixture_driver;\n', encoding='utf-8')
         compiler = root / ('compiler.cmd' if os.name == 'nt' else 'compiler')

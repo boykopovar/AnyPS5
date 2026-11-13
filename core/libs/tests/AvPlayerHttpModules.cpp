@@ -58,8 +58,8 @@ std::filesystem::path ModulePath(HMODULE module) {
 int main(int argc, char** argv) {
     try {
         Require(argc == 3, "expected module directory and AvPlayer module name");
-        const auto directory = std::filesystem::canonical(std::filesystem::u8path(argv[1]));
-        const auto player = directory / std::filesystem::u8path(argv[2]);
+        const auto directory = std::filesystem::canonical(std::filesystem::path(reinterpret_cast<const char8_t*>(argv[1])));
+        const auto player = directory / std::filesystem::path(reinterpret_cast<const char8_t*>(argv[2]));
         const auto expected = std::filesystem::canonical(directory / "libSceHttp.prx");
 #ifdef _WIN32
         const auto consumer = LoadLibraryW(player.c_str());

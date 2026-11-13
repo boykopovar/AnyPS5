@@ -231,6 +231,47 @@ static void CheckLogSpecialValues() {
     Require(std::abs(logf_nid_postfix(1.4012985e-45f) + 103.27893f) <= 103.27893f * 1e-6f);
 }
 
+static void CheckRoundHalfwayAwayFromZero() {
+    const double doubleCases[][2] = {{0.5, 1.0}, {-0.5, -1.0}, {1.5, 2.0}, {2.5, 3.0}, {-1.5, -2.0}, {-2.5, -3.0}, {0.4, 0.0}, {-0.6, -1.0}, {4503599627370495.5, 4503599627370496.0}, {-4503599627370495.5, -4503599627370496.0}};
+    for (const auto& item : doubleCases) Require(round_nid_postfix(item[0]) == item[1]);
+    Require(round_nid_postfix(0.49999999999999994) == 0.0 && !std::signbit(round_nid_postfix(0.49999999999999994)));
+    Require(std::signbit(round_nid_postfix(-0.4)) && round_nid_postfix(-0.4) == 0.0);
+    Require(!std::signbit(round_nid_postfix(0.0)) && std::signbit(round_nid_postfix(-0.0)));
+    Require(round_nid_postfix(INFINITY) == INFINITY && round_nid_postfix(-INFINITY) == -INFINITY);
+    Require(std::isnan(round_nid_postfix(NAN)));
+    Require(round_nid_postfix(4503599627370497.0) == 4503599627370497.0 && round_nid_postfix(1e300) == 1e300);
+
+    const float floatCases[][2] = {{0.5f, 1.0f}, {-0.5f, -1.0f}, {1.5f, 2.0f}, {2.5f, 3.0f}, {-1.5f, -2.0f}, {-2.5f, -3.0f}, {0.4f, 0.0f}, {-0.6f, -1.0f}, {8388607.5f, 8388608.0f}, {-8388607.5f, -8388608.0f}};
+    for (const auto& item : floatCases) Require(roundf_nid_postfix(item[0]) == item[1]);
+    Require(roundf_nid_postfix(0.49999997f) == 0.0f && !std::signbit(roundf_nid_postfix(0.49999997f)));
+    Require(std::signbit(roundf_nid_postfix(-0.4f)) && roundf_nid_postfix(-0.4f) == 0.0f);
+    Require(!std::signbit(roundf_nid_postfix(0.0f)) && std::signbit(roundf_nid_postfix(-0.0f)));
+    Require(roundf_nid_postfix(INFINITY) == INFINITY && roundf_nid_postfix(-INFINITY) == -INFINITY);
+    Require(std::isnan(roundf_nid_postfix(NAN)));
+    Require(roundf_nid_postfix(8388609.0f) == 8388609.0f && roundf_nid_postfix(1e38f) == 1e38f);
+}
+
+static void CheckExpSpecialValues() {
+    Require(exp_nid_postfix(0.0) == 1.0 && exp_nid_postfix(-0.0) == 1.0);
+    Require(exp_nid_postfix(INFINITY) == INFINITY);
+    Require(exp_nid_postfix(-INFINITY) == 0.0 && !std::signbit(exp_nid_postfix(-INFINITY)));
+    Require(std::isnan(exp_nid_postfix(NAN)));
+    Require(std::abs(exp_nid_postfix(1.0) - 2.718281828459045) <= 2.718281828459045 * 1e-15);
+    Require(std::abs(exp_nid_postfix(-1.0) - 0.36787944117144233) <= 0.36787944117144233 * 1e-15);
+    errno = 0;
+    Require(exp_nid_postfix(710.0) == INFINITY && errno == ERANGE);
+    Require(exp_nid_postfix(-746.0) == 0.0);
+
+    Require(expf_nid_postfix(0.0f) == 1.0f && expf_nid_postfix(-0.0f) == 1.0f);
+    Require(expf_nid_postfix(INFINITY) == INFINITY);
+    Require(expf_nid_postfix(-INFINITY) == 0.0f && !std::signbit(expf_nid_postfix(-INFINITY)));
+    Require(std::isnan(expf_nid_postfix(NAN)));
+    Require(std::abs(expf_nid_postfix(1.0f) - 2.7182817f) <= 2.7182817f * 1e-6f);
+    errno = 0;
+    Require(expf_nid_postfix(89.0f) == INFINITY && errno == ERANGE);
+    Require(expf_nid_postfix(-110.0f) == 0.0f);
+}
+
 int main() {
     CheckRoundingAndScaling();
     CheckLogblLroundl();
@@ -241,6 +282,8 @@ int main() {
     CheckRoundingModes();
     CheckRintTiesToEven();
     CheckClassification();
+    CheckRoundHalfwayAwayFromZero();
+    CheckExpSpecialValues();
     CheckLogSpecialValues();
     return 0;
 }

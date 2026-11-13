@@ -30,6 +30,7 @@ struct SpirvRequirements {
     bool coherentBufferPairs = false;
     bool bufferU64View = false;
     bool imageInt64Atomics = false;
+    bool gdsInt64Atomics = false;
     bool sharedInt64Atomics = false;
     bool float64 = false;
     bool float64NeedsDevice = false;

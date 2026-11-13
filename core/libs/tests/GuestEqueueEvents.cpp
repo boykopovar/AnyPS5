@@ -244,6 +244,8 @@ static void VerifyRepeatedAmprCompletionsAreNotLost() {
     Require(sceKernelWaitEqueue(eq, events, 4, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(sceKernelDeleteAmprEvent(eq, 3) == SCE_OK);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    Require(sceKernelAddAmprEvent(eq, 3, &udata) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelAddAmprEvent(0, 3, &udata) == SCE_KERNEL_ERROR_EBADF);
 }
 
 static void VerifyUndrainedTriggersStayBounded() {
@@ -394,7 +396,33 @@ static void VerifyReportedEventsMoveBehindWaitingOnes() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void VerifyInvalidQueueAttributes() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(nullptr, "invalid") == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateEqueue(&eq, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateEqueue(nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    KernelEqueue untouched = 0x1234;
+    Require(sceKernelCreateEqueue(&untouched, "0123456789012345678901234567890123456789") == static_cast<int>(0x8002003fu) && untouched == 0x1234);
+    Require(sceKernelCreateEqueue(&untouched, "01234567890123456789012345678901") == static_cast<int>(0x8002003fu) && untouched == 0x1234);
+    Require(sceKernelCreateEqueue(&untouched, "0123456789012345678901234567890") == SCE_OK && untouched != 0x1234);
+    Require(sceKernelDeleteEqueue(untouched) == SCE_OK);
+
+    Require(sceKernelCreateEqueue(&eq, reinterpret_cast<const char*>(1)) == SCE_KERNEL_ERROR_EFAULT && eq == 0);
+    Require(sceKernelCreateEqueue(reinterpret_cast<KernelEqueue*>(1), "bad output") == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelCreateEqueue(&eq, "bounds") == SCE_OK);
+    Require(static_cast<std::uint32_t>(eq) == static_cast<std::uint32_t>(untouched));
+    KernelEvent event{};
+    int count = -1;
+    const KernelUseconds timeout = 0;
+    Require(sceKernelWaitEqueue(eq, &event, 0, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, &event, -1, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, &event, 1, nullptr, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, nullptr, 1, &count, &timeout) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 int main() {
+    VerifyInvalidQueueAttributes();
     VerifyPeriodicTimer();
     VerifyHRTimerDelete();
     VerifyUserEventReportedOncePerWait();
@@ -431,6 +459,11 @@ int main() {
     Require(sceKernelGetEventId(&timerEvent) == 9);
     Require(sceKernelGetEventFilter(&timerEvent) == EVFILT_HRTIMER);
     Require(sceKernelGetEventUserData(&timerEvent) == &payload);
+    const KernelTimespec later{60, 0};
+    Require(sceKernelAddHRTimerEvent(eq, 16, &later, &payload) == SCE_OK);
+    Require(sceKernelDeleteTimerEvent(eq, 16) == SCE_KERNEL_ERROR_ENOENT);
+    Require(sceKernelDeleteHRTimerEvent(eq, 16) == SCE_OK);
+    Require(sceKernelDeleteHRTimerEvent(eq, 16) == SCE_KERNEL_ERROR_ENOENT);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 
     KernelEvent rawEvent{};
@@ -482,4 +515,25 @@ int main() {
     Require(RejectsNull(sceKernelGetEventFilter));
     Require(RejectsNull(sceKernelGetEventId));
     Require(RejectsNull(sceKernelGetEventUserData));
+
+    KernelEqueue closedEq = 0;
+    Require(sceKernelCreateEqueue(&closedEq, "closed") == SCE_OK);
+    Require(sceKernelDeleteEqueue(closedEq) == SCE_OK);
+    Require(sceKernelAddUserEvent(closedEq, 7) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelAddUserEvent(0, 7) == SCE_KERNEL_ERROR_EBADF);
+
+    KernelEqueue amprEq = 0;
+    Require(sceKernelCreateEqueue(&amprEq, "ampr-system") == SCE_OK);
+    int amprUdata = 0;
+    Require(sceKernelAddAmprSystemEvent(amprEq, 4, &amprUdata) == SCE_OK);
+    KernelEvent amprEvents[2]{};
+    int amprCount = 0;
+    const KernelUseconds amprPoll = 0;
+    Require(EqueueTriggerEvent_nid_postfix(amprEq, 4, EVFILT_AMPR, reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x66))) == SCE_OK);
+    Require(sceKernelWaitEqueue(amprEq, amprEvents, 2, &amprCount, &amprPoll) == SCE_OK);
+    Require(amprCount == 1 && sceKernelGetEventFilter(&amprEvents[0]) == EVFILT_AMPR && sceKernelGetEventId(&amprEvents[0]) == 4 &&
+        sceKernelGetEventData(&amprEvents[0]) == 0x66 && sceKernelGetEventUserData(&amprEvents[0]) == &amprUdata);
+    Require(sceKernelDeleteEqueue(amprEq) == SCE_OK);
+    Require(sceKernelAddAmprSystemEvent(amprEq, 4, &amprUdata) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelAddAmprSystemEvent(0, 4, &amprUdata) == SCE_KERNEL_ERROR_EBADF);
 }

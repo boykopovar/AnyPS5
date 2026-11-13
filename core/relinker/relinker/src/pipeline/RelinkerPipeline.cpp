@@ -11,6 +11,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <domain/ImportModule.hpp>
@@ -30,7 +31,7 @@ constexpr std::uint16_t kEtSceDynamic = 0xfe18;
 
 }
 
-RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress)
+RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress, const bool functionSymbolRoots)
     : elfReader(std::move(elfReader))
     , syscallScanner(std::move(syscallScanner))
     , callSiteResolver(std::move(callSiteResolver))
@@ -39,6 +40,7 @@ RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::s
     , unusedNidFilter(std::move(unusedNidFilter))
     , unusedFilterLevel(unusedFilterLevel)
     , progress(progress)
+    , functionSymbolRoots(functionSymbolRoots)
 {
     if (!this->elfReader || !this->syscallScanner || !this->callSiteResolver || !this->validationPolicy || !this->dynamicSectionBuilder || !this->unusedNidFilter) throw RelinkerException("Missing relinker pipeline dependency");
     if (unusedFilterLevel > 2) throw RelinkerException("Unused NID filter level must be 0, 1 or 2");
@@ -87,6 +89,8 @@ RelinkResult RelinkerPipeline::Relink() {
     ByteCount gotSize = 0;
 
     for (const auto& ph : programHeaders) {
+        if (ph.Type == PT_LOAD && (ph.Flags & ~7u) != 0)
+            throw RelinkerException("Unsupported PT_LOAD permission flags", ph.Offset);
         if (ph.Type == PT_LOAD && (ph.Flags & PF_X) != 0) {
             auto segment = elfReader->ReadSegment(ph);
             if (!segment.empty()) {
@@ -314,7 +318,9 @@ RelinkResult RelinkerPipeline::Relink() {
     }
 
     std::map<std::uint64_t, std::string> importModules;
+    std::set<std::uint64_t> ownModules;
     for (const auto& tag : dynTags) {
+        if (tag.Tag == 0x61000043 || tag.Tag == 0x6100000d) ownModules.insert(tag.Value >> 48);
         if (tag.Tag == 0x61000045 && !importModules.emplace(tag.Value >> 48, readCStr(tag.Value & 0xffffffffu)).second)
             throw RelinkerException("Duplicate import module ID");
     }
@@ -435,7 +441,7 @@ RelinkResult RelinkerPipeline::Relink() {
             const bool weak = (raw[symOff + 4] >> 4) == STB_WEAK;
             const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
             const bool function = symbolType == STT_FUNC;
-            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend, weak, function, symbolType});
+            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries, ownModules), relType, pos, rOffset, rAddend, weak, function, symbolType});
         }
     };
 
@@ -523,10 +529,11 @@ RelinkResult RelinkerPipeline::Relink() {
                 if (section >= SHN_LORESERVE)
                     throw RelinkerException("Unsupported executable export section: " + name, entryOffset);
                 const std::uint32_t flags = type == STT_FUNC ? PF_X : 0;
-                const auto extent = std::max<std::uint64_t>(size, 1);
+                const bool functionRoot = functionSymbolRoots && type == STT_FUNC;
+                const auto extent = functionRoot ? 1 : std::max<std::uint64_t>(size, 1);
                 const bool mapped = std::any_of(programHeaders.begin(), programHeaders.end(), [&](const ProgramHeader& ph) {
                     return ph.Type == PT_LOAD && (ph.Flags & flags) == flags && value >= ph.MappedAddress &&
-                           value - ph.MappedAddress < ph.MemorySize && extent <= ph.MemorySize - (value - ph.MappedAddress);
+                           value - ph.MappedAddress < (functionRoot ? ph.FileSize : ph.MemorySize) && extent <= (functionRoot ? ph.FileSize : ph.MemorySize) - (value - ph.MappedAddress);
                 });
                 if (!mapped) {
                     std::ostringstream message;
@@ -538,7 +545,7 @@ RelinkResult RelinkerPipeline::Relink() {
             }
             exportedSymbols.emplace_back(off, std::move(name));
             const auto binding = symbol[4] >> 4;
-            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC)
+            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC && section != SHN_ABS)
                 exportedFunctions.push_back(value);
         }
     }
@@ -598,7 +605,7 @@ RelinkResult RelinkerPipeline::Relink() {
     auto dynSection = dynamicSectionBuilder->BuildDynamicSection(dynamicRefs, neededLibraries, dynJmpRelOffset, pltCount);
     for (const auto& ref : dynamicRefs) {
         if (!ref.Library.empty()) continue;
-        if (auto declared = Domain::DeclaredImportModule(ref.Nid, importModules); !declared.empty()) dynSection.UnmatchedImportModules.insert(std::move(declared));
+        if (auto declared = Domain::DeclaredImportModule(ref.Nid, importModules, ownModules); !declared.empty()) dynSection.UnmatchedImportModules.insert(std::move(declared));
     }
 
     for (const auto& [off, name] : exportedSymbols) {

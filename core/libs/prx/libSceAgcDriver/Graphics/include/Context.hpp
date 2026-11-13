@@ -6,6 +6,7 @@
 #endif
 #include <mutex>
 #include <vulkan/vulkan.h>
+#include "prx/libc/include/PrimedSharedMutex.hpp"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -35,6 +36,7 @@ class SamplerCache;
 class ShaderResources;
 class PlaceholderImages;
 class VertexInputCache;
+class VertexBufferFormats;
 
 class PipelineCacheSynchronization {
 public:
@@ -46,7 +48,7 @@ public:
     SnapshotLock TryLockForSnapshot() const { return SnapshotLock(mutex, std::try_to_lock); }
 
 private:
-    mutable std::shared_mutex mutex;
+    mutable PrimedSharedMutex mutex;
 };
 
 inline void Require(bool condition, const std::string& reason) {
@@ -116,6 +118,7 @@ struct DeviceFunctions {
     PFN_vkCmdEndRenderingKHR cmdEndRendering = nullptr;
     PFN_vkCmdSetViewport cmdSetViewport = nullptr;
     PFN_vkCmdSetScissor cmdSetScissor = nullptr;
+    PFN_vkCmdSetColorWriteMaskEXT cmdSetColorWriteMask = nullptr;
     PFN_vkCmdSetDepthBounds cmdSetDepthBounds = nullptr;
     PFN_vkCmdSetDepthBias cmdSetDepthBias = nullptr;
     PFN_vkCmdSetCullModeEXT cmdSetCullMode = nullptr;
@@ -178,10 +181,13 @@ struct Context {
     VkDeviceSize hostImportAlignment = 0;
     bool drawInputsInPlace = true;
     bool discreteGpu = false;
+    bool integratedGpu = false;
     bool dmaBufImport = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool sparseResidencyAliased = false;
+    bool sparseResidencyImage2D = false;
+    PFN_vkGetPhysicalDeviceSparseImageFormatProperties sparseImageFormatProperties = nullptr;
     std::uint32_t queueFamily = 0;
     std::uint32_t sparseFamily = VK_QUEUE_FAMILY_IGNORED;
     VkQueue sparseQueue = VK_NULL_HANDLE;
@@ -212,6 +218,7 @@ struct Context {
     bool dualSrcBlend = false;
     bool logicOp = false;
     bool samplerFilterMinmax = false;
+    bool samplerMirrorClampToEdge = false;
     bool nonSeamlessCubeMap = false;
     VkSampleCountFlags mergedCoverageSampleCounts = 0;
     VkSampleCountFlags truncatedCoverageSampleCounts = 0;
@@ -219,6 +226,7 @@ struct Context {
     bool conservativeRasterization = false;
     bool meshWave32 = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
+    VkBuffer oversizedBuffer = VK_NULL_HANDLE;
     bool exactRobustLoads = false;
     // The device's list of recorded dispatches whose copied written buffers await a CPU write-back
     // (VulkanDevice's State::copiedWriters; the draw counterpart is DrawCopiedWriters): an indirect
@@ -245,6 +253,7 @@ struct Context {
     bool largePoints = false;
     bool sampleRateShading = false;
     bool fillModeNonSolid = false;
+    bool wideLines = false;
     bool maintenance5 = false;
     bool storageImageMultisample = false;
     bool storageImageWriteWithoutFormat = false;
@@ -257,12 +266,17 @@ struct Context {
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
+    bool fmaFloat16 = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
+    bool shaderResourceMinLod = false;
+    bool shaderImageMinLod = false;
     bool pipelineExecutableInfo = false;
     bool maintenance8 = false;
+    bool pushDescriptors = false;
     bool graphicsPipelineLibrary = false;
     bool pipelineLinkTimeOptimization = true;
+    bool dynamicColorWriteMask = false;
     std::uint32_t srgbDecodeFormats = 0;
     std::uint32_t srgbCopyFormats = 0;
     bool provokingVertexLast = false;
@@ -279,6 +293,7 @@ struct Context {
         return pipelineCacheSynchronization != nullptr ? pipelineCacheSynchronization->LockForPipelineUse() : PipelineCacheSynchronization::PipelineUseLock{};
     }
     VertexInputCache* vertexInputs = nullptr;
+    VertexBufferFormats* vertexFormats = nullptr;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {
@@ -330,33 +345,60 @@ struct Context {
         return type;
     }
 
-    std::uint32_t DeviceMemoryType(std::uint32_t mask, VkDeviceSize bytes, const char* what) const {
-        const auto type = MemoryType(mask, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE) return type;
+    struct HeapReport {
+        VkDeviceSize budget = 0;
+        VkDeviceSize usage = 0;
+        bool Fits(VkDeviceSize bytes) const { return budget == 0 || (usage < budget && bytes <= budget - usage); }
+    };
+
+    HeapReport ReportedHeap(std::uint32_t heap) const {
+        if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE) return {};
         VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
         VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
         properties.pNext = &reported;
         memoryProperties2(physical, &properties);
+        return {reported.heapBudget[heap], reported.heapUsage[heap]};
+    }
+
+    bool DeviceLocalFits(std::uint32_t mask, VkDeviceSize bytes) const {
+        return ReportedHeap(memory.memoryTypes[MemoryType(mask, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)].heapIndex).Fits(bytes);
+    }
+
+    std::uint32_t DeviceMemoryType(std::uint32_t mask, VkDeviceSize bytes, const char* what) const {
+        const auto type = MemoryType(mask, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         const auto heap = memory.memoryTypes[type].heapIndex;
-        const auto budget = reported.heapBudget[heap];
-        const auto usage = reported.heapUsage[heap];
-        if (budget == 0 || (usage < budget && bytes <= budget - usage)) return type;
+        const auto report = ReportedHeap(heap);
+        if (report.Fits(bytes)) return type;
         const auto host = HostMemoryType(mask);
         if (!host) return type;
         if (cacheReclaim != nullptr) {
-            const auto wanted = bytes + (usage > budget ? usage - budget : 0u);
+            const auto wanted = bytes + (report.usage > report.budget ? report.usage - report.budget : 0u);
             const auto released = cacheReclaim(wanted, true);
             if (released >= wanted) return type;
             if (released != 0) {
-                memoryProperties2(physical, &properties);
-                if (reported.heapUsage[heap] < reported.heapBudget[heap] && bytes <= reported.heapBudget[heap] - reported.heapUsage[heap]) return type;
+                const auto after = ReportedHeap(heap);
+                if (after.Fits(bytes)) return type;
             }
         }
         static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
         const auto count = placements.fetch_add(1) + 1;
         const auto total = placedBytes.fetch_add(bytes) + bytes;
-        if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local heap %u uses %llu of its %llu MiB budget, %llu bytes placed in host memory type %u; %llu such allocations, %llu MiB\n", what, heap, static_cast<unsigned long long>(usage >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(bytes), *host, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
+        if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local heap %u uses %llu of its %llu MiB budget, %llu bytes placed in host memory type %u; %llu such allocations, %llu MiB\n", what, heap, static_cast<unsigned long long>(report.usage >> 20u), static_cast<unsigned long long>(report.budget >> 20u), static_cast<unsigned long long>(bytes), *host, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
         return *host;
+    }
+
+    bool DeviceLocalHeadroom(std::uint32_t type, VkDeviceSize bytes) const {
+        if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE || type >= memory.memoryTypeCount) return true;
+        const auto heap = memory.memoryTypes[type].heapIndex;
+        if ((memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return true;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
+        memoryProperties2(physical, &properties);
+        const auto budget = reported.heapBudget[heap];
+        if (budget == 0) return true;
+        const auto limit = budget - budget / 8u;
+        const auto usage = reported.heapUsage[heap];
+        return usage < limit && bytes <= limit - usage;
     }
 
     std::optional<std::uint32_t> HostMemoryType(std::uint32_t mask) const {

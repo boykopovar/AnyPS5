@@ -113,6 +113,7 @@ void Driver::lookupDispatch(std::uint64_t address, const Submission& submission,
                 case EntryOutcome::Equal: ++counters.equal; break;
                 case EntryOutcome::EqualData: ++counters.equal; break;
                 case EntryOutcome::Differing: ++counters.differing; break;
+                case EntryOutcome::QueuedStores: ++counters.queuedStores; break;
                 case EntryOutcome::Inaccessible: ++counters.inaccessible; break;
                 case EntryOutcome::QueuedLabel: ++counters.queuedLabel; break;
                 case EntryOutcome::FlushingImage: ++counters.flushingImage; break;
@@ -168,7 +169,7 @@ void Driver::lookupDispatch(std::uint64_t address, const Submission& submission,
                     }
                 }
             } else {
-                if (traceCache) std::fprintf(stderr, "[dispatch-cache] 0x%llx captured memory changed\n", static_cast<unsigned long long>(address));
+                if (traceCache) std::fprintf(stderr, "[dispatch-cache] 0x%llx %s\n", static_cast<unsigned long long>(address), outcome == EntryOutcome::QueuedStores ? "queued stores over the captured memory" : "captured memory changed");
 
                 missedEntry = entry;
                 missedDiffering = outcome == EntryOutcome::Differing;
