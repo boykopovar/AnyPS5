@@ -236,9 +236,15 @@ GLboolean APS5_VABI glIsTexture_nid_postfix(GLuint name) {
 void APS5_VABI glDeleteTextures_nid_postfix(GLsizei count, const GLuint* textures) {
     std::lock_guard lock(mutex);
     if (count < 0) { Error_nid_no_patch(0x0501); return; }
+    if (count == 0) return;
+    std::vector<GLuint> local(static_cast<std::size_t>(count));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(local.data(), textures, local.size() * sizeof(GLuint));
+    errno = savedErrno;
+    if (!copied) { Error_nid_no_patch(0x0501); return; }
     auto& c = Current_nid_no_patch();
-    for (GLsizei i = 0; i < count; ++i) {
-        auto it = c.share->textures.find(textures[i]);
+    for (GLuint name : local) {
+        auto it = c.share->textures.find(name);
         if (it == c.share->textures.end()) continue;
         auto object = it->second;
         if (object) {
@@ -263,8 +269,22 @@ void APS5_VABI glTexParameterf_nid_postfix(GLenum target, GLenum name, GLfloat v
     glTexParameteri_nid_postfix(target, name, static_cast<GLint>(std::round(value)));
 }
 
-void APS5_VABI glTexParameteriv_nid_postfix(GLenum target, GLenum name, const GLint* values) { glTexParameteri_nid_postfix(target, name, *values); }
-void APS5_VABI glTexParameterfv_nid_postfix(GLenum target, GLenum name, const GLfloat* values) { glTexParameterf_nid_postfix(target, name, *values); }
+void APS5_VABI glTexParameteriv_nid_postfix(GLenum target, GLenum name, const GLint* values) {
+    GLint value;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, values, sizeof(value));
+    errno = savedErrno;
+    if (!copied) { std::lock_guard lock(mutex); Error_nid_no_patch(0x0501); return; }
+    glTexParameteri_nid_postfix(target, name, value);
+}
+void APS5_VABI glTexParameterfv_nid_postfix(GLenum target, GLenum name, const GLfloat* values) {
+    GLfloat value;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, values, sizeof(value));
+    errno = savedErrno;
+    if (!copied) { std::lock_guard lock(mutex); Error_nid_no_patch(0x0501); return; }
+    glTexParameterf_nid_postfix(target, name, value);
+}
 
 void APS5_VABI glGetTexParameteriv_nid_postfix(GLenum target, GLenum name, GLint* values) {
     std::lock_guard lock(mutex);
@@ -273,7 +293,11 @@ void APS5_VABI glGetTexParameteriv_nid_postfix(GLenum target, GLenum name, GLint
     auto object = BoundTexture(index);
     auto it = object->parameters.find(name);
     if (it == object->parameters.end()) { Error_nid_no_patch(0x0500); return; }
-    *values = it->second;
+    const GLint result = it->second;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(values, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glGetTexParameterfv_nid_postfix(GLenum target, GLenum name, GLfloat* values) {
@@ -283,7 +307,11 @@ void APS5_VABI glGetTexParameterfv_nid_postfix(GLenum target, GLenum name, GLflo
     auto object = BoundTexture(index);
     auto it = object->parameters.find(name);
     if (it == object->parameters.end()) { Error_nid_no_patch(0x0500); return; }
-    *values = static_cast<GLfloat>(it->second);
+    const GLfloat result = static_cast<GLfloat>(it->second);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(values, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glTexImage2D_nid_postfix(GLenum target, GLint level, GLint internalFormat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels) {
@@ -344,9 +372,15 @@ GLboolean APS5_VABI glIsRenderbuffer_nid_postfix(GLuint name) {
 void APS5_VABI glDeleteRenderbuffers_nid_postfix(GLsizei count, const GLuint* names) {
     std::lock_guard lock(mutex);
     if (count < 0) { Error_nid_no_patch(0x0501); return; }
+    if (count == 0) return;
+    std::vector<GLuint> local(static_cast<std::size_t>(count));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(local.data(), names, local.size() * sizeof(GLuint));
+    errno = savedErrno;
+    if (!copied) { Error_nid_no_patch(0x0501); return; }
     auto& c = Current_nid_no_patch();
-    for (GLsizei i = 0; i < count; ++i) {
-        auto it = c.share->renderbuffers.find(names[i]);
+    for (GLuint name : local) {
+        auto it = c.share->renderbuffers.find(name);
         if (it == c.share->renderbuffers.end()) continue;
         auto object = it->second;
         if (object) {
@@ -374,9 +408,10 @@ void APS5_VABI glGetRenderbufferParameteriv_nid_postfix(GLenum target, GLenum na
     auto object = Current_nid_no_patch().renderbuffer;
     if (!object) { Error_nid_no_patch(0x0502); return; }
     const auto& image = object->image;
-    if (name == 0x8d42) *value = image.width;
-    else if (name == 0x8d43) *value = image.height;
-    else if (name == 0x8d44) *value = image.format ? image.format : 0x8056;
+    GLint result;
+    if (name == 0x8d42) result = image.width;
+    else if (name == 0x8d43) result = image.height;
+    else if (name == 0x8d44) result = image.format ? image.format : 0x8056;
     else if (name >= 0x8d50 && name <= 0x8d55) {
         GLint bits = 0;
         if (name <= 0x8d53) {
@@ -385,8 +420,12 @@ void APS5_VABI glGetRenderbufferParameteriv_nid_postfix(GLenum target, GLenum na
             if (image.format == 0x8d62) bits = name == 0x8d53 ? 0 : name == 0x8d51 ? 6 : 5;
         } else if (name == 0x8d54 && image.format == 0x81a5) bits = 16;
         else if (name == 0x8d55 && image.format == 0x8d48) bits = 8;
-        *value = bits;
-    } else Error_nid_no_patch(0x0500);
+        result = bits;
+    } else { Error_nid_no_patch(0x0500); return; }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glGenFramebuffers_nid_postfix(GLsizei count, GLuint* names) {
@@ -416,9 +455,15 @@ GLboolean APS5_VABI glIsFramebuffer_nid_postfix(GLuint name) {
 void APS5_VABI glDeleteFramebuffers_nid_postfix(GLsizei count, const GLuint* names) {
     std::lock_guard lock(mutex);
     if (count < 0) { Error_nid_no_patch(0x0501); return; }
+    if (count == 0) return;
+    std::vector<GLuint> local(static_cast<std::size_t>(count));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(local.data(), names, local.size() * sizeof(GLuint));
+    errno = savedErrno;
+    if (!copied) { Error_nid_no_patch(0x0501); return; }
     auto& c = Current_nid_no_patch();
-    for (GLsizei i = 0; i < count; ++i) {
-        auto it = c.framebuffers.find(names[i]);
+    for (GLuint name : local) {
+        auto it = c.framebuffers.find(name);
         if (it == c.framebuffers.end()) continue;
         if (c.framebuffer == it->second) c.framebuffer.reset();
         c.framebuffers.erase(it);
@@ -461,11 +506,16 @@ void APS5_VABI glGetFramebufferAttachmentParameteriv_nid_postfix(GLenum target, 
     std::lock_guard lock(mutex);
     auto* a = BoundAttachment(target, attachment);
     if (!a) return;
-    if (name == 0x8cd0) *value = a->texture ? 0x1702 : a->renderbuffer ? 0x8d41 : 0;
-    else if (name == 0x8cd1 && (a->texture || a->renderbuffer)) *value = a->texture ? a->texture->name : a->renderbuffer->name;
-    else if (name == 0x8cd2 && a->texture) *value = a->level;
-    else if (name == 0x8cd3 && a->texture) *value = a->face == 0x0de1 ? 0 : a->face;
-    else Error_nid_no_patch(0x0500);
+    GLint result;
+    if (name == 0x8cd0) result = a->texture ? 0x1702 : a->renderbuffer ? 0x8d41 : 0;
+    else if (name == 0x8cd1 && (a->texture || a->renderbuffer)) result = a->texture ? a->texture->name : a->renderbuffer->name;
+    else if (name == 0x8cd2 && a->texture) result = a->level;
+    else if (name == 0x8cd3 && a->texture) result = a->face == 0x0de1 ? 0 : a->face;
+    else { Error_nid_no_patch(0x0500); return; }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glClear_nid_postfix(GLenum mask) {
