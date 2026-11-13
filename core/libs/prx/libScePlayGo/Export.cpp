@@ -343,8 +343,13 @@ int APS5_VABI scePlayGoSetToDoList(int handle, const PlayGoToDo* todo_list, uint
     if (!todo_list) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (number_of_entries == 0) return SCE_PLAYGO_ERROR_BAD_SIZE;
     for (uint32_t index = 0; index < number_of_entries; ++index) {
-        if (!IsKnownChunk(todo_list[index].chunk_id)) return SCE_PLAYGO_ERROR_BAD_CHUNK_ID;
-        const int8_t locus = todo_list[index].locus;
+        PlayGoToDo entry{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&entry, &todo_list[index], sizeof(entry));
+        errno = savedErrno;
+        if (!copied) return SCE_PLAYGO_ERROR_BAD_POINTER;
+        if (!IsKnownChunk(entry.chunk_id)) return SCE_PLAYGO_ERROR_BAD_CHUNK_ID;
+        const int8_t locus = entry.locus;
         if (locus != PLAYGO_LOCUS_NOT_DOWNLOADED && locus != PLAYGO_LOCUS_LOCAL_SLOW && locus != PLAYGO_LOCUS_LOCAL_FAST) return SCE_PLAYGO_ERROR_BAD_LOCUS;
     }
     return 0;

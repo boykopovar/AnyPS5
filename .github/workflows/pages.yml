@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/pages.yml
+      - .github/workflows/pages-progress.yml
       - CMakeLists.txt
       - core/relinker/**
       - demo/web/**
@@ -12,12 +13,16 @@ on:
       - tools/package_release.py
       - tools/nid_names.py
       - tools/progress.py
+      - tools/progress_prs.py
+      - tools/pr_overlap.py
       - tools/shader_scan.py
       - tools/rdna2_isa_forms.txt
       - tools/progress_history.py
       - tools/rdna_isa.txt
       - tools/test_web.py
   workflow_dispatch:
+  schedule:
+    - cron: '37 4 * * *'
   release:
     types: [published]
   workflow_run:
@@ -50,7 +55,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 tools/build_web.py --build build-wasm --release
-      - run: python3 tools/progress.py --require-shader-source build-wasm/web
+      - name: Prepare the open-PR estimate fallback
+        run: |
+          python3 - "$RUNNER_TEMP/open-pr-progress.json" <<'PY'
+          import json
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+          Path(sys.argv[1]).write_text(json.dumps({"available": False,
+              "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+              "reason": "estimator failed before producing a result"}) + "\n", encoding="utf-8")
+          PY
+      - name: Estimate open-PR library progress
+        env:
+          GH_TOKEN: ${{ github.token }}
+        continue-on-error: true
+        run: python3 tools/progress_prs.py --output "$RUNNER_TEMP/open-pr-progress.json"
+      - run: python3 tools/progress.py --require-shader-source --open-pr-estimate "$RUNNER_TEMP/open-pr-progress.json" build-wasm/web
       - run: python3 tools/progress_history.py build-wasm/web
       - uses: actions/upload-pages-artifact@v5
         with:
