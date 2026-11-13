@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -845,6 +846,9 @@ int main() {
     attribute = -1;
     Require(sceFontGetAttribute(font, 0, &attribute) == SCE_FONT_OK && attribute == 5);
     Require(sceFontGetAttribute(font, 0x11, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetAttribute(font, 0x11, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     attribute = -1;
     Require(sceFontDefineAttribute(nullptr, 0x11, &attribute) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && attribute == -1);
     Require(sceFontGetAttribute(nullptr, 0x11, &attribute) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && attribute == -1);
