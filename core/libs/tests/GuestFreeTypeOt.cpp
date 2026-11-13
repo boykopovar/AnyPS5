@@ -7,6 +7,7 @@
 #include FT_TRIGONOMETRY_H
 #include FT_GLYPH_H
 #include FT_MODULE_H
+#include FT_RENDER_H
 #include FT_TYPE1_TABLES_H
 #include <algorithm>
 #include <array>
@@ -37,6 +38,7 @@ struct Exports {
     decltype(&FT_Outline_Copy_nid_postfix) copy;
     decltype(&FT_Outline_Decompose_nid_postfix) decompose;
     decltype(&FT_Outline_Get_Bitmap_nid_postfix) outlineBitmap;
+    decltype(&FT_Set_Renderer_nid_postfix) setRenderer;
 };
 
 struct StrokerExports {
@@ -138,6 +140,14 @@ void Libraries() {
     FreeType::GuestLibrary* library = nullptr;
     FT_Library native = nullptr;
     Require(forwarded.init(&library) == 0 && library && FT_Init_FreeType(&native) == 0, "initialize libraries");
+    auto* renderer = forwarded.getModule(library, "smooth");
+    auto* nativeRenderer = reinterpret_cast<FT_Renderer>(FT_Get_Module(native, "smooth"));
+    Require(renderer != nullptr && nativeRenderer != nullptr, "find the smooth renderer");
+    Require(ot.setRenderer(library, renderer, 0, nullptr) == FT_Set_Renderer(native, nativeRenderer, 0, nullptr),
+            "select the smooth renderer");
+    Require(FT_Get_Renderer(native, FT_GLYPH_FORMAT_OUTLINE) == nativeRenderer, "native renderer selected");
+    Require(ot.setRenderer(library, nullptr, 0, nullptr) == FT_Set_Renderer(native, nullptr, 0, nullptr),
+            "reject a missing renderer");
     for (FreeType::GuestLibrary* queried : {library, static_cast<FreeType::GuestLibrary*>(nullptr)}) {
         std::array<std::int32_t, 3> actual{-1, -1, -1};
         std::array<FT_Int, 3> expected{-1, -1, -1};
@@ -446,6 +456,9 @@ int main(int argc, char** argv) {
     if (!library) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(library != nullptr, "load requested library");
+    Resolve(ot.setRenderer, library, patched, "Yu9oXRVmTTo", "sceFreeTypeOtSetRenderer_nid_no_patch");
+    Require(ot.setRenderer(nullptr, nullptr, 0, nullptr) == FT_Set_Renderer(nullptr, nullptr, 0, nullptr),
+            "reject a missing library");
 #ifdef _WIN32
     Resolve(ot.outlineBitmap, library, patched, "4RRjK-Wd1lU", "sceFreeTypeOtOutlineGetBitmap_nid_no_patch");
 #else
