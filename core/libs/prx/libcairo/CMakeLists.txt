@@ -1,8 +1,17 @@
 add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp Surface.cpp Context.cpp FontOptions.cpp Region.cpp Glyph.cpp)
 target_include_directories(libcairo PRIVATE ${LIBS_INCLUDE_DIR})
 target_sources(libcairo PRIVATE Png.cpp)
-target_link_libraries(libcairo PRIVATE decoder_png)
+include(${CMAKE_SOURCE_DIR}/cmake/Cairo.cmake)
+target_link_libraries(libcairo PRIVATE decoder_png cairo_backend)
 configure_windows_unwind(libcairo)
+if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(libcairo PRIVATE LINKER:--exclude-libs,ALL)
+elseif(APPLE)
+    target_link_options(libcairo PRIVATE
+        LINKER:-unexported_symbol,_aps5_cairo_*
+        LINKER:-unexported_symbol,_pixman_*
+        LINKER:-unexported_symbol,__pixman_*)
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_cairo_png_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoPng.cpp)
