@@ -702,8 +702,11 @@ void WatchMapping(std::uintptr_t address, std::size_t len) {
             const auto first = std::max(addedPhys, other.phys);
             const auto last = std::min(addedPhysEnd, other.phys + (other.end - base));
             if (first >= last) continue;
-            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(added->first + (first - addedPhys)), last - first);
-            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(base + (first - other.phys)), last - first);
+            const auto* addedAt = reinterpret_cast<const void*>(added->first + (first - addedPhys));
+            const auto* otherAt = reinterpret_cast<const void*>(base + (first - other.phys));
+            if (GuestWriteWatch::GuestWriteWatchAlias_nid_postfix(addedAt, otherAt, last - first)) continue;
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(addedAt, last - first);
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(otherAt, last - first);
         }
     }
 }
@@ -853,7 +856,7 @@ void RequireAliasesUnpinned(GuestAllocations::Mutation& mutation, std::uint64_t 
 #endif
 }
 
-bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t len, int prot, int flags, int64_t physStart = -1) {
+bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t len, int prot, int flags, int64_t physStart = -1, [[maybe_unused]] bool zero = false) {
     constexpr int GuestMapFixed = 0x10;
     constexpr int GuestMapNoOverwrite = 0x80;
     if (addr == nullptr || (flags & GuestMapFixed) == 0 || (flags & GuestMapNoOverwrite) != 0 || !mutation.Covers(addr, len)) return false;
@@ -876,8 +879,11 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
         } else {
             EraseMappings(address, address + len);
 #ifdef _WIN32
-            GuestArena::GuestArenaReset_nid_postfix(addr, len);
-            if (nativeProtection != PROT_NONE) CommitArenaRange(addr, len, WinProtFromPosix(nativeProtection));
+            if (zero) GuestArena::GuestArenaMapZero_nid_postfix(addr, len);
+            else {
+                GuestArena::GuestArenaReset_nid_postfix(addr, len);
+                if (nativeProtection != PROT_NONE) CommitArenaRange(addr, len, WinProtFromPosix(nativeProtection));
+            }
 #elif defined(__EMSCRIPTEN__)
             GuestArena::GuestArenaReset_nid_postfix(addr, len);
             GuestArena::GuestArenaCommit_nid_postfix(addr, len, 0x04, PS5_PAGE_SIZE);
@@ -1158,6 +1164,7 @@ int PlaceHintInReservation(void* addr, size_t len, int flags) {
 
 int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart, size_t alignment) {
     ValidateOutput(addr);
+    ValidateAlignment(alignment);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
     if (physStart < 0 || (static_cast<std::uint64_t>(physStart) & (PS5_PAGE_SIZE - 1)) != 0 || static_cast<std::uint64_t>(physStart) >= DIRECT_MEMORY_SIZE || len > DIRECT_MEMORY_SIZE - static_cast<std::uint64_t>(physStart)) {
         return SCE_KERNEL_ERROR_EINVAL;
@@ -1193,6 +1200,35 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     EraseReservations(mapped, len);
     RecordProtection(mapped, len, prot);
     Trace("map direct %p+0x%zx phys=0x%llx prot=0x%x flags=0x%x align=0x%zx", mapped, len, static_cast<unsigned long long>(physStart), prot, flags, alignment);
+    return 0;
+}
+
+static int MapAnonymous(void** addr, size_t len, int prot, int flags, size_t alignment, bool exclusive, bool zero) {
+    GuestAllocations::Mutation mutation;
+    if (exclusive && mutation.Overlaps(*addr, len)) return SCE_KERNEL_ERROR_ENOMEM;
+    flags = PlaceHintInReservation(*addr, len, flags);
+    if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
+    if (RemapFixedIntoRegistered(mutation, *addr, len, prot, flags, -1, zero)) {
+        EraseReservations(*addr, len);
+        RecordProtection(*addr, len, prot);
+        return 0;
+    }
+    ReplaceFixedOverlap(mutation, *addr, len, flags);
+    void* mapped = MapAligned(*addr, len, zero ? PROT_NONE : LinuxProtFromSce(prot), flags, alignment);
+    try {
+#ifdef _WIN32
+        if (zero) GuestArena::GuestArenaMapZero_nid_postfix(mapped, len);
+#endif
+        mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0);
+        if ((prot & GuestProtGpuReadWrite) != 0) mutation.NoteGpuMapping(mapped, len);
+    } catch (...) {
+        Unmap(mapped, len);
+        throw;
+    }
+    *addr = mapped;
+    EraseReservations(mapped, len);
+    RecordProtection(mapped, len, prot);
+    Trace("map anon %p+0x%zx prot=0x%x flags=0x%x", mapped, len, prot, flags);
     return 0;
 }
 
@@ -1246,29 +1282,18 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment, bo
         return result;
     }
 #endif
-    GuestAllocations::Mutation mutation;
-    if (exclusive && mutation.Overlaps(*addr, len)) return SCE_KERNEL_ERROR_ENOMEM;
-    flags = PlaceHintInReservation(*addr, len, flags);
-    if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
-    if (RemapFixedIntoRegistered(mutation, *addr, len, prot, flags)) {
-        EraseReservations(*addr, len);
-        RecordProtection(*addr, len, prot);
-        return 0;
-    }
-    ReplaceFixedOverlap(mutation, *addr, len, flags);
-    void* mapped = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, alignment);
-    try {
-        mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0);
-        if ((prot & GuestProtGpuReadWrite) != 0) mutation.NoteGpuMapping(mapped, len);
-    } catch (...) {
-        Unmap(mapped, len);
-        throw;
-    }
-    *addr = mapped;
-    EraseReservations(mapped, len);
-    RecordProtection(mapped, len, prot);
-    Trace("map anon %p+0x%zx prot=0x%x flags=0x%x", mapped, len, prot, flags);
-    return 0;
+    return MapAnonymous(addr, len, prot, flags, alignment, exclusive, false);
+}
+
+int DoMapZero(void** addr, size_t len, int prot, int flags) {
+#ifdef _WIN32
+    ValidateOutput(addr);
+    if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+    if (LinuxProtFromSce(prot) != PROT_READ) throw std::invalid_argument("Zero pages are only readable: " + std::to_string(prot));
+    return MapAnonymous(addr, len, prot, flags, PS5_PAGE_SIZE, false, true);
+#else
+    return DoMapAnon(addr, len, prot, flags);
+#endif
 }
 
 int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, int descriptor, std::uint64_t offset, size_t alignment) {
@@ -1605,18 +1630,36 @@ int DoReserveVirtual(void** addr, size_t len, int flags, size_t alignment) {
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
     GuestAllocations::Mutation mutation;
     const bool fixed = *addr != nullptr && (flags & GuestMapFixedFlag) != 0;
-    if (fixed && mutation.Covers(*addr, len)) {
-        constexpr int GuestMapNoOverwrite = 0x80;
-        if ((flags & GuestMapNoOverwrite) == 0 && RemapFixedIntoRegistered(mutation, *addr, len, 0, GuestMapFixedFlag)) {
-            RecordProtection(*addr, len, -1);
-            RecordReservation(*addr, len);
-            return 0;
+    if (fixed) {
+        if (GuestArena::GuestArenaAvailable_nid_postfix() && !GuestArena::GuestArenaContains_nid_postfix(*addr, len)) return SCE_KERNEL_ERROR_EINVAL;
+        if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
+        if (mutation.Covers(*addr, len)) {
+            constexpr int GuestMapNoOverwrite = 0x80;
+            if ((flags & GuestMapNoOverwrite) == 0 && RemapFixedIntoRegistered(mutation, *addr, len, 0, GuestMapFixedFlag)) {
+                RecordProtection(*addr, len, -1);
+                RecordReservation(*addr, len);
+                return 0;
+            }
         }
         mutation.RequireAvailable(*addr, len);
+        std::uintptr_t usedStart = 0, usedEnd = 0;
+        if (GuestArena::GuestArenaAvailable_nid_postfix() &&
+            GuestArena::GuestArenaNextUsed_nid_no_patch(reinterpret_cast<std::uintptr_t>(*addr), &usedStart, &usedEnd) &&
+            usedStart < reinterpret_cast<std::uintptr_t>(*addr) + len && reinterpret_cast<std::uintptr_t>(*addr) < usedEnd) {
+            return SCE_KERNEL_ERROR_ENOMEM;
+        }
     }
-    if (fixed) mutation.RequireAvailable(*addr, len);
     constexpr int GuestMapNoCoalesce = 0x400000;
-    void* mapped = MapAligned(*addr, len, PROT_NONE, fixed ? GuestMapFixedFlag | (flags & GuestMapNoCoalesce) : 0, alignment);
+    void* mapped = nullptr;
+    if (fixed) {
+        try {
+            mapped = MapAligned(*addr, len, PROT_NONE, GuestMapFixedFlag | (flags & GuestMapNoCoalesce), alignment);
+        } catch (const std::invalid_argument&) {
+            return SCE_KERNEL_ERROR_EINVAL;
+        }
+    } else {
+        mapped = MapAligned(*addr, len, PROT_NONE, 0, alignment);
+    }
     try {
         mutation.Add(mapped, len, false, false, false);
     } catch (...) {

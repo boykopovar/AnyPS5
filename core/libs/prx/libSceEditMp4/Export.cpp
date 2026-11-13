@@ -1,6 +1,8 @@
 #include "prx/libSceEditMp4/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <array>
+#include <cerrno>
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -29,12 +31,14 @@ int APS5_VABI sceEditMp4Initialize() {
 
 void APS5_VABI sceEditMp4InitializeParam(void* param) {
     if (param == nullptr) return;
-    auto* bytes = static_cast<std::uint8_t*>(param);
+    std::array<std::uint8_t, 0x1c> initial{};
     const std::uint64_t at10 = 0x3f;
     const std::uint32_t at18 = 700;
-    std::memset(bytes, 0, 0x10);
-    std::memcpy(bytes + 0x10, &at10, sizeof(at10));
-    std::memcpy(bytes + 0x18, &at18, sizeof(at18));
+    std::memcpy(initial.data() + 0x10, &at10, sizeof(at10));
+    std::memcpy(initial.data() + 0x18, &at18, sizeof(at18));
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(param, initial.data(), initial.size());
+    errno = savedErrno;
 }
 
 std::uint64_t APS5_VABI sceEditMp4QueryMemSize() {

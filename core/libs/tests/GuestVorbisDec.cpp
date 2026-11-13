@@ -519,6 +519,14 @@ void TestNeverOpened() {
     Require(Throws<std::invalid_argument>([] { sceVorbisDecStreams(nullptr); }));
     Require(Throws<std::invalid_argument>([] { sceVorbisDecInfo(nullptr, 0); }));
     Require(Throws<std::invalid_argument>([] { sceVorbisDecPcmSeek(nullptr, 0); }));
+    Require(Throws<std::invalid_argument>([] { sceVorbisDecComment(nullptr, 0); }));
+    Require(Throws<std::invalid_argument>([] { sceVorbisDecPcmTell(nullptr); }));
+    Require(Throws<std::invalid_argument>([] { sceVorbisDecTimeTotal(nullptr, 0); }));
+    Require(Throws<std::invalid_argument>([] { sceVorbisDecTimeTell(nullptr); }));
+    Require(Throws<std::invalid_argument>([] { sceVorbisDecPcmTotal(nullptr, 0); }));
+    Require(Throws<std::invalid_argument>([] { sceVorbisDecBitrate(nullptr, 0); }));
+    float** nullPcm = nullptr;
+    Require(Throws<std::invalid_argument>([&] { sceVorbisDecReadFloat(nullptr, &nullPcm, 64, &bitstream); }));
 }
 
 void TestFailedOpens(const std::vector<unsigned char>& stream) {

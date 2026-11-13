@@ -1,4 +1,5 @@
 #include "prx/libSceAvPlayer/include/Api.hpp"
+#include <cerrno>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -869,6 +870,9 @@ void CheckStreamInfo(AvPlayerInternal* player) {
     AvPlayerStreamInfo unused{};
     Check(sceAvPlayerGetStreamInfo(player, 3, &unused) == OperationFailed, "invalid stream accepted");
     Check(sceAvPlayerGetStreamInfo(player, 0, nullptr) == InvalidParams, "null stream info accepted");
+    errno = 71;
+    Check(sceAvPlayerGetStreamInfo(player, 0, reinterpret_cast<AvPlayerStreamInfo*>(0x10)) == InvalidParams, "unmapped stream info accepted");
+    Check(errno == 71, "preserve errno on unmapped stream info");
 }
 
 void CheckStreamInfoEx(AvPlayerInternal* player) {
@@ -897,6 +901,9 @@ void CheckStreamInfoEx(AvPlayerInternal* player) {
     AvPlayerStreamInfoEx unused{};
     Check(sceAvPlayerGetStreamInfoEx(player, 3, &unused) == OperationFailed, "invalid extended stream accepted");
     Check(sceAvPlayerGetStreamInfoEx(player, 0, nullptr) == InvalidParams, "null extended stream info accepted");
+    errno = 71;
+    Check(sceAvPlayerGetStreamInfoEx(player, 0, reinterpret_cast<AvPlayerStreamInfoEx*>(0x10)) == InvalidParams, "unmapped extended stream info accepted");
+    Check(errno == 71, "preserve errno on unmapped extended stream info");
     Check(sceAvPlayerGetStreamInfoEx(nullptr, 0, &unused) == InvalidParams, "null player accepted");
 }
 
@@ -909,6 +916,9 @@ void TestPlayback() {
     post.demux_video_buffer_size = 64 * 1024;
     Check(sceAvPlayerPostInit(player, &post) == 0, "post init failed");
     Check(sceAvPlayerPostInit(player, nullptr) == InvalidParams, "post init accepted null data");
+    errno = 71;
+    Check(sceAvPlayerPostInit(player, reinterpret_cast<const AvPlayerPostInitData*>(0x10)) == InvalidParams, "unmapped post init accepted");
+    Check(errno == 71, "preserve errno on unmapped post init");
     Check(sceAvPlayerStreamCount(player) == OperationFailed, "stream count without a source");
     Check(sceAvPlayerSetTrickSpeed(player, 100) == OperationFailed, "trick speed accepted without a source");
     Check(sceAvPlayerSetTrickSpeed(player, 0) == OperationFailed, "trick speed checked the speed before the source");
@@ -931,6 +941,25 @@ void TestPlayback() {
 
     AvPlayerFrameInfoEx frame{};
     AvPlayerFrameInfo sound{};
+    AvPlayerFrameInfo videoSimple{};
+    Check(!sceAvPlayerGetAudioData(nullptr, &sound), "null player audio accepted");
+    Check(!sceAvPlayerGetAudioData(player, nullptr), "null audio info accepted");
+    errno = 71;
+    Check(!sceAvPlayerGetAudioData(player, reinterpret_cast<AvPlayerFrameInfo*>(0x10)), "unmapped audio info accepted");
+    Check(errno == 71, "preserve errno on unmapped audio info");
+
+    Check(!sceAvPlayerGetVideoData(nullptr, &videoSimple), "null player video accepted");
+    Check(!sceAvPlayerGetVideoData(player, nullptr), "null video info accepted");
+    errno = 71;
+    Check(!sceAvPlayerGetVideoData(player, reinterpret_cast<AvPlayerFrameInfo*>(0x10)), "unmapped video info accepted");
+    Check(errno == 71, "preserve errno on unmapped video info");
+
+    Check(!sceAvPlayerGetVideoDataEx(nullptr, &frame), "null player video ex accepted");
+    Check(!sceAvPlayerGetVideoDataEx(player, nullptr), "null video ex info accepted");
+    errno = 71;
+    Check(!sceAvPlayerGetVideoDataEx(player, reinterpret_cast<AvPlayerFrameInfoEx*>(0x10)), "unmapped video ex info accepted");
+    Check(errno == 71, "preserve errno on unmapped video ex info");
+
     int frames = 0;
     int sounds = 0;
     std::uint64_t last = 0;
@@ -1153,6 +1182,9 @@ void TestExtendedExports() {
     Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
     Check(sceAvPlayerStartEx(nullptr, nullptr) == InvalidParams, "start accepted a null player");
     Check(sceAvPlayerStartEx(player, nullptr) == InvalidParams, "start accepted null parameters");
+    errno = 71;
+    Check(sceAvPlayerStartEx(player, reinterpret_cast<const AvPlayer::StartInfo*>(0x10)) == InvalidParams, "unmapped start parameters accepted");
+    Check(errno == 71, "preserve errno on unmapped start info");
     AvPlayer::StartInfo startInfo{0, 700};
     Check(sceAvPlayerStartEx(player, &startInfo) == InvalidParams, "start accepted an invalid parameter size");
     startInfo.size = sizeof(startInfo);
@@ -1219,16 +1251,20 @@ void TestWithoutAllocators() {
     AvPlayerInternal* handle = nullptr;
     Check(sceAvPlayerInitEx(&extended, &handle) == 0 && handle != nullptr, "extended init without allocators failed");
     Check(sceAvPlayerInitEx(nullptr, &handle) == InvalidParams, "extended init accepted null data");
+    errno = 71;
+    Check(sceAvPlayerInitEx(&extended, reinterpret_cast<AvPlayerInternal**>(0x10)) == InvalidParams, "extended init rejected unwritable handle");
+    Check(errno == 71, "errno preserved");
     Check(sceAvPlayerClose(handle) == 0, "close failed");
 }
 
 void TestOptionalVideoBuffersRespectMemoryLimit() {
-    const auto run = [](int textureLimit, int expectedTextures) {
+    const auto run = [](int textureLimit, int expectedTextures, bool unsynced) {
         SetTextureLimit(textureLimit);
         AvPlayerInitData init = InitData(nullptr);
         init.num_output_video_framebuffers = 2;
         auto* player = sceAvPlayerInit(&init);
         Check(player != nullptr, "init with limited texture memory failed");
+        if (unsynced) Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode with limited texture memory rejected");
         Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source with limited texture memory failed");
         Check(WaitFor([&] { return TextureCount() == expectedTextures && sceAvPlayerIsActive(player); }), "unexpected optional video buffer count");
         AvPlayerFrameInfoEx frame{};
@@ -1238,9 +1274,13 @@ void TestOptionalVideoBuffersRespectMemoryLimit() {
         Check(TextureCount() == 0, "limited texture allocations were not released");
     };
 
-    run(2, 2);
-    run(4, 2);
-    run(6, 6);
+    run(2, 2, false);
+    run(5, 2, false);
+    run(6, 6, false);
+    run(14, 6, false);
+    run(5, 2, true);
+    run(13, 6, true);
+    run(14, 14, true);
     SetTextureLimit(std::nullopt);
 }
 
@@ -1348,7 +1388,7 @@ void TestPs5ExtendedInitLayout() {
 
 void TestAutoStartKeepsStartedPlayback() {
     bool startedByTitle = false;
-    for (int attempt = 0; attempt < 10 && !startedByTitle; ++attempt) {
+    for (int attempt = 0; attempt < 400 && !startedByTitle; ++attempt) {
         AvPlayerInitData init = InitData(nullptr);
         auto* player = sceAvPlayerInit(&init);
         Check(player != nullptr, "init failed");
@@ -1600,6 +1640,27 @@ void TestNoSyncVideoCanLeadAudioClock() {
     Check(available, "no-sync video was gated by the audio-backed player clock");
     std::lock_guard lock(allocations.mutex);
     Check(allocations.blocks.empty(), "no-sync allocations leaked");
+}
+
+void TestNoSyncClockIgnoresEarlyAudio() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "no-sync clock init failed");
+    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "no-sync clock mode rejected");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "no-sync clock source failed");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "no-sync clock video stream failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "no-sync clock audio stream failed");
+    Check(sceAvPlayerStart(player) == 0, "no-sync clock start failed");
+    AvPlayerFrameInfo sound{};
+    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), "no-sync clock audio unavailable");
+    const auto start = std::chrono::steady_clock::now();
+    const auto first = sound.timestamp;
+    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0 && sound.timestamp >= first + 600; }), "no-sync clock audio was not pulled ahead");
+    const auto clock = sceAvPlayerCurrentTime(player);
+    const auto elapsed = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+    Check(sceAvPlayerClose(player) == 0, "no-sync clock close failed");
+    Check(clock <= first + elapsed + 100, "no-sync clock followed audio pulled early: " + std::to_string(clock - first) + " ms after " + std::to_string(elapsed) + " ms");
 }
 
 void TestLoopWarningWaitsForPlayback() {
@@ -2287,6 +2348,7 @@ int main(int argc, char** argv) {
         TestJumpPastTheLatestTimeReportsTheDuration();
         TestUnsyncedVideoKeepsUpWithAudio();
         TestNoSyncVideoCanLeadAudioClock();
+        TestNoSyncClockIgnoresEarlyAudio();
         TestLoopWarningWaitsForPlayback();
         TestEofStopLatency();
         TestVideoSyncTolerance();

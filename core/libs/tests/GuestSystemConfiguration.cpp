@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <ctime>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 static_assert(offsetof(SceKernelSystemSwVersion, size) == 0x00);
@@ -346,6 +348,92 @@ static void CheckProcessSysctl() {
 
     length = 100;
     Require(sysctl_nid_postfix(mibPid, 4, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12 && length == 100);
+}
+struct ThreadRecordWorker {
+    std::atomic<int> tid{0};
+    std::atomic<bool> release{false};
+};
+static void* APS5_VABI ThreadRecordWorkerEntry(void* argument) {
+    auto* worker = static_cast<ThreadRecordWorker*>(argument);
+    worker->tid.store(scePthreadGetthreadid(), std::memory_order_release);
+    while (!worker->release.load(std::memory_order_acquire)) std::this_thread::yield();
+    return nullptr;
+}
+static std::vector<unsigned char> ReadThreadRecords(const int* mib) {
+    std::size_t length = 0;
+    Require(sysctl_nid_postfix(mib, 4, nullptr, &length, nullptr, 0) == 0 && length > 0 && length % 1088 == 0);
+    std::vector<unsigned char> buffer(length + 4 * 1088, 0xaa);
+    length = buffer.size();
+    Require(sysctl_nid_postfix(mib, 4, buffer.data(), &length, nullptr, 0) == 0 && length > 0 && length % 1088 == 0);
+    Require(buffer[length] == 0xaa);
+    buffer.resize(length);
+    return buffer;
+}
+static std::int32_t RecordInt(const std::vector<unsigned char>& records, std::size_t record, std::size_t offset) {
+    std::int32_t value = 0;
+    std::memcpy(&value, records.data() + record * 1088 + offset, sizeof(value));
+    return value;
+}
+static bool ListsThread(const std::vector<unsigned char>& records, int tid) {
+    for (std::size_t record = 0; record < records.size() / 1088; ++record) {
+        if (RecordInt(records, record, 600) == tid) return true;
+    }
+    return false;
+}
+static void CheckProcessThreadsSysctl() {
+    const int callerPid = getpid_nid_postfix();
+    const int mib[] = {1, 14, 17, callerPid};
+    const int self = scePthreadGetthreadid();
+
+    ThreadRecordWorker worker;
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, ThreadRecordWorkerEntry, &worker, "kproc_thread_name") == 0);
+    while (worker.tid.load(std::memory_order_acquire) == 0) std::this_thread::yield();
+    const int workerTid = worker.tid.load(std::memory_order_acquire);
+
+    const auto records = ReadThreadRecords(mib);
+    const std::size_t count = records.size() / 1088;
+    Require(count >= 2);
+    bool sawSelf = false;
+    bool sawWorker = false;
+    for (std::size_t record = 0; record < count; ++record) {
+        const unsigned char* bytes = records.data() + record * 1088;
+        Require(RecordInt(records, record, 0) == 1088);
+        Require(RecordInt(records, record, 72) == callerPid && RecordInt(records, record, 76) == getppid_nid_postfix());
+        Require(RecordInt(records, record, 596) == static_cast<std::int32_t>(count));
+        Require(std::strcmp(reinterpret_cast<const char*>(bytes + 447), "eboot.bin") == 0);
+        Require(bytes[394 + 16] == 0 && bytes[502 + 3] == 0);
+        const int tid = RecordInt(records, record, 600);
+        for (std::size_t other = record + 1; other < count; ++other) Require(RecordInt(records, other, 600) != tid);
+        if (tid == self) sawSelf = true;
+        if (tid == workerTid) {
+            sawWorker = true;
+            Require(std::memcmp(bytes + 394, "kproc_thread_nam", 17) == 0);
+            Require(std::memcmp(bytes + 502, "e\0\0\0", 4) == 0);
+        }
+    }
+    Require(sawSelf && sawWorker);
+
+    std::vector<unsigned char> buffer(1100, 0xaa);
+    std::size_t length = 100;
+    Require(sysctl_nid_postfix(mib, 4, buffer.data(), &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12 && length == 100);
+    Require(buffer[100] == 0xaa);
+
+    length = buffer.size();
+    Require(sysctl_nid_postfix(mib, 4, buffer.data(), &length, buffer.data(), buffer.size()) == -1 && *__error_nid_postfix() == 1);
+
+    const int mibForeign[] = {1, 14, 17, callerPid + 1000};
+    Require(sysctl_nid_postfix(mibForeign, 4, buffer.data(), &length, nullptr, 0) == -1 && *__error_nid_postfix() == 3);
+    const int mibSelfAlias[] = {1, 14, 17, -1};
+    Require(sysctl_nid_postfix(mibSelfAlias, 4, buffer.data(), &length, nullptr, 0) == -1 && *__error_nid_postfix() == 3);
+    const int mibTooShort[] = {1, 14, 17};
+    Require(sysctl_nid_postfix(mibTooShort, 3, buffer.data(), &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
+    const int mibTooLong[] = {1, 14, 17, callerPid, 0};
+    Require(sysctl_nid_postfix(mibTooLong, 5, buffer.data(), &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
+
+    worker.release.store(true, std::memory_order_release);
+    Require(scePthreadJoin(thread, nullptr) == 0);
+    Require(!ListsThread(ReadThreadRecords(mib), workerTid));
 }
 static void CheckProcessListSysctl() {
     const int callerPid = getpid_nid_postfix();
@@ -791,15 +879,16 @@ static void CheckOvercommitSysctl() {
     length = 2;
     Require(sysctlbyname_nid_postfix("vm.overcommit", bytes, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12);
     Require(length == 2 && bytes[2] == 0xaa && bytes[3] == 0xaa);
-    bool threw = false;
+    int written = 1;
+    value = -1;
     length = sizeof(value);
-    try {
-        sysctlbyname_nid_postfix("vm.overcommit", &value, &length, &value, sizeof(value));
-
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, &written, sizeof(written)) == -1 && *__error_nid_postfix() == 1);
+    Require(value == -1 && length == sizeof(value));
+    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, nullptr, &written, sizeof(written)) == -1 && *__error_nid_postfix() == 1);
+    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, nullptr, &written, 0) == -1 && *__error_nid_postfix() == 1);
+    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, nullptr, reinterpret_cast<const void*>(0x10), 1) == -1 && *__error_nid_postfix() == 1);
+    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, nullptr, 0) == 0 && value == 0);
 }
 static void CheckSdkVersionSysctl() {
     *__error_nid_postfix() = 13;
@@ -984,9 +1073,13 @@ static void CheckNameToMib() {
         {"hw.realmem", {6, 12}, 2},
         {"kern.arandom", {1, 37}, 2},
         {"kern.boottime", {1, 21}, 2},
-        {"kern.rng_pseudo", {1, 50}, 2},
         {"kern.proc.pathname", {1, 14, 12}, 3},
         {"kern.proc.proc", {1, 14, 8}, 3},
+        {"kern.rng_pseudo", {1, 50}, 2},
+        {"kern.sched.name", {1, 2147483182, 2147483181}, 3},
+        {"kern.smp.maxcpus", {1, 2147482816, 2147482814}, 3},
+        {"kern.stackprot", {1, 2147483151}, 2},
+        {"kern.timecounter.hardware", {1, 2147482838, 2147482834}, 3},
     };
     *__error_nid_postfix() = 13;
     for (const auto& entry : expected) {
@@ -998,6 +1091,28 @@ static void CheckNameToMib() {
         Require(std::memcmp(mib, entry.mib, entry.length * sizeof(int)) == 0 && mib[entry.length] == 0x5a5a5a5a);
     }
     Require(*__error_nid_postfix() == 13);
+
+    for (const char* name : {"kern.sched.name", "kern.smp.maxcpus", "kern.stackprot", "kern.timecounter.hardware"}) {
+        int absentMib[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+        std::size_t absentSize = 3;
+        Require(sysctlnametomib_nid_postfix(name, absentMib, &absentSize) == 0);
+        unsigned char absentBuffer[64];
+        std::memset(absentBuffer, 0xaa, sizeof(absentBuffer));
+        std::size_t absentLength = sizeof(absentBuffer);
+        *__error_nid_postfix() = 13;
+        Require(sysctl_nid_postfix(absentMib, static_cast<std::uint32_t>(absentSize), absentBuffer, &absentLength, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+        Require(absentLength == sizeof(absentBuffer) && Untouched(absentBuffer, sizeof(absentBuffer)));
+        absentLength = 77;
+        *__error_nid_postfix() = 13;
+        Require(sysctl_nid_postfix(absentMib, static_cast<std::uint32_t>(absentSize), nullptr, &absentLength, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+        Require(absentLength == 77);
+    }
+
+    int absentShort[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    std::size_t absentShortSize = 2;
+    *__error_nid_postfix() = 13;
+    Require(sysctlnametomib_nid_postfix("kern.smp.maxcpus", absentShort, &absentShortSize) == -1 && *__error_nid_postfix() == 12);
+    Require(absentShortSize == 2 && absentShort[0] == 1 && absentShort[1] == 2147482816 && absentShort[2] == 0x5a5a5a5a);
 
     int mib[4] = {};
     std::size_t size = 4;
@@ -1227,6 +1342,7 @@ int main() {
     CheckUnknownSysctlName();
     CheckPathnameSysctl();
     CheckProcessSysctl();
+    CheckProcessThreadsSysctl();
     CheckProcessListSysctl();
     CheckSystemStringSysctl();
     CheckSystemStringNames();

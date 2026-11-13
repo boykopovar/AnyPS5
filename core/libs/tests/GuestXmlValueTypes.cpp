@@ -179,6 +179,19 @@ void TestNodeId() {
     for (const XmlNodeId* other : {&otherFlag, &otherFirst, &otherSecond}) {
         Require(!_ZN3sce3Xml3Dom6NodeIdeqES2_(&base, *other) && _ZN3sce3Xml3Dom6NodeIdneES2_(&base, *other), "NodeId comparison uses every field");
     }
+    for (const std::uint8_t padding : {static_cast<std::uint8_t>(0x00), static_cast<std::uint8_t>(0xff)}) {
+        const XmlNodeId null = NodeIdValue(0, 0, 0, padding);
+        Require(_ZN3sce3Xml3Dom6NodeIdntEv(&null), "operator! is true for a null NodeId whatever its padding");
+        Require(_ZN3sce3Xml3Dom6NodeIdeqEi(&null, 0) && !_ZN3sce3Xml3Dom6NodeIdneEi(&null, 0), "a null NodeId compares equal to 0");
+        for (const int value : {1, -1, 0x7fffffff}) {
+            Require(!_ZN3sce3Xml3Dom6NodeIdeqEi(&null, value) && _ZN3sce3Xml3Dom6NodeIdneEi(&null, value), "a NodeId never compares equal to a nonzero int");
+        }
+    }
+    for (const XmlNodeId value : {NodeIdValue(1, 0, 0, 0), NodeIdValue(0, 1, 0, 0), NodeIdValue(0, 0, 1, 0), NodeIdValue(0, 0, 0x80, 0xff)}) {
+        Require(!_ZN3sce3Xml3Dom6NodeIdntEv(&value), "operator! is false once any field is set");
+        Require(!_ZN3sce3Xml3Dom6NodeIdeqEi(&value, 0) && _ZN3sce3Xml3Dom6NodeIdneEi(&value, 0), "a NodeId with any field set compares unequal to 0");
+        Require(!_ZN3sce3Xml3Dom6NodeIdeqEi(&value, 1) && _ZN3sce3Xml3Dom6NodeIdneEi(&value, 1), "a NodeId with any field set compares unequal to a nonzero int");
+    }
     XmlNodeId any = NodeIdValue(0x1234, 0x5678, 1, 0);
     Require(_ZN3sce3Xml3Dom6NodeIdcvPvEv(&any) == nullptr, "NodeId::operator void* is null");
 }
@@ -215,6 +228,69 @@ void TestNode() {
     }
 }
 
+void TestStrResult() {
+    struct Case {
+        int result;
+        const char* text;
+    };
+    const Case cases[] = {
+        {static_cast<int>(0x00000000u), "Success"},
+        {static_cast<int>(0x00850000u), "GenericMessage"},
+        {static_cast<int>(0x00850001u), "XmlParseInProgress"},
+        {static_cast<int>(0x00850002u), "XmlParseAborted"},
+        {static_cast<int>(0x00850003u), "MultipleInitialized"},
+        {static_cast<int>(0x80850000u), "GenericError"},
+        {static_cast<int>(0x80850001u), "NoMemory"},
+        {static_cast<int>(0x80850002u), "NotInitialized"},
+        {static_cast<int>(0x80850003u), "InvalidArgument"},
+        {static_cast<int>(0x80850004u), "NotSupported"},
+        {static_cast<int>(0x80850005u), "InitializeFailed"},
+        {static_cast<int>(0x80850006u), "InvalidBinXml"},
+        {static_cast<int>(0x80850007u), "ParserBusy"},
+        {static_cast<int>(0x80850008u), "XmlUnexpextedEoF"},
+        {static_cast<int>(0x80850009u), "XmlSyntaxError"},
+        {static_cast<int>(0x8085000au), "XmlEndTagMismatch"},
+        {static_cast<int>(0x8085000bu), "XmlInvalidChar"},
+        {static_cast<int>(0x8085000cu), "XmlInvalidDecValue"},
+        {static_cast<int>(0x8085000du), "XmlInvalidHexValue"},
+        {static_cast<int>(0x8085000eu), "XmlClosingAngleBracketCharNotFound"},
+        {static_cast<int>(0x8085000fu), "XmlEqualityCharNotFound"},
+        {static_cast<int>(0x80850010u), "XmlSemiColonCharNotFound"},
+        {static_cast<int>(0x80850011u), "XmlQuoteCharNotFound"},
+        {static_cast<int>(0x80850012u), "XmlEndOfCommentNotFound"},
+        {static_cast<int>(0x80850013u), "XmlEndOfCDSectNotFound"},
+        {static_cast<int>(0x80850014u), "XmlEndOfDtdNotFound"},
+        {static_cast<int>(0x80850015u), "XmlUnknownEncoding"},
+        {static_cast<int>(0x80850016u), "XmlHandlerNotSet"},
+        {static_cast<int>(0x80850017u), "XmlInvalidPi"},
+        {static_cast<int>(0x80850018u), "XmlInvalidDocumentElement"},
+        {static_cast<int>(0x80850019u), "XmlDocumentElementNotFound"},
+        {static_cast<int>(0x8085001au), "XmlDuplicateAttrName"},
+        {static_cast<int>(0x80850200u), "DomError"},
+        {static_cast<int>(0x80850201u), "DomNodeNotFound"},
+        {static_cast<int>(0x80850202u), "DomReadOnlyError"},
+        {static_cast<int>(0x80850203u), "DomMaxUniqueElementError"},
+        {static_cast<int>(0x80850204u), "DomMaxUniqueAttrError"},
+        {static_cast<int>(0x80850205u), "DomMaxNumOfAttrError"},
+        {static_cast<int>(0x80850206u), "DomMaxSizeOfElementNameError"},
+        {static_cast<int>(0x80850207u), "DomMaxSizeOfAttrNameError"},
+        {static_cast<int>(0x80850208u), "DomMaxSizeOfAttrValueError"},
+        {static_cast<int>(0x80850209u), "DomInvalidEnitity"},
+        {static_cast<int>(0x8085020au), "DomInvalidNodeType"},
+    };
+    for (const Case& c : cases) {
+        const char* text = _ZN3sce3Xml4Util9strResultEi(c.result);
+        Require(text != nullptr && std::strcmp(text, c.text) == 0, c.text);
+        Require(_ZN3sce3Xml4Util9strResultEi(c.result) == text, "the same code returns the same string");
+    }
+    const int unknown[] = {1, -1, 0x7fffffff, static_cast<int>(0x80000000u), static_cast<int>(0x8084ffffu),
+        static_cast<int>(0x8085001bu), static_cast<int>(0x80850100u), static_cast<int>(0x808501ffu),
+        static_cast<int>(0x8085020bu), 0x0084ffff, 0x00850004, static_cast<int>(0x80860000u)};
+    for (int result : unknown) {
+        Require(std::strcmp(_ZN3sce3Xml4Util9strResultEi(result), "Unknown error.") == 0, "any other value is an unknown error");
+    }
+}
+
 }
 
 int main() {
@@ -223,6 +299,7 @@ int main() {
     TestSerializeParameterAndAllocator();
     TestNodeId();
     TestNode();
+    TestStrResult();
     std::puts("guest_xml_value_types: all checks passed");
     return 0;
 }

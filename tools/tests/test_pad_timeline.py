@@ -31,6 +31,24 @@ class TimelineTests(unittest.TestCase):
         self.document["events"][0]["buttons"] = ["cross", "touch-left", "touch-right"]
         self.assertIn("200 100 6307840", pad_timeline.compile_timeline(self.document, 1))
 
+    def test_sticks_are_written_after_the_buttons(self):
+        self.document["events"][0]["left_stick"] = [255, 0]
+        self.document["events"][1]["right_stick"] = [10, 245]
+        text = pad_timeline.compile_timeline(self.document, 7)
+        self.assertEqual(text, "APS5_PAD_TIMELINE 1 7 2\n200 100 18432 255 0 128 128\n500 200 64 128 128 10 245\n")
+
+    def test_stick_positions_are_validated(self):
+        for position in [None, [], [128], [128, 128, 128], [256, 128], [-1, 128], [True, 128], [128.0, 128], "128,128"]:
+            with self.subTest(position=position):
+                self.document["events"][0]["left_stick"] = position
+                with self.assertRaises(ValueError):
+                    pad_timeline.compile_timeline(self.document, 1)
+
+    def test_unknown_event_fields_are_rejected(self):
+        self.document["events"][0]["stick"] = [128, 128]
+        with self.assertRaises(ValueError):
+            pad_timeline.compile_timeline(self.document, 1)
+
     def test_empty_buttons_release(self):
         self.document["events"][0]["buttons"] = []
         self.assertIn("200 100 0", pad_timeline.compile_timeline(self.document, 1))
@@ -147,8 +165,9 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
     def run_cli(self, timeline, output):
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
         return subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output)],
-                              capture_output=True, text=True, timeout=5)
+                              capture_output=True, encoding="utf-8", timeout=5, env=env)
 
     def test_cli_roundtrip_and_invalid_input_preservation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -160,6 +179,22 @@ class TimelineTests(unittest.TestCase):
             timeline.write_text('{"version":2}', encoding="utf-8")
             self.assertEqual(self.run_cli(timeline, output).returncode, 2)
             self.assertEqual(output.read_bytes(), original)
+
+    def test_duplicate_timeline_fields_do_not_replace_a_queued_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            original = b"777 0 100\n"
+            output.write_bytes(original)
+            for text, field in (
+                    ('{"version":1,"events":[],"events":[{"at_ms":0,"hold_ms":100,"buttons":["cross"]}]}', "events"),
+                    ('{"version":1,"events":[{"at_ms":0,"hold_ms":100,"buttons":["cross"],"buttons":["circle"]}]}', "buttons")):
+                with self.subTest(field=field):
+                    timeline.write_text(text, encoding="utf-8")
+                    result = self.run_cli(timeline, output)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn(f"duplicate timeline field '{field}'", result.stderr)
+                    self.assertEqual(output.read_bytes(), original)
 
     def test_input_alias_protection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -255,6 +290,18 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn(f"directory does not exist: {nonexistent_parent.parent}", result.stderr)
 
+    def test_cli_diagnostics_keep_unicode_paths_with_inherited_encodings(self):
+        with tempfile.TemporaryDirectory(prefix="timeline-é-") as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "output_dir"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            output.mkdir()
+            for encoding in ("utf-8", "cp1252"):
+                with self.subTest(encoding=encoding), mock.patch.dict(os.environ, PYTHONIOENCODING=encoding):
+                    result = self.run_cli(timeline, output)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(f"{output} is a directory", result.stderr)
+
     def test_sequence_advances_past_existing_command_after_clock_reset(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -274,6 +321,32 @@ class TimelineTests(unittest.TestCase):
                     pad_timeline.main()
             self.assertEqual(error.exception.code, 2)
             self.assertEqual(output.read_text(encoding="utf-8"), exhausted)
+
+    def test_timeline_accepts_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text("\ufeff" + json.dumps(self.document), encoding="utf-8")
+            self.assertEqual(self.run_cli(timeline, output).returncode, 0)
+            self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 "))
+            self.assertIn("200 100 18432\n", output.read_text(encoding="utf-8"))
+
+    def test_unencodable_command_path_still_reports_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command\udcff"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            try:
+                output.touch()
+                output.unlink()
+            except (OSError, UnicodeError):
+                self.skipTest("the file system cannot name a file with a lone surrogate")
+            env = dict(os.environ, PYTHONIOENCODING="utf-8:backslashreplace")
+            result = subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output)],
+                                    capture_output=True, text=True, timeout=5, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 "))
+            self.assertIn("\\udcff", result.stdout)
 
 
 if __name__ == "__main__":
