@@ -1,7 +1,7 @@
 add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp Surface.cpp Context.cpp FontOptions.cpp Region.cpp Glyph.cpp)
 target_include_directories(libcairo PRIVATE ${LIBS_INCLUDE_DIR})
-target_sources(libcairo PRIVATE Png.cpp)
 target_sources(libcairo PRIVATE InFill.cpp)
+target_sources(libcairo PRIVATE Png.cpp)
 target_link_libraries(libcairo PRIVATE decoder_png)
 configure_windows_unwind(libcairo)
 
