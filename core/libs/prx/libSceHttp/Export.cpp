@@ -1,4 +1,5 @@
 #include "prx/libSceHttp/include/Http.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #ifdef _WIN32
@@ -603,8 +604,15 @@ int APS5_VABI sceHttpsGetSslError(int id, int* err_num, uint32_t* detail) {
     if (err_num == nullptr || detail == nullptr) {
         return ERROR_INVALID_VALUE;
     }
-    *err_num = 0;
-    *detail = 0;
+    const int zeroErr = 0;
+    const uint32_t zeroDetail = 0;
+    const int savedErrno = errno;
+    const bool copiedErr = GuestCopyOut_nid_no_patch(err_num, &zeroErr, sizeof(zeroErr));
+    const bool copiedDetail = GuestCopyOut_nid_no_patch(detail, &zeroDetail, sizeof(zeroDetail));
+    errno = savedErrno;
+    if (!copiedErr || !copiedDetail) {
+        return ERROR_INVALID_VALUE;
+    }
     return 0;
 }
 
@@ -797,13 +805,15 @@ int APS5_VABI sceHttpGetCookieStats(int id, HttpCookieStats* stats) {
 }
 
 int APS5_VABI sceHttpSetPriorityOption(int id, int priority) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    (void)priority;
+    return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpSetPolicyOption(int id, int policy) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    (void)policy;
+    return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpRequestGetAllHeaders(int requestId, HttpRequestHeader* headers, std::uint32_t* headerCount, char* contentLength, std::size_t* contentLengthSize) {
@@ -823,14 +833,10 @@ int APS5_VABI sceHttpSetProxy(int id, int, int, const char* hostname, std::uint1
     return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
 }
 
-int APS5_VABI sceHttpSetSocketCreationCallback(std::int32_t id, HttpSocketCreationCallback callback, void* userArg) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceHttpSetHttp09Enabled(int id, int enabled) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    (void)enabled;
+    return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpGetRegisteredCtxIds(int contextId, int* netPoolId, int* sslContextId) {

@@ -1166,9 +1166,16 @@ int APS5_VABI RSA_sign_nid_postfix(int type, const unsigned char* digest, unsign
     std::uint64_t contentLength = 0;
     std::uint64_t length = Md5Sha1Bytes;
     if (type == DigestMd5Sha1) {
-        if (digestLength != Md5Sha1Bytes) return 0;
+        if (digestLength != Md5Sha1Bytes) {
+            LibreSslPutError_nid_no_patch(4, 0xfff, 131);
+            return 0;
+        }
     } else {
-        if (type <= 0) return 0;
+        if (type <= 0) {
+            if (type < 0) LibreSslAddedObjectName_nid_no_patch(type, false);
+            LibreSslPutError_nid_no_patch(4, 0xfff, type < 0 ? 117 : 116);
+            return 0;
+        }
         object = &DigestObjectFor(type, __func__);
         if (digestLength > INT_MAX) NotImplemented_nid_no_patch((std::string(__func__) + ": a digest length over INT_MAX").c_str());
         algorithmLength = 2 + static_cast<std::uint64_t>(object->length) + 2;
@@ -1176,7 +1183,10 @@ int APS5_VABI RSA_sign_nid_postfix(int type, const unsigned char* digest, unsign
         length = 1 + DerLengthBytes(contentLength) + contentLength;
         if (length > INT_MAX) NotImplemented_nid_no_patch((std::string(__func__) + ": a DigestInfo over INT_MAX bytes").c_str());
     }
-    if (static_cast<std::int64_t>(length) > std::int64_t(RSA_size_nid_postfix(rsa)) - 11) return 0;
+    if (static_cast<std::int64_t>(length) > std::int64_t(RSA_size_nid_postfix(rsa)) - 11) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 112);
+        return 0;
+    }
     std::vector<unsigned char> encoded;
     const unsigned char* data = digest;
     if (object) {
