@@ -217,6 +217,16 @@ void Reserve(std::size_t slot, const char* role, std::optional<unsigned> logical
     const auto allowed = logical.has_value() ? std::vector<std::uint32_t>{reservation->chosen.id} : CpuTopology::ReservedThreadCpus(sets, *reservation);
     own = Reservation{reservation->chosen, CurrentThread(), allowed};
     const bool thread = PinTo(0, allowed);
+    for (auto& other : reservations) {
+        if (!other.has_value() || &other == &own) continue;
+        std::erase_if(other->allowed, [&](std::uint32_t cpu) {
+            for (const auto& set : sets) {
+                if (set.id == cpu) return set.group == reservation->chosen.group && set.core == reservation->chosen.core;
+            }
+            return false;
+        });
+        if (OwnThread(other->thread)) static_cast<void>(PinTo(static_cast<pid_t>(other->thread), other->allowed.empty() ? std::vector<std::uint32_t>{other->set.id} : other->allowed));
+    }
     if (DIR* tasks = opendir("/proc/self/task"); tasks != nullptr) {
         while (const dirent* entry = readdir(tasks)) {
             char* end = nullptr;

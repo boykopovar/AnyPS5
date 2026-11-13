@@ -2,6 +2,7 @@
 #include "prx/libc/include/CpuTopology.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <future>
 #include <thread>
 #include <vector>
 #ifdef __linux__
@@ -53,10 +54,25 @@ int main() {
     }
     const auto before = Allowed();
     std::vector<int> committer;
+    std::vector<int> committerAfterFinisher;
+    std::promise<void> reserved;
+    std::promise<void> finisherReserved;
     std::thread thread([&] {
         AgcDriver::DriverDetail::ReserveCommitterCore();
         committer = Allowed();
+        reserved.set_value();
+        finisherReserved.get_future().wait();
+        committerAfterFinisher = Allowed();
     });
+    reserved.get_future().wait();
+    const auto after = Allowed();
+    std::vector<int> finisher;
+    std::thread finisherThread([&] {
+        AgcDriver::DriverDetail::ReserveFinisherCore();
+        finisher = Allowed();
+    });
+    finisherThread.join();
+    finisherReserved.set_value();
     thread.join();
     const int chosen = static_cast<int>(expected->chosen.id);
     Require(Contains(committer, chosen), "the committer is not allowed its reserved processor");
@@ -65,9 +81,17 @@ int main() {
     } else {
         Require(committer.size() > 1 && committer.size() <= before.size(), "the committer was pinned to one processor instead of its core and the unreserved ones");
     }
-    const auto after = Allowed();
     Require(!Contains(after, chosen), "another thread of the process kept the reserved processor");
-    std::printf("committer allowed %zu processors, reserved %d, others %zu\n", committer.size(), chosen, after.size());
+    const auto second = CpuTopology::ChooseReservedCore(sets, {expected->chosen}, std::nullopt);
+    if (second.has_value()) {
+        const int finisherChosen = static_cast<int>(second->chosen.id);
+        Require(Contains(finisher, finisherChosen) && !Contains(finisher, chosen), "the finisher is not allowed its own reserved processor alone among the reserved ones");
+        Require(!Contains(committerAfterFinisher, finisherChosen), "the committer kept the processor the finisher reserved after it");
+        Require(Contains(committerAfterFinisher, chosen), "the finisher reservation took the committer off its reserved processor");
+        std::printf("committer allowed %zu processors, reserved %d, others %zu; after the finisher reserved %d, committer allowed %zu, finisher %zu\n", committer.size(), chosen, after.size(), finisherChosen, committerAfterFinisher.size(), finisher.size());
+    } else {
+        std::printf("committer allowed %zu processors, reserved %d, others %zu\n", committer.size(), chosen, after.size());
+    }
     return 0;
 #endif
 }
