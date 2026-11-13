@@ -36,6 +36,11 @@ UProperty Property(std::int32_t which) {
     return static_cast<UProperty>(which);
 }
 
+UErrorCode& Status(std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    return *reinterpret_cast<UErrorCode*>(error);
+}
+
 }
 
 bool Icu::PropertyNeedsData(std::int32_t property) {
@@ -43,6 +48,14 @@ bool Icu::PropertyNeedsData(std::int32_t property) {
 }
 
 extern "C" {
+
+const UCPMap* APS5_VABI u_getIntPropertyMap_nid_postfix(std::int32_t property, std::int32_t* error) {
+    auto& status = Status(error);
+    if (U_FAILURE(status)) return nullptr;
+    if (property >= UCHAR_INT_START && property < UCHAR_INT_LIMIT && Icu::PropertyNeedsData(property))
+        NotImplemented_nid_no_patch("u_getIntPropertyMap: property from a data file");
+    return u_getIntPropertyMap(Property(property), &status);
+}
 
 std::int8_t APS5_VABI u_charType_nid_postfix(std::int32_t character) {
     return u_charType(character);
