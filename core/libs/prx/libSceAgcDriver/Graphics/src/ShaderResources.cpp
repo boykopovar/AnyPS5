@@ -3351,6 +3351,15 @@ std::vector<std::uint32_t> ShaderResources::ContentKey(const CompiledShader& sha
 
 void ShaderResources::AppendContentKey(const CompiledShader& shader, bool dataWords, bool movableBuffers, std::vector<std::uint32_t>& key) {
     Require(shader.program != nullptr, "missing compiled shader");
+    if (shader.heap != nullptr && shader.program->heapTemplateId != 0) {
+        std::size_t heapWords = key.size() + 8;
+        for (const auto& binding : shader.program->bindings) {
+            if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers) heapWords += 1 + DrawGuestWords(shader, binding).size();
+        }
+        key.reserve(heapWords);
+        VisitContentKey(shader, dataWords, movableBuffers, [&](std::uint32_t word) { key.push_back(word); });
+        return;
+    }
     std::size_t words = key.size() + 5;
     const auto addWords = [&](std::size_t count) {
         if (count > key.max_size() - words) throw std::length_error("resource content key exceeds vector limits");
