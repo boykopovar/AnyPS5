@@ -19,16 +19,31 @@ def main():
         source.write_bytes(image)
 
         def convert(output, *options):
-            return subprocess.run([str(relinker), "--skip-sce-module", *flags, *options,
-                                   str(source), str(output)], capture_output=True, text=True, timeout=5)
+            return subprocess.run(
+                [
+                    str(relinker),
+                    "--skip-sce-module",
+                    *flags,
+                    *options,
+                    str(source),
+                    str(output),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
 
-        control = work / "control"
+        control_dir = work / "control"
+        control_dir.mkdir()
+        control = control_dir / "output"
         result = convert(control)
         assert result.returncode == 0, result.stderr
         expected = control.read_bytes()
         for name in ("regular", "symlink"):
-            output = work / name
-            target = work / (name + "-target") if name == "symlink" else output
+            case = work / name
+            case.mkdir()
+            output = case / "output"
+            target = case / "output-target" if name == "symlink" else output
             target.write_bytes(b"previous")
             if name == "symlink":
                 output.symlink_to(target.name)
@@ -56,14 +71,19 @@ def main():
                     else:
                         path.write_bytes(b"previous metadata")
             result = convert(output, *options)
-            assert result.returncode == 2 and "Output is a FIFO:" in result.stderr, (name, result)
+            assert result.returncode == 2 and "Output is a FIFO:" in result.stderr, (
+                name,
+                result,
+            )
             assert stat.S_ISFIFO(pipe.stat().st_mode), name
             if name == "symlink":
                 assert output.is_symlink(), name
             elif name in ("registry", "needed"):
                 assert output.read_bytes() == b"previous executable", name
                 other = "needed" if name == "registry" else "registry"
-                assert (case / ("output." + other + ".json")).read_bytes() == b"previous metadata", name
+                assert (
+                    case / ("output." + other + ".json")
+                ).read_bytes() == b"previous metadata", name
                 assert (case / ("output." + name + ".json")).is_symlink(), name
             assert source.read_bytes() == image, name
     print(mode + " FIFO output rejection and regular-file controls passed")
