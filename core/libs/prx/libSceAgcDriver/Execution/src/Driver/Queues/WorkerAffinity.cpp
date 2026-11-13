@@ -71,6 +71,7 @@ struct CoreSwitches {
 struct Reservation {
     CpuTopology::CpuSet set;
     unsigned long thread = 0;
+    std::vector<std::uint32_t> allowed;
 };
 
 constexpr std::size_t CommitterSlot = 0;
@@ -173,7 +174,7 @@ void Reserve(std::size_t slot, const char* role, std::optional<unsigned> logical
         const bool selected = setSelected(GetCurrentThread(), &id, 1) != 0;
 #else
         own->thread = CurrentThread();
-        const bool selected = PinTo(0, {own->set.id});
+        const bool selected = PinTo(0, own->allowed.empty() ? std::vector<std::uint32_t>{own->set.id} : own->allowed);
 #endif
         std::fprintf(stderr, "[affinity] %s tid=%lu -> core %u logical %u, kept from its previous thread (thread %s)\n", role, CpuTopology::ThreadId(nullptr), static_cast<unsigned>(own->set.core), static_cast<unsigned>(own->set.logical), selected ? "set" : "failed");
         return;
@@ -213,8 +214,12 @@ void Reserve(std::size_t slot, const char* role, std::optional<unsigned> logical
     }
     const char* processState = process ? "set" : "failed";
 #else
-    own = Reservation{reservation->chosen, CurrentThread()};
-    const bool thread = PinTo(0, {reservation->chosen.id});
+    std::vector<std::uint32_t> allowed = reservation->others;
+    for (const auto& set : sets) {
+        if (set.group == reservation->chosen.group && set.core == reservation->chosen.core) allowed.push_back(set.id);
+    }
+    own = Reservation{reservation->chosen, CurrentThread(), allowed};
+    const bool thread = PinTo(0, allowed);
     if (DIR* tasks = opendir("/proc/self/task"); tasks != nullptr) {
         while (const dirent* entry = readdir(tasks)) {
             char* end = nullptr;
