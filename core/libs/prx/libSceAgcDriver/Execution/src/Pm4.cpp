@@ -314,6 +314,8 @@ constexpr std::uint32_t ConditionalWordsMask = 0x3fffu;
 constexpr std::uint32_t DmaSourceCachePolicy = 3u << 13u;
 constexpr std::uint32_t DmaDestinationCachePolicy = 3u << 25u;
 constexpr std::uint32_t WriteDataCachePolicy = 3u << 25u;
+constexpr std::uint32_t PredicatedHeaderFlag = 1u;
+constexpr std::uint32_t RegisterWriteHeaderFlags = 6u;
 
 namespace {
 
@@ -358,7 +360,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     require((header & 0xc0000000u) == 0xc0000000u, "unsupported PM4 packet type");
     require(packet.size() == ((header >> 16u) & 0x3fffu) + 2u, "invalid PM4 packet size");
     const auto opcode = (header >> 8u) & 0xffu;
-    if (RegisterWriteOpcode(opcode) && (header & 0xf8u) == 0) {
+    if (RegisterWriteOpcode(opcode) && (header & 0xffu & ~(RegisterWriteHeaderFlags | PredicatedHeaderFlag)) == 0) {
         ValidateRegisterWrite(packet, opcode, queue);
         return;
     }
@@ -408,8 +410,8 @@ void ValidateGeneral(std::span<const std::uint32_t> packet, std::uint32_t queue,
     // neither changes what the packet writes.
     const auto flags = header & 0xffu;
     const bool registerWrite = opcode == 0x69 || opcode == 0x76 || opcode == 0x79 || opcode == 0x7a || (opcode == 0x37 && ((packet[1] >> 8u) & 0xfu) == 0);
-    auto allowedFlags = opcode == 0x11 || opcode == 0x15 || opcode == 0x16 ? 2u : registerWrite ? 6u : opcode == 0x3c || opcode == 0x93 ? 2u : 0u;
-    if (opcode != 0x20 && opcode != 0x22) allowedFlags |= 1u;
+    auto allowedFlags = opcode == 0x11 || opcode == 0x15 || opcode == 0x16 ? 2u : registerWrite ? RegisterWriteHeaderFlags : opcode == 0x3c || opcode == 0x93 ? 2u : 0u;
+    if (opcode != 0x20 && opcode != 0x22) allowedFlags |= PredicatedHeaderFlag;
     if (queue != 0 && ShaderRecompiler::GcnGuestShaders()) allowedFlags |= 2u;
     if ((flags & ~allowedFlags) != 0) throw std::runtime_error("PM4 header flags 0x" + ToHex(flags) + " are not implemented");
     switch (opcode) {

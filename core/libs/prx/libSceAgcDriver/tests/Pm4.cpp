@@ -209,6 +209,17 @@ void testValidationMessages() {
         const auto compute = validationMessage(makePacket(opcode, {0x10, 1}), 0x20);
         check(compute == (opcode == 0x76 ? "" : "graphics packet in compute queue"), "compute queue register write message changed");
     }
+    for (const auto opcode : {0x69u, 0x76u, 0x79u, 0x7au}) {
+        for (std::uint32_t flags = 0; flags < 256u; ++flags) {
+            std::string expected;
+            if ((flags & ~7u) != 0) {
+                char text[64];
+                std::snprintf(text, sizeof(text), "PM4 header flags 0x%x are not implemented", flags);
+                expected = text;
+            }
+            check(validationMessage(makePacket(opcode, {0x10, 1, 2}, flags), 0) == expected, "a register write accepts header flags beyond the predicate, shader type and filter bits, or rejects one of them");
+        }
+    }
     check(validationMessage(makePacket(0x10, {0}), 0).empty() && validationMessage(makePacket(0x10, {0x1234, 5, 6}), 0x20).empty(), "a plain NOP was rejected");
     check(validationMessage(makePacket(0x10, {0x68750000u}), 0) == "typed user-data and legacy flip markers are not implemented", "the typed user-data NOP message changed");
     check(validationMessage(makePacket(0x10, {0x687500ffu, 1}), 0x20) == "typed user-data and legacy flip markers are not implemented", "the typed user-data NOP message changed on a compute queue");
