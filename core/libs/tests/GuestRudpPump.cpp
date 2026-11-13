@@ -22,6 +22,7 @@ int main() {
     std::uint16_t segmentSize = 0x5a5a;
     CHECK(sceRudpProcessEvents(0) == notInitialized);
     CHECK(sceRudpNetFlush() == notInitialized);
+    CHECK(sceRudpProcessEvents(1) == notInitialized);
     CHECK(sceRudpNetReceived(0, nullptr, 0, nullptr, 0) == notInitialized);
     CHECK(sceRudpEnableInternalIOThread2(0, 0, 0) == notInitialized);
     CHECK(sceRudpGetMaxSegmentSize(&segmentSize) == notInitialized);
