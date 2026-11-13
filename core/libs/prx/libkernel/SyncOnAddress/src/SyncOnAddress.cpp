@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -12,10 +13,20 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <vector>
+
+#ifdef __linux__
+#include <cstdio>
+#include <sys/sysmacros.h>
+#elif defined(__APPLE__)
+#include <libproc.h>
+#include <unistd.h>
+#endif
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
@@ -781,6 +792,168 @@ int RwlockUnlock(UserRwlock* rwlock) {
     return 0;
 }
 
+constexpr int UMTX_OP_SHM = 25;
+constexpr std::uint32_t UMTX_SHM_CREAT = 0x0001;
+constexpr std::uint32_t UMTX_SHM_LOOKUP = 0x0002;
+constexpr std::uint32_t UMTX_SHM_DESTROY = 0x0004;
+constexpr std::uint32_t UMTX_SHM_ALIVE = 0x0008;
+constexpr int GUEST_ESRCH = 3;
+constexpr int GUEST_EBADF = 9;
+constexpr int GUEST_ENOTTY = 25;
+constexpr int GUEST_O_RDWR = 0x0002;
+constexpr int GUEST_O_CLOEXEC = 0x00100000;
+constexpr int GUEST_F_DUPFD = 0;
+constexpr int GUEST_F_SETFD = 2;
+constexpr int GUEST_FD_CLOEXEC = 1;
+
+struct ShmIdentity {
+    std::uint32_t device;
+    std::uint32_t inode;
+    bool operator==(const ShmIdentity&) const = default;
+};
+
+struct ShmRegistration {
+    int descriptor;
+    ShmIdentity identity;
+};
+
+std::mutex g_shmMutex;
+std::unordered_map<std::uintptr_t, ShmRegistration> g_shmRegistry;
+std::vector<ShmIdentity> g_shmDestroyed;
+
+std::optional<ShmIdentity> DescriptorIdentity(int descriptor) {
+    FileStat status{};
+    if (_fstat_nid_postfix(descriptor, &status) != 0) {
+        return std::nullopt;
+    }
+    return ShmIdentity{status.st_dev, status.st_ino};
+}
+
+std::optional<ShmIdentity> MappedIdentity(void* address) {
+    const auto start = reinterpret_cast<std::uintptr_t>(address);
+#ifdef __linux__
+    std::FILE* maps = std::fopen("/proc/self/maps", "re");
+    if (maps == nullptr) {
+        NotImplemented_nid_no_patch("_umtx_op UMTX_SHM_ALIVE without /proc/self/maps");
+    }
+    std::optional<ShmIdentity> identity;
+    char line[4096];
+    while (std::fgets(line, sizeof(line), maps) != nullptr) {
+        unsigned long begin = 0;
+        unsigned long end = 0;
+        unsigned int major = 0;
+        unsigned int minor = 0;
+        unsigned long inode = 0;
+        if (std::sscanf(line, "%lx-%lx %*s %*s %x:%x %lu", &begin, &end, &major, &minor, &inode) == 5 && begin <= start && start < end) {
+            if (inode != 0) {
+                identity = ShmIdentity{static_cast<std::uint32_t>(makedev(major, minor)), static_cast<std::uint32_t>(inode)};
+            }
+            break;
+        }
+    }
+    std::fclose(maps);
+    return identity;
+#elif defined(__APPLE__)
+    proc_regionwithpathinfo region{};
+    if (proc_pidinfo(getpid(), PROC_PIDREGIONPATHINFO, start, &region, sizeof(region)) != static_cast<int>(sizeof(region))) {
+        return std::nullopt;
+    }
+    const auto& info = region.prp_prinfo;
+    if (start < info.pri_address || start - info.pri_address >= info.pri_size || region.prp_vip.vip_vi.vi_stat.vst_ino == 0) {
+        return std::nullopt;
+    }
+    return ShmIdentity{static_cast<std::uint32_t>(region.prp_vip.vip_vi.vi_stat.vst_dev), static_cast<std::uint32_t>(region.prp_vip.vip_vi.vi_stat.vst_ino)};
+#else
+    (void)start;
+    NotImplemented_nid_no_patch("_umtx_op UMTX_SHM_ALIVE on a host without a mapping query");
+#endif
+}
+
+bool ShmKeyWritable(void* address) {
+    if (!TryLoadAddressValue(static_cast<std::uint8_t*>(address))) {
+        return false;
+    }
+    const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(reinterpret_cast<std::uintptr_t>(address), false);
+    return range == nullptr || range->writable;
+}
+
+int CreateShmRegistration(ShmRegistration& created) {
+    const int descriptor = shm_open_nid_postfix(reinterpret_cast<const char*>(1), GUEST_O_RDWR | GUEST_O_CLOEXEC, 0);
+    if (descriptor < 0) {
+        return *__error_nid_postfix();
+    }
+    std::optional<ShmIdentity> identity;
+    if (ftruncate_nid_postfix(descriptor, static_cast<std::int64_t>(PS5_PAGE_SIZE)) != 0 || !(identity = DescriptorIdentity(descriptor))) {
+        const int error = *__error_nid_postfix();
+        close_nid_postfix(descriptor);
+        return error;
+    }
+    created = ShmRegistration{descriptor, *identity};
+    std::erase(g_shmDestroyed, *identity);
+    return 0;
+}
+
+int OpenShmRegistration(const ShmRegistration& registration, int& descriptor) {
+    descriptor = fcntl_nid_postfix(registration.descriptor, GUEST_F_DUPFD, 0);
+    if (descriptor >= 0 && DescriptorIdentity(descriptor) == registration.identity) {
+        if (fcntl_nid_postfix(descriptor, GUEST_F_SETFD, GUEST_FD_CLOEXEC) == 0) {
+            return 0;
+        }
+        const int error = *__error_nid_postfix();
+        close_nid_postfix(descriptor);
+        return error;
+    }
+    if (descriptor >= 0) {
+        close_nid_postfix(descriptor);
+    } else if (const int error = *__error_nid_postfix(); error != GUEST_EBADF) {
+        return error;
+    }
+    NotImplemented_nid_no_patch("_umtx_op UMTX_OP_SHM after the title closed the registry descriptor");
+}
+
+int UmtxShm(void* address, std::uint64_t value, int& descriptor) {
+    const auto flags = static_cast<std::uint32_t>(value);
+    const auto operation = flags & (UMTX_SHM_CREAT | UMTX_SHM_LOOKUP | UMTX_SHM_DESTROY | UMTX_SHM_ALIVE);
+    if (operation == 0 || (operation & (operation - 1)) != 0) {
+        return GUEST_EINVAL;
+    }
+    if (operation == UMTX_SHM_ALIVE) {
+        if (!TryLoadAddressValue(static_cast<std::uint8_t*>(address))) {
+            return GUEST_EFAULT;
+        }
+        std::lock_guard<std::mutex> lock(g_shmMutex);
+        if (g_shmDestroyed.empty()) {
+            return 0;
+        }
+        const auto backing = MappedIdentity(address);
+        return backing && std::find(g_shmDestroyed.begin(), g_shmDestroyed.end(), *backing) != g_shmDestroyed.end() ? GUEST_ENOTTY : 0;
+    }
+    if (!ShmKeyWritable(address)) {
+        return GUEST_EFAULT;
+    }
+    const auto key = reinterpret_cast<std::uintptr_t>(address);
+    std::lock_guard<std::mutex> lock(g_shmMutex);
+    auto found = g_shmRegistry.find(key);
+    if (operation == UMTX_SHM_CREAT && found == g_shmRegistry.end()) {
+        ShmRegistration created{};
+        if (const int error = CreateShmRegistration(created); error != 0) {
+            return error;
+        }
+        found = g_shmRegistry.emplace(key, created).first;
+    }
+    if (found == g_shmRegistry.end()) {
+        return GUEST_ESRCH;
+    }
+    if (operation == UMTX_SHM_DESTROY) {
+        const ShmRegistration destroyed = found->second;
+        g_shmRegistry.erase(found);
+        g_shmDestroyed.push_back(destroyed.identity);
+        close_nid_postfix(destroyed.descriptor);
+        return 0;
+    }
+    return OpenShmRegistration(found->second, descriptor);
+}
+
 }  // namespace
 
 extern "C" {
@@ -872,6 +1045,14 @@ int APS5_VABI _umtx_op_nid_postfix(void* object, int operation, std::uint64_t va
         case UMTX_OP_RW_UNLOCK:
             error = RwlockUnlock(static_cast<UserRwlock*>(object));
             break;
+        case UMTX_OP_SHM: {
+            int result = 0;
+            error = UmtxShm(sizeArgument, value, result);
+            if (error == 0) {
+                return result;
+            }
+            break;
+        }
         default:
             if (operation < 0 || operation >= UMTX_OP_MAX) {
                 error = GUEST_EINVAL;
