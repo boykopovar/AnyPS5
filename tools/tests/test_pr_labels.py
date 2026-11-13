@@ -312,6 +312,16 @@ class ProcessTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
+    def test_missing_github_cli_reports_a_setup_error_without_traceback(self):
+        output = io.StringIO()
+        with patch.dict(pr_labels.os.environ, {"GITHUB_REPOSITORY": "owner/project"}):
+            with patch.object(subprocess, "run", side_effect=FileNotFoundError(2, "No such file or directory", "gh")):
+                with contextlib.redirect_stderr(output), self.assertRaises(SystemExit) as raised:
+                    pr_labels.main(["--pr", "7", "--dry-run"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("GitHub CLI 'gh' is required on PATH", output.getvalue())
+        self.assertNotIn("Traceback", output.getvalue())
+
     def test_invalid_pages_fail_before_any_label_or_comment_write(self):
         valid = json.dumps([{"number": 7, "title": "perf: example", "body": "", "labels": [], "state": "open"}])
         for response in ("", " \r\n", "{", "{}", valid + "\n{", "[" * 2000):
