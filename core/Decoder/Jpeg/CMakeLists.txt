@@ -8,7 +8,8 @@ function(add_jpeg_decoder target runtimeTarget)
         if(BUILD_TESTING AND Python3_EXECUTABLE)
             add_test(NAME jpeg_external_toolchain COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/test_toolchain.py)
-            set_tests_properties(jpeg_external_toolchain PROPERTIES TIMEOUT 30)
+            set_tests_properties(jpeg_external_toolchain PROPERTIES TIMEOUT 30
+                ENVIRONMENT "CMAKE_GENERATOR=${CMAKE_GENERATOR}")
         endif()
         set(jpeg_turbo_prefix "${CMAKE_BINARY_DIR}/libjpeg-turbo")
         if(WIN32)

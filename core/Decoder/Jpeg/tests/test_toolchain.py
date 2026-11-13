@@ -38,7 +38,7 @@ add_library(probe_runtime INTERFACE)
 include([==[{helper}]==])
 add_jpeg_decoder(probe_decoder probe_runtime)
 """)
-            command = [CMAKE, "-S", str(source), "-B", str(root / "build"), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release"]
+            command = [CMAKE, "-S", str(source), "-B", str(root / "build"), "-DCMAKE_BUILD_TYPE=Release"]
             if configured:
                 toolchain = root / "selected toolchain.cmake"
                 toolchain.write_text('set(CMAKE_C_FLAGS_INIT "${CMAKE_C_FLAGS_INIT} -DANYPS5_JPEG_TOOLCHAIN_PROBE=123")\n')
