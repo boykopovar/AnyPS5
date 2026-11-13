@@ -38,6 +38,8 @@ void Key(const UResourceBundle* bundle, const char* name) {
 void Pattern(const char* locale, const char16_t* skeleton, std::u16string_view expected) {
     UErrorCode status = U_ZERO_ERROR;
     Generator generator(udatpg_open(locale, &status), udatpg_close);
+    if (!generator || U_FAILURE(status) || status == U_USING_DEFAULT_WARNING)
+        std::fprintf(stderr, "native generator: locale=%s status=%s\n", locale, u_errorName(status));
     Require(generator && U_SUCCESS(status) && status != U_USING_DEFAULT_WARNING, "native generator opens from complete locale data");
     std::array<char16_t, 128> output{};
     const auto count = udatpg_getBestPattern(generator.get(), skeleton, -1, output.data(), output.size(), &status);
