@@ -699,6 +699,16 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(err, f"FAIL: {output}: JSON output is a directory\n")
         self.assertEqual(set(work.root.iterdir()), files)
 
+    def test_long_json_filename_can_be_written_and_replaced(self):
+        root = self.work.root
+        directory = Path("\\\\?\\" + str(root.resolve())) if os.name == "nt" else root
+        output = directory / ("a" * 245 + ".json")
+        files = set(directory.iterdir())
+        for result in ({"complete": True}, {"complete": False}):
+            import_audit.write_json(output, result)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
+            self.assertEqual(set(directory.iterdir()), files | {output})
+
     @unittest.skipUnless(os.name == "posix", "POSIX report permissions")
     def test_new_json_report_permissions_follow_the_process_umask(self):
         script = "\n".join([
