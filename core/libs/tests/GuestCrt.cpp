@@ -248,6 +248,7 @@ int main() {
     Require(sceAmprMbstowcs(nullptr, "ABC", 8) == 3);
     Require(sceAmprMbstowcs(nullptr, "ABC", 0) == 3 && sceAmprMbstowcs(nullptr, "ABC", 1) == 3);
     Require(mbstowcs_nid_postfix(nullptr, "ABC", 0) == 3 && mbstowcs_nid_postfix(nullptr, "ABC", 1) == 3);
+    Require(mbstowcs_nid_postfix(nullptr, "ABC", 0) == 3);
     Require(sceAmprMbstowcs(wide, "ABC", 2) == 2);
     Require(mbstowcs_nid_postfix(wide, "ABC", 8) == 3);
 
