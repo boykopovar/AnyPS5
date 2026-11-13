@@ -47,7 +47,7 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 952, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(State) == 1008, "State changed: update CanonicalPipelineState and the recipe codec");
 static_assert(sizeof(ShaderStages) == 164, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
@@ -56,7 +56,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 17u;
+constexpr std::uint32_t FileFormat = 18u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -247,6 +247,7 @@ void encodeState(Writer& writer, const State& state) {
     writer.Raw(state.pointSizeMin);
     writer.Raw(state.pointSizeMax);
     writer.Bool(state.rasterizerDiscard);
+    writer.U32(static_cast<std::uint32_t>(state.extraViewports.size()));
 }
 
 void decodeState(Reader& reader, State& state) {
@@ -322,6 +323,13 @@ void decodeState(Reader& reader, State& state) {
     state.pointSizeMin = reader.Raw<float>();
     state.pointSizeMax = reader.Raw<float>();
     state.rasterizerDiscard = reader.Bool();
+    const auto extraViewports = reader.U32();
+    if (!reader.Ok() || extraViewports >= MaxViewports) {
+        reader.Fail();
+        state = State{};
+        return;
+    }
+    state.extraViewports.assign(extraViewports, VkViewport{0, 0, 1, 1, 0, 1});
 }
 
 void encodeRecipe(Writer& writer, const GraphicsPipelineRecipe& recipe) {
@@ -1616,6 +1624,7 @@ State CanonicalPipelineState(const State& state) {
     canonical.pointSizeMin = state.pointSizeMin;
     canonical.pointSizeMax = state.pointSizeMax;
     canonical.rasterizerDiscard = state.rasterizerDiscard;
+    canonical.extraViewports.assign(state.extraViewports.size(), VkViewport{0, 0, 1, 1, 0, 1});
     return canonical;
 }
 

@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
@@ -33,10 +34,11 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Width = 32;
 constexpr std::uint32_t Height = 16;
-constexpr std::uint32_t Half = Width / 2u;
+constexpr std::uint32_t Strip = Width / AgcDriver::Graphics::MaxViewports;
 constexpr std::uint8_t Kept = 0x40;
 constexpr std::uint8_t Drawn = 255;
 constexpr std::uint32_t ViewportExport = (1u << 19u) | (1u << 21u);
+constexpr std::array<std::uint32_t, 5> DrawnViewports{1u, 0u, 2u, 7u, 15u};
 constexpr std::uint32_t MultiViewportCapability = 57;
 constexpr std::uint32_t ShaderViewportIndexLayerCapability = 5254;
 
@@ -146,6 +148,12 @@ void DecodeTests() {
     SetViewport(queue, 1, 8.0f, 48.0f, 1.0f, 2.0f, 0.5f, 0.5f);
     queue.context[0x96] = (1u << 16u) | 40u;
     queue.context[0x97] = (3u << 16u) | 60u;
+    SetViewport(queue, 5, 4.0f, 10.0f, 2.0f, 6.0f, 0.25f, 0.5f);
+    queue.context[0x9e] = (1u << 16u) | 8u;
+    queue.context[0x9f] = (3u << 16u) | 12u;
+    SetViewport(queue, 15, 2.0f, 30.0f, 3.0f, 20.0f, 0.5f, 0.25f);
+    queue.context[0xb2] = 26u;
+    queue.context[0xb3] = (3u << 16u) | 33u;
     const auto state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.viewportExports == (1u << 19u), "the viewport index export bit was not kept");
     Require(state.extraViewports.size() == AgcDriver::Graphics::MaxViewports - 1u && state.viewportScissors.size() == AgcDriver::Graphics::MaxViewports, "a viewport index export did not decode all sixteen viewports");
@@ -153,15 +161,39 @@ void DecodeTests() {
     Require(Same(state.viewport, baseline.viewport) && Same(state.viewportScissors[0], baseline.scissor), "viewport 0 changed with a viewport index export");
     Require(Same(state.extraViewports[0], VkViewport{40.0f, 1.0f, 16.0f, 2.0f, 0.5f, 1.0f}), "viewport 1 does not follow its PA_CL_VPORT registers");
     Require(Same(state.viewportScissors[1], VkRect2D{{40, 1}, {20u, 2u}}), "viewport 1 does not use its own PA_SC_VPORT_SCISSOR");
+    Require(Same(state.extraViewports[4], VkViewport{6.0f, 4.0f, 8.0f, 4.0f, 0.5f, 0.75f}), "viewport 5 does not follow its PA_CL_VPORT registers");
+    Require(Same(state.viewportScissors[5], VkRect2D{{8, 1}, {4u, 2u}}), "viewport 5 does not use its own PA_SC_VPORT_SCISSOR");
+    Require(Same(state.extraViewports[14], VkViewport{28.0f, 17.0f, 4.0f, 6.0f, 0.25f, 0.75f}), "viewport 15 does not follow its PA_CL_VPORT registers");
+    Require(Same(state.viewportScissors[15], VkRect2D{{26, 0}, {7u, 3u}}), "viewport 15 does not use its own PA_SC_VPORT_SCISSOR");
     for (std::uint32_t index = 2; index < AgcDriver::Graphics::MaxViewports; ++index) {
+        if (index == 5u || index == 15u) continue;
         Require(state.viewportScissors[index].extent.width == 0u || state.viewportScissors[index].extent.height == 0u, "viewport " + std::to_string(index) + " with zero scale is not empty");
     }
-    auto bounds = baseline.scissor;
-    const auto right = std::max<std::int64_t>(bounds.offset.x + bounds.extent.width, 60);
-    const auto bottom = std::max<std::int64_t>(bounds.offset.y + bounds.extent.height, 3);
-    bounds.offset = {std::min(bounds.offset.x, 40), std::min(bounds.offset.y, 1)};
-    bounds.extent = {static_cast<std::uint32_t>(right - bounds.offset.x), static_cast<std::uint32_t>(bottom - bounds.offset.y)};
+    std::int64_t left = baseline.scissor.offset.x;
+    std::int64_t top = baseline.scissor.offset.y;
+    std::int64_t right = left + baseline.scissor.extent.width;
+    std::int64_t bottom = top + baseline.scissor.extent.height;
+    for (const VkRect2D& rect : {VkRect2D{{40, 1}, {20u, 2u}}, VkRect2D{{8, 1}, {4u, 2u}}, VkRect2D{{26, 0}, {7u, 3u}}}) {
+        left = std::min<std::int64_t>(left, rect.offset.x);
+        top = std::min<std::int64_t>(top, rect.offset.y);
+        right = std::max<std::int64_t>(right, rect.offset.x + rect.extent.width);
+        bottom = std::max<std::int64_t>(bottom, rect.offset.y + rect.extent.height);
+    }
+    const VkRect2D bounds{{static_cast<std::int32_t>(left), static_cast<std::int32_t>(top)}, {static_cast<std::uint32_t>(right - left), static_cast<std::uint32_t>(bottom - top)}};
     Require(Same(state.scissor, bounds), "the draw's scissor is not the union of its viewports' scissors");
+
+    AgcDriver::Graphics::GraphicsPipelineRecipe recipe;
+    recipe.state = AgcDriver::Graphics::CanonicalPipelineState(state);
+    Require(AgcDriver::Graphics::ViewportCount(recipe.state) == AgcDriver::Graphics::MaxViewports, "the canonical pipeline state dropped the viewport count");
+    Require(AgcDriver::Graphics::ViewportCount(AgcDriver::Graphics::CanonicalPipelineState(baseline)) == 1u, "the canonical pipeline state of a single-viewport draw has extra viewports");
+    auto bytes = AgcDriver::Graphics::EncodeGraphicsPipelineRecipe(recipe);
+    AgcDriver::Graphics::GraphicsPipelineRecipe decoded;
+    Require(AgcDriver::Graphics::DecodeGraphicsPipelineRecipe(bytes, decoded) && AgcDriver::Graphics::ViewportCount(decoded.state) == AgcDriver::Graphics::MaxViewports, "the journal recipe dropped the viewport count");
+    Require(AgcDriver::Graphics::EncodeGraphicsPipelineRecipe(decoded) == bytes, "the journal recipe with sixteen viewports does not round-trip byte for byte");
+    Require(bytes.size() >= 4u, "the journal recipe is too short");
+    const auto tooMany = AgcDriver::Graphics::MaxViewports;
+    std::memcpy(bytes.data() + bytes.size() - 4u, &tooMany, 4u);
+    Require(!AgcDriver::Graphics::DecodeGraphicsPipelineRecipe(bytes, decoded), "a journal recipe with seventeen viewports decoded");
 
     AgcDriver::Graphics::Context unsupported{};
     auto stripped = state;
@@ -172,6 +204,10 @@ void DecodeTests() {
     auto kept = state;
     AgcDriver::Graphics::ApplyViewportIndex(supported, kept);
     Require(kept.viewportExports == state.viewportExports && kept.extraViewports.size() == state.extraViewports.size() && Same(kept.scissor, state.scissor), "a multiViewport device dropped the extra viewports");
+    auto partial = state;
+    partial.extraViewports.pop_back();
+    partial.viewportScissors.pop_back();
+    ExpectFailure([&] { AgcDriver::Graphics::ApplyViewportIndex(supported, partial); }, "all 16 viewports");
     auto tessellated = state;
     tessellated.stages.path = AgcDriver::Graphics::ShaderPath::Tessellation;
     AgcDriver::Graphics::ApplyViewportIndex(supported, tessellated);
@@ -239,14 +275,20 @@ private:
     std::byte* block = nullptr;
 };
 
-void SetHalves(AgcDriver::Graphics::State& state) {
+VkRect2D StripScissor(std::uint32_t viewport) {
+    return {{static_cast<std::int32_t>(viewport * Strip), 0}, {Strip, viewport + 1u}};
+}
+
+void SetStrips(AgcDriver::Graphics::State& state) {
     state.viewportExports = 1u << 19u;
-    state.viewport = {0, static_cast<float>(Height), static_cast<float>(Half), -static_cast<float>(Height), 0, 1};
-    state.extraViewports.assign(AgcDriver::Graphics::MaxViewports - 1u, VkViewport{0, 0, 1, 1, 0, 1});
-    state.extraViewports[0] = {static_cast<float>(Half), static_cast<float>(Height), static_cast<float>(Half), -static_cast<float>(Height), 0, 1};
-    state.viewportScissors.assign(AgcDriver::Graphics::MaxViewports, VkRect2D{{0, 0}, {0u, 0u}});
-    state.viewportScissors[0] = {{0, 0}, {Half, Height}};
-    state.viewportScissors[1] = {{static_cast<std::int32_t>(Half), 0}, {Half, Height}};
+    std::array<VkViewport, AgcDriver::Graphics::MaxViewports> viewports{};
+    state.viewportScissors.clear();
+    for (std::uint32_t index = 0; index < AgcDriver::Graphics::MaxViewports; ++index) {
+        viewports[index] = {static_cast<float>(index * Strip), static_cast<float>(Height), static_cast<float>(Strip), -static_cast<float>(Height), 0, 1};
+        state.viewportScissors.push_back(StripScissor(index));
+    }
+    state.viewport = viewports[0];
+    state.extraViewports.assign(viewports.begin() + 1, viewports.end());
     state.scissor = {{0, 0}, {Width, Height}};
 }
 
@@ -262,7 +304,7 @@ void CommonState(AgcDriver::Graphics::State& state, const AgcDriver::Graphics::C
     state.blend.colorWriteMask = 15;
     state.blends = {state.blend};
     state.blendConstants = {};
-    SetHalves(state);
+    SetStrips(state);
 }
 
 ShaderRecompiler::RecompileResult Fragment(const ShaderRecompiler::SpirvTarget& target, std::uint32_t mainPush) {
@@ -368,7 +410,8 @@ void Check(const std::byte* memory, const AgcDriver::Graphics::ColorTarget& colo
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
             const auto* texel = memory + (static_cast<std::uint64_t>(y / thin[2]) * mip.blocksPerRow + x / thin[1]) * thin[0] + BlockOffset(*equation, x, y);
-            const bool inside = viewport == 0u ? x < Half : x >= Half;
+            const auto scissor = StripScissor(viewport);
+            const bool inside = x >= static_cast<std::uint32_t>(scissor.offset.x) && x < scissor.offset.x + scissor.extent.width && y < scissor.extent.height;
             const auto expected = inside ? Drawn : Kept;
             for (std::uint32_t channel = 0; channel < 4; ++channel) {
                 const auto actual = std::to_integer<std::uint8_t>(texel[channel]);
@@ -392,7 +435,7 @@ int main() {
             return VulkanTestSkipped;
         }
         const auto bytes = (Target(nullptr).bytes + 65535u) & ~std::size_t{65535u};
-        for (const std::uint32_t viewport : {1u, 0u}) {
+        for (const std::uint32_t viewport : DrawnViewports) {
             BuildQuad(viewport);
             const GuestSurface memory(bytes);
             const auto color = Target(memory.Data());
@@ -403,7 +446,7 @@ int main() {
             std::puts("viewport index vertex tests passed; mesh draws skipped, the device has no VK_EXT_mesh_shader compiler for these programs");
             return 0;
         }
-        for (const std::uint32_t viewport : {1u, 0u}) {
+        for (const std::uint32_t viewport : DrawnViewports) {
             BuildQuad(viewport);
             const GuestSurface memory(bytes);
             const auto color = Target(memory.Data());

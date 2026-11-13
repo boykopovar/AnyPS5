@@ -39,7 +39,10 @@ void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPi
 void ApplyViewportIndex(const Context& context, State& state) {
     if (state.viewportExports == 0u) return;
     const bool direct = (state.stages.path == ShaderPath::Vertex && !state.stages.tessellation && !state.rectList) || state.stages.mesh.has_value();
-    if (context.multiViewport && direct) return;
+    if (context.multiViewport && direct) {
+        Require(ViewportCount(state) == MaxViewports && state.viewportScissors.size() == MaxViewports, "a viewport index draw must declare all 16 viewports, since the 4-bit index can name any of them");
+        return;
+    }
     static bool reported = false;
     if (!reported) {
         reported = true;
