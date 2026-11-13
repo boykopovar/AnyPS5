@@ -1835,9 +1835,10 @@ public:
         return next;
     }
     void remove(const StorageTexture* texture) {
-        if (std::find(textures.begin(), textures.end(), texture) == textures.end()) return;
+        const auto found = std::find(textures.begin(), textures.end(), texture);
+        if (found == textures.end()) return;
         unindex(const_cast<StorageTexture*>(texture));
-        std::erase(textures, texture);
+        textures.erase(found);
         changed();
     }
     bool MayOverlap(std::uint64_t address, std::size_t bytes) {
@@ -4994,6 +4995,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         if (pending.flushingCount.load(std::memory_order_acquire) != 0) return false;
         if (!pending.textures.SurelyClear(address, bytes)) {
             std::lock_guard lock(pending.mutex);
+            pending.textures.Publish();
             const auto* exempt = Refreshing::Get();
             if (pending.textures.AnyOverlapping(address, bytes, [&](const StorageTexture* texture) { return texture != except && texture != exempt && texture->pendingUnitInside(address, bytes); })) return false;
             if (pending.flushingCount.load(std::memory_order_acquire) != 0) return false;
