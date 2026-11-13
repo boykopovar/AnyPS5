@@ -1,12 +1,14 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/src/DOMExceptionAbi.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include <cstddef>
 #include <cstdint>
 
 extern "C" {
 
+const NKWebKit::WebCoreAbi::DOMExceptionDescription& APS5_VABI _ZN7WebCore12DOMException11descriptionENS_13ExceptionCodeE(std::uint32_t code);
 WebCore::FloatPoint APS5_VABI _ZN7WebCore10FloatPoint15narrowPrecisionEdd(double x, double y);
 void APS5_VABI _ZN7WebCore10FloatPoint9normalizeEv(WebCore::FloatPoint* self);
 void APS5_VABI _ZN7WebCore10FloatPointC1ERKNS_8IntPointE(WebCore::FloatPoint* self, const WebCore::IntPoint& p);
