@@ -2469,6 +2469,9 @@ static void CheckSockInfo() {
     alignas(NetSockInfo6) std::array<std::uint8_t, 0xa0> record;
     record.fill(0xa5);
     Require(Failed(sceNetGetSockInfo(datagram, nullptr, 1, 0), 22));
+    void* const badRecord = reinterpret_cast<void*>(0x10);
+    Require(Failed(sceNetGetSockInfo(datagram, badRecord, 1, 0), 14));
+    Require(Failed(sceNetGetSockInfo(-1, badRecord, 1, 0), 14));
     Require(Failed(sceNetGetSockInfo(datagram, record.data(), 0, 0), 22));
     Require(Failed(sceNetGetSockInfo(-1, record.data(), 0, 0), 22));
     for (const int flags : {1, 0x41, 0x1000}) {
@@ -2600,6 +2603,9 @@ static void CheckSockInfo6() {
     record.fill(0xa5);
     const auto untouched = [&record] { return std::all_of(record.begin(), record.end(), [](auto byte) { return byte == 0xa5; }); };
     Require(Failed(sceNetGetSockInfo6(datagram, nullptr, 1, 0x1000), 22));
+    auto* const badRecord = reinterpret_cast<NetSockInfo6*>(0x10);
+    Require(Failed(sceNetGetSockInfo6(datagram, badRecord, 1, 0x1000), 14));
+    Require(Failed(sceNetGetSockInfo6(-1, badRecord, 1, 0x1000), 14));
     Require(Failed(sceNetGetSockInfo6(datagram, reinterpret_cast<NetSockInfo6*>(record.data()), 0, 0x1000), 22));
     Require(Failed(sceNetGetSockInfo6(datagram, reinterpret_cast<NetSockInfo6*>(record.data()), -1, 0x1000), 22));
     Require(Failed(sceNetGetSockInfo6(-1, reinterpret_cast<NetSockInfo6*>(record.data()), 0, 0), 22));
