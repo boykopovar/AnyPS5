@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -48,6 +49,26 @@ bool validEntitlementLabel(const NpUnifiedEntitlementLabel& label, std::uint32_t
     return compiledSdkVersion() < minimumSdkVersion || std::all_of(std::begin(label.padding), std::end(label.padding), [](char value) { return value == 0; });
 }
 
+std::optional<NpUnifiedEntitlementLabel> CopyEntitlementLabel(const NpUnifiedEntitlementLabel* label) {
+    if (label == nullptr) return std::nullopt;
+    NpUnifiedEntitlementLabel copy{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&copy, label, sizeof(copy));
+    errno = savedErrno;
+    if (!copied) return std::nullopt;
+    return copy;
+}
+
+std::optional<AppContentMountPoint> CopyMountPoint(const AppContentMountPoint* mountPoint) {
+    if (mountPoint == nullptr) return std::nullopt;
+    AppContentMountPoint copy{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&copy, mountPoint, sizeof(copy));
+    errno = savedErrno;
+    if (!copied) return std::nullopt;
+    return copy;
+}
+
 struct TemporaryData {
     std::mutex mutex;
     const std::filesystem::path directory = ResolvePath_nid_no_patch(TEMPORARY_MOUNT_POINT);
@@ -61,17 +82,16 @@ TemporaryData& Temporary() {
     return state;
 }
 
-bool IsTemporaryMountPoint(const AppContentMountPoint* mountPoint) {
-    return std::strncmp(mountPoint->data, TEMPORARY_MOUNT_POINT, sizeof(mountPoint->data)) == 0;
+bool IsTemporaryMountPoint(const AppContentMountPoint& mountPoint) {
+    return std::strncmp(mountPoint.data, TEMPORARY_MOUNT_POINT, sizeof(mountPoint.data)) == 0;
 }
 
 std::atomic<std::uint64_t> download1QuotaBytes{0};
 std::atomic<std::uint64_t> download2QuotaBytes{0};
 
-bool IsDownloadMountPoint(const AppContentMountPoint* mountPoint) {
-    if (!mountPoint) return false;
+bool IsDownloadMountPoint(const AppContentMountPoint& mountPoint) {
     for (const char* prefix : {"/download0", "/download1", "/download2"}) {
-        if (std::strncmp(mountPoint->data, prefix, sizeof(mountPoint->data)) == 0) return true;
+        if (std::strncmp(mountPoint.data, prefix, sizeof(mountPoint.data)) == 0) return true;
     }
     return false;
 }
@@ -129,8 +149,8 @@ extern "C" {
 int APS5_VABI sceAppContentCheckBundleLicenseOnDisc(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)serviceLabel;
-    if (!entitlementLabel) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto label = CopyEntitlementLabel(entitlementLabel);
+    if (!label || !validEntitlementLabel(*label, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
@@ -154,8 +174,9 @@ int APS5_VABI sceAppContentGetGameTrialsFlag(uint32_t* gameTrialsFlag) {
 int APS5_VABI sceAppContentGetPlayableStatus(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, uint32_t* playableStatus) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)serviceLabel;
-    if (!entitlementLabel || !playableStatus) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!playableStatus) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto label = CopyEntitlementLabel(entitlementLabel);
+    if (!label || !validEntitlementLabel(*label, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
@@ -163,17 +184,22 @@ int APS5_VABI sceAppContentGetPlayableStatus(uint32_t serviceLabel, const NpUnif
 int APS5_VABI sceAppContentAddcontMount(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, AppContentMountPoint* mount_point) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)service_label;
-    if (!entitlement_label || !mount_point) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlement_label, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!mount_point) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto label = CopyEntitlementLabel(entitlement_label);
+    if (!label || !validEntitlementLabel(*label, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
     std::lock_guard lock(addcontMutex);
     for (auto& addon : AddonEntries()) {
-        if (std::strncmp(addon.info.entitlement_label.data, entitlement_label->data, sizeof(entitlement_label->data)) == 0) {
+        if (std::strncmp(addon.info.entitlement_label.data, label->data, sizeof(label->data)) == 0) {
             if (!addon.has_host_path) return SCE_APP_CONTENT_ERROR_NOT_FOUND;
             if (addon.mounted) return SCE_APP_CONTENT_ERROR_BUSY;
+            AppContentMountPoint output{};
+            std::memcpy(output.data, addon.mount_point.data(), addon.mount_point.size());
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(mount_point, &output, sizeof(output));
+            errno = savedErrno;
+            if (!copied) return SCE_APP_CONTENT_ERROR_PARAMETER;
             addon.mounted = true;
             AddPathAlias_nid_no_patch(addon.mount_point.c_str(), addon.host_path.string().c_str());
-            std::memset(mount_point->data, 0, sizeof(mount_point->data));
-            std::memcpy(mount_point->data, addon.mount_point.data(), addon.mount_point.size());
             return 0;
         }
     }
@@ -182,10 +208,11 @@ int APS5_VABI sceAppContentAddcontMount(uint32_t service_label, const NpUnifiedE
 
 int APS5_VABI sceAppContentAddcontUnmount(const AppContentMountPoint* mount_point) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
-    if (!mount_point) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto mount = CopyMountPoint(mount_point);
+    if (!mount) return SCE_APP_CONTENT_ERROR_PARAMETER;
     std::lock_guard lock(addcontMutex);
     for (auto& addon : AddonEntries()) {
-        if (addon.mounted && std::strncmp(addon.mount_point.c_str(), mount_point->data, sizeof(mount_point->data)) == 0) {
+        if (addon.mounted && std::strncmp(addon.mount_point.c_str(), mount->data, sizeof(mount->data)) == 0) {
             RemovePathAlias_nid_no_patch(addon.mount_point.c_str());
             BlockPathAlias_nid_no_patch(addon.mount_point.c_str());
             addon.mounted = false;
@@ -198,13 +225,16 @@ int APS5_VABI sceAppContentAddcontUnmount(const AppContentMountPoint* mount_poin
 int APS5_VABI sceAppContentGetAddcontInfo(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, AppContentAddcontInfo* info) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)service_label;
-    if (!entitlement_label || !info) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlement_label, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!info) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto label = CopyEntitlementLabel(entitlement_label);
+    if (!label || !validEntitlementLabel(*label, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
     std::lock_guard lock(addcontMutex);
     for (const auto& addon : AddonEntries()) {
-        if (std::strncmp(addon.info.entitlement_label.data, entitlement_label->data, sizeof(entitlement_label->data)) == 0) {
-            *info = addon.info;
-            return 0;
+        if (std::strncmp(addon.info.entitlement_label.data, label->data, sizeof(label->data)) == 0) {
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(info, &addon.info, sizeof(addon.info));
+            errno = savedErrno;
+            return copied ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
         }
     }
     return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
@@ -259,9 +289,10 @@ int APS5_VABI sceAppContentAppParamGetInt(uint32_t param_id, int32_t* value) {
 
 int APS5_VABI sceAppContentDownloadDataFormat(const AppContentMountPoint* mount_point) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
-    if (!mount_point) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!IsDownloadMountPoint(mount_point)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    const auto directory = ResolvePath_nid_no_patch(mount_point->data);
+    const auto mount = CopyMountPoint(mount_point);
+    if (!mount) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!IsDownloadMountPoint(*mount)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
+    const auto directory = ResolvePath_nid_no_patch(mount->data);
     if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
     ClearDirectory(directory);
     return 0;
@@ -269,31 +300,38 @@ int APS5_VABI sceAppContentDownloadDataFormat(const AppContentMountPoint* mount_
 
 int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMountPoint* mountPoint, size_t* availableSpaceKb) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
-    if (!mountPoint || !availableSpaceKb) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!IsDownloadMountPoint(mountPoint)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
+    if (!availableSpaceKb) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto mount = CopyMountPoint(mountPoint);
+    if (!mount) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!IsDownloadMountPoint(*mount)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
     std::uint64_t quotaKb = 0;
-    if (std::strncmp(mountPoint->data, DOWNLOAD_MOUNT_POINT, sizeof(mountPoint->data)) == 0) {
+    if (std::strncmp(mount->data, DOWNLOAD_MOUNT_POINT, sizeof(mount->data)) == 0) {
         const std::uint64_t quotaMiB = GetAppDownloadDataSizeMiB_nid_postfix();
         if (quotaMiB > std::numeric_limits<std::uint64_t>::max() / 1024u) throw std::overflow_error("AppContent download quota exceeds KiB range");
         quotaKb = quotaMiB * 1024u;
-    } else if (std::strncmp(mountPoint->data, "/download1", sizeof(mountPoint->data)) == 0) {
+    } else if (std::strncmp(mount->data, "/download1", sizeof(mount->data)) == 0) {
         quotaKb = download1QuotaBytes.load() / 1024u;
-    } else if (std::strncmp(mountPoint->data, "/download2", sizeof(mountPoint->data)) == 0) {
+    } else if (std::strncmp(mount->data, "/download2", sizeof(mount->data)) == 0) {
         quotaKb = download2QuotaBytes.load() / 1024u;
     }
+    const auto writeOut = [&](std::size_t value) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(availableSpaceKb, &value, sizeof(value));
+        errno = savedErrno;
+        return copied;
+    };
     if (quotaKb == 0) {
-        *availableSpaceKb = 0;
-        return 0;
+        return writeOut(0) ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
     }
-    const auto directory = ResolvePath_nid_no_patch(mountPoint->data);
+    const auto directory = ResolvePath_nid_no_patch(mount->data);
     if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
     std::uint64_t usedKb = 0;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(directory)) {
         if (entry.is_regular_file()) usedKb += (entry.file_size() + 1023u) / 1024u;
     }
     const std::uint64_t hostKb = std::filesystem::space(directory).available / 1024u;
-    *availableSpaceKb = static_cast<size_t>(std::min(quotaKb - std::min(quotaKb, usedKb), hostKb));
-    return 0;
+    const auto result = static_cast<size_t>(std::min(quotaKb - std::min(quotaKb, usedKb), hostKb));
+    return writeOut(result) ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceAppContentInitialize(const AppContentInitParam* initParam, AppContentBootParam* bootParam) {
@@ -313,10 +351,11 @@ int APS5_VABI sceAppContentInitialize(const AppContentInitParam* initParam, AppC
 
 int APS5_VABI sceAppContentTemporaryDataFormat(const AppContentMountPoint* mountPoint) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
-    if (!mountPoint) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto mount = CopyMountPoint(mountPoint);
+    if (!mount) return SCE_APP_CONTENT_ERROR_PARAMETER;
     auto& state = Temporary();
     std::lock_guard lock(state.mutex);
-    if (!state.mounted || !IsTemporaryMountPoint(mountPoint)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
+    if (!state.mounted || !IsTemporaryMountPoint(*mount)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
     ClearDirectory(state.directory);
     return 0;
 }
@@ -326,7 +365,7 @@ int APS5_VABI sceAppContentTemporaryDataGetAvailableSpaceKb(const AppContentMoun
     if (!mountPoint || !availableSpaceKb) return SCE_APP_CONTENT_ERROR_PARAMETER;
     auto& state = Temporary();
     std::lock_guard lock(state.mutex);
-    if (!state.mounted || !IsTemporaryMountPoint(mountPoint)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
+    if (!state.mounted || !IsTemporaryMountPoint(*mountPoint)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
     *availableSpaceKb = static_cast<size_t>(std::filesystem::space(state.directory).available / 1024);
     return 0;
 }
@@ -352,10 +391,11 @@ int APS5_VABI sceAppContentTemporaryDataMount2(uint32_t option, AppContentMountP
 
 int APS5_VABI sceAppContentTemporaryDataUnmount(const AppContentMountPoint* mountPoint) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
-    if (!mountPoint) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto mount = CopyMountPoint(mountPoint);
+    if (!mount) return SCE_APP_CONTENT_ERROR_PARAMETER;
     auto& state = Temporary();
     std::lock_guard lock(state.mutex);
-    if (!state.mounted || !IsTemporaryMountPoint(mountPoint)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
+    if (!state.mounted || !IsTemporaryMountPoint(*mount)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
     BlockPathAlias_nid_no_patch(TEMPORARY_MOUNT_POINT);
     state.mounted = false;
     return 0;
@@ -364,24 +404,25 @@ int APS5_VABI sceAppContentTemporaryDataUnmount(const AppContentMountPoint* moun
 int APS5_VABI sceAppContentAddcontEnqueueDownload(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)service_label;
-    if (!entitlement_label) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlement_label, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto label = CopyEntitlementLabel(entitlement_label);
+    if (!label || !validEntitlementLabel(*label, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
 int APS5_VABI sceAppContentAddcontDelete(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)service_label;
-    if (!entitlement_label) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlement_label, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto label = CopyEntitlementLabel(entitlement_label);
+    if (!label || !validEntitlementLabel(*label, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
 int APS5_VABI sceAppContentGetAddcontDownloadProgress(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, void* progress) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)service_label;
-    if (!entitlement_label || !progress) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlement_label, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!progress) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto label = CopyEntitlementLabel(entitlement_label);
+    if (!label || !validEntitlementLabel(*label, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 int APS5_VABI sceAppContentAddcontEnqueueDownloadByEntitlemetId(const char* entitlementId) {
@@ -393,9 +434,9 @@ int APS5_VABI sceAppContentAddcontEnqueueDownloadByEntitlemetId(const char* enti
 int APS5_VABI sceAppContentAddcontEnqueueDownloadSp(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)serviceLabel;
-    if (!entitlementLabel) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlementLabel, 0)) throw std::runtime_error("sceAppContentAddcontEnqueueDownloadSp: padded entitlement label before SDK 0x03500000");
+    const auto label = CopyEntitlementLabel(entitlementLabel);
+    if (!label || !validEntitlementLabel(*label, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*label, 0)) throw std::runtime_error("sceAppContentAddcontEnqueueDownloadSp: padded entitlement label before SDK 0x03500000");
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
@@ -408,9 +449,9 @@ int APS5_VABI sceAppContentAddcontMountByEntitlemetId(const char* entitlementId,
 int APS5_VABI sceAppContentAddcontShrink(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)serviceLabel;
-    if (!entitlementLabel) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlementLabel, 0)) throw std::runtime_error("sceAppContentAddcontShrink: padded entitlement label before SDK 0x03500000");
+    const auto label = CopyEntitlementLabel(entitlementLabel);
+    if (!label || !validEntitlementLabel(*label, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*label, 0)) throw std::runtime_error("sceAppContentAddcontShrink: padded entitlement label before SDK 0x03500000");
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
@@ -487,16 +528,18 @@ int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(uint32_t iroTag, AppConten
 int APS5_VABI sceAppContentGetDownloadedStoreCountry(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, void* storeCountry) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)serviceLabel;
-    if (!entitlementLabel || !storeCountry) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlementLabel, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!storeCountry) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto label = CopyEntitlementLabel(entitlementLabel);
+    if (!label || !validEntitlementLabel(*label, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return SCE_APP_CONTENT_ERROR_GET_STORE_COUNTRY;
 }
 
 int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, AppContentEntitlementKey* key) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)serviceLabel;
-    if (!entitlementLabel || !key) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!validEntitlementLabel(*entitlementLabel, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!key) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto label = CopyEntitlementLabel(entitlementLabel);
+    if (!label || !validEntitlementLabel(*label, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
 }
 
@@ -515,7 +558,9 @@ int APS5_VABI sceAppContentGetRegion(void* region) {
 
 int APS5_VABI sceAppContentRequestPatchInstall(const char* text) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
-    if (!text || std::strlen(text) > 0xff) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!text) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    std::string copy;
+    if (CopyGuestString_nid_no_patch(text, 0x100, copy) != 0) return SCE_APP_CONTENT_ERROR_PARAMETER;
     NotImplemented_nid_no_patch(__func__);
 }
 
