@@ -64,7 +64,6 @@ int APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase3endEv();
 int APS5_VABI _ZN9Inspector14InspectorAgent29willDestroyFrontendAndBackendENS_16DisconnectReasonE();
 int APS5_VABI _ZN9Inspector22RemoteInspectionTarget34pauseWaitingForAutomaticInspectionEv();
 int APS5_VABI _ZN3JSC7Options24ensureOptionsAreCoherentEv();
-int APS5_VABI JSObjectHasPropertyForKey();
 int APS5_VABI _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE();
 int APS5_VABI _ZN9Inspector14InspectorAgentnaEm();
 int APS5_VABI _ZN9Inspector24ConsoleBackendDispatcherD0Ev();
@@ -155,7 +154,6 @@ int APS5_VABI _ZN9Inspector25NetworkFrontendDispatcher18requestInterceptedERKN3W
 int APS5_VABI _ZN3JSC22EdenGCActivityCallback12doCollectionERNS_2VME();
 int APS5_VABI _ZN3JSC8JSObject26setIndexQuicklyToUndecidedERNS_2VMEjNS_7JSValueE();
 int APS5_VABI _ZN3WTF11ThreadGroup16addCurrentThreadEv();
-int APS5_VABI JSValueMakeString();
 int APS5_VABI _ZN3WTF7RunLoop14initializeMainEv();
 int APS5_VABI _ZN9Inspector22RemoteAutomationTargetC2ERKS0_();
 int APS5_VABI _ZN9Inspector15ScriptCallStack6appendERKNS_15ScriptCallFrameE();

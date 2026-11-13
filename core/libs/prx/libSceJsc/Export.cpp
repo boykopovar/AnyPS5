@@ -281,10 +281,6 @@ int APS5_VABI _ZN3JSC7Options24ensureOptionsAreCoherentEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI JSObjectHasPropertyForKey() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -636,10 +632,6 @@ int APS5_VABI _ZN3JSC8JSObject26setIndexQuicklyToUndecidedERNS_2VMEjNS_7JSValueE
 }
 
 int APS5_VABI _ZN3WTF11ThreadGroup16addCurrentThreadEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI JSValueMakeString() {
     NotImplemented_nid_no_patch(__func__);
 }
 
