@@ -48,6 +48,7 @@ void GetloginPaths() {
     char buffer[7];
     std::memset(buffer, 'x', sizeof(buffer));
     Require(getlogin_r_nid_postfix(buffer, 6) == 34 && buffer[0] == 'x');
+    Require(getlogin_r_nid_postfix(buffer, 1) == 34 && buffer[0] == 'x');
     Require(getlogin_r_nid_postfix(buffer, 7) == 0 && std::strcmp(buffer, "player") == 0);
 
     const std::string longName(40, 'n');
