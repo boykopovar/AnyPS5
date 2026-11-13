@@ -119,6 +119,7 @@ static void CheckIsModuleLoaded() {
 }
 
 int main() {
+    for (int iter = 0; iter < 2; ++iter)
     CheckList();
     CheckEachModule();
     CheckMatchesAddressLookup();
