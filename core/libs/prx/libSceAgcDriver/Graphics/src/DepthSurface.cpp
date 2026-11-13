@@ -1704,9 +1704,7 @@ private:
         }
 
         std::vector<std::byte> Expand() const {
-            std::vector<std::byte> bytes(range.bytes);
-            for (std::size_t offset = 0u; offset < bytes.size(); ++offset) bytes[offset] = Byte(offset);
-            return bytes;
+            return ExpandPagedSnapshot(range.bytes, words, starts, stored, PageBytes, Repeated);
         }
     };
     std::vector<PublicationPlane> publication;
@@ -2670,7 +2668,7 @@ void DepthSurface::PublishToGuest() {
         Require(layout.Bytes() == publication[index].range.bytes, "native multisample depth publication layout differs from its guarded range");
         const auto linear = readBackSamples(aspect, layout.LinearBytes() / elementBytes);
         result[index] = publication[index].Expand();
-        layout.Tile(linear->Bytes().first(static_cast<std::size_t>(layout.LinearBytes())), result[index]);
+        layout.TileHoisted(linear->Bytes().first(static_cast<std::size_t>(layout.LinearBytes())), result[index]);
     }
     if (htile) {
         result[1] = publication[1].Expand();
