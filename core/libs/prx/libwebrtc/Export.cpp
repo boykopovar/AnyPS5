@@ -210,11 +210,6 @@ int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9T
     return 0;
 }
 
-int APS5_VABI _ZN3rtc6Thread7CurrentEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 std::int64_t APS5_VABI _ZN3rtc10TimeMillisEv_nid_postfix() {
     return TimeNanos() / 1000000;
 }
@@ -564,17 +559,7 @@ int APS5_VABI _ZN6webrtc16AsyncDnsResolverC1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3rtc13ThreadManager8InstanceEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3rtc6Thread15ProcessMessagesEi_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc13ThreadManager13CurrentThreadEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -648,11 +633,6 @@ int APS5_VABI _ZN3rtc6Thread19PostDelayedTaskImplEN4absl12AnyInvocableIFvvOEEEN6
 }
 
 int APS5_VABI _ZN3rtc6Thread8GetDelayEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK3rtc6Thread9IsCurrentEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

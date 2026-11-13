@@ -38,6 +38,7 @@
 #include "prx/libwebrtc/include/CryptoOptions.hpp"
 #include "prx/libwebrtc/include/VideoFrame.hpp"
 #include "prx/libwebrtc/include/PlatformThread.hpp"
+#include "prx/libwebrtc/include/ThreadManager.hpp"
 #include "prx/libwebrtc/include/I420Buffer.hpp"
 #include "prx/libwebrtc/include/VideoFrameBuffer.hpp"
 #include "prx/libwebrtc/include/KeyParams.hpp"
@@ -115,7 +116,7 @@ WebRtcTaskQueueBase* APS5_VABI _ZN6webrtc13TaskQueueBase7CurrentEv_nid_postfix(v
 void APS5_VABI _ZN3rtc10PacketInfoD1Ev_nid_postfix(void* object);
 int APS5_VABI _ZN6webrtc21RtpHeaderExtensionMapC1EN3rtc9ArrayViewIKNS_12RtpExtensionELln4711EEE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(void);
-int APS5_VABI _ZN3rtc6Thread7CurrentEv_nid_postfix(void);
+void* APS5_VABI _ZN3rtc6Thread7CurrentEv_nid_postfix();
 std::int64_t APS5_VABI _ZN3rtc10TimeMillisEv_nid_postfix();
 int APS5_VABI libwebrtcUnknown06(void);
 int APS5_VABI _ZNK6webrtc14RTCStatsReport5beginEv_nid_postfix(void);
@@ -237,9 +238,9 @@ void APS5_VABI _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(
 void APS5_VABI _ZN3rtc9CritScopeD1Ev_nid_postfix(WebRtcCritScope* scope);
 void APS5_VABI _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(WebRtcRecursiveCriticalSection* section);
 void APS5_VABI _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(WebRtcRecursiveCriticalSection* section);
-int APS5_VABI _ZN3rtc13ThreadManager8InstanceEv_nid_postfix(void);
+WebRtcThreadManager* APS5_VABI _ZN3rtc13ThreadManager8InstanceEv_nid_postfix();
 int APS5_VABI _ZN3rtc6Thread15ProcessMessagesEi_nid_postfix(void);
-int APS5_VABI _ZN3rtc13ThreadManager13CurrentThreadEv_nid_postfix(void);
+void* APS5_VABI _ZN3rtc13ThreadManager13CurrentThreadEv_nid_postfix(WebRtcThreadManager* manager);
 int APS5_VABI _ZN3rtc13ThreadManager16SetCurrentThreadEPNS_6ThreadE_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown29(void);
 int APS5_VABI libwebrtcUnknown30(void);
@@ -254,7 +255,7 @@ int APS5_VABI _ZN3rtc6Thread7RestartEv_nid_postfix(void);
 int APS5_VABI _ZN3rtc6Thread12PostTaskImplEN4absl12AnyInvocableIFvvOEEERKN6webrtc13TaskQueueBase14PostTaskTraitsERKNS5_8LocationE_nid_postfix(void);
 int APS5_VABI _ZN3rtc6Thread19PostDelayedTaskImplEN4absl12AnyInvocableIFvvOEEEN6webrtc9TimeDeltaERKNS5_13TaskQueueBase21PostDelayedTaskTraitsERKNS5_8LocationE_nid_postfix(void);
 int APS5_VABI _ZN3rtc6Thread8GetDelayEv_nid_postfix(void);
-int APS5_VABI _ZNK3rtc6Thread9IsCurrentEv_nid_postfix(void);
+bool APS5_VABI _ZNK3rtc6Thread9IsCurrentEv_nid_postfix(const void* thread);
 int APS5_VABI libwebrtcUnknown32(void);
 int APS5_VABI _ZN3rtc16NullSocketServerC1Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc6Thread5StartEv_nid_postfix(void);
