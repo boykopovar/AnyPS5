@@ -76,6 +76,8 @@ int main() {
     Require(pthread_barrierattr_destroy_nid_postfix(&missing) == GUEST_EINVAL);
     Require(pthread_barrierattr_getpshared_nid_postfix(nullptr, &pshared) == GUEST_EINVAL);
     Require(pthread_barrierattr_getpshared_nid_postfix(&missing, &pshared) == GUEST_EINVAL);
+    Require(pthread_barrierattr_getpshared_nid_postfix(nullptr, nullptr) == GUEST_EINVAL);
+    Require(pthread_barrierattr_getpshared_nid_postfix(&missing, nullptr) == GUEST_EINVAL);
     Require(pthread_barrierattr_setpshared_nid_postfix(nullptr, PROCESS_PRIVATE) == GUEST_EINVAL);
     Require(pthread_barrierattr_setpshared_nid_postfix(&missing, PROCESS_PRIVATE) == GUEST_EINVAL);
     Require(pshared == -1);

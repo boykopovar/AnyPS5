@@ -39,6 +39,22 @@ struct UnsupportedPictureInfo {
     std::string reason;
 };
 
+template<typename TValue>
+bool CopyInGuest(TValue& destination, const TValue* source) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&destination, source, sizeof(TValue));
+    errno = savedErrno;
+    return copied;
+}
+
+template<typename TValue>
+bool CopyOutGuest(TValue* destination, const TValue& source) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &source, sizeof(TValue));
+    errno = savedErrno;
+    return copied;
+}
+
 constexpr std::uint64_t WorkMemoryBytes = 1u << 20u;
 constexpr std::uint32_t PitchAlignment = 256;
 constexpr std::uint32_t HeightAlignment = 32;
@@ -484,18 +500,26 @@ void EmitDecoded(std::uint64_t handle, Decoder& decoder, FrameBuffer* frame, Out
 extern "C" {
 
 int APS5_VABI sceVideodec2QueryComputeMemoryInfo_nid_postfix(ComputeMemoryInfo* info) {
-    if (!info) return Videodec2ErrorArgumentPointer;
-    if (info->thisSize != sizeof(ComputeMemoryInfo)) return Videodec2ErrorStructureSize;
-    if (Trace()) std::fprintf(stderr, "[videodec2] QueryComputeMemoryInfo size=%llu\n", static_cast<unsigned long long>(info->thisSize));
-    info->cpuGpuMemorySize = WorkMemoryBytes;
+    ComputeMemoryInfo localInfo{};
+    if (!info || !CopyInGuest(localInfo, info)) return Videodec2ErrorArgumentPointer;
+    if (localInfo.thisSize != sizeof(ComputeMemoryInfo)) return Videodec2ErrorStructureSize;
+    if (Trace()) std::fprintf(stderr, "[videodec2] QueryComputeMemoryInfo size=%llu\n", static_cast<unsigned long long>(localInfo.thisSize));
+    localInfo.cpuGpuMemorySize = WorkMemoryBytes;
+    if (!CopyOutGuest(info, localInfo)) return Videodec2ErrorArgumentPointer;
     return 0;
 }
 
 int APS5_VABI sceVideodec2AllocateComputeQueue_nid_postfix(const ComputeConfigInfo* config, const ComputeMemoryInfo* memory, std::uint64_t* queue) {
-    if (!config || !memory || !queue) throw std::runtime_error("Videodec2: invalid argument pointer");
-    if (Trace()) std::fprintf(stderr, "[videodec2] AllocateComputeQueue config=%llu memory=%llu\n", static_cast<unsigned long long>(config->thisSize), static_cast<unsigned long long>(memory->thisSize));
+    ComputeConfigInfo localConfig{};
+    ComputeMemoryInfo localMemory{};
+    if (!config || !memory || !queue || !CopyInGuest(localConfig, config) || !CopyInGuest(localMemory, memory)) {
+        throw std::runtime_error("Videodec2: invalid argument pointer");
+    }
+    if (Trace()) std::fprintf(stderr, "[videodec2] AllocateComputeQueue config=%llu memory=%llu\n", static_cast<unsigned long long>(localConfig.thisSize), static_cast<unsigned long long>(localMemory.thisSize));
     std::lock_guard guard(lock);
-    *queue = nextQueue++;
+    const std::uint64_t allocated = nextQueue;
+    if (!CopyOutGuest(queue, allocated)) throw std::runtime_error("Videodec2: invalid argument pointer");
+    ++nextQueue;
     return 0;
 }
 
@@ -519,15 +543,21 @@ int APS5_VABI sceVideodec2QueryDecoderMemoryInfo_nid_postfix(const DecoderConfig
 }
 
 int APS5_VABI sceVideodec2CreateDecoder_nid_postfix(const DecoderConfigInfo* config, const DecoderMemoryInfo* memory, std::uint64_t* handle) {
-    if (!config || !memory || !handle) throw std::runtime_error("Videodec2: invalid argument pointer");
-    CodecId(config->codecType);
+    DecoderConfigInfo localConfig{};
+    DecoderMemoryInfo localMemory{};
+    if (!config || !memory || !handle || !CopyInGuest(localConfig, config) || !CopyInGuest(localMemory, memory)) {
+        throw std::runtime_error("Videodec2: invalid argument pointer");
+    }
+    CodecId(localConfig.codecType);
     auto decoder = std::make_shared<Decoder>();
-    decoder->codec = config->codecType;
+    decoder->codec = localConfig.codecType;
     OpenCodec(*decoder);
     std::lock_guard guard(lock);
-    *handle = nextDecoder++;
-    decoders.emplace(*handle, decoder);
-    std::fprintf(stderr, "[videodec2] decoder %llu: codec=%u max %dx%d (%s)\n", static_cast<unsigned long long>(*handle), config->codecType, config->maxFrameWidth, config->maxFrameHeight, decoder->context->codec->long_name);
+    const std::uint64_t allocated = nextDecoder;
+    if (!CopyOutGuest(handle, allocated)) throw std::runtime_error("Videodec2: invalid argument pointer");
+    ++nextDecoder;
+    decoders.emplace(allocated, decoder);
+    std::fprintf(stderr, "[videodec2] decoder %llu: codec=%u max %dx%d (%s)\n", static_cast<unsigned long long>(allocated), localConfig.codecType, localConfig.maxFrameWidth, localConfig.maxFrameHeight, decoder->context->codec->long_name);
     return 0;
 }
 
