@@ -269,6 +269,10 @@ int main() {
         NpOnlineId partlyEmpty[2]{};
         std::strcpy(partlyEmpty[0].data, "first");
         Require(sceNpTusGetMultiUserVariableVUserAsync(req, partlyEmpty, 1, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiUserVariableVUserAsync", "an empty virtual user in the array was taken");
+        const auto* unreadableUser = reinterpret_cast<const NpOnlineId*>(0x10);
+        Require(sceNpTusAddAndGetVariableVUserAsync(req, unreadableUser, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr) == InvalidArgument, "sceNpTusAddAndGetVariableVUserAsync", "an unreadable virtual user was taken");
+        Require(sceNpTusGetMultiUserVariableVUserAsync(req, unreadableUser, 1, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiUserVariableVUserAsync", "an unreadable virtual user array was taken");
+        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, reinterpret_cast<const std::int32_t*>(0x10), 2, nullptr) == InvalidArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "unreadable slot ids were taken");
         Require(sceNpTusTryAndSetVariableAAsync(req, 1, 1, 0, 5, nullptr, nullptr, nullptr, buffer, sizeof(buffer), nullptr) == InvalidType, "sceNpTusTryAndSetVariableAAsync", "operation type 0 was taken");
         Require(sceNpTusTryAndSetVariableAAsync(req, 1, 1, 7, 5, nullptr, nullptr, nullptr, buffer, sizeof(buffer), nullptr) == InvalidType, "sceNpTusTryAndSetVariableAAsync", "operation type 7 was taken");
         Require(sceNpTusTryAndSetVariableAsync(req, npId, 1, 7, 5, nullptr, nullptr, nullptr, buffer, sizeof(buffer), nullptr) == InvalidArgument, "sceNpTusTryAndSetVariableAsync", "operation type 7 was not refused with INVALID_ARGUMENT");
