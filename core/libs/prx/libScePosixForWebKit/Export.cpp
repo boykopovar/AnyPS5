@@ -245,7 +245,7 @@ int APS5_VABI getenv_np(const char* name, char* buffer, std::size_t size) {
         return -1;
     const std::size_t length = std::strlen(value);
     if (length >= size)
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error("getenv_np: the console's handling of a value longer than the buffer is unknown");
     std::memcpy(buffer, value, length + 1);
     return 0;
 }
