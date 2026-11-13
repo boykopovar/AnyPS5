@@ -215,6 +215,52 @@ void CheckRedirects(const std::string& base) {
     }
 }
 
+void CheckUnknownRangeLengths(const std::string& base) {
+    int accepted = 0;
+    int refused = 0;
+    for (const char* name : {"known", "initial", "late", "chunked", "closed", "initial-date", "late-date", "unvalidated"}) {
+        try {
+            auto client = Create();
+            Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/unknown-range/" + name + "/payload.bin").c_str()) == 1,
+                  "unknown complete-length source open failed");
+            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000, "unknown complete-length source size differs");
+            Read(client.get(), 0, 64);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "unknown complete-length seek failed");
+            Read(client.get(), 90000, 64);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 0) == 0, "unknown complete-length rewind failed");
+            Read(client.get(), 0, 64);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 2) == 100000, "unknown complete-length end differs");
+            End(client.get());
+            ++accepted;
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "Unknown complete length %s: %s\n", name, error.what());
+        }
+    }
+    for (const char* name : {"wrong-start", "wrong-span", "empty-body", "bad-total", "missing-total", "overflow-span",
+                             "unknown-unit", "full-partial", "full-refused", "full-short"}) {
+        auto client = Create();
+        Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/unknown-range/" + name + "/payload.bin").c_str()) == 0,
+              "invalid unknown complete-length response accepted");
+        Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == -1, "failed unknown complete-length open exposes a size");
+        ++refused;
+    }
+    for (const char* name : {"late-changed", "late-size", "late-absent", "late-redirect"}) {
+        auto client = Create();
+        Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/unknown-range/" + name + "/payload.bin").c_str()) == 1,
+              "late unknown complete-length control open failed");
+        Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "late unknown complete-length seek failed");
+        bool failed = false;
+        std::array<std::uint8_t, 3> bytes{0xa5, 0xa5, 0xa5};
+        try { Aps5HttpClient_Read_nid_postfix(client.get(), bytes.data() + 1, 1); } catch (const std::exception&) { failed = true; }
+        Check(failed && bytes == std::array<std::uint8_t, 3>{0xa5, 0xa5, 0xa5}, "invalid full fallback changed the read destination");
+        Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000 &&
+              Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 1) == 90000, "failed full fallback changed size or position");
+        ++refused;
+    }
+    std::printf("Unknown complete-length source cases: %d/8; invalid cases refused: %d/14\n", accepted, refused);
+    Check(accepted == 8 && refused == 14, "unknown complete-length interoperability failed");
+}
+
 void CheckFailures(const std::string& base) {
     auto client = Create();
     for (const char* route : {"/bad/", "/short/", "/chunk-bad/"}) Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + route + "payload.bin").c_str()) == 0, "malformed HTTP response accepted");
@@ -424,6 +470,7 @@ int main(int argc, char** argv) {
         CheckRedirects(base);
         CheckCacheAndReopen(base);
         CheckFailures(base);
+        CheckUnknownRangeLengths(base);
         CheckRepresentations(base);
         CheckCancellation(base);
         CheckRangeUnits(base);

@@ -9,6 +9,7 @@ import urllib.parse
 
 
 identity_requests = {}
+unknown_range_requests = {}
 identity_targets = []
 legacy_dates = {
     "date-rfc850": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
@@ -130,6 +131,71 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def unknown_range(self, path):
+        name = path.split("/")[2]
+        history = unknown_range_requests.setdefault(name, [])
+        ranged = self.headers.get("Range")
+        history.append((ranged, self.headers.get("If-Range")))
+        content = pathlib.Path("app0", "payload.bin").read_bytes()
+        status = 200
+        first, last = 0, len(content) - 1
+        total = "*"
+        if ranged is not None:
+            match = re.fullmatch(r"bytes=(\d+)-(\d+)", ranged)
+            assert match is not None
+            first, end = map(int, match.groups())
+            last = min(first + 511, end, len(content) - 1)
+            if first:
+                expected = "Wed, 01 Jan 2020 00:00:00 GMT" if name.endswith("date") else '"unknown-v1"'
+                assert self.headers.get("If-Range") == expected
+            status = 206
+            if name == "known" or (name.startswith("late") and first == 0):
+                total = str(len(content))
+        else:
+            assert self.headers.get("If-Range") is None
+            if name == "full-partial":
+                status, last, total = 206, 511, str(len(content))
+            elif name == "full-refused":
+                status = 404
+            elif name == "late-redirect":
+                status = 302
+        body = content[first:last + 1]
+        if name == "late-size" and ranged is None:
+            body = body[:-1]
+        if name == "empty-body":
+            body = b""
+        header_first = first + int(name == "wrong-start")
+        header_last = last
+        if name in {"wrong-span", "empty-body"}:
+            header_last = first
+        elif name == "overflow-span":
+            header_last = 18446744073709551615
+        total = "*invalid" if name == "bad-total" else "" if name == "missing-total" else total
+        self.send_response_only(status)
+        if status == 206:
+            unit = "items" if name == "unknown-unit" else "ByTeS"
+            self.send_header("Content-Range", f"{unit} {header_first}-{header_last}/{total}")
+        if name.endswith("date"):
+            self.send_header("Last-Modified", "Wed, 01 Jan 2020 00:00:00 GMT")
+            self.send_header("Date", "Wed, 01 Jan 2020 00:02:00 GMT")
+        elif name != "unvalidated" and not (name == "late-absent" and ranged is None):
+            self.send_header("ETag", '"unknown-v2"' if name == "late-changed" and ranged is None else '"unknown-v1"')
+        if status == 302:
+            self.send_header("Location", "/range/payload.bin")
+        if name == "chunked":
+            self.send_header("Transfer-Encoding", "chunked")
+        elif name != "closed":
+            self.send_header("Content-Length", str(len(body) + int(name == "full-short" and ranged is None)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        if name == "chunked":
+            for at in range(0, len(body), 4096):
+                chunk = body[at:at + 4096]
+                self.wfile.write(f"{len(chunk):X}\r\n".encode() + chunk + b"\r\n")
+            self.wfile.write(b"0\r\n\r\n")
+        else:
+            self.wfile.write(body)
+
     def do_GET(self):
         try:
             self.respond()
@@ -180,6 +246,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(b"ready" if ready else b"error")
+            return
+        if path.startswith("/unknown-range/"):
+            self.unknown_range(path)
             return
         if path.startswith("/redirect/") or path.startswith("/client-redirect/"):
             self.send_response(307)
@@ -466,6 +535,24 @@ with Server(("127.0.0.1", 0), Handler) as server, Server(("127.0.0.1", 0), Handl
         sys.exit(result.returncode)
     assert not failures, failures
     assert any(header is not None and not header.startswith("bytes=0-") for _, header in requests)
+    if unknown_range_requests:
+        valid = {"known", "initial", "late", "chunked", "closed", "initial-date", "late-date", "unvalidated"}
+        invalid = {"wrong-start", "wrong-span", "empty-body", "bad-total", "missing-total", "overflow-span", "unknown-unit"}
+        bad_full = {"full-partial", "full-refused", "full-short"}
+        bad_late = {"late-changed", "late-size", "late-absent", "late-redirect"}
+        assert set(unknown_range_requests) == valid | invalid | bad_full | bad_late
+        for name, history in unknown_range_requests.items():
+            initial = [("bytes=0-65535", None)]
+            validator = "Wed, 01 Jan 2020 00:00:00 GMT" if name.endswith("date") else '"unknown-v1"'
+            if name == "known":
+                expected = initial + [("bytes=90000-99999", validator), ("bytes=0-65535", validator)]
+            elif name.startswith("late"):
+                expected = initial + [("bytes=90000-99999", validator), (None, None)]
+            elif name in invalid:
+                expected = initial
+            else:
+                expected = initial + [(None, None)]
+            assert history == expected, (name, history, expected)
     if mode == "avplayer":
         assert {"/range/avplayer.mp4", "/chunk/avplayer.webm", "/ignore/avplayer.mp4", "/redirect/avplayer.mp4"}.issubset({path for path, _ in requests})
     if mode == "client":
