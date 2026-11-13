@@ -338,7 +338,10 @@ def save_export_cache(path, version, files):
         temporary.write_text(json.dumps({"version": version, "files": files}), encoding="utf-8")
         os.replace(temporary, path)
     except OSError:
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def base_sources(root, ref):
