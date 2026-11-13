@@ -560,5 +560,49 @@ int main() {
     CheckOutputStaysInItsDestination();
     CheckFlushResetAndSync();
     CheckDeleteWithQueuedInput();
+    {
+        VdecCoreConfigInfo config = Config(DecoderVdec2, CodecAvc, 64, 64);
+        VdecCoreMemoryInfo memory{};
+        void* decoder = nullptr;
+        errno = 71;
+        Require(sceVdecCoreCreateDecoder(reinterpret_cast<const VdecCoreConfigInfo*>(static_cast<std::uintptr_t>(0x10)),
+                                         &memory, nullptr, &decoder) == InvalidArgument &&
+                    decoder == nullptr && errno == 71,
+                "unreadable config must fail without changing errno");
+        errno = 71;
+        Require(sceVdecCoreCreateDecoder(&config, &memory, nullptr,
+                                         reinterpret_cast<void**>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument &&
+                    errno == 71,
+                "unwritable decoder output must fail without changing errno");
+        Require(sceVdecCoreCreateDecoder(&config, &memory, nullptr, &decoder) == 0 && decoder != nullptr, "create decoder");
+        errno = 71;
+        Require(sceVdecCoreMapMemoryBlock(decoder,
+                                          reinterpret_cast<const VdecCoreMemoryBlock*>(static_cast<std::uintptr_t>(0x10)),
+                                          1) == InvalidArgument &&
+                    errno == 71,
+                "unreadable memory block must fail without changing errno");
+        errno = 71;
+        Require(sceVdecCoreSetDecodeInput(decoder,
+                                          reinterpret_cast<const VdecCoreInputData*>(static_cast<std::uintptr_t>(0x10)),
+                                          nullptr, nullptr) == InvalidArgument &&
+                    errno == 71,
+                "unreadable input must fail without changing errno");
+        VdecCoreInputData badAu{};
+        badAu.auData = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10));
+        badAu.auSize = 16;
+        errno = 71;
+        Require(sceVdecCoreSetDecodeInput(decoder, &badAu, nullptr, nullptr) == InvalidArgument && errno == 71,
+                "unreadable AU data must fail without changing errno");
+        std::array<std::uint8_t, 16> au{};
+        VdecCoreInputData goodAu{};
+        goodAu.auData = au.data();
+        goodAu.auSize = static_cast<std::uint32_t>(au.size());
+        errno = 71;
+        Require(sceVdecCoreSetDecodeInput(decoder, &goodAu, nullptr,
+                                          reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument &&
+                    errno == 71,
+                "unwritable status must fail without changing errno");
+        Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete decoder");
+    }
     return 0;
 }
