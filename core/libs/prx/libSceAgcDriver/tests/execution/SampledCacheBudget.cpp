@@ -1302,6 +1302,81 @@ void VKAPI_PTR ReportBudget(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2*
     }
 }
 
+void VKAPI_PTR ReportFullBudget(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
+    auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
+    for (std::uint32_t heap = 0; heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+        reported->heapBudget[heap] = ReportedBudget;
+        reported->heapUsage[heap] = ReportedBudget;
+    }
+}
+
+struct InheritedReclaimProbe {
+    Recorder* recorder = nullptr;
+    std::size_t before = 0;
+    std::size_t bytes = 0;
+    unsigned requests = 0;
+} inheritedReclaim;
+
+VkDeviceSize ReclaimInheritedForTest(VkDeviceSize bytes, bool newImage) {
+    Require(newImage, "the inherited-cache fixture did not reclaim for an image allocation");
+    ++inheritedReclaim.requests;
+    Require(ReleaseTextureCaches(bytes, false) == 0, "a non-image reclaim entered the inherited sampled cache");
+    const auto released = ReleaseTextureCaches(bytes, true);
+    const auto after = inheritedReclaim.recorder->OpenKeptBytes();
+    Require(after >= inheritedReclaim.before + inheritedReclaim.bytes, "inherited sampled-cache reclaim did not charge the texture held by the open batch");
+    ReleaseTextureCaches(bytes, true);
+    Require(inheritedReclaim.recorder->OpenKeptBytes() == after, "inherited sampled-cache reclaim charged the held texture twice");
+    return released;
+}
+
+void inheritedBatchReclaimTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    ClearCachedTextures(context.device);
+    SharedResourceCache().Clear();
+    Block block(context);
+    Recorder recorder(context);
+    recorder.Activate();
+    recorder.Commands();
+    auto kept = ImageResources(context, block, 0, 1, true);
+    const std::weak_ptr<Texture> texture = kept->SampledTextures().front();
+    const std::weak_ptr<ShaderResources> build = kept;
+    const auto bytes = static_cast<std::size_t>(texture.lock()->AllocationBytes());
+    Require(bytes != 0, "the inherited-cache fixture's sampled texture owns no allocation");
+    recorder.Keep(std::move(kept));
+    inheritedReclaim = {&recorder, recorder.OpenKeptBytes(), bytes, 0};
+    const auto originalReport = context.memoryProperties2;
+    const auto originalReclaim = context.cacheReclaim;
+    context.memoryProperties2 = ReportFullBudget;
+    context.cacheReclaim = ReclaimInheritedForTest;
+    std::shared_ptr<Texture> made;
+    try {
+        made = Sampled(context, block.Surface(1));
+    } catch (...) {
+        context.memoryProperties2 = originalReport;
+        context.cacheReclaim = originalReclaim;
+        inheritedReclaim = {};
+        throw;
+    }
+    context.memoryProperties2 = originalReport;
+    context.cacheReclaim = originalReclaim;
+    Require(inheritedReclaim.requests != 0, "the sampled allocation never entered the inherited-cache reclaim callback");
+    inheritedReclaim = {};
+    Require(made != nullptr && !texture.expired() && !build.expired(), "inherited-cache reclaim released an object bound by the open batch");
+    recorder.Sync();
+    recorder.FlushDeferredReleases();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!build.expired() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(build.expired(), "the completed batch retained the inherited-cache fixture's resource build");
+    ReleaseTextureCaches(~std::uint64_t{0});
+    Require(texture.expired(), "the inherited-cache fixture's texture survived its completed batch and a full reclaim");
+    SharedResourceCache().Clear();
+    ClearCachedTextures(context.device);
+    std::puts("inherited sampled-cache batch accounting tests passed");
+}
+
 struct BudgetReportAgeProbe {
     std::uint64_t budget = 8ull << 30u;
     unsigned queries = 0;
@@ -1883,7 +1958,7 @@ int main(int argc, char** argv) {
         }
         const bool resources = mode == "resource-admission" || mode == "resource-oversized" || mode == "resource-clear";
         const bool disableStorageImageMultisample = mode == "without-storage-image-multisample";
-        const bool recover = mode == "recover-sampled" || mode == "recover-storage" || mode == "recover-srgb" || mode == "recover-repack";
+        const bool recover = mode == "recover-sampled" || mode == "recover-storage" || mode == "recover-srgb" || mode == "recover-repack" || mode == "recover-sampled-held";
         const bool largeSurfaces = recover || mode == "surface-import";
 #ifdef _WIN32
         if (!memory && mode != "budget-report-age") _putenv_s("APS5_TEXTURE_CACHE_MIB", largeSurfaces ? "16" : "1");
@@ -1979,6 +2054,11 @@ int main(int argc, char** argv) {
             storageMemoryTests(context);
             ClearCachedTextures(context.device);
             std::puts("sampled texture memory budget tests passed");
+            return 0;
+        }
+        if (mode == "recover-sampled-held") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            inheritedBatchReclaimTests(context);
             return 0;
         }
         if (recover) {
