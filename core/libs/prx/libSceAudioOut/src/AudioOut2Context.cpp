@@ -410,16 +410,23 @@ int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle ctx) try {
 int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint32_t* queue_level, uint32_t* available_queue) {
     auto* context = AudioOut2FindContext(ctx);
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    const auto copyOutput = [](std::uint32_t* destination, std::uint32_t value) {
+        if (!destination) return true;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+        errno = savedErrno;
+        return copied;
+    };
     if (context->deviceBacked && !AudioOut2TraceEnabled()) {
         const auto level = context->publishedQueueLevel.load(std::memory_order_acquire);
-        if (queue_level) *queue_level = level;
-        if (available_queue) *available_queue = context->queueDepth - level;
+        if (!copyOutput(queue_level, level) || !copyOutput(available_queue, context->queueDepth - level))
+            return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
         return 0;
     }
     std::lock_guard lock(context->lock);
     const auto level = std::min(context->queueDepth, QueueLevel(*context, Now(*context)) + static_cast<std::uint32_t>(context->advancedGrains.size()));
-    if (queue_level) *queue_level = level;
-    if (available_queue) *available_queue = context->queueDepth - level;
+    if (!copyOutput(queue_level, level) || !copyOutput(available_queue, context->queueDepth - level))
+        return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     context->queueLevelPolls++;
     context->summaryPolls++;
     if (context->queueLevelPolls <= CALL_TRACE_FULL) AUDIOOUT2_TRACE("t=%.3f GetQueueLevel ctx %p -> level %u, available %u\n", AudioOut2TraceSeconds(), static_cast<void*>(context), level, context->queueDepth - level);

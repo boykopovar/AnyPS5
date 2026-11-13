@@ -160,6 +160,9 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
         Require(connectionInfo(context, 5, 1, 1, info) == SignalingPeerNotFound, "connection info", "a never-started context did not return 0x80550E19");
     }
     std::uint16_t port = 0xA5A5;
+    Require(getPort(nullptr) == SignalingInvalidArgument, "sceNpMatching2SignalingGetPort", "a null port did not return SignalingInvalidArgument");
+    errno = 71;
+    Require(getPort(reinterpret_cast<std::uint16_t*>(0x10)) == SignalingInvalidArgument && errno == 71, "sceNpMatching2SignalingGetPort", "an unwritable port did not return SignalingInvalidArgument");
     Require(getPort(&port) == 0 && port == 0, "sceNpMatching2SignalingGetPort", "the port did not start at 0");
     Require(setPort(3659) == 0 && getPort(&port) == 0 && port == 3659, "sceNpMatching2SignalingSetPort", "the port that was set is not reported");
     Require(sceNpMatching2Terminate() == 0, "sceNpMatching2Terminate", "terminating after the requests failed");
