@@ -982,6 +982,8 @@ void* APS5_VABI sceLibcMspaceAlignedAlloc_nid_postfix(void* handle, std::size_t 
 void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void* handle, void* pointer, std::size_t alignment, std::size_t size);
 int APS5_VABI sceLibcMspaceMallocStats_nid_postfix(void* handle, MallocManagedSize* stats);
 int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats);
+int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void* handle);
+int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void* handle);
 std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void* pointer);
 void* APS5_VABI sceLibcPafMspaceCreate_nid_postfix(const char* name, void* base, std::size_t size, unsigned flags, const void* options);
 int APS5_VABI sceLibcPafMspaceDestroy_nid_postfix(void* handle);
@@ -1367,6 +1369,8 @@ int APS5_VABI _Smtx_timedlock_exclusive_nid_postfix(void** smtx, const Xtime* ta
 int APS5_VABI _Smtx_timedlock_shared_nid_postfix(void** smtx, const Xtime* target);
 int APS5_VABI _Smtx_unlock_exclusive_nid_postfix(void** smtx);
 int APS5_VABI _Smtx_unlock_shared_nid_postfix(void** smtx);
+void** APS5_VABI __std_acquire_shared_mutex_for_instance_nid_postfix(void* instance);
+void APS5_VABI __std_release_shared_mutex_for_instance_nid_postfix(void* instance);
 void APS5_VABI tzset_nid_postfix(void);
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer);
 int64_t APS5_VABI time_nid_postfix(int64_t* timer);

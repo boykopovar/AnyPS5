@@ -699,6 +699,16 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(err, f"FAIL: {output}: JSON output is a directory\n")
         self.assertEqual(set(work.root.iterdir()), files)
 
+    def test_long_json_filename_can_be_written_and_replaced(self):
+        root = self.work.root
+        directory = Path("\\\\?\\" + str(root.resolve())) if os.name == "nt" else root
+        output = directory / ("a" * 245 + ".json")
+        files = set(directory.iterdir())
+        for result in ({"complete": True}, {"complete": False}):
+            import_audit.write_json(output, result)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
+            self.assertEqual(set(directory.iterdir()), files | {output})
+
     @unittest.skipUnless(os.name == "posix", "POSIX report permissions")
     def test_new_json_report_permissions_follow_the_process_umask(self):
         script = "\n".join([
@@ -3173,6 +3183,26 @@ class ImportAuditTests(unittest.TestCase):
             import_audit.read_registry(path)
         write_registry(path, [("AAAAAAAAAAA#A#B", "libSceA.prx")], encoding="utf-8-sig")
         self.assertEqual(import_audit.read_registry(path), [("AAAAAAAAAAA", "libSceA.prx", False)])
+
+    def test_duplicate_registry_keys_cannot_hide_an_absent_import(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry = work.root / "game.registry.json"
+        report = work.root / "audit.json"
+        registry.write_text('[{"nid":"BBBBBBBBBBB","nid":"AAAAAAAAAAA","library":"libSceA.prx"}]', encoding="utf-8")
+        code, out, err = work.run(registry, "--json", str(report))
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn("duplicate JSON key 'nid'", err)
+        self.assertFalse(report.exists())
+
+    def test_duplicate_registry_library_and_weak_fields_are_rejected(self):
+        registry = self.work.root / "game.registry.json"
+        for fields, repeated in ((('"library":"first.prx"', '"library":"second.prx"'), "library"),
+                                 (('"weak":true', '"weak":false'), "weak")):
+            with self.subTest(repeated=repeated):
+                registry.write_text('[{"nid":"AAAAAAAAAAA","library":"libSceA.prx",' + ','.join(fields) + '}]', encoding="utf-8")
+                with self.assertRaisesRegex(import_audit.AuditError, f"duplicate JSON key '{repeated}'"):
+                    import_audit.read_registry(registry)
 
     def test_names_never_download(self):
         work = self.work
