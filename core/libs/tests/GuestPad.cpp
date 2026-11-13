@@ -1173,6 +1173,9 @@ static void CheckAccessibilityControllerState(int handle) {
     Require(scePadGetAccessibilityControllerState(handle + 1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetAccessibilityControllerState(handle + 1, &state) == PAD_ERROR_INVALID_HANDLE);
     Require(state == 7);
+    errno = 71;
+    Require(scePadGetAccessibilityControllerState(handle, reinterpret_cast<std::uint32_t*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadGetAccessibilityControllerState(handle, &state) == PAD_OK);
     Require(state == 0);
     Require(scePadGetAccessibilityControllerState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
