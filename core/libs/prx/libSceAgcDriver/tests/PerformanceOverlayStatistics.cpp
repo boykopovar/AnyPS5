@@ -581,6 +581,26 @@ void requireDrawable(const OverlayContent& content, const std::string& what) {
     }
 }
 
+void overlayScaleRequestTests() {
+    AgcDriver::OverlayContent content;
+    content.below = {"FPS: 60.0"};
+    content.graph = false;
+    const VkExtent2D big{3840, 2160};
+    const VkExtent2D small{320, 240};
+    require(AgcDriver::OverlayScale(big, content, 0) == AgcDriver::OverlayScale(big, content), "a request of 0 is not the automatic scale");
+    require(AgcDriver::OverlayScale(big, content, 2) == 2, "a request of 2 on 3840x2160 is not scale 2");
+    require(AgcDriver::OverlayScale(big, content, 8) == 8, "a request of 8 on 3840x2160 with one line is not scale 8");
+    require(AgcDriver::OverlayScale(small, content, 3) == 1, "a request of 3 on 320x240 is not shrunk to scale 1");
+}
+
+void overlayScaleParseTests() {
+    require(AgcDriver::OverlayScaleRequest(nullptr) == 0, "an unset ANYPS5_OVERLAY_SCALE is not automatic");
+    require(AgcDriver::OverlayScaleRequest("") == 0, "an empty ANYPS5_OVERLAY_SCALE is not automatic");
+    require(AgcDriver::OverlayScaleRequest("1") == 1 && AgcDriver::OverlayScaleRequest("8") == 8, "1 and 8 are not accepted");
+    require(AgcDriver::OverlayScaleRequest("0") == 0 && AgcDriver::OverlayScaleRequest("9") == 0, "a value outside 1 to 8 is accepted");
+    require(AgcDriver::OverlayScaleRequest("3x") == 0 && AgcDriver::OverlayScaleRequest("big") == 0, "a value with other text is accepted");
+}
+
 void pageTwoComposeTests() {
     const auto full = AgcDriver::ComposeOverlayDetails(fullDetailSample());
     require(full.columns == OverlayMetrics::DetailColumns && !full.graph && full.above.empty() && full.frameTimes.empty(), "page 2 is not a 46-column panel without a graph");
@@ -596,7 +616,7 @@ void pageTwoComposeTests() {
         phase("DRIVER.DRAW.CAPTURE_RESOURCES", " 0.9 MS/FRAME"),
         "Q0 WAIT MS/FRAME: MEM 0.4 LOCK 0.2 GPU 1.3",
         "RENDER PASSES/FRAME: 12.0",
-        "PIPELINES: COMPILING 3  NEW/S 12",
+        "PIPELINES: COMPILING 3  NEW/S 12  LEFT 0.25 S",
         "HIT %: DRAW CACHE 97.1  PIPELINES 99.9",
         "FLIPS/S: 60.0  PRESENTS/S: 59.9",
         "DROPPED/S: 1  REPEATED/S: 2",
@@ -661,7 +681,7 @@ void pageTwoLayoutTests() {
         }
     }
     auto stretched = content;
-    while (stretched.below.size() < 60) stretched.below.push_back("PIPELINES: COMPILING 3  NEW/S 12");
+    while (stretched.below.size() < 60) stretched.below.push_back("PIPELINES: COMPILING 3  NEW/S 12  LEFT 0.25 S");
     require(AgcDriver::OverlayScale({3840, 2160}, stretched) == 3, "a 60-line page 2 at 3840x2160 is not shrunk to scale 3");
 }
 
@@ -972,6 +992,8 @@ int main() {
         widePanelTests();
         pageCycleTests();
         pageTwoComposeTests();
+        overlayScaleRequestTests();
+        overlayScaleParseTests();
         pageTwoLayoutTests();
         sampleTests();
         traceDeltaTests();
