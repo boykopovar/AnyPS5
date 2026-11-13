@@ -18,6 +18,8 @@
 
 ### Functional
 
+- [sceImeDialogGetPanelPositionAndForm](../../../core/libs/prx/libSceImeDialog/Export.cpp) (libSceImeDialog) - returning `0x80bc0002` (`ErrorNotOpened`) when the `form` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+
 - [sceImeDialogInit, sceImeDialogGetResult](../../../core/libs/prx/libSceImeDialog/Export.cpp) (libSceImeDialog) - a param, extended param or input text buffer the host cannot read makes `sceImeDialogInit` return `0x80bc0031` or `0x80bc0017` and open no dialog; `0x80bc0031` is the code the library already returns for a null param. An output buffer the host cannot write ends the dialog with end status 2 (aborted) when Done, R2 or Enter accepts it, and nothing is written. Not measured on a PS5; the error codes and the buffer size are a host-safety choice. Closes when: measured on a PS5
 
 - [Text written on Done](../../../core/libs/prx/libSceImeDialog/Export.cpp) (libSceImeDialog) - the typed text reaches the title's buffer once, when Done, R2 or Enter accepts it. [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/30f4170896ce974353a6f6486d0ecec179aec54b/src/core/libraries/ime/ime_dialog_ui.cpp#L1310-L1313) (PS4) writes it after every edit, and calls the title's text filter from `sceImeDialogGetStatus` while the dialog runs ([ime_dialog.cpp](https://github.com/shadps4-emu/shadPS4/blob/30f4170896ce974353a6f6486d0ecec179aec54b/src/core/libraries/ime/ime_dialog.cpp#L964-L966)) and again before the result. This library never calls the filter. A title that reads its buffer or relies on the filter while typing sees neither. Closes when: measured on a PS5

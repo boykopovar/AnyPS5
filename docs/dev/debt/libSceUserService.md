@@ -1,5 +1,9 @@
 # libSceUserService technical debt
 
+### Functional
+
+- [sceUserServiceInitialize](../../../core/libs/prx/libSceUserService/Export.cpp) - returning `0x80960005` (`USER_SERVICE_ERROR_INVALID_ARGUMENT`) for an unmapped or unreadable parameter pointer is a defensive host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 ### Unsupported account state
 
 - [sceUserServiceIsKratosUser, sceUserServiceIsKratosPrimaryUser and sceUserServiceGetKratosPrimaryUser](../../../core/libs/prx/libSceUserService/Export.cpp) throw because the account-state backend and Cronos behavior are unavailable. A non-Cronos model alone does not establish the full export contract.
@@ -201,7 +205,7 @@
 - [sceUserServiceSetIsFakePremium](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetAccessibilityKeyremapDataAston](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetKeyRepeatSpeed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceSetUserGroupName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int groupIndex, const char* name)` and dispatches update `0x3001c`; AnyPS5 writes names up to 128 bytes to `/system_data/priv/home/user_group_name.dat.<groupIndex>` with the recovered create, truncate, and mode flags. Missing slots are writable only when they are the next group slot.
+- [sceUserServiceSetUserGroupName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int groupIndex, const char* name)` and dispatches update `0x3001c`; AnyPS5 writes names up to 128 bytes to `/system_data/priv/home/user_group_name.dat.<groupIndex>` with the recovered create, truncate, and mode flags. Missing slots are writable only when they are the next group slot. An unreadable non-null guest name returns invalid argument through checked guest-string copying; the console's response to an invalid address has not been measured.
 - [sceUserServiceGetParentalDvdRegion](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetGlsCameraDepthLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetParentalContentControl](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature

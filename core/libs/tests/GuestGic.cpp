@@ -1,9 +1,9 @@
 #include "prx/libSceGic/libSceGic.hpp"
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <string>
 
@@ -27,10 +27,14 @@ int main() {
     std::filesystem::current_path(directory);
 
     Require(sceGicGetValue(nullptr) == ErrorInvalidArgument, "null output");
-    std::uint8_t buffer[32];
-    std::memset(buffer, 0xAB, sizeof(buffer));
-    Require(sceGicGetValue(buffer) == ErrorDeviceUnavailable, "GetValue without /dev/gic");
-    for (const std::uint8_t byte : buffer) Require(byte == 0xAB, "a failed call writes nothing");
+    Require(sceGicGetValue(nullptr) == ErrorInvalidArgument, "repeated null output");
+    for (const std::uint8_t fill : {std::uint8_t{0x00}, std::uint8_t{0xAB}, std::uint8_t{0xFF}}) {
+        std::array<std::uint8_t, 33> buffer{};
+        buffer.fill(fill);
+        Require(sceGicGetValue(buffer.data()) == ErrorDeviceUnavailable, "GetValue without /dev/gic");
+        Require(sceGicGetValue(buffer.data() + 1) == ErrorDeviceUnavailable, "unaligned GetValue without /dev/gic");
+        for (const std::uint8_t byte : buffer) Require(byte == fill, "a failed call writes nothing");
+    }
 
     std::filesystem::current_path(original);
     std::error_code ignored;
