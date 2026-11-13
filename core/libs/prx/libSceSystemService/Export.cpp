@@ -393,7 +393,13 @@ int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value) {
  if (value == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *value = false;
+ const bool localValue = false;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(value, &localValue, sizeof(localValue));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 

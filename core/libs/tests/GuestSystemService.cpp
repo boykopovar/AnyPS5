@@ -288,6 +288,9 @@ int main() {
     Require(safeArea.ratio == 1.0f);
     for (unsigned char byte : safeArea.reserved) Require(byte == 0);
     Require(sceSystemServiceGetNoticeScreenSkipFlag(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    errno = 71;
+    Require(sceSystemServiceGetNoticeScreenSkipFlag(reinterpret_cast<bool*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     bool skip = true;
     Require(sceSystemServiceGetNoticeScreenSkipFlag(&skip) == SYSTEM_SERVICE_OK && !skip);
     Require(sceSystemServiceSetNoticeScreenSkipFlag() == SYSTEM_SERVICE_OK);
