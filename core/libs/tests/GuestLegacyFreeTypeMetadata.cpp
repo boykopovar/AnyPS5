@@ -228,6 +228,13 @@ static std::vector<unsigned char> FntFont(std::uint16_t version) {
     return bytes;
 }
 
+static std::int32_t NativePropertyType(const BDF_PropertyRec& property) {
+    static_assert(sizeof(property.type) == sizeof(std::int32_t));
+    std::int32_t type;
+    std::memcpy(&type, &property.type, sizeof type);
+    return type;
+}
+
 static void CheckProperty(const Api& api, FreeType::GuestFaceRec* face, FT_Face native, const char* name) {
     Guarded<BdfProperty> actual;
     BDF_PropertyRec expected;
@@ -235,7 +242,7 @@ static void CheckProperty(const Api& api, FreeType::GuestFaceRec* face, FT_Face 
     const int error = FT_Get_BDF_Property(native, name, &expected);
     Require(api.property(face, name, &actual.value) == error);
     actual.Check();
-    Require(actual.value.type == expected.type);
+    Require(actual.value.type == NativePropertyType(expected));
     if (!error) {
         switch (expected.type) {
             case BDF_PROPERTY_TYPE_ATOM: CheckText(actual.value.value.atom, expected.u.atom); break;

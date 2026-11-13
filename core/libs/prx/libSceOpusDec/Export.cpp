@@ -84,8 +84,96 @@ int APS5_VABI sceOpusDecDecodeWithPriorityAndTimeout(void* state, const std::uin
 
 extern "C" {
 
-int APS5_VABI sceOpusDecGetAjmContext() {
+int APS5_VABI sceOpusDecGetAjmContext(const void* state, std::uint32_t* ajmContext) {
+    if (state == nullptr) return static_cast<int>(ErrorBase);
+    if (ajmContext == nullptr) return 0;
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceOpusDecUnknown__minus_NcPFjTj5zU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("-NcPFjTj5zU", libSceOpusDecUnknown__minus_NcPFjTj5zU_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_EF6FftzF33M_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("EF6FftzF33M", libSceOpusDecUnknown_EF6FftzF33M_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_I1ugumHd0_plus_A_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("I1ugumHd0+A", libSceOpusDecUnknown_I1ugumHd0_plus_A_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_JZapTsLx0j0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JZapTsLx0j0", libSceOpusDecUnknown_JZapTsLx0j0_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_VsujeTF0_plus_xk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("VsujeTF0+xk", libSceOpusDecUnknown_VsujeTF0_plus_xk_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_ZBx02KtHz2Y_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZBx02KtHz2Y", libSceOpusDecUnknown_ZBx02KtHz2Y_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(std::int32_t first, std::int32_t second, std::int32_t third) {
+    if (first < 1 || first > 12) return static_cast<int>(ErrorBase + 0x03);
+    if (second < 1 || second > 12) return static_cast<int>(ErrorBase + 0x16);
+    if (static_cast<std::uint32_t>(third) > static_cast<std::uint32_t>(second)) return static_cast<int>(ErrorBase + 0x17);
+    if (static_cast<std::uint32_t>(second) + static_cast<std::uint32_t>(third) >= 13) return static_cast<int>(ErrorBase + 0x03);
+    return 0x290;
+}
+APS5_EXPORT("ark0tPj4meI", libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_ct42RpB2CaM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ct42RpB2CaM", libSceOpusDecUnknown_ct42RpB2CaM_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_eJQx7Emrwb0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("eJQx7Emrwb0", libSceOpusDecUnknown_eJQx7Emrwb0_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_ewfq1d5iJhU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ewfq1d5iJhU", libSceOpusDecUnknown_ewfq1d5iJhU_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_gMazl3u8Y40_nid_no_patch(const void* state, std::uint32_t* value) {
+    if (state == nullptr) return static_cast<int>(ErrorBase);
+    if (value == nullptr) return 0;
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("gMazl3u8Y40", libSceOpusDecUnknown_gMazl3u8Y40_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_jXVNwfmd1II_nid_no_patch(std::uint32_t* context) {
+    if (context == nullptr) return static_cast<int>(ErrorBase + 0x0d);
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("jXVNwfmd1II", libSceOpusDecUnknown_jXVNwfmd1II_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_lFTdHt_minus_AuKU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lFTdHt-AuKU", libSceOpusDecUnknown_lFTdHt_minus_AuKU_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_sr25irrwGBI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("sr25irrwGBI", libSceOpusDecUnknown_sr25irrwGBI_nid_no_patch);
+
+int APS5_VABI libSceOpusDecUnknown_ygCoF49g3F0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ygCoF49g3F0", libSceOpusDecUnknown_ygCoF49g3F0_nid_no_patch);
 
 }
