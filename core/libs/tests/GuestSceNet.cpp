@@ -1258,6 +1258,7 @@ static void CheckMessages(int receiver, int sender, const std::array<std::uint8_
     NetMsghdr bad = send;
     Require(Failed(sceNetSendmsg(sender, nullptr, 0), 14));
     Require(Failed(sceNetRecvmsg(receiver, nullptr, 0), 14));
+    Require(Failed(sceNetRecvmsg(receiver, reinterpret_cast<NetMsghdr*>(0x10), 0), 14));
     bad.iov_length = -1;
     Require(Failed(sceNetSendmsg(sender, &bad, 0), 40));
     bad.iov_length = 1025;
@@ -1265,6 +1266,8 @@ static void CheckMessages(int receiver, int sender, const std::array<std::uint8_
     bad.iov_length = 1;
     bad.iov = nullptr;
     Require(Failed(sceNetSendmsg(sender, &bad, 0), 14));
+    bad.iov = reinterpret_cast<NetIovec*>(0x10);
+    Require(Failed(sceNetRecvmsg(receiver, &bad, 0), 14));
     NetIovec hole[] = {{nullptr, 1}};
     bad.iov = hole;
     Require(Failed(sceNetRecvmsg(receiver, &bad, 0), 14));
