@@ -25,7 +25,7 @@ namespace {
 
 constexpr std::uint64_t UnitBytes = 65536;
 constexpr std::size_t ReasonCount = static_cast<std::size_t>(PublishReason::Count);
-constexpr const char* ReasonNames[ReasonCount] = {"hook", "region", "indirect", "copy-src", "copy-dst", "fill", "fill-clear", "label", "keys", "scanout", "validate", "upload", "tail", "evict", "retire", "teardown", "address"};
+constexpr const char* ReasonNames[ReasonCount] = {"hook", "region", "indirect", "copy-src", "copy-dst", "fill", "fill-clear", "label", "keys", "scanout", "validate", "upload", "tail", "evict", "retire", "teardown", "address", "other"};
 
 std::uint64_t BudgetBytes(const Context& context) {
     static const char* text = std::getenv("APS5_UNIT_SHADOW_MIB");
@@ -538,7 +538,7 @@ PublishReason PublishReasonFor(const char* flushReason) {
     if (is("buffer copy count") || is("dispatch-cache entry")) return PublishReason::Validate;
     if (is("storage image creation") || is("storage refresh")) return PublishReason::Upload;
     if (is("address-based heaps")) return PublishReason::Address;
-    return PublishReason::Hook;
+    return PublishReason::Other;
 }
 
 ShadowSlab::ShadowSlab(const Context& context, VkBuffer buffer, VkDeviceMemory memory, std::uint64_t firstUnit, std::uint32_t units) : context(context), buffer(buffer), memory(memory), firstUnit(firstUnit), units(units) {}

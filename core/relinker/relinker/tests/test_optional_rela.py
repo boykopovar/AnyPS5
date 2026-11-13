@@ -117,14 +117,19 @@ def main():
                        ("missing-size", ((7, 0x700), (9, 24)), (), "DT_RELASZ"),
                        ("missing-entry-size", ((7, 0x700), (8, 0)), (), "DT_RELAENT"),
                        ("invalid-entry-size", ((9, 8),), (), "Unsupported DT_RELAENT"),
-                       ("unaligned-size", ((7, 0x700), (8, 1), (9, 24)), (), "Invalid DT_RELASZ"))
+                       ("unaligned-size", ((7, 0x700), (8, 1), (9, 24)), (), "Invalid DT_RELASZ"),
+                       ("unsupported-plt-format", ((3, 0x300), (20, 17), (23, 0x740), (2, 0)), (),
+                        "Unsupported DT_PLTREL type: 17; expected DT_RELA (7)"),
+                       ("unsupported-rel-before-rela-size", ((7, 0x700), (8, 1), (9, 24)), ((18, 1),),
+                        "DT_REL relocations are not supported"))
             for tag in (7, 8, 9):
                 value = {7: 0x700, 8: 0, 9: 24}[tag]
                 other = tag if sce else SCE_TAGS[tag]
                 invalid += ((f"ambiguous-{tag}", ((7, 0x700), (8, 0), (9, 24)),
                              ((other, value),), "Both DT_OS_ and DT_ variants"),)
             for tag in (17, 18, 19):
-                invalid += ((f"unsupported-{tag}", (), ((tag, 24),), "relocations are not supported"),)
+                for value in (0, 1, 16, 24, 0xFFFFFFFFFFFFFFFF):
+                    invalid += ((f"unsupported-{tag}-{value}", (), ((tag, value),), "DT_REL relocations are not supported"),)
             for tag in (35, 36, 37):
                 invalid += ((f"incomplete-relr-{tag}", (), ((tag, 24),), "Incomplete DT_RELR metadata"),)
             for name, tags, extra, error in invalid:

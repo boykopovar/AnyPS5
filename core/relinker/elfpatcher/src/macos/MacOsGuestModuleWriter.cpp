@@ -23,7 +23,9 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
     Windows::WindowsLoadImage image(guest.Bytes, guest.Headers, false);
     MacOsImageInput input;
     input.Executable = false;
+    input.FunctionSymbolRoots = guest.FunctionSymbolRoots;
     input.InstallName = "@rpath/" + guest.OutputName;
+    input.Identifier = guest.OutputName;
     input.Source = &guest.Bytes;
     input.Headers = &guest.Headers;
     input.Image = &image;
@@ -89,7 +91,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
             input.TlsExports.push_back({name, symbol.Value, flags});
             continue;
         }
-        input.Exports.push_back({name, image.GetRva(symbol.Value, std::max<std::uint64_t>(symbol.Size, 1)), flags});
+        input.Exports.push_back({name, image.GetRva(symbol.Value, guest.FunctionSymbolRoots && (symbol.Info & 15) == 2 ? 1 : std::max<std::uint64_t>(symbol.Size, 1)), flags});
     }
 
     for (const auto& dependency : dependencies) input.Dylibs.push_back(MachODependency(dependency, "@loader_path"));

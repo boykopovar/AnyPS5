@@ -102,6 +102,7 @@ std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const 
 std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, const GuestTextureResource& resource, VkComponentMapping components);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image = nullptr);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image = nullptr);
+void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const ColorTarget& target);
 void KeepMultisampleTarget_nid_no_patch(const std::shared_ptr<void>& owner);
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target);
 VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage = false);
@@ -125,6 +126,7 @@ void GuardOneFragmentFmask(const Context& context, const ColorTarget& target);
 bool HoldsMultisampleTargetsLock();
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);
+void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& active);
 std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes);
 
 }

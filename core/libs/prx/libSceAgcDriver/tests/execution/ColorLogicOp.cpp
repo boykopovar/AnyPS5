@@ -111,6 +111,8 @@ std::uint8_t Combine(std::uint8_t rop, std::uint8_t destination, std::uint8_t so
         case 0x5a: return static_cast<std::uint8_t>(destination ^ source);
         case 0x88: return static_cast<std::uint8_t>(destination & source);
         case 0xee: return static_cast<std::uint8_t>(destination | source);
+        case 0x44: return static_cast<std::uint8_t>(source & ~destination);
+        case 0x22: return static_cast<std::uint8_t>(~source & destination);
         default: throw std::runtime_error("the test has no expectation for this ROP");
     }
 }
@@ -134,7 +136,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        for (const std::uint8_t rop : {0xcc, 0x5a, 0x88, 0xee, 0xcc}) {
+        for (const std::uint8_t rop : {0xcc, 0x5a, 0x88, 0xee, 0x44, 0x22, 0xcc}) {
             try {
                 Draw(*device, rop);
             } catch (const std::exception& error) {

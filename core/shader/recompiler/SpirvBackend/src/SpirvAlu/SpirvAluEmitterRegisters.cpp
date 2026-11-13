@@ -1,4 +1,3 @@
-#include "SpirvBackend/SpirvAluEmitter.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include <functional>
@@ -7,14 +6,6 @@
 #include <vector>
 
 namespace ShaderRecompiler {
-
-void EmitAluValue(SpirvModule& module, const IrValue& value, std::uint32_t resultId) {
-    throw std::runtime_error("EmitAluValue not implemented");
-}
-
-void EmitAluValue(SpirvValueEmitContext& context, const IrValue& value, std::uint32_t resultId) {
-    throw std::runtime_error("EmitAluValue not implemented");
-}
 
 void EmitGetThreadBitScalarRegister(SpirvValueEmitContext& ctx, const IrValue& inst) {
     EmitUnreachable(ctx, inst);
