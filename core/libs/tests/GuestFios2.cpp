@@ -177,11 +177,16 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE(sceFiosIOFilterPsarcDearchiver(nullptr, 0, nullptr) == SCE_FIOS_ERROR_BAD_PTR);
     REQUIRE(sceFiosIOFilterPsarcDearchiver(nullptr, 1, nullptr) == SCE_FIOS_ERROR_BAD_PTR);
     REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, 2, psarcText) == SCE_FIOS_ERROR_BAD_PTR);
-    char overlayResult[64]{};
-    REQUIRE(sceFiosOverlayResolveSync(0, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_OVERLAY);
-    REQUIRE(sceFiosOverlayResolveSync(1, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_OVERLAY);
-    REQUIRE(sceFiosOverlayResolveSync(64, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_OVERLAY);
-    REQUIRE(sceFiosOverlayResolveSync(0x401, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_SIZE);
+    char overlayResult[0x400]{};
+    REQUIRE(sceFiosOverlayResolveSync(0, file.c_str(), overlayResult, sizeof(overlayResult)) == SCE_FIOS_OK && file == overlayResult);
+    REQUIRE(sceFiosOverlayResolveSync(1, file.c_str(), overlayResult, sizeof(overlayResult)) == SCE_FIOS_OK && file == overlayResult);
+    REQUIRE(sceFiosOverlayResolveSync(0, file.c_str(), overlayResult, 0x401) == SCE_FIOS_ERROR_BAD_SIZE);
+    REQUIRE(sceFiosOverlayResolveSync(0, nullptr, overlayResult, sizeof(overlayResult)) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayResolveSync(0, file.c_str(), nullptr, sizeof(overlayResult)) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayResolveSync(0, file.c_str(), overlayResult, file.size()) == SCE_FIOS_ERROR_PATH_TOO_LONG);
+    std::memset(overlayResult, 0, sizeof(overlayResult));
+    REQUIRE(sceFiosOverlayResolveSync(2, file.c_str(), overlayResult, sizeof(overlayResult)) == SCE_FIOS_ERROR_BAD_RESOLVE_FLAG && file == overlayResult);
+    REQUIRE(sceFiosOverlayResolveSync(-1, file.c_str(), overlayResult, sizeof(overlayResult)) == SCE_FIOS_ERROR_BAD_RESOLVE_FLAG);
     OverlayRecordTest overlay{};
     overlay.type = 0;
     overlay.order = 1;
@@ -595,6 +600,65 @@ static void CheckFileHandles(const std::string& directory) {
     REQUIRE(sceFiosDeleteSync(nullptr, path.c_str()) == SCE_FIOS_OK);
 }
 
+static std::int32_t AddOverlay(std::uint8_t type, std::uint8_t order, const std::string& destination, const std::string& source) {
+    OverlayRecordTest overlay{};
+    overlay.type = type;
+    overlay.order = order;
+    std::memcpy(overlay.destination, destination.c_str(), destination.size() + 1);
+    std::memcpy(overlay.source, source.c_str(), source.size() + 1);
+    std::int32_t id = 0;
+    REQUIRE(sceFiosOverlayAdd(&overlay, &id) == SCE_FIOS_OK && id > 0);
+    return id;
+}
+
+static std::string Resolve(std::int32_t flag, const std::string& path, std::size_t capacity = 0x400) {
+    char result[0x400]{};
+    REQUIRE(sceFiosOverlayResolveSync(flag, path.c_str(), result, capacity) == SCE_FIOS_OK);
+    return result;
+}
+
+static void CheckOverlayResolve(const std::string& directory) {
+    const std::string base = directory + "/ovlbase";
+    const std::string source = directory + "/ovlsrc";
+    std::filesystem::create_directories(base);
+    std::filesystem::create_directories(source);
+    for (const char* name : {"/a.txt", "/older.txt", "/newer.txt"}) std::ofstream(source + name) << "source";
+    for (const char* name : {"/b.txt", "/older.txt", "/newer.txt"}) std::ofstream(base + name) << "base";
+    const auto now = std::filesystem::last_write_time(source + "/a.txt");
+    std::filesystem::last_write_time(base + "/older.txt", now - std::chrono::hours(1));
+    std::filesystem::last_write_time(source + "/older.txt", now);
+    std::filesystem::last_write_time(base + "/newer.txt", now);
+    std::filesystem::last_write_time(source + "/newer.txt", now - std::chrono::hours(1));
+
+    std::int32_t opaque = AddOverlay(0, 5, "/app0/ovltest", source);
+    REQUIRE(Resolve(0, "/app0/ovltest/a.txt") == source + "/a.txt");
+    REQUIRE(Resolve(1, "/app0/ovltest/missing.txt") == source + "/missing.txt");
+    REQUIRE(Resolve(0, "/app0/ovltest") == source && Resolve(0, "/app0/ovltest/") == source);
+    REQUIRE(Resolve(0, "/app0//ovltest/./a.txt") == source + "/a.txt");
+    REQUIRE(Resolve(0, "/app0/ovltestx/a.txt") == "/app0/ovltestx/a.txt");
+    REQUIRE(Resolve(0, "/app0/OVLTEST/a.txt") == "/app0/OVLTEST/a.txt");
+    REQUIRE(Resolve(0, "ovltest/a.txt") == "ovltest/a.txt");
+    char small[0x400]{};
+    const std::string tooLong = "/app0/ovltest/a.txt";
+    REQUIRE(sceFiosOverlayResolveSync(0, tooLong.c_str(), small, tooLong.size() + 1) == SCE_FIOS_ERROR_PATH_TOO_LONG && tooLong == small);
+    const std::int32_t first = AddOverlay(0, 1, "/app0/ovltest/", base + "/");
+    const std::int32_t nested = AddOverlay(0, 3, "/app0/ovltest/sub", source);
+    REQUIRE(Resolve(0, "/app0/ovltest/sub/b.txt") == base + "/sub/b.txt");
+    REQUIRE(Resolve(0, "/app0/ovltest") == base);
+    REQUIRE(sceFiosOverlayRemove(first) == SCE_FIOS_OK && sceFiosOverlayRemove(nested) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOverlayRemove(opaque) == SCE_FIOS_OK);
+
+    for (std::uint8_t type : {std::uint8_t{1}, std::uint8_t{2}, std::uint8_t{3}}) {
+        const std::int32_t id = AddOverlay(type, 0, base, source);
+        REQUIRE(Resolve(0, base + "/a.txt") == source + "/a.txt");
+        REQUIRE(Resolve(0, base + "/b.txt") == base + "/b.txt");
+        REQUIRE(Resolve(1, base + "/b.txt") == (type == 3 ? source : base) + "/b.txt");
+        REQUIRE(Resolve(0, base + "/older.txt") == source + "/older.txt");
+        REQUIRE(Resolve(0, base + "/newer.txt") == (type == 2 ? base : source) + "/newer.txt");
+        REQUIRE(sceFiosOverlayRemove(id) == SCE_FIOS_OK);
+    }
+}
+
 static void CheckDirectories(const std::string& directory) {
     const std::string root = directory + "/listing";
     REQUIRE(sceFiosDirectoryCreateSync(nullptr, root.c_str()) == SCE_FIOS_OK);
@@ -760,6 +824,7 @@ int main() {
     CheckMutations(directory.generic_string());
     CheckFileHandles(directory.generic_string());
     CheckDirectories(directory.generic_string());
+    CheckOverlayResolve(directory.generic_string());
     REQUIRE(sceFiosIOFilterGetInfo(0, nullptr, nullptr) == SCE_FIOS_ERROR_BAD_INDEX);
     CheckDates();
     CheckBadPointers(file);
