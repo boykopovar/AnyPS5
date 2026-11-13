@@ -65,13 +65,8 @@ int APS5_VABI sceNpTrophy2GetGameInfo(int context, int handle, NpTrophy2GameDeta
 }
 
 int APS5_VABI sceNpTrophy2GetGameIcon(int context, int handle, void* buffer, size_t* size) {
-    (void)context;
     (void)handle;
-    (void)buffer;
-    if (size != nullptr) {
-        *size = NP_TROPHY2_ICON_SIZE_NONE;
-    }
-    return SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND;
+    return NpTrophy2::CopyIcon(context, NpTrophy2::IconKind::Game, 0, buffer, size, __func__);
 }
 
 int APS5_VABI sceNpTrophy2RegisterUnlockCallback(void* callback, void* userdata) {

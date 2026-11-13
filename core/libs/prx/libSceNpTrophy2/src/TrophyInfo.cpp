@@ -114,14 +114,8 @@ int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t o
 }
 
 int APS5_VABI sceNpTrophy2GetTrophyIcon(int context, int handle, int trophy_id, void* buffer, size_t* size) {
-    (void)context;
     (void)handle;
-    (void)trophy_id;
-    (void)buffer;
-    if (size != nullptr) {
-        *size = NP_TROPHY2_ICON_SIZE_NONE;
-    }
-    return SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND;
+    return NpTrophy2::CopyIcon(context, NpTrophy2::IconKind::Trophy, trophy_id, buffer, size, __func__);
 }
 
 }

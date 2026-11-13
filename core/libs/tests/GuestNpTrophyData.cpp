@@ -23,6 +23,7 @@ struct NpUniversalDataSystemEventPropertyObject;
 
 static constexpr int InitialUser = 0x10000000;
 static constexpr int InvalidTrophyId = static_cast<int>(0x8055390Au);
+static constexpr int IconFileNotFound = static_cast<int>(0x80553911u);
 
 static const char TropConf[] = R"({"defaultLanguage":"en-US","trophies":[
     {"id":"0","grade":"P"},
@@ -51,6 +52,16 @@ static bool ThrowsInvalidArgument(TCall call) {
     try {
         call();
     } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+template <typename TCall>
+static bool ThrowsRuntimeError(TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
         return true;
     }
     return false;
@@ -190,6 +201,55 @@ static void ReportTrophyData(int context) {
             "the group list does not hold the base game and group 1");
 }
 
+using IconCall = int (*)(int context, std::int32_t id, void* buffer, std::size_t* size);
+
+static int GameIcon(int context, std::int32_t, void* buffer, std::size_t* size) {
+    return sceNpTrophy2GetGameIcon(context, 1, buffer, size);
+}
+
+static int GroupIcon(int context, std::int32_t id, void* buffer, std::size_t* size) {
+    return sceNpTrophy2GetGroupIcon(context, 1, id, buffer, size);
+}
+
+static int TrophyIcon(int context, std::int32_t id, void* buffer, std::size_t* size) {
+    return sceNpTrophy2GetTrophyIcon(context, 1, id, buffer, size);
+}
+
+static int RewardIcon(int context, std::int32_t id, void* buffer, std::size_t* size) {
+    return sceNpTrophy2GetRewardIcon(context, 1, id, buffer, size);
+}
+
+static bool IconIs(IconCall call, int context, std::int32_t id, const std::string& icon) {
+    std::size_t size = 0;
+    if (call(context, id, nullptr, &size) != 0 || size != icon.size()) return false;
+    std::string buffer(icon.size() + 4, '\x5a');
+    size = buffer.size();
+    if (call(context, id, buffer.data(), &size) != 0 || size != icon.size()) return false;
+    return buffer.compare(0, icon.size(), icon) == 0 && buffer.substr(icon.size()) == std::string(4, '\x5a');
+}
+
+static bool IconMissing(IconCall call, int context, std::int32_t id) {
+    std::size_t size = 1234;
+    char buffer[8] = {};
+    return call(context, id, nullptr, &size) == IconFileNotFound && size == 0 && call(context, id, buffer, nullptr) == IconFileNotFound;
+}
+
+static void ReportIcons(int context) {
+    Require(IconIs(GameIcon, context, 0, "game icon") && IconIs(GroupIcon, context, 1, "group icon") && IconIs(TrophyIcon, context, 1, "trophy 1 icon"),
+            "the game, group 1 or trophy 1 icon was not the package's file");
+    Require(IconMissing(GroupIcon, context, -1) && IconMissing(GroupIcon, context, 7) && IconMissing(TrophyIcon, context, 2) && IconMissing(TrophyIcon, context, 99) &&
+                IconMissing(RewardIcon, context, 1),
+            "an icon that is not in the package was reported");
+    char small[4] = {};
+    std::size_t smallSize = sizeof(small);
+    Require(ThrowsRuntimeError([context, &small, &smallSize] { sceNpTrophy2GetGameIcon(context, 1, small, &smallSize); }), "an icon was copied into a buffer too small for it");
+    Require(ThrowsInvalidArgument([context] { sceNpTrophy2GetTrophyIcon(context, 1, 1, nullptr, nullptr); }), "an icon was reported without a size to write");
+    std::size_t hiddenSize = 0;
+    Require(ThrowsRuntimeError([context, &hiddenSize] { sceNpTrophy2GetTrophyIcon(context, 1, 6, nullptr, &hiddenSize); }) &&
+                ThrowsRuntimeError([context, &hiddenSize] { sceNpTrophy2GetRewardIcon(context, 1, 6, nullptr, &hiddenSize); }),
+            "the icon of a hidden trophy that is locked was given out");
+}
+
 static void PostUnlocks(int context) {
     Unlocks unlocks;
     const auto listener = NpTrophy2AddUnlockListener_nid_no_patch(Remember, &unlocks);
@@ -207,6 +267,7 @@ static void PostUnlocks(int context) {
             "a progressive, platinum or unknown trophy posted through UDS unlocked, or changed the counts");
     NpTrophy2RemoveUnlockListener_nid_no_patch(listener);
     Require(unlocks.trophies == (std::vector<std::int32_t>{1, 2, 3, 6, 4}), "the listener did not see each posted unlock once, in order, or saw a refused one");
+    Require(IconIs(TrophyIcon, context, 6, "secret icon") && IconIs(RewardIcon, context, 6, "hat icon"), "the icon or reward icon of a hidden trophy was not given out once it unlocked");
 }
 
 static void ReportPlaceholders() {
@@ -221,6 +282,7 @@ static void ReportPlaceholders() {
         Require(std::strcmp(game.title, "Game") == 0 && std::strcmp(details.name, "Trophy") == 0 &&
                     sceNpTrophy2GetTrophyInfoArray(context, 1, 0, 10, nullptr, &listed, &count) == 0 && count == 1,
                 "a missing or malformed trophy package does not leave the placeholders");
+        Require(IconMissing(GameIcon, context, 0) && IconMissing(TrophyIcon, context, 1), "a missing or malformed trophy package reported an icon");
     }
 }
 
@@ -256,11 +318,13 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(root);
     std::filesystem::current_path(root);
     Write("app0/sce_sys/param.json", R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}}})");
-    Write("app0/sce_sys/trophy2/trophy00.ucp", Ucp({{"tropconf.json", TropConf}, {"tropmeta_en-US.json", TropMeta}}));
+    Write("app0/sce_sys/trophy2/trophy00.ucp", Ucp({{"tropconf.json", TropConf}, {"tropmeta_en-US.json", TropMeta}, {"icon0_en-US.png", "game icon"}, {"gr0001_en-US.png", "group icon"},
+                                                    {"trop0001.png", "trophy 1 icon"}, {"trop0006.png", "secret icon"}, {"reward0006.png", "hat icon"}}));
     Write("app0/sce_sys/trophy2/trophy02.ucp", "not a package");
 
     const auto context = TrophyContext(0);
     ReportTrophyData(context);
+    ReportIcons(context);
     PostUnlocks(context);
     ReportPlaceholders();
     ReportExportLinked();
