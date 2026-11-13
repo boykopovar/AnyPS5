@@ -37,6 +37,8 @@
 
 - [scePadEnableExtensionPort](../../../core/libs/prx/libScePad/Export.cpp) returns success without changing extension-port state. The boolean argument is recovered; connected-device behavior is not modeled.
 - [scePadSetLightBarBaseBrightness](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returns success for known handles without changing the hardware state. `scePadIsLightBarBaseBrightnessControllable` reports 1 while the modifier is a no-op.
+- [scePadSetProcessPrivilege](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returns `PAD_OK` for any `privilege` value and keeps nothing. The per-process input privilege level is not modeled, so a caller that raises or lowers its privilege sees success but no change in what later pad calls allow.
+- [scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returns `PAD_OK` and ignores its `enabled` flag. The setting that would weaken DualSense adaptive-trigger vibration while the controller's embedded microphone is in use is not retained, so trigger-effect strength is unaffected by this toggle.
 
 ### Unknown function info
 - [scePadDeviceClassGetExtendedInformation](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returning `PAD_ERROR_INVALID_ARG` with caller `errno` preserved for an unwritable `info` pointer via `GuestCopyOut_nid_no_patch` is a host-safety fallback with console behavior unmeasured.

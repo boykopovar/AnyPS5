@@ -1008,17 +1008,34 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
         return words;
     };
+    const auto joinedRuns = [](const std::vector<std::pair<std::uint64_t, std::uint64_t>>& runs) {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> joined;
+        for (const auto& run : runs) {
+            if (!joined.empty() && joined.back().second == run.first) joined.back().second = run.second;
+            else joined.push_back(run);
+        }
+        return joined;
+    };
+    const auto listRuns = [](const std::vector<std::pair<std::uint64_t, std::uint64_t>>& runs) {
+        std::string text;
+        for (std::size_t run = 0; run < runs.size() && run < 4; ++run) {
+            char item[48];
+            std::snprintf(item, sizeof(item), " [0x%llx,0x%llx)", static_cast<unsigned long long>(runs[run].first), static_cast<unsigned long long>(runs[run].second));
+            text += item;
+        }
+        return text;
+    };
     const auto verifyDataStage = [&](std::size_t i, const DispatchVariant& kept) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
         std::vector<std::uint32_t> words;
         freshRuns(i, runs, words);
         const auto& compiled = *stageCaptures[i].compiled;
         if (kept.ringTemplate != nullptr) VerifyRingWords(*kept.compiled, *buildRingWords(i, kept), *stageCaptures[i].compiled, stageCaptures[i].heapWords.get());
-        const char* what = runs != kept.runs ? "runs" : words != kept.words ? "words" : vertexInfos[i].has_value() != (kept.vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *kept.vertexInfo)) ? "vertex stage info" : compiled.variantId != kept.compiled->variantId ? "variant" : compiled.pushConstants != kept.compiled->pushConstants ? "push constants" : nullptr;
+        const char* what = joinedRuns(runs) != joinedRuns(kept.runs) ? "runs" : words != kept.words ? "words" : vertexInfos[i].has_value() != (kept.vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *kept.vertexInfo)) ? "vertex stage info" : compiled.variantId != kept.compiled->variantId ? "variant" : compiled.pushConstants != kept.compiled->pushConstants ? "push constants" : nullptr;
         ++dataVerified;
         if (what == nullptr) return;
-        char message[320];
-        std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a data-only hit differs from its full build in its %s (%zu runs / %zu words kept, %zu / %zu fresh; variant 0x%llx / 0x%llx; key 0x%llx, shape 0x%llx)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.runs.size(), kept.words.size(), runs.size(), words.size(), static_cast<unsigned long long>(kept.compiled->variantId), static_cast<unsigned long long>(compiled.variantId), static_cast<unsigned long long>(drawKey), static_cast<unsigned long long>(shapeKey));
+        char message[640];
+        std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a data-only hit differs from its full build in its %s (%zu runs / %zu words kept, %zu / %zu fresh; variant 0x%llx / 0x%llx; key 0x%llx, shape 0x%llx; kept%s; fresh%s)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.runs.size(), kept.words.size(), runs.size(), words.size(), static_cast<unsigned long long>(kept.compiled->variantId), static_cast<unsigned long long>(compiled.variantId), static_cast<unsigned long long>(drawKey), static_cast<unsigned long long>(shapeKey), listRuns(joinedRuns(kept.runs)).c_str(), listRuns(joinedRuns(runs)).c_str());
         throw std::runtime_error(message);
     };
     const auto verifyStageData = [&](std::size_t i) {
@@ -1035,7 +1052,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto& fresh = *expected;
         const auto& patched = *effective;
         const bool sameBindings = fresh.bindings.size() == patched.bindings.size() && std::equal(fresh.bindings.begin(), fresh.bindings.end(), patched.bindings.begin(), [](const auto& a, const auto& b) { return a.kind == b.kind && a.role == b.role && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor; });
-        const char* what = runs != kept.runs ? "runs" : words != hit.words ? "words" : fresh.variantId != patched.variantId ? "variant" : fresh.pushConstants != patched.pushConstants ? "push constants" : !sameBindings ? "bindings" : nullptr;
+        const char* what = joinedRuns(runs) != joinedRuns(kept.runs) ? "runs" : words != hit.words ? "words" : fresh.variantId != patched.variantId ? "variant" : fresh.pushConstants != patched.pushConstants ? "push constants" : !sameBindings ? "bindings" : nullptr;
         ++stageDataVerified;
         if (what == nullptr) return;
         char message[256];
