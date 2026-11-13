@@ -21,6 +21,12 @@ def fake_run(command, **kwargs):
 
 
 class ErrorReportTests(unittest.TestCase):
+    def test_missing_github_cli_reports_a_setup_error_without_traceback(self):
+        with patch.object(subprocess, "run", side_effect=FileNotFoundError(2, "No such file or directory", "gh")):
+            with self.assertRaises(SystemExit) as raised:
+                pr_overlap.main(["--repo", "owner/project", "--branch", "HEAD"])
+        self.assertEqual(str(raised.exception.code), "pr_overlap: GitHub CLI 'gh' is required on PATH")
+
     def test_failure_names_the_command_the_exit_code_and_the_git_message(self):
         error = subprocess.CalledProcessError(128, ["git", "fetch", "-q"], output="", stderr=MISSING_REF + "\n")
         message = pr_overlap.describe_failure(error)
@@ -77,7 +83,7 @@ class ErrorReportTests(unittest.TestCase):
             finally:
                 os.chdir(old)
             self.assertIn("cannot resolve path '../loop'", str(raised.exception))
-            self.assertRegex(str(raised.exception), r"Too many levels of symbolic links|Symlink loop|cannot be resolved by the system")
+            self.assertRegex(str(raised.exception), r"Too many levels of symbolic links|Symlink loop|WinError 1921")
 
     def test_main_reconfigures_streams(self):
         class Stream:

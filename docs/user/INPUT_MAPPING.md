@@ -10,15 +10,20 @@ Supported input sources are:
 
 - `KEY:Return`, `KEY:Space`, or another key name accepted by SDL.
 - `MOUSE:Left`, `MOUSE:Middle`, `MOUSE:Right`, `MOUSE:X1`, or `MOUSE:X2`.
-- `WHEEL:Up` or `WHEEL:Down` for pad buttons.
+- `WHEEL:Up`, `WHEEL:Down`, `WHEEL:Left` or `WHEEL:Right` for pad buttons. `Left` and `Right` are horizontal scroll steps, such as a tilting wheel's sideways clicks; no action uses them by default.
+- `PAD:Button` or `PAD:Button+Button+...` for emulator actions only: a chord of controller buttons that are all held at once. Button names are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left` and `TouchPad`. The chord fires once, when its last button goes down, and the buttons still reach the title. `PAD:` is accepted for `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeUp`, `VolumeDown`, `ToggleMute` and `ReloadInputMapping`; other actions refuse it. Example: `ToggleFullscreen = PAD:Options+R1`.
 
 While a title has a mouse open (`sceMouseOpen`) and the window is focused, AnyPS5 hides and captures the host cursor, so the title's own cursor is the only one; the capture ends when the window loses focus or when the mouse-to-stick toggle (`ToggleMouse`) is on. Mouse movement reaches the title scaled from the window's presented image to the title's display resolution, so the title's cursor moves as far as the host cursor would.
 
-The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeDown`, `VolumeUp` and `ToggleMute`) never reach the game's pad. A key bound to a hotkey and to another action triggers both, as for every other action; the built-in keys of the actions above share none.
+The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeDown`, `VolumeUp` and `ToggleMute`) never reach the game's pad when bound to a key or mouse button. A `PAD:` chord is the one exception: its buttons still reach the title. A key bound to a hotkey and to another action triggers both, as for every other action; the built-in keys of the actions above share none.
 
 Game-controller bindings are enabled automatically and are not affected by keyboard or mouse overrides in this file.
 
 Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` accept only keyboard keys.
+
+### Reloading the mapping
+
+`ReloadInputMapping` (F1 by default) reads `anyps5-input.ini` and the title's profile again while the game keeps running, so you can try a change without restarting the title. The new file is read completely before anything changes: if it has an error, the previous mapping stays active and the log names the file, the line and the reason. A successful reload replaces the whole mapping at once.
 
 A key bound to `ShowPadStatus` and to another action triggers both, as for every other action. F9 is the built-in key of `ShowPadStatus`: if you moved `Screenshot`, `TogglePerformanceOverlay` or another action to F9, also rebind `ShowPadStatus` to a key you do not use, or each press shows the controller status panel too. The [web configurator](#web-configurator) warns about a key that two actions share.
 
@@ -54,6 +59,7 @@ Without an `anyps5-input.ini`, or for actions the file does not mention, these b
 | `VolumeDown` | F5 |
 | `VolumeUp` | F6 |
 | `ToggleMute` | F8 |
+| `ReloadInputMapping` | F1 |
 
 For example, this changes Cross to F or Space, moves the left stick to IJKL, uses the mouse buttons for Square and R2, makes the middle mouse button the only `ToggleMouse` input (the line replaces F7), and keeps all other built-in bindings:
 
@@ -104,13 +110,15 @@ Set `APS5_PAD_INPUT_FILE` as described in [Controller input for test runs](USAGE
 python3 tools/pad_timeline.py menu.json /tmp/anyps5-pad --repeat 3 --gap-ms 500
 ```
 
-Events start relative to when the application first observes the new command. Button lists support every name in `pad_input.py`; simultaneous names are combined. An empty list or `["release"]` injects no buttons. Events must be ordered and non-overlapping, hold for 1–5000 ms, and finish within one hour. Repetition adds the specified gap after the last event; at most 4096 events are accepted after repetition. The helper validates the entire sequence before atomically replacing the command file.
+Events start relative to when the application first observes the new command. Button lists support every name in `pad_input.py`; simultaneous names are combined. An empty list or `["release"]` injects no buttons. An event may also hold `left_stick` and `right_stick` positions as `[x, y]` from 0 to 255 (128 is centred); a stick an event names but the other leaves out stays centred for that event, and an event without either keeps the physical sticks, for example `{"at_ms":0,"hold_ms":400,"buttons":[],"left_stick":[255,128]}` to push the left stick right. Events must be ordered and non-overlapping, hold for 1–5000 ms, and finish within one hour. Repetition adds the specified gap after the last event; at most 4096 events are accepted after repetition. The helper validates the entire sequence before atomically replacing the command file.
 
 The runtime evaluates scheduled events at each controller read, including their automatic releases. A new pulse or timeline replaces the remaining sequence. Physical controller buttons still add to injected buttons. Existing commands at the application's first controller read are ignored. This schedules wall-time input: events can be missed while the application is not reading its controller, and it does not reproduce frame timing or game state. Use gaps and holds long enough for the title's input loop.
 
 ## Controller vibration strength
 
-Vibration is not part of the input mapping file. The host-side strength of a controller's vibration is set with `ANYPS5_RUMBLE`, described in [Controller vibration strength](USAGE.md#controller-vibration-strength); `0` turns it off for every connected controller.
+Vibration is not part of the input mapping file. The host-side strength of a controller's vibration is set with `ANYPS5_RUMBLE`, described in [Controller vibration strength](USAGE.md#controller-vibration-strength); `0` turns it off for every connected controller. Vibration also pauses while the window has no focus unless `ANYPS5_RUMBLE_ON_FOCUS_LOSS=0` is set, see [Vibration while the window has no focus](USAGE.md#vibration-while-the-window-has-no-focus).
+
+The identification pulse that tells players' controllers apart is set with `ANYPS5_PAD_IDENTIFY`, described in [Controller identification pulse](USAGE.md#controller-identification-pulse).
 
 ## Analog keyboard input
 
@@ -128,6 +136,17 @@ With `TriggerRampMs` above 0, a key or mouse button bound to `L2` or `R2` presse
 ## Shake
 
 While the `Shake` input is held (X by default), the controller reports its acceleration and angular velocity swinging back and forth every 50 ms, for titles that ask the player to shake the controller. A controller's own motion sensors are used otherwise.
+
+## Per-game profiles
+
+A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. The profile has the same format and overrides only what it lists: an action it names replaces the bindings from the shared file, a setting it names replaces the shared value, and everything else stays. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
+
+For example, a profile that gives one title a lower mouse sensitivity and Cross on F:
+
+```ini
+MouseSensitivity = 0.6
+Cross = KEY:F
+```
 
 ## Mouse as an analog stick
 

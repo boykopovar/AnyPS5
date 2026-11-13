@@ -15,8 +15,13 @@ static constexpr int EXPLICIT_SCHED = 0;
 static constexpr int RTP_LOOKUP = 0;
 static constexpr int RTP_SET = 1;
 static constexpr std::uint16_t RTP_PRIO_REALTIME = 2;
+static constexpr std::uint16_t RTP_PRIO_NORMAL = 3;
 static constexpr std::uint16_t RTP_PRIO_FIFO = 10;
+static constexpr std::uint16_t RTP_PRIO_IDLE = 4;
+static constexpr std::uint16_t RTP_PRIO_IDLE_FIFO = 12;
+static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_ESRCH = 3;
+static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_EFAULT = 14;
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -68,9 +73,7 @@ static void CheckThread(int policy, int priority, std::uint16_t expectedType) {
     GuestRtPrio fromCreator{7, 7};
     Require(rtprio_thread_nid_postfix(RTP_LOOKUP, report.tid.load(), &fromCreator) == 0);
     Require(fromCreator.type == expectedType && fromCreator.prio == priority);
-    bool threw = false;
-    try { rtprio_thread_nid_postfix(RTP_SET, report.tid.load(), &fromCreator); } catch (const std::exception&) { threw = true; }
-    Require(threw);
+    Require(LookupError(RTP_SET, report.tid.load(), &fromCreator) == GUEST_EPERM);
     report.release.store(true, std::memory_order_release);
     Require(scePthreadJoin(thread, nullptr) == SCE_OK);
     Require(LookupError(RTP_LOOKUP, report.tid.load(), &fromCreator) == GUEST_ESRCH);
@@ -91,6 +94,12 @@ int main() {
     CheckThread(GUEST_SCHED_RR, 600, RTP_PRIO_REALTIME);
     CheckThread(GUEST_SCHED_FIFO, 256, RTP_PRIO_FIFO);
     Require(LookupError(2, 0, &self) == GUEST_ESRCH);
+    Require(LookupError(5, 0, &self) == GUEST_EINVAL);
+    for (const std::uint16_t prio : {0, 31}) {
+        GuestRtPrio normal{RTP_PRIO_NORMAL, prio};
+        Require(LookupError(RTP_SET, 0, &normal) == GUEST_EINVAL);
+        Require(normal.type == RTP_PRIO_NORMAL && normal.prio == prio);
+    }
     Require(LookupError(RTP_LOOKUP, 0, nullptr) == GUEST_EFAULT);
     auto* unmapped = reinterpret_cast<GuestRtPrio*>(std::uintptr_t{0x10});
     Require(LookupError(RTP_LOOKUP, 0, unmapped) == GUEST_EFAULT);
@@ -105,7 +114,14 @@ int main() {
     Require(readOnly->type == 7 && readOnly->prio == 7);
     Require(LookupError(RTP_LOOKUP, 1, &self) == GUEST_ESRCH);
     Require(LookupError(RTP_LOOKUP, 999999, &self) == GUEST_ESRCH);
-    bool threw = false;
-    try { rtprio_thread_nid_postfix(RTP_SET, 0, &self); } catch (const std::exception&) { threw = true; }
-    Require(threw);
+    Require(LookupError(RTP_SET, 0, &self) == GUEST_EPERM);
+    Require(LookupError(RTP_SET, scePthreadGetthreadid(), &self) == GUEST_EPERM);
+    for (const std::uint16_t type : {RTP_PRIO_REALTIME, RTP_PRIO_IDLE, RTP_PRIO_FIFO, RTP_PRIO_IDLE_FIFO}) {
+        for (const std::uint16_t prio : {0, 15, 31, 32, 999}) {
+            GuestRtPrio request{type, prio};
+            Require(LookupError(RTP_SET, 0, &request) == GUEST_EPERM);
+            Require(request.type == type && request.prio == prio);
+        }
+    }
+    Require(LookupError(RTP_SET, 999999, &self) == GUEST_ESRCH);
 }

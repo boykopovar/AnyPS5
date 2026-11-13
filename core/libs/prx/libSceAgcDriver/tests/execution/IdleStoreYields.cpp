@@ -6,6 +6,7 @@
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -25,6 +26,8 @@ constexpr std::uint32_t Untouched = 0xdeadbeefu;
 constexpr std::uint32_t Stored = 0x12345678u;
 constexpr std::uint32_t FarRow = 1000;
 constexpr std::uint64_t Piece = 4u << 20u;
+alignas(4) std::atomic<std::uint32_t> betweenImagesHold{0};
+alignas(4) std::atomic<std::uint32_t> withinAnImageHold{0};
 
 alignas(256) constexpr std::array<std::uint32_t, 8> StoreRowZeroCode{
     0x7e040300, 0x7e060280, 0x7e0202ff, Stored, 0xf0200108, 0x00020102, 0xbf810000, 0xbf810000,
@@ -107,30 +110,69 @@ bool Contains(std::uint64_t begin, std::uint64_t end) {
     return false;
 }
 
-void SubmitAndWaitForPending(std::vector<std::uint32_t>& words) {
+class QueueHold {
+public:
+    explicit QueueHold(std::atomic<std::uint32_t>& label) : label(label) {}
+    ~QueueHold() { Release(); }
+    QueueHold(const QueueHold&) = delete;
+    QueueHold& operator=(const QueueHold&) = delete;
+
+    void Append(std::vector<std::uint32_t>& words) const {
+        const auto address = AddressOf(&label);
+        words.insert(words.end(), {0xc0053c00u, 0x13u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 1u, 0xffffffffu, 0x19u});
+    }
+
+    bool Reached() const {
+        std::array<AgcDriver::AwaitedWait, 16> waits{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(waits.data(), waits.size());
+        return std::ranges::any_of(std::span(waits.data(), count), [&](const AgcDriver::AwaitedWait& wait) { return wait.address == AddressOf(&label); });
+    }
+
+    void Release() { label.store(1, std::memory_order_release); }
+
+private:
+    std::atomic<std::uint32_t>& label;
+};
+
+void SubmitAndWaitHeld(std::vector<std::uint32_t>& words, const QueueHold& hold) {
+    hold.Append(words);
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (!AgcDriver::Graphics::StorageTexture::AnyPending() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    while (!hold.Reached() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::microseconds(200));
+    Require(hold.Reached(), "idle yield fixture: the queue did not reach the wait after the dispatches");
     Require(AgcDriver::Graphics::StorageTexture::AnyPending(), "idle yield fixture did not observe pending storage results");
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
 }
+
+struct Registered {
+    std::vector<const Surface*> surfaces;
+
+    explicit Registered(std::vector<const Surface*> list) : surfaces(std::move(list)) {
+        GuestAllocations::Mutation mutation;
+        for (const auto* surface : surfaces) mutation.Add(surface->texels, surface->bytes, true, true, true);
+    }
+    ~Registered() {
+        try {
+            AgcDriver::Graphics::StorageTexture::FlushAllPending("idle yield fixture");
+            GuestAllocations::Mutation mutation;
+            for (const auto* surface : surfaces) mutation.Remove(surface->texels);
+        } catch (...) {}
+    }
+};
 
 void StopsBetweenImages() {
     Surface first(256, 256);
     Surface second(256, 256);
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Add(first.texels, first.bytes, true, true, true);
-        mutation.Add(second.texels, second.bytes, true, true, true);
-    }
+    Registered registered({&first, &second});
     std::vector<std::uint32_t> words;
     AppendStore(words, first, StoreRowZeroCode);
     AppendStore(words, second, StoreRowZeroCode);
-    SubmitAndWaitForPending(words);
+    QueueHold hold(betweenImagesHold);
+    SubmitAndWaitHeld(words, hold);
     const auto pending = [](const Surface& surface) { return Pending(surface.Address(), surface.Address() + surface.bytes); };
     {
         std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex());
+        hold.Release();
         Require(pending(first) && pending(second), "the queue-idle store ran before the fixture could take the GPU mutex");
         std::size_t checks = 0;
         const bool finished = AgcDriver::Graphics::StorageTexture::FlushAllPendingUntil("idle", [&] { return checks++ != 0; });
@@ -140,27 +182,23 @@ void StopsBetweenImages() {
         Require(!pending(first) && !pending(second), "the store after the stopped one left an image pending");
     }
     Require(Contains(first.Address(), first.Address() + first.bytes) && Contains(second.Address(), second.Address() + second.bytes), "the two stores did not bring both results to guest memory");
-    GuestAllocations::Mutation mutation;
-    mutation.Remove(first.texels);
-    mutation.Remove(second.texels);
 }
 
 void StopsWithinAnImage() {
     Surface surface(2048, 1024);
     Require(surface.bytes > Piece, "idle yield fixture: the large surface is not larger than one stored piece");
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Add(surface.texels, surface.bytes, true, true, true);
-    }
+    Registered registered({&surface});
     std::vector<std::uint32_t> words;
     AppendStore(words, surface, StoreRowZeroCode);
     AppendStore(words, surface, StoreFarRowCode);
-    SubmitAndWaitForPending(words);
+    QueueHold hold(withinAnImageHold);
+    SubmitAndWaitHeld(words, hold);
     const auto begin = surface.Address();
     const auto split = begin + Piece;
     const auto end = begin + surface.bytes;
     {
         std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex());
+        hold.Release();
         Require(Pending(begin, end), "the large image has no pending results");
         std::size_t checks = 0;
         const bool finished = AgcDriver::Graphics::StorageTexture::FlushAllPendingUntil("idle", [&] { return checks++ != 0; });
@@ -170,8 +208,6 @@ void StopsWithinAnImage() {
         Require(!Pending(begin, end), "storing the rest of the large image left it pending");
     }
     Require(Contains(begin, split) && Contains(split, end), "the two stores did not bring both rows of the large image to guest memory");
-    GuestAllocations::Mutation mutation;
-    mutation.Remove(surface.texels);
 }
 
 }

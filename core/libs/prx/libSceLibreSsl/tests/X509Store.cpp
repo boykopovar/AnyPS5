@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
@@ -31,6 +32,17 @@ void RequireThrows(TAction action, const char* message) {
         action();
     } catch (const std::exception&) {
         return;
+    }
+    Require(false, message);
+}
+
+template<typename TAction>
+void RequireInvalidArgument(TAction action, const char* message) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    } catch (const std::exception&) {
     }
     Require(false, message);
 }
@@ -76,10 +88,10 @@ void Flags() {
     store->param->flags = 0;
     Require(X509_STORE_set_flags_nid_postfix(store, 0x8000000000000000ull) == 1 && store->param->flags == 0x8000000000000000ull, "all 64 flag bits are kept");
     Require(store->param->inheritanceFlags == 0, "inheritance flags are left alone");
-    RequireThrows([] { X509_STORE_set_flags_nid_postfix(nullptr, 1); }, "null store");
+    RequireInvalidArgument([] { X509_STORE_set_flags_nid_postfix(nullptr, 1); }, "null store");
     auto* param = store->param;
     store->param = nullptr;
-    RequireThrows([&] { X509_STORE_set_flags_nid_postfix(store, 1); }, "store without verify parameters");
+    RequireInvalidArgument([&] { X509_STORE_set_flags_nid_postfix(store, 1); }, "store without verify parameters");
     store->param = param;
     X509_STORE_free_nid_postfix(store);
 }
@@ -122,7 +134,42 @@ void Unsupported() {
     store = X509_STORE_new_nid_postfix();
     static_cast<Stack*>(store->objects)->data = nullptr;
     static_cast<Stack*>(store->objects)->num = 1;
-    RequireThrows([&] { X509_STORE_free_nid_postfix(store); }, "null element array");
+    RequireInvalidArgument([&] { X509_STORE_free_nid_postfix(store); }, "null element array");
+}
+
+void LookupStack() {
+    auto* store = X509_STORE_new_nid_postfix();
+    auto* lookups = static_cast<Stack*>(store->lookupMethods);
+    auto* method = X509_LOOKUP_file_nid_postfix();
+    lookups->numAlloc = 0;
+    RequireInvalidArgument([&] { X509_STORE_add_lookup_nid_postfix(store, method); }, "a stack without room to grow");
+    Require(lookups->num == 0, "a refused lookup leaves the stack empty");
+    lookups->numAlloc = 4;
+    lookups->num = -1;
+    RequireInvalidArgument([&] { X509_STORE_add_lookup_nid_postfix(store, method); }, "a negative count");
+    lookups->num = 0;
+    X509_STORE_free_nid_postfix(store);
+}
+
+void AddNullCrl() {
+    ERR_clear_error_nid_postfix();
+    auto* store = X509_STORE_new_nid_postfix();
+    Require(store != nullptr, "allocate a CRL test store");
+    std::array<unsigned char, sizeof(LibreSslX509Store)> before{};
+    std::memcpy(before.data(), store, before.size());
+    LibreSslPutError_nid_no_patch(8, 0xfff, 101);
+    LibreSslPutError_nid_no_patch(8, 0xfff, 102);
+    constexpr std::uint64_t firstError = 0x08fff065;
+    constexpr std::uint64_t lastError = 0x08fff066;
+    Require(X509_STORE_add_crl_nid_postfix(store, nullptr) == 0, "a null CRL returns zero");
+    Require(X509_STORE_add_crl_nid_postfix(reinterpret_cast<LibreSslX509Store*>(1), nullptr) == 0, "a null CRL does not access the store");
+    Require(ERR_peek_error_nid_postfix() == firstError, "a null CRL preserves the oldest queued error");
+    Require(ERR_get_error_nid_postfix() == (std::uint64_t{8} << 24 | std::uint64_t{0xfff} << 12 | 101)
+        && ERR_get_error_nid_postfix() == lastError && ERR_get_error_nid_postfix() == 0, "a null CRL preserves the full error queue");
+    Require(std::memcmp(before.data(), store, before.size()) == 0, "a null CRL leaves the store unchanged");
+    X509_STORE_free_nid_postfix(store);
+
+    RequireThrows([] { X509_STORE_add_crl_nid_postfix(reinterpret_cast<LibreSslX509Store*>(1), reinterpret_cast<void*>(1)); }, "a non-null CRL is unsupported before store access");
 }
 
 const char* Host(const LibreSslX509VerifyParam* param, int index) {
@@ -155,10 +202,10 @@ void Hosts() {
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, nullptr, 5) == 1 && param->id->hosts == nullptr, "a null name clears the list");
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, nullptr, 0) == 1 && param->id->hosts == nullptr, "clearing an empty list");
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "last.example", 0) == 1, "a name that the store frees");
-    RequireThrows([] { X509_VERIFY_PARAM_set1_host_nid_postfix(nullptr, "a", 0); }, "null verify parameters");
+    RequireInvalidArgument([] { X509_VERIFY_PARAM_set1_host_nid_postfix(nullptr, "a", 0); }, "null verify parameters");
     auto* id = param->id;
     param->id = nullptr;
-    RequireThrows([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, "a", 0); }, "verify parameters without an identity");
+    RequireInvalidArgument([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, "a", 0); }, "verify parameters without an identity");
     param->id = id;
     X509_STORE_free_nid_postfix(store);
 }
@@ -240,4 +287,6 @@ int main(int argc, char**) {
     Identity();
     Unsupported();
     Hosts();
+    LookupStack();
+    AddNullCrl();
 }

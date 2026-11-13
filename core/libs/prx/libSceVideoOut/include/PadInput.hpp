@@ -3,15 +3,21 @@
 
 #include "SDL_events.h"
 #include "SDL_gamecontroller.h"
+#include "SDL_hidapi.h"
+#include "prx/libScePad/include/InputMapping.hpp"
 #include "prx/libScePad/include/KeyboardMouse.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/Pad.hpp"
+#include "prx/libScePad/include/PadIdentify.hpp"
 #include "prx/libSceVideoOut/include/PadOutputPacing.hpp"
 #include "prx/libSceVideoOut/include/Port0Presence.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PadStatus.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <memory>
 #include <string>
+#include <thread>
 #include "prx/libSceVideoOut/include/Telemetry.hpp"
 
 class DisplayWindow;
@@ -37,16 +43,23 @@ private:
         std::uint32_t outputSequence = 0;
         PadOutputState outputState{};
         bool outputPending = false;
+        bool rumbleLive = false;
         std::chrono::steady_clock::time_point nextRumbleRefresh{};
         LightBarPacer lightBar;
         TriggerEffectCache triggerEffect;
         std::uint32_t heldThroughCapture = 0;
+        SDL_hid_device* statusHid = nullptr;
+        Pad::IdentifyScheduler identify;
         AgcDriver::PadKind kind = AgcDriver::PadKind::Unknown;
         std::string name;
     };
 
     explicit PadInput(Pad::InputConfiguration configuration);
     void publish(std::uint64_t frame);
+    void applyMappingSnapshot();
+    void reloadInputMapping();
+    void dispatchPadChords(DisplayWindow& window);
+    void applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window);
     void publish(std::uint64_t frame, int slot);
     void setMouseMode(bool enabled);
     void openAvailableControllers();
@@ -56,12 +69,21 @@ private:
     PadInputState handOff(int slot, PadInputState state);
     void applyOutput();
     void enableSensors(int slot);
+    void openStatus(int slot);
+    void pollStatus(int slot);
+    void closeStatus(int slot);
     AgcDriver::PadStatusSnapshot statusSnapshot() const;
     void reportStatus();
     void updatePort0();
     void applyPort0(bool connected);
+    void openHaptics(SDL_GameController* controller);
+    void closeHaptics();
+    void streamHaptics();
 
+    Pad::InputMappingStore mappings;
+    std::shared_ptr<const Pad::InputConfiguration> appliedMapping;
     Pad::KeyboardMouse keyboardMouse;
+    Pad::IdentifyMode identifyMode = Pad::IdentifyMode::Off;
     std::array<ControllerSlot, PAD_MAX_CONTROLLERS> slots{};
     VideoOutTelemetry::PadChangeFilter telemetryFilter;
     AgcDriver::PadStatusProvider statusProvider;
@@ -69,6 +91,11 @@ private:
     Port0Presence::Presence port0;
     bool padCaptured = false;
     bool hostFocusSynced = false;
+    SDL_hid_device* haptics = nullptr;
+    std::atomic<bool> hapticsRunning{false};
+    std::thread hapticsThread;
+    bool hapticsRumbled = false;
+    std::atomic<std::chrono::steady_clock::rep> hapticsReconfigureAt{0};
 };
 
 #endif

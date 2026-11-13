@@ -35,6 +35,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <pdh.h>
 #include <psapi.h>
 #else
 #include <sys/resource.h>
@@ -527,7 +528,9 @@ OverlayContent ComposeOverlayDetails(const OverlayDetailSample& sample) {
     }
     if (sample.queueWaits) add("Q0 WAIT MS/FRAME: MEM " + value(sample.queueWaits->memoryMs) + " LOCK " + value(sample.queueWaits->lockMs) + " GPU " + value(sample.queueWaits->gpuMs));
     joined("RENDER PASSES/FRAME:", {shown(sample.renderPassesPerFrame, value)});
-    joined("PIPELINES:", {shown(sample.pipelinesCompiling, [&](std::uint64_t pending) { return "COMPILING " + count(static_cast<double>(pending)); }), shown(sample.pipelinesPerSecond, [&](double made) { return "NEW/S " + count(made); })});
+    std::optional<double> compileSecondsLeft;
+    if (sample.pipelinesCompiling && sample.pipelinesPerSecond && *sample.pipelinesPerSecond > 0) compileSecondsLeft = static_cast<double>(*sample.pipelinesCompiling) / *sample.pipelinesPerSecond;
+    joined("PIPELINES:", {shown(sample.pipelinesCompiling, [&](std::uint64_t pending) { return "COMPILING " + count(static_cast<double>(pending)); }), shown(sample.pipelinesPerSecond, [&](double made) { return "NEW/S " + count(made); }), shown(compileSecondsLeft, [&](double seconds) { return "LEFT " + FormatOverlayRate(seconds) + " S"; })});
     joined("HIT %:", {shown(sample.drawCacheHitPercent, [&](double percent) { return "DRAW CACHE " + value(percent); }), shown(sample.pipelineCacheHitPercent, [&](double percent) { return "PIPELINES " + value(percent); })});
     joined("", {shown(sample.flipsPerSecond, [&](double flips) { return "FLIPS/S: " + rate(flips); }), shown(sample.presentsPerSecond, [&](double presents) { return "PRESENTS/S: " + rate(presents); })});
     joined("", {shown(sample.droppedFrames, [&](std::uint64_t dropped) { return "DROPPED/S: " + count(static_cast<double>(dropped)); }), shown(sample.repeatedPresents, [&](std::uint64_t repeated) { return "REPEATED/S: " + count(static_cast<double>(repeated)); })});
@@ -537,6 +540,7 @@ OverlayContent ComposeOverlayDetails(const OverlayDetailSample& sample) {
     joined("UNIMPLEMENTED:", {shown(sample.unimplementedPerSecond, [&](double calls) { return count(calls) + "/S"; }), shown(sample.unimplementedTotal, [&](std::uint64_t calls) { return count(static_cast<double>(calls)) + " TOTAL"; })});
     joined("REFUSED SHADERS:", {shown(sample.refusedShaders, [&](std::uint64_t refused) { return count(static_cast<double>(refused)); })});
     joined("", {sample.title.empty() ? std::nullopt : std::optional<std::string>("TITLE: " + OverlayText(sample.title)), sample.presentMode.empty() ? std::nullopt : std::optional<std::string>("PRESENT: " + OverlayText(sample.presentMode))});
+    joined("FPS LIMIT:", {shown(sample.fpsLimit, [&](double limit) { return limit < 10000.0 ? rate(limit) : count(limit); })});
     return content;
 }
 
@@ -661,6 +665,26 @@ std::optional<OverlayMemory> ParseCommitCharge(std::string_view meminfo) {
 
 std::optional<OverlayMemory> ReadCommitCharge() {
 #ifdef _WIN32
+    struct CommitCounters {
+        PDH_HQUERY query = nullptr;
+        PDH_HCOUNTER committed = nullptr;
+        PDH_HCOUNTER limit = nullptr;
+        bool ready = PdhOpenQueryW(nullptr, 0, &query) == ERROR_SUCCESS
+            && PdhAddEnglishCounterW(query, L"\\Memory\\Committed Bytes", 0, &committed) == ERROR_SUCCESS
+            && PdhAddEnglishCounterW(query, L"\\Memory\\Commit Limit", 0, &limit) == ERROR_SUCCESS;
+    };
+    static CommitCounters counters;
+    static std::mutex mutex;
+    if (counters.ready) {
+        const std::lock_guard lock(mutex);
+        PDH_FMT_COUNTERVALUE committed{};
+        PDH_FMT_COUNTERVALUE limit{};
+        if (PdhCollectQueryData(counters.query) == ERROR_SUCCESS
+            && PdhGetFormattedCounterValue(counters.committed, PDH_FMT_LARGE, nullptr, &committed) == ERROR_SUCCESS
+            && PdhGetFormattedCounterValue(counters.limit, PDH_FMT_LARGE, nullptr, &limit) == ERROR_SUCCESS
+            && committed.largeValue > 0 && limit.largeValue > 0)
+            return OverlayMemory{static_cast<std::uint64_t>(committed.largeValue), static_cast<std::uint64_t>(limit.largeValue)};
+    }
     PERFORMANCE_INFORMATION information{};
     information.cb = sizeof(information);
     if (K32GetPerformanceInfo(&information, sizeof(information)) == 0) return std::nullopt;
@@ -704,10 +728,18 @@ std::optional<std::uint64_t> ReadPhysicalMemoryBytes() {
 #endif
 }
 
-std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content) {
-    auto scale = std::max<std::int32_t>(1, static_cast<std::int32_t>((extent.height + 240) / 480));
+std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content, std::int32_t requested) {
+    auto scale = requested > 0 ? requested : std::max<std::int32_t>(1, static_cast<std::int32_t>((extent.height + 240) / 480));
     while (scale > 1 && !fits(extent, content, scale)) --scale;
     return scale;
+}
+
+std::int32_t OverlayScaleRequest(const char* value) {
+    if (value == nullptr || value[0] == '\0') return 0;
+    char* end = nullptr;
+    const long parsed = std::strtol(value, &end, 10);
+    if (end == value || *end != '\0' || parsed < 1 || parsed > 8) return 0;
+    return static_cast<std::int32_t>(parsed);
 }
 
 OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, OverlayCorner corner) {
@@ -716,7 +748,7 @@ OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, Ov
     Graphics::Require(content.columns > 0, "the performance overlay panel needs at least one column");
     Graphics::Require(content.graph ? content.columns * OverlayMetrics::Advance - 1 >= static_cast<std::int32_t>(OverlayStatistics::FrameHistory) : content.frameTimes.empty(), "the performance overlay graph needs a graph row as wide as its 120 frames");
     OverlayLayout layout;
-    const auto scale = OverlayScale(extent, content);
+    const auto scale = OverlayScale(extent, content, OverlayScaleRequest(std::getenv("ANYPS5_OVERLAY_SCALE")));
     layout.scale = scale;
     const auto width = panelWidth(content.columns, scale);
     const auto height = panelHeight(content, scale);
@@ -953,9 +985,11 @@ void PerformanceOverlay::sampleDetails(OverlayStatistics::Clock::time_point at, 
     if (context.hostImportAlignment != 0) {
         const auto imports = Graphics::HostImportCounters();
         detailSample.hostImports = imports.live;
-        detailSample.hostImportBytes = OverlayMemory{imports.liveBytes, imports.liveBytes + Graphics::HostImportBudgetRemaining(context)};
+        detailSample.hostImportBytes = OverlayMemory{imports.liveBytes + imports.retiredPinnedBytes, imports.liveBytes + imports.retiredPinnedBytes + Graphics::HostImportBudgetRemaining(context)};
     }
     detailSample.presentMode = std::string(OverlayPresentModeName(info.presentMode));
+    if (info.fpsLimit > 0.0) detailSample.fpsLimit = info.fpsLimit;
+    else detailSample.fpsLimit.reset();
     sampleTrace(at);
     detail.base = std::move(now);
     detail.repeats = 0;

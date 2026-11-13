@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libSceKeyboard/include/PadEmulate.hpp"
 #include "SceTypes.hpp"
 
 struct KeyboardDeviceInfo;
@@ -26,15 +27,13 @@ int APS5_VABI sceKeyboardDisconnectPort(std::int32_t first, std::int32_t second)
 int APS5_VABI sceKeyboardGetDeviceInfo(std::int32_t deviceId, KeyboardDeviceInfo* info);
 int APS5_VABI sceKeyboardGetHandle(std::int32_t userId, std::int32_t type, std::int32_t index);
 int APS5_VABI sceKeyboardMbusInit(void);
-int APS5_VABI sceKeyboardPadEmulateClose(void);
-int APS5_VABI sceKeyboardPadEmulateOpen(void);
 int APS5_VABI sceKeyboardSetProcessFocus(const KeyboardProcessFocus* focus);
 int APS5_VABI sceKeyboardSetProcessPrivilege(std::uint8_t privilege);
-int APS5_VABI sceDbgKeyboardClose();
+int APS5_VABI sceDbgKeyboardClose(int32_t handle);
 int APS5_VABI sceDbgKeyboardGetKey2Char();
-int APS5_VABI sceDbgKeyboardInit();
-int APS5_VABI sceDbgKeyboardOpen();
+int APS5_VABI sceDbgKeyboardInit(void);
+int APS5_VABI sceDbgKeyboardOpen(int userId, int32_t type, int32_t index, const void* param);
 int APS5_VABI sceDbgKeyboardRead();
-int APS5_VABI sceDbgKeyboardReadState();
+int APS5_VABI sceDbgKeyboardReadState(std::int32_t handle, KeyboardData* data);
 
 }
