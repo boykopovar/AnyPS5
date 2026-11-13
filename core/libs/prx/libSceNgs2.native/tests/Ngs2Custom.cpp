@@ -616,6 +616,12 @@ static void TestCustomRackChecks() {
     option.custom_rack_option.state_size = 0;
     option.custom_rack_option.rack_option.max_matrices = 2;
     Require(CreateThrows<std::runtime_error>(option));
+    option.custom_rack_option.state_size = 15;
+    Require(CreateThrows<std::runtime_error>(option));
+    for (const std::uint32_t stateSize : {16u, 17u}) {
+        option.custom_rack_option.state_size = stateSize;
+        Require(sceNgs2RackDestroy(CustomRack(system, option), nullptr) == SCE_NGS2_OK);
+    }
 
     option = good;
     option.custom_rack_option.module[0].source_buffer_id = 1;
