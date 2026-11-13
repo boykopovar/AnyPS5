@@ -153,6 +153,9 @@ int main() {
     Require(sceNpSignalingGetLocalNetInfo(context, nullptr) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "a null output was taken");
     Require(sceNpSignalingGetLocalNetInfo(99, nullptr) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "a null output was not refused before the context");
     Require(sceNpSignalingGetLocalNetInfo(-1, nullptr) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "a null output was not refused for negative context");
+    errno = 71;
+    Require(sceNpSignalingGetLocalNetInfo(context, inaccessible) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "an inaccessible pointer was taken");
+    Require(errno == 71, "sceNpSignalingGetLocalNetInfo", "errno was not preserved");
 
     std::memset(&localInfo, 0xA5, sizeof(localInfo));
     localInfo.size = 0;
@@ -237,6 +240,9 @@ int main() {
     netInfo.size = 0;
     Require(sceNpSignalingGetPeerNetInfoResult(99, 1, &netInfo) == CtxNotFound, "sceNpSignalingGetPeerNetInfoResult", "an unknown context was not refused before the size");
     Require(sceNpSignalingGetPeerNetInfoResult(context, 1, &netInfo) == InvalidArgument, "sceNpSignalingGetPeerNetInfoResult", "size 0 was taken");
+    errno = 71;
+    Require(sceNpSignalingGetPeerNetInfoResult(context, 1, inaccessible) == InvalidArgument, "sceNpSignalingGetPeerNetInfoResult", "unreadable peerNetInfo was taken");
+    Require(errno == 71, "sceNpSignalingGetPeerNetInfoResult", "errno was not preserved");
     netInfo.size = sizeof(netInfo);
     Require(sceNpSignalingGetPeerNetInfoResult(context, 1, &netInfo) == ResultNotFound && netInfo.localAddr == 0, "sceNpSignalingGetPeerNetInfoResult", "a result that was never staged was found");
     Require(sceNpSignalingGetMemoryInfo(nullptr) == InvalidArgument, "sceNpSignalingGetMemoryInfo", "a null output was taken");
