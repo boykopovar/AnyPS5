@@ -103,10 +103,12 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ConstantFolder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DeadCodeEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/UnobservedPhiEliminator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/GotoPhiRefiner.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/HostInterpolationChecker.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ReadLaneEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/MaskedSelectEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/TessellationLowering.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/QuadHelperProof.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceTracker.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceMaterializer.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/BindingAllocator.cpp
@@ -160,6 +162,13 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/DummyShaders.cpp
     )
 
+    set_source_files_properties(
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/src/VectorInstructions.cpp
+            TARGET_DIRECTORY ${target}
+            PROPERTIES COMPILE_OPTIONS
+            "$<$<AND:$<CXX_COMPILER_ID:GNU>,$<VERSION_GREATER_EQUAL:$<CXX_COMPILER_VERSION>,14>,$<VERSION_LESS:$<CXX_COMPILER_VERSION>,15>>:-fno-tree-pre>"
+    )
+
     target_include_directories(${target} PUBLIC
             ${PROJECT_SOURCE_DIR}/core/libs
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/
@@ -197,7 +206,9 @@ function(add_shader_recompiler target runtimeTarget)
     list(APPEND shaderCacheRecompilerSources ${shaderCacheCompiledSources})
     list(REMOVE_DUPLICATES shaderCacheRecompilerSources)
     set(shaderCacheKeySources
+            "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThread.hpp"
             "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadLocal.hpp"
+            "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/RemoveTree.hpp"
             "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadSlot.hpp"
             "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/general/AtomicSharedPtr.hpp")
     foreach(source IN LISTS shaderCacheKeySources)

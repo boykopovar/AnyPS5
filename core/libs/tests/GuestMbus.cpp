@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -46,6 +47,16 @@ void CheckDeviceIdConversion() {
         Require(sceMbusConvertToMbusDeviceId(1, other, &id) == unconvertibleClass && id == 0, "other classes are refused and clear the output");
     }
     Require(sceMbusConvertToMbusDeviceId(1, 0, nullptr) == unconvertibleClass, "refusal without an output");
+    constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
+    errno = 71;
+    Require(sceMbusConvertToLocalDeviceId(0x0020123456789ABCull, reinterpret_cast<std::uint32_t*>(0x10), &deviceClass) == invalidArgument, "unwritable local id accepted");
+    Require(errno == 71, "errno modified by unwritable local id check");
+    Require(sceMbusConvertToLocalDeviceId(0x0020123456789ABCull, &local, reinterpret_cast<std::uint32_t*>(0x10)) == invalidArgument, "unwritable device class accepted");
+    Require(errno == 71, "errno modified by unwritable device class check");
+    Require(sceMbusConvertToLocalDeviceId2(0x0010123456789ABCull, 0x10, reinterpret_cast<std::uint64_t*>(0x10)) == invalidArgument, "unwritable local id 2 accepted");
+    Require(errno == 71, "errno modified by unwritable local id 2 check");
+    Require(sceMbusConvertToMbusDeviceId(0x123456789ABCull, 0x20, reinterpret_cast<std::uint64_t*>(0x10)) == invalidArgument, "unwritable mbus device id accepted");
+    Require(errno == 71, "errno modified by unwritable mbus device id check");
 }
 
 void CheckInit() {
@@ -90,6 +101,10 @@ int main() {
     Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "threadParam reserved field accepted");
     param.threadParam = nullptr;
     Require(sceDeviceServiceInitialize(3, &param) == 0, "default parameter initialization failed");
+    Require(sceDeviceServiceInitialize(3, reinterpret_cast<const DeviceServiceInitParam*>(1)) == invalidArgument, "unmapped parameter accepted");
+    param.threadParam = reinterpret_cast<DeviceServiceThreadParam*>(~std::uintptr_t{0});
+    Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "unmapped thread parameter accepted");
+    param.threadParam = nullptr;
     Require(sceDeviceServiceInitialize(3, 0) == 0, "initialization failed");
     Require(sceDeviceServiceGetGeneration() == 0, "the device set started at another generation");
     Require(sceDeviceServiceGetEventState(1) == 0, "a device event was reported");
@@ -107,6 +122,9 @@ int main() {
     Require(sceDeviceServiceQueryDeviceInfo_(0xFFFF, nullptr, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "unrecognized device class accepted");
     DeviceServiceUsageFilter filter{1, 2, 3};
     Require(sceDeviceServiceQueryDeviceInfo_(0x8001, &filter, 0, info.data(), 1, &count, nullptr, info.size()) == 0, "valid HID filter rejected");
+    count = 7;
+    Require(sceDeviceServiceQueryDeviceInfo_(0x8001, reinterpret_cast<const DeviceServiceUsageFilter*>(0x10), 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument && count == 7,
+            "unreadable HID filter accepted or modified the count output");
     Require(sceDeviceServiceQueryDeviceInfo_(0x8001, nullptr, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "missing HID filter accepted");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, &filter, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "unexpected HID filter accepted");
     filter.minimumUsage = 4;

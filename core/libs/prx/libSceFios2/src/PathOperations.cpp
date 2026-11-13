@@ -63,9 +63,9 @@ SceFiosOp StartFileDelete(const SceFiosOpAttr* attr, const char* path) {
     return SubmitPath(attr, path, 0, 0, nullptr, RemoveFile);
 }
 
-SceFiosOp StartDirectoryCreate(const SceFiosOpAttr* attr, const char* path) {
-    return SubmitPath(attr, path, 0, 0, nullptr, [](const std::string& target, Fios::Completion& completion) {
-        completion.error = Fios::FromKernelError(sceKernelMkdir(target.c_str(), DefaultDirectoryMode));
+SceFiosOp StartDirectoryCreate(const SceFiosOpAttr* attr, const char* path, std::uint16_t mode = DefaultDirectoryMode) {
+    return SubmitPath(attr, path, 0, 0, nullptr, [mode](const std::string& target, Fios::Completion& completion) {
+        completion.error = Fios::FromKernelError(sceKernelMkdir(target.c_str(), mode));
     });
 }
 
@@ -169,6 +169,14 @@ SceFiosOp APS5_VABI sceFiosDirectoryCreate(const SceFiosOpAttr* attr, const char
 
 int APS5_VABI sceFiosDirectoryCreateSync(const SceFiosOpAttr* attr, const char* path) {
     return StatusSync(StartDirectoryCreate(attr, path));
+}
+
+SceFiosOp APS5_VABI sceFiosDirectoryCreateWithMode(const SceFiosOpAttr* attr, const char* path, std::uint32_t mode) {
+    return StartDirectoryCreate(attr, path, static_cast<std::uint16_t>(mode));
+}
+
+int APS5_VABI sceFiosDirectoryCreateWithModeSync(const SceFiosOpAttr* attr, const char* path, std::uint32_t mode) {
+    return StatusSync(StartDirectoryCreate(attr, path, static_cast<std::uint16_t>(mode)));
 }
 
 SceFiosOp APS5_VABI sceFiosDirectoryDelete(const SceFiosOpAttr* attr, const char* path) {

@@ -1,94 +1,36 @@
 # libcurl technical debt
 
-### Unknown function info
-
-- [curl_strequal, curl_strnequal](../../../core/libs/prx/libcurl/Export.cpp) (libcurl) - signatures and ASCII-only matching follow curl's public [curl_strequal documentation](https://curl.se/libcurl/c/curl_strequal.html) and [strcase.c](https://github.com/curl/curl/blob/curl-7_73_0/lib/strcase.c). No console or title caller was read. A null argument throws, because the module's curl version is unknown and curl differs: 7.73 dereferences it, while 8.10 treats two nulls as equal.
-
-### Callable exports
-
-- [Callable exports](../../../core/libs/prx/libcurl/Export.cpp) - 76 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcurl.c) and the [selected export metadata](https://gist.github.com/kyon-eth/996975adc28d0d270d032fb47eb297a7/52f3b6179ff69fbc0725e02ba146279ecd451f49) from two version-labelled images (SHA-256 `69baa557f91eba487275aa1b8e0aecd8dde1caa261eb2dd04106f8fa00e65361`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
-
-| Name | NID |
-| --- | --- |
-| `curl_pushheader_bynum` | `+0geDEimyvE` |
-| `curl_formadd` | `-FwfB5G9ztg` |
-| `curl_multi_socket_action` | `-WWyz1uPfx0` |
-| `curl_easy_recv` | `0i8EaWOLjcY` |
-| `curl_mime_free` | `1N7ft+SiHD0` |
-| `curl_mvfprintf` | `4zl-9Emcwhc` |
-| `curl_share_cleanup` | `5b-D80m2TKc` |
-| `curl_easy_perform` | `7KQckhaDi18` |
-| `curl_multi_remove_handle` | `7ShPrvjazws` |
-| `curl_mvsprintf` | `7h+e56B2oKs` |
-| `curl_global_sslset` | `7ijxBuDNvHY` |
-| `curl_multi_perform` | `9cpxUNV97mM` |
-| `curl_version` | `A+rTLSeCJFQ` |
-| `curl_mvsnprintf` | `BAz8Ji7lJls` |
-| `curl_multi_socket_all` | `BhNAR5P2VEg` |
-| `curl_url_get` | `Cc+Qhdd4ons` |
-| `curl_multi_strerror` | `Dfdbc8trvZg` |
-| `curl_easy_setopt` | `DiBmbfiH8J4` |
-| `curl_mime_data` | `ENFUpkwnFM8` |
-| `curl_mfprintf` | `GldGeV80-58` |
-| `curl_multi_poll` | `H49qutQi9a0` |
-| `curl_easy_cleanup` | `HD+IPUl76Hs` |
-| `curl_mime_name` | `HgFRO6Upsg4` |
-| `curl_global_init` | `I38s92i-Xjk` |
-| `curl_easy_duphandle` | `JBHZ4wLpnx0` |
-| `curl_share_init` | `KBTWh1VVa-8` |
-| `curl_getenv` | `KK03u+6DkBU` |
-| `curl_formget` | `KUolTh2gQ8k` |
-| `curl_mime_type` | `KzSFgeUXy2E` |
-| `curl_mprintf` | `Lr91kLn38uM` |
-| `curl_easy_send` | `MhymOvp1NkU` |
-| `curl_easy_reset` | `N5yPp5dHBQE` |
-| `curl_easy_strerror` | `NGTkAHTkViY` |
-| `curl_easy_init` | `NUbq2aNGojo` |
-| `curl_mime_data_cb` | `PoT9ByTU4ws` |
-| `curl_mvaprintf` | `Pyz55DYmOrI` |
-| `curl_url` | `QwbCXdumE84` |
-| `curl_msnprintf` | `Rwe8bHavOL0` |
-| `curl_multi_socket` | `SxPu8PZuHuU` |
-| `curl_multi_fdset` | `SyLtMxQlS6M` |
-| `curl_multi_wakeup` | `TdLam7xSzmY` |
-| `curl_multi_assign` | `U2tir7V8tzw` |
-| `curl_share_strerror` | `W+jyDVS+594` |
-| `curl_multi_wait` | `WuFNFYQX3NA` |
-| `curl_url_set` | `XKdprgRLQy4` |
-| `curl_easy_option_next` | `YSi2PMczWE8` |
-| `curl_global_cleanup` | `YkyOTEcu7vA` |
-| `curl_easy_getinfo` | `ZhOwNq3lcpk` |
-| `curl_share_setopt` | `b3SWcncY+A0` |
-| `curl_multi_info_read` | `ea8LaHOKFDA` |
-| `curl_easy_upkeep` | `govcxXDyzbw` |
-| `curl_multi_setopt` | `hGv08dyfsNQ` |
-| `curl_mime_addpart` | `hXXC4BDL1gY` |
-| `curl_easy_option_by_name` | `hdaJCex67Tg` |
-| `curl_maprintf` | `hpQlqUYshFI` |
-| `curl_url_cleanup` | `kIbwtX5Mi6c` |
-| `curl_getdate` | `kX88h1qQ7co` |
-| `curl_mime_filedata` | `ln25S0X-S08` |
-| `curl_multi_timeout` | `lxail8CxrHk` |
-| `curl_multi_add_handle` | `mQBD4RanvTc` |
-| `curl_mime_init` | `mUQG6ux03z4` |
-| `curl_easy_option_by_id` | `mmBX7M6ArkM` |
-| `curl_formfree` | `oOckhjRxPps` |
-| `curl_mime_subparts` | `orXjmpvkHuU` |
-| `curl_version_info` | `pZvrLdhriNk` |
-| `curl_pushheader_byname` | `qB5W5ljFCIk` |
-| `curl_mime_encoder` | `rhqf6JmhtHg` |
-| `curl_mvprintf` | `s5XKQo9CHyw` |
-| `curl_global_init_mem` | `sbs5dzWn8cE` |
-| `curl_mime_headers` | `tCOYIku29OE` |
-| `curl_url_dup` | `txIPTHNsC1w` |
-| `curl_multi_init` | `wXEc3+fNcO4` |
-| `curl_multi_cleanup` | `xyRRwQMH5ug` |
-| `curl_easy_pause` | `yQ7SgQu4L98` |
-| `curl_mime_filename` | `yfNiwy8p5Ds` |
-| `curl_msprintf` | `zMA017igJyk` |
-
 ### Functional
 
-- [String lists and URL escaping](../../../core/libs/prx/libcurl/Export.cpp) have no console verification of their signatures, behavior or curl revision. The public signatures and 16-byte LP64 `curl_slist` layout follow curl 8.10.1's [list](https://github.com/curl/curl/blob/curl-8_10_1/lib/slist.c) and [escaping](https://github.com/curl/curl/blob/curl-8_10_1/lib/escape.c) APIs. Custom curl allocators are unavailable because `curl_global_init_mem` throws; allocations use the guest libc heap.
-- [Null string arguments](../../../core/libs/prx/libcurl/Export.cpp) to list append or escaping with a nonnegative length throw. curl 8.5.0 faults there; 8.10.1 returns null from escaping. The console behavior is unknown. Invalid non-null pointers and damaged lists are not validated.
-- [Escaping version differences](../../../core/libs/prx/libcurl/Export.cpp) remain unverified: the easy handle is ignored, as curl does from 7.82.0, and input size follows 8.10.1 rather than 8.5.0's dynamic-buffer cap. Older per-handle character conversion is not modeled. Tests do not exercise the unescape output-length overflow for strings larger than `INT_MAX`.
+- [Version and backend](../../../core/libs/prx/libcurl/CMakeLists.txt) - the exact console version and Sony patches are unknown. The export set matches upstream 7.73 through 7.85. The source is curl tag `curl-7_81_0` (its checked-in version string includes `7.81.0-DEV`), using bundled mbedtls 3.6.7 and nghttp2. The configuration enables FILE, HTTP and HTTPS, static linking, IPv6 and the threaded resolver. Other protocols, TLS backends, LDAP, SSH, compression libraries, IDN, GSSAPI, QUIC and external packages are disabled. `MBEDTLS_ALLOW_PRIVATE_ACCESS` permits curl's backend to access the bundled mbedtls fields; the existing mbedtls target's configuration definitions are forwarded to curl.
+- [Guest layouts](../../../core/libs/prx/libcurl/include/CurlTypes.hpp) - console structure definitions remain unverified. Mirrors use x86-64 SysV LP64 sizes and offsets from curl 7.81.0. Matching host layouts for lists, option descriptors, messages and backend descriptors are asserted before sharing their pointers. Version information and timeout outputs widen host long fields. This does not establish console-specific ABI extensions.
+
+- [Allocator callbacks](../../../core/libs/prx/libcurl/Export.cpp) - console allocator ABI and failure behavior remain unverified. Default allocation uses the guest libc heap; custom SysV callbacks follow pinned [curl 7.81.0 easy.c](https://github.com/curl/curl/blob/801bd5138ce31aa0d906fa4e2eabfc599d74e793/lib/easy.c#L135-L302). Callback code and its heap must outlive all associated objects, including allocations released after global cleanup. Caller-invalid pointers, reentrant global lifecycle calls from allocator callbacks, concurrent allocator replacement and mixing allocation families are not validated.
+- [Resolver thread](../../../core/libs/prx/libcurl/CMakeLists.txt) - libcurl is built with its threaded resolver (c-ares is off), so `getaddrinfo_thread` runs on a host thread libcurl creates and allocates and fills the `Curl_addrinfo` results through the guest heap (`lib/curl_addrinfo.c`). That thread is not a guest thread and writes guest memory outside any guest call. Closes when: name resolution runs on a guest-visible thread or through the console resolver.
+- [Native callback objects](../../../core/libs/prx/libcurl/Export.cpp) - `CURLOPT_SSL_CTX_FUNCTION` and `SSL_CTX_DATA` throw `std::invalid_argument` naming the option because mbedtls context objects belong to the host. The three `CURLOPT_CONV_*_FUNCTION` options throw the same exception because this build has no conversion backend. TLS session/SSL pointer getinfo results expose host mbedtls internals only as opaque pointers; guest code cannot operate on them.
+- [Guest long](../../../core/libs/prx/libcurl/Export.cpp) - LONG easy/multi values outside the host long range throw `std::out_of_range` on LLP64 hosts. Chunk callback long return values have the same restriction. `CURLOPT_HTTPPOST` throws `std::invalid_argument` on LLP64 because legacy LP64 form nodes have no host layout adapter.
+- [Socket ownership](../../../core/libs/prx/libcurl/Export.cpp) - socket callback/DATA options, multi socket callback/DATA options, `CURLINFO_ACTIVESOCKET` and `LASTSOCKET`, and extra descriptors in multi wait/poll throw through `NotImplemented_nid_no_patch`. Kernel sockets and libSceNet use separate owner tables sharing reserved guest numbers. `KernelLookupSocketNative` leases existing guest sockets, but reservation alone does not install a socket in either owner table. There is no reverse lookup or borrowed-owner installation for curl-owned sockets, nor notification when curl internally closes them. Descriptor exports remain stubs; no guest descriptor is passed to native curl.
+- [Push ownership](../../../core/libs/prx/libcurl/Export.cpp) - `CURLMOPT_PUSHFUNCTION` and `PUSHDATA` throw through `NotImplemented_nid_no_patch`. In curl 7.81.0 `http2.c:push_promise`, an accepted pushed handle can be closed internally if `Curl_multi_add_perform` fails. The adapter has no destruction notification for releasing that handle's copied callback context. Timer callbacks and scalar multi options are adapted.
+- [MIME callbacks](../../../core/libs/prx/libcurl/Export.cpp) - whether the console calls the `curl_mime_data_cb` free function again for each copy `curl_easy_duphandle` makes, as curl 7.81.0 `Curl_mime_duppart` does, is unverified. The guest functions are called through a host context shared by the part and its copies; it is released once the part's content is replaced or its mime freed and every handle holding a copy is reset, cleaned up or given another `CURLOPT_MIMEPOST`. The adapter learns this from the mime, part and easy exports, so a part freed outside them is not seen; in 7.81.0 only `curl_easy_duphandle` copies parts.
+- [Default stdio streams](../../../core/libs/prx/libcurl/Export.cpp) - with the default callbacks, a NULL `WRITEDATA` ends the transfer with `CURLE_WRITE_ERROR` and a NULL `READDATA` with `CURLE_ABORTED_BY_CALLBACK`, where libcurl would pass NULL to `fwrite` or `fread`. A rewind of the default input returns `CURL_SEEKFUNC_CANTSEEK` when guest `fseek` fails or the stream is NULL; a rewind of a `/dev/random` or `/dev/urandom` stream throws `std::runtime_error` through libcurl's frames. Native `Curl_readrewind` identifies its default input by comparing the read function to host fread. The guest default read trampoline needs an internal seek callback instead; successful rewinds use guest fseek, but a failed rewind cannot reproduce the native diagnostic path through that callback.
+- [Transfer scope](../../../core/libs/prx/libcurl/Export.cpp) - HTTP/HTTPS transfers, HSTS callbacks, disabled protocol callbacks and asynchronous native writes into guest buffers remain unverified. File URLs use the host filesystem and Windows file URL normalization rather than a guest path namespace. Verbose bytes use guest fwrite; the built-in progress meter writes the native stream underlying STDERR, without guest FileStream state updates. The standalone harness substitutes guest stdio operations and does not verify arena protection or full libc integration.
+- [`curl_formfree`](../../../core/libs/prx/libcurl/src/FormFree.cpp) - the guest node layout is the unverified LP64 mirror of curl 7.81.0's `struct curl_httppost`, and nodes are released through the guest heap described under Allocator. Adapted from [lib/formdata.c](https://github.com/curl/curl/blob/801bd5138ce31aa0d906fa4e2eabfc599d74e793/lib/formdata.c#L746-L771): it frees each node of the `next` chain after its `more` chain, keeping names marked `CURL_HTTPPOST_PTRNAME` and contents marked `PTRCONTENTS`, `BUFFER` or `CALLBACK`.
+
+### Unimplemented exports
+
+- [`curl_formadd`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
+- [`curl_formget`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
+- [`curl_maprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
+- [`curl_mfprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
+- [`curl_mprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
+- [`curl_msnprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
+- [`curl_msprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
+- [`curl_multi_assign`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: The guest registry lacks reverse lookup and borrowed-owner installation for curl-owned sockets; see Socket ownership above.
+- [`curl_multi_fdset`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: The guest registry lacks reverse lookup and borrowed-owner installation for curl-owned sockets; see Socket ownership above.
+- [`curl_multi_socket`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: The guest registry lacks reverse lookup and borrowed-owner installation for curl-owned sockets; see Socket ownership above.
+- [`curl_multi_socket_action`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: The guest registry lacks reverse lookup and borrowed-owner installation for curl-owned sockets; see Socket ownership above.
+- [`curl_mvaprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
+- [`curl_mvfprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
+- [`curl_mvprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
+- [`curl_mvsnprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
+- [`curl_mvsprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.

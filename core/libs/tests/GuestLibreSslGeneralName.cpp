@@ -15,15 +15,17 @@
 
 using FreeName = void (APS5_VABI*)(LibreSslGeneralName*);
 using FreeNames = void (APS5_VABI*)(LibreSslStack*);
+using FreeResponse = void (APS5_VABI*)(LibreSslOcspResponse*);
 static_assert(std::is_same_v<decltype(&GENERAL_NAME_free_nid_postfix), FreeName>);
 static_assert(std::is_same_v<decltype(&GENERAL_NAMES_free_nid_postfix), FreeNames>);
+static_assert(std::is_same_v<decltype(&OCSP_RESPONSE_free_nid_postfix), FreeResponse>);
 static_assert(sizeof(LibreSslGeneralName) == 16);
 
 namespace {
 
 void Require(bool success, std::source_location where = std::source_location::current()) {
     if (success) return;
-    std::fprintf(stderr, "GENERAL_NAME free test failed at line %u\n", where.line());
+    std::fprintf(stderr, "LibreSSL ASN.1 free test failed at line %u\n", where.line());
     std::abort();
 }
 
@@ -253,10 +255,127 @@ void TestOidAndStack() {
     CheckClean();
 }
 
+LibreSslOcspResponse* Response() {
+    auto* response = New<LibreSslOcspResponse>();
+    wipes.emplace(response, sizeof(*response));
+    response->responseStatus = String();
+    response->responseStatus->type = 10;
+    auto* bytes = New<LibreSslOcspResponseBytes>();
+    wipes.emplace(bytes, sizeof(*bytes));
+    response->responseBytes = bytes;
+    bytes->responseType = Object();
+    bytes->response = String();
+    bytes->response->type = 4;
+    return response;
 }
 
-int main() {
+void TestResponseOwnership() {
+    OCSP_RESPONSE_free_nid_postfix(nullptr);
+    CheckClean();
+    auto* response = Response();
+    auto* bytes = static_cast<LibreSslOcspResponseBytes*>(response->responseBytes);
+    auto* object = bytes->responseType;
+    const std::vector<void*> expected {
+        bytes->response->data, bytes->response,
+        const_cast<char*>(object->shortName), const_cast<char*>(object->longName),
+        const_cast<unsigned char*>(object->data), object, bytes,
+        response->responseStatus->data, response->responseStatus, response
+    };
+    freed.clear();
+    OCSP_RESPONSE_free_nid_postfix(response);
+    Require(freed == expected);
+    CheckClean();
+
+    for (bool status : {false, true}) {
+        for (int members = -1; members < 4; ++members) {
+            response = New<LibreSslOcspResponse>();
+            if (status) response->responseStatus = String(0);
+            if (members >= 0) {
+                bytes = New<LibreSslOcspResponseBytes>();
+                response->responseBytes = bytes;
+                if (members & 1) bytes->responseType = Object();
+                if (members & 2) {
+                    bytes->response = String(0);
+                    bytes->response->data = Bytes(4);
+                }
+            }
+            OCSP_RESPONSE_free_nid_postfix(response);
+            CheckClean();
+        }
+    }
+}
+
+void TestResponseBorrowedData() {
+    std::array<unsigned char, 5> borrowed {1, 2, 3, 4, 5};
+    const char* const shortName = "short";
+    const char* const longName = "long";
+    for (int flags = 0; flags < 16; ++flags) {
+        LibreSslAsn1Object staticObject {};
+        auto* object = flags & 1 ? New<LibreSslAsn1Object>() : &staticObject;
+        object->flags = flags;
+        object->nid = 73;
+        object->shortName = flags & 4 ? reinterpret_cast<char*>(Bytes(6)) : shortName;
+        object->longName = flags & 4 ? reinterpret_cast<char*>(Bytes(9)) : longName;
+        object->data = flags & 8 ? Bytes(5, 5) : borrowed.data();
+        object->length = flags & 8 ? 5 : -7;
+        auto* response = New<LibreSslOcspResponse>();
+        auto* bytes = New<LibreSslOcspResponseBytes>();
+        response->responseBytes = bytes;
+        bytes->responseType = object;
+        response->responseStatus = String(-7, 0x10);
+        response->responseStatus->data = borrowed.data();
+        bytes->response = String(-7, 0x90);
+        bytes->response->data = borrowed.data();
+        OCSP_RESPONSE_free_nid_postfix(response);
+        Require(borrowed == (std::array<unsigned char, 5>{1, 2, 3, 4, 5}));
+        if (!(flags & 1)) {
+            Require(object->flags == flags && object->nid == 73);
+            Require(object->shortName == ((flags & 4) ? nullptr : shortName));
+            Require(object->longName == ((flags & 4) ? nullptr : longName));
+            Require(object->data == ((flags & 8) ? nullptr : borrowed.data()));
+            Require(object->length == ((flags & 8) ? 0 : -7));
+        }
+        CheckClean();
+    }
+}
+
+void TestResponseInvalidLengths() {
+    for (int member = 0; member < 3; ++member) {
+        auto* response = Response();
+        auto* bytes = static_cast<LibreSslOcspResponseBytes*>(response->responseBytes);
+        auto& length = member == 0 ? response->responseStatus->length
+            : member == 1 ? bytes->response->length : bytes->responseType->length;
+        const int savedLength = length;
+        length = -1;
+        std::unordered_map<void*, std::vector<unsigned char>> before;
+        for (const auto& [pointer, size] : live) {
+            const auto* data = static_cast<const unsigned char*>(pointer);
+            before.emplace(pointer, std::vector<unsigned char>(data, data + size));
+        }
+        freed.clear();
+        bool threw = false;
+        try { OCSP_RESPONSE_free_nid_postfix(response); }
+        catch (const std::invalid_argument&) { threw = true; }
+        Require(threw && freed.empty() && live.size() == before.size());
+        for (const auto& [pointer, data] : before)
+            Require(std::memcmp(pointer, data.data(), data.size()) == 0);
+        length = savedLength;
+        OCSP_RESPONSE_free_nid_postfix(response);
+        CheckClean();
+    }
+}
+
+}
+
+int main(int argc, char** argv) {
     InitializeHeap();
+    if (argc == 2 && std::strcmp(argv[1], "ocsp") == 0) {
+        TestResponseOwnership();
+        TestResponseBorrowedData();
+        TestResponseInvalidLengths();
+        std::puts("libSceLibreSsl OCSP response free tests passed");
+        return 0;
+    }
     TestSimpleNames();
     TestOtherName();
     TestEdiPartyName();

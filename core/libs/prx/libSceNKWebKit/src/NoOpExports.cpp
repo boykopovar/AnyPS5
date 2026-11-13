@@ -2,6 +2,9 @@
 
 extern "C" {
 
+void APS5_VABI JSRemoteInspectorSetParentProcessInformation() {
+}
+
 void APS5_VABI WKAddMockMediaDevice() {
 }
 

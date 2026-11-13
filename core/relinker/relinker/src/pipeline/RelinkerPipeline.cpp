@@ -13,6 +13,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <domain/ImportModule.hpp>
@@ -343,7 +344,9 @@ RelinkResult RelinkerPipeline::Relink() {
     }
 
     std::map<std::uint64_t, std::string> importModules;
+    std::set<std::uint64_t> ownModules;
     for (const auto& tag : dynTags) {
+        if (tag.Tag == 0x61000043 || tag.Tag == 0x6100000d) ownModules.insert(tag.Value >> 48);
         if (tag.Tag == 0x61000045 && !importModules.emplace(tag.Value >> 48, readCStr(tag.Value & 0xffffffffu)).second)
             throw RelinkerException("Duplicate import module ID");
     }
@@ -464,7 +467,7 @@ RelinkResult RelinkerPipeline::Relink() {
             const bool weak = (raw[symOff + 4] >> 4) == STB_WEAK;
             const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
             const bool function = symbolType == STT_FUNC;
-            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend, weak, function, symbolType});
+            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries, ownModules), relType, pos, rOffset, rAddend, weak, function, symbolType});
         }
     };
 
@@ -695,7 +698,7 @@ RelinkResult RelinkerPipeline::Relink() {
     auto dynSection = dynamicSectionBuilder->BuildDynamicSection(dynamicRefs, neededLibraries, dynJmpRelOffset, pltCount);
     for (const auto& ref : dynamicRefs) {
         if (!ref.Library.empty()) continue;
-        if (auto declared = Domain::DeclaredImportModule(ref.Nid, importModules); !declared.empty()) dynSection.UnmatchedImportModules.insert(std::move(declared));
+        if (auto declared = Domain::DeclaredImportModule(ref.Nid, importModules, ownModules); !declared.empty()) dynSection.UnmatchedImportModules.insert(std::move(declared));
     }
 
     for (const auto& [off, name] : exportedSymbols) {
