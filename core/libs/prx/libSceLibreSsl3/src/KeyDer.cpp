@@ -1260,15 +1260,32 @@ bool ReadSingleDerObjectFromBio(LibreSsl::Bio* bio, std::vector<unsigned char>& 
         PutError(ErrLibAsn1, Asn1RTooLong);
         return false;
     }
-    result.resize(headerSize + contentLength);
-    if (!ReadExactBytesFromBio(bio, result.data() + headerSize, contentLength)) {
-        PutError(ErrLibAsn1, Asn1RNotEnoughData);
-        return false;
+    constexpr std::size_t InitialChunkSize = 16 * 1024;
+    constexpr std::size_t MaxChunkSize = 1024 * 1024;
+    std::size_t offset = headerSize;
+    std::size_t remaining = contentLength;
+    std::size_t chunkMax = InitialChunkSize;
+    while (remaining > 0) {
+        std::size_t chunk = std::min(remaining, chunkMax);
+        result.resize(offset + chunk);
+        remaining -= chunk;
+        while (chunk > 0) {
+            const int got = bio->method->read(
+                bio, reinterpret_cast<char*>(result.data() + offset), static_cast<int>(chunk));
+            if (got <= 0 || static_cast<std::size_t>(got) > chunk) {
+                result.clear();
+                PutError(ErrLibAsn1, Asn1RNotEnoughData);
+                return false;
+            }
+            offset += static_cast<std::size_t>(got);
+            chunk -= static_cast<std::size_t>(got);
+        }
+        chunkMax = std::min(chunkMax * 2, MaxChunkSize);
     }
     return true;
 }
 
-template<typename T> void ReplaceOutput(T** output, T* decoded, void (*freeValue)(T*)) {
+template<typename T> void ReplaceOutput(T** output, T* decoded, void (APS5_VABI* freeValue)(T*)) {
     if (!output) return;
     if (*output) freeValue(*output);
     *output = decoded;
@@ -1301,7 +1318,7 @@ LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
     std::span<const unsigned char> remaining(*input, static_cast<std::size_t>(length));
     auto* info = DecodePkcs8(remaining);
     if (!info) return nullptr;
-    ReplaceOutput(output, info, FreePkcs8);
+    ReplaceOutput(output, info, PKCS8_PRIV_KEY_INFO_free_nid_postfix);
     *input += static_cast<std::size_t>(length) - remaining.size();
     return info;
 }

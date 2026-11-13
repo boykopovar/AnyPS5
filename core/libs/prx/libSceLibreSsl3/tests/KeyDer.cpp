@@ -27,6 +27,7 @@ constexpr int ErrLibAsn1 = 13;
 
 constexpr int ErrRNestedAsn1Error = 58;
 constexpr int Asn1RBadObjectHeader = 102;
+constexpr int Asn1RNotEnoughData = 142;
 constexpr int Asn1RSequenceLengthMismatch = 148;
 constexpr int Asn1RTooLong = 155;
 constexpr int Asn1RWrongTag = 168;
@@ -528,6 +529,101 @@ void TestPkcs8AttributesRoundTrip() {
     PKCS8_PRIV_KEY_INFO_free_nid_postfix(info);
 }
 
+void TestBioMalformedAndMultiChunkObjects() {
+    const std::array<unsigned char, 9> hugeLengthHeader{
+        0x30, 0x84, 0x7f, 0xff, 0xff, 0x00, 0x02, 0x01, 0x00};
+    LibreSsl::Bio* hugeP8Bio = BIO_new_mem_buf_nid_postfix(
+        hugeLengthHeader.data(), static_cast<int>(hugeLengthHeader.size()));
+    Require(hugeP8Bio != nullptr);
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix(hugeP8Bio, nullptr) == nullptr);
+    ExpectError(ErrLibAsn1, Asn1RNotEnoughData);
+    BIO_free_nid_postfix(hugeP8Bio);
+
+    LibreSsl::Bio* hugePrivBio = BIO_new_mem_buf_nid_postfix(
+        hugeLengthHeader.data(), static_cast<int>(hugeLengthHeader.size()));
+    Require(hugePrivBio != nullptr);
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PrivateKey_bio_nid_postfix(hugePrivBio, nullptr) == nullptr);
+    ExpectError(ErrLibAsn1, Asn1RNotEnoughData);
+    BIO_free_nid_postfix(hugePrivBio);
+
+    const std::array<unsigned char, 7> indefiniteHeader{
+        0x30, 0x80, 0x02, 0x01, 0x00, 0x00, 0x00};
+    LibreSsl::Bio* indefP8Bio = BIO_new_mem_buf_nid_postfix(
+        indefiniteHeader.data(), static_cast<int>(indefiniteHeader.size()));
+    Require(indefP8Bio != nullptr);
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix(indefP8Bio, nullptr) == nullptr);
+    ExpectError(ErrLibAsn1, Asn1RBadObjectHeader);
+    BIO_free_nid_postfix(indefP8Bio);
+
+    LibreSsl::Bio* indefPrivBio = BIO_new_mem_buf_nid_postfix(
+        indefiniteHeader.data(), static_cast<int>(indefiniteHeader.size()));
+    Require(indefPrivBio != nullptr);
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PrivateKey_bio_nid_postfix(indefPrivBio, nullptr) == nullptr);
+    ExpectError(ErrLibAsn1, Asn1RBadObjectHeader);
+    BIO_free_nid_postfix(indefPrivBio);
+
+    constexpr std::size_t payloadLen = 17000;
+    auto pushTagLen16 = [](std::vector<unsigned char>& dst, unsigned char tag, std::size_t len) {
+        dst.push_back(tag);
+        dst.push_back(0x82);
+        dst.push_back(static_cast<unsigned char>((len >> 8) & 0xff));
+        dst.push_back(static_cast<unsigned char>(len & 0xff));
+    };
+    std::vector<unsigned char> attrBody;
+    attrBody.insert(attrBody.end(), {0x06, 0x03, 0x55, 0x04, 0x03});
+    pushTagLen16(attrBody, 0x31, 4 + payloadLen);
+    pushTagLen16(attrBody, 0x04, payloadLen);
+    attrBody.insert(attrBody.end(), payloadLen, 0x55);
+
+    const std::size_t attrSeqLen = 4 + attrBody.size();
+    const std::size_t outerBodyLen = (P256Pkcs8Der.size() - 3) + 4 + attrSeqLen;
+    std::vector<unsigned char> largePkcs8;
+    largePkcs8.reserve(4 + outerBodyLen);
+    pushTagLen16(largePkcs8, 0x30, outerBodyLen);
+    largePkcs8.insert(largePkcs8.end(), P256Pkcs8Der.begin() + 3, P256Pkcs8Der.end());
+    pushTagLen16(largePkcs8, 0xa0, attrSeqLen);
+    pushTagLen16(largePkcs8, 0x30, attrBody.size());
+    largePkcs8.insert(largePkcs8.end(), attrBody.begin(), attrBody.end());
+    Require(largePkcs8.size() > 16384);
+
+    const unsigned char* refCursor = P256Pkcs8Der.data();
+    LibreSsl3Pkcs8PrivKeyInfo* refP8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &refCursor, static_cast<std::int64_t>(P256Pkcs8Der.size()));
+    Require(refP8 != nullptr);
+    LibreSsl3EvpPkey* refKey = EVP_PKCS82PKEY_nid_postfix(refP8);
+    Require(refKey != nullptr && refKey->type == EcType);
+
+    LibreSsl::Bio* largeP8Bio = BIO_new_mem_buf_nid_postfix(
+        largePkcs8.data(), static_cast<int>(largePkcs8.size()));
+    Require(largeP8Bio != nullptr);
+    LibreSsl3Pkcs8PrivKeyInfo* largeP8 = d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix(largeP8Bio, nullptr);
+    Require(largeP8 != nullptr);
+    BIO_free_nid_postfix(largeP8Bio);
+    LibreSsl3EvpPkey* largeP8Key = EVP_PKCS82PKEY_nid_postfix(largeP8);
+    Require(largeP8Key != nullptr && largeP8Key->type == EcType);
+    CompareEcKeys(
+        static_cast<const EcKey*>(refKey->key), static_cast<const EcKey*>(largeP8Key->key), true);
+
+    LibreSsl::Bio* largePrivBio = BIO_new_mem_buf_nid_postfix(
+        largePkcs8.data(), static_cast<int>(largePkcs8.size()));
+    Require(largePrivBio != nullptr);
+    LibreSsl3EvpPkey* largePrivKey = d2i_PrivateKey_bio_nid_postfix(largePrivBio, nullptr);
+    Require(largePrivKey != nullptr && largePrivKey->type == EcType);
+    BIO_free_nid_postfix(largePrivBio);
+    CompareEcKeys(
+        static_cast<const EcKey*>(refKey->key), static_cast<const EcKey*>(largePrivKey->key), true);
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(largePrivKey);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(largeP8Key);
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(largeP8);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(refKey);
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(refP8);
+}
+
 void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size == 0 ? 1 : size); }
 void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
 void* APS5_VABI HeapCallocate(std::size_t count, std::size_t size) {
@@ -561,5 +657,6 @@ int main() {
     TestOutputReplacementAndTruncation();
     TestConsecutiveBioObjects();
     TestPkcs8AttributesRoundTrip();
+    TestBioMalformedAndMultiChunkObjects();
     return 0;
 }
