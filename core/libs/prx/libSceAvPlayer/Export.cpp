@@ -4,11 +4,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <string>
 #include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
@@ -33,6 +35,13 @@ std::uint32_t VideoBufferCount(std::int32_t requested) {
 constexpr std::size_t Ps5InitDataExSize = 0x230;
 constexpr std::size_t Ps5AutoStartOffset = 0x74;
 constexpr std::size_t Ps5VideoFrameBuffersOffset = 0x228;
+
+bool CopyGuestIn(void* dst, const void* src, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = savedErrno;
+    return ok;
+}
 
 }
 
@@ -69,8 +78,12 @@ int APS5_VABI sceAvPlayerAddSource(AvPlayerInternal* h, const char* filename) {
 }
 
 int APS5_VABI sceAvPlayerAddSourceEx(AvPlayerInternal* h, uint32_t uri_type, const AvPlayerSourceDetails* source_details) {
-    if (!h || uri_type != 0 || !source_details || !source_details->uri.name) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
-    return ToPlayer(h)->AddSource(std::string_view(source_details->uri.name, source_details->uri.length), source_details->source_type);
+    if (!h || uri_type != 0 || !source_details) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    AvPlayerSourceDetails details{};
+    if (!CopyGuestIn(&details, source_details, sizeof(details)) || !details.uri.name) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    std::string uri(details.uri.length, '\0');
+    if (details.uri.length > 0 && !CopyGuestIn(uri.data(), details.uri.name, details.uri.length)) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    return ToPlayer(h)->AddSource(uri, details.source_type);
 }
 
 int APS5_VABI sceAvPlayerChangeStream(AvPlayerInternal* h, uint32_t old_stream_id, uint32_t new_stream_id) {
@@ -180,25 +193,30 @@ Bool APS5_VABI sceAvPlayerGetVideoDataEx(AvPlayerInternal* h, AvPlayerFrameInfoE
 
 AvPlayerInternal* APS5_VABI sceAvPlayerInit(AvPlayerInitData* init) {
     if (!init) return nullptr;
-    return new Player(*init, VideoBufferCount(init->num_output_video_framebuffers));
+    AvPlayerInitData localInit{};
+    if (!CopyGuestIn(&localInit, init, sizeof(localInit))) return nullptr;
+    return new Player(localInit, VideoBufferCount(localInit.num_output_video_framebuffers));
 }
 
 int APS5_VABI sceAvPlayerInitEx(const AvPlayerInitDataEx* init_ex, AvPlayerInternal** handle) {
     if (!init_ex || !handle) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    AvPlayerInitDataEx localEx{};
+    if (!CopyGuestIn(&localEx, init_ex, sizeof(localEx))) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     AvPlayerInitData init{};
-    init.memory_replacement = init_ex->memory_replacement;
-    init.file_replacement = init_ex->file_replacement;
-    init.event_replacement = init_ex->event_replacement;
-    init.debug_level = init_ex->debug_level;
-    if (init_ex->this_size >= Ps5InitDataExSize) {
-        const auto* bytes = reinterpret_cast<const std::uint8_t*>(init_ex);
-        std::memcpy(&init.num_output_video_framebuffers, bytes + Ps5VideoFrameBuffersOffset, sizeof(init.num_output_video_framebuffers));
-        init.auto_start = bytes[Ps5AutoStartOffset] != 0;
+    init.memory_replacement = localEx.memory_replacement;
+    init.file_replacement = localEx.file_replacement;
+    init.event_replacement = localEx.event_replacement;
+    init.debug_level = localEx.debug_level;
+    if (localEx.this_size >= Ps5InitDataExSize) {
+        std::array<std::uint8_t, Ps5InitDataExSize> ps5Bytes{};
+        if (!CopyGuestIn(ps5Bytes.data(), init_ex, ps5Bytes.size())) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+        std::memcpy(&init.num_output_video_framebuffers, ps5Bytes.data() + Ps5VideoFrameBuffersOffset, sizeof(init.num_output_video_framebuffers));
+        init.auto_start = ps5Bytes[Ps5AutoStartOffset] != 0;
     } else {
-        init.num_output_video_framebuffers = init_ex->num_output_video_framebuffers;
-        init.auto_start = init_ex->auto_start;
+        init.num_output_video_framebuffers = localEx.num_output_video_framebuffers;
+        init.auto_start = localEx.auto_start;
     }
-    init.default_language = init_ex->default_language;
+    init.default_language = localEx.default_language;
     auto* player = new Player(init, VideoBufferCount(init.num_output_video_framebuffers));
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(handle, &player, sizeof(player));

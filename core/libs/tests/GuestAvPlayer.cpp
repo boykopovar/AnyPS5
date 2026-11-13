@@ -2356,6 +2356,33 @@ int main(int argc, char** argv) {
         TestAudioEofClockRebase();
         TestAudioClockAdvancesAfterEof();
         TestTrailingVideoAfterShortAudio();
+        {
+            errno = 71;
+            Check(sceAvPlayerInit(reinterpret_cast<AvPlayerInitData*>(static_cast<std::uintptr_t>(0x10))) == nullptr && errno == 71,
+                  "unreadable init data must return null without changing errno");
+            AvPlayerInternal* badHandle = nullptr;
+            errno = 71;
+            Check(sceAvPlayerInitEx(reinterpret_cast<const AvPlayerInitDataEx*>(static_cast<std::uintptr_t>(0x10)), &badHandle) ==
+                      AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+                      badHandle == nullptr && errno == 71,
+                  "unreadable extended init data must fail without changing errno");
+            AvPlayerInitData init{};
+            init.num_output_video_framebuffers = 2;
+            AvPlayerInternal* player = sceAvPlayerInit(&init);
+            Check(player != nullptr, "valid init creates player");
+            errno = 71;
+            Check(sceAvPlayerAddSourceEx(player, 0, reinterpret_cast<const AvPlayerSourceDetails*>(static_cast<std::uintptr_t>(0x10))) ==
+                      AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+                      errno == 71,
+                  "unreadable source details must fail without changing errno");
+            AvPlayerSourceDetails badUri{};
+            badUri.uri.name = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
+            badUri.uri.length = 8;
+            errno = 71;
+            Check(sceAvPlayerAddSourceEx(player, 0, &badUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS && errno == 71,
+                  "unreadable source URI must fail without changing errno");
+            Check(sceAvPlayerClose(player) == 0, "close player");
+        }
         std::puts("AvPlayer tests passed");
         return 0;
     } catch (const std::exception& error) {
