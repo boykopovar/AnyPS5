@@ -796,9 +796,15 @@ def main(argv=None):
     args.out = args.out or args.build / "title-runs"
     if args.json and not args.compare:
         parser.error("--json needs --compare")
-    previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
+    try:
+        previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
+    except (OSError, ValueError) as error:
+        parser.error(f"--compare: {error}")
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
-    titles = load_titles(args.titles)
+    try:
+        titles = load_titles(args.titles)
+    except (OSError, ValueError) as error:
+        parser.error(f"--titles: {error}")
     if args.smoke:
         args.ids = [title_id for title_id, entry in sorted(titles.items()) if entry.get("smoke")]
         if not args.ids:
