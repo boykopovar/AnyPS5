@@ -1,4 +1,6 @@
+#include "prx/libc/include/GuestGs.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/System/include/ProcessWait.hpp"
 #include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -22,8 +24,15 @@
 #include <sys/syscall.h>
 #endif
 
+#ifdef _WIN32
+#include "prx/libc/include/ChildProcesses.hpp"
+#else
+#include <sys/wait.h>
+#endif
 #include "SceTypes.hpp"
+#include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostExecutable.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -40,11 +49,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <fstream>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -52,7 +63,12 @@
 #ifndef _WIN32
 #include <sys/resource.h>
 #endif
+#ifdef __APPLE__
+#include <crt_externs.h>
+#include <mach/mach.h>
+#endif
 
+extern char** environ;
 namespace {
 
 constexpr int sceInvalidArgument = static_cast<int>(0x80020016u);
@@ -61,10 +77,19 @@ constexpr int errnoNoSuchProcess = 3;
 constexpr int errnoNoChild = 10;
 constexpr int errnoBadAddress = 14;
 constexpr int errnoInvalidArgument = 22;
+constexpr int errnoTooBig = 7;
+constexpr int errnoNoExec = 8;
+constexpr int errnoNoEnt = 2;
+constexpr int errnoAccess = 13;
+constexpr int errnoBadFile = 9;
 constexpr int freebsdGroupsMax = 1023;
 std::mutex supplementaryGroupsMutex;
 std::vector<std::uint32_t> supplementaryGroups{0};
 constexpr unsigned freebsdWaitOptions = 0x8000003Fu;
+constexpr std::size_t ExecArgumentBytesLimit = 262144;
+constexpr std::string_view ExecDefaultSearchPath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin";
+constexpr std::string_view ExecApplicationRoot = "/app0/";
+constexpr std::string_view ExecMainExecutable = "/app0/eboot.bin";
 
 bool StoreGuestId(std::uint32_t* output) {
     if (output == nullptr) return true;
@@ -87,7 +112,10 @@ bool StoreGuestId(std::uint32_t* output) {
 #elif defined(__linux__)
     iovec local{const_cast<std::uint32_t*>(&zero), sizeof(zero)};
     iovec remote{output, sizeof(zero)};
-    return ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(sizeof(zero));
+    const int saved = errno;
+    const auto copied = ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0);
+    if (copied < 0 && errno == EFAULT) errno = saved;
+    return copied == static_cast<ssize_t>(sizeof(zero));
 #elif defined(__APPLE__)
     return ::mach_vm_write(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(output),
         reinterpret_cast<vm_offset_t>(const_cast<std::uint32_t*>(&zero)), sizeof(zero)) == KERN_SUCCESS;
@@ -112,8 +140,10 @@ bool ReadGuest(void* destination, const void* source, std::size_t bytes) {
 #elif defined(__linux__)
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
+    const int saved = errno;
     const auto copied = ::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("credentials: process_vm_readv failed with errno " + std::to_string(errno));
+    errno = saved;
     return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
     mach_vm_size_t copied = 0;
@@ -135,8 +165,10 @@ bool WriteGuest(void* destination, const void* source, std::size_t bytes) {
 #elif defined(__linux__)
     iovec local{const_cast<void*>(source), bytes};
     iovec remote{destination, bytes};
+    const int saved = errno;
     const auto copied = ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("credentials: process_vm_writev failed with errno " + std::to_string(errno));
+    errno = saved;
     return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
     return ::mach_vm_write(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(destination),
@@ -180,6 +212,11 @@ public:
             if (_wputenv_s(L"ANYPS5_LOADEXEC_ARGV_SKIP", L"") != 0 || !SetEnvironmentVariableW(L"ANYPS5_LOADEXEC_ARGV_SKIP", nullptr))
                 throw std::runtime_error("LoadExec: cannot clear the argument marker");
         }
+#elif defined(__APPLE__)
+        const int count = *_NSGetArgc();
+        char** values = *_NSGetArgv();
+        for (int index = 0; index < count; ++index)
+            arguments.push_back(values[index]);
 #else
         std::ifstream stream("/proc/self/cmdline", std::ios::binary);
         if (!stream)
@@ -218,6 +255,7 @@ bool hasPriorityRange(int policy) {
 }
 
 constexpr int guestNoProcess = 3;
+constexpr int guestAccess = 13;
 constexpr int guestFault = 14;
 constexpr int guestInvalid = 22;
 constexpr int guestRlimitCpu = 0;
@@ -225,9 +263,6 @@ constexpr int guestRlimitFsize = 1;
 constexpr int guestPriorityProcess = 0;
 constexpr int guestPriorityGroup = 1;
 constexpr int guestPriorityUser = 2;
-std::atomic<int> guestNice{0};
-constexpr int guestNiceMin = -20;
-constexpr int guestNiceMax = 20;
 constexpr int guestRlimitData = 2;
 constexpr int guestRlimitStack = 3;
 constexpr int guestRlimitCore = 4;
@@ -276,11 +311,218 @@ std::mutex openFileLimitMutex;
 std::optional<GuestResourceLimit> guestOpenFileLimit;
 std::mutex processLimitMutex;
 GuestResourceLimit guestProcessResourceLimit{guestProcessLimit, guestProcessLimit};
+std::mutex coreLimitMutex;
+GuestResourceLimit guestCoreLimit{guestRlimitInfinity, guestRlimitInfinity};
+}
+
+namespace {
+
+bool ExecProgramFound(std::string_view name, bool search, int& error, std::string& found) {
+    const auto executable = [&error, &found](const std::string& candidate) {
+        found = candidate;
+        std::filesystem::path native;
+        std::error_code probe;
+        const int resolved = ResolvePathError_nid_no_patch(candidate.c_str(), native);
+        if (resolved != 0 || !std::filesystem::exists(native, probe)) {
+            error = resolved == 0 ? NotFoundError_nid_no_patch(native) : resolved;
+            return false;
+        }
+        if (!std::filesystem::is_regular_file(native, probe) || !ExecutePermission_nid_no_patch(native)) {
+            error = errnoAccess;
+            return false;
+        }
+        return true;
+    };
+    if (name.empty()) {
+        error = errnoNoEnt;
+        return false;
+    }
+    if (!search || name.find('/') != std::string_view::npos) return executable(std::string(name));
+    bool inaccessible = false;
+    const char* variable = getenv_nid_postfix("PATH");
+    std::string_view directories = variable != nullptr ? std::string_view(variable) : ExecDefaultSearchPath;
+    while (true) {
+        const auto separator = directories.find(':');
+        const auto directory = directories.substr(0, separator);
+        const std::string candidate = (directory.empty() ? std::string(".") : std::string(directory)) + '/' + std::string(name);
+        found = candidate;
+        std::filesystem::path native;
+        std::error_code probe;
+        if (ResolvePathError_nid_no_patch(candidate.c_str(), native) == 0 && std::filesystem::exists(native, probe)) {
+            if (std::filesystem::is_regular_file(native, probe) && ExecutePermission_nid_no_patch(native)) return true;
+            inaccessible = true;
+        }
+        if (separator == std::string_view::npos) {
+            error = inaccessible ? errnoAccess : errnoNoEnt;
+            return false;
+        }
+        directories.remove_prefix(separator + 1);
+    }
+}
+
+std::filesystem::path ExecConvertedTarget(const std::string& guest) {
+    const auto own = HostExecutable::Own("exec");
+    if (guest == ExecMainExecutable) return own;
+    std::error_code error;
+    const auto name = std::filesystem::path(reinterpret_cast<const char8_t*>((HostExecutable::ConvertedName(guest, [](const std::string& reason) { NotImplemented_nid_no_patch(("exec: " + reason).c_str()); }) + own.extension().string()).c_str()));
+    const auto target = own.parent_path() / name;
+    if (!std::filesystem::is_regular_file(target, error))
+        NotImplemented_nid_no_patch((std::string("exec: ") + guest + " without its converted executable; relink with --executable " +
+                                     std::string(guest.substr(ExecApplicationRoot.size())))
+                                        .c_str());
+    return target;
+}
+
+std::size_t ExecEntriesBytes(char* const* entries) {
+    std::size_t bytes = 0;
+    for (std::size_t index = 0; entries[index] != nullptr; ++index)
+        bytes += std::strlen(entries[index]) + 1;
+    return bytes;
+}
+
+std::vector<std::string> ExecArgumentVector(char* const* arguments) {
+    std::vector<std::string> values;
+    for (std::size_t index = 0; arguments[index] != nullptr; ++index) values.emplace_back(arguments[index]);
+    return values;
+}
+
+#ifdef _WIN32
+void ExecDuplicate(HANDLE source, DWORD access, HANDLE* target) {
+    if (!DuplicateHandle(GetCurrentProcess(), source, GetCurrentProcess(), target, access, TRUE, access ? 0 : DUPLICATE_SAME_ACCESS))
+        throw std::system_error(GetLastError(), std::system_category(), "exec: duplicating a handle");
+}
+
+void ExecCloseHandle(HANDLE value) { CloseHandle(value); }
+
+bool ExecWindowsImage(const std::filesystem::path& target) {
+    std::ifstream image(target, std::ios::binary);
+    std::array<char, 64> dos{};
+    if (!image.read(dos.data(), dos.size()) || dos[0] != 'M' || dos[1] != 'Z') return false;
+    const auto header = static_cast<std::size_t>(static_cast<unsigned char>(dos[63])) << 24 |
+                        static_cast<std::size_t>(static_cast<unsigned char>(dos[62])) << 16 |
+                        static_cast<std::size_t>(static_cast<unsigned char>(dos[61])) << 8 |
+                        static_cast<std::size_t>(static_cast<unsigned char>(dos[60]));
+    if (header < dos.size()) return false;
+    image.seekg(static_cast<std::streamoff>(header));
+    std::array<char, 6> coff{};
+    if (!image.read(coff.data(), coff.size())) return false;
+    return coff[0] == 'P' && coff[1] == 'E' && coff[2] == '\0' && coff[3] == '\0' &&
+           static_cast<unsigned char>(coff[4]) == 0x64 && static_cast<unsigned char>(coff[5]) == 0x86;
+}
+
+[[noreturn]] void ExecReplaceWindows(const std::filesystem::path& target, const std::vector<std::string>& arguments, bool implicitEnvironment,
+                                     char* const* environment) {
+    constexpr wchar_t ParentVariable[] = L"ANYPS5_LOADEXEC_PARENT=";
+    constexpr wchar_t SkipVariable[] = L"ANYPS5_LOADEXEC_ARGV_SKIP=";
+    const wchar_t* parentPrefix = ParentVariable;
+    const wchar_t* skipPrefix = SkipVariable;
+    const std::size_t parentPrefixLength = std::size(ParentVariable) - 1;
+    const std::size_t skipPrefixLength = std::size(SkipVariable) - 1;
+    std::wstring command = HostExecutable::QuotedArgument(target.wstring());
+    for (const auto& argument : arguments) {
+        if (!command.empty()) command += L' ';
+        command += HostExecutable::QuotedArgument(HostExecutable::Wide(argument, "exec"));
+    }
+    if (command.size() >= 32767) throw std::runtime_error("exec: command line is too long");
+    std::vector<std::wstring> entries;
+    const std::unique_ptr<wchar_t, decltype(&FreeEnvironmentStringsW)> inherited(GetEnvironmentStringsW(), FreeEnvironmentStringsW);
+    if (!inherited) throw std::runtime_error("exec: cannot read the process environment");
+    for (const wchar_t* at = inherited.get(); *at;) {
+        const std::wstring entry(at);
+        at += entry.size() + 1;
+        entries.push_back(std::move(entry));
+    }
+    if (!implicitEnvironment) {
+        const auto name = [](const std::wstring& entry) {
+            const std::size_t separator = entry.find(L'=');
+            return separator == std::wstring::npos ? entry : entry.substr(0, separator);
+        };
+        for (std::size_t index = 0; environment[index] != nullptr; ++index) {
+            std::wstring replaced = HostExecutable::Wide(environment[index], "exec");
+            const std::wstring replacedName = name(replaced);
+            for (std::size_t existing = 0; existing < entries.size();) {
+                if (name(entries[existing]) == replacedName) {
+                    entries.erase(entries.begin() + existing);
+                    continue;
+                }
+                ++existing;
+            }
+            entries.push_back(std::move(replaced));
+        }
+    }
+    entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                 [parentPrefix, parentPrefixLength, skipPrefix, skipPrefixLength](const std::wstring& entry) {
+                                     return _wcsnicmp(entry.c_str(), parentPrefix, parentPrefixLength) == 0 ||
+                                            _wcsnicmp(entry.c_str(), skipPrefix, skipPrefixLength) == 0;
+                                 }),
+                  entries.end());
+    std::unique_ptr<void, void (*)(HANDLE)> parent(nullptr, ExecCloseHandle);
+    {
+        HANDLE shared = nullptr;
+        ExecDuplicate(GetCurrentProcess(), SYNCHRONIZE, &shared);
+        parent.reset(shared);
+    }
+    std::vector<HANDLE> inheritedHandles{parent.get()};
+    std::vector<std::unique_ptr<void, void (*)(HANDLE)>> standard;
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    HANDLE* outputs[] = {&startup.StartupInfo.hStdInput, &startup.StartupInfo.hStdOutput, &startup.StartupInfo.hStdError};
+    const DWORD identifiers[] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    for (std::size_t index = 0; index < 3; ++index) {
+        const HANDLE source = GetStdHandle(identifiers[index]);
+        if (source && source != INVALID_HANDLE_VALUE) {
+            HANDLE handle = nullptr;
+            ExecDuplicate(source, 0, &handle);
+            standard.emplace_back(handle, ExecCloseHandle);
+            inheritedHandles.push_back(handle);
+            *outputs[index] = handle;
+        }
+    }
+    SIZE_T bytes = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+    std::vector<std::max_align_t> storage((bytes + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t));
+    auto* attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
+    if (!InitializeProcThreadAttributeList(attributes, 1, 0, &bytes))
+        throw std::system_error(GetLastError(), std::system_category(), "exec: creating process attributes");
+    const std::unique_ptr<_PROC_THREAD_ATTRIBUTE_LIST, void (*)(LPPROC_THREAD_ATTRIBUTE_LIST)> cleanup(attributes, DeleteProcThreadAttributeList);
+    if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inheritedHandles.data(),
+                                   inheritedHandles.size() * sizeof(HANDLE), nullptr, nullptr))
+        throw std::system_error(GetLastError(), std::system_category(), "exec: selecting inherited handles");
+    startup.lpAttributeList = attributes;
+    std::wostringstream value;
+    value << ParentVariable << std::hex << reinterpret_cast<std::uintptr_t>(parent.get());
+    entries.push_back(value.str());
+    entries.push_back(std::wstring(SkipVariable) + L"1");
+    std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) { return _wcsicmp(left.c_str(), right.c_str()) < 0; });
+    std::vector<wchar_t> block;
+    for (const auto& entry : entries) {
+        block.insert(block.end(), entry.begin(), entry.end());
+        block.push_back(0);
+    }
+    block.push_back(0);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(target.c_str(), command.data(), nullptr, nullptr, TRUE,
+                        CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT, block.data(), nullptr,
+                        &startup.StartupInfo, &process))
+        throw std::system_error(GetLastError(), std::system_category(), "exec: creating the converted executable");
+    const std::unique_ptr<void, void (*)(HANDLE)> child(process.hProcess, ExecCloseHandle);
+    const std::unique_ptr<void, void (*)(HANDLE)> thread(process.hThread, ExecCloseHandle);
+    try {
+        if (ResumeThread(process.hThread) == static_cast<DWORD>(-1))
+            throw std::system_error(GetLastError(), std::system_category(), "exec: starting the converted executable");
+        TerminateProcess(GetCurrentProcess(), 0);
+    } catch (...) {
+        TerminateProcess(process.hProcess, 1);
+        throw;
+    }
+    std::abort();
+}
+#endif
 }
 
 extern "C" {
 
-// unknown data
 const char* __progname_nid_postfix = "eboot.bin";
 static char* emptyEnvironment[1];
 char** environ_nid_postfix = emptyEnvironment;
@@ -306,6 +548,12 @@ int APS5_VABI getpid_nid_postfix(void) {
     if (pid == 0 || static_cast<std::uint64_t>(pid) > static_cast<std::uint64_t>(std::numeric_limits<int>::max()))
         throw std::runtime_error("Process identifier is outside the guest range");
     return static_cast<int>(pid);
+}
+
+int APS5_VABI sceKernelGetProcessAbiType(int pid) {
+    if (pid == -1 || pid == getpid_nid_postfix()) return 1;
+    if (pid == 0) return 0;
+    throw std::runtime_error("sceKernelGetProcessAbiType: unsupported process id " + std::to_string(pid));
 }
 
 int APS5_VABI getsid_nid_postfix(int pid) {
@@ -360,17 +608,28 @@ int APS5_VABI getppid_nid_postfix(void) {
 }
 
 int APS5_VABI sceKernelGetAppInfo(int pid, void* info) {
-    if (pid != getpid_nid_postfix()) return SCE_KERNEL_ERROR_EPERM;
+    const bool own = pid == getpid_nid_postfix();
+    if (!own && pid != 0) NotImplemented_nid_no_patch("sceKernelGetAppInfo: a pid other than the caller's and 0");
     if (info == nullptr) return 0;
+    constexpr std::size_t StructureBytes = 0x58;
     constexpr std::size_t TitleIdOffset = 0x10;
     constexpr std::size_t TitleIdBytes = 10;
-    const auto titleId = GetAppTitleId_nid_postfix();
-    char field[TitleIdBytes] = {};
-    std::strncpy(field, titleId.value, sizeof(field) - 1);
-    auto* bytes = static_cast<std::uint8_t*>(info);
-    const std::uint32_t appId = 1;
-    std::memcpy(bytes, &appId, sizeof(appId));
-    std::memcpy(bytes + TitleIdOffset, field, TitleIdBytes);
+    constexpr std::size_t MarkerOffset = 0x50;
+    std::uint8_t record[StructureBytes]{};
+    if (own) {
+        const auto titleId = GetAppTitleId_nid_postfix();
+        char field[TitleIdBytes] = {};
+        std::strncpy(field, titleId.value, sizeof(field) - 1);
+        const std::uint32_t appId = 1;
+        std::memcpy(record, &appId, sizeof(appId));
+        std::memcpy(record + TitleIdOffset, field, TitleIdBytes);
+    }
+    const std::uint32_t marker = 0xffffffffu;
+    std::memcpy(record + MarkerOffset, &marker, sizeof(marker));
+    const int savedErrno = errno;
+    const bool written = WriteGuest(info, record, sizeof(record));
+    errno = savedErrno;
+    if (!written) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -410,9 +669,11 @@ int APS5_VABI getresgid_nid_postfix(std::uint32_t* rgid, std::uint32_t* egid, st
     return 0;
 }
 
+#ifndef __EMSCRIPTEN__
 void APS5_VABI exit_nid_postfix(int code) {
     LibcExit_nid_no_patch(code);
 }
+#endif
 
 [[noreturn]] void APS5_VABI _exit_nid_postfix(int status) {
     LibcTerminate_nid_no_patch(status);
@@ -423,15 +684,109 @@ int APS5_VABI system_nid_postfix(const char* command) {
     return command == nullptr ? 1 : shellNotExecuted;
 }
 
+#ifndef _WIN32
+static GuestResourceUsage ResourceUsage(const struct rusage& native) {
+    GuestResourceUsage result{};
+    result.ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
+    result.ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
+    result.ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
+    result.ru_stime.tv_usec = static_cast<std::int64_t>(native.ru_stime.tv_usec);
+    result.ru_maxrss = static_cast<std::int64_t>(native.ru_maxrss);
+    result.ru_ixrss = static_cast<std::int64_t>(native.ru_ixrss);
+    result.ru_idrss = static_cast<std::int64_t>(native.ru_idrss);
+    result.ru_isrss = static_cast<std::int64_t>(native.ru_isrss);
+    result.ru_minflt = static_cast<std::int64_t>(native.ru_minflt);
+    result.ru_majflt = static_cast<std::int64_t>(native.ru_majflt);
+    result.ru_nswap = static_cast<std::int64_t>(native.ru_nswap);
+    result.ru_inblock = static_cast<std::int64_t>(native.ru_inblock);
+    result.ru_oublock = static_cast<std::int64_t>(native.ru_oublock);
+    result.ru_msgsnd = static_cast<std::int64_t>(native.ru_msgsnd);
+    result.ru_msgrcv = static_cast<std::int64_t>(native.ru_msgrcv);
+    result.ru_nsignals = static_cast<std::int64_t>(native.ru_nsignals);
+    result.ru_nvcsw = static_cast<std::int64_t>(native.ru_nvcsw);
+    result.ru_nivcsw = static_cast<std::int64_t>(native.ru_nivcsw);
+    return result;
+}
+#endif
+
 int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
-    (void)pid;
-    (void)status;
-    *__error_nid_postfix() = (static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0 ? errnoInvalidArgument : errnoNoChild;
-    return -1;
+    return WaitProcess_nid_no_patch(pid, status, options, nullptr);
+}
+
+int WaitProcess_nid_no_patch(int pid, int* status, int options, GuestResourceUsage* usage) {
+    if ((static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0) {
+        *__error_nid_postfix() = errnoInvalidArgument;
+        return -1;
+    }
+#ifdef _WIN32
+    int encoded = 0;
+    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded, usage != nullptr);
+    if (reaped == -2) {
+        *__error_nid_postfix() = errnoNoChild;
+        return -1;
+    }
+    if (reaped == -1) return -1;
+    if (reaped == 0) return 0;
+    if (status != nullptr && !WriteGuest(status, &encoded, sizeof(encoded))) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
+    return static_cast<int>(reaped);
+#else
+    unsigned hostOptions = static_cast<unsigned>(options) & 3u;
+    if ((static_cast<unsigned>(options) & 4u) != 0) hostOptions |= static_cast<unsigned>(WCONTINUED);
+    int encoded = 0;
+    struct rusage native{};
+    const int result = ::wait4(pid, &encoded, static_cast<int>(hostOptions), usage == nullptr ? nullptr : &native);
+    if (result < 0) {
+        *__error_nid_postfix() = errno;
+        return -1;
+    }
+    if (result == 0) return 0;
+    if (WIFCONTINUED(encoded)) {
+        encoded = 0x13;
+    } else if (WIFSIGNALED(encoded) || WIFSTOPPED(encoded)) {
+        const int hostSignal = WIFSIGNALED(encoded) ? WTERMSIG(encoded) : WSTOPSIG(encoded);
+        int guestSignal = hostSignal;
+#ifndef __APPLE__
+        switch (hostSignal) {
+        case 7: guestSignal = 10; break;
+        case 10: guestSignal = 30; break;
+        case 12: guestSignal = 31; break;
+        case 17: guestSignal = 20; break;
+        case 18: guestSignal = 19; break;
+        case 19: guestSignal = 17; break;
+        case 20: guestSignal = 18; break;
+        case 23: guestSignal = 16; break;
+        case 29: guestSignal = 23; break;
+        case 31: guestSignal = 12; break;
+        case 16:
+        case 30:
+            NotImplemented_nid_no_patch("waitpid: a child stopped or died with a signal without a guest equivalent");
+            return -1;
+        default: break;
+        }
+#endif
+        encoded = WIFSTOPPED(encoded) ? ((encoded & ~0xff00) | (guestSignal << 8)) : ((encoded & ~0x7f) | guestSignal);
+    }
+    if (status != nullptr && !WriteGuest(status, &encoded, sizeof(encoded))) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
+    if (usage != nullptr) {
+        const auto resources = ResourceUsage(native);
+        if (!WriteGuest(usage, &resources, sizeof(resources))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
+    }
+    return result;
+#endif
 }
 
 int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limit) {
-    if (limit == nullptr) {
+    GuestResourceLimit requested{};
+    if (limit == nullptr || !GuestCopyIn_nid_no_patch(&requested, limit, sizeof(requested))) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
@@ -440,7 +795,6 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
         return -1;
     }
 
-    GuestResourceLimit requested = *limit;
     if (requested.rlim_cur < 0)
         requested.rlim_cur = guestRlimitInfinity;
     if (requested.rlim_max < 0)
@@ -465,6 +819,13 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
         guestProcessResourceLimit = requested;
         return 0;
     }
+    if (resource == guestRlimitCore && requested.rlim_max == current.rlim_max) {
+        std::lock_guard lock(coreLimitMutex);
+        guestCoreLimit.rlim_cur = requested.rlim_cur;
+        return 0;
+    }
+    if ((resource == guestRlimitData || resource == guestRlimitStack) && requested.rlim_cur == current.rlim_cur && requested.rlim_max > current.rlim_max)
+        return 0;
     if (requested.rlim_cur != current.rlim_cur || requested.rlim_max != current.rlim_max)
         throw std::runtime_error("setrlimit: changing the limit of resource " + std::to_string(resource) + " is not supported");
     return 0;
@@ -474,26 +835,77 @@ int APS5_VABI wait_nid_postfix(int* status) {
     return waitpid_nid_postfix(-1, status, 0);
 }
 
-int APS5_VABI execvp_nid_postfix(const char* file, char* const* arguments) {
-    (void)file;
-    (void)arguments;
-    NotImplemented_nid_no_patch("execvp: executable replacement");
+int ExecProgram(const char* file, char* const* arguments, char* const* environment, bool search, bool implicitEnvironment) {
+    const auto fail = [](int error) { *__error_nid_postfix() = error; return -1; };
+    if (file == nullptr) return fail(errnoBadFile);
+    if (arguments == nullptr) return fail(errnoBadAddress);
+    if (file[0] == '\0') return fail(errnoNoEnt);
+    static char* const noEnvironment[] = {nullptr};
+    char* const* entries = implicitEnvironment ? static_cast<char* const*>(environ) : (environment != nullptr ? environment : noEnvironment);
+    if (ExecEntriesBytes(arguments) + ExecEntriesBytes(entries) > ExecArgumentBytesLimit) return fail(errnoTooBig);
+    int error = errnoNoEnt;
+    std::string program;
+    if (!ExecProgramFound(file, search, error, program)) return fail(error);
+    const auto target = ExecConvertedTarget(program);
+#ifdef _WIN32
+    if (!ExecWindowsImage(target)) return fail(errnoNoExec);
+    ExecReplaceWindows(target, ExecArgumentVector(arguments), implicitEnvironment, entries);
+#elif defined(__linux__)
+    const int descriptor = ::open(target.c_str(), O_RDONLY | O_CLOEXEC);
+    if (descriptor < 0) throw std::system_error(errno, std::generic_category(), "exec: opening the converted executable");
+    std::array<unsigned char, 20> header{};
+    if (::pread(descriptor, header.data(), header.size(), 0) != static_cast<ssize_t>(header.size()) || header[0] != 0x7f ||
+        header[1] != 'E' || header[2] != 'L' || header[3] != 'F' || header[4] != 2 || header[5] != 1 ||
+        (header[7] != 0 && header[7] != 3) || header[17] != 0 || (header[16] != 2 && header[16] != 3) || header[18] != 62 ||
+        header[19] != 0) {
+        ::close(descriptor);
+        return fail(errnoNoExec);
+    }
+    if (::access(target.c_str(), X_OK) != 0) {
+        ::close(descriptor);
+        return fail(errnoAccess);
+    }
+    std::vector<std::string> merged;
+    if (!implicitEnvironment)
+        for (std::size_t index = 0; entries[index] != nullptr; ++index) merged.emplace_back(entries[index]);
+    for (std::size_t index = 0; environ[index] != nullptr; ++index) {
+        const std::string_view entry = environ[index];
+        const std::size_t separator = entry.find('=');
+        const std::string_view name = separator == std::string_view::npos ? entry : entry.substr(0, separator);
+        bool overridden = false;
+        for (const auto& guest : merged) {
+            const std::size_t guestSeparator = guest.find('=');
+            if ((guestSeparator == std::string::npos ? std::string_view(guest) : std::string_view(guest).substr(0, guestSeparator)) == name) {
+                overridden = true;
+                break;
+            }
+        }
+        if (!overridden) merged.emplace_back(environ[index]);
+    }
+    std::vector<char*> replacement;
+    for (auto& entry : merged) replacement.push_back(entry.data());
+    replacement.push_back(nullptr);
+    fexecve(descriptor, arguments, replacement.data());
+    const int replaced = errno;
+    ::close(descriptor);
+    throw std::system_error(replaced, std::generic_category(), "exec: replacing the executable");
+#else
+    static_cast<void>(target);
+    NotImplemented_nid_no_patch("exec: process replacement on this host");
     return -1;
+#endif
+}
+
+int APS5_VABI execvp_nid_postfix(const char* file, char* const* arguments) {
+    return ExecProgram(file, arguments, nullptr, true, true);
 }
 
 int APS5_VABI execv_nid_postfix(const char* path, char* const* arguments) {
-    (void)path;
-    (void)arguments;
-    NotImplemented_nid_no_patch("execv: executable replacement");
-    return -1;
+    return ExecProgram(path, arguments, nullptr, false, true);
 }
 
 int APS5_VABI execve_nid_postfix(const char* path, char* const* arguments, char* const* environment) {
-    (void)path;
-    (void)arguments;
-    (void)environment;
-    NotImplemented_nid_no_patch("execve: executable replacement");
-    return -1;
+    return ExecProgram(path, arguments, environment, false, false);
 }
 
 int APS5_VABI sceKernelGetCurrentCpu(void) {
@@ -507,6 +919,11 @@ int APS5_VABI sceKernelGetCurrentCpu(void) {
             throw std::system_error(GetLastError(), std::system_category(), "Reading processor group size");
         index += count;
     }
+#elif defined(__APPLE__)
+    std::size_t cpu = 0;
+    if (const int error = ::pthread_cpu_number_np(&cpu); error != 0)
+        throw std::system_error(error, std::generic_category(), "Reading current processor");
+    const auto index = static_cast<unsigned>(cpu);
 #else
     const int cpu = ::sched_getcpu();
     if (cpu < 0)
@@ -535,7 +952,8 @@ void APS5_VABI sceKernelSetGPO(std::uint32_t bits) {
 int APS5_VABI sceKernelGetOpenPsId(void* openPsIdOutput) {
     if (!openPsIdOutput)
         throw std::invalid_argument("sceKernelGetOpenPsId: null output");
-    std::memcpy(openPsIdOutput, openPsId.data(), openPsId.size());
+    if (!GuestCopyOut_nid_no_patch(openPsIdOutput, openPsId.data(), openPsId.size()))
+        return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -549,7 +967,7 @@ int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid) {
     HostEntropy_nid_no_patch(value.data(), sizeof(value));
     value[1] = (value[1] & 0x0fffffffu) | 0x40000000u;
     value[2] = (value[2] & 0xffffff3fu) | 0x80u;
-    std::memcpy(uuid, value.data(), sizeof(value));
+    if (!GuestCopyOut_nid_no_patch(uuid, value.data(), sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -559,7 +977,7 @@ int APS5_VABI sceKernelCreateUuidV4(std::uint8_t* uuid) {
     HostEntropy_nid_no_patch(value.data(), value.size());
     value[6] = static_cast<std::uint8_t>((value[6] & 0x0fu) | 0x40u);
     value[8] = static_cast<std::uint8_t>((value[8] & 0x3fu) | 0x80u);
-    std::memcpy(uuid, value.data(), value.size());
+    if (!GuestCopyOut_nid_no_patch(uuid, value.data(), value.size())) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -594,43 +1012,66 @@ int APS5_VABI sysarch(int operation, void* parameters) {
     constexpr int getFsBase = 128;
     constexpr int getGsBase = 130;
     constexpr int setGsBase = 131;
+    constexpr std::array<int, 2> xfpuStateOperations{11, 132};
     constexpr std::uint64_t userAddressEnd = 0x0000800000000000ull;
     constexpr std::array<int, 14> definedOperations{0, 1, 3, 4, 7, 8, 9, 10, 11, 128, 129, 130, 131, 132};
     if (std::find(definedOperations.begin(), definedOperations.end(), operation) == definedOperations.end()) {
         *__error_nid_postfix() = guestInvalid;
         return -1;
     }
+    if (parameters == nullptr && std::find(xfpuStateOperations.begin(), xfpuStateOperations.end(), operation) != xfpuStateOperations.end()) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
     const bool i386 = operation == i386GetFsBase || operation == i386GetGsBase;
     if (!i386 && operation != getFsBase && operation != getGsBase && operation != setGsBase)
         NotImplemented_nid_no_patch(("sysarch: operation " + std::to_string(operation)).c_str());
-#if defined(__linux__) && defined(__x86_64__)
+#if (defined(__linux__) || defined(_WIN32)) && defined(__x86_64__)
     if (parameters == nullptr) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
     std::uint64_t base = 0;
     if (operation == setGsBase) {
-        std::memcpy(&base, parameters, sizeof(base));
+        if (!GuestCopyIn_nid_no_patch(&base, parameters, sizeof(base))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
         if (base >= userAddressEnd) {
             *__error_nid_postfix() = guestInvalid;
             return -1;
         }
+#ifdef _WIN32
+        GuestGsSet_nid_no_patch(base);
+#else
         if (::syscall(SYS_arch_prctl, ARCH_SET_GS, base) != 0) throw std::system_error(errno, std::generic_category(), "sysarch: setting the GS base");
+#endif
         return 0;
     }
     const bool fs = operation == getFsBase || operation == i386GetFsBase;
+#ifdef _WIN32
+    if (fs) NotImplemented_nid_no_patch(("sysarch: operation " + std::to_string(operation)).c_str());
+    base = GuestGsGet_nid_no_patch();
+#else
     if (::syscall(SYS_arch_prctl, fs ? ARCH_GET_FS : ARCH_GET_GS, &base) != 0)
         throw std::system_error(errno, std::generic_category(), "sysarch: reading a segment base");
+#endif
     if (i386) {
         const auto low = static_cast<std::uint32_t>(base);
-        std::memcpy(parameters, &low, sizeof(low));
+        if (!GuestCopyOut_nid_no_patch(parameters, &low, sizeof(low))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
         return 0;
     }
-    std::memcpy(parameters, &base, sizeof(base));
+    if (!GuestCopyOut_nid_no_patch(parameters, &base, sizeof(base))) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
     return 0;
 #else
     static_cast<void>(parameters);
-    NotImplemented_nid_no_patch("sysarch: segment bases on this host");
+    NotImplemented_nid_no_patch(("sysarch: operation " + std::to_string(operation)).c_str());
     return 0;
 #endif
 }
@@ -675,26 +1116,28 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     result.ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
 #else
     struct rusage native{};
+#ifdef __APPLE__
+    if (who == 0) {
+        if (::getrusage(RUSAGE_SELF, &native) != 0)
+            throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
+    } else {
+        thread_basic_info_data_t info{};
+        mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+        const mach_port_t thread = mach_thread_self();
+        const kern_return_t status = thread_info(thread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count);
+        mach_port_deallocate(mach_task_self(), thread);
+        if (status != KERN_SUCCESS)
+            throw std::runtime_error("getrusage: thread_info failed");
+        native.ru_utime.tv_sec = info.user_time.seconds;
+        native.ru_utime.tv_usec = info.user_time.microseconds;
+        native.ru_stime.tv_sec = info.system_time.seconds;
+        native.ru_stime.tv_usec = info.system_time.microseconds;
+    }
+#else
     if (::getrusage(who == 0 ? RUSAGE_SELF : RUSAGE_THREAD, &native) != 0)
         throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
-    result.ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
-    result.ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
-    result.ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
-    result.ru_stime.tv_usec = static_cast<std::int64_t>(native.ru_stime.tv_usec);
-    result.ru_maxrss = static_cast<std::int64_t>(native.ru_maxrss);
-    result.ru_ixrss = static_cast<std::int64_t>(native.ru_ixrss);
-    result.ru_idrss = static_cast<std::int64_t>(native.ru_idrss);
-    result.ru_isrss = static_cast<std::int64_t>(native.ru_isrss);
-    result.ru_minflt = static_cast<std::int64_t>(native.ru_minflt);
-    result.ru_majflt = static_cast<std::int64_t>(native.ru_majflt);
-    result.ru_nswap = static_cast<std::int64_t>(native.ru_nswap);
-    result.ru_inblock = static_cast<std::int64_t>(native.ru_inblock);
-    result.ru_oublock = static_cast<std::int64_t>(native.ru_oublock);
-    result.ru_msgsnd = static_cast<std::int64_t>(native.ru_msgsnd);
-    result.ru_msgrcv = static_cast<std::int64_t>(native.ru_msgrcv);
-    result.ru_nsignals = static_cast<std::int64_t>(native.ru_nsignals);
-    result.ru_nvcsw = static_cast<std::int64_t>(native.ru_nvcsw);
-    result.ru_nivcsw = static_cast<std::int64_t>(native.ru_nivcsw);
+#endif
+    result = ResourceUsage(native);
 #endif
     if (!WriteGuest(usage, &result, sizeof(result))) {
         *__error_nid_postfix() = guestFault;
@@ -753,9 +1196,13 @@ int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit) {
         result = guestProcessResourceLimit;
         break;
     }
+    case guestRlimitCore: {
+        std::lock_guard lock(coreLimitMutex);
+        result = guestCoreLimit;
+        break;
+    }
     case guestRlimitCpu:
     case guestRlimitFsize:
-    case guestRlimitCore:
     case guestRlimitRss:
     case guestRlimitMemlock:
     case guestRlimitSbsize:
@@ -788,7 +1235,7 @@ int APS5_VABI getpriority_nid_postfix(int which, int who) {
         *__error_nid_postfix() = guestNoProcess;
         return -1;
     }
-    return guestNice.load(std::memory_order_relaxed);
+    return 0;
 }
 
 int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
@@ -802,8 +1249,15 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
         *__error_nid_postfix() = guestNoProcess;
         return -1;
     }
-    const int clamped = niceval < guestNiceMin ? guestNiceMin : (niceval > guestNiceMax ? guestNiceMax : niceval);
-    guestNice.store(clamped, std::memory_order_relaxed);
+    if (niceval < 0) {
+        *__error_nid_postfix() = guestAccess;
+        return -1;
+    }
+    if (which != guestPriorityProcess) {
+        throw std::runtime_error(std::string("setpriority: setting the nice value of ") +
+                                 (which == guestPriorityGroup ? "PRIO_PGRP" : "PRIO_USER") + " to " + std::to_string(niceval) +
+                                 " is not verified on the console");
+    }
     return 0;
 }
 
@@ -812,7 +1266,7 @@ int APS5_VABI getdtablesize_nid_postfix(void) {
     getrlimit_nid_postfix(guestRlimitNofile, &limit);
 
     std::int64_t tableSize = limit.rlim_cur;
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
     tableSize = std::min(tableSize, static_cast<std::int64_t>(::getdtablesize()));
 #endif
     if (tableSize > std::numeric_limits<int>::max())
@@ -824,11 +1278,18 @@ int APS5_VABI sceKernelIsTrinityMode(void) {
     return 0;
 }
 
+int APS5_VABI sceKernelHasTrinityMode(void) {
+    return 0;
+}
+
 void APS5_VABI sceKernelGetOperationMode(int* mode, int* submode) {
     if (!mode || !submode)
         throw std::invalid_argument("sceKernelGetOperationMode: null output");
-    *mode = 2;
-    *submode = 0;
+    constexpr int guestMode = 2;
+    constexpr int guestSubmode = 0;
+    if (!GuestCopyOut_nid_no_patch(mode, &guestMode, sizeof(guestMode)) ||
+        !GuestCopyOut_nid_no_patch(submode, &guestSubmode, sizeof(guestSubmode)))
+        throw std::invalid_argument("sceKernelGetOperationMode: output is not writable");
 }
 
 int APS5_VABI seteuid_nid_postfix(std::uint32_t euid) {
@@ -896,7 +1357,7 @@ int APS5_VABI setresgid_nid_postfix(std::uint32_t rgid, std::uint32_t egid, std:
 }
 
 int APS5_VABI setgroups_nid_postfix(int count, const std::uint32_t* groups) {
-    if (count < 0 || count > freebsdGroupsMax) {
+    if (static_cast<std::uint32_t>(count) > static_cast<std::uint32_t>(freebsdGroupsMax) + 1) {
         *__error_nid_postfix() = errnoInvalidArgument;
         return -1;
     }
@@ -926,8 +1387,9 @@ int APS5_VABI setgroups_nid_postfix(int count, const std::uint32_t* groups) {
 int APS5_VABI getgroups_nid_postfix(int capacity, std::uint32_t* groups) {
     std::lock_guard lock(supplementaryGroupsMutex);
     const int count = static_cast<int>(supplementaryGroups.size());
-    if (capacity == 0) return count;
-    if (capacity < count) {
+    const auto size = static_cast<std::uint32_t>(capacity);
+    if (size == 0) return count;
+    if (size < static_cast<std::uint32_t>(count)) {
         *__error_nid_postfix() = errnoInvalidArgument;
         return -1;
     }
@@ -941,5 +1403,18 @@ int APS5_VABI getgroups_nid_postfix(int capacity, std::uint32_t* groups) {
     }
     return count;
 }
+
+}
+
+namespace {
+
+struct ProgramNameRegistration {
+    ProgramNameRegistration() { LibcRegisterProgramName_nid_no_patch(&__progname_nid_postfix); }
+    ~ProgramNameRegistration() { LibcRegisterProgramName_nid_no_patch(nullptr); }
+    ProgramNameRegistration(const ProgramNameRegistration&) = delete;
+    ProgramNameRegistration& operator=(const ProgramNameRegistration&) = delete;
+};
+
+const ProgramNameRegistration programNameRegistration;
 
 }

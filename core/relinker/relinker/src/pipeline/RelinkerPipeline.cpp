@@ -5,13 +5,17 @@
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <algorithm>
+#include <iterator>
 #include <sstream>
 
 #include <cstring>
 #include <limits>
+#include <map>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <domain/ImportModule.hpp>
+#include <relinker/parsing/RelrRelocations.hpp>
 
 namespace Relinker {
 
@@ -22,10 +26,12 @@ namespace {
 constexpr std::uint16_t kEtNone = 0;
 constexpr std::uint16_t kEtRel = 1;
 constexpr std::uint16_t kEtCore = 4;
+constexpr std::uint16_t kEtSceDynExec = 0xfe10;
+constexpr std::uint16_t kEtSceDynamic = 0xfe18;
 
 }
 
-RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress)
+RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress, const bool functionSymbolRoots)
     : elfReader(std::move(elfReader))
     , syscallScanner(std::move(syscallScanner))
     , callSiteResolver(std::move(callSiteResolver))
@@ -34,6 +40,7 @@ RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::s
     , unusedNidFilter(std::move(unusedNidFilter))
     , unusedFilterLevel(unusedFilterLevel)
     , progress(progress)
+    , functionSymbolRoots(functionSymbolRoots)
 {
     if (!this->elfReader || !this->syscallScanner || !this->callSiteResolver || !this->validationPolicy || !this->dynamicSectionBuilder || !this->unusedNidFilter) throw RelinkerException("Missing relinker pipeline dependency");
     if (unusedFilterLevel > 2) throw RelinkerException("Unused NID filter level must be 0, 1 or 2");
@@ -42,6 +49,7 @@ RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::s
 std::string RelinkerPipeline::relocationTypeName(std::uint32_t type) {
     switch (type) {
         case 1: return "R_X86_64_64";
+        case 2: return "R_X86_64_PC32";
         case 6: return "R_X86_64_GLOB_DAT";
         case 7: return "R_X86_64_JUMP_SLOT";
         case 10: return "R_X86_64_32";
@@ -64,6 +72,13 @@ RelinkResult RelinkerPipeline::Relink() {
         throw RelinkerException("ET_NONE inputs do not specify an ELF object type");
     if (inputType == kEtCore)
         throw RelinkerException("ET_CORE core dumps are not executable images");
+    if (inputType == ET_EXEC)
+        throw RelinkerException("ET_EXEC inputs are linked at fixed addresses; conversion requires a position-independent image", 0x10);
+    if (inputType != ET_DYN && inputType != kEtSceDynExec && inputType != kEtSceDynamic) {
+        std::ostringstream message;
+        message << "Unsupported ELF object type 0x" << std::hex << inputType << ": expected ET_DYN, 0xfe10 or 0xfe18";
+        throw RelinkerException(message.str(), 0x10);
+    }
 
     auto programHeaders = elfReader->ReadProgramHeaders();
 
@@ -74,6 +89,8 @@ RelinkResult RelinkerPipeline::Relink() {
     ByteCount gotSize = 0;
 
     for (const auto& ph : programHeaders) {
+        if (ph.Type == PT_LOAD && (ph.Flags & ~7u) != 0)
+            throw RelinkerException("Unsupported PT_LOAD permission flags", ph.Offset);
         if (ph.Type == PT_LOAD && (ph.Flags & PF_X) != 0) {
             auto segment = elfReader->ReadSegment(ph);
             if (!segment.empty()) {
@@ -103,14 +120,24 @@ RelinkResult RelinkerPipeline::Relink() {
     for (const auto& ph : programHeaders) {
         if (ph.Type != PT_DYNAMIC)
             continue;
+        if (hasDynamicSegment)
+            throw RelinkerException("Multiple PT_DYNAMIC segments", ph.Offset);
 
         hasDynamicSegment = true;
         dynTags = elfReader->ReadDynamicTags(ph);
-        break;
     }
 
     if (!hasDynamicSegment)
         throw RelinkerException("No PT_DYNAMIC segment found");
+
+    bool hasEhFrameSegment = false;
+    for (const auto& ph : programHeaders) {
+        if (ph.Type != PT_GNU_EH_FRAME)
+            continue;
+        if (hasEhFrameSegment)
+            throw RelinkerException("Multiple PT_GNU_EH_FRAME segments", ph.Offset);
+        hasEhFrameSegment = true;
+    }
 
     auto hasTag = [&](const std::int64_t tag) {
         for (const auto& t : dynTags)
@@ -120,9 +147,6 @@ RelinkResult RelinkerPipeline::Relink() {
     };
 
     auto getTagValue = [&](const std::int64_t tag) -> std::uint64_t {
-        for (const auto& t : dynTags)
-            if (t.Tag == tag)
-                return t.Value;
         const char* name = "unknown";
         switch (tag) {
         case DT_OS_STRTAB: name = "DT_OS_STRTAB"; break;
@@ -149,6 +173,16 @@ RelinkResult RelinkerPipeline::Relink() {
         case DT_RELAENT: name = "DT_RELAENT"; break;
         case DT_OS_SYMTABSZ: name = "DT_OS_SYMTABSZ"; break;
         }
+        std::optional<std::uint64_t> value;
+        for (const auto& t : dynTags) {
+            if (t.Tag != tag)
+                continue;
+            if (value && *value != t.Value)
+                throw RelinkerException(std::string("Conflicting duplicate ") + name + " tags");
+            value = t.Value;
+        }
+        if (value)
+            return *value;
         std::ostringstream message;
         message << "Required dynamic tag " << name << " (0x" << std::hex << tag << ") not found";
         throw RelinkerException(message.str());
@@ -216,8 +250,6 @@ RelinkResult RelinkerPipeline::Relink() {
 
     if (hasTag(DT_REL) || hasTag(DT_RELSZ) || hasTag(DT_RELENT))
         throw RelinkerException("DT_REL relocations are not supported");
-    if (hasTag(DT_RELR) || hasTag(DT_RELRSZ) || hasTag(DT_RELRENT))
-        throw RelinkerException("DT_RELR relocations are not supported");
 
     const bool hasRelaTable = hasTag(DT_OS_RELA) || hasTag(DT_RELA)
         || hasTag(DT_OS_RELASZ) || hasTag(DT_RELASZ);
@@ -245,6 +277,7 @@ RelinkResult RelinkerPipeline::Relink() {
     std::vector<std::string> neededLibraries;
 
     const std::vector<std::uint8_t>& raw = elfReader->GetRawBytes();
+    const auto relrRelocations = ReadRelrRelocations(raw, programHeaders, dynTags);
     const std::optional<ByteCount> dynSymTabSize = hasTag(DT_OS_SYMTABSZ)
         ? std::optional<ByteCount>(getTagValue(DT_OS_SYMTABSZ)) : std::nullopt;
 
@@ -265,6 +298,8 @@ RelinkResult RelinkerPipeline::Relink() {
     auto readCStr = [&](FileByteOffset strOff) -> std::string {
         if (strOff >= dynStrTabSize)
             throw RelinkerException("Dynamic string offset is outside DT_STRSZ", strOff);
+        if (strOff == 0 && raw[dynStrTabOffset] != 0)
+            throw RelinkerException("Dynamic string table does not begin with a NUL byte", dynStrTabOffset);
         std::string result;
         FileByteOffset pos = dynStrTabOffset + strOff;
         const FileByteOffset end = dynStrTabOffset + dynStrTabSize;
@@ -283,7 +318,9 @@ RelinkResult RelinkerPipeline::Relink() {
     }
 
     std::map<std::uint64_t, std::string> importModules;
+    std::set<std::uint64_t> ownModules;
     for (const auto& tag : dynTags) {
+        if (tag.Tag == 0x61000043 || tag.Tag == 0x6100000d) ownModules.insert(tag.Value >> 48);
         if (tag.Tag == 0x61000045 && !importModules.emplace(tag.Value >> 48, readCStr(tag.Value & 0xffffffffu)).second)
             throw RelinkerException("Duplicate import module ID");
     }
@@ -300,6 +337,9 @@ RelinkResult RelinkerPipeline::Relink() {
         if (symOff < dynSymTabOffset || symOff > raw.size() || raw.size() - symOff < symEntSize
             || (dynSymTabSize && (off > *dynSymTabSize || symEntSize > *dynSymTabSize - off)))
             throw RelinkerException("Symbol table entry out of bounds", symOff);
+        if (symIdx == 0 && std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
+                                       [](const std::uint8_t byte) { return byte != 0; }))
+            throw RelinkerException("Dynamic symbol table entry 0 is not a null symbol entry", symOff);
         return symOff;
     };
 
@@ -314,19 +354,29 @@ RelinkResult RelinkerPipeline::Relink() {
         return type == R_X86_64_DTPMOD64 || type == R_X86_64_DTPOFF64 || type == R_X86_64_TPOFF64;
     };
 
-    const bool hasTlsSegment = std::any_of(programHeaders.begin(), programHeaders.end(),
-                                           [](const ProgramHeader& ph) { return ph.Type == PT_TLS; });
+    const auto tlsSegment = std::find_if(programHeaders.begin(), programHeaders.end(),
+                                         [](const ProgramHeader& ph) { return ph.Type == PT_TLS && ph.MemorySize != 0; });
+    const bool hasNonEmptyTlsSegment = tlsSegment != programHeaders.end();
 
     const auto definedTlsSymbolValue = [&](const std::uint32_t symIdx, const FileByteOffset pos) -> std::optional<std::uint64_t> {
         const FileByteOffset symOff = symbolEntryPos(symIdx);
         std::uint16_t section = 0;
         std::memcpy(&section, raw.data() + symOff + 6, sizeof(section));
+        const auto type = raw[symOff + 4] & 15;
+        if (section == SHN_UNDEF && type != STT_TLS)
+            throw RelinkerException("TLS relocation names an undefined symbol that is not STT_TLS", pos);
         if (section == SHN_UNDEF)
             return std::nullopt;
-        if ((raw[symOff + 4] & 15) != STT_TLS)
+        if (type != STT_TLS)
             throw RelinkerException("TLS relocation names a defined symbol that is not STT_TLS", pos);
+        if (section >= SHN_LORESERVE)
+            throw RelinkerException("Unsupported executable TLS symbol section", pos);
         std::uint64_t value = 0;
         std::memcpy(&value, raw.data() + symOff + 8, sizeof(value));
+        std::uint64_t size = 0;
+        std::memcpy(&size, raw.data() + symOff + 16, sizeof(size));
+        if (hasNonEmptyTlsSegment && (value > tlsSegment->MemorySize || size > tlsSegment->MemorySize - value))
+            throw RelinkerException("TLS symbol exceeds TLS segment", pos);
         return value;
     };
     const auto definedTlsSymbol = [&](const std::uint32_t symIdx, const FileByteOffset pos) {
@@ -348,13 +398,20 @@ RelinkResult RelinkerPipeline::Relink() {
             const std::uint32_t symIdx = static_cast<std::uint32_t>(rInfo >> 32);
             const std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
 
-            validationPolicy->ValidateRelocationTypeSupported(relType, pos);
+            if (relType != R_X86_64_NONE && !relrRelocations.empty()) {
+                const auto nextRelr = relrRelocations.lower_bound(rOffset);
+                if ((nextRelr != relrRelocations.end() && nextRelr->first - rOffset < 8)
+                    || (nextRelr != relrRelocations.begin() && rOffset - std::prev(nextRelr)->first < 8))
+                    throw RelinkerException("RELR target overlaps RELA relocation", rOffset);
+            }
 
-            if (relType == R_X86_64_NONE)
-                continue;
+            validationPolicy->ValidateRelocationTypeSupported(relType, pos);
 
             if (plt && relType != R_X86_64_JUMP_SLOT)
                 throw RelinkerException("Unsupported PLT relocation type", pos);
+
+            if (relType == R_X86_64_NONE)
+                continue;
 
             if (relType == 8) {
                 if (symIdx != 0 && !isZeroSectionSymbol(symIdx))
@@ -366,18 +423,25 @@ RelinkResult RelinkerPipeline::Relink() {
                 continue;
 
             const FileByteOffset symOff = symbolEntryPos(symIdx);
+            if (!isTlsRelocation(relType) && (raw[symOff + 4] & 15) == STT_TLS)
+                throw RelinkerException("Non-TLS relocation names an STT_TLS symbol", pos);
 
             std::uint32_t nameOff = 0;
             std::memcpy(&nameOff, raw.data() + symOff, 4);
 
             const auto name = readCStr(nameOff);
+            std::uint16_t section = 0;
+            std::memcpy(&section, raw.data() + symOff + 6, sizeof(section));
+            if (section == SHN_UNDEF && (raw[symOff + 4] >> 4) != STB_WEAK && (raw[symOff + 5] & 3) != 0)
+                throw RelinkerException("Undefined non-weak symbol has non-default visibility: " + name, symOff);
             if (name.empty() && (raw.size() - symOff < symEntSize
                                  || std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
                                                 [](const std::uint8_t byte) { return byte != 0; })))
                 throw RelinkerException("Unnamed import symbol is not a null symbol entry", symOff);
             const bool weak = (raw[symOff + 4] >> 4) == STB_WEAK;
-            const bool function = (raw[symOff + 4] & 15) == STT_FUNC;
-            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend, weak, function});
+            const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
+            const bool function = symbolType == STT_FUNC;
+            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries, ownModules), relType, pos, rOffset, rAddend, weak, function, symbolType});
         }
     };
 
@@ -386,17 +450,20 @@ RelinkResult RelinkerPipeline::Relink() {
 
     std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
     std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());
-    if (std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_SCE_DYNLIBDATA; })) {
+    const bool sceImage = std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_SCE_DYNLIBDATA; });
+    const bool hasEhFrame = sceImage || std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_GNU_EH_FRAME; });
+    if (hasEhFrame) {
         const auto functions = UnusedNidFilter::ReadExceptionFunctions(raw, programHeaders, {}, {});
         for (const auto& function : functions) unwindRanges.emplace_back(function.Begin, function.End);
         std::sort(unwindRanges.begin(), unwindRanges.end());
-        for (std::size_t index = 0; index < executableSegments.size(); ++index) {
-            auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
-            static_cast<void>(segmentFileOffset);
-            if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize))
-                segment.resize(*codeEnd - segmentVAddr);
-            segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, functions);
-        }
+        if (sceImage)
+            for (std::size_t index = 0; index < executableSegments.size(); ++index) {
+                auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
+                static_cast<void>(segmentFileOffset);
+                if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize))
+                    segment.resize(*codeEnd - segmentVAddr);
+                segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, functions);
+            }
     }
 
     std::vector<std::vector<std::uint8_t>> scanSegments;
@@ -427,6 +494,7 @@ RelinkResult RelinkerPipeline::Relink() {
         const auto symbolBytes = getTagValue(DT_OS_SYMTABSZ);
         if (symbolBytes % symEntSize != 0 || dynSymTabOffset > raw.size() || symbolBytes > raw.size() - dynSymTabOffset)
             throw RelinkerException("Invalid executable dynamic symbol table size");
+        std::map<std::string, const std::uint8_t*> exportEntries;
         for (ByteCount off = symEntSize; off < symbolBytes; off += symEntSize) {
             const auto* symbol = raw.data() + dynSymTabOffset + off;
             std::uint16_t section = 0;
@@ -438,6 +506,12 @@ RelinkResult RelinkerPipeline::Relink() {
             name.resize(name.find('#') == std::string::npos ? name.size() : name.find('#'));
             const FileByteOffset entryOffset = dynSymTabOffset + off;
             const auto type = symbol[4] & 15;
+            if (name.empty())
+                throw RelinkerException("Empty executable export name", entryOffset);
+            if ((symbol[4] >> 4) > STB_WEAK || (symbol[5] & ~3) != 0 || (type != STT_NOTYPE && type != STT_OBJECT && type != STT_FUNC && type != STT_TLS))
+                throw RelinkerException("Unsupported executable export attributes: " + name, entryOffset);
+            if (const auto [previous, inserted] = exportEntries.emplace(name, symbol); !inserted && std::memcmp(previous->second + 4, symbol + 4, symEntSize - 4) != 0)
+                throw RelinkerException("Conflicting executable exports after stripping #: " + name, entryOffset);
             std::uint64_t value = 0;
             std::uint64_t size = 0;
             std::memcpy(&value, symbol + 8, sizeof(value));
@@ -455,10 +529,11 @@ RelinkResult RelinkerPipeline::Relink() {
                 if (section >= SHN_LORESERVE)
                     throw RelinkerException("Unsupported executable export section: " + name, entryOffset);
                 const std::uint32_t flags = type == STT_FUNC ? PF_X : 0;
-                const auto extent = std::max<std::uint64_t>(size, 1);
+                const bool functionRoot = functionSymbolRoots && type == STT_FUNC;
+                const auto extent = functionRoot ? 1 : std::max<std::uint64_t>(size, 1);
                 const bool mapped = std::any_of(programHeaders.begin(), programHeaders.end(), [&](const ProgramHeader& ph) {
                     return ph.Type == PT_LOAD && (ph.Flags & flags) == flags && value >= ph.MappedAddress &&
-                           value - ph.MappedAddress < ph.MemorySize && extent <= ph.MemorySize - (value - ph.MappedAddress);
+                           value - ph.MappedAddress < (functionRoot ? ph.FileSize : ph.MemorySize) && extent <= (functionRoot ? ph.FileSize : ph.MemorySize) - (value - ph.MappedAddress);
                 });
                 if (!mapped) {
                     std::ostringstream message;
@@ -470,7 +545,7 @@ RelinkResult RelinkerPipeline::Relink() {
             }
             exportedSymbols.emplace_back(off, std::move(name));
             const auto binding = symbol[4] >> 4;
-            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC)
+            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC && section != SHN_ABS)
                 exportedFunctions.push_back(value);
         }
     }
@@ -530,7 +605,7 @@ RelinkResult RelinkerPipeline::Relink() {
     auto dynSection = dynamicSectionBuilder->BuildDynamicSection(dynamicRefs, neededLibraries, dynJmpRelOffset, pltCount);
     for (const auto& ref : dynamicRefs) {
         if (!ref.Library.empty()) continue;
-        if (auto declared = Domain::DeclaredImportModule(ref.Nid, importModules); !declared.empty()) dynSection.UnmatchedImportModules.insert(std::move(declared));
+        if (auto declared = Domain::DeclaredImportModule(ref.Nid, importModules, ownModules); !declared.empty()) dynSection.UnmatchedImportModules.insert(std::move(declared));
     }
 
     for (const auto& [off, name] : exportedSymbols) {
@@ -576,8 +651,8 @@ RelinkResult RelinkerPipeline::Relink() {
                     continue;
                 offset = *value;
             }
-            if (!hasTlsSegment)
-                throw RelinkerException("TLS relocation in an executable without a PT_TLS segment", pos);
+            if (!hasNonEmptyTlsSegment)
+                throw RelinkerException("TLS relocation in an executable without a non-empty PT_TLS segment", pos);
             if (relType == R_X86_64_DTPMOD64 && rAddend != 0)
                 throw RelinkerException("DTPMOD64 relocation has a nonzero addend", pos);
             const auto addend = relType == R_X86_64_DTPMOD64 ? 0 : static_cast<std::int64_t>(offset + static_cast<std::uint64_t>(rAddend));
@@ -587,6 +662,8 @@ RelinkResult RelinkerPipeline::Relink() {
 
     extractLocal(dynRelaOffset, dynRelaSize, false);
     extractLocal(dynJmpRelOffset, dynJmpRelSize, true);
+    for (const auto& [target, addend] : relrRelocations)
+        appendRela(dynSection.RelaData, target, R_X86_64_RELATIVE, static_cast<std::int64_t>(addend));
 
     std::vector<CallRegistryEntry> entries;
     entries.reserve(nidRefs.size());

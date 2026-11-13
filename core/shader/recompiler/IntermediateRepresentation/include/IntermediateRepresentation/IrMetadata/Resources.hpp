@@ -59,6 +59,16 @@ inline constexpr std::uint32_t ReferenceZero = 3u;
 [[nodiscard]] inline std::uint32_t Reference(std::uint32_t state) { return (state >> ReferenceShift) & 0x3u; }
 }
 
+namespace VolumeGather {
+inline constexpr std::uint32_t ClampXShift = 0u;
+inline constexpr std::uint32_t ClampYShift = 3u;
+inline constexpr std::uint32_t ClampZShift = 6u;
+inline constexpr std::uint32_t BorderShift = 9u;
+inline constexpr std::uint32_t BorderTransparentBlack = 0u;
+inline constexpr std::uint32_t BorderOpaqueBlack = 1u;
+inline constexpr std::uint32_t BorderOpaqueWhite = 2u;
+}
+
 inline constexpr std::uint32_t NoTable = std::numeric_limits<std::uint32_t>::max();
 
 enum class TableOperation : std::uint8_t { Supported, Unsupported };
@@ -94,12 +104,19 @@ struct ImageResource {
     bool flatVolumeCompatible = true;
     bool singleMipPlaneBiasCompatible = false;
     bool volumeArraySampleCompatible = false;
+    bool adjustedSample = false;
     bool flatLineCompatible = true;
     bool flatVolumeLineCompatible = true;
     bool dimensionQueryOnly = true;
+    bool sampledOnly = true;
     bool foldTexelOffsetsOnly = false;
     bool convertedSamples = false;
     bool remappedDepth1D = false;
+    bool layerRowsCompatible = true;
+    bool layerRows = false;
+    std::uint32_t maxArrayLayers = 0u;
+    bool optionalDescriptor = false;
+    bool volumeGather = false;
     std::uint32_t byElements = 0;
     std::uint32_t byComponents = 0;
     IrBufferFormat packedFormat = IrBufferFormat::Invalid;
@@ -150,10 +167,19 @@ inline bool SamplesBaseLevelIfUnnormalized(const SamplerResource& sampler) {
     return (sampler.uses & (SamplerUseImplicitLod | SamplerUseGradient)) != 0u && (sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseImplicitLod | SamplerUseGradient | SamplerUseNonZeroLod | SamplerUseOffset)) == 0u && !sampler.depthCompare;
 }
 
+inline bool MirrorsIfUnnormalized(const SamplerResource& sampler) {
+    return sampler.table == NoTable && !sampler.depthCompare && sampler.uses != 0u && ((sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset | SamplerUseNonZeroLod)) == 0u || SamplesBaseLevelIfUnnormalized(sampler));
+}
+
+inline bool AppliesLodBiasInShader(const SamplerResource& sampler) {
+    return sampler.table == NoTable && (sampler.uses & (SamplerUseExplicitLod | SamplerUseImplicitLod | SamplerUseGradient)) != 0u;
+}
+
 struct SampledResourcePair {
     std::uint32_t image = 0;
     std::uint32_t sampler = 0;
     std::uint32_t firstUsePc = 0;
+    bool volumeGather = false;
 
     bool operator==(const SampledResourcePair& other) const = default;
 };

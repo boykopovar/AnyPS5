@@ -1,6 +1,8 @@
+#include <algorithm>
 #include "prx/libc/include/Api.hpp"
 #include <cerrno>
 #include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -8,10 +10,12 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/HostErrno.hpp"
 #include "prx/libc/include/WindowsFormatting.hpp"
 
 #ifdef _WIN32
@@ -28,26 +32,32 @@ bool In(char16_t character, const char* set) {
     return character != 0 && character < 128 && std::strchr(set, static_cast<char>(character)) != nullptr;
 }
 
-void AppendUtf16(std::u16string& out, const char* text, std::size_t limit) {
-    for (std::size_t index = 0; out.size() < limit && text[index] != '\0';) {
+class WideEncodingError : public std::invalid_argument {
+public:
+    explicit WideEncodingError(std::u16string written, bool sequence = true)
+        : std::invalid_argument("Invalid multibyte string argument"), partial(std::move(written)), invalidSequence(sequence) {}
+    std::u16string partial;
+    bool invalidSequence;
+};
+
+bool AppendUtf16(std::u16string& out, const char* text, std::size_t limit) {
+    std::size_t index = 0;
+    for (std::size_t count = 0; count == 0 || count < limit; ++count) {
         const unsigned char lead = static_cast<unsigned char>(text[index]);
-        std::size_t extra = lead >= 0xf0 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
-        std::uint32_t code = extra == 3 ? lead & 0x07 : extra == 2 ? lead & 0x0f : extra == 1 ? lead & 0x1f : lead;
-        std::size_t used = 1;
-        for (; used <= extra; ++used) {
+        if (lead == 0) break;
+        if ((lead >= 0x80 && lead < 0xc0) || lead >= 0xf0) return false;
+        const std::size_t extra = lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
+        std::uint32_t code = extra == 2 ? lead & 0x0f : extra == 1 ? lead & 0x1f : lead;
+        for (std::size_t used = 1; used <= extra; ++used) {
             const unsigned char next = static_cast<unsigned char>(text[index + used]);
-            if ((next & 0xc0) != 0x80) { extra = 0; code = lead; used = 1; break; }
+            if ((next & 0xc0) != 0x80) return false;
             code = (code << 6) | (next & 0x3f);
         }
-        if (extra != 0) used = extra + 1;
-        index += used;
-        if (code >= 0x10000) {
-            if (limit - out.size() < 2) break;
-            code -= 0x10000;
-            out.push_back(static_cast<char16_t>(0xd800 + (code >> 10)));
-            out.push_back(static_cast<char16_t>(0xdc00 + (code & 0x3ff)));
-        } else out.push_back(static_cast<char16_t>(code));
+        index += extra + 1;
+        if (code == 0) break;
+        if (count < limit) out.push_back(static_cast<char16_t>(code));
     }
+    return true;
 }
 
 std::string ToUtf8(const std::u16string& text) {
@@ -82,6 +92,24 @@ template<class TValue> void AppendNumber(std::u16string& out, const std::string&
     out.append(text.begin(), text.begin() + size);
 }
 
+int AppendDecimalDigit(int value, char16_t digit) {
+    const int next = digit - u'0';
+    if (value > (INT_MAX - next) / 10) throw std::invalid_argument("Format width or precision out of range");
+    return value * 10 + next;
+}
+
+std::u16string WideNanText(const std::string& spec, bool negative, bool upper) {
+    char16_t sign = negative ? u'-' : u'\0';
+    for (std::size_t index = 1; !negative && index < spec.size() && std::strchr("-+ #0", spec[index]); ++index) {
+        if (spec[index] == '+') sign = u'+';
+        else if (spec[index] == ' ' && sign == u'\0') sign = u' ';
+    }
+    std::u16string text;
+    if (sign != u'\0') text.push_back(sign);
+    text += upper ? u"NAN" : u"nan";
+    return text;
+}
+
 void AppendPadded(std::u16string& out, const std::u16string& text, bool left, int width) {
     const std::size_t pad = width > 0 && static_cast<std::size_t>(width) > text.size() ? static_cast<std::size_t>(width) - text.size() : 0;
     if (!left) out.append(pad, u' ');
@@ -95,7 +123,7 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
     const char16_t* const start = format;
     std::string ascii;
     for (const char16_t* unit = format; *unit != 0; ++unit) ascii.push_back(*unit < 0x80 ? static_cast<char>(*unit) : '?');
-    args.Number(LibcDetail::NumberedArgumentClasses(ascii.c_str()));
+    args.Number(LibcDetail::NumberedArgumentClasses(ascii.c_str(), true));
     const auto position = [&] {
         const char* cursor = ascii.c_str() + (format - start);
         const std::size_t found = LibcDetail::ArgumentPosition(cursor);
@@ -116,18 +144,19 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
         bool left = false;
         int width = 0;
         int precision = -1;
-        while (In(*format, "-+ #0'")) {
+        while (In(*format, "-+ #0")) {
             if (*format == u'-') left = true;
-            if (*format != u'\'') spec += static_cast<char>(*format);
+            spec += static_cast<char>(*format);
             ++format;
         }
         if (*format == u'*') {
             ++format;
             width = star();
+            if (width == INT_MIN) throw std::invalid_argument("Format width out of range");
             if (width < 0) { left = true; spec += '-'; width = -width; }
             spec += std::to_string(width);
         } else {
-            while (*format >= u'0' && *format <= u'9') { width = width * 10 + (*format - u'0'); spec += static_cast<char>(*format++); }
+            while (*format >= u'0' && *format <= u'9') { width = AppendDecimalDigit(width, *format); spec += static_cast<char>(*format++); }
         }
         if (*format == u'.') {
             ++format;
@@ -138,7 +167,7 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
                 if (precision >= 0) spec += "." + std::to_string(precision);
             } else {
                 spec += '.';
-                while (*format >= u'0' && *format <= u'9') { precision = precision * 10 + (*format - u'0'); spec += static_cast<char>(*format++); }
+                while (*format >= u'0' && *format <= u'9') { precision = AppendDecimalDigit(precision, *format); spec += static_cast<char>(*format++); }
             }
         }
         std::string length;
@@ -146,9 +175,10 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             length += static_cast<char>(*format++);
             if ((length == "h" && *format == u'h') || (length == "l" && *format == u'l')) length += static_cast<char>(*format++);
         }
-        const char16_t conversion = *format;
+        char16_t conversion = *format;
         if (!conversion) throw std::invalid_argument("Incomplete format conversion");
         ++format;
+        if (conversion < 0x80) length = LibcDetail::ApplicableLength(length, static_cast<char>(conversion));
         const bool integerLength = length.empty() || length == "h" || length == "hh" || length == "l" || length == "ll" ||
             length == "j" || length == "z" || length == "t";
         if (conversion == u'd' || conversion == u'i') {
@@ -170,26 +200,52 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             } else value = args.Next<unsigned long long>();
             if (conversion == u'o' && value == 0 && precision == 0 && spec.find('#') != std::string::npos)
                 spec = spec.substr(0, spec.find('.')) + ".1";
+            const auto flags = spec.begin() + static_cast<std::ptrdiff_t>(std::min(spec.find_first_not_of("-+ #0", 1), spec.size()));
+            spec.erase(std::remove_if(spec.begin() + 1, flags, [](char flag) { return flag == ' ' || flag == '+'; }), flags);
             AppendNumber(out, spec + "ll" + static_cast<char>(conversion), value);
         } else if (In(conversion, "aAeEfFgG")) {
-            if (length == "L") AppendNumber(out, spec + "L" + static_cast<char>(conversion), args.Next<long double>());
-            else {
+            const char narrow = static_cast<char>(conversion);
+            const bool hexadecimal = narrow == 'a' || narrow == 'A';
+            if (length == "L") {
+                const long double value = args.Next<long double>();
+                if (std::isnan(value)) {
+                    AppendPadded(out, WideNanText(spec, std::signbit(value), conversion < u'a'), left, width);
+                } else if (std::isfinite(value)) {
+                    const std::string text = hexadecimal ? LibcDetail::HexFloat(spec, narrow, value) : LibcDetail::DecimalFloat(spec, narrow, value);
+                    out.append(text.begin(), text.end());
+                } else {
+                    AppendNumber(out, spec + "L" + narrow, value);
+                }
+            } else {
                 if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
-                AppendNumber(out, spec + static_cast<char>(conversion), args.Next<double>());
+                const double value = args.Next<double>();
+                if (std::isnan(value)) {
+                    AppendPadded(out, WideNanText(spec, std::signbit(value), conversion < u'a'), left, width);
+                } else if (std::isfinite(value)) {
+                    const std::string text = hexadecimal ? LibcDetail::HexFloat(spec, narrow, value) : LibcDetail::DecimalFloat(spec, narrow, value);
+                    out.append(text.begin(), text.end());
+                } else {
+                    AppendNumber(out, spec + narrow, value);
+                }
             }
-        } else if (conversion == u'p' && length.empty()) {
+        } else if (conversion == u'p' && (length.empty() || length == "l")) {
             const std::string text = LibcDetail::FormatPointer(spec, args.Next<void*>());
             out.append(text.begin(), text.end());
-        } else if (conversion == u'c' || conversion == u'C') {
+        } else if (conversion == u'c') {
             const int value = args.Next<int>();
             std::u16string text;
-            if (conversion == u'C' || length == "l") text.push_back(static_cast<char16_t>(value));
-            else text.push_back(static_cast<char16_t>(static_cast<unsigned char>(value)));
+            if (length == "l") {
+                text.push_back(static_cast<char16_t>(value));
+            } else {
+                const auto byte = static_cast<unsigned char>(value);
+                if (byte >= 0x80) throw WideEncodingError(out, value != -1 && (byte < 0xc0 || byte >= 0xf0));
+                text.push_back(static_cast<char16_t>(byte));
+            }
             AppendPadded(out, text, left, width);
-        } else if (conversion == u's' || conversion == u'S') {
+        } else if (conversion == u's') {
             std::u16string text;
             const std::size_t limit = precision < 0 ? SIZE_MAX : static_cast<std::size_t>(precision);
-            if (conversion == u'S' || length == "l") {
+            if (length == "l") {
                 const char16_t* value = args.Next<const char16_t*>();
                 if (value == nullptr && secure) throw std::invalid_argument("Null string argument");
                 if (value == nullptr) value = u"(null)";
@@ -197,7 +253,8 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             } else {
                 const char* value = args.Next<const char*>();
                 if (value == nullptr && secure) throw std::invalid_argument("Null string argument");
-                AppendUtf16(text, value != nullptr ? value : "(null)", limit);
+                if (!AppendUtf16(text, value != nullptr ? value : "(null)", limit)) throw WideEncodingError(out);
+                if (text.empty()) width = 0;
             }
             AppendPadded(out, text, left, width);
         } else if (conversion == u'n' && integerLength && spec == "%" && !secure) {
@@ -208,6 +265,11 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
             else if (length.empty()) *static_cast<int*>(pointer) = count;
             else *static_cast<long long*>(pointer) = count;
+        } else if (conversion == u'S' || (conversion < 0x80 && !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion))) || (conversion >= 0xd800 && conversion < 0xdc00)) {
+            std::u16string text = u"%";
+            if (conversion != u'%') text.push_back(conversion);
+            if (conversion >= 0xd800 && conversion < 0xdc00 && *format >= 0xdc00 && *format < 0xe000) text.push_back(*format++);
+            AppendPadded(out, text, left, width);
         } else {
             throw std::invalid_argument("Unsupported format conversion");
         }
@@ -228,6 +290,12 @@ int APS5_VABI vswprintf_nid_postfix(char16_t* buffer, std::size_t size, const ch
         std::memcpy(buffer, text.data(), copied * sizeof(char16_t));
         buffer[copied] = 0;
         return copied == text.size() ? static_cast<int>(copied) : -1;
+    } catch (const WideEncodingError& error) {
+        const std::size_t copied = error.partial.size() < size - 1 ? error.partial.size() : size - 1;
+        std::memcpy(buffer, error.partial.data(), copied * sizeof(char16_t));
+        buffer[copied] = 0;
+        if (error.invalidSequence) errno = 86;
+        return -1;
     } catch (const std::exception&) {
         buffer[0] = 0;
         errno = 22;
@@ -322,12 +390,16 @@ int APS5_VABI vsnwprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const
 
 int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {
     if (!__stdoutp_nid_postfix->IsOpen()) { errno = 9; return -1; }
+    _Stdout_nid_postfix.Orientation(1);
+    if (!__stdoutp_nid_postfix->SwitchToWriting()) return -1;
     APS5_VA_BEGIN(format);
     int result = -1;
     try {
         const std::u16string text = FormatWide(format, reinterpret_cast<VaList*>(args));
         const std::string bytes = ToUtf8(text);
         if (std::fwrite(bytes.data(), 1, bytes.size(), GetNativeStream(__stdoutp_nid_postfix)) == bytes.size()) result = static_cast<int>(text.size());
+    } catch (const WideEncodingError& error) {
+        if (error.invalidSequence) errno = 86;
     } catch (const std::exception&) {
         errno = 22;
     }
@@ -338,11 +410,15 @@ int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {
 int APS5_VABI vfwprintf_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
     if (stream == nullptr || format == nullptr) { errno = 22; return -1; }
     if (!stream->IsOpen()) { errno = 9; return -1; }
+    stream->Orientation(1);
+    if (!stream->SwitchToWriting()) return -1;
     int result = -1;
     try {
         const std::u16string text = FormatWide(format, args);
         const std::string bytes = ToUtf8(text);
         if (std::fwrite(bytes.data(), 1, bytes.size(), GetNativeStream(stream)) == bytes.size()) result = static_cast<int>(text.size());
+    } catch (const WideEncodingError& error) {
+        if (error.invalidSequence) errno = 86;
     } catch (const std::exception&) {
         errno = 22;
     }
@@ -361,13 +437,55 @@ int APS5_VABI vwprintf_nid_postfix(const char16_t* format, VaList* args) {
     return vfwprintf_nid_postfix(__stdoutp_nid_postfix, format, args);
 }
 
+int APS5_VABI vfwprintf_s_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
+    if (stream == nullptr || format == nullptr || args == nullptr) return -1;
+    if (!stream->IsOpen()) { errno = 9; return -1; }
+    stream->Orientation(1);
+    if (!stream->SwitchToWriting()) return -1;
+    int result = -1;
+    try {
+        const std::u16string text = FormatWide(format, args, true);
+        const std::string bytes = ToUtf8(text);
+        if (text.size() <= static_cast<std::size_t>(INT_MAX) &&
+            std::fwrite(bytes.data(), 1, bytes.size(), GetNativeStream(stream)) == bytes.size()) result = static_cast<int>(text.size());
+    } catch (const std::invalid_argument&) {
+    }
+    stream->SyncStatus();
+    return result;
+}
+
+int APS5_VABI vwprintf_s_nid_postfix(const char16_t* format, VaList* args) {
+    return vfwprintf_s_nid_postfix(__stdoutp_nid_postfix, format, args);
+}
+
+int APS5_VABI fwprintf_s_nid_postfix(FileStream* stream, const char16_t* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vfwprintf_s_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
+}
+
+int APS5_VABI wprintf_s_nid_postfix(const char16_t* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vfwprintf_s_nid_postfix(__stdoutp_nid_postfix, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
+}
+
 int APS5_VABI fputwc_nid_postfix(char16_t value, FileStream* stream) {
     if (stream == nullptr) { errno = 22; return -1; }
     if (!stream->IsOpen()) { errno = 9; return -1; }
+    stream->Orientation(1);
     try {
         const std::string bytes = ToUtf8(std::u16string(1, value));
         auto* native = GetNativeStream(stream);
-        if (std::fwrite(bytes.data(), 1, bytes.size(), native) != bytes.size()) throw std::runtime_error("stream write failed");
+        if (!stream->SwitchToWriting()) return -1;
+        if (std::fwrite(bytes.data(), 1, bytes.size(), native) != bytes.size()) {
+            const int error = GuestErrnoFromHost_nid_no_patch(errno);
+            stream->SyncStatus();
+            errno = error;
+            return -1;
+        }
         stream->SyncStatus();
         return value;
     } catch (const std::exception&) {
@@ -379,11 +497,18 @@ int APS5_VABI fputwc_nid_postfix(char16_t value, FileStream* stream) {
 int APS5_VABI fputws_nid_postfix(const char16_t* str, FileStream* stream) {
     if (str == nullptr || stream == nullptr) { errno = 22; return -1; }
     if (!stream->IsOpen()) { errno = 9; return -1; }
+    stream->Orientation(1);
     try {
         const std::u16string text(str);
         const std::string bytes = ToUtf8(text);
         auto* native = GetNativeStream(stream);
-        if (std::fwrite(bytes.data(), 1, bytes.size(), native) != bytes.size()) throw std::runtime_error("stream write failed");
+        if (!stream->SwitchToWriting()) return -1;
+        if (std::fwrite(bytes.data(), 1, bytes.size(), native) != bytes.size()) {
+            const int error = GuestErrnoFromHost_nid_no_patch(errno);
+            stream->SyncStatus();
+            errno = error;
+            return -1;
+        }
         stream->SyncStatus();
         return static_cast<int>(text.size());
     } catch (const std::exception&) {
@@ -401,6 +526,7 @@ int APS5_VABI putwchar_nid_postfix(char16_t value) {
 }
 
 char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* stream) {
+    if (stream != nullptr) stream->Orientation(1);
     if (size < 2) return nullptr;
     if (buffer == nullptr || stream == nullptr) {
         if (stream != nullptr) stream->SetError();

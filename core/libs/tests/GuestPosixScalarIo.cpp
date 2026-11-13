@@ -119,6 +119,16 @@ int main() {
     RequirePosixFailure([&] { return pwrite_nid_disambig1_nid_postfix(descriptor, payload, oversized, 0); }, EINVAL);
     RequirePosixFailure([&] { return read_nid_postfix(-1, buffer, oversized); }, EINVAL);
     RequirePosixFailure([&] { return write_nid_postfix(-1, payload, -1); }, EINVAL);
+    RequirePosixFailure([&] { return pread_nid_postfix(-1, buffer, 1, 0); }, EBADF);
+    RequirePosixFailure([&] { return pwrite_nid_disambig1_nid_postfix(-1, payload, 1, 0); }, EBADF);
+    RequirePosixFailure([&] { return pread_nid_postfix(descriptor, buffer, 1, -1); }, EINVAL);
+    RequirePosixFailure([&] { return pwrite_nid_disambig1_nid_postfix(descriptor, payload, 1, -1); }, EINVAL);
+    RequirePosixFailure([&] { return pread_nid_postfix(descriptor, nullptr, 1, 0); }, EFAULT);
+    RequirePosixFailure([&] { return pwrite_nid_disambig1_nid_postfix(descriptor, nullptr, 1, 0); }, EFAULT);
+    Require(pread_nid_postfix(descriptor, nullptr, 0, 0) == 0);
+    Require(pwrite_nid_disambig1_nid_postfix(descriptor, nullptr, 0, 0) == 0);
+    RequirePosixFailure([&] { return pread_nid_postfix(-1, nullptr, 0, 0); }, EBADF);
+    RequirePosixFailure([&] { return pwrite_nid_disambig1_nid_postfix(-1, nullptr, 0, 0); }, EBADF);
 #ifdef _WIN32
     errno = EACCES;
     bool limitDiagnosticPreserved = false;
@@ -140,6 +150,14 @@ int main() {
     Require(sceKernelWrite(descriptor, nullptr, 0) == 0);
     Require(sceKernelRead(-1, nullptr, 0) == static_cast<std::int32_t>(0x80020009u));
     Require(sceKernelWrite(-1, nullptr, 0) == static_cast<std::int32_t>(0x80020009u));
+    Require(sceKernelPread(-1, direct, 1, 0) == static_cast<std::int32_t>(0x80020009u));
+    Require(sceKernelPwrite(-1, direct, 1, 0) == static_cast<std::int32_t>(0x80020009u));
+    Require(sceKernelPread(descriptor, nullptr, 1, 0) == static_cast<std::int32_t>(0x8002000eu));
+    Require(sceKernelPwrite(descriptor, nullptr, 1, 0) == static_cast<std::int32_t>(0x8002000eu));
+    Require(sceKernelPread(descriptor, direct, 1, -1) == static_cast<std::int32_t>(0x80020016u));
+    Require(sceKernelPwrite(descriptor, direct, 1, -1) == static_cast<std::int32_t>(0x80020016u));
+    Require(sceKernelPread(descriptor, nullptr, 0, 0) == 0);
+    Require(sceKernelPwrite(descriptor, nullptr, 0, 0) == 0);
     FileStat nullStat{};
     Require(sceKernelStat(nullptr, &nullStat) == static_cast<std::int32_t>(0x8002000eu));
     Require(sceKernelStat(nullptr, nullptr) == static_cast<std::int32_t>(0x8002000eu));
@@ -180,6 +198,20 @@ int main() {
     Require(_read_nid_postfix(capacityDescriptors[0], largeBuffer.data(), largeBuffer.size()) == static_cast<std::int64_t>(largeBuffer.size()));
     Require(largeBuffer == largePayload);
     Require(close_nid_postfix(capacityDescriptors[0]) == 0);
+#ifdef _WIN32
+    constexpr int GuestEpipe = 32;
+    int brokenPipe[2] = {-1, -1};
+    Require(pipe_nid_postfix(brokenPipe) == 0);
+    Require(close_nid_postfix(brokenPipe[0]) == 0);
+    RequirePosixFailure([&] { return write_nid_postfix(brokenPipe[1], pipePayload, 1); }, GuestEpipe);
+    RequirePosixFailure([&] { return _write_nid_postfix(brokenPipe[1], pipePayload, 1); }, GuestEpipe);
+    Require(sceKernelWrite(brokenPipe[1], pipePayload, 1) == static_cast<std::int32_t>(0x80020000u | GuestEpipe));
+    char brokenByte = 'b';
+    const KernelIovec brokenVector{&brokenByte, 1};
+    RequirePosixFailure([&] { return writev_nid_postfix(brokenPipe[1], &brokenVector, 1); }, GuestEpipe);
+    Require(sceKernelWritev(brokenPipe[1], &brokenVector, 1) == static_cast<std::int32_t>(0x80020000u | GuestEpipe));
+    Require(close_nid_postfix(brokenPipe[1]) == 0);
+#endif
 #ifndef _WIN32
     int nonBlockingPipe[2] = {-1, -1};
     Require(pipe_nid_postfix(nonBlockingPipe) == 0);

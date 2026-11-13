@@ -88,9 +88,7 @@ static int registerVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind,
 }
 
 static int deleteVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind) {
-    if (!VideoOutDriver::Get().IsOpen(handle)) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
-    }
+    if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     if (eq == 0 || !EqueuePin_nid_postfix(eq)) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE");
     }
@@ -171,26 +169,16 @@ int APS5_VABI sceVideoOutDeleteVrrActiveStatusEvent(KernelEqueue eq, int handle)
 }
 
 int APS5_VABI sceVideoOutGetEventId(const KernelEvent* ev) {
-    if (ev == nullptr) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
-    }
-    if (ev->filter != EVFILT_VIDEO_OUT) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT");
-    }
-    const int ident = static_cast<int>(ev->ident);
-    if (ident != VIDEO_OUT_EVENT_FLIP && ident != VIDEO_OUT_EVENT_VBLANK && ident != VIDEO_OUT_EVENT_PRE_VBLANK_START && ident != VIDEO_OUT_EVENT_SET_MODE && ident != VIDEO_OUT_EVENT_VRR_STATUS) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT");
-    }
-    return ident;
+    if (ev == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    if (ev->filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
+    const uintptr_t ident = ev->ident;
+    if (ident != VIDEO_OUT_EVENT_FLIP && ident != VIDEO_OUT_EVENT_VBLANK && ident != VIDEO_OUT_EVENT_PRE_VBLANK_START && ident != VIDEO_OUT_EVENT_SET_MODE && ident != VIDEO_OUT_EVENT_VRR_STATUS) return VIDEO_OUT_ERROR_INVALID_EVENT;
+    return static_cast<int>(ident);
 }
 
 int APS5_VABI sceVideoOutGetEventData(const KernelEvent* ev, int64_t* data) {
-    if (ev == nullptr || data == nullptr) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
-    }
-    if (ev->filter != EVFILT_VIDEO_OUT) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT");
-    }
+    if (ev == nullptr || data == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    if (ev->filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
     uint64_t eventData = static_cast<uint64_t>(ev->data) >> 16u;
     if (ev->ident == static_cast<uintptr_t>(VIDEO_OUT_EVENT_FLIP) && (static_cast<uint64_t>(ev->data) & 0x8000000000000000ULL) != 0) {
         eventData |= 0xffff000000000000ULL;
@@ -202,9 +190,6 @@ int APS5_VABI sceVideoOutGetEventData(const KernelEvent* ev, int64_t* data) {
 int APS5_VABI sceVideoOutGetEventCount(const KernelEvent* ev) {
     if (ev == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
-    }
-    if (ev->filter != EVFILT_VIDEO_OUT) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT");
     }
     return static_cast<int>((static_cast<uint64_t>(ev->data) >> 12u) & 0xfu);
 }

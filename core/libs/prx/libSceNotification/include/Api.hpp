@@ -2,6 +2,16 @@
 
 #include "SceTypes.hpp"
 
+namespace Notification {
+
+inline constexpr std::int32_t InvalidMessage = static_cast<std::int32_t>(0x81980001u);
+
+inline constexpr std::size_t IdCapacity = 0x20;
+
+inline constexpr std::size_t MessageCapacity = 0x1800;
+
+}
+
 extern "C" {
 
 int APS5_VABI sceNotificationSend(int type, std::uint8_t flag, std::uint8_t* message);

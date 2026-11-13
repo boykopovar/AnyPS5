@@ -1,5 +1,6 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
@@ -8,11 +9,14 @@
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
+#include <atomic>
 #include <filesystem>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <vector>
 #if defined(_WIN32)
 #include <windows.h>
@@ -26,12 +30,30 @@
 #include "SceTypes.hpp"
 #include "LoadExec.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostExecutable.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceSystemService/HostUrlBackends.hpp"
+#include "prx/libSceSystemService/DateTimeLocale.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 
 namespace {
+
+HostBrowserLauncher g_defaultUrlLauncher;
+HostMessageBoxConfirmation g_defaultUrlConfirmation;
+std::atomic<IUrlLauncher*> g_urlLauncher{&g_defaultUrlLauncher};
+std::atomic<IUrlConfirmation*> g_urlConfirmation{&g_defaultUrlConfirmation};
+SteadyUrlClock g_steadyUrlClock;
+OpenUrlGate g_urlGate(g_steadyUrlClock);
+
+int OpenWebBrowserUrl(const char* uri) {
+    const OpenUrlMode mode = OpenUrlModeFromEnvironment("sceSystemServiceLaunchWebBrowser");
+    if (mode == OpenUrlMode::Never) return SCE_KERNEL_ERROR_EOPNOTSUPP;
+    const OpenUrlGateOutcome outcome = g_urlGate.Run(mode, uri, *g_urlLauncher.load(), *g_urlConfirmation.load());
+    return outcome == OpenUrlGateOutcome::Launched ? SYSTEM_SERVICE_OK : SCE_KERNEL_ERROR_EOPNOTSUPP;
+}
 
 struct MeasuredParameter {
     int id;
@@ -72,6 +94,21 @@ ConsoleTimeZone HostTimeZone() {
     return {static_cast<int>(offset.count()) - summerMinutes, summer};
 }
 
+std::mutex appSuspendBlockMutex;
+int appSuspendBlocks = 0;
+
+int WriteStatus(bool* status, bool value, const char* function) {
+    if (status == nullptr) NotImplemented_nid_no_patch((std::string(function) + " with a null output").c_str());
+    *status = value;
+    return SYSTEM_SERVICE_OK;
+}
+
+int WriteStatusOrRefuse(bool* status, bool value, int nullOutputError) {
+    if (status == nullptr) return nullOutputError;
+    if (!GuestCopyOut_nid_no_patch(status, &value, sizeof(value))) return nullOutputError;
+    return SYSTEM_SERVICE_OK;
+}
+
 constexpr char MainExecutable[] = "/app0/eboot.bin";
 constexpr char ApplicationRoot[] = "/app0/";
 constexpr char MainExecutableVariable[] = "APS5_EBOOT";
@@ -80,23 +117,7 @@ constexpr wchar_t MainExecutableVariableWide[] = L"APS5_EBOOT";
 #endif
 
 [[noreturn]] void UnconvertedExecutable(const std::string& message) {
-    NotImplemented_nid_no_patch(("sceSystemServiceLoadExec: " + message).c_str());
-    std::abort();
-}
-
-std::string ConvertedExecutableName(const char* path) {
-    std::string_view relative(path);
-    if (!relative.starts_with(ApplicationRoot)) UnconvertedExecutable(std::string("executables outside /app0 (") + path + ")");
-    relative.remove_prefix(std::size(ApplicationRoot) - 1);
-    std::string name;
-    while (true) {
-        const std::size_t separator = relative.find('/');
-        const std::string_view component = relative.substr(0, separator);
-        if (component.empty() || component == "." || component == "..") UnconvertedExecutable(std::string("a path with an empty, . or .. component (") + path + ")");
-        name += (name.empty() ? "" : ".") + std::string(component);
-        if (separator == std::string_view::npos) return name;
-        relative.remove_prefix(separator + 1);
-    }
+    throw std::runtime_error("sceSystemServiceLoadExec: " + message);
 }
 
 void RequireExecutableBeside(const std::filesystem::path& directory, const std::filesystem::path& target, const char* guestPath) {
@@ -106,47 +127,13 @@ void RequireExecutableBeside(const std::filesystem::path& directory, const std::
 }
 
 #if defined(_WIN32)
-std::wstring Utf16(const std::string& text) {
-    if (text.empty()) return {};
-    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (size <= 0) throw std::runtime_error("sceSystemServiceLoadExec: argument is not valid UTF-8");
-    std::wstring wide(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), wide.data(), size);
-    return wide;
-}
-
-std::wstring QuotedArgument(const std::wstring& argument) {
-    if (!argument.empty() && argument.find_first_of(L" \t\n\v\"") == std::wstring::npos) return argument;
-    std::wstring quoted = L"\"";
-    for (std::size_t index = 0;; ++index) {
-        std::size_t backslashes = 0;
-        while (index < argument.size() && argument[index] == L'\\') {
-            ++backslashes;
-            ++index;
-        }
-        if (index == argument.size()) {
-            quoted.append(backslashes * 2, L'\\');
-            break;
-        }
-        quoted.append(argument[index] == L'"' ? backslashes * 2 + 1 : backslashes, L'\\');
-        quoted.push_back(argument[index]);
-    }
-    quoted.push_back(L'"');
-    return quoted;
-}
-
 struct HostLaunch {
     std::wstring executable;
     std::wstring commandLine;
 };
 
 HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
-    std::wstring own(32768, L'\0');
-    const DWORD length = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
-    if (length == 0 || length >= own.size()) {
-        throw std::runtime_error("sceSystemServiceLoadExec: GetModuleFileNameW failed with error " + std::to_string(GetLastError()));
-    }
-    own.resize(length);
+    const std::wstring own = HostExecutable::Own("sceSystemServiceLoadExec").wstring();
     HostLaunch launch;
     const std::filesystem::path ownPath(own);
     if (std::strcmp(path, MainExecutable) == 0) {
@@ -154,7 +141,7 @@ HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
         const DWORD mainLength = GetEnvironmentVariableW(MainExecutableVariableWide, main.data(), static_cast<DWORD>(main.size()));
         launch.executable = mainLength > 0 && mainLength < main.size() ? main.substr(0, mainLength) : own;
     } else {
-        const auto target = ownPath.parent_path() / (Utf16(ConvertedExecutableName(path)) + ownPath.extension().wstring());
+        const auto target = ownPath.parent_path() / (HostExecutable::Wide(HostExecutable::ConvertedName(path, UnconvertedExecutable), "sceSystemServiceLoadExec") + ownPath.extension().wstring());
         RequireExecutableBeside(ownPath.parent_path(), target, path);
         if (!std::filesystem::is_regular_file(target)) {
             UnconvertedExecutable(std::string(path) + " without its converted executable; relink with --executable " + (path + std::size(ApplicationRoot) - 1));
@@ -166,12 +153,13 @@ HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
     }
     launch.commandLine = L"\"" + launch.executable + L"\"";
     for (std::size_t index = 0; arguments != nullptr && arguments[index] != nullptr; ++index) {
-        launch.commandLine += L" " + QuotedArgument(Utf16(arguments[index]));
+        launch.commandLine += L" " + HostExecutable::QuotedArgument(HostExecutable::Wide(arguments[index], "sceSystemServiceLoadExec"));
     }
     return launch;
 }
 
 void StartHostExecutable(HostLaunch& launch) {
+    LogFileRelease_nid_no_patch();
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
@@ -187,30 +175,14 @@ struct HostLaunch {
     std::vector<std::string> arguments;
 };
 
-std::filesystem::path OwnExecutable() {
-    std::error_code error;
-#ifdef __APPLE__
-    std::uint32_t size = 0;
-    _NSGetExecutablePath(nullptr, &size);
-    std::vector<char> executable(size);
-    std::filesystem::path own;
-    if (_NSGetExecutablePath(executable.data(), &size) == 0) own = std::filesystem::canonical(executable.data(), error);
-    if (own.empty()) throw std::runtime_error("sceSystemServiceLoadExec: cannot locate the executable");
-#else
-    const auto own = std::filesystem::read_symlink("/proc/self/exe", error);
-    if (error) throw std::runtime_error("sceSystemServiceLoadExec: cannot read /proc/self/exe: " + error.message());
-#endif
-    return own;
-}
-
 HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
-    const auto own = OwnExecutable();
+    const auto own = HostExecutable::Own("sceSystemServiceLoadExec");
     HostLaunch launch;
     if (std::strcmp(path, MainExecutable) == 0) {
         const char* main = std::getenv(MainExecutableVariable);
         launch.executable = main != nullptr && *main != '\0' ? main : own.string();
     } else {
-        const auto target = own.parent_path() / (ConvertedExecutableName(path) + own.extension().string());
+        const auto target = own.parent_path() / (HostExecutable::ConvertedName(path, UnconvertedExecutable) + own.extension().string());
         RequireExecutableBeside(own.parent_path(), target, path);
         if (!std::filesystem::is_regular_file(target)) {
             UnconvertedExecutable(std::string(path) + " without its converted executable; relink with --executable " + (path + std::size(ApplicationRoot) - 1));
@@ -232,6 +204,7 @@ void StartHostExecutable(HostLaunch& launch) {
     if (const int host = HostStandardError_nid_no_patch(); host >= 0 && ::dup2(host, 2) != 2) {
         throw std::runtime_error("sceSystemServiceLoadExec: cannot give the host standard error back to descriptor 2: " + std::string(std::strerror(errno)));
     }
+    LogFileRelease_nid_no_patch();
     ::execv(launch.executable.c_str(), argv.data());
     throw std::runtime_error("sceSystemServiceLoadExec: execv failed: " + std::string(std::strerror(errno)));
 }
@@ -253,16 +226,105 @@ std::string RunningTitleId() {
 }
 
 void CopyRunningTitleId(const std::string& caller, bool running, char* destination) {
-    if (!running) NotImplemented_nid_no_patch((caller + ": application other than the running title").c_str());
-    if (destination == nullptr) NotImplemented_nid_no_patch((caller + ": null title ID buffer").c_str());
+    if (!running) throw std::runtime_error(caller + ": application other than the running title");
+    if (destination == nullptr) throw std::runtime_error(caller + ": null title ID buffer");
     const std::string titleId = RunningTitleId();
-    if (titleId.size() >= TitleIdBufferSize) NotImplemented_nid_no_patch((caller + ": title ID that does not fit 10 bytes").c_str());
-    std::memcpy(destination, titleId.c_str(), titleId.size() + 1);
+    if (titleId.size() >= TitleIdBufferSize) throw std::runtime_error(caller + ": title ID that does not fit 10 bytes");
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, titleId.c_str(), titleId.size() + 1);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(caller + ": unwritable title ID buffer");
 }
+
+bool WellFormedTitleId(const char* titleId) {
+    return titleId != nullptr && std::strlen(titleId) == SYSTEM_SERVICE_TITLE_ID_LENGTH;
+}
+
+int RunningAppId(const std::string& caller, const char* titleId) {
+    if (!WellFormedTitleId(titleId)) return SYSTEM_SERVICE_INVALID_TITLE_APP_ID;
+    if (RunningTitleId() != titleId) NotImplemented_nid_no_patch((caller + ": title other than the running title").c_str());
+    return SYSTEM_SERVICE_RUNNING_APP_ID;
+}
+
+template<typename TValue>
+int AnswerForRunningApp(const std::string& caller, std::int32_t appId, TValue* destination, std::type_identity_t<TValue> value, int nullOutputResult) {
+    if (destination == nullptr) return nullOutputResult;
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) throw std::runtime_error(caller + ": application other than the running title");
+    *destination = value;
+    return SYSTEM_SERVICE_OK;
+}
+
+int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
+    if (appIds == nullptr || count == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    if (capacity == 0) throw std::runtime_error(caller + ": a list with no room for the running title");
+    appIds[0] = SYSTEM_SERVICE_RUNNING_APP_ID;
+    *count = 1;
+    return SYSTEM_SERVICE_OK;
+}
+
+constexpr std::uint32_t GpuLoadEmulationModeOff = 0;
+constexpr std::uint32_t GpuLoadEmulationModeNormal = 1;
+
+std::atomic<std::uint32_t> GpuLoadEmulationMode{GpuLoadEmulationModeNormal};
+
+int SetGpuLoadEmulationMode(const char* caller, std::uint32_t mode) {
+    if (mode != GpuLoadEmulationModeOff && mode != GpuLoadEmulationModeNormal) {
+        NotImplemented_nid_no_patch((std::string(caller) + ": a mode other than 0 and 1").c_str());
+    }
+    GpuLoadEmulationMode.store(mode, std::memory_order_relaxed);
+    return SYSTEM_SERVICE_OK;
+}
+
+int GetGpuLoadEmulationModeOfApp(const char* caller, std::int32_t appId) {
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch((std::string(caller) + ": application other than the running title").c_str());
+    return static_cast<int>(GpuLoadEmulationMode.load(std::memory_order_relaxed));
+}
+
+std::atomic<bool> SuspendConfirmationDialogEnabled{true};
 
 }
 
 extern "C" {
+
+int APS5_VABI sceSystemServiceEnableSuspendConfirmationDialog() {
+    SuspendConfirmationDialogEnabled.store(true, std::memory_order_relaxed);
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceSystemServiceDisableSuspendConfirmationDialog() {
+    SuspendConfirmationDialogEnabled.store(false, std::memory_order_relaxed);
+    return SYSTEM_SERVICE_OK;
+}
+
+bool APS5_VABI sceShellCoreUtilGetSuspendConfirmationDialogFlag(std::int32_t appId) {
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch("sceShellCoreUtilGetSuspendConfirmationDialogFlag: application other than the running title");
+    return SuspendConfirmationDialogEnabled.load(std::memory_order_relaxed);
+}
+
+int APS5_VABI sceSystemServiceSetGpuLoadEmulationMode(std::uint32_t mode) {
+    return SetGpuLoadEmulationMode("sceSystemServiceSetGpuLoadEmulationMode", mode);
+}
+
+int APS5_VABI sceSystemServiceGetGpuLoadEmulationMode() {
+    return static_cast<int>(GpuLoadEmulationMode.load(std::memory_order_relaxed));
+}
+
+int APS5_VABI sceShellCoreUtilSetGpuLoadEmulationMode(std::uint32_t mode) {
+    return SetGpuLoadEmulationMode("sceShellCoreUtilSetGpuLoadEmulationMode", mode);
+}
+
+int APS5_VABI sceShellCoreUtilGetGpuLoadEmulationMode() {
+    return static_cast<int>(GpuLoadEmulationMode.load(std::memory_order_relaxed));
+}
+
+int APS5_VABI sceShellCoreUtilSetGpuLoadEmulationModeByAppId(std::int32_t appId, std::uint32_t mode) {
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch("sceShellCoreUtilSetGpuLoadEmulationModeByAppId: application other than the running title");
+    return SetGpuLoadEmulationMode("sceShellCoreUtilSetGpuLoadEmulationModeByAppId", mode);
+}
+
+int APS5_VABI sceShellCoreUtilGetGpuLoadEmulationModeByAppId(std::int32_t appId) {
+    return GetGpuLoadEmulationModeOfApp("sceShellCoreUtilGetGpuLoadEmulationModeByAppId", appId);
+}
 
 int APS5_VABI sceSystemServiceLoadExec(const char* path, const char* const* arguments) {
     if (!path || !*path) return SYSTEM_SERVICE_ERROR_PARAMETER;
@@ -323,6 +385,131 @@ int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status) {
  return SYSTEM_SERVICE_OK;
 }
 
+int APS5_VABI sceLncUtilBlockAppSuspend(const char* reason) {
+    if (reason == nullptr) NotImplemented_nid_no_patch("sceLncUtilBlockAppSuspend with a null reason");
+    std::lock_guard lock(appSuspendBlockMutex);
+    ++appSuspendBlocks;
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilUnblockAppSuspend(const char* reason) {
+    std::lock_guard lock(appSuspendBlockMutex);
+    if (appSuspendBlocks == 0) return SCE_KERNEL_ERROR_EBUSY;
+    if (reason == nullptr) NotImplemented_nid_no_patch("sceLncUtilUnblockAppSuspend with a null reason while a block is held");
+    --appSuspendBlocks;
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilEnableSuspendNotification() {
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilDisableSuspendNotification() {
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceSystemServiceEnableSuspendNotification() {
+    return sceLncUtilEnableSuspendNotification();
+}
+
+int APS5_VABI sceSystemServiceDisableSuspendNotification() {
+    return sceLncUtilDisableSuspendNotification();
+}
+
+int APS5_VABI sceShellCoreUtilGetRemotePlayStatus(bool* active) {
+    return WriteStatusOrRefuse(active, false, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+int APS5_VABI sceSystemServiceGetRemoteplayStatus(bool* active) {
+    return sceShellCoreUtilGetRemotePlayStatus(active);
+}
+
+int APS5_VABI sceShellCoreUtilGetSharePlayStatus(bool* active) {
+    return WriteStatusOrRefuse(active, false, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+bool APS5_VABI sceShellCoreUtilIsGameLiveStreamingOnAir() {
+    return false;
+}
+
+bool APS5_VABI sceSystemServiceIsGameLiveStreamingOnAir() {
+    return sceShellCoreUtilIsGameLiveStreamingOnAir();
+}
+
+int APS5_VABI sceShellCoreUtilGetGameLiveStreamingStatus(bool* active) {
+    return WriteStatusOrRefuse(active, sceShellCoreUtilIsGameLiveStreamingOnAir(), SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+bool APS5_VABI sceLncUtilIsShellUiFgAndGameBgCpuMode() {
+    return false;
+}
+
+bool APS5_VABI sceSystemServiceIsShellUiFgAndGameBgCpuMode() {
+    return sceLncUtilIsShellUiFgAndGameBgCpuMode();
+}
+
+bool APS5_VABI sceShellCoreUtilIsImposeScreenOverlaid() {
+    return false;
+}
+
+bool APS5_VABI sceShellCoreUtilIsScreenSaverOn() {
+    return false;
+}
+
+bool APS5_VABI sceSystemServiceIsScreenSaverOn() {
+    return sceShellCoreUtilIsScreenSaverOn();
+}
+
+bool APS5_VABI sceSystemStateMgrIsShellUIShutdownInProgress() {
+    return false;
+}
+
+int APS5_VABI sceShellCoreUtilGetSocialScreenStatus(bool* active) {
+    return WriteStatus(active, false, __func__);
+}
+
+int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
+    if (adjusted == nullptr) NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted with a null output");
+    if (userId != static_cast<std::uint32_t>(USER_SERVICE_INITIAL_USER_ID)) {
+        NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted for a user other than the logged-in user");
+    }
+    const std::uint8_t result = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(adjusted, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) {
+        NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted with an unwritable output");
+    }
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
+    if (adjusted == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
+    std::uint8_t result = 0;
+    const int status = sceShellCoreUtilIsEyeToEyeDistanceAdjusted(userId, &result);
+    if (status != SYSTEM_SERVICE_OK) return status;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(adjusted, &result, sizeof(result));
+    errno = savedErrno;
+    return copied ? SYSTEM_SERVICE_OK : SYSTEM_SERVICE_ERROR_PARAMETER;
+}
+
+bool APS5_VABI sceSystemStateMgrIsBdDriveReady() {
+    return false;
+}
+
+bool APS5_VABI sceShellCoreUtilIsUsbMassStorageMounted(std::uint32_t) {
+    return false;
+}
+
+bool APS5_VABI sceShellCoreUtilIsExternalStorageAppMoveInProgress() {
+    return false;
+}
+
+int APS5_VABI sceLncUtilIsPs2Emu(bool* emulated) {
+    return WriteStatusOrRefuse(emulated, false, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
 int APS5_VABI sceSystemServiceHideSplashScreen(void) {
  return SYSTEM_SERVICE_OK;
 }
@@ -334,8 +521,8 @@ int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
  switch (paramId) {
   case SYSTEM_SERVICE_PARAM_ID_LANG:
   case SYSTEM_SERVICE_PARAM_ID_400: *value = SystemServiceConsoleLanguage("sceSystemServiceParamGetInt"); break;
-  case SYSTEM_SERVICE_PARAM_ID_DATE_FORMAT: *value = SYSTEM_SERVICE_PARAM_DATE_FORMAT_DDMMYYYY; break;
-  case SYSTEM_SERVICE_PARAM_ID_TIME_FORMAT: *value = SYSTEM_SERVICE_PARAM_TIME_FORMAT_24HOUR; break;
+  case SYSTEM_SERVICE_PARAM_ID_DATE_FORMAT: *value = SystemServiceDateTime::ConsoleDateFormat("sceSystemServiceParamGetInt"); break;
+  case SYSTEM_SERVICE_PARAM_ID_TIME_FORMAT: *value = SystemServiceDateTime::ConsoleTimeFormat("sceSystemServiceParamGetInt"); break;
   case SYSTEM_SERVICE_PARAM_ID_TIME_ZONE: *value = HostTimeZone().minutes; break;
   case SYSTEM_SERVICE_PARAM_ID_SUMMERTIME: *value = HostTimeZone().summer ? 1 : 0; break;
   default: {
@@ -363,9 +550,7 @@ int APS5_VABI sceSystemServicePowerTick(void) {
 }
 
 int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event) {
- if (event == nullptr) {
-  return SYSTEM_SERVICE_ERROR_PARAMETER;
- }
+ (void)event;
  return SYSTEM_SERVICE_ERROR_NO_EVENT;
 }
 
@@ -404,7 +589,13 @@ int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri) {
     while (length < 6016 && uri[length] != 0) ++length;
     if (length > 6015) return static_cast<int>(0x80a10007);
     if (std::strncmp(uri, "http:", 5) != 0 && std::strncmp(uri, "https:", 6) != 0 && std::strncmp(uri, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
-    return SCE_KERNEL_ERROR_EOPNOTSUPP;
+    return OpenWebBrowserUrl(uri);
+}
+
+extern "C" void SystemServiceSetUrlHandlers_nid_no_patch(IUrlLauncher* launcher, IUrlConfirmation* confirmation, IUrlClock* clock) {
+    g_urlLauncher = launcher != nullptr ? launcher : &g_defaultUrlLauncher;
+    g_urlConfirmation = confirmation != nullptr ? confirmation : &g_defaultUrlConfirmation;
+    g_urlGate.Reset(clock != nullptr ? *clock : static_cast<IUrlClock&>(g_steadyUrlClock));
 }
 
 int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* arguments, const void* param) {
@@ -412,7 +603,6 @@ int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* 
  (void)arguments;
  (void)param;
  NotImplemented_nid_no_patch("sceSystemServiceLaunchApp: launching another application");
- return 0;
 }
 
 int APS5_VABI sceSystemServiceDisableMusicPlayer(void) {
@@ -433,13 +623,11 @@ int APS5_VABI sceSystemServiceOpenTournamentOccurrence(const SystemServiceTourna
 }
 
 int APS5_VABI sceSystemServiceAddLocalProcessForPsmKit(const char*, const char* const*, const void*) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ NotImplemented_nid_no_patch("sceSystemServiceAddLocalProcessForPsmKit: starting another process");
 }
 
 int APS5_VABI sceSystemServiceKillLocalProcessForPsmKit(int) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ NotImplemented_nid_no_patch("sceSystemServiceKillLocalProcessForPsmKit: stopping another process");
 }
 
 int APS5_VABI sceSystemServiceReenableMusicPlayer(void) {
@@ -455,13 +643,7 @@ int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void) {
 }
 
 int APS5_VABI sceSystemServiceGetAppId(const char* titleId) {
- if (titleId == nullptr) {
-  NotImplemented_nid_no_patch("sceSystemServiceGetAppId: null title ID");
- }
- if (RunningTitleId() != titleId) {
-  NotImplemented_nid_no_patch("sceSystemServiceGetAppId: title other than the running title");
- }
- return SYSTEM_SERVICE_RUNNING_APP_ID;
+ return RunningAppId("sceSystemServiceGetAppId", titleId);
 }
 
 int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {
@@ -470,33 +652,82 @@ int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {
 }
 
 int APS5_VABI sceLncUtilGetAppTitleId(std::int32_t appId, char* titleId) {
- CopyRunningTitleId("sceLncUtilGetAppTitleId", appId == SYSTEM_SERVICE_RUNNING_APP_ID, titleId);
+ return sceSystemServiceGetAppTitleId(appId, titleId);
+}
+
+int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
+ return sceSystemServiceGetAppId(titleId);
+}
+
+int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
+ if (!WellFormedTitleId(titleId) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+ static_cast<void>(sceSystemServiceGetAppId(titleId));
+ *launched = true;
  return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilGetAppIdOfRunningBigApp() {
+ return sceSystemServiceGetAppIdOfRunningBigApp();
+}
+
+int APS5_VABI sceLncUtilGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
+ return ListRunningBigApp("sceLncUtilGetAppIdListOfBigApp", appIds, capacity, count);
+}
+
+int APS5_VABI sceSystemServiceGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
+ return sceLncUtilGetAppIdListOfBigApp(appIds, capacity, count);
+}
+
+int APS5_VABI sceLncUtilGetAppLaunchedUser(std::int32_t appId, std::int32_t* userId) {
+ return AnswerForRunningApp("sceLncUtilGetAppLaunchedUser", appId, userId, USER_SERVICE_INITIAL_USER_ID, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+int APS5_VABI sceSystemServiceGetAppLaunchedUser(std::int32_t appId, std::int32_t* userId) {
+ return sceLncUtilGetAppLaunchedUser(appId, userId);
+}
+
+int APS5_VABI sceShellCoreUtilGetUserFocus(std::int32_t appId, std::int32_t* userId) {
+ if (userId == nullptr) return SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT;
+ return sceLncUtilGetAppLaunchedUser(appId, userId);
+}
+
+int APS5_VABI sceLncUtilIsAppSuspended(std::int32_t appId, bool* suspended) {
+ return AnswerForRunningApp("sceLncUtilIsAppSuspended", appId, suspended, false, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+int APS5_VABI sceSystemServiceIsAppSuspended(std::int32_t appId, bool* suspended) {
+ return sceLncUtilIsAppSuspended(appId, suspended);
+}
+
+int APS5_VABI sceLncUtilLoadExec(const char* path, const char* const* argv) {
+ if (path == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+ if (path[0] == '\0') throw std::runtime_error("sceLncUtilLoadExec: empty path");
+ return sceSystemServiceLoadExec(path, argv);
 }
 
 int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDump) {
  if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) {
-  NotImplemented_nid_no_patch("sceSystemServiceKillApp: application other than the running title");
+  throw std::runtime_error("sceSystemServiceKillApp: application other than the running title");
  }
  if (how != -1 || reason != 0 || coreDump != 0) {
-  NotImplemented_nid_no_patch("sceSystemServiceKillApp: arguments other than -1, 0 and 0");
+  throw std::runtime_error("sceSystemServiceKillApp: arguments other than -1, 0 and 0");
  }
  LibcExit_nid_no_patch(0);
 }
 
 int APS5_VABI sceLncUtilKillApp(uint32_t appId) {
  if (appId != static_cast<uint32_t>(SYSTEM_SERVICE_RUNNING_APP_ID)) {
-  NotImplemented_nid_no_patch("sceLncUtilKillApp: application other than the running title");
+  throw std::runtime_error("sceLncUtilKillApp: application other than the running title");
  }
  LibcExit_nid_no_patch(0);
 }
 
 int APS5_VABI sceLncUtilKillAppWithReason(uint32_t appId, int reason) {
  if (appId != static_cast<uint32_t>(SYSTEM_SERVICE_RUNNING_APP_ID)) {
-  NotImplemented_nid_no_patch("sceLncUtilKillAppWithReason: application other than the running title");
+  throw std::runtime_error("sceLncUtilKillAppWithReason: application other than the running title");
  }
  if (reason != 0) {
-  NotImplemented_nid_no_patch("sceLncUtilKillAppWithReason: a reason other than 0");
+  throw std::runtime_error("sceLncUtilKillAppWithReason: a reason other than 0");
  }
  LibcExit_nid_no_patch(0);
 }
@@ -506,9 +737,10 @@ int APS5_VABI sceSystemServiceLaunchSystemDeeplink(void) {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void* param) {
+    if (param == nullptr) return;
+    const std::uint32_t fields[2] = {0, 0xffffffff};
+    std::memcpy(param, fields, sizeof(fields));
 }
 
 int APS5_VABI sceSystemStateMgrTickVideoPlayback(void) {
@@ -796,8 +1028,9 @@ int APS5_VABI sceShellCoreUtilRemoveCffConfigFile(void) {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(std::uint32_t* count) {
+    if (count == nullptr) return static_cast<int>(0x80e30005);
+    *count = 50;
     return 0;
 }
 
@@ -896,6 +1129,12 @@ int APS5_VABI sceSystemServiceIsBgmPlaying(void) {
 }
 
 int APS5_VABI sceShellCoreUtilIsBgmPlaying(void) {
+    return 0;
+}
+
+APS5_EXPORT("M+KwxF0amiw", sceSystemServiceUnknown_M_KwxF0amiw);
+int APS5_VABI sceSystemServiceUnknown_M_KwxF0amiw(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

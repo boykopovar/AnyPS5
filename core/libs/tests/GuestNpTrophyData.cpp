@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
+#include "tests/ExportLookup.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -223,7 +224,33 @@ static void ReportPlaceholders() {
     }
 }
 
-int main() {
+static void ReportExportLinked() {
+    auto* volatile linked = &sceNpUniversalDataSystemIntInitialize;
+    Require(linked != nullptr, "sceNpUniversalDataSystemIntInitialize is not linked");
+}
+
+static void ResolveInternalExports(const char* path) {
+    struct Export {
+        int (APS5_VABI* function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {sceNpUniversalDataSystemIntAbortHandle, "sceNpUniversalDataSystemIntAbortHandle"},
+        {sceNpUniversalDataSystemIntCheckNetSyncTitles, "sceNpUniversalDataSystemIntCheckNetSyncTitles"},
+        {sceNpUniversalDataSystemIntCreateContext, "sceNpUniversalDataSystemIntCreateContext"},
+        {sceNpUniversalDataSystemIntCreateHandle, "sceNpUniversalDataSystemIntCreateHandle"},
+        {sceNpUniversalDataSystemIntDeleteAllData, "sceNpUniversalDataSystemIntDeleteAllData"},
+        {sceNpUniversalDataSystemIntDeleteUserDataWithServerData, "sceNpUniversalDataSystemIntDeleteUserDataWithServerData"},
+        {sceNpUniversalDataSystemIntDestroyContext, "sceNpUniversalDataSystemIntDestroyContext"},
+        {sceNpUniversalDataSystemIntDestroyHandle, "sceNpUniversalDataSystemIntDestroyHandle"},
+        {sceNpUniversalDataSystemIntNetSyncTitles, "sceNpUniversalDataSystemIntNetSyncTitles"},
+        {sceNpUniversalDataSystemIntTerminate, "sceNpUniversalDataSystemIntTerminate"},
+    };
+    Require(ExportsResolveByName(path, exports, "sceNpUniversalDataSystemIntNotExported"),
+            "the internal exports do not all resolve by name");
+}
+
+int main(int argc, char** argv) {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-data-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(root);
@@ -236,6 +263,8 @@ int main() {
     ReportTrophyData(context);
     PostUnlocks(context);
     ReportPlaceholders();
+    ReportExportLinked();
+    ResolveInternalExports(argc > 1 ? argv[1] : nullptr);
 
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);

@@ -1,26 +1,28 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include "SceTypes.hpp"
 
 extern "C" {
 
-int APS5_VABI sceRegMgrGetBin(std::uint32_t optionId, void* data, std::size_t size);
-int APS5_VABI sceRegMgrGetInt(int32_t optionId, int32_t* outInt);
-int APS5_VABI sceRegMgrGetStr(int32_t optionId, char* outString, std::size_t stringLength);
+int APS5_VABI sceRegMgrGetBin(std::int64_t optionId, void* data, int size);
+int APS5_VABI sceRegMgrGetInt(std::int64_t optionId, int32_t* outInt);
+int APS5_VABI sceRegMgrGetStr(std::int64_t optionId, char* outString, int stringLength);
 int APS5_VABI sceRegMgrSetBin(std::uint32_t optionId, const void* data, std::size_t size);
 int APS5_VABI sceRegMgrSetInt(int32_t optionId, int32_t inInt);
 int APS5_VABI sceRegMgrSetStr(int32_t optionId, const char* inStirng, std::size_t stringLength);
-std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t unk, std::int32_t* data);
+std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t type, std::int32_t* data);
 int APS5_VABI sceRegMgrCheckError(void);
 int APS5_VABI sceRegMgrCheckIntVal(void);
 int APS5_VABI sceRegMgrGetBinInitVal(void);
-int APS5_VABI sceRegMgrGetIntInitVal(void);
+int APS5_VABI sceRegMgrGetIntInitVal(std::uint32_t optionId, std::int32_t* outInt);
 int APS5_VABI sceRegMgrGetStrInitVal(void);
 int APS5_VABI sceRegMgrGetVersion(void);
-int APS5_VABI sceRegMgrIsChange(void);
+int APS5_VABI sceRegMgrIsChange(std::uint32_t optionId, std::uint32_t consumer);
 int APS5_VABI sceRegMgrEvtGetCnt(void);
 int APS5_VABI sceRegMgrEvtGetRegId(void);
-int APS5_VABI sceRegMgrResetVal(void);
+int APS5_VABI sceRegMgrResetVal(std::int32_t optionId, std::int32_t unk);
 int APS5_VABI sceRegMgrSetInitLevel(void);
 int APS5_VABI sceRegMgrSrvCnvRegionInt(void);
 int APS5_VABI sceRegMgrSrvCnvRegionStr(void);
@@ -43,11 +45,11 @@ int APS5_VABI sceRegMgrIsInitOK(void);
 int APS5_VABI sceRegMgrGetInitError(void);
 int APS5_VABI sceRegMgrRecoverRegNvs(void);
 int APS5_VABI sceRegMgrNonSysCheckError(void);
-int APS5_VABI sceRegMgrNonSysGetBin(void);
-int APS5_VABI sceRegMgrNonSysGetStr(void);
-int APS5_VABI sceRegMgrNonSysSetBin(void);
-int APS5_VABI sceRegMgrNonSysSetInt(void);
-int APS5_VABI sceRegMgrNonSysSetStr(void);
+int APS5_VABI sceRegMgrNonSysGetBin(std::int64_t key, std::int32_t type, void* data, std::size_t size);
+int APS5_VABI sceRegMgrNonSysGetStr(std::int64_t key, std::int32_t type, char* data, std::size_t size);
+int APS5_VABI sceRegMgrNonSysSetBin(std::int64_t key, std::int32_t type, const void* data, std::size_t size);
+int APS5_VABI sceRegMgrNonSysSetInt(std::int64_t key, std::int32_t type, std::int32_t value);
+int APS5_VABI sceRegMgrNonSysSetStr(std::int64_t key, std::int32_t type, const char* data, std::size_t size);
 int APS5_VABI sceRegMgrGetVersionForPS4(void);
 int APS5_VABI sceRegMgrBackupNeedMemForPS4(void);
 int APS5_VABI sceRegMgrBackupPullDataForPS4(void);
@@ -69,5 +71,6 @@ int APS5_VABI sceRegMgrToolGetInfo(void);
 int APS5_VABI sceRegMgrLogPull(void);
 int APS5_VABI sceRegMgrCntlStopHdd(void);
 int APS5_VABI sceRegMgrPrintInfo(void);
+int APS5_VABI sceRegMgrLogStart(void);
 
 }

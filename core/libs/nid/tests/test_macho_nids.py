@@ -117,8 +117,8 @@ def dylib_command(path):
     return struct.pack("<IIIIII", LC_LOAD_DYLIB, size, 24, 2, 0x10000, 0x10000) + name.ljust(size - 24, b"\0")
 
 
-def build_dylib(exports, imports, signed=False, bind_opcodes=False):
-    trie = build_trie(exports)
+def build_dylib(exports, imports, signed=False, bind_opcodes=False, trie=None):
+    trie = build_trie(exports) if trie is None else trie
     fixups = build_fixups(imports)
     linkedit = bytearray(trie + fixups)
     trie_command = (struct.pack("<IIII", LC_DYLD_EXPORTS_TRIE, 16, PAGE, len(trie)))
@@ -263,11 +263,39 @@ def check_export_list(patcher, directory):
 def check_refusals(patcher, directory):
     growing = [("_ab", 0, 0x100), ("_cd", 0, 0x108)]
     result, _ = patch(patcher, directory, "signed.dylib", build_dylib(growing, [], signed=True))
-    assert result.returncode != 0 and "signed Mach-O images cannot grow their export trie" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert result.returncode != 0 and "signed Mach-O images cannot grow linkedit data" in result.stdout + result.stderr, (result.stdout, result.stderr)
     result, _ = patch(patcher, directory, "opcodes.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [], bind_opcodes=True))
     assert result.returncode != 0 and "bind opcodes are not supported" in result.stdout + result.stderr, (result.stdout, result.stderr)
-    result, _ = patch(patcher, directory, "long.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [("_sceXy", 1)]))
-    assert result.returncode != 0 and "import NID longer than original name" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    result, _ = patch(patcher, directory, "signed-short.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [("_sceXy", 1)], signed=True))
+    assert result.returncode != 0 and "signed Mach-O images cannot grow linkedit data" in result.stdout + result.stderr, (result.stdout, result.stderr)
+
+
+def chain_trie(depth):
+    def fixed_uleb(value):
+        return bytes([((value >> (7 * index)) & 0x7F) | 0x80 for index in range(4)] + [(value >> 28) & 0x7F])
+
+    node_size = 9
+    nodes = [b"\x00\x01a\x00" + fixed_uleb(node_size * (index + 1)) for index in range(depth - 1)]
+    nodes.append(b"\x02\x00\x00\x00")
+    return b"".join(nodes) + bytes(-sum(map(len, nodes)) % 8)
+
+
+def check_deep_trie(patcher, directory):
+    image = build_dylib([("_puts_nid_postfix", 0, 0x100)], [], trie=chain_trie(200000))
+    result, _ = patch(patcher, directory, "deep-trie.dylib", image)
+    assert result.returncode != 0 and "export trie nesting too deep" in result.stdout + result.stderr, (result.returncode, result.stdout, result.stderr)
+
+
+def check_short_imports(patcher, directory):
+    imports = [("_sceXy", 1), ("_malloc", 2), ("_sceKernelFoo", 1), ("_sceNetRecv", 1)]
+    result, path = patch(patcher, directory, "short.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], imports))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    data = path.read_bytes()
+    assert exports_of(data) == {"_" + nid("puts"): (0, 0x100)}, exports_of(data)
+    assert chained_imports(data) == [("_" + nid("sceXy"), 1), ("_malloc", 2), ("_" + nid("sceKernelFoo"), 1), ("_" + nid("sceNetRecv"), 1)], chained_imports(data)
+    result, path = patch(patcher, directory, "one-byte.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [("_sceNetRecv", 1), ("_sceKernelFoo", 1)]))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert chained_imports(path.read_bytes()) == [("_" + nid("sceNetRecv"), 1), ("_" + nid("sceKernelFoo"), 1)], chained_imports(path.read_bytes())
 
 
 def main():
@@ -281,9 +309,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-macho-nid-a\u00e7\u00e3o-\u65e5\u672c-") as directory:
         check_shrinking(patcher, directory)
         check_growing(patcher, directory)
+        check_short_imports(patcher, directory)
         check_preserved(patcher, directory)
         check_export_list(patcher, directory)
         check_refusals(patcher, directory)
+        check_deep_trie(patcher, directory)
     print("NID patcher Mach-O tests passed")
 
 

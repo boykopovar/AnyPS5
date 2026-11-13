@@ -4,6 +4,8 @@ import subprocess
 import sys
 import tempfile
 
+from test_guest_intel_trampolines import main_fixture
+from test_guest_needed_modules import module_with_needed
 from test_optional_plt import fixture as optional_plt_fixture
 
 
@@ -16,17 +18,25 @@ def fixture():
     return image
 
 
+def strict_fixture():
+    image = optional_plt_fixture([(4, 0x6a0)])
+    struct.pack_into("<I", image, 64 + 4, 5)
+    struct.pack_into("<Q", image, 0x400 + 5 * 16 + 8, 0)
+    struct.pack_into("<IIII", image, 0x6a0, 1, 1, 0, 0)
+    return image
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     failures = []
     with tempfile.TemporaryDirectory(prefix="anyps5-dynamic-segment-") as directory:
         work = Path(directory)
 
-        def convert(name, image, error=None):
+        def convert(name, image, error=None, modes=([], ["--windows"], ["--macos"], ["unused-filter=1"])):
             source = work / (name + ".elf")
             source.write_bytes(image)
-            for mode in ([], ["--windows"]):
-                output = work / (name + (".exe" if mode else ".out"))
+            for mode in modes:
+                output = work / (name + "." + ("-".join(flag.lstrip("-") for flag in mode) or "linux"))
                 result = subprocess.run([str(relinker), "--skip-sce-module", *mode, str(source), str(output)],
                                         capture_output=True, text=True, timeout=20)
                 valid = result.returncode == 0 and output.exists() if error is None else (
@@ -60,9 +70,14 @@ def main():
             struct.pack_into("<Q", malformed, 120 + 32, declared_size)
             convert(name, malformed, "Dynamic segment out of bounds")
 
-        partial = fixture()
-        struct.pack_into("<Q", partial, 120 + 32, size + 1)
-        convert("partial-entry", partial, "Invalid dynamic segment size")
+        trailing = fixture()
+        struct.pack_into("<QQ", trailing, 120 + 32, size + 0x18, size + 0x18)
+        trailing[0x400 + size:0x400 + size + 0x18] = bytes(range(1, 0x19))
+        convert("trailing-bytes-after-null", trailing)
+
+        cut = fixture()
+        struct.pack_into("<QQ", cut, 120 + 32, size - 8, size - 8)
+        convert("partial-terminator", cut, "Unterminated dynamic segment")
 
         missing_null = fixture()
         struct.pack_into("<QQ", missing_null, 120 + 32, size - 16, size - 16)
@@ -71,6 +86,40 @@ def main():
         empty = fixture()
         struct.pack_into("<QQ", empty, 120 + 32, 0, 0)
         convert("empty", empty, "Unterminated dynamic segment")
+
+        strict_modes = (["unused-filter=2"], ["--windows", "unused-filter=2"], ["--macos", "unused-filter=2"])
+        strict_size = struct.unpack_from("<Q", strict_fixture(), 120 + 32)[0]
+        strict = strict_fixture()
+        struct.pack_into("<QQ", strict, 120 + 32, strict_size + 0x18, strict_size + 0x18)
+        strict[0x400 + strict_size:0x400 + strict_size + 0x18] = bytes(range(1, 0x19))
+        convert("strict-trailing-bytes-after-null", strict, modes=strict_modes)
+
+        strict = strict_fixture()
+        struct.pack_into("<QQ", strict, 120 + 32, strict_size - 8, strict_size - 8)
+        convert("strict-partial-terminator", strict, "Unterminated dynamic segment", strict_modes)
+
+        for name, delta, error in (("module-trailing-bytes", 8, None),
+                                   ("module-partial-terminator", -8, "Unterminated dynamic segment")):
+            module = module_with_needed((b"libkernel.prx",), (0,))
+            declared = struct.unpack_from("<Q", module, 176 + 32)[0] + delta
+            struct.pack_into("<QQ", module, 176 + 32, declared, declared)
+            for mode in ([], ["--windows"], ["--macos"]):
+                case = work / (name + "-" + (mode[0].lstrip("-") if mode else "linux"))
+                (case / "prx").mkdir(parents=True)
+                (case / "prx" / "consumer.prx").write_bytes(module)
+                source = case / "input.elf"
+                source.write_bytes(main_fixture())
+                output = case / "output"
+                result = subprocess.run([str(relinker), *mode, str(source), str(output)],
+                                        capture_output=True, text=True, timeout=30)
+                valid = result.returncode == 0 and output.exists() if error is None else (
+                    result.returncode == 2 and error in result.stderr and not output.exists())
+                if not valid:
+                    failures.append((name, mode, result.returncode, result.stdout, result.stderr))
+
+        duplicate = fixture()
+        duplicate[64 + 2 * 56:64 + 3 * 56] = duplicate[120:176]
+        convert("duplicate", duplicate, "Multiple PT_DYNAMIC segments", ([], ["--windows"], ["--macos"]))
 
     if failures:
         raise AssertionError(failures)

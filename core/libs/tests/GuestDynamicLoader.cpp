@@ -136,6 +136,7 @@ int main(int argc, char** argv) {
     Require(mainResult == 0 && mainSymbol != nullptr);
     using MainFunction = int (APS5_VABI *)(int, int);
     Require(reinterpret_cast<MainFunction>(mainSymbol)(6, 7) == 42);
+    Require(sceKernelDlsym(0, "GuestDefaultScopeOnly", reinterpret_cast<void**>(static_cast<std::uintptr_t>(0x10))) == static_cast<int>(0x8002000eu));
     Require(sceKernelDlsym(0, "anyps5_missing_main_symbol", &mainSymbol) == static_cast<int>(0x80020003u));
     dlerror_nid_postfix();
 
@@ -202,6 +203,27 @@ int main(int argc, char** argv) {
         Require(add && add(30, 12) == 42);
         Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, nullptr, nullptr) == 0);
     }
+    {
+        const char* path = "/system/common/lib/anyps5-system-module-for-test.sprx";
+        KernelLoadModuleOpt loadOpt{};
+        int started = -1;
+        Require(sceKernelLoadStartModule(path, 0, nullptr, 1, nullptr, &started) == static_cast<int>(0x80020016u) && started == -1);
+        Require(sceKernelLoadStartModule(path, 0, nullptr, 0, &loadOpt, &started) == static_cast<int>(0x80020016u) && started == -1);
+        const int system = sceKernelLoadStartModule(path, 0, nullptr, 0, nullptr, &started);
+        Require(system > 0 && started == 0);
+        KernelUnloadModuleOpt unloadOpt{};
+        int stopped = -1;
+        Require(sceKernelStopUnloadModule(system, 0, nullptr, 1, nullptr, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
+        Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, &unloadOpt, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
+        Require(sceKernelStopUnloadModule(0, 0, nullptr, 0, nullptr, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
+        for (const int badHandle : {0x7fffffff, -1, 0x7ffffff0}) {
+            Require(sceKernelStopUnloadModule(badHandle, 0, nullptr, 0, nullptr, &stopped) == static_cast<int>(0x80020003u) && stopped == -1);
+            Require(sceKernelStopUnloadModule(badHandle, 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020003u));
+        }
+        add = reinterpret_cast<Add>(dlsym_nid_postfix(reinterpret_cast<void*>(static_cast<std::intptr_t>(system)), "GuestModuleAdd"));
+        Require(add && add(30, 12) == 42);
+        Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, nullptr, nullptr) == 0);
+    }
     Require(sceKernelLoadStartModule("/gkbHtXc3Wq/common/lib/anyps5-missing-system-module.sprx", 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020002u));
     Require(sceKernelLoadStartModule("/gkbHtXc3Wq/common/lib/anyps5-system-module-for-test.prx", 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020002u));
     std::filesystem::copy_file(argv[1], "anyps5-escape-module-for-test.prx", std::filesystem::copy_options::overwrite_existing);
@@ -210,6 +232,54 @@ int main(int argc, char** argv) {
     std::filesystem::remove("libs/anyps5-system-module-for-test.prx");
     std::error_code notEmpty;
     if (createdLibs) std::filesystem::remove("libs", notEmpty);
+
+    const std::filesystem::path nestedRoot = "anyps5-relinked-prx-dir-for-test";
+    const std::filesystem::path nestedGuest = nestedRoot / "Engine.Render.prx";
+    const std::filesystem::path nestedRelinked = nestedRoot / "prx" / "Engine.Render.prx.guest.prx";
+    std::filesystem::create_directories(nestedRelinked.parent_path());
+    {
+        std::ofstream elf(nestedGuest, std::ios::binary);
+        elf.write("\x7f" "ELF", 4);
+    }
+    std::filesystem::copy_file(argv[1], nestedRelinked, std::filesystem::copy_options::overwrite_existing);
+    void* nested = dlopen_nid_postfix(nestedGuest.string().c_str(), 2);
+    Require(nested != nullptr);
+    add = reinterpret_cast<Add>(dlsym_nid_postfix(nested, "GuestModuleAdd"));
+    Require(add && add(20, 22) == 42);
+    Require(dlclose_nid_postfix(nested) == 0);
+    std::filesystem::remove_all(nestedRoot);
+
+    const std::filesystem::path layeredRoot = "anyps5-relinked-prx-layers-for-test";
+    const std::filesystem::path layeredGuest = layeredRoot / "Engine.Layers.prx";
+    std::filesystem::create_directories(layeredRoot / "prx");
+    {
+        std::ofstream elf(layeredGuest, std::ios::binary);
+        elf.write("" "ELF", 4);
+        std::ofstream broken(layeredRoot / "prx" / "Engine.Layers.prx.guest.prx", std::ios::binary);
+        broken << "not a module";
+    }
+    std::filesystem::copy_file(argv[1], layeredRoot / "ENGINE.LAYERS.PRX.GUEST.PRX", std::filesystem::copy_options::overwrite_existing);
+    void* layered = dlopen_nid_postfix(layeredGuest.string().c_str(), 2);
+    Require(layered != nullptr);
+    add = reinterpret_cast<Add>(dlsym_nid_postfix(layered, "GuestModuleAdd"));
+    Require(add && add(19, 23) == 42);
+    Require(dlclose_nid_postfix(layered) == 0);
+    std::filesystem::remove_all(layeredRoot);
+
+    const std::filesystem::path foldedRoot = "anyps5-relinked-prx-folded-for-test";
+    const std::filesystem::path foldedGuest = foldedRoot / "Engine.Folded.prx";
+    std::filesystem::create_directories(foldedRoot / "prx");
+    {
+        std::ofstream elf(foldedGuest, std::ios::binary);
+        elf.write("" "ELF", 4);
+    }
+    std::filesystem::copy_file(argv[1], foldedRoot / "prx" / "ENGINE.FOLDED.PRX.GUEST.PRX", std::filesystem::copy_options::overwrite_existing);
+    void* folded = dlopen_nid_postfix(foldedGuest.string().c_str(), 2);
+    Require(folded != nullptr);
+    add = reinterpret_cast<Add>(dlsym_nid_postfix(folded, "GuestModuleAdd"));
+    Require(add && add(10, 32) == 42);
+    Require(dlclose_nid_postfix(folded) == 0);
+    std::filesystem::remove_all(foldedRoot);
 
     void* pinned = dlopen_nid_postfix(argv[1], 2);
     add = reinterpret_cast<Add>(dlsym_nid_postfix(pinned, "GuestModuleAdd"));
@@ -222,9 +292,12 @@ int main(int argc, char** argv) {
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
     Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
-    Require(ThrowsRuntimeError([] { _sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&Require)); }));
+    Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
     int local = 0;
-    Require(ThrowsRuntimeError([&] { _sceKernelRtldThreadAtexitIncrement_nid_postfix(&local); }));
+    Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(&local) == -1);
+    Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(nullptr) == -1);
+    Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(&local) == 0);
+    Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(nullptr) == 0);
 #ifndef _WIN32
     Require(dlsym_nid_postfix(nullptr, "malloc") == nullptr);
     Require(dlsym_nid_postfix(nullptr, "dlopen") == nullptr);

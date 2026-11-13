@@ -1,8 +1,10 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Unwind.hpp"
+#include "prx/libc/include/exceptions/CompactUnwind.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "prx/libc/src/specifics/x86_64/RegisterContext.cpp"
+#include <cstdio>
 
 #if defined(__linux__)
 #include <dlfcn.h>
@@ -25,77 +27,11 @@
 #include <utility>
 #endif
 #ifdef __APPLE__
+#include <cstring>
 #include <dlfcn.h>
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
 #endif
-
-namespace {
-constexpr int CursorInstructionRegister = -1;
-constexpr int CursorStackRegister = -2;
-constexpr int CursorRegisterCount = 17;
-
-std::uintptr_t* CursorRegister(_Unwind_Context* context, int number) {
-    if (number == CursorInstructionRegister) return &context->registers[16];
-    if (number == CursorStackRegister) return &context->registers[7];
-    if (number >= 0 && number < CursorRegisterCount) return &context->registers[number];
-    return nullptr;
-}
-
-bool APS5_VABI CursorValidRegister(_Unwind_Context* context, int number) {
-    return CursorRegister(context, number) != nullptr;
-}
-
-std::uintptr_t APS5_VABI CursorGetRegister(_Unwind_Context* context, int number) {
-    auto* value = CursorRegister(context, number);
-    if (!value) NotImplemented_nid_no_patch("libunwind cursor: read of an unknown register");
-    return value ? *value : 0;
-}
-
-void APS5_VABI CursorSetRegister(_Unwind_Context* context, int number, std::uintptr_t value) {
-    auto* slot = CursorRegister(context, number);
-    if (!slot) NotImplemented_nid_no_patch("libunwind cursor: write of an unknown register");
-    else *slot = value;
-}
-
-bool APS5_VABI CursorValidFloatRegister(_Unwind_Context*, int) {
-    return false;
-}
-
-bool APS5_VABI CursorIsSignalFrame(_Unwind_Context* context) {
-    return context->signalFrame;
-}
-
-void APS5_VABI CursorUnsupported(_Unwind_Context*) {
-    NotImplemented_nid_no_patch("libunwind cursor: operation other than register access or isSignalFrame");
-}
-
-template<class Function> std::uintptr_t Slot(Function function) {
-    return reinterpret_cast<std::uintptr_t>(function);
-}
-
-const std::uintptr_t CursorSlots[] = {
-    Slot(&CursorUnsupported),
-    Slot(&CursorUnsupported),
-    Slot(&CursorValidRegister),
-    Slot(&CursorGetRegister),
-    Slot(&CursorSetRegister),
-    Slot(&CursorValidFloatRegister),
-    Slot(&CursorUnsupported),
-    Slot(&CursorUnsupported),
-    Slot(&CursorUnsupported),
-    Slot(&CursorUnsupported),
-    Slot(&CursorUnsupported),
-    Slot(&CursorIsSignalFrame),
-    Slot(&CursorUnsupported),
-    Slot(&CursorUnsupported),
-    Slot(&CursorUnsupported),
-};
-}
-
-const std::uintptr_t* UnwindCursorSlots_nid_no_patch() {
-    return CursorSlots;
-}
 
 #if defined(__linux__) || defined(_WIN32) || defined(__APPLE__)
 
@@ -107,14 +43,41 @@ extern "C" void _Unwind_DeleteException(_Unwind_Exception*);
 
 namespace LibcUnwind {
 #ifdef _WIN32
+static bool Readable(Word address, std::size_t size) {
+    for (Word cursor = address; cursor - address < size;) {
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) != sizeof(memory)) return false;
+        if (memory.RegionSize == 0 || memory.State != MEM_COMMIT || (memory.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0 || (memory.Protect & 0xff) == PAGE_EXECUTE) return false;
+        cursor = reinterpret_cast<Word>(memory.BaseAddress) + memory.RegionSize;
+    }
+    return true;
+}
+
 static Word ResolveImport(Word address) {
     const auto* code = reinterpret_cast<const Byte*>(address);
-    if (code[0] == 0xff && code[1] == 0x25) {
+    if (Readable(address, 6) && code[0] == 0xff && code[1] == 0x25) {
         std::int32_t displacement;
         std::memcpy(&displacement, code + 2, sizeof(displacement));
-        std::memcpy(&address, code + 6 + displacement, sizeof(address));
+        const Word slot = address + 6 + displacement;
+        if (Readable(slot, sizeof(address))) std::memcpy(&address, reinterpret_cast<const void*>(slot), sizeof(address));
     }
     return address;
+}
+#endif
+
+#ifdef __APPLE__
+Word ResolveStub(Word personality) {
+    if (!personality) return 0;
+    Dl_info image {};
+    if (!dladdr(reinterpret_cast<void*>(personality), &image) || image.dli_fbase == nullptr) return 0;
+    const auto* code = reinterpret_cast<const Byte*>(personality);
+    if (code[0] != 0xff || code[1] != 0x25) return personality;
+    std::int32_t displacement = 0;
+    std::memcpy(&displacement, code + 2, 4);
+    const auto slot = static_cast<Word>(static_cast<std::intptr_t>(personality) + 6 + displacement);
+    Word target = 0;
+    std::memcpy(&target, reinterpret_cast<const void*>(slot), sizeof(target));
+    return target ? target : personality;
 }
 #endif
 
@@ -126,6 +89,28 @@ _Unwind_Reason_Code CallPersonality(Word personality, _Unwind_Action actions, _U
         return __gxx_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
     if (personality == reinterpret_cast<Word>(__gcc_personality_v0_nid_postfix) || personality == reinterpret_cast<Word>(__gcc_personality_v0))
         return __gcc_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
+#ifdef __APPLE__
+    {
+        Dl_info mapped {};
+        if (!dladdr(reinterpret_cast<void*>(personality), &mapped) || mapped.dli_fbase == nullptr)
+            return (actions & _UA_SEARCH_PHASE) ? _URC_FATAL_PHASE1_ERROR : _URC_FATAL_PHASE2_ERROR;
+    }
+    personality = ResolveStub(personality);
+    if (personality == 0) return (actions & _UA_SEARCH_PHASE) ? _URC_FATAL_PHASE1_ERROR : _URC_FATAL_PHASE2_ERROR;
+    if (personality == reinterpret_cast<Word>(__gxx_personality_v0_nid_postfix) || personality == reinterpret_cast<Word>(__gxx_personality_v0))
+        return __gxx_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
+    if (personality == reinterpret_cast<Word>(__gcc_personality_v0_nid_postfix) || personality == reinterpret_cast<Word>(__gcc_personality_v0))
+        return __gcc_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
+    Dl_info info {};
+    const char* name = nullptr;
+    if (dladdr(reinterpret_cast<void*>(personality), &info)) name = info.dli_sname;
+    const auto kind = MatchCompactPersonality(name);
+    if (kind == CompactPersonality::Gxx)
+        return __gxx_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
+    if (kind == CompactPersonality::Gcc)
+        return __gcc_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
+    return (actions & _UA_SEARCH_PHASE) ? _URC_FATAL_PHASE1_ERROR : _URC_FATAL_PHASE2_ERROR;
+#endif
     return (actions & _UA_SEARCH_PHASE) ? _URC_FATAL_PHASE1_ERROR : _URC_FATAL_PHASE2_ERROR;
 }
 #if defined(__linux__) || defined(__APPLE__)
@@ -138,7 +123,10 @@ int FindFrame(dl_phdr_info* info, std::size_t, void* argument) {
     for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
         const auto& ph = info->dlpi_phdr[i];
         Word start = info->dlpi_addr + ph.p_vaddr;
-        if (ph.p_type == PT_LOAD && query.pc >= start && query.pc - start < ph.p_memsz) contains = true;
+        if (ph.p_type == PT_LOAD && query.pc >= start && query.pc - start < ph.p_memsz) {
+            contains = true;
+            query.segment = start;
+        }
         if (ph.p_type == PT_GNU_EH_FRAME) header = reinterpret_cast<const Byte*>(start);
         if (ph.p_type == PT_LOAD && (ph.p_flags & PF_X)) query.text = start;
         if (ph.p_type == PT_LOAD && (ph.p_flags & PF_W)) query.data = start;
@@ -169,31 +157,66 @@ void SearchHeader(const Byte* header, Lookup& query) {
 }
 
 #ifdef LIBC_UNWIND_FIND_OBJECT
+struct LoadSegment { Word start; Word size; };
+
+struct ObjectBases {
+    Word text {};
+    Word data {};
+    std::vector<LoadSegment> loads;
+};
+
+struct ObjectProbe {
+    Lookup lookup;
+    std::vector<LoadSegment> loads;
+};
+
+int CollectLoads(dl_phdr_info* info, std::size_t size, void* argument) {
+    auto& probe = *static_cast<ObjectProbe*>(argument);
+    bool contains = false;
+    for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
+        const auto& ph = info->dlpi_phdr[i];
+        const Word start = info->dlpi_addr + ph.p_vaddr;
+        if (ph.p_type == PT_LOAD && probe.lookup.pc >= start && probe.lookup.pc - start < ph.p_memsz) contains = true;
+    }
+    if (!contains) return 0;
+    for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
+        const auto& ph = info->dlpi_phdr[i];
+        if (ph.p_type == PT_LOAD) probe.loads.push_back({Word(info->dlpi_addr + ph.p_vaddr), Word(ph.p_memsz)});
+    }
+    FindFrame(info, size, &probe.lookup);
+    return 1;
+}
+
+void SetBases(Lookup& query, const ObjectBases& bases) {
+    query.text = bases.text;
+    query.data = bases.data;
+    for (const auto& load : bases.loads)
+        if (query.pc >= load.start && query.pc - load.start < load.size) query.segment = load.start;
+}
+
 bool FindFrameFast(Lookup& query) {
     dl_find_object object {};
     if (_dl_find_object(reinterpret_cast<void*>(query.pc), &object) != 0 || object.dlfo_eh_frame == nullptr) return false;
     const auto* header = static_cast<const Byte*>(object.dlfo_eh_frame);
     if (header[0] != 1) return false;
-    static std::mutex mutex;
-    static std::map<std::tuple<const Byte*, const void*, const void*>, std::pair<Word, Word>> bases;
+    static std::mutex& mutex = *new std::mutex();
+    static auto& bases = *new std::map<std::tuple<const Byte*, const void*, const void*>, ObjectBases>();
     const std::tuple key {header, static_cast<const void*>(object.dlfo_map_start), static_cast<const void*>(object.dlfo_map_end)};
     {
         std::lock_guard lock(mutex);
         auto found = bases.find(key);
         if (found != bases.end()) {
-            query.text = found->second.first;
-            query.data = found->second.second;
+            SetBases(query, found->second);
             SearchHeader(header, query);
             return true;
         }
     }
-    Lookup probe {query.pc};
-    dl_iterate_phdr(FindFrame, &probe);
+    ObjectProbe probe {Lookup {query.pc}, {}};
+    dl_iterate_phdr(CollectLoads, &probe);
     {
         std::lock_guard lock(mutex);
-        const auto found = bases.emplace(key, std::pair {probe.text, probe.data}).first;
-        query.text = found->second.first;
-        query.data = found->second.second;
+        const auto found = bases.emplace(key, ObjectBases {probe.lookup.text, probe.lookup.data, std::move(probe.loads)}).first;
+        SetBases(query, found->second);
     }
     SearchHeader(header, query);
     return true;
@@ -220,6 +243,10 @@ bool DecodeCandidate(_Unwind_Context& context, Frame& frame, const Lookup& query
     context.personality = frame.personality;
     context.textBase = query.text;
     context.dataBase = query.data;
+    context.regionEnd = frame.start + frame.length;
+    context.frameEntry = Word(query.fde);
+    context.frameEntrySize = Word(frame.end - query.fde);
+    context.segment = query.segment;
     return true;
 }
 
@@ -228,8 +255,8 @@ using FrameIndex = std::vector<std::pair<Word, const Byte*>>;
 using ImageKey = std::array<Word, 6>;
 
 const FrameIndex& IndexFrames(const ImageKey& key, const Byte* begin, const Byte* end) {
-    static std::mutex mutex;
-    static std::map<ImageKey, FrameIndex> indexes;
+    static std::mutex& mutex = *new std::mutex();
+    static auto& indexes = *new std::map<ImageKey, FrameIndex>();
     std::lock_guard lock(mutex);
     const auto [entry, inserted] = indexes.try_emplace(key);
     auto& index = entry->second;
@@ -263,6 +290,30 @@ const IMAGE_NT_HEADERS64* ImageHeaders(Word pc, const Byte*& base) {
     if (dos->e_magic != IMAGE_DOS_SIGNATURE) return nullptr;
     const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
     return nt->Signature == IMAGE_NT_SIGNATURE ? nt : nullptr;
+}
+
+bool NearestExport(Word pc, const char*& name, Word& address) {
+    const Byte* base = nullptr;
+    const auto* nt = ImageHeaders(pc, base);
+    if (!nt) return false;
+    const auto& directory = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (!directory.VirtualAddress || !directory.Size) return false;
+    const auto* exports = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(base + directory.VirtualAddress);
+    const auto* functions = reinterpret_cast<const DWORD*>(base + exports->AddressOfFunctions);
+    const auto* names = reinterpret_cast<const DWORD*>(base + exports->AddressOfNames);
+    const auto* ordinals = reinterpret_cast<const WORD*>(base + exports->AddressOfNameOrdinals);
+    const Word rva = pc - Word(base);
+    name = nullptr;
+    DWORD nearest = 0;
+    for (DWORD i = 0; i < exports->NumberOfNames; ++i) {
+        if (ordinals[i] >= exports->NumberOfFunctions) continue;
+        const DWORD target = functions[ordinals[i]];
+        if (target - directory.VirtualAddress < directory.Size || target > rva || (name && target <= nearest)) continue;
+        name = reinterpret_cast<const char*>(base + names[i]);
+        nearest = target;
+    }
+    address = Word(base) + nearest;
+    return name != nullptr;
 }
 
 bool VirtualUnwind(_Unwind_Context& context, Frame& frame) {
@@ -314,6 +365,102 @@ bool VirtualUnwind(_Unwind_Context& context, Frame& frame) {
 }
 #endif
 
+#ifdef __APPLE__
+struct AppleSections { Word base {}; const Byte* unwind {}; unsigned long unwindSize {}; const Byte* eh {}; unsigned long ehSize {}; };
+
+bool AppleSectionsOf(Word pc, AppleSections& out) {
+    Dl_info image {};
+    if (!dladdr(reinterpret_cast<void*>(pc), &image) || !image.dli_fbase) return false;
+    const auto* header = static_cast<const mach_header_64*>(image.dli_fbase);
+    if (header->magic != MH_MAGIC_64) return false;
+    out.base = reinterpret_cast<Word>(header);
+    const Byte* command = reinterpret_cast<const Byte*>(header + 1);
+    Word slide = 0;
+    for (std::uint32_t index = 0; index < header->ncmds; ++index) {
+        const auto* load = reinterpret_cast<const load_command*>(command);
+        if (load->cmdsize < 8 || command + load->cmdsize < command) return false;
+        if (load->cmd == LC_SEGMENT_64) {
+            const auto* segment = reinterpret_cast<const segment_command_64*>(load);
+            if (std::strcmp(segment->segname, "__TEXT") == 0) slide = out.base - static_cast<Word>(segment->vmaddr);
+            const auto* section = reinterpret_cast<const section_64*>(segment + 1);
+            for (std::uint32_t part = 0; part < segment->nsects; ++part, ++section) {
+                const auto* address = reinterpret_cast<const Byte*>(static_cast<Word>(section->addr) + slide);
+                if (std::strncmp(section->sectname, "__unwind_info", 16) == 0) {
+                    out.unwind = address;
+                    out.unwindSize = static_cast<unsigned long>(section->size);
+                } else if (std::strncmp(section->sectname, "__eh_frame", 16) == 0) {
+                    out.eh = address;
+                    out.ehSize = static_cast<unsigned long>(section->size);
+                }
+            }
+        }
+        command += load->cmdsize;
+    }
+    return out.unwind != nullptr;
+}
+
+struct CompactDwarfAttempt {
+    _Unwind_Context* context;
+    Frame* frame;
+    Lookup* query;
+    const Byte* eh;
+    Word base;
+};
+
+bool TryCompactDwarf(std::uint32_t ehOffset, void* user) {
+    auto* attempt = static_cast<CompactDwarfAttempt*>(user);
+    attempt->query->fde = attempt->eh + ehOffset;
+    attempt->query->text = attempt->base;
+    attempt->query->data = attempt->base;
+    Frame decoded {};
+    if (!DecodeCandidate(*attempt->context, decoded, *attempt->query)) {
+        attempt->query->fde = nullptr;
+        return false;
+    }
+    *attempt->frame = decoded;
+    return true;
+}
+
+bool AppleCompact(_Unwind_Context& context, Frame& frame, Lookup& query) {
+    AppleSections sections {};
+    if (!AppleSectionsOf(query.pc, sections)) return false;
+    const auto base = sections.base;
+    if (query.pc < base) return false;
+    const std::span<const Byte> unwind{sections.unwind, static_cast<std::size_t>(sections.unwindSize)};
+    const std::span<const Byte> eh = sections.eh == nullptr ? std::span<const Byte>{} : std::span<const Byte>{sections.eh, static_cast<std::size_t>(sections.ehSize)};
+    CompactDwarfAttempt attempt {&context, &frame, &query, sections.eh, base};
+    CompactEntry entry {};
+    const auto target = static_cast<std::uint32_t>(query.pc - base);
+    const auto status = ParseCompactUnwind(unwind, eh, target, TryCompactDwarf, &attempt, entry);
+    if (status != CompactParse::Found) return false;
+    if (entry.dwarf) return true;
+    frame = {};
+    frame.useCompact = true;
+    frame.compactEncoding = entry.encoding;
+    frame.functionStart = base + entry.functionOffset;
+    frame.functionEnd = base + entry.functionEndOffset;
+    frame.personality = 0;
+    if (entry.hasPersonality) std::memcpy(&frame.personality, reinterpret_cast<const void*>(static_cast<std::intptr_t>(base) + entry.personalityDelta), sizeof(frame.personality));
+    frame.lsda = entry.hasLsda ? base + entry.lsdaOffset : 0;
+    frame.returnRegister = 16;
+    context.region = frame.functionStart;
+    context.lsda = frame.lsda;
+    context.personality = frame.personality;
+    context.textBase = base;
+    context.dataBase = base;
+    return true;
+}
+
+bool CompactRules(Frame& frame, Rules& rules) {
+    frame.returnRegister = 16;
+    std::span<const Byte> function;
+    if (frame.functionEnd > frame.functionStart)
+        function = {reinterpret_cast<const Byte*>(frame.functionStart), static_cast<std::size_t>(frame.functionEnd - frame.functionStart)};
+    return CompactUnwindRules(frame.compactEncoding, function, rules);
+}
+
+#endif
+
 bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
     Lookup query {context.registers[16] - !context.signalFrame};
 #if defined(__linux__) || defined(__APPLE__)
@@ -322,9 +469,11 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
 #endif
         dl_iterate_phdr(FindFrame, &query);
 #ifdef __APPLE__
+    if (!query.fde && AppleCompact(context, frame, query)) return true;
     if (!query.fde) {
         Dl_info image {};
         if (!dladdr(reinterpret_cast<void*>(query.pc), &image) || !image.dli_fbase) return false;
+        query.segment = Word(image.dli_fbase);
         unsigned long size = 0;
         const Byte* p = getsectiondata(static_cast<const mach_header_64*>(image.dli_fbase), "__TEXT", "__eh_frame", &size);
         if (!p) return false;
@@ -345,12 +494,20 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
         return false;
     }
 #endif
-    return DecodeCandidate(context, frame, query);
+    if (DecodeCandidate(context, frame, query)) return true;
+#ifdef __APPLE__
+    return AppleCompact(context, frame, query);
+#endif
+    return false;
 #else
     const Byte* base = nullptr;
     const auto* nt = ImageHeaders(query.pc, base);
     if (!nt) return false;
     const auto* sections = IMAGE_FIRST_SECTION(nt);
+    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        const Word start = Word(base) + sections[i].VirtualAddress;
+        if (query.pc >= start && query.pc - start < sections[i].Misc.VirtualSize) query.segment = start;
+    }
     for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
         const auto& section = sections[i];
         if (std::memcmp(section.Name, ".ehmeta", 8) == 0) {
@@ -440,7 +597,12 @@ bool Expression(const Byte* p, const _Unwind_Context& context, Word cfa, Word& r
     result = stack[0]; return true;
 }
 
-bool GetRules(_Unwind_Context& context, Frame& frame, Rules& rules) {
+void ClearInfo(_Unwind_Context& context) {
+    context.region = context.lsda = context.personality = context.textBase = context.dataBase = 0;
+    context.regionEnd = context.frameEntry = context.frameEntrySize = context.argumentsSize = context.segment = 0;
+}
+
+bool FrameRules(_Unwind_Context& context, Frame& frame, Rules& rules) {
     if (!DecodeFrame(context, frame)) {
 #ifdef _WIN32
         frame = {};
@@ -451,6 +613,14 @@ bool GetRules(_Unwind_Context& context, Frame& frame, Rules& rules) {
         return false;
 #endif
     }
+#ifdef __APPLE__
+    if (frame.useCompact) {
+        if (!CompactRules(frame, rules)) return false;
+        if (rules.cfaRegister >= 17) return false;
+        context.cfa = context.registers[rules.cfaRegister] + rules.cfaOffset;
+        return true;
+    }
+#endif
     Rules initial;
     if (!Instructions(frame.cieBegin, frame.cieEnd, frame, ~Word(0), initial, {})) return false;
 #ifdef _WIN32
@@ -462,24 +632,28 @@ bool GetRules(_Unwind_Context& context, Frame& frame, Rules& rules) {
 #endif
     rules = initial;
     if (!Instructions(frame.begin, frame.end, frame, context.registers[16] - !context.signalFrame, rules, initial)) return false;
+    context.argumentsSize = rules.argumentsSize;
     if (rules.cfaExpression) return Expression(rules.cfaExpression, context, 0, context.cfa);
     if (rules.cfaRegister >= 17) return false;
     context.cfa = context.registers[rules.cfaRegister] + rules.cfaOffset;
     return true;
 }
 
-bool Step(_Unwind_Context& context) {
-    Frame frame; Rules rules;
-    if (!GetRules(context, frame, rules)) return false;
+bool GetRules(_Unwind_Context& context, Frame& frame, Rules& rules) {
+    ClearInfo(context);
+    context.infoMissing = !FrameRules(context, frame, rules);
+    if (context.infoMissing) ClearInfo(context);
+    return !context.infoMissing;
+}
+
+bool Caller(const _Unwind_Context& context, const Frame& frame, const Rules& rules, _Unwind_Context& next) {
 #ifdef _WIN32
     if (frame.foreign) {
-        const auto& next = frame.caller;
-        if (!next.registers[16] || (next.registers[7] == context.registers[7] && next.registers[16] == context.registers[16])) return false;
-        context = next;
+        next = frame.caller;
         return true;
     }
 #endif
-    _Unwind_Context next = context;
+    next = context;
     for (unsigned i = 0; i < 17; ++i) {
         const auto& rule = rules.registers[i];
         Word value;
@@ -514,7 +688,18 @@ bool Step(_Unwind_Context& context) {
     next.registers[7] = context.cfa;
     next.registers[16] = next.registers[frame.returnRegister];
     next.signalFrame = frame.signal;
-    if (!next.registers[16] || (next.registers[7] == context.registers[7] && next.registers[16] == context.registers[16])) return false;
+    return true;
+}
+
+bool Moved(const _Unwind_Context& context, const _Unwind_Context& next) {
+    return next.registers[7] != context.registers[7] || next.registers[16] != context.registers[16];
+}
+
+bool Step(_Unwind_Context& context) {
+    Frame frame; Rules rules;
+    _Unwind_Context next;
+    if (!GetRules(context, frame, rules) || !Caller(context, frame, rules, next)) return false;
+    if (!next.registers[16] || !Moved(context, next)) return false;
     context = next;
     return true;
 }
@@ -553,6 +738,181 @@ _Unwind_Reason_Code PhaseTwo(_Unwind_Context context, _Unwind_Exception* excepti
     }
     return _URC_FATAL_PHASE2_ERROR;
 }
+}
+
+namespace {
+constexpr int CursorInstructionRegister = -1;
+constexpr int CursorStackRegister = -2;
+constexpr int CursorRegisterCount = 17;
+constexpr int CursorStepSuccess = 1;
+constexpr int CursorStepEnd = 0;
+constexpr int CursorBadFrame = -6546;
+constexpr std::uint32_t CursorDwarfFormat = 0x04000000;
+
+struct CursorProcedureInfo {
+    std::uintptr_t start;
+    std::uintptr_t end;
+    std::uintptr_t lsda;
+    std::uintptr_t handler;
+    std::uintptr_t gp;
+    std::uintptr_t flags;
+    std::uint32_t format;
+    std::uint32_t unwindInfoSize;
+    std::uintptr_t unwindInfo;
+    std::uintptr_t extra;
+};
+
+static_assert(sizeof(CursorProcedureInfo) == 72);
+
+[[noreturn]] void CursorAbort(const char* function, const char* message) {
+    std::fprintf(stderr, "libunwind: %s - %s\n", function, message);
+    std::fflush(stderr);
+    std::abort();
+}
+
+std::uintptr_t* CursorRegister(_Unwind_Context* context, int number) {
+    if (number == CursorInstructionRegister) return &context->registers[16];
+    if (number == CursorStackRegister) return &context->registers[7];
+    if (number >= 0 && number < CursorRegisterCount) return &context->registers[number];
+    return nullptr;
+}
+
+void CursorDescribe(_Unwind_Context& context) {
+    LibcUnwind::Frame frame;
+    LibcUnwind::Rules rules;
+    if (context.registers[16]) {
+        LibcUnwind::GetRules(context, frame, rules);
+        return;
+    }
+    LibcUnwind::ClearInfo(context);
+    context.infoMissing = true;
+}
+
+void APS5_VABI CursorDestroy(_Unwind_Context*) {}
+
+bool APS5_VABI CursorValidRegister(_Unwind_Context* context, int number) {
+    return CursorRegister(context, number) != nullptr;
+}
+
+std::uintptr_t APS5_VABI CursorGetRegister(_Unwind_Context* context, int number) {
+    auto* value = CursorRegister(context, number);
+    if (!value) CursorAbort("getRegister", "unsupported x86_64 register");
+    return *value;
+}
+
+void APS5_VABI CursorSetRegister(_Unwind_Context* context, int number, std::uintptr_t value) {
+    auto* slot = CursorRegister(context, number);
+    if (!slot) CursorAbort("setRegister", "unsupported x86_64 register");
+    *slot = value;
+}
+
+bool APS5_VABI CursorValidFloatRegister(_Unwind_Context*, int) {
+    return false;
+}
+
+double APS5_VABI CursorGetFloatRegister(_Unwind_Context*, int) {
+    CursorAbort("getFloatRegister", "no x86_64 float registers");
+}
+
+void APS5_VABI CursorSetFloatRegister(_Unwind_Context*, int, double) {
+    CursorAbort("setFloatRegister", "no x86_64 float registers");
+}
+
+int APS5_VABI CursorStep(_Unwind_Context* context, bool) {
+    if (context->infoMissing) return CursorStepEnd;
+    LibcUnwind::Frame frame;
+    LibcUnwind::Rules rules;
+    _Unwind_Context current = *context;
+    _Unwind_Context caller;
+    if (!LibcUnwind::GetRules(current, frame, rules) || !LibcUnwind::Caller(current, frame, rules, caller)) return CursorBadFrame;
+    if (caller.registers[16] && !LibcUnwind::Moved(current, caller)) return CursorStepEnd;
+    CursorDescribe(caller);
+    *context = caller;
+    return context->infoMissing ? CursorStepEnd : CursorStepSuccess;
+}
+
+void APS5_VABI CursorGetInfo(_Unwind_Context* context, CursorProcedureInfo* info) {
+    *info = {};
+    if (context->infoMissing) return;
+    info->start = context->region;
+    info->end = context->regionEnd;
+    info->lsda = context->lsda;
+    info->handler = context->personality;
+    info->gp = context->argumentsSize;
+    info->format = context->frameEntry ? CursorDwarfFormat : 0;
+    info->unwindInfoSize = static_cast<std::uint32_t>(context->frameEntrySize);
+    info->unwindInfo = context->frameEntry;
+    info->extra = context->segment;
+}
+
+[[noreturn]] void APS5_VABI CursorJumpTo(_Unwind_Context* context) {
+    LibcRestoreRegisters(context->registers);
+}
+
+bool APS5_VABI CursorIsSignalFrame(_Unwind_Context* context) {
+    return context->signalFrame;
+}
+
+bool APS5_VABI CursorGetFunctionName(_Unwind_Context* context, char* buffer, std::size_t length, std::uintptr_t* offset) {
+    const auto pc = context->registers[16];
+#ifdef _WIN32
+    const char* name = nullptr;
+    LibcUnwind::Word address = 0;
+    if (!LibcUnwind::NearestExport(pc, name, address)) return false;
+#else
+    Dl_info image {};
+    if (!dladdr(reinterpret_cast<void*>(pc), &image) || !image.dli_sname) return false;
+    const char* name = image.dli_sname;
+    const auto address = reinterpret_cast<std::uintptr_t>(image.dli_saddr);
+#endif
+    std::snprintf(buffer, length, "%s", name);
+    *offset = pc - address;
+    return true;
+}
+
+void APS5_VABI CursorSetInfoBasedOnIPRegister(_Unwind_Context* context, bool returnAddress) {
+    _Unwind_Context described = *context;
+    described.signalFrame = !returnAddress;
+    CursorDescribe(described);
+    described.signalFrame = context->signalFrame;
+    described.cfa = context->cfa;
+    *context = described;
+}
+
+const char* APS5_VABI CursorGetRegisterName(_Unwind_Context*, int number) {
+    static constexpr const char* names[] {"rax", "rdx", "rcx", "rbx", "rsi", "rdi", "rbp", "rsp", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "rip",
+        "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"};
+    if (number == CursorInstructionRegister) return "rip";
+    if (number == CursorStackRegister) return "rsp";
+    if (number >= 0 && number < static_cast<int>(sizeof(names) / sizeof(names[0]))) return names[number];
+    return "unknown register";
+}
+
+template<class Function> std::uintptr_t Slot(Function function) {
+    return reinterpret_cast<std::uintptr_t>(function);
+}
+
+const std::uintptr_t CursorSlots[] = {
+    Slot(&CursorDestroy),
+    Slot(&CursorDestroy),
+    Slot(&CursorValidRegister),
+    Slot(&CursorGetRegister),
+    Slot(&CursorSetRegister),
+    Slot(&CursorValidFloatRegister),
+    Slot(&CursorGetFloatRegister),
+    Slot(&CursorSetFloatRegister),
+    Slot(&CursorStep),
+    Slot(&CursorGetInfo),
+    Slot(&CursorJumpTo),
+    Slot(&CursorIsSignalFrame),
+    Slot(&CursorGetFunctionName),
+    Slot(&CursorSetInfoBasedOnIPRegister),
+    Slot(&CursorGetRegisterName),
+};
+}
+
+const std::uintptr_t* UnwindCursorSlots_nid_no_patch() {
+    return CursorSlots;
 }
 
 extern "C" {
@@ -625,6 +985,13 @@ _Unwind_Ptr APS5_VABI _Unwind_GetLanguageSpecificData_nid_postfix(_Unwind_Contex
 _Unwind_Ptr APS5_VABI _Unwind_GetRegionStart_nid_postfix(_Unwind_Context* context) { return context->region; }
 _Unwind_Ptr APS5_VABI _Unwind_GetDataRelBase_nid_postfix(_Unwind_Context* context) { return context->dataBase; }
 _Unwind_Ptr APS5_VABI _Unwind_GetTextRelBase_nid_postfix(_Unwind_Context* context) { return context->textBase; }
+_Unwind_Ptr APS5_VABI _Unwind_FindEnclosingFunction_nid_postfix(void* pc) {
+    _Unwind_Context context {};
+    context.registers[16] = reinterpret_cast<std::uintptr_t>(pc);
+    LibcUnwind::Frame frame {};
+    if (!LibcUnwind::DecodeFrame(context, frame)) return 0;
+    return frame.start;
+}
 
 _Unwind_Reason_Code APS5_VABI _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception* exception, _Unwind_Stop_Fn stop, void* argument) {
     if (!stop) return _URC_FATAL_PHASE2_ERROR;
@@ -653,6 +1020,10 @@ _Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn tra
 
 #else
 
+const std::uintptr_t* UnwindCursorSlots_nid_no_patch() {
+    return nullptr;
+}
+
 extern "C" {
 _Unwind_Reason_Code APS5_VABI _Unwind_RaiseException_nid_postfix(_Unwind_Exception*) { std::abort(); }
 [[noreturn]] void APS5_VABI _Unwind_Resume_nid_postfix(_Unwind_Exception*) { std::abort(); }
@@ -668,6 +1039,7 @@ _Unwind_Ptr APS5_VABI _Unwind_GetLanguageSpecificData_nid_postfix(_Unwind_Contex
 _Unwind_Ptr APS5_VABI _Unwind_GetRegionStart_nid_postfix(_Unwind_Context*) { std::abort(); }
 _Unwind_Ptr APS5_VABI _Unwind_GetDataRelBase_nid_postfix(_Unwind_Context*) { std::abort(); }
 _Unwind_Ptr APS5_VABI _Unwind_GetTextRelBase_nid_postfix(_Unwind_Context*) { std::abort(); }
+_Unwind_Ptr APS5_VABI _Unwind_FindEnclosingFunction_nid_postfix(void*) { std::abort(); }
 _Unwind_Reason_Code APS5_VABI _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception*, _Unwind_Stop_Fn, void*) { std::abort(); }
 _Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn, void*) { std::abort(); }
 }

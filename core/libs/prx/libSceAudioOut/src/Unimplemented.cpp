@@ -7,11 +7,6 @@
 
 extern "C" {
 
-int APS5_VABI sceAudioOut2UserCreateEx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceAudioOutOpenEx(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -99,7 +94,7 @@ int APS5_VABI sceAudioOutGetInfo(void) {
     return 0;
 }
 
-int APS5_VABI sceAudioOutSetPadSpkVolume(void) {
+int APS5_VABI sceAudioOutSetPadSpkVolume(std::int32_t, std::int32_t) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -125,11 +120,6 @@ int APS5_VABI sceAudioOutSetHeadphoneOutMode(void) {
 }
 
 int APS5_VABI sceAudioOutGetFocusEnablePid(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOutSetMainOutput(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -339,32 +329,12 @@ int APS5_VABI sceAudioOut2GetIpcHandle(void) {
     return 0;
 }
 
-int APS5_VABI sceAudioOut2GetSystemStateEx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceAudioOut2SetDebugHeadphoneMode(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceAudioOut2DebugStateCtrl(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2ContextBedWrite(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2PortCreateEx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2Terminate(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -389,4 +359,13 @@ int APS5_VABI sceAudioOut2GetHrtfIdForCronos(void) {
     return 0;
 }
 
+int APS5_VABI sceAudioDeviceControlGet_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tKumjQSzhys", sceAudioDeviceControlGet_nid_no_patch);
+
+int APS5_VABI sceAudioDeviceControlSet_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("5ChfcHOf3SM", sceAudioDeviceControlSet_nid_no_patch);
 }

@@ -183,9 +183,8 @@ int APS5_VABI sceSpPthreadMutexattrInit(PthreadMutexattr* attr) {
     return scePthreadMutexattrInit(attr);
 }
 
-int APS5_VABI sceSpPthreadMutexattrSetprioceiling() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSpPthreadMutexattrSetprioceiling(PthreadMutexattr* attr, int prioceiling) {
+    return scePthreadMutexattrSetprioceiling(attr, prioceiling);
 }
 
 int APS5_VABI sceSpPthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol) {

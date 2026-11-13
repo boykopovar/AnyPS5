@@ -1,9 +1,11 @@
-#include "prx/libSceVdecsw/include/Api.hpp"
+#include "prx/libSceVdecsw/libSceVdecsw.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -60,6 +62,168 @@ struct Session {
     }
 };
 
+template <typename TAction>
+bool throws(TAction action) {
+    try {
+        action();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+template <typename TInfo>
+void checkGenericPictureInfo(const OutputInfo& output, const TInfo& typed) {
+    const std::array<std::uint64_t, 7> sizes{8, 9, 0x28, sizeof(TInfo) - 1, sizeof(TInfo), sizeof(TInfo) + 16, std::numeric_limits<std::uint64_t>::max()};
+    for (const auto size : sizes) {
+        std::array<std::uint8_t, sizeof(TInfo) + 32> storage;
+        storage.fill(0xcc);
+        std::memcpy(storage.data() + 1, &size, sizeof(size));
+        auto expected = storage;
+        const auto copied = std::min<std::uint64_t>(size, sizeof(TInfo)) - sizeof(size);
+        std::memcpy(expected.data() + 1 + sizeof(size), reinterpret_cast<const std::uint8_t*>(&typed) + sizeof(size), copied);
+        auto second = storage;
+        const auto secondBefore = second;
+        check(sceVdecswGetPictureInfo(&output, storage.data() + 1, second.data()) == 0, "generic picture info query failed");
+        check(storage == expected && second == secondBefore, "generic picture info bytes, size or guards differ");
+    }
+    for (std::uint64_t size = 0; size < sizeof(size); ++size) {
+        auto tooSmall = typed;
+        tooSmall.thisSize = size;
+        const auto before = tooSmall;
+        check(throws([&] { sceVdecswGetPictureInfo(&output, &tooSmall, nullptr); }), "generic picture info accepted an undersized size field");
+        check(std::memcmp(&tooSmall, &before, sizeof(tooSmall)) == 0, "an invalid generic query changed its output");
+    }
+    auto second = typed;
+    const auto secondBefore = second;
+    check(sceVdecswGetPictureInfo(&output, nullptr, &second) == 0, "generic picture info rejected a null first output");
+    check(std::memcmp(&second, &secondBefore, sizeof(second)) == 0, "generic picture info wrote a nonexistent second picture");
+    auto shorter = output;
+    shorter.thisSize = sizeof(OutputInfo) - 8;
+    auto actual = typed;
+    check(sceVdecswGetPictureInfo(&shorter, &actual, nullptr) == 0 && std::memcmp(&actual, &typed, sizeof(actual)) == 0, "generic picture info rejected the shorter output descriptor");
+    auto doubled = output;
+    doubled.pictureCount = 2;
+    auto doubledFirst = typed;
+    const auto doubledBefore = doubledFirst;
+    auto doubledSecond = typed;
+    check(throws([&] { sceVdecswGetPictureInfo(&doubled, &doubledFirst, &doubledSecond); }) && std::memcmp(&doubledFirst, &doubledBefore, sizeof(doubledFirst)) == 0 && std::memcmp(&doubledSecond, &doubledBefore, sizeof(doubledSecond)) == 0, "generic picture info accepted two pictures");
+}
+
+void testGenericPictureInfoValidation() {
+    OutputInfo output{sizeof(OutputInfo)};
+    std::array<std::uint64_t, 8> first;
+    first.fill(0xccccccccccccccccull);
+    const auto before = first;
+    auto second = first;
+    check(throws([&] { sceVdecswGetPictureInfo(nullptr, first.data(), second.data()); }), "generic picture info accepted a null output descriptor");
+    check(first == before && second == before, "a null descriptor changed picture info");
+    check(sceVdecswGetPictureInfo(&output, first.data(), second.data()) == 0 && first == before && second == before, "an empty output changed picture info");
+    check(sceVdecswGetPictureInfo(&output, nullptr, nullptr) == 0, "an empty output required picture-info pointers");
+    for (const auto size : {0ull, 0x28ull, 0x31ull, 0x40ull, 0x100000038ull}) {
+        output.thisSize = size;
+        check(throws([&] { sceVdecswGetPictureInfo(&output, first.data(), second.data()); }) && first == before && second == before, "generic picture info accepted an invalid descriptor size");
+    }
+    output.thisSize = sizeof(OutputInfo);
+    first[0] = sizeof(first);
+    const auto firstBefore = first;
+    output.pictureCount = 1;
+    output.frameBuffer = first.data();
+    check(throws([&] { sceVdecswGetPictureInfo(&output, first.data(), nullptr); }) && first == firstBefore, "generic picture info accepted a foreign frame buffer");
+    output.frameBuffer = nullptr;
+    check(throws([&] { sceVdecswGetPictureInfo(&output, first.data(), nullptr); }) && first == firstBefore, "generic picture info accepted a null frame buffer");
+}
+
+void testDeliveredPictureInfoValidation() {
+    OutputInfo output{sizeof(OutputInfo)};
+    AvcPictureInfo avc{sizeof(AvcPictureInfo)};
+    HevcPictureInfo hevc{sizeof(HevcPictureInfo)};
+    check(throws([&] { sceVdecswGetAvcPictureInfo(nullptr, &avc, nullptr); }), "AVC picture info accepted a null output descriptor");
+    check(throws([&] { sceVdecswGetAvcPictureInfo(&output, nullptr, nullptr); }), "AVC picture info accepted a null info pointer");
+    check(throws([&] { sceVdecswGetHevcPictureInfo(nullptr, &hevc); }), "HEVC picture info accepted a null output descriptor");
+    check(throws([&] { sceVdecswGetHevcPictureInfo(&output, nullptr); }), "HEVC picture info accepted a null info pointer");
+
+    for (const auto size : {std::size_t{0}, sizeof(std::uint64_t) - 1}) {
+        avc.thisSize = size;
+        check(throws([&] { sceVdecswGetAvcPictureInfo(&output, &avc, nullptr); }), "AVC picture info accepted an undersized info struct");
+        hevc.thisSize = size;
+        check(throws([&] { sceVdecswGetHevcPictureInfo(&output, &hevc); }), "HEVC picture info accepted an undersized info struct");
+    }
+
+    avc.thisSize = sizeof(AvcPictureInfo);
+    hevc.thisSize = sizeof(HevcPictureInfo);
+    output.pictureCount = 0;
+    check(sceVdecswGetAvcPictureInfo(&output, &avc, nullptr) == 0, "empty output AVC picture info failed");
+    check(sceVdecswGetHevcPictureInfo(&output, &hevc) == 0, "empty output HEVC picture info failed");
+
+    output.pictureCount = 2;
+    check(throws([&] { sceVdecswGetAvcPictureInfo(&output, &avc, nullptr); }), "AVC picture info accepted more than one picture");
+    check(throws([&] { sceVdecswGetHevcPictureInfo(&output, &hevc); }), "HEVC picture info accepted more than one picture");
+
+    output.pictureCount = 1;
+    int dummy = 0;
+    output.frameBuffer = &dummy;
+    check(throws([&] { sceVdecswGetAvcPictureInfo(&output, &avc, nullptr); }), "AVC picture info accepted foreign frame buffer");
+    check(throws([&] { sceVdecswGetHevcPictureInfo(&output, &hevc); }), "HEVC picture info accepted foreign frame buffer");
+}
+
+void testGenericPictureInfoLifetime() {
+    OutputInfo output{sizeof(OutputInfo)};
+    std::vector<std::uint8_t> buffer;
+    {
+        Session session;
+        buffer.resize(session.memory.maxFrameBufferSize);
+        const auto units = accessUnits(false);
+        for (std::uint64_t iteration = 0; iteration < 2; ++iteration) {
+            const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 1000 + iteration, iteration, 0xa0 + iteration};
+            check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "generic lifetime input failed");
+            InputResult consumed{sizeof(InputResult)};
+            check(sceVdecswSyncDecodeInput(session.decoder, &consumed) == 0, "generic lifetime input was not consumed");
+            const FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size()};
+            check(sceVdecswSetDecodeOutput(session.decoder, &frame) == 0, "generic lifetime buffer failed");
+            check(sceVdecswFinalizeDecodeSequence(session.decoder) == 0, "generic lifetime finalize failed");
+            check(sceVdecswSyncDecodeOutput(session.decoder, &output) == 0 && output.isValid, "generic lifetime picture missing");
+            AvcPictureInfo info{sizeof(AvcPictureInfo)};
+            check(sceVdecswGetPictureInfo(&output, &info, nullptr) == 0 && info.ptsData == input.ptsData && info.dtsData == iteration && info.attachedData == input.attachedData, "generic picture info retained stale timestamps");
+            if (iteration == 0) {
+                check(sceVdecswResetDecoder(session.decoder) == 0, "generic lifetime reset failed");
+                const auto before = info;
+                check(throws([&] { sceVdecswGetPictureInfo(&output, &info, nullptr); }) && std::memcmp(&info, &before, sizeof(info)) == 0, "generic AVC picture info survived a decoder reset");
+            }
+        }
+    }
+    AvcPictureInfo info{sizeof(AvcPictureInfo)};
+    const auto before = info;
+    check(throws([&] { sceVdecswGetPictureInfo(&output, &info, nullptr); }) && std::memcmp(&info, &before, sizeof(info)) == 0, "generic picture info survived decoder destruction");
+}
+
+void testPictureInfoOfReusedFrameBuffer() {
+    Session first;
+    Session second;
+    std::vector<std::uint8_t> buffer(std::max(first.memory.maxFrameBufferSize, second.memory.maxFrameBufferSize));
+    const auto units = accessUnits(false);
+    const auto decodeInto = [&](const Session& session, std::uint64_t pts) {
+        const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), pts, pts, pts};
+        check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "shared buffer input failed");
+        InputResult consumed{sizeof(InputResult)};
+        check(sceVdecswSyncDecodeInput(session.decoder, &consumed) == 0, "shared buffer input was not consumed");
+        const FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size()};
+        check(sceVdecswSetDecodeOutput(session.decoder, &frame) == 0, "shared buffer was rejected");
+        check(sceVdecswFinalizeDecodeSequence(session.decoder) == 0, "shared buffer finalize failed");
+        OutputInfo output{sizeof(OutputInfo)};
+        check(sceVdecswSyncDecodeOutput(session.decoder, &output) == 0 && output.isValid && output.frameBuffer == buffer.data(), "shared buffer picture missing");
+        return output;
+    };
+    decodeInto(first, 1000);
+    const auto output = decodeInto(second, 2000);
+    AvcPictureInfo typed{sizeof(AvcPictureInfo)};
+    check(sceVdecswGetAvcPictureInfo(&output, &typed, nullptr) == 0 && typed.ptsData == 2000 && typed.dtsData == 2000 && typed.attachedData == 2000, "AVC picture info of a reused frame buffer came from the decoder that wrote it earlier");
+    AvcPictureInfo generic{sizeof(AvcPictureInfo)};
+    check(sceVdecswGetPictureInfo(&output, &generic, nullptr) == 0 && generic.ptsData == 2000, "generic picture info of a reused frame buffer came from the decoder that wrote it earlier");
+    check(sceVdecswResetDecoder(second.decoder) == 0, "shared buffer reset failed");
+    check(throws([&] { sceVdecswGetAvcPictureInfo(&output, &typed, nullptr); }), "picture info of a reused frame buffer outlived the reset of its last decoder");
+}
+
 void testDecode() {
     Session session;
     const auto units = accessUnits(false);
@@ -92,6 +256,7 @@ void testDecode() {
             check(!output.isErrorFrame && !output.isDiscardedFrame && output.pictureCount == 1 && output.frameWidth == Width && output.frameHeight == CodedHeight && output.frameBuffer == buffers[pictures % 2].data(), "unexpected picture geometry");
             AvcPictureInfo info{sizeof(AvcPictureInfo)};
             check(sceVdecswGetAvcPictureInfo(&output, &info, nullptr) == 0 && info.isValid, "picture info missing");
+            checkGenericPictureInfo(output, info);
             const auto unit = DisplayOrderUnits[pictures];
             check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit && info.idrPictureFlag == (pictures == 0 ? 1 : 0) && info.profileIdc == 100, "pictures out of display order");
             check(info.picWidthInMbsMinus1 == Width / 16 - 1 && info.picHeightInMapUnitsMinus1 == CodedHeight / 16 - 1 && info.frameMbsOnlyFlag == 1 && info.frameCroppingFlag == 1 && info.frameCropLeftOffset == 0 && info.frameCropRightOffset == 0 && info.frameCropTopOffset == 0 && info.frameCropBottomOffset == (CodedHeight - Height) / 2, "picture geometry in the picture info is wrong");
@@ -138,6 +303,7 @@ void testHevc() {
             check(pictures < HevcHashes.size() && output.codecType == CodecHevc && output.pictureCount == 1 && output.frameWidth == Width && output.frameHeight == Height, "unexpected HEVC picture geometry");
             HevcPictureInfo info{sizeof(HevcPictureInfo)};
             check(sceVdecswGetHevcPictureInfo(&output, &info) == 0 && info.isValid, "HEVC picture info missing");
+            checkGenericPictureInfo(output, info);
             const auto unit = HevcDisplayOrderUnits[pictures];
             check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit, "HEVC pictures out of display order");
             check(info.idrPictureFlag == (pictures == 0 ? 1 : 0) && info.irapPictureFlag == (pictures == 0 ? 1 : 0), "HEVC random access flags differ");
@@ -182,6 +348,7 @@ void testHevcCrop() {
     check(sceVdecswSyncDecodeOutput(session.decoder, &output) == 0 && output.isValid && output.frameWidth == 64 && output.frameHeight == 40, "unexpected cropped HEVC picture geometry");
     HevcPictureInfo info{sizeof(HevcPictureInfo)};
     check(sceVdecswGetHevcPictureInfo(&output, &info) == 0 && info.isValid, "cropped HEVC picture info missing");
+    checkGenericPictureInfo(output, info);
     check(info.picWidthInLumaSamples == 64 && info.picHeightInLumaSamples == 40, "cropped HEVC coded size differs");
     check(info.conformanceWindowFlag == 1 && info.confWinLeftOffset == 0 && info.confWinRightOffset == 0 && info.confWinTopOffset == 0 && info.confWinBottomOffset == 2, "HEVC conformance window differs");
     check(info.frameCroppingFlag == 1 && info.frameCropLeftOffset == 0 && info.frameCropRightOffset == 0 && info.frameCropTopOffset == 0 && info.frameCropBottomOffset == 2, "HEVC frame cropping differs");
@@ -203,6 +370,29 @@ void testWithoutOutput() {
     check(sceVdecswTrySyncDecodeOutput(session.decoder, &output) == 0 && output.isValid && output.isLastFrame, "the only picture of a finalized sequence is not marked last");
     check(sceVdecswResetDecoder(session.decoder) == 0, "reset failed");
     check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "a reset decoder kept its inputs");
+}
+
+void testRejectedUnitDoesNotBlockQueue() {
+    Session session;
+    const auto units = accessUnits(false);
+    const std::array<std::uint8_t, 4> rejected{0x12, 0x34, 0x56, 0x78};
+    const SceVideodec2::InputData bad{sizeof(SceVideodec2::InputData), rejected.data(), rejected.size(), 1, 0, 0};
+    check(throws([&] { sceVdecswSetDecodeInput(session.decoder, &bad); }), "a unit that is neither Annex-B nor length-prefixed was accepted");
+    InputResult result{sizeof(InputResult)};
+    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == 0 && result.decodedAu == rejected.data() && result.outputFrameCount == 0, "a rejected unit stayed queued");
+    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "a rejected unit left the queue blocked");
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
+    check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "decode input after a rejected unit was refused");
+    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == 0 && result.decodedAu == units[0].data(), "a valid unit after a rejected one was not decoded");
+}
+
+void testOversizedUnitIsRejectedBeforeCopy() {
+    Session session;
+    const std::array<std::uint8_t, 4> small{0x00, 0x00, 0x00, 0x01};
+    const SceVideodec2::InputData oversized{sizeof(SceVideodec2::InputData), small.data(), std::uint64_t{std::numeric_limits<int>::max()} + 1, 1, 0, 0};
+    check(throws([&] { sceVdecswSetDecodeInput(session.decoder, &oversized); }), "an access unit larger than int was accepted");
+    InputResult result{sizeof(InputResult)};
+    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "an oversized access unit was queued");
 }
 
 void testSyncWrappers() {
@@ -252,16 +442,6 @@ struct Vp9Session {
 
     }
 };
-
-template <typename TAction>
-bool throws(TAction action) {
-    try {
-        action();
-    } catch (const std::exception&) {
-        return true;
-    }
-    return false;
-}
 
 SceVideodec2::Vp9PictureInfo sentinelVp9Info(std::uint64_t size = sizeof(SceVideodec2::Vp9PictureInfo)) {
     SceVideodec2::Vp9PictureInfo info;
@@ -314,6 +494,7 @@ void testVp9PictureInfo() {
             check(output.codecType == CodecVp9 && output.pictureCount == 1 && output.frameWidth == Width && output.frameHeight == Height && output.frameBuffer == target.data(), "unexpected VP9 picture geometry");
             auto info = sentinelVp9Info();
             check(sceVdecswGetVp9PictureInfo(&output, &info) == 0, "VP9 picture info query failed");
+            checkGenericPictureInfo(output, info);
             checkVp9Info(info, pictures);
             check(hashNv12(target.data(), output.framePitch, output.frameHeight) == Vp9Hashes[pictures], "VP9 picture " + std::to_string(pictures) + " differs from the reference");
             outputs[pictures] = output;
@@ -335,6 +516,7 @@ void testVp9PictureInfo() {
         auto info = sentinelVp9Info();
         check(sceVdecswGetVp9PictureInfo(&outputs[picture], &info) == 0, "VP9 picture info of an earlier picture was lost");
         checkVp9Info(info, picture);
+        checkGenericPictureInfo(outputs[picture], info);
     }
 
     const auto unchanged = sentinelVp9Info();
@@ -380,6 +562,7 @@ void testVp9PictureInfo() {
 
     check(sceVdecswResetDecoder(session.decoder) == 0, "VP9 reset failed");
     check(throws([&] { sceVdecswGetVp9PictureInfo(&outputs[0], &info); }) && sameBytes(info, unchanged), "VP9 picture info survived a decoder reset");
+    check(throws([&] { sceVdecswGetPictureInfo(&outputs[0], &info, nullptr); }) && sameBytes(info, unchanged), "generic picture info survived a decoder reset");
 }
 
 void testVp9PictureInfoOfAvcPicture() {
@@ -416,16 +599,23 @@ void testHevcMain10() {
     check(sceVdecswSyncDecodeOutput(session.decoder, &output) == 0 && output.isValid, "the Main 10 HEVC picture was not output");
     HevcPictureInfo info{sizeof(HevcPictureInfo)};
     check(sceVdecswGetHevcPictureInfo(&output, &info) == 0 && info.isValid, "Main 10 HEVC picture info missing");
+    checkGenericPictureInfo(output, info);
     check(info.generalProfileIdc == 2 && info.bitDepthLumaMinus8 == 2 && info.bitDepthChromaMinus8 == 2, "Main 10 HEVC profile or bit depth differs");
 }
 
 int main() {
     try {
+        testGenericPictureInfoValidation();
+        testDeliveredPictureInfoValidation();
+        testGenericPictureInfoLifetime();
+        testPictureInfoOfReusedFrameBuffer();
         testDecode();
         testHevc();
         testHevcCrop();
         testHevcMain10();
         testWithoutOutput();
+        testRejectedUnitDoesNotBlockQueue();
+        testOversizedUnitIsRejectedBeforeCopy();
         testSyncWrappers();
         testVp9PictureInfo();
         testVp9PictureInfoOfAvcPicture();

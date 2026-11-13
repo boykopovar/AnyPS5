@@ -16,10 +16,13 @@ import unwrap_self
 SELF_MAGIC = 0x1D3D154F
 ELF_HEADER_OFFSET = 0x1A0
 PROGRAM_TABLE_OFFSET = 0x40
+PT_NULL = 0
 PT_LOAD = 1
 PT_DYNAMIC = 2
+PT_INTERP = 3
 PT_TLS = 7
 PT_NOTE = 4
+PT_PHDR = 6
 SCE_COMMENT = 0x6FFFFF00
 SCE_VERSION = 0x6FFFFF01
 FIRST_REGION = 0x400
@@ -67,11 +70,11 @@ def default_segments():
     ]
 
 
-def default_records():
+def default_records(read_only_index=1):
     return [
         (0x2804, 0x800, 0x100),
         (0x310004, 0x910, 0x20),
-        (0x102804, 0xA00, 0x80),
+        ((read_only_index << unwrap_self.RECORD_SEGMENT_SHIFT) | 0x2804, 0xA00, 0x80),
     ]
 
 
@@ -90,6 +93,161 @@ def read_program_headers(path):
 
 
 class UnwrapTest(unittest.TestCase):
+    def test_tls_zero_fill_cannot_hide_a_truncated_load(self):
+        directory = Path(self.directory)
+        source, output = directory / "input.self", directory / "output.elf"
+        for mapping in ("indexed", "legacy", "unrecorded"):
+            for stored in (0x60, 0x7F):
+                for tls_first in (False, True):
+                    load = (PT_LOAD, 5, 0x800 if mapping == "unrecorded" else 0x1234,
+                            0x1000, 0x80, 1)
+                    tls = (PT_TLS, 4, 0x880, 0x1080, 0x40, 1)
+                    segments = [tls, load] if tls_first else [load, tls]
+                    load_index = segments.index(load)
+                    flags = (load_index << unwrap_self.RECORD_SEGMENT_SHIFT) | 0x800
+                    records = [] if mapping == "unrecorded" else [
+                        (flags if mapping == "indexed" else 0, 0x800, 0x80)]
+                    container = bytearray(build_container(segments, records, {0x800: b"A" * stored}))
+                    struct.pack_into("<Q", container,
+                                     ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + load_index * 56 + 40, 0x100)
+                    source.write_bytes(container)
+                    for previous in (None, b"previous output"):
+                        with self.subTest(mapping=mapping, stored=stored, tls_first=tls_first, previous=previous):
+                            output.unlink(missing_ok=True)
+                            if previous is not None:
+                                output.write_bytes(previous)
+                            before = set(directory.iterdir())
+                            stdout, stderr = io.StringIO(), io.StringIO()
+                            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                                status = unwrap_self.main([str(source), str(output)])
+                            self.assertEqual(status, 2)
+                            self.assertEqual(stdout.getvalue(), "")
+                            self.assertIn(f"segment {load_index} does not fit the file", stderr.getvalue())
+                            self.assertEqual(source.read_bytes(), container)
+                            self.assertEqual(output.read_bytes() if output.exists() else None, previous)
+                            self.assertEqual(set(directory.iterdir()), before)
+
+    def test_interpreter_without_an_address_uses_its_load_file_range(self):
+        payload = b"/libexec/ld-elf.so.1\0" + pattern(3, 0x20) * 8
+        for delta, address in ((0, 0), (0x20, 0), (len(payload) - 0x10, 0),
+                               (0, 0x400000), (0x20, 0x400000), (len(payload) - 0x10, 0x400000)):
+            for mapping in ("indexed", "legacy", "unrecorded"):
+                with self.subTest(delta=delta, address=address, mapping=mapping):
+                    source = 0x800 if mapping != "unrecorded" else 0x4000
+                    segments = [(PT_INTERP, 4, 0x4000 + delta, 0, 0x10, 1),
+                                (PT_LOAD, 5, 0x4000, address, len(payload), PAGE)]
+                    records = [] if mapping == "unrecorded" else [
+                        (0x100800 if mapping == "indexed" else 0, source, len(payload))]
+                    container = build_container(segments, records, {source: payload})
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    data, headers = read_program_headers(output)
+                    interpreter, load = headers
+                    self.assertEqual(interpreter[2], load[2] + delta)
+                    self.assertEqual(interpreter[3], 0)
+                    self.assertEqual(data[interpreter[2]:interpreter[2] + 0x10], payload[delta:delta + 0x10])
+                    self.assertEqual(data[load[2]:load[2] + len(payload)], payload)
+                    self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_recorded_interpreter_keeps_its_own_payload(self):
+        payload = pattern(3, 0x20) * 8
+        interpreter = b"/libexec/ld-elf.so.1\0"
+        segments = [(PT_INTERP, 4, 0x4000, 0, len(interpreter), 1),
+                    (PT_LOAD, 5, 0x4000, 0x400000, len(payload), PAGE)]
+        records = [(0x800, 0xA00, len(interpreter)), (0x100800, 0x800, len(payload))]
+        result, output = self.convert(build_container(segments, records, {0x800: payload, 0xA00: interpreter}))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data, headers = read_program_headers(output)
+        self.assertEqual(data[headers[0][2]:headers[0][2] + len(interpreter)], interpreter)
+        self.assertEqual(data[headers[1][2]:headers[1][2] + len(payload)], payload)
+
+    def test_inferred_interpreter_does_not_move_trailing_metadata(self):
+        payload = b"/libexec/ld-elf.so.1\0" + bytes(0x100)
+        comment, version = b"comment" * 4, b"version" * 4
+        segments = [(PT_INTERP, 4, 0x4000, 0, 0x10, 1),
+                    (PT_LOAD, 5, 0x4000, 0x400000, len(payload), PAGE),
+                    (SCE_COMMENT, 4, 0x1000, 0, len(comment), 1),
+                    (SCE_VERSION, 4, 0x1000 + len(comment), 0, len(version), 1)]
+        records = [(0x100800, 0x800, len(payload)), (0x200800, 0xA00, len(comment))]
+        container = build_container(segments, records, {0x800: payload, 0xA00: comment + version})
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data, headers = read_program_headers(output)
+        self.assertEqual(headers[0][2], headers[1][2])
+        self.assertEqual([data[header[2]:header[2] + header[5]] for header in headers],
+                         [payload[:0x10], payload, comment, version])
+
+    def test_inferred_interpreter_does_not_hide_a_truncated_load(self):
+        segments = [(PT_INTERP, 4, 0x4000, 0, 0x10, 1),
+                    (PT_LOAD, 5, 0x4000, 0x400000, 0x100, PAGE)]
+        container = build_container(segments, [(0x100800, 0x800, 0x100)], {0x800: bytes(0x20)})
+        output = Path(self.directory) / "output.elf"
+        output.write_bytes(b"previous output")
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("segment 1 does not fit the file", result.stderr)
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_mapped_segments_at_virtual_address_zero_keep_their_template(self):
+        for kind in (PT_DYNAMIC, PT_TLS):
+            with self.subTest(kind=kind):
+                segments = default_segments()
+                segments[2] = (kind, 4, 0x1234, 0, 0x10, 8)
+                result, output = self.convert(build_container(segments, default_records(), default_payloads()))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                self.assertEqual(headers[2][2], headers[0][2])
+                self.assertEqual(headers[2][5:7], (0x10, 0x10))
+                self.assertEqual(data[headers[2][2]:headers[2][2] + 0x10], pattern(1, 0x10))
+
+    def test_unsupported_inner_elf_machines_are_refused(self):
+        for machine in (0, 3, 40, 183, 0x3E00, 0xFFFF):
+            with self.subTest(machine=machine):
+                container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                struct.pack_into("<H", container, ELF_HEADER_OFFSET + 0x12, machine)
+                with self.assertRaises(unwrap_self.Refused) as refused:
+                    unwrap_self.parse_elf(container)
+                self.assertEqual(str(refused.exception), f"unsupported inner ELF machine {machine} (expected 62)")
+
+    def test_invalid_inner_elf_header_sizes_are_refused(self):
+        for size in (0, 52, 63, 65, 0x4000, 0xFFFF):
+            with self.subTest(size=size):
+                container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                struct.pack_into("<H", container, ELF_HEADER_OFFSET + 0x34, size)
+                with self.assertRaises(unwrap_self.Refused) as refused:
+                    unwrap_self.parse_elf(container)
+                self.assertEqual(str(refused.exception), f"invalid inner ELF header size {size} (expected 64)")
+
+    def test_invalid_inner_elf_header_metadata_preserves_output(self):
+        directory = Path(self.directory)
+        source, output = directory / "input.self", directory / "output.elf"
+        for offset, value, message in ((0x12, 0, "unsupported inner ELF machine 0 (expected 62)"),
+                                       (0x12, 0x3E00, "unsupported inner ELF machine 15872 (expected 62)"),
+                                       (0x34, 0, "invalid inner ELF header size 0 (expected 64)"),
+                                       (0x34, 0x4000, "invalid inner ELF header size 16384 (expected 64)")):
+            for previous in (None, b"previous output"):
+                with self.subTest(offset=offset, value=value, previous=previous):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                    struct.pack_into("<H", container, ELF_HEADER_OFFSET + offset, value)
+                    source.write_bytes(container)
+                    if previous is None:
+                        output.unlink(missing_ok=True)
+                    else:
+                        output.write_bytes(previous)
+                    before = set(directory.iterdir())
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(f"FAIL: {source}: {message}", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(source.read_bytes(), container)
+                    self.assertEqual(set(directory.iterdir()), before)
+                    if previous is None:
+                        self.assertFalse(output.exists())
+                    else:
+                        self.assertEqual(output.read_bytes(), previous)
+
     def test_output_aliases_cannot_replace_the_input_container(self):
         container = build_container(default_segments(), default_records(), default_payloads())
         source = Path(self.directory) / "input.self"
@@ -100,12 +258,36 @@ class UnwrapTest(unittest.TestCase):
         for output in (source, source.parent / "." / source.name, alias):
             with self.subTest(output=output):
                 result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
-                                        capture_output=True, text=True, timeout=30)
+                                        capture_output=True, encoding="utf-8", timeout=30)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn("output aliases the input", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(source.read_bytes(), container)
                 self.assertEqual(alias.read_bytes(), container)
+
+    def test_symbolic_link_loops_are_reported_without_a_traceback(self):
+        container = build_container(default_segments(), default_records(), default_payloads())
+        source = Path(self.directory) / "input.self"
+        source.write_bytes(container)
+        loop = Path(self.directory) / "loop.elf"
+        output = Path(self.directory) / "output.elf"
+        try:
+            loop.symlink_to(loop.name)
+        except OSError as error:
+            self.skipTest(str(error))
+        for arguments in ((source, loop), (loop, output)):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), *map(str, arguments)],
+                                        capture_output=True, encoding="utf-8", timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("FAIL: ", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertTrue(loop.is_symlink())
+                self.assertEqual(os.readlink(loop), loop.name)
+                self.assertFalse(output.exists())
+                self.assertEqual(source.read_bytes(), container)
+                self.assertEqual(sorted(path.name for path in Path(self.directory).iterdir()), ["input.self", "loop.elf"])
 
     def test_main_with_explicit_argv(self):
         container = build_container(default_segments(), default_records(), default_payloads())
@@ -124,11 +306,50 @@ class UnwrapTest(unittest.TestCase):
         output = Path(self.directory) / "output.elf"
         source.write_bytes(container)
         result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, encoding="utf-8", timeout=30)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("does not fit the file", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
         self.assertFalse(output.exists())
+
+    def test_tls_layouts_the_relinker_rejects_are_refused(self):
+        cases = ((3, 0x20, 0x40, "segment 1 alignment is not a power of two"),
+                 (6, 0x20, 0x40, "segment 1 alignment is not a power of two"),
+                 (0x1001, 0x10, 0x20, "segment 1 alignment is not a power of two"),
+                 (8, 0x40, 0x20, "segment 1 file size exceeds memory size"),
+                 (0x4000, 0x10, 0x20, "segment 1 TLS alignment exceeds 8192"),
+                 (0x40, 0x10, 0x80000000, "segment 1 TLS memory size exceeds 0x7fff0000"))
+        for align, size, memory, message in cases:
+            with self.subTest(align=align, size=size, memory=memory):
+                segments = [default_segments()[0], (PT_TLS, 4, 0x1580, 0x1040, size, align)]
+                segments += default_segments()[1:]
+                container = bytearray(build_container(segments, default_records(read_only_index=2), default_payloads()))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 0x28, memory)
+                source = Path(self.directory) / "input.self"
+                output = Path(self.directory) / "output.elf"
+                source.write_bytes(container)
+                result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
+                                        capture_output=True, encoding="utf-8", timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(f"FAIL: {source}: {message}", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(output.exists())
+                self.assertEqual(source.read_bytes(), container)
+
+    def test_tls_layouts_the_relinker_accepts_are_unwrapped(self):
+        for align, size, memory in ((0x40, 0x20, 0x40), (8, 0x10, 0x10), (0, 0x20, 0x40), (1, 0x20, 0x40),
+                                    (0x2000, 0x10, 0x20), (0x40, 0x10, 0x7FFF0000)):
+            with self.subTest(align=align, size=size, memory=memory):
+                segments = [default_segments()[0], (PT_TLS, 4, 0x1580, 0x1040, size, align)]
+                segments += default_segments()[1:]
+                container = bytearray(build_container(segments, default_records(read_only_index=2), default_payloads()))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 0x28, memory)
+                result, output = self.convert(bytes(container))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                tls = [header for header in headers if header[0] == PT_TLS][0]
+                self.assertEqual((tls[5], tls[6], tls[7]), (size, memory, align))
+                self.assertEqual(data[tls[2]:tls[2] + tls[5]], pattern(9, 0x80)[0x40:0x40 + size])
 
     def test_huge_stale_offset_is_refused_instead_of_exhausting_memory(self):
         segments = default_segments()
@@ -139,9 +360,22 @@ class UnwrapTest(unittest.TestCase):
         output = Path(self.directory) / "output.elf"
         source.write_bytes(container)
         result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, encoding="utf-8", timeout=30)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("does not fit the file", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_many_load_segments_over_one_range_are_refused_instead_of_exhausting_memory(self):
+        segments = [(PT_LOAD, 5, 0x100000, 0x400000 + index * 0x400000, 0x200000, 1) for index in range(200)]
+        container = build_container(segments, [], {0x100000: bytes(0x200000)})
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
+                                capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("bytes of output", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
         self.assertFalse(output.exists())
 
@@ -293,14 +527,14 @@ class UnwrapTest(unittest.TestCase):
     def test_new_output_inherits_the_destination_directory_acl(self):
         directory = Path(self.directory)
         grant = subprocess.run(["icacls.exe", str(directory), "/grant", "*S-1-1-0:(OI)(CI)(RX)"],
-                               capture_output=True, text=True, timeout=30)
+                               capture_output=True, text=True, encoding="oem", errors="replace", timeout=30)
         self.assertEqual(grant.returncode, 0, grant.stdout + grant.stderr)
         container = build_container(default_segments(), default_records(), default_payloads())
         result, output = self.convert(container)
         self.assertEqual(result.returncode, 0, result.stderr)
         permissions = directory / "output-acl.txt"
         saved = subprocess.run(["icacls.exe", str(output), "/save", str(permissions)],
-                               capture_output=True, text=True, timeout=30)
+                               capture_output=True, text=True, encoding="oem", errors="replace", timeout=30)
         self.assertEqual(saved.returncode, 0, saved.stdout + saved.stderr)
         self.assertIn(";;;WD)", permissions.read_text(encoding="utf-16-le"))
         self.assertTrue(output.read_bytes().startswith(b"\x7fELF"))
@@ -317,7 +551,7 @@ class UnwrapTest(unittest.TestCase):
             with self.subTest(umask=oct(mask)):
                 output = directory / f"output-{mask:o}.elf"
                 result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
-                                        capture_output=True, text=True, timeout=30, umask=mask)
+                                        capture_output=True, encoding="utf-8", timeout=30, umask=mask)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 mode = output.stat().st_mode & 0o777
                 self.assertEqual(mode, 0o666 & ~mask)
@@ -384,7 +618,7 @@ class UnwrapTest(unittest.TestCase):
         output = directory / "output.elf"
         source.write_bytes(container)
         result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, encoding="utf-8", timeout=30)
         return result, output
 
     def setUp(self):
@@ -447,6 +681,160 @@ class UnwrapTest(unittest.TestCase):
         self.assertEqual(tls[2], read_only[2] + 0x80)
         self.assertEqual(tls[5], 0)
 
+    def test_indexed_records_are_not_reused_for_another_load(self):
+        first = pattern(1, 0x80)
+        unrelated = pattern(2, 0x80)
+        second = pattern(3, 0x80)
+        indexed = [(0x800, 0x800, len(first)), (0x800, 0x900, len(unrelated))]
+        for source_offset, records in (
+            (0xA00, indexed),
+            (0x2000, indexed + [(0, 0xA00, len(second))]),
+        ):
+            with self.subTest(source_offset=source_offset):
+                segments = [
+                    (PT_LOAD, 5, 0x1000, 0, len(first), PAGE),
+                    (PT_LOAD, 4, source_offset, PAGE, len(second), PAGE),
+                ]
+                container = build_container(segments, records, {0x800: first, 0x900: unrelated, 0xA00: second})
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                for header, expected in zip(headers, (first, second)):
+                    offset, size = header[2], header[5]
+                    self.assertEqual(data[offset:offset + size], expected)
+
+    def test_contained_segments_keep_stronger_alignment_than_their_load(self):
+        payload = b"TLS template data" * 16
+        for kind in (PT_DYNAMIC, PT_TLS):
+            for size in (0, 0x20):
+                for recorded in (False, True):
+                    with self.subTest(kind=kind, size=size, recorded=recorded):
+                        segments = [(PT_LOAD, 6, 0x2000, 0x4000, len(payload), 0x100),
+                                    (kind, 4, 0x2040, 0x4040, size, PAGE)]
+                        records = [(0x800, 0x800, len(payload))] if recorded else []
+                        if recorded and size:
+                            records.append((0x100800, 0x840, size))
+                        source = 0x800 if recorded else 0x2000
+                        container = build_container(segments, records, {source: payload})
+                        result, output = self.convert(container)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        data, headers = read_program_headers(output)
+                        load, embedded = headers
+                        for header in headers:
+                            self.assertEqual(header[2] % header[7], header[3] % header[7])
+                        self.assertEqual(embedded[2] - load[2], 0x40)
+                        self.assertEqual(data[load[2]:load[2] + load[5]], payload)
+                        self.assertEqual(data[embedded[2]:embedded[2] + size], payload[0x40:0x40 + size])
+                        self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_incompatible_contained_alignment_preserves_output(self):
+        segments = [(PT_LOAD, 6, 0x2000, 0x4000, 0x100, 0x100),
+                    (PT_TLS, 4, 0x2040, 0x40C0, 0x20, PAGE)]
+        records = [(0x800, 0x800, 0x100), (0x100800, 0x840, 0x20)]
+        container = build_container(segments, records, {0x800: b"TLS data" * 32})
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        for previous in (None, b"previous output"):
+            with self.subTest(previous=previous):
+                if previous is not None:
+                    output.write_bytes(previous)
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors):
+                    self.assertEqual(unwrap_self.main([str(source), str(output)]), 2)
+                self.assertIn("segment 1 has incompatible alignment", errors.getvalue())
+                self.assertEqual(source.read_bytes(), container)
+                self.assertEqual(output.read_bytes() if output.exists() else None, previous)
+                self.assertEqual(set(Path(self.directory).iterdir()),
+                                 {source, output} if previous is not None else {source})
+
+    def test_contained_alignment_obeys_the_padding_limit(self):
+        segments = [(PT_LOAD, 6, 0x2000, 0x4000, 0x100, 0x100),
+                    (PT_TLS, 4, 0x2040, 0x4040, 0x20, PAGE)]
+        container = build_container(segments, [], {0x2000: b"TLS data" * 32})
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        output.write_bytes(b"previous output")
+
+        def allocate(value):
+            if isinstance(value, int):
+                self.assertLessEqual(value, len(container) + 0x800)
+            return bytearray(value)
+
+        with mock.patch.object(unwrap_self, "MAX_ALIGNMENT_PADDING", 0x800), \
+                mock.patch.object(unwrap_self, "bytearray", side_effect=allocate, create=True):
+            with self.assertRaisesRegex(unwrap_self.Refused, "alignment requires more than"):
+                unwrap_self.unwrap(source, output)
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual(source.read_bytes(), container)
+
+    def test_multiple_contained_alignments_keep_a_nonzero_residue_in_either_order(self):
+        payload = b"TLS template data" * 16
+        embedded = [(PT_DYNAMIC, 4, 0x2140, 0x4140, 0x20, PAGE),
+                    (PT_TLS, 4, 0x2180, 0x4180, 0x20, 2 * PAGE)]
+        for order in (embedded, list(reversed(embedded))):
+            with self.subTest(order=order):
+                segments = [(PT_LOAD, 6, 0x2100, 0x4100, len(payload), 0x100), *order]
+                container = build_container(segments, [], {0x2100: payload})
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                self.assertEqual(headers[0][2], 0x2100)
+                for header, segment in zip(headers, segments):
+                    self.assertEqual(header[7], segment[5])
+                    self.assertEqual(header[2] % header[7], header[3] % header[7])
+                    delta = header[3] - headers[0][3]
+                    self.assertEqual(header[2] - headers[0][2], delta)
+                    self.assertEqual(data[header[2]:header[2] + header[5]], payload[delta:delta + header[5]])
+
+    def test_recorded_overlaps_use_the_same_region_for_constraints_and_output(self):
+        payload = bytes(0x30 + (index * 7) % 0x40 for index in range(0x200))
+        prefix = bytes(0x41 + index % 20 for index in range(0x50))
+        cases = [
+            ([(PT_LOAD, 5, 0x2040, 0x11040, 0xC0, PAGE),
+              (PT_LOAD, 6, 0x2000, 0x20000, 0x200, PAGE),
+              (PT_TLS, 4, 0x2120, 0x20120, 0x20, 0x100)],
+             [(0x800, 0x900, 0xC0), (0x100800, 0x800, 0x200), (0x200800, 0x920, 0x20)],
+             {0x800: payload}, [payload[0x100:0x1C0], payload, payload[0x120:0x140]]),
+            ([(PT_LOAD, 5, 0x2040, 0x11040, 0xC0, PAGE),
+              (PT_LOAD, 6, 0x2000, 0x20000, 0x100, 0x10),
+              (PT_TLS, 4, 0x2080, 0x11080, 0x20, 0x100),
+              (PT_LOAD, 4, 0x5000, 0x30000, 0x50, 0x10)],
+             [(0x800, 0x840, 0xC0), (0x100800, 0x800, 0x100),
+              (0x200800, 0x880, 0x20), (0x300800, 0x700, 0x50)],
+             {0x800: payload[:0x100], 0x700: prefix},
+             [payload[0x40:0x100], payload[:0x100], payload[0x80:0xA0], prefix]),
+        ]
+        for segments, records, payloads, expected in cases:
+            with self.subTest(segments=segments):
+                container = build_container(segments, records, payloads)
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                for header, segment, block in zip(headers, segments, expected):
+                    self.assertEqual(header[7], segment[5])
+                    self.assertEqual(header[2] % header[7], header[3] % header[7])
+                    self.assertEqual(data[header[2]:header[2] + header[5]], block)
+                self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_inferred_overlaps_apply_stronger_alignment_to_the_host(self):
+        payload = b"overlapping load payload\0" * 16
+        segments = [(PT_LOAD, 5, 0x1000, 0x1000, 0x100, 0x100),
+                    (PT_LOAD, 6, 0x1080, 0x3080, 0x100, 0x100),
+                    (PT_TLS, 4, 0x1090, 0x3090, 0x10, PAGE)]
+        container = build_container(segments, [], {0x1000: payload})
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data, headers = read_program_headers(output)
+        for header, segment, delta in zip(headers, segments, (0, 0x80, 0x90)):
+            self.assertEqual(header[7], segment[5])
+            self.assertEqual(header[2] % header[7], header[3] % header[7])
+            self.assertEqual(data[header[2]:header[2] + header[5]], payload[delta:delta + header[5]])
+        host, tls = headers[1:]
+        self.assertEqual(tls[2] - host[2], tls[3] - host[3])
+        self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
     def test_overlapping_load_sources_keep_each_load_alignment(self):
         payload = b"shared load payload\0" * 16
         for delta, size in ((0, len(payload)), (0, 0x80), (0x40, 0x80)):
@@ -483,6 +871,30 @@ class UnwrapTest(unittest.TestCase):
                     host, embedded = headers[1:]
                     self.assertEqual(embedded[2] - host[2], embedded[3] - host[3])
                     self.assertEqual(data[embedded[2]:embedded[2] + size], payload[0x90:0x90 + size])
+
+    def test_recorded_embedded_segments_keep_their_overlapping_load_host(self):
+        payload = b"overlapping load payload\0" * 16
+        for kind in (PT_DYNAMIC, PT_TLS):
+            for delta, size in ((0, 0x10), (0x10, 0x10), (0x40, 0x20), (0xF0, 0x10)):
+                for relocated in (False, True):
+                    with self.subTest(kind=kind, delta=delta, size=size, relocated=relocated):
+                        source = 0x800 if relocated else 0x1000
+                        segments = [(PT_LOAD, 5, 0x1000, 0x1000, 0x100, PAGE),
+                                    (PT_LOAD, 6, 0x1080, 0x3080, 0x100, PAGE),
+                                    (kind, 4, 0x1080 + delta, 0x3080 + delta, size, 8)]
+                        records = [(0x800, source, 0x100), (0x100800, source + 0x80, 0x100)] if relocated else []
+                        records.append((0x200800, source + 0x80 + delta, size))
+                        container = build_container(segments, records, {source: payload})
+                        result, output = self.convert(container)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        data, headers = read_program_headers(output)
+                        host, embedded = headers[1:]
+                        self.assertEqual(embedded[2] - host[2], delta)
+                        for header, start in zip(headers[:2], (0, 0x80)):
+                            self.assertEqual(header[2] % header[7], header[3] % header[7])
+                            self.assertEqual(data[header[2]:header[2] + header[5]], payload[start:start + 0x100])
+                        self.assertEqual(data[embedded[2]:embedded[2] + size], payload[0x80 + delta:0x80 + delta + size])
+                        self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
 
     def test_segments_after_the_recorded_comment_are_read_from_the_container(self):
         segments = default_segments() + [(SCE_COMMENT, 4, 0x15A0, 0x0, 0x20, 0x10), (PT_NOTE, 4, 0x15C0, 0x0, 0x18, 4),
@@ -633,6 +1045,147 @@ class UnwrapTest(unittest.TestCase):
                 self.assertEqual(len(headers), count)
                 self.assertTrue(all(header[0] == 0 for header in headers[1:]))
 
+    def test_phdr_names_the_rewritten_table_in_the_load_image(self):
+        table_size = 2 * 56
+        for address in (0, 0x4000):
+            for delta in (0, 0x40):
+                for recorded in (False, True):
+                    with self.subTest(address=address, delta=delta, recorded=recorded):
+                        table_offset = PAGE + delta
+                        segments = [(PT_PHDR, 4, table_offset, address + delta, table_size, 8),
+                                    (PT_LOAD, 4, PAGE, address, 0x400, PAGE)]
+                        table = build_elf(segments, table_offset)[table_offset:table_offset + table_size]
+                        payload = bytearray(b"load payload\0" * 80)[:0x400]
+                        payload[delta:delta + table_size] = table
+                        records = [(0x100800, 0x3000, len(payload))]
+                        if recorded:
+                            records.insert(0, (0x800, 0x3000 + delta, table_size))
+                        container = build_container(segments, records, {0x3000: payload},
+                                                    program_offset=table_offset)
+                        result, output = self.convert(container)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        data, headers = read_program_headers(output)
+                        phdr, load = headers
+                        rewritten = struct.unpack_from("<Q", data, 0x20)[0]
+                        self.assertEqual(rewritten, phdr[2])
+                        self.assertEqual(phdr[2], load[2] + delta)
+                        self.assertEqual(phdr[3], load[3] + delta)
+                        expected = b"".join(struct.pack("<IIQQQQQQ", *header) for header in headers)
+                        self.assertEqual(data[phdr[2]:phdr[2] + table_size], expected)
+                        self.assertEqual(data[load[2]:phdr[2]], payload[:delta])
+                        self.assertEqual(data[phdr[2] + table_size:load[2] + load[5]], payload[delta + table_size:])
+                        self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_invalid_phdr_metadata_preserves_input_and_output(self):
+        load = (PT_LOAD, 4, PAGE, 0x4000, 0x400, PAGE)
+        phdr = (PT_PHDR, 4, PAGE, 0x4000, 2 * 56, 8)
+        duplicate = (PT_PHDR, 4, PAGE, 0x4000, 3 * 56, 8)
+        cases = [([duplicate, duplicate, load], None, "more than one PT_PHDR segment"),
+                 ([load, phdr], None, "PT_PHDR must precede the load segments")]
+        cases += [([(PT_PHDR, 4, PAGE, 0x4000, size, 8), load], 2 * 56,
+                   "PT_PHDR does not cover the program header table") for size in (0, 2 * 56 - 1)]
+        cases += [([phdr, load], size, "PT_PHDR does not cover the program header table")
+                  for size in (0, 2 * 56 - 1)]
+        directory = Path(self.directory)
+        source, output = directory / "input.self", directory / "output.elf"
+        for segments, memory, message in cases:
+            container = bytearray(build_container(segments, [(0x100800, 0x3000, 0x400)],
+                                                  {0x3000: (b"load data\0" * 128)[:0x400]}, program_offset=PAGE))
+            if memory is not None:
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PAGE + 40, memory)
+            table = ELF_HEADER_OFFSET + PAGE
+            container[0x3000:0x3000 + len(segments) * 56] = container[table:table + len(segments) * 56]
+            source.write_bytes(container)
+            for previous in (None, b"previous output"):
+                with self.subTest(segments=segments, memory=memory, previous=previous):
+                    output.unlink(missing_ok=True)
+                    if previous is not None:
+                        output.write_bytes(previous)
+                    before = set(directory.iterdir())
+                    errors = io.StringIO()
+                    with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(io.StringIO()):
+                        status = unwrap_self.main([str(source), str(output)])
+                    self.assertEqual(status, 2)
+                    self.assertIn(message, errors.getvalue())
+                    self.assertEqual(source.read_bytes(), container)
+                    self.assertEqual(output.read_bytes() if output.exists() else None, previous)
+                    self.assertEqual(set(directory.iterdir()), before)
+
+    def test_phdr_mapping_other_load_bytes_preserves_input_and_output(self):
+        table_size = 2 * 56
+        cases = [(0x4000, 0, 0, PROGRAM_TABLE_OFFSET),
+                 (0x4000, 0x400000, 0x40, PROGRAM_TABLE_OFFSET),
+                 (0, 0, 0x1040, 0x1040)]
+        directory = Path(self.directory)
+        source, output = directory / "input.self", directory / "output.elf"
+        for load_offset, address, delta, phdr_offset in cases:
+            segments = [(PT_PHDR, 4, phdr_offset, address + delta, table_size, 8),
+                        (PT_LOAD, 4, load_offset, address, 0x1400, PAGE)]
+            payload = (b"load bytes outside the program header table\0" * 128)[:0x1400]
+            for recorded in (False, True):
+                records = [(0x100800, 0x5000, len(payload))]
+                if recorded:
+                    records.insert(0, (0x800, 0x5000 + delta, table_size))
+                container = build_container(segments, records, {0x5000: payload})
+                source.write_bytes(container)
+                for previous in (None, b"previous output"):
+                    with self.subTest(segments=segments, recorded=recorded, previous=previous):
+                        output.unlink(missing_ok=True)
+                        if previous is not None:
+                            output.write_bytes(previous)
+                        before = set(directory.iterdir())
+                        result, output = self.convert(container)
+                        self.assertEqual(result.returncode, 2, result.stderr)
+                        self.assertIn("PT_PHDR does not map the program header table", result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+                        self.assertEqual(source.read_bytes(), container)
+                        self.assertEqual(output.read_bytes() if output.exists() else None, previous)
+                        self.assertEqual(set(directory.iterdir()), before)
+
+    def test_larger_phdr_after_a_non_load_header_preserves_surrounding_bytes(self):
+        table_size = 3 * 56
+        delta = 0x40
+        segments = [(PT_NOTE, 4, 0, 0, 0, 4),
+                    (PT_PHDR, 4, PAGE + delta, 0x4000 + delta, table_size + 0x20, 8),
+                    (PT_LOAD, 4, PAGE, 0x4000, 0x400, PAGE)]
+        table = build_elf(segments, PAGE + delta)[PAGE + delta:PAGE + delta + table_size]
+        payload = bytearray(b"load payload\0" * 80)[:0x400]
+        payload[delta:delta + table_size] = table
+        for recorded in (False, True):
+            with self.subTest(recorded=recorded):
+                records = [(0x200800, 0x3000, len(payload))]
+                if recorded:
+                    records.insert(0, (0x100800, 0x3000 + delta, table_size + 0x20))
+                container = build_container(segments, records, {0x3000: payload}, program_offset=PAGE + delta)
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                phdr, load = headers[1:]
+                self.assertEqual(struct.unpack_from("<Q", data, 0x20)[0], phdr[2])
+                self.assertEqual(phdr[2], load[2] + delta)
+                self.assertEqual((phdr[5], phdr[6]), (table_size + 0x20, table_size + 0x20))
+                expected = b"".join(struct.pack("<IIQQQQQQ", *header) for header in headers)
+                self.assertEqual(data[phdr[2]:phdr[2] + table_size], expected)
+                self.assertEqual(data[load[2]:phdr[2]], payload[:delta])
+                self.assertEqual(data[phdr[2] + table_size:load[2] + load[5]], payload[delta + table_size:])
+                self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_phdr_record_outside_its_load_image_is_refused(self):
+        segments = [(PT_PHDR, 4, PAGE, 0x4000, 2 * 56, 8),
+                    (PT_LOAD, 4, PAGE, 0x4000, 0x400, PAGE)]
+        container = build_container(segments, [(0x800, 0x4000, 2 * 56), (0x100800, 0x3000, 0x400)],
+                                    {0x3000: (b"load data\0" * 128)[:0x400], 0x4000: b"x" * (2 * 56)},
+                                    program_offset=PAGE)
+        directory = Path(self.directory)
+        source, output = directory / "input.self", directory / "output.elf"
+        source.write_bytes(container)
+        output.write_bytes(b"previous output")
+        with self.assertRaisesRegex(unwrap_self.Refused, "PT_PHDR is not in a file-backed load segment"):
+            unwrap_self.unwrap(source, output)
+        self.assertEqual(source.read_bytes(), container)
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual(set(directory.iterdir()), {source, output})
+
     def test_the_verbose_report_names_every_program_header(self):
         container = build_container(default_segments(), default_records(), default_payloads())
         directory = Path(self.directory)
@@ -640,7 +1193,7 @@ class UnwrapTest(unittest.TestCase):
         output = directory / "output.elf"
         source.write_bytes(container)
         result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), "--verbose",
-                                 str(source), str(output)], capture_output=True, text=True, timeout=30)
+                                 str(source), str(output)], capture_output=True, encoding="utf-8", timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("PT_LOAD", result.stdout)
         self.assertIn("PT_DYNAMIC", result.stdout)
@@ -690,6 +1243,63 @@ class UnwrapTest(unittest.TestCase):
                 self.assertIn("inner ELF is not 64-bit little-endian", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertFalse(output.exists())
+
+    def test_unsupported_inner_elf_versions_are_refused(self):
+        for identification in (0, 1, 2, 255):
+            for version in (0, 1, 2, 0x1000001, 0xFFFFFFFF):
+                if identification == version == 1:
+                    continue
+                with self.subTest(identification=identification, version=version):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                    container[ELF_HEADER_OFFSET + 6] = identification
+                    struct.pack_into("<I", container, ELF_HEADER_OFFSET + 0x14, version)
+                    with self.assertRaises(unwrap_self.Refused) as refused:
+                        unwrap_self.parse_elf(container)
+                    self.assertEqual(str(refused.exception),
+                                     f"unsupported inner ELF version (identification {identification}, object {version})")
+
+    def test_unsupported_inner_elf_versions_preserve_output(self):
+        directory = Path(self.directory)
+        source, output = directory / "input.self", directory / "output.elf"
+        for identification, version in ((0, 1), (2, 1), (1, 0), (1, 2), (1, 0x1000001), (255, 0xFFFFFFFF)):
+            for previous in (None, b"previous output"):
+                with self.subTest(identification=identification, version=version, previous=previous):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                    container[ELF_HEADER_OFFSET + 6] = identification
+                    struct.pack_into("<I", container, ELF_HEADER_OFFSET + 0x14, version)
+                    source.write_bytes(container)
+                    if previous is None:
+                        output.unlink(missing_ok=True)
+                    else:
+                        output.write_bytes(previous)
+                    before = set(directory.iterdir())
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(str(source), result.stderr)
+                    self.assertIn(f"unsupported inner ELF version (identification {identification}, object {version})", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(source.read_bytes(), container)
+                    self.assertEqual(set(directory.iterdir()), before)
+                    if previous is None:
+                        self.assertFalse(output.exists())
+                    else:
+                        self.assertEqual(output.read_bytes(), previous)
+
+    def test_current_elf_versions_preserve_the_separate_abi_version(self):
+        for magic in (SELF_MAGIC, unwrap_self.SELF_MAGIC_KERNEL):
+            for abi_version in (0, 1, 255):
+                with self.subTest(magic=magic, abi_version=abi_version):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads(), magic=magic))
+                    container[ELF_HEADER_OFFSET + 8] = abi_version
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    data, headers = read_program_headers(output)
+                    self.assertEqual(data[6], 1)
+                    self.assertEqual(struct.unpack_from("<I", data, 0x14)[0], 1)
+                    self.assertEqual(data[8], abi_version)
+                    self.assertEqual(len(headers), len(default_segments()))
+                    self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
 
     def test_a_container_whose_load_segments_look_encrypted_is_refused(self):
         random_like = bytes(range(256)) * 4
@@ -912,6 +1522,44 @@ class UnwrapTest(unittest.TestCase):
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(output.read_bytes(), b"previous output")
 
+    def test_invalid_non_null_segment_alignment_is_refused_before_replacing_output(self):
+        output = Path(self.directory) / "output.elf"
+        for kind in (PT_DYNAMIC, PT_NOTE, PT_PHDR, SCE_COMMENT):
+            with self.subTest(kind=kind):
+                segments = default_segments()
+                segments[2] = (kind, 6, 0x1580, 0x1040, 0x10, 3)
+                container = build_container(segments, default_records(), default_payloads())
+                output.write_bytes(b"previous output")
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("segment 2 alignment is not a power of two", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(output.read_bytes(), b"previous output")
+
+    def test_null_segment_alignment_is_ignored(self):
+        segments = default_segments()
+        segments[2] = (PT_NULL, 0, 0, 0, 0, 3)
+        container = build_container(segments, default_records(), default_payloads())
+        _, _, headers = unwrap_self.parse_elf(container)
+        self.assertEqual(headers[2]["align"], 3)
+
+    def test_null_segment_fields_do_not_affect_conversion(self):
+        segments = default_segments()
+        segments[2] = (PT_NULL, 0, 0, 0, 0, 0)
+        original = build_container(segments, default_records(), default_payloads())
+        result, output = self.convert(original)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = output.read_bytes()
+        for field, format in ((4, "<I"), (8, "<Q"), (16, "<Q"), (24, "<Q"),
+                              (32, "<Q"), (40, "<Q"), (48, "<Q")):
+            with self.subTest(field=field):
+                container = bytearray(original)
+                value = (1 << (struct.calcsize(format) * 8)) - 1
+                struct.pack_into(format, container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 2 * 56 + field, value)
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output.read_bytes(), expected)
+
     def test_load_alignment_zero_and_one_remain_supported(self):
         for alignment in (0, 1):
             with self.subTest(alignment=alignment):
@@ -945,28 +1593,60 @@ class UnwrapTest(unittest.TestCase):
 
     def test_segments_outside_the_file_backed_load_range_preserve_existing_output(self):
         output = Path(self.directory) / "output.elf"
-        for address, size, memory_size in ((0x1078, 0x10, 0x80), (0x1078, 0x10, 0x100),
-                                            (0x1080, 0x10, 0x100)):
-            for kind in (PT_DYNAMIC, PT_TLS):
-                with self.subTest(address=address, size=size, memory_size=memory_size, kind=kind):
-                    segments = default_segments()
-                    segments[2] = (kind, 4, 0x1580, address, size, 8)
-                    payloads = default_payloads()
-                    payloads[0xA80] = pattern(23, 0x100)
-                    container = bytearray(build_container(segments, default_records(), payloads))
-                    struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 40,
-                                     memory_size)
-                    output.write_bytes(b"previous output")
-                    result, output = self.convert(container)
-                    self.assertEqual(result.returncode, 2, result.stderr)
-                    self.assertIn("file-backed range of PT_LOAD 1", result.stderr)
-                    self.assertNotIn("Traceback", result.stderr)
-                    self.assertEqual(output.read_bytes(), b"previous output")
-                    self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+        cases = ((PT_DYNAMIC, 0x1078, 0x80), (PT_DYNAMIC, 0x1078, 0x100), (PT_DYNAMIC, 0x1080, 0x100),
+                 (PT_TLS, 0x1078, 0x80), (PT_TLS, 0x1080, 0x88))
+        for kind, address, memory_size in cases:
+            with self.subTest(kind=kind, address=address, memory_size=memory_size):
+                segments = default_segments()
+                segments[2] = (kind, 4, 0x1580, address, 0x10, 8)
+                payloads = default_payloads()
+                payloads[0xA80] = pattern(23, 0x100)
+                container = bytearray(build_container(segments, default_records(), payloads))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 40, memory_size)
+                output.write_bytes(b"previous output")
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("file-backed range of PT_LOAD 1", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(output.read_bytes(), b"previous output")
+                self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_tls_image_past_the_file_backed_load_range_reads_the_zero_fill(self):
+        for address, memory_size, backed in ((0x1078, 0x100, 8), (0x1080, 0x100, 0), (0x1080, 0x90, 0),
+                                             (0x10F0, 0x100, 0)):
+            with self.subTest(address=address, memory_size=memory_size):
+                segments = default_segments()
+                segments[2] = (PT_TLS, 4, 0x1580, address, 0x10, 8)
+                payloads = default_payloads()
+                payloads[0xA80] = pattern(23, 0x100)
+                container = bytearray(build_container(segments, default_records(), payloads))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 40, memory_size)
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 2 * 56 + 40, 0x40)
+                result, output = self.convert(bytes(container))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                load, tls = headers[1:3]
+                self.assertEqual(tls, (PT_TLS, 4, tls[2], address, address, 0x10, 0x40, 8))
+                self.assertEqual(tls[2] % 8, address % 8)
+                self.assertEqual(data[tls[2]:tls[2] + 0x10], pattern(9, 0x80)[0x80 - backed:] + bytes(0x10 - backed))
+                self.assertEqual(load[5], 0x80)
+                self.assertEqual(data[load[2]:load[2] + 0x80], pattern(9, 0x80))
+
+    def test_huge_zero_filled_tls_image_is_refused_before_allocation(self):
+        segments = default_segments()
+        segments[2] = (PT_TLS, 4, 0x1580, 0x1080, 0x20000000, 8)
+        container = bytearray(build_container(segments, default_records(), default_payloads()))
+        struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 40, 0x40000000)
+        struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 2 * 56 + 40, 0x20000000)
+        result, output = self.convert(bytes(container))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("segment 2 needs 536870912 bytes of output", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(output.exists())
 
     def test_file_empty_load_cannot_supply_segment_bytes_from_container_padding(self):
         segments = default_segments() + [(PT_LOAD, 6, 0x1900, 0x4000, 0, PAGE),
-                                         (PT_TLS, 4, 0x1900, 0x4000, 0x10, 8)]
+                                         (PT_DYNAMIC, 6, 0x1900, 0x4000, 0x10, 8)]
         payloads = default_payloads()
         payloads[0x1900] = pattern(23, 0x10)
         container = bytearray(build_container(segments, default_records(), payloads))
@@ -977,6 +1657,21 @@ class UnwrapTest(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertFalse(output.exists())
         self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_tls_image_in_a_file_empty_load_is_zero_not_container_padding(self):
+        segments = default_segments() + [(PT_LOAD, 6, 0x1900, 0x4000, 0, PAGE),
+                                         (PT_TLS, 4, 0x1900, 0x4000, 0x10, 8)]
+        payloads = default_payloads()
+        payloads[0x1900] = b"\xa5" * 0x10
+        container = bytearray(build_container(segments, default_records(), payloads))
+        struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 3 * 56 + 40, 0x2000)
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data, headers = read_program_headers(output)
+        tls = headers[4]
+        self.assertEqual(tls[:6], (PT_TLS, 4, tls[2], 0x4000, 0x4000, 0x10))
+        self.assertEqual(data[tls[2]:tls[2] + 0x10], bytes(0x10))
+        self.assertNotIn(b"\xa5" * 0x10, data)
 
     def test_segment_ending_at_the_file_backed_load_boundary_is_preserved(self):
         for kind in (PT_DYNAMIC, PT_TLS):
@@ -1084,6 +1779,35 @@ class JobManagerModuleRefusalTests(unittest.TestCase):
         self.toolchain.mkdir()
         self.module = self.root / "module.self"
 
+    def test_reference_timeouts_are_bounded_before_setup(self):
+        import run_job_manager_reference
+        cases = ((None, 20), ("0.001", 0.001), ("30", 30), ("nan", None), ("NaN", None),
+                 ("-nan", None), ("inf", None), ("-inf", None), ("0", None), ("-1", None), ("30.001", None))
+        for platform in ("linux", "win32"):
+            for number, (value, expected) in enumerate(cases):
+                with self.subTest(platform=platform, value=value):
+                    output = self.root / f"artifacts-{platform}-{number}"
+                    arguments = ["run_job_manager_reference.py", "--host", "--build", str(self.build),
+                                 "--relinker", str(self.relinker), "--toolchain", str(self.toolchain),
+                                 "--output", str(output)] + ([] if value is None else [f"--timeout={value}"])
+                    stdout, stderr = io.StringIO(), io.StringIO()
+                    with mock.patch.object(sys, "argv", arguments), mock.patch.object(sys, "platform", platform), \
+                            mock.patch.object(run_job_manager_reference, "run", return_value=0) as run, \
+                            contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                        if expected is None:
+                            with self.assertRaises(SystemExit) as stopped:
+                                run_job_manager_reference.main()
+                            self.assertEqual(stopped.exception.code, 2)
+                            self.assertIn("--timeout must be greater than zero and at most 30 seconds", stderr.getvalue())
+                            self.assertEqual(stdout.getvalue(), "")
+                            self.assertFalse(output.exists())
+                            run.assert_not_called()
+                        else:
+                            self.assertEqual(run_job_manager_reference.main(), 0)
+                            run.assert_called_once()
+                            self.assertEqual(run.call_args.args[0].timeout, expected)
+                            self.assertTrue(output.is_dir())
+
     def invoke(self, output):
         import run_job_manager_reference
         arguments = ["run_job_manager_reference.py", "--module", str(self.module),
@@ -1129,4 +1853,5 @@ class JobManagerModuleRefusalTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    selected_test = os.environ.get("UNWRAP_SELF_TEST")
+    unittest.main(argv=[sys.argv[0], selected_test] if selected_test else None)

@@ -1,8 +1,14 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceKeyboard/include/InventoryExports.hpp"
 #include "prx/libSceKeyboard/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
 
 extern "C" {
+
+int APS5_VABI sceDbgKeyboardGetHandle() {
+    NotImplemented_nid_no_patch(__func__);
+}
 
 int APS5_VABI sceKeyboardInit(void) {
     return Keyboard::Initialize();
@@ -34,16 +40,17 @@ int APS5_VABI sceKeyboardGetKey2Char(std::int32_t handle, std::int32_t arrange, 
 }
 
 int APS5_VABI sceKeyboardConnectPort(std::int32_t first, std::int32_t second) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKeyboardDebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Keyboard::DebugGetDeviceId(handle, deviceId);
 }
 
 int APS5_VABI sceKeyboardDeviceOpen(std::uint64_t deviceId, std::int32_t index, std::uint32_t options) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -53,46 +60,42 @@ int APS5_VABI sceKeyboardDisconnectAll(void) {
 }
 
 int APS5_VABI sceKeyboardDisconnectDevice(std::int32_t deviceId) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKeyboardDisconnectPort(std::int32_t first, std::int32_t second) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKeyboardGetDeviceInfo(std::int32_t deviceId, KeyboardDeviceInfo* info) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKeyboardGetHandle(std::int32_t userId, std::int32_t type, std::int32_t index) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Keyboard::GetHandle(userId, type, index);
 }
 
 int APS5_VABI sceKeyboardMbusInit(void) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceKeyboardPadEmulateClose(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKeyboardPadEmulateOpen(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI sceKeyboardSetProcessFocus(const KeyboardProcessFocus* focus) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKeyboardSetProcessPrivilege(std::uint8_t privilege) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -122,7 +125,7 @@ int APS5_VABI sceDbgKeyboardRead() {
     return 0;
 }
 
-int APS5_VABI sceDbgKeyboardReadState() {
+int APS5_VABI sceDbgKeyboardReadState(std::int32_t handle, KeyboardData* data) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -130,5 +133,14 @@ int APS5_VABI sceDbgKeyboardReadState() {
 void KeyboardPublishInput_nid_postfix(const KeyboardInputEvent& event) {
     Keyboard::Publish(event);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceKeyboardUnknown_l76jptHfizM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("l76jptHfizM", libSceKeyboardUnknown_l76jptHfizM_nid_no_patch);
 
 }

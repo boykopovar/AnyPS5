@@ -16,9 +16,23 @@
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static const char* UnreadablePage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    Require(page != nullptr);
+#else
+    void* page = mmap(nullptr, static_cast<std::size_t>(sysconf(_SC_PAGESIZE)), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    return static_cast<const char*>(page);
+}
 static std::map<std::string, std::uint32_t> ReadFileNumbers(void* directory) {
     std::map<std::string, std::uint32_t> numbers;
     rewinddir_nid_postfix(directory);
@@ -173,8 +187,20 @@ int main() {
     Require(closedir_nid_postfix(directory) == 0);
     Require(opendir_nid_postfix((root / "missing").string().c_str()) == nullptr);
     Require(*__error_nid_postfix() == 2);
-#ifndef _WIN32
     const auto symlinkLoop = root / "symlink-loop";
+#ifdef _WIN32
+    if (links) {
+        Require(CreateSymbolicLinkW(symlinkLoop.c_str(), L"symlink-loop", SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0);
+        Require(opendir_nid_postfix(symlinkLoop.string().c_str()) == nullptr);
+        Require(*__error_nid_postfix() == 62);
+        Require(DeleteFileW(symlinkLoop.c_str()) != 0);
+        const auto directoryLoop = root / "directory-loop";
+        Require(CreateSymbolicLinkW(directoryLoop.c_str(), L"directory-loop", SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0);
+        Require(opendir_nid_postfix(directoryLoop.string().c_str()) == nullptr);
+        Require(*__error_nid_postfix() == 62);
+        Require(RemoveDirectoryW(directoryLoop.c_str()) != 0);
+    }
+#else
     std::filesystem::create_symlink("symlink-loop", symlinkLoop);
     Require(opendir_nid_postfix(symlinkLoop.string().c_str()) == nullptr);
     Require(*__error_nid_postfix() == 62);
@@ -184,6 +210,26 @@ int main() {
     Require(*__error_nid_postfix() == 20);
     Require(opendir_nid_postfix("") == nullptr && *__error_nid_postfix() == 2);
     Require(closedir_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(opendir_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(chdir_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
+    for (const char* unusable : {reinterpret_cast<const char*>(0x10), UnreadablePage()}) {
+        *__error_nid_postfix() = 0;
+        Require(opendir_nid_postfix(unusable) == nullptr && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(chdir_nid_postfix(unusable) == -1 && *__error_nid_postfix() == 14);
+    }
+    const std::string tooLong(1024, 'a');
+    *__error_nid_postfix() = 0;
+    Require(opendir_nid_postfix(tooLong.c_str()) == nullptr && *__error_nid_postfix() == 63);
+    *__error_nid_postfix() = 0;
+    Require(chdir_nid_postfix(tooLong.c_str()) == -1 && *__error_nid_postfix() == 63);
+    *__error_nid_postfix() = 0;
+    Require(readdir_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    rewinddir_nid_postfix(nullptr);
+    Require(*__error_nid_postfix() == 9);
     const std::u8string folder = u8"セーブ";
     const std::u8string file = u8"été.txt";
     Require(std::filesystem::create_directory(root / std::filesystem::path(folder)));

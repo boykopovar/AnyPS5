@@ -7,6 +7,12 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
 namespace {
 
 constexpr int Stream = 1;
@@ -21,6 +27,7 @@ constexpr int SoLinger = 0x80;
 constexpr int SoReusePort = 0x200;
 constexpr int SoTimestamp = 0x400;
 constexpr int SoNoSigpipe = 0x800;
+constexpr int SoAcceptFilter = 0x1000;
 constexpr int SoSendBuffer = 0x1001;
 constexpr int SoReceiveBuffer = 0x1002;
 constexpr int SoSendLowWater = 0x1003;
@@ -125,6 +132,22 @@ void ReportsAndClearsTheConnectError() {
     Require(close_nid_postfix(failing) == 0, "close failed");
 }
 
+void ReconnectAfterARefusalFails() {
+    int closed = -1;
+    auto refused = Listen(&closed);
+    Require(close_nid_postfix(closed) == 0, "close failed");
+    const int failing = socket_nid_postfix(2, Stream, 0);
+    Require(failing >= 0 && fcntl_nid_postfix(failing, 4, 4) == 0, "nonblocking socket setup failed");
+    const int attempt = connect_nid_postfix(failing, refused.data(), refused.size());
+    Require(attempt == -1, "a connect to a closed port must not succeed");
+    if (*__error_nid_postfix() == 36) {
+        WaitUntilSettled(failing);
+        Require(connect_nid_postfix(failing, refused.data(), refused.size()) == -1 && *__error_nid_postfix() == ErrorConnectionRefused,
+            "a connect after a refused nonblocking one must fail with ECONNREFUSED (61), not start another attempt");
+    }
+    Require(close_nid_postfix(failing) == 0, "close failed");
+}
+
 void BooleanOptionsReportTheirBit() {
     const int stream = socket_nid_postfix(2, Stream, 0);
     const int datagram = socket_nid_postfix(2, Datagram, 0);
@@ -151,9 +174,34 @@ void BooleanOptionsReportTheirBit() {
         std::uint32_t size = sizeof(value);
         Require(getsockopt_nid_postfix(stream, SolSocket, option, &value, &size) == -1 && *__error_nid_postfix() == ErrorNoProtocolOption, "SO_NO_OFFLOAD and SO_NO_DDP are accepted but cannot be read");
     }
+    for (const int descriptor : {stream, datagram})
+        for (const int setting : {5, 0}) {
+            Require(SetFails(descriptor, SolSocket, 0x1000, &setting, sizeof(setting), ErrorInvalid), "SO_ACCEPTFILTER on a socket that is not listening must fail with EINVAL (22)");
+            std::uint64_t filter = 0xbbbbbbbbbbbbbbbbull;
+            std::uint32_t size = sizeof(filter);
+            Require(getsockopt_nid_postfix(descriptor, SolSocket, 0x1000, &filter, &size) == -1 && *__error_nid_postfix() == ErrorInvalid && filter == 0xbbbbbbbbbbbbbbbbull, "getsockopt of SO_ACCEPTFILTER on a socket that is not listening must fail with EINVAL (22)");
+        }
     const unsigned char narrowFlag = 1;
     Require(SetFails(stream, SolSocket, SoDebug, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
     Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
+}
+
+void AcceptFilterFollowsFreeBsd() {
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    Require(stream >= 0, "socket failed");
+    Require(SetFails(stream, SolSocket, SoAcceptFilter, nullptr, 0, ErrorInvalid), "removing the accept filter of a socket that is not listening must fail with EINVAL (22)");
+    Require(close_nid_postfix(stream) == 0, "close failed");
+    int listener = -1;
+    Listen(&listener);
+    Require(setsockopt_nid_postfix(listener, SolSocket, SoAcceptFilter, nullptr, 0) == 0, "a NULL SO_ACCEPTFILTER value on a listener removes the filter and returns 0");
+    const std::array<std::uint8_t, 255> shortArgument{};
+    Require(SetFails(listener, SolSocket, SoAcceptFilter, shortArgument.data(), shortArgument.size(), ErrorInvalid), "an SO_ACCEPTFILTER value shorter than struct accept_filter_arg (256 bytes) must fail with EINVAL (22)");
+    std::array<std::uint8_t, 256> filter{};
+    filter.fill(0xbb);
+    std::uint32_t size = filter.size();
+    Require(getsockopt_nid_postfix(listener, SolSocket, SoAcceptFilter, filter.data(), &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "getsockopt of SO_ACCEPTFILTER on a listener without a filter must fail with EINVAL (22)");
+    Require(size == filter.size() && filter[0] == 0xbb && filter[255] == 0xbb, "a failed SO_ACCEPTFILTER get must leave the buffer and its length unchanged");
+    Require(close_nid_postfix(listener) == 0, "close failed");
 }
 
 void ReusePortSharesAPort() {
@@ -299,6 +347,8 @@ void IpLevelFollowsThePs5() {
     const unsigned char byte = 9;
     Require(SetFails(datagram, 0, IpTimeToLive, &byte, 1, ErrorInvalid), "a one-byte IP_TTL must fail with EINVAL (22)");
     Require(SetIp(datagram, IpTypeOfService, 0x1ff) && GetIp(datagram, IpTypeOfService) == 0xff, "IP_TOS keeps the low byte");
+    Require(SetIp(datagram, IpTypeOfService, -1) && GetIp(datagram, IpTypeOfService) == 255, "IP_TOS of -1 reads back as 255");
+    Require(SetFails(datagram, 0, IpTypeOfService, &byte, 1, ErrorInvalid), "a one-byte IP_TOS must fail with EINVAL (22)");
     const unsigned char seven = 7;
     Require(setsockopt_nid_postfix(datagram, 0, IpMulticastTimeToLive, &seven, 1) == 0 && GetIp(datagram, IpMulticastTimeToLive) == 7, "a one-byte IP_MULTICAST_TTL is accepted");
     const int tooLarge = 300;
@@ -353,7 +403,7 @@ void MulticastMembership() {
     Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(stream) == 0, "close failed");
 }
 
-void MulticastOnTheHost() {
+bool MulticastOnTheHost() {
     constexpr int IpMulticastInterface = 9;
     constexpr int IpAddMembership = 12;
     constexpr int IpDropMembership = 13;
@@ -362,7 +412,12 @@ void MulticastOnTheHost() {
     const int datagram = socket_nid_postfix(2, Datagram, 0);
     Require(datagram >= 0, "socket failed");
     const std::array<std::uint8_t, 8> group{224, 0, 0, 251, 0, 0, 0, 0};
-    Require(setsockopt_nid_postfix(datagram, 0, IpAddMembership, group.data(), group.size()) == 0, "joining 224.0.0.251 through INADDR_ANY failed");
+    if (setsockopt_nid_postfix(datagram, 0, IpAddMembership, group.data(), group.size()) != 0) {
+        Require(*__error_nid_postfix() == ErrorAddressNotAvailable, "a join no host interface can take must fail with EADDRNOTAVAIL (49)");
+        Require(close_nid_postfix(datagram) == 0, "close failed");
+        std::puts("skipped, the host has no interface that can join 224.0.0.251");
+        return false;
+    }
     Require(SetFails(datagram, 0, IpAddMembership, group.data(), group.size(), ErrorAddressInUse), "joining twice must fail with EADDRINUSE (48)");
     Require(setsockopt_nid_postfix(datagram, 0, IpDropMembership, group.data(), group.size()) == 0, "drop failed");
     Require(SetFails(datagram, 0, IpDropMembership, group.data(), group.size(), ErrorAddressNotAvailable), "dropping twice must fail with EADDRNOTAVAIL (49)");
@@ -381,6 +436,7 @@ void MulticastOnTheHost() {
     size = address.size();
     Require(getsockopt_nid_postfix(datagram, 0, IpMulticastInterface, address.data(), &size) == 0 && address == std::array<std::uint8_t, 4>{}, "the default interface reads back as INADDR_ANY");
     Require(close_nid_postfix(datagram) == 0, "close failed");
+    return true;
 }
 
 void UnknownRequestsFail() {
@@ -397,19 +453,110 @@ void UnknownRequestsFail() {
 
 }
 
+constexpr int ErrorFault = 14;
+constexpr int SoReceiveTimeout = 0x1006;
+constexpr int SoNoSigpipe2 = 0x800;
+
+void* MapPage(bool readable) {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, readable ? PAGE_READONLY : PAGE_NOACCESS);
+    Require(page != nullptr, "VirtualAlloc failed");
+#else
+    void* page = mmap(nullptr, 4096, readable ? PROT_READ : PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "mmap failed");
+#endif
+    return page;
+}
+
+void UnmapPage(void* page) {
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, 4096);
+#endif
+}
+
+bool GetFails(int descriptor, int level, int option, void* value, std::uint32_t* size, int error) {
+    return getsockopt_nid_postfix(descriptor, level, option, value, size) == -1 && *__error_nid_postfix() == error;
+}
+
+void BadPointersFail() {
+    void* unreadable = MapPage(false);
+    void* readOnly = MapPage(true);
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    const int datagram = socket_nid_postfix(2, Datagram, 0);
+    Require(stream >= 0 && datagram >= 0, "socket failed");
+    for (void* bad : {reinterpret_cast<void*>(0x10), unreadable}) {
+        Require(SetFails(stream, SolSocket, SoKeepAlive, bad, sizeof(int), ErrorFault), "setsockopt with an unreadable value must fail with EFAULT (14)");
+        Require(GetInt(stream, SoKeepAlive) == 0, "a faulting setsockopt must not change the option");
+        Require(SetFails(stream, SolSocket, SoLinger, bad, sizeof(Linger), ErrorFault), "SO_LINGER with an unreadable value must fail with EFAULT");
+        Require(SetFails(stream, SolSocket, SoReceiveTimeout, bad, 16, ErrorFault), "SO_RCVTIMEO with an unreadable value must fail with EFAULT");
+        Require(SetFails(stream, SolSocket, SoNoSigpipe2, bad, sizeof(int), ErrorFault), "SO_NOSIGPIPE with an unreadable value must fail with EFAULT");
+        Require(SetFails(stream, SolSocket, SoSendBuffer, bad, sizeof(int), ErrorFault), "SO_SNDBUF with an unreadable value must fail with EFAULT");
+        Require(SetFails(stream, 6, 1, bad, sizeof(int), ErrorFault), "TCP_NODELAY with an unreadable value must fail with EFAULT");
+        Require(SetFails(stream, 0, 4, bad, sizeof(int), ErrorFault), "IP_TTL with an unreadable value must fail with EFAULT");
+        Require(SetFails(datagram, 0, 12, bad, 8, ErrorFault), "IP_ADD_MEMBERSHIP with an unreadable value must fail with EFAULT");
+        Require(SetFails(datagram, 0, 9, bad, 4, ErrorFault), "IP_MULTICAST_IF with an unreadable value must fail with EFAULT");
+        Require(SetFails(datagram, 0, 9, bad, 12, ErrorFault), "IP_MULTICAST_IF with an unreadable ip_mreqn must fail with EFAULT");
+        Require(SetFails(datagram, 0, 10, bad, 1, ErrorFault), "IP_MULTICAST_TTL with an unreadable byte must fail with EFAULT");
+        Require(SetFails(datagram, 0, 10, bad, 4, ErrorFault), "IP_MULTICAST_TTL with an unreadable int must fail with EFAULT");
+        Require(SetFails(stream, SolSocket, SoKeepAlive, bad, 2, ErrorInvalid), "a short length is rejected before the value is read");
+        Require(SetFails(stream, SolSocket, 0x7777, bad, sizeof(int), ErrorNoProtocolOption), "an unknown option is rejected before the value is read");
+        Require(SetFails(stream, 99, SoKeepAlive, bad, sizeof(int), ErrorInvalid), "an unknown level is rejected before the value is read");
+        Require(SetFails(-1, SolSocket, SoKeepAlive, bad, sizeof(int), ErrorBadDescriptor), "the descriptor is checked before the value is read");
+    }
+    const int on = 1;
+    Require(SetFails(stream, SolSocket, SoKeepAlive, &on, 0x80000000u, ErrorInvalid), "a negative length must fail with EINVAL (22)");
+
+    for (void* bad : {reinterpret_cast<void*>(0x10), unreadable, readOnly}) {
+        std::uint32_t size = sizeof(int);
+        Require(GetFails(stream, SolSocket, SoType, bad, &size, ErrorFault) && size == sizeof(int), "getsockopt into an unwritable value must fail with EFAULT and keep the length");
+        Require(GetFails(stream, SolSocket, SoLinger, bad, &size, ErrorFault), "SO_LINGER into an unwritable value must fail with EFAULT");
+        size = 16;
+        Require(GetFails(stream, SolSocket, SoReceiveTimeout, bad, &size, ErrorFault), "SO_RCVTIMEO into an unwritable value must fail with EFAULT");
+        size = sizeof(int);
+        Require(GetFails(stream, 6, 1, bad, &size, ErrorFault), "TCP_NODELAY into an unwritable value must fail with EFAULT");
+        Require(GetFails(stream, 0, 4, bad, &size, ErrorFault), "IP_TTL into an unwritable value must fail with EFAULT");
+        Require(GetFails(datagram, 0, 9, bad, &size, ErrorFault), "IP_MULTICAST_IF into an unwritable value must fail with EFAULT");
+        Require(GetFails(stream, SolSocket, 0x7777, bad, &size, ErrorNoProtocolOption), "an unknown option is rejected before the value is written");
+        Require(GetFails(-1, SolSocket, SoType, bad, &size, ErrorBadDescriptor), "the descriptor is checked before the value is written");
+        std::uint32_t zero = 0;
+        Require(getsockopt_nid_postfix(stream, SolSocket, SoType, bad, &zero) == 0 && zero == 0, "a zero length never touches the value");
+    }
+
+    for (std::uint32_t* bad : {reinterpret_cast<std::uint32_t*>(0x10), static_cast<std::uint32_t*>(unreadable), static_cast<std::uint32_t*>(nullptr)}) {
+        int value = 0;
+        Require(GetFails(stream, SolSocket, SoType, &value, bad, ErrorFault), "getsockopt with an unreadable length must fail with EFAULT");
+        Require(GetFails(-1, SolSocket, SoType, &value, bad, ErrorFault), "the length is read before the descriptor is checked");
+        Require(GetFails(stream, SolSocket, 0x7777, &value, bad, ErrorFault), "the length is read before the option is checked");
+    }
+    for (std::uint32_t* bad : {reinterpret_cast<std::uint32_t*>(0x10), static_cast<std::uint32_t*>(unreadable), static_cast<std::uint32_t*>(readOnly), static_cast<std::uint32_t*>(nullptr)}) {
+        Require(GetFails(stream, SolSocket, SoType, nullptr, bad, ErrorFault), "the final length store failing must give EFAULT");
+        Require(GetFails(stream, SolSocket, 0x7777, nullptr, bad, ErrorNoProtocolOption), "an option error is reported before the length store");
+    }
+    int value = 0;
+    std::uint32_t size = sizeof(int);
+    Require(getsockopt_nid_postfix(stream, SolSocket, SoType, &value, &size) == 0 && value == Stream && size == sizeof(int), "valid getsockopt still works");
+    Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
+    UnmapPage(unreadable);
+    UnmapPage(readOnly);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "multicast") == 0) {
-        MulticastOnTheHost();
-        return 0;
+        return MulticastOnTheHost() ? 0 : 77;
     }
     ReportsTypeAndListening();
     ReportsAndClearsTheConnectError();
+    ReconnectAfterARefusalFails();
     BooleanOptionsReportTheirBit();
+    AcceptFilterFollowsFreeBsd();
     ReusePortSharesAPort();
     LingerFollowsFreeBsd();
     LengthsFollowFreeBsd();
     BuffersFollowThePs5();
     NullValues();
+    BadPointersFail();
     IpLevelFollowsThePs5();
     MulticastMembership();
     UnknownRequestsFail();

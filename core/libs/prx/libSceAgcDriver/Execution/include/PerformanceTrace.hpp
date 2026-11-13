@@ -12,6 +12,8 @@
 #include <cstdlib>
 #include <condition_variable>
 #include <exception>
+#include "prx/libc/include/RunReport.hpp"
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <map>
@@ -32,6 +34,7 @@ class TraceThread;
 
 extern "C" bool AgcDriverTraceRecording_nid_postfix();
 extern "C" AgcDriver::TraceThread* AgcDriverTraceThread_nid_postfix();
+extern "C" void AgcDriverTraceCount_nid_postfix(const char* scope);
 
 namespace AgcDriver {
 
@@ -42,7 +45,32 @@ public:
     using Clock = std::chrono::steady_clock;
     enum class Edge { None, Open, Close };
 
-    static std::optional<TraceWindow> Parse(const char* frames, const char* seconds) {
+    static bool TriggerConfigured() {
+#ifdef _WIN32
+        return _wgetenv(L"APS5_TRACE_TRIGGER_FILE") != nullptr;
+#else
+        return std::getenv("APS5_TRACE_TRIGGER_FILE") != nullptr;
+#endif
+    }
+
+    static std::optional<TraceWindow> FromEnvironment() {
+        auto window = Parse(std::getenv("APS5_TRACE_FRAMES"), std::getenv("APS5_TRACE_SECONDS"));
+#ifdef _WIN32
+        const auto* trigger = _wgetenv(L"APS5_TRACE_TRIGGER_FILE");
+#else
+        const auto* trigger = std::getenv("APS5_TRACE_TRIGGER_FILE");
+#endif
+        if (trigger != nullptr) {
+            if (trigger[0] == 0 || !window)
+                throw std::invalid_argument("APS5_TRACE_TRIGGER_FILE requires a nonempty path and APS5_TRACE_FRAMES or APS5_TRACE_SECONDS");
+            window->trigger = std::filesystem::path(trigger);
+        }
+        return window;
+    }
+
+    static std::optional<TraceWindow> Parse(const char* frames, const char* seconds, const char* trigger = nullptr) {
+        if (trigger != nullptr && (trigger[0] == '\0' || (frames == nullptr && seconds == nullptr)))
+            throw std::invalid_argument("APS5_TRACE_TRIGGER_FILE requires a nonempty path and APS5_TRACE_FRAMES or APS5_TRACE_SECONDS");
         if (frames == nullptr && seconds == nullptr) return std::nullopt;
         if (frames != nullptr && seconds != nullptr) throw std::invalid_argument("APS5_TRACE_FRAMES and APS5_TRACE_SECONDS cannot be set together");
         const std::string_view name = frames != nullptr ? "APS5_TRACE_FRAMES" : "APS5_TRACE_SECONDS";
@@ -52,13 +80,24 @@ public:
         std::uint64_t length = 0;
         if (colon == std::string_view::npos || !number(text.substr(0, colon), start) || !number(text.substr(colon + 1), length) || length == 0)
             throw std::invalid_argument(std::string(name) + "=" + std::string(text) + " is not <start>:<length> with a length above 0");
-        return TraceWindow(frames != nullptr, start, length);
+        return TraceWindow(frames != nullptr, start, length, trigger);
     }
 
     Edge Present(std::uint64_t present, Clock::duration elapsed) {
         if (state == State::Closed) return Edge::None;
         if (state == State::Waiting) {
             if (frames ? present < start : wholeSeconds(elapsed) < start) return Edge::None;
+            if (trigger) {
+                if (elapsed < nextTriggerCheck) return Edge::None;
+                nextTriggerCheck = elapsed + std::chrono::milliseconds(250);
+                std::error_code error;
+                const auto status = std::filesystem::status(*trigger, error);
+                if (error && error != std::errc::no_such_file_or_directory)
+                    throw std::filesystem::filesystem_error("APS5_TRACE_TRIGGER_FILE", *trigger, error);
+                if (!std::filesystem::exists(status)) return Edge::None;
+                if (!std::filesystem::is_regular_file(status))
+                    throw std::invalid_argument("APS5_TRACE_TRIGGER_FILE is not a regular file");
+            }
             state = State::Open;
             openedPresent = present;
             openedAt = elapsed;
@@ -76,7 +115,9 @@ public:
 private:
     enum class State { Waiting, Open, Closed };
 
-    TraceWindow(bool frames, std::uint64_t start, std::uint64_t length) : frames(frames), start(start), length(length) {}
+    TraceWindow(bool frames, std::uint64_t start, std::uint64_t length, const char* trigger) : frames(frames), start(start), length(length) {
+        if (trigger != nullptr) this->trigger = std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(trigger)));
+    }
 
     static bool number(std::string_view text, std::uint64_t& value) {
         const auto end = text.data() + text.size();
@@ -94,6 +135,8 @@ private:
     State state = State::Waiting;
     std::uint64_t openedPresent = 0;
     Clock::duration openedAt{};
+    std::optional<std::filesystem::path> trigger;
+    Clock::duration nextTriggerCheck{};
 };
 
 class TraceInterval {
@@ -203,6 +246,10 @@ public:
         else append({scope, stage, begin, length, TraceBatchTag});
     }
 
+    void Count(const char* scope, std::uint64_t amount = 1) {
+        if (amount != 0) account(scope, nullptr, {}, amount);
+    }
+
     Snapshot Collect() const {
         Snapshot snapshot{name, {slices.get(), used.load(std::memory_order_acquire)}, {}, false};
         for (const auto& entry : entries) {
@@ -237,7 +284,7 @@ private:
         used.store(index + 1, std::memory_order_release);
     }
 
-    void account(const char* scope, const char* stage, Clock::duration length) {
+    void account(const char* scope, const char* stage, Clock::duration length, std::uint64_t amount = 1) {
         const auto key = reinterpret_cast<std::uintptr_t>(scope) ^ (reinterpret_cast<std::uintptr_t>(stage) >> 3);
         const auto hash = static_cast<std::size_t>((static_cast<std::uint64_t>(key) * 0x9e3779b97f4a7c15ull) >> 55);
         for (std::size_t probe = 0; probe < entries.size(); ++probe) {
@@ -250,7 +297,7 @@ private:
                 continue;
             }
             entry.length.store(entry.length.load(std::memory_order_relaxed) + length.count(), std::memory_order_relaxed);
-            entry.count.store(entry.count.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+            entry.count.store(entry.count.load(std::memory_order_relaxed) + amount, std::memory_order_relaxed);
             return;
         }
         totalsFull.store(true, std::memory_order_relaxed);
@@ -296,6 +343,7 @@ struct TraceSummary {
     std::string window;
     std::uint64_t firstPresent = 0;
     double gpuBusyMs = 0;
+    std::uint64_t ownedDrawUnbound = 0;
     std::string trace;
     std::optional<std::pair<double, double>> interval;
     std::optional<TraceHost> host;
@@ -441,6 +489,41 @@ struct TraceClockSample {
     std::chrono::steady_clock::time_point cpu{};
 };
 
+class TraceCapture {
+public:
+    TraceCapture() = default;
+    TraceCapture(const TraceCapture&) = delete;
+    TraceCapture& operator=(const TraceCapture&) = delete;
+
+    void Add(TraceThread::Snapshot snapshot) {
+        slices.emplace_back(snapshot.slices.begin(), snapshot.slices.end());
+        for (auto& slice : slices.back()) {
+            slice.scope = own(slice.scope);
+            slice.stage = own(slice.stage);
+        }
+        for (auto& total : snapshot.totals) {
+            total.scope = own(total.scope);
+            total.stage = own(total.stage);
+        }
+        snapshot.slices = slices.back();
+        threads.push_back(std::move(snapshot));
+    }
+
+    TraceSummary summary;
+    std::vector<TraceThread::Clock::time_point> presents;
+    std::vector<TraceThread::Snapshot> threads;
+    std::uint64_t process = 0;
+    std::size_t presenter = 0;
+
+private:
+    const char* own(const char* text) {
+        return text != nullptr ? labels.try_emplace(text, text).first->second.c_str() : nullptr;
+    }
+
+    std::vector<std::vector<TraceThread::Slice>> slices;
+    std::map<const char*, std::string> labels;
+};
+
 class TraceFormat {
 public:
     using Clock = std::chrono::steady_clock;
@@ -567,7 +650,7 @@ public:
         std::vector<double> frames;
         for (std::size_t index = 1; index < presents.size(); ++index) frames.push_back(milliseconds(presents[index] - presents[index - 1]));
         std::sort(frames.begin(), frames.end());
-        const auto percentile = [&](double fraction) { return frames.empty() ? 0.0 : frames[std::min(frames.size() - 1, static_cast<std::size_t>(fraction * static_cast<double>(frames.size())))]; };
+        const auto percentile = [&](double fraction) { return RunReport::FramePercentile(frames, fraction); };
         const double perPresent = count != 0 ? 1.0 / static_cast<double>(count) : 0.0;
 
         std::string output = "{\"commit\":";
@@ -602,7 +685,9 @@ public:
         output += ",\"worker_busy_pct\":{";
         bool firstWorker = true;
         std::map<std::string, Clock::duration> phases;
-        bool dropped = false;
+        std::map<std::string, std::uint64_t> ownedCounts;
+        bool dropped = summary.ownedDrawUnbound != 0;
+        if (summary.ownedDrawUnbound != 0) ownedCounts["OwnedDraw.unbound"] = summary.ownedDrawUnbound;
         struct DroppedThread {
             std::string name;
             std::uint64_t eventsLost = 0;
@@ -623,13 +708,22 @@ public:
             for (const auto& total : thread.totals) {
                 const std::string_view scope = total.scope;
                 if (total.stage == nullptr && std::find(WorkerBusyScopes.begin(), WorkerBusyScopes.end(), scope) != WorkerBusyScopes.end()) busy += total.length;
-                if (scope != WorkerWaitScope) phases[Name(total.scope, total.stage)] += total.length;
+                if (scope.starts_with("OwnedDraw.") && total.stage == nullptr) ownedCounts[std::string(scope)] += total.count;
+                else if (scope != WorkerWaitScope) phases[Name(total.scope, total.stage)] += total.length;
             }
             if (!thread.name.starts_with(WorkerPrefix)) continue;
             if (!firstWorker) output += ',';
             firstWorker = false;
             AppendString(output, thread.name);
             output += ':' + number(span != Clock::duration{} ? 100.0 * static_cast<double>(busy.count()) / static_cast<double>(span.count()) : 0.0);
+        }
+        output += "},\"phase_totals_ms\":{";
+        bool firstPhase = true;
+        for (const auto& [name, length] : phases) {
+            if (!firstPhase) output += ',';
+            firstPhase = false;
+            AppendString(output, name);
+            output += ':' + number(milliseconds(length));
         }
         output += "},\"top_phases_ms_per_frame\":{";
         std::vector<std::pair<std::string, Clock::duration>> top(phases.begin(), phases.end());
@@ -639,7 +733,17 @@ public:
             AppendString(output, top[index].first);
             output += ':' + number(milliseconds(top[index].second) * perPresent);
         }
-        output += "},\"trace_dropped\":";
+        output += "}";
+        output += ",\"owned_draw_counts\":{";
+        bool firstCount = true;
+        for (const auto& [name, value] : ownedCounts) {
+            if (!firstCount) output += ',';
+            firstCount = false;
+            AppendString(output, name);
+            output += ':' + std::to_string(value);
+        }
+        output += '}';
+        output += ",\"trace_dropped\":";
         output += dropped ? "true" : "false";
         if (!droppedList.empty()) {
             std::string droppedThreads;
@@ -769,10 +873,17 @@ private:
     }
 };
 
+struct TraceThreadTotals {
+    std::string name;
+    std::vector<TraceThread::Total> totals;
+};
+
 class PerformanceTrace {
 public:
+    static constexpr const char* RenderPassScope = "Graphics.RenderPass";
+
     static bool Configured() {
-        static const bool configured = std::getenv("APS5_TRACE_FRAMES") != nullptr || std::getenv("APS5_TRACE_SECONDS") != nullptr || std::getenv("APS5_TRACE_SUMMARY_EVERY") != nullptr || std::getenv("APS5_TRACE_BENCH") != nullptr;
+        static const bool configured = std::getenv("APS5_TRACE_FRAMES") != nullptr || std::getenv("APS5_TRACE_SECONDS") != nullptr || TraceWindow::TriggerConfigured() || std::getenv("APS5_TRACE_SUMMARY_EVERY") != nullptr || std::getenv("APS5_TRACE_BENCH") != nullptr;
         return configured;
     }
 
@@ -797,19 +908,35 @@ public:
         return AgcDriverTraceThread_nid_postfix();
     }
 
+    static void Count(const char* scope) {
+        if (Recording()) AgcDriverTraceCount_nid_postfix(scope);
+    }
+
+    static void CountOwnedDraw(const char* scope, std::uint64_t amount = 1);
+    static std::uint64_t OwnedDrawUnbound();
+
+    static void SetOverlayTotals(bool on);
+    static bool OverlayTotals();
+    static std::optional<std::vector<TraceThreadTotals>> ThreadTotals();
     static void StopOutput();
 
 private:
     friend bool ::AgcDriverTraceRecording_nid_postfix();
     friend TraceThread* ::AgcDriverTraceThread_nid_postfix();
+    friend void ::AgcDriverTraceCount_nid_postfix(const char* scope);
+
+    static TraceThread* bindNamed();
 
     static void OpenInterval(std::chrono::steady_clock::time_point now, std::uint64_t present);
     static void FlushInterval(std::chrono::steady_clock::time_point now, std::uint32_t width, std::uint32_t height, const VulkanDevice* device);
 
     static std::atomic<bool> recording;
+    static std::atomic<std::uint64_t> ownedDrawUnbound;
     inline static std::atomic<bool> buffering{false};
     inline static std::atomic<std::uint64_t> presentCount{0};
     static thread_local TraceThread* local;
+    static thread_local const char* localName;
+    static std::atomic<TraceThread* (*)()> binder;
     inline static std::mutex gpuMutex;
     inline static std::vector<TraceGpuRange> gpuRanges;
     inline static std::uint64_t gpuLost = 0;

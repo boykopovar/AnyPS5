@@ -47,6 +47,16 @@ std::optional<std::uint8_t> poppedRegister(const std::uint8_t* code, const Insn&
     return std::nullopt;
 }
 
+bool pushesOrPops(const std::uint8_t* code, const Insn& insn) {
+    if (pushedRegister(code, insn) || poppedRegister(code, insn)) return true;
+    const auto& info = insn.Info;
+    const auto lead = code[info.OpcodeOffset];
+    if (info.RexPrefix == 0 && (lead == 0xc4 || lead == 0xc5 || lead == 0x62 || lead == 0x8f) && info.Opcode != 0x8f) return false;
+    if (info.IsTwoByteOpcode) return info.Opcode == 0xa0 || info.Opcode == 0xa1 || info.Opcode == 0xa8 || info.Opcode == 0xa9;
+    const auto reg = static_cast<std::uint8_t>((info.ModRmByte >> 3) & 7);
+    return (info.Opcode >= 0x50 && info.Opcode <= 0x5f) || info.Opcode == 0x68 || info.Opcode == 0x6a || info.Opcode == 0x9c || info.Opcode == 0x9d || (info.Opcode == 0x8f && info.HasModRm && reg == 0) || (info.Opcode == 0xff && info.HasModRm && reg == 6);
+}
+
 std::optional<std::int64_t> rspAdjustment(const std::uint8_t* code, const Insn& insn) {
     std::int32_t value = 0;
     if (insn.Length == 4 && code[0] == 0x48 && code[1] == 0x83 && (code[2] == 0xec || code[2] == 0xc4)) {
@@ -78,6 +88,11 @@ struct MemoryUse {
     bool Address = false;
 };
 
+bool xopPrefixed(const std::uint8_t* code, const Insn& insn) {
+    const auto at = insn.Info.OpcodeOffset;
+    return code[at] == 0x8f && at + 1 < insn.Length && (code[at + 1] & 0x1f) >= 8;
+}
+
 void extensionBits(const std::uint8_t* code, const Insn& insn, bool& r, bool& x, bool& b) {
     const auto& info = insn.Info;
     r = x = b = false;
@@ -88,7 +103,7 @@ void extensionBits(const std::uint8_t* code, const Insn& insn, bool& r, bool& x,
         return;
     }
     const auto lead = code[info.OpcodeOffset];
-    if ((lead == 0xc4 || lead == 0x8f || lead == 0x62) && info.OpcodeOffset + 1 < insn.Length) {
+    if ((lead == 0xc4 || lead == 0x62 || xopPrefixed(code, insn)) && info.OpcodeOffset + 1 < insn.Length) {
         r = (code[info.OpcodeOffset + 1] & 0x80) == 0;
         x = (code[info.OpcodeOffset + 1] & 0x40) == 0;
         b = (code[info.OpcodeOffset + 1] & 0x20) == 0;
@@ -97,29 +112,117 @@ void extensionBits(const std::uint8_t* code, const Insn& insn, bool& r, bool& x,
     }
 }
 
-bool twoByteRegisterIsGeneral(const std::uint8_t op) {
-    return (op >= 0x40 && op <= 0x4f) || op == 0xa3 || op == 0xa4 || op == 0xa5 || op == 0xab || op == 0xac || op == 0xad || op == 0xaf || op == 0xb0 || op == 0xb1 || op == 0xb3 || op == 0xb6 || op == 0xb7 || op == 0xb8 || (op >= 0xbb && op <= 0xbf) || op == 0xc0 || op == 0xc1 || op == 0xc3;
+std::uint8_t legacyPp(const std::uint8_t* code, const Insn& insn) {
+    std::uint8_t repeat = 0;
+    bool operandSize = false;
+    for (std::size_t index = 0; index < insn.Info.OpcodeOffset; ++index) {
+        if (code[index] == 0x66) operandSize = true;
+        else if (code[index] == 0xf3) repeat = 2;
+        else if (code[index] == 0xf2) repeat = 3;
+    }
+    return repeat != 0 ? repeat : (operandSize ? std::uint8_t{1} : std::uint8_t{0});
 }
 
-bool twoByteRmIsGeneral(const std::uint8_t op) {
-    return twoByteRegisterIsGeneral(op) || op == 0x6e || op == 0x7e || op == 0xba;
+bool twoByteScalarRegisterIsGeneral(const std::uint8_t op) {
+    return op == 0x02 || op == 0x03 || (op >= 0x40 && op <= 0x4f) || op == 0xa3 || op == 0xa4 || op == 0xa5 || op == 0xab || op == 0xac || op == 0xad || op == 0xaf || op == 0xb0 || op == 0xb1 || op == 0xb3 || op == 0xb6 || op == 0xb7 || op == 0xb8 || (op >= 0xbb && op <= 0xbf) || op == 0xc0 || op == 0xc1 || op == 0xc3;
 }
 
-bool vexGeneralUsesRsp(const std::uint8_t* code, const Insn& insn, const std::uint8_t mod, const std::uint8_t reg, const std::uint8_t rm, const bool r, const bool b) {
-    const auto at = insn.Info.OpcodeOffset;
+bool map1RegisterIsGeneral(const std::uint8_t op, const std::uint8_t pp, const std::uint8_t mod, const bool vex, const bool evex) {
+    if (!vex && !evex && twoByteScalarRegisterIsGeneral(op)) return true;
+    if ((op == 0x2c || op == 0x2d) && (pp == 2 || pp == 3)) return true;
+    if (op == 0x50 && !evex && mod == 3 && (pp == 0 || pp == 1)) return true;
+    return (op == 0xc5 || (op == 0xd7 && !evex)) && mod == 3 && (pp == 1 || (!vex && !evex && pp == 0));
+}
+
+bool map1RmIsGeneral(const std::uint8_t op, const std::uint8_t pp, const std::uint8_t reg, const std::uint8_t rex, const bool vex, const bool evex) {
+    if (!vex && !evex) {
+        if (twoByteScalarRegisterIsGeneral(op) || op == 0xba) return true;
+        if ((op == 0x00 && reg <= 1) || (op == 0x01 && reg == 4)) return true;
+        if (op >= 0x90 && op <= 0x9f && pp == 0 && rex != 0) return true;
+        if (op == 0xae && pp == 2 && reg <= 3) return true;
+        if (op == 0xc7 && reg >= 6 && (pp <= 1 || (pp == 2 && reg == 7))) return true;
+    }
+    if (op == 0x2a && (pp == 2 || pp == 3)) return true;
+    return (op == 0x6e || op == 0x7e || op == 0xc4) && (pp == 1 || (!vex && !evex && pp == 0));
+}
+
+bool extendedOpcodeUsesRsp(const std::uint8_t* code, const Insn& insn, const std::uint8_t mod, const std::uint8_t reg, const std::uint8_t rm, const bool r, const bool b) {
+    const auto& info = insn.Info;
+    const auto at = info.OpcodeOffset;
     const auto lead = code[at];
-    if ((lead != 0xc4 && lead != 0xc5) || at + 3 >= insn.Length) return false;
-    const auto map = lead == 0xc5 ? std::uint8_t{1} : static_cast<std::uint8_t>(code[at + 1] & 0x1f);
-    const auto vvvv = static_cast<std::uint8_t>((~code[lead == 0xc5 ? at + 1 : at + 2] >> 3) & 0xf);
-    const auto op = code[lead == 0xc5 ? at + 2 : at + 3];
-    const bool general = (map == 2 && (op == 0xf2 || op == 0xf3 || op == 0xf5 || op == 0xf6 || op == 0xf7)) || (map == 3 && op == 0xf0);
-    return general && ((reg == kRegRsp && !r) || (mod == 3 && rm == kRegRsp && !b) || vvvv == kRegRsp);
+    const bool regRsp = reg == kRegRsp && !r;
+    const bool rmRsp = mod == 3 && rm == kRegRsp && !b;
+    if (info.RexPrefix == 0 && xopPrefixed(code, insn)) {
+        if (at + 3 >= insn.Length) return false;
+        const auto map = static_cast<std::uint8_t>(code[at + 1] & 0x1f);
+        const auto vvvv = static_cast<std::uint8_t>((~code[at + 2] >> 3) & 0xf);
+        const auto op = code[at + 3];
+        if (map == 9 && (op == 0x01 || op == 0x02)) return rmRsp || vvvv == kRegRsp;
+        if (map == 10 && op == 0x10) return regRsp || rmRsp;
+        return false;
+    }
+    std::uint8_t map = 0;
+    std::uint8_t pp = 0;
+    std::uint8_t op = 0;
+    std::uint8_t vvvv = 0;
+    bool isVex = false;
+    bool isEvex = false;
+    if (info.RexPrefix == 0 && (lead == 0xc4 || lead == 0xc5)) {
+        if (at + (lead == 0xc5 ? 2u : 3u) >= insn.Length) return false;
+        isVex = true;
+        map = lead == 0xc5 ? std::uint8_t{1} : static_cast<std::uint8_t>(code[at + 1] & 0x1f);
+        const auto second = code[lead == 0xc5 ? at + 1 : at + 2];
+        pp = static_cast<std::uint8_t>(second & 3);
+        vvvv = static_cast<std::uint8_t>((~second >> 3) & 0xf);
+        op = code[lead == 0xc5 ? at + 2 : at + 3];
+    } else if (info.RexPrefix == 0 && lead == 0x62) {
+        if (at + 4 >= insn.Length) return false;
+        isEvex = true;
+        map = static_cast<std::uint8_t>(code[at + 1] & 0x07);
+        pp = static_cast<std::uint8_t>(code[at + 2] & 3);
+        op = code[at + 4];
+    } else if (info.IsTwoByteOpcode) {
+        pp = legacyPp(code, insn);
+        if (info.Opcode == 0x38 || info.Opcode == 0x3a) {
+            if (at + 2 >= insn.Length) return false;
+            map = info.Opcode == 0x38 ? std::uint8_t{2} : std::uint8_t{3};
+            op = code[at + 2];
+        } else {
+            map = 1;
+            op = info.Opcode;
+        }
+    } else {
+        return false;
+    }
+    if (map == 1) return (regRsp && map1RegisterIsGeneral(op, pp, mod, isVex, isEvex)) || (rmRsp && map1RmIsGeneral(op, pp, reg, info.RexPrefix, isVex, isEvex));
+    if (map == 2) {
+        if (isVex) return (op == 0xf2 || op == 0xf3 || op == 0xf5 || op == 0xf6 || op == 0xf7) && ((op != 0xf3 && regRsp) || rmRsp || vvvv == kRegRsp);
+        if (!isEvex) {
+            const bool regGen = ((op == 0xf0 || op == 0xf1) && (pp <= 1 || pp == 3)) || (op == 0xf6 && (pp == 1 || pp == 2)) || (op == 0xf8 && pp == 1) || (op == 0xf9 && pp == 0);
+            const bool rmGen = (op == 0xf0 && pp == 3 && info.RexPrefix != 0) || (op == 0xf1 && pp == 3) || (op == 0xf6 && (pp == 1 || pp == 2));
+            return (regRsp && regGen) || (rmRsp && rmGen);
+        }
+        return false;
+    }
+    if (map == 3) {
+        if (isVex && op == 0xf0 && pp == 3) return regRsp || rmRsp;
+        return rmRsp && pp == 1 && ((op >= 0x14 && op <= 0x17) || op == 0x20 || op == 0x22);
+    }
+    return false;
 }
 
 MemoryUse memoryUse(const std::uint8_t* code, const Insn& insn) {
     MemoryUse use;
     const auto& info = insn.Info;
-    if (!info.HasModRm || info.ModRmOffset == 0 || info.ModRmOffset >= insn.Length) return use;
+    if (!info.HasModRm) {
+        const auto op = info.Opcode;
+        if ((info.RexPrefix & 1) == 0
+            && ((!info.IsTwoByteOpcode && (op == 0x54 || op == 0x5c || op == 0x94 || op == 0xbc || (op == 0xb4 && info.RexPrefix != 0)))
+                || (info.IsTwoByteOpcode && op == 0xcc)))
+            use.UsesRsp = use.RegisterRsp = true;
+        return use;
+    }
+    if (info.ModRmOffset == 0 || info.ModRmOffset >= insn.Length) return use;
     bool r = false;
     bool x = false;
     bool b = false;
@@ -128,13 +231,12 @@ MemoryUse memoryUse(const std::uint8_t* code, const Insn& insn) {
     const auto mod = static_cast<std::uint8_t>(modrm >> 6);
     const auto reg = static_cast<std::uint8_t>((modrm >> 3) & 7);
     const auto rm = static_cast<std::uint8_t>(modrm & 7);
-    const bool vex = info.RexPrefix == 0 && (code[info.OpcodeOffset] == 0xc4 || code[info.OpcodeOffset] == 0xc5 || code[info.OpcodeOffset] == 0x62 || code[info.OpcodeOffset] == 0x8f);
+    const bool vex = info.RexPrefix == 0 && (code[info.OpcodeOffset] == 0xc4 || code[info.OpcodeOffset] == 0xc5 || code[info.OpcodeOffset] == 0x62 || xopPrefixed(code, insn));
     if (!vex && !info.IsTwoByteOpcode && reg == kRegRsp && !r) {
         const auto op = info.Opcode;
-        if ((op <= 0x3f && (op & 7) <= 3) || (op >= 0x84 && op <= 0x8b) || op == 0x8d) use.UsesRsp = use.RegisterRsp = true;
+        if ((op <= 0x3f && (op & 7) <= 3) || op == 0x63 || op == 0x69 || op == 0x6b || (op >= 0x84 && op <= 0x8b) || op == 0x8d) use.UsesRsp = use.RegisterRsp = true;
     }
-    if (!vex && info.IsTwoByteOpcode && ((reg == kRegRsp && !r && twoByteRegisterIsGeneral(info.Opcode)) || (mod == 3 && rm == kRegRsp && !b && twoByteRmIsGeneral(info.Opcode)))) use.UsesRsp = use.RegisterRsp = true;
-    if (vex && vexGeneralUsesRsp(code, insn, mod, reg, rm, r, b)) use.UsesRsp = use.RegisterRsp = true;
+    if ((vex || info.IsTwoByteOpcode) && extendedOpcodeUsesRsp(code, insn, mod, reg, rm, r, b)) use.UsesRsp = use.RegisterRsp = true;
     if (mod == 3) {
         const bool generalPurpose = !vex && !info.IsTwoByteOpcode && !(info.Opcode >= 0xd8 && info.Opcode <= 0xdf);
         if (generalPurpose && rm == kRegRsp && !b) use.UsesRsp = use.RegisterRsp = true;
@@ -205,6 +307,16 @@ struct OperandStub {
     std::size_t Begin;
     std::size_t End;
     std::vector<std::uint8_t> Body;
+    std::size_t Operands = 0;
+};
+
+struct ExitSite {
+    std::size_t First;
+    std::size_t Tail;
+    std::size_t Begin;
+    std::size_t TailBegin;
+    std::size_t End;
+    std::vector<std::uint8_t> Lead;
     std::size_t Operands = 0;
 };
 
@@ -286,9 +398,10 @@ void frameSegment(
         bool leaf = true;
         bool redZone = false;
         const char* reason = nullptr;
-        std::vector<std::pair<std::size_t, std::size_t>> exits;
+        std::vector<ExitSite> exits;
         std::map<std::size_t, std::pair<std::size_t, std::vector<std::uint8_t>>> moves;
         std::vector<std::size_t> stubbed;
+        std::vector<std::size_t> stackMoves;
         const auto functionEnd = limit;
         std::int64_t depth = 0;
         bool wholeRedZone = rbpPrologue;
@@ -310,6 +423,8 @@ void frameSegment(
             if (use.RspBased && use.RspDisp < 0) redZone = true;
             if (reason != nullptr) continue;
             if (code[insn.Info.OpcodeOffset] == 0xc9 || code[insn.Info.OpcodeOffset] == 0xc8) { reason = "leave or enter"; continue; }
+            if (!rbpPrologue && pushed.empty() && allocation == 0 && pushesOrPops(code, insn)) { reason = "push or pop in a leaf without pushes"; continue; }
+            if (!rbpPrologue && pushesOrPops(code, insn)) stackMoves.push_back(k);
             if (rbpPrologue) {
                 if (use.UsesRsp) { reason = "other use of rsp"; continue; }
             } else {
@@ -335,24 +450,61 @@ void frameSegment(
                     if (q == p || !frees.contains(q - 1)) { reason = "exit does not free the prologue's allocation"; continue; }
                     --q;
                 }
-                const auto siteStart = body[q].Offset;
-                const auto siteEnd = insn.Offset + 1;
-                if (siteEnd - siteStart < kJumpBytes) { reason = "exit shorter than a jump"; continue; }
-                if (targetInside(siteStart, siteEnd)) { reason = "branch into an exit"; continue; }
-                exits.emplace_back(siteStart, siteEnd);
+                ExitSite exit{q, q, body[q].Offset, body[q].Offset, insn.Offset + 1, {}};
+                while (exit.End - exit.Begin < kJumpBytes && exit.First > p) {
+                    const auto j = exit.First - 1;
+                    const auto& prior = body[j];
+                    if (prior.Offset + prior.Length != exit.Begin || prior.Info.FlowKind != ControlFlowKind::Sequential || prior.Info.HasRipRelativeDisp || frees.contains(j) || pushesOrPops(at(j), prior)) break;
+                    const auto priorUse = memoryUse(at(j), prior);
+                    const auto bytes = priorUse.RspBased ? withDisplacement(at(j), prior, priorUse, priorUse.RspDisp + shift) : std::vector<std::uint8_t>(at(j), at(j) + prior.Length);
+                    if (!bytes) break;
+                    exit.Lead.insert(exit.Lead.begin(), bytes->begin(), bytes->end());
+                    if (priorUse.RspBased) ++exit.Operands;
+                    exit.Begin = prior.Offset;
+                    exit.First = j;
+                }
+                if (exit.End - exit.Begin < kJumpBytes) { reason = "exit shorter than a jump"; continue; }
+                if (targetInside(exit.Begin, exit.End)) { reason = exit.First == exit.Tail ? "branch into an exit" : "branch into the instructions before a short exit"; continue; }
+                exits.push_back(std::move(exit));
             }
         }
         if (!leaf || !redZone) continue;
         ++report.RedZoneFunctions;
         const auto prologueEnd = p > 0 ? body[p - 1].Offset + body[p - 1].Length : start;
-        if (reason == nullptr && ((pushed.empty() && allocation == 0) || prologueEnd - start < kJumpBytes)) reason = "prologue shorter than a jump";
-        if (reason == nullptr && targetInside(start, prologueEnd)) reason = "branch into the prologue";
+        if (reason == nullptr && std::any_of(stackMoves.begin(), stackMoves.end(), [&](const std::size_t k) { return std::none_of(exits.begin(), exits.end(), [&](const ExitSite& exit) { return exit.Begin <= body[k].Offset && body[k].Offset < exit.End; }); })) reason = "push or pop inside the body";
+        auto entryEnd = prologueEnd;
+        auto entryLast = p;
+        std::vector<std::uint8_t> entryTail;
+        std::size_t entryOperands = 0;
+        while (entryEnd - start < kJumpBytes && entryLast < body.size()) {
+            const auto& covered = body[entryLast];
+            if (covered.Offset != entryEnd || covered.Info.FlowKind != ControlFlowKind::Sequential || covered.Info.HasRipRelativeDisp || frees.contains(entryLast) || pushesOrPops(at(entryLast), covered)) break;
+            if (std::any_of(exits.begin(), exits.end(), [&](const ExitSite& exit) { return covered.Offset < exit.End && exit.Begin < covered.Offset + covered.Length; })) break;
+            const auto use = memoryUse(at(entryLast), covered);
+            const auto bytes = use.RspBased ? withDisplacement(at(entryLast), covered, use, use.RspDisp + shift) : std::vector<std::uint8_t>(at(entryLast), at(entryLast) + covered.Length);
+            if (!bytes) break;
+            entryTail.insert(entryTail.end(), bytes->begin(), bytes->end());
+            if (use.RspBased) ++entryOperands;
+            entryEnd += covered.Length;
+            ++entryLast;
+        }
+        if (reason == nullptr && entryEnd - start < kJumpBytes) reason = "prologue shorter than a jump";
+        if (reason == nullptr && targetInside(start, entryEnd)) reason = entryEnd == prologueEnd ? "branch into the prologue" : "branch into the instructions after a short prologue";
+        if (reason == nullptr && entryEnd != prologueEnd && targets.contains(start)) reason = "branch to the start of a widened prologue";
         if (reason == nullptr && exits.empty()) reason = "no ret exit";
-        if (reason == nullptr && (overlapsExisting(start, prologueEnd) || std::any_of(exits.begin(), exits.end(), [&](const auto& exit) { return overlapsExisting(exit.first, exit.second); }))) reason = "overlaps another stub";
+        if (reason == nullptr && std::any_of(exits.begin(), exits.end(), [&](const ExitSite& exit) { return exit.Begin < entryEnd; })) reason = "prologue shorter than a jump";
+        if (reason == nullptr && (overlapsExisting(start, entryEnd) || std::any_of(exits.begin(), exits.end(), [&](const ExitSite& exit) { return overlapsExisting(exit.Begin, exit.End); }))) reason = "overlaps another stub";
+        const auto carried = [&](const std::size_t k) {
+            moves.erase(k);
+            stubbed.erase(std::remove(stubbed.begin(), stubbed.end(), k), stubbed.end());
+        };
+        for (auto k = p; k < entryLast; ++k) carried(k);
+        for (const auto& exit : exits)
+            for (auto k = exit.First; k < exit.Tail; ++k) carried(k);
         std::vector<OperandStub> stubs;
         const auto overlapsSite = [&](const std::size_t begin, const std::size_t end) {
-            if (begin < prologueEnd && start < end) return true;
-            if (std::any_of(exits.begin(), exits.end(), [&](const auto& exit) { return begin < exit.second && exit.first < end; })) return true;
+            if (begin < entryEnd && start < end) return true;
+            if (std::any_of(exits.begin(), exits.end(), [&](const ExitSite& exit) { return begin < exit.End && exit.Begin < end; })) return true;
             return std::any_of(stubs.begin(), stubs.end(), [&](const OperandStub& stub) { return begin < stub.End && stub.Begin < end; });
         };
         for (const auto k : stubbed) {
@@ -405,18 +557,27 @@ void frameSegment(
         auto entry = original(start, prologueEnd);
         const auto lower = lowerRsp(shift);
         entry.insert(entry.end(), lower.begin(), lower.end());
-        addSite(start, prologueEnd, std::move(entry));
-        for (const auto& exit : exits) {
-            auto code = raiseRsp(shift);
-            const auto tail = original(exit.first, exit.second);
+        entry.insert(entry.end(), entryTail.begin(), entryTail.end());
+        addSite(start, entryEnd, std::move(entry));
+        for (auto& exit : exits) {
+            auto code = std::move(exit.Lead);
+            const auto raise = raiseRsp(shift);
+            code.insert(code.end(), raise.begin(), raise.end());
+            const auto tail = original(exit.TailBegin, exit.End);
             code.insert(code.end(), tail.begin(), tail.end());
-            addSite(exit.first, exit.second, std::move(code));
+            addSite(exit.Begin, exit.End, std::move(code));
         }
         for (auto& stub : stubs) addSite(stub.Begin, stub.End, std::move(stub.Body));
         for (auto& [k, move] : moves) displacements.push_back({ph.Offset + move.first, std::move(move.second)});
         ++report.Framed;
         if (!rbpPrologue) ++report.FramedWithoutFramePointer;
         report.Exits += exits.size();
+        if (entryLast != p) ++report.WidenedPrologues;
+        report.WidenedOperands += entryOperands;
+        for (const auto& exit : exits) {
+            if (exit.First != exit.Tail) ++report.WidenedExits;
+            report.WidenedOperands += exit.Operands;
+        }
         report.MovedOperands += moves.size();
         report.OperandStubs += stubs.size();
         for (const auto& stub : stubs) report.StubbedOperands += stub.Operands;

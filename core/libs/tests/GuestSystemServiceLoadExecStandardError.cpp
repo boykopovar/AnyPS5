@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -23,6 +24,17 @@ std::string Drain(int descriptor) {
     for (ssize_t count; (count = ::read(descriptor, buffer, sizeof(buffer))) > 0;) text.append(buffer, static_cast<std::size_t>(count));
     ::close(descriptor);
     return text;
+}
+
+bool HostOutputIs(const std::string& text, const std::string& line) {
+    constexpr std::string_view WriteWatchUnavailable = "[memory] write watch unavailable: ";
+    std::size_t begin = 0;
+    if (text.compare(0, WriteWatchUnavailable.size(), WriteWatchUnavailable) == 0) {
+        const std::size_t end = text.find('\n');
+        if (end == std::string::npos) return false;
+        begin = end + 1;
+    }
+    return text.compare(begin, std::string::npos, line) == 0;
 }
 
 void Run(const char* mode, const char* const* arguments) {
@@ -50,7 +62,7 @@ void Run(const char* mode, const char* const* arguments) {
     int status = 0;
     Require(::waitpid(child, &status, 0) == child);
     Require(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-    Require(hostText == std::string("started ") + mode + "\n");
+    Require(HostOutputIs(hostText, std::string("started ") + mode + "\n"));
     Require(guestText.empty());
 }
 

@@ -1,4 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/System/include/ThermalSensors.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -8,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -85,6 +88,15 @@ void Plausible(int& value) {
 }
 
 }  // namespace
+
+extern "C" bool StorageDescriptorAllowsTemperatureQuery_nid_no_patch(const void* descriptor, std::size_t bytes) {
+    constexpr std::size_t kBusTypeOffset = 28;
+    constexpr std::uint32_t kBusTypeRaid = 8;
+    std::uint32_t busType = 0;
+    if (descriptor == nullptr || bytes < kBusTypeOffset + sizeof(busType)) return false;
+    std::memcpy(&busType, static_cast<const char*>(descriptor) + kBusTypeOffset, sizeof(busType));
+    return busType != kBusTypeRaid;
+}
 
 extern "C" void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]) {
     celsius[0] = celsius[1] = celsius[2] = -1;
@@ -179,6 +191,7 @@ void ReadAcpiThermalZones(int celsius[2]) {
 int ReadStorageTemperature() {
     constexpr ULONG kStorageDeviceTemperatureProperty = 52;
     constexpr ULONG kLegacyStorageDeviceTemperatureProperty = 22;
+    constexpr ULONG kStorageDeviceProperty = 0;
     constexpr ULONG kPropertyStandardQuery = 0;
     constexpr DWORD kIoctlStorageQueryProperty = 0x2D1400;
     struct Information {
@@ -217,6 +230,16 @@ int ReadStorageTemperature() {
         std::snprintf(name, sizeof(name), "\\\\.\\PhysicalDrive%d", index);
         HANDLE handle = CreateFileA(name, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
         if (handle == INVALID_HANDLE_VALUE) continue;
+        Query deviceQuery{};
+        deviceQuery.property = kStorageDeviceProperty;
+        deviceQuery.query = kPropertyStandardQuery;
+        unsigned char deviceDescriptor[1024]{};
+        DWORD deviceBytes = 0;
+        if (!DeviceIoControl(handle, kIoctlStorageQueryProperty, &deviceQuery, sizeof(deviceQuery), deviceDescriptor, sizeof(deviceDescriptor), &deviceBytes, nullptr)
+            || !StorageDescriptorAllowsTemperatureQuery_nid_no_patch(deviceDescriptor, deviceBytes)) {
+            CloseHandle(handle);
+            continue;
+        }
         for (ULONG property : kProperties) {
             Query query{};
             query.property = property;
@@ -239,6 +262,11 @@ int ReadStorageTemperature() {
 
 #endif
 
+int Fail(int error) {
+    *__error_nid_postfix() = error;
+    return SceKernelError(error);
+}
+
 void ReadHostSensors(int celsius[3]) {
 #ifdef _WIN32
     celsius[2] = ReadStorageTemperature();
@@ -255,21 +283,28 @@ void ReadHostSensors(int celsius[3]) {
 extern "C" {
 
 int APS5_VABI sceKernelGetCpuTemperature(int* outCelsius) {
-    if (outCelsius == nullptr) return SCE_KERNEL_ERROR_EFAULT;
+    if (outCelsius == nullptr) return Fail(14);
     int celsius[3];
     ReadHostSensors(celsius);
-    if (celsius[0] < 0) return SCE_KERNEL_ERROR_EINVAL;
-    *outCelsius = celsius[0];
+    if (celsius[0] < 0) return Fail(22);
+    if (!GuestCopyOut_nid_no_patch(outCelsius, &celsius[0], sizeof(int))) return Fail(14);
     return 0;
 }
 
 int APS5_VABI sceKernelGetSocSensorTemperature(int sensorId, int* outCelsius) {
-    if (outCelsius == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    if (sensorId < 0 || sensorId >= 3) return SCE_KERNEL_ERROR_EINVAL;
+    if (sensorId < 0 || sensorId > 64) return Fail(22);
+    if (outCelsius == nullptr) return Fail(14);
+    if (sensorId == 64) {
+        const int value = -49;
+        if (!GuestCopyOut_nid_no_patch(outCelsius, &value, sizeof(value))) return Fail(14);
+        return 0;
+    }
+    if (sensorId > 3 && sensorId < 62) throw std::runtime_error("sceKernelGetSocSensorTemperature: channels 4 to 61 have no host sensor and were not measured");
     int celsius[3];
     ReadHostSensors(celsius);
-    if (celsius[sensorId] < 0) return SCE_KERNEL_ERROR_EINVAL;
-    *outCelsius = celsius[sensorId];
+    const int host = sensorId >= 3 ? 0 : sensorId;
+    if (celsius[host] < 0) return Fail(22);
+    if (!GuestCopyOut_nid_no_patch(outCelsius, &celsius[host], sizeof(int))) return Fail(14);
     return 0;
 }
 

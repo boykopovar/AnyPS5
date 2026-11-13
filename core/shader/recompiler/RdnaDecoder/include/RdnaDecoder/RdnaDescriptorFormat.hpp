@@ -20,7 +20,15 @@ enum class ImageType : std::uint32_t {
     Color2DMsaaArray = 15
 };
 
+struct ImageFormatRange {
+    std::uint32_t first;
+    std::uint32_t last;
+};
+
+inline constexpr std::array<ImageFormatRange, 4> DefinedImageFormats{{{1u, 77u}, {128u, 154u}, {156u, 182u}, {265u, 292u}}};
+
 [[nodiscard]] IrTextureNumericClass VertexInputNumericClass(IrBufferFormat format);
+[[nodiscard]] bool IsDefinedImageFormat(IrBufferFormat format);
 [[nodiscard]] bool IsFmaskTextureFormat(IrBufferFormat format);
 
 struct FmaskLayout {
@@ -34,6 +42,7 @@ inline constexpr IrBufferFormat FmaskExpansion = IrBufferFormat::Fmask8_S2_F1;
 
 [[nodiscard]] std::optional<FmaskLayout> FmaskLayoutOf(IrBufferFormat format);
 [[nodiscard]] IrTextureNumericClass SampledTextureNumericClass(IrBufferFormat format);
+[[nodiscard]] bool IsConvertedUnormTextureFormat(IrBufferFormat format);
 [[nodiscard]] IrBufferFormat RemapTextureFormat(IrBufferFormat format);
 [[nodiscard]] IrBufferFormat RemapStorageTextureFormat(IrBufferFormat format);
 [[nodiscard]] std::uint32_t DepthBitsTextureWidth(std::uint32_t word1, std::uint32_t word3);

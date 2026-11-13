@@ -59,6 +59,7 @@ public:
     void AddSubgroupBallot(std::uint32_t type, std::uint32_t result, std::uint32_t scope, std::uint32_t predicate);
     void BeginHelperFunction();
     void EndHelperFunction();
+    [[nodiscard]] bool InHelperFunction() const { return inHelperFunction; }
     [[nodiscard]] SpirvDeferredPhi AddDeferredPhi(std::uint32_t type, std::uint32_t result, std::size_t incomingCount);
     void PatchDeferredPhi(SpirvDeferredPhi phi, std::size_t incoming, std::uint32_t value, std::uint32_t parent);
 
@@ -231,6 +232,9 @@ private:
         const auto offset = section.size();
         appendOperands(section, opcode, operands...);
         const auto wordCount = static_cast<std::uint32_t>(section.size() - offset);
+        if (wordCount > 0xffffu) {
+            throw std::runtime_error("SpirvModule instruction length exceeds maximum SPIR-V word count");
+        }
         section[offset] |= wordCount << spv::WordCountShift;
     }
 
@@ -253,6 +257,7 @@ private:
     std::map<std::vector<std::uint32_t>, std::uint32_t> declarationIds;
     std::array<DeclarationSlot, DeclarationCacheSize> declarationCache = {};
     std::size_t unpatchedPhiIncomings = 0;
+    std::map<std::size_t, std::pair<std::size_t, std::size_t>> pendingDeferredPhis;
     std::vector<std::uint32_t> capabilities;
     std::vector<std::uint32_t> extensions;
     std::vector<std::uint32_t> entryPoints;

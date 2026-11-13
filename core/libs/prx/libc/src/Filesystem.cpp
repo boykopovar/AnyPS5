@@ -8,20 +8,52 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #else
 #include <unistd.h>
+#endif
+
+#ifdef _WIN32
+static std::filesystem::path FollowedPath(const std::filesystem::path& path) {
+    std::error_code pathError;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, pathError);
+    const auto& targetPath = pathError ? path : verbatim;
+    const DWORD attributes = GetFileAttributesW(targetPath.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return targetPath;
+    const HANDLE handle = CreateFileW(targetPath.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return {};
+    std::wstring target(MAX_PATH, L'\0');
+    DWORD length = GetFinalPathNameByHandleW(handle, target.data(), static_cast<DWORD>(target.size()), FILE_NAME_NORMALIZED);
+    if (length >= target.size()) {
+        target.resize(length);
+        length = GetFinalPathNameByHandleW(handle, target.data(), length, FILE_NAME_NORMALIZED);
+    }
+    const DWORD error = GetLastError();
+    CloseHandle(handle);
+    if (length == 0 || length >= target.size()) {
+        SetLastError(length == 0 ? error : ERROR_FILENAME_EXCED_RANGE);
+        return {};
+    }
+    target.resize(length);
+    return target;
+}
 #endif
 
 extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
     if (mode < 0 || (mode & ~7)) { errno = 22; return -1; }
     if (!path) { errno = 14; return -1; }
-    if (!*path) { errno = 2; return -1; }
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return -1; }
+    if (copy.empty()) { errno = 2; return -1; }
     try {
-        const auto resolved = ResolvePath_nid_no_patch(path);
+        const auto resolved = ResolvePath_nid_no_patch(copy.c_str());
 #ifdef _WIN32
-        const DWORD attributes = GetFileAttributesW(resolved.c_str());
+        const auto target = FollowedPath(resolved);
+        const DWORD attributes = target.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(target.c_str());
         if (attributes == INVALID_FILE_ATTRIBUTES) {
-            errno = FilesystemError(std::error_code(static_cast<int>(GetLastError()), std::system_category()));
+            const DWORD failure = GetLastError();
+            errno = failure == ERROR_CANT_RESOLVE_FILENAME ? 62 : FilesystemError(std::error_code(static_cast<int>(failure), std::system_category()));
             if (errno == 2) errno = NotFoundError_nid_no_patch(resolved);
             return -1;
         }
@@ -31,10 +63,10 @@ extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
         }
         DWORD size = 0;
         constexpr auto information = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
-        GetFileSecurityW(resolved.c_str(), information, nullptr, 0, &size);
+        GetFileSecurityW(target.c_str(), information, nullptr, 0, &size);
         if (!size) { errno = 13; return -1; }
         std::vector<unsigned char> descriptor(size);
-        if (!GetFileSecurityW(resolved.c_str(), information, descriptor.data(), size, &size)) {
+        if (!GetFileSecurityW(target.c_str(), information, descriptor.data(), size, &size)) {
             errno = 13; return -1;
         }
         struct Token {
@@ -72,12 +104,47 @@ extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
     }
 }
 
+extern "C" bool ExecutePermission_nid_no_patch(const std::filesystem::path& native) {
+#ifdef _WIN32
+    const auto target = FollowedPath(native);
+    if (target.empty() || GetFileAttributesW(target.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+    DWORD size = 0;
+    constexpr auto information = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+    GetFileSecurityW(target.c_str(), information, nullptr, 0, &size);
+    if (!size) return false;
+    std::vector<unsigned char> descriptor(size);
+    if (!GetFileSecurityW(target.c_str(), information, descriptor.data(), size, &size)) return false;
+    struct Token {
+        HANDLE value = nullptr;
+        ~Token() { if (value) CloseHandle(value); }
+    } source, impersonation;
+    if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY | TOKEN_DUPLICATE, TRUE, &source.value)) {
+        if (GetLastError() != ERROR_NO_TOKEN ||
+            !OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &source.value)) {
+            return false;
+        }
+    }
+    if (!DuplicateToken(source.value, SecurityImpersonation, &impersonation.value)) return false;
+    GENERIC_MAPPING mapping{FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_GENERIC_EXECUTE, FILE_ALL_ACCESS};
+    PRIVILEGE_SET privileges{};
+    DWORD privilegeSize = sizeof(privileges), granted = 0;
+    BOOL allowed = FALSE;
+    if (!AccessCheck(descriptor.data(), impersonation.value, FILE_EXECUTE, &mapping,
+                     &privileges, &privilegeSize, &granted, &allowed) || !allowed) return false;
+    return true;
+#else
+    return ::access(native.c_str(), X_OK) == 0;
+#endif
+}
+
 extern "C" int APS5_VABI remove_nid_postfix(const char* path) {
     if (!path) { errno = 14; return -1; }
-    if (!*path) { errno = 2; return -1; }
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return -1; }
+    if (copy.empty()) { errno = 2; return -1; }
     try {
-        const auto resolved = ResolvePath_nid_no_patch(path);
-        if (FinalPathComponentIsDot_nid_no_patch(path)) {
+        const auto resolved = ResolvePath_nid_no_patch(copy.c_str());
+        if (FinalPathComponentIsDot_nid_no_patch(copy.c_str())) {
             std::error_code statusError;
             const auto status = std::filesystem::status(resolved, statusError);
             if (statusError) { errno = FilesystemError(statusError); return -1; }
@@ -88,17 +155,20 @@ extern "C" int APS5_VABI remove_nid_postfix(const char* path) {
         }
         std::error_code error;
 #ifdef _WIN32
-        const DWORD attributes = GetFileAttributesW(resolved.c_str());
+        std::error_code pathError;
+        const auto verbatim = NativeVerbatimPath_nid_no_patch(resolved, pathError);
+        const auto& targetPath = pathError ? resolved : verbatim;
+        const DWORD attributes = GetFileAttributesW(targetPath.c_str());
         bool removed = false;
         if (attributes != INVALID_FILE_ATTRIBUTES) {
             const DWORD writable = attributes & ~FILE_ATTRIBUTE_READONLY;
             const bool unlocked = writable != attributes &&
-                SetFileAttributesW(resolved.c_str(), writable ? writable : FILE_ATTRIBUTE_NORMAL);
+                SetFileAttributesW(targetPath.c_str(), writable ? writable : FILE_ATTRIBUTE_NORMAL);
             removed = (attributes & FILE_ATTRIBUTE_DIRECTORY) ?
-                RemoveDirectoryW(resolved.c_str()) != 0 : DeleteFileW(resolved.c_str()) != 0;
+                RemoveDirectoryW(targetPath.c_str()) != 0 : DeleteFileW(targetPath.c_str()) != 0;
             if (!removed && unlocked) {
                 const DWORD nativeError = GetLastError();
-                SetFileAttributesW(resolved.c_str(), attributes);
+                SetFileAttributesW(targetPath.c_str(), attributes);
                 SetLastError(nativeError);
             }
         }

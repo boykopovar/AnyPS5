@@ -9,6 +9,7 @@
 #include <domain/IProgress.hpp>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Relinker {
@@ -18,6 +19,9 @@ inline constexpr char GuestModuleSuffix[] = ".guest.prx";
 inline constexpr char GuestModulePattern[] = "sce_module/*.prx";
 inline constexpr std::uint16_t AbsoluteSection = 0xfff1;
 inline constexpr char GuestInitializeExport[] = "__aps5_guest_initialize";
+inline constexpr std::uint32_t GuestDeferredDependenciesMagic = 0x44504541;
+inline constexpr std::uint32_t GuestDeferredSweepMagic = 0x57534550;
+inline constexpr std::size_t GuestMaximumDeferredDependencies = 4096;
 
 struct GuestSymbol {
     std::string Name;
@@ -48,21 +52,24 @@ struct GuestImage {
     std::vector<Domain::ProgramHeader> Headers;
     std::vector<GuestSymbol> Symbols;
     std::vector<std::string> Dependencies;
+    std::vector<std::pair<std::size_t, std::string>> BindingAliases;
     Domain::SysVDynamicSection Dynamic;
     std::vector<std::uint64_t> InitArray;
     std::vector<std::uint64_t> FiniArray;
     std::uint64_t Init = 0;
     bool HasInit = false;
     std::uint64_t Fini = 0;
+    bool HasFini = false;
     std::uint64_t Got = 0;
     bool UsePlatformTlsResolver = true;
     bool Symbolic = false;
+    bool FunctionSymbolRoots = false;
     std::vector<std::size_t> NamedImports;
 };
 
 class GuestImageReader {
 public:
-    GuestImage Read(const std::filesystem::path& path, std::vector<std::uint8_t> bytes, bool windows = false) const;
+    GuestImage Read(const std::filesystem::path& path, std::vector<std::uint8_t> bytes, bool windows = false, bool functionSymbolRoots = false) const;
 };
 
 struct GuestArtifact {
@@ -79,9 +86,11 @@ struct GuestModuleInput {
     std::vector<GamePatch::PatchedRange> PatchedRanges;
 };
 
+std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, bool functionSymbolRoots = false);
+
 class GuestModuleBuilder {
 public:
-    std::vector<GuestArtifact> Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool macos, bool toIntel, bool toRosetta, ISyscallScanner& syscallScanner, bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress) const;
+    std::vector<GuestArtifact> Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool macos, bool toIntel, Codegen::Amd64OnlyTarget target, ISyscallScanner& syscallScanner, bool lazyBinding, bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress, bool functionSymbolRoots = false) const;
 };
 
 }

@@ -2,6 +2,8 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include <memory>
+#include <new>
 #include <stdexcept>
 #include <string>
 
@@ -30,53 +32,79 @@ bool SetDefaultStackSize_nid_no_patch(std::size_t size) {
 #include <limits>
 #endif
 
+namespace {
+
+int LoadAttribute(const PthreadAttr* attr, PthreadAttr& handle) {
+    if (!attr) return SCE_KERNEL_ERROR_EINVAL;
+    if (!GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle))) return SCE_KERNEL_ERROR_EFAULT;
+    return handle ? SCE_OK : SCE_KERNEL_ERROR_EINVAL;
+}
+
+template <typename Value>
+int StoreOutput(Value* destination, const Value& value) {
+    if (!destination) return SCE_KERNEL_ERROR_EINVAL;
+    return GuestCopyOut_nid_no_patch(destination, &value, sizeof(value)) ? SCE_OK : SCE_KERNEL_ERROR_EFAULT;
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI scePthreadAttrInit(PthreadAttr* attr) {
     if (!attr) throw std::runtime_error(std::string(__func__) + ": null attr");
-    auto* p = new (std::nothrow) PthreadAttrPrivate{};
-    if (!p) return SCE_KERNEL_ERROR_ENOMEM;
-    p->_stacksize = GetDefaultStackSize_nid_no_patch();
-    p->_detachstate = DETACH_JOINABLE;
-    p->_schedpriority = 700;
-    p->_schedpolicy = SCHED_FIFO_PS5;
-    p->_inheritsched = 4;
-    *attr = p;
+    std::unique_ptr<PthreadAttrPrivate> created(new (std::nothrow) PthreadAttrPrivate{});
+    if (!created) return SCE_KERNEL_ERROR_ENOMEM;
+    created->_stacksize = GetDefaultStackSize_nid_no_patch();
+    created->_detachstate = DETACH_JOINABLE;
+    created->_schedpriority = 700;
+    created->_schedpolicy = SCHED_FIFO_PS5;
+    created->_inheritsched = 4;
+    PthreadAttr handle = created.get();
+    if (!GuestCopyOut_nid_no_patch(attr, &handle, sizeof(handle))) return SCE_KERNEL_ERROR_EFAULT;
+    created.release();
     return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
-    delete *attr;
-    *attr = nullptr;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    const PthreadAttr cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(attr, &cleared, sizeof(cleared))) return SCE_KERNEL_ERROR_EFAULT;
+    delete handle;
     return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrSetdetachstate(PthreadAttr* attr, int detachstate) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
     if (detachstate != DETACH_JOINABLE && detachstate != DETACH_DETACHED) return SCE_KERNEL_ERROR_EINVAL;
-    (*attr)->_detachstate = detachstate;
+    handle->_detachstate = detachstate;
     return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr* attr, const KernelSchedParam* param) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
     constexpr int HighestPriority = 256;
     constexpr int LowestPriority = 767;
-    if (!param || param->sched_priority < HighestPriority || param->sched_priority > LowestPriority)
+    if (!param) return SCE_KERNEL_ERROR_EOPNOTSUPP;
+    KernelSchedParam requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return SCE_KERNEL_ERROR_EFAULT;
+    if (requested.sched_priority < HighestPriority || requested.sched_priority > LowestPriority)
         return SCE_KERNEL_ERROR_EOPNOTSUPP;
-    (*attr)->_schedpriority = param->sched_priority;
+    handle->_schedpriority = requested.sched_priority;
     return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stacksize) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
     if (stacksize < MIN_STACK_SIZE) return SCE_KERNEL_ERROR_EINVAL;
 #ifdef _WIN32
     if (stacksize > std::numeric_limits<unsigned>::max() - 0xffffu)
         throw std::runtime_error(std::string(__func__) + ": stack size exceeds the Windows limit");
 #endif
-    (*attr)->_stacksize = stacksize;
+    handle->_stacksize = stacksize;
     return SCE_OK;
 }
 
@@ -97,7 +125,8 @@ int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr) {
     (*attr)->_detachstate = thread->_detached ? DETACH_DETACHED : DETACH_JOINABLE;
     (*attr)->_schedpriority = thread->priority.load(std::memory_order_relaxed);
     (*attr)->_schedpolicy = thread->schedPolicy.load(std::memory_order_relaxed);
-    (*attr)->_inheritsched = 4;
+    (*attr)->_inheritsched = thread->inheritSched;
+    (*attr)->_createSuspended = thread->createdSuspended;
     (*attr)->_affinity = thread->affinity.load(std::memory_order_relaxed);
     (*attr)->_affinityExplicit = true;
     (*attr)->_scope = thread->scope;
@@ -112,34 +141,35 @@ int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* 
 }
 
 int APS5_VABI scePthreadAttrGetdetachstate(const PthreadAttr* attr, int* state) {
-    if (!attr || !*attr || !state) return SCE_KERNEL_ERROR_EINVAL;
-    *state = (*attr)->_detachstate;
-    return SCE_OK;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    return StoreOutput<int>(state, handle->_detachstate);
 }
 
 int APS5_VABI scePthreadAttrGetguardsize(const PthreadAttr* attr, size_t* guard_size) {
-    if (!attr || !*attr || !guard_size) return SCE_KERNEL_ERROR_EINVAL;
-    *guard_size = (*attr)->_guardsize;
-    return SCE_OK;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    return StoreOutput<size_t>(guard_size, handle->_guardsize);
 }
 
 int APS5_VABI scePthreadAttrGetinheritsched(const PthreadAttr* attr, int* inheritSched) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
-    if (!inheritSched) throw std::runtime_error(std::string(__func__) + ": null output");
-    *inheritSched = (*attr)->_inheritsched;
-    return SCE_OK;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    return StoreOutput<int>(inheritSched, handle->_inheritsched);
 }
 
 int APS5_VABI scePthreadAttrGetschedparam(const PthreadAttr* attr, KernelSchedParam* param) {
-    if (!attr || !*attr || !param) return SCE_KERNEL_ERROR_EINVAL;
-    param->sched_priority = (*attr)->_schedpriority;
-    return SCE_OK;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    if (!param) return SCE_KERNEL_ERROR_EINVAL;
+    const int priority = handle->_schedpriority;
+    return StoreOutput<int>(&param->sched_priority, priority);
 }
 
 int APS5_VABI scePthreadAttrGetschedpolicy(const PthreadAttr* attr, int* policy) {
-    if (!attr || !*attr || !policy) return SCE_KERNEL_ERROR_EINVAL;
-    *policy = (*attr)->_schedpolicy;
-    return SCE_OK;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    return StoreOutput<int>(policy, handle->_schedpolicy);
 }
 
 int APS5_VABI scePthreadAttrGetsolosched(const PthreadAttr* attr, int* solosched) {
@@ -150,15 +180,15 @@ int APS5_VABI scePthreadAttrGetsolosched(const PthreadAttr* attr, int* solosched
 }
 
 int APS5_VABI scePthreadAttrGetstackaddr(const PthreadAttr* attr, void** stack_addr) {
-    if (!attr || !*attr || !stack_addr) return SCE_KERNEL_ERROR_EINVAL;
-    *stack_addr = (*attr)->stackAddress;
-    return SCE_OK;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    return StoreOutput<void*>(stack_addr, handle->stackAddress);
 }
 
 int APS5_VABI scePthreadAttrGetstacksize(const PthreadAttr* attr, size_t* stack_size) {
-    if (!attr || !*attr || !stack_size) return SCE_KERNEL_ERROR_EINVAL;
-    *stack_size = (*attr)->_stacksize;
-    return SCE_OK;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    return StoreOutput<size_t>(stack_size, handle->_stacksize);
 }
 
 int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask) {
@@ -169,34 +199,38 @@ int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask) {
 }
 
 int APS5_VABI scePthreadAttrSetguardsize(PthreadAttr* attr, size_t guard_size) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
-    (*attr)->_guardsize = guard_size;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    handle->_guardsize = guard_size;
     return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr* attr, int inherit_sched) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
     constexpr int ExplicitSched = 0;
     constexpr int InheritSched = 4;
     if (inherit_sched != ExplicitSched && inherit_sched != InheritSched) return SCE_KERNEL_ERROR_EOPNOTSUPP;
-    (*attr)->_inheritsched = inherit_sched;
+    handle->_inheritsched = inherit_sched;
     return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrSetschedpolicy(PthreadAttr* attr, int policy) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
     constexpr int SchedRr = 3;
     if (policy != SCHED_FIFO_PS5 && policy != SchedRr) return SCE_KERNEL_ERROR_EOPNOTSUPP;
-    (*attr)->_schedpolicy = policy;
+    handle->_schedpolicy = policy;
     return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrSetsolosched(PthreadAttr* attr, int solosched) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
     constexpr int SoloSchedOff = 0;
     constexpr int SoloSchedOn = 16;
     if (solosched != SoloSchedOff && solosched != SoloSchedOn) return SCE_KERNEL_ERROR_EOPNOTSUPP;
-    (*attr)->_solosched = solosched;
+    handle->_solosched = solosched;
     return SCE_OK;
 }
 

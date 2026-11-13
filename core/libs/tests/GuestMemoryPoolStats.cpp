@@ -44,10 +44,13 @@ int main() {
 
     const int http2 = sceHttp2Init(1, ssl, 0x40000, 1);
     Require(http2 > 0);
-    Http2MemoryPoolStats http2Stats{};
-    Require(sceHttp2GetMemoryPoolStats(http2, &http2Stats) == 0 && http2Stats.pool_size == 0x40000);
+    Http2MemoryPoolStats http2Stats{1, 2, 3, 4};
+    Require(sceHttp2GetMemoryPoolStats(http2, &http2Stats) == 0);
+    Require(http2Stats.pool_size == 0x40000 && http2Stats.max_inuse_size == 0 && http2Stats.current_inuse_size == 0 && http2Stats.reserved == 0);
     Require(sceHttp2GetMemoryPoolStats(http2, nullptr) == http2NullPointer);
+    Require(sceHttp2GetMemoryPoolStats(http2, reinterpret_cast<Http2MemoryPoolStats*>(0x10)) == http2NullPointer);
     Require(sceHttp2GetMemoryPoolStats(12345, nullptr) == http2NullPointer);
+    Require(sceHttp2GetMemoryPoolStats(12345, reinterpret_cast<Http2MemoryPoolStats*>(0x10)) == http2NullPointer);
     CheckRejected(sceHttp2GetMemoryPoolStats, 12345, http2InvalidId);
     CheckRejected(sceHttp2GetMemoryPoolStats, -1, http2InvalidId);
     Require(sceHttp2Term(http2) == 0);

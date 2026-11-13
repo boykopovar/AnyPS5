@@ -11,6 +11,8 @@ POINTER = 0x810
 TABLE = 0x820
 FUNCTION = CODE + 0x40
 SECOND_FUNCTION = CODE + 0x60
+REJECTED = {"got-slot-address-size-underflow":
+            "RELA r_offset 0xfffff008 (8 bytes) does not fit inside a PT_LOAD segment"}
 
 
 def rel(next_address, target):
@@ -27,11 +29,12 @@ def build(code, relative=(), data=(), code_vaddr=CODE, slot_vaddr=SLOT):
     for slot in range(3, 8):
         struct.pack_into("<IIQQQQQQ", image, 64 + slot * 56, 0x6fffff01, 0, 0, 0, 0, 0, 0, 1)
     relocations = [(slot_vaddr, (1 << 32) | 6, 0)] + [(slot, 8, target) for slot, target in relative]
-    tags = [(1, 4), (5, 0x600), (10, 12), (6, 0x620), (11, 24), (7, 0x700), (8, 24 * len(relocations)),
+    tags = [(1, 5), (5, 0x600), (10, 12), (6, 0x620), (11, 24), (7, 0x700), (8, 24 * len(relocations)),
             (9, 24), (0x6100003f, 48), (0, 0)]
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", image, 0x400 + index * 16, *tag)
-    image[0x600:0x600 + 11] = b"foo\0lib.so\0"
+    image[0x600:0x600 + 12] = b"\0foo\0lib.so\0"
+    struct.pack_into("<I", image, 0x638, 1)
     for index, relocation in enumerate(relocations):
         struct.pack_into("<QQq", image, 0x700 + index * 24, *relocation)
     for offset, value in data:
@@ -62,6 +65,11 @@ def run(relinker, work, name, image, level=1):
     source.write_bytes(image)
     result = subprocess.run([str(relinker), "--skip-sce-module", "--registry", f"unused-filter={level}",
                              str(source), str(output)], capture_output=True, text=True, timeout=20)
+    if name in REJECTED:
+        assert result.returncode == 2 and REJECTED[name] in result.stderr and not output.exists(), (
+            name, result.returncode, result.stdout, result.stderr)
+        assert "CFG/GOT filtering: 1 -> 1;" in result.stdout, (name, result.stdout)
+        return True
     assert result.returncode == 0 and output.exists(), (name, result.returncode, result.stdout, result.stderr)
     registry = json.loads(output.with_suffix(".registry.json").read_text())
     kept = len(registry)
@@ -71,7 +79,7 @@ def run(relinker, work, name, image, level=1):
     return kept == 1
 
 
-def exported_fixture(binding, defined, sections):
+def exported_fixture(binding, defined, sections, section=1, section_type=11):
     image = build(at_offset([(0, b"\xc3"), (0x40, load_slot(FUNCTION))]))
     strings = b"\0foo\0lib.so\0exported\0"
     image[0x600:0x600 + len(strings)] = strings
@@ -82,14 +90,14 @@ def exported_fixture(binding, defined, sections):
     export_index = 1 if binding == 0 else 2
     struct.pack_into("<IBBHQQ", image, 0x620 + import_index * 24, 1, 0x12, 0, 0, 0, 0)
     struct.pack_into("<IBBHQQ", image, 0x620 + export_index * 24, 12, (binding << 4) | 2, 0,
-                     1 if defined else 0, FUNCTION if defined else 0, 8 if defined else 0)
+                     section if defined else 0, FUNCTION if defined else 0, 8 if defined else 0)
     struct.pack_into("<Q", image, 0x708, (import_index << 32) | 6)
     if sections:
         image.extend(bytes(4 * 64))
         struct.pack_into("<Q", image, 40, 0x1200)
         struct.pack_into("<H", image, 60, 4)
         struct.pack_into("<IIQQQQIIQQ", image, 0x1240, 0, 1, 6, CODE, CODE, 0x200, 0, 0, 16, 0)
-        struct.pack_into("<IIQQQQIIQQ", image, 0x1280, 0, 11, 2, 0x620, 0x620, 72, 3, import_index, 8, 24)
+        struct.pack_into("<IIQQQQIIQQ", image, 0x1280, 0, section_type, 2, 0x620, 0x620, 72, 3, import_index, 8, 24)
         struct.pack_into("<IIQQQQIIQQ", image, 0x12c0, 0, 3, 2, 0x600, 0x600, len(strings), 0, 0, 1, 0)
     return image
 
@@ -140,6 +148,15 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-unused-filter-indirect-") as directory:
         failures = [name for name, expected, image in cases()
                     if run(relinker, Path(directory), name, image) != expected]
+        for segment in (b"\x64", b"\x65"):
+            for address_prefix in (b"", b"\x67"):
+                for base in (0, 8):
+                    prefix = segment + address_prefix + b"\x48\x8b\x05"
+                    load = prefix + rel(CODE + len(prefix) + 4, SLOT - base) + b"\xc3"
+                    for level in (1, 2):
+                        name = f"segment-{segment.hex()}-address-{address_prefix.hex()}-base-{base}-filter-{level}"
+                        if not run(relinker, Path(directory), name, build(at_offset([(0, load)])), level):
+                            failures.append(name)
         for sections in (False, True):
             for kind, binding, defined in (("global", 1, True), ("weak", 2, True),
                                            ("local", 0, True), ("undefined", 1, False)):
@@ -148,6 +165,15 @@ def main():
                     expected = level != 1 or (binding in (1, 2) and defined)
                     if run(relinker, Path(directory), name, exported_fixture(binding, defined, sections), level) != expected:
                         failures.append(name)
+        for kind, binding in (("global", 1), ("weak", 2)):
+            if run(relinker, Path(directory), f"exported-abs-{kind}-no-sections",
+                   exported_fixture(binding, True, False, section=0xfff1), 1):
+                failures.append(f"exported-abs-{kind}-no-sections")
+            for section_name, section_type in (("dynsym", 11), ("symtab", 2)):
+                name = f"exported-abs-{kind}-{section_name}"
+                if run(relinker, Path(directory), name,
+                       exported_fixture(binding, True, True, section=0xfff1, section_type=section_type), 1):
+                    failures.append(name)
         assert not failures, failures
     print("Unused filter indirect tests passed")
 

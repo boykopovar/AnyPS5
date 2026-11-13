@@ -42,6 +42,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     static_assert(std::endian::native == std::endian::little);
     if (options.Target != TargetSystem::Linux && options.Target != TargetSystem::Windows && options.Target != TargetSystem::MacOs) throw Domain::RelinkerException("Unknown target system");
     if (options.ToRosetta && (!options.ToIntel || options.Target == TargetSystem::Windows)) throw Domain::RelinkerException("Rosetta conversion requires Intel lowering and a non-Windows target");
+    if (options.ToAvx && (!options.ToIntel || options.Target != TargetSystem::MacOs)) throw Domain::RelinkerException("AVX conversion requires Intel lowering and a macOS target: only the macOS runtime skips the host CPU check");
     if (options.UnusedFilterLevel > 2) throw Domain::RelinkerException("Unused NID filter level must be 0, 1 or 2");
     if (options.FrameRedZone && options.Target != TargetSystem::Windows) throw Domain::RelinkerException("Red-zone framing requires a Windows target: only Windows exception dispatch writes below RSP");
     if (input.InputPath.empty() || input.OutputPath.empty()) throw Domain::RelinkerException("Input and output names are required");
@@ -52,6 +53,9 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     if (options.MacosFixedBase && options.Target != TargetSystem::MacOs) throw Domain::RelinkerException("A fixed macOS base requires the macOS target");
     const bool windows = options.Target == TargetSystem::Windows;
     const bool macos = options.Target == TargetSystem::MacOs;
+    for (const auto& [copy, kept] : RemoveBackupCopies(input.Modules, options.FunctionSymbolRoots))
+        inputProgress.Message("Skipping backup copy: " + copy.lexically_relative(input.ModuleRoot).generic_string() + " (same SONAME as "
+                              + kept.lexically_relative(input.ModuleRoot).generic_string() + ")\n");
     inputProgress.Report({Domain::ProgressStage::Executable, Io::Utf8Path(input.InputPath), 0, 1});
     auto sourceBytes = std::move(input.Executable);
     std::vector<GamePatch::AppliedPatch> appliedPatches;
@@ -67,7 +71,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     std::vector<Codegen::TrampolineSite> trampolines;
     if (options.ToIntel) {
         const auto segments = Relinker::ElfReader(sourceBytes).ReadProgramHeaders();
-        auto converted = Codegen::MakeAmd64OnlyConverter(options.ToRosetta ? Codegen::Amd64OnlyTarget::Rosetta : Codegen::Amd64OnlyTarget::Intel, [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); })->Convert(std::move(sourceBytes), segments);
+        auto converted = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); })->Convert(std::move(sourceBytes), segments);
         sourceBytes = std::move(converted.Bytes);
         trampolines = std::move(converted.Trampolines);
         GamePatch::CheckOverlaps(options.TargetName, patchedRanges, {.Reports = converted.Reports, .Trampolines = trampolines});
@@ -96,7 +100,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
         std::make_shared<Relinker::ValidationPolicy>(),
         std::make_shared<Relinker::SysVDynamicSectionBuilder>(),
         options.UnusedFilterLevel == 2 ? Relinker::MakeStrictUnusedNidFilter(inputProgress) : Relinker::MakeUnusedNidFilter(),
-        options.UnusedFilterLevel, inputProgress
+        options.UnusedFilterLevel, inputProgress, options.FunctionSymbolRoots
     );
 
     { std::ostringstream message; message << "System: " << (windows ? "Windows" : macos ? "macOS" : "Linux") << "; unused-filter=" << options.UnusedFilterLevel << "\n"; inputProgress.Message(message.str()); }
@@ -125,6 +129,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
             std::copy(moved.Bytes.begin(), moved.Bytes.end(), sourceBytes.begin() + static_cast<std::ptrdiff_t>(moved.Offset));
         }
         { std::ostringstream message; message << "Red-zone framing: " << report.Functions << " functions, " << report.RedZoneFunctions << " leaf functions keep values below RSP, " << report.Framed << " framed (" << report.FramedWithoutFramePointer << " without a frame pointer, " << report.MovedOperands << " rsp operands moved, " << report.StubbedOperands << " in " << report.OperandStubs << " operand stubs; " << report.Exits << " exits)\n"; inputProgress.Message(message.str()); }
+        if (report.WidenedPrologues != 0 || report.WidenedExits != 0) { std::ostringstream message; message << "Red-zone framing: " << report.WidenedPrologues << " prologues widened over the instructions after them and " << report.WidenedExits << " exits over the instructions before them, as they were shorter than a jump (" << report.WidenedOperands << " rsp operands moved into their stubs)\n"; inputProgress.Message(message.str()); }
         for (const auto& [reason, count] : report.Skipped) { std::ostringstream message; message << "Red-zone framing: skipped " << count << ": " << reason << '\n'; inputProgress.Message(message.str()); }
         trampolines.insert(trampolines.end(), std::make_move_iterator(framed.begin()), std::make_move_iterator(framed.end()));
     }
@@ -143,7 +148,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
 
     std::vector<Relinker::GuestArtifact> guestArtifacts;
     if (!input.Modules.empty()) {
-        guestArtifacts = Relinker::GuestModuleBuilder().Build(input.InputPath, input.OutputPath, result.DynamicSection, windows, macos, options.ToIntel, options.ToRosetta, *syscallScanner, options.LazyBinding, options.RunPath, options.ExcludedModules, input.ModuleRoot, input.RuntimeDirectories, std::move(input.Modules), inputProgress);
+        guestArtifacts = Relinker::GuestModuleBuilder().Build(input.InputPath, input.OutputPath, result.DynamicSection, windows, macos, options.ToIntel, Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), *syscallScanner, options.LazyBinding, options.OmitUnavailableDependencies, options.RunPath, options.ExcludedModules, input.ModuleRoot, input.RuntimeDirectories, std::move(input.Modules), inputProgress, options.FunctionSymbolRoots);
     }
 
     auto byteWriter = std::make_shared<Io::ByteWriter>();
@@ -155,9 +160,9 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
         inputProgress.Message("Warning: with --lazy-binding the Linux executable stays position independent and is not placed at 0x400000; a title whose own sceLibcMspaceCreate checks the 40-bit address window stops at start-up\n");
     std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
     if (macos) {
-        patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>(options.MacosFixedBase, [&](std::string_view text) { inputProgress.Message(text); });
+        patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>(options.MacosFixedBase, [&](std::string_view text) { inputProgress.Message(text); }, options.TraceImports, options.FunctionSymbolRoots, Io::Utf8Path(input.OutputPath.filename()));
     } else if (windows) {
-        patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(options.WindowsGui, std::move(input.Icon), input.InputPath.parent_path() / "sce_sys" / "icon0.png", [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Image, {}, completed, total}); }, options.WindowsFixedBase, options.TraceImports, [&](std::string_view text) { inputProgress.Message(text); });
+        patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(options.WindowsGui, std::move(input.Icon), input.InputPath.parent_path() / "sce_sys" / "icon0.png", [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Image, {}, completed, total}); }, options.WindowsFixedBase, options.TraceImports, [&](std::string_view text) { inputProgress.Message(text); }, Io::Utf8Path(input.OutputPath.filename()), options.FunctionSymbolRoots);
     } else {
         patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(
             std::make_shared<Elfpatcher::EntryStubBuilder>(),

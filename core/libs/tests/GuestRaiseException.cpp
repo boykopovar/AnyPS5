@@ -1,8 +1,10 @@
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -18,7 +20,7 @@
 #include <windows.h>
 #endif
 
-static constexpr int SIGUSR1 = 30;
+static constexpr int GUEST_SIGUSR1 = 30;
 static constexpr int Repeats = 50;
 static constexpr std::size_t R12Offset = 0xa0;
 static constexpr std::size_t R13Offset = 0xa8;
@@ -45,7 +47,7 @@ static std::atomic<std::uint64_t> observedXmm8{0};
 static std::atomic<std::uint32_t> observedMxcsr{0};
 
 static void APS5_VABI Handler(int signum, void* context) {
-    Require(signum == SIGUSR1);
+    Require(signum == GUEST_SIGUSR1);
     auto* bytes = static_cast<unsigned char*>(context);
     std::uint64_t rsp = 0;
     std::memcpy(&rsp, bytes + 0xf8, sizeof(rsp));
@@ -84,8 +86,7 @@ static_assert(offsetof(SpinState, r12) == 8 && offsetof(SpinState, xmm8) == 16 &
 
 extern "C" void APS5_VABI RaiseTestSpinUntilR12(SpinState* state);
 asm(".text\n"
-    ".globl RaiseTestSpinUntilR12\n"
-    "RaiseTestSpinUntilR12:\n"
+    APS5_ASM_FUNCTION("RaiseTestSpinUntilR12")
     "    pushq %r12\n"
     "    pushq %r13\n"
     "    subq $8, %rsp\n"
@@ -272,6 +273,51 @@ static void* APS5_VABI Vectors(void* arg) {
 }
 #endif
 
+#ifdef _WIN32
+static constexpr int DrainRounds = 10;
+static std::atomic<int> drainingRound{0};
+static std::uint32_t drainWord = 0;
+
+static void* APS5_VABI Churning(void* arg) {
+    auto& worker = *static_cast<Worker*>(arg);
+    worker.id = std::this_thread::get_id();
+    const std::string source(64u << 20u, 'a');
+    std::vector<wchar_t> converted(64u << 20u);
+    std::vector<char> moved(64u << 20u);
+    for (int round = 0; round < DrainRounds; ++round) {
+        worker.started.store(true);
+        while (drainingRound.load() == round) {
+            MultiByteToWideChar(CP_UTF8, 0, source.data(), static_cast<int>(source.size()), converted.data(), static_cast<int>(converted.size()));
+            std::memmove(moved.data(), source.data(), moved.size());
+            std::this_thread::yield();
+        }
+        Require(sceKernelSyncOnAddressWake(&drainWord, 1) >= 0);
+    }
+    return nullptr;
+}
+
+static constexpr int ExitRounds = 10;
+static std::atomic<bool> exitingRelease{false};
+
+static void* APS5_VABI ChurnUntil(void* arg) {
+    auto& worker = *static_cast<Worker*>(arg);
+    worker.id = std::this_thread::get_id();
+    const std::string source(64u << 20u, 'a');
+    std::vector<wchar_t> converted(64u << 20u);
+    worker.started.store(true);
+    while (!exitingRelease.load()) MultiByteToWideChar(CP_UTF8, 0, source.data(), static_cast<int>(source.size()), converted.data(), static_cast<int>(converted.size()));
+    return nullptr;
+}
+
+static std::atomic<int> postEntered{0};
+static std::atomic<bool> postHold{false};
+
+static void DeliveryPostHook() {
+    postEntered.fetch_add(1);
+    while (postHold.load()) std::this_thread::yield();
+}
+#endif
+
 static std::atomic<std::thread::id> spinningId;
 
 static void* APS5_VABI Spinning(void* arg) {
@@ -301,7 +347,7 @@ static std::atomic<int> nestedResult{0};
 static std::atomic<int> nestedCalls{0};
 
 static void APS5_VABI NestedHandler(int signum, void*) {
-    Require(signum == SIGUSR1);
+    Require(signum == GUEST_SIGUSR1);
     nestedEntered.store(true);
     KernelUseconds timeout = nestedTimeout;
     nestedResult.store(sceKernelSyncOnAddressWait(&nestedWord, 0, &timeout, "nested"));
@@ -353,7 +399,7 @@ static void NestedWaitKeepsLaterWaiters() {
     StartSemaWaiter(&secondThread, second, sem, "nested second");
     nestedTimeout = 20000;
     const int before = nestedCalls.load();
-    Require(sceKernelRaiseException(firstThread, SIGUSR1) == 0);
+    Require(sceKernelRaiseException(firstThread, GUEST_SIGUSR1) == 0);
     ExpectNestedDone(before);
     Require(sceKernelSignalSema(sem, 2) == 0);
     ExpectReturned(first);
@@ -372,7 +418,7 @@ static void NestedWaitKeepsOuterWake() {
     nestedTimeout = 1000000;
     nestedEntered.store(false);
     const int before = nestedCalls.load();
-    Require(sceKernelRaiseException(thread, SIGUSR1) == 0);
+    Require(sceKernelRaiseException(thread, GUEST_SIGUSR1) == 0);
     while (!nestedEntered.load()) std::this_thread::yield();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     Require(sceKernelSignalSema(sem, 1) == 0);
@@ -391,7 +437,7 @@ static std::atomic<bool> holdingLeft{false};
 static std::atomic<std::thread::id> holdingThread;
 
 static void APS5_VABI HoldingHandler(int signum, void*) {
-    Require(signum == SIGUSR1);
+    Require(signum == GUEST_SIGUSR1);
     holdingThread.store(std::this_thread::get_id());
     holdingEntered.store(true);
     while (!holdingRelease.load()) std::this_thread::yield();
@@ -402,7 +448,7 @@ static void* APS5_VABI AddressWaking(void* arg) {
     auto& worker = *static_cast<Worker*>(arg);
     worker.id = std::this_thread::get_id();
     worker.started.store(true);
-    while (!worker.stop.load()) Require(sceKernelSyncOnAddressWake(&addressWord, 1) == 0);
+    while (!worker.stop.load()) Require(sceKernelSyncOnAddressWake(&addressWord, 1) >= 0);
     return nullptr;
 }
 
@@ -443,7 +489,7 @@ static void HandlerLeavesAddressLock(PthreadEntry entry, const char* name) {
         holdingEntered.store(false);
         holdingLeft.store(false);
         holdingRelease.store(false);
-        RequireInRound(sceKernelRaiseException(thread, SIGUSR1) == 0, name, round, "the raise failed");
+        RequireInRound(sceKernelRaiseException(thread, GUEST_SIGUSR1) == 0, name, round, "the raise failed");
         RequireInRound(AwaitWithin(holdingEntered, std::chrono::seconds(5)), name, round, "the handler did not run within 5 s");
         RequireInRound(holdingThread.load() == worker.id, name, round, "the handler ran on another thread");
         std::atomic<bool> woke{false};
@@ -480,7 +526,7 @@ static void HandlerRunsInUnboundedAddressWait() {
     holdingEntered.store(false);
     holdingLeft.store(false);
     holdingRelease.store(false);
-    Require(sceKernelRaiseException(thread, SIGUSR1) == 0);
+    Require(sceKernelRaiseException(thread, GUEST_SIGUSR1) == 0);
     RequireInRound(AwaitWithin(holdingEntered, std::chrono::seconds(5)), "address idle", 0, "the handler did not run while the thread waited without a timeout");
     RequireInRound(holdingThread.load() == worker.id, "address idle", 0, "the handler ran on another thread");
     holdingRelease.store(true);
@@ -540,7 +586,7 @@ static void ExpectDeliveryWhileLockHeld(int (*lock)(), int (*unlock)(), int befo
     for (int round = 1; round <= LockRounds; ++round) {
         while (worker.blocking.load() != round) std::this_thread::yield();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        Require(sceKernelRaiseException(thread, SIGUSR1) == 0);
+        Require(sceKernelRaiseException(thread, GUEST_SIGUSR1) == 0);
         ExpectDelivery(before + round - 1, worker.id);
         Require(worker.acquired.load() == round - 1);
         Require(unlock() == 0);
@@ -556,15 +602,15 @@ int main() {
     Require(sceKernelRaiseException(scePthreadSelf(), 11) == SCE_KERNEL_ERROR_EINVAL);
     bool rejected = false;
     try {
-        sceKernelRaiseException(scePthreadSelf(), SIGUSR1);
+        sceKernelRaiseException(scePthreadSelf(), GUEST_SIGUSR1);
 
     } catch (const std::runtime_error&) {
         rejected = true;
     }
     Require(rejected);
-    Require(sceKernelInstallExceptionHandler(SIGUSR1, reinterpret_cast<void*>(&Handler)) == 0);
+    Require(sceKernelInstallExceptionHandler(GUEST_SIGUSR1, reinterpret_cast<void*>(&Handler)) == 0);
 
-    Require(sceKernelRaiseException(scePthreadSelf(), SIGUSR1) == 0);
+    Require(sceKernelRaiseException(scePthreadSelf(), GUEST_SIGUSR1) == 0);
     Require(calls.load() == 1 && handlerThread.load() == std::this_thread::get_id());
 
     Worker busy;
@@ -572,7 +618,7 @@ int main() {
     Require(scePthreadCreate(&busyThread, nullptr, Busy, &busy, "busy") == 0);
     while (!busy.started.load()) std::this_thread::yield();
     for (int raised = 0; raised < Repeats; ++raised) {
-        Require(sceKernelRaiseException(busyThread, SIGUSR1) == 0);
+        Require(sceKernelRaiseException(busyThread, GUEST_SIGUSR1) == 0);
         ExpectDelivery(1 + raised, busy.id);
     }
     busy.stop.store(true);
@@ -585,7 +631,7 @@ int main() {
     while (!waiting.started.load()) std::this_thread::yield();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     for (int raised = 0; raised < Repeats; ++raised) {
-        Require(sceKernelRaiseException(waitingThread, SIGUSR1) == 0);
+        Require(sceKernelRaiseException(waitingThread, GUEST_SIGUSR1) == 0);
         ExpectDelivery(1 + Repeats + raised, waiting.id);
     }
     Require(sceKernelSignalSema(waiting.sem, 1) == 0);
@@ -600,7 +646,7 @@ int main() {
     for (int round = 0; round < HostRounds; ++round) {
         while (!blocked.started.load()) std::this_thread::yield();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        Require(sceKernelRaiseException(blockedThread, SIGUSR1) == 0);
+        Require(sceKernelRaiseException(blockedThread, GUEST_SIGUSR1) == 0);
         hostLock.unlock();
         ExpectDelivery(1 + 2 * Repeats + round, blocked.id);
         while (hostAcquired.load() != round + 1) std::this_thread::yield();
@@ -622,7 +668,7 @@ int main() {
         Require(sceKernelSignalSema(leaving.sem, 1) == 0);
         const auto offset = std::chrono::steady_clock::now() + std::chrono::microseconds(round % 16 * 8);
         while (std::chrono::steady_clock::now() < offset) {}
-        Require(sceKernelRaiseException(leavingThread, SIGUSR1) == 0);
+        Require(sceKernelRaiseException(leavingThread, GUEST_SIGUSR1) == 0);
         ExpectDelivery(1 + 2 * Repeats + HostRounds + round, leaving.id);
         leavingRound.store(round + 1);
     }
@@ -637,7 +683,7 @@ int main() {
     Require(scePthreadCreate(&continuingThread, nullptr, Continuing, &continuing, "continuing") == 0);
     while (!continuing.started.load() || continued.load() == 0) std::this_thread::yield();
     for (int raised = 0; raised < ContinuingRounds; ++raised) {
-        Require(sceKernelRaiseException(continuingThread, SIGUSR1) == 0);
+        Require(sceKernelRaiseException(continuingThread, GUEST_SIGUSR1) == 0);
         ExpectDelivery(1 + 2 * Repeats + HostRounds + LeavingRounds + raised, continuing.id);
     }
     continuing.stop.store(true);
@@ -649,7 +695,7 @@ int main() {
     Require(scePthreadCreate(&selfingThread, nullptr, Selfing, &selfing, "selfing") == 0);
     while (!selfing.started.load()) std::this_thread::yield();
     for (int raised = 0; raised < SelfingRounds; ++raised) {
-        Require(sceKernelRaiseException(selfingThread, SIGUSR1) == 0);
+        Require(sceKernelRaiseException(selfingThread, GUEST_SIGUSR1) == 0);
         ExpectDelivery(1 + 2 * Repeats + HostRounds + LeavingRounds + ContinuingRounds + raised, selfing.id);
         Require(handlerSelf.load() == selfingThread);
     }
@@ -665,7 +711,7 @@ int main() {
     const auto raisedAt = std::chrono::steady_clock::now();
     bool refused = false;
     try {
-        sceKernelRaiseException(loopingThread, SIGUSR1);
+        sceKernelRaiseException(loopingThread, GUEST_SIGUSR1);
 
     } catch (const std::runtime_error&) {
         refused = true;
@@ -693,7 +739,7 @@ int main() {
         while (!vectors.started.load()) std::this_thread::yield();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         for (int raised = 0; raised < VectorRounds; ++raised) {
-            Require(sceKernelRaiseException(vectorsThread, SIGUSR1) == 0);
+            Require(sceKernelRaiseException(vectorsThread, GUEST_SIGUSR1) == 0);
             ExpectDelivery(1 + 2 * Repeats + HostRounds + LeavingRounds + ContinuingRounds + SelfingRounds + raised, vectors.id);
         }
         clobberVectors.store(false);
@@ -701,6 +747,81 @@ int main() {
         Require(scePthreadJoin(vectorsThread, nullptr) == 0);
         Require(std::memcmp(vectorPattern, vectorResult, VectorBytes) == 0);
     }
+
+    Worker churning;
+    Pthread churningThread = nullptr;
+    TimedWait::SetDeliveryDrainPostHook(&DeliveryPostHook);
+    const int postsBeforeChurn = postEntered.load();
+    Require(scePthreadCreate(&churningThread, nullptr, Churning, &churning, "churn then drain") == 0);
+    for (int round = 0; round < DrainRounds; ++round) {
+        while (!churning.started.load()) std::this_thread::yield();
+        churning.started.store(false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const int before = calls.load();
+        Require(sceKernelRaiseException(churningThread, GUEST_SIGUSR1) == 0);
+        drainingRound.store(round + 1);
+        ExpectDelivery(before, churning.id);
+    }
+    Require(scePthreadJoin(churningThread, nullptr) == 0);
+    Require(postEntered.load() > postsBeforeChurn);
+
+    for (int round = 0; round < ExitRounds; ++round) {
+        exitingRelease.store(false);
+        Worker exiting;
+        Pthread exitingThread = nullptr;
+        Require(scePthreadCreate(&exitingThread, nullptr, ChurnUntil, &exiting, "exit after churn") == 0);
+        while (!exiting.started.load()) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const int result = sceKernelRaiseException(exitingThread, GUEST_SIGUSR1);
+        Require(result == 0 || result == SCE_KERNEL_ERROR_ESRCH);
+        exitingRelease.store(true);
+        Require(scePthreadJoin(exitingThread, nullptr) == 0);
+        Require(TimedWait::DeliveryDrainPending() == 0);
+    }
+
+    exitingRelease.store(false);
+    postHold.store(true);
+    const int postsBeforeHeld = postEntered.load();
+    Worker heldExit;
+    Pthread heldExitThread = nullptr;
+    Require(scePthreadCreate(&heldExitThread, nullptr, ChurnUntil, &heldExit, "exit while posted") == 0);
+    while (!heldExit.started.load()) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::atomic<int> raiseResult{-1};
+    bool posted = false;
+    for (int attempt = 0; attempt < 50 && !posted; ++attempt) {
+        raiseResult.store(-1);
+        std::thread raiser([&] { raiseResult.store(sceKernelRaiseException(heldExitThread, GUEST_SIGUSR1)); });
+        const auto entered = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (postEntered.load() == postsBeforeHeld && raiseResult.load() == -1 && std::chrono::steady_clock::now() < entered) std::this_thread::yield();
+        posted = postEntered.load() > postsBeforeHeld;
+        if (posted) {
+            exitingRelease.store(true);
+            Require(scePthreadJoin(heldExitThread, nullptr) == 0);
+            postHold.store(false);
+        }
+        raiser.join();
+    }
+    Require(posted);
+    Require(raiseResult.load() == 0 || raiseResult.load() == SCE_KERNEL_ERROR_ESRCH);
+    const auto drained = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (TimedWait::DeliveryDrainPending() != 0 && std::chrono::steady_clock::now() < drained) std::this_thread::yield();
+    Require(TimedWait::DeliveryDrainPending() == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    const int settledCalls = calls.load();
+    drainingRound.store(0);
+    Worker settled;
+    Pthread settledThread = nullptr;
+    Require(scePthreadCreate(&settledThread, nullptr, Churning, &settled, "settled") == 0);
+    for (int round = 0; round < DrainRounds; ++round) {
+        while (!settled.started.load()) std::this_thread::yield();
+        settled.started.store(false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        Require(sceKernelRaiseException(settledThread, GUEST_SIGUSR1) == 0);
+        drainingRound.store(round + 1);
+        ExpectDelivery(settledCalls + round, settled.id);
+    }
+    Require(scePthreadJoin(settledThread, nullptr) == 0);
 #endif
 
     SpinState spin;
@@ -709,7 +830,7 @@ int main() {
     while (spin.started.load() == 0) std::this_thread::yield();
     patchContext.store(true);
     const int spinBefore = calls.load();
-    Require(sceKernelRaiseException(spinningThread, SIGUSR1) == 0);
+    Require(sceKernelRaiseException(spinningThread, GUEST_SIGUSR1) == 0);
     ExpectDelivery(spinBefore, spinningId.load());
     Require(scePthreadJoin(spinningThread, nullptr) == 0);
     patchContext.store(false);
@@ -722,7 +843,7 @@ int main() {
         startingRelease.store(false);
         Pthread startingThread = nullptr;
         Require(scePthreadCreate(&startingThread, nullptr, Starting, nullptr, "starting") == 0);
-        Require(sceKernelRaiseException(startingThread, SIGUSR1) == 0);
+        Require(sceKernelRaiseException(startingThread, GUEST_SIGUSR1) == 0);
         for (int attempt = 0; attempt < 5000 && calls.load() == before; ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         Require(calls.load() == before + 1);
         Require(handlerSelf.load() == startingThread);
@@ -743,19 +864,19 @@ int main() {
     Require(scePthreadCreate(&finishedThread, nullptr, Finished, nullptr, "finished") == 0);
     while (!finishedReturned.load()) std::this_thread::yield();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    Require(sceKernelRaiseException(finishedThread, SIGUSR1) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelRaiseException(finishedThread, GUEST_SIGUSR1) == SCE_KERNEL_ERROR_ESRCH);
     Require(scePthreadJoin(finishedThread, nullptr) == 0);
 
-    Require(sceKernelRemoveExceptionHandler(SIGUSR1) == 0);
+    Require(sceKernelRemoveExceptionHandler(GUEST_SIGUSR1) == 0);
 
-    Require(sceKernelInstallExceptionHandler(SIGUSR1, reinterpret_cast<void*>(&NestedHandler)) == 0);
+    Require(sceKernelInstallExceptionHandler(GUEST_SIGUSR1, reinterpret_cast<void*>(&NestedHandler)) == 0);
     NestedWaitKeepsLaterWaiters();
     NestedWaitKeepsOuterWake();
-    Require(sceKernelRemoveExceptionHandler(SIGUSR1) == 0);
+    Require(sceKernelRemoveExceptionHandler(GUEST_SIGUSR1) == 0);
 
-    Require(sceKernelInstallExceptionHandler(SIGUSR1, reinterpret_cast<void*>(&HoldingHandler)) == 0);
+    Require(sceKernelInstallExceptionHandler(GUEST_SIGUSR1, reinterpret_cast<void*>(&HoldingHandler)) == 0);
     HandlerLeavesAddressLock(AddressWaking, "address waking");
     HandlerLeavesAddressLock(AddressWaiting, "address waiting");
     HandlerRunsInUnboundedAddressWait();
-    Require(sceKernelRemoveExceptionHandler(SIGUSR1) == 0);
+    Require(sceKernelRemoveExceptionHandler(GUEST_SIGUSR1) == 0);
 }

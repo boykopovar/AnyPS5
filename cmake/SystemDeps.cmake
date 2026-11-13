@@ -33,7 +33,7 @@ if(NOT ANYPS5_SDL2_HAS_HIDAPI)
     message(FATAL_ERROR "ANYPS5_USE_SYSTEM_DEPS: the system SDL2 does not define SDL_JOYSTICK_HIDAPI, so a DualSense gets no light bar, touchpad or trigger effects and the disk audio driver does not preserve the requested format; sdl2-compat (SDL3 underneath) and SDL2 builds with HIDAPI disabled both fail the pad and audio tests; install a real SDL2 2.x built with HIDAPI")
 endif()
 
-find_package(Freetype REQUIRED)
+find_package(Freetype 2.15 REQUIRED)
 if(NOT TARGET Freetype::Freetype)
     message(FATAL_ERROR "ANYPS5_USE_SYSTEM_DEPS: freetype was found but does not provide Freetype::Freetype")
 endif()

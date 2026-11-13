@@ -2,9 +2,12 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DIAGNOSTICS_HPP
 
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace AgcDriver::DriverDetail {
 
@@ -21,6 +24,12 @@ public:
 bool SkipRefusedDraws();
 
 void ReportRefusedDraw(const RefusedDraw& refused);
+std::optional<std::size_t> RefusedShaderCount();
+
+bool SkipRefusedDispatches();
+void ReportRefusedDispatch(std::uint64_t address, std::string_view reason);
+bool RefusedDispatch(std::uint64_t address);
+std::size_t MaxComputeSpirvWords();
 
 void require(bool condition, const char* reason);
 

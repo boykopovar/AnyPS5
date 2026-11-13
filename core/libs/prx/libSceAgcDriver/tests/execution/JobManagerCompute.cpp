@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <iostream>
 #include <new>
 #include <stdexcept>
@@ -237,6 +238,132 @@ void CapacityCase() {
     for (auto offset = size; offset < allocationSize; ++offset)
         Require(memory[offset] == 0xa5, "maximum packets escaped the supplied work area");
     ::operator delete(memory, std::align_val_t{256});
+}
+
+struct ComputeFailureGuard {
+    void* manager;
+    std::uint32_t& gate;
+
+    ~ComputeFailureGuard() {
+        if (std::uncaught_exceptions() == 0) return;
+        std::atomic_ref<std::uint32_t>(gate).store(1);
+        try {
+            static_cast<void>(Shutdown(manager));
+            AgcDriverShutdown_nid_postfix();
+        } catch (...) {
+            std::terminate();
+        }
+    }
+};
+
+void BarrierStorageCase() {
+    const MemorySizeQueryParams query{1, 1, 0, 1, 4, 4, 1, 1, 2};
+    const auto size = RequiredSize(&query);
+    auto* memory = static_cast<std::uint8_t*>(::operator new(size, std::align_val_t{256}));
+    std::memset(memory, 0, size);
+    alignas(64) unsigned char manager[0x100]{};
+    Construct(manager);
+    Require(Initialize(manager, memory, size, 1, 0, 1, 2, nullptr) == 0, "barrier storage initialization failed");
+    auto* factory = Factories(manager, 0);
+    ISequence* sequence = nullptr;
+    Require(factory->CreateCompute(&sequence, 1, 4, 4, 1, nullptr) == 0, "barrier storage sequence creation failed");
+    for (const std::uint32_t pattern : {0u, 1u, 2u, 3u}) {
+        alignas(64) std::uint32_t gate = 0;
+        alignas(256) std::array<std::uint32_t, 32> words{};
+        const ComputeFailureGuard failureGuard{manager, gate};
+        CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+        Require(sceAgcAcbWaitRegMem(&buffer, 0, 3, 3, &gate, 1, 0xffffffffu, 0x190) != nullptr, "barrier storage gate encoding failed");
+        const Packet packet{words.data(), static_cast<std::uint32_t>(buffer.cursor_up - words.data()), 0, {}};
+        Require(sceAgcDriverSubmitAcb(0x21, &packet) == 0, "barrier storage gate submission failed");
+        Value[0] = 0xbab00000u + pattern;
+        Output[0] = 0;
+        const std::string first = std::to_string(pattern) + "frst";
+        const std::string later = std::to_string(pattern) + "last";
+        Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, first.c_str()) == 0, "barrier storage first dispatch failed");
+        if (pattern == 3) {
+            Require(sequence->SyncPoint() == 0, "barrier storage leading sync failed");
+            Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, "middl") == 0, "barrier storage middle dispatch failed");
+        }
+        if (pattern >= 2) Require(sequence->Dispatch(Nothing, nullptr, 1, nullptr) == 0, "mixed barrier storage CPU dispatch failed");
+        Require(sequence->SyncPoint() == 0, "barrier storage sync failed");
+        if (pattern == 0) {
+            Require(sequence->SyncPoint() == 0, "barrier storage first empty sync failed");
+            Require(sequence->SyncPoint() == 0, "barrier storage second empty sync failed");
+        }
+        if (pattern == 1) Require(sequence->Dispatch(Nothing, nullptr, 1, nullptr) == 0, "terminal barrier storage CPU dispatch failed");
+        Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, later.c_str()) == 0, "barrier storage later dispatch failed");
+        std::atomic_ref<std::uint32_t>(gate).store(1);
+        Require(sequence->Wait() == 0, "barrier storage wait failed");
+        const auto* firstPacket = std::search(memory, memory + size, first.begin(), first.end());
+        const auto* laterPacket = std::search(memory, memory + size, later.begin(), later.end());
+        const std::ptrdiff_t expectedDistance = pattern == 0 ? 304 : pattern == 1 ? 284 : pattern == 2 ? 188 : 492;
+        Require(firstPacket != memory + size && laterPacket != memory + size && laterPacket - firstPacket == expectedDistance,
+            "GPU barrier command storage differs from the original module");
+        Require(Output[0] == Value[0], "barrier storage dispatch did not finish");
+    }
+    Require(factory->DestroyCompute(sequence) == 0, "barrier storage destruction failed");
+    Require(Shutdown(manager) == 0, "barrier storage shutdown failed");
+    ::operator delete(memory, std::align_val_t{256});
+}
+
+void BarrierCapacityCase(bool overflow) {
+    const MemorySizeQueryParams query{1, 1, 0, 0, 255, 255, 1, 1, 2};
+    const auto size = RequiredSize(&query);
+    const auto allocationSize = (size + 511) & ~std::uint64_t{255};
+    auto* memory = static_cast<std::uint8_t*>(::operator new(allocationSize, std::align_val_t{256}));
+    std::memset(memory, 0, size);
+    std::memset(memory + size, 0xa5, allocationSize - size);
+    alignas(64) unsigned char manager[0x100]{};
+    Construct(manager);
+    Require(Initialize(manager, memory, size, 1, 0, 1, 2, nullptr) == 0, "barrier capacity initialization failed");
+    auto* factory = Factories(manager, 0);
+    ISequence* sequence = nullptr;
+    Require(factory->CreateCompute(&sequence, 0, 255, 255, 1, nullptr) == 0, "barrier capacity sequence creation failed");
+    const std::string large(65535, 'l');
+    const std::string medium(32767, 'm');
+    alignas(64) std::uint32_t gate = 0;
+    alignas(256) std::array<std::uint32_t, 32> gateWords{};
+    alignas(256) Label fence{};
+    alignas(256) std::array<std::uint32_t, 32> tailWords{};
+    const ComputeFailureGuard failureGuard{manager, gate};
+    CommandBuffer gateBuffer{gateWords.data(), gateWords.data() + gateWords.size(), gateWords.data(), gateWords.data() + gateWords.size(), nullptr, nullptr, 0};
+    Require(sceAgcAcbWaitRegMem(&gateBuffer, 0, 3, 3, &gate, 1, 0xffffffffu, 0x190) != nullptr, "barrier capacity gate encoding failed");
+    const Packet gatePacket{gateWords.data(), static_cast<std::uint32_t>(gateBuffer.cursor_up - gateWords.data()), 0, {}};
+    Require(sceAgcDriverSubmitAcb(0x21, &gatePacket) == 0, "barrier capacity gate submission failed");
+    Value[0] = 0xbab10000u;
+    Output[0] = 0;
+    for (std::uint32_t index = 0; index < 224; ++index) {
+        const char* marker = index == 0 ? large.c_str() : index == 1 ? medium.c_str() : "small";
+        Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, marker) == 0, "barrier capacity dispatch failed");
+        Require(sequence->SyncPoint() == 0, "barrier capacity sync within the native bound failed");
+    }
+    bool exhausted = false;
+    if (overflow) {
+        Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, "small") == 0, "the last fitting barrier capacity dispatch failed");
+        try {
+            static_cast<void>(sequence->SyncPoint());
+        } catch (const std::runtime_error& error) {
+            exhausted = std::string(error.what()).find("compute completion did not fit") != std::string::npos;
+        }
+        Require(Shutdown(manager) == 0, "barrier capacity overflow shutdown failed");
+    }
+    std::atomic_ref<std::uint32_t>(gate).store(1);
+    CommandBuffer tail{tailWords.data(), tailWords.data() + tailWords.size(), tailWords.data(), tailWords.data() + tailWords.size(), nullptr, nullptr, 0};
+    Require(sceAgcCbReleaseMem(&tail, 0x2f, 0x200, 1, 3, &fence, 1, 1, 0, 0, 0, 0) != nullptr, "barrier capacity tail fence encoding failed");
+    const Packet tailPacket{tailWords.data(), static_cast<std::uint32_t>(tail.cursor_up - tailWords.data()), 0, {}};
+    Require(sceAgcDriverSubmitAcb(0x21, &tailPacket) == 0, "barrier capacity tail fence submission failed");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (fence.value != 1 && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    Require(fence.value == 1 && Output[0] == Value[0], "barrier capacity work did not finish");
+    if (!overflow) {
+        Require(sequence->Wait() == 0, "barrier capacity wait failed");
+        Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, large.c_str()) == 0, "barrier capacity storage was not reusable");
+        Require(factory->DestroyCompute(sequence) == 0, "barrier capacity destruction failed");
+        Require(Shutdown(manager) == 0, "barrier capacity shutdown failed");
+    }
+    for (auto offset = size; offset < allocationSize; ++offset) Require(memory[offset] == 0xa5, "barrier capacity wrote beyond the work area");
+    ::operator delete(memory, std::align_val_t{256});
+    Require(!overflow || exhausted, "GPU sync exceeded the original module command capacity");
 }
 
 void DeferredInputsCase(bool mixed) {
@@ -565,7 +692,7 @@ void StorageCase(bool directMemory) {
 
 int RunJobManagerCase(const char* name) {
     try {
-        Require(std::strcmp(name, "compute") == 0 || std::strcmp(name, "size") == 0 || std::strcmp(name, "execution") == 0 || std::strcmp(name, "storage") == 0 || std::strcmp(name, "capacity") == 0 || std::strcmp(name, "deferred_inputs") == 0 || std::strcmp(name, "gpu_barriers") == 0 || std::strcmp(name, "compute_shutdown") == 0, "unknown compute fixture");
+        Require(std::strcmp(name, "compute") == 0 || std::strcmp(name, "size") == 0 || std::strcmp(name, "execution") == 0 || std::strcmp(name, "storage") == 0 || std::strcmp(name, "capacity") == 0 || std::strcmp(name, "deferred_inputs") == 0 || std::strcmp(name, "gpu_barriers") == 0 || std::strcmp(name, "compute_shutdown") == 0 || std::strcmp(name, "barrier_storage") == 0 || std::strcmp(name, "barrier_capacity") == 0 || std::strcmp(name, "barrier_capacity_overflow") == 0, "unknown compute fixture");
 #ifndef ANYPS5_JOB_MANAGER_REFERENCE
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -575,6 +702,9 @@ int RunJobManagerCase(const char* name) {
         if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "size") == 0) SizeCase();
         if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "execution") == 0) RunCase();
         if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "capacity") == 0) CapacityCase();
+        if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "barrier_storage") == 0) BarrierStorageCase();
+        if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "barrier_capacity") == 0) BarrierCapacityCase(false);
+        if (std::strcmp(name, "barrier_capacity_overflow") == 0) BarrierCapacityCase(true);
         if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "deferred_inputs") == 0) {
             DeferredInputsCase(false);
             DeferredInputsCase(true);

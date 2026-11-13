@@ -1,20 +1,19 @@
+#include "LoweringExecution.hpp"
 #include <codegen/x86/AndnLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
+#include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/CodegenException.hpp>
 #include <array>
 #include <cstring>
 #include <iostream>
-#include <limits>
+#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
-#if (defined(__linux__) || defined(__APPLE__)) && defined(__x86_64__)
-#include <sys/mman.h>
-#endif
 
 namespace {
 
-using Bytes = std::vector<std::uint8_t>;
+using LoweringExecution::Bytes;
 
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -69,130 +68,27 @@ void matching() {
     require(rosetta->MatchSequence(sequence, {}).has_value(), "An ANDN sequence could not move out of line");
 }
 
-#if (defined(__linux__) || defined(__APPLE__)) && defined(__x86_64__)
+#if LOWERING_EXECUTION_AVAILABLE
 
-struct State {
-    std::array<std::uint64_t, 16> Input{};
-    std::array<std::uint64_t, 16> Output{};
-    std::uint64_t Flags = 0;
-    std::array<std::uint64_t, 16> RedZone{};
-};
+using LoweringExecution::Execution;
+using LoweringExecution::State;
 
-class Execution {
-public:
-    Execution(const Bytes& site, std::uint64_t memoryValue) {
-        auto operands = Codegen::DecodeAndn(site.data(), site.size());
-        require(operands.has_value(), "Execution site was not ANDN");
-        for (auto reg : {3, 5, 12, 13, 14, 15}) push(static_cast<std::uint8_t>(reg));
-        memory(0x8D, 4, 4, -128);
-        rip({0x48, 0x89, 0x3D}, 0);
-        rip({0x48, 0x89, 0x25}, 8);
-        memory(0x89, 4, 7, 32);
-        bytes.insert(bytes.end(), {0x48, 0xB8});
-        append64(kSentinel);
-        for (int displacement = -128; displacement < 0; displacement += 8)
-            memory(0x89, 0, 4, displacement);
-        memory(0x8B, 0, 7, 16 * 8);
-        memory(0x89, 0, 4, 64);
-        for (std::uint8_t reg = 0; reg < 16; ++reg)
-            if (reg != 4 && reg != 7) memory(0x8B, reg, 7, reg * 8);
-        memory(0x8B, 7, 7, 7 * 8);
-        const auto siteOffset = bytes.size();
-        if (operands->Memory && operands->Memory->RipRelative) {
-            auto relocated = site;
-            const auto displacement = static_cast<std::int32_t>(4096 + 24 - (siteOffset + site.size()));
-            std::memcpy(relocated.data() + relocated.size() - 4, &displacement, sizeof(displacement));
-            operands = Codegen::DecodeAndn(relocated.data(), relocated.size());
-        }
-        Codegen::StubBodyBuilder builder;
-        Codegen::EmitAndn(builder, *operands);
-        auto body = builder.Finish();
-        const auto stubOffset = bytes.size();
-        Codegen::ApplyStubRelocations(body.Bytes, body.Relocations, siteOffset, stubOffset, 0);
-        bytes.insert(bytes.end(), body.Bytes.begin(), body.Bytes.begin() + static_cast<std::ptrdiff_t>(body.ReturnBranchOffset));
-        rip({0x48, 0x89, 0x25}, 16);
-        rip({0x48, 0x8B, 0x25}, 8);
-        memory(0x8D, 4, 4, -256);
-        for (std::uint8_t reg = 0; reg < 16; ++reg) if (reg != 4) push(reg);
-        bytes.push_back(0x9C);
-        rip({0x48, 0x8B, 0x3D}, 0);
-        memory(0x8B, 0, 4, 0);
-        memory(0x89, 0, 7, 32 * 8);
-        int offset = 8;
-        for (int reg = 15; reg >= 0; --reg) {
-            if (reg == 4) continue;
-            memory(0x8B, 0, 4, offset);
-            memory(0x89, 0, 7, (16 + reg) * 8);
-            offset += 8;
-        }
-        rip({0x48, 0x8B, 0x05}, 16);
-        memory(0x89, 0, 7, 20 * 8);
-        for (int slot = 0; slot < 16; ++slot) {
-            memory(0x8B, 0, 4, 256 + 128 - 128 + slot * 8);
-            memory(0x89, 0, 7, (33 + slot) * 8);
-        }
-        rip({0x48, 0x8B, 0x25}, 8);
-        memory(0x8D, 4, 4, 128);
-        for (auto reg : {15, 14, 13, 12, 5, 3}) pop(static_cast<std::uint8_t>(reg));
-        bytes.push_back(0xC3);
-        require(bytes.size() < 4096, "Execution wrapper exceeded its code page");
-        code = static_cast<std::uint8_t*>(mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-        require(code != MAP_FAILED, "Cannot allocate execution test pages");
-        std::memcpy(code, bytes.data(), bytes.size());
-        std::memcpy(code + 4096 + 24, &memoryValue, sizeof(memoryValue));
-        require(mprotect(code, 4096, PROT_READ | PROT_EXEC) == 0, "Cannot make ANDN test code executable");
-    }
-
-    ~Execution() { if (code != MAP_FAILED) munmap(code, 8192); }
-
-    void Run(State& state) const { reinterpret_cast<void (*)(State*)>(code)(&state); }
-    const void* Memory() const { return code + 4096 + 24; }
-    static constexpr std::uint64_t kSentinel = 0xBADC0FFEE0DDF00Dull;
-
-private:
-    Bytes bytes;
-    std::uint8_t* code = reinterpret_cast<std::uint8_t*>(MAP_FAILED);
-
-    void append32(std::int32_t value) {
-        for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(value) >> shift));
-    }
-    void append64(std::uint64_t value) {
-        for (unsigned shift = 0; shift < 64; shift += 8) bytes.push_back(static_cast<std::uint8_t>(value >> shift));
-    }
-    void rip(std::initializer_list<std::uint8_t> opcode, int slot) {
-        bytes.insert(bytes.end(), opcode);
-        append32(static_cast<std::int32_t>(4096 + slot - (bytes.size() + 4)));
-    }
-    void push(std::uint8_t reg) {
-        if (reg >= 8) bytes.push_back(0x41);
-        bytes.push_back(static_cast<std::uint8_t>(0x50 | (reg & 7)));
-    }
-    void pop(std::uint8_t reg) {
-        if (reg >= 8) bytes.push_back(0x41);
-        bytes.push_back(static_cast<std::uint8_t>(0x58 | (reg & 7)));
-    }
-    void memory(std::uint8_t opcode, std::uint8_t reg, std::uint8_t base, int displacement) {
-        bytes.insert(bytes.end(), {static_cast<std::uint8_t>(0x48 | ((reg & 8) >> 1) | ((base & 8) >> 3)), opcode,
-            static_cast<std::uint8_t>(0x80 | ((reg & 7) << 3) | (base & 7))});
-        if ((base & 7) == 4) bytes.push_back(0x24);
-        append32(displacement);
-    }
-};
+Execution executable(const Bytes& site, std::uint64_t memoryValue) {
+    const auto operands = Codegen::DecodeAndn(site.data(), site.size());
+    require(operands.has_value(), "Execution site was not ANDN");
+    return Execution(site, memoryValue, operands->Memory && operands->Memory->RipRelative, [](Codegen::StubBodyBuilder& body, const Bytes& relocated) {
+        Codegen::EmitAndn(body, *Codegen::DecodeAndn(relocated.data(), relocated.size()));
+    });
+}
 
 void check(const State& state, const Codegen::AndnOperands& operands, std::uint64_t second) {
     const auto mask = operands.Wide ? ~std::uint64_t{0} : 0xFFFFFFFFull;
     const auto expected = (~state.Input[operands.InvertedSource] & second) & mask;
     for (std::size_t reg = 0; reg < 16; ++reg)
         require(state.Output[reg] == (reg == operands.Destination ? expected : state.Input[reg]), "ANDN changed a source/scratch register or produced an incorrect result");
-    const auto flags = (expected == 0 ? 0x40u : 0u) | ((expected >> (operands.Wide ? 63 : 31)) != 0 ? 0x80u : 0u);
-    require((state.Flags & 0x8C1u) == flags, "ANDN did not preserve its defined flag semantics");
-    for (const auto value : state.RedZone) require(value == Execution::kSentinel, "ANDN overwrote the caller's red zone");
-}
-
-State initialState() {
-    State state;
-    for (std::size_t reg = 0; reg < 16; ++reg) state.Input[reg] = 0xABCD123456789000ull + reg * 0x1234567ull;
-    return state;
+    const auto flags = (expected == 0 ? LoweringExecution::kZero : 0u) | ((expected >> (operands.Wide ? 63 : 31)) != 0 ? LoweringExecution::kSign : 0u);
+    require((state.Flags & LoweringExecution::kFlagMask) == flags, "ANDN did not preserve its defined flag semantics");
+    for (const auto value : state.RedZone) require(value == LoweringExecution::kSentinel, "ANDN overwrote the caller's red zone");
 }
 
 void execution() {
@@ -200,12 +96,12 @@ void execution() {
         for (std::uint8_t dst = 0; dst < 16; ++dst) {
             for (const auto pair : {std::pair<std::uint8_t, std::uint8_t>{1, 6}, {dst, 10}, {11, dst}, {dst, dst}, {4, 9}, {9, 4}}) {
                 const auto site = instruction(wide, dst, pair.first, pair.second);
-                Execution executable(site, 0);
+                const auto run = executable(site, 0);
                 for (int variant = 0; variant < 3; ++variant) {
-                    auto state = initialState();
+                    auto state = LoweringExecution::InitialState();
                     if (variant == 1) state.Input.fill(0);
                     if (variant == 2) state.Input.fill(~std::uint64_t{0});
-                    executable.Run(state);
+                    run.Run(state);
                     check(state, *Codegen::DecodeAndn(site.data(), site.size()), state.Input[pair.second]);
                 }
             }
@@ -214,15 +110,64 @@ void execution() {
             Bytes site{0xC4, 0xE2, static_cast<std::uint8_t>(wide ? 0xF0 : 0x70), 0xF2};
             site.insert(site.end(), tail.begin(), tail.end());
             constexpr std::uint64_t value = 0xFEDCBA9876543210ull;
-            Execution executable(site, value);
-            auto state = initialState();
-            state.Input[6] = reinterpret_cast<std::uint64_t>(executable.Memory()) - (tail[0] == 0x46 ? 16 : 0);
-            state.Input[2] = reinterpret_cast<std::uint64_t>(executable.Memory()) - 3 * 8;
+            const auto run = executable(site, value);
+            auto state = LoweringExecution::InitialState();
+            state.Input[6] = reinterpret_cast<std::uint64_t>(run.Memory()) - (tail[0] == 0x46 ? 16 : 0);
+            state.Input[2] = reinterpret_cast<std::uint64_t>(run.Memory()) - 3 * 8;
             state.Input[1] = 3;
-            state.Input[5] = reinterpret_cast<std::uint64_t>(executable.Memory()) - 16;
+            state.Input[5] = reinterpret_cast<std::uint64_t>(run.Memory()) - 16;
             state.Output[0] = value;
-            executable.Run(state);
+            run.Run(state);
             check(state, *Codegen::DecodeAndn(site.data(), site.size()), value);
+        }
+        for (const std::uint8_t dst : std::array<std::uint8_t, 2>{0, 4}) {
+            for (const std::int32_t displacement : {-176, -160, -152, -151, -145, -144, -140, -136}) {
+                Bytes site{0xC4, 0xE2, static_cast<std::uint8_t>((wide ? 0x80 : 0) | ((~1 & 15) << 3)), 0xF2,
+                    static_cast<std::uint8_t>(0x84 | (dst << 3)), 0x24};
+                for (unsigned shift = 0; shift < 32; shift += 8)
+                    site.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> shift));
+                constexpr std::uint64_t value = 0xFEDCBA9876543210ull;
+                const auto operands = *Codegen::DecodeAndn(site.data(), site.size());
+                const Execution run(site, value, false, [&](Codegen::StubBodyBuilder& body, const Bytes&) {
+                    for (int part = 0; part < 2; ++part) {
+                        Bytes store{0xC7, 0x84, 0x24};
+                        const auto slot = static_cast<std::uint32_t>(displacement + part * 4);
+                        const auto word = static_cast<std::uint32_t>(value >> (part * 32));
+                        for (unsigned shift = 0; shift < 32; shift += 8) store.push_back(static_cast<std::uint8_t>(slot >> shift));
+                        for (unsigned shift = 0; shift < 32; shift += 8) store.push_back(static_cast<std::uint8_t>(word >> shift));
+                        body.Raw(store);
+                    }
+                    Codegen::EmitAndn(body, operands);
+                });
+                auto state = LoweringExecution::InitialState();
+                run.Run(state);
+                check(state, operands, value);
+            }
+        }
+        for (const auto pair : {std::pair<std::uint8_t, std::uint8_t>{1, 6}, {4, 9}, {9, 4}}) {
+            const auto site = instruction(wide, 4, pair.first, pair.second);
+            const auto operands = *Codegen::DecodeAndn(site.data(), site.size());
+            Codegen::StubBodyBuilder probe;
+            Codegen::EmitAndn(probe, operands);
+            const auto built = probe.Finish();
+            const Bytes raw(built.Bytes.begin(), built.Bytes.begin() + static_cast<std::ptrdiff_t>(built.ReturnBranchOffset));
+            Codegen::X64InstructionDecoder decoder;
+            for (std::size_t cut = 0; cut < raw.size(); cut += decoder.Decode(raw.data() + cut, raw.size() - cut)) {
+                const Execution run(site, 0, false, [&](Codegen::StubBodyBuilder& body, const Bytes&) {
+                    body.Raw(std::span<const std::uint8_t>(raw.data(), cut));
+                    for (std::int32_t disp = -256; disp < -128; disp += 4) {
+                        Bytes clobber{0xC7, 0x84, 0x24};
+                        for (unsigned shift = 0; shift < 32; shift += 8)
+                            clobber.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(disp) >> shift));
+                        clobber.insert(clobber.end(), {0xEF, 0xBE, 0xAD, 0xDE});
+                        body.Raw(clobber);
+                    }
+                    body.Raw(std::span<const std::uint8_t>(raw.data() + cut, raw.size() - cut));
+                });
+                auto state = LoweringExecution::InitialState();
+                run.Run(state);
+                check(state, operands, state.Input[pair.second]);
+            }
         }
     }
 }

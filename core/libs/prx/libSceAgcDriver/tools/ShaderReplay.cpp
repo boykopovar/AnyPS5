@@ -9,14 +9,18 @@
 #include "Recompiler.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
+#include <spirv/unified1/spirv.hpp>
+
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "spirv-tools/libspirv.hpp"
 #endif
 
 #include <cstdio>
+#include <cstdint>
 #include <exception>
 #include <fstream>
 #include <sstream>
+#include <span>
 #include <stdexcept>
 #include <string>
 
@@ -50,10 +54,60 @@ bool g_maintenance8 = false;
 bool g_robust2 = false;
 bool g_waveLdsMemoryBarriers = false;
 bool g_deviceScopeLdsMemoryBarriers = false;
+bool g_ldsLockFences = false;
+bool g_shaderFma = false;
+bool g_shaderInt16 = false;
 bool g_code = false;
+bool g_float16WidenNans = false;
+bool g_float16NarrowNans = false;
+
+bool OutputSpirv(const char* path, std::span<const std::uint32_t> spirv) {
+    if (g_spirv) {
+        std::string name(path);
+        name = name.substr(name.find_last_of("/\\") + 1) + ".spv";
+        std::ofstream file(name, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(spirv.data()), static_cast<std::streamsize>(spirv.size_bytes()));
+        file.close();
+        if (!file) {
+            std::printf("  could not write %s\n", name.c_str());
+            return false;
+        }
+    }
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    if (g_disassemble) {
+        spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_2);
+        std::string text;
+        if (!tools.Disassemble(spirv.data(), spirv.size(), &text, SPV_BINARY_TO_TEXT_OPTION_FRIENDLY_NAMES)) {
+            std::printf("  could not disassemble SPIR-V\n");
+            return false;
+        }
+        std::printf("%s\n", text.c_str());
+    }
+#else
+    if (g_disassemble) std::printf("  (--dis needs ANYPS5_ENABLE_SPIRV_TOOLS=ON)\n");
+#endif
+    return true;
+}
 
 bool Replay(const char* path) {
     auto request = ShaderRecompiler::RequestSerializer{}.Deserialize(ReadText(path));
+    if (g_maintenance8) request.request.target.nonConstantImageOffsets = true;
+    if (g_robust2) request.request.target.robustBufferAccess2 = true;
+    if (g_waveLdsMemoryBarriers) request.request.target.waveLdsMemoryBarriers = true;
+    if (g_deviceScopeLdsMemoryBarriers) request.request.target.deviceScopeLdsMemoryBarriers = true;
+    if (g_ldsLockFences) request.request.target.ldsLockFences = true;
+    if (g_shaderFma) {
+        request.supportedCapabilities.push_back(spv::CapabilityFMAKHR);
+        request.supportedExtensions.push_back("SPV_KHR_fma");
+        request.request.target.supportedCapabilities = request.supportedCapabilities;
+        request.request.target.supportedExtensions = request.supportedExtensions;
+    }
+    if (g_shaderInt16) {
+        request.supportedCapabilities.push_back(spv::CapabilityInt16);
+        request.request.target.supportedCapabilities = request.supportedCapabilities;
+    }
+    if (g_float16WidenNans) request.request.target.float16WidenNans = true;
+    if (g_float16NarrowNans) request.request.target.float16NarrowNans = true;
     std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
     if (request.request.context.compute.has_value()) {
         const auto& compute = *request.request.context.compute;
@@ -73,6 +127,13 @@ bool Replay(const char* path) {
         // mem_<code address>_<guest address>.bin next to the request for inspection with other tools.
         const auto& context = request.request.context;
         for (std::size_t i = 0; i < context.userData.size(); ++i) std::printf("  user[%zu] = 0x%08x\n", i, context.userData[i]);
+        if (request.request.graphics.has_value()) {
+            const auto& linked = request.request.graphics->linkedPrograms;
+            for (std::size_t index = 0; index < linked.size(); ++index) {
+                std::printf("  linked program %zu (stage %u, 0x%llx): user data base register %u, first user SGPR %u\n", index, static_cast<unsigned>(linked[index].binary.stage), static_cast<unsigned long long>(linked[index].binary.codeAddress), linked[index].userDataBaseRegister, linked[index].firstUserSgpr);
+                for (std::size_t i = 0; i < linked[index].userData.size(); ++i) std::printf("    user[%zu] = 0x%08x\n", i, linked[index].userData[i]);
+            }
+        }
         for (const auto& region : context.memory) {
             char name[96];
             std::snprintf(name, sizeof(name), "mem_%llx_%llx.bin", static_cast<unsigned long long>(request.request.shader.codeAddress), static_cast<unsigned long long>(region.guestAddress));
@@ -94,6 +155,20 @@ bool Replay(const char* path) {
             return false;
         }
         std::printf("  code -> %s\n", name.c_str());
+        if (request.request.graphics.has_value()) {
+            const auto& linked = request.request.graphics->linkedPrograms;
+            for (std::size_t index = 0; index < linked.size(); ++index) {
+                const auto linkedName = name + ".linked" + std::to_string(index);
+                const auto& linkedCode = linked[index].binary.code;
+                std::ofstream linkedFile(linkedName, std::ios::binary);
+                linkedFile.write(reinterpret_cast<const char*>(linkedCode.data()), static_cast<std::streamsize>(linkedCode.size() * sizeof(linkedCode[0])));
+                if (!linkedFile) {
+                    std::printf("  could not write %s\n", linkedName.c_str());
+                    return false;
+                }
+                std::printf("  linked program %zu (stage %u, 0x%llx) -> %s\n", index, static_cast<unsigned>(linked[index].binary.stage), static_cast<unsigned long long>(linked[index].binary.codeAddress), linkedName.c_str());
+            }
+        }
     }
     if (g_assembly) {
         const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(request.request.shader.code);
@@ -112,7 +187,6 @@ bool Replay(const char* path) {
             return false;
         }
     }
-    if (g_materialize && g_maintenance8) request.request.target.nonConstantImageOffsets = true;
     if (!g_materialize) {
         try {
             auto program = ShaderRecompiler::PrepareResourceProgram(request.request);
@@ -139,25 +213,17 @@ bool Replay(const char* path) {
                 phase = "materialize";
                 const auto result = invocation->Materialize(*capture);
                 std::printf("  materialized: %zu SPIR-V words\n", result->spirv.size());
+                return OutputSpirv(path, result->spirv);
             }
-            return true;
+            return OutputSpirv(path, ShaderRecompiler::GetPreparedArtifact(*handle).spirv);
         } catch (const std::exception& error) {
             std::printf("  %s failed: %s\n", phase, FirstLine(error.what()).c_str());
             return false;
         }
     }
     try {
-        if (g_maintenance8) request.request.target.nonConstantImageOffsets = true;
-        if (g_robust2) request.request.target.robustBufferAccess2 = true;
-        if (g_waveLdsMemoryBarriers) request.request.target.waveLdsMemoryBarriers = true;
-        if (g_deviceScopeLdsMemoryBarriers) request.request.target.deviceScopeLdsMemoryBarriers = true;
         const auto result = ShaderRecompiler::Recompile(request.request);
         std::printf("  recompiled: %zu SPIR-V words\n", result.spirv.size());
-        if (g_spirv) {
-            std::string name(path);
-            name = name.substr(name.find_last_of("/\\") + 1) + ".spv";
-            std::ofstream(name, std::ios::binary).write(reinterpret_cast<const char*>(result.spirv.data()), static_cast<std::streamsize>(result.spirv.size() * sizeof(result.spirv[0])));
-        }
         if (g_memory) {
             for (const auto& binding : result.bindings) {
                 if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
@@ -168,16 +234,7 @@ bool Replay(const char* path) {
                 }
             }
         }
-#if ANYPS5_ENABLE_SPIRV_TOOLS
-        if (g_disassemble) {
-            spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_2);
-            std::string text;
-            if (tools.Disassemble(result.spirv.data(), result.spirv.size(), &text, SPV_BINARY_TO_TEXT_OPTION_FRIENDLY_NAMES)) std::printf("%s\n", text.c_str());
-        }
-#else
-        if (g_disassemble) std::printf("  (--dis needs ANYPS5_ENABLE_SPIRV_TOOLS=ON)\n");
-#endif
-        return true;
+        return OutputSpirv(path, result.spirv);
     } catch (const std::exception& error) {
         std::printf("  recompile failed: %s\n", FirstLine(error.what()).c_str());
         return false;
@@ -188,11 +245,15 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--shader-fma] [--shader-int16] [--f16-widen-nans] [--f16-narrow-nans] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
         return 2;
     }
     int failures = 0;
     for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--gcn") {
+            ShaderRecompiler::SetGcnGuestShaders(true);
+            continue;
+        }
         if (std::string(argv[i]) == "--dis") {
             g_disassemble = true;
             continue;
@@ -219,6 +280,26 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--device-scope-lds-memory-barriers") {
             g_deviceScopeLdsMemoryBarriers = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--lds-lock-fences") {
+            g_ldsLockFences = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--shader-fma") {
+            g_shaderFma = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--shader-int16") {
+            g_shaderInt16 = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--f16-widen-nans") {
+            g_float16WidenNans = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--f16-narrow-nans") {
+            g_float16NarrowNans = true;
             continue;
         }
         if (std::string(argv[i]) == "--mem") {

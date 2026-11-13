@@ -1432,7 +1432,9 @@ struct NetEpollEvent {
 
 struct NetCtlNatInfo {
     std::uint32_t size;
-    std::uint8_t opaque[12];
+    std::int32_t stun_status;
+    std::int32_t nat_type;
+    std::uint32_t mapped_addr;
 };
 
 static_assert(sizeof(NetCtlNatInfo) == 16);
@@ -1502,7 +1504,24 @@ struct SharePlayConnectionInfoA {
     std::int32_t visitorUserId;
 };
 static_assert(sizeof(SharePlayConnectionInfoA) == 72 && offsetof(SharePlayConnectionInfoA, hostAccountId) == 48 && offsetof(SharePlayConnectionInfoA, hostUserId) == 64);
-struct NpId { NpOnlineId online_id; std::uint8_t opaque[4]; };
+struct SharePlayConnectionInfo {
+    std::int32_t status;
+    std::int32_t mode;
+    NpOnlineId hostOnlineId;
+    NpOnlineId visitorOnlineId;
+    std::int32_t hostUserId;
+    std::int32_t visitorUserId;
+};
+static_assert(sizeof(SharePlayConnectionInfo) == 56 && offsetof(SharePlayConnectionInfo, hostUserId) == 48);
+struct NpId {
+    union {
+        NpOnlineId handle;
+        NpOnlineId online_id;
+    };
+    std::uint8_t opt[8];
+    std::uint8_t reserved[8];
+};
+static_assert(sizeof(NpId) == 36);
 struct NpCreateAsyncRequestParameter { std::uint8_t opaque[64]; };
 struct NpCheckPremiumParameter { std::uint8_t opaque[64]; };
 struct NpCheckPremiumResult { std::uint8_t opaque[64]; };
@@ -1700,6 +1719,16 @@ struct SaveDataMount3 {
     std::uint8_t reserved[32];
 };
 
+struct SaveDataMount2 {
+    int user_id;
+    int pad;
+    const SceSaveDataDirName* dir_name;
+    std::uint64_t blocks;
+    std::uint32_t mount_mode;
+    std::uint8_t reserved[32];
+    int pad2;
+};
+
 struct SaveDataDirNameSearchCond {
     std::int32_t user_id;
     std::int32_t pad;
@@ -1799,6 +1828,8 @@ struct SaveDataEvent {
     std::uint8_t reserved[40];
 };
 
+using SaveDataEventCallback = void (APS5_VABI *)(const SaveDataEvent* event, void* userdata);
+
 struct SaveDataBackup {
     std::int32_t user_id;
     std::int32_t pad;
@@ -1807,6 +1838,40 @@ struct SaveDataBackup {
     const void* fingerprint;
     std::uint8_t reserved[32];
 };
+
+struct SaveDataCheckBackupData {
+    std::int32_t user_id;
+    std::int32_t pad;
+    const SceSaveDataTitleId* title_id;
+    const SceSaveDataDirName* dir_name;
+    SaveDataParam* param;
+    SaveDataIcon* icon;
+    std::uint8_t reserved[32];
+};
+
+struct SaveDataRestoreBackupData {
+    std::int32_t user_id;
+    std::int32_t pad;
+    const SceSaveDataTitleId* title_id;
+    const SceSaveDataDirName* dir_name;
+    const void* fingerprint;
+    std::uint32_t unused;
+    std::uint8_t reserved[32];
+    std::int32_t pad2;
+};
+static_assert(offsetof(SaveDataCheckBackupData, title_id) == 0x08);
+static_assert(offsetof(SaveDataCheckBackupData, dir_name) == 0x10);
+static_assert(offsetof(SaveDataCheckBackupData, param) == 0x18);
+static_assert(offsetof(SaveDataCheckBackupData, icon) == 0x20);
+static_assert(offsetof(SaveDataCheckBackupData, reserved) == 0x28);
+static_assert(sizeof(SaveDataCheckBackupData) == 0x48);
+static_assert(offsetof(SaveDataRestoreBackupData, title_id) == 0x08);
+static_assert(offsetof(SaveDataRestoreBackupData, dir_name) == 0x10);
+static_assert(offsetof(SaveDataRestoreBackupData, fingerprint) == 0x18);
+static_assert(offsetof(SaveDataRestoreBackupData, unused) == 0x20);
+static_assert(offsetof(SaveDataRestoreBackupData, reserved) == 0x24);
+static_assert(offsetof(SaveDataRestoreBackupData, pad2) == 0x44);
+static_assert(sizeof(SaveDataRestoreBackupData) == 0x48);
 
 struct SaveDataConvert {
     std::int32_t user_id;
@@ -1970,6 +2035,32 @@ struct PngDecImageInfo {
     std::uint32_t image_flag;
 };
 
+struct PngDecInputChunk {
+    const void* data;
+    std::uint32_t size;
+    std::uint32_t reserved;
+};
+
+using PngDecInputCallback = std::int32_t (APS5_VABI *)(PngDecInputChunk*, void*);
+
+struct PngDecInputControlParam {
+    PngDecInputCallback input;
+    void* input_argument;
+    void* image_mem_addr;
+    std::uint32_t image_mem_size;
+    std::uint16_t operation;
+    std::uint16_t pixel_format;
+    std::uint16_t alpha_value;
+    std::uint16_t reserved;
+    std::uint32_t image_pitch;
+};
+
+struct SystemLoggerLogData {
+    std::uint8_t data[0x40];
+    std::uint32_t size;
+    std::uint8_t reserved[0x20];
+};
+
 struct JpegEncCreateParam {
     std::uint32_t size;
     std::uint32_t attr;
@@ -2034,6 +2125,29 @@ struct JpegDecImageInfo {
     std::uint32_t suitable_csc_attribute;
     std::uint32_t output_image_width;
     std::uint32_t output_image_height;
+};
+
+struct JpegDecInputChunk {
+    const void* data;
+    std::uint32_t size;
+    std::uint32_t reserved;
+};
+
+using JpegDecInputCallback = std::int32_t (APS5_VABI *)(JpegDecInputChunk*, void*);
+
+struct JpegDecInputControlParam {
+    JpegDecInputCallback input;
+    void* input_argument;
+    void* image_mem_addr;
+    void* coefficient_mem_addr;
+    std::uint32_t image_mem_size;
+    std::uint32_t coefficient_mem_size;
+    std::uint16_t operation;
+    std::uint16_t down_scale;
+    std::uint16_t pixel_format;
+    std::uint16_t alpha_value;
+    std::uint32_t image_pitch;
+    std::uint32_t reserved;
 };
 
 struct PlayGoInitParams {

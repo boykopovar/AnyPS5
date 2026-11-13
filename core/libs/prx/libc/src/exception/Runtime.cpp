@@ -1,6 +1,7 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
@@ -51,24 +52,28 @@ static void RawLog(const char* format, ...) {
     RawWrite(buffer, static_cast<std::size_t>(length));
 }
 
+const char* CaughtWhat(const char** typeName) {
+    if (!globals.caught || !Native(globals.caught->unwind.exception_class)) return nullptr;
+    Header* primary = Primary(globals.caught);
+    if (typeName != nullptr) *typeName = primary->type ? primary->type->name() : nullptr;
+    void* exception = primary->adjusted;
+    if (!exception || !primary->type || !Match(&typeid(std::exception), primary->type, exception)) return nullptr;
+    struct VtableLayout { std::ptrdiff_t offset; const void* type; void (*destroy)(void*); void (*del)(void*); const char* (*whatFn)(const void*); };
+    const void* vtable = *static_cast<const void* const*>(exception);
+    auto* layout = reinterpret_cast<const VtableLayout*>(static_cast<const char*>(vtable) - offsetof(VtableLayout, destroy));
+#ifdef _WIN32
+    if (!primary->_pad) {
+        using GuestWhat = const char* (APS5_VABI *)(const void*);
+        return reinterpret_cast<GuestWhat>(layout->whatFn)(exception);
+    }
+#endif
+    return layout->whatFn(exception);
+}
+
 [[noreturn]] static void DefaultTerminate() {
     if (globals.caught && Native(globals.caught->unwind.exception_class)) {
-        Header* primary = Primary(globals.caught);
-        const char* typeName = primary->type ? primary->type->name() : nullptr;
-        const char* what = nullptr;
-        void* exception = primary->adjusted;
-        if (exception && primary->type && Match(&typeid(std::exception), primary->type, exception)) {
-            struct VtableLayout { std::ptrdiff_t offset; const void* type; void (*destroy)(void*); void (*del)(void*); const char* (*whatFn)(const void*); };
-            const void* vtable = *static_cast<const void* const*>(exception);
-            auto* layout = reinterpret_cast<const VtableLayout*>(static_cast<const char*>(vtable) - offsetof(VtableLayout, destroy));
-#ifdef _WIN32
-            if (!primary->_pad) {
-                using GuestWhat = const char* (__attribute__((sysv_abi)) *)(const void*);
-                what = reinterpret_cast<GuestWhat>(layout->whatFn)(exception);
-            } else
-#endif
-            what = layout->whatFn(exception);
-        }
+        const char* typeName = nullptr;
+        const char* what = CaughtWhat(&typeName);
         int status = 0;
         char* demangled = abi::__cxa_demangle(typeName, nullptr, nullptr, &status);
         const char* displayName = (status == 0 && demangled) ? demangled : typeName;
@@ -87,7 +92,10 @@ static void RawLog(const char* format, ...) {
 
 inline std::atomic<void(*)()> terminateHandler {DefaultTerminate};
 [[noreturn]] void InvokeTerminate(void (*handler)()) {
+    const bool runtimeHandler = handler == nullptr || handler == DefaultTerminate || handler == std::abort;
+    if (runtimeHandler) LibcRunReportTerminate_nid_no_patch(CaughtWhat(nullptr));
     try { if (handler) handler(); } catch (...) {}
+    if (!runtimeHandler) LibcRunReportTerminate_nid_no_patch(CaughtWhat(nullptr));
     std::abort();
 }
 [[noreturn]] void Terminate() { InvokeTerminate(terminateHandler.load(std::memory_order_acquire)); }
@@ -202,12 +210,15 @@ void VisitBases(const std::type_info* type, BaseLocation location, bool publicPa
 
 void Bases(const std::type_info* type, void* object, Search& search) {
     std::uintptr_t identity = 0;
+    bool reachedPublicly = false;
     auto visitor = [&](const std::type_info* candidate, BaseLocation location, bool publicPath) {
-        if (!publicPath || !Equal(candidate, search.wanted)) return;
-        if (!search.count) { search.found = location.object; identity = location.identity; search.count = 1; }
+        if (!Equal(candidate, search.wanted)) return;
+        if (!search.count) { search.found = location.object; identity = location.identity; search.count = 1; reachedPublicly = publicPath; }
         else if (search.found != location.object || identity != location.identity) search.count = 2;
+        else if (publicPath) reachedPublicly = true;
     };
     VisitBases(type, {object, 0}, true, visitor);
+    if (search.count == 1 && !reachedPublicly) search.count = 0;
 }
 
 bool PointerMatch(const __cxxabiv1::__pbase_type_info* caught, const __cxxabiv1::__pbase_type_info* thrown,

@@ -4,6 +4,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEFONT_INCLUDE_FONTINTERNAL_HPP
 #define CORE_LIBS_PRX_LIBSCEFONT_INCLUDE_FONTINTERNAL_HPP
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -16,8 +17,17 @@
 #include FT_FREETYPE_H
 
 #include "prx/libSceFont/include/FontDriver.hpp"
+#include "prx/libc/include/General.hpp"
 
 namespace Font {
+
+template <typename T>
+bool CopyOutGuest(T* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
 
 constexpr std::uint8_t STYLE_FRAME_FLAG_SCALE = 0x01;
 constexpr std::uint8_t STYLE_FRAME_FLAG_SLANT = 0x02;
@@ -121,6 +131,9 @@ int StyleStateGetSlantRatio(const StyleStateBlock* style, float* slantRatio);
 int StyleStateSetWeightScale(StyleStateBlock* style, float weightXScale, float weightYScale);
 int StyleStateGetWeightScale(const StyleStateBlock* style, float* weightXScale, float* weightYScale, std::uint32_t* mode);
 bool ValidStyleFrame(const FontStyleFrame* frame);
+const FontStyleFrame* SurfaceStyleFrame(const FontRenderSurface* surface);
+const StyleStateBlock* ApplyStyleFrame(const StyleStateBlock* base, const FontStyleFrame* frame, StyleStateBlock& temporary);
+int RenderCodeWithStyle(FontHandle handle, std::uint32_t code, const StyleStateBlock* style, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result);
 
 std::uint8_t CachedStyleCacheFlags(const CachedStyle& style);
 void CachedStyleSetCacheFlags(CachedStyle& style, std::uint8_t flags);
@@ -133,6 +146,9 @@ int ComputeHorizontalLayout(FontHandle handle, const StyleStateBlock* style, std
 int ComputeVerticalLayout(FontHandle handle, const StyleStateBlock* style, std::uint8_t* outWords);
 int GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle, float* usedScaleW = nullptr, float* usedScaleH = nullptr);
 int RenderCharGlyphImageCore(FontHandle handle, std::uint32_t code, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result);
+int ComputeFontMetrics(FontHandle handle, std::uint32_t form, FontMetrics* metrics);
+int ComputeFontStyleInformation(FontHandle handle, FontStyleInformation* information);
+int ComputeFontGlyphsOutlineProfile(FontHandle handle, FontOutlineProfile* profile);
 
 }
 

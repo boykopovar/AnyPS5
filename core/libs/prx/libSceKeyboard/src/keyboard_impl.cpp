@@ -1,6 +1,7 @@
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 
 #include <algorithm>
 #include <array>
@@ -13,6 +14,7 @@ int head = 0;
 int count = 0;
 bool initialized = false;
 bool opened = false;
+int openedUser = 0;
 bool connected = true;
 std::uint32_t led = 0;
 std::uint32_t modifiers = 0;
@@ -24,6 +26,12 @@ constexpr char US_SHIFTED[] = "!@#$%^&*()\n\0\b\t _+{}||:\"~<>?";
 constexpr char JIS_NORMAL[] = "1234567890\n\0\b\t -^@[]];:\0,./";
 constexpr char JIS_SHIFTED[] = "!\"#$%&'()\0\n\0\b\t =~`{}}+*\0<>?";
 constexpr char KEYPAD_DIGITS[] = "1234567890.";
+
+bool registered(int userId) {
+    UserServiceRegisteredUserIdList users{};
+    return sceUserServiceGetRegisteredUserIdList(&users) == USER_SERVICE_OK &&
+        std::find(std::begin(users.user_id), std::end(users.user_id), userId) != std::end(users.user_id);
+}
 
 KeyboardData snapshot() {
     KeyboardData data{};
@@ -101,6 +109,11 @@ std::uint16_t character(bool jis, std::uint32_t ledState, std::uint32_t modifier
 
 namespace Keyboard {
 
+bool IsInitialized() {
+    std::lock_guard lock(keyboardMutex);
+    return initialized;
+}
+
 int Initialize() {
     std::lock_guard lock(keyboardMutex);
     initialized = true;
@@ -110,9 +123,13 @@ int Initialize() {
 int Open(int userId, std::int32_t type, std::int32_t index) {
     std::lock_guard lock(keyboardMutex);
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
-    if (userId < 0 || type != 0 || index != 0) return KEYBOARD_ERROR_INVALID_ARG;
+    if (type != 0 || index != 0) return KEYBOARD_ERROR_INVALID_ARG;
+    if (userId == USER_SERVICE_USER_ID_INVALID) return KEYBOARD_ERROR_INVALID_USER_ID;
+    if (userId < 0) return KEYBOARD_ERROR_INVALID_ARG;
+    if (!registered(userId)) return KEYBOARD_ERROR_UNKNOWN_USER;
     if (opened) return KEYBOARD_ERROR_ALREADY_OPENED;
     opened = true;
+    openedUser = userId;
     clearKeys();
     head = 0;
     count = 0;
@@ -125,10 +142,17 @@ int Close(std::int32_t handle) {
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
     if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
     opened = false;
+    openedUser = 0;
     clearKeys();
     head = 0;
     count = 0;
     return KEYBOARD_OK;
+}
+
+int GetHandle(std::int32_t userId, std::int32_t type, std::int32_t index) {
+    std::lock_guard lock(keyboardMutex);
+    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    return opened && openedUser == userId && type == 0 && index == 0 ? KEYBOARD_HANDLE : KEYBOARD_ERROR_NO_HANDLE;
 }
 
 int Read(std::int32_t handle, KeyboardData* data, std::int32_t num) {
@@ -163,6 +187,16 @@ int GetConnection(std::int32_t handle, bool* isConnected) {
     return KEYBOARD_OK;
 }
 
+int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
+    std::lock_guard lock(keyboardMutex);
+    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    if (deviceId == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
+    *deviceId = -1;
+    if (handle != KEYBOARD_HANDLE || !opened || !connected) return KEYBOARD_ERROR_INVALID_HANDLE;
+    *deviceId = KEYBOARD_DEVICE_ID;
+    return KEYBOARD_OK;
+}
+
 int DisconnectAll() {
     KeyboardInputEvent event{};
     event.connectionChange = true;
@@ -175,17 +209,15 @@ int GetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint32_t ledStat
     {
         std::lock_guard lock(keyboardMutex);
         if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+        if (keyCode < 4 || keyCode > 231) return KEYBOARD_ERROR_INVALID_ARG;
         if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
     }
     if (charData == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
     if (arrange != KEYBOARD_ARRANGEMENT_101 && arrange != KEYBOARD_ARRANGEMENT_106) return KEYBOARD_ERROR_INVALID_ARG;
-    if (arrange == KEYBOARD_ARRANGEMENT_106 && (ledState & KEYBOARD_LED_KANA) != 0) {
-        NotImplemented_nid_no_patch(__func__);
-        return KEYBOARD_ERROR_INVALID_ARG;
-    }
     *charData = {};
-    charData->char_code = character(arrange == KEYBOARD_ARRANGEMENT_106, ledState, modifierKey, keyCode);
-    charData->processed = charData->char_code != 0;
+    const std::uint16_t converted = character(arrange == KEYBOARD_ARRANGEMENT_106, ledState, modifierKey, keyCode);
+    charData->char_code = converted != 0 ? converted : keyCode;
+    charData->processed = converted != 0;
     charData->length = charData->processed ? 1 : 0;
     return KEYBOARD_OK;
 }

@@ -3,6 +3,9 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <atomic>
+#include <new>
+#include <set>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -10,6 +13,23 @@
 #include <stdexcept>
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+#ifndef _WIN32
+static std::atomic<std::size_t> lastAllocationSize{0};
+static std::atomic<std::size_t> failAllocationOfSize{0};
+static std::atomic<int> failAllocationAfter{0};
+void* operator new(std::size_t bytes) {
+    lastAllocationSize = bytes;
+    if (bytes != 0 && failAllocationOfSize.load() == bytes && --failAllocationAfter == 0) {
+        failAllocationOfSize = 0;
+        throw std::bad_alloc();
+    }
+    if (void* pointer = std::malloc(bytes != 0 ? bytes : 1)) return pointer;
+    throw std::bad_alloc();
+}
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+#endif
 
 template<typename TFunction>
 static bool ThrowsRuntimeError(TFunction function) {
@@ -139,9 +159,99 @@ static void CheckReceiveMessageFaults() {
     message = {readOnly + 128, 0, readOnlyVector, 1, nullptr, 0, -1};
     Require(Queue(pair[0], pair[1], "gh") && recvmsg_nid_postfix(pair[1], &message, 0) == 2);
     Require(std::memcmp(data, "gh", 2) == 0 && message.nameLength == 0);
+    message = {nullptr, 0, &good, 1, nullptr, 0, -1};
+    for (const int flag : {1, 4, 0x100, 0x40000, -1, Peek | 1, 0x80 | 4}) {
+        *__error_nid_postfix() = 0;
+        Require(recvmsg_nid_postfix(pair[1], &message, flag) == -1 && *__error_nid_postfix() == 45);
+    }
 
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
     Require(sceKernelMprotect(memory, page * 3, 3) == 0 && sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), page * 3) == 0);
+}
+
+static bool FailsWith(std::int64_t result, int error) {
+    return result == -1 && *__error_nid_postfix() == error;
+}
+
+static void CheckAddressOnPairEnd() {
+    const std::uint8_t inet[16] = {16, 2, 0x1f, 0x90, 127, 0, 0, 1};
+    int pair[2] = {-1, -1};
+    char received[16]{};
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(FailsWith(connect_nid_postfix(pair[0], inet, sizeof(inet)), 56));
+    Require(FailsWith(connect_nid_postfix(pair[0], inet, 1), 22));
+    Require(FailsWith(bind_nid_postfix(pair[0], inet, sizeof(inet)), 47));
+    Require(sendto_nid_postfix(pair[0], "to", 2, NoSignal, inet, sizeof(inet)) == 2 && Readable(pair[1]));
+    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == 2 && std::memcmp(received, "to", 2) == 0);
+    Require(shutdown_nid_postfix(pair[0], 2) == 0);
+    Require(FailsWith(connect_nid_postfix(pair[0], inet, sizeof(inet)), 56));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(close_nid_postfix(pair[1]) == 0);
+    Require(FailsWith(connect_nid_postfix(pair[0], inet, sizeof(inet)), 47));
+    std::int64_t sent = 0;
+    for (int i = 0; i < 100 && sent >= 0; ++i) sent = sendto_nid_postfix(pair[0], "x", 1, NoSignal, inet, sizeof(inet));
+    Require(FailsWith(sent, 32));
+    Require(close_nid_postfix(pair[0]) == 0);
+
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+    Require(FailsWith(sendto_nid_postfix(pair[0], "to", 2, 0, inet, sizeof(inet)), 56));
+    GuestMsghdr message{const_cast<std::uint8_t*>(inet), static_cast<std::uint32_t>(sizeof(inet)), nullptr, 0, nullptr, 0, 0};
+    Require(FailsWith(sendmsg_nid_postfix(pair[0], &message, 0), 56));
+    Require(Exchange(pair[0], pair[1], "still paired"));
+    Require(FailsWith(bind_nid_postfix(pair[0], inet, sizeof(inet)), 47));
+    Require(shutdown_nid_postfix(pair[0], 1) == 0);
+    Require(FailsWith(send_nid_postfix(pair[0], "x", 1, NoSignal), 32));
+    Require(FailsWith(sendto_nid_postfix(pair[0], "x", 1, NoSignal, inet, sizeof(inet)), 32));
+    Require(close_nid_postfix(pair[1]) == 0);
+    Require(FailsWith(sendto_nid_postfix(pair[0], "x", 1, NoSignal, inet, sizeof(inet)), 32));
+    Require(close_nid_postfix(pair[0]) == 0);
+
+#if !defined(_WIN32) && !defined(__APPLE__)
+    Require(socketpair_nid_postfix(Unix, SequencedPacket, 0, pair) == 0);
+    Require(FailsWith(connect_nid_postfix(pair[0], inet, sizeof(inet)), 56));
+    Require(sendto_nid_postfix(pair[0], "to", 2, NoSignal, inet, sizeof(inet)) == 2 && Readable(pair[1]));
+    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == 2 && std::memcmp(received, "to", 2) == 0);
+    Require(close_nid_postfix(pair[1]) == 0);
+    Require(FailsWith(sendto_nid_postfix(pair[0], "x", 1, NoSignal, inet, sizeof(inet)), 32));
+    Require(close_nid_postfix(pair[0]) == 0);
+#endif
+}
+
+static void CheckRecordOverSendBuffer(int type, int sendBuffer) {
+    constexpr int SolSocket = 0xffff;
+    constexpr int SendBuffer = 0x1001;
+    constexpr int MessageTooLong = 40;
+    static char record[0x8000];
+    static char received[0x8000];
+    std::memset(record, 'r', sizeof(record));
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, type, 0, pair) == 0);
+    int size = 0;
+    std::uint32_t sizeLength = sizeof(size);
+    Require(getsockopt_nid_postfix(pair[0], SolSocket, SendBuffer, &size, &sizeLength) == 0 && size == sendBuffer);
+    const auto over = static_cast<std::uint64_t>(sendBuffer) + 1;
+    Require(FailsWith(send_nid_postfix(pair[0], record, over, NoSignal), MessageTooLong));
+    Require(FailsWith(sendto_nid_postfix(pair[0], record, over, NoSignal, nullptr, 0), MessageTooLong));
+    KernelIovec pieces[2]{{record, 1}, {record + 1, static_cast<std::size_t>(sendBuffer)}};
+    GuestMsghdr message{nullptr, 0, pieces, 2, nullptr, 0, 0};
+    Require(FailsWith(sendmsg_nid_postfix(pair[0], &message, NoSignal), MessageTooLong));
+    Require(FailsWith(write_nid_postfix(pair[0], record, over), MessageTooLong));
+    Require(FailsWith(send_nid_postfix(pair[0], nullptr, over, NoSignal), MessageTooLong));
+    GuestPollDescriptor waited{pair[1], In, 0};
+    Require(poll_nid_postfix(&waited, 1, 0) == 0);
+    Require(send_nid_postfix(pair[0], record, static_cast<std::uint64_t>(sendBuffer), NoSignal) == sendBuffer && Readable(pair[1]));
+    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == sendBuffer);
+    const int larger = sendBuffer * 2;
+    Require(setsockopt_nid_postfix(pair[0], SolSocket, SendBuffer, &larger, sizeof(larger)) == 0);
+    Require(send_nid_postfix(pair[0], record, over, NoSignal) == static_cast<std::int64_t>(over) && Readable(pair[1]));
+    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == static_cast<std::int64_t>(over));
+    Require(std::memcmp(received, record, static_cast<std::size_t>(over)) == 0);
+    Require(FailsWith(send_nid_postfix(pair[0], record, static_cast<std::uint64_t>(larger) + 1, NoSignal), MessageTooLong));
+    Require(FailsWith(send_nid_postfix(pair[1], record, over, NoSignal), MessageTooLong));
+    Require(shutdown_nid_postfix(pair[0], 1) == 0);
+    Require(FailsWith(send_nid_postfix(pair[0], record, static_cast<std::uint64_t>(larger) + 1, NoSignal), 32));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 }
 
 int main(int argc, char** argv) {
@@ -190,6 +300,12 @@ int main(int argc, char** argv) {
     Require(close_nid_postfix(pair[1]) == 0);
     Require(close_nid_postfix(pair[1]) == -1 && *__error_nid_postfix() == 9);
 
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(close_nid_postfix(pair[1]) == 0);
+    *__error_nid_postfix() = 0;
+    Require(send_nid_postfix(pair[0], "late", 4, NoSignal) == -1 && *__error_nid_postfix() == 32);
+    Require(close_nid_postfix(pair[0]) == 0);
+
     Require(socketpair_nid_postfix(Unix, Stream | NonBlocking | CloseOnExec, 0, pair) == 0);
     Require(fcntl_nid_postfix(pair[0], 3) == 6 && fcntl_nid_postfix(pair[1], 3) == 6);
     Require(fcntl_nid_postfix(pair[0], 1) == 1 && fcntl_nid_postfix(pair[1], 1) == 1);
@@ -201,19 +317,26 @@ int main(int argc, char** argv) {
     FileStat status{};
     Require(fstat_nid_disambig1_nid_postfix(pair[0], &status) == 0);
     Require(status.st_mode == 0140666 && status.st_size == 0 && status.st_blksize != 0 && status.st_nlink == 0);
+    Require(status.st_dev == 0xFFFFFFFFu && status.st_ino != 0);
+    const auto firstInode = status.st_ino;
+    Require(sceKernelFstat(pair[0], &status) == 0 && status.st_dev == 0xFFFFFFFFu && status.st_ino == firstInode);
+    Require(fstat_nid_disambig1_nid_postfix(pair[1], &status) == 0 && status.st_dev == 0xFFFFFFFFu);
+    Require(status.st_ino != 0 && status.st_ino != firstInode);
+    const auto secondInode = status.st_ino;
+    const int duplicate = dup_nid_postfix(pair[1]);
+    Require(duplicate >= 0 && fstat_nid_disambig1_nid_postfix(duplicate, &status) == 0 && status.st_ino == secondInode);
+    Require(close_nid_postfix(duplicate) == 0);
+    Require(fstat_nid_disambig1_nid_postfix(pair[1], &status) == 0 && status.st_ino == secondInode);
+    const int inet = socket_nid_postfix(2, Stream, 0);
+    Require(inet >= 0 && fstat_nid_disambig1_nid_postfix(inet, &status) == 0 && status.st_dev == 0 && status.st_ino == 0);
+    Require(close_nid_postfix(inet) == 0);
     Require(send_nid_postfix(pair[0], "hello", 5, 0) == 5 && Readable(pair[1]));
     Require(sceKernelFstat(pair[1], &status) == 0 && status.st_mode == 0140666 && status.st_size == 5);
     Require(shutdown_nid_postfix(pair[0], 1) == 0);
     Require(fstat_nid_disambig1_nid_postfix(pair[0], &status) == 0 && status.st_mode == 0140444);
-#ifndef _WIN32
     Require(shutdown_nid_postfix(pair[1], 0) == 0);
-    Require(fstat_nid_disambig1_nid_postfix(pair[1], &status) == 0 && status.st_mode == 0140666 && status.st_size == 5);
-    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == 5);
-#else
-    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == 5);
-    Require(shutdown_nid_postfix(pair[1], 0) == 0);
-#endif
     Require(fstat_nid_disambig1_nid_postfix(pair[1], &status) == 0 && status.st_mode == 0140222 && status.st_size == 0);
+    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == 0);
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
     *__error_nid_postfix() = 0;
     Require(fstat_nid_disambig1_nid_postfix(pair[0], &status) == -1 && *__error_nid_postfix() == 9);
@@ -236,6 +359,32 @@ int main(int argc, char** argv) {
     Require(Unnamed(pair[1], getpeername_nid_postfix) && Exchange(pair[1], copy, "copy"));
     Require(close_nid_postfix(copy) == 0 && NotConnected(pair[1]));
     Require(close_nid_postfix(pair[1]) == 0);
+
+#ifdef _WIN32
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+    Require(send_nid_postfix(pair[0], "q", 1, 0) == 1);
+    Require(close_nid_postfix(pair[0]) == 0);
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == 1 && datagram[0] == 'q');
+    *__error_nid_postfix() = 0;
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == -1 && *__error_nid_postfix() == 54);
+    Require(close_nid_postfix(pair[1]) == 0);
+
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+    Require(send_nid_postfix(pair[0], "", 0, 0) == 0);
+    Require(close_nid_postfix(pair[0]) == 0);
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == 0);
+    *__error_nid_postfix() = 0;
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == -1 && *__error_nid_postfix() == 54);
+    Require(close_nid_postfix(pair[1]) == 0);
+#endif
+
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+    Require(send_nid_postfix(pair[0], "c", 1, 0) == 1 && Readable(pair[1]));
+    Require(shutdown_nid_postfix(pair[1], 0) == 0);
+    KernelIovec slot{datagram, sizeof(datagram)};
+    GuestMsghdr shut{sender, static_cast<std::uint32_t>(sizeof(sender)), &slot, 1, nullptr, 0, -1};
+    Require(recvmsg_nid_postfix(pair[1], &shut, 0) == 0 && shut.nameLength == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 
 #ifdef __APPLE__
     Require(ThrowsRuntimeError([&] { socketpair_nid_postfix(Unix, SequencedPacket, 0, pair); }));
@@ -264,6 +413,11 @@ int main(int argc, char** argv) {
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 #endif
     CheckReceiveMessageFaults();
+    CheckAddressOnPairEnd();
+    CheckRecordOverSendBuffer(Datagram, 2048);
+#if !defined(_WIN32) && !defined(__APPLE__)
+    CheckRecordOverSendBuffer(SequencedPacket, 8192);
+#endif
 
     Require(Fails(2, Stream, 0, 45));
     Require(Fails(28, Datagram, 0, 45));
@@ -275,5 +429,55 @@ int main(int argc, char** argv) {
     Require(Fails(Unix, Stream, 6, 43));
     *__error_nid_postfix() = 0;
     Require(socketpair_nid_postfix(Unix, Stream, 0, nullptr) == -1 && *__error_nid_postfix() == 14);
+    for (int type : {Stream, Datagram}) {
+        *__error_nid_postfix() = 0;
+        Require(socketpair_nid_postfix(Unix, type, 0, reinterpret_cast<int*>(0x10)) == -1 && *__error_nid_postfix() == 14);
+    }
+    constexpr std::size_t page = 0x4000;
+    void* memory = nullptr;
+    Require(sceKernelMapFlexibleMemory(&memory, page * 2, 3, 0) == 0 && memory != nullptr);
+    auto* base = static_cast<char*>(memory);
+    Require(sceKernelMprotect(base + page, page, 0) == 0);
+    for (auto* target : {base + page, base + page - 4}) {
+        *__error_nid_postfix() = 0;
+        Require(socketpair_nid_postfix(Unix, Stream, 0, reinterpret_cast<int*>(target)) == -1 && *__error_nid_postfix() == 14);
+    }
+    Require(sceKernelMprotect(memory, page * 2, 3) == 0 && sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), page * 2) == 0);
+    int first[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, Stream, 0, first) == 0);
+    Require(close_nid_postfix(first[0]) == 0 && close_nid_postfix(first[1]) == 0);
+    Require(socketpair_nid_postfix(Unix, Stream | CloseOnExec, 0, reinterpret_cast<int*>(0x10)) == -1);
+    int second[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, Stream, 0, second) == 0 && second[0] == first[0] && second[1] == first[1]);
+    Require(close_nid_postfix(second[0]) == 0 && close_nid_postfix(second[1]) == 0);
+#ifndef _WIN32
+    {
+        std::set<int> probe;
+        probe.insert(1);
+    }
+    const std::size_t registryNodeSize = lastAllocationSize;
+    for (const int occurrence : {1, 2}) {
+        int expected[2] = {-1, -1};
+        Require(socketpair_nid_postfix(Unix, Stream | CloseOnExec, 0, expected) == 0);
+        Require(close_nid_postfix(expected[0]) == 0 && close_nid_postfix(expected[1]) == 0);
+        failAllocationAfter = occurrence;
+        failAllocationOfSize = registryNodeSize;
+        int refused[2] = {-1, -1};
+        *__error_nid_postfix() = 0;
+        const int result = socketpair_nid_postfix(Unix, Stream | CloseOnExec, 0, refused);
+        failAllocationOfSize = 0;
+        Require(result == -1 && *__error_nid_postfix() == 12);
+        int plain[2] = {-1, -1};
+        Require(socketpair_nid_postfix(Unix, Stream, 0, plain) == 0 && plain[0] == expected[0] && plain[1] == expected[1]);
+        Require(fcntl_nid_postfix(plain[0], 1, 0) == 0 && fcntl_nid_postfix(plain[1], 1, 0) == 0);
+        Require(close_nid_postfix(plain[0]) == 0 && close_nid_postfix(plain[1]) == 0);
+        int again[2] = {-1, -1};
+        Require(socketpair_nid_postfix(Unix, Stream | CloseOnExec, 0, again) == 0 && again[0] == expected[0] && again[1] == expected[1]);
+        Require(fcntl_nid_postfix(again[0], 1, 0) == 1 && fcntl_nid_postfix(again[1], 1, 0) == 1);
+        Require(close_nid_postfix(again[0]) == 0 && close_nid_postfix(again[1]) == 0);
+        *__error_nid_postfix() = 0;
+        Require(close_nid_postfix(again[0]) == -1 && *__error_nid_postfix() == 9);
+    }
+#endif
     return 0;
 }
