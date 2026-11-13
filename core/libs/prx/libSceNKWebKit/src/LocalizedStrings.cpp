@@ -44,7 +44,7 @@ String FromUTF8(const char* data) {
     return _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(data));
 }
 
-__attribute__((format(printf, 1, 2))) String FormatLocalizedString(const char* format, ...) {
+String FormatLocalizedString(const char* format, ...) {
     va_list args, argsCopy;
     va_start(args, format);
     va_copy(argsCopy, args);
