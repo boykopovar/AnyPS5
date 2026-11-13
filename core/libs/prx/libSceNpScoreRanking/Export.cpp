@@ -1,5 +1,6 @@
 #include "prx/libSceNpScoreRanking/include/Api.hpp"
 #include <cerrno>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -54,6 +55,7 @@ struct Request {
 };
 
 std::mutex scoreMutex;
+std::condition_variable& requestFinished = *new std::condition_variable();
 std::unordered_set<int> titleContexts;
 std::unordered_map<int, Request> requests;
 int nextTitleContext = 1;
@@ -78,7 +80,10 @@ int Finish(int reqId, int error) {
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (request->second.result == SCE_NP_COMMUNITY_ERROR_ABORTED) return SCE_NP_COMMUNITY_ERROR_ABORTED;
-    if (!request->second.result) request->second.result = error;
+    if (!request->second.result) {
+        request->second.result = error;
+        requestFinished.notify_all();
+    }
     return error;
 }
 
@@ -204,7 +209,10 @@ int APS5_VABI sceNpScoreAbortRequest(int reqId) {
     std::lock_guard lock(scoreMutex);
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    if (!request->second.result) request->second.result = SCE_NP_COMMUNITY_ERROR_ABORTED;
+    if (!request->second.result) {
+        request->second.result = SCE_NP_COMMUNITY_ERROR_ABORTED;
+        requestFinished.notify_all();
+    }
     return 0;
 }
 
@@ -551,11 +559,13 @@ int APS5_VABI sceNpScoreSetTimeout(int id, int resolveRetry, int resolveTimeout,
 }
 
 int APS5_VABI sceNpScoreWaitAsync(int reqId, int* result) {
-    std::lock_guard lock(scoreMutex);
-    const auto request = requests.find(reqId);
-    if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    if (!request->second.result) NotImplemented_nid_no_patch("sceNpScoreWaitAsync (a request with no operation started)");
-    if (result) *result = *request->second.result;
+    std::unique_lock lock(scoreMutex);
+    if (!requests.contains(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    requestFinished.wait(lock, [reqId] {
+        const auto request = requests.find(reqId);
+        return request != requests.end() && request->second.result;
+    });
+    if (result) *result = *requests.at(reqId).result;
     return 0;
 }
 

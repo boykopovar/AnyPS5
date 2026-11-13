@@ -1118,15 +1118,19 @@ int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThr
     }
     if (capacity != 0 && state->_waiters != 0) NotImplemented_nid_no_patch(__func__);
     if (state->_lockCount != 0 && (state->_attribute != 0 || state->_lockCount > 1 || state->_ownerIdentity.type != 1)) NotImplemented_nid_no_patch(__func__);
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltMutexInfo);
-    info->object = object;
-    std::memcpy(info->name, state->_name, sizeof(info->name));
-    info->waitingQueuePool = state->_waitingPool;
-    info->owner = state->_ownerIdentity.thread;
-    info->ownerType = state->_ownerIdentity.type;
-    info->attributes = state->_attribute;
-    info->waitingThreads = state->_waiters;
+    UltMutexInfo localInfo{};
+    localInfo.size = sizeof(UltMutexInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
+    localInfo.waitingQueuePool = state->_waitingPool;
+    localInfo.owner = state->_ownerIdentity.thread;
+    localInfo.ownerType = state->_ownerIdentity.type;
+    localInfo.attributes = state->_attribute;
+    localInfo.waitingThreads = state->_waiters;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -1197,13 +1201,14 @@ int APS5_VABI sceUltGetSemaphoreInfo(void* object, UltSemaphoreInfo* info, UltWa
     std::lock_guard stateLock(state->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
     if (capacity != 0 && state->_waiters != 0) NotImplemented_nid_no_patch(__func__);
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltSemaphoreInfo);
-    info->object = object;
-    std::memcpy(info->name, state->_name, sizeof(info->name));
-    info->waitingQueuePool = state->_waitingPool;
-    info->resources = static_cast<std::uint32_t>(state->_resources);
-    info->waitingThreads = state->_waiters;
+    UltSemaphoreInfo localInfo{};
+    localInfo.size = sizeof(UltSemaphoreInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
+    localInfo.waitingQueuePool = state->_waitingPool;
+    localInfo.resources = static_cast<std::uint32_t>(state->_resources);
+    localInfo.waitingThreads = state->_waiters;
+    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 

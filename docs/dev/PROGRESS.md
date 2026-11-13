@@ -2,6 +2,8 @@
 
 [`tools/progress.py`](../../tools/progress.py) generates `progress.json`, HTML, SVG maps and badges. The [Pages workflow](../../.github/workflows/pages.yml) publishes them with the web converter after pushes to `main` that change the converter, the web page or these tools. The [Pages progress workflow](../../.github/workflows/pages-progress.yml) runs after pushes that change `core/libs/prx` or the opcode list, compares the generated `progress.json` with the deployed one and dispatches the Pages workflow only when they differ, so the history chart gains new days only when the progress changes. The [Progress report workflow](../../.github/workflows/progress-report.yml) compares the base and head trees of pull requests.
 
+The page also shows a dated estimate of library progress after combining open pull requests against `main`. [`tools/progress_prs.py`](../../tools/progress_prs.py) fetches the open heads, applies declared dependencies first, and combines them in a temporary Git history. A conflict or unresolved dependency excludes that pull request and any dependent changes. Identical changes are present once in the resulting source tree, and the existing name-based progress scanner counts each function once. Pull requests that do not change the measured source can be included without changing the percentage. If the GitHub query or virtual integration fails, the estimate is marked unavailable and the current progress remains visible. The Pages workflow refreshes the estimate daily, on relevant pushes, and when run manually. This figure is a source-count scenario, not a claim that all pull requests will merge or that the emulator is compatible with more titles.
+
 ## Library counts
 
 The scanner reads `APS5_VABI` function definitions under `core/libs/prx/<library>/`, excluding `tests` subdirectories and their descendants. Test callbacks do not contribute to library counts. Definitions whose names end in `_nid_no_patch` or `_nid_no_patch_cut` are internal helpers and are not counted, unless an `APS5_EXPORT` in the library exports them under an explicit name. A definition is pending when its body calls `NotImplemented_nid_no_patch`, directly or through a recognized local stub wrapper. Call matching uses complete identifiers and accepts whitespace or comments before `(`. Other definitions are counted as implemented. Braces inside string literals, character literals and comments do not delimit bodies. These counts describe declared functions, not every firmware export, verified ABI compatibility or playable games. Silent behavior and unverified assumptions remain in [Technical debt](TechnicalDebt.md).
@@ -59,6 +61,8 @@ Implemented definitions are also classified as behaviourally empty when their bo
 
 ```sh
 python3 tools/tests/test_progress.py
+python3 tools/tests/test_progress_prs.py
+python3 tools/tests/test_progress_open_pr_page.py
 python3 tools/progress.py /tmp/anyps5-progress
 python3 tools/progress.py --module libScePad
 python3 tools/progress.py --json
