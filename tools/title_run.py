@@ -27,6 +27,7 @@ FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-b
 PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
 PAD_AFTER_SECONDS = 5
 REPORT_FILE = "anyps5-report.json"
+FRAME_PERCENTILES = ("p50", "p90", "p99")
 SHADER_COUNTS = ("compiled", "failed", "cacheHits")
 UNSUPPORTED_KEYS = ("encoding", "opcode", "opcodeValue", "modifiers")
 
@@ -160,6 +161,7 @@ def read_report(path):
     functions = [entry for entry in functions if isinstance(entry, dict)] if isinstance(functions, list) else functions
     unsupported = [entry for entry in unsupported if isinstance(entry, dict)] if isinstance(unsupported, list) else unsupported
     return {"averageFps": run.get("averageFps"),
+            "frameMs": section(run, "frameMs") or None,
             "shaders": {name: shaders.get(name) for name in SHADER_COUNTS} if coverage.get("shaders") else None,
             "missing": functions if coverage.get("missing") and isinstance(functions, list) else None,
             "unsupported": unsupported if coverage.get("unsupported") and isinstance(unsupported, list) else None,
@@ -309,8 +311,11 @@ def compare_runs(summary, previous):
     compared = {}
     for title_id in sorted(set(summary["titles"]) & set(previous["titles"])):
         before, now = last_run(previous["titles"][title_id]), last_run(summary["titles"][title_id])
+        before_frames = section(before.get("report") or {}, "frameMs")
+        now_frames = section(now.get("report") or {}, "frameMs")
         compared[title_id] = {"name": summary["titles"][title_id]["name"], "fps": pair(fps_of(before), fps_of(now)),
                               "averageFps": pair(report_field(before, "averageFps"), report_field(now, "averageFps")),
+                              "frameMs": {name: pair(before_frames.get(name), now_frames.get(name)) for name in FRAME_PERCENTILES},
                               "shaders": {name: pair(shader_count(before, name), shader_count(now, name)) for name in SHADER_COUNTS},
                               "missingFunctions": diff_entries(missing_functions(before), missing_functions(now), ("library", "name"), "calls"),
                               "missingFunctionsCount": pair(distinct(missing_functions(before), ("library", "name")), distinct(missing_functions(now), ("library", "name"))),
@@ -343,9 +348,14 @@ def render_compare(compared):
     lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
     details = []
     for title_id, title in compared.items():
-        measures = [("FPS", title["fps"]), ("Average FPS (report)", title["averageFps"]),
-                    ("Shaders compiled", title["shaders"]["compiled"]), ("Shaders failed", title["shaders"]["failed"]),
-                    ("Shader cache hits", title["shaders"]["cacheHits"])]
+        measures = [
+            ("FPS", title["fps"]),
+            ("Average FPS (report)", title["averageFps"]),
+            *((f"Frame time {name} (ms)", title["frameMs"][name]) for name in FRAME_PERCENTILES),
+            ("Shaders compiled", title["shaders"]["compiled"]),
+            ("Shaders failed", title["shaders"]["failed"]),
+            ("Shader cache hits", title["shaders"]["cacheHits"]),
+        ]
         for label, key in (("Missing functions", "missingFunctions"), ("Unsupported instructions", "unsupportedInstructions")):
             diff = title[key]
             measures.append((label, title[key + "Count"]))
