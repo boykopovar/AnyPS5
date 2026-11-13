@@ -1056,7 +1056,11 @@ int APS5_VABI sceShellCoreUtilRemoveCffConfigFile(void) {
 
 int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(std::uint32_t* count) {
     if (count == nullptr) return static_cast<int>(0x80e30005);
-    *count = 50;
+    const std::uint32_t localCount = 50;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(count, &localCount, sizeof(localCount));
+    errno = savedErrno;
+    if (!copied) return static_cast<int>(0x80e30005);
     return 0;
 }
 
