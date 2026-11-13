@@ -1,17 +1,26 @@
+#include "prx/libSceAvPlayer/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <cerrno>
 #include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
+#include "prx/libSceAvPlayer/include/LogCallback.hpp"
+#include "prx/libc/include/WindowsFormatting.hpp"
 
 using namespace AvPlayer;
 
 namespace {
+
+void* LogCallback = nullptr;
+void* LogUserData = nullptr;
 
 Player* ToPlayer(AvPlayerInternal* h) {
     return static_cast<Player*>(h);
@@ -24,6 +33,30 @@ std::uint32_t VideoBufferCount(std::int32_t requested) {
 constexpr std::size_t Ps5InitDataExSize = 0x230;
 constexpr std::size_t Ps5AutoStartOffset = 0x74;
 constexpr std::size_t Ps5VideoFrameBuffersOffset = 0x228;
+
+}
+
+extern "C" {
+
+void SceAvPlayerSetLogCallbackState(void* callback, void* user_data) {
+    LogCallback = callback;
+    LogUserData = user_data;
+}
+
+int SceAvPlayerWriteLog(const char* format, VaList* arguments) {
+    if (LogCallback) {
+        return reinterpret_cast<SceAvPlayerLogCallback>(LogCallback)(LogUserData, format, arguments);
+    }
+#ifdef _WIN32
+    return LibcDetail::PrintWindows(format, arguments);
+#else
+    std::va_list copy;
+    va_copy(copy, *reinterpret_cast<std::va_list*>(arguments));
+    const int result = std::vprintf(format, copy);
+    va_end(copy);
+    return result;
+#endif
+}
 
 }
 
@@ -112,7 +145,14 @@ int APS5_VABI sceAvPlayerInitEx(const AvPlayerInitDataEx* init_ex, AvPlayerInter
         init.auto_start = init_ex->auto_start;
     }
     init.default_language = init_ex->default_language;
-    *handle = new Player(init, VideoBufferCount(init.num_output_video_framebuffers), init_ex->this_size >= Ps5InitDataExSize);
+    auto* player = new Player(init, VideoBufferCount(init.num_output_video_framebuffers));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(handle, &player, sizeof(player));
+    errno = savedErrno;
+    if (!copied) {
+        delete player;
+        return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    }
     return SCE_OK;
 }
 
@@ -151,12 +191,11 @@ int APS5_VABI sceAvPlayerSetAvailableBandwidth(AvPlayerInternal* h, uint32_t sta
     (void)minimum_bandwidth;
     (void)maximum_bandwidth;
     if (!h) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
-    return SCE_OK;
+    return ToPlayer(h)->SetAvailableBandwidth();
 }
 
 int APS5_VABI sceAvPlayerSetLogCallback(void* callback, void* user_data) {
-    (void)callback;
-    (void)user_data;
+    SceAvPlayerSetLogCallbackState(callback, user_data);
     return SCE_OK;
 }
 
@@ -175,10 +214,9 @@ int APS5_VABI sceAvPlayerStart(AvPlayerInternal* h) {
     return ToPlayer(h)->Start();
 }
 
-int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal* h, const void* start_info_ex) {
-    (void)start_info_ex;
-    if (!h) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
-    return ToPlayer(h)->Start();
+int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal* handle, const StartInfo* startInfo) {
+    if (handle == nullptr || startInfo == nullptr || startInfo->size != sizeof(*startInfo)) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    return ToPlayer(handle)->Start(startInfo->startTime);
 }
 
 int APS5_VABI sceAvPlayerStop(AvPlayerInternal* h) {
@@ -197,6 +235,29 @@ namespace AvPlayer {
 
 void SetAvPlayerClockForTest_nid_no_patch(AvPlayerInternal* h, double milliseconds) {
     if (h) ToPlayer(h)->SetClockTimeForTest(milliseconds);
+}
+
+void HoldAvPlayerAudioEofForTest_nid_no_patch(AvPlayerInternal* h, bool hold) {
+    if (h) ToPlayer(h)->SetHoldAudioEofForTest(hold);
+}
+
+bool AvPlayerAudioEofHeldForTest_nid_no_patch(AvPlayerInternal* h) {
+    return h && ToPlayer(h)->AudioEofHeldForTest();
+}
+
+bool AvPlayerAudioEndedForTest_nid_no_patch(AvPlayerInternal* h) {
+    return h && ToPlayer(h)->AudioEndedForTest();
+}
+
+int QueuedAvPlayerAudioForTest_nid_no_patch(AvPlayerInternal* h) {
+    return h ? ToPlayer(h)->QueuedAudioForTest() : 0;
+}
+
+bool NextQueuedAvPlayerAudioTimestampForTest_nid_no_patch(AvPlayerInternal* h, std::uint64_t* timestamp) {
+    std::uint64_t value = 0;
+    if (!h || !timestamp || !ToPlayer(h)->NextQueuedAudioTimestampForTest(value)) return false;
+    *timestamp = value;
+    return true;
 }
 
 }

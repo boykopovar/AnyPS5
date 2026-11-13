@@ -1,5 +1,6 @@
 #include <elfpatcher/windows/WindowsElfPatcher.hpp>
 #include <elfpatcher/windows/WindowsEntryStubBuilder.hpp>
+#include <elfpatcher/windows/WindowsExportBuilder.hpp>
 #include <elfpatcher/windows/WindowsIconResourceBuilder.hpp>
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
 #include <elfpatcher/windows/WindowsPeWriter.hpp>
@@ -28,7 +29,7 @@ void writeGotStub(std::vector<PeSection>& sections, const std::uint32_t targetRv
 
 }
 
-WindowsPePatcher::WindowsPePatcher(const bool windowsGui, std::optional<std::vector<std::uint8_t>> icon, std::filesystem::path iconName, std::function<void(std::uint64_t, std::uint64_t)> progress, const std::optional<std::uint64_t> fixedBase, const bool traceImports, std::function<void(std::string_view)> message) : progress(std::move(progress)), windowsGui(windowsGui), icon(std::move(icon)), iconName(std::move(iconName)), fixedBase(fixedBase), traceImports(traceImports), message(std::move(message)) {
+WindowsPePatcher::WindowsPePatcher(const bool windowsGui, std::optional<std::vector<std::uint8_t>> icon, std::filesystem::path iconName, std::function<void(std::uint64_t, std::uint64_t)> progress, const std::optional<std::uint64_t> fixedBase, const bool traceImports, std::function<void(std::string_view)> message, std::string outputName, const bool functionSymbolRoots) : progress(std::move(progress)), windowsGui(windowsGui), icon(std::move(icon)), iconName(std::move(iconName)), fixedBase(fixedBase), traceImports(traceImports), functionSymbolRoots(functionSymbolRoots), message(std::move(message)), outputName(std::move(outputName)) {
     if (fixedBase && (*fixedBase < 0x20000 || *fixedBase > 0x7fffffff0000 || (*fixedBase & 0xffff) != 0))
         throw Domain::RelinkerException("Invalid fixed Windows guest image base");
 }
@@ -39,12 +40,19 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     const auto report = [&](std::uint64_t completed) { if (progress) progress(completed, 10000); };
     report(0);
     diagnostics.clear();
-    WindowsLoadImage image(sourceElf, originalHeaders, true, fixedBase ? *fixedBase - LoadRva : ImageBase);
+    WindowsLoadImage image(sourceElf, originalHeaders, true, fixedBase.value_or(ExecutableBase) - LoadRva);
     if (originalPltGotVaddr != 0)
         image.GetRva(originalPltGotVaddr, 8);
     report(500);
     const WindowsRelocationBuilder relocationBuilder;
     auto relocations = relocationBuilder.Apply(image, dynamicSection, originalHeaders);
+    for (const auto& header : originalHeaders) {
+        if (header.Type != 7 || header.FileSize == 0) continue;
+        const auto templateRva = image.GetRva(header.MappedAddress, header.FileSize);
+        for (const auto& import : relocations.Imports)
+            if (import.TargetRva < static_cast<std::uint64_t>(templateRva) + header.FileSize && static_cast<std::uint64_t>(import.TargetRva) + 8 > templateRva)
+                throw Domain::RelinkerException("Runtime-bound executable TLS template relocation is not supported", header.MappedAddress + import.TargetRva - templateRva);
+    }
     report(1000);
     auto sections = image.BuildSections();
     report(1500);
@@ -61,6 +69,10 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         sections.push_back({".procpar", nextRva, SectionRead | 0x40u, std::move(metadata)});
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
+    if (!hasProcessParameters) {
+        sections.push_back({".procpar", nextRva, SectionRead | 0x40u, std::vector<std::uint8_t>(8)});
+        nextRva = AlignRva(nextRva + sections.back().Data.size());
+    }
     for (const auto& header : originalHeaders) {
         if (header.Type != 0x6474e550) continue;
         std::vector<std::uint8_t> metadata(4);
@@ -68,7 +80,9 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         sections.push_back({".ehmeta", nextRva, SectionRead | 0x40u, std::move(metadata)});
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
-    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, nullptr, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message);
+    std::uint32_t tlsIndex = 0;
+    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, &tlsIndex, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message, functionSymbolRoots);
+    directories[0] = WindowsExportBuilder().BuildExecutable(dynamicSection, image, originalHeaders, tlsIndex, relocations.BaseRelocations, outputName, sections, nextRva, functionSymbolRoots);
     report(8000);
     WindowsTrampolineBuilder().Build(trampolines, image, sections, nextRva);
     const WindowsImportBuilder importBuilder;
@@ -111,7 +125,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     }
     directories[2] = icon ? WindowsIconResourceBuilder().Build(*icon, iconName, sections, nextRva) : PeDirectory{};
     report(9500);
-    auto result = WindowsPeWriter().Write(sections, entryRva, directories, windowsGui, fixedBase ? std::optional<std::uint64_t>(image.GetImageBase()) : std::nullopt, false);
+    auto result = WindowsPeWriter().Write(sections, entryRva, directories, windowsGui, image.GetImageBase(), fixedBase.has_value(), false);
     report(10000);
     return result;
 }

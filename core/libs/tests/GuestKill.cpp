@@ -1,16 +1,13 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <limits>
 using Handler = void (APS5_VABI *)(int);
-extern "C" {
-Handler APS5_VABI signal_nid_postfix(int, Handler);
-int APS5_VABI kill_nid_postfix(int, int);
-int APS5_VABI killpg_nid_postfix(int, int);
-int APS5_VABI getpid_nid_postfix(void);
-int* APS5_VABI __error_nid_postfix();
-}
+
 volatile std::sig_atomic_t received = 0;
 void APS5_VABI Callback(int value) { received = value; }
 static void Require(bool value) { if (!value) std::abort(); }
@@ -36,10 +33,11 @@ int main() {
         KillpgFails(target, 0, 3);
         KillpgFails(target, 15, 3);
     }
-    for (int target : {-1, -self}) {
-        KillpgFails(target, 0, 22);
-        KillpgFails(target, 15, 22);
-    }
+    KillpgFails(-(self + 1000), 0, 3);
+    KillpgFails(-(self + 1000), 15, 3);
+    KillpgFails(-(self + 1000), 129, 22);
+    for (int guest : {0, 15, 129}) KillpgFails(1, guest, 3);
+    KillpgFails(std::numeric_limits<int>::min(), 15, 3);
     for (int guest : {-1, 129}) {
         Fails(self, guest, 22);
         Fails(self + 1, guest, 22);
@@ -52,7 +50,7 @@ int main() {
         Require(kill_nid_postfix(target, 0) == 0 && received == 0);
         Require(kill_nid_postfix(target, 15) == 0 && received == 15);
     }
-    for (int target : {self, 0}) {
+    for (int target : {self, 0, -self}) {
         received = 0;
         Require(killpg_nid_postfix(target, 0) == 0 && received == 0);
         Require(killpg_nid_postfix(target, 15) == 0 && received == 15);

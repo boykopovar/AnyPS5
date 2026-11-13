@@ -1,28 +1,17 @@
+#include "prx/libSceGameLiveStreaming/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
+#include <span>
 
-struct GameLiveStreamingStatus2 {
-    std::int32_t userId;
-    bool isOnAir;
-    std::uint8_t align[3];
-    std::uint32_t spectatorCounts;
-    std::uint32_t textMessageCounts;
-    std::uint32_t commandMessageCounts;
-    std::uint32_t broadcastVideoResolution;
-    std::uint8_t reserved[48];
-};
 static_assert(sizeof(GameLiveStreamingStatus2) == 72);
-
-extern "C" {
-int APS5_VABI sceGameLiveStreamingInitialize(std::size_t heap_size);
-int APS5_VABI sceGameLiveStreamingTerminate(void);
-int APS5_VABI sceGameLiveStreamingGetCurrentStatus2(GameLiveStreamingStatus2* status);
-int APS5_VABI sceGameLiveStreamingGetProgramInfo(void);
-}
+static_assert(sizeof(GameLiveStreamingStatus) == 72);
 
 namespace {
 
@@ -30,26 +19,239 @@ void Require(bool value) { if (!value) std::abort(); }
 
 constexpr std::int32_t kInvalidUserId = -1;
 
+bool EnableThrowsNotInitialized(bool isEnableLiveStreaming) {
+    try {
+        sceGameLiveStreamingEnableLiveStreaming(isEnableLiveStreaming);
+
+    } catch (const std::logic_error&) {
+        return true;
+    }
+    return false;
+}
+
+constexpr int kInvalidArgument = static_cast<int>(0x80A00002);
+
+GameLiveStreamingFeedbackMessage* AsMessages(std::array<std::uint8_t, 256>& buffer) {
+    return reinterpret_cast<GameLiveStreamingFeedbackMessage*>(buffer.data());
+}
+
+void CheckLifecycleFirst() {
+    constexpr int notInitialized = static_cast<int>(0x80A00004);
+    GameLiveStreamingSpoilerTag tag{};
+    GameLiveStreamingPresetCommand preset{};
+    GameLiveStreamingCameraFrameSetting camera{};
+    std::array<std::uint8_t, 256> messages{};
+    std::uint32_t count = 0x55;
+    std::size_t acquired = 0x55;
+    Require(sceGameLiveStreamingPermitLiveStreaming(true) == notInitialized);
+    Require(sceGameLiveStreamingPermitServerSideRecording(false) == notInitialized);
+    Require(sceGameLiveStreamingSetMaxBitrate(6000) == notInitialized);
+    Require(sceGameLiveStreamingEnableSocialFeedback(true) == notInitialized);
+    Require(sceGameLiveStreamingSetMetadata(nullptr) == notInitialized);
+    Require(sceGameLiveStreamingSetMetadata("metadata") == notInitialized);
+    Require(sceGameLiveStreamingSetSpoilerTag(0, nullptr) == notInitialized);
+    Require(sceGameLiveStreamingSetSpoilerTag(1, &tag) == notInitialized);
+    Require(sceGameLiveStreamingClearSpoilerTag() == notInitialized);
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(0, nullptr) == notInitialized);
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(1, &preset) == notInitialized);
+    Require(sceGameLiveStreamingClearPresetSocialFeedbackCommands() == notInitialized);
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommandsDescription(nullptr) == notInitialized);
+    Require(sceGameLiveStreamingSetCameraFrameSetting(nullptr) == notInitialized);
+    Require(sceGameLiveStreamingSetCameraFrameSetting(&camera) == notInitialized);
+    Require(sceGameLiveStreamingSetInvitationSessionId(nullptr) == notInitialized);
+    Require(sceGameLiveStreamingGetSocialFeedbackMessagesCount(0, nullptr) == notInitialized);
+    Require(sceGameLiveStreamingGetSocialFeedbackMessagesCount(1, &count) == notInitialized);
+    Require(count == 0x55);
+    Require(sceGameLiveStreamingGetSocialFeedbackMessages(0, 1, nullptr, nullptr) == notInitialized);
+    Require(sceGameLiveStreamingGetSocialFeedbackMessages(1, 1, AsMessages(messages), &acquired) == notInitialized);
+    Require(acquired == 0x55);
+    Require(sceGameLiveStreamingClearSocialFeedbackMessages(0) == notInitialized);
+    Require(sceGameLiveStreamingClearSocialFeedbackMessages(1) == notInitialized);
+    Require(sceGameLiveStreamingPostSocialMessage(nullptr) == notInitialized);
+    Require(sceGameLiveStreamingPostSocialMessage("message") == notInitialized);
+}
+
+void CheckString(int (APS5_VABI *call)(const char*), std::size_t limit) {
+    Require(call(nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(call(reinterpret_cast<const char*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    Require(call("") == 0);
+    Require(call(std::string(limit, 'a').c_str()) == 0);
+    Require(call(std::string(limit + 1, 'a').c_str()) == kInvalidArgument);
+    Require(call(std::string(limit + 100, 'a').c_str()) == kInvalidArgument);
+}
+
+void CheckStrings() {
+    CheckString(sceGameLiveStreamingSetMetadata, 240);
+    CheckString(sceGameLiveStreamingSetPresetSocialFeedbackCommandsDescription, 720);
+    CheckString(sceGameLiveStreamingSetInvitationSessionId, 45);
+    CheckString(sceGameLiveStreamingPostSocialMessage, 360);
+}
+
+void CheckFeedbackTypes() {
+    std::array<std::uint8_t, 256> messages{};
+    for (const int type : {-1, 0, 4, 5, 0x7fffffff}) {
+        std::uint32_t count = 0xdeadbeef;
+        Require(sceGameLiveStreamingGetSocialFeedbackMessagesCount(type, &count) == kInvalidArgument);
+        Require(count == 0xdeadbeef);
+        std::size_t acquired = 0xdeadbeef;
+        Require(sceGameLiveStreamingGetSocialFeedbackMessages(type, 1, AsMessages(messages), &acquired) == kInvalidArgument);
+        Require(acquired == 0xdeadbeef);
+        Require(sceGameLiveStreamingClearSocialFeedbackMessages(type) == kInvalidArgument);
+    }
+    for (const int type : {1, 2, 3}) {
+        std::uint32_t count = 0xdeadbeef;
+        Require(sceGameLiveStreamingGetSocialFeedbackMessagesCount(type, &count) == 0);
+        Require(count == 0);
+        messages.fill(0xaa);
+        std::size_t acquired = 0xdeadbeef;
+        Require(sceGameLiveStreamingGetSocialFeedbackMessages(type, 1, AsMessages(messages), &acquired) == 0);
+        Require(acquired == 0);
+        for (const std::uint8_t byte : messages) Require(byte == 0xaa);
+        acquired = 0xdeadbeef;
+        Require(sceGameLiveStreamingGetSocialFeedbackMessages(type, 0, AsMessages(messages), &acquired) == 0);
+        Require(acquired == 0);
+        Require(sceGameLiveStreamingClearSocialFeedbackMessages(type) == 0);
+    }
+    std::size_t acquired = 0xdeadbeef;
+    Require(sceGameLiveStreamingGetSocialFeedbackMessages(1, 0, nullptr, &acquired) == kInvalidArgument);
+    Require(sceGameLiveStreamingGetSocialFeedbackMessages(1, 1, nullptr, &acquired) == kInvalidArgument);
+    Require(sceGameLiveStreamingGetSocialFeedbackMessages(1, 1, AsMessages(messages), nullptr) == kInvalidArgument);
+    Require(acquired == 0xdeadbeef);
+    Require(sceGameLiveStreamingGetSocialFeedbackMessagesCount(1, nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(sceGameLiveStreamingGetSocialFeedbackMessagesCount(1, reinterpret_cast<std::uint32_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceGameLiveStreamingGetSocialFeedbackMessages(1, 1, AsMessages(messages), reinterpret_cast<std::size_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+}
+
+void CheckArrays() {
+    GameLiveStreamingSpoilerTag tags[17]{};
+    Require(sceGameLiveStreamingSetSpoilerTag(0, nullptr) == kInvalidArgument);
+    Require(sceGameLiveStreamingSetSpoilerTag(1, nullptr) == kInvalidArgument);
+    Require(sceGameLiveStreamingSetSpoilerTag(0, tags) == 0);
+    Require(sceGameLiveStreamingSetSpoilerTag(1, tags) == 0);
+    Require(sceGameLiveStreamingSetSpoilerTag(16, tags) == 0);
+    Require(sceGameLiveStreamingSetSpoilerTag(17, tags) == kInvalidArgument);
+    Require(sceGameLiveStreamingSetSpoilerTag(0x1000, tags) == kInvalidArgument);
+    for (const std::size_t index : {0u, 15u}) {
+        for (const std::size_t byte : {0u, 15u, 30u}) {
+            tags[index].reserved[byte] = 1;
+            Require(sceGameLiveStreamingSetSpoilerTag(16, tags) == kInvalidArgument);
+            Require(sceGameLiveStreamingSetSpoilerTag(index, tags) == 0);
+            tags[index].reserved[byte] = 0;
+        }
+    }
+    tags[16].reserved[0] = 1;
+    Require(sceGameLiveStreamingSetSpoilerTag(16, tags) == 0);
+    tags[0].text[192] = 'x';
+    Require(sceGameLiveStreamingSetSpoilerTag(1, tags) == 0);
+    Require(sceGameLiveStreamingClearSpoilerTag() == 0);
+    Require(sceGameLiveStreamingClearSpoilerTag() == 0);
+
+    GameLiveStreamingPresetCommand presets[6]{};
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(0, nullptr) == kInvalidArgument);
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(1, nullptr) == kInvalidArgument);
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(0, presets) == 0);
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(5, presets) == 0);
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(6, presets) == kInvalidArgument);
+    for (const std::size_t index : {0u, 4u}) {
+        for (const std::size_t byte : {0u, 30u}) {
+            presets[index].reserved[byte] = 1;
+            Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(5, presets) == kInvalidArgument);
+            Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(index, presets) == 0);
+            presets[index].reserved[byte] = 0;
+        }
+    }
+    presets[5].reserved[0] = 1;
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(5, presets) == 0);
+    presets[0].body[196] = 1;
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(5, presets) == 0);
+    Require(sceGameLiveStreamingClearPresetSocialFeedbackCommands() == 0);
+    Require(sceGameLiveStreamingClearPresetSocialFeedbackCommands() == 0);
+
+    GameLiveStreamingCameraFrameSetting camera{};
+    Require(sceGameLiveStreamingSetCameraFrameSetting(nullptr) == kInvalidArgument);
+    Require(sceGameLiveStreamingSetCameraFrameSetting(&camera) == 0);
+    camera.head[8] = 1;
+    Require(sceGameLiveStreamingSetCameraFrameSetting(&camera) == 0);
+    camera.head[8] = 0;
+    for (const std::size_t byte : {0u, 15u, 30u}) {
+        camera.reserved[byte] = 1;
+        Require(sceGameLiveStreamingSetCameraFrameSetting(&camera) == kInvalidArgument);
+        camera.reserved[byte] = 0;
+    }
+}
+
+void CheckScalars() {
+    for (const bool value : {true, false}) {
+        Require(sceGameLiveStreamingPermitLiveStreaming(value) == 0);
+        Require(sceGameLiveStreamingPermitServerSideRecording(value) == 0);
+        Require(sceGameLiveStreamingEnableSocialFeedback(value) == 0);
+    }
+    for (const std::uint32_t bitrate : {0u, 6000u, 0xffffffffu}) Require(sceGameLiveStreamingSetMaxBitrate(bitrate) == 0);
+}
+
+void CheckSeparateModeParameter() {
+    Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(reinterpret_cast<void*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    std::array<std::uint8_t, 0x60> parameter{};
+    parameter.fill(0xaa);
+    Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(parameter.data()) == 0);
+    for (std::size_t i = 0; i < parameter.size(); ++i) Require(parameter[i] == (i < 0x44 ? 0 : 0xaa));
+}
+
+void CheckInvalidOutputPointers() {
+    errno = 71;
+    Require(sceGameLiveStreamingGetCurrentStatus2(reinterpret_cast<GameLiveStreamingStatus2*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceGameLiveStreamingGetProgramInfo(reinterpret_cast<GameLiveStreamingProgramInfo*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceGameLiveStreamingGetCurrentStatus(reinterpret_cast<GameLiveStreamingStatus*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+}
+
 }
 
 int main() {
-    bool threwZeroHeap = false;
-    try {
-        sceGameLiveStreamingInitialize(0);
-    } catch (const std::invalid_argument&) {
-        threwZeroHeap = true;
-    }
-    Require(threwZeroHeap);
+    constexpr int invalidArgument = static_cast<int>(0x80A00002);
+    constexpr int alreadyInitialized = static_cast<int>(0x80A00003);
+    constexpr int notInitialized = static_cast<int>(0x80A00004);
+    Require(sceGameLiveStreamingTerminate() == notInitialized);
+    Require(sceGameLiveStreamingGetCurrentStatus2(nullptr) == notInitialized);
+    Require(sceGameLiveStreamingGetCurrentStatus(nullptr) == notInitialized);
+    GameLiveStreamingStatus liveStatus{};
+    std::memset(&liveStatus, 0x5a, sizeof(liveStatus));
+    Require(sceGameLiveStreamingGetCurrentStatus(&liveStatus) == notInitialized);
+    for (const auto value : std::as_bytes(std::span(&liveStatus, 1))) Require(value == std::byte{0x5a});
+    Require(sceGameLiveStreamingRegisterCallback(nullptr, nullptr) == notInitialized);
+    Require(sceGameLiveStreamingUnregisterCallback() == notInitialized);
+    Require(EnableThrowsNotInitialized(true));
+    CheckLifecycleFirst();
+    CheckSeparateModeParameter();
+    for (const std::size_t size : {0u, 1u, 0x3fffu, 0x4001u, 0x100000u}) Require(sceGameLiveStreamingInitialize(size) == invalidArgument);
+    Require(sceGameLiveStreamingInitialize(0x4000) == 0);
+    CheckInvalidOutputPointers();
+    Require(sceGameLiveStreamingEnableLiveStreaming(true) == 0);
+    Require(sceGameLiveStreamingInitialize(0) == invalidArgument);
+    Require(sceGameLiveStreamingInitialize(0x4000) == alreadyInitialized);
+    Require(sceGameLiveStreamingGetCurrentStatus2(nullptr) == invalidArgument);
+    Require(sceGameLiveStreamingGetCurrentStatus(nullptr) == invalidArgument);
 
-    Require(sceGameLiveStreamingInitialize(1024 * 1024) == 0);
-
-    bool threwNullStatus = false;
-    try {
-        sceGameLiveStreamingGetCurrentStatus2(nullptr);
-    } catch (const std::invalid_argument&) {
-        threwNullStatus = true;
-    }
-    Require(threwNullStatus);
+    std::memset(&liveStatus, 0x5a, sizeof(liveStatus));
+    Require(sceGameLiveStreamingGetCurrentStatus(&liveStatus) == 0);
+    for (const auto value : std::as_bytes(std::span(&liveStatus, 1))) Require(value == std::byte{0});
+    Require(sceGameLiveStreamingRegisterCallback(reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x2000)) == 0);
+    Require(sceGameLiveStreamingUnregisterCallback() == 0);
+    Require(sceGameLiveStreamingUnregisterCallback() == 0);
+    Require(sceGameLiveStreamingRegisterCallback(nullptr, nullptr) == 0);
 
     GameLiveStreamingStatus2 status{};
     std::memset(&status, 0x7f, sizeof(status));
@@ -67,13 +269,34 @@ int main() {
         Require(byte == 0);
     }
 
-    bool threwProgramInfo = false;
-    try {
-        sceGameLiveStreamingGetProgramInfo();
-    } catch (const std::runtime_error&) {
-        threwProgramInfo = true;
+    Require(sceGameLiveStreamingGetProgramInfo(nullptr) == static_cast<int>(0x80A00002));
+    std::array<std::uint8_t, 0x134C + 16> programInfo{};
+    programInfo.fill(0x7f);
+    Require(sceGameLiveStreamingGetProgramInfo(reinterpret_cast<GameLiveStreamingProgramInfo*>(programInfo.data())) == 0);
+    for (std::size_t i = 0; i < programInfo.size(); ++i) {
+        Require(programInfo[i] == (i < 0x134C ? 0 : 0x7f));
     }
-    Require(threwProgramInfo);
 
+    CheckScalars();
+    CheckStrings();
+    CheckFeedbackTypes();
+    CheckArrays();
+
+    Require(sceGameLiveStreamingEnableLiveStreaming(false) == 0);
     Require(sceGameLiveStreamingTerminate() == 0);
+    CheckLifecycleFirst();
+    Require(EnableThrowsNotInitialized(false));
+    std::memset(&status, 0x7f, sizeof(status));
+    Require(sceGameLiveStreamingGetCurrentStatus2(&status) == notInitialized);
+    for (const auto value : std::as_bytes(std::span(&status, 1))) Require(value == std::byte{0x7f});
+    std::memset(&liveStatus, 0x5a, sizeof(liveStatus));
+    Require(sceGameLiveStreamingGetCurrentStatus(&liveStatus) == notInitialized);
+    for (const auto value : std::as_bytes(std::span(&liveStatus, 1))) Require(value == std::byte{0x5a});
+    Require(sceGameLiveStreamingGetCurrentStatus(nullptr) == notInitialized);
+    programInfo.fill(0x7f);
+    Require(sceGameLiveStreamingGetProgramInfo(reinterpret_cast<GameLiveStreamingProgramInfo*>(programInfo.data())) == notInitialized);
+    for (const std::uint8_t byte : programInfo) Require(byte == 0x7f);
+    Require(sceGameLiveStreamingRegisterCallback(nullptr, nullptr) == notInitialized);
+    Require(sceGameLiveStreamingUnregisterCallback() == notInitialized);
+    Require(sceGameLiveStreamingTerminate() == notInitialized);
 }

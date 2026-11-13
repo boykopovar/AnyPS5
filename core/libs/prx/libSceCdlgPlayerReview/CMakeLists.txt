@@ -1,6 +1,7 @@
 add_library(libSceCdlgPlayerReview SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceCdlgPlayerReview PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceCdlgPlayerReview)
+target_link_libraries(libSceCdlgPlayerReview PRIVATE libSceUserService)
 
 if(MINGW)
     foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
@@ -11,7 +12,7 @@ endif()
 if(BUILD_TESTING)
     add_test_executable(guest_player_review_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestPlayerReviewDialog.cpp)
     target_include_directories(guest_player_review_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_player_review_dialog_tests PRIVATE libSceCdlgPlayerReview)
+    target_link_libraries(guest_player_review_dialog_tests PRIVATE libSceCdlgPlayerReview libSceUserService)
     add_test(NAME guest_player_review_dialog COMMAND guest_player_review_dialog_tests)
     if(WIN32)
         set_tests_properties(guest_player_review_dialog PROPERTIES ENVIRONMENT_MODIFICATION

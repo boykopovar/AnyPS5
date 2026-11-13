@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/MallocManagedSize.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -12,8 +13,6 @@
 #include <set>
 #include <stdexcept>
 #include <utility>
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 
@@ -286,6 +285,12 @@ int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void* handle, MallocManag
     return FillStats(handle, stats);
 }
 
+int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void* handle) {
+    std::lock_guard lock(arenaMutex);
+    const auto found = arenas.find(reinterpret_cast<std::uintptr_t>(handle));
+    return found != arenas.end() && found->second->inUse == 0 ? 1 : 0;
+}
+
 std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void* pointer) {
     if (!pointer) return 0;
     std::lock_guard lock(arenaMutex);
@@ -322,6 +327,7 @@ void* APS5_VABI sceLibcPafMspaceMemalign_nid_postfix(void* handle, std::size_t a
 void APS5_VABI sceLibcPafMspaceFree_nid_postfix(void* handle, void* pointer, const void* owner) {
     (void)owner;
     sceLibcMspaceFree_nid_postfix(handle, pointer);
+
 }
 
 void* APS5_VABI sceLibcPafMspaceCalloc_nid_postfix(void* handle, std::size_t count, std::size_t size, const void* owner) {
@@ -350,5 +356,9 @@ int APS5_VABI sceLibcPafMspaceMallocStats_nid_postfix(void* handle, MallocManage
 
 int APS5_VABI sceLibcPafMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats) {
     return sceLibcMspaceMallocStatsFast_nid_postfix(handle, stats);
+}
+
+int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void* handle) {
+    return sceLibcMspaceIsHeapEmpty_nid_postfix(handle);
 }
 }

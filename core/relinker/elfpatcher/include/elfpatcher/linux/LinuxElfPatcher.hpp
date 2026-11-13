@@ -14,6 +14,8 @@
 
 namespace Elfpatcher::Linux {
 
+inline constexpr std::uint64_t DefaultFixedBase = 0x400000;
+
 class LinuxElfPatcher : public IElfPatcher {
 public:
     LinuxElfPatcher(

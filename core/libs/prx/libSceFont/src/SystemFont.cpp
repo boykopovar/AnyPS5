@@ -60,7 +60,7 @@ constexpr std::array<FamilyFiles, 9> FAMILY_FILES = {{
      {"NotoSansCJK-Light.ttc", "NotoSansCJK-Regular.ttc", "NotoSansCJK-Medium.ttc", "NotoSansCJK-Bold.ttc"}, 0},
     {{"DFHEI5-SONY.ttf", "DFHEI5-SONY.ttf", "DFHEI5-SONY.ttf", "DFHEI5-SONY.ttf"},
      {"NotoSansCJK-Light.ttc", "NotoSansCJK-Regular.ttc", "NotoSansCJK-Medium.ttc", "NotoSansCJK-Bold.ttc"}, 2},
-    {{"SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Bold.otf"},
+    {{"SCEPS4Yoongd-Light.otf", "SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Bold.otf"},
      {"NotoSansCJK-Light.ttc", "NotoSansCJK-Regular.ttc", "NotoSansCJK-Medium.ttc", "NotoSansCJK-Bold.ttc"}, 1},
     {{"SSTArabic-Light.otf", "SSTArabic-Roman.otf", "SSTArabic-Medium.otf", "SSTArabic-Bold.otf"},
      {"NotoSansArabic-Light.ttf", "NotoSansArabic-Regular.ttf", "NotoSansArabic-Medium.ttf", "NotoSansArabic-Bold.ttf"}, 0},
@@ -154,8 +154,12 @@ std::vector<Font::SystemFontFile> Font::SystemFontCandidates(std::uint32_t fontS
 }
 
 std::filesystem::path Font::SystemFontDirectory() {
+#ifdef _WIN32
+    const wchar_t* configured = _wgetenv(L"ANYPS5_SYSTEM_FONTS");
+#else
     const char* configured = std::getenv("ANYPS5_SYSTEM_FONTS");
-    if (!configured || configured[0] == '\0') return ExecutableDirectory() / "anyps5-fonts";
+#endif
+    if (!configured || configured[0] == 0) return ExecutableDirectory() / "anyps5-fonts";
     const std::filesystem::path directory(configured);
     std::error_code error;
     if (!std::filesystem::is_directory(directory, error)) throw std::runtime_error("libSceFont: ANYPS5_SYSTEM_FONTS is not a directory: " + directory.string());

@@ -1,9 +1,8 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
-extern "C" {
-int APS5_VABI system_nid_postfix(const char*);
-int* APS5_VABI __error_nid_postfix();
-}
+
 static void Require(bool value) { if (!value) std::abort(); }
 int main() {
     *__error_nid_postfix() = 13;

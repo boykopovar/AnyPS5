@@ -1,3 +1,4 @@
+#include "prx/libSceAjm.native/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -7,19 +8,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAjmInitialize(std::int64_t, std::uint32_t*);
-int APS5_VABI sceAjmFinalize(std::uint32_t);
-int APS5_VABI sceAjmDecAt9ParseConfigData(const void*, AjmDecAt9ConfigDataInfo*);
-int APS5_VABI sceAjmInstanceCreate(std::uint32_t, std::uint32_t, std::uint64_t, std::uint32_t*);
-int APS5_VABI sceAjmInstanceDestroy(std::uint32_t, std::uint32_t);
-int APS5_VABI sceAjmBatchInitialize(void*, std::size_t, AjmBatchInfo*);
-int APS5_VABI sceAjmBatchJobInitialize(AjmBatchInfo*, std::uint32_t, const void*, std::size_t, void*);
-int APS5_VABI sceAjmBatchJobRun(AjmBatchInfo*, std::uint32_t, std::uint64_t, const void*, std::size_t, void*, std::size_t, void*, std::size_t);
-int APS5_VABI sceAjmBatchStart(std::uint32_t, const AjmBatchInfo*, int, AjmBatchError*, std::uint32_t*);
-int APS5_VABI sceAjmBatchWait(std::uint32_t, std::uint32_t, std::uint32_t, AjmBatchError*);
-}
 
 namespace {
 void Require(bool value, const char* message) {
@@ -110,7 +98,7 @@ std::vector<T> Decode(std::uint32_t context, unsigned channels, unsigned encodin
         Require((stream.result & 2) != 0 && stream.consumed == 0 && stream.produced == 0, "invalid first-frame flag");
     }
     const auto stream = run(packet, packet.size());
-    Require(stream.result == 0 && stream.internalResult == 0, "decode vibration superframe");
+    Require(stream.result == 0x18 && stream.internalResult == 0, "decode vibration superframe");
     Require(stream.consumed == 128 && stream.produced == static_cast<int>(pcm.size() * sizeof(T)), "consumed/produced accounting");
     Require(stream.samples == static_cast<unsigned>(samples) && stream.frames == 4, "decoded sample/frame accounting");
     Require(sceAjmInstanceDestroy(context, instance) == 0, "destroy instance");
@@ -135,6 +123,8 @@ void Parse() {
     std::memset(&info, 0xAA, sizeof(info));
     Require(sceAjmDecAt9ParseConfigData(invalid.data(), &info) == static_cast<int>(0x80930005), "invalid version accepted");
     Require(info.superframe_size == 0xAAAAAAAAu, "invalid parse changed output");
+    Require(sceAjmDecAt9ParseConfigData(nullptr, &info) == static_cast<int>(0x80930005), "null config data accepted");
+    Require(sceAjmDecAt9ParseConfigData(invalid.data(), nullptr) == static_cast<int>(0x80930005), "null config info accepted");
 }
 }
 
@@ -143,6 +133,11 @@ int main() {
         Parse();
         std::uint32_t context = 0;
         Require(sceAjmInitialize(0, &context) == 0, "initialize AJM");
+        Require(sceAjmInstanceCreate(context, 1, 0, nullptr) == static_cast<int>(0x80930005), "null instance pointer accepted");
+        Require(sceAjmInstanceDestroy(context, 0x99999) == static_cast<int>(0x80930003), "destroy invalid instance succeeded");
+        AjmBatchInfo batchInfo{};
+        Require(sceAjmBatchInitialize(nullptr, 1024, &batchInfo) == static_cast<int>(0x80930005), "null batch buffer accepted");
+        Require(sceAjmBatchInitialize(&batchInfo, 1024, nullptr) == static_cast<int>(0x80930005), "null batch info accepted");
         const auto left = Decode<float>(context, 1, 2, {1});
         const auto right = Decode<float>(context, 1, 2, {2});
         const auto stereo = Decode<float>(context, 2, 2, {1, 2}, 7, true, true);

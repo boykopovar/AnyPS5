@@ -1,11 +1,24 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libSceHttp/src/Options.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 
 namespace {
+
+constexpr std::uint32_t SocketCreationCallbackSdkVersion = 0x01500000u;
+
+std::uint32_t CompiledSdkVersion() {
+    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t sdkVersion;
+    std::memcpy(&sdkVersion, process + 16, sizeof(sdkVersion));
+    return sdkVersion;
+}
 
 constexpr std::uint32_t PrivateSslFlags = 0x2dffu;
 
@@ -21,14 +34,21 @@ void AddHttpContext(int contextId) {
 }
 
 void RemoveHttpContext(int contextId) {
-    std::lock_guard lock(g_optionsMutex);
+    std::unique_lock lock(g_optionsMutex);
     g_contextAcceptEncodingGzip.erase(contextId);
     if (g_contextAcceptEncodingGzip.empty()) g_objectOptions.clear();
+    lock.unlock();
+    RemoveHttpCookieJar(contextId);
 }
 
 bool HttpInitialised() {
     std::lock_guard lock(g_optionsMutex);
     return !g_contextAcceptEncodingGzip.empty();
+}
+
+bool IsHttpContext(int contextId) {
+    std::lock_guard lock(g_optionsMutex);
+    return g_contextAcceptEncodingGzip.contains(contextId);
 }
 
 void AddHttpTemplate(int templateId, int contextId) {
@@ -143,6 +163,14 @@ int APS5_VABI sceHttpsEnableOptionPrivate(int id, std::uint32_t sslFlags) {
 
 int APS5_VABI sceHttpsDisableOptionPrivate(int id, std::uint32_t sslFlags) {
     return sceHttpsEnableOptionPrivate(id, sslFlags);
+}
+
+int APS5_VABI sceHttpSetSocketCreationCallback(std::int32_t id, HttpSocketCreationCallback callback, void* userArg) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    (void)callback;
+    (void)userArg;
+    if (!FindHttpOptions(id)) return ERROR_INVALID_ID;
+    return CompiledSdkVersion() < SocketCreationCallbackSdkVersion ? ERROR_INVALID_VALUE : 0;
 }
 
 }

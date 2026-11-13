@@ -50,7 +50,10 @@ def current_directory(pid):
         parameters = struct.unpack('<Q', read(information.PebBaseAddress + 0x20, 8))[0]
         length = struct.unpack('<H', read(parameters + 0x38, 2))[0]
         text = struct.unpack('<Q', read(parameters + 0x40, 8))[0]
-        return Path(read(text, length).decode('utf-16-le'))
+        directory = read(text, length).decode('utf-16-le')
+        if '\0' in directory:
+            raise OSError(0, 'the current directory is not written yet')
+        return Path(directory)
     finally:
         kernel32.CloseHandle(handle)
 

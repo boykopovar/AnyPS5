@@ -1,3 +1,4 @@
+#include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
 #include <cinttypes>
 #include <cstddef>
 #include <cstdint>
@@ -9,7 +10,13 @@ extern "C" {
 
 int APS5_VABI sceNpUniversalDataSystemInitialize(const NpUniversalDataSystemInitParam* param) {
     if (param == nullptr) {
-        APS5_INVALID_ARG_EX;
+        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+    }
+    if (param->size != sizeof(NpUniversalDataSystemInitParam)) {
+        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_PARAM_SIZE;
+    }
+    if (param->pool_size == 0) {
+        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }

@@ -1,5 +1,6 @@
 import argparse
 import io
+import itertools
 import json
 import os
 import posixpath
@@ -13,6 +14,7 @@ from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from nid_names import CPP_TOKEN, NID_POSTFIX, compute_nid, source_aliases
+import base_ref
 import env_reference
 
 RULES = {
@@ -24,6 +26,7 @@ RULES = {
     "system-dependency": ("error", "CONTRIBUTING.md#code", "Third-party code is a submodule under 3rdparty/ built from source, not found on the system"),
     "title-specific": ("error", "CONTRIBUTING.md#code", "Implement the general behaviour, not what one title needs; title-specific code belongs in its sce_module"),
     "extension": ("error", "CONTRIBUTING.md#code", "Avoid non-standard extensions where standard C++ is enough"),
+    "alignment": ("error", "CONTRIBUTING.md#code", "MinGW GCC rejects static objects aligned above 8192 bytes; align a larger block at run time inside a bigger buffer"),
     "notes-file": ("error", "CONTRIBUTING.md#branches-and-pull-requests", "Notes, investigation and agent files go in the pull request, not in the repository; only the root AGENTS.md is allowed"),
     "binary": ("error", "docs/dev/CONVENTIONS.md", "Only UTF-8 text files in the repository; images go in the gist comments"),
     "ci-gate": ("error", "CONTRIBUTING.md#build-and-test", "A job that runs for pull requests needs a file filter: paths on the pull_request trigger, or needs eligibility and an if on its outputs"),
@@ -33,9 +36,11 @@ RULES = {
     "pr-template": ("error", ".github/pull_request_template.md", "Fill in the pull request template"),
     "env-reference": ("error", "docs/dev/ENVIRONMENT.md", "Every APS5_* or ANYPS5_* name a pull request adds to the code has a row in docs/dev/ENVIRONMENT.md, a row whose name the pull request stops reading is removed, and a row the pull request removes is no longer read"),
     "debt-length": ("warning", "CONTRIBUTING.md#documentation", "Technical debt entry over 1000 characters: state the gap first (what differs from the console, what is unverified, what throws) and keep only the behaviour it needs"),
+    "debt-labels": ("warning", "docs/dev/TechnicalDebt.md", "Unknown label in a technical debt entry's Labels: trailer, which ends the entry; the labels are console, firmware, gpu, title, code, no-test, tested, windows, macos and linux"),
 }
 
 CPP = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp"}
+ASSEMBLY = {".S", ".s", ".asm"}
 IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico", ".tga", ".dds"}
 NOTES = {".md", ".markdown", ".rst", ".log", ".patch", ".diff"}
 AGENT_FILES = {
@@ -46,22 +51,44 @@ DEBT = "docs/dev/TechnicalDebt.md"
 DEBT_DIR = "docs/dev/debt/"
 DEBT_TARGET = re.compile(r"\]\((?:\.\./)+(core/[^)#\s]+)")
 DEBT_ENTRY_LIMIT = 1000
+DEBT_LABELS = {
+    "closer": ("console", "firmware", "gpu", "title", "code"),
+    "test": ("no-test", "tested"),
+    "platform": ("windows", "macos", "linux"),
+}
+DEBT_LABEL_TRAILER = re.compile(r"\bLabels:[ \t]*([^\n]*?)\.?[ \t]*$", re.M)
 
 CONVENTIONAL = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: \S")
 STRINGS = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+DIRECTIVE = re.compile(r"^[\s\ufeff]*#\s*(?:(?:if|ifdef|ifndef|elif|elifdef|elifndef|else|endif|define|undef|include|include_next|import|error|warning|pragma|line|ident|sccs|assert|unassert)\b|$)")
 ALLOWED_COMMENT = re.compile(r"^\s*(#\s*endif\b|}\s*;?\s*//\s*(end\s+)?namespace\b)")
+LICENSE_MARKER = re.compile(
+    r"SPDX-License-Identifier"
+    r"|Copyright\s*(?:\([cC]\)|©|\d{4})"
+    r"|Permission is hereby granted"
+    r"|Permission to use,? copy,? modify"
+    r"|Redistribution and use in source and binary forms",
+    re.I)
 CMAKE_TOKEN = re.compile(r'\[(=*)\[.*?\]\1\]|"(?:\\.|[^"\\])*"|(?P<comment>#\[(?P<level>=*)\[.*?\](?P=level)\]|#[^\n]*)|\\.', re.S)
 EXPORT = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 NID_SOURCES = r"APS5_EXPORT|APS5_VABI|_nid_postfix|ASM_FUNCTION"
 STUB_BODY = re.compile(r"^(?:\(void\)\s*\w+\s*;|static_cast<void>\(\s*\w+\s*\)\s*;)*"
                        r"(?:return\s*\(?\s*(?:-?(?:0x[0-9a-fA-F]+|\d+)[uUlL]*|nullptr|true|false|\w*_OK)?\s*\)?\s*;)?$")
-SYSTEM_DEPENDENCY = re.compile(r"\b(find_package\s*\((?!\s*(Python3|Threads|Git)\b)|pkg_check_modules\b|pkg_search_module\b|find_(library|path|program|file)\b)", re.I)
+SYSTEM_DEPENDENCY = re.compile(r"\b(find_package\s*\((?!\s*(Python3|Threads|Git|LLVM)\b)|pkg_check_modules\b|pkg_search_module\b|find_(library|path|program|file)\b)", re.I)
 TITLE = re.compile(r"\b(PPSA|CUSA)\d{5}\b")
 EXTENSION = re.compile(r"__attribute__|__declspec|#\s*pragma\s+(?!once\b)")
-LINK = re.compile(r"\[[^\]]+\]\(([^)\s]+)")
+INTEGER = r"(0[xX][0-9a-fA-F']+|0[bB][01']+|[0-9][0-9']*)[uUlLzZ]*"
+ALIGNAS = re.compile(rf"\balignas\s*\(\s*(?:{INTEGER}|([A-Za-z_][A-Za-z0-9_]*))\s*\)")
+CONSTANT = re.compile(rf"\bconstexpr\b[^;=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s*|\{{\s*){INTEGER}\s*[;}}]")
+NAMESPACE = re.compile(r"\bnamespace\s+((?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*(?:inline\s+)?)*[A-Za-z_][A-Za-z0-9_]*)\s*$|\bnamespace\s*$")
+LINKAGE = re.compile(r'\bextern\s*""\s*$')
+ALIGNMENT_LIMIT = 8192
+LINK = re.compile(r"\[[^\]]+\]\((<[^<>\r\n]*>|(?!<)[^)\s]+)")
 FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*\r?$|^ {0,3}(?:```|~~~).*\Z", re.S | re.M)
-INLINE = re.compile(r"`[^`\n]*`")
+BACKSLASH_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")
+BACKTICKS = re.compile(r"`+")
+INLINE = re.compile(BACKSLASH_ESCAPE.pattern + r"|`+")
 SECTION = re.compile(r"^###(?!#)\s*(.+?)\s*$", re.M)
 KEY = re.compile(r"^( *)([A-Za-z0-9_-]+|'[^']*'|\"[^\"]*\"):(?:\s+(.*?))?\s*$")
 
@@ -93,10 +120,12 @@ def git(*args, text=True):
 class Check:
     def __init__(self, base, head):
         self.head = head
+        self.target = base
         self.base = git("merge-base", base, head).strip()
         self.findings = []
         self.added = defaultdict(list)
         self.status = {}
+        self.renamed_from = set()
         self.numstat = {}
         entries = [(metadata.split(), path) for metadata, path in
                    (entry.split("\t", 1) for entry in git("ls-tree", "-rz", "--full-tree", head).split("\0") if entry)]
@@ -110,6 +139,7 @@ class Check:
         for status in statuses:
             path = next(statuses)
             if status.startswith("R"):
+                self.renamed_from.add(path)
                 path = next(statuses)
             self.status[path] = status[0]
         statistics = iter(git("diff", "--numstat", "-z", *diff).split("\0")[:-1])
@@ -169,18 +199,30 @@ class Check:
         for path, lines in self.files(lambda p: p.suffix in CPP):
             core = path.startswith("core/") and "tests" not in PurePosixPath(path).parts
             source = self.show(path).split("\n")
+            expanded = expand_abi_aliases(cpp_text("\n".join(source))).split("\n")
             masked = cpp_text("\n".join(source), preserve_comments=True).split("\n")
+            assembly = asm_exports("\n".join(source)) if core and path.startswith("core/libs/prx/") else {}
+            constants, starts = None, None
             for number, text in lines:
                 bare = masked[number - 1]
-                if ("//" in bare or "/*" in bare) and not ALLOWED_COMMENT.match(bare):
+                if ("//" in bare or "/*" in bare) and not ALLOWED_COMMENT.match(bare) and not license_run(source, expanded, number - 1):
                     self.report("comment", path, number)
                 if EXTENSION.search(bare):
                     self.report("extension", path, number, EXTENSION.search(bare).group(0))
+                if "alignas" in bare:
+                    if constants is None:
+                        constants = named_constants(cpp_text("\n".join(source)))
+                        starts = list(itertools.accumulate((len(line) + 1 for line in masked), initial=0))
+                    alignment = over_aligned(bare, constants, starts[number - 1])
+                    if alignment:
+                        self.report("alignment", path, number, alignment)
                 if core and TITLE.search(text):
                     self.report("title-specific", path, number, TITLE.search(text).group(0))
+                bare = expanded[number - 1]
                 if core and path.startswith("core/libs/prx/"):
                     unknowns.extend((nid, name, path, number) for nid, name in source_aliases(text) if "unknown" in name.lower())
                     symbols.extend((symbol, path, number) for symbol in nid_symbols(text))
+                exports.update((name, (path, number)) for name in assembly.get(number, ()) if not name.endswith(("_nid_no_patch", "_nid_no_patch_cut")))
                 match = EXPORT.search(bare)
                 if match and core and path.startswith("core/libs/prx/") and not match.group(1).endswith(("_nid_no_patch", "_nid_no_patch_cut")):
                     source = source or self.show(path).splitlines()
@@ -196,7 +238,7 @@ class Check:
             source = self.show(path)
             comments = python_comments(source) if path.endswith(".py") else cmake_comments(source)
             for number, text in lines:
-                shebang = text.startswith("#!") or (number == 1 and text.startswith("\ufeff#!"))
+                shebang = number == 1 and text.removeprefix("\ufeff").startswith("#!")
                 comment = number in comments if comments is not None else "#" in STRINGS.sub('""', text)
                 if comment and not shebang:
                     self.report("comment", path, number)
@@ -206,21 +248,23 @@ class Check:
     def duplicates(self, exports):
         if not exports:
             return
-        result = subprocess.run(["git", "-c", "core.quotePath=false", "grep", "-nF", "--full-name", "-f", "-", self.head, "--", ":(top)core/libs/prx"], input="\n".join(exports) + "\n", capture_output=True, encoding="utf-8", errors="replace")
-        hits = [line.split(":", 3)[1:] for line in filter(None, result.stdout.split("\n"))]
-        self.read(path for path, _, _ in hits)
-        sources = {}
-        for path, number, text in hits:
-            if path not in sources:
-                sources[path] = cpp_text(self.show(path)).split("\n")
-            source = sources[path]
-            match = next((match for match in EXPORT.finditer(source[int(number) - 1]) if match.group(1) in exports), None)
-            if match is None:
+        paths = sorted(path for path in self.objects if path.startswith("core/libs/prx/") and
+                       "tests" not in PurePosixPath(path).parts)
+        self.read(paths)
+        for path in paths:
+            text = self.show(path)
+            if "APS5_VABI" not in text and "ASM_FUNCTION" not in text:
                 continue
-            name = match.group(1)
-            own, own_number = exports[name]
-            if library(path) != library(own) and "tests" not in PurePosixPath(path).parts and function_body(source, int(number) - 1) is not None:
-                self.report("duplicate-export", own, own_number, f"{name} is also in {library(path)}")
+            source = expand_abi_aliases(cpp_text(text)).split("\n")
+            assembly = asm_exports(text)
+            for number, line in enumerate(source):
+                names = [match.group(1) for match in EXPORT.finditer(line)
+                         if match.group(1) in exports and library(path) != library(exports[match.group(1)][0])
+                         and function_body(source, number) is not None]
+                names += [name for name in assembly.get(number + 1, ()) if name in exports and library(path) != library(exports[name][0])]
+                for name in names:
+                    own, own_number = exports[name]
+                    self.report("duplicate-export", own, own_number, f"{name} is also in {library(path)}")
 
     def unknown_nids(self, unknowns, symbols):
         if not unknowns and not symbols:
@@ -265,6 +309,24 @@ class Check:
                 if ("//" in bare or "/*" in bare) and not ALLOWED_COMMENT.match(bare):
                     self.report("comment", path, number)
 
+    def assembly(self):
+        if any(is_debt(path) for path in self.status):
+            return
+        for path, lines in self.files(lambda p: p.suffix in ASSEMBLY):
+            preprocessed = PurePosixPath(path).suffix == ".S"
+            source = self.show(path).split("\n")
+            expanded = cpp_text("\n".join(source)).split("\n")
+            masked = cpp_text("\n".join(source), preserve_comments=True).split("\n")
+            directives = set()
+            for number, text in enumerate(masked, 1):
+                if preprocessed and (DIRECTIVE.match(text) or (number - 1 in directives and masked[number - 2].rstrip().endswith("\\"))):
+                    directives.add(number)
+            for number, _ in lines:
+                bare = masked[number - 1]
+                comment = "//" in bare or "/*" in bare or ("#" in bare and number not in directives)
+                if comment and not (preprocessed and ALLOWED_COMMENT.match(bare)) and not license_run(source, expanded, number - 1):
+                    self.report("comment", path, number)
+
     def submodules(self):
         result = subprocess.run(["git", "config", "--no-includes", "-z", "--blob", f"{self.head}:.gitmodules", "--list"],
                                 capture_output=True, encoding="utf-8", errors="replace")
@@ -295,10 +357,12 @@ class Check:
             if status == "R" and not path.startswith("3rdparty/") and PurePosixPath(path).suffix == ".md":
                 files[path] = list(enumerate(self.show(path).split("\n"), 1))
         for path, lines in files.items():
-            fenced = fenced_lines(self.show(path))
+            source = self.show(path)
+            fenced = fenced_lines(source)
+            entries = debt_entries(source) if is_debt(path) else {}
             for number, text in lines:
                 if is_debt(path) and text.startswith("- "):
-                    name = debt_name(text)
+                    name = debt_name(entries.get(number, text))
                     expected = f"{DEBT_DIR}{name}.md" if name else DEBT
                     if path != expected:
                         self.report("debt-file", path, number, expected)
@@ -307,12 +371,32 @@ class Check:
                 for target, resolved in links(path, text):
                     if resolved not in self.tree and resolved not in self.dirs:
                         self.report("doc-link", path, number, target)
+        deleted = {path for path, status in self.status.items() if status == "D"} | self.renamed_from
+        deleted |= {str(parent) for path in deleted for parent in PurePosixPath(path).parents}
+        if deleted:
+            for path in sorted(self.tree):
+                if path.startswith("3rdparty/") or PurePosixPath(path).suffix != ".md" or path in deleted:
+                    continue
+                checked = {number for number, _ in files.get(path, [])}
+                source = self.show(path)
+                fenced = fenced_lines(source)
+                for number, text in enumerate(source.split("\n"), 1):
+                    if number in checked or number in fenced:
+                        continue
+                    for target, resolved in links(path, text):
+                        if resolved in deleted and resolved not in self.tree and resolved not in self.dirs:
+                            self.report("doc-link", path, number, target)
 
     def debt_entries(self):
+        known = {label for labels in DEBT_LABELS.values() for label in labels}
         for path, lines in self.files(lambda p: is_debt(p.as_posix())):
+            entry_lines = {start + offset for start, entry in debt_entries(self.show(path)).items() for offset in range(len(entry.split("\n")))}
             for number, text in lines:
                 if long_debt_entry(text):
                     self.report("debt-length", path, number, f"{len(text)} characters")
+                for label in debt_labels(text) if number in entry_lines else []:
+                    if label not in known:
+                        self.report("debt-labels", path, number, label)
 
     def workflows(self):
         for path in sorted(self.status):
@@ -338,7 +422,7 @@ class Check:
         doc = "docs/dev/ENVIRONMENT.md"
         added, removed, dropped = {}, set(), set()
         path, number, in_hunk = "", 0, False
-        for line in git("diff", "-U0", self.base, self.head, "--", "core", doc).splitlines():
+        for line in git("diff", "-U0", self.base, self.head, "--", ":(top)core", f":(top){doc}").splitlines():
             if line.startswith("diff --git"):
                 path, in_hunk = "", False
             elif line.startswith("@@"):
@@ -356,12 +440,15 @@ class Check:
                     removed.update(match.group("name") for _, match in env_reference.line_reads(line[1:]))
             elif line.startswith("+++ b/"):
                 path = line[6:]
-        result = subprocess.run(["git", "grep", "-nE", env_reference.GREP, self.head, "--", "core"],
+        result = subprocess.run(["git", "grep", "-nE", "--full-name", env_reference.GREP, self.head, "--", ":(top)core"],
                                 capture_output=True, encoding="utf-8", errors="replace")
         reads = set()
         for line in result.stdout.splitlines():
             reads.update(match.group("name") for _, match in env_reference.line_reads(line))
-        documented = set(env_reference.documented_pattern(env_reference.PREFIXES).findall(self.show(doc))) if doc in self.tree else set()
+        pattern = env_reference.documented_pattern(env_reference.PREFIXES)
+        documented = set(pattern.findall(self.show(doc))) if doc in self.tree else set()
+        if git("ls-tree", "--full-tree", "--name-only", self.target, "--", doc).strip() == doc:
+            documented |= set(pattern.findall(git("show", f"{self.target}:{doc}"))) - dropped
         for name, (source, line) in sorted(added.items()):
             if name not in documented:
                 self.report("env-reference", source, line, f"{name} is read here but has no row in {doc}")
@@ -377,8 +464,12 @@ class Check:
         body = re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
         sections = dict(zip(SECTION.findall(body), SECTION.split(body)[2::2]))
         for name in ("What", "Tested", "Checklist"):
-            if not sections.get(name, "").strip():
-                self.report("pr-template", "", 0, f"section '{name}' is missing or empty")
+            if name not in sections:
+                found = re.search(rf"^[ \t]*#+[ \t]*{name}[ \t]*$", body, re.M | re.I)
+                hint = f"; found '{found.group(0).strip()}'" if found else ""
+                self.report("pr-template", "", 0, f"add the '### {name}' heading of the template{hint}")
+            elif not sections[name].strip():
+                self.report("pr-template", "", 0, f"fill the '### {name}' section")
         checklist = sections.get("Checklist", "")
         for item in re.findall(r"^\s*[-*+]\s*\[ \]\s*(.+)$", checklist, re.M):
             self.report("pr-template", "", 0, f"unchecked: {item.strip()}")
@@ -404,11 +495,39 @@ def fenced_lines(text):
     return inside
 
 
+def link_syntax(text):
+    def blank(value):
+        return re.sub(r"[^\r\n]", " ", value)
+
+    text = FENCE.sub(lambda match: blank(match[0]), text)
+    parts = []
+    cursor = 0
+    while match := INLINE.search(text, cursor):
+        parts.append(text[cursor:match.start()])
+        token = match[0]
+        end = match.end()
+        if token.startswith("\\"):
+            parts.append("\0" * len(token))
+        else:
+            close = next((tick for tick in BACKTICKS.finditer(text, end) if tick[0] == token), None)
+            if close:
+                end = close.end()
+                parts.append(blank(text[match.start():end]))
+            else:
+                parts.append(token)
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 def links(path, text):
     result = []
-    text = INLINE.sub("code", FENCE.sub("", text))
-    for target in LINK.findall(text):
-        if re.match(r"[A-Za-z][A-Za-z0-9+.-]*:|//|#", target):
+    for match in LINK.finditer(link_syntax(text)):
+        target = text[match.start(1):match.end(1)]
+        if target.startswith("<"):
+            target = target[1:-1]
+        target = BACKSLASH_ESCAPE.sub(r"\1", target)
+        if not target or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:|//|#", target):
             continue
         target = target.split("#", 1)[0].split("?", 1)[0]
         decoded = unquote(target)
@@ -422,6 +541,30 @@ def is_debt(path):
 
 def long_debt_entry(text):
     return text.startswith("- ") and len(text) > DEBT_ENTRY_LIMIT
+
+
+def debt_labels(text):
+    match = DEBT_LABEL_TRAILER.search(text)
+    return [label.strip() for label in match.group(1).split(",") if label.strip()] if match else []
+
+
+def debt_entries(text):
+    entries = {}
+    start = None
+    blanks = []
+    for number, line in enumerate(text.split("\n"), 1):
+        if line.startswith("- "):
+            start = number
+            entries[start] = [line]
+            blanks = []
+        elif start is not None and line.startswith((" ", "\t")):
+            entries[start] += blanks + [line]
+            blanks = []
+        elif line.strip():
+            start = None
+        else:
+            blanks.append(line)
+    return {number: "\n".join(lines) for number, lines in entries.items()}
 
 
 def debt_name(text):
@@ -456,13 +599,44 @@ def block(lines, start):
     return lines[start + 1:end]
 
 
+def flow_mapping(value):
+    tokens = re.findall(r'''"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^{}\[\],:\s]+|[{}\[\],:]''', value)
+    if not tokens or tokens[0] != "{" or tokens[-1] != "}":
+        return {}
+    result = {}
+    stack = []
+    start, colon = 1, None
+    for index, token in enumerate(tokens):
+        if token in ("{", "["):
+            stack.append(token)
+        elif token in ("}", "]"):
+            if not stack or stack.pop() != ("{" if token == "}" else "["):
+                return {}
+            if not stack and index != len(tokens) - 1:
+                return {}
+        if len(stack) == 1 and token == ":" and colon is None:
+            colon = index
+        if (len(stack) == 1 and token == ",") or (not stack and token == "}"):
+            if colon == start + 1:
+                result[tokens[start].strip("'\"")] = " ".join(tokens[colon + 1:index])
+            elif start != index:
+                return {}
+            start, colon = index + 1, None
+    return result if not stack else {}
+
+
 def pull_request_filtered(lines, trigger):
     _, _, _, value = trigger
     if value:
+        if value.lstrip().startswith("{"):
+            triggers = flow_mapping(value)
+            return "pull_request" not in triggers or bool({"paths", "paths-ignore"} & flow_mapping(triggers["pull_request"]).keys())
         return "pull_request" not in re.findall(r"[A-Za-z_]+", value)
     triggers = block(lines, lines.index(trigger))
     for index, (_, indent, name, value) in enumerate(triggers):
         if name == "pull_request" and indent == triggers[0][1]:
+            if value:
+                return bool({"paths", "paths-ignore"} & flow_mapping(value).keys())
             return any(entry[2] in ("paths", "paths-ignore") for entry in block(triggers, index))
     return True
 
@@ -512,6 +686,16 @@ def symbol_nid(name):
     return compute_nid(base) if base else None
 
 
+def asm_exports(text):
+    tokens = [match for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
+    exports = defaultdict(list)
+    for index, match in enumerate(tokens[:-2]):
+        name = tokens[index + 2].group()[1:-1]
+        if match.group() in ("APS5_ASM_FUNCTION", "APS5_SIGNAL_ASM_FUNCTION") and tokens[index + 1].group() == "(" and tokens[index + 2].group("string") is not None and IDENTIFIER.fullmatch(name):
+            exports[text.count("\n", 0, tokens[index + 2].start()) + 1].append(name)
+    return exports
+
+
 def nid_symbols(text):
     tokens = [match for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
     names = []
@@ -552,26 +736,139 @@ def cmake_comments(text):
     return lines
 
 
-def cpp_text(text, preserve_comments=False):
-    def mask(match):
-        if match.group("code") is not None or preserve_comments and match.group("comment") is not None:
-            return match.group()
-        blank = re.sub(r"[^\n]", " ", match.group())
-        return blank if match.group("comment") is not None else '""' + blank[2:]
+def cpp_mask(match, preserve_comments=False):
+    if match.group("code") is not None or preserve_comments and match.group("comment") is not None:
+        return match.group()
+    blank = re.sub(r"[^\n]", " ", match.group())
+    return blank if match.group("comment") is not None else '""' + blank[2:]
 
-    return CPP_TOKEN.sub(mask, text)
+
+def cpp_text(text, preserve_comments=False):
+    return CPP_TOKEN.sub(lambda match: cpp_mask(match, preserve_comments), text)
+
+
+def license_run(source, expanded, index):
+    if expanded[index].strip():
+        return False
+    start = end = index
+    while start > 0 and not expanded[start - 1].strip() and source[start - 1].strip():
+        start -= 1
+    while end + 1 < len(expanded) and not expanded[end + 1].strip() and source[end + 1].strip():
+        end += 1
+    return bool(LICENSE_MARKER.search("\n".join(source[start:end + 1])))
+
+
+def cpp_pieces(text):
+    end = 0
+    for match in CPP_TOKEN.finditer(text):
+        yield text[end:match.start()]
+        yield cpp_mask(match)
+        end = match.end()
+    yield text[end:]
+
+
+def expand_abi_aliases(text):
+    aliases = {}
+
+    def expand(match):
+        name = match.group()
+        seen = set()
+        while name in aliases and name not in seen and name != "APS5_VABI":
+            seen.add(name)
+            name = aliases[name]
+        return "APS5_VABI" if name == "APS5_VABI" else match.group()
+
+    lines = []
+    for line in text.split("\n"):
+        directive = re.match(r"^[\s\ufeff]*#\s*(define|undef)\s+([A-Za-z_]\w*)(.*)$", line)
+        if directive:
+            action, name, value = directive.groups()
+            aliases.pop(name, None)
+            replacement = re.fullmatch(r"\s+([A-Za-z_]\w*)\s*", value)
+            if action == "define" and replacement:
+                aliases[name] = replacement.group(1)
+            lines.append(line)
+        else:
+            lines.append(IDENTIFIER.sub(expand, line) if aliases else line)
+    return "\n".join(lines)
+
+
+def integer_literal(text):
+    digits = text.replace("'", "").lower()
+    if digits.startswith(("0x", "0b")):
+        return int(digits, 0)
+    return int(digits, 8 if len(digits) > 1 and digits[0] == "0" else 10)
+
+
+def brace_scopes(text):
+    stack, scopes, boundary = [], [], -1
+    for index, character in enumerate(text):
+        if character not in "{};":
+            continue
+        if character == "{":
+            head = text[boundary + 1:index]
+            outer = next((key[1] for _, key in reversed(stack) if key and key[0] == "namespace"), "")
+            match = NAMESPACE.search(head)
+            if match and re.search(r"\binline\s+namespace\b", head):
+                key = ("namespace", outer)
+            elif match:
+                key = ("namespace", outer + "::" + re.sub(r"\binline\b|\s+", "", match.group(1) or "{anonymous}"))
+            else:
+                key = None if LINKAGE.search(head) else ("block", index)
+            stack.append((index, key))
+        elif character == "}" and stack:
+            start, key = stack.pop()
+            scopes.append((start, index, key))
+        boundary = index
+    return scopes
+
+
+def scope_chain(scopes, position):
+    chain = []
+    for _, _, key in sorted((scope for scope in scopes if scope[0] < position < scope[1]), reverse=True):
+        if key and key[0] == "namespace":
+            parts = key[1].split("::")
+            chain.extend(prefix for prefix in (("namespace", "::".join(parts[:count])) for count in range(len(parts), 1, -1)) if prefix not in chain)
+        elif key:
+            chain.append(key)
+    return chain + [("namespace", "")]
+
+
+def named_constants(text):
+    scopes = brace_scopes(text)
+    definitions = [(match.group(1), integer_literal(match.group(2)), match.start(), scope_chain(scopes, match.start())[0]) for match in CONSTANT.finditer(text)]
+    return definitions, scopes
+
+
+def constant_value(constants, name, position):
+    definitions, scopes = constants
+    chain = scope_chain(scopes, position)
+    visible = [(-chain.index(scope), start, value) for found, value, start, scope in definitions if found == name and start < position and scope in chain]
+    return max(visible)[2] if visible else 0
+
+
+def over_aligned(text, constants=((), ()), offset=0):
+    for match in ALIGNAS.finditer(text):
+        value = integer_literal(match.group(1)) if match.group(1) else constant_value(constants, match.group(2), offset + match.start())
+        if value > ALIGNMENT_LIMIT:
+            return match.group(0)
+    return None
 
 
 def function_body(lines, start):
-    text = cpp_text("\n".join(lines[start:start + 400]))
-    brace, semicolon = text.find("{"), text.find(";")
-    if brace < 0 or 0 <= semicolon < brace:
-        return None
-    depth = 0
-    for index in range(brace, len(text)):
-        depth += {"{": 1, "}": -1}.get(text[index], 0)
-        if depth == 0:
-            return re.sub(r"\s+", " ", text[brace + 1:index]).replace(" ", "")
+    body, depth = None, 0
+    for piece in cpp_pieces("\n".join(lines[start:start + 400])):
+        for character in piece:
+            if body is None:
+                if character == ";":
+                    return None
+                if character == "{":
+                    body, depth = [], 1
+                continue
+            depth += {"{": 1, "}": -1}.get(character, 0)
+            if depth == 0:
+                return re.sub(r"\s+", " ", "".join(body)).replace(" ", "")
+            body.append(character)
     return None
 
 
@@ -610,25 +907,44 @@ if __name__ == "__main__":
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="check a branch against the contributing rules; errors fail the check")
-    parser.add_argument("--base", default="origin/main", help="branch the pull request targets (default: origin/main)")
+    parser.add_argument("--base", help="branch the pull request targets (default: upstream/main, then origin/main, then main)")
     parser.add_argument("--head", default="HEAD")
     parser.add_argument("--title", help="pull request title to check")
     parser.add_argument("--body", help="file with the pull request description to check")
     parser.add_argument("--event", default=os.environ.get("GITHUB_EVENT_PATH"), help="GitHub event JSON (set in CI)")
     args = parser.parse_args()
-    check = Check(args.base, args.head)
+    event = {}
+    if args.event:
+        try:
+            event = json.loads(Path(args.event).read_text(encoding="utf-8"))
+        except (OSError, ValueError, RecursionError) as error:
+            parser.error(f"--event {args.event}: {error}")
+        if not isinstance(event, dict):
+            parser.error(f"--event {args.event}: not a JSON object")
+    body = ""
+    if args.body:
+        try:
+            body = Path(args.body).read_text(encoding="utf-8-sig")
+        except (OSError, ValueError) as error:
+            parser.error(f"--body {args.body}: {error}")
+    try:
+        base = base_ref.resolve(".", args.base)
+    except ValueError as error:
+        parser.error(str(error))
+    check = Check(base, args.head)
     check.code()
     check.build()
     check.shaders()
+    check.assembly()
     check.repository()
     check.docs()
     check.debt_entries()
     check.workflows()
     check.commits()
     check.env_reference()
-    pr = json.load(open(args.event, encoding="utf-8")).get("pull_request") if args.event else None
+    pr = event.get("pull_request")
     if pr:
         check.pull_request(pr["title"], pr["body"])
     elif args.title is not None or args.body:
-        check.pull_request(args.title or "", open(args.body, encoding="utf-8-sig").read() if args.body else "")
+        check.pull_request(args.title or "", body)
     raise SystemExit(output(check, os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")))

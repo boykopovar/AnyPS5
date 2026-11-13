@@ -17,6 +17,7 @@
 #include <mach/mach_vm.h>
 #endif
 #include <cstdio>
+#include <cstdlib>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -33,6 +34,8 @@
 namespace GuestArena {
 namespace {
 
+std::atomic<void (*)(std::uintptr_t, std::size_t)> hostWriteHook{nullptr};
+
 std::atomic<void (*)(std::uintptr_t, std::size_t)> hostReadHook{nullptr};
 
 #ifdef _WIN32
@@ -46,10 +49,20 @@ void noteAccess(const void* pointer, std::size_t bytes) {
 }
 
 constexpr std::uintptr_t GuestArenaOffset = GuestArena::GuestAddressOffset;
-constexpr std::uintptr_t ArenaStart = 0x0000000200000000ull + GuestArenaOffset;
+constexpr std::uintptr_t DefaultAllocationStart = 0x0000000200000000ull + GuestArenaOffset;
+#ifdef __APPLE__
+constexpr std::uintptr_t ArenaStart = DefaultAllocationStart;
+#else
+constexpr std::uintptr_t ArenaStart = GuestArenaOffset == 0 ? 0x10000ull : DefaultAllocationStart;
+#endif
 constexpr std::uintptr_t SystemReservedStart = 0x00000007FFFFC000ull + GuestArenaOffset;
 constexpr std::uintptr_t SystemReservedEnd = 0x0000001000000000ull + GuestArenaOffset;
 constexpr std::uintptr_t ApplicationAreaEnd = 0x000000FC00000000ull + GuestArenaOffset;
+
+#ifdef __EMSCRIPTEN__
+constexpr std::size_t EmscriptenArenaAlignment = std::size_t{1} << 32;
+constexpr std::size_t EmscriptenArenaBytes = std::size_t{8} << 30;
+#endif
 
 std::uintptr_t alignUp(std::uintptr_t value, std::size_t alignment) {
     return (value + alignment - 1) & ~(static_cast<std::uintptr_t>(alignment) - 1);
@@ -86,7 +99,7 @@ public:
         RequireAllocatable(alignment);
         std::lock_guard lock(_lock);
         auto candidate = hint < _end ? FindAtOrAbove(hint, bytes, alignment) : 0;
-        if (candidate == 0 && hint > _base) candidate = FindAtOrAbove(_base, bytes, alignment);
+        if (candidate == 0 && hint > _base) candidate = FindAtOrAbove(hint < DefaultAllocationStart ? _base : DefaultAllocationStart, bytes, alignment);
         return Claim(candidate, bytes);
     }
 
@@ -147,6 +160,11 @@ public:
         std::lock_guard lock(_lock);
         const auto start = reinterpret_cast<std::uintptr_t>(pointer);
         const auto end = start + bytes;
+#ifdef __EMSCRIPTEN__
+        NoteDirtyLocked(start, end);
+#endif
+        _occupiedPrefixEnd = std::min(_occupiedPrefixEnd, std::max(_base, start));
+        _occupiedDefaultPrefixEnd = std::min(_occupiedDefaultPrefixEnd, std::max(DefaultAllocationStart, start));
         auto it = _used.upper_bound(start);
         if (it != _used.begin()) --it;
         while (it != _used.end() && it->first < end) {
@@ -167,7 +185,12 @@ public:
 
 private:
     Arena() {
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__EMSCRIPTEN__)
+        void* const region = std::aligned_alloc(EmscriptenArenaAlignment, EmscriptenArenaBytes);
+        if (region == nullptr) throw std::runtime_error("guest arena: cannot reserve the guest range in WebAssembly memory");
+        _base = reinterpret_cast<std::uintptr_t>(region);
+        _end = _base + EmscriptenArenaBytes;
+#elif defined(__linux__) || defined(__APPLE__)
         SeedHostUsedRanges();
 #elif defined(_WIN32)
         _writeWatched = std::getenv("APS5_NO_WRITE_WATCH") == nullptr;
@@ -273,6 +296,10 @@ private:
             const int failed = ReserveNoReplace(cursor, end - cursor);
             if (failed == 0) continue;
             if (failed != EEXIST) {
+                if (cursor < DefaultAllocationStart && (failed == EACCES || failed == EPERM)) {
+                    occupied.emplace_back(cursor, end);
+                    continue;
+                }
                 char message[128];
                 std::snprintf(message, sizeof(message), "guest arena: cannot reserve 0x%llx+0x%llx",
                     static_cast<unsigned long long>(cursor), static_cast<unsigned long long>(end - cursor));
@@ -299,6 +326,46 @@ private:
     }
 #endif
 
+#ifdef __EMSCRIPTEN__
+    void NoteDirtyLocked(std::uintptr_t start, std::uintptr_t end) {
+        auto it = _dirty.upper_bound(start);
+        if (it != _dirty.begin() && std::prev(it)->second >= start) --it;
+        while (it != _dirty.end() && it->first <= end) {
+            start = std::min(start, it->first);
+            end = std::max(end, it->second);
+            it = _dirty.erase(it);
+        }
+        _dirty.emplace(start, end);
+    }
+
+public:
+    void NoteDirty(const void* pointer, std::size_t bytes) {
+        std::lock_guard lock(_lock);
+        const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+        NoteDirtyLocked(start, start + bytes);
+    }
+
+    void ZeroDirty(void* pointer, std::size_t bytes) {
+        std::lock_guard lock(_lock);
+        const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+        const auto end = start + bytes;
+        auto it = _dirty.upper_bound(start);
+        if (it != _dirty.begin() && std::prev(it)->second > start) --it;
+        while (it != _dirty.end() && it->first < end) {
+            const auto [dirtyStart, dirtyEnd] = *it;
+            const auto first = std::max(dirtyStart, start);
+            const auto last = std::min(dirtyEnd, end);
+            std::memset(reinterpret_cast<void*>(first), 0, last - first);
+            it = _dirty.erase(it);
+            if (dirtyStart < first) _dirty.emplace(dirtyStart, first);
+            if (dirtyEnd > last) it = _dirty.emplace(last, dirtyEnd).first;
+        }
+    }
+
+private:
+    std::map<std::uintptr_t, std::uintptr_t> _dirty;
+#endif
+
     std::mutex _lock;
     std::map<std::uintptr_t, std::uintptr_t> _used;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _holes;
@@ -308,13 +375,16 @@ private:
         if (alignment == 0 || (alignment & (alignment - 1)) != 0) throw std::invalid_argument("invalid guest arena alignment");
     }
 
-    std::uintptr_t FindAtOrAbove(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) const {
-        std::uintptr_t candidate = alignUp(std::max(_base, hint), alignment);
+    std::uintptr_t FindAtOrAbove(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) {
+        const auto first = hint == 0 ? DefaultAllocationStart : std::max(_base, hint);
+        auto& prefixEnd = first >= DefaultAllocationStart ? _occupiedDefaultPrefixEnd : _occupiedPrefixEnd;
+        std::uintptr_t candidate = alignUp(bytes == 0 ? first : std::max(prefixEnd, first), alignment);
         auto it = _used.upper_bound(candidate);
         if (it != _used.begin() && std::prev(it)->second > candidate) --it;
         for (; it != _used.end(); ++it) {
             const auto& [start, end] = *it;
             if (candidate <= _end && bytes <= _end - candidate && candidate + bytes <= start) break;
+            if (start <= prefixEnd) prefixEnd = std::max(prefixEnd, end);
             candidate = std::max(candidate, alignUp(end, alignment));
         }
         if (candidate > _end || bytes > _end - candidate) return 0;
@@ -329,6 +399,8 @@ private:
 
     std::uintptr_t _base = 0;
     std::uintptr_t _end = 0;
+    std::uintptr_t _occupiedPrefixEnd = ArenaStart;
+    std::uintptr_t _occupiedDefaultPrefixEnd = DefaultAllocationStart;
     bool _writeWatched = false;
 
 public:
@@ -341,6 +413,30 @@ public:
         }
         return false;
     }
+
+#ifndef _WIN32
+    void ReleaseHostRegion(const void* pointer, std::size_t bytes) {
+#ifdef __EMSCRIPTEN__
+        throw std::runtime_error("guest arena: host region release is unsupported in WebAssembly");
+#else
+        Release(pointer, bytes);
+        std::lock_guard lock(_lock);
+        const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+        const auto end = start + bytes;
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> kept;
+        for (const auto& [regionStart, regionEnd] : _hostRegions) {
+            if (regionEnd <= start || regionStart >= end) {
+                kept.emplace_back(regionStart, regionEnd);
+                continue;
+            }
+            if (regionStart < start) kept.emplace_back(regionStart, start);
+            if (regionEnd > end) kept.emplace_back(end, regionEnd);
+        }
+        _hostRegions = std::move(kept);
+        static_cast<void>(ReserveNoReplace(start, bytes));
+#endif
+    }
+#endif
 };
 
 const bool g_reserved = (Arena::Get(), true);
@@ -399,6 +495,171 @@ std::invalid_argument OutsideArena(const char* operation, const void* pointer, s
 }
 
 #ifdef _WIN32
+extern "C" {
+int GuardedCopy(std::uintptr_t source, void* destination, std::size_t bytes);
+int GuardedCompare(std::uintptr_t source, const void* expected, std::size_t bytes);
+int GuardedCopyAvx2(std::uintptr_t source, void* destination, std::size_t bytes);
+int GuardedCompareAvx2(std::uintptr_t source, const void* expected, std::size_t bytes);
+extern const char GuardedCopyAvx2Load[];
+extern const char GuardedCopyAvx2HighLoad[];
+extern const char GuardedCompareAvx2Load[];
+extern const char GuardedCompareAvx2HighLoad[];
+extern const char GuardedCopyWideLoad[];
+extern const char GuardedCopyByteLoad[];
+extern const char GuardedCompareWideLoad[];
+extern const char GuardedCompareByteLoad[];
+extern const char GuardedReadFailed[];
+extern const char GuardedReadFailedAvx2[];
+}
+
+asm(".text\n"
+    ".seh_proc GuardedCopy\n"
+    "GuardedCopy:\n"
+    ".seh_endprologue\n"
+    "    leaq (%rcx,%r8), %r9\n"
+    "    subq %rcx, %rdx\n"
+    "    jmp 2f\n"
+    "GuardedCopyWideLoad:\n"
+    "1:  movdqu (%rcx), %xmm0\n"
+    "    movdqu %xmm0, (%rcx,%rdx)\n"
+    "    addq $16, %rcx\n"
+    "GuardedCopyTail:\n"
+    "2:  leaq 16(%rcx), %rax\n"
+    "    cmpq %r9, %rax\n"
+    "    jbe 1b\n"
+    "    jmp 4f\n"
+    "GuardedCopyByteLoad:\n"
+    "3:  movzbl (%rcx), %eax\n"
+    "    movb %al, (%rcx,%rdx)\n"
+    "    incq %rcx\n"
+    "4:  cmpq %r9, %rcx\n"
+    "    jb 3b\n"
+    "    xorl %eax, %eax\n"
+    "    ret\n"
+    ".seh_endproc\n"
+    ".seh_proc GuardedCompare\n"
+    "GuardedCompare:\n"
+    ".seh_endprologue\n"
+    "    leaq (%rcx,%r8), %r9\n"
+    "    subq %rcx, %rdx\n"
+    "    jmp 2f\n"
+    "GuardedCompareWideLoad:\n"
+    "1:  movdqu (%rcx), %xmm0\n"
+    "    movdqu (%rcx,%rdx), %xmm1\n"
+    "    pcmpeqb %xmm1, %xmm0\n"
+    "    pmovmskb %xmm0, %eax\n"
+    "    cmpl $0xffff, %eax\n"
+    "    jne 5f\n"
+    "    addq $16, %rcx\n"
+    "GuardedCompareTail:\n"
+    "2:  leaq 16(%rcx), %rax\n"
+    "    cmpq %r9, %rax\n"
+    "    jbe 1b\n"
+    "    jmp 4f\n"
+    "GuardedCompareByteLoad:\n"
+    "3:  movzbl (%rcx), %eax\n"
+    "    cmpb (%rcx,%rdx), %al\n"
+    "    jne 5f\n"
+    "    incq %rcx\n"
+    "4:  cmpq %r9, %rcx\n"
+    "    jb 3b\n"
+    "    xorl %eax, %eax\n"
+    "    ret\n"
+    "5:  movl $1, %eax\n"
+    "    ret\n"
+    "GuardedReadFailed:\n"
+    "    movl $-1, %eax\n"
+    "    ret\n"
+    ".seh_endproc\n"
+    ".seh_proc GuardedCopyAvx2\n"
+    "GuardedCopyAvx2:\n"
+    ".seh_endprologue\n"
+    "    leaq (%rcx,%r8), %r9\n"
+    "    subq %rcx, %rdx\n"
+    "    jmp 2f\n"
+    "GuardedCopyAvx2Load:\n"
+    "1:  vmovdqu (%rcx), %ymm0\n"
+    "GuardedCopyAvx2HighLoad:\n"
+    "    vmovdqu 32(%rcx), %ymm1\n"
+    "    vmovdqu %ymm0, (%rcx,%rdx)\n"
+    "    vmovdqu %ymm1, 32(%rcx,%rdx)\n"
+    "    addq $64, %rcx\n"
+    "2:  leaq 64(%rcx), %rax\n"
+    "    cmpq %r9, %rax\n"
+    "    jbe 1b\n"
+    "    vzeroupper\n"
+    "    jmp GuardedCopyTail\n"
+    ".seh_endproc\n"
+    ".seh_proc GuardedCompareAvx2\n"
+    "GuardedCompareAvx2:\n"
+    ".seh_endprologue\n"
+    "    leaq (%rcx,%r8), %r9\n"
+    "    subq %rcx, %rdx\n"
+    "    jmp 2f\n"
+    "GuardedCompareAvx2Load:\n"
+    "1:  vmovdqu (%rcx), %ymm0\n"
+    "GuardedCompareAvx2HighLoad:\n"
+    "    vmovdqu 32(%rcx), %ymm1\n"
+    "    vpcmpeqb (%rcx,%rdx), %ymm0, %ymm0\n"
+    "    vpcmpeqb 32(%rcx,%rdx), %ymm1, %ymm1\n"
+    "    vpand %ymm1, %ymm0, %ymm0\n"
+    "    vpmovmskb %ymm0, %eax\n"
+    "    cmpl $-1, %eax\n"
+    "    jne 3f\n"
+    "    addq $64, %rcx\n"
+    "2:  leaq 64(%rcx), %rax\n"
+    "    cmpq %r9, %rax\n"
+    "    jbe 1b\n"
+    "    vzeroupper\n"
+    "    jmp GuardedCompareTail\n"
+    "3:  vzeroupper\n"
+    "    movl $1, %eax\n"
+    "    ret\n"
+    "GuardedReadFailedAvx2:\n"
+    "    vzeroupper\n"
+    "    movl $-1, %eax\n"
+    "    ret\n"
+    ".seh_endproc\n");
+
+namespace {
+
+bool HasAvx2() {
+    static const bool avx2 = __builtin_cpu_supports("avx2");
+    return avx2;
+}
+
+bool OwnedByGuest(std::uintptr_t address, std::size_t bytes) {
+    const auto& arena = Arena::Get();
+    return arena.Contains(reinterpret_cast<const void*>(address), bytes) && !arena.OverlapsHostRegion(address, bytes);
+}
+
+}
+
+bool GuestArenaCopyOwned_nid_no_patch(std::uintptr_t source, void* destination, std::size_t bytes) {
+    return OwnedByGuest(source, bytes) && (HasAvx2() ? GuardedCopyAvx2 : GuardedCopy)(source, destination, bytes) == 0;
+}
+
+bool GuestArenaCompareOwned_nid_no_patch(std::uintptr_t source, const void* expected, std::size_t bytes, bool* equal) {
+    if (!OwnedByGuest(source, bytes)) return false;
+    const auto result = (HasAvx2() ? GuardedCompareAvx2 : GuardedCompare)(source, expected, bytes);
+    *equal = result == 0;
+    return result >= 0;
+}
+
+bool GuestArenaRecoverRead_nid_no_patch(EXCEPTION_POINTERS* exception) {
+    const auto* record = exception->ExceptionRecord;
+    const auto code = record->ExceptionCode;
+    if ((code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_IN_PAGE_ERROR) || record->NumberParameters < 2 || record->ExceptionInformation[0] != 0) return false;
+    auto* context = exception->ContextRecord;
+    const auto at = reinterpret_cast<const char*>(context->Rip);
+    const bool avx2 = at == GuardedCopyAvx2Load || at == GuardedCopyAvx2HighLoad || at == GuardedCompareAvx2Load || at == GuardedCompareAvx2HighLoad;
+    if (!avx2 && at != GuardedCopyWideLoad && at != GuardedCopyByteLoad && at != GuardedCompareWideLoad && at != GuardedCompareByteLoad) return false;
+    const auto address = static_cast<std::uintptr_t>(record->ExceptionInformation[1]);
+    if (address < context->Rcx || address >= context->R9) return false;
+    context->Rip = reinterpret_cast<DWORD64>(avx2 ? GuardedReadFailedAvx2 : GuardedReadFailed);
+    return true;
+}
+
 void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection) {
     WindowsMappings::Get().SetProtection(address, bytes, protection);
     noteAccess(reinterpret_cast<const void*>(address), bytes);
@@ -471,6 +732,14 @@ void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, 
     noteAccess(pointer, bytes);
 }
 
+void GuestArenaMapZero_nid_postfix(void* pointer, std::size_t bytes) {
+    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("zero page mapping", pointer, bytes);
+    const auto generation = commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    WindowsMappings::Get().MapZero(pointer, bytes);
+    if (const auto callback = privateMappingObserver.load(std::memory_order_acquire)) callback(reinterpret_cast<std::uintptr_t>(pointer), bytes, generation);
+    noteAccess(pointer, bytes);
+}
+
 void GuestArenaMapDirect_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("direct memory mapping", pointer, bytes);
     const auto generation = commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -502,12 +771,40 @@ void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes) 
     return WindowsMappings::Get().MapAlias(address, bytes);
 }
 
+void* GuestArenaMapAliasForImport_nid_no_patch(std::uintptr_t address, std::size_t bytes, bool* boundsRefused) {
+    return WindowsMappings::Get().MapAlias(address, bytes, boundsRefused);
+}
+
 void GuestArenaUnmapAlias_nid_postfix(void* alias) {
     WindowsMappings::Get().UnmapAlias(alias);
 }
 
 bool GuestArenaResidentSpan_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uintptr_t* start, std::uintptr_t* end) {
     return WindowsMappings::Get().ResidentSpan(address, bytes, start, end);
+}
+
+void GuestArenaCompareWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    WindowsMappings::Get().CompareWhenShared(address, bytes);
+}
+
+void GuestArenaCompareResidentWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    WindowsMappings::Get().CompareWhenShared(address, bytes, true);
+}
+
+void GuestArenaComparedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count) {
+    WindowsMappings::Get().ComparedPages(address, bytes, pages, count, false);
+}
+
+void GuestArenaTakeUnreportedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count) {
+    WindowsMappings::Get().ComparedPages(address, bytes, pages, count, true);
+}
+
+void GuestArenaKnownZero_nid_no_patch(std::uintptr_t address, std::size_t bytes, void (*zero)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
+    WindowsMappings::Get().KnownZero(address, bytes, zero, context);
+}
+
+void GuestArenaForgetKnownZero_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    WindowsMappings::Get().ForgetKnownZero(address, bytes);
 }
 
 void GuestArenaForgetSection_nid_postfix(void* section) {
@@ -543,8 +840,13 @@ void* PlaceAt(void* pointer, std::size_t bytes, std::uint32_t protection) {
 #if defined(__linux__) || defined(__APPLE__)
 void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection) {
     if (!Arena::Get().Contains(reinterpret_cast<void*>(address), bytes)) throw OutsideArena("set protection", reinterpret_cast<void*>(address), bytes);
+#ifdef __APPLE__
+    if (const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(reinterpret_cast<void*>(address), bytes, PosixProtection(protection)); error != 0)
+        throw std::system_error(error, std::generic_category(), "guest arena protection failed");
+#else
     if (mprotect(reinterpret_cast<void*>(address), bytes, PosixProtection(protection)) != 0)
         throw std::system_error(errno, std::generic_category(), "guest arena protection failed");
+#endif
     noteAccess(reinterpret_cast<const void*>(address), bytes);
 }
 
@@ -565,10 +867,61 @@ void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("reset", pointer, bytes);
     if (PlaceAt(pointer, bytes, 0x01) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "guest arena reset failed");
 }
+#elif defined(__EMSCRIPTEN__)
+void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection) {
+    static_cast<void>(protection);
+    if (!Arena::Get().Contains(reinterpret_cast<void*>(address), bytes)) throw OutsideArena("set protection", reinterpret_cast<void*>(address), bytes);
+}
+
+void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_t protection, std::size_t granule) {
+    static_cast<void>(protection);
+    static_cast<void>(granule);
+    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("commit", pointer, bytes);
+    Arena::Get().MarkUsedForCommit(pointer, bytes);
+    Arena::Get().ZeroDirty(pointer, bytes);
+}
+
+void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
+    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("reset", pointer, bytes);
+    Arena::Get().NoteDirty(pointer, bytes);
+}
 #endif
+
+bool GuestArenaArmOwned_nid_no_patch(std::uintptr_t address, std::size_t bytes, std::uint64_t* words, std::size_t count, unsigned flags) {
+#ifdef _WIN32
+    if (bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address) return false;
+    const auto first = address & ~std::uintptr_t{65535};
+    const auto last = (address + bytes - 1) | std::uintptr_t{65535};
+    if (last == std::numeric_limits<std::uintptr_t>::max() || !Arena::Get().Contains(reinterpret_cast<void*>(first), last + 1 - first) || Arena::Get().OverlapsHostRegion(first, last + 1 - first)) return false;
+    return WindowsMappings::Get().ArmOwned(address, bytes, words, count, flags);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    static_cast<void>(words);
+    static_cast<void>(count);
+    static_cast<void>(flags);
+    return false;
+#endif
+}
+
+bool GuestArenaOwnedUnchanged_nid_no_patch(std::uintptr_t address, std::size_t bytes, const std::uint64_t* words, std::size_t count) {
+#ifdef _WIN32
+    return WindowsMappings::Get().OwnedUnchanged(address, bytes, words, count);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    static_cast<void>(words);
+    static_cast<void>(count);
+    return false;
+#endif
+}
 
 bool GuestArenaWriteWatched_nid_postfix() {
     return Arena::Get().WriteWatched();
+}
+
+void GuestArenaSetHostWriteHook_nid_no_patch(void (*hook)(std::uintptr_t, std::size_t)) {
+    hostWriteHook.store(hook, std::memory_order_release);
 }
 
 void GuestArenaSetAccessObserver_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes)) {
@@ -586,6 +939,7 @@ void GuestArenaPrepareHostRead_nid_no_patch(const void* pointer, std::size_t byt
 }
 
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
+    if (const auto hook = hostWriteHook.load(std::memory_order_acquire); hook != nullptr && bytes != 0) hook(reinterpret_cast<std::uintptr_t>(pointer), bytes);
 #ifdef _WIN32
     return WindowsMappings::Get().BeginHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes);
 #else
@@ -617,6 +971,7 @@ namespace {
 
 std::atomic<SharedBackingResolver> sharedBackingResolver{nullptr};
 std::atomic<SharedBackingWriter> sharedBackingWriter{nullptr};
+std::atomic<SharedBackingRunsResolver> sharedBackingRunsResolver{nullptr};
 
 }
 
@@ -636,6 +991,23 @@ bool GuestArenaWriteSharedBacking_nid_no_patch(std::uintptr_t address, const voi
 bool GuestArenaSharedBacking_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
     const auto resolver = sharedBackingResolver.load(std::memory_order_acquire);
     return resolver != nullptr && resolver(address, bytes, file, offset);
+}
+
+void GuestArenaSetSharedBackingRuns_nid_postfix(SharedBackingRunsResolver resolver) {
+    sharedBackingRunsResolver.store(resolver, std::memory_order_release);
+}
+
+bool GuestArenaSharedBackingRuns_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, SharedBackingRun* runs, std::size_t capacity, std::size_t* count) {
+    const auto resolver = sharedBackingRunsResolver.load(std::memory_order_acquire);
+    return resolver != nullptr && resolver(address, bytes, file, runs, capacity, count);
+}
+
+bool GuestArenaOverlapsHostRegion_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    return Arena::Get().OverlapsHostRegion(address, bytes);
+}
+
+void GuestArenaReleaseHostRegion_nid_no_patch(const void* pointer, std::size_t bytes) {
+    Arena::Get().ReleaseHostRegion(pointer, bytes);
 }
 #endif
 

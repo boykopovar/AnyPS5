@@ -1,7 +1,9 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -10,6 +12,7 @@
 #include <mutex>
 #include <new>
 #include <stdexcept>
+#include <string>
 #include <algorithm>
 
 namespace {
@@ -27,6 +30,7 @@ using UsableSize = std::size_t (APS5_VABI *)(void*);
 
 std::mutex heapMutex;
 std::array<void*, 10> heapApi{};
+std::atomic<int> heapKind{0};
 std::once_flag heapInitialization;
 std::exception_ptr heapFailure;
 Initialize heapFinalize = nullptr;
@@ -56,8 +60,8 @@ int APS5_VABI defaultStatsFast(void* stats) { return GuestHeap::GuestHeapStatsFa
 std::array<void*, 10> defaultApi() {
     return {reinterpret_cast<void*>(defaultAllocate), reinterpret_cast<void*>(defaultFree),
         reinterpret_cast<void*>(defaultCalloc), reinterpret_cast<void*>(defaultReallocate),
-        reinterpret_cast<void*>(defaultAlign), nullptr, reinterpret_cast<void*>(defaultPosixAlign), nullptr,
-        reinterpret_cast<void*>(defaultStatsFast)};
+        reinterpret_cast<void*>(defaultAlign), nullptr, reinterpret_cast<void*>(defaultPosixAlign),
+        reinterpret_cast<void*>(defaultStatsFast), reinterpret_cast<void*>(defaultStatsFast)};
 }
 
 class CallbackScope {
@@ -145,11 +149,28 @@ void ApplicationHeapRegister_nid_no_patch(void* const* api) {
     if (heapFinalized) throw std::runtime_error("application heap: allocator has been finalized");
     if (heapApi[0] != nullptr && heapApi != replacement) throw std::runtime_error("application heap: cannot replace an active allocator");
     heapApi = replacement;
+    heapKind.store(replacement == defaultApi() ? 1 : 2, std::memory_order_release);
+}
+
+bool ApplicationHeapDefault_nid_no_patch() {
+    int kind = heapKind.load(std::memory_order_acquire);
+    if (kind == 0) {
+        std::unique_lock lock(heapMutex);
+        ensureInitialized(lock);
+        if (heapFailure) std::rethrow_exception(heapFailure);
+        kind = heapKind.load(std::memory_order_acquire);
+    }
+    return kind == 1;
 }
 
 void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
     std::call_once(heapInitialization, [processParameters] {
         try {
+            if (processParameters == ApplicationEmptyProcessParameters_nid_no_patch()) {
+                const std::array<void*, 10> none{};
+                ApplicationHeapRegister_nid_no_patch(none.data());
+                return;
+            }
             if (read<std::uint64_t>(processParameters, 0) < 0x40 || read<std::uint32_t>(processParameters, 8) != 0x4942524f) throw std::runtime_error("application heap: invalid process parameters");
             const auto* libcParameters = read<const void*>(processParameters, 0x38);
             if (read<std::uint64_t>(libcParameters, 0) < 0x38) throw std::runtime_error("application heap: invalid libc parameters");
@@ -178,6 +199,16 @@ void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
     if (heapFailure) std::rethrow_exception(heapFailure);
 }
 
+void ApplicationHeapEnsureInitialized_nid_no_patch() {
+    std::unique_lock lock(heapMutex);
+    ensureInitialized(lock);
+    if (heapFailure) std::rethrow_exception(heapFailure);
+}
+
+void ApplicationHeapFinalize_nid_no_patch() {
+    finalize();
+}
+
 void* ApplicationHeapAllocate_nid_no_patch(std::size_t bytes) {
     const auto allocate = callback<Allocate>(0);
     CallbackScope scope;
@@ -192,7 +223,7 @@ void ApplicationHeapFree_nid_no_patch(void* pointer) {
 }
 
 void* ApplicationHeapReallocate_nid_no_patch(void* pointer, std::size_t bytes) {
-    if (bytes == 0 && pointer != nullptr) {
+    if (bytes == 0 && pointer != nullptr && !ApplicationHeapDefault_nid_no_patch()) {
         ApplicationHeapFree_nid_no_patch(pointer);
         return nullptr;
     }
@@ -227,7 +258,7 @@ extern "C" void APS5_VABI scriptingFreeMem_nid_postfix(void* pointer) {
 }
 
 void* ApplicationHeapRealign_nid_no_patch(void* pointer, std::size_t bytes, std::size_t alignment) {
-    if (bytes == 0) {
+    if (bytes == 0 && !ApplicationHeapDefault_nid_no_patch()) {
         ApplicationHeapFree_nid_no_patch(pointer);
         return nullptr;
     }
@@ -270,19 +301,31 @@ int ApplicationHeapPosixAlign_nid_no_patch(void** pointer, std::size_t alignment
     return 0;
 }
 
-int ApplicationHeapStatsFast_nid_no_patch(void* stats) {
-    Stats statsFast;
+namespace {
+
+int callStats(std::size_t index, const char* name, void* stats) {
+    Stats callback;
     {
         std::unique_lock lock(heapMutex);
         ensureInitialized(lock);
         if (heapFailure) std::rethrow_exception(heapFailure);
         if (heapFinalized) throw std::runtime_error("application heap: allocator has been finalized");
         if (heapApi[0] == nullptr) throw std::runtime_error("application heap: allocator API is not registered");
-        if (heapApi[8] == nullptr) throw std::runtime_error("malloc_stats_fast: implemented only for an application allocator that provides it");
-        std::memcpy(&statsFast, &heapApi[8], sizeof(statsFast));
+        if (heapApi[index] == nullptr) throw std::runtime_error(std::string(name) + ": implemented only for an application allocator that provides it");
+        std::memcpy(&callback, &heapApi[index], sizeof(callback));
     }
     CallbackScope scope;
-    return statsFast(stats);
+    return callback(stats);
+}
+
+}
+
+int ApplicationHeapStats_nid_no_patch(void* stats) {
+    return callStats(7, "malloc_stats", stats);
+}
+
+int ApplicationHeapStatsFast_nid_no_patch(void* stats) {
+    return callStats(8, "malloc_stats_fast", stats);
 }
 
 std::size_t ApplicationHeapUsableSize_nid_no_patch(void* pointer) {

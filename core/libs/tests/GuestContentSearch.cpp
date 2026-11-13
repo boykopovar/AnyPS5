@@ -1,25 +1,26 @@
+#include "prx/libSceContentSearch/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#ifdef __APPLE__
+#include <initializer_list>
+#endif
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceContentSearchInit(const ContentSearchInitParam* init_param);
-int APS5_VABI sceContentSearchTerm(void);
-int APS5_VABI sceContentSearchGetContentLastUpdateId(std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchGetNumOfContent(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, std::int64_t* numOfContent, std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchGetTotalContentSize(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, std::int64_t* size, std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchSearchContent(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, const ContentSearchContentOrderByCondition* orderByConditions, std::uint32_t orderByConditionsLength, std::uint32_t offset, std::uint32_t limit, std::int64_t* numOfContent, void* infos, std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchOpenMetadata(const char* filePath, std::int32_t* metadataId);
-int APS5_VABI sceContentSearchOpenMetadataByContentId(std::int64_t contentId, std::int32_t* metadataId);
-int APS5_VABI sceContentSearchCloseMetadata(std::int32_t metadataId);
-int APS5_VABI sceContentSearchGetMetadataFieldInfo(std::int32_t metadataId, const char* field, std::int32_t* metadataType, std::int32_t* size);
-int APS5_VABI sceContentSearchGetMetadataValue(std::int32_t metadataId, const char* field, void* value);
-}
 
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
+
+template <typename TAction>
+bool ThrowsRuntimeError(TAction action) {
+    try {
+        action();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
 
 template <typename TAction>
 bool Throws(TAction action) {
@@ -32,13 +33,9 @@ bool Throws(TAction action) {
 }
 
 constexpr int ErrorNotInitialized = static_cast<int>(0x809D1001u);
+constexpr int ErrorInvalidArgument = static_cast<int>(0x809D1003u);
+constexpr int ErrorAlreadyInitialized = static_cast<int>(0x809D1002u);
 constexpr int ErrorLimitTooBig = static_cast<int>(0x809D100Au);
-
-struct MetadataValue {
-    std::int32_t size;
-    std::int32_t type;
-    std::int64_t value;
-};
 
 }
 
@@ -53,20 +50,35 @@ int main() {
     std::int64_t size = -1;
     std::int64_t updateId = -1;
     std::int32_t metadataId = -1;
-    std::int32_t metadataType = -1;
-    std::int32_t fieldSize = -1;
-    MetadataValue value{-1, -1, -1};
+    std::int32_t applicationIndex = -1;
 
+    Require(sceContentSearchGetApplicationLastUpdateId(&updateId) == ErrorNotInitialized);
+    Require(sceContentSearchGetMyApplicationIndex(&applicationIndex) == ErrorNotInitialized);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, &updateId) == ErrorNotInitialized);
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == ErrorNotInitialized);
     Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, &updateId) == ErrorNotInitialized);
     Require(sceContentSearchGetTotalContentSize(&columnSet, 1, &size, &updateId) == ErrorNotInitialized);
     Require(sceContentSearchSearchContent(&columnSet, 1, &orderBy, 1, 0, 2, &count, infos, &updateId) == ErrorNotInitialized);
+    Require(sceContentSearchGetMetadataFieldInfo(0, nullptr, nullptr, nullptr) == ErrorNotInitialized);
+    Require(sceContentSearchGetMetadataValue(0, nullptr, nullptr) == ErrorNotInitialized);
     Require(sceContentSearchOpenMetadata("/data/photo.jpg", &metadataId) == ErrorNotInitialized);
     Require(sceContentSearchOpenMetadataByContentId(1, &metadataId) == ErrorNotInitialized);
     Require(sceContentSearchCloseMetadata(1) == ErrorNotInitialized);
     Require(count == -1 && size == -1 && updateId == -1 && metadataId == -1);
 
+    Require(sceContentSearchTerm() == ErrorNotInitialized);
+    Require(sceContentSearchInit(nullptr) == ErrorInvalidArgument);
+    errno = 71;
+    Require(sceContentSearchInit(reinterpret_cast<const ContentSearchInitParam*>(0x10)) == ErrorInvalidArgument);
+    Require(errno == 71);
+    for (std::size_t memorySize : {std::size_t{0}, std::size_t{1}, std::size_t{16383}, param.memory_size - 1}) {
+        ContentSearchInitParam invalidParam{memorySize};
+        Require(sceContentSearchInit(&invalidParam) == ErrorInvalidArgument);
+        Require(sceContentSearchTerm() == ErrorNotInitialized);
+    }
     Require(sceContentSearchInit(&param) == 0);
+    Require(sceContentSearchInit(nullptr) == ErrorAlreadyInitialized);
+    Require(sceContentSearchInit(&param) == ErrorAlreadyInitialized);
 
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == 0);
     Require(updateId == 0);
@@ -86,17 +98,85 @@ int main() {
     Require(count == 0 && updateId == 0);
     count = -1;
     updateId = -1;
+    errno = 71;
+    Require(sceContentSearchSearchContent(nullptr, 0, nullptr, 0, 0, 1,
+        reinterpret_cast<std::int64_t*>(0x10), infos, &updateId) == ErrorInvalidArgument);
+    Require(updateId == -1 && errno == 71);
+    Require(sceContentSearchSearchContent(nullptr, 0, nullptr, 0, 0, 1,
+        &count, infos, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(count == 0 && errno == 71);
+    count = -1;
+    updateId = -1;
     Require(sceContentSearchSearchContent(&columnSet, 1, &orderBy, 1, 0, 93, &count, infos, &updateId) == ErrorLimitTooBig);
     Require(count == -1 && updateId == -1);
+    updateId = -1;
+    Require(sceContentSearchGetApplicationLastUpdateId(&updateId) == 0 && updateId == 0);
+    errno = 71;
+    Require(sceContentSearchGetApplicationLastUpdateId(reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(errno == 71);
+    count = -1;
+    updateId = -1;
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, &updateId) == 0);
+    Require(count == 0 && updateId == 0);
+    count = -1;
+    updateId = -1;
+    Require(sceContentSearchGetNumOfApplication(nullptr, 0, nullptr, 0, &count, &updateId) == 0);
+    Require(count == 0 && updateId == 0);
+    count = -1;
+    updateId = -1;
+    errno = 71;
+    Require(sceContentSearchGetNumOfApplication(nullptr, 0, nullptr, 0,
+        reinterpret_cast<std::int64_t*>(0x10), &updateId) == ErrorInvalidArgument);
+    Require(updateId == -1 && errno == 71);
+    Require(sceContentSearchGetNumOfApplication(nullptr, 0, nullptr, 0,
+        &count, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(count == 0 && errno == 71);
+    count = -1;
+    updateId = -1;
 
-    Require(Throws([&] { sceContentSearchGetContentLastUpdateId(nullptr); }));
-    Require(Throws([&] { sceContentSearchGetNumOfContent(&columnSet, 1, nullptr, &updateId); }));
-    Require(Throws([&] { sceContentSearchGetNumOfContent(&columnSet, 1, &count, nullptr); }));
-    Require(Throws([&] { sceContentSearchGetTotalContentSize(nullptr, 1, &size, &updateId); }));
-    Require(Throws([&] { sceContentSearchSearchContent(&columnSet, 1, &orderBy, 1, 0, 2, &count, nullptr, &updateId); }));
+    Require(sceContentSearchGetContentLastUpdateId(nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchGetContentLastUpdateId(reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(sceContentSearchGetApplicationLastUpdateId(nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchGetMyApplicationIndex(nullptr) == ErrorInvalidArgument);
+    errno = 71;
+    Require(sceContentSearchGetMyApplicationIndex(reinterpret_cast<std::int32_t*>(0x10)) == ErrorInvalidArgument);
+    Require(errno == 71);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, nullptr, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 0, &count, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 0, &orderBy, 1, &count, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfContent(&columnSet, 1, nullptr, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfContent(&columnSet, 1, reinterpret_cast<std::int64_t*>(0x10), &updateId) == ErrorInvalidArgument);
+    count = -1;
+    Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, nullptr) == ErrorInvalidArgument);
+    Require(count == -1);
+    Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(count == 0);
+    Require(sceContentSearchGetTotalContentSize(nullptr, 1, &size, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetTotalContentSize(nullptr, 0, nullptr, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetTotalContentSize(nullptr, 0, reinterpret_cast<std::int64_t*>(0x10), &updateId) == ErrorInvalidArgument);
+    size = -1;
+    Require(sceContentSearchGetTotalContentSize(nullptr, 0, &size, nullptr) == ErrorInvalidArgument);
+    Require(size == -1);
+    Require(sceContentSearchGetTotalContentSize(nullptr, 0, &size, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(size == 0);
+    count = -1;
+    size = -1;
+    std::int32_t metadataType = 0, fieldSize = 0;
+    Require(sceContentSearchGetMetadataFieldInfo(1, nullptr, nullptr, nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchGetMetadataFieldInfo(1, "field", nullptr, &fieldSize) == ErrorInvalidArgument);
+    Require(sceContentSearchGetMetadataFieldInfo(1, "field", &metadataType, nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchGetMetadataValue(1, nullptr, nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchGetMetadataValue(1, "field", nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchOpenMetadata(nullptr, nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchOpenMetadata("/data/photo.jpg", nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchOpenMetadata(nullptr, &metadataId) == ErrorInvalidArgument);
+    Require(sceContentSearchOpenMetadataByContentId(1, nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchContent(&columnSet, 1, &orderBy, 1, 0, 2, &count, nullptr, &updateId) == ErrorInvalidArgument);
     ContentSearchContentColumn unknownColumn{8, 0, &photo, 2};
     ContentSearchContentColumnSet unknownColumnSet{&unknownColumn, 1, 2};
     Require(Throws([&] { sceContentSearchGetNumOfContent(&unknownColumnSet, 1, &count, &updateId); }));
+    Require(Throws([&] { sceContentSearchGetNumOfApplication(&unknownColumnSet, 1, &orderBy, 1, &count, &updateId); }));
     ContentSearchContentColumn missingValue{3, 0, nullptr, 2};
     ContentSearchContentColumnSet missingValueSet{&missingValue, 1, 2};
     Require(Throws([&] { sceContentSearchGetTotalContentSize(&missingValueSet, 1, &size, &updateId); }));
@@ -105,17 +185,40 @@ int main() {
     Require(Throws([&] { sceContentSearchSearchContent(&unknownOperatorSet, 1, &orderBy, 1, 0, 2, &count, infos, &updateId); }));
     ContentSearchContentOrderByCondition unknownSort{3, 0};
     Require(Throws([&] { sceContentSearchSearchContent(&columnSet, 1, &unknownSort, 1, 0, 2, &count, infos, &updateId); }));
+    Require(Throws([&] { sceContentSearchGetNumOfApplication(&columnSet, 1, &unknownSort, 1, &count, &updateId); }));
+    Require(count == -1 && updateId == -1);
+    Require(sceContentSearchSearchContent(nullptr, 0, nullptr, 0, 0, 0, nullptr, nullptr, nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchContent(nullptr, 0, nullptr, 0, 0, 93, nullptr, nullptr, nullptr) == ErrorLimitTooBig);
+    Require(sceContentSearchSearchContent(&columnSet, 0, nullptr, 0, 0, 93, nullptr, nullptr, nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchContent(nullptr, 0, &orderBy, 0, 0, 92, &count, infos, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfContent(&columnSet, 0, &count, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetTotalContentSize(&columnSet, 0, &size, &updateId) == ErrorInvalidArgument);
     Require(count == -1 && updateId == -1);
 
-    Require(Throws([&] { sceContentSearchOpenMetadata("/data/photo.jpg", &metadataId); }));
-    Require(Throws([&] { sceContentSearchOpenMetadataByContentId(1, &metadataId); }));
-    Require(metadataId == -1);
-    Require(Throws([] { sceContentSearchCloseMetadata(1); }));
-    Require(Throws([&] { sceContentSearchGetMetadataFieldInfo(1, "title", &metadataType, &fieldSize); }));
-    Require(Throws([&] { sceContentSearchGetMetadataValue(1, "title", &value); }));
-    Require(metadataType == -1 && fieldSize == -1 && value.size == -1);
+    Require(sceContentSearchCloseMetadata(1) == ErrorInvalidArgument);
 
     Require(sceContentSearchTerm() == 0);
+    Require(sceContentSearchTerm() == ErrorNotInitialized);
+    Require(sceContentSearchOpenMetadata(nullptr, nullptr) == ErrorNotInitialized);
+    Require(sceContentSearchOpenMetadataByContentId(1, nullptr) == ErrorNotInitialized);
+    Require(sceContentSearchGetTotalContentSize(&columnSet, 1, &size, &updateId) == ErrorNotInitialized);
+    Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, &updateId) == ErrorNotInitialized);
+    Require(sceContentSearchSearchContent(&columnSet, 1, &orderBy, 1, 0, 2, &count, infos, &updateId) == ErrorNotInitialized);
+    Require(sceContentSearchCloseMetadata(1) == ErrorNotInitialized);
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == ErrorNotInitialized);
+    Require(sceContentSearchGetApplicationLastUpdateId(&updateId) == ErrorNotInitialized);
+    Require(sceContentSearchGetMyApplicationIndex(&applicationIndex) == ErrorNotInitialized);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, &updateId) == ErrorNotInitialized);
     Require(updateId == -1);
+    constexpr int binderResult = static_cast<int>(0x809D000F);
+    Require(sceContentBinderInitialize() == binderResult);
+    Require(sceContentBinderStart() == binderResult);
+    Require(sceContentBinderReset() == binderResult);
+    Require(sceContentBinderIsUpdated() == binderResult);
+    Require(sceContentBinderGetNumOfDifference() == binderResult);
+    Require(sceContentBinderSearchDifference() == binderResult);
+    Require(sceContentBinderEnd() == binderResult);
+    Require(sceContentBinderTerminate() == binderResult);
+
+    Require(ThrowsRuntimeError([] { sceContentSearchSearchApplication(); }));
 }

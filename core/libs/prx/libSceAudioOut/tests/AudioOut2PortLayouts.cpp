@@ -1,5 +1,8 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -14,19 +17,6 @@
 #include <thread>
 #include <vector>
 
-extern "C" {
-int APS5_VABI sceAudioOut2UserCreate(std::uint32_t, AudioOut2UserHandle*);
-int APS5_VABI sceAudioOut2UserDestroy(AudioOut2UserHandle);
-int APS5_VABI sceAudioOut2UserGetSupportedAttributes(AudioOut2UserHandle, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam*);
-int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam*, void*, std::size_t, AudioOut2ContextHandle*);
-int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle);
-int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle, std::uint32_t);
-int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle, const AudioOut2PortParam*, AudioOut2PortHandle*);
-int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle);
-int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle, const AudioOut2Attribute*, std::uint32_t);
-}
-
 static void Require(bool value) { if (!value) std::abort(); }
 
 static void SetEnvironment(const char* name, const std::string& value) {
@@ -34,6 +24,14 @@ static void SetEnvironment(const char* name, const std::string& value) {
     _putenv_s(name, value.c_str());
 #else
     setenv(name, value.c_str(), 1);
+#endif
+}
+
+static void UnsetEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
 #endif
 }
 
@@ -59,14 +57,26 @@ void TestUserAttributes() {
         std::uint32_t value = 0xFFFFFFFFu;
         std::uint32_t after = 0x87654321u;
     } context, port;
+    auto* const invalidOutput = reinterpret_cast<AudioOut2UserHandle*>(0x10);
+    auto* const invalidAttribute = reinterpret_cast<std::uint32_t*>(0x10);
+    errno = 73;
+    Require(sceAudioOut2UserCreate(1, invalidOutput) == static_cast<int>(0x80260502));
+    Require(sceAudioOut2UserCreateEx(1, nullptr, invalidOutput) == static_cast<int>(0x80260502));
+    Require(errno == 73);
     AudioOut2UserHandle first = 0;
     AudioOut2UserHandle second = 0;
-    Require(sceAudioOut2UserCreate(1, &first) == 0);
+    Require(sceAudioOut2UserCreate(1, &first) == 0 && first == 1);
     Require(sceAudioOut2UserCreate(2, &second) == 0 && second != first);
     Require(sceAudioOut2UserGetSupportedAttributes(first, &context.value, &port.value) == 0);
     Require(context.value == 0 && port.value == ((1u << attributeData) | (1u << attributeVolume)));
     Require(context.before == 0x12345678u && context.after == 0x87654321u);
     Require(port.before == 0x12345678u && port.after == 0x87654321u);
+    context.value = port.value = 0xFFFFFFFFu;
+    errno = 73;
+    Require(sceAudioOut2UserGetSupportedAttributes(first, invalidAttribute, &port.value) == static_cast<int>(0x80268001));
+    Require(port.value == 0xFFFFFFFFu && errno == 73);
+    Require(sceAudioOut2UserGetSupportedAttributes(first, &context.value, invalidAttribute) == static_cast<int>(0x80268001));
+    Require(context.value == 0 && errno == 73);
     const auto rejects = [&](AudioOut2UserHandle handle, bool nullContext, bool nullPort) {
         context.value = port.value = 0xFFFFFFFFu;
         bool threw = false;
@@ -77,11 +87,17 @@ void TestUserAttributes() {
         }
         Require(threw && context.value == 0xFFFFFFFFu && port.value == 0xFFFFFFFFu);
     };
-    rejects(first, true, false);
-    rejects(first, false, true);
-    rejects(first, true, true);
-    rejects(0, false, false);
-    rejects(std::numeric_limits<AudioOut2UserHandle>::max(), false, false);
+    context.value = port.value = 0xFFFFFFFFu;
+    Require(sceAudioOut2UserGetSupportedAttributes(first, nullptr, &port.value) == 0);
+    Require(context.value == 0xFFFFFFFFu && port.value == 3);
+    Require(sceAudioOut2UserGetSupportedAttributes(first, &context.value, nullptr) == 0 && context.value == 0);
+    context.value = port.value = 0xFFFFFFFFu;
+    Require(sceAudioOut2UserGetSupportedAttributes(first, nullptr, nullptr) == static_cast<int>(0x80268001));
+    for (const AudioOut2UserHandle handle : {AudioOut2UserHandle{0}, std::numeric_limits<AudioOut2UserHandle>::max()}) {
+        Require(sceAudioOut2UserGetSupportedAttributes(handle, &context.value, &port.value) == static_cast<int>(0x80268010));
+        Require(sceAudioOut2UserGetSupportedAttributes(handle, nullptr, nullptr) == static_cast<int>(0x80268010));
+        Require(context.value == 0xFFFFFFFFu && port.value == 0xFFFFFFFFu);
+    }
     Require(sceAudioOut2UserDestroy(first) == 0);
     rejects(first, false, false);
     std::thread([&] {
@@ -150,12 +166,14 @@ struct PortData {
     std::vector<float> volume;
 };
 
-std::vector<float> Play(const std::vector<PortData>& inputs) {
+template<typename TAfterCreate>
+std::vector<float> Play(const std::vector<PortData>& inputs, TAfterCreate afterCreate) {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_port_layouts-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
 
     const auto context = CreateContext();
+    afterCreate();
     std::vector<AudioOut2PortHandle> ports;
     for (const auto& input : inputs) {
         AudioOut2PortHandle port = 0;
@@ -182,6 +200,10 @@ std::vector<float> Play(const std::vector<PortData>& inputs) {
     while (first < last && samples[first] == 0.0f) first++;
     while (last > first && samples[last - 1] == 0.0f) last--;
     return {samples + first, samples + last};
+}
+
+std::vector<float> Play(const std::vector<PortData>& inputs) {
+    return Play(inputs, [] {});
 }
 
 std::vector<float> Play(std::uint32_t format, const void* data, const std::vector<float>& volume) {
@@ -283,6 +305,48 @@ void TestPadPortsWithoutPadDevice() {
     Require(Play({{portTypePadVibration, Format(stereo.channels, formatFloat), vibration.data(), unity}}).empty());
 }
 
+void TestPadSpeakerFallbackOverride() {
+    const auto speaker = FloatGrain(mono.channels);
+    SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "-15");
+    const auto played = Play({{portTypePadSpeaker, Format(mono.channels, formatFloat), speaker.data(), {1.0f}}});
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
+    RequireFold(played, mono, speaker, {1.0f}, 0.17782794f);
+}
+
+void TestPadSpeakerFallbackMute() {
+    const auto speaker = FloatGrain(mono.channels);
+    SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "mute");
+    const auto played = Play({{portTypePadSpeaker, Format(mono.channels, formatFloat), speaker.data(), {1.0f}}});
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
+    Require(played.empty());
+}
+
+void TestPadSpeakerFallbackReadOnce() {
+    const auto speaker = FloatGrain(mono.channels);
+    SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "-15");
+    const auto played = Play({{portTypePadSpeaker, Format(mono.channels, formatFloat), speaker.data(), {1.0f}}}, [] {
+        SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "garbage");
+    });
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
+    RequireFold(played, mono, speaker, {1.0f}, 0.17782794f);
+}
+
+void TestPadSpeakerFallbackInvalidStopsTheTitle() {
+    const auto speaker = FloatGrain(mono.channels);
+    SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "garbage");
+    std::string what;
+    bool thrown = false;
+    try {
+        Play({{portTypePadSpeaker, Format(mono.channels, formatFloat), speaker.data(), {1.0f}}});
+    } catch (const std::exception& error) {
+        thrown = true;
+        what = error.what();
+    }
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
+    Require(thrown);
+    Require(what.find(AUDIO_PAD_SPEAKER_FALLBACK_ENV) != std::string::npos && what.find("garbage") != std::string::npos);
+}
+
 void TestMeasuredMainPortFormats() {
     struct Case {
         std::uint32_t format;
@@ -332,6 +396,7 @@ void TestMeasuredMainPortFormats() {
 }
 
 int main() {
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
     TestUserAttributes();
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     for (const Layout* layout : {&mono, &stereo, &surround71, &surround714}) {
@@ -351,6 +416,10 @@ int main() {
     TestHeightChannels();
     TestDroppedLfe();
     TestPadPortsWithoutPadDevice();
+    TestPadSpeakerFallbackOverride();
+    TestPadSpeakerFallbackReadOnce();
+    TestPadSpeakerFallbackMute();
+    TestPadSpeakerFallbackInvalidStopsTheTitle();
     TestMeasuredMainPortFormats();
     return 0;
 }

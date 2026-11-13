@@ -1,10 +1,12 @@
 #include <nid/BinaryPatcherFactory.hpp>
 #include <nid/ExportExclusions.hpp>
 #include <nid/NativePath.hpp>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -16,11 +18,33 @@ std::vector<std::uint8_t> _readFile(const std::string& path) {
 }
 
 void _writeFile(const std::string& path, const std::vector<std::uint8_t>& data) {
-    std::ofstream f(Nid::Internal::NativePath(path), std::ios::binary);
-    if (!f) throw std::runtime_error("cannot write: " + path);
-    f.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
-    f.close();
-    if (!f) throw std::runtime_error("cannot write: " + path);
+    const std::filesystem::path target = Nid::Internal::NativePath(path);
+    const auto permissions = std::filesystem::status(target).permissions();
+    std::filesystem::path pending = target;
+    pending += ".patching";
+    std::error_code discarded;
+    {
+        std::ofstream f(pending, std::ios::binary);
+        if (!f) throw std::runtime_error("cannot write: " + path);
+        f.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        f.close();
+        if (!f) {
+            std::filesystem::remove(pending, discarded);
+            throw std::runtime_error("cannot write: " + path);
+        }
+    }
+    std::error_code permissionError;
+    std::filesystem::permissions(pending, permissions, permissionError);
+    if (permissionError) {
+        std::filesystem::remove(pending, discarded);
+        throw std::runtime_error("cannot preserve permissions: " + path + ": " + permissionError.message());
+    }
+    std::error_code renamed;
+    std::filesystem::rename(pending, target, renamed);
+    if (renamed) {
+        std::filesystem::remove(pending, discarded);
+        throw std::runtime_error("cannot write: " + path + ": " + renamed.message());
+    }
 }
 
 }
@@ -28,6 +52,7 @@ void _writeFile(const std::string& path, const std::vector<std::uint8_t>& data) 
 int Run(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "Usage: nid_patcher <library_name> [--preserve-exports <unpatched-library> | --preserve-export-list <export-list>] <file> [file2 ...]\n"
+                     "       nid_patcher --exec [--only-sce] [--preserve-exports <unpatched-library> | --preserve-export-list <export-list>] <file> [file2 ...]\n"
                      "       nid_patcher --write-export-list <unpatched-library> <export-list>\n";
         return 1;
     }
@@ -46,14 +71,20 @@ int Run(int argc, char* argv[]) {
         return 0;
     }
 
-    const std::string libraryName = argv[1];
+    Nid::PatchOptions options;
+    options.executable = std::string(argv[1]) == "--exec";
+    const std::string libraryName = options.executable ? "" : argv[1];
     std::unordered_set<std::string> excludedExports;
     std::vector<std::string> paths;
     try {
+        if (!options.executable && libraryName.starts_with("--")) throw std::runtime_error("unknown option: " + libraryName);
         bool hasReference = false;
         for (int i = 2; i < argc; ++i) {
             const std::string argument = argv[i];
-            if (argument == "--preserve-exports" || argument == "--preserve-export-list") {
+            if (argument == "--only-sce") {
+                if (!options.executable || options.onlySce) throw std::runtime_error("--only-sce requires --exec and may appear once");
+                options.onlySce = true;
+            } else if (argument == "--preserve-exports" || argument == "--preserve-export-list") {
                 if (hasReference || i + 1 == argc) throw std::runtime_error(argument + " requires exactly one reference");
                 hasReference = true;
                 excludedExports = argument == "--preserve-exports" ? Nid::ReadExportExclusions(argv[++i]) : Nid::ReadExportList(argv[++i]);
@@ -72,7 +103,7 @@ int Run(int argc, char* argv[]) {
         try {
             auto binary = _readFile(path);
             const auto patcher = Nid::MakePatcher(binary);
-            patcher->PatchNids(binary, libraryName, excludedExports);
+            patcher->PatchNids(binary, libraryName, excludedExports, options);
             _writeFile(path, binary);
             std::cout << "OK: " << path << "\n";
         } catch (const std::exception& e) {

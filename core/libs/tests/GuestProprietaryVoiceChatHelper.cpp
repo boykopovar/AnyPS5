@@ -1,16 +1,10 @@
+#include "prx/libSceProprietaryVoiceChatHelperPrx/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceProprietaryVoiceChatHelperInitialize();
-int APS5_VABI sceProprietaryVoiceChatHelperTerminate();
-int APS5_VABI sceProprietaryVoiceChatHelperSetVoiceChatState();
-int APS5_VABI sceProprietaryVoiceChatHelperGetVoiceChatUsageState();
-int APS5_VABI sceProprietaryVoiceChatHelperGetVoiceChat();
-}
+#include <string>
 
 static void Require(bool value, const char* what) {
     if (value) return;
@@ -28,6 +22,16 @@ static bool Throws(TCall call) {
     return false;
 }
 
+template <typename TError, typename TCall>
+static bool ThrowsMessage(TCall call, const char* message) {
+    try {
+        call();
+    } catch (const TError& error) {
+        return std::string(error.what()).find(message) != std::string::npos;
+    }
+    return false;
+}
+
 int main() {
     Require(Throws<std::logic_error>([] { sceProprietaryVoiceChatHelperSetVoiceChatState(); }),
             "setting the state before initialization did not throw");
@@ -35,11 +39,13 @@ int main() {
             "reading the usage state before initialization did not throw");
     Require(Throws<std::logic_error>([] { sceProprietaryVoiceChatHelperGetVoiceChat(); }),
             "getting voice chat before initialization did not throw");
-    Require(Throws<std::logic_error>([] { sceProprietaryVoiceChatHelperTerminate(); }),
+    Require(ThrowsMessage<std::logic_error>([] { sceProprietaryVoiceChatHelperTerminate(); },
+                                            "library not initialized"),
             "terminating before initialization did not throw");
 
     Require(sceProprietaryVoiceChatHelperInitialize() == 0, "initialization failed");
-    Require(Throws<std::logic_error>([] { sceProprietaryVoiceChatHelperInitialize(); }),
+    Require(ThrowsMessage<std::logic_error>([] { sceProprietaryVoiceChatHelperInitialize(); },
+                                            "already initialized"),
             "initializing twice did not throw");
     Require(sceProprietaryVoiceChatHelperSetVoiceChatState() == 0, "setting the state failed");
     Require(Throws<std::runtime_error>([] { sceProprietaryVoiceChatHelperGetVoiceChatUsageState(); }),
@@ -48,12 +54,25 @@ int main() {
             "calling unknown voice chat export did not throw");
     Require(sceProprietaryVoiceChatHelperTerminate() == 0, "termination failed");
 
-    Require(Throws<std::logic_error>([] { sceProprietaryVoiceChatHelperSetVoiceChatState(); }),
+    Require(ThrowsMessage<std::logic_error>([] { sceProprietaryVoiceChatHelperSetVoiceChatState(); },
+                                            "library not initialized"),
             "setting the state after termination did not throw");
-    Require(Throws<std::logic_error>([] { sceProprietaryVoiceChatHelperGetVoiceChat(); }),
+    Require(ThrowsMessage<std::logic_error>([] { sceProprietaryVoiceChatHelperGetVoiceChat(); },
+                                            "library not initialized"),
             "getting voice chat after termination did not throw");
+    Require(ThrowsMessage<std::logic_error>([] { sceProprietaryVoiceChatHelperGetVoiceChatUsageState(); },
+                                            "library not initialized"),
+            "reading the usage state after termination did not throw");
+    Require(ThrowsMessage<std::logic_error>([] { sceProprietaryVoiceChatHelperTerminate(); },
+                                            "library not initialized"),
+            "terminating a second time did not throw");
+
     Require(sceProprietaryVoiceChatHelperInitialize() == 0, "initialization after termination failed");
+    Require(sceProprietaryVoiceChatHelperSetVoiceChatState() == 0, "setting state after reinitialization failed");
     Require(sceProprietaryVoiceChatHelperTerminate() == 0, "termination after reinitialization failed");
+    Require(ThrowsMessage<std::logic_error>([] { sceProprietaryVoiceChatHelperTerminate(); },
+                                            "library not initialized"),
+            "terminating a second time did not throw");
 
     std::puts("ProprietaryVoiceChatHelper tests passed");
     return 0;

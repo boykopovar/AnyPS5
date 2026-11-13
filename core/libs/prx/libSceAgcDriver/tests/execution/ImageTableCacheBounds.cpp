@@ -17,12 +17,18 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#else
-#include <sys/mman.h>
+#endif
+#ifdef __linux__
+#include <dirent.h>
+#include <execinfo.h>
+#include <signal.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #endif
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -30,11 +36,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <fstream>
 #include <iostream>
+#include <memory>
 #include <span>
 #include <string>
 #include <thread>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -66,24 +75,26 @@ constexpr std::array<std::size_t, 3> WideSlots{SrtSlots - 1u, SrtSlots - 2u, Srt
 constexpr std::array<std::uint32_t, 17> WideTableCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x9310b010u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 constexpr std::array<std::uint32_t, 17> TableCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 
+constexpr std::size_t VertexOffset = 256;
+constexpr std::size_t PixelOffset = 512;
+constexpr std::size_t DrawSrtBytes = 64;
+constexpr std::size_t DrawKeys = SrtSlots * SrtBytes / DrawSrtBytes;
+constexpr std::size_t ColorBytes = 1024;
+constexpr std::array<std::uint32_t, 13> TriangleVertexCode{0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u, 0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u};
+constexpr std::array<std::uint32_t, 20> TablePixelCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xd7650002u, 0x000100c1u, 0x7e200502u, 0x8f108510u, 0xbf8cc07fu, 0xf42c0502u, 0x20000000u, 0x7e000280u, 0x7e020280u, 0xbf8cc07fu, 0xf09c0f08u, 0x00450000u, 0xbf8c3f70u, 0xf800180fu, 0x03020100u, 0xbf810000u};
+
 class GuestBlock {
 public:
     GuestBlock() {
-#ifdef _WIN32
         block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
-        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+        if (block != nullptr) {
+#ifdef _WIN32
+            GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
 #else
-        constexpr std::uintptr_t alignment = 65536;
-        void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (mapped != MAP_FAILED) {
-            const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
-            const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
-            if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
-            block = reinterpret_cast<std::uint8_t*>(aligned);
+            GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, 0x04, BlockBytes);
             GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
-        }
 #endif
+        }
         Require(block != nullptr, "image table cache bounds: cannot allocate the guest block");
         GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
     }
@@ -114,6 +125,93 @@ std::vector<std::uint32_t> Pm4(std::uint32_t opcode, std::initializer_list<std::
     return words;
 }
 
+std::atomic<unsigned> dispatchesSubmitted{0};
+std::atomic<unsigned> dispatchesIdle{0};
+
+#ifdef __linux__
+void PrintThreadStack(int) {
+    void* frames[48];
+    const int count = backtrace(frames, 48);
+    backtrace_symbols_fd(frames, count, STDERR_FILENO);
+}
+
+std::string FirstLine(const std::string& path) {
+    std::ifstream file(path);
+    std::string line;
+    std::getline(file, line);
+    return line;
+}
+#endif
+
+void PrintStalledThreads() {
+#ifdef __linux__
+    void* preload[1];
+    backtrace(preload, 1);
+    struct sigaction action {};
+    action.sa_handler = PrintThreadStack;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGUSR2, &action, nullptr);
+    const auto self = static_cast<int>(syscall(SYS_gettid));
+    DIR* tasks = opendir("/proc/self/task");
+    if (!tasks) return;
+    while (const dirent* entry = readdir(tasks)) {
+        const int thread = std::atoi(entry->d_name);
+        if (thread <= 0) continue;
+        const auto base = std::string("/proc/self/task/") + entry->d_name;
+        const auto stat = FirstLine(base + "/stat");
+        const auto state = stat.rfind(") ") == std::string::npos ? std::string("?") : stat.substr(stat.rfind(") ") + 2, 1);
+        std::fprintf(stderr, "thread %d %s state=%s syscall=%s\n", thread, FirstLine(base + "/comm").c_str(), state.c_str(), FirstLine(base + "/syscall").c_str());
+        if (thread == self) continue;
+        syscall(SYS_tgkill, getpid(), thread, SIGUSR2);
+        usleep(50000);
+    }
+    closedir(tasks);
+#endif
+}
+
+struct StallWatchdog {
+    std::atomic<bool> finished{false};
+    std::atomic<bool> reporterExited{false};
+    std::thread reporter;
+    std::thread hardStop;
+
+    StallWatchdog(int seconds, int graceSeconds) {
+        const auto start = std::chrono::steady_clock::now();
+        reporter = std::thread([this, seconds, start] {
+            const auto deadline = start + std::chrono::seconds(seconds);
+            while (!finished.load(std::memory_order_acquire)) {
+                if (std::chrono::steady_clock::now() > deadline) {
+                    std::fprintf(stderr, "image table vouched lookups: no result after %d s, %u dispatches submitted and %u idle\n", seconds, dispatchesSubmitted.load(), dispatchesIdle.load());
+                    PrintStalledThreads();
+                    std::fflush(stderr);
+                    std::_Exit(1);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            reporterExited.store(true, std::memory_order_release);
+        });
+        hardStop = std::thread([this, seconds, graceSeconds, start] {
+#ifdef __linux__
+            sigset_t blocked;
+            sigemptyset(&blocked);
+            sigaddset(&blocked, SIGUSR2);
+            pthread_sigmask(SIG_BLOCK, &blocked, nullptr);
+#endif
+            const auto deadline = start + std::chrono::seconds(seconds + graceSeconds);
+            while (!reporterExited.load(std::memory_order_acquire)) {
+                if (std::chrono::steady_clock::now() > deadline) std::_Exit(1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+    }
+
+    ~StallWatchdog() {
+        finished.store(true, std::memory_order_release);
+        reporter.join();
+        hardStop.join();
+    }
+};
+
 void Dispatch(const GuestBlock& block, std::size_t slot, std::size_t kernelOffset = 0, std::vector<std::uint32_t> words = {}) {
     const auto kernel = block.At(kernelOffset);
     const auto srt = block.At(SrtOffset + slot * SrtBytes);
@@ -121,8 +219,10 @@ void Dispatch(const GuestBlock& block, std::size_t slot, std::size_t kernelOffse
         words.insert(words.end(), packet.begin(), packet.end());
     }
     Packet dcb{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    ++dispatchesSubmitted;
     Require(sceAgcDriverSubmitDcb(&dcb) == 0, "image table cache bounds: the dispatch submission failed");
     AgcDriverWaitIdle_nid_postfix();
+    ++dispatchesIdle;
 }
 
 void Prepare(const GuestBlock& block) {
@@ -164,6 +264,95 @@ void SrtMovingPerDispatch(const GuestBlock& block) {
     }
     Require(entries >= 2, "image table cache bounds: the dispatches were not kept in the dispatch cache");
     Require(most <= Driver::DispatchCacheBytes(), "image table cache bounds: dispatches reading a 2 MiB table through " + std::to_string(SrtSlots) + " SRTs kept " + std::to_string(most >> 20u) + " MiB of captured words in the dispatch cache, over its budget of " + std::to_string(Driver::DispatchCacheBytes() >> 20u) + " MiB");
+}
+
+void Draw(const GuestBlock& block, std::size_t key) {
+    const auto color = block.At(OutputOffset);
+    const auto vertex = block.At(VertexOffset);
+    const auto pixel = block.At(PixelOffset);
+    const auto srt = block.At(SrtOffset + key * DrawSrtBytes);
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
+        {0x2d5, 0x2000}, {0x1b6, 0}, {0x207, 0}, {0x200, 0}, {0x203, 0x800}, {0x2dc, 0xaa00}, {0x2f8, 0}, {0x292, 2}, {0x293, 0},
+        {0x80, 0}, {0x8d, 0}, {0x83, 0xffff}, {0x8c, 0xa}, {0x2f9, 0x2d}, {0x313, 0x6000}, {0x30e, 0xffffffff}, {0x30f, 0xffffffff},
+        {0x206, 0x43f}, {0x204, 0x80000}, {0x205, 0x240}, {0x8e, 0xf}, {0x8f, 0xf}, {0x202, 0xcc0010},
+        {0x1c4, 0}, {0x1c5, 9}, {0x1c3, 4}, {0x31c, 0x28028}, {0x31b, 0}, {0x31d, 0}, {0x3b0, (63u << 14u) | 3u}, {0x3b8, 0x9000000}, {0x1e0, 0},
+        {0xc, 0}, {0xd, 0x40040}, {0x81, 0x80000000}, {0x82, 0x40040}, {0x90, 0x80000000}, {0x91, 0x40040}, {0x94, 0x80000000}, {0x95, 0x40040},
+        {0x318, static_cast<std::uint32_t>(color >> 8u)}, {0x390, static_cast<std::uint32_t>(color >> 40u)},
+        {0x10f, std::bit_cast<std::uint32_t>(32.0f)}, {0x110, std::bit_cast<std::uint32_t>(32.0f)}, {0x111, std::bit_cast<std::uint32_t>(-2.0f)}, {0x112, std::bit_cast<std::uint32_t>(2.0f)},
+        {0x113, std::bit_cast<std::uint32_t>(1.0f)}, {0x114, 0}, {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)}, {0x2fe, 0}, {0x302, 0}, {0x306, 0}, {0x30a, 0},
+    };
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{
+        {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, 0}, {0x8c, 0},
+        {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, 2u << 1u},
+        {0x00c, static_cast<std::uint32_t>(srt)}, {0x00d, static_cast<std::uint32_t>(srt >> 32u)},
+    };
+    std::vector<std::uint32_t> words;
+    const auto append = [&](const std::vector<std::uint32_t>& packet) { words.insert(words.end(), packet.begin(), packet.end()); };
+    append(Pm4(0x79, {0x242, 4}));
+    for (const auto& [offset, value] : context) append(Pm4(0x69, {offset, value}));
+    for (const auto& [offset, value] : shader) append(Pm4(0x76, {offset, value}));
+    append(Pm4(0x2d, {3, 2}));
+    Packet dcb{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&dcb) == 0, "image table draw cache bounds: the draw submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+unsigned BrightestColor(const GuestBlock& block) {
+    AgcDriver::GuestMemory::FlushGpuWrites(block.At(OutputOffset), ColorBytes);
+    const auto* bytes = block.Bytes(OutputOffset);
+    return *std::max_element(bytes, bytes + ColorBytes);
+}
+
+void SrtMovingPerDraw(const GuestBlock& block) {
+    using AgcDriver::DriverDetail::Driver;
+    std::memcpy(block.Bytes(VertexOffset), TriangleVertexCode.data(), sizeof(TriangleVertexCode));
+    std::memcpy(block.Bytes(PixelOffset), TablePixelCode.data(), sizeof(TablePixelCode));
+    const auto fill = [&](std::uint32_t surface) {
+        for (std::uint32_t record = 0; record < Records; ++record) SetRecord(block, record, surface * Aliases);
+    };
+    fill(3u);
+    for (std::size_t key = 0; key < DrawKeys; ++key) {
+        auto* srt = reinterpret_cast<std::uint32_t*>(block.Bytes(SrtOffset + key * DrawSrtBytes));
+        std::fill(srt, srt + DrawSrtBytes / 4u, 0u);
+        const auto heap = V(block.At(HeapOffset + key * Stride), Stride, Records - static_cast<std::uint32_t>(key));
+        std::copy(heap.begin(), heap.end(), srt);
+    }
+    auto& driver = Driver::Get();
+    const auto budget = Driver::DrawCacheBytes();
+    const auto before = driver.DrawCacheCounters();
+    std::uint64_t most = 0;
+    std::size_t entries = 0;
+    for (std::size_t key = 0; key < DrawKeys; ++key) {
+        for (std::size_t sight = 0; sight < 2; ++sight) {
+            Draw(block, key);
+            const auto size = driver.DrawCacheSize();
+            Require(size.variantBytes <= budget, "image table draw cache bounds: after draw " + std::to_string(2 * key + sight) + " the draw cache kept " + std::to_string(size.entries) + " entries holding " + std::to_string(size.variantBytes >> 10u) + " KiB, over its budget of " + std::to_string(budget >> 10u) + " KiB");
+            most = std::max(most, size.variantBytes);
+            entries = std::max(entries, size.entries);
+        }
+    }
+    const auto filled = driver.DrawCacheCounters();
+    const auto inserts = filled.inserts - before.inserts;
+    const auto evictions = filled.evictions - before.evictions;
+    const auto byteEvictions = filled.byteEvictions - before.byteEvictions;
+    const auto counts = " (" + std::to_string(inserts) + " inserts, " + std::to_string(evictions) + " evictions, " + std::to_string(byteEvictions) + " over the byte budget, at most " + std::to_string(entries) + " entries holding " + std::to_string(most >> 10u) + " KiB)";
+    Require(BrightestColor(block) == 3u, "image table draw cache bounds: the draws through the table wrote " + std::to_string(BrightestColor(block)) + ", expected 3");
+    Require(entries >= 2 && inserts >= DrawKeys / 2, "image table draw cache bounds: the draws were not kept in the draw cache" + counts);
+    Require(inserts * (most / entries) > 2 * budget, "image table draw cache bounds: the draws did not insert more than twice the budget" + counts);
+    Require(byteEvictions >= 1 && byteEvictions == evictions, "image table draw cache bounds: the draw cache was not bounded by its byte budget" + counts);
+
+    fill(9u);
+    std::memset(block.Bytes(OutputOffset), 0, ColorBytes);
+    Draw(block, 0);
+    const auto rebuilt = driver.DrawCacheCounters();
+    Require(rebuilt.absent - filled.absent == 1 && rebuilt.inserts - filled.inserts == 1, "image table draw cache bounds: the first key, evicted, was not looked up without an entry and inserted again (" + std::to_string(rebuilt.absent - filled.absent) + " absent, " + std::to_string(rebuilt.inserts - filled.inserts) + " inserts)");
+    Require(BrightestColor(block) == 9u, "image table draw cache bounds: the evicted key drawn again wrote " + std::to_string(BrightestColor(block)) + ", expected 9");
+    std::memset(block.Bytes(OutputOffset), 0, ColorBytes);
+    Draw(block, 0);
+    const auto hit = driver.DrawCacheCounters();
+    Require(hit.hits - rebuilt.hits == 1, "image table draw cache bounds: the evicted key, inserted again, was not hit by its next draw");
+    Require(BrightestColor(block) == 9u, "image table draw cache bounds: the hit on the rebuilt key wrote " + std::to_string(BrightestColor(block)) + ", expected 9");
+    std::puts(("image table draw cache bounds passed" + counts).c_str());
 }
 
 std::array<std::uint32_t, 8> TextureWords(const GuestBlock& block, std::uint32_t element) {
@@ -337,9 +526,11 @@ void SetBudgets() {
 #ifdef _WIN32
     _putenv_s("APS5_RESOURCE_CACHE_TABLE_ELEMENTS", "8192");
     _putenv_s("APS5_DISPATCH_CACHE_BYTES", "16777216");
+    _putenv_s("APS5_DRAW_CACHE_BYTES", "16777216");
 #else
     setenv("APS5_RESOURCE_CACHE_TABLE_ELEMENTS", "8192", 1);
     setenv("APS5_DISPATCH_CACHE_BYTES", "16777216", 1);
+    setenv("APS5_DRAW_CACHE_BYTES", "16777216", 1);
 #endif
 }
 
@@ -372,6 +563,8 @@ bool ImportsStayWatchedThroughReads(const AgcDriver::Graphics::Context& context)
 }
 
 int main(int argc, char** argv) {
+    std::unique_ptr<StallWatchdog> watchdog;
+    if (argc == 2 && std::string(argv[1]) == "--vouched-lookups") watchdog = std::make_unique<StallWatchdog>(30, 15);
     SetBudgets();
     try {
         {
@@ -398,6 +591,7 @@ int main(int argc, char** argv) {
         }
         TablesChangingPerDispatch(block);
         SrtMovingPerDispatch(block);
+        SrtMovingPerDraw(block);
         AgcDriverShutdown_nid_postfix();
         std::puts("image table cache bounds tests passed");
         return 0;

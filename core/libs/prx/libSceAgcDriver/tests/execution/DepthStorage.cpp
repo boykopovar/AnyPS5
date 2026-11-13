@@ -1,15 +1,14 @@
+#include "../PortabilitySubset.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "VulkanTestDevice.hpp"
+#include "FixtureDeviceSelection.hpp"
 #include <SDL_loadso.h>
 #include <vector>
 #include <algorithm>
@@ -32,15 +31,16 @@ using namespace AgcDriver::Graphics;
 constexpr std::uint32_t Side = 64;
 constexpr std::size_t BlockBytes = 65536;
 alignas(4096) std::array<std::uint8_t, BlockBytes * 2> Storage{};
-alignas(4096) std::array<std::uint8_t, BlockBytes * 2> CopyStorage{};
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Format8Uint = 5;
 
 class Device {
 public:
-    Device() {
+    explicit Device(bool unrestrictedDepth) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+        library = SDL_LoadObject("libvulkan.1.dylib");
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -52,6 +52,12 @@ public:
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
             info.pApplicationInfo = &application;
+#ifdef __APPLE__
+            const char* portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+            info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            info.enabledExtensionCount = 1;
+            info.ppEnabledExtensionNames = &portability;
+#endif
             Check(function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance), "vkCreateInstance");
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
@@ -59,7 +65,7 @@ public:
             Require(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
-            context.physical = devices.front();
+            context.physical = SelectFixturePhysicalDevice(devices, function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties"));
             const auto extensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> available(count);
@@ -88,6 +94,14 @@ public:
             enabled.shaderInt64 = VK_TRUE;
             address.pNext = &bytes;
             std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
+            if (hasExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) && (families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0) {
+                extensionsEnabled.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+                context.pushDescriptors = true;
+            }
+            if (unrestrictedDepth && hasExtension(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME)) {
+                extensionsEnabled.push_back(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME);
+                context.depthRangeUnrestricted = true;
+            }
             if (hasExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
                 extensionsEnabled.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
                 VkPhysicalDeviceExternalMemoryHostPropertiesEXT hostProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
@@ -98,8 +112,9 @@ public:
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos = &queue;
-            device.enabledExtensionCount = static_cast<std::uint32_t>(extensionsEnabled.size());
-            device.ppEnabledExtensionNames = extensionsEnabled.data();
+            AgcDriver::Tests::PortabilitySubset subset;
+            subset.Enable(context.physical, function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties"),
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), extensionsEnabled, device);
             device.pEnabledFeatures = &enabled;
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
             context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
@@ -254,9 +269,17 @@ void Run(Context context, std::uint8_t* block) {
     layeredStencil.depthOrLastArray = 1;
     ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredStencil, 0)); }, "storage image access to depth/stencil surface", "a two-layer 2D array view of the stencil plane was accepted");
     layeredDepth.depthOrLastArray = 1;
-    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredDepth, 0)); }, "with a layer pitch of", "a two-layer 2D array view of the depth plane with a layer pitch other than the depth slice size was accepted");
+    const auto layerPitch = static_cast<std::uint64_t>(DescribeSurface(layeredDepth).GuestLayerOffset(1));
+    const auto sliceBytes = DepthSliceBytes({Side, Side}, 4u);
+    Require(layerPitch != sliceBytes, "the test's layered depth view has the depth slice size as its layer pitch");
+    const auto layered = DepthSurfaceStorage(context, {}, layeredDepth, 0);
+    Require(layered != nullptr && layered->ImageLayers() == 2, "a two-layer 2D array view over the depth plane's guest layer pitch was not taken as a storage image");
+    submit(recorder);
+    readBack(*layered);
+    Require(CountFloats(block + layerPitch, 0.f) == Side * Side, "the two-layer 2D array view did not take the layer that only overlaps the depth slice from guest memory");
+    Require(CountFloats(block, 0.5f) == Side * Side, "the two-layer 2D array view did not receive the layer the depth surface holds");
     layeredDepth.baseArray = 1;
-    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredDepth, 0)); }, "with a layer pitch of", "a 2D array view of layer 1 of the depth plane with a layer pitch other than the depth slice size was accepted");
+    Require(DepthSurfaceStorage(context, {}, layeredDepth, 0) != nullptr, "a 2D array view from layer 1 of the depth plane was not taken as a storage image");
     const auto own = StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float), 0);
     const std::array<std::uint32_t, 4> eighth{std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f)};
     Require(own->FillClear(eighth, StorageTexture::WholeImage, refusal), refusal != nullptr ? refusal : "the storage image could not be filled");
@@ -267,6 +290,24 @@ void Run(Context context, std::uint8_t* block) {
     submit(recorder);
     readBack(*reread);
     Require(CountFloats(block, 0.125f) == Side * Side, "a storage image written over the depth plane did not reach the depth surface");
+    const float overlapping = 0.375f;
+    for (std::size_t i = 0; i < Side * Side; ++i) std::memcpy(block + layerPitch + i * sizeof(overlapping), &overlapping, sizeof(overlapping));
+    auto swizzled = PlaneResource(address, Format32Float);
+    swizzled.tileMode = TextureTileMode::kStandard64KB;
+    const auto tiled = DepthSurfaceStorage(context, {}, swizzled, 0);
+    Require(tiled != nullptr, "a 64 KiB depth plane has no storage image");
+    const std::array<std::uint32_t, 4> pendingFill{std::bit_cast<std::uint32_t>(0.75f), std::bit_cast<std::uint32_t>(0.75f), std::bit_cast<std::uint32_t>(0.75f), std::bit_cast<std::uint32_t>(0.75f)};
+    Require(tiled->FillClear(pendingFill, StorageTexture::WholeImage, refusal), refusal != nullptr ? refusal : "the 64 KiB depth plane's storage image could not be filled");
+    submit(recorder);
+    auto spanning = layeredDepth;
+    spanning.baseArray = 0;
+    spanning.depthOrLastArray = 3;
+    const auto spanningView = DepthSurfaceStorage(context, {}, spanning, 0);
+    Require(spanningView != nullptr && spanningView->ImageLayers() == 4, "a four-layer 2D array view over a 64 KiB depth plane was not taken as a storage image");
+    Require(CountFloats(block, 0.75f) == Side * Side, "the pending depth result was not stored into guest memory before the layered view was created");
+    submit(recorder);
+    readBack(*spanningView);
+    Require(CountFloats(block + layerPitch, overlapping) == Side * Side, "the layer that only overlaps the depth surface did not hold the guest bytes that were there");
     Require(!DepthSurfaceStoreBack(context, *StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float, Side / 2), 0)), "a storage image of another extent over the depth memory was stored into the depth surface");
 }
 
@@ -305,76 +346,79 @@ void RunPairings(Context context, std::uint8_t* block) {
     ExpectFailure([&] { static_cast<void>(DepthSurfaceStoreBack(context, *depth)); }, "through a view that another view of the plane", "a store back through a replaced view was taken by an older pairing that covers the plane");
 }
 
-void DepthCopyCase(Context context, std::uint8_t* block) {
-    const auto colorAddress = reinterpret_cast<std::uint64_t>(block);
-    const auto depthAddress = colorAddress + BlockBytes / 4;
-    Recorder recorder(context);
-    recorder.Activate();
-    const auto submit = [&] {
+constexpr std::array<std::uint32_t, 16> RoundTripWords{0x3e800000u, 0x3f800000u, 0x00000000u, 0x80000000u, 0xbf000000u, 0x40000000u, 0x00000001u, 0x007fffffu, 0x807fffffu, 0x7f7fffffu, 0x7f800000u, 0xff800000u, 0x7fc00000u, 0x7fc12345u, 0x7f800001u, 0xffc00000u};
+
+std::vector<std::uint32_t> RoundTrip(Context context, std::uint8_t* block, VkFormat format) {
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto submit = [&](Recorder& recorder) {
         recorder.Submit();
         Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle");
     };
-    ColorTarget color{};
-    color.address = colorAddress;
-    color.surfaceAddress = colorAddress;
-    color.extent = {Side, Side};
-    color.surfaceExtent = color.extent;
-    color.format = VK_FORMAT_R32_SFLOAT;
-    color.elementBytes = 4;
-    color.tileMode = ColorTileMode::RenderTarget;
-    color.bytes = ColorTargetLayout(Side, Side, ColorTileMode::RenderTarget, 4).Bytes();
-    const auto copy = [&](std::uint32_t samples, std::uint32_t sample, VkExtent2D extent) {
-        RunDepthCopyPass(context, DepthCopyPass{depthAddress, extent, samples, sample, color});
-        submit();
-        const auto resident = CachedStorageSurface(context, SurfaceForTarget(color));
-        resident->MarkDirty();
-        resident->WriteBack();
-        submit();
-    };
-    const auto countBlock = [&](float value) {
-        std::size_t count = 0;
-        for (std::size_t offset = 0; offset < BlockBytes; offset += sizeof(float)) {
-            float texel = 0;
-            std::memcpy(&texel, block + offset, sizeof(texel));
-            if (texel == value) ++count;
+    Recorder recorder(context);
+    recorder.Activate();
+    constexpr std::uint32_t sentinel = 0x12345678u;
+    for (std::size_t texel = 0; texel < Side * Side; ++texel) std::memcpy(block + texel * 4, &RoundTripWords[texel % RoundTripWords.size()], 4);
+    const DepthTarget target{address, format == VK_FORMAT_D32_SFLOAT_S8_UINT ? address + BlockBytes / 2 : 0, {Side, Side}, format, 0.25f, 7};
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the round trip's depth surface was not created");
+    const auto stored = StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float), 0);
+    submit(recorder);
+    Require(DepthSurfaceStoreBack(context, *stored), "the round trip's storage image was not stored into the depth surface");
+    submit(recorder);
+    for (std::size_t texel = 0; texel < Side * Side; ++texel) std::memcpy(block + texel * 4, &sentinel, 4);
+    auto layered = PlaneResource(address, Format32Float);
+    layered.dimension = TextureDimension::k2DArray;
+    const auto read = DepthSurfaceStorage(context, {}, layered, 0);
+    Require(read != nullptr, "the round trip's depth plane has no storage image");
+    submit(recorder);
+    read->MarkDirty();
+    read->WriteBack();
+    submit(recorder);
+    std::vector<std::uint32_t> words(Side * Side);
+    std::memcpy(words.data(), block, words.size() * 4);
+    ClearDepthSurfaces(context.device);
+    return words;
+}
+
+void RunRoundTrips(Context context, std::uint8_t* block) {
+    const bool passesOff = std::getenv("APS5_NO_DEPTH_TRANSFER_PASS") != nullptr;
+    for (const auto format : {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT}) {
+        SetDepthTransferPasses(false);
+        const auto copied = RoundTrip(context, block, format);
+        SetDepthTransferPasses(true);
+        const auto before = DepthTransferPassCount();
+        const auto passed = RoundTrip(context, block, format);
+        Require(passesOff || !context.pushDescriptors || DepthTransferPassCount() > before, "the round trip did not read the depth plane in the shader pass");
+        Require(passed == copied, "the shader pass read the depth plane into the storage image differently from the copy");
+        const auto kept = [&](std::uint32_t word) {
+            for (std::size_t texel = 0; texel < copied.size(); ++texel) {
+                if (RoundTripWords[texel % RoundTripWords.size()] == word && copied[texel] != word) return false;
+            }
+            return true;
+        };
+        for (const auto word : {0x3e800000u, 0x3f800000u, 0x00000000u}) Require(kept(word), "a depth value in [0, 1] did not come back from the depth plane");
+        if (context.depthRangeUnrestricted) {
+            for (const auto word : {0xbf000000u, 0x40000000u}) Require(kept(word), "-0.5 or 2.0 did not come back from a depth plane with the depth range unrestricted");
         }
-        return count;
-    };
-    std::fill(block, block + BlockBytes, std::uint8_t{0});
-    ExpectFailure([&] { copy(1, 0, {Side, Side}); }, "no draw rendered", "a DB depth copy from memory without a depth surface was accepted");
-    const auto sampledCounts = context.limits.sampledImageDepthSampleCounts & context.limits.framebufferDepthSampleCounts;
-    const std::uint32_t samples = (sampledCounts & VK_SAMPLE_COUNT_2_BIT) != 0 ? 2u : (sampledCounts & VK_SAMPLE_COUNT_4_BIT) != 0 ? 4u : 0u;
-    if (samples != 0) {
-        Require(DepthSurfaceView(context, DepthTarget{depthAddress, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.375f, 0, 0, false, samples}) != VK_NULL_HANDLE, "the multisample depth surface was not created");
-        for (std::uint32_t sample = 0; sample < samples; ++sample) {
-            std::fill(block, block + BlockBytes, std::uint8_t{0});
-            copy(samples, sample, {Side, Side});
-            Require(countBlock(0.375f) == Side * Side, "the DB depth copy of sample " + std::to_string(sample) + " of " + std::to_string(samples) + " did not store the cleared depth in every texel of the R32 float target");
+        std::string changed;
+        for (const auto word : RoundTripWords) {
+            if (kept(word)) continue;
+            char text[16];
+            std::snprintf(text, sizeof(text), " 0x%08x", word);
+            changed += text;
         }
-        ExpectFailure([&] { copy(samples, samples, {Side, Side}); }, "does not have", "a DB depth copy of a sample past the last of a multisample surface was accepted");
-        ExpectFailure([&] { copy(samples, 0, {Side / 2, Side / 2}); }, "of another size", "a DB depth copy of another extent than the depth surface was accepted");
-        ClearDepthSurfaces(context.device);
+        std::printf("depth round trip, vk format %d, depth range %s: the shader pass matches the copy; words the copy changed:%s\n", static_cast<int>(format), context.depthRangeUnrestricted ? "unrestricted" : "[0, 1]", changed.empty() ? " none" : changed.c_str());
     }
-    if ((context.limits.sampledImageDepthSampleCounts & VK_SAMPLE_COUNT_2_BIT) == 0) {
-        Require(DepthSurfaceView(context, DepthTarget{depthAddress, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.375f, 0, 0, false, 2}) != VK_NULL_HANDLE, "the unsampleable two-sample depth surface was not created");
-        ExpectFailure([&] { copy(2, 0, {Side, Side}); }, "cannot sample at its sample count", "a DB depth copy from an unsampleable two-sample depth surface was accepted");
-        ClearDepthSurfaces(context.device);
-        std::puts("DB depth copy: unsupported two-sample source refused cleanly");
-    }
-    Require(DepthSurfaceView(context, DepthTarget{depthAddress, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.625f, 0, 0, false, 1}) != VK_NULL_HANDLE, "the one-sample depth surface was not created");
-    std::fill(block, block + BlockBytes, std::uint8_t{0});
-    copy(1, 0, {Side, Side});
-    Require(countBlock(0.625f) == Side * Side, "the DB depth copy of a one-sample depth surface did not store the cleared depth in every texel of the R32 float target");
-    ExpectFailure([&] { copy(1, 1, {Side, Side}); }, "does not have", "a DB depth copy of a second sample of a one-sample surface was accepted");
+    SetDepthTransferPasses(true);
 }
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool restrictedDepth = argc > 1 && std::string(argv[1]) == "--restricted-depth";
         std::unique_ptr<Device> device;
         try {
-            device = std::make_unique<Device>();
+            device = std::make_unique<Device>(!restrictedDepth);
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
@@ -388,15 +432,13 @@ int main() {
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             Run(context, block);
-            auto* copyBlock = CopyStorage.data() + (BlockBytes - reinterpret_cast<std::uintptr_t>(CopyStorage.data()) % BlockBytes) % BlockBytes;
-            GuestAllocations::Mutation().Add(copyBlock, BlockBytes, true, true, true);
-            DepthCopyCase(context, copyBlock);
-            ClearCachedTextures(context.device);
-            GuestAllocations::Mutation().Remove(copyBlock);
             ClearDepthSurfaces(context.device);
             RunPairings(context, block);
             ClearDepthSurfaces(context.device);
+            RunRoundTrips(context, block);
         }
+        const bool passesOff = std::getenv("APS5_NO_DEPTH_TRANSFER_PASS") != nullptr;
+        Require(passesOff ? DepthTransferPassCount() == 0 : !context.pushDescriptors || DepthTransferPassCount() > 0, passesOff ? "a depth plane transfer ran in shader passes with APS5_NO_DEPTH_TRANSFER_PASS set" : "the device enables VK_KHR_push_descriptor but no depth plane transfer ran in shader passes");
         GuestAllocations::Mutation().Remove(block);
         std::cout << "depth surface storage access tests passed\n";
         return 0;

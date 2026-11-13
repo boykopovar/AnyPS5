@@ -4,6 +4,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <array>
 #include <string>
@@ -95,6 +97,52 @@ void rejectFields(const Fields& f, std::string_view reason) {
 
 }
 
+static void RunR128TextureTests() {
+    constexpr std::array<std::uint32_t, 8> streamed{0xa0c18800u, 0xcad00000u, 0x01ffc1ffu, 0x905b2facu, 0u, 0u, 0u, 0u};
+    const auto view = DecodeTextureResource(streamed);
+    Require(view.baseAddress == 0xa0c1880000ull && view.format == 173u && view.tileMode == TextureTileMode::kStandard4KB && view.width == 512u && view.height == 512u && view.baseLevel == 0u && view.lastLevel == 9u && view.mipCount == 10u && view.allocatedMipCount == 10u && view.minLod == 0u,
+        "a 128-bit BC3 T# (2048x2048, levels 2..11, words 4-7 zero) must read as the 512x512 chain of its 10 resident levels, got " + std::to_string(view.width) + "x" + std::to_string(view.height) + " levels " + std::to_string(view.baseLevel) + ".." + std::to_string(view.lastLevel) + " of " + std::to_string(view.mipCount));
+    auto chainWords = streamed;
+    chainWords[3] &= ~(0xfu << 12u);
+    chainWords[5] = 11u << 4u;
+    const auto full = DecodeTextureResource(chainWords);
+    Require(full.width == 2048u && full.mipCount == 12u, "the same surface with MAX_MIP 11 must be the 12-level 2048x2048 chain");
+    const auto chain = DescribeSurface(full);
+    const auto resident = DescribeSurface(view);
+    Require(chain.mips.size() == 12u && resident.mips.size() == 10u, "the chain and the resident levels must have 12 and 10 levels");
+    for (std::uint32_t level = 0; level < 10u; ++level) {
+        const auto& a = chain.mips[level + 2u];
+        const auto& b = resident.mips[level];
+        Require(a.tiledOffset == b.tiledOffset && a.tiledSize == b.tiledSize && a.width == b.width && a.height == b.height && a.blocksPerRow == b.blocksPerRow && a.tail == b.tail && a.tailX == b.tailX && a.tailY == b.tailY, "resident level " + std::to_string(level) + " must be level " + std::to_string(level + 2u) + " of the 12-level chain");
+    }
+    Require(resident.guestBytes <= chain.mips[1].tiledOffset && chain.mips[0].tiledOffset > chain.mips[1].tiledOffset, "the resident levels must end before the chain's levels 1 and 0, which come last in a GFX10 swizzled chain");
+    auto levelZero = streamed;
+    levelZero[3] &= ~(0xfu << 12u);
+    const auto single = DecodeTextureResource(levelZero);
+    Require(single.mipCount == 1u && single.lastLevel == 0u, "a T# with words 4-7 zero that starts at level 0 must stay one level");
+    auto tailed = streamed;
+    tailed[5] = 4u << 20u;
+    reject([&] { DecodeTextureResource(tailed); }, "would move the surface's own");
+
+    constexpr std::array<std::uint32_t, 8> tall{0xa0c1de00u, 0xcad00000u, 0x01ffc0ffu, 0x905b4facu, 0u, 0u, 0u, 0u};
+    const auto tallView = DecodeTextureResource(tall);
+    Require(tallView.width == 64u && tallView.height == 128u && tallView.lastLevel == 7u && tallView.mipCount == 8u, "a 128-bit 1024x2048 T# of levels 4..11 must read as its 64x128 chain of 8 levels");
+
+    Fields clamped;
+    clamped.base40 = 0x55ea000ull;
+    clamped.format = 20;
+    clamped.width = 1024;
+    clamped.height = 1024;
+    clamped.tileModeRaw = 0x1b;
+    clamped.baseLevel = 2;
+    clamped.lastLevel = 10;
+    clamped.minLod = 2u * 256u + 64u;
+    const auto clampedView = DecodeTextureResource(pack(clamped));
+    Require(clampedView.width == 256u && clampedView.mipCount == 9u && clampedView.minLod == 64u, "reading a 128-bit T# from its resident levels must move its MIN_LOD clamp with the base level");
+    clamped.minLod = 256u;
+    Require(DecodeTextureResource(pack(clamped)).minLod == 0u, "a MIN_LOD clamp below the base level must vanish when read from the resident levels");
+}
+
 void RunGuestTextureResourceTests() {
     Fields base;
     const auto baseWords = pack(base);
@@ -109,6 +157,26 @@ void RunGuestTextureResourceTests() {
     Require(IsNullTextureResource(pack(nullType)), "a type-1 texture with a nonzero base was not classified as null");
     nullType.typeRaw = 2;
     Require(!IsNullTextureResource(pack(nullType)), "a reserved type-2 texture was classified as null");
+    const std::array<std::uint32_t, 8> reportedStorage{0x04efd000u, 0x00040011u, 0x00017a00u, 0x00005204u, 0x0af00000u, 0u, 0x00000612u, 0x00fff000u};
+    Require(IsNullTextureResource(reportedStorage), "the type-0 words of a written storage slot were not classified as null");
+    reject([&] { static_cast<void>(DecodeTextureResource(reportedStorage)); }, "guest texture descriptor");
+    Fields unsetFormat = base;
+    unsetFormat.format = 0u;
+    unsetFormat.typeRaw = 12u;
+    Require(!IsNullTextureResource(pack(unsetFormat)), "a zero-format texture was classified as null for every consumer");
+    Require(IsNullSampledTextureResource(pack(unsetFormat)), "a zero-format image-type texture was not classified as null for a sampled consumer");
+    reject([] { ResolveTextureFormat(0u); }, "unsupported guest texture format");
+    unsetFormat.format = 0x1ffu;
+    Require(!IsNullTextureResource(pack(unsetFormat)), "an all-ones-format texture was classified as null for every consumer");
+    Require(IsNullSampledTextureResource(pack(unsetFormat)), "an all-ones-format image-type texture was not classified as null for a sampled consumer");
+    reject([] { ResolveTextureFormat(0x1ffu); }, "unsupported guest texture format");
+    unsetFormat.typeRaw = 2u;
+    unsetFormat.format = 0u;
+    Require(!IsNullSampledTextureResource(pack(unsetFormat)), "a reserved type-2 texture with a zero format was classified as null for a sampled consumer");
+    unsetFormat.format = 0x1ffu;
+    Require(!IsNullSampledTextureResource(pack(unsetFormat)), "a reserved type-2 texture with an all-ones format was classified as null for a sampled consumer");
+    unsetFormat.typeRaw = 15u;
+    Require(!IsNullSampledTextureResource(pack(unsetFormat)), "a type-15 texture with an unset format was classified as null for a sampled consumer");
     auto result = DecodeTextureResource(pack(base));
     Require(result.baseAddress == (base.base40 << 8u), "decoded base address changed");
     Require(result.width == 16 && result.height == 16, "decoded width or height changed");
@@ -123,37 +191,38 @@ void RunGuestTextureResourceTests() {
     fmask.dstSelY = fmask.dstSelZ = fmask.dstSelW = 0u;
     const auto fmaskResource = DecodeTextureResource(pack(fmask));
     Require(fmaskResource.format == 20u && fmaskResource.dimension == TextureDimension::k2D && fmaskResource.tileMode == TextureTileMode::kZ64KBX, "uncompressed 32-bit FMASK did not use an integer Z surface");
+    auto compressedFmask = fmask;
+    compressedFmask.metaCompress = compressedFmask.metaPipeAligned = true;
+    compressedFmask.metaAddr = 0x123456789aull;
+    const auto compressedResource = DecodeTextureResource(pack(compressedFmask));
+    Require(compressedResource.fmaskCmaskAddress == compressedFmask.metaAddr << 8u && compressedResource.dccAddress == 0u && compressedResource.dccPipeAligned, "compressed FMASK CMASK was interpreted as color DCC");
+    compressedFmask.metaPipeAligned = false;
+    rejectFields(compressedFmask, "FMASK CMASK metadata must be pipe aligned");
     Fields fmaskArray = fmask;
     fmaskArray.typeRaw = 13u;
     fmaskArray.depth = 2u;
     fmaskArray.baseArray = 1u;
     const auto fmaskArrayResource = DecodeTextureResource(pack(fmaskArray));
     Require(fmaskArrayResource.format == 20u && fmaskArrayResource.baseArray == 1u && fmaskArrayResource.depthOrLastArray == 2u, "FMASK normalization changed the array view");
-    for (std::uint32_t format = 156u; format <= 168u; ++format) {
-        if (format == 166u) continue;
-        auto unsupported = fmask;
-        unsupported.format = format;
-        rejectFields(unsupported, "FMASK format is not implemented");
+    constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 8> narrowFormats{{{156u, 5u}, {157u, 5u}, {158u, 5u}, {159u, 5u}, {160u, 5u}, {161u, 5u}, {163u, 11u}, {165u, 20u}}};
+    for (const auto& [format, surface] : narrowFormats) {
+        auto narrow = fmask;
+        narrow.format = format;
+        const auto narrowResource = DecodeTextureResource(pack(narrow));
+        Require(narrowResource.format == surface && narrowResource.tileMode == TextureTileMode::kZ64KBX, "FMASK " + std::to_string(format) + " did not use an integer Z surface of its storage width");
+        narrow.dstSelX = 4u;
+        narrow.dstSelY = 5u;
+        narrow.dstSelZ = 6u;
+        narrow.dstSelW = 7u;
+        Require(DecodeTextureResource(pack(narrow)).format == surface, "an expanded FMASK " + std::to_string(format) + " view with identity selectors was refused");
+        auto compressedNarrow = narrow;
+        compressedNarrow.metaCompress = compressedNarrow.metaPipeAligned = true;
+        compressedNarrow.metaAddr = 0x123456789aull;
+        if (format == 159u) Require(DecodeTextureResource(pack(compressedNarrow)).format == surface, "a two-fragment CMASK FMASK was not normalized to its 8-bit storage");
     }
-    for (const auto field : {&Fields::metaCompress, &Fields::writeCompress}) {
-        auto compressed = fmask;
-        compressed.*field = true;
-        rejectFields(compressed, "FMASK CMASK compression is not implemented");
-    }
-    for (const auto selector : {5u, 6u, 7u}) {
-        auto unsupported = fmask;
-        unsupported.dstSelX = selector;
-        rejectFields(unsupported, "FMASK destination channel selector is not implemented");
-    }
-    auto unsupportedFmask = fmask;
-    unsupportedFmask.tileModeRaw = 0u;
-    rejectFields(unsupportedFmask, "FMASK reads require a single-mip");
-    unsupportedFmask = fmask;
-    unsupportedFmask.lastLevel = unsupportedFmask.maxMip = 1u;
-    rejectFields(unsupportedFmask, "FMASK reads require a single-mip");
-    unsupportedFmask = fmask;
-    unsupportedFmask.typeRaw = 10u;
-    rejectFields(unsupportedFmask, "FMASK reads require a single-mip");
+    auto missingFmaskMetadata = fmask;
+    missingFmaskMetadata.metaCompress = true;
+    rejectFields(missingFmaskMetadata, "FMASK CMASK compression is not implemented");
     Require(result.dstSelX == 4 && result.dstSelY == 5 && result.dstSelZ == 6 && result.dstSelW == 7, "decoded destination selectors changed");
 
     Fields wide = base;
@@ -210,7 +279,8 @@ void RunGuestTextureResourceTests() {
 
     Fields twoD = base;
     twoD.depth = 1;
-    rejectFields(twoD, "custom pitch other than its default pitch");
+    result = DecodeTextureResource(pack(twoD));
+    Require(result.depthOrLastArray == 0 && result.linearPitch == 0, "linear 2D descriptor with a pitch below its width did not keep the default pitch");
     twoD.tileModeRaw = 0x09;
     rejectFields(twoD, "nonzero depth or base array");
     Fields pitched = base;
@@ -218,18 +288,35 @@ void RunGuestTextureResourceTests() {
     pitched.height = 72;
     pitched.depth = 127;
     result = DecodeTextureResource(pack(pitched));
-    Require(result.dimension == TextureDimension::k2D && result.width == 72 && result.depthOrLastArray == 0, "linear 2D descriptor with its default pitch in DEPTH decoded incorrectly");
+    Require(result.dimension == TextureDimension::k2D && result.width == 72 && result.depthOrLastArray == 0 && result.linearPitch == 0, "linear 2D descriptor with its default pitch in DEPTH decoded incorrectly");
     pitched.width = 8;
     pitched.height = 8;
     pitched.depth = 63;
     result = DecodeTextureResource(pack(pitched));
-    Require(result.width == 8 && result.depthOrLastArray == 0, "linear 2D descriptor with a one-unit default pitch decoded incorrectly");
-    pitched.depth = 127;
-    rejectFields(pitched, "custom pitch other than its default pitch");
+    Require(result.width == 8 && result.depthOrLastArray == 0 && result.linearPitch == 0, "linear 2D descriptor with a one-unit default pitch decoded incorrectly");
+    for (const auto& [depth, pitch] : std::array<std::pair<std::uint32_t, std::uint32_t>, 4>{{{64u, 128u}, {127u, 128u}, {128u, 192u}, {319u, 320u}}}) {
+        pitched.depth = depth;
+        result = DecodeTextureResource(pack(pitched));
+        Require(result.width == 8 && result.depthOrLastArray == 0 && result.linearPitch == pitch, "linear 2D descriptor did not round its DEPTH pitch up to 256 bytes");
+        const auto geometry = DescribeSurface(result);
+        Require(geometry.mips.size() == 1 && geometry.mips[0].pitchBytes == pitch * 4u && geometry.mips[0].blocksPerRow == pitch && geometry.guestBytes == pitch * 4u * 8u, "linear 2D surface with a custom pitch has the wrong layout");
+        auto defaultPitch = result;
+        defaultPitch.linearPitch = 0;
+        static_cast<void>(EncodeTextureResource(defaultPitch));
+    }
+    Fields narrow = base;
+    narrow.format = 5;
+    narrow.width = 300;
+    narrow.depth = 511;
+    Require(DecodeTextureResource(pack(narrow)).linearPitch == 0, "linear 2D 8-bit descriptor with its default pitch in DEPTH set a custom pitch");
+    narrow.depth = 767;
+    Require(DecodeTextureResource(pack(narrow)).linearPitch == 768, "linear 2D 8-bit descriptor did not keep its DEPTH pitch");
+    narrow.depth = 768;
+    Require(DecodeTextureResource(pack(narrow)).linearPitch == 1024, "linear 2D 8-bit descriptor did not round its DEPTH pitch up to 256 bytes");
     pitched.depth = 63;
     pitched.maxMip = 1;
     pitched.lastLevel = 1;
-    rejectFields(pitched, "custom pitch other than its default pitch");
+    rejectFields(pitched, "pitch on a block-compressed, mipmapped or base-array surface");
     twoD = base;
     twoD.baseArray = 1;
     rejectFields(twoD, "nonzero depth or base array");
@@ -295,9 +382,14 @@ void RunGuestTextureResourceTests() {
     result = DecodeTextureResource(pack(cubeExtraSlice));
     Require(result.baseArray == 0 && result.depthOrLastArray == 6, "a cube descriptor with a slice past its last whole cube lost a slice");
     Require(DescribeSurface(result).imageLayers == 7, "a cube allocation with a slice past its last whole cube omitted it");
-    Fields cubePartial = cube;
-    cubePartial.depth = 4;
-    rejectFields(cubePartial, "fewer than 6 array slices");
+    for (const auto [first, last] : {std::pair{0u, 4u}, std::pair{0u, 1u}, std::pair{2u, 5u}, std::pair{6u, 10u}}) {
+        auto shortCube = cube;
+        shortCube.baseArray = first;
+        shortCube.depth = last;
+        result = DecodeTextureResource(pack(shortCube));
+        Require(result.baseArray == first && result.depthOrLastArray == first + 5u, "a cube descriptor with fewer than six slices did not expose six faces from its base slice");
+        Require(DescribeSurface(result).imageLayers == first + 6u, "a cube allocation with fewer than six slices omitted faces");
+    }
 
     Fields multisampled = base;
     multisampled.typeRaw = 14;
@@ -620,12 +712,15 @@ void RunGuestTextureResourceTests() {
     pastUntailed.maxMip = 0;
     pastUntailed.baseLevel = 1;
     pastUntailed.lastLevel = 1;
+    pastUntailed.perfMod = 4;
     rejectFields(pastUntailed, "would move the surface's own");
     auto untailedChain = tailView;
     untailedChain.mipCount = 1;
     const auto untailedAllocated = DescribeSurface(untailedChain).guestBytes;
     untailedChain.mipCount = 2;
     Require(untailedAllocated == 0xff0000u && DescribeSurface(untailedChain).guestBytes == 0x1470000u, "a second level must grow a 1920x1080 64 bpp SW_64KB_R_X surface from addrlib's 0xff0000 to 0x1470000 bytes");
+
+    RunR128TextureTests();
 
     std::array<std::uint32_t, 4> shortWords{};
     reject([&] { DecodeTextureResource(shortWords); }, "8 dwords");
@@ -702,4 +797,16 @@ void RunGuestTextureResourceTests() {
     single.depth = 3;
     Require(!FirstLayerDescriptor(pack(single), narrowed), "a 2D array T# of its base slice alone needs no narrowing");
     Require(!FirstLayerDescriptor(baseWords, narrowed), "a 2D T# needs no narrowing");
+
+    const std::array<std::uint32_t, 8> gcnTexture{0x00001000u, 0x00a000c0u, 0x0003c00fu, 0x90800facu, 0x0001e000u, 0u, 0u, 0u};
+    auto gcnNullBase = gcnTexture;
+    gcnNullBase[0] = 0u;
+    ShaderRecompiler::SetGcnGuestShaders(true);
+    const auto gcnResult = DecodeTextureResource(ShaderRecompiler::GcnImageWords(std::span<const std::uint32_t, 8>(gcnTexture)));
+    const bool gcnNull = IsNullTextureResource(ShaderRecompiler::GcnImageWords(std::span<const std::uint32_t, 8>(gcnNullBase)));
+    const auto gcnAllocation = TextureResourceAllocationAddress(ShaderRecompiler::GcnImageWords(std::span<const std::uint32_t, 8>(gcnTexture)));
+    ShaderRecompiler::SetGcnGuestShaders(false);
+    Require(gcnResult.baseAddress == 0x100000u, "a PS4 T# took MTYPE_L2 above its 38-bit base as address bits");
+    Require(gcnNull, "a PS4 T# with a zero base and MTYPE_L2 set was not classified as null");
+    Require(gcnAllocation && *gcnAllocation == gcnResult.baseAddress, "a PS4 T# with MTYPE_L2 set looked up its allocation at an address other than its 38-bit base");
 }

@@ -1,20 +1,20 @@
 import subprocess
+import os
+import stat
 import signal
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from test_macho_nids import build_dylib, exports_of, nid
+from test_macho_nids import build_dylib, exports_of, nid, PATCHER
 
 try:
     import resource
 except ImportError:
     resource = None
 
-PATCHER = Path(sys.argv.pop(1)).resolve()
-
-
+@unittest.skipUnless(PATCHER is not None and PATCHER.is_file(), "nid_patcher executable required")
 class NativePathTests(unittest.TestCase):
     def invoke(self, *arguments):
         return subprocess.run([str(PATCHER), "libtest", *map(str, arguments)],
@@ -57,6 +57,19 @@ class NativePathTests(unittest.TestCase):
             self.assertFalse(missing.exists())
             self.assertEqual(existing.read_bytes(), b"unchanged")
 
+    @unittest.skipUnless(os.name == "posix", "requires POSIX file permissions")
+    def test_patching_preserves_the_input_permissions(self):
+        for mode in (0o700, 0o750, 0o640):
+            with self.subTest(mode=oct(mode)), tempfile.TemporaryDirectory() as temporary:
+                file = Path(temporary) / "library.prx"
+                file.write_bytes(build_dylib([("_puts_nid_postfix", 0, 0x100)], []))
+                file.chmod(mode)
+                result = self.invoke(file)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(exports_of(file.read_bytes()), {"_" + nid("puts"): (0, 0x100)})
+                self.assertEqual(stat.S_IMODE(file.stat().st_mode), mode)
+                self.assertEqual(list(Path(temporary).iterdir()), [file])
+
     @unittest.skipUnless(resource is not None and hasattr(signal, "SIGXFSZ"), "requires POSIX file size limits")
     def test_failed_file_write_is_reported_without_success(self):
         for limit in (0, 1024):
@@ -72,7 +85,8 @@ class NativePathTests(unittest.TestCase):
                 result = subprocess.run([str(PATCHER), "libtest", str(file)], capture_output=True,
                                         encoding="utf-8", errors="replace", timeout=10,
                                         preexec_fn=restrict_output)
-                self.assertEqual(file.stat().st_size, limit)
+                self.assertEqual(file.read_bytes(), original)
+                self.assertEqual(sorted(entry.name for entry in file.parent.iterdir()), [file.name])
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn("cannot write", result.stderr)
                 self.assertIn(str(file), result.stderr)

@@ -7,33 +7,65 @@ namespace Elfpatcher::Windows {
 
 WindowsLoadImage::WindowsLoadImage(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const bool requireEntry, const std::uint64_t imageBase) : imageBase(imageBase) {
     if (source.size() < 64 || Io::ReadU32(source, 0) != 0x464c457f || source[4] != 2 || source[5] != 1 || source[6] != 1 || Io::ReadU16(source, 18) != 62)
-        throw Domain::RelinkerException("Windows output requires a little-endian ELF64 x86-64 image");
+        throw Domain::RelinkerException("This target requires a little-endian ELF64 x86-64 image");
     const auto type = Io::ReadU16(source, 16);
     if (type != 3 && type != 0xfe10 && type != 0xfe18)
-        throw Domain::RelinkerException("Windows output requires a position-independent ELF image");
+        throw Domain::RelinkerException("This target requires a position-independent ELF image");
     for (const auto& header : headers) {
         if (header.Type != 1)
             continue;
         if (header.FileSize > header.MemorySize || header.Offset > source.size() || header.FileSize > source.size() - header.Offset)
             throw Domain::RelinkerException("Invalid PT_LOAD file range", header.Offset);
-        if (header.MemorySize == 0)
-            throw Domain::RelinkerException("Empty PT_LOAD segment", header.Offset);
         if (header.MappedAddress > std::numeric_limits<std::uint64_t>::max() - header.MemorySize)
             throw Domain::RelinkerException("PT_LOAD address overflow", header.MappedAddress);
         if ((header.Flags & ~7u) != 0)
             throw Domain::RelinkerException("Unsupported PT_LOAD permission flags", header.Offset);
+        if (header.MemorySize == 0)
+            continue;
         segments.push_back(header);
     }
     if (segments.empty())
         throw Domain::RelinkerException("No PT_LOAD segments found");
     std::sort(segments.begin(), segments.end(), [](const auto& left, const auto& right) { return left.MappedAddress < right.MappedAddress; });
     firstAddress = segments.front().MappedAddress & ~static_cast<std::uint64_t>(SectionAlignment - 1);
-    std::uint64_t end = firstAddress;
-    for (const auto& segment : segments) {
-        if (segment.MappedAddress < end)
+    for (std::size_t index = 1; index < segments.size(); ++index) {
+        auto& previous = segments[index - 1];
+        const auto& segment = segments[index];
+        if (segment.MappedAddress - previous.MappedAddress >= previous.MemorySize)
+            continue;
+        const auto previousEnd = previous.MappedAddress + previous.MemorySize;
+        if (segment.MappedAddress == previous.MappedAddress || previousEnd > segment.MappedAddress + segment.MemorySize)
             throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", segment.MappedAddress);
-        end = segment.MappedAddress + segment.MemorySize;
+        if (((previous.Flags | segment.Flags) & 3u) == 3u && segment.MappedAddress % SectionAlignment != 0)
+            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", segment.MappedAddress);
+        const auto previousFileEnd = previous.MappedAddress + previous.FileSize;
+        const auto segmentFileEnd = segment.MappedAddress + segment.FileSize;
+        const auto compareEnd = std::min(previousEnd, std::max(previousFileEnd, segmentFileEnd));
+        for (auto address = segment.MappedAddress; address < compareEnd;) {
+            const bool previousBacked = address < previousFileEnd;
+            const bool segmentBacked = address < segmentFileEnd;
+            auto runEnd = compareEnd;
+            if (previousBacked)
+                runEnd = std::min(runEnd, previousFileEnd);
+            if (segmentBacked)
+                runEnd = std::min(runEnd, segmentFileEnd);
+            const auto length = static_cast<std::size_t>(runEnd - address);
+            const auto previousAt = static_cast<std::size_t>(previous.Offset + (address - previous.MappedAddress));
+            const auto segmentAt = static_cast<std::size_t>(segment.Offset + (address - segment.MappedAddress));
+            const bool congruent = previousBacked && segmentBacked
+                ? std::equal(source.begin() + previousAt, source.begin() + previousAt + length, source.begin() + segmentAt)
+                : previousBacked
+                    ? std::all_of(source.begin() + previousAt, source.begin() + previousAt + length, [](const std::uint8_t byte) { return byte == 0; })
+                    : std::all_of(source.begin() + segmentAt, source.begin() + segmentAt + length, [](const std::uint8_t byte) { return byte == 0; });
+            if (!congruent)
+                throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", segment.MappedAddress);
+            address = runEnd;
+        }
+        previous.MemorySize = segment.MappedAddress - previous.MappedAddress;
+        if (previous.FileSize > previous.MemorySize)
+            previous.FileSize = previous.MemorySize;
     }
+    const auto end = segments.back().MappedAddress + segments.back().MemorySize;
     size = AlignRva(end - firstAddress);
     CheckedRva(LoadRva + size);
     pageFlags.resize(static_cast<std::size_t>(size / SectionAlignment));

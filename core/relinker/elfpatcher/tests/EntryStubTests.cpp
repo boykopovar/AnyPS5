@@ -1,9 +1,12 @@
 #include <elfpatcher/general/EntryStubBuilder.hpp>
 #include <elfpatcher/windows/WindowsEntryStubBuilder.hpp>
 #include <domain/Types.hpp>
+#include <io/BufferUtils.hpp>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -21,10 +24,33 @@ bool bytesAt(const std::vector<std::uint8_t>& stub, std::size_t& offset, const s
     return true;
 }
 
+void stubEntersThroughTheMainStackSlot() {
+    constexpr std::uint64_t stubVaddr = 0xb32db98;
+    constexpr std::uint64_t entryVaddr = 0x80;
+    constexpr std::uint64_t slotVaddr = 0xb32d000;
+    const auto stub = Elfpatcher::EntryStubBuilder().BuildEntryStub(stubVaddr, entryVaddr, slotVaddr);
+    std::size_t offset = 0;
+    const auto ripTarget = [&](const std::vector<std::uint8_t>& opcode, const std::string& what) {
+        require(bytesAt(stub, offset, opcode), "the stub does not " + what);
+        std::int32_t rel32 = 0;
+        require(offset + sizeof(rel32) <= stub.size(), "the stub ends inside a displacement");
+        std::memcpy(&rel32, stub.data() + offset, sizeof(rel32));
+        offset += sizeof(rel32);
+        return stubVaddr + offset + static_cast<std::int64_t>(rel32);
+    };
+    require(bytesAt(stub, offset, {0x48, 0x89, 0xe7}), "the stub does not pass the initial stack pointer in rdi");
+    require(bytesAt(stub, offset, {0x48, 0x83, 0xe4, 0xf0}), "the stub does not align the stack to 16 bytes");
+    require(bytesAt(stub, offset, {0x6a, 0x00, 0x6a, 0x00}), "the stub does not push a zero frame record");
+    require(bytesAt(stub, offset, {0x48, 0x89, 0xe5}), "the stub does not point rbp at the zero frame record");
+    require(ripTarget({0x48, 0x8d, 0x35}, "load the entry point into rsi") == entryVaddr, "the stub passes the wrong entry point");
+    require(ripTarget({0xff, 0x15}, "call through the main stack entry slot") == slotVaddr, "the stub calls through the wrong slot");
+    require(bytesAt(stub, offset, {0x0f, 0x0b}) && offset == stub.size(), "the stub does not end with ud2 after the call");
+}
+
 void stubTerminatesTheFrameChain() {
     constexpr std::uint64_t stubVaddr = 0xb32db98;
     constexpr std::uint64_t entryVaddr = 0x80;
-    const auto stub = Elfpatcher::EntryStubBuilder().BuildEntryStub(stubVaddr, entryVaddr);
+    const auto stub = Elfpatcher::EntryStubBuilder().BuildEntryStub(stubVaddr, entryVaddr, std::nullopt);
     std::size_t offset = 0;
     require(bytesAt(stub, offset, {0x48, 0x89, 0xe7}), "the stub does not pass the initial stack pointer in rdi");
     require(bytesAt(stub, offset, {0x48, 0x83, 0xe4, 0xf0}), "the stub does not align the stack to 16 bytes");
@@ -116,16 +142,86 @@ void windowsStubRejectsAnOverlongAllocatorPath() {
     throw std::runtime_error("an allocator path past the startup buffer was accepted");
 }
 
+void windowsStubWaitsForTheParentAfterOpeningTheLog(const std::string& runPath) {
+    const auto nativeImports = Elfpatcher::Windows::WindowsImportBuilder().Build(0x1000);
+    const auto stub = windowsStub(nativeImports, runPath, {"libc.prx"});
+    const auto log = ripReference(stub.Code, {0xff, 0x15}, nativeImports.Functions.at("CreateFileW"), 0);
+    require(log != std::string::npos, runPath + ": the stub does not open anyps5.log");
+    const auto parent = ripReference(stub.Code, {0xff, 0x15}, nativeImports.Functions.at("GetEnvironmentVariableW"), 0);
+    require(parent != std::string::npos, runPath + ": the stub does not read ANYPS5_LOADEXEC_PARENT");
+    require(log < parent, runPath + ": the stub reads ANYPS5_LOADEXEC_PARENT before anyps5.log is opened");
+}
+
+void windowsLibSceAmprObjectImportsFallBackToTheLibcProvider() {
+    using namespace Elfpatcher::Windows;
+    const auto nativeImports = WindowsImportBuilder().Build(0x1000);
+    const std::vector<std::string> libraries{"libSceAmpr.prx", "libc.prx"};
+    const std::vector<PeImport> amprImport{{.Name = "-mLzBSk-VGs", .TargetRva = 0x2000, .Addend = 0, .Library = "libSceAmpr.prx"}};
+    const auto amprStub = WindowsEntryStubBuilder().Build(0x40000, 0x1000, nativeImports, libraries, amprImport, "$ORIGIN/libs", false, false);
+    const std::vector<std::uint8_t> fallbackOrder{0, 0, 0, 0, 1, 0, 0, 0};
+    require(std::search(amprStub.Data.Data.begin(), amprStub.Data.Data.end(), fallbackOrder.begin(), fallbackOrder.end()) != amprStub.Data.Data.end(),
+            "a libSceAmpr-qualified locale object import does not fall back to libc");
+
+    const std::vector<PeImport> libcImport{{.Name = "-mLzBSk-VGs", .TargetRva = 0x2000, .Addend = 0, .Library = "libc.prx"}};
+    const auto libcStub = WindowsEntryStubBuilder().Build(0x40000, 0x1000, nativeImports, libraries, libcImport, "$ORIGIN/libs", false, false);
+    const std::vector<std::uint8_t> libcOrder{1, 0, 0, 0};
+    require(std::search(libcStub.Data.Data.begin(), libcStub.Data.Data.end(), libcOrder.begin(), libcOrder.end()) != libcStub.Data.Data.end(),
+            "a libc-qualified locale object import does not resolve through libc");
+}
+
+void windowsKernelVariantImportsSearchCanonicalKernelAfterTheRequestedVariant() {
+    using namespace Elfpatcher::Windows;
+    const auto nativeImports = WindowsImportBuilder().Build(0x1000);
+    const std::vector<std::string> libraries{"libkernel_sys.prx", "libc.prx", "libkernel.prx"};
+    const std::vector<PeImport> imports{{.Name = "getpagesize", .TargetRva = 0x2000, .Addend = 0, .Library = "libkernel_sys.prx"}};
+    const auto stub = WindowsEntryStubBuilder().Build(0x40000, 0x1000, nativeImports, libraries, imports, "$ORIGIN/libs", false, false);
+    const std::vector<std::uint8_t> expected{0, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0};
+    require(std::search(stub.Data.Data.begin(), stub.Data.Data.end(), expected.begin(), expected.end()) != stub.Data.Data.end(),
+            "a scoped libkernel_sys import does not search the requested variant before canonical libkernel and libc");
+}
+
+void windowsKernelVariantDependenciesLoadCanonicalKernel() {
+    using namespace Elfpatcher::Windows;
+    for (const auto& variant : {std::string("libkernel_sys.prx"), std::string("libkernel_web.prx")}) {
+        const auto other = variant == "libkernel_sys.prx" ? "libkernel_web.prx" : "libkernel_sys.prx";
+        Domain::SysVDynamicSection dynamic;
+        dynamic.DynStrData.insert(dynamic.DynStrData.end(), variant.begin(), variant.end());
+        dynamic.DynStrData.push_back(0);
+        dynamic.DynamicSegmentData.resize(16);
+        Io::WriteU64(dynamic.DynamicSegmentData, 0, 1);
+        Io::WriteU64(dynamic.DynamicSegmentData, 8, 0);
+        require(WindowsImportBuilder().ReadLibraries(dynamic) == std::vector<std::string>{variant, "libkernel.prx", other, "libc.prx"},
+                variant + ": canonical kernel fallback and its libc provider are not loaded after the requested module");
+    }
+}
+
+void stubRejectsAnEntryBeyondTheWrapBoundary() {
+    bool threw = false;
+    try {
+        static_cast<void>(Elfpatcher::EntryStubBuilder().BuildEntryStub(0x1000, 0xFFFFFFFFFFFFF000, std::nullopt));
+    } catch (const Domain::RelinkerException& error) {
+        threw = std::string(error.what()).find("rel32") != std::string::npos;
+    }
+    require(threw, "an entry point more than 2^63 from the stub was accepted with a wrapped displacement");
+}
+
 }
 
 int main() {
     try {
+        stubEntersThroughTheMainStackSlot();
         stubTerminatesTheFrameChain();
+        stubRejectsAnEntryBeyondTheWrapBoundary();
         windowsStubLoadsTheAllocatorFirst("C:/Games/Title/libs", u"C:\\Games\\Title\\libs\\", {0x48, 0x8d, 0x0d});
         windowsStubLoadsTheAllocatorFirst("$ORIGIN/libs", u"libs\\", {0x48, 0x8d, 0x35});
         windowsStubLoadsTheAllocatorOnRequest("C:/Games/Title/libs", u"C:\\Games\\Title\\libs\\", {0x48, 0x8d, 0x0d});
         windowsStubLoadsTheAllocatorOnRequest("$ORIGIN/libs", u"libs\\", {0x48, 0x8d, 0x35});
         windowsStubRejectsAnOverlongAllocatorPath();
+        windowsStubWaitsForTheParentAfterOpeningTheLog("C:/Games/Title/libs");
+        windowsStubWaitsForTheParentAfterOpeningTheLog("$ORIGIN/libs");
+        windowsLibSceAmprObjectImportsFallBackToTheLibcProvider();
+        windowsKernelVariantImportsSearchCanonicalKernelAfterTheRequestedVariant();
+        windowsKernelVariantDependenciesLoadCanonicalKernel();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

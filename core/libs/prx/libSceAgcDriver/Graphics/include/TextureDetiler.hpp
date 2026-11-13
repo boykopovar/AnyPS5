@@ -49,14 +49,13 @@ namespace AgcDriver::Graphics {
         // leaving the other elements of both buffers alone.
         void Dispatch(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, bool thick = false, const DetileWindow& window = {});
         void DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, VkImageView view, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, const DetileWindow& window = {});
-        void DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes);
+        void DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes, bool depthToFloat = false);
         static VkFormat ImageElementFormat(std::uint32_t elementBytes);
         // Recycles the descriptor sets of the previous batch; call before recording a new command batch.
         void BeginBatch();
         void DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write);
         std::uint32_t CmaskErrors();
         void DispatchMultisampleReadback(VkCommandBuffer commands, VkFormat format, VkBuffer destination, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements);
-        void DispatchDepthSample(VkCommandBuffer commands, VkImageView depth, bool multisampled, VkImageView target, std::uint32_t width, std::uint32_t height, std::uint32_t sample);
         void DispatchMultisampleImage(VkCommandBuffer commands, std::uint32_t elementBytes, VkBuffer source, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements);
 
     private:
@@ -80,22 +79,21 @@ namespace AgcDriver::Graphics {
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkShaderModule module = VK_NULL_HANDLE;
         std::vector<std::pair<std::uint32_t, VkPipeline>> pipelines;
+        std::vector<std::pair<std::uint32_t, GcnTileGeometry>> gcnGeometries;
+        std::uint32_t layerBankXor(TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, std::uint32_t layer);
         DescriptorRing descriptorSets;
         VkDescriptorSetLayout cmaskDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout cmaskPipelineLayout = VK_NULL_HANDLE;
         VkPipeline cmaskPipeline = VK_NULL_HANDLE;
         DescriptorRing cmaskDescriptorSets;
-        VkDescriptorSetLayout depthSampleLayout = VK_NULL_HANDLE;
-        VkPipelineLayout depthSamplePipelineLayout = VK_NULL_HANDLE;
-        std::array<VkPipeline, 2> depthSamplePipelines{};
-        VkSampler depthSampler = VK_NULL_HANDLE;
-        DescriptorRing depthSampleSets;
         std::unique_ptr<Buffer> cmaskErrors;
         VkDescriptorSetLayout imageDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout imagePipelineLayout = VK_NULL_HANDLE;
         VkShaderModule imageModule = VK_NULL_HANDLE;
         VkShaderModule repackModule = VK_NULL_HANDLE;
         VkPipeline repackPipeline = VK_NULL_HANDLE;
+        VkShaderModule imageWordModule = VK_NULL_HANDLE;
+        VkShaderModule wordModule = VK_NULL_HANDLE;
         DescriptorRing imageDescriptorSets;
         VkDescriptorSetLayout readbackDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout readbackPipelineLayout = VK_NULL_HANDLE;

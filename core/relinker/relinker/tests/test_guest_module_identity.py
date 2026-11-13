@@ -40,7 +40,7 @@ def main():
     with fixture_directory('anyps5-module-identity-') as directory:
         work = Path(directory)
 
-        def convert(label, windows, request, module_name='libGuest', providers=None, guest_request=None, symbol='shared#A#B', module_directory='sce_module', extra=None):
+        def convert(label, windows, request, module_name='libGuest', providers=None, guest_request=None, symbol='shared#A#B', module_directory='sce_module', extra=None, extra_dependencies=(), guest_symbol=None, guest_module_name=None):
             case = work / label
             modules = case / module_directory
             modules.mkdir(parents=True)
@@ -52,9 +52,12 @@ def main():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(image)
             if guest_request:
-                (case / 'sce_module/consumer.prx').write_bytes(consumer(guest_request, symbol=symbol, module_name=module_name))
+                (case / 'sce_module/consumer.prx').write_bytes(consumer(
+                    guest_request, symbol=symbol if guest_symbol is None else guest_symbol,
+                    module_name=module_name if guest_module_name is None else guest_module_name))
             source = case / 'input.elf'
-            source.write_bytes(executable(request, symbol=symbol, module_name=module_name))
+            source.write_bytes(executable(request, symbol=symbol, module_name=module_name,
+                                          extra_dependencies=extra_dependencies))
             output = case / ('output.exe' if windows else 'output.elf')
             result = subprocess.run([str(relinker), *(['--windows'] if windows else []),
                                      '--rpath', '$ORIGIN/custom-hosts', str(source), str(output)],
@@ -98,7 +101,7 @@ def main():
                     assert not artifact.exists(), artifact
                     assert len(list((output.parent / 'app0').rglob('*.guest.prx'))) == 1
                     if not windows:
-                        assert 'libGuest.suprx' in needed_libraries(output.read_bytes())
+                        assert 'libGuest.prx' in needed_libraries(output.read_bytes())
 
             result, output = convert(f'outside-ambiguous-{windows}', windows, 'libGuest.suprx', module_directory='.',
                 providers={'one.prx': declared_provider(22, ('libGuest',))},
@@ -146,6 +149,28 @@ def main():
                 run(output)
 
         for windows in (True, False):
+            result, output = convert(f'mono-versioned-dependency-{windows}', windows, 'root.prx',
+                module_name='libRoot', guest_request='libmonosgen-2.0.prx', symbol='rootOnly#A#B',
+                providers={
+                    'root.prx': declared_provider(22, ('libRoot',), symbol='rootOnly'),
+                    'libmonosgen-2.0.prx': declared_provider(22, ('libmonosgen',)),
+                    'aaa.prx': declared_provider(11, ('other',))},
+                extra_dependencies=('aaa.prx',), guest_symbol='shared#A#B', guest_module_name='libmonosgen')
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            artifact = output.parent / 'app0/sce_module/libmonosgen-2.0.prx.guest.prx'
+            assert artifact.is_file(), list((output.parent / 'app0').rglob('*'))
+            if windows:
+                run(output)
+            else:
+                needed = needed_libraries(output.read_bytes())
+                assert needed == ['$ORIGIN/app0/sce_module/aaa.prx.guest.prx',
+                                  '$ORIGIN/app0/sce_module/libmonosgen-2.0.prx.guest.prx',
+                                  '$ORIGIN/app0/sce_module/consumer.prx.guest.prx',
+                                  '$ORIGIN/app0/sce_module/root.prx.guest.prx', 'libkernel.prx'], needed
+                consumer_artifact = output.parent / 'app0/sce_module/consumer.prx.guest.prx'
+                assert needed_libraries(consumer_artifact.read_bytes()) == [
+                    '$ORIGIN/libmonosgen-2.0.prx.guest.prx', 'libkernel.prx'], needed_libraries(consumer_artifact.read_bytes())
+
             for tag in (0x6100000d, 0x61000043):
                 for suffix in ('.suprx', '.prx', '.sprx', '.debug_prx'):
                     request = 'libGuest' + suffix
@@ -187,7 +212,7 @@ def main():
                 if windows:
                     run(output, error='Failed to load module:')
                 else:
-                    assert request in needed_libraries(output.read_bytes())
+                    assert request.replace('.suprx', '.prx') in needed_libraries(output.read_bytes())
 
         providers = {'wrong.prx': declared_provider(11, ('other',)),
                      'right.prx': declared_provider(22, ('libGuest',))}

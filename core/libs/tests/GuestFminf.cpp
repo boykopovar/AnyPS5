@@ -1,18 +1,10 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cfenv>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
-
-extern "C" {
-double APS5_VABI fmin_nid_postfix(double, double);
-float APS5_VABI fminf_nid_postfix(float, float);
-long double APS5_VABI fminl_nid_postfix(long double, long double);
-double APS5_VABI fmax_nid_postfix(double, double);
-float APS5_VABI fmaxf_nid_postfix(float, float);
-long double APS5_VABI fmaxl_nid_postfix(long double, long double);
-}
 
 static void Check(bool condition, const char* name, int line) {
     if (!condition) {
@@ -26,6 +18,7 @@ template <typename T>
 static void CheckMinAndMax(T (APS5_VABI *minimum)(T, T), T (APS5_VABI *maximum)(T, T), const char* name) {
     const auto nan = std::numeric_limits<T>::quiet_NaN();
     const auto infinity = std::numeric_limits<T>::infinity();
+    const auto tiny = std::numeric_limits<T>::denorm_min();
 
     Require(minimum(T(3.0), T(-2.0)) == T(-2.0));
     Require(minimum(T(-2.0), T(3.0)) == T(-2.0));
@@ -33,6 +26,11 @@ static void CheckMinAndMax(T (APS5_VABI *minimum)(T, T), T (APS5_VABI *maximum)(
     Require(maximum(T(3.0), T(-2.0)) == T(3.0));
     Require(maximum(T(-2.0), T(3.0)) == T(3.0));
     Require(maximum(T(1.5), T(2.5)) == T(2.5));
+
+    Require(minimum(tiny, T(+0.0)) == T(+0.0) && !std::signbit(minimum(tiny, T(+0.0))));
+    Require(minimum(-tiny, T(-0.0)) == -tiny && std::signbit(minimum(-tiny, T(-0.0))));
+    Require(maximum(tiny, T(+0.0)) == tiny && !std::signbit(maximum(tiny, T(+0.0))));
+    Require(maximum(-tiny, T(-0.0)) == T(-0.0) && std::signbit(maximum(-tiny, T(-0.0))));
 
     Require(minimum(nan, T(4.0)) == T(4.0));
     Require(minimum(T(4.0), nan) == T(4.0));

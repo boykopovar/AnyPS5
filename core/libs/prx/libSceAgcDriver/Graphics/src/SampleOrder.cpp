@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
@@ -110,7 +111,7 @@ public:
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory sample order copy");
+            Check(MemoryAccounting::Allocate(context, allocation, "sample order copy", &memory), "vkAllocateMemory sample order copy");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory sample order copy");
             depthView = createView(VK_IMAGE_ASPECT_DEPTH_BIT);
             if (stencil) stencilView = createView(VK_IMAGE_ASPECT_STENCIL_BIT);
@@ -149,7 +150,7 @@ private:
         if (stencilView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, stencilView, nullptr);
         if (depthView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, depthView, nullptr);
         if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-        if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+        if (memory) MemoryAccounting::Free(context, memory);
     }
 };
 
@@ -185,6 +186,7 @@ public:
         auto copy = copyFor(target.format, target.samples, target.extent, stencil);
         kept.push_back(copy);
         const VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT | (stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
+        const VkImageAspectFlags layoutAspects = VK_IMAGE_ASPECT_DEPTH_BIT | (HasStencil(target.format) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
         if (!copy->general) {
             VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
             toGeneral.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -193,7 +195,7 @@ public:
             toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toGeneral.image = copy->image;
-            toGeneral.subresourceRange = {aspects, 0, 1, 0, 1};
+            toGeneral.subresourceRange = {layoutAspects, 0, 1, 0, 1};
             context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
             copy->general = true;
         }

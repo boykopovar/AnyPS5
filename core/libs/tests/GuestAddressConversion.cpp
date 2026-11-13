@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
@@ -5,19 +7,9 @@
 #include <cstring>
 #include <stdexcept>
 
-extern "C" {
-int APS5_VABI __inet_pton_nid_postfix(int, const char*, void*);
-const char* APS5_VABI __inet_ntop_nid_postfix(int, const void*, char*, std::uint32_t);
-int APS5_VABI inet_pton_nid_postfix(int, const char*, void*);
-const char* APS5_VABI inet_ntop_nid_postfix(int, const void*, char*, std::uint32_t);
-int* APS5_VABI __error_nid_postfix();
-std::uint32_t APS5_VABI htonl_nid_postfix(std::uint32_t);
-std::uint32_t APS5_VABI ntohl_nid_postfix(std::uint32_t);
-std::uint16_t APS5_VABI htons_nid_postfix(std::uint16_t);
-std::uint16_t APS5_VABI ntohs_nid_postfix(std::uint16_t);
-}
 static void Require(bool value) { if (!value) std::abort(); }
 
+using Pton = int (APS5_VABI *)(int, const char*, void*);
 using Ntop = const char* (APS5_VABI *)(int, const void*, char*, std::uint32_t);
 
 struct PtonCase { bool plain; int family; const char* text; int result; int error; const char* bytes; };
@@ -470,6 +462,7 @@ static void CheckConsolePton() {
         *__error_nid_postfix() = 0;
         const int result = sample.plain ? inet_pton_nid_postfix(sample.family, sample.text, destination)
                                         : __inet_pton_nid_postfix(sample.family, sample.text, destination);
+
         Require(result == sample.result);
         Require(*__error_nid_postfix() == sample.error);
         Require(SameBytes(destination, sample.bytes));
@@ -484,6 +477,7 @@ static void CheckConsoleNtop() {
         *__error_nid_postfix() = 0;
         const char* result = sample.plain ? inet_ntop_nid_postfix(sample.family, source, Wide, sample.size)
                                           : __inet_ntop_nid_postfix(sample.family, source, Wide, sample.size);
+
         Require(result == (sample.succeeds ? Wide : nullptr));
         Require(*__error_nid_postfix() == sample.error);
         Require(SameBytes(Wide, sample.bytes));
@@ -569,6 +563,54 @@ static void CheckErrnoKept() {
     Require(__inet_ntop_nid_postfix(2, bytes, text, sizeof(text)) == text && *__error_nid_postfix() == 13);
 }
 
+static void CheckUnusablePtonPointers() {
+    const auto* const badSource = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
+    auto* const badDestination = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10));
+    std::uint8_t address[16]{};
+    char unterminated[46];
+    std::memset(unterminated, '1', sizeof(unterminated));
+    constexpr std::size_t Page = 0x4000;
+    auto* const memory = static_cast<char*>(mmap_nid_postfix(nullptr, 2 * Page, 3, 0x1002, -1, 0));
+    Require(memory != reinterpret_cast<char*>(static_cast<std::uintptr_t>(-1)));
+    char* const guarded = memory + Page;
+    Require(mprotect_nid_postfix(guarded, Page, 0) == 0);
+    for (Pton pton : {__inet_pton_nid_postfix, inet_pton_nid_postfix}) {
+        for (int family : {2, 28}) {
+            *__error_nid_postfix() = 0;
+            Require(pton(family, badSource, address) == -1 && *__error_nid_postfix() == 14);
+        }
+        *__error_nid_postfix() = 0;
+        Require(pton(9999, badSource, badDestination) == -1 && *__error_nid_postfix() == 47);
+        *__error_nid_postfix() = 0;
+        Require(pton(2, "1.2.3.4", badDestination) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(pton(28, "::1", badDestination) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 13;
+        Require(pton(2, "1.2.3", badDestination) == 0 && *__error_nid_postfix() == 13);
+        Require(pton(28, "zzz", badDestination) == 0 && *__error_nid_postfix() == 13);
+        Require(pton(28, unterminated, badDestination) == 0 && *__error_nid_postfix() == 13);
+        std::memcpy(guarded - 16, "255.255.255.255", 16);
+        Require(pton(2, guarded - 16, address) == 1 && address[0] == 255 && address[3] == 255);
+        std::memcpy(guarded - 4, "::1", 4);
+        Require(pton(28, guarded - 4, address) == 1 && address[15] == 1);
+        guarded[-1] = '1';
+        *__error_nid_postfix() = 0;
+        Require(pton(2, guarded - 1, address) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(pton(28, guarded - 1, address) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 13;
+        Require(pton(2, "1.2.3.4", guarded - 4) == 1 && *__error_nid_postfix() == 13);
+        Require(static_cast<unsigned char>(guarded[-4]) == 1 && static_cast<unsigned char>(guarded[-1]) == 4);
+        Require(pton(28, "::1", guarded - 16) == 1 && *__error_nid_postfix() == 13);
+        Require(static_cast<unsigned char>(guarded[-16]) == 0 && static_cast<unsigned char>(guarded[-1]) == 1);
+        *__error_nid_postfix() = 0;
+        Require(pton(2, "1.2.3.4", guarded - 2) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(pton(28, "::1", guarded - 8) == -1 && *__error_nid_postfix() == 14);
+    }
+    Require(munmap_nid_postfix(memory, 2 * Page) == 0);
+}
+
 int main() {
     Require(htonl_nid_postfix(0x11223344u) == 0x44332211u && ntohl_nid_postfix(0x44332211u) == 0x11223344u);
     Require(htons_nid_postfix(0x1234) == 0x3412 && ntohs_nid_postfix(0x3412) == 0x1234);
@@ -651,4 +693,5 @@ int main() {
     CheckConsolePadding(ConsolePaddingLarge, sizeof(ConsolePaddingLarge) / sizeof(ConsolePaddingLarge[0]), inet_ntop_nid_postfix);
     CheckNullPointers();
     CheckErrnoKept();
+    CheckUnusablePtonPointers();
 }

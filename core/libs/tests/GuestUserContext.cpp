@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
@@ -16,15 +19,6 @@
 using ContextEntry = void (APS5_VABI*)();
 
 extern "C" {
-[[gnu::returns_twice]] int APS5_VABI getcontext_nid_postfix(UserUcontext* context);
-int APS5_VABI setcontext_nid_postfix(const UserUcontext* context);
-void APS5_VABI makecontext_nid_postfix(UserUcontext* context, ContextEntry entry, int count, ...);
-[[gnu::returns_twice]] int APS5_VABI setjmp_nid_postfix(std::uint64_t* buffer);
-[[noreturn]] void APS5_VABI longjmp_nid_postfix(std::uint64_t* buffer, int value);
-[[gnu::returns_twice]] int APS5_VABI sigsetjmp_nid_postfix(std::uint64_t* buffer, int saveMask);
-[[noreturn]] void APS5_VABI siglongjmp_nid_postfix(std::uint64_t* buffer, int value);
-int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet);
-int* APS5_VABI __error_nid_postfix();
 
 int APS5_VABI CaptureKnownRegisters(UserUcontext* context);
 void CaptureReturnAddress();
@@ -124,6 +118,7 @@ asm(".text\n"
 
 namespace {
 
+constexpr int GuestEfault = 14;
 constexpr int GuestEinval = 22;
 constexpr int GuestSigBlock = 1;
 constexpr int GuestSigSetmask = 3;
@@ -224,7 +219,24 @@ void CheckErrors() {
     Require(getcontext_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "getcontext rejects a null context");
     *__error_nid_postfix() = 0;
     Require(setcontext_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "setcontext rejects a null context");
+    *__error_nid_postfix() = 0;
+    Require(getcontext_nid_postfix(reinterpret_cast<UserUcontext*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "getcontext rejects an invalid destination pointer");
+    *__error_nid_postfix() = 0;
+    Require(setcontext_nid_postfix(reinterpret_cast<const UserUcontext*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "setcontext rejects an invalid source pointer");
+    *__error_nid_postfix() = 0;
+    Require(SigreturnContext_nid_no_patch(nullptr) == -1 && *__error_nid_postfix() == GuestEfault, "sigreturn rejects a null context");
+    *__error_nid_postfix() = 0;
+    Require(SigreturnContext_nid_no_patch(reinterpret_cast<const UserUcontext*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "sigreturn rejects an invalid context pointer");
+    *__error_nid_postfix() = 0;
+    Require(swapcontext_nid_postfix(reinterpret_cast<UserUcontext*>(0x10), nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "swapcontext rejects a null next pointer");
     UserUcontext context{};
+    Require(getcontext_nid_postfix(&context) == 0, "capture a valid context");
+    *__error_nid_postfix() = 0;
+    Require(swapcontext_nid_postfix(reinterpret_cast<UserUcontext*>(0x10), &context) == -1 && *__error_nid_postfix() == GuestEfault, "swapcontext rejects an invalid saved pointer");
+    UserUcontext savedContext{};
+    *__error_nid_postfix() = 0;
+    Require(swapcontext_nid_postfix(&savedContext, reinterpret_cast<const UserUcontext*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "swapcontext rejects an invalid next pointer");
+    Require(savedContext.mcontext.len == sizeof(UserMcontext) && savedContext.mcontext.rip != 0, "swapcontext writes saved context before failing next");
     Require(getcontext_nid_postfix(&context) == 0, "capture a context to corrupt");
     context.mcontext.len = 0;
     *__error_nid_postfix() = 0;
@@ -238,24 +250,29 @@ void CheckErrors() {
     invalid.stackPointer = g_contextStack.bytes;
     invalid.stackSize = StackBytes;
     makecontext_nid_postfix(&invalid, &EntryThunk, 7);
+
     Require(invalid.mcontext.len == 0, "makecontext invalidates a context with more than six arguments");
     invalid = context;
     invalid.stackPointer = g_contextStack.bytes;
     invalid.stackSize = 2047;
     makecontext_nid_postfix(&invalid, &EntryThunk, 0);
+
     Require(invalid.mcontext.len == 0, "makecontext invalidates a context with a stack below MINSIGSTKSZ");
     invalid = context;
     invalid.stackPointer = nullptr;
     invalid.stackSize = StackBytes;
     makecontext_nid_postfix(&invalid, &EntryThunk, 0);
+
     Require(invalid.mcontext.len == 0, "makecontext invalidates a context without a stack");
     invalid = context;
     invalid.stackPointer = g_contextStack.bytes;
     invalid.stackSize = StackBytes;
     invalid.mcontext.len = 0;
     makecontext_nid_postfix(&invalid, &EntryThunk, 0);
+
     Require(invalid.mcontext.len == 0 && invalid.mcontext.rip == context.mcontext.rip, "makecontext leaves a context without a valid mc_len untouched");
     makecontext_nid_postfix(nullptr, &EntryThunk, 0);
+
 }
 
 void CheckCapture() {
@@ -282,7 +299,7 @@ void CheckCapture() {
     Require(machine.rsp == CapturedStackPointer, "getcontext saves the caller's stack pointer");
     Require(machine.len == sizeof(UserMcontext) && machine.fpformat == 0x10002 && machine.ownedfp == 0x20001, "getcontext sets mc_len, mc_fpformat and mc_ownedfp");
     Require(machine.onstack == 0 && machine.trapno == 0 && machine.addr == 0 && machine.flags == 0 && machine.err == 0, "getcontext zeroes the trap fields");
-    Require(machine.fsbase == 0 && machine.gsbase == 0 && machine.xfpustate == 0 && machine.xfpustateLength == 0, "getcontext zeroes the bases and the extended FPU state");
+    Require(machine.fsbase == 0 && machine.gsbase == 0 && machine.lbrfrom == 0 && machine.lbrto == 0 && machine.aux1 == 0 && machine.aux2 == 0, "getcontext zeroes the bases and the branch record and auxiliary fields");
     for (const auto word : machine.spare) Require(word == 0, "getcontext zeroes mc_spare");
     Require(context.sigmask[0] == 0x24 && context.sigmask[1] == 0 && context.sigmask[2] == 0 && context.sigmask[3] == 0, "getcontext saves the signal mask");
     std::uint32_t mxcsr = 0;
@@ -331,6 +348,7 @@ void CheckRestore() {
             std::memcpy(image + FxsaveXmm + index * 8, &value, sizeof(value));
         }
         setcontext_nid_postfix(&target);
+
         Require(false, "setcontext returned from a valid context");
     }
     const auto& machine = target.mcontext;
@@ -374,6 +392,7 @@ namespace {
         if (sigsetjmp_nid_postfix(from->jump, 1) == 0) {
             if (to->started) siglongjmp_nid_postfix(to->jump, 1);
             setcontext_nid_postfix(&to->context);
+
             Require(false, "setcontext into the job returned");
         }
         return;
@@ -381,6 +400,7 @@ namespace {
     if (setjmp_nid_postfix(from->jump) == 0) {
         if (to->started) longjmp_nid_postfix(to->jump, 1);
         setcontext_nid_postfix(&to->context);
+
         Require(false, "setcontext into the job returned");
     }
 }
@@ -397,6 +417,44 @@ extern "C" void APS5_VABI JobEntry() {
 }
 
 namespace {
+
+Stack g_fiberStack;
+UserUcontext g_fiberCaller = {};
+alignas(64) unsigned char g_fiberContext[2048] = {};
+int g_fiberRuns = 0;
+
+void StoreWord(std::size_t offset, std::uint64_t value) {
+    std::memcpy(g_fiberContext + offset, &value, sizeof(value));
+}
+
+}
+
+extern "C" void APS5_VABI ConsoleFiberEntry() {
+    for (;;) {
+        ++g_fiberRuns;
+        swapcontext_nid_postfix(reinterpret_cast<UserUcontext*>(g_fiberContext), &g_fiberCaller);
+    }
+}
+
+namespace {
+
+void CheckConsoleOffsets() {
+    auto* fiber = reinterpret_cast<UserUcontext*>(g_fiberContext);
+    Require(getcontext_nid_postfix(fiber) == 0, "capture the fiber template");
+    std::uint64_t length = 0;
+    std::memcpy(&length, g_fiberContext + 0x108, sizeof(length));
+    Require(length == 1152, "getcontext reports mc_len 1152 at offset 0x108");
+    for (std::size_t offset = 0x4c0; offset < sizeof(g_fiberContext); ++offset) Require(g_fiberContext[offset] == 0, "getcontext writes only the 1216 bytes before uc_link");
+    const auto top = ((reinterpret_cast<std::uintptr_t>(g_fiberStack.bytes) + StackBytes) & ~std::uintptr_t{15}) - sizeof(std::uint64_t);
+    std::memset(reinterpret_cast<void*>(top), 0, sizeof(std::uint64_t));
+    StoreWord(0xf8, top);
+    StoreWord(0x88, 0);
+    StoreWord(0xe0, reinterpret_cast<std::uint64_t>(&ConsoleFiberEntry));
+    for (int round = 1; round <= 3; ++round) {
+        Require(swapcontext_nid_postfix(&g_fiberCaller, fiber) == 0, "swapcontext into a fiber set up at mc_rsp 0xf8, mc_rbp 0x88 and mc_rip 0xe0");
+        Require(g_fiberRuns == round, "the fiber runs from mc_rip on mc_rsp and switches back once per round");
+    }
+}
 
 void CheckMakecontext() {
 #ifdef _WIN32
@@ -415,8 +473,10 @@ void CheckMakecontext() {
         context.stackSize = StackBytes;
         context.link = &caller;
         makecontext_nid_postfix(&context, &EntryThunk, 6, 0x8000000000000001ull, 0x8000000000000002ull, 0x8000000000000003ull, 0x8000000000000004ull, 0x8000000000000005ull, 0x8000000000000006ull);
+
         Require(context.mcontext.len == sizeof(UserMcontext), "makecontext keeps the context valid");
         setcontext_nid_postfix(&context);
+
         Require(false, "setcontext into the made context returned");
     }
     Require(g_entries == 1, "the made context runs once and resumes uc_link");
@@ -448,6 +508,7 @@ void CheckJumpBuffers(bool signalJumps) {
     g_job.context.stackSize = StackBytes;
     g_job.context.link = nullptr;
     makecontext_nid_postfix(&g_job.context, &JobEntry, 0);
+
     for (int round = 1; round <= 4; ++round) {
         Switch(&g_dispatcher, &g_job);
         Require(g_jobRuns == round, "the job runs once per switch");
@@ -473,6 +534,7 @@ void CheckSignalMask() {
         phase = 1;
         Require(sigprocmask_nid_postfix(GuestSigSetmask, second, nullptr) == 0, "set the second mask");
         setcontext_nid_postfix(&context);
+
         Require(false, "setcontext returned from a valid context");
     }
     std::uint32_t current[4] = {};
@@ -488,6 +550,7 @@ int ExitFromContext() {
     context.link = nullptr;
     makecontext_nid_postfix(&context, &ReturnWithoutLink, 0);
     setcontext_nid_postfix(&context);
+
     return 1;
 }
 
@@ -500,6 +563,7 @@ int main(int argc, char** argv) {
     CheckRestore();
     CheckSignalMask();
     std::thread([] {
+        CheckConsoleOffsets();
         CheckMakecontext();
         CheckJumpBuffers(false);
         CheckJumpBuffers(true);

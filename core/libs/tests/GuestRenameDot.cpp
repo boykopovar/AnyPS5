@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -6,15 +8,6 @@
 #ifndef _WIN32
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI mkdir_nid_postfix(const char*, int);
-int APS5_VABI rmdir_nid_postfix(const char*);
-int APS5_VABI rename_nid_postfix(const char*, const char*);
-int APS5_VABI sceKernelRename(const char*, const char*);
-int APS5_VABI stat_nid_postfix(const char*, void*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 
@@ -32,6 +25,7 @@ void Cleanup() {
     rmdir_nid_postfix(Source);
     rmdir_nid_postfix(Target);
     rmdir_nid_postfix(Moved);
+
     std::remove(PlainFile);
     std::remove(Loop);
 }
@@ -47,7 +41,7 @@ bool Fails(long result, int error) { return result == -1 && *__error_nid_postfix
 
 bool Exists(const char* path) {
     unsigned char status[256];
-    return stat_nid_postfix(path, status) == 0;
+    return stat_nid_postfix(path, reinterpret_cast<FileStat*>(status)) == 0;
 }
 
 }

@@ -8,14 +8,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <mutex>
-extern "C" std::uint32_t APS5_VABI sceAgcDriverGetWaitRenderingPacketSizeInDwords();
-extern "C" std::uint32_t APS5_VABI sceAgcDriverGetSetFlipPacketSizeInDwords();
-extern "C" std::uint32_t APS5_VABI sceAgcDriverGetSetWorkloadsActivePacketSize();
-extern "C" std::uint32_t APS5_VABI sceAgcDriverGetSetWorkloadCompletePacketSize();
-extern "C" std::uint32_t APS5_VABI sceAgcDriverGetSetWorkloadStreamInactivePacketSize();
-extern "C" std::uint32_t APS5_VABI sceAgcDriverNopDataGetPacketSize(std::uint32_t);
-extern "C" std::uint32_t APS5_VABI sceAgcDriverUserDataGetPacketSize(std::uint32_t);
-extern "C" std::uint32_t APS5_VABI sceAgcDriverWaitUntilSafeForRendering(std::uint32_t**, std::uint32_t, std::uint32_t, std::uint32_t, int);
+
 static void Require(bool value) { if (!value) std::abort(); }
 class Output final : public AgcDriver::IVideoOutput, public AgcDriver::IRenderingWait,
     public AgcDriver::IFlipRequest, public std::enable_shared_from_this<Output> {
@@ -74,6 +67,19 @@ int main() {
     try { sceAgcDriverWaitUntilSafeForRendering(&cursor, size - 1, 0, 7, 0); }
     catch (const std::invalid_argument&) { rejected = true; }
     Require(rejected && cursor == words.data() && words[0] == 0);
+    rejected = false;
+    try { sceAgcDriverWaitUntilSafeForRendering(nullptr, size, 0, 7, 0); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected);
+    std::uint32_t* nullCursor = nullptr;
+    rejected = false;
+    try { sceAgcDriverWaitUntilSafeForRendering(&nullCursor, size, 0, 7, 0); }
+    catch (const std::exception&) { rejected = true; }
+    Require(rejected && nullCursor == nullptr);
+    rejected = false;
+    try { sceAgcDriverWaitUntilSafeForRendering(&cursor, size, 0, 7, -1); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected && cursor == words.data());
     Require(sceAgcDriverWaitUntilSafeForRendering(&cursor, size, 0, 7, 0) == 0);
     Require(cursor == words.data() + size);
     Require(words[0] == AgcDriver::RenderingWaitPacketHeader && words[1] == 7 && words[2] == 0 && words[3] == 0);

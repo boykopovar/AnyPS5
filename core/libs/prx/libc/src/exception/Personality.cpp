@@ -1,3 +1,4 @@
+#include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 
 extern "C" _Unwind_Reason_Code APS5_VABI __gxx_personality_v0_nid_postfix(

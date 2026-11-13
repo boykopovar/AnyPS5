@@ -1,4 +1,7 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "tests/TemporaryFile.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -6,14 +9,6 @@
 #include <cstdlib>
 #include <string>
 #include <thread>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread*, const PthreadAttr*, PthreadEntry, void*, const char*);
-int APS5_VABI scePthreadJoin(Pthread, void**);
-int APS5_VABI sceKernelInstallExceptionHandler(int, void*);
-int APS5_VABI sceKernelRemoveExceptionHandler(int);
-int APS5_VABI sceKernelRaiseException(Pthread, int);
-}
 
 static constexpr int SigUsr1 = 30;
 static constexpr int Raises = 100;
@@ -48,14 +43,17 @@ int main() {
         for (int i = 0; i < 20000 && !done.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         if (!done.load()) std::abort();
     });
-    shared = std::tmpfile();
+    shared = TemporaryFile::Open();
     Require(shared != nullptr);
     Require(sceKernelInstallExceptionHandler(SigUsr1, reinterpret_cast<void*>(&Handler)) == 0);
     Pthread writer = nullptr;
     Require(scePthreadCreate(&writer, nullptr, Writer, nullptr, "host writer") == 0);
     while (!started.load()) std::this_thread::yield();
+    auto longest = std::chrono::steady_clock::duration::zero();
     for (int raise = 1; raise <= Raises; ++raise) {
+        const auto raisedAt = std::chrono::steady_clock::now();
         Require(sceKernelRaiseException(writer, SigUsr1) == 0);
+        longest = std::max(longest, std::chrono::steady_clock::now() - raisedAt);
         while (deliveries.load() < raise) std::this_thread::yield();
         Require(std::fputc('y', shared) == 'y');
         released.store(raise);
@@ -64,6 +62,7 @@ int main() {
     Require(scePthreadJoin(writer, nullptr) == 0);
     Require(sceKernelRemoveExceptionHandler(SigUsr1) == 0);
     std::fclose(shared);
+    std::printf("longest raise: %.2f ms\n", std::chrono::duration<double, std::milli>(longest).count());
     done.store(true);
     watchdog.join();
 }

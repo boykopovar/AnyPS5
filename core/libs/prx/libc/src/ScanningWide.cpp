@@ -1,3 +1,7 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
+#include <cerrno>
+#include <cmath>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
@@ -21,13 +25,6 @@
 #define APS5_VA_BEGIN(last) std::va_list args; va_start(args, last)
 #define APS5_VA_END() va_end(args)
 #endif
-
-extern "C" int APS5_VABI iswspace_nid_postfix(std::uint32_t c);
-extern "C" std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state);
-extern "C" std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream);
-extern "C" int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream);
-extern "C" void APS5_VABI flockfile_nid_postfix(FileStream* stream);
-extern "C" void APS5_VABI funlockfile_nid_postfix(FileStream* stream);
 
 namespace {
 
@@ -127,8 +124,9 @@ Fit FloatFit(std::string_view text) {
     if (digits == 0) return Fit::Invalid;
     if (Lower(text[index]) != (hex ? 'p' : 'e')) return Fit::Invalid;
     ++index;
-    if (index < text.size() && (text[index] == '+' || text[index] == '-')) ++index;
-    if (index == text.size()) return Fit::Prefix;
+    if (index == text.size()) return Fit::Valid;
+    if (text[index] == '+' || text[index] == '-') ++index;
+    if (index == text.size()) return Fit::Valid;
     for (; index < text.size(); ++index) {
         if (!IsDecimal(text[index])) return Fit::Invalid;
     }
@@ -244,7 +242,7 @@ private:
     }
 
     std::size_t IntegerSize(const std::string& length) const {
-        if (length.empty()) return sizeof(std::int32_t);
+        if (length.empty() || length == "L") return sizeof(std::int32_t);
         if (length == "hh") return sizeof(std::int8_t);
         if (length == "h") return sizeof(std::int16_t);
         if (length == "l" || length == "ll" || length == "j" || length == "z" || length == "t") return sizeof(std::int64_t);
@@ -256,7 +254,7 @@ private:
     }
 
     Outcome Literal(char16_t expected) {
-        if (input.Peek() < 0) return Outcome::Input;
+        if (input.Peek() < 0) return Outcome::Matching;
         if (input.Peek() != expected) return Outcome::Matching;
         input.Advance();
         return Outcome::Done;
@@ -268,13 +266,11 @@ private:
             directive.suppress = true;
             ++format;
         }
-        const char16_t* digits = format;
         for (; *format >= u'0' && *format <= u'9'; ++format) {
             const std::size_t digit = static_cast<std::size_t>(*format - u'0');
             const std::size_t limit = (std::numeric_limits<std::size_t>::max() - digit) / 10;
             directive.width = directive.width > limit ? std::numeric_limits<std::size_t>::max() : directive.width * 10 + digit;
         }
-        if (format != digits && directive.width == 0) Fail("zero field width");
         if (*format == u'h' || *format == u'l') {
             directive.length += static_cast<char>(*format++);
             if (*format == directive.length[0]) directive.length += static_cast<char>(*format++);
@@ -290,11 +286,11 @@ private:
             directive.setBegin = format;
             if (*format == u']') ++format;
             while (*format != 0 && *format != u']') ++format;
-            if (*format == 0) Fail("unterminated scanset");
-            directive.setEnd = format++;
-            for (const char16_t* member = directive.setBegin + 1; member + 1 < directive.setEnd; ++member) {
-                if (*member == u'-') Fail("scanset range is implementation-defined");
+            if (*format == 0) {
+                directive.conversion = 0;
+                return directive;
             }
+            directive.setEnd = format++;
         }
         return directive;
     }
@@ -303,6 +299,7 @@ private:
         if (*format == u'%') {
             ++format;
             SkipSpace();
+            if (input.Peek() < 0) return Outcome::Input;
             return Literal(u'%');
         }
         const Directive directive = Parse();
@@ -319,8 +316,10 @@ private:
         case u's':
         case u'c':
         case u'[': return Text(directive);
+        case u'S':
+        case u'C': return Outcome::Matching;
         case u'n': return Count(directive);
-        default: Fail("unsupported conversion " + std::to_string(directive.conversion));
+        default: return Outcome::Matching;
         }
     }
 
@@ -362,12 +361,10 @@ private:
     }
 
     Outcome Pointer(const Directive& directive) {
-        if (!directive.length.empty()) Fail("invalid pointer length modifier " + directive.length);
         return Integer(directive, 16, false, sizeof(void*));
     }
 
     Outcome Float(const Directive& directive) {
-        static_assert(sizeof(long double) == 16 && std::numeric_limits<long double>::digits == 64);
         if (!directive.length.empty() && directive.length != "l" && directive.length != "L")
             Fail("invalid floating length modifier " + directive.length);
         void* target = nullptr;
@@ -377,16 +374,26 @@ private:
         const std::string field = Field(directive.width, FloatFit);
         if (FloatFit(field) != Fit::Valid) return Outcome::Matching;
         if (target != nullptr) {
+            const int savedError = errno;
+            errno = 0;
+            const long double extended = std::strtold(field.c_str(), nullptr);
+            const bool hexadecimal = field.find_first_of("xX") != std::string::npos;
+            const bool outOfRange = !hexadecimal && errno == ERANGE && (std::isinf(extended) || extended == 0.0L);
             if (directive.length == "L") {
-                const long double value = std::strtold(field.c_str(), nullptr);
-                std::memcpy(target, &value, sizeof(value));
+                const long double value = std::isnan(extended) ? std::numeric_limits<long double>::quiet_NaN() : extended;
+                alignas(long double) unsigned char stored[LibcDetail::GuestLongDoubleBytes]{};
+                LibcDetail::GuestLongDoubleStore(stored, value);
+                std::memcpy(target, stored, 10);
             } else if (directive.length == "l") {
-                const double value = std::strtod(field.c_str(), nullptr);
+                const double parsed = std::strtod(field.c_str(), nullptr);
+                const double value = std::isnan(parsed) ? std::numeric_limits<double>::quiet_NaN() : parsed;
                 std::memcpy(target, &value, sizeof(value));
             } else {
-                const float value = std::strtof(field.c_str(), nullptr);
+                const float parsed = std::strtof(field.c_str(), nullptr);
+                const float value = std::isnan(parsed) ? std::numeric_limits<float>::quiet_NaN() : parsed;
                 std::memcpy(target, &value, sizeof(value));
             }
+            errno = outOfRange ? ERANGE : savedError;
             ++assigned;
         }
         converted = true;
@@ -395,7 +402,12 @@ private:
 
     static bool InSet(const Directive& directive, char16_t character) {
         bool found = false;
-        for (const char16_t* member = directive.setBegin; member != directive.setEnd && !found; ++member) found = *member == character;
+        for (const char16_t* member = directive.setBegin; member != directive.setEnd && !found;) {
+            if (directive.setEnd - member >= 3 && member[1] == u'-') {
+                found = character >= member[0] && character <= member[2];
+                member += 3;
+            } else found = *member++ == character;
+        }
         return found != directive.setExcluded;
     }
 
@@ -408,8 +420,6 @@ private:
     }
 
     Outcome Text(const Directive& directive) {
-        if (!directive.length.empty() && directive.length != "l")
-            Fail("invalid string length modifier " + directive.length);
         void* target = nullptr;
         std::size_t capacity = 0;
         if (!directive.suppress) {
@@ -421,12 +431,15 @@ private:
         if (input.Peek() < 0) return Outcome::Input;
         std::u16string item;
         if (directive.conversion == u'c') {
-            const std::size_t count = directive.width == 0 ? 1 : directive.width;
+            std::size_t count = directive.width == 0 ? 1 : directive.width;
+            if (sized && target != nullptr && directive.length == "l" && capacity != 0 && capacity < count) count = capacity;
             while (item.size() < count && input.Peek() >= 0) {
                 item.push_back(static_cast<char16_t>(input.Peek()));
                 input.Advance();
             }
-            if (item.size() < count) return Outcome::Matching;
+            if (sized && target != nullptr && directive.length == "l" && capacity == 0) return Outcome::Matching;
+            if (item.size() < count && sized && target != nullptr && capacity < count)
+                Fail("short character field with capacity below width");
         } else {
             const std::size_t limit = directive.width == 0 ? std::numeric_limits<std::size_t>::max() : directive.width;
             while (item.size() < limit && input.Peek() >= 0) {
@@ -464,7 +477,8 @@ private:
     }
 
     Outcome Count(const Directive& directive) {
-        if (directive.suppress || directive.width != 0) Fail("%n with suppression or width");
+        converted = true;
+        if (directive.suppress) return Outcome::Done;
         const std::size_t size = IntegerSize(directive.length);
         void* target = args.Next<void*>();
         if (target == nullptr) return Outcome::Violation;
@@ -518,12 +532,14 @@ extern FileStream* __stdinp_nid_postfix;
 
 int APS5_VABI vfwscanf_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
     if (stream == nullptr || format == nullptr) return EOF;
+    stream->Orientation(1);
     const LockedStream lock(stream);
     return WideScanner("vfwscanf", false, WideInput(stream), format, args).Run();
 }
 
 int APS5_VABI vfwscanf_s_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
     if (stream == nullptr || format == nullptr) return EOF;
+    stream->Orientation(1);
     const LockedStream lock(stream);
     return WideScanner("vfwscanf_s", true, WideInput(stream), format, args).Run();
 }

@@ -4,14 +4,19 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
+#include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace AgcDriver::Graphics {
 
@@ -45,13 +50,40 @@ public:
     void NoteFill(std::uint64_t fillAddress, std::size_t fillBytes, std::uint32_t pattern);
     std::optional<std::uint32_t> TakeFill();
     void Discard();
+    std::optional<std::uint32_t> Pending() const { return filled; }
+    const std::string& Refusal() const { return refusal; }
+    std::uint64_t Noted() const { return noted; }
+    std::uint64_t SameRun() const { return sameRun; }
 
 private:
     std::uint64_t address = 0;
     std::uint64_t bytes = 0;
     std::optional<std::uint32_t> filled;
     std::string refusal;
+    std::uint64_t noted = 0;
+    std::uint64_t sameRun = 0;
 };
+
+enum class MultisampleColorContent { Unknown, Fill, FastClear, Clear, Drawn };
+
+struct MultisampleColorAlias {
+    std::uint64_t address = 0;
+    std::uint64_t bytes = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    std::uint32_t samples = 0;
+    MultisampleColorContent newest = MultisampleColorContent::Unknown;
+    std::optional<VkClearColorValue> value;
+    std::optional<std::uint8_t> byte;
+    std::shared_ptr<std::atomic<bool>> active;
+    std::uint64_t contents = 0;
+    std::uint64_t filledBytes = 0;
+    std::uint64_t fills = 0;
+    std::uint64_t sameRun = 0;
+};
+
+std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t address, std::size_t bytes);
+std::vector<MultisampleColorAlias> MultisampleColorTargetsOver(std::uint64_t address, std::size_t bytes);
+void WithMultisampleTargetsLockForTest(const std::function<void()>& inside);
 
 std::uint64_t MultisampledColorBytes(const ColorTarget& target);
 std::size_t MultisampledDccBytes(const ColorTarget& target);
@@ -67,20 +99,31 @@ bool TakeMultisampledSingleClear(std::span<const std::uint32_t> code, std::span<
 bool TakeMultisampledClear(MultisampledCmask& cmask, MultisampledColorFill& colorFill, const ColorTarget& use, VkClearColorValue& clear);
 SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const ColorTarget& target);
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
+std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, const GuestTextureResource& resource, VkComponentMapping components);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image = nullptr);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image = nullptr);
+void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const ColorTarget& target);
 void KeepMultisampleTarget_nid_no_patch(const std::shared_ptr<void>& owner);
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target);
-VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource);
+VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage = false);
 bool MultisampleTargetStorable(const Context& context, const ColorTarget& target);
 void ResolveMultisampleTarget(const Context& context, const ColorTarget& source, StorageTexture& destination, VkImageView destinationView);
 bool MultisampledColorFillAbsorbs(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
 void NoteColorMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
+std::shared_ptr<Texture> MultisampleTargetFmaskTexture_nid_no_patch(const Context& context, const GuestTextureResource& resource, VkComponentMapping components);
 void ClearMultisampleTargets(VkDevice device);
+std::uint64_t MultisampleTargetRangeGeneration();
+std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTargetRanges(
+    VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges, std::uint64_t& generation);
 void InstallResidentImageReadGuard_nid_no_patch();
 void UpdateResidentImageUnmapObserver_nid_no_patch();
+void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes);
+void GuardOneFragmentFmask(const Context& context, const ColorTarget& target);
+bool HoldsMultisampleTargetsLock();
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);
+void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& active);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes);
 
 }
 

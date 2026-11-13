@@ -62,7 +62,7 @@ def main():
                     assert output.is_file()
                     assert not list((output.parent / 'app0').rglob('*.guest.prx'))
                     if not windows:
-                        assert needed_libraries(output.read_bytes()) == ['libGuest.suprx']
+                        assert needed_libraries(output.read_bytes()) == ['libGuest.prx']
                     result, output = convert(f'{label}-{identity}-excluded', windows, 'libGuest.suprx', files, (filename,))
                     assert result.returncode == 2 and 'Excluded guest module file not found' in result.stderr, result.stderr
                     assert not output.exists()

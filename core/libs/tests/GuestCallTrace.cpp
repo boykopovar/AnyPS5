@@ -12,8 +12,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <source_location>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -54,6 +58,10 @@ static double APS5_VABI Variadic(int count, ...) {
 
 static Block APS5_VABI Blocks(std::uint64_t seed) {
     return {{seed, seed + 1, seed + 2, seed + 3}};
+}
+
+static std::uint64_t APS5_VABI Unlabeled(std::uint64_t value) {
+    return value + 3;
 }
 
 static std::uint64_t CurrentThread() {
@@ -106,8 +114,8 @@ int main(int argc, char** argv) {
         while (!locked.load()) std::this_thread::yield();
         if (std::strcmp(argv[1], "abort-race") == 0) {
             for (int call = 0; call < 100; ++call) Require(first(1, 2, 3, 4, 5, 6, 7, 8) == 204);
-            std::atomic<bool> go{false};
-            std::thread([&go] {
+            static std::atomic<bool> go{false};
+            std::thread([] {
                 while (!go.load()) {
                 }
                 std::abort();
@@ -199,4 +207,37 @@ int main(int argc, char** argv) {
     Require(owned == Window);
     Require(CopyCallCounts_nid_no_patch(counts, 1, &total) == 1 && total == 8 + Workers * Calls);
     Require(counts[0].calls == 1 + Workers * Calls && std::strcmp(counts[0].name, "Integers") == 0);
+
+    const auto path = std::filesystem::temp_directory_path() / ("guest_call_trace_counts_" + std::to_string(CurrentThread()) + ".txt");
+    const auto utf8 = path.u8string();
+    Require(WriteCallCounts_nid_no_patch(reinterpret_cast<const char*>(utf8.c_str())));
+    std::ifstream written(path, std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(written), std::istreambuf_iterator<char>()};
+    written.close();
+    Require(text == std::to_string(1 + Workers * Calls) + " libTraced.prx Integers\n3 libTraced.prx Blocks\n2 libTraced Doubles\n1 libOther.prx Mixed\n1 libOther Variadic\n");
+    const auto unwritable = (path / "file").u8string();
+    Require(!WriteCallCounts_nid_no_patch(reinterpret_cast<const char*>(unwritable.c_str())));
+    Require(!WriteCallCounts_nid_no_patch(nullptr) && !WriteCallCounts_nid_no_patch(""));
+    std::filesystem::remove(path);
+
+    Require(Traced(&Unlabeled, "Unlabeled", "") == &Unlabeled);
+    const auto executable = std::filesystem::path(argv[0]).filename().string();
+#ifdef _WIN32
+    Require(_putenv_s("APS5_TRACE_CALLS", executable.c_str()) == 0);
+#else
+    Require(setenv("APS5_TRACE_CALLS", executable.c_str(), 1) == 0);
+#endif
+    const auto unlabeled = Traced(&Unlabeled, "Unlabeled", "");
+    Require(unlabeled != &Unlabeled && unlabeled(39) == 42);
+    const auto tracedCount = CopyCallCounts_nid_no_patch(counts, 8, &total);
+    Require(tracedCount == 6 && total == 9 + Workers * Calls);
+    bool inferred = false;
+    for (std::size_t index = 0; index < tracedCount; ++index) {
+        const auto& count = counts[index];
+        if (count.name != nullptr && std::strcmp(count.name, "Unlabeled") == 0) {
+            Require(count.calls == 1 && executable == count.library);
+            inferred = true;
+        }
+    }
+    Require(inferred);
 }

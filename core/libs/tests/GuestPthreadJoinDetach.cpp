@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <atomic>
@@ -6,10 +7,6 @@
 #include <cstdlib>
 #include <mutex>
 #include <thread>
-
-extern "C" int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-extern "C" int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-extern "C" int APS5_VABI scePthreadDetach(Pthread thread);
 
 static constexpr int SCE_OK = 0;
 

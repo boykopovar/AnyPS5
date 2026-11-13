@@ -1,41 +1,57 @@
+#include "prx/libSceUsbStorageDialog/include/Api.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
 #include "SceTypes.hpp"
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
 
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
-constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
-constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
-constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
-constexpr int COMMON_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80B80004u);
-constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
 constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80007u);
-constexpr int COMMON_DIALOG_ERROR_NOT_RUNNING = static_cast<int>(0x80B8000Bu);
-constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
-constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 
 std::atomic<int> g_status{COMMON_DIALOG_STATUS_NONE};
+std::uint32_t g_sdkVersion = 0;
+std::atomic_bool g_closed{false};
 
 }
 
 extern "C" {
 
 int APS5_VABI sceUsbStorageDialogInitialize(void) {
+    if (g_status.load() != COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
+    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t sdkVersion;
+    std::memcpy(&sdkVersion, process + 16, sizeof(sdkVersion));
     int expected = COMMON_DIALOG_STATUS_NONE;
     if (!g_status.compare_exchange_strong(expected, COMMON_DIALOG_STATUS_INITIALIZED)) return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
+    g_sdkVersion = sdkVersion;
+    g_closed = false;
     return 0;
 }
 
-int APS5_VABI sceUsbStorageDialogOpen(const void* param) {
+int APS5_VABI sceUsbStorageDialogOpen(const UsbStorageDialogParam* param) {
+    if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    UsbStorageDialogParam local{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) {
+        errno = savedErrno;
+        return COMMON_DIALOG_ERROR_ARG_NULL;
+    }
+    errno = savedErrno;
+    if (!ValidateCommonDialogBaseParam(local.base, reinterpret_cast<std::uintptr_t>(param))) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    UserServiceLoginUserIdList users{};
+    if (local.userId == -1 || sceUserServiceGetLoginUserIdList(&users) != 0 || std::find(std::begin(users.user_id), std::end(users.user_id), local.userId) == std::end(users.user_id)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+    if (local.path[1023] != 0 || local.path[0] == 0) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+    if (g_sdkVersion >= 0x04500000 && (std::strpbrk(local.path, ",*?\"<>|") != nullptr || std::strstr(local.path, "..") != nullptr)) return static_cast<int>(0x812D0003u);
     if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
-    if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    g_closed = false;
     g_status = COMMON_DIALOG_STATUS_RUNNING;
     return 0;
 }
@@ -50,20 +66,50 @@ int APS5_VABI sceUsbStorageDialogUpdateStatus(void) {
     return g_status.load();
 }
 
-int APS5_VABI sceUsbStorageDialogGetResult(void* result) {
+int APS5_VABI sceUsbStorageDialogGetResult(UsbStorageDialogResult* result) {
+    if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (g_closed.load()) {
+        const std::int32_t notFinished = COMMON_DIALOG_ERROR_NOT_FINISHED;
+        const std::int32_t zeroStatus = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(&result->result, &notFinished, sizeof(notFinished)) ||
+            !GuestCopyOut_nid_no_patch(&result->status, &zeroStatus, sizeof(zeroStatus))) {
+            errno = savedErrno;
+            return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+        }
+        errno = savedErrno;
+        return 0;
+    }
     if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
-    const std::int32_t dialogResult = COMMON_DIALOG_RESULT_USER_CANCELED;
-    std::memcpy(result, &dialogResult, sizeof(dialogResult));
-    return 0;
+    if (g_sdkVersion >= 0x04500000) {
+        std::uint64_t size = 0;
+        std::int32_t currentResult = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyIn_nid_no_patch(&size, &result->size, sizeof(size)) ||
+            !GuestCopyIn_nid_no_patch(&currentResult, &result->result, sizeof(currentResult))) {
+            errno = savedErrno;
+            return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+        }
+        errno = savedErrno;
+        if (size != sizeof(*result) || currentResult != COMMON_DIALOG_ERROR_BUSY) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+    }
+    const std::int32_t cancelResult = COMMON_DIALOG_RESULT_USER_CANCELED;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(&result->result, &cancelResult, sizeof(cancelResult))) {
+        errno = savedErrno;
+        return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+    }
+    errno = savedErrno;
+    return COMMON_DIALOG_RESULT_USER_CANCELED;
 }
 
 int APS5_VABI sceUsbStorageDialogClose(void) {
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status != COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_NOT_RUNNING;
+    g_closed = true;
     g_status = COMMON_DIALOG_STATUS_FINISHED;
     return 0;
 }

@@ -1,7 +1,10 @@
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "nid/Sha1.hpp"
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <sys/mman.h>
@@ -9,11 +12,18 @@
 #include <unistd.h>
 #include <vector>
 
-extern "C" int APS5_VABI shm_open_nid_postfix(const char*, int, int);
-extern "C" std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t);
-
 static void Require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+static void RemoveHostObject(const std::string& hostName) {
+#ifdef __APPLE__
+    std::error_code error;
+    const auto directory = std::filesystem::canonical(std::filesystem::temp_directory_path(error), error);
+    ::unlink((directory.string() + hostName).c_str());
+#else
+    ::shm_unlink(hostName.c_str());
+#endif
 }
 
 class Masks {
@@ -35,9 +45,9 @@ public:
             hostName += "0123456789abcdef"[byte >> 4];
             hostName += "0123456789abcdef"[byte & 15];
         }
-        ::shm_unlink(hostName.c_str());
+        RemoveHostObject(hostName);
     }
-    ~Object() { if (descriptor >= 0) ::close(descriptor); ::shm_unlink(hostName.c_str()); }
+    ~Object() { if (descriptor >= 0) ::close(descriptor); RemoveHostObject(hostName); }
     Object(const Object&) = delete;
     Object& operator=(const Object&) = delete;
     std::string name;

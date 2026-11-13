@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceAmpr/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
@@ -14,35 +16,10 @@
 #include <exception>
 #include <limits>
 
-extern "C" {
-SonyLconv* APS5_VABI sceAmprLocaleconv(void);
-double APS5_VABI sceAmprSinh(double x, double y);
-char* APS5_VABI sceAmprStrtokS(char* str, const char* delim, char** context);
-int APS5_VABI sceAmprCtimeS(char* buffer, std::size_t size, const std::int64_t* time);
-int APS5_VABI sceAmprWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src);
-void* APS5_VABI sceAmprSetConstraintHandlerS(void* handler);
-int APS5_VABI sceAmprFltrounds(void);
-void APS5_VABI sceAmprIgnoreHandlerS(const char* message, void* pointer, int error);
-std::size_t APS5_VABI sceAmprMbstowcs(std::uint16_t* dest, const char* src, std::size_t size);
-int APS5_VABI sceAmprAsctimeS(char* buffer, std::size_t size, const GuestTm* time);
-int APS5_VABI ctime_s_nid_postfix(char* buffer, std::size_t size, const std::int64_t* time);
-int APS5_VABI asctime_s_nid_postfix(char* buffer, std::size_t size, const GuestTm* time);
-std::size_t APS5_VABI mbstowcs_nid_postfix(std::uint16_t* dest, const char* src, std::size_t size);
-char* APS5_VABI strtok_s_nid_postfix(char* str, const char* delim, char** context);
-int APS5_VABI __fpclassifyd_nid_postfix(double value);
-unsigned __int128 APS5_VABI __udivti3_nid_postfix(unsigned __int128 dividend, unsigned __int128 divisor);
-__int128 APS5_VABI __divti3_nid_postfix(__int128 dividend, __int128 divisor);
-unsigned __int128 APS5_VABI __umodti3_nid_postfix(unsigned __int128 dividend, unsigned __int128 divisor);
-__int128 APS5_VABI __modti3_nid_postfix(__int128 dividend, __int128 divisor);
-SonyLconv* APS5_VABI localeconv_nid_postfix(void);
-int APS5_VABI sceAmprFpclassifyd(double value);
-unsigned int APS5_VABI _ZSt14_Random_devicev_nid_postfix();
-}
-
 #define Require(condition) do { if (!(condition)) { std::fprintf(stderr, "guest_crt: line %d: %s\n", __LINE__, #condition); std::abort(); } } while (0)
 
 static int g_handlerCalls = 0;
-static void CountingHandler(const char* message, void* pointer, int error) {
+static void APS5_VABI CountingHandler(const char* message, void* pointer, int error) {
     (void)message;
     (void)pointer;
     (void)error;
@@ -67,6 +44,7 @@ int main() {
     Require(sceAmprSinh(0.0, 5.0) == 0.0);
 
     SonyLconv* locale = sceAmprLocaleconv();
+    Require(locale != nullptr && locale == localeconv_nid_postfix());
     Require(reinterpret_cast<std::uintptr_t>(&locale->decimal_point) - reinterpret_cast<std::uintptr_t>(locale) == 0x48);
     Require(std::strcmp(locale->decimal_point, ".") == 0);
     Require(std::memcmp(localeconv_nid_postfix()->chars, locale->chars, sizeof(locale->chars)) == 0);
@@ -154,6 +132,7 @@ int main() {
     trapped = false;
     try {
         __umodti3_nid_postfix(((unsigned __int128)0x1234 << 64) | 0x5678, 0);
+
     } catch (const std::runtime_error& error) {
         trapped = std::strcmp(error.what(), "__umodti3: integer divide by zero (0x00000000000012340000000000005678 % 0)") == 0;
     }
@@ -177,6 +156,34 @@ int main() {
     Require(previous != nullptr && previous != reinterpret_cast<void*>(&CountingHandler));
     sceAmprIgnoreHandlerS("msg", nullptr, 0);
 
+    void* const defaultHandler = previous;
+    g_handlerCalls = 0;
+    Require(wcscpy_s_nid_postfix(buffer, 4, longText) == ERANGE);
+    Require(g_handlerCalls == 1);
+    g_handlerCalls = 0;
+    Require(fopen_s_nid_postfix(nullptr, nullptr, nullptr) == EINVAL);
+    Require(g_handlerCalls == 1);
+
+    Require(set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&ignore_handler_s_nid_postfix)) == reinterpret_cast<void*>(&CountingHandler));
+    g_handlerCalls = 0;
+    Require(sceAmprWcscpyS(buffer, 4, longText) == ERANGE);
+    Require(wcscpy_s_nid_postfix(buffer, 4, longText) == ERANGE);
+    Require(g_handlerCalls == 0);
+
+    set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&CountingHandler));
+    g_handlerCalls = 0;
+    Require(sceAmprWcscpyS(buffer, 4, longText) == ERANGE);
+    Require(g_handlerCalls == 1);
+
+    Require(sceAmprSetConstraintHandlerS(nullptr) == reinterpret_cast<void*>(&CountingHandler));
+    Require(set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&CountingHandler)) == defaultHandler);
+    Require(set_constraint_handler_s_nid_postfix(nullptr) == reinterpret_cast<void*>(&CountingHandler));
+    g_handlerCalls = 0;
+    Require(sceAmprWcscpyS(buffer, 4, longText) == ERANGE);
+    Require(wcscpy_s_nid_postfix(buffer, 4, longText) == ERANGE);
+    Require(g_handlerCalls == 0);
+    Require(sceAmprSetConstraintHandlerS(reinterpret_cast<void*>(&CountingHandler)) == defaultHandler);
+
     char text[64];
     GuestTm known{};
     known.tm_year = 70;
@@ -195,6 +202,13 @@ int main() {
     known.tm_year = 9000;
     text[0] = 'x';
     Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    for (const int year : {INT_MAX, INT_MAX - 1899, INT_MIN}) {
+        known.tm_year = year;
+        text[0] = 'x';
+        Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+        text[0] = 'x';
+        Require(asctime_s_nid_postfix(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    }
     known.tm_year = 70;
     known.tm_mday = 32;
     text[0] = 'x';
@@ -216,14 +230,17 @@ int main() {
 
     char line[] = "a,b,,c";
     char* context = nullptr;
-    Require(std::strcmp(sceAmprStrtokS(line, ",", &context), "a") == 0);
-    Require(std::strcmp(sceAmprStrtokS(nullptr, ",", &context), "b") == 0);
-    Require(std::strcmp(sceAmprStrtokS(nullptr, ",", &context), "c") == 0);
-    Require(sceAmprStrtokS(nullptr, ",", &context) == nullptr);
-    Require(sceAmprStrtokS(line, nullptr, &context) == nullptr);
+    std::size_t remaining = sizeof(line);
+    Require(std::strcmp(sceAmprStrtokS(line, &remaining, ",", &context), "a") == 0 && remaining == 5);
+    Require(std::strcmp(sceAmprStrtokS(nullptr, &remaining, ",", &context), "b") == 0 && remaining == 3);
+    Require(std::strcmp(sceAmprStrtokS(nullptr, &remaining, ",", &context), "c") == 0 && remaining == 1);
+    Require(sceAmprStrtokS(nullptr, &remaining, ",", &context) == nullptr);
+    g_handlerCalls = 0;
+    Require(sceAmprStrtokS(line, &remaining, nullptr, &context) == nullptr && g_handlerCalls == 1);
     char again[] = "x y";
     char* again_context = nullptr;
-    Require(std::strcmp(strtok_s_nid_postfix(again, " ", &again_context), "x") == 0);
+    std::size_t again_remaining = sizeof(again);
+    Require(std::strcmp(strtok_s_nid_postfix(again, &again_remaining, " ", &again_context), "x") == 0 && again_remaining == 2);
 
     std::uint16_t wide[8] = {};
     Require(sceAmprMbstowcs(wide, "ABC", 8) == 3);

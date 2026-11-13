@@ -55,7 +55,12 @@ struct InputRequests {
     bool toggleFullscreen = false;
     bool togglePerformanceOverlay = false;
     bool screenshot = false;
+    bool showPadStatus = false;
+    bool volumeUp = false;
+    bool volumeDown = false;
+    bool toggleMute = false;
     bool toggleMouse = false;
+    bool reloadInputMapping = false;
     bool releaseMouse = false;
 };
 
@@ -64,7 +69,9 @@ public:
     using Clock = std::chrono::steady_clock;
 
     explicit KeyboardMouse(InputConfiguration configuration);
+    void Replace(InputConfiguration next);
     InputRequests HandleEvent(const SDL_Event& event, Clock::time_point now);
+    InputRequests PadChordRequests(std::uint32_t buttons);
     bool Advance(Clock::time_point now);
     void SetMouseMode(bool enabled);
     void SetTitleReadsMouse(bool reads);
@@ -95,6 +102,7 @@ private:
     bool axesAdvanced = false;
     bool mouseMode = false;
     bool titleReadsMouse = false;
+    std::uint32_t padButtons = 0;
 };
 
 std::uint8_t StickByte(double deflection);

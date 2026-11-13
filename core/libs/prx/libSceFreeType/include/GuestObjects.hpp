@@ -2,9 +2,11 @@
 #define CORE_LIBS_PRX_LIBSCEFREETYPE_INCLUDE_GUESTOBJECTS_HPP
 
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libSceFreeType/include/GuestSfntTables.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_SYSTEM_H
 
 #include <list>
 #include <memory>
@@ -19,25 +21,59 @@ struct GuestLibrary {
     std::list<std::unique_ptr<GuestFace>> faces;
 };
 
+void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap);
+
+struct GuestSize {
+    GuestSizeRec rec{};
+    FT_Size host = nullptr;
+};
+
+struct RasterTargetSpan {
+    unsigned char* begin = nullptr;
+    std::size_t bytes = 0;
+};
+
+RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target);
+
+struct GuestStreamBridge {
+    GuestStreamRec* guest = nullptr;
+    FT_StreamRec_ host{};
+    bool closed = false;
+};
+
 struct GuestFace {
     GuestFaceRec rec{};
     GuestGlyphSlotRec slot{};
     GuestSizeRec size{};
     GuestLibrary* library = nullptr;
     FT_Face host = nullptr;
+    bool finalized = false;
+    FT_Size initialSize = nullptr;
+    bool sizeInitialized = false;
+    std::list<GuestSize> sizes;
     std::vector<unsigned char> bytes;
     std::vector<GuestBitmapSize> fixedSizes;
     std::vector<GuestCharMapRec> charmaps;
     std::vector<GuestCharMapRec*> charmapPointers;
     std::vector<GuestVector> outlinePoints;
+    GuestSfntTables sfntTables{};
+    std::unique_ptr<GuestStreamBridge> stream;
+
+    ~GuestFace() { UnregisterBitmap_nid_no_patch(&slot.bitmap); }
 };
+
+void RegisterBitmap_nid_no_patch(GuestFace& face);
 
 GuestFace* FaceOf(const GuestFaceRec* face);
 GuestFace* FaceOf(const GuestGlyphSlotRec* slot);
 void SyncFace(GuestFace& face);
 void SyncSize(GuestFace& face);
+void SyncSizePointer_nid_no_patch(GuestFace& face);
+void SyncSizeRecord_nid_no_patch(GuestFace& face, GuestSizeRec& rec, FT_Size host);
 void SyncSlot(GuestFace& face);
 
 }
+
+extern "C" void FreeTypeSyncFace_nid_no_patch(FreeType::GuestFaceRec* face);
 
 #endif

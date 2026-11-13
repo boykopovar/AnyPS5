@@ -9,7 +9,7 @@ namespace AgcDriver::Graphics {
 
 struct VertexInputLayout;
 
-void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline);
+void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline, std::span<const CompiledShader> shaders = {});
 
 // The attachments of one render pass instance. Work recorded with it references the handle until
 // the batch completes, so a recorded draw keeps the object (Recorder::Keep) like its pipeline.
@@ -49,15 +49,15 @@ public:
     VkPipelineLayout Layout() const;
     std::shared_ptr<Framebuffer> AcquireFramebuffer(std::span<const VkImageView> targets, std::span<const std::shared_ptr<void>> owners, VkExtent2D extent, std::uint32_t layers = 1);
     // Begins the render pass on the framebuffer, binds the pipeline and sets its dynamic state.
-    void Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, VkExtent2D extent, const State& state) const;
+    void Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, const State* masked = nullptr) const;
     // The same inside a render pass another pipeline of the same attachments began (compatible by
     // construction: the attachment formats alone decide).
-    void Continue(VkCommandBuffer commands, const State& state) const;
+    void Continue(VkCommandBuffer commands, const State& state, const State* masked = nullptr) const;
     bool SplitsFaces() const { return backFaces != VK_NULL_HANDLE; }
     bool Optimized() const { return optimized != nullptr && optimized->handle.load() != VK_NULL_HANDLE; }
-    void ContinueBackFaces(VkCommandBuffer commands, const State& state) const;
+    void ContinueBackFaces(VkCommandBuffer commands, const State& state, const State* masked = nullptr) const;
     bool SplitsSecondChannel() const { return secondChannel != VK_NULL_HANDLE; }
-    void ContinueSecondChannel(VkCommandBuffer commands) const;
+    void ContinueSecondChannel(VkCommandBuffer commands, const State& state, const State* masked = nullptr) const;
     const SampleOrder& HostSampleOrder() const { return sampleOrder; }
     bool ReordersSamples() const { return Graphics::ReordersSamples(sampleOrder); }
     bool SampleLocationsEnabled() const { return sampleLocationsEnabled; }
@@ -78,6 +78,7 @@ private:
     };
     void release() noexcept;
     void setLibraryState(VkCommandBuffer commands, const State& state) const;
+    void setColorWriteMasks(VkCommandBuffer commands, const State& state, const State* masked, bool secondChannel) const;
     Context context;
     std::vector<VkShaderModule> _modules;
     VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -87,6 +88,8 @@ private:
     VkPipeline secondChannel = VK_NULL_HANDLE;
     std::size_t attachments = 0;
     std::size_t colorAttachments = 0;
+    std::vector<bool> boundAttachments;
+    std::uint32_t boundColorAttachments = 0;
     bool depthBounds = false;
     bool depthBias = false;
     bool libraries = false;
@@ -107,11 +110,14 @@ private:
 // stages and every pipeline state field. A configuration whose stage has no module gets a private
 // pipeline. A miss builds the pipeline outside the store's mutex (a concurrent build of the same
 // key keeps the first inserted) and records its recipe in the pipeline journal. Entries are
-// LRU-bounded (APS5_PIPELINE_STORE_ENTRIES, 1024) and only evicted once no recorded draw holds
-// them. Debug aid: APS5_NO_PIPELINE_CACHE=1 builds one per draw as before.
+// LRU-bounded and only evicted once no recorded draw holds them. The bound starts at 1024 and
+// doubles up to 4096 for a journal replay that does not fit and while pipelines it evicted keep
+// coming back; it never shrinks during a run. APS5_PIPELINE_STORE_ENTRIES fixes it. Debug aid:
+// APS5_NO_PIPELINE_CACHE=1 builds one per draw as before.
 std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 // `created` reports whether this call built the pipeline (false: served from the store or private).
-std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, bool* created = nullptr);
+std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, bool* created = nullptr, std::uint64_t* storeHash = nullptr);
+std::shared_ptr<Pipeline> TouchCachedPipeline(const Context& context, std::uint64_t hash, const std::weak_ptr<Pipeline>& expected);
 // Cumulative pipeline store outcomes since start-up (the [pipecache] line reports 10 s windows).
 struct PipelineStoreCounters {
     std::uint64_t hits = 0;
@@ -122,6 +128,8 @@ struct PipelineStoreCounters {
     std::uint64_t bound = 0;
 };
 PipelineStoreCounters PipelineStoreTotals();
+// Whether the store may still raise its bound (not fixed by APS5_PIPELINE_STORE_ENTRIES, below 4096).
+bool PipelineStoreCanGrow();
 // The pipeline store's key of a configuration (empty when the configuration gets a private pipeline).
 void BuildPipelineStoreKey(std::vector<std::byte>& key, const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout);
 struct DescribedSetLayouts {
@@ -140,6 +148,8 @@ bool HasStencil(VkFormat format);
 // Device limit checks of the viewport, which is dynamic state and so no longer checked by Pipeline.
 void ValidateViewport(const Context& context, const VkViewport& viewport);
 void ValidateDepthBounds(const Context& context, const State& state);
+void ValidateMeshLimits(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t invocations);
+void ValidateLineWidth(const Context& context, float width);
 void ValidateProvokingVertex(const Context& context, const State& state, std::span<const CompiledShader> shaders = {});
 bool BarycentricPatches(const State& state, std::span<const CompiledShader> shaders);
 bool ValidateSampleLocations(const Context& context, const State& state);
@@ -149,7 +159,7 @@ bool ShadersWriteMemory(std::span<const CompiledShader> shaders);
 bool DeclaresEarlyFragmentTests(const ShaderRecompiler::RecompileResult& program);
 void ValidateSampleMask(const Context& context, const State& state, std::span<const CompiledShader> shaders);
 // Returns the color attachment locations the pixel shader writes.
-std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing = false, bool imageInt64Atomics = false, bool geometryShader = false, bool sampleRateShading = false, bool bufferInt64Atomics = false, bool shaderClipDistance = false, bool shaderCullDistance = false, bool viewportIndexLayer = false, bool runtimeDescriptorArray = false, bool demoteToHelperInvocation = false, bool shaderTerminateInvocation = false, bool meshShader = true);
+std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing = false, bool imageInt64Atomics = false, bool geometryShader = false, bool sampleRateShading = false, bool bufferInt64Atomics = false, bool shaderClipDistance = false, bool shaderCullDistance = false, bool viewportIndexLayer = false, bool runtimeDescriptorArray = false, bool demoteToHelperInvocation = false, bool shaderTerminateInvocation = false, bool meshShader = true, bool shaderResourceMinLod = false, bool fmaFloat16 = false);
 
 }
 

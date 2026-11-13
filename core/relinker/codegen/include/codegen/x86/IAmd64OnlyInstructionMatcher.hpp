@@ -27,7 +27,8 @@ public:
 
     virtual void EmitOutOfLine(
         StubBodyBuilder& body,
-        std::span<const std::uint8_t> instruction
+        std::span<const std::uint8_t> instruction,
+        bool allowInPlace = false
     ) const = 0;
 };
 
