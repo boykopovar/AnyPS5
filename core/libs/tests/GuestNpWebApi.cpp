@@ -706,7 +706,87 @@ void TestIntCreateCtxIndExtdPushEventFilter() {
     Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(0x7fff + 1, handle, filterParam, 1) == LibContextNotFound, "extended push event filter of an unknown context");
     Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(other, handle, filterParam, 1) == HandleNotFound, "extended push event filter with another context's handle");
 
+    const int filter = sceNpWebApiIntCreateCtxIndExtdPushEventFilter(context, handle, filterParam, 1);
+    Require(filter > 0 && static_cast<unsigned>(filter) < 0xf0000000u, "extended push event filter id");
+    const int second = sceNpWebApiIntCreateCtxIndExtdPushEventFilter(context, handle, filterParam, 2);
+    Require(second > 0 && second != filter, "a second extended push event filter gets a new id");
+    Require(sceNpWebApiDeleteExtdPushEventFilter(other, filter) == ExtdPushEventFilterNotFound, "the filter belongs to its library context");
+
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for extended push event callbacks");
+    int argument = 0;
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user, filter, nullptr, &argument) == InvalidArgument, "extended callback without a function on an existing filter");
+    Require(sceNpWebApiRegisterExtdPushEventCallbackA(user, second, nullptr, &argument) == InvalidArgument, "extended callback A without a function on an existing filter");
+    const int callback = sceNpWebApiRegisterExtdPushEventCallback(user, filter, PushEventCallback(), &argument);
+    Require(callback > 0 && static_cast<unsigned>(callback) < 0xf0000000u, "extended push event callback id");
+    const int callbackA = sceNpWebApiRegisterExtdPushEventCallbackA(user, second, PushEventCallback(), &argument);
+    Require(callbackA > 0 && callbackA != callback, "extended push event callback A id");
+    Require(sceNpWebApiUnregisterPushEventCallback(user, callback) == PushEventCallbackNotFound, "an extended callback is not a push event callback");
+    Require(sceNpWebApiUnregisterExtdPushEventCallback(user + 1, callback) == UserContextNotFound, "unregister an extended callback through an unknown user context");
+    Require(sceNpWebApiUnregisterExtdPushEventCallback(user, callback) == 0, "unregister the extended callback");
+    Require(sceNpWebApiUnregisterExtdPushEventCallback(user, callback) == ExtdPushEventCallbackNotFound, "extended callback unregistered twice");
+    Require(sceNpWebApiUnregisterExtdPushEventCallback(user, callbackA) == 0, "unregister the extended callback A");
+
+    Require(sceNpWebApiDeleteExtdPushEventFilter(context, filter) == 0, "delete the extended push event filter");
+    Require(sceNpWebApiDeleteExtdPushEventFilter(context, filter) == ExtdPushEventFilterNotFound, "extended push event filter deleted twice");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user, filter, PushEventCallback(), &argument) == ExtdPushEventFilterNotFound, "extended callback on a deleted filter");
+    Require(sceNpWebApiRegisterServicePushEventCallback(user, second, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "an extended filter is not a service filter");
+
     Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the extended push event filter library contexts");
+}
+
+void TestInternalServicePushEventFilter() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int other = sceNpWebApiInitialize(1, 0x10000);
+    const int handle = sceNpWebApiCreateHandle(context);
+    Require(context > 0 && other > 0 && handle > 0, "library contexts and handle for internal service filters");
+
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, nullptr, 0, nullptr, 1) == InvalidArgument, "internal service filter without filter parameter");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(other, handle, nullptr, 0, filterParam, 1) == HandleNotFound, "internal service filter with another context's handle");
+    const int filter = sceNpWebApiIntCreateServicePushEventFilter(context, handle, nullptr, 0xffffffffu, filterParam, 1);
+    Require(filter > 0 && static_cast<unsigned>(filter) < 0xf0000000u, "internal service filter id");
+    const int second = sceNpWebApiIntCreateServicePushEventFilter(context, handle, nullptr, 0, filterParam, 1);
+    Require(second > 0 && second != filter, "a second internal service filter gets a new id");
+    Require(sceNpWebApiDeleteServicePushEventFilter(other, filter) == ServicePushEventFilterNotFound, "the service filter belongs to its library context");
+
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for internal service callbacks");
+    int argument = 0;
+    const int callback = sceNpWebApiRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument);
+    Require(callback > 0 && static_cast<unsigned>(callback) < 0xf0000000u, "service callback on an internal service filter");
+    const int intCallback = sceNpWebApiIntRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument);
+    const int intCallbackA = sceNpWebApiIntRegisterServicePushEventCallbackA(user, second, PushEventCallback(), &argument);
+    Require(intCallback > 0 && intCallbackA > 0 && intCallback != callback && intCallbackA != intCallback, "internal service callbacks");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user, filter, PushEventCallback(), &argument) == ExtdPushEventFilterNotFound, "a service filter is not an extended filter");
+    Require(sceNpWebApiUnregisterServicePushEventCallback(user, callback) == 0, "unregister the service callback");
+    Require(sceNpWebApiUnregisterServicePushEventCallback(user, intCallback) == 0 && sceNpWebApiUnregisterServicePushEventCallback(user, intCallbackA) == 0, "unregister the internal service callbacks");
+
+    Require(sceNpWebApiDeleteServicePushEventFilter(context, filter) == 0, "delete the internal service filter");
+    Require(sceNpWebApiDeleteServicePushEventFilter(context, filter) == ServicePushEventFilterNotFound, "internal service filter deleted twice");
+    Require(sceNpWebApiRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "service callback on a deleted filter");
+
+    Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the internal service filter library contexts");
+}
+
+void TestMultipartSendOnPlainRequest() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for multipart sends on a plain request");
+    std::int64_t request = 0;
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPost, nullptr, &request) == 0, "create a plain request");
+
+    int index = 0;
+    const NpWebApiMultipartPartParameter part{nullptr, 0, 100};
+    Require(sceNpWebApiAddMultipartPart(request, &part, &index) == 0 && index == 1, "a part is added to a plain request");
+    Require(sceNpWebApiSendMultipartRequest(request, 0, body, sizeof(body)) == InvalidArgument, "part index 0 on a plain request");
+    Require(sceNpWebApiSendMultipartRequest(request, 1, body, sizeof(body)) == NotSignedIn, "a plain request is sent whole by a multipart send");
+    Require(sceNpWebApiSendMultipartRequest(request, 9, body, sizeof(body)) == NotSignedIn, "the part index is not range checked on a plain request");
+    Require(sceNpWebApiSendMultipartRequest2(request, 1, body, sizeof(body), nullptr) == NotSignedIn, "send2 on a plain request");
+    Require(sceNpWebApiAbortRequest(request) == 0, "abort the plain request");
+    Require(sceNpWebApiSendMultipartRequest(request, 1, body, sizeof(body)) == Aborted, "multipart send of an aborted plain request");
+    Require(sceNpWebApiSendMultipartRequest2(request, 1, body, sizeof(body), nullptr) == Aborted, "send2 of an aborted plain request");
+
+    Require(sceNpWebApiTerminate(context) == 0, "terminate the plain request library context");
 }
 
 void TestConnectionChecks() {
@@ -756,6 +836,34 @@ int main() {
     TestMultipartParts();
     TestUtilityParseNpId();
     TestIntCreateCtxIndExtdPushEventFilter();
+    TestInternalServicePushEventFilter();
+    TestMultipartSendOnPlainRequest();
     TestConnectionChecks();
+    {
+        errno = 71;
+        Require(sceNpWebApiIntInitialize(reinterpret_cast<const NpWebApiIntInitializeArgs*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument && errno == 71,
+                "unreadable IntInitialize args must return InvalidArgument without changing errno");
+        const int libCtx = sceNpWebApiInitialize(1, 4096);
+        Require(libCtx > 0, "libCtx created");
+        const int userCtx = sceNpWebApiCreateContext(libCtx, "user");
+        Require(userCtx > 0, "userCtx created");
+        std::int64_t reqId = 0;
+        errno = 71;
+        Require(sceNpWebApiCreateRequest(userCtx, "sdk", "/v1/test", 0,
+                                         reinterpret_cast<const NpWebApiContentParameter*>(static_cast<std::uintptr_t>(0x10)),
+                                         &reqId) == InvalidArgument && errno == 71,
+                "unreadable contentParameter must fail");
+        errno = 71;
+        Require(sceNpWebApiCreateRequest(userCtx, "sdk", "/v1/test", 0, nullptr,
+                                         reinterpret_cast<std::int64_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument && errno == 71,
+                "unwritable requestId must fail");
+        errno = 71;
+        Require(sceNpWebApiIntCreateRequest(userCtx, "sdk", "/v1/test", 0, nullptr,
+                                            reinterpret_cast<const NpWebApiIntCreateRequestExtraArgs*>(static_cast<std::uintptr_t>(0x10)),
+                                            &reqId) == InvalidArgument && errno == 71,
+                "unreadable internalArgs must fail");
+        Require(sceNpWebApiDeleteContext(userCtx) == 0, "delete userCtx");
+        Require(sceNpWebApiTerminate(libCtx) == 0, "terminate libCtx");
+    }
     return 0;
 }

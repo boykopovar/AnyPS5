@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -61,7 +62,9 @@ int main() {
     Require(sceRudpGetStatus(nullptr, 0) == invalidArgument);
     Require(sceRudpGetStatus(status.data(), 0) == invalidArgument);
     Require(sceRudpGetStatus(status.data(), statusSize + 1) == invalidArgument);
+    errno = 71;
     Require(sceRudpGetStatus(reinterpret_cast<void*>(0x10), statusSize) == invalidArgument);
+    Require(errno == 71);
     Require(status == untouched);
 
     Require(sceRudpGetStatus(status.data(), statusSize) == 0);

@@ -826,10 +826,7 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &push;
     Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &release.layout), "ordering pipeline layout");
-    VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    moduleInfo.codeSize = sizeof(BUFFER_UPDATE_SPV);
-    moduleInfo.pCode = BUFFER_UPDATE_SPV;
-    Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &release.module), "ordering shader module");
+    release.module = CreateShaderModule(context, BUFFER_UPDATE_SPV, sizeof(BUFFER_UPDATE_SPV), "ordering shader module");
     VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, release.module, "main", nullptr};
     pipelineInfo.layout = release.layout;
@@ -1104,10 +1101,7 @@ void copiedWriteBackTests(const Device& device, Recorder& recorder) {
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &push;
     Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &release.layout), "copied write-back pipeline layout");
-    VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    moduleInfo.codeSize = sizeof(BUFFER_UPDATE_SPV);
-    moduleInfo.pCode = BUFFER_UPDATE_SPV;
-    Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &release.module), "copied write-back shader module");
+    release.module = CreateShaderModule(context, BUFFER_UPDATE_SPV, sizeof(BUFFER_UPDATE_SPV), "copied write-back shader module");
     VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, release.module, "main", nullptr};
     pipelineInfo.layout = release.layout;
@@ -13123,10 +13117,7 @@ public:
         pipelineLayoutInfo.pushConstantRangeCount = 1;
         pipelineLayoutInfo.pPushConstantRanges = &push;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
-        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = code.size_bytes();
-        moduleInfo.pCode = code.data();
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule");
+        module = CreateShaderModule(context, code.data(), code.size_bytes(), "vkCreateShaderModule");
         VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "main", nullptr};
         pipelineInfo.layout = pipelineLayout;
