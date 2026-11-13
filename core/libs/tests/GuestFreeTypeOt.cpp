@@ -446,7 +446,11 @@ int main(int argc, char** argv) {
     if (!library) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(library != nullptr, "load requested library");
+#ifdef _WIN32
     Resolve(ot.outlineBitmap, library, patched, "4RRjK-Wd1lU", "sceFreeTypeOtOutlineGetBitmap_nid_no_patch");
+#else
+    Resolve(ot.outlineBitmap, library, patched, "4RRjK-Wd1lU", "FT_Outline_Get_Bitmap_nid_postfix");
+#endif
     Require(ot.outlineBitmap(nullptr, nullptr, nullptr) == FT_Outline_Get_Bitmap(nullptr, nullptr, nullptr),
             "outline bitmap without library");
 #ifdef _WIN32
