@@ -52,4 +52,3 @@ extern "C" bool APS5_VABI _ZN7WebCore29isCharacterSmartReplaceExemptEib(int char
     const auto category = u_charType_nid_postfix(character);
     return (category >= 19 && category <= 23) || category == 28 || category == 29;
 }
-
