@@ -42,7 +42,7 @@ void CheckVs() {
     const auto* code = ShaderCode();
     Require(code[0] == 0xbeeb0387u && code[10] == 0xf80008cfu && code[11] == 0x03020001u && code[14] == 0xbf810000u);
 
-    for (const std::uint32_t invalidId : {1u, 2u, 10u, 100u, 0xffffffffu}) {
+    for (const std::uint32_t invalidId : {1u, 2u, 3u, 10u, 100u, 0xffffffffu}) {
         Require(sceGnmSetEmbeddedVsShader(Fresh(), 0x1d, invalidId, 0) == Failure);
         RequireUntouchedFrom(0);
     }
