@@ -18,10 +18,10 @@
 #include <sys/mman.h>
 #endif
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
