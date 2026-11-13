@@ -567,9 +567,7 @@ int APS5_VABI WKPreferencesGetQTKitEnabled();
 int APS5_VABI WKPreferencesGetTypeID();
 int APS5_VABI WKProtectionSpaceCopyCertificateInfo();
 int APS5_VABI WKRegistrableDomainCreate();
-int APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins();
-int APS5_VABI WKResourceCacheManagerClearCacheForOrigin();
-int APS5_VABI WKResourceCacheManagerGetCacheOrigins();
+
 int APS5_VABI WKSendDisplayConfigurationChangedMessageForTesting();
 int APS5_VABI WKTextCheckerSetTestingMode();
 int APS5_VABI WKUserContentExtensionStoreCompile();
