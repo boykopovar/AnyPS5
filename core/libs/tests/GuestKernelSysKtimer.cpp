@@ -199,6 +199,7 @@ static void SettimeGuestBuffers() {
 }
 
 int main() {
+    for (int iter = 0; iter < 2; ++iter)
     Creation();
     InvalidIds();
     Values();
