@@ -4,6 +4,9 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "SceShaders.hpp"
 #include "VulkanTestDevice.hpp"
+#ifdef __APPLE__
+#include "prx/libSceAgcDriver/Execution/include/Driver/DriverMemory.hpp"
+#endif
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -21,8 +24,13 @@ using AgcDriver::Graphics::Require;
 constexpr std::uint32_t Threads = 64;
 constexpr std::uint32_t Untouched = 0xcafebabeu;
 constexpr std::uint32_t Marker = 0x55u;
+#ifdef __APPLE__
+constexpr std::uint64_t FsTable = AgcDriver::DriverDetail::RetargetPs5DriverMemory(0xfe0040000ull);
+constexpr std::uint64_t DriverMemory = AgcDriver::DriverDetail::RetargetPs5DriverMemory(0xfe0000000ull);
+#else
 constexpr std::uint64_t FsTable = 0xfe0040000ull;
 constexpr std::uint64_t DriverMemory = 0xfe0000000ull;
+#endif
 constexpr std::size_t DriverMemoryBytes = 2u << 20u;
 
 alignas(256) constexpr std::array<std::uint32_t, 32> Caller{
@@ -97,10 +105,6 @@ void CheckTable() {
 int main() {
 #ifdef ANYPS5_ENABLE_ASAN
     std::puts("skipped: the shader calls through the FS table at the PS5's fixed 0xfe0040000, which an ANYPS5_ENABLE_ASAN build cannot map");
-    return VulkanTestSkipped;
-#endif
-#ifdef __APPLE__
-    std::puts("skipped: the shader calls through the FS table at the PS5's fixed 0xfe0040000, which macOS reserves; the AGC driver block is moved on macOS (DriverMemory.hpp)");
     return VulkanTestSkipped;
 #endif
     try {

@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/DriverMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
@@ -954,6 +955,7 @@ ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, con
 }
 
 struct UserDataCallSites {
+    std::shared_ptr<const std::vector<std::uint32_t>> code;
     ShaderRecompiler::RdnaProgram program;
     std::vector<ShaderRecompiler::UserDataCall> calls;
     std::vector<ShaderRecompiler::TableCall> tableCalls;
@@ -1047,6 +1049,24 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
     return callees;
 }
 
+#ifdef __APPLE__
+std::optional<std::vector<std::uint32_t>> RetargetDriverBlockPointers(std::span<const std::uint32_t> code, const ShaderRecompiler::RdnaProgram& program, const std::vector<ShaderRecompiler::TableCall>& calls) {
+    std::vector<std::uint32_t> words(code.begin(), code.end());
+    bool retargeted = false;
+    for (const auto& call : calls) {
+        if (!call.constantPointer) continue;
+        const auto address = DriverDetail::RetargetPs5DriverMemory(*call.constantPointer);
+        if (address == *call.constantPointer) continue;
+        const auto rewritten = ShaderRecompiler::RetargetTableCallPointer(words, program, call, address);
+        if (!rewritten) continue;
+        words = std::move(*rewritten);
+        retargeted = true;
+    }
+    if (!retargeted) return std::nullopt;
+    return words;
+}
+#endif
+
 std::shared_ptr<const ShaderRecompiler::LinkedCalls> LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot, std::size_t codeOffset) {
     const bool gcnVertex = ShaderRecompiler::GcnGuestShaders() && request.shader.stage == ShaderRecompiler::ShaderStage::Vertex;
     if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute && !gcnVertex) return nullptr;
@@ -1088,6 +1108,15 @@ std::shared_ptr<const ShaderRecompiler::LinkedCalls> LinkUserDataCallees(const S
         found->program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
         found->calls = ShaderRecompiler::FindUserDataCalls(found->program, swappc);
         found->tableCalls = ShaderRecompiler::FindTableCalls(found->program, swappc);
+#ifdef __APPLE__
+        const auto patched = RetargetDriverBlockPointers(code, found->program, found->tableCalls);
+        if (patched) {
+            found->code = std::make_shared<const std::vector<std::uint32_t>>(std::move(*patched));
+            found->program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(*found->code);
+            found->calls = ShaderRecompiler::FindUserDataCalls(found->program, swappc);
+            found->tableCalls = ShaderRecompiler::FindTableCalls(found->program, swappc);
+        }
+#endif
         sites = std::move(found);
     }
     const auto& program = sites->program;

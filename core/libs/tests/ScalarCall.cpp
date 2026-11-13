@@ -234,6 +234,23 @@ static void CheckConstantTableCall() {
     Require(FindTableCalls(RdnaInstructionDecoder{}.Decode(computed), swappc).empty());
 }
 
+static void CheckRetargetedConstantTableCall() {
+    const std::vector<std::uint32_t> caller{0xbeea03ffu, 0xe0040000u, 0xbeeb038fu, 0xf4080135u, 0xfa000000u, 0xbf8cc07fu, 0xf4240382u, 0xfa000020u, 0xbf8cc07fu, 0xbf130e80u,
+        0xbf840004u, 0xf4240402u, 0xfa000028u, 0xbf8cc07fu, 0xbe8e210eu, 0xbf810000u};
+    const SwappcInfo swappc{false, 0u, 16u};
+    const auto program = RdnaInstructionDecoder{}.Decode(caller);
+    const auto calls = FindTableCalls(program, swappc);
+    Require(calls.size() == 1u);
+    Require(calls[0].constantPointerLowProgramCounter == 0x0u && calls[0].constantPointerHighProgramCounter == 0x8u);
+    const auto patched = RetargetTableCallPointer(caller, program, calls[0], 0xee0040000ull);
+    Require(patched.has_value());
+    Require(patched->size() == caller.size());
+    Require((*patched)[1] == 0xe0040000u && (*patched)[2] == 0xbeeb038eu);
+    const auto retargeted = FindTableCalls(RdnaInstructionDecoder{}.Decode(*patched), swappc);
+    Require(retargeted.size() == 1u && retargeted[0].constantPointer == std::optional<std::uint64_t>(0xee0040000ull));
+    Require(!RetargetTableCallPointer(caller, program, calls[0], 0x000000ff00000000ull).has_value());
+}
+
 static void CheckUserDataDescriptorTableCall() {
     const SwappcInfo swappc{false, 0u, 16u};
     const std::vector<std::uint32_t> caller{
@@ -255,6 +272,7 @@ static void CheckUserDataDescriptorTableCall() {
 
 static void CheckTableCalls() {
     CheckConstantTableCall();
+    CheckRetargetedConstantTableCall();
     CheckUserDataDescriptorTableCall();
     const SwappcInfo swappc{false, 0u, 16u};
     const auto caller = TableCaller();
