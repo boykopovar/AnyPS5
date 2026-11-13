@@ -8,6 +8,8 @@
 
 namespace WebCore {
 
+enum class XFrameOptionsDisposition : std::uint8_t { None, Deny, SameOrigin, AllowAll, Invalid, Conflict };
+
 enum class HTMLIntegerParsingError : int { NegativeOverflow, PositiveOverflow, Other };
 
 struct ExpectedInt {
@@ -51,6 +53,7 @@ static_assert(offsetof(ByteVector, size) == 12);
 
 extern "C" {
 
+WebCore::XFrameOptionsDisposition APS5_VABI _ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(const NKWebKit::WtfAbi::String& header);
 WebCore::ExpectedInt APS5_VABI _ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(NKWebKit::WtfAbi::StringView input);
 WebCore::CrossOriginResourcePolicy APS5_VABI _ZN7WebCore36parseCrossOriginResourcePolicyHeaderEN3WTF10StringViewE(NKWebKit::WtfAbi::StringView header);
 bool APS5_VABI _ZN7WebCore18isValidContentTypeERKN3WTF6StringENS_4ModeE(const NKWebKit::WtfAbi::String& input, WebCore::Mode mode);

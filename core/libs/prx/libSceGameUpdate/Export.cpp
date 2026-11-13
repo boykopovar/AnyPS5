@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
@@ -169,8 +170,11 @@ int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t serviceLabel, const 
             return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
         }
     }
-    info->found = false;
-    return 0;
+    constexpr bool found = false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(&info->found, &found, sizeof(found));
+    errno = savedErrno;
+    return copied ? 0 : SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceGameUpdateInitialize(void) {

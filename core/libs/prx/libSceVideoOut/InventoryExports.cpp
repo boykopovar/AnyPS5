@@ -440,8 +440,10 @@ void APS5_VABI sceVideoOutSysInitMode(void* mode) {
     std::memcpy(mode, &size, sizeof(size));
 }
 
-int APS5_VABI sceVideoOutSysIsModeS3d() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSysIsModeS3d(const void* mode) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const std::uint8_t*>(mode) + 0x10, sizeof(value));
+    return value - 0xA0u < 2u || value == 0xFFFFFFFF81FFFFFFull ? 1 : 0;
 }
 
 int APS5_VABI sceVideoOutSysIsOutputSupported() {

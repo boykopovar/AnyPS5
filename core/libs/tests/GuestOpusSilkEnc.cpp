@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -121,6 +122,9 @@ int main() {
     constexpr int codecApplication = OPUS_APPLICATION_RESTRICTED_SILK;
     std::uint32_t instanceId = 1;
     Require(sceOpusSilkEncInitialize(nullptr) == static_cast<int>(errorBase + 0x18));
+    errno = 71;
+    Require(sceOpusSilkEncInitialize(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(errorBase + 0x18));
+    Require(errno == 71);
     Require(sceOpusSilkEncDestroy(nullptr) == static_cast<int>(errorBase + 0x01));
     std::uint32_t context = 0;
     Require(sceOpusSilkEncInitialize(&context) == 0);
