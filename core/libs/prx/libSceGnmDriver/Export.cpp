@@ -452,6 +452,12 @@ int APS5_VABI sceGnmInsertPopMarker(std::uint32_t* cmd, std::uint32_t size) {
     return 0;
 }
 
+int APS5_VABI sceGnmInsertDingDongMarker_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
+    if (!cmd || size != 4) return -1;
+    Nop(cmd, 3);
+    return 0;
+}
+
 int APS5_VABI sceGnmInsertSetColorMarker() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -509,6 +515,14 @@ int APS5_VABI sceGnmDeleteEqEvent(KernelEqueue eq, std::uint64_t id) {
 int APS5_VABI sceGnmGetEqEventType(const KernelEvent* ev) {
     if (!ev || ev->filter != EvfiltGraphicsCore) throw std::runtime_error(std::string(__func__) + ": not a graphics event");
     return static_cast<int>(ev->ident);
+}
+
+int APS5_VABI sceGnmGetOffChipTessellationBufferSize_nid_disambig1(void) {
+    return 0x800000;
+}
+
+bool APS5_VABI sceGnmDriverTraceInProgress_nid_disambig1(void) {
+    return false;
 }
 
 bool APS5_VABI sceGnmIsUserPaEnabled() {

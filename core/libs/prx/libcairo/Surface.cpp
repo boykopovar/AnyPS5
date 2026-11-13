@@ -13,11 +13,13 @@ namespace {
 
 constexpr int kSuccess = 0;
 constexpr int kNullPointer = 7;
+constexpr int kReadError = 10;
 constexpr int kInvalidContent = 15;
 constexpr int kInvalidFormat = 16;
 constexpr int kInvalidStride = 24;
 constexpr int kInvalidSize = 32;
 constexpr int kNoMemory = 1;
+constexpr int kPngError = 39;
 constexpr int kColor = 0x1000;
 constexpr int kAlpha = 0x2000;
 constexpr int kColorAlpha = 0x3000;
@@ -128,12 +130,16 @@ CairoSurfaceState* NewSurface() {
 CairoSurface* ErrorSurface(int status) {
     static CairoSurfaceState noMemory{kNoMemory};
     static CairoSurfaceState nullPointer{kNullPointer};
+    static CairoSurfaceState readError{kReadError};
+    static CairoSurfaceState pngError{kPngError};
     static CairoSurfaceState invalidContent{kInvalidContent};
     static CairoSurfaceState invalidFormat{kInvalidFormat};
     static CairoSurfaceState invalidStride{kInvalidStride};
     static CairoSurfaceState invalidSize{kInvalidSize};
     switch (status) {
     case kNullPointer: return Handle(&nullPointer);
+    case kReadError: return Handle(&readError);
+    case kPngError: return Handle(&pngError);
     case kInvalidContent: return Handle(&invalidContent);
     case kInvalidFormat: return Handle(&invalidFormat);
     case kInvalidStride: return Handle(&invalidStride);
