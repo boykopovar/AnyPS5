@@ -32,6 +32,15 @@ void RequireRefused(int result) {
     RequireWords({});
 }
 
+bool WholePackets(const std::uint32_t* words, std::size_t count) {
+    std::size_t at = 0;
+    while (at < count) {
+        if ((words[at] >> 30) != 3) return false;
+        at += ((words[at] >> 16) & 0x3fffu) + 2;
+    }
+    return at == count;
+}
+
 void CheckVs() {
     Require(sceGnmUpdateVsShader(Fresh(), 0x1d, Regs, 0) == 0);
     RequireWords({0xc0027600u, 0x48, 0x1000, 0, 0xc0027600u, 0x4a, 0x2000, 0x3000, 0xc0011000u, 0xc01e0207u, 0x6000,
@@ -120,6 +129,31 @@ void CheckMarkersAndVgt() {
     RequireWords({0xc0017900u, 0x40000258u, 0x6d007fu});
 }
 
+void CheckEmbeddedShaders() {
+    Require(sceGnmSetEmbeddedPsShader(Fresh(), 0x30, 2, 0) == static_cast<int>(0x8EEE00FFu));
+    RequireWords({});
+    Require(sceGnmSetEmbeddedPsShader(nullptr, 0x30, 0, 0) == -1);
+
+    Require(sceGnmSetEmbeddedPsShader(Fresh(), 0x30, 0, 0) == 0);
+    Require(g_words[0] == 0xc0027600u && g_words[1] == 8);
+    Require(WholePackets(g_words, 28));
+    Require(g_words[28] == 0xc00a1000u && g_words[29] == 0);
+
+    Require(sceGnmSetEmbeddedPsShader(Fresh(), 0x30, 1, 0) == 0);
+    Require(g_words[0] == 0xc0027600u && g_words[1] == 8);
+    Require(WholePackets(g_words, 28));
+    Require(g_words[28] == 0xc00a1000u && g_words[29] == 0);
+
+    Require(sceGnmSetEmbeddedVsShader(Fresh(), 0x30, 1, 0) == static_cast<int>(0x8EEE00FFu));
+    RequireWords({});
+    Require(sceGnmSetEmbeddedVsShader(nullptr, 0x30, 0, 0) == -1);
+
+    Require(sceGnmSetEmbeddedVsShader(Fresh(), 0x30, 0, 0) == 0);
+    Require(g_words[0] == 0xc0027600u && g_words[1] == 0x48);
+    Require(WholePackets(g_words, 17));
+    Require(g_words[17] == 0xc00a1000u && g_words[18] == 0);
+}
+
 void CheckWorkloads() {
     std::uint32_t stream = Untouched;
     Require(sceGnmCreateWorkloadStream(0, &stream) == 3 && stream == Untouched);
@@ -144,6 +178,7 @@ int main() {
     CheckPs();
     CheckGsHsCs();
     CheckMarkersAndVgt();
+    CheckEmbeddedShaders();
     CheckWorkloads();
     Require(sceGnmGetGpuCoreClockFrequency() == 911000000);
     Require(sceGnmGetOffChipTessellationBufferSize() == 0x800000);

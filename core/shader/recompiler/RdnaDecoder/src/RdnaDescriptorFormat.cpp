@@ -14,7 +14,7 @@ struct FormatInfo {
     bool sint32;
 };
 
-constexpr std::array<FormatInfo, 83> kFormatInfoTable {{
+constexpr std::array<FormatInfo, 87> kFormatInfoTable {{
     {IrBufferFormat::Format8UNorm, true, false, false},
     {IrBufferFormat::Format8SNorm, true, false, false},
     {IrBufferFormat::Format8UInt, true, true, false},
@@ -39,7 +39,11 @@ constexpr std::array<FormatInfo, 83> kFormatInfoTable {{
     {IrBufferFormat::Format11_11_10UNorm, true, true, false},
     {IrBufferFormat::Format11_11_10UInt, true, true, false},
     {IrBufferFormat::Format11_11_10Float, true, true, false},
+    {IrBufferFormat::Format10_11_11UNorm, true, true, false},
+    {IrBufferFormat::Format10_11_11UInt, true, true, false},
     {IrBufferFormat::Format10_11_11Float, true, true, false},
+    {IrBufferFormat::Format2_10_10_10UNorm, true, true, false},
+    {IrBufferFormat::Format2_10_10_10UInt, true, true, false},
     {IrBufferFormat::Format10_10_10_2UNorm, true, false, false},
     {IrBufferFormat::Format10_10_10_2SNorm, true, false, false},
     {IrBufferFormat::Format10_10_10_2UInt, true, true, false},
@@ -144,8 +148,12 @@ IrTextureNumericClass SampledTextureNumericClass(IrBufferFormat format) {
     return info->uint32 ? IrTextureNumericClass::Uint : IrTextureNumericClass::Float;
 }
 
+bool IsConvertedUnormTextureFormat(IrBufferFormat format) {
+    return format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format10_11_11UNorm || format == IrBufferFormat::Format2_10_10_10UNorm;
+}
+
 IrBufferFormat RemapTextureFormat(IrBufferFormat format) {
-    return format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format11_11_10Float || format == IrBufferFormat::Format10_11_11Float ? IrBufferFormat::Format32UInt : format;
+    return IsConvertedUnormTextureFormat(format) || format == IrBufferFormat::Format10_11_11UInt || format == IrBufferFormat::Format2_10_10_10UInt || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format11_11_10Float || format == IrBufferFormat::Format10_11_11Float ? IrBufferFormat::Format32UInt : format;
 }
 
 IrBufferFormat RemapStorageTextureFormat(IrBufferFormat format) {

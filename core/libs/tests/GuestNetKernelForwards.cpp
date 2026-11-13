@@ -74,6 +74,14 @@ static void CheckDatagram(bool net) {
     size = 123;
     Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, &size) == sizeof(payload));
     Require(size == 123 && std::strcmp(received, payload) == 0);
+    Require(Failed(connect_nid_postfix(sender, nullptr, receiverAddress.size()), 14));
+    Require(connect_nid_postfix(sender, receiverAddress.data(), receiverAddress.size()) == 0);
+    const auto sent = net ? sceNetSend(sender, payload, sizeof(payload), 0)
+                          : sendto_nid_postfix(sender, payload, sizeof(payload), 0, nullptr, 0);
+    Require(sent == sizeof(payload));
+    std::memset(received, 0, sizeof(received));
+    Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, nullptr) == sizeof(payload));
+    Require(std::strcmp(received, payload) == 0);
     Require(Close(net, receiver) == 0 && Close(net, sender) == 0);
 }
 
@@ -142,6 +150,11 @@ static Stream OpenStream(bool net) {
     Require((net ? sceNetConnect(stream.client, local.data(), 16) : connect_nid_postfix(stream.client, local.data(), 16)) == 0);
     stream.accepted = net ? sceNetAccept(stream.listener, nullptr, nullptr) : accept_nid_postfix(stream.listener, nullptr, nullptr);
     Require(stream.accepted >= 0);
+    std::array<unsigned char, 16> peer{};
+    size = peer.size();
+    Require(getpeername_nid_postfix(stream.client, peer.data(), &size) == 0);
+    Require(size == local.size() && peer == local);
+    Require(Failed(getpeername_nid_postfix(stream.client, nullptr, &size), 14));
     return stream;
 }
 

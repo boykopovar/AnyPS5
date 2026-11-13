@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -31,6 +32,10 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
+#ifdef __APPLE__
+#include <pthread.h>
+#include <sys/qos.h>
 #endif
 
 namespace AgcDriver::Graphics {
@@ -903,7 +908,7 @@ private:
         path = directory / "pipelines.journal";
         lockPath = directory / "pipelines.journal.lock";
         maxBytes = configured("APS5_PIPELINE_JOURNAL_MAX_MIB", 1024u) << 20u;
-        std::thread([this] { run(); }).detach();
+        Libc::StartHostThread([this] { run(); }).detach();
     }
 
     // Parses the file: with `loaded` set every record is decoded, otherwise only the index (the
@@ -1368,7 +1373,7 @@ public:
         replayCounters().threads.store(threads, std::memory_order_relaxed);
         replayCounters().heldPeak.store(0, std::memory_order_relaxed);
         workers.reserve(threads);
-        for (unsigned index = 0; index < threads; ++index) workers.emplace_back([this] { run(); });
+        for (unsigned index = 0; index < threads; ++index) workers.push_back(Libc::StartHostThread([this] { run(); }));
     }
 
     ~Replay() override {
@@ -1391,6 +1396,8 @@ private:
     void run() {
 #ifdef _WIN32
         if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL)) std::fprintf(stderr, "[pipeline-journal] replay thread priority not lowered (error %lu)\n", GetLastError());
+#elif defined(__APPLE__)
+        if (const int error = pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0); error != 0) std::fprintf(stderr, "[pipeline-journal] replay thread priority not lowered (error %d)\n", error);
 #endif
         std::call_once(loadOnce, [&] {
             try {
