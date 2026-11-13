@@ -451,6 +451,9 @@ void GetInfoTests() {
 
     CHECK(sceUltMutexCreate(mutexObj, "test-mutex", poolObj, nullptr, 0) == Ok);
     CHECK(sceUltGetMutexInfo(mutexObj, &mutexInfo, waitThreads, 4) == Ok);
+    errno = 71;
+    CHECK(sceUltGetMutexInfo(mutexObj, reinterpret_cast<UltMutexInfo*>(0x10), waitThreads, 4) == Null);
+    CHECK(errno == 71);
     CHECK(mutexInfo.size == sizeof(UltMutexInfo));
     CHECK(mutexInfo.object == mutexObj);
     CHECK(std::strcmp(mutexInfo.name, "test-mutex") == 0);
@@ -499,6 +502,9 @@ void GetInfoTests() {
     CHECK(std::strcmp(semInfo.name, "test-sem") == 0);
     CHECK(semInfo.waitingQueuePool == poolObj);
     CHECK(semInfo.resources == 3);
+    errno = 71;
+    CHECK(sceUltGetSemaphoreInfo(semObj, reinterpret_cast<UltSemaphoreInfo*>(0x10), waitThreads, 4) == Null);
+    CHECK(errno == 71);
 
     CHECK(sceUltReaderWriterLockCreate(rwObj, "test-rw", poolObj, nullptr, 0) == Ok);
     CHECK(sceUltGetReaderWriterLockInfo(rwObj, &rwInfo, waitThreads, 4) == Ok);
