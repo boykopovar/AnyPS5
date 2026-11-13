@@ -86,6 +86,9 @@ void APS5_VABI _ZN7WebCore8IntPointC2ERKNS_10FloatPointE(WebCore::IntPoint* self
 void APS5_VABI _ZN7WebCore9FloatRect5scaleEff(WebCore::FloatRect* self, float sx, float sy);
 void APS5_VABI _ZN7WebCore9FloatRect5uniteERKS0_(WebCore::FloatRect* self, const WebCore::FloatRect& other);
 void APS5_VABI _ZN7WebCore9FloatRect6extendERKNS_10FloatPointE(WebCore::FloatRect* self, const WebCore::FloatPoint& p);
+void APS5_VABI _ZN7WebCore9FloatRect11fitToPointsERKNS_10FloatPointES3_(WebCore::FloatRect* self, const WebCore::FloatPoint& p0, const WebCore::FloatPoint& p1);
+void APS5_VABI _ZN7WebCore9FloatRect11fitToPointsERKNS_10FloatPointES3_S3_(WebCore::FloatRect* self, const WebCore::FloatPoint& p0, const WebCore::FloatPoint& p1, const WebCore::FloatPoint& p2);
+void APS5_VABI _ZN7WebCore9FloatRect11fitToPointsERKNS_10FloatPointES3_S3_S3_(WebCore::FloatRect* self, const WebCore::FloatPoint& p0, const WebCore::FloatPoint& p1, const WebCore::FloatPoint& p2, const WebCore::FloatPoint& p3);
 void APS5_VABI _ZN7WebCore9FloatRect9intersectERKS0_(WebCore::FloatRect* self, const WebCore::FloatRect& other);
 void APS5_VABI _ZN7WebCore9FloatRectC1ERKNS_7IntRectE(WebCore::FloatRect* self, const WebCore::IntRect& r);
 void APS5_VABI _ZN7WebCore9FloatRectC2ERKNS_7IntRectE(WebCore::FloatRect* self, const WebCore::IntRect& r);

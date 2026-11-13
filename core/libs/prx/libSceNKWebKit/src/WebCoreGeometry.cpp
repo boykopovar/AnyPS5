@@ -215,6 +215,34 @@ void APS5_VABI _ZN7WebCore9FloatRect6extendERKNS_10FloatPointE(WebCore::FloatRec
     self->m_size = {maxX - minX, maxY - minY};
 }
 
+void APS5_VABI _ZN7WebCore9FloatRect11fitToPointsERKNS_10FloatPointES3_(
+    WebCore::FloatRect* self, const WebCore::FloatPoint& p0, const WebCore::FloatPoint& p1) {
+    self->m_location = {std::min(p0.m_x, p1.m_x), std::min(p0.m_y, p1.m_y)};
+    self->m_size = {std::max(p0.m_x, p1.m_x) - self->m_location.m_x,
+                    std::max(p0.m_y, p1.m_y) - self->m_location.m_y};
+}
+
+void APS5_VABI _ZN7WebCore9FloatRect11fitToPointsERKNS_10FloatPointES3_S3_(
+    WebCore::FloatRect* self, const WebCore::FloatPoint& p0, const WebCore::FloatPoint& p1, const WebCore::FloatPoint& p2) {
+    float left = std::min({p0.m_x, p1.m_x, p2.m_x});
+    float top = std::min({p0.m_y, p1.m_y, p2.m_y});
+    float right = std::max({p0.m_x, p1.m_x, p2.m_x});
+    float bottom = std::max({p0.m_y, p1.m_y, p2.m_y});
+    self->m_location = {left, top};
+    self->m_size = {right - left, bottom - top};
+}
+
+void APS5_VABI _ZN7WebCore9FloatRect11fitToPointsERKNS_10FloatPointES3_S3_S3_(
+    WebCore::FloatRect* self, const WebCore::FloatPoint& p0, const WebCore::FloatPoint& p1,
+    const WebCore::FloatPoint& p2, const WebCore::FloatPoint& p3) {
+    float left = std::min(std::min(p0.m_x, p1.m_x), std::min(p2.m_x, p3.m_x));
+    float top = std::min(std::min(p0.m_y, p1.m_y), std::min(p2.m_y, p3.m_y));
+    float right = std::max(std::max(p0.m_x, p1.m_x), std::max(p2.m_x, p3.m_x));
+    float bottom = std::max(std::max(p0.m_y, p1.m_y), std::max(p2.m_y, p3.m_y));
+    self->m_location = {left, top};
+    self->m_size = {right - left, bottom - top};
+}
+
 void APS5_VABI _ZN7WebCore9FloatRect9intersectERKS0_(WebCore::FloatRect* self, const WebCore::FloatRect& other) {
     float l = std::max(self->m_location.m_x, other.m_location.m_x);
     float t = std::max(self->m_location.m_y, other.m_location.m_y);

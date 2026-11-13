@@ -165,6 +165,41 @@ static void TestFloatRect() {
     Require(AlmostEqual(rExt.m_location.m_y, 10.0f));
     Require(AlmostEqual(rExt.m_size.m_width, 15.0f));
     Require(AlmostEqual(rExt.m_size.m_height, 15.0f));
+
+    WebCore::FloatPoint fit2p0{4.0f, -3.0f};
+    WebCore::FloatPoint fit2p1{-2.0f, 5.0f};
+    WebCore::FloatRect fit2;
+    _ZN7WebCore9FloatRect11fitToPointsERKNS_10FloatPointES3_(&fit2, fit2p0, fit2p1);
+    Require(AlmostEqual(fit2.m_location.m_x, -2.0f));
+    Require(AlmostEqual(fit2.m_location.m_y, -3.0f));
+    Require(AlmostEqual(fit2.m_size.m_width, 6.0f));
+    Require(AlmostEqual(fit2.m_size.m_height, 8.0f));
+
+    WebCore::FloatPoint fit3p2{7.0f, 8.0f};
+    WebCore::FloatRect fit3;
+    _ZN7WebCore9FloatRect11fitToPointsERKNS_10FloatPointES3_S3_(&fit3, fit2p0, fit2p1, fit3p2);
+    Require(AlmostEqual(fit3.m_location.m_x, -2.0f));
+    Require(AlmostEqual(fit3.m_location.m_y, -3.0f));
+    Require(AlmostEqual(fit3.m_size.m_width, 9.0f));
+    Require(AlmostEqual(fit3.m_size.m_height, 11.0f));
+
+    WebCore::FloatPoint fit4p3{-6.0f, 9.0f};
+    WebCore::FloatRect fit4;
+    _ZN7WebCore9FloatRect11fitToPointsERKNS_10FloatPointES3_S3_S3_(&fit4, fit2p0, fit2p1, fit3p2, fit4p3);
+    Require(AlmostEqual(fit4.m_location.m_x, -6.0f));
+    Require(AlmostEqual(fit4.m_location.m_y, -3.0f));
+    Require(AlmostEqual(fit4.m_size.m_width, 13.0f));
+    Require(AlmostEqual(fit4.m_size.m_height, 12.0f));
+
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    WebCore::FloatPoint nanP0{1.0f, 0.0f};
+    WebCore::FloatPoint nanP1{2.0f, 0.0f};
+    WebCore::FloatPoint nanP2{nan, 0.0f};
+    WebCore::FloatPoint nanP3{0.0f, 0.0f};
+    WebCore::FloatRect fitNan;
+    _ZN7WebCore9FloatRect11fitToPointsERKNS_10FloatPointES3_S3_S3_(&fitNan, nanP0, nanP1, nanP2, nanP3);
+    Require(AlmostEqual(fitNan.m_location.m_x, 1.0f));
+    Require(AlmostEqual(fitNan.m_size.m_width, 1.0f));
 }
 
 static void TestFloatQuad() {
