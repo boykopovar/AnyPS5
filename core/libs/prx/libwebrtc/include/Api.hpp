@@ -282,7 +282,7 @@ bool APS5_VABI _ZN6webrtc4rtcp4Nack5ParseERKNS0_12CommonHeaderE_nid_postfix(WebR
 int APS5_VABI _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(void);
 bool APS5_VABI _ZN6webrtc4rtcp3Pli5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRtcRtcpPli* pli, const WebRtcRtcpCommonHeader* packet);
-int APS5_VABI _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(WebRtcRtcpPli* pli);
 void APS5_VABI _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(void*);
 int APS5_VABI _ZN6webrtc4rtcp14ReceiverReportC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp4Remb5ParseERKNS0_12CommonHeaderE_nid_postfix(void);
