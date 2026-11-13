@@ -102,6 +102,42 @@ class CompareResultsTests(unittest.TestCase):
         self.assertIn("2 rows x 2 registers: 0 differing words", result.stdout)
         self.assertEqual(result.stderr, "")
 
+    def test_duplicate_output_cannot_hide_a_difference_on_either_side(self):
+        original = json.dumps(self.report)
+        ambiguous = original.replace('"output": [0, 2147483648]',
+                                     '"output": [1, 2147483648], "output": [0, 2147483648]', 1)
+        self.assertNotEqual(ambiguous, original)
+        for side in (self.before, self.after):
+            with self.subTest(side=side.name):
+                self.before.write_text(original, encoding="utf-8")
+                self.after.write_text(original, encoding="utf-8")
+                side.write_text(ambiguous, encoding="utf-8-sig")
+                result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("duplicate JSON field 'output'", result.stderr)
+                self.assertIn(str(side), result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_duplicate_settings_are_rejected_at_every_object_depth(self):
+        original = json.dumps(self.report)
+        cases = [('"wave_size": 32', '"wave_size": 64, "wave_size": 32', "wave_size"),
+                 ('"wave_size": 32', '"wave_size": 32, "wave_size": 32', "wave_size"),
+                 ('"ieee": 0', '"ieee": 1, "ieee": 0', "ieee"),
+                 ('"input": [0, 2147483648, 4294967295, 0]',
+                  '"input": [1, 2147483648, 4294967295, 0], "input": [0, 2147483648, 4294967295, 0]', "input")]
+        for field, replacement, name in cases:
+            with self.subTest(name=name, replacement=replacement):
+                ambiguous = original.replace(field, replacement, 1)
+                self.assertNotEqual(ambiguous, original)
+                self.before.write_text(original, encoding="utf-8")
+                self.after.write_text(ambiguous, encoding="utf-8")
+                result = self.compare()
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(f"duplicate JSON field {name!r}", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def test_bit_differences_include_signed_zero_nan_payload_and_unsigned_words(self):
         after = copy.deepcopy(self.report)
         after["rows"][0]["output"][0] = 0x80000000
