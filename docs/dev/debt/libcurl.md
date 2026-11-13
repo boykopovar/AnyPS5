@@ -22,7 +22,6 @@
 - [`curl_formadd`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
 - [`curl_formget`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
 - [`curl_global_init_mem`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: Allocator callback ownership across repeated initialization and cleanup is not adapted exactly.
-- [`curl_maprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
 - [`curl_mfprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
 - [`curl_mprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
 - [`curl_multi_assign`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: The guest registry lacks reverse lookup and borrowed-owner installation for curl-owned sockets; see Socket ownership above.
