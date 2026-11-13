@@ -194,6 +194,7 @@ void APS5_VABI glGetVertexAttribPointerv_nid_postfix(GLuint index, GLenum name, 
 
 void APS5_VABI glGetVertexAttribfv_nid_postfix(GLuint index, GLenum name, GLfloat* values) {
     std::lock_guard lock(mutex);
+    if (!values) return;
     std::vector<double> data;
     if (AttribQuery(index, name, data)) std::copy(data.begin(), data.end(), values);
 }
