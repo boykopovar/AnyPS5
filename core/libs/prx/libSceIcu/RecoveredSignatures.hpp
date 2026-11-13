@@ -2,6 +2,7 @@
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIcu/Enumeration.hpp"
+#include "prx/libSceIcu/UText.hpp"
 #include <cstdint>
 
 struct UBreakIterator;
@@ -30,7 +31,6 @@ struct URelativeDateTimeFormatter;
 struct UResourceBundle;
 struct USet;
 struct UStringSearch;
-struct UText;
 
 using UCalendarDateFields = std::int32_t;
 using UDate = double;
@@ -198,5 +198,6 @@ void APS5_VABI ures_close(UResourceBundle* resB);
 UStringSearch* APS5_VABI usearch_open_nid_postfix(const char16_t* pattern, std::int32_t patternLength, const char16_t* text, std::int32_t textLength, const char* locale, UBreakIterator* breakIterator, std::int32_t* status);
 
 UText* APS5_VABI utext_close(UText* ut);
+UText* APS5_VABI utext_setup(UText* ut, std::int32_t extraSpace, std::int32_t* status);
 
 }

@@ -307,8 +307,4 @@ int APS5_VABI utext_openUChars() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI utext_setup() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 }
