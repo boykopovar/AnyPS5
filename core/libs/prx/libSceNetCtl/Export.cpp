@@ -21,6 +21,7 @@
 #include <netpacket/packet.h>
 #endif
 #ifdef __APPLE__
+#include <net/if_dl.h>
 #include <sys/sysctl.h>
 #endif
 #endif
@@ -848,15 +849,15 @@ extern "C" bool NetCtlHostIpv4Address_nid_no_patch(std::uint32_t* address, std::
     return true;
 }
 
-static void WriteInfoWord(NetCtlInfo* info, std::uint32_t value) {
-    std::memcpy(info->opaque, &value, sizeof(value));
+static bool WriteInfoWord(NetCtlInfo* info, std::uint32_t value) {
+    return GuestCopyOut_nid_no_patch(info->opaque, &value, sizeof(value));
 }
 
-static void WriteInfoAddress(NetCtlInfo* info, in_addr address) {
+static bool WriteInfoAddress(NetCtlInfo* info, in_addr address) {
     const auto* bytes = reinterpret_cast<const std::uint8_t*>(&address.s_addr);
     char text[NET_CTL_IPV4_ADDR_STR_LEN] = {};
     std::snprintf(text, sizeof(text), "%u.%u.%u.%u", static_cast<unsigned>(bytes[0]), static_cast<unsigned>(bytes[1]), static_cast<unsigned>(bytes[2]), static_cast<unsigned>(bytes[3]));
-    std::memcpy(info->opaque, text, sizeof(text));
+    return GuestCopyOut_nid_no_patch(info->opaque, text, sizeof(text));
 }
 
 static constexpr std::size_t NET_CTL_IPV6_ADDR_STR_LEN = 46;
@@ -960,11 +961,14 @@ static HostIpv6Selection QueryHostIpv6Selection() {
 }
 #endif
 
-static void WriteInfoV6Address(NetCtlInfoV6* info, const HostIpv6Address& address) {
-    char text[NET_CTL_IPV6_ADDR_STR_LEN] = {};
-    inet_ntop(AF_INET6, &address.address, text, sizeof(text));
-    std::memcpy(info->opaque, text, sizeof(text));
-    info->opaque[NET_CTL_IPV6_ADDR_STR_LEN] = static_cast<std::uint8_t>(address.prefix);
+static bool WriteInfoV6Address(NetCtlInfoV6* info, const HostIpv6Address& address) {
+    char buffer[NET_CTL_IPV6_ADDR_STR_LEN + 1] = {};
+    inet_ntop(AF_INET6, &address.address, buffer, NET_CTL_IPV6_ADDR_STR_LEN);
+    buffer[NET_CTL_IPV6_ADDR_STR_LEN] = static_cast<char>(static_cast<std::uint8_t>(address.prefix));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info->opaque, buffer, sizeof(buffer));
+    errno = savedErrno;
+    return copied;
 }
 
 extern "C" std::uint64_t NetCtlReadByteCounter_nid_no_patch(const char* path) {
@@ -996,6 +1000,17 @@ static void HostTraffic(std::uint64_t& sent, std::uint64_t& received) {
         const std::string statistics = std::string("/sys/class/net/") + item->ifa_name + "/statistics/";
         sent += NetCtlReadByteCounter_nid_no_patch((statistics + "tx_bytes").c_str());
         received += NetCtlReadByteCounter_nid_no_patch((statistics + "rx_bytes").c_str());
+    }
+    freeifaddrs(interfaces);
+#elif defined(__APPLE__)
+    ifaddrs* interfaces = nullptr;
+    if (getifaddrs(&interfaces) != 0) throw std::runtime_error("sceNetCtlGetIfStat: the host interface list is unavailable");
+    for (auto* item = interfaces; item; item = item->ifa_next) {
+        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_LINK || !item->ifa_data) continue;
+        if (!(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+        const auto* statistics = static_cast<const struct if_data*>(item->ifa_data);
+        sent += statistics->ifi_obytes;
+        received += statistics->ifi_ibytes;
     }
     freeifaddrs(interfaces);
 #else
@@ -1044,8 +1059,12 @@ int APS5_VABI sceNetCtlGetIfStat(NetCtlIfStat* stat) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!stat) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (!HostHasAddress(AF_UNSPEC)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
-    *stat = {};
-    HostTraffic(stat->tx_bytes, stat->rx_bytes);
+    NetCtlIfStat localStat{};
+    HostTraffic(localStat.tx_bytes, localStat.rx_bytes);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stat, &localStat, sizeof(localStat));
+    errno = savedErrno;
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -1055,50 +1074,69 @@ int APS5_VABI sceNetCtlGetInfo(int code, NetCtlInfo* info) {
     if (code < NET_CTL_INFO_DEVICE || code > NET_CTL_INFO_HTTP_PROXY_PORT) return SCE_NET_CTL_ERROR_INVALID_CODE;
     HostIpv4Interface host;
     if (!FindHostIpv4Interface(host)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
+    bool copied = false;
     switch (code) {
-        case NET_CTL_INFO_DEVICE: WriteInfoWord(info, NET_CTL_DEVICE_WIRED); break;
-        case NET_CTL_INFO_ETHER_ADDR: std::memcpy(info->opaque, NET_CTL_ETHER_ADDR, sizeof(NET_CTL_ETHER_ADDR)); break;
-        case NET_CTL_INFO_MTU: WriteInfoWord(info, host.mtu); break;
-        case NET_CTL_INFO_LINK: WriteInfoWord(info, NET_CTL_LINK_CONNECTED); break;
-        case NET_CTL_INFO_IP_CONFIG: WriteInfoWord(info, NET_CTL_IP_DHCP); break;
-        case NET_CTL_INFO_IP_ADDRESS: WriteInfoAddress(info, host.address); break;
-        case NET_CTL_INFO_NETMASK: WriteInfoAddress(info, host.netmask); break;
-        case NET_CTL_INFO_DEFAULT_ROUTE: WriteInfoAddress(info, host.gateway); break;
-        case NET_CTL_INFO_PRIMARY_DNS: WriteInfoAddress(info, host.dns.size() > 0 ? host.dns[0] : in_addr{}); break;
-        case NET_CTL_INFO_SECONDARY_DNS: WriteInfoAddress(info, host.dns.size() > 1 ? host.dns[1] : in_addr{}); break;
-        case NET_CTL_INFO_HTTP_PROXY_CONFIG: WriteInfoWord(info, NET_CTL_HTTP_PROXY_OFF); break;
+        case NET_CTL_INFO_DEVICE: copied = WriteInfoWord(info, NET_CTL_DEVICE_WIRED); break;
+        case NET_CTL_INFO_ETHER_ADDR: copied = GuestCopyOut_nid_no_patch(info->opaque, NET_CTL_ETHER_ADDR, sizeof(NET_CTL_ETHER_ADDR)); break;
+        case NET_CTL_INFO_MTU: copied = WriteInfoWord(info, host.mtu); break;
+        case NET_CTL_INFO_LINK: copied = WriteInfoWord(info, NET_CTL_LINK_CONNECTED); break;
+        case NET_CTL_INFO_IP_CONFIG: copied = WriteInfoWord(info, NET_CTL_IP_DHCP); break;
+        case NET_CTL_INFO_IP_ADDRESS: copied = WriteInfoAddress(info, host.address); break;
+        case NET_CTL_INFO_NETMASK: copied = WriteInfoAddress(info, host.netmask); break;
+        case NET_CTL_INFO_DEFAULT_ROUTE: copied = WriteInfoAddress(info, host.gateway); break;
+        case NET_CTL_INFO_PRIMARY_DNS: copied = WriteInfoAddress(info, host.dns.size() > 0 ? host.dns[0] : in_addr{}); break;
+        case NET_CTL_INFO_SECONDARY_DNS: copied = WriteInfoAddress(info, host.dns.size() > 1 ? host.dns[1] : in_addr{}); break;
+        case NET_CTL_INFO_HTTP_PROXY_CONFIG: copied = WriteInfoWord(info, NET_CTL_HTTP_PROXY_OFF); break;
         case NET_CTL_INFO_BSSID:
         case NET_CTL_INFO_SSID:
         case NET_CTL_INFO_DHCP_HOSTNAME:
         case NET_CTL_INFO_PPPOE_AUTH_NAME:
-        case NET_CTL_INFO_HTTP_PROXY_SERVER: std::memset(info->opaque, 0, sizeof(info->opaque)); break;
+        case NET_CTL_INFO_HTTP_PROXY_SERVER: {
+            const NetCtlInfo zero{};
+            copied = GuestCopyOut_nid_no_patch(info->opaque, zero.opaque, sizeof(info->opaque));
+            break;
+        }
         case NET_CTL_INFO_WIFI_SECURITY:
         case NET_CTL_INFO_RSSI_DBM:
         case NET_CTL_INFO_RSSI_PERCENTAGE:
         case NET_CTL_INFO_CHANNEL:
-        case NET_CTL_INFO_HTTP_PROXY_PORT: WriteInfoWord(info, 0); break;
+        case NET_CTL_INFO_HTTP_PROXY_PORT: copied = WriteInfoWord(info, 0); break;
         default: throw std::runtime_error("sceNetCtlGetInfo: info code " + std::to_string(code) + " is not implemented");
     }
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!info) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    if (info->size != sizeof(NetCtlNatInfo)) return SCE_NET_CTL_ERROR_INVALID_SIZE;
+    std::uint32_t size = 0;
+    const int savedErrno = errno;
+    const bool copiedSize = GuestCopyIn_nid_no_patch(&size, info, sizeof(size));
+    errno = savedErrno;
+    if (!copiedSize) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (size != sizeof(NetCtlNatInfo)) return SCE_NET_CTL_ERROR_INVALID_SIZE;
     HostIpv4Interface host;
     if (!FindHostIpv4Interface(host)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
     auto& config = GetStunConfig();
     std::uint64_t generation = 0;
     const auto now = std::chrono::steady_clock::now();
+    NetCtlNatInfo cached{};
+    bool hasCached = false;
     {
         std::lock_guard guard(config.lock);
         generation = config.configGeneration;
         if (config.hasCachedResult && config.cachedConfigGeneration == generation &&
             config.cachedLocalAddr == host.address.s_addr && now < config.cachedUntil) {
-            *info = config.cachedResult;
-            return 0;
+            cached = config.cachedResult;
+            hasCached = true;
         }
+    }
+    if (hasCached) {
+        const int copyErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(info, &cached, sizeof(cached));
+        errno = copyErrno;
+        return copied ? 0 : SCE_NET_CTL_ERROR_INVALID_ADDR;
     }
     const NetCtlNatInfo discovered = DiscoverNatInfo(host.address);
     if (discovered.stun_status == NET_CTL_STUN_STATUS_OK) {
@@ -1111,8 +1149,10 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
             config.hasCachedResult = true;
         }
     }
-    *info = discovered;
-    return 0;
+    const int copyErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &discovered, sizeof(discovered));
+    errno = copyErrno;
+    return copied ? 0 : SCE_NET_CTL_ERROR_INVALID_ADDR;
 }
 
 int APS5_VABI sceNetCtlGetResult(int event, int* result) {
@@ -1170,7 +1210,7 @@ int APS5_VABI sceNetCtlGetInfoV6(std::uint32_t code, NetCtlInfoV6* info) {
             chosen = selection.linkLocal;
         }
         if (!chosen.valid) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
-        WriteInfoV6Address(info, chosen);
+        if (!WriteInfoV6Address(info, chosen)) return SCE_NET_CTL_ERROR_INVALID_ADDR;
         return 0;
     }
     throw std::runtime_error("sceNetCtlGetInfoV6: info code " + std::to_string(code) + " is not implemented");
@@ -1333,7 +1373,11 @@ int APS5_VABI sceNetCtlGetResultV6(int event_type, int* error_code) {
     if (event_type < NET_CTL_EVENT_DISCONNECTED || event_type > NET_CTL_EVENT_IPOBTAINED) {
         throw std::runtime_error("sceNetCtlGetResultV6: event type " + std::to_string(event_type) + " is not implemented");
     }
-    *error_code = 0;
+    const int val = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(error_code, &val, sizeof(val));
+    errno = savedErrno;
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 

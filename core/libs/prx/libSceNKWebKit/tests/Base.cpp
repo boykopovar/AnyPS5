@@ -7,6 +7,7 @@
 #include "prx/libSceNKWebKit/src/FrameHandle.hpp"
 #include "prx/libSceNKWebKit/src/OpenPanelParameters.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
+#include "prx/libSceNKWebKit/src/RenderTree.hpp"
 #include <algorithm>
 #include <cassert>
 #include <chrono>
@@ -59,8 +60,8 @@ static void TestTypeIDs() {
     Require(WKContextMenuItemGetTypeID() == 0);
     Require(WKUserContentExtensionStoreGetTypeID() == 0);
     Require(WKAXObjectGetTypeID() == 132);
-    WKRenderLayerGetTypeID();
-    WKRenderObjectGetTypeID();
+    Require(WKRenderLayerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::RenderLayer));
+    Require(WKRenderObjectGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::RenderObject));
     Require(WKSessionStateGetTypeID() == 19);
     Require(WKSerializedScriptValueGetTypeID() == 20);
     Require(WKContextGetTypeID() == 85);
@@ -1162,6 +1163,43 @@ static void TestBundleDOMWindowExtension() {
     Require(threw);
 }
 
+static void TestBundleNodeHandle() {
+    Require(WKBundleNodeHandleGetTypeID() == 122);
+    auto handle = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    const void* ref = handle.Get();
+    Require(WKBundleNodeHandleCopyDocument(ref) == nullptr);
+    Require(WKBundleNodeHandleCopyDocumentFrame(ref) == nullptr);
+    Require(WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(ref) == nullptr);
+
+    auto doc = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    auto docFrame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto iframeContent = NKWebKit::Make<NKWebKit::BundleFrame>();
+
+    handle->document = doc;
+    handle->documentFrame = docFrame;
+    handle->htmlIFrameElementContentFrame = iframeContent;
+
+    auto* copiedDoc = WKBundleNodeHandleCopyDocument(ref);
+    Require(copiedDoc == doc.Get());
+    WKRelease(copiedDoc);
+
+    auto* copiedDocFrame = WKBundleNodeHandleCopyDocumentFrame(ref);
+    Require(copiedDocFrame == docFrame.Get());
+    WKRelease(copiedDocFrame);
+
+    auto* copiedIframe = WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(ref);
+    Require(copiedIframe == iframeContent.Get());
+    WKRelease(copiedIframe);
+
+    bool threw = false;
+    try {
+        WKBundleNodeHandleCopyDocument(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -1988,9 +2026,147 @@ static void TestInspector() {
     Require(!WKInspectorIsProfilingPage(ref));
     Require(WKInspectorIsVisible(ref));
 
+    WKInspectorAttach(ref);
+    Require(WKInspectorIsAttached(ref));
+    WKInspectorDetach(ref);
+    Require(!WKInspectorIsAttached(ref));
+
+    WKInspectorConnect(ref);
+    Require(WKInspectorIsConnected(ref));
+
+    WKInspectorShow(ref);
+    Require(WKInspectorIsVisible(ref));
+    Require(WKInspectorIsFront(ref));
+    WKInspectorHide(ref);
+    Require(!WKInspectorIsVisible(ref));
+    Require(!WKInspectorIsFront(ref));
+
+    WKInspectorShowConsole(ref);
+    Require(WKInspectorIsVisible(ref));
+    Require(WKInspectorIsFront(ref));
+    WKInspectorHide(ref);
+    Require(!WKInspectorIsVisible(ref));
+    Require(!WKInspectorIsFront(ref));
+
+    WKInspectorShowResources(ref);
+    Require(WKInspectorIsVisible(ref));
+    Require(WKInspectorIsFront(ref));
+
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    WKInspectorToggleElementSelection(ref);
+    Require(WKInspectorIsElementSelectionActive(ref));
+    WKInspectorToggleElementSelection(ref);
+    Require(!WKInspectorIsElementSelectionActive(ref));
+
+    Require(!WKInspectorIsProfilingPage(ref));
+    WKInspectorTogglePageProfiling(ref);
+    Require(WKInspectorIsProfilingPage(ref));
+    WKInspectorTogglePageProfiling(ref);
+    Require(!WKInspectorIsProfilingPage(ref));
+
+    WKInspectorAttach(ref);
+    WKInspectorConnect(ref);
+    WKInspectorShow(ref);
+    WKInspectorToggleElementSelection(ref);
+    WKInspectorTogglePageProfiling(ref);
+    Require(WKInspectorIsAttached(ref));
+    Require(WKInspectorIsConnected(ref));
+    Require(WKInspectorIsVisible(ref));
+    Require(WKInspectorIsFront(ref));
+    Require(WKInspectorIsElementSelectionActive(ref));
+    Require(WKInspectorIsProfilingPage(ref));
+
+    WKInspectorClose(ref);
+    Require(!WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsVisible(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+
     bool threw = false;
     try {
         WKInspectorIsAttached(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorAttach(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorClose(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorConnect(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorDetach(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorHide(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorShow(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorShowConsole(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorShowResources(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorToggleElementSelection(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorTogglePageProfiling(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -2250,6 +2426,174 @@ static void TestSerializedScriptValue() {
     JSGlobalContextRelease(ctx);
 }
 
+static void TestRenderTree() {
+    auto requireThrows = [](auto&& fn) {
+        bool caught = false;
+        try {
+            fn();
+        } catch (const std::invalid_argument&) {
+            caught = true;
+        }
+        Require(caught);
+    };
+
+    auto obj = NKWebKit::Make<NKWebKit::RenderObject>();
+    Require(WKGetTypeID(obj.Get()) == WKRenderObjectGetTypeID());
+    Require(WKRenderObjectCopyElementID(obj.Get()) == nullptr);
+    Require(WKRenderObjectCopyElementTagName(obj.Get()) == nullptr);
+    Require(WKRenderObjectCopyName(obj.Get()) == nullptr);
+    Require(WKRenderObjectCopyTextSnippet(obj.Get()) == nullptr);
+    Require(WKRenderObjectGetElementClassNames(obj.Get()) == nullptr);
+    Require(WKRenderObjectGetChildren(obj.Get()) == nullptr);
+    auto defaultObjRect = WKRenderObjectGetFrameRect(obj.Get());
+    Require(defaultObjRect.origin.x == 0.0 && defaultObjRect.origin.y == 0.0);
+    Require(defaultObjRect.size.width == 0.0 && defaultObjRect.size.height == 0.0);
+    auto defaultObjPos = WKRenderObjectGetAbsolutePosition(obj.Get());
+    Require(defaultObjPos.x == 0.0 && defaultObjPos.y == 0.0);
+    Require(WKRenderObjectGetTextLength(obj.Get()) == 0);
+
+    obj->elementID = NKWebKit::String::FromUtf8("main-content");
+    obj->elementTagName = NKWebKit::String::FromUtf8("div");
+    obj->name = NKWebKit::String::FromUtf8("RenderBlock");
+    obj->textSnippet = NKWebKit::String::FromUtf8("Hello World");
+    auto classes = NKWebKit::Make<NKWebKit::Array>();
+    classes->elements.push_back(NKWebKit::String::FromUtf8("container"));
+    obj->elementClassNames = classes;
+    auto children = NKWebKit::Make<NKWebKit::Array>();
+    auto childObj = NKWebKit::Make<NKWebKit::RenderObject>();
+    children->elements.push_back(std::move(childObj));
+    obj->children = children;
+    obj->frameRect = {{10.0, 20.0}, {300.0, 400.0}};
+    obj->absolutePosition = {10.0, 20.0};
+    obj->textLength = 11;
+
+    auto* idStr = WKRenderObjectCopyElementID(obj.Get());
+    Require(idStr != nullptr);
+    Require(WKGetTypeID(idStr) == WKStringGetTypeID());
+    Require(static_cast<const NKWebKit::String*>(idStr)->Utf8() == "main-content");
+    WKRelease(idStr);
+
+    auto* tagStr = WKRenderObjectCopyElementTagName(obj.Get());
+    Require(tagStr != nullptr);
+    Require(static_cast<const NKWebKit::String*>(tagStr)->Utf8() == "div");
+    WKRelease(tagStr);
+
+    auto* nameStr = WKRenderObjectCopyName(obj.Get());
+    Require(nameStr != nullptr);
+    Require(static_cast<const NKWebKit::String*>(nameStr)->Utf8() == "RenderBlock");
+    WKRelease(nameStr);
+
+    auto* snippetStr = WKRenderObjectCopyTextSnippet(obj.Get());
+    Require(snippetStr != nullptr);
+    Require(static_cast<const NKWebKit::String*>(snippetStr)->Utf8() == "Hello World");
+    WKRelease(snippetStr);
+
+    Require(WKRenderObjectGetElementClassNames(obj.Get()) == classes.Get());
+    Require(WKRenderObjectGetChildren(obj.Get()) == children.Get());
+    auto objRect = WKRenderObjectGetFrameRect(obj.Get());
+    Require(objRect.origin.x == 10.0 && objRect.origin.y == 20.0);
+    Require(objRect.size.width == 300.0 && objRect.size.height == 400.0);
+    auto objPos = WKRenderObjectGetAbsolutePosition(obj.Get());
+    Require(objPos.x == 10.0 && objPos.y == 20.0);
+    Require(WKRenderObjectGetTextLength(obj.Get()) == 11);
+
+    auto layer = NKWebKit::Make<NKWebKit::RenderLayer>();
+    Require(WKGetTypeID(layer.Get()) == WKRenderLayerGetTypeID());
+    Require(WKRenderLayerGetRenderer(layer.Get()) == nullptr);
+    Require(WKRenderLayerGetFrameContentsLayer(layer.Get()) == nullptr);
+    Require(WKRenderLayerCopyRendererName(layer.Get()) == nullptr);
+    Require(WKRenderLayerCopyElementTagName(layer.Get()) == nullptr);
+    Require(WKRenderLayerCopyElementID(layer.Get()) == nullptr);
+    Require(WKRenderLayerGetElementClassNames(layer.Get()) == nullptr);
+    Require(WKRenderLayerGetNegativeZOrderList(layer.Get()) == nullptr);
+    Require(WKRenderLayerGetPositiveZOrderList(layer.Get()) == nullptr);
+    Require(WKRenderLayerGetNormalFlowList(layer.Get()) == nullptr);
+    Require(!WKRenderLayerIsClipping(layer.Get()));
+    Require(!WKRenderLayerIsClipped(layer.Get()));
+    Require(!WKRenderLayerIsReflection(layer.Get()));
+    Require(WKRenderLayerGetCompositingLayerType(layer.Get()) == 0);
+    Require(WKRenderLayerGetBackingStoreMemoryEstimate(layer.Get()) == 0);
+    auto defaultLayerBounds = WKRenderLayerGetAbsoluteBounds(layer.Get());
+    Require(defaultLayerBounds.origin.x == 0.0 && defaultLayerBounds.origin.y == 0.0);
+    Require(defaultLayerBounds.size.width == 0.0 && defaultLayerBounds.size.height == 0.0);
+
+    auto childLayer = NKWebKit::Make<NKWebKit::RenderLayer>();
+    auto negList = NKWebKit::Make<NKWebKit::Array>();
+    auto posList = NKWebKit::Make<NKWebKit::Array>();
+    auto flowList = NKWebKit::Make<NKWebKit::Array>();
+    layer->renderer = obj;
+    layer->frameContentsLayer = childLayer;
+    layer->rendererName = NKWebKit::String::FromUtf8("RenderLayerModel");
+    layer->elementTagName = NKWebKit::String::FromUtf8("body");
+    layer->elementID = NKWebKit::String::FromUtf8("page-body");
+    layer->elementClassNames = classes;
+    layer->negativeZOrderList = negList;
+    layer->positiveZOrderList = posList;
+    layer->normalFlowList = flowList;
+    layer->isClipping = true;
+    layer->isClipped = true;
+    layer->isReflection = true;
+    layer->compositingLayerType = 2;
+    layer->backingStoreMemoryEstimate = 1048576;
+    layer->absoluteBounds = {{5.0, 15.0}, {800.0, 600.0}};
+
+    Require(WKRenderLayerGetRenderer(layer.Get()) == obj.Get());
+    Require(WKRenderLayerGetFrameContentsLayer(layer.Get()) == childLayer.Get());
+    auto* rName = WKRenderLayerCopyRendererName(layer.Get());
+    Require(rName != nullptr);
+    Require(static_cast<const NKWebKit::String*>(rName)->Utf8() == "RenderLayerModel");
+    WKRelease(rName);
+    auto* eTag = WKRenderLayerCopyElementTagName(layer.Get());
+    Require(eTag != nullptr);
+    Require(static_cast<const NKWebKit::String*>(eTag)->Utf8() == "body");
+    WKRelease(eTag);
+    auto* eId = WKRenderLayerCopyElementID(layer.Get());
+    Require(eId != nullptr);
+    Require(static_cast<const NKWebKit::String*>(eId)->Utf8() == "page-body");
+    WKRelease(eId);
+    Require(WKRenderLayerGetElementClassNames(layer.Get()) == classes.Get());
+    Require(WKRenderLayerGetNegativeZOrderList(layer.Get()) == negList.Get());
+    Require(WKRenderLayerGetPositiveZOrderList(layer.Get()) == posList.Get());
+    Require(WKRenderLayerGetNormalFlowList(layer.Get()) == flowList.Get());
+    Require(WKRenderLayerIsClipping(layer.Get()));
+    Require(WKRenderLayerIsClipped(layer.Get()));
+    Require(WKRenderLayerIsReflection(layer.Get()));
+    Require(WKRenderLayerGetCompositingLayerType(layer.Get()) == 2);
+    Require(WKRenderLayerGetBackingStoreMemoryEstimate(layer.Get()) == 1048576);
+    auto bounds = WKRenderLayerGetAbsoluteBounds(layer.Get());
+    Require(bounds.origin.x == 5.0 && bounds.origin.y == 15.0);
+    Require(bounds.size.width == 800.0 && bounds.size.height == 600.0);
+
+    requireThrows([] { WKRenderObjectCopyElementID(nullptr); });
+    requireThrows([] { WKRenderObjectCopyElementTagName(nullptr); });
+    requireThrows([] { WKRenderObjectCopyName(nullptr); });
+    requireThrows([] { WKRenderObjectCopyTextSnippet(nullptr); });
+    requireThrows([] { WKRenderObjectGetAbsolutePosition(nullptr); });
+    requireThrows([] { WKRenderObjectGetChildren(nullptr); });
+    requireThrows([] { WKRenderObjectGetElementClassNames(nullptr); });
+    requireThrows([] { WKRenderObjectGetFrameRect(nullptr); });
+    requireThrows([] { WKRenderObjectGetTextLength(nullptr); });
+
+    requireThrows([] { WKRenderLayerCopyElementID(nullptr); });
+    requireThrows([] { WKRenderLayerCopyElementTagName(nullptr); });
+    requireThrows([] { WKRenderLayerCopyRendererName(nullptr); });
+    requireThrows([] { WKRenderLayerGetAbsoluteBounds(nullptr); });
+    requireThrows([] { WKRenderLayerGetBackingStoreMemoryEstimate(nullptr); });
+    requireThrows([] { WKRenderLayerGetCompositingLayerType(nullptr); });
+    requireThrows([] { WKRenderLayerGetElementClassNames(nullptr); });
+    requireThrows([] { WKRenderLayerGetFrameContentsLayer(nullptr); });
+    requireThrows([] { WKRenderLayerGetNegativeZOrderList(nullptr); });
+    requireThrows([] { WKRenderLayerGetNormalFlowList(nullptr); });
+    requireThrows([] { WKRenderLayerGetPositiveZOrderList(nullptr); });
+    requireThrows([] { WKRenderLayerGetRenderer(nullptr); });
+    requireThrows([] { WKRenderLayerIsClipped(nullptr); });
+    requireThrows([] { WKRenderLayerIsClipping(nullptr); });
+    requireThrows([] { WKRenderLayerIsReflection(nullptr); });
+
+    requireThrows([&] { WKRenderLayerGetRenderer(obj.Get()); });
+    requireThrows([&] { WKRenderObjectGetChildren(layer.Get()); });
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -2269,6 +2613,7 @@ int main() {
     TestBundleScriptWorld();
     TestBundleDOMWindowExtension();
     TestBundleHitTestResult();
+    TestBundleNodeHandle();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();
@@ -2299,6 +2644,7 @@ int main() {
         return 1;
     }
     TestFrame();
+    TestRenderTree();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }

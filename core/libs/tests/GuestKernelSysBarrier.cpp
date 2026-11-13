@@ -99,7 +99,7 @@ int main() {
     Require(pthread_getcpuclockid_nid_postfix(scePthreadSelf(), reinterpret_cast<int*>(0x10)) == 14);
     Require(scePthreadGetcpuclockid(nullptr, &clock) == SCE_KERNEL_ERROR_EINVAL);
 
-    Require(pthread_setconcurrency_nid_postfix(3) == 0 && scePthreadGetconcurrency() == 3);
+    Require(pthread_setconcurrency_nid_postfix(3) == 0 && scePthreadGetconcurrency() == static_cast<int>(0x80020003));
     Require(pthread_setconcurrency_nid_postfix(0) == 0 && scePthreadGetconcurrency() == 0);
 
     auto* unmapped = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x4000));

@@ -89,6 +89,23 @@ std::uint64_t Number(std::string_view text, int base = 10) {
     return value;
 }
 
+std::uint64_t Http1ContentLength(std::string_view text) {
+    std::uint64_t length = 0;
+    bool first = true;
+    for (;;) {
+        const auto comma = text.find(',');
+        auto digits = text.substr(0, comma);
+        while (!digits.empty() && (digits.front() == ' ' || digits.front() == '\t')) digits.remove_prefix(1);
+        while (!digits.empty() && (digits.back() == ' ' || digits.back() == '\t')) digits.remove_suffix(1);
+        const auto value = Number(digits);
+        Require(first || value == length, "sceHttp2: inconsistent HTTP1 content lengths");
+        length = value;
+        first = false;
+        if (comma == std::string_view::npos) return length;
+        text.remove_prefix(comma + 1);
+    }
+}
+
 struct Url {
     std::string host, authority, path;
     std::uint16_t port = 443;
@@ -715,7 +732,7 @@ struct Request::State {
                 if (line.empty()) break;
                 const auto [name, value] = Field(line);
                 if (name == "content-length") {
-                    const auto length = Number(value);
+                    const auto length = Http1ContentLength(value);
                     Require(!hasLength || length == contentLength, "sceHttp2: inconsistent HTTP1 content lengths");
                     hasLength = true;
                     contentLength = length;
@@ -825,16 +842,25 @@ struct Request::State {
             if (chunkTerminator) { Require(Line(deadline).empty(), "sceHttp2: invalid chunk terminator"); chunkTerminator = false; }
             if (!chunkRemaining) {
                 const auto line = Line(deadline);
-                chunkRemaining = Number(std::string_view(line).substr(0, line.find(';')), 16);
+                const auto extension = line.find(';');
+                auto digits = std::string_view(line).substr(0, extension);
+                if (extension != std::string::npos) {
+                    while (!digits.empty() && (digits.back() == ' ' || digits.back() == '\t')) digits.remove_suffix(1);
+                }
+                chunkRemaining = Number(digits, 16);
                 if (!chunkRemaining) {
                     std::size_t bytes = 0;
+                    std::string trailers;
                     for (;;) {
                         const auto trailer = Line(deadline);
                         bytes += trailer.size() + 2;
                         Require(bytes <= 65536, "sceHttp2: trailers exceed host limit");
                         if (trailer.empty()) break;
                         Field(trailer);
+                        trailers += trailer + "\r\n";
                     }
+                    if (!trailers.empty()) trailers += "\r\n";
+                    trailerHeaders = std::move(trailers);
                     ended = true;
                     return 0;
                 }

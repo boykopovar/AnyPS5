@@ -3,6 +3,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -316,6 +317,12 @@ void Ulthreads() {
     UlthreadObject first{};
     std::uint8_t context[4096];
     CHECK(sceUltUlthreadCreate(&first, "exits", ExitingEntry, 42, context, sizeof(context), &runtime, nullptr, 0) == Ok);
+    UltUlthreadInfo threadQueryInfo{};
+    CHECK(sceUltGetUlthreadInfo(&first, &threadQueryInfo) == Ok);
+    CHECK(std::strcmp(threadQueryInfo.name, "exits") == 0);
+    errno = 71;
+    CHECK(sceUltGetUlthreadInfo(&first, reinterpret_cast<UltUlthreadInfo*>(0x10)) == Null);
+    CHECK(errno == 71);
     std::int32_t status = 0;
     CHECK(sceUltUlthreadJoin(&first, &status) == Ok);
     CHECK(status == 42 && gSelf.load() == &first && gYield.load() == Ok && !gPastExit.load());
@@ -444,6 +451,9 @@ void GetInfoTests() {
 
     CHECK(sceUltMutexCreate(mutexObj, "test-mutex", poolObj, nullptr, 0) == Ok);
     CHECK(sceUltGetMutexInfo(mutexObj, &mutexInfo, waitThreads, 4) == Ok);
+    errno = 71;
+    CHECK(sceUltGetMutexInfo(mutexObj, reinterpret_cast<UltMutexInfo*>(0x10), waitThreads, 4) == Null);
+    CHECK(errno == 71);
     CHECK(mutexInfo.size == sizeof(UltMutexInfo));
     CHECK(mutexInfo.object == mutexObj);
     CHECK(std::strcmp(mutexInfo.name, "test-mutex") == 0);
@@ -492,6 +502,9 @@ void GetInfoTests() {
     CHECK(std::strcmp(semInfo.name, "test-sem") == 0);
     CHECK(semInfo.waitingQueuePool == poolObj);
     CHECK(semInfo.resources == 3);
+    errno = 71;
+    CHECK(sceUltGetSemaphoreInfo(semObj, reinterpret_cast<UltSemaphoreInfo*>(0x10), waitThreads, 4) == Null);
+    CHECK(errno == 71);
 
     CHECK(sceUltReaderWriterLockCreate(rwObj, "test-rw", poolObj, nullptr, 0) == Ok);
     CHECK(sceUltGetReaderWriterLockInfo(rwObj, &rwInfo, waitThreads, 4) == Ok);
@@ -560,6 +573,9 @@ void GetInfoTests() {
     CHECK(sceUltUlthreadRuntimeCreate(rtObj, "test-rt", 2, 1, nullptr, nullptr, 0) == Ok);
     void* activeThreads[4]{};
     CHECK(sceUltGetUlthreadRuntimeInfo(rtObj, &rtInfo, activeThreads, 4, nullptr, 0) == Ok);
+    errno = 71;
+    CHECK(sceUltGetUlthreadRuntimeInfo(rtObj, reinterpret_cast<UltUlthreadRuntimeInfo*>(0x10), nullptr, 0, nullptr, 0) == Null);
+    CHECK(errno == 71);
     CHECK(rtInfo.size == sizeof(UltUlthreadRuntimeInfo));
     CHECK(rtInfo.object == rtObj);
     CHECK(std::strcmp(rtInfo.name, "test-rt") == 0);
