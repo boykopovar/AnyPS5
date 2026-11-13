@@ -1,6 +1,6 @@
 # libSceFreeTypeOt technical debt
 
-- The FT_Outline_Get_Orientation, FT_Request_Size, FT_Sin, FT_Tan, FT_Vector_Unit, FT_New_Size, FT_Outline_Copy and FT_Outline_Decompose NIDs have unverified provider-specific behavior.
+- The FT_Outline_Get_Orientation, FT_Request_Size, FT_Sin, FT_Tan, FT_Vector_Unit, FT_New_Size, FT_Outline_Copy and FT_Outline_Decompose NIDs in [libSceFreeTypeOt](../../../core/libs/prx/libSceFreeTypeOt/Export.cpp) have unverified provider-specific behavior.
 - [Variation coordinate setters](../../../core/libs/prx/libSceFreeTypeOt/Export.cpp) use the existing libSceFreeType wrappers for the four matching FreeType NIDs. Guest fixed-point arrays follow the LP64 public ABI and are converted by those wrappers to host-width values. Behavior follows the bundled FreeType version, and the console provider remains unmeasured.
 - The 136 `sceFreeTypeOtUnknown_*_nid_no_patch` exports in [Export.cpp](../../../core/libs/prx/libSceFreeTypeOt/Export.cpp) are present in the PS5 3.20 export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Their prototypes and behavior are unverified. Each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`; these declarations make no ABI or behavior claim.
 ### Unknown function info
