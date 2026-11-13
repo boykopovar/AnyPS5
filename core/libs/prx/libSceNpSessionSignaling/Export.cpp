@@ -64,6 +64,14 @@ static_assert(offsetof(SessionSignalingConnectionStatistics, connectedCount) == 
 static_assert(sizeof(SessionSignalingGroupInfo) == 264);
 static_assert(offsetof(SessionSignalingGroupInfo, connectionCount) == 256);
 
+template <typename T>
+static bool CopyOutGuest(T* dst, const T& src) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, &src, sizeof(src));
+    errno = savedErrno;
+    return copied;
+}
+
 static SessionSignalingContext* FindContext(std::uint32_t contextId) {
     auto& context = g_contexts[contextId % g_contexts.size()];
     return context.active && context.id == contextId ? &context : nullptr;
@@ -235,16 +243,16 @@ int APS5_VABI sceNpSessionSignalingGetMemoryInfo(SessionSignalingMemoryInfo* mem
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!memoryInfo) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
-    *memoryInfo = {g_poolSize, 0, 0};
-    return 0;
+    const SessionSignalingMemoryInfo localInfo = {g_poolSize, 0, 0};
+    return CopyOutGuest(memoryInfo, localInfo) ? 0 : SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceNpSessionSignalingGetConnectionStatistics(SessionSignalingConnectionStatistics* statistics) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!statistics) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
-    *statistics = {};
-    return 0;
+    const SessionSignalingConnectionStatistics localStats{};
+    return CopyOutGuest(statistics, localStats) ? 0 : SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceNpSessionSignalingGetConnectionFromPeerAddress(std::uint32_t contextId, const SessionSignalingPeerAddress* peerAddress, std::uint32_t* connectionId) {
@@ -306,7 +314,13 @@ int APS5_VABI sceNpSessionSignalingGetCustomProperty(std::uint32_t contextId, st
     if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
     auto* context = FindContext(contextId);
     if (!context) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_NOT_FOUND;
-    if (property) *property = context->customProperty;
+    if (property) {
+        const std::uint32_t val = context->customProperty;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(property, &val, sizeof(val));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+    }
     return 0;
 }
 

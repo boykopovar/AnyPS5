@@ -162,17 +162,20 @@ def load_cache(path, signature):
 
 
 def save_cache(path, signature, commits):
-    path.parent.mkdir(parents=True, exist_ok=True)
+    target = Path(os.path.realpath(path))
+    if target.is_symlink():
+        raise ValueError(f"{path}: history cache is a symbolic link loop")
+    target.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=path.parent,
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=target.parent,
                                          prefix=".history-", delete=False) as output:
             temporary = Path(output.name)
             json.dump({"schema_version": 2, "rules": signature, "commits": commits}, output, sort_keys=True)
             output.write("\n")
-        if os.name != "nt" and path.exists():
-            temporary.chmod(stat.S_IMODE(path.stat().st_mode))
-        os.replace(temporary, path)
+        if os.name != "nt" and target.exists():
+            temporary.chmod(stat.S_IMODE(target.stat().st_mode))
+        os.replace(temporary, target)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -341,13 +344,14 @@ def daily(points):
 def page(points):
     metrics = used_shader_metrics(points)
     labels = {metric: title for metric, title, _ in SHADER_SERIES}
+    changes = ["n/a"] + [f'{p["libraries"]["done"] - q["libraries"]["done"]:+,}' for q, p in zip(points, points[1:])]
     rows = "\n".join(
         f'<tr><td>{p["date"]}</td><td>{p["libraries"]["done"]}/{p["libraries"]["total"]}</td>'
-        f'<td>{p["libraries"]["percent"]}%</td>'
+        f'<td>{p["libraries"]["percent"]}%</td><td>{change}</td>'
         + "".join(f'<td>{p["shaders"]["done"]}/{p["shaders"]["total"]}</td><td>{p["shaders"]["percent"]}%</td>'
                   if shader_metric(p) == metric else '<td>—</td><td>—</td>' for metric in metrics)
         + '</tr>'
-        for p in reversed(points))
+        for p, change in reversed(list(zip(points, changes))))
     return "\n".join([
         '<!DOCTYPE html>',
         '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -372,10 +376,10 @@ def page(points):
         'shader panel. One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point '
         f'is measured with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> and '
         f'<a href="{progress.SOURCE}/tools/shader_scan.py">tools/shader_scan.py</a> rules, '
-        'so points within each series are comparable across days. The bars are the change in implemented library functions '
-        'from one point to the next. Hover a day for the exact numbers. <a href="history.json">history.json</a> records the '
+        'so points within each series are comparable across days. The bars and the Functions implemented column show the net change '
+        'in implemented library functions from one point to the next; the first point is n/a. Hover a day for the exact numbers. <a href="history.json">history.json</a> records the '
         'shader metric for each point. <a href="progress.html">Back to the current progress</a>.</p>',
-        '<table><tr><th>Date</th><th>System library functions</th><th>%</th>'
+        '<table><tr><th>Date</th><th>System library functions</th><th>%</th><th>Functions implemented</th>'
         + "".join(f'<th>{escape(labels[metric])}</th><th>%</th>' for metric in metrics) + '</tr>',
         rows,
         '</table>',
@@ -427,10 +431,10 @@ def main(argv=None):
             with (args.output / "history.csv").open("w", encoding="utf-8", newline="") as output:
                 writer = csv.writer(output)
                 writer.writerow(["date", "commit"] + [f"{name}_{key}" for name in ("libraries", "shaders")
-                                                      for key in ("done", "total", "percent")])
+                                                      for key in ("done", "total", "percent")] + ["shader_metric"])
                 writer.writerows([point["date"], point["commit"]] +
-                                 [point[name][key] for name in ("libraries", "shaders") for key in ("done", "total", "percent")]
-                                 for point in points)
+                                 [point[name][key] for name in ("libraries", "shaders") for key in ("done", "total", "percent")] +
+                                 [shader_metric(point)] for point in points)
     except OSError as error:
         parser.error(f"{error.filename or args.output}: {error.strerror or error}")
     print(f"{len(points)} days, {points[0]['date']} .. {points[-1]['date']}")

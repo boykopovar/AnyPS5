@@ -50,5 +50,24 @@ int APS5_VABI sceGnmRequestMipStatsReportAndReset();
 int APS5_VABI sceGnmSetGsRingSizes();
 int APS5_VABI sceGnmSetupMipStatsReport();
 int APS5_VABI sceGnmUnmapComputeQueue();
+int APS5_VABI sceGnmSetEmbeddedPsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t);
+int APS5_VABI sceGnmSetEmbeddedVsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t);
+int APS5_VABI sceGnmDestroyWorkloadStream_nid_disambig1(void);
+int APS5_VABI sceGnmDingDongForWorkload_nid_disambig1(std::uint32_t vqueueId, std::uint32_t nextOffsetDw, std::uint64_t workloadId);
+int APS5_VABI sceGnmDrawIndexMultiInstanced_nid_disambig1(void);
+int APS5_VABI sceGnmDrawOpaqueAuto_nid_disambig1(void);
+int APS5_VABI sceGnmGetGpuBlockStatus_nid_disambig1(void);
+int APS5_VABI sceGnmGetGpuInfoStatus_nid_disambig1(void);
+int APS5_VABI sceGnmGetLastWaitedAddress_nid_disambig1(void);
+int APS5_VABI sceGnmGetNumTcaUnits_nid_disambig1(void);
+int APS5_VABI sceGnmGetProtectionFaultTimeStamp_nid_disambig1(void);
+int APS5_VABI sceGnmGetShaderProgramBaseAddress_nid_disambig1(void);
+int APS5_VABI sceGnmGetShaderStatus_nid_disambig1(void);
+int APS5_VABI sceGnmInsertThreadTraceMarker_nid_disambig1(void);
+int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(void);
+int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload_nid_disambig1(void);
+int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(void);
+int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(void);
+int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(void);
 
 }

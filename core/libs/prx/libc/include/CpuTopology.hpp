@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <vector>
 
 #ifdef _WIN32
@@ -69,6 +70,77 @@ inline Layout LayoutFromClasses(const std::uint64_t* byClass, const bool* seen, 
     }
     result.performant = byClass[highest];
     result.hybrid = result.efficient != 0 && result.performant != 0;
+    return result;
+}
+
+struct CpuSet {
+    std::uint32_t id = 0;
+    std::uint16_t group = 0;
+    std::uint8_t logical = 0;
+    std::uint8_t core = 0;
+    std::uint8_t efficiencyClass = 0;
+    std::uint8_t lastLevelCache = 0;
+    bool parked = false;
+};
+
+struct CoreReservation {
+    CpuSet chosen;
+    std::vector<std::uint32_t> others;
+};
+
+inline std::optional<CoreReservation> ChooseReservedCore(const std::vector<CpuSet>& sets, const std::vector<CpuSet>& reserved, std::optional<unsigned> logical) {
+    constexpr std::size_t minimumCores = 6;
+    const auto sameCore = [](const CpuSet& left, const CpuSet& right) { return left.group == right.group && left.core == right.core; };
+    const auto held = [&](const CpuSet& set) {
+        for (const auto& other : reserved) {
+            if (sameCore(other, set)) return true;
+        }
+        return false;
+    };
+    const auto parked = [&](const CpuSet& set) {
+        for (const auto& other : sets) {
+            if (sameCore(other, set) && other.parked) return true;
+        }
+        return false;
+    };
+    const CpuSet* chosen = nullptr;
+    if (logical.has_value()) {
+        for (const auto& set : sets) {
+            if (set.group == 0 && set.logical == *logical) chosen = &set;
+        }
+    } else {
+        std::uint8_t highest = 0;
+        for (const auto& set : sets) {
+            if (set.efficiencyClass > highest) highest = set.efficiencyClass;
+        }
+        const CpuSet* home = nullptr;
+        for (const auto& set : sets) {
+            if (set.efficiencyClass != highest || set.parked) continue;
+            if (home == nullptr || set.group < home->group || (set.group == home->group && set.logical < home->logical)) home = &set;
+        }
+        if (home == nullptr) return std::nullopt;
+        const auto candidate = [&](const CpuSet& set) {
+            return set.efficiencyClass == highest && set.group == home->group && set.lastLevelCache == home->lastLevelCache;
+        };
+        std::vector<std::uint8_t> cores;
+        for (const auto& set : sets) {
+            if (!candidate(set)) continue;
+            bool counted = false;
+            for (const auto core : cores) counted = counted || core == set.core;
+            if (!counted) cores.push_back(set.core);
+        }
+        if (cores.size() < minimumCores) return std::nullopt;
+        for (const auto& set : sets) {
+            if (!candidate(set) || held(set) || parked(set)) continue;
+            if (chosen == nullptr || set.core > chosen->core || (set.core == chosen->core && set.logical < chosen->logical)) chosen = &set;
+        }
+    }
+    if (chosen == nullptr || held(*chosen)) return std::nullopt;
+    CoreReservation result{*chosen, {}};
+    for (const auto& set : sets) {
+        if (!sameCore(set, *chosen) && !held(set)) result.others.push_back(set.id);
+    }
+    if (result.others.empty()) return std::nullopt;
     return result;
 }
 

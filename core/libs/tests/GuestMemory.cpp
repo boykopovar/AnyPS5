@@ -1417,20 +1417,31 @@ static void CheckFixedVirtualReservation() {
     VirtualQueryInfo revived{};
     Require(sceKernelVirtualQuery(remapped, 0, &revived, sizeof(revived)) == 0);
     Require(revived.is_direct);
-    bool refused = false;
-    try {
-        sceKernelReserveVirtualRange(&reserved, page * 2, 0x90, 0);
-
-    } catch (const std::exception&) {
-        refused = true;
-    }
-    Require(refused);
+    void* conflictTarget = reserved;
+    const int conflict = sceKernelReserveVirtualRange(&conflictTarget, page * 2, 0x90, 0);
+    Require(conflict == SCE_KERNEL_ERROR_ENOMEM);
+    Require(conflictTarget == reserved);
+    VirtualQueryInfo conflictState{};
+    Require(sceKernelVirtualQuery(reserved, 0, &conflictState, sizeof(conflictState)) == 0);
+    Require(conflictState.is_direct);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page * 2) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
     void* pooled = nullptr;
     Require(sceKernelMemoryPoolReserve(requested, page * 2, 0, 0x10, &pooled) == 0);
     Require(pooled == requested);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(pooled), page * 2) == 0);
+    void* unplaceable = reinterpret_cast<void*>(0x4000);
+    const int unplaceableError = sceKernelReserveVirtualRange(&unplaceable, page * 2, 0x10, 0);
+    Require(unplaceableError == SCE_KERNEL_ERROR_EINVAL);
+    Require(unplaceable == reinterpret_cast<void*>(0x4000));
+    VirtualQueryInfo unplaceableInfo{};
+    Require(sceKernelVirtualQuery(unplaceable, 0, &unplaceableInfo, sizeof(unplaceableInfo)) != 0);
+    void* hostOccupied = reinterpret_cast<void*>(0x7ffffc000ull + GuestArena::GuestAddressOffset);
+    const int hostError = sceKernelReserveVirtualRange(&hostOccupied, page, 0x10, 0);
+    Require(hostError == SCE_KERNEL_ERROR_ENOMEM);
+    Require(hostOccupied == reinterpret_cast<void*>(0x7ffffc000ull + GuestArena::GuestAddressOffset));
+    VirtualQueryInfo hostInfo{};
+    Require(sceKernelVirtualQuery(hostOccupied, 0, &hostInfo, sizeof(hostInfo)) != 0);
 }
 
 static void CheckHintInsideReservation() {
@@ -4188,6 +4199,7 @@ static void CheckMemoryPoolBlockStats() {
     KernelMemoryPoolBlockStats stats{-1, -1, -1, -1};
     Require(sceKernelMemoryPoolGetBlockStats(nullptr, sizeof(stats)) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelMemoryPoolGetBlockStats(&stats, sizeof(stats) - 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMemoryPoolGetBlockStats(reinterpret_cast<KernelMemoryPoolBlockStats*>(1), sizeof(stats)) == SCE_KERNEL_ERROR_EFAULT);
     Require(stats.available_flushed_blocks == -1 && stats.allocated_flushed_blocks == -1);
     Require(sceKernelMemoryPoolGetBlockStats(&stats, sizeof(stats)) == 0);
     Require(stats.available_cached_blocks == 0 && stats.allocated_cached_blocks == 0);
