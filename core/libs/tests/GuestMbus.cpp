@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -46,6 +47,16 @@ void CheckDeviceIdConversion() {
         Require(sceMbusConvertToMbusDeviceId(1, other, &id) == unconvertibleClass && id == 0, "other classes are refused and clear the output");
     }
     Require(sceMbusConvertToMbusDeviceId(1, 0, nullptr) == unconvertibleClass, "refusal without an output");
+    constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
+    errno = 71;
+    Require(sceMbusConvertToLocalDeviceId(0x0020123456789ABCull, reinterpret_cast<std::uint32_t*>(0x10), &deviceClass) == invalidArgument, "unwritable local id accepted");
+    Require(errno == 71, "errno modified by unwritable local id check");
+    Require(sceMbusConvertToLocalDeviceId(0x0020123456789ABCull, &local, reinterpret_cast<std::uint32_t*>(0x10)) == invalidArgument, "unwritable device class accepted");
+    Require(errno == 71, "errno modified by unwritable device class check");
+    Require(sceMbusConvertToLocalDeviceId2(0x0010123456789ABCull, 0x10, reinterpret_cast<std::uint64_t*>(0x10)) == invalidArgument, "unwritable local id 2 accepted");
+    Require(errno == 71, "errno modified by unwritable local id 2 check");
+    Require(sceMbusConvertToMbusDeviceId(0x123456789ABCull, 0x20, reinterpret_cast<std::uint64_t*>(0x10)) == invalidArgument, "unwritable mbus device id accepted");
+    Require(errno == 71, "errno modified by unwritable mbus device id check");
 }
 
 void CheckInit() {
