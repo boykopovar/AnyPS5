@@ -12,7 +12,8 @@ using Query = int (APS5_VABI *)();
 } // namespace
 
 int main() {
-    for (const Query query : std::initializer_list<Query>{
+    for (int iter = 0; iter < 2; ++iter) {
+        for (const Query query : std::initializer_list<Query>{
              sceShareUtilityAdvanceFromFileWithContentIdList,
              sceShareUtilityAdvanceFromFileWithTitleIdList,
              sceShareUtilityAdvanceGetServiceInfo,
@@ -21,5 +22,6 @@ int main() {
              sceShareUtilityAdvanceValidateContents,
          }) {
         if (query() != AdvanceResult) std::abort();
+        }
     }
 }
