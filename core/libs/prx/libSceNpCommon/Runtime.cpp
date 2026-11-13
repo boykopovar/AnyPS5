@@ -5,6 +5,7 @@
 #include "prx/libSceRtc/include/Rtc.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <iterator>
 #include <mutex>
 #include <random>
@@ -897,9 +898,14 @@ void APS5_VABI sceNpGetSdkVersionUInt(std::uint32_t* version) {
 }
 
 int APS5_VABI sceNpRtcConvertToPosixTime(const RtcTick* tick, std::int64_t* seconds) {
-    if (tick->tick == 0) return NP_ERROR_INVALID_ARGUMENT;
+    if (tick == nullptr || seconds == nullptr) return NP_ERROR_INVALID_ARGUMENT;
+    RtcTick localTick{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localTick, tick, sizeof(localTick));
+    errno = savedErrno;
+    if (!copied || localTick.tick == 0) return NP_ERROR_INVALID_ARGUMENT;
     RtcDateTime time {};
-    const int result = sceRtcSetTick(&time, tick);
+    const int result = sceRtcSetTick(&time, &localTick);
     if (result < 0) return result;
     return NpResult(sceRtcGetTime_t(&time, seconds));
 }
