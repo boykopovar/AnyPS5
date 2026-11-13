@@ -165,7 +165,7 @@ void PingPong() {
 }
 
 int main() {
-    Arguments();
+    for (int iter = 0; iter < 2; ++iter) Arguments();
     PingPong();
     std::puts("guest_kernel_sys_swapcontext passed");
     return 0;
