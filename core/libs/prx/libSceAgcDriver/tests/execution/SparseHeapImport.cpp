@@ -379,6 +379,10 @@ int main() {
         const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
         SparseMirrors = context.sparseBinding && context.sparseResidencyBuffer && context.sparseResidencyAliased;
         ImportsEnabled = std::getenv("APS5_NO_SPARSE_HEAP_IMPORT") == nullptr;
+        if (ImportsEnabled && context.hostImportAlignment == 0) {
+            std::puts("skipped, the device does not import guest memory");
+            return VulkanTestSkipped;
+        }
         if (!ImportsEnabled && !SparseMirrors) {
             std::puts("skipped, no sparse residency: the mirror path needs it");
             return VulkanTestSkipped;
