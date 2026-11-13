@@ -325,6 +325,10 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceAudioOut2PortSetAttributesEx(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num) {
+    return sceAudioOut2PortSetAttributes(port, attributes, num);
+}
+
 int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut2Attribute* attributes, uint32_t num) try {
     constexpr int ErrorInvalidParam = static_cast<int>(0x80268001);
     const AudioOutCall call;
