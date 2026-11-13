@@ -12,6 +12,7 @@
 
 namespace {
 
+constexpr int Ebadf = 9;
 constexpr int Eintr = 4;
 constexpr int Efault = 14;
 constexpr int Einval = 22;
@@ -29,7 +30,7 @@ struct SignalSet {
 };
 
 struct DescriptorSet {
-    std::array<std::uint64_t, 1024 / 64> words{};
+    std::array<std::uint64_t, 2048 / 64> words{};
     void Add(int descriptor) { words[descriptor / 64] |= std::uint64_t{1} << (descriptor % 64); }
     bool Has(int descriptor) const { return ((words[descriptor / 64] >> (descriptor % 64)) & 1u) != 0; }
 };
@@ -142,6 +143,22 @@ int main() {
         Require(caught == 1);
         Require(read.words == original.words);
         Require(Same(CurrentMask(), withUsr1));
+        caught = 0;
+    }
+    {
+        constexpr int Above = 1500;
+        Require(dup2_nid_postfix(writer, Above) == Above);
+        RaiseBlocked(blocked);
+        DescriptorSet read{};
+        read.Add(Above);
+        const DescriptorSet original = read;
+        const Timespec limit{0, 300000000};
+        Require(pselect_nid_postfix(Above + 1, read.words.data(), nullptr, nullptr, &limit, &empty) == -1 && Error() == Eintr && caught == 1);
+        Require(read.words == original.words);
+        Require(close_nid_postfix(Above) == 0);
+        caught = 0;
+        RaiseBlocked(blocked);
+        Require(pselect_nid_postfix(Above + 1, read.words.data(), nullptr, nullptr, &limit, &empty) == -1 && Error() == Ebadf && caught == 1);
         caught = 0;
     }
     {
