@@ -15,6 +15,10 @@ public:
     bool canGoBack = false;
     bool canGoForward = false;
     mutable Retained<Inspector> inspector;
+    bool isPinnedToLeftSide = true;
+    bool isPinnedToRightSide = true;
+    bool isPinnedToTopSide = true;
+    bool isPinnedToBottomSide = true;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};

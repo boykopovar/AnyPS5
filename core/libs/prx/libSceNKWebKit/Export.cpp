@@ -11324,22 +11324,6 @@ int APS5_VABI WKPageIsContentEditable() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageIsPinnedToBottomSide() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageIsPinnedToLeftSide() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageIsPinnedToRightSide() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageIsPinnedToTopSide() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageIsPlayingAudio() {
     NotImplemented_nid_no_patch(__func__);
 }
