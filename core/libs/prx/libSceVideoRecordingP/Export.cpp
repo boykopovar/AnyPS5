@@ -35,6 +35,7 @@ constexpr int ErrorNoVideoFormat = static_cast<int>(0x80a80008);
 constexpr int MinimumHeapSize = 0x1000;
 constexpr std::uint64_t MinimumParamSize = 0x10;
 constexpr std::uint32_t MaximumDuration = 3600;
+constexpr std::uint32_t MaximumWidth = 16384;
 
 bool IsVideoFormat(std::uint32_t format) {
  switch (format) {
@@ -120,6 +121,7 @@ int APS5_VABI sceVideoRecordingCloseByHandle(VideoRecordingContext* handle, int 
 
 int APS5_VABI sceVideoRecordingCopyBGRAtoNV12(void* dst, const void* src, uint32_t width, uint32_t height) {
     if (dst == nullptr || src == nullptr || width == 0 || height == 0) return ErrorInvalidArgument;
+    if (width > MaximumWidth) return ErrorInvalidArgument;
     if ((width & 1u) != 0 || (height & 1u) != 0) return ErrorInvalidArgument;
     const std::uint64_t pixels = static_cast<std::uint64_t>(width) * height;
     if (pixels > std::numeric_limits<std::size_t>::max() / 4) return ErrorInvalidArgument;

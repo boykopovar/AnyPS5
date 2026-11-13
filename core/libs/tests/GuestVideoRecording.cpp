@@ -152,6 +152,7 @@ int main() {
     Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), bgra.data(), 2, 0) == InvalidArgument, "conversion without height");
     Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), bgra.data(), 3, 2) == InvalidArgument, "conversion with odd width");
     Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), bgra.data(), 2, 3) == InvalidArgument, "conversion with odd height");
+    Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), bgra.data(), 16386, 2) == InvalidArgument, "conversion with a width above the bound");
     errno = 71;
     Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), reinterpret_cast<const void*>(0x10), 2, 2) == InvalidArgument, "conversion read an unmapped source");
     Require(errno == 71, "errno was preserved across an unmapped source");
