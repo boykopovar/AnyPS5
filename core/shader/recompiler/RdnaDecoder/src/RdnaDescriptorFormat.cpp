@@ -90,6 +90,7 @@ constexpr std::array<FormatInfo, 102> kFormatInfoTable {{
     {IrBufferFormat::Format4_4_4_4UNorm, true, false, false},
     {IrBufferFormat::Format8_24UNorm, true, false, false},
     {IrBufferFormat::Format4_4UNorm, true, false, false},
+    {IrBufferFormat::FormatX24_8_32Float, true, false, false},
     {IrBufferFormat::Fmask8_S2_F1, true, false, false},
     {IrBufferFormat::Fmask8_S4_F1, true, false, false},
     {IrBufferFormat::Fmask8_S8_F1, true, false, false},
