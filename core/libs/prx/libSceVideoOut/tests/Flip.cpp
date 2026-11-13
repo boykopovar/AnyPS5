@@ -4,6 +4,7 @@
 #include "prx/libSceVideoOut/include/Output.hpp"
 #include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include "prx/libSceVideoOut/include/Event.hpp"
+#include "prx/libSceVideoOut/include/InventoryExports.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -633,6 +634,28 @@ void testControls() {
     check(sceVideoOutDeleteOutputModeEvent(queue, handle) == 0, "duplicate output mode unsubscription failed");
     expectFailure([&] { sceVideoOutDeleteOutputModeEvent(0, handle); });
     check(sceVideoOutDeleteOutputModeEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "output mode unsubscription on an invalid handle was accepted");
+    check(sceVideoOutSysGetBus(handle) == VIDEO_OUT_BUS_TYPE_MAIN, "the main port's bus is not main");
+    check(sceVideoOutSysGetBus(0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported for a null handle");
+    check(sceVideoOutSysGetBus(handle + 1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported for a port that is not open");
+    check(sceVideoOutSysGetBus(-1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported for a negative handle");
+    check(sceVideoOutSysGetBus(6) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported past the last port");
+    constexpr int invalidIndex = static_cast<int>(0x80290001u);
+    check(sceVideoOutSysAddSetModeEvent2(queue, 2, nullptr) == invalidIndex, "set mode subscription on index 2 was accepted");
+    check(sceVideoOutSysAddSetModeEvent2(queue, -1, nullptr) == invalidIndex, "set mode subscription on a negative index was accepted");
+    check(sceVideoOutSysAddSetModeEvent2(queue, 1, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "set mode subscription on an unopened port was accepted");
+    check(sceVideoOutSysAddSetModeEvent2(queue, 0, &mode) == 0, "set mode subscription on the main port failed");
+    check(owner->GetTriggeredEvents(&event, 1) == 1 && event.udata == &mode && sceVideoOutGetEventId(&event) == VIDEO_OUT_EVENT_SET_MODE, "set mode event missing");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->outputModeEvents.size() == 1, "set mode subscription was not recorded");
+    }
+    check(sceVideoOutDeleteOutputModeEvent(queue, handle) == 0, "set mode unsubscription failed");
+    std::uint32_t pipeline[8];
+    std::fill_n(pipeline, 8, 0xdeadbeefu);
+    check(sceVideoOutGetPipelineStatus(nullptr, 0) == static_cast<int>(0x80290002u), "a null pipeline status was accepted");
+    check(sceVideoOutGetPipelineStatus(pipeline, 1) == static_cast<int>(0x80290002u), "a nonzero pipeline reservation was accepted");
+    check(sceVideoOutGetPipelineStatus(pipeline, 0) == static_cast<int>(0x802900FFu), "the pipeline query did not report the device error");
+    check(pipeline[0] == 0xdeadbeefu && pipeline[7] == 0xdeadbeefu, "the pipeline status wrote on failure");
     check(sceVideoOutAddVblankEvent(queue, handle, nullptr) == 0 && sceVideoOutAddVblankEvent(queue, handle, &settings) == 0, "vblank subscription failed");
     {
         std::lock_guard lock(cfg->mutex);
