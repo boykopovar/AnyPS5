@@ -1,0 +1,132 @@
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_EXT_samplerless_texture_functions : require
+
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 0) uniform utexture2D direct;
+layout(set = 3, binding = 1) uniform utexture2D heapImages[];
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Words { uint words[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) coherent buffer Ring { uint count; uint reserved0; uint reserved1; uint reserved2; uint records[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) coherent buffer Seen { uint words[]; };
+
+layout(push_constant) uniform Parameters {
+    uint64_t header;
+    uint64_t descriptors;
+    uint64_t indices;
+    uint64_t results;
+    uint64_t slots;
+    uint interfaceLow;
+    uint interfaceHigh;
+    uint mode;
+    uint iterations;
+    uint listMask;
+    uint pc;
+} p;
+
+const uint KeyWords = 15u;
+const uint BucketWords = 20u;
+const uint StateWord = 15u;
+const uint SlotWord = 16u;
+const uint ModeWord = 17u;
+const uint LiveState = 1u;
+const uint ProbeSteps = 16u;
+const uint RecordWords = 16u;
+const uint SlotMask = 0xfffffu;
+
+uint rotl(uint value, uint bits) {
+    return (value << bits) | (value >> (32u - bits));
+}
+
+uint hashWord(uint hash, uint word) {
+    uint mixed = rotl(word * 0xcc9e2d51u, 15u) * 0x1b873593u;
+    return rotl(hash ^ mixed, 13u) * 5u + 0xe6546b64u;
+}
+
+uint hashFinish(uint hash) {
+    hash ^= KeyWords * 4u;
+    hash ^= hash >> 16u;
+    hash *= 0x85ebca6bu;
+    hash ^= hash >> 13u;
+    hash *= 0xc2b2ae35u;
+    return hash ^ (hash >> 16u);
+}
+
+uvec2 lookup(uint key[15]) {
+    Words header = Words(p.header);
+    uint64_t table = packUint2x32(uvec2(header.words[1], header.words[2]));
+    uint mask = header.words[3];
+    uint hash = 0x9747b28cu;
+    for (uint word = 0u; word < KeyWords; ++word) hash = hashWord(hash, key[word]);
+    hash = hashFinish(hash);
+    for (uint step = 0u; step < ProbeSteps; ++step) {
+        Words bucket = Words(table + uint64_t((hash + step) & mask) * uint64_t(BucketWords * 4u));
+        if (bucket.words[StateWord] != LiveState) break;
+        bool equal = true;
+        for (uint word = 0u; word < KeyWords; ++word) equal = equal && bucket.words[word] == key[word];
+        if (equal) return uvec2(bucket.words[SlotWord], bucket.words[ModeWord]);
+    }
+    uint seenSlots = header.words[9];
+    bool report = true;
+    if (seenSlots != 0u) {
+        Seen seen = Seen(packUint2x32(uvec2(header.words[7], header.words[8])));
+        uint tag = 0x811c9dc5u;
+        for (uint word = 0u; word < KeyWords; ++word) tag = (tag ^ key[word]) * 0x01000193u;
+        tag |= 1u;
+        bool settled = false;
+        for (uint step = 0u; step < 8u && !settled; ++step) {
+            uint index = (hash + step) & (seenSlots - 1u);
+            uint current = atomicAdd(seen.words[index], 0u);
+            if (current == 0u) current = atomicCompSwap(seen.words[index], 0u, tag);
+            if (current == 0u || current == tag) {
+                report = current == 0u;
+                settled = true;
+            }
+        }
+    }
+    if (!report) return uvec2(0u);
+    Ring ring = Ring(packUint2x32(uvec2(header.words[4], header.words[5])));
+    uint at = atomicAdd(ring.count, 1u);
+    if (at < header.words[6]) {
+        for (uint word = 0u; word < KeyWords; ++word) ring.records[at * RecordWords + word] = key[word];
+        ring.records[at * RecordWords + KeyWords] = p.pc;
+    }
+    return uvec2(0u);
+}
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    uint sum = 0u;
+    for (uint iteration = 0u; iteration < p.iterations; ++iteration) {
+        uint record = Words(p.indices).words[(id * 7u + iteration * 131u) & p.listMask];
+        if (p.mode == 3u) record = subgroupBroadcastFirst(record);
+        ivec2 coord = ivec2(record & 63u, (record >> 6u) & 63u);
+        if (p.mode == 0u) {
+            sum += texelFetch(direct, coord, 0).x;
+            continue;
+        }
+        uint slot = 0u;
+        uint modeWord = 0u;
+        if (p.mode == 1u) {
+            slot = Words(p.slots).words[record];
+        } else {
+            uint key[15];
+            Words descriptor = Words(p.descriptors + uint64_t(record) * 32ul);
+            for (uint word = 0u; word < 8u; ++word) key[word] = descriptor.words[word];
+            key[5] &= ~((0xfffu << 8u) | (1u << 25u));
+            key[6] &= ~0xffu;
+            key[8] = p.interfaceLow;
+            key[9] = p.interfaceHigh;
+            for (uint word = 10u; word < KeyWords; ++word) key[word] = 0u;
+            uvec2 hit = lookup(key);
+            slot = hit.x & SlotMask;
+            modeWord = hit.y;
+        }
+        sum += texelFetch(heapImages[nonuniformEXT(slot)], coord, 0).x + modeWord;
+    }
+    Words(p.results).words[id] = sum;
+}

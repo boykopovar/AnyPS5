@@ -84,6 +84,7 @@ public:
     VulkanDevice(const VulkanDevice&) = delete;
     VulkanDevice& operator=(const VulkanDevice&) = delete;
     std::string DeviceName() const;
+    bool BindlessImagesEnabled() const;
     std::string DriverInfo() const;
     VkDriverId DriverId() const;
     bool SupportsImageFormat(VkFormat format, VkImageUsageFlags usage) const;
