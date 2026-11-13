@@ -93,4 +93,23 @@ int main() {
             std::memset(b, 0x80, extent);
         }
     }
+    for (std::size_t length : {160, 256, 512, 1024, 2048}) {
+        a = left.At(length);
+        b = right.At(length);
+        std::memset(a, 0x33, length);
+        std::memset(b, 0x33, length);
+        Require(memcmp_nid_postfix(a, b, length) == 0);
+        Require(memcmp_nid_postfix(a, a, length) == 0);
+
+        a[0] = 0x55;
+        Require(memcmp_nid_postfix(a, b, length) > 0);
+        Require(memcmp_nid_postfix(b, a, length) < 0);
+        a[0] = 0x33;
+
+        a[length - 1] = 0x77;
+        Require(memcmp_nid_postfix(a, b, length) > 0);
+        Require(memcmp_nid_postfix(b, a, length) < 0);
+        Require(memcmp_nid_postfix(a, b, length - 1) == 0);
+        a[length - 1] = 0x33;
+    }
 }
