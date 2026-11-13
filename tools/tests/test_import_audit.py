@@ -135,6 +135,41 @@ def with_elf_symbol_table_range(image, offset, size):
     return bytes(image)
 
 
+def uleb(value):
+    out = b""
+    while True:
+        byte, value = value & 0x7f, value >> 7
+        out += bytes([byte | (0x80 if value else 0)])
+        if not value:
+            return out
+
+
+def build_macho(names, needed=(), trie_command=0x80000033):
+    leaves = [b"\x02\x00" + uleb(0x1000 + 16 * index) for index in range(len(names))]
+    leaves = [bytes([len(leaf) - 1]) + leaf[1:] + b"\0" for leaf in leaves]
+    labels = [b"_" + name.encode() + b"\0" for name in names]
+    root_size = 2 + sum(len(label) + 2 for label in labels)
+    offsets, cursor = [], root_size
+    for leaf in leaves:
+        offsets.append(cursor)
+        cursor += len(leaf)
+    trie = b"\0" + bytes([len(names)]) + b"".join(label + bytes([offset & 0x7f | 0x80, offset >> 7]) for label, offset in zip(labels, offsets)) + b"".join(leaves)
+    commands = []
+    for library in needed:
+        name = library.encode() + b"\0"
+        size = (24 + len(name) + 7) // 8 * 8
+        commands.append(struct.pack("<IIIIII", 0xc, size, 24, 2, 0, 0) + name.ljust(size - 24, b"\0"))
+    trie_size = 48 if trie_command == 0x80000022 else 16
+    size = sum(len(command) for command in commands) + trie_size
+    data = 32 + size
+    if trie_command == 0x80000022:
+        commands.append(struct.pack("<12I", trie_command, 48, 0, 0, 0, 0, 0, 0, 0, 0, data, len(trie)))
+    else:
+        commands.append(struct.pack("<IIII", trie_command, 16, data, len(trie)))
+    header = struct.pack("<IiiIIIII", 0xfeedfacf, 0x01000007, 3, 6, len(commands), size, 0, 0)
+    return header + b"".join(commands) + trie
+
+
 def build_pe(names):
     section_rva, raw_offset = 0x1000, 0x200
     strings, rvas = b"", []
@@ -3150,6 +3185,28 @@ class ImportAuditTests(unittest.TestCase):
         with patch.object(import_audit.subprocess, "run", side_effect=[completed, OSError("status unavailable")]):
             self.assertEqual(import_audit.git_stamp(self.work.source), ("abcdef", None))
 
+    def test_macho_libraries_export_their_trie_names_and_dylib_dependencies(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(build_macho(["AAAAAAAAAAA", "BBBBBBBBBBB#A#A"], ["@rpath/libkernel.prx", "/usr/lib/libSystem.B.dylib"]))
+        (work.libs / "libSceB.prx").write_bytes(build_macho(["AAAAAAAAAAA"], trie_command=0x80000022))
+        exports, libraries = import_audit.built_libraries([work.libs])
+        self.assertEqual(exports, {"AAAAAAAAAAA": ["libSceA.prx", "libSceB.prx"], "BBBBBBBBBBB": ["libSceA.prx"]})
+        self.assertEqual(libraries, {"libSceA.prx", "libSceB.prx"})
+        direct, windows = import_audit.built_host_dependencies([work.libs])
+        self.assertEqual(direct, {"libSceA.prx": ["libkernel.prx"], "libSceB.prx": []})
+        self.assertEqual(windows, set())
+
+    def test_malformed_macho_export_tries_are_audit_errors(self):
+        path = self.work.libs / "libSceA.prx"
+        image = bytearray(build_macho(["AAAAAAAAAAA"]))
+        image[image.index(b"\0\x01_AAAAAAAAAAA") + 1] = 0x7f
+        with self.assertRaisesRegex(import_audit.AuditError, "export trie"):
+            import_audit.read_exports(path, bytes(image))
+        image = bytearray(build_macho(["AAAAAAAAAAA"]))
+        image[20:24] = struct.pack("<I", 0x1000)
+        with self.assertRaisesRegex(import_audit.AuditError, "Mach-O load commands"):
+            import_audit.read_exports(path, bytes(image))
+
     def test_library_directories(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(build_pe(["AAAAAAAAAAA"]))
@@ -3158,7 +3215,7 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(exports, {"AAAAAAAAAAA": ["libSceA.prx", "libSceB.prx"], "BBBBBBBBBBB": ["libSceB.prx"]})
         self.assertEqual(libraries, {"libSceA.prx", "libSceB.prx"})
         (work.libs / "libSceC.prx").write_bytes(b"text")
-        with self.assertRaisesRegex(import_audit.AuditError, r"libSceC.prx: neither ELF nor PE"):
+        with self.assertRaisesRegex(import_audit.AuditError, r"libSceC.prx: neither ELF, PE nor Mach-O"):
             import_audit.built_libraries([work.libs])
         with self.assertRaisesRegex(import_audit.AuditError, "no .prx files"):
             import_audit.built_libraries([work.modules])
