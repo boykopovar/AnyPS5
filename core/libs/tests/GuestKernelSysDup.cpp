@@ -23,6 +23,7 @@ void Require(bool condition, const char* message) {
 
 int main() {
     Require(_dup2_nid_postfix(-1, 0) == -1 && *__error_nid_postfix() == GuestEbadf, "_dup2(-1, 0) did not fail with EBADF");
+    Require(_dup2_nid_postfix(-2, 0) == -1 && *__error_nid_postfix() == GuestEbadf, "_dup2(-2, 0) did not fail with EBADF");
     Require(_dup2_nid_postfix(0, -1) == -1 && *__error_nid_postfix() == GuestEbadf, "_dup2(0, -1) did not fail with EBADF");
     Require(_dup2_nid_postfix(1000000, 1000001) == -1 && *__error_nid_postfix() == GuestEbadf, "_dup2 on unopened descriptors did not fail with EBADF");
 
