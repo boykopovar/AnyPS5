@@ -25,6 +25,7 @@ int main() {
 
     const auto reservedTimestamp = get_vm_map_timestamp_nid_postfix();
     Require(get_vm_map_timestamp_nid_postfix() == reservedTimestamp);
+    Require(get_vm_map_timestamp_nid_postfix() == reservedTimestamp);
 
     void* mapped = reserved;
     Require(sceKernelMapFlexibleMemory(&mapped, page, 3, 0x10) == 0 && mapped == reserved);
