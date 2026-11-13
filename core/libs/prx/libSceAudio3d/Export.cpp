@@ -788,8 +788,21 @@ size_t APS5_VABI sceAudio3dGetSpeakerArrayMemorySize(uint32_t num_speakers, uint
 int APS5_VABI sceAudio3dCreateSpeakerArray(AudioOut2SpeakerArrayHandle* handle, const Audio3dSpeakerArrayParameters* parameters) {
     if (!handle || !parameters) return AUDIO3D_ERROR_INVALID_PARAMETER;
     unsigned char extended[0x28] = {};
-    std::memcpy(extended, parameters, sizeof(*parameters));
-    return sceAudioOut2SpeakerArrayCreate(handle, extended, nullptr);
+    const int saved = errno;
+    const bool copiedIn = GuestCopyIn_nid_no_patch(extended, parameters, sizeof(*parameters));
+    errno = saved;
+    if (!copiedIn) return AUDIO3D_ERROR_INVALID_PARAMETER;
+    AudioOut2SpeakerArrayHandle localHandle = nullptr;
+    const int result = sceAudioOut2SpeakerArrayCreate(&localHandle, extended, nullptr);
+    if (result != 0) return result;
+    const int savedOut = errno;
+    const bool copiedOut = GuestCopyOut_nid_no_patch(handle, &localHandle, sizeof(localHandle));
+    errno = savedOut;
+    if (!copiedOut) {
+        sceAudioOut2SpeakerArrayDestroy(localHandle);
+        return AUDIO3D_ERROR_INVALID_PARAMETER;
+    }
+    return 0;
 }
 
 int APS5_VABI sceAudio3dDeleteSpeakerArray(AudioOut2SpeakerArrayHandle handle) {
