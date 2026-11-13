@@ -119,6 +119,12 @@ void CheckGetters() {
     CheckGetter(sceCameraGetLensCorrection, 0, "lens correction must be off");
     CheckGetter(sceCameraGetContrast, 32, "the contrast must be 32");
     CheckGetter(sceCameraGetSaturation, 64, "the saturation must be 64");
+    errno = 71;
+    Require(sceCameraGetSaturation(1, Channel0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == ErrorParam, "an unwritable saturation pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable saturation pointer");
+    alignas(16) std::uint32_t saturationBuffer[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    Require(sceCameraGetSaturation(1, Channel0, &saturationBuffer[1], nullptr) == 0, "reading saturation to buffer failed");
+    Require(saturationBuffer[0] == 0x5a5a5a5a && saturationBuffer[1] == 64 && saturationBuffer[2] == 0x5a5a5a5a, "adjacent memory was corrupted");
     CheckGetter(sceCameraGetSharpness, 1, "the sharpness must be 1");
     std::int32_t hue = 0;
     Require(sceCameraGetHue(1, Channel0, &hue, nullptr) == 0 && hue == 1, "the hue must be 1");
