@@ -338,11 +338,11 @@ int APS5_VABI sceKernelAioInitializeImpl(void* param, int32_t size) {
 
 void APS5_VABI sceKernelAioInitializeParam(void* param) {
     if (param == nullptr) throw std::invalid_argument("sceKernelAioInitializeParam: param is null");
-    auto* scheduling = static_cast<KernelAioSchedulingParam*>(param);
-    for (int index = 0; index < 3; ++index) {
-        const bool split = index < 2;
-        scheduling[index] = {AioDefaultSchedulingWindow, AioDefaultDelayedCountLimit, split ? 1u : 0u, split ? AioDefaultSplitSize : 0u, split ? AioDefaultSplitSize : 0u};
-    }
+    constexpr KernelAioSchedulingParam split{AioDefaultSchedulingWindow, AioDefaultDelayedCountLimit, 1u, AioDefaultSplitSize, AioDefaultSplitSize};
+    constexpr KernelAioSchedulingParam unsplit{AioDefaultSchedulingWindow, AioDefaultDelayedCountLimit, 0u, 0u, 0u};
+    constexpr KernelAioSchedulingParam scheduling[]{split, split, unsplit};
+    if (!GuestCopyOut_nid_no_patch(param, scheduling, sizeof(scheduling)))
+        throw std::invalid_argument("sceKernelAioInitializeParam: param is not writable");
 }
 
 int APS5_VABI sceKernelAioSetParam(KernelAioSchedulingParam* param, int32_t schedulingWindowSize, int32_t delayedCountLimit, uint32_t enableSplit, uint32_t splitSize, uint32_t splitChunkSize) {
@@ -350,12 +350,8 @@ int APS5_VABI sceKernelAioSetParam(KernelAioSchedulingParam* param, int32_t sche
     if (schedulingWindowSize < 0 || schedulingWindowSize > AioSchedulingWindowMax || delayedCountLimit < 0 || delayedCountLimit > AioDelayedCountMax || enableSplit > 1)
         return SCE_KERNEL_ERROR_EINVAL;
     if (enableSplit == 1 && (splitSize == 0 || splitSize > AioSplitSizeMax || splitChunkSize == 0 || splitChunkSize > AioSplitChunkSizeMax)) return SCE_KERNEL_ERROR_EINVAL;
-    param->schedulingWindowSize = schedulingWindowSize;
-    param->delayedCountLimit = delayedCountLimit;
-    param->enableSplit = enableSplit;
-    param->splitSize = splitSize;
-    param->splitChunkSize = splitChunkSize;
-    return 0;
+    const KernelAioSchedulingParam value{schedulingWindowSize, delayedCountLimit, enableSplit, splitSize, splitChunkSize};
+    return GuestCopyOut_nid_no_patch(param, &value, sizeof(value)) ? 0 : SCE_KERNEL_ERROR_EFAULT;
 }
 
 int APS5_VABI sceKernelAioSubmitReadCommands(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {

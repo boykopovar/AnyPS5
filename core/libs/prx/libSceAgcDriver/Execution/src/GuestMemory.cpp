@@ -53,6 +53,7 @@
 #else
 #include <cstdint>
 #include <dlfcn.h>
+#include <execinfo.h>
 #include <fcntl.h>
 #include <fstream>
 #ifndef __APPLE__
@@ -515,9 +516,20 @@ std::size_t CaptureCallerOffsets(std::span<unsigned long long> frames, unsigned 
     }
     return captured;
 #else
-    static_cast<void>(skip);
-    frames[0] = ModuleOffset(__builtin_return_address(0));
-    return 1;
+    void* raw[24];
+    const auto wanted = static_cast<int>(std::min<std::size_t>(frames.size() + 1 + skip, std::size(raw)));
+    const int captured = backtrace(raw, wanted);
+    static const auto base = [] {
+        Dl_info info{};
+        return dladdr(reinterpret_cast<const void*>(&CaptureCallerOffsets), &info) != 0 ? reinterpret_cast<std::uintptr_t>(info.dli_fbase) : std::uintptr_t{0};
+    }();
+    std::size_t written = 0;
+    for (int i = 1 + static_cast<int>(skip); i < captured && written < frames.size(); ++i) {
+        Dl_info info{};
+        const auto address = reinterpret_cast<std::uintptr_t>(raw[i]);
+        frames[written++] = base != 0 && dladdr(raw[i], &info) != 0 && reinterpret_cast<std::uintptr_t>(info.dli_fbase) == base ? address - base : 0;
+    }
+    return written;
 #endif
 }
 
