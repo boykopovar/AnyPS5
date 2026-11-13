@@ -716,6 +716,14 @@ public:
             AppendString(output, thread.name);
             output += ':' + number(span != Clock::duration{} ? 100.0 * static_cast<double>(busy.count()) / static_cast<double>(span.count()) : 0.0);
         }
+        output += "},\"phase_totals_ms\":{";
+        bool firstPhase = true;
+        for (const auto& [name, length] : phases) {
+            if (!firstPhase) output += ',';
+            firstPhase = false;
+            AppendString(output, name);
+            output += ':' + number(milliseconds(length));
+        }
         output += "},\"top_phases_ms_per_frame\":{";
         std::vector<std::pair<std::string, Clock::duration>> top(phases.begin(), phases.end());
         std::stable_sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.second > b.second; });

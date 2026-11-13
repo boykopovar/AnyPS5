@@ -218,7 +218,7 @@ def host_only_test_targets(source_root, targets, changed_paths=None):
         path in {"CMakeLists.txt", ".github/workflows/build.yml", "tools/build_mingw_host_only_tests.py"}
         or path.startswith(BUILD_WIDE_PREFIXES)
         or path.startswith("core/libs/") and (
-            path.endswith((".h", ".hpp", ".hh", ".inl")) or Path(path).name == "CMakeLists.txt"
+            path.endswith((".h", ".hpp", ".hh", ".inl", ".cmake")) or Path(path).name == "CMakeLists.txt"
         )
         for path in changed
     )

@@ -47,6 +47,9 @@ int main() {
     Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5003u));
     Require(sceContentDeleteInitialize(nullptr) == static_cast<int>(0x809D5001u));
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5001u));
+    errno = 71;
+    Require(sceContentDeleteByPath(reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x809D5001u));
+    Require(errno == 71);
 
     Require(LogicErrorMessage([] { sceContentDeleteByPath(nullptr); }) == "invalid argument");
 
@@ -58,5 +61,8 @@ int main() {
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByIdListForSf(nullptr, 0) == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByIdListForSf(validIds, 1) == static_cast<int>(0x809D5002u));
+
+    Require(sceContentDeleteInitialize(&param) == 0);
+    Require(sceContentDeleteTerminate() == 0);
     return 0;
 }

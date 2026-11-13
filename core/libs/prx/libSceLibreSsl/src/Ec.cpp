@@ -644,6 +644,7 @@ int APS5_VABI EC_KEY_set_group_nid_postfix(EcKey* key, const EcGroup* group) {
         if (key->privateKey) RequireSameCurve(*group, key->privateKey->curve, "EC_KEY_set_group: a curve other than the one of the key's private key");
     }
     EcGroup* copy = group ? new EcGroup(group->curve) : nullptr;
+    if (copy) copy->asn1Flag = group->asn1Flag;
     delete key->group;
     key->group = copy;
     return copy ? 1 : 0;

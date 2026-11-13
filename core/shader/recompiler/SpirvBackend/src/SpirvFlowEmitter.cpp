@@ -382,6 +382,16 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::FPAdd16x2: return Invoke(EmitFPAdd16x2, ctx, inst);
         case IrOpcode::FPMul16x2: return Invoke(EmitFPMul16x2, ctx, inst);
         case IrOpcode::FPFma16x2: return Invoke(EmitFPFma16x2, ctx, inst);
+        case IrOpcode::IAdd16x2: return Invoke(EmitIAdd16x2, ctx, inst);
+        case IrOpcode::ISub16x2: return Invoke(EmitISub16x2, ctx, inst);
+        case IrOpcode::IMul16x2: return Invoke(EmitIMul16x2, ctx, inst);
+        case IrOpcode::ShiftLeftLogical16x2: return Invoke(EmitShiftLeftLogical16x2, ctx, inst);
+        case IrOpcode::ShiftRightLogical16x2: return Invoke(EmitShiftRightLogical16x2, ctx, inst);
+        case IrOpcode::ShiftRightArithmetic16x2: return Invoke(EmitShiftRightArithmetic16x2, ctx, inst);
+        case IrOpcode::SMin16x2: return Invoke(EmitSMin16x2, ctx, inst);
+        case IrOpcode::SMax16x2: return Invoke(EmitSMax16x2, ctx, inst);
+        case IrOpcode::UMin16x2: return Invoke(EmitUMin16x2, ctx, inst);
+        case IrOpcode::UMax16x2: return Invoke(EmitUMax16x2, ctx, inst);
         case IrOpcode::FPAbs32: return Invoke(EmitFPAbs32, ctx, inst);
         case IrOpcode::FPNeg32: return Invoke(EmitFPNeg32, ctx, inst);
         case IrOpcode::FPSaturate32: return Invoke(EmitFPSaturate32, ctx, inst);
