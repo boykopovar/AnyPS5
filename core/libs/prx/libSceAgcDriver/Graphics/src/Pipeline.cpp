@@ -10,6 +10,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RenderOverride.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <algorithm>
@@ -687,15 +688,23 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
         dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
         dynamic.pDynamicStates = dynamicStates.data();
+        const auto renderOverride = CurrentRenderOverride();
         VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
         Require(state.polygonMode == VK_POLYGON_MODE_FILL || context.fillModeNonSolid, "a point or line polygon mode needs the fillModeNonSolid feature");
         Require(state.polygonMode != VK_POLYGON_MODE_POINT || context.maintenance5, "a point polygon mode needs VK_KHR_maintenance5 for its one-pixel point size");
         ValidateLineWidth(context, state.lineWidth);
         raster.polygonMode = state.polygonMode;
         raster.rasterizerDiscardEnable = state.rasterizerDiscard ? VK_TRUE : VK_FALSE;
+        if (renderOverride.forceWireframe) {
+            if (context.fillModeNonSolid) raster.polygonMode = VK_POLYGON_MODE_LINE;
+            else {
+                static std::atomic<bool> reported{false};
+                if (!reported.exchange(true)) std::fprintf(stderr, "[HOT-RELOAD] force_wireframe ignored: fillModeNonSolid is unavailable\n");
+            }
+        }
         raster.depthClampEnable = state.depthClamp && context.depthClamp ? VK_TRUE : VK_FALSE;
         Require(!state.depthBiasPerFace || (depthBias && state.cullMode == VK_CULL_MODE_NONE), "per-face depth bias needs both faces rasterized");
-        raster.cullMode = state.depthBiasPerFace ? VK_CULL_MODE_BACK_BIT : state.cullMode;
+        raster.cullMode = renderOverride.disableCull ? VK_CULL_MODE_NONE : (state.depthBiasPerFace ? VK_CULL_MODE_BACK_BIT : state.cullMode);
         raster.frontFace = state.frontFace;
         raster.depthBiasEnable = depthBias;
         raster.lineWidth = state.lineWidth;
@@ -725,8 +734,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             samples.pNext = &coverageReduction;
         }
         VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        depthStencil.depthTestEnable = state.depthTest;
-        depthStencil.depthWriteEnable = state.depthWrite;
+        depthStencil.depthTestEnable = renderOverride.disableDepthTest ? VK_FALSE : state.depthTest;
+        depthStencil.depthWriteEnable = renderOverride.forceDepthWrite ? VK_TRUE : state.depthWrite;
         depthStencil.depthCompareOp = state.depthCompare;
         depthStencil.depthBoundsTestEnable = depthBounds;
         depthStencil.stencilTestEnable = state.stencilTest;

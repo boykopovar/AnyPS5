@@ -71,8 +71,8 @@ PlaceholderImages::PlaceholderImages(const Context& context) : context(context) 
                 const VkClearDepthStencilValue zero{0.0f, 0};
                 context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, barrier.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &barrier.subresourceRange);
             } else {
-                const VkClearColorValue zero{};
-                context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, barrier.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &barrier.subresourceRange);
+                const VkClearColorValue clear{};
+                context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, barrier.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &barrier.subresourceRange);
             }
             auto general = barrier;
             general.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;

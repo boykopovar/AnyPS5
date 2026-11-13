@@ -721,6 +721,11 @@ if(BUILD_TESTING)
         set_tests_properties(guest_sdec_version PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecSavc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecSavc2>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecShevc>")
     endif()
+    add_test_executable(render_override_tests prx/libSceAgcDriver/tests/RenderOverride.cpp prx/libSceAgcDriver/Graphics/src/RenderOverride.cpp)
+    target_include_directories(render_override_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    configure_host_test_executable(render_override_tests)
+    add_test(NAME render_override COMMAND render_override_tests)
+    set_tests_properties(render_override PROPERTIES TIMEOUT 10)
     if(Python3_Interpreter_FOUND)
         add_test(NAME nid_verneed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_verneed.py $<TARGET_FILE:nid_patcher>)

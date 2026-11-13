@@ -130,6 +130,7 @@ public:
     static ShaderMemory::PendingWrite QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
     static void SetCaptureCheckHook(void (*hook)());
+    void HotReloadShaders();
 
 private:
     class RecaptureScope {
@@ -143,6 +144,7 @@ private:
     friend struct PendingView;
     friend struct PacketTimer;
     friend struct DriverTestAccess;
+    void checkShaderHotReload();
     void stop();
     Driver();
     void rethrowFailure() const;

@@ -6,7 +6,11 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include <algorithm>
 #include "prx/libSceAgcDriver/Execution/include/TracyZone.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RenderOverride.hpp"
+#include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 
 namespace AgcDriver::DriverDetail {
 
@@ -114,6 +118,7 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
             timing.Mark("gpu_mutex_wait");
             require(device != nullptr && device->Window() == window.context, "presentation window is not attached to the device");
             presenting = device;
+            checkShaderHotReload();
             timing.Mark("device_setup");
             std::uint32_t drawableWidth = 0;
             std::uint32_t drawableHeight = 0;
@@ -229,6 +234,29 @@ void Driver::reportPresents(double waitedMs, std::size_t inFlight) {
 void Driver::ReleaseWindow(void* window) {
     std::lock_guard lock(GuestMemory::GpuMutex());
     if (device && device->Window() == window) device.Reset();
+}
+
+void Driver::checkShaderHotReload() {
+    if (!Graphics::RenderOverrideEnabled()) return;
+    static std::uint32_t frameCounter = 0;
+    if (++frameCounter % 30 != 0) return;
+    const std::filesystem::path trigger("hotreload/reload_shaders");
+    std::error_code error;
+    bool shouldReload = Graphics::ConsumeShaderReload();
+    if (std::filesystem::exists(trigger, error)) {
+        std::filesystem::remove(trigger, error);
+        shouldReload = true;
+    }
+    if (Graphics::PollRenderOverride() || shouldReload) HotReloadShaders();
+}
+
+void Driver::HotReloadShaders() {
+    const std::shared_ptr<VulkanDevice> currentDevice = device.Load();
+    if (currentDevice != nullptr) {
+        currentDevice->WaitIdle();
+        Graphics::ClearCachedPipelines(currentDevice->Device());
+    }
+    std::fprintf(stderr, "[HOT-RELOAD] Pipeline cache cleared.\n");
 }
 
 }
