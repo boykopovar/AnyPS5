@@ -2655,6 +2655,7 @@ private:
                 continue;
             }
             image.table = next++;
+            image.nestedTable = TableSource(m_sources[image.source].tableColumn->heapSource);
         }
         for (auto& sampler : m_info.samplers) {
             if (TableSource(sampler.source)) {

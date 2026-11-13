@@ -88,6 +88,17 @@ inline VkPipelineStageFlags PipelineStages(std::span<const CompiledShader> shade
     return result;
 }
 
+inline VkShaderStageFlags BindlessHeapStages(std::span<const CompiledShader> shaders) {
+    VkShaderStageFlags stages = 0;
+    bool heap = false;
+    for (const auto& shader : shaders) {
+        Require(shader.program != nullptr, "missing compiled shader");
+        heap = heap || shader.program->bindlessHeap;
+        stages |= VulkanStage(shader.stage);
+    }
+    return heap ? stages : 0u;
+}
+
 inline VkShaderStageFlags PushConstantStages(std::span<const CompiledShader> shaders) {
     VkShaderStageFlags result = 0;
     for (const auto& shader : shaders) {

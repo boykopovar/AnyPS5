@@ -902,6 +902,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.emulatedCompare);
         out.Value(image.table);
         out.Value(image.tableOperation);
+        out.Value(image.nestedTable);
         out.Value(image.targetMerge);
         encodeOverwrite(out, image.overwrite);
     });
@@ -1020,6 +1021,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.emulatedCompare);
         in.Value(image.table);
         in.Value(image.tableOperation);
+        in.Value(image.nestedTable);
         in.Value(image.targetMerge);
         decodeOverwrite(in, image.overwrite);
     });
