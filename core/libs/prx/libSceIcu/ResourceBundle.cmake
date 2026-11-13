@@ -1,3 +1,5 @@
+target_sources(libSceIcu PRIVATE ResourceBundleBackend.cpp)
+
 if(BUILD_TESTING)
     set(icu_resource_fixture ${CMAKE_CURRENT_BINARY_DIR}/resource-fixture/icudt78l.dat)
     add_custom_command(OUTPUT ${icu_resource_fixture}
