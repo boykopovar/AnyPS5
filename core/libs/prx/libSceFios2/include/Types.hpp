@@ -44,6 +44,7 @@ constexpr std::int32_t SCE_FIOS_ERROR_WRITE_ONLY = static_cast<std::int32_t>(0x8
 constexpr std::int32_t SCE_FIOS_ERROR_PATH_TOO_LONG = static_cast<std::int32_t>(0x80820018u);
 constexpr std::int32_t SCE_FIOS_ERROR_BUSY = static_cast<std::int32_t>(0x8082001eu);
 constexpr std::int32_t SCE_FIOS_ERROR_BAD_INDEX = static_cast<std::int32_t>(0x8082001cu);
+constexpr std::int32_t SCE_FIOS_ERROR_BAD_RESOLVE_FLAG = static_cast<std::int32_t>(0x80820020u);
 constexpr std::int32_t SCE_FIOS_ERROR_BAD_FLAGS = static_cast<std::int32_t>(0x80820021u);
 constexpr std::int32_t SCE_FIOS_ERROR_UNKNOWN = static_cast<std::int32_t>(0x80820022u);
 constexpr std::int32_t SCE_FIOS_ERROR_ALREADY_EXISTS = static_cast<std::int32_t>(0x80820023u);

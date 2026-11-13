@@ -1106,7 +1106,7 @@ int OpenFolderNoFollow(const fs::path& folder) {
         if (current < 0) return -1;
         const bool last = index + 1u == parts.size();
         int next = ::openat(current, parts[index].c_str(), (last ? O_RDONLY : passThrough) | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-        if (next < 0 && last && errno == EACCES) next = ::openat(current, parts[index].c_str(), passThrough | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (next < 0 && last && (errno == EACCES || errno == EPERM)) next = ::openat(current, parts[index].c_str(), passThrough | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         if (next < 0 && index == 0 && rootLinks < 8) {
             struct stat entry {};
             char target[PATH_MAX];

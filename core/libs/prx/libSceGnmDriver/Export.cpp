@@ -452,6 +452,12 @@ int APS5_VABI sceGnmInsertPopMarker(std::uint32_t* cmd, std::uint32_t size) {
     return 0;
 }
 
+int APS5_VABI sceGnmInsertDingDongMarker_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
+    if (!cmd || size != 4) return -1;
+    Nop(cmd, 3);
+    return 0;
+}
+
 int APS5_VABI sceGnmInsertSetColorMarker() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
