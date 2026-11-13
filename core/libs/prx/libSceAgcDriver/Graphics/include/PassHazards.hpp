@@ -31,6 +31,7 @@ enum class PassHazard : std::uint8_t { None, ReadAfterWrite, WriteAfterWrite, Wr
 enum class PassBreak : std::uint8_t { Continued, NewBatch, Command, Label, Samples, Forced, Segment, Key, ReadAfterWrite, WriteAfterWrite, WriteAfterRead, Image, UnknownRead, UnknownWrite, Count };
 constexpr std::size_t PassBreakCount = static_cast<std::size_t>(PassBreak::Count);
 constexpr std::array<const char*, PassBreakCount> PassBreakNames{"continued", "new batch", "command", "label", "samples", "forced", "segment", "key", "read after write", "write after write", "write after read", "image", "unknown read", "unknown write"};
+constexpr std::array<const char*, PassBreakCount> PassBreakScopeNames{"Graphics.RenderPass.Close.continued", "Graphics.RenderPass.Close.new-batch", "Graphics.RenderPass.Close.command", "Graphics.RenderPass.Close.label", "Graphics.RenderPass.Close.samples", "Graphics.RenderPass.Close.forced", "Graphics.RenderPass.Close.segment", "Graphics.RenderPass.Close.key", "Graphics.RenderPass.Close.raw", "Graphics.RenderPass.Close.waw", "Graphics.RenderPass.Close.war", "Graphics.RenderPass.Close.image", "Graphics.RenderPass.Close.unknown-read", "Graphics.RenderPass.Close.unknown-write"};
 
 constexpr PassBreak PassBreakFor(PassHazard hazard) {
     switch (hazard) {

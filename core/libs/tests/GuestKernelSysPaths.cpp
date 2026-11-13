@@ -16,6 +16,7 @@
 #include <limits>
 #include <source_location>
 #include <string>
+#include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -34,6 +35,20 @@ static void Require(bool value, std::source_location location = std::source_loca
         std::abort();
     }
 }
+
+#ifdef _WIN32
+static void RemoveLinks(const std::filesystem::path& root) {
+    std::vector<std::filesystem::path> links;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        const DWORD attributes = GetFileAttributesW(entry.path().c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) links.push_back(entry.path());
+    }
+    for (const auto& path : links) {
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        Require((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? RemoveDirectoryW(path.c_str()) != FALSE : DeleteFileW(path.c_str()) != FALSE);
+    }
+}
+#endif
 
 static void* LoadLibraryFile(const std::filesystem::path& path) {
 #ifdef _WIN32
@@ -161,6 +176,9 @@ int main(int argc, char** argv) {
         Require(update(-1, nullptr, invalid) == -1 && *error() == 22);
         invalid[0].tv_usec = 1000000;
         Require(update(base, "data", invalid) == -1 && *error() == 22);
+        const auto* unreadableTimes = reinterpret_cast<const KernelTimeval*>(1);
+        Require(update(base, "data", unreadableTimes) == -1 && *error() == 14);
+        Require(update(-100, path.c_str(), unreadableTimes) == -1 && *error() == 14);
         Require(update(base, "data", nullptr) == 0);
         Require(stat(path.c_str(), &info) == 0 && info.st_mtim.tv_sec > 1000000001);
     } else if (test == "symlinkat") {
@@ -230,6 +248,9 @@ int main(int argc, char** argv) {
         Require(false);
     }
     Require(close(file) == 0 && close(base) == 0);
+#ifdef _WIN32
+    RemoveLinks(root);
+#endif
     std::filesystem::remove_all(root);
     return skipped ? 77 : 0;
 }

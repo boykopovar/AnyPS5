@@ -97,3 +97,7 @@
 [submodule "3rdparty/libpsl"]
 	path = 3rdparty/libpsl
 	url = https://github.com/rockdaboot/libpsl.git
+[submodule "3rdparty/icu"]
+	path = 3rdparty/icu
+	url = https://github.com/unicode-org/icu.git
+	shallow = true
