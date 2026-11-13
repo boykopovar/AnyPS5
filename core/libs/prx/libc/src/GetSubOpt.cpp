@@ -32,7 +32,10 @@
 
 extern "C" {
 
+char* suboptarg_nid_postfix = nullptr;
+
 int APS5_VABI getsubopt_nid_postfix(char** optionp, char* const* tokens, char** valuep) {
+    suboptarg_nid_postfix = nullptr;
     if (valuep) *valuep = nullptr;
     if (!optionp || !*optionp) return -1;
 
@@ -44,6 +47,7 @@ int APS5_VABI getsubopt_nid_postfix(char** optionp, char* const* tokens, char** 
     }
 
     char* const suboption = p;
+    suboptarg_nid_postfix = suboption;
     while (*++p != '\0' && *p != ',' && *p != '=' && *p != ' ' && *p != '\t');
 
     if (*p != '\0') {
