@@ -556,9 +556,8 @@ int APS5_VABI sceGnmGetEqTimeStamp() {
     return 0;
 }
 
-int APS5_VABI sceGnmGetTheTessellationFactorRingBufferBaseAddress() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI sceGnmGetTheTessellationFactorRingBufferBaseAddress() {
+    return 0xff0000000ull;
 }
 
 int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex() {
@@ -566,9 +565,8 @@ int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex() {
     return 0;
 }
 
-int APS5_VABI sceGnmLogicalCuMaskToPhysicalCuMask() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint32_t APS5_VABI sceGnmLogicalCuMaskToPhysicalCuMask(std::uint32_t, std::uint32_t mask) {
+    return mask;
 }
 
 int APS5_VABI sceGnmMapComputeQueue() {

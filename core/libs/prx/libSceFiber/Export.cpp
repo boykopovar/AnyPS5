@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 #include <thread>
 #include <stdexcept>
 #include <string>
@@ -596,7 +597,11 @@ int32_t APS5_VABI sceFiberReturnToThread(uint64_t arg_on_return, uint64_t* arg_o
 int32_t APS5_VABI sceFiberGetSelf(FiberObject** fiber) {
     if (!fiber) return SCE_FIBER_ERROR_NULL;
     if (!ThreadState().current) return SCE_FIBER_ERROR_PERMISSION;
-    *fiber = reinterpret_cast<FiberObject*>(ThreadState().current);
+    auto* current = reinterpret_cast<FiberObject*>(ThreadState().current);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(fiber, &current, sizeof(current));
+    errno = savedErrno;
+    if (!copied) return SCE_FIBER_ERROR_NULL;
     return SCE_OK;
 }
 
