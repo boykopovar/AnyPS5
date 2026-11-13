@@ -466,9 +466,9 @@ int32_t APS5_VABI sceJpegDecDecode(void* handle, const JpegDecDecodeParam* param
 int32_t APS5_VABI sceJpegDecDelete(void* handle) {
     Context* context = toContext(handle);
     if (!context) return SCE_JPEG_DEC_ERROR_INVALID_HANDLE;
-    forgetStream(context);
     Context cleared{};
-    GuestCopyOut_nid_no_patch(context, &cleared, sizeof(cleared));
+    if (!GuestCopyOut_nid_no_patch(context, &cleared, sizeof(cleared))) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    forgetStream(context);
     return 0;
 }
 

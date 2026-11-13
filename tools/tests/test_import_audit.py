@@ -56,7 +56,7 @@ def build_elf(symbols, needed=()):
     return bytes(image)
 
 
-def build_sectionless_elf(symbols, needed=(), gnu_hash=False, gnu_buckets=(1,)):
+def build_sectionless_elf(symbols, needed=(), gnu_hash=False, gnu_buckets=(1,), extra_dynamic=()):
     strings = b"\0"
     entries = [struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)]
     for name, index, info in symbols:
@@ -88,6 +88,7 @@ def build_sectionless_elf(symbols, needed=(), gnu_hash=False, gnu_buckets=(1,)):
         (6, 0x400000 + symbols_offset),
         (11, 24),
         (hash_tag, 0x400000 + hash_offset),
+        *extra_dynamic,
         (0, 0),
     ))
     image = bytearray(dynamic_offset + len(dynamic))
@@ -697,6 +698,16 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((code, out), (2, ""))
         self.assertEqual(err, f"FAIL: {output}: JSON output is a directory\n")
         self.assertEqual(set(work.root.iterdir()), files)
+
+    def test_long_json_filename_can_be_written_and_replaced(self):
+        root = self.work.root
+        directory = Path("\\\\?\\" + str(root.resolve())) if os.name == "nt" else root
+        output = directory / ("a" * 245 + ".json")
+        files = set(directory.iterdir())
+        for result in ({"complete": True}, {"complete": False}):
+            import_audit.write_json(output, result)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
+            self.assertEqual(set(directory.iterdir()), files | {output})
 
     @unittest.skipUnless(os.name == "posix", "POSIX report permissions")
     def test_new_json_report_permissions_follow_the_process_umask(self):
@@ -1523,6 +1534,19 @@ class ImportAuditTests(unittest.TestCase):
             ["libSceA.prx"], gnu_hash=True)
         self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("module.prx"), image),
                          ({"AAAAAAAAAAA": False}, {"BBBBBBBBBBB"}, {"libSceA.prx"}))
+
+    def test_sectionless_elf_rejects_conflicting_dynamic_metadata(self):
+        path = Path("module.prx")
+        symbols = [("AAAAAAAAAAA", 0, GLOBAL_FUNCTION), ("BBBBBBBBBBB", 1, GLOBAL_FUNCTION)]
+        needed = ["libSceA.prx", "libSceB.prx"]
+        for gnu_hash in (False, True):
+            with self.subTest(gnu_hash=gnu_hash):
+                image = build_sectionless_elf(symbols, needed, gnu_hash, extra_dynamic=((11, 24),))
+                self.assertEqual(import_audit.elf_program_dynamic_symbols(path, image),
+                                 ({"AAAAAAAAAAA": False}, {"BBBBBBBBBBB"}, set(needed)))
+                image = build_sectionless_elf(symbols, needed, gnu_hash, extra_dynamic=((11, 16), (11, 24)))
+                with self.assertRaisesRegex(import_audit.AuditError, r"module\.prx: conflicting duplicate DT_SYMENT"):
+                    import_audit.elf_program_dynamic_symbols(path, image)
 
     def test_sectionless_elf_gnu_hash_reads_each_chain_entry_once(self):
         symbols = [(f"symbol{index}", int(index != 0), GLOBAL_FUNCTION) for index in range(32)]

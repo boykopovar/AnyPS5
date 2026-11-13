@@ -87,6 +87,8 @@ static void VerifyPeriodicTimer() {
     Require(count == 1 && sceKernelGetEventId(&events[0]) == 14 && sceKernelGetEventData(&events[0]) >= 1);
     Require(sceKernelDeleteTimerEvent(eq, 14) == SCE_OK);
     const KernelTimespec soon{0, 1000000};
+    Require(sceKernelAddHRTimerEvent(eq, 15, reinterpret_cast<const KernelTimespec*>(1), &second) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(sceKernelAddHRTimerEvent(eq, 15, &soon, &second) == SCE_OK);
     Require(sceKernelWaitEqueue(eq, events, 2, &count, nullptr) == SCE_OK);
     Require(count == 1 && sceKernelGetEventId(&events[0]) == 15 && sceKernelGetEventFilter(&events[0]) == EVFILT_HRTIMER);
@@ -407,7 +409,10 @@ static void VerifyInvalidQueueAttributes() {
     Require(sceKernelCreateEqueue(&untouched, "0123456789012345678901234567890") == SCE_OK && untouched != 0x1234);
     Require(sceKernelDeleteEqueue(untouched) == SCE_OK);
 
+    Require(sceKernelCreateEqueue(&eq, reinterpret_cast<const char*>(1)) == SCE_KERNEL_ERROR_EFAULT && eq == 0);
+    Require(sceKernelCreateEqueue(reinterpret_cast<KernelEqueue*>(1), "bad output") == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelCreateEqueue(&eq, "bounds") == SCE_OK);
+    Require(static_cast<std::uint32_t>(eq) == static_cast<std::uint32_t>(untouched));
     KernelEvent event{};
     int count = -1;
     const KernelUseconds timeout = 0;
