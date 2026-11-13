@@ -36,5 +36,7 @@ int main() {
     Require(get_vm_map_timestamp_nid_postfix() != mappedTimestamp);
     Require(static_cast<std::uint32_t>(get_vm_map_timestamp_nid_postfix()) ==
             static_cast<std::uint32_t>(GuestAllocations::GuestAllocationsGeneration_nid_postfix()));
+    const auto finalTimestamp = get_vm_map_timestamp_nid_postfix();
+    Require(get_vm_map_timestamp_nid_postfix() == finalTimestamp);
     return 0;
 }
