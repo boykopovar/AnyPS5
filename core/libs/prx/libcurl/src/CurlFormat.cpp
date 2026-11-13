@@ -143,6 +143,13 @@ private:
 
 class AllocatedOutput final : public IOutput {
 public:
+    AllocatedOutput() = default;
+    AllocatedOutput(const AllocatedOutput&) = delete;
+    AllocatedOutput& operator=(const AllocatedOutput&) = delete;
+    ~AllocatedOutput() override {
+        if (buffer) Curl_cfree(buffer);
+    }
+
     bool Put(unsigned char value) override {
         const std::size_t fit = length + 2;
         if (fit > AllocatedLimit) {
@@ -170,7 +177,7 @@ public:
     }
 
     void Release() {
-        Curl_cfree(buffer);
+        if (buffer) Curl_cfree(buffer);
         buffer = nullptr;
         length = 0;
         capacity = 0;
@@ -179,7 +186,13 @@ public:
 
     bool Failed() const { return failed; }
     std::size_t Length() const { return length; }
-    char* Buffer() const { return buffer; }
+    char* Detach() {
+        char* taken = buffer;
+        buffer = nullptr;
+        length = 0;
+        capacity = 0;
+        return taken;
+    }
 
 private:
     char* buffer = nullptr;
@@ -744,7 +757,7 @@ char* FormatAllocated(const char* format, const void* args) {
         output.Release();
         return nullptr;
     }
-    if (output.Length()) return output.Buffer();
+    if (output.Length()) return output.Detach();
     return Curl_cstrdup("");
 }
 
