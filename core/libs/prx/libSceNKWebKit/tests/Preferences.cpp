@@ -53,6 +53,11 @@ struct BooleanCase {
 };
 
 const BooleanCase booleanCases[]{
+    {"AccessibilityObjectModelEnabled", WKPreferencesSetAccessibilityObjectModelEnabled, WKPreferencesGetAccessibilityObjectModelEnabled, false},
+    {"AriaReflectionEnabled", WKPreferencesSetAriaReflectionEnabled, WKPreferencesGetAriaReflectionEnabled, false},
+    {"IsITPDatabaseEnabled", WKPreferencesSetIsITPDatabaseEnabled, WKPreferencesGetIsITPDatabaseEnabled, false},
+    {"IsNSURLSessionWebSocketEnabled", WKPreferencesSetIsNSURLSessionWebSocketEnabled, WKPreferencesGetIsNSURLSessionWebSocketEnabled, false},
+    {"UseLegacyTextAlignPositionedElementBehavior", WKPreferencesSetUseLegacyTextAlignPositionedElementBehavior, WKPreferencesUseLegacyTextAlignPositionedElementBehavior, false},
     {"AVFoundationEnabled", WKPreferencesSetAVFoundationEnabled, WKPreferencesGetAVFoundationEnabled, false},
     {"AcceleratedCompositingEnabled", WKPreferencesSetAcceleratedCompositingEnabled, WKPreferencesGetAcceleratedCompositingEnabled, true},
     {"AcceleratedDrawingEnabled", WKPreferencesSetAcceleratedDrawingEnabled, WKPreferencesGetAcceleratedDrawingEnabled, true},
@@ -114,6 +119,7 @@ const BooleanCase booleanCases[]{
     {"ImageControlsEnabled", WKPreferencesSetImageControlsEnabled, WKPreferencesGetImageControlsEnabled, false},
     {"InlineMediaPlaybackRequiresPlaysInlineAttribute", WKPreferencesSetInlineMediaPlaybackRequiresPlaysInlineAttribute, WKPreferencesGetInlineMediaPlaybackRequiresPlaysInlineAttribute, false},
     {"InspectorAdditionsEnabled", WKPreferencesSetInspectorAdditionsEnabled, WKPreferencesGetInspectorAdditionsEnabled, false},
+    {"InspectorUsesWebKitUserInterface", WKPreferencesSetInspectorUsesWebKitUserInterface, WKPreferencesGetInspectorUsesWebKitUserInterface, false},
     {"InteractiveFormValidationEnabled", WKPreferencesSetInteractiveFormValidationEnabled, WKPreferencesGetInteractiveFormValidationEnabled, true},
     {"IntersectionObserverEnabled", WKPreferencesSetIntersectionObserverEnabled, WKPreferencesGetIntersectionObserverEnabled, true},
     {"InvisibleMediaAutoplayPermitted", WKPreferencesSetInvisibleMediaAutoplayPermitted, WKPreferencesGetInvisibleMediaAutoplayPermitted, true},
@@ -145,6 +151,7 @@ const BooleanCase booleanCases[]{
     {"MetaRefreshEnabled", WKPreferencesSetMetaRefreshEnabled, WKPreferencesGetMetaRefreshEnabled, true},
     {"MockCaptureDevicesEnabled", WKPreferencesSetMockCaptureDevicesEnabled, WKPreferencesGetMockCaptureDevicesEnabled, false},
     {"MockScrollbarsEnabled", WKPreferencesSetMockScrollbarsEnabled, WKPreferencesGetMockScrollbarsEnabled, false},
+    {"ModernMediaControlsEnabled", WKPreferencesSetModernMediaControlsEnabled, WKPreferencesGetModernMediaControlsEnabled, true},
     {"NeedsSiteSpecificQuirks", WKPreferencesSetNeedsSiteSpecificQuirks, WKPreferencesGetNeedsSiteSpecificQuirks, true},
     {"NeedsStorageAccessFromFileURLsQuirk", WKPreferencesSetNeedsStorageAccessFromFileURLsQuirk, WKPreferencesGetNeedsStorageAccessFromFileURLsQuirk, true},
     {"NotificationsEnabled", WKPreferencesSetNotificationsEnabled, WKPreferencesGetNotificationsEnabled, false},
@@ -163,6 +170,7 @@ const BooleanCase booleanCases[]{
     {"RestrictedHTTPResponseAccess", WKPreferencesSetRestrictedHTTPResponseAccess, WKPreferencesGetRestrictedHTTPResponseAccess, true},
     {"ScrollingPerformanceLoggingEnabled", WKPreferencesSetScrollingPerformanceLoggingEnabled, WKPreferencesGetScrollingPerformanceLoggingEnabled, false},
     {"SelectTrailingWhitespaceEnabled", WKPreferencesSetSelectTrailingWhitespaceEnabled, WKPreferencesGetSelectTrailingWhitespaceEnabled, false},
+    {"SelectionPaintingWithoutSelectionGapsEnabled", WKPreferencesSetSelectionPaintingWithoutSelectionGapsEnabled, WKPreferencesGetSelectionPaintingWithoutSelectionGapsEnabled, false},
     {"ServerTimingEnabled", WKPreferencesSetServerTimingEnabled, WKPreferencesGetServerTimingEnabled, true},
     {"ServiceControlsEnabled", WKPreferencesSetServiceControlsEnabled, WKPreferencesGetServiceControlsEnabled, false},
     {"ShouldAllowUserInstalledFonts", WKPreferencesSetShouldAllowUserInstalledFonts, WKPreferencesGetShouldAllowUserInstalledFonts, true},
@@ -176,6 +184,8 @@ const BooleanCase booleanCases[]{
     {"ShouldUseServiceWorkerShortTimeout", WKPreferencesSetShouldUseServiceWorkerShortTimeout, WKPreferencesGetShouldUseServiceWorkerShortTimeout, false},
     {"ShowsToolTipOverTruncatedText", WKPreferencesSetShowsToolTipOverTruncatedText, WKPreferencesGetShowsToolTipOverTruncatedText, false},
     {"ShowsURLsInToolTipsEnabled", WKPreferencesSetShowsURLsInToolTipsEnabled, WKPreferencesGetShowsURLsInToolTipsEnabled, false},
+    {"SimpleLineLayoutDebugBordersEnabled", WKPreferencesSetSimpleLineLayoutDebugBordersEnabled, WKPreferencesGetSimpleLineLayoutDebugBordersEnabled, false},
+    {"SimpleLineLayoutEnabled", WKPreferencesSetSimpleLineLayoutEnabled, WKPreferencesGetSimpleLineLayoutEnabled, true},
     {"SmartInsertDeleteEnabled", WKPreferencesSetSmartInsertDeleteEnabled, WKPreferencesGetSmartInsertDeleteEnabled, true},
     {"SpatialNavigationEnabled", WKPreferencesSetSpatialNavigationEnabled, WKPreferencesGetSpatialNavigationEnabled, false},
     {"StorageAccessAPIEnabled", WKPreferencesSetStorageAccessAPIEnabled, WKPreferencesGetStorageAccessAPIEnabled, true},
@@ -194,10 +204,15 @@ const BooleanCase booleanCases[]{
     {"UseGiantTiles", WKPreferencesSetUseGiantTiles, WKPreferencesGetUseGiantTiles, false},
     {"VideoPlaybackRequiresUserGesture", WKPreferencesSetVideoPlaybackRequiresUserGesture, WKPreferencesGetVideoPlaybackRequiresUserGesture, false},
     {"ViewGestureDebuggingEnabled", WKPreferencesSetViewGestureDebuggingEnabled, WKPreferencesGetViewGestureDebuggingEnabled, false},
+    {"WebAnimationsCSSIntegrationEnabled", WKPreferencesSetWebAnimationsCSSIntegrationEnabled, WKPreferencesGetWebAnimationsCSSIntegrationEnabled, true},
+    {"WebAnimationsEnabled", WKPreferencesSetWebAnimationsEnabled, WKPreferencesGetWebAnimationsEnabled, true},
     {"WebArchiveDebugModeEnabled", WKPreferencesSetWebArchiveDebugModeEnabled, WKPreferencesGetWebArchiveDebugModeEnabled, false},
     {"WebAudioEnabled", WKPreferencesSetWebAudioEnabled, WKPreferencesGetWebAudioEnabled, false},
     {"WebAuthenticationEnabled", WKPreferencesSetWebAuthenticationEnabled, WKPreferencesGetWebAuthenticationEnabled, false},
+    {"WebAuthenticationLocalAuthenticatorEnabled", WKPreferencesSetWebAuthenticationLocalAuthenticatorEnabled, WKPreferencesGetWebAuthenticationLocalAuthenticatorEnabled, false},
     {"WebGLEnabled", WKPreferencesSetWebGLEnabled, WKPreferencesGetWebGLEnabled, true},
+    {"WebRTCLegacyAPIEnabled", WKPreferencesSetWebRTCLegacyAPIEnabled, WKPreferencesGetWebRTCLegacyAPIEnabled, false},
+    {"WebRTCMDNSICECandidatesEnabled", WKPreferencesSetWebRTCMDNSICECandidatesEnabled, WKPreferencesGetWebRTCMDNSICECandidatesEnabled, false},
     {"WebSecurityEnabled", WKPreferencesSetWebSecurityEnabled, WKPreferencesGetWebSecurityEnabled, true},
     {"WebShareEnabled", WKPreferencesSetWebShareEnabled, WKPreferencesGetWebShareEnabled, false},
 };
@@ -282,6 +297,10 @@ void Deprecated() {
     Require(WKPreferencesGetJavaEnabled(nullptr) == false);
     WKPreferencesSetJavaEnabled(nullptr, false);
     Require(WKPreferencesGetJavaEnabled(nullptr) == false);
+    WKPreferencesSetJavaEnabledForLocalFiles(nullptr, true);
+    Require(WKPreferencesGetJavaEnabledForLocalFiles(nullptr) == false);
+    WKPreferencesSetJavaEnabledForLocalFiles(nullptr, false);
+    Require(WKPreferencesGetJavaEnabledForLocalFiles(nullptr) == false);
     WKPreferencesSetKeygenElementEnabled(nullptr, true);
     Require(WKPreferencesGetKeygenElementEnabled(nullptr) == false);
     WKPreferencesSetKeygenElementEnabled(nullptr, false);
@@ -491,6 +510,8 @@ void Features() {
     WKPreferencesSetStorageAccessAPIEnabled(preferences.Get(), false);
     WKPreferencesSetHighlightAPIEnabled(preferences.Get(), false);
     WKPreferencesSetAcceleratedDrawingEnabled(preferences.Get(), false);
+    WKPreferencesSetApplicationChromeModeEnabled(preferences.Get(), true);
+    RequireThrows<std::invalid_argument>([&] { WKPreferencesSetApplicationChromeModeEnabled(nullptr, true); });
     WKPreferencesSetCompositingBordersVisible(preferences.Get(), true);
     WKPreferencesSetFullScreenEnabled(preferences.Get(), true);
     WKPreferencesSetDefaultFontSize(preferences.Get(), 23);

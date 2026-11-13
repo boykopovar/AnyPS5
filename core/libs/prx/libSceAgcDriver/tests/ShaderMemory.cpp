@@ -10000,7 +10000,7 @@ void verifyCoherentBufferAccesses() {
                 const auto found = bases.find(words[cursor + 3]);
                 bases[words[cursor + 2]] = found == bases.end() ? words[cursor + 3] : found->second;
             }
-            if (opcode == spv::OpLoad && base(words[cursor + 3]).starts_with("buffers")) module.loads.push_back(base(words[cursor + 3]));
+            if ((opcode == spv::OpLoad || opcode == spv::OpAtomicLoad) && base(words[cursor + 3]).starts_with("buffers")) module.loads.push_back(base(words[cursor + 3]));
             if (opcode == spv::OpStore && base(words[cursor + 1]).starts_with("buffers")) module.stores.push_back(base(words[cursor + 1]));
             cursor += count;
         }
