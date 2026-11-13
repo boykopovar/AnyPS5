@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 constexpr int ULT_OK = 0;
 constexpr int ULT_ERROR_NULL = -2139029503;
@@ -32,7 +33,8 @@ inline int InitializeOptParam(UltOptParam* optParam) {
     if (optParam == nullptr) {
         return ULT_ERROR_NULL;
     }
-    std::memset(optParam, 0, sizeof(*optParam));
+    const UltOptParam cleared{};
+    if (!GuestCopyOut_nid_no_patch(optParam, &cleared, sizeof(cleared))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 

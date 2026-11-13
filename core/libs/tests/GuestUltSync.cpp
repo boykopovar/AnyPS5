@@ -128,6 +128,9 @@ void OptParams() {
         alignas(UltOptParam) std::uint8_t bytes[136];
         std::memset(bytes, 0xa5, sizeof(bytes));
         CHECK(initialize(nullptr, 0) == Null);
+        errno = 71;
+        CHECK(initialize(reinterpret_cast<UltOptParam*>(0x10), 0) == Null);
+        CHECK(errno == 71);
         CHECK(initialize(reinterpret_cast<UltOptParam*>(bytes), 0) == Ok);
         for (std::size_t index = 0; index < 128; ++index) CHECK(bytes[index] == 0);
         for (std::size_t index = 128; index < sizeof(bytes); ++index) CHECK(bytes[index] == 0xa5);
