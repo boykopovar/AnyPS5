@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cwchar>
 #include <cstdio>
@@ -13,6 +14,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <type_traits>
 #if defined(__SSE2__)
 #include <emmintrin.h>
@@ -481,6 +483,24 @@ auto ParseAsciiPrefix(const char16_t* text, char16_t** end, TParse parse) {
 }
 
 template<typename TFloat>
+TFloat ParseHostFloat(const char* text, char** end, TFloat (*parse)(const char*, char**)) {
+    const TFloat value = parse(text, end);
+    if constexpr (std::is_same_v<TFloat, long double>) {
+        return value;
+    } else {
+        if ((value < 0 ? -value : value) != std::numeric_limits<TFloat>::min()) return value;
+        const char* subject = text;
+        while (std::isspace(static_cast<unsigned char>(*subject))) ++subject;
+        const bool negative = *subject == '-';
+        if (*subject == '+' || *subject == '-') ++subject;
+        TFloat exact{};
+        const auto parsed = std::from_chars(subject, static_cast<const char*>(*end), exact);
+        if (parsed.ec != std::errc() || parsed.ptr != *end) return value;
+        return negative ? -exact : exact;
+    }
+}
+
+template<typename TFloat>
 TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, char**)) {
     if (const NanSubject subject = FindNanSubject(text); subject.tail != nullptr) {
         const char* stop = subject.tail;
@@ -490,7 +510,7 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
     }
     char* parsedEnd = nullptr;
     const int saved = errno;
-    const TFloat value = parse(text, &parsedEnd);
+    const TFloat value = ParseHostFloat(text, &parsedEnd, parse);
     if (errno == ERANGE && value != 0 && (value < 0 ? -value : value) < std::numeric_limits<TFloat>::min()) errno = saved;
     if (end != nullptr) *end = parsedEnd;
     const char* subject = text;

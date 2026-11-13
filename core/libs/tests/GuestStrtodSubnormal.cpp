@@ -53,6 +53,61 @@ static void CheckBoth(const std::string& text, std::uint64_t expectedBits, int e
     Require(errno == expectedErrno, message);
 }
 
+static std::string ExactBinaryFraction(std::uint64_t numerator, int power) {
+    std::string digits = std::to_string(numerator);
+    for (int i = 0; i < power; ++i) {
+        int carry = 0;
+        for (auto digit = digits.rbegin(); digit != digits.rend(); ++digit) {
+            const int value = (*digit - '0') * 5 + carry;
+            *digit = static_cast<char>('0' + value % 10);
+            carry = value / 10;
+        }
+        if (carry != 0) digits.insert(digits.begin(), static_cast<char>('0' + carry));
+    }
+    std::string result = "0.";
+    result.append(static_cast<std::size_t>(power) - digits.size(), '0');
+    return result + digits;
+}
+
+static void CheckFloatBoth(const std::string& text, std::uint32_t expectedBits, int expectedErrno, const char* message) {
+    char* end = nullptr;
+    errno = 7;
+    const float value = strtof_nid_postfix(text.c_str(), &end);
+    Require(std::bit_cast<std::uint32_t>(value) == expectedBits, message);
+    Require(end == text.c_str() + text.size(), message);
+    Require(errno == expectedErrno, message);
+    const std::u16string wide(text.begin(), text.end());
+    char16_t* wideEnd = nullptr;
+    errno = 7;
+    const float wideValue = wcstof_nid_postfix(wide.c_str(), &wideEnd);
+    Require(std::bit_cast<std::uint32_t>(wideValue) == expectedBits, message);
+    Require(wideEnd == wide.c_str() + wide.size(), message);
+    Require(errno == expectedErrno, message);
+}
+
+static void CheckDecimalTies() {
+    for (int bit = 1; bit <= 52; ++bit) {
+        const std::uint64_t target = 1ull << bit;
+        const std::string tie = ExactBinaryFraction(2 * target - 1, 1075);
+        const int expectedErrno = bit == 52 ? 7 : ERANGE;
+        CheckBoth(tie, target, expectedErrno, "decimal tie rounding up to a power of two");
+        CheckBoth(" -" + tie, 0x8000000000000000ull | target, expectedErrno, "negative decimal tie rounding up to a power of two");
+        CheckBoth(tie + "1", target, expectedErrno, "decimal just above a tie below a power of two");
+    }
+    CheckBoth(ExactBinaryFraction(5, 1075), 2, ERANGE, "decimal tie rounding down to even");
+    CheckBoth(ExactBinaryFraction(11, 1075), 6, ERANGE, "decimal tie rounding up to even");
+    Require(std::bit_cast<std::uint64_t>(atof_nid_postfix(ExactBinaryFraction(3, 1075).c_str())) == 2, "atof decimal tie");
+    for (int bit = 1; bit <= 23; ++bit) {
+        const std::uint32_t target = 1u << bit;
+        const std::string tie = ExactBinaryFraction(2ull * target - 1, 150);
+        const int expectedErrno = bit == 23 ? 7 : ERANGE;
+        CheckFloatBoth(tie, target, expectedErrno, "float decimal tie rounding up to a power of two");
+        CheckFloatBoth(" -" + tie, 0x80000000u | target, expectedErrno, "negative float decimal tie rounding up to a power of two");
+    }
+    CheckFloatBoth(ExactBinaryFraction(5, 150), 2, ERANGE, "float decimal tie rounding down to even");
+    CheckFloatBoth(ExactBinaryFraction(11, 150), 6, ERANGE, "float decimal tie rounding up to even");
+}
+
 static void CheckHexadecimal() {
     CheckBoth("0x1p-1074", 1, 7, "hexadecimal smallest subnormal");
     CheckBoth("0x1.8p-1075", 1, ERANGE, "hexadecimal rounding up to the smallest subnormal");
@@ -103,6 +158,7 @@ int main() {
     Check("1e-300", std::bit_cast<std::uint64_t>(1e-300), 7, "normal decimal errno preservation");
     Check("0x1p-1074", 1, 7, "hexadecimal subnormal errno preservation");
     Check("1e-330", 0, ERANGE, "decimal underflow-to-zero errno");
+    CheckDecimalTies();
     CheckHexadecimal();
     CheckHexadecimalExponentSaturation();
     CheckLongHexadecimalDigitRuns();
