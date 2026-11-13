@@ -1348,6 +1348,9 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     } catch (const ShaderRecompiler::UnsupportedInstructionError& error) {
         if (deferred == nullptr) throw;
         return defer(error.what());
+    } catch (const std::exception& error) {
+        if (deferred == nullptr) throw;
+        return defer(error.what());
     }
     std::optional<ShaderRecompiler::ShaderComputeStageInfo> compute;
     std::optional<ShaderRecompiler::ShaderPixelStageInfo> pixel;

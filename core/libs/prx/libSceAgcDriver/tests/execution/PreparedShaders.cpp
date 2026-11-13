@@ -910,7 +910,9 @@ void Registration(bool indirect) {
     ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "must be nonzero");
     header.registers[threadRegisterIndex].value = 1;
     code[0] = 0xffffffffu;
-    ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "");
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    code[0] = 0xbf810000u;
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
     std::vector<std::uint32_t> commands;
     for (const auto reg : header.registers) commands.insert(commands.end(), {0xc0017600u, reg.offset, reg.value});
     const std::array<std::uint32_t, 3> arguments{1, 1, 1};
@@ -1126,8 +1128,8 @@ void DeferredRegistration() {
     ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "not statically resolvable");
 }
 
-void DeferredUndecodableRegistration() {
-    alignas(256) std::array<std::uint32_t, 3> code{0xbe842104u, 0xf1949f05u, 0x00060018u};
+void DeferredFailingRegistration(const std::array<std::uint32_t, 3>& words, const char* failure) {
+    alignas(256) std::array<std::uint32_t, 3> code = words;
     struct Header {
         Shader shader{};
         std::array<ShaderRegister, 8> registers{};
@@ -1150,8 +1152,16 @@ void DeferredUndecodableRegistration() {
     commands.insert(commands.end(), {0xc0031500u, 1, 1, 1, 0x8041});
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     sceAgcDriverSubmitAcb(0x20, &packet);
-    ExpectFailure([] { AgcDriverWaitIdle_nid_postfix(); }, "unsupported MIMG opcode");
-    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "unsupported MIMG opcode");
+    ExpectFailure([] { AgcDriverWaitIdle_nid_postfix(); }, failure);
+    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, failure);
+}
+
+void DeferredUndecodableRegistration() {
+    DeferredFailingRegistration({0xbe842104u, 0xf1949f05u, 0x00060018u}, "unsupported MIMG opcode");
+}
+
+void DeferredUnknownWordRegistration() {
+    DeferredFailingRegistration({0xbe842104u, 0xc3800000u, 0xbf810000u}, "unknown RDNA instruction family");
 }
 
 class StderrCapture {
@@ -1840,7 +1850,7 @@ int main(int argc, char** argv) {
 #endif
         const std::string_view abiMode = argc == 2 ? argv[1] : "";
         const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-concurrent" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs";
-        Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--dispatch-ahead-prewarm" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");
+        Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--deferred-unknown-word" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--dispatch-ahead-prewarm" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");
         if (abiDeferred) {
             if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
             if (abiMode == "--abi-deferred-compute") AbiDeferredCompute();
@@ -1884,6 +1894,12 @@ int main(int argc, char** argv) {
             if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
             DeferredUndecodableRegistration();
             std::cout << "deferred undecodable shader tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--deferred-unknown-word") {
+            if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
+            DeferredUnknownWordRegistration();
+            std::cout << "deferred unknown-word shader tests passed\n";
             return 0;
         }
         auto device = OpenVulkanTestDevice();
