@@ -433,7 +433,9 @@ std::string quotedMember(std::string_view text) {
     return quoted;
 }
 
-void readRule(const Json& rule, std::size_t index, StatRules& rules) {
+using StatLabels = std::map<std::uint64_t, const Json*>;
+
+void readRule(const Json& rule, std::size_t index, const StatLabels& labels, StatRules& rules) {
     const auto where = "stats_extraction.json statsExtractionRuleArray[" + std::to_string(index) + "]";
     const auto* condition = rule.Find("condition");
     const auto* action = rule.Find("action");
@@ -472,8 +474,8 @@ void readRule(const Json& rule, std::size_t index, StatRules& rules) {
     const auto* output = action->Find("output");
     if (output != nullptr) {
         for (const auto& member : output->members) {
-            if (member.first != "statId") {
-                rules.skipped.push_back(where + " for " + event->text + " has unsupported output member " + quotedMember(member.first) + "; only a statId output is supported");
+            if (member.first != "statId" && member.first != "statName" && member.first != "sourceId") {
+                rules.skipped.push_back(where + " for " + event->text + " has unsupported output member " + quotedMember(member.first) + "; only a statId output, labelled with its statName and sourceId, is supported");
                 return;
             }
         }
@@ -487,6 +489,16 @@ void readRule(const Json& rule, std::size_t index, StatRules& rules) {
     if (!rules.stats.contains(*statId)) {
         rules.skipped.push_back(where + " for " + event->text + " writes stat " + std::to_string(*statId) + ", which has no supported definition");
         return;
+    }
+    for (const std::string_view key : {"statName", "sourceId"}) {
+        const auto* label = output->Find(key);
+        if (label == nullptr) continue;
+        const auto* definition = labels.at(*statId)->Find(key);
+        if (label->kind != Json::Kind::String || definition == nullptr || definition->kind != Json::Kind::String || definition->text != label->text) {
+            rules.skipped.push_back(where + " for " + event->text + " gives stat " + std::to_string(*statId) + " the " + std::string(key) + " " + describe(*label) +
+                                    ", which is not the " + std::string(key) + " of its definition");
+            return;
+        }
     }
     const auto* input = action->Find("input");
     const auto path = input != nullptr && input->kind == Json::Kind::String ? propertyPath(input->text) : std::nullopt;
@@ -644,8 +656,13 @@ StatRules ParseStatRules(std::string_view ucp) {
     const auto& stats = member(definitions, "statDefinitionArray", Json::Kind::Array, "stats_definition.json");
     const auto& extractionRules = member(extraction, "statsExtractionRuleArray", Json::Kind::Array, "stats_extraction.json");
     StatRules rules;
-    for (std::size_t index = 0; index < stats.items.size(); ++index) readStat(stats.items[index], index, rules);
-    for (std::size_t index = 0; index < extractionRules.items.size(); ++index) readRule(extractionRules.items[index], index, rules);
+    StatLabels labels;
+    for (std::size_t index = 0; index < stats.items.size(); ++index) {
+        readStat(stats.items[index], index, rules);
+        const auto* id = stats.items[index].Find("statId");
+        if (const auto statId = id != nullptr ? id->Unsigned() : std::nullopt; statId && rules.stats.contains(*statId)) labels.try_emplace(*statId, &stats.items[index]);
+    }
+    for (std::size_t index = 0; index < extractionRules.items.size(); ++index) readRule(extractionRules.items[index], index, labels, rules);
     return rules;
 }
 
