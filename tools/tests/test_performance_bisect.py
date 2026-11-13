@@ -178,7 +178,7 @@ class CommandTests(unittest.TestCase):
                   "result_dir": Path("/tmp/results"), "commit": "abc123"}
         command = ["cmake", "--build", "{build_dir}", "literal;argument", "{commit}"]
         self.assertEqual(performance_bisect.format_command(command, values),
-                         ["cmake", "--build", "/tmp/source/build", "literal;argument", "abc123"])
+                         ["cmake", "--build", str(Path("/tmp/source/build")), "literal;argument", "abc123"])
 
     def test_build_commands_expand_paths_without_a_shell(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -573,6 +573,14 @@ class FocusedInputEdgeTests(unittest.TestCase):
     def test_recipe_rejects_absolute_build_directories(self):
         with tempfile.TemporaryDirectory() as directory:
             path = self.recipe_path(Path(directory), build_dir="/tmp/unsafe-build")
+            with self.assertRaisesRegex(ValueError, "relative path"):
+                performance_bisect.load_recipe(path)
+
+
+    @unittest.skipUnless(sys.platform == "win32", "drive-relative paths exist only on Windows")
+    def test_recipe_rejects_drive_relative_build_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.recipe_path(Path(directory), build_dir="D:unsafe-build")
             with self.assertRaisesRegex(ValueError, "relative path"):
                 performance_bisect.load_recipe(path)
 
