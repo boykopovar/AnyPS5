@@ -254,6 +254,14 @@ float SinhfExp(float x) {
 }
 
 float GuestTgammaf(float x) {
+    if (std::isgreater(static_cast<double>(x), 171.63)) {
+        static volatile double zero = 0.0;
+        return static_cast<float>(static_cast<double>(x) / zero);
+    }
+    if (std::isfinite(x) && std::isless(static_cast<double>(x), -190.0) && std::trunc(x) != x) {
+        const double interval = std::floor(-static_cast<double>(x));
+        return std::fmod(interval, 2.0) == 0.0 ? -0.0f : 0.0f;
+    }
     const int savedErrno = errno;
     const float result = static_cast<float>(std::tgamma(static_cast<double>(x)));
     errno = std::isfinite(x) && x < 0.0f && std::trunc(x) == x ? EDOM : savedErrno;
@@ -1423,7 +1431,7 @@ long double APS5_VABI erfl_nid_postfix(long double x) { return std::erf(x); }
 long double APS5_VABI erfcl_nid_postfix(long double x) { return std::erfc(x); }
 long double APS5_VABI expm1l_nid_postfix(long double x) { return std::expm1(x); }
 long double APS5_VABI log1pl_nid_postfix(long double x) { return std::log1p(x); }
-long double APS5_VABI log2l_nid_postfix(long double x) { return std::log2(x); }
+long double APS5_VABI log2l_nid_postfix(long double x) { return _LLog_nid_postfix(x, -1); }
 long double APS5_VABI lgammal_nid_postfix(long double x) { return std::lgamma(x); }
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
 float APS5_VABI tgammaf_nid_postfix(float x) { return GuestTgammaf(x); }
@@ -2078,7 +2086,7 @@ double APS5_VABI erfc_nid_postfix(double x) {
         return 1.0 + (erx + ratio);
     }
     if (ix >= 0x403c0000) {
-        return hx > 0 ? tiny * tiny : 2.0 - tiny;
+        return hx > 0 ? 0.0 : 2.0 - tiny;
     }
     if (hx < 0 && ix >= 0x40180000) {
         return 2.0 - tiny;
@@ -4316,8 +4324,8 @@ long double APS5_VABI coshl_nid_postfix(long double x) { return std::cosh(x); }
 long double APS5_VABI tanhl_nid_postfix(long double x) { return std::tanh(x); }
 long double APS5_VABI expl_nid_postfix(long double x) { return std::exp(x); }
 long double APS5_VABI exp2l_nid_postfix(long double x) { return std::exp2(x); }
-long double APS5_VABI logl_nid_postfix(long double x) { return std::log(x); }
-long double APS5_VABI log10l_nid_postfix(long double x) { return std::log10(x); }
+long double APS5_VABI logl_nid_postfix(long double x) { return _LLog_nid_postfix(x, 0); }
+long double APS5_VABI log10l_nid_postfix(long double x) { return _LLog_nid_postfix(x, 1); }
 long double APS5_VABI powl_nid_postfix(long double base, long double exp) { return std::pow(base, exp); }
 long double APS5_VABI ldexpl_nid_postfix(long double x, int exp) { return std::ldexp(x, exp); }
 long double APS5_VABI truncl_nid_postfix(long double x) { return std::trunc(x); }
