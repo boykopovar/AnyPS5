@@ -141,6 +141,32 @@ void Status() {
     unumsys_close_nid_postfix(nullptr);
 }
 
+void InaccessibleStatus() {
+    std::int32_t status = 0;
+    auto* enumeration = unumsys_openAvailableNames_nid_postfix(&status);
+    Require(enumeration && status <= 0, "valid enumeration for checked dispatch status");
+    auto* invalid = reinterpret_cast<std::int32_t*>(std::uintptr_t{1});
+    Refuses([&] { uenum_count_nid_postfix(enumeration, invalid); });
+    Refuses([&] { uenum_next_nid_postfix(enumeration, nullptr, invalid); });
+    Refuses([&] { uenum_unext_nid_postfix(enumeration, nullptr, invalid); });
+    uenum_close_nid_postfix(enumeration);
+}
+
+void CrossKind() {
+    std::int32_t status = 0;
+    auto* system = unumsys_openByName_nid_postfix("latn", &status);
+    Require(system && status <= 0, "valid system for reverse cross-kind checks");
+    auto* enumeration = reinterpret_cast<UEnumeration*>(system);
+    for (int phase = 0; phase < 2; ++phase) {
+        status = 0;
+        Refuses([&] { uenum_count_nid_postfix(enumeration, &status); });
+        Refuses([&] { uenum_next_nid_postfix(enumeration, nullptr, &status); });
+        Refuses([&] { uenum_unext_nid_postfix(enumeration, nullptr, &status); });
+        Refuses([&] { uenum_close_nid_postfix(enumeration); });
+        if (phase == 0) unumsys_close_nid_postfix(system);
+    }
+}
+
 void Memory() {
     constexpr std::size_t page = 0x4000;
     constexpr std::size_t bytes = page * 3;
@@ -186,6 +212,8 @@ int main(int argc, char** argv) {
         else if (mode == "enumeration") Enumeration();
         else if (mode == "status") Status();
         else if (mode == "memory") Memory();
+        else if (mode == "inaccessible_status") InaccessibleStatus();
+        else if (mode == "cross_kind") CrossKind();
         else Require(false, "unknown numbering test mode");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "numbering fixture failed: %s\n", error.what());
