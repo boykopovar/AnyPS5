@@ -32,6 +32,8 @@ void TestTimerGettimeBounds() {
 
     GuestItimerspec value{};
     Require(ktimer_gettime_nid_postfix(id, &value) == 0);
+    GuestItimerspec secondValue{};
+    Require(ktimer_gettime_nid_postfix(id, &secondValue) == 0);
     Require(ktimer_gettime_nid_postfix(id, nullptr) == -1);
     Require(GetError() == GuestEfault);
 
