@@ -4147,13 +4147,9 @@ std::vector<NativeDepthSnapshot> CaptureNativeDepthSurfaces(VkDevice device) {
     return snapshots;
 }
 
-void RestoreNativeDepthSurfaces(const Context& context, std::span<const NativeDepthSnapshot> snapshots) {
+void PreflightNativeDepthSurfaces(const Context& context, std::span<const NativeDepthSnapshot> snapshots) {
     static_cast<void>(ValidateNativeDepthSnapshots(snapshots));
     RequireNativeDepthGraph(snapshots);
-    if (snapshots.empty()) return;
-    std::lock_guard gpu(GuestMemory::GpuMutex());
-    std::lock_guard lock(surfacesMutex());
-    Require(std::ranges::none_of(surfaces(), [&](const auto& surface) { return surface->context.device == context.device && surface->active->load(std::memory_order_acquire) && !surface->retired; }), "native depth restoration requires a fresh device");
     for (const auto& snapshot : snapshots) {
         const auto& target = snapshot.target;
         Require(target.htileAddress == 0u, "native depth restoration with HTILE is not implemented");
@@ -4174,6 +4170,14 @@ void RestoreNativeDepthSurfaces(const Context& context, std::span<const NativeDe
         constexpr auto required = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
         Require((properties.optimalTilingFeatures & required) == required, "native depth snapshot format is unavailable");
     }
+}
+
+void RestoreNativeDepthSurfaces(const Context& context, std::span<const NativeDepthSnapshot> snapshots) {
+    PreflightNativeDepthSurfaces(context, snapshots);
+    if (snapshots.empty()) return;
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    std::lock_guard lock(surfacesMutex());
+    Require(std::ranges::none_of(surfaces(), [&](const auto& surface) { return surface->context.device == context.device && surface->active->load(std::memory_order_acquire) && !surface->retired; }), "native depth restoration requires a fresh device");
     drawnDepth = nullptr;
     struct DrawnScope {
         ~DrawnScope() { drawnDepth = nullptr; }

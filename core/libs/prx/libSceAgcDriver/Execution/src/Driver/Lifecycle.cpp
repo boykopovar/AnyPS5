@@ -298,6 +298,14 @@ void Driver::RestoreNativeDepth(std::span<const NativeDepthSnapshot> snapshots) 
     device->RestoreNativeDepth(snapshots);
 }
 
+void Driver::PreflightNativeDepthForReplay(std::span<const NativeDepthSnapshot> snapshots) {
+    require(GuestMemory::GpuMutex().HeldByThisThread(), "native replay preflight requires the guest memory transaction lock");
+    if (snapshots.empty()) return;
+    const auto localDevice = device.Load();
+    require(localDevice != nullptr, "native replay preflight requires an initialized device");
+    localDevice->PreflightNativeDepthWhileIdle(snapshots);
+}
+
 RetiredOwners Driver::DiscardNativeDepthForReplay() {
     require(GuestMemory::GpuMutex().HeldByThisThread(), "native replay discard requires the guest memory transaction lock");
     const auto localDevice = device.Load();

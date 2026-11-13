@@ -609,6 +609,7 @@ ResetResult resetMemory(const FrameCaptureReader& reader, const Skipped& skipped
     ResetResult result;
     result.rangeBytes = plan.rangeBytes;
     exclusive([&] {
+        if (nativeDepth != nullptr) AgcDriver::PreflightNativeDepthForReplay_nid_no_patch(*nativeDepth);
         const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         struct Omission {
             explicit Omission(bool omit) : omit(omit) { if (omit) AgcDriverOmitGpuOwnersForTest_nid_no_patch(true); }

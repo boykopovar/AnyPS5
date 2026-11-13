@@ -110,6 +110,7 @@ public:
     void WaitIdle();
     std::vector<NativeDepthSnapshot> CaptureNativeDepth();
     void RestoreNativeDepth(std::span<const NativeDepthSnapshot> snapshots);
+    void PreflightNativeDepthWhileIdle(std::span<const NativeDepthSnapshot> snapshots) const;
     void RestoreNativeDepthWhileIdle(std::span<const NativeDepthSnapshot> snapshots);
     void PrepareForReplacement();
     void startJournalReplay();
