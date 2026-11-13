@@ -12333,6 +12333,8 @@ void encoderFailedSegmentTests(const Device& device) {
     Require(started.empty(), "continuing a pass after a replay failure reported it before its occlusion segment began ('" + started + "')");
     const auto begun = caught([&] { recorder.NoteSampledDraw(commands); });
     Require(begun == "injected replay failure", "an occlusion segment begun outside an encoding window after a replay failure did not report it ('" + begun + "')");
+    const auto again = caught([&] { recorder.NoteSampledDraw(commands); });
+    Require(again == "AGC graphics: the encoder failed to record this command buffer, so it is not submitted", "a second occlusion segment begun after a caught replay failure was not refused ('" + again + "')");
     recover();
 
     cover.Draw(recorder);
@@ -12340,8 +12342,10 @@ void encoderFailedSegmentTests(const Device& device) {
     cover.DrawEncodedSampled(recorder, context);
     RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, true);
     const auto inlined = caught([&] { const Recorder::EncodingWindow window(recorder); });
+    const auto reinlined = caught([&] { const Recorder::EncodingWindow window(recorder); });
     RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false);
     Require(inlined == "injected replay failure", "an inline window after a replay failure did not report it ('" + inlined + "')");
+    Require(reinlined == "AGC graphics: the encoder failed to record this command buffer, so it is not submitted", "a second inline window after a caught replay failure was not refused ('" + reinlined + "')");
     recover();
     const auto posts = recorder.EncoderCounts().posts;
     cover.Draw(recorder);
@@ -12349,6 +12353,21 @@ void encoderFailedSegmentTests(const Device& device) {
     recorder.Submit();
     recorder.Sync();
     Require(recorder.EncoderCounts().posts > posts, "the encoder took no window after an inline window reported a replay failure");
+
+    const auto beforeFold = recorder.SamplesTotal();
+    cover.Draw(recorder);
+    recorder.EndPassSamples();
+    recorder.Submit();
+    recorder.Sync();
+    Require(recorder.DumpSamples(dump->DeviceAddress(), 0), "a batch did not fold the occlusion segments of the batch before it");
+    Recorder::FailNextSubmitsForTest(1);
+    const auto folded = caught([&] { recorder.Submit(); });
+    Recorder::FailNextSubmitsForTest(0);
+    Require(folded == "vkQueueSubmit recorder: injected failure", "a batch that folded an earlier batch's occlusion segments was submitted past an injected failure ('" + folded + "')");
+    std::uint64_t afterFold = 0;
+    completesWithin(std::chrono::seconds(20), "the sample total after a discarded batch that folded an earlier batch", [&] { afterFold = recorder.SamplesTotal(); });
+    Require(afterFold > beforeFold, "the samples of a submitted batch folded by a discarded batch were lost (" + std::to_string(afterFold) + " after " + std::to_string(beforeFold) + ")");
+    if (context.occlusionQueryPrecise) Require(afterFold == beforeFold + CoverPass::Samples, "the sample total after a discarded batch that folded an earlier batch is " + std::to_string(afterFold) + ", not " + std::to_string(beforeFold + CoverPass::Samples));
     std::cout << "Command encoder failed segment tests passed\n";
 }
 

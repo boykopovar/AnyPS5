@@ -50,7 +50,7 @@ public:
         Recording& operator=(const Recording&) = delete;
         bool Failed() const { return failed.load(std::memory_order_acquire); }
         void Report() {
-            if (Failed() && !reported) deliver();
+            if (Failed()) refuse();
         }
         void Finish() {
             if (Failed()) refuse();
@@ -83,6 +83,7 @@ public:
     class HandoffPolicy {
     public:
         HandoffChoice Next() {
+            if (Complete()) static_cast<void>(Decide());
             if (!probing) {
                 if (settled < span) {
                     ++settled;
@@ -98,12 +99,16 @@ public:
         void ChargeOutside(std::uint64_t ns) {
             if (probing && charged) blockNs[lastBlock] += ns;
         }
-        std::optional<HandoffDecision> Charge(std::uint64_t ns) {
-            if (!probing) return std::nullopt;
+        void Charge(std::uint64_t ns) {
+            if (!probing || Complete()) return;
             lastBlock = probed / ProbeBlock;
             blockNs[lastBlock] += ns;
             charged = true;
-            if (++probed < ProbeWindows) return std::nullopt;
+            ++probed;
+        }
+        bool Complete() const { return probing && probed == ProbeWindows; }
+        bool LastEncoded() const { return ((lastBlock % 2) == 0) == encode; }
+        HandoffDecision Decide() {
             const auto chosen = std::min(blockNs[0], blockNs[2]);
             const auto other = std::min(blockNs[1], blockNs[3]);
             const auto encodedNs = encode ? chosen : other;
@@ -271,6 +276,7 @@ private:
     bool decline(std::source_location where) noexcept;
     void startTimedWindow() noexcept;
     void endTimedWindow() noexcept;
+    void decide(std::source_location where) noexcept;
     void printSites(bool final) noexcept;
     const bool profiled;
     std::chrono::steady_clock::time_point printedAt;

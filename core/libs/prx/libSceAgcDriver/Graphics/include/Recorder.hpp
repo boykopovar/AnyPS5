@@ -653,9 +653,16 @@ private:
     private:
         VkCommandBuffer handle = VK_NULL_HANDLE;
     };
+    struct SampleSegment {
+        std::shared_ptr<void> pool;
+        VkQueryPool handle;
+        std::uint32_t slot = 0;
+        std::uint64_t batch = 0;
+    };
     struct Batch {
         CommandEncoder::Recording recording;
         std::uint64_t sampleBatch = 0;
+        std::vector<SampleSegment> foldedSamples;
         BatchCommands commands;
         VkCommandPool pool = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
@@ -832,12 +839,6 @@ private:
     void dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, std::uint32_t dumps, std::uint32_t firstSegment, std::uint32_t lastSegment);
     void foldSegments();
     void foldQueuedDumps(VkCommandBuffer commands, std::span<const Batch::StoreRun::Queued> writes, std::size_t first, std::size_t end, std::uint32_t& dumpIndex, std::uint32_t& consumed);
-    struct SampleSegment {
-        std::shared_ptr<void> pool;
-        VkQueryPool handle;
-        std::uint32_t slot = 0;
-        std::uint64_t batch = 0;
-    };
     std::vector<SampleSegment> pendingSamples;
     std::uint64_t sampleBatches = 0;
     bool countingSamples = false;

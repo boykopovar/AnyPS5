@@ -756,7 +756,7 @@ void FailedReplayStaysWithItsRecording() {
     }
     Require(RecordingOf(failing).Failed() && !RecordingOf(healthy).Failed(), "a replay failure was not kept with the recording it happened in");
     Require(Reports([&] { RecordingOf(failing).Report(); }), "a failed replay recorded by a thread that has exited was not reported to the next settle of its recording");
-    Require(!Reports([&] { RecordingOf(failing).Report(); }), "a failed replay was reported twice");
+    Require(Refuses([&] { RecordingOf(failing).Report(); }), "a recording whose replay failure was already reported did not refuse the next settle, or reported the failure again");
     Require(Refuses([&] { RecordingOf(failing).Finish(); }), "finishing a recording whose reported replay failure was not refused, or reported it again");
     Require(!Reports([&] { RecordingOf(healthy).Finish(); }), "finishing a healthy recording reported another recording's failed replay");
     Require(Recorded(failing) == 0, "the encoder recorded " + std::to_string(Recorded(failing)) + " commands into a recording after a replay into it failed");
@@ -783,7 +783,7 @@ void FinishCarriesAnUnreportedFailure() {
     std::thread submitter([&] { carried.store(Reports([&] { RecordingOf(failing).Finish(); })); });
     submitter.join();
     Require(carried.load(), "finishing a recording on another thread did not carry its unreported replay failure");
-    Require(!Reports([&] { RecordingOf(failing).Report(); }), "a failed replay carried by finishing its recording was reported again");
+    Require(Refuses([&] { RecordingOf(failing).Report(); }), "a recording whose failure was carried by finishing it did not refuse the next settle, or reported the failure again");
 }
 
 void DirectCallsSkipAFailedRecording() {
@@ -1061,6 +1061,36 @@ int HandoffBench() {
     return 0;
 }
 
+VKAPI_ATTR void VKAPI_CALL BurnInstanceDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t microseconds) {
+    BusyFor(std::chrono::microseconds(microseconds));
+}
+
+void HandoffChargesTheLastProbeBlocksBacklog() {
+    Reset();
+    const auto commands = Handle<VkCommandBuffer>(0x1780);
+    DeviceFunctions table{};
+    table.cmdDraw = &BurnInstanceDraw;
+    const auto attached = Attached(Handle<VkDevice>(0x58), table);
+    auto& encoder = *attached;
+    constexpr std::uint64_t Backlogged = 12;
+    constexpr std::uint64_t Windows = 2 * CommandEncoder::ProbeWindows + CommandEncoder::SettledSpanMin + 256;
+    std::uint64_t inlined = 0;
+    for (std::uint64_t index = 0; index < Windows; ++index) {
+        const bool encoded = encoder.Admit(CommandEncoder::Handoff::Adaptive);
+        const bool backlogged = index % CommandEncoder::ProbeBlock >= CommandEncoder::ProbeBlock - Backlogged;
+        if (encoded) encoder.Open(commands, RecordingOf(commands));
+        table.cmdDraw(commands, 3, 1, 0, encoded ? (backlogged ? 2000u : 0u) : 50u);
+        if (encoded) {
+            encoder.Close();
+        } else {
+            encoder.EndInline();
+            ++inlined;
+        }
+    }
+    encoder.Quiesce();
+    Require(inlined == Windows - CommandEncoder::ProbeWindows, "the adaptive hand-off recorded " + std::to_string(inlined) + " of " + std::to_string(Windows) + " windows inline, not the " + std::to_string(Windows - CommandEncoder::ProbeWindows) + " outside its encoded probe blocks, so the backlog left by a probe's last encoded block was not charged to it");
+}
+
 void HandoffPolicyFollowsItsMeasuredCost() {
     constexpr std::uint32_t Draws = 6000;
     CommandEncoder::Statistics counts{};
@@ -1096,10 +1126,15 @@ struct PolicyRun {
             const auto choice = policy.Next();
             if (choice.timed) {
                 policy.ChargeOutside(outside);
-                if (const auto decision = policy.Charge(choice.encode ? encodedNs : inlineNs)) decisions.push_back(*decision);
+                policy.Charge(choice.encode ? encodedNs : inlineNs);
             }
             outside = choice.encode ? outsideAfterEncodedNs : 0;
             ++(choice.encode ? encoded : inlined);
+            if (policy.Complete()) {
+                policy.ChargeOutside(outside);
+                outside = 0;
+                decisions.push_back(policy.Decide());
+            }
         }
     }
 };
@@ -1149,6 +1184,26 @@ void HandoffPolicyDecidesFromTheCostItIsGiven() {
             everyBlock.Windows(1, block % 2 == 0 ? 100000 : 1500, 1500);
         }
         Require(everyBlock.decisions.size() == 1 && !everyBlock.decisions.back().encode, "a wait in every encoded probe block was not charged to the encoder");
+    }
+    {
+        PolicyRun run;
+        run.Windows(Probe, 5000, 1000);
+        run.Windows(Min, 5000, 1000);
+        Require(run.decisions.size() == 1 && !run.decisions.back().encode, "the setup for a final encoded probe block did not settle inline");
+        auto& policy = run.policy;
+        constexpr std::uint64_t Drain = 100000;
+        std::uint64_t outside = 0;
+        for (std::uint64_t window = 0; window < Probe; ++window) {
+            const auto choice = policy.Next();
+            Require(choice.timed, "a probe window was not timed");
+            policy.ChargeOutside(outside);
+            policy.Charge(choice.encode ? 1000 : 1500);
+            outside = choice.encode && window % CommandEncoder::ProbeBlock == CommandEncoder::ProbeBlock - 1 ? Drain : 0;
+        }
+        Require(policy.Complete() && policy.LastEncoded(), "the probe after an inline span did not end with an encoded block");
+        policy.ChargeOutside(outside);
+        const auto decision = policy.Decide();
+        Require(!decision.encode && decision.encodedNs == CommandEncoder::ProbeBlock * 1000 + Drain, "the drain after the final encoded probe block was not charged to it (encoded block " + std::to_string(decision.encodedNs) + " ns)");
     }
     {
         PolicyRun run;
@@ -1203,6 +1258,7 @@ int main(int argc, char** argv) {
         WaitsAreAttributedToTheirCallSites();
         SitesAreCountedOnlyWhenProfiled();
         HandoffPolicyFollowsItsMeasuredCost();
+        HandoffChargesTheLastProbeBlocksBacklog();
         HandoffPolicyDecidesFromTheCostItIsGiven();
         std::cout << "command encoder tests passed\n";
         return 0;

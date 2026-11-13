@@ -2892,9 +2892,7 @@ void Recorder::copySegments(VkCommandBuffer commands, std::uint32_t count) {
 }
 
 void Recorder::retireSegments(std::uint32_t count) {
-    for (std::uint32_t i = 0; i < count; ++i) {
-        if (pendingSamples[i].pool != nullptr) open->kept.push_back(std::move(pendingSamples[i].pool));
-    }
+    open->foldedSamples.insert(open->foldedSamples.end(), std::make_move_iterator(pendingSamples.begin()), std::make_move_iterator(pendingSamples.begin() + count));
     pendingSamples.erase(pendingSamples.begin(), pendingSamples.begin() + count);
 }
 
@@ -3017,6 +3015,7 @@ void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
     } while (done < pendingSamples.size());
     recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_HOST_READ_BIT);
     CountBarriers(CommandClass::Copy, target != 0 ? 4u : 2u);
+    batch.foldedSamples.insert(batch.foldedSamples.end(), std::make_move_iterator(pendingSamples.begin()), std::make_move_iterator(pendingSamples.end()));
     pendingSamples.clear();
 }
 
@@ -5026,6 +5025,12 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
 void Recorder::discard(std::unique_ptr<Batch> batch) noexcept {
     if (encoder != nullptr) encoder->Quiesce();
     std::erase_if(pendingSamples, [&](const SampleSegment& sample) { return sample.batch == batch->sampleBatch; });
+    std::erase_if(batch->foldedSamples, [&](const SampleSegment& sample) { return sample.batch == batch->sampleBatch; });
+    try {
+        pendingSamples.insert(pendingSamples.begin(), std::make_move_iterator(batch->foldedSamples.begin()), std::make_move_iterator(batch->foldedSamples.end()));
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[samples] %zu occlusion samples folded by a discarded batch are lost: %s\n", batch->foldedSamples.size(), error.what());
+    }
     removeLabels(*batch);
     if (batch->completionLabelCount != 0) completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
     if (batch->completionStoreCount != 0) completionStores.fetch_sub(batch->completionStoreCount, std::memory_order_acq_rel);

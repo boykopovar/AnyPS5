@@ -608,6 +608,7 @@ bool CommandEncoder::Admit(Handoff handoff, std::source_location where) {
         ++inlineDepth;
         return false;
     }
+    if (policy.Complete()) decide(where);
     const auto choice = policy.Next();
     if (choice.encode) {
         if (choice.timed) startTimedWindow();
@@ -634,17 +635,22 @@ void CommandEncoder::endTimedWindow() noexcept {
     timedWindow = false;
     const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - windowStart).count());
     waitsAtWindowEnd = waitNs.load(std::memory_order_relaxed);
-    const auto decision = policy.Charge(ns);
-    if (!decision) return;
-    (decision->encode ? encodedDecisions : inlineDecisions).fetch_add(1, std::memory_order_relaxed);
+    policy.Charge(ns);
+}
+
+void CommandEncoder::decide(std::source_location where) noexcept {
+    if (policy.LastEncoded()) Quiesce(WaitSite::At(Wait::Open, where));
+    policy.ChargeOutside(waitNs.load(std::memory_order_relaxed) - waitsAtWindowEnd);
+    const auto decision = policy.Decide();
+    (decision.encode ? encodedDecisions : inlineDecisions).fetch_add(1, std::memory_order_relaxed);
     if (!profiled) return;
     const auto now = std::chrono::steady_clock::now();
-    const bool changed = decision->encode != lastDecisionEncoded;
-    lastDecisionEncoded = decision->encode;
+    const bool changed = decision.encode != lastDecisionEncoded;
+    lastDecisionEncoded = decision.encode;
     if (!changed && now - decisionPrintedAt < SitePrintInterval) return;
     decisionPrintedAt = now;
     try {
-        AgcDriver::ProfilePrint_nid_no_patch("[encoder] hand-off %s: encoded %.0f ns/window, inline %.0f ns/window over %llu windows each; next probe after %llu windows; %llu encoded and %llu inline decisions so far\n", decision->encode ? "encoded" : "inline", static_cast<double>(decision->encodedNs) / static_cast<double>(decision->windows), static_cast<double>(decision->inlineNs) / static_cast<double>(decision->windows), static_cast<unsigned long long>(decision->windows), static_cast<unsigned long long>(decision->span), static_cast<unsigned long long>(encodedDecisions.load(std::memory_order_relaxed)), static_cast<unsigned long long>(inlineDecisions.load(std::memory_order_relaxed)));
+        AgcDriver::ProfilePrint_nid_no_patch("[encoder] hand-off %s: encoded %.0f ns/window, inline %.0f ns/window over %llu windows each; next probe after %llu windows; %llu encoded and %llu inline decisions so far\n", decision.encode ? "encoded" : "inline", static_cast<double>(decision.encodedNs) / static_cast<double>(decision.windows), static_cast<double>(decision.inlineNs) / static_cast<double>(decision.windows), static_cast<unsigned long long>(decision.windows), static_cast<unsigned long long>(decision.span), static_cast<unsigned long long>(encodedDecisions.load(std::memory_order_relaxed)), static_cast<unsigned long long>(inlineDecisions.load(std::memory_order_relaxed)));
     } catch (const std::exception& error) {
         std::fprintf(stderr, "[encoder] the hand-off decision could not be printed: %s\n", error.what());
     }
@@ -732,7 +738,7 @@ void CommandEncoder::execute(Chunk& chunk) {
     const auto start = std::chrono::steady_clock::now();
     {
         std::lock_guard lock(poolMutex);
-        if (auto& hook = testDelay(); hook.set.load(std::memory_order_acquire)) {
+        if (auto& hook = testDelay(); hook.set.load(std::memory_order_relaxed)) [[unlikely]] {
             std::lock_guard delayLock(hook.mutex);
             if (hook.delay) hook.delay();
         }
