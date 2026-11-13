@@ -1,3 +1,61 @@
+/* Derived from LibreSSL 2.5.4 (openbsd 2e2c612066aa993717528a0249c15c51128d61cb) src/lib/libcrypto/rsa/rsa_asn1.c
+ * (rsa_asn1.c,v 1.13) */
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
+ * project 2000.
+ */
+/* ====================================================================
+ * Copyright (c) 2000-2005 The OpenSSL Project.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit. (http://www.OpenSSL.org/)"
+ *
+ * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
+ *    endorse or promote products derived from this software without
+ *    prior written permission. For written permission, please contact
+ *    licensing@OpenSSL.org.
+ *
+ * 5. Products derived from this software may not be called "OpenSSL"
+ *    nor may "OpenSSL" appear in their names without prior written
+ *    permission of the OpenSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit (http://www.OpenSSL.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
+ *
+ * This product includes cryptographic software written by Eric Young
+ * (eay@cryptsoft.com).  This product includes software written by Tim
+ * Hudson (tjh@cryptsoft.com).
+ *
+ */
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
 #include <atomic>
@@ -15,6 +73,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
+#include "PemReadBio.hpp"
 
 struct LibreSslBignum {
     std::uint64_t* d;
@@ -1475,6 +1534,73 @@ int APS5_VABI RSA_verify_PKCS1_PSS_nid_postfix(LibreSslRsa* rsa, const unsigned 
     const int result = VerifyPss(context, rsa, mHash, hash, em, saltLength, __func__);
     EVP_MD_CTX_cleanup_nid_postfix(&context);
     return result;
+}
+
+}
+
+namespace {
+
+bool DecodeLong(const Element& element, std::int64_t& result) {
+    if (element.length > static_cast<long>(sizeof(std::int64_t))) return false;
+    const bool negative = element.length && (element.content[0] & 0x80);
+    std::uint64_t value = 0;
+    for (long index = 0; index < element.length; ++index)
+        value = value << 8 | static_cast<unsigned char>(negative ? element.content[index] ^ 0xFF : element.content[index]);
+    result = static_cast<std::int64_t>(negative ? ~value : value);
+    return result != 0x7FFFFFFF;
+}
+
+}
+
+namespace LibreSsl {
+
+LibreSslRsa* DecodeRsaPrivateKey(const unsigned char** input, long length, const char* function) {
+    Element sequence;
+    if (!ReadTop(*input, length, 16, sequence) || !sequence.constructed) return nullptr;
+    if (sequence.indefinite) UnsupportedEncoding(function, "indefinite-length SEQUENCE");
+    auto* rsa = RSA_new_nid_postfix();
+    if (!rsa) return nullptr;
+    Cursor fields {sequence.content, sequence.length};
+    Element version;
+    bool decoded = ReadPrimitive(fields, 2, version, function) && DecodeLong(version, rsa->version);
+    for (void** number : {&rsa->n, &rsa->e, &rsa->d, &rsa->p, &rsa->q, &rsa->dmp1, &rsa->dmq1, &rsa->iqmp}) {
+        Element integer;
+        decoded = decoded && ReadPrimitive(fields, 2, integer, function) &&
+                  (*number = NewBignum(integer.content, static_cast<std::size_t>(integer.length))) != nullptr;
+    }
+    if (!decoded || fields.length) {
+        RSA_free_nid_postfix(rsa);
+        return nullptr;
+    }
+    *input = sequence.end;
+    return rsa;
+}
+
+bool DecodePkcs8(const unsigned char** input, long length, Pkcs8Key& key, const char* function) {
+    Element sequence;
+    if (!ReadTop(*input, length, 16, sequence) || !sequence.constructed) return false;
+    if (sequence.indefinite) UnsupportedEncoding(function, "indefinite-length SEQUENCE");
+    Cursor fields {sequence.content, sequence.length};
+    Element version;
+    Algorithm algorithm;
+    if (!ReadPrimitive(fields, 2, version, function) || !ReadAlgorithm(fields, algorithm, function)) return false;
+    const unsigned char* const start = fields.data;
+    Element privateKey;
+    if (ReadField(fields, -1, privateKey) != Field::Present || !ValidAny(privateKey, function)) return false;
+    Advance(fields, privateKey);
+    if (fields.length) {
+        Element attributes;
+        if (ReadField(fields, -1, attributes) == Field::Present && attributes.tagClass == 0x80 && attributes.tag == 0)
+            NotImplemented_nid_no_patch((std::string(function) + ": PKCS#8 attributes").c_str());
+        return false;
+    }
+    const LibreSslAsn1Object object {nullptr, nullptr, 0, static_cast<int>(algorithm.objectLength), algorithm.object, 0};
+    key.algorithm = LibreSslObjectNid_nid_no_patch(&object);
+    key.keyType = privateKey.tagClass == 0 ? privateKey.tag : -3;
+    key.key = key.keyType == 16 ? start : privateKey.content;
+    key.keyLength = key.keyType == 16 ? privateKey.end - start : privateKey.length;
+    *input = sequence.end;
+    return true;
 }
 
 }
