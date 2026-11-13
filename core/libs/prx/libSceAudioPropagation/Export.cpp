@@ -705,7 +705,14 @@ int APS5_VABI sceAudioPropagationReportRegisterHandler(std::uint32_t category, R
             slot.userData = userData;
             slot.handler = handler;
             ++slot.generation;
-            if (registration) *registration = &slot;
+            if (registration) {
+                if (!copyGuestOut(registration, &slot)) {
+                    slot.userData = nullptr;
+                    slot.handler = nullptr;
+                    --slot.generation;
+                    return -1;
+                }
+            }
             return 0;
         }
     }

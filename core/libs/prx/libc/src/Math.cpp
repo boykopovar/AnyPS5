@@ -1383,7 +1383,6 @@ long double APS5_VABI acosl_nid_postfix(long double x) {
 long double APS5_VABI acoshl_nid_postfix(long double x) { return std::acosh(x); }
 long double APS5_VABI asinhl_nid_postfix(long double x) { return std::asinh(x); }
 long double APS5_VABI atanhl_nid_postfix(long double x) { return std::atanh(x); }
-long double APS5_VABI atan2l_nid_postfix(long double y, long double x) { return std::atan2(y, x); }
 long double APS5_VABI cbrtl_nid_postfix(long double x) {
     constexpr std::uint32_t B1 = 709958130;
     constexpr int Bias = 0x3fff;
@@ -4734,6 +4733,67 @@ long double APS5_VABI atanl_nid_postfix(long double x) {
     if (index < 0) return x - x * (even + odd);
     const long double result = AtanHigh[index] - ((x * (even + odd) - AtanLow[index]) - x);
     return negative ? -result : result;
+}
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_atan2l.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_atan2l.c */
+static constexpr std::uint64_t ExtendedFractionMask = 0x7fffffffffffffffull;
+static bool Atan2lOnAxis(long double yValue, const ExtendedParts& y, const ExtendedParts& x, int quadrant, long double& result) {
+    static volatile long double tiny = 1.0e-300;
+    const long double halfPi = AtanHigh[3];
+    const long double pi = Pi;
+    const int yExponent = y.signExponent & 0x7fff;
+    const int xExponent = x.signExponent & 0x7fff;
+    const bool yNegative = (y.signExponent & 0x8000) != 0;
+    if (yExponent == 0 && (y.mantissa & ExtendedFractionMask) == 0) {
+        if (quadrant < 2) result = yValue;
+        else result = quadrant == 2 ? pi + tiny : -pi - tiny;
+    } else if (xExponent == 0 && (x.mantissa & ExtendedFractionMask) == 0) {
+        result = yNegative ? -halfPi - tiny : halfPi + tiny;
+    } else if (xExponent == 0x7fff && yExponent == 0x7fff) {
+        result = quadrant == 0 ? halfPi * 0.5 + tiny : quadrant == 1 ? -halfPi * 0.5 - tiny : quadrant == 2 ? 1.5 * halfPi + tiny : -1.5 * halfPi - tiny;
+    } else if (xExponent == 0x7fff) {
+        result = quadrant == 0 ? 0.0L : quadrant == 1 ? -0.0L : quadrant == 2 ? pi + tiny : -pi - tiny;
+    } else if (yExponent == 0x7fff) {
+        result = yNegative ? -halfPi - tiny : halfPi + tiny;
+    } else {
+        return false;
+    }
+    return true;
+}
+long double APS5_VABI atan2l_nid_postfix(long double y, long double x) {
+    constexpr long double PiLow = -5.01655761266833202345e-20L;
+    const ExtendedParts py = SplitExtended(y);
+    const ExtendedParts px = SplitExtended(x);
+    const int yExponent = py.signExponent & 0x7fff;
+    const int xExponent = px.signExponent & 0x7fff;
+    if ((xExponent == 0x7fff && (px.mantissa & ExtendedFractionMask) != 0) || (yExponent == 0x7fff && (py.mantissa & ExtendedFractionMask) != 0)) return x + y;
+    if (px.signExponent == 0x3fff && (px.mantissa & ExtendedFractionMask) == 0) return atanl_nid_postfix(y);
+    int quadrant = ((py.signExponent >> 15) & 1) | ((px.signExponent >> 14) & 2);
+    long double result;
+    if (Atan2lOnAxis(y, py, px, quadrant, result)) return result;
+    const int k = yExponent - xExponent;
+    long double z;
+    if (k > 64 + 2) {
+        z = SumAtCallerPrecision(AtanHigh[3], AtanLow[3]);
+        quadrant &= 1;
+    } else if ((px.signExponent & 0x8000) != 0 && k < -64 - 2) {
+        z = 0.0L;
+    } else {
+        z = atanl_nid_postfix(std::fabs(y / x));
+    }
+    if (quadrant == 0) return z;
+    if (quadrant == 1) return -z;
+    if (quadrant == 2) return Pi - (z - PiLow);
+    return (z - PiLow) - Pi;
 }
 long double APS5_VABI sinl_nid_postfix(long double x) { return std::sin(x); }
 long double APS5_VABI cosl_nid_postfix(long double x) { return std::cos(x); }
