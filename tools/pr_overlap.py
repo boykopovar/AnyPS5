@@ -74,7 +74,10 @@ def own(prs, sha):
 
 
 def gh(*args):
-    return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+    try:
+        return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+    except FileNotFoundError as error:
+        raise ValueError("GitHub CLI 'gh' is required on PATH") from error
 
 
 def upstream():
@@ -230,9 +233,9 @@ def merge(*args):
     return lines[0], set(lines[1:]) if result.returncode else set()
 
 
-def commit(tree):
+def commit(tree, ref):
     return git("-c", "user.name=pr_overlap", "-c", "user.email=pr_overlap", "commit-tree", tree,
-               "-p", "refs/pr/base", "-m", "pr_overlap").strip()
+               "-p", "refs/pr/base", "-p", ref, "-m", "pr_overlap").strip()
 
 
 def exports(diff, prefix="+"):
@@ -338,7 +341,10 @@ def save_export_cache(path, version, files):
         temporary.write_text(json.dumps({"version": version, "files": files}), encoding="utf-8")
         os.replace(temporary, path)
     except OSError:
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def base_sources(root, ref):
@@ -402,7 +408,7 @@ def merge_base(ref):
 
 def scan(pr):
     tree, conflicted = merge("refs/pr/base", pr["ref"])
-    pr["tree"] = None if conflicted else commit(tree)
+    pr["tree"] = None if conflicted else commit(tree, pr["ref"])
     old, new = (merge_base(pr["ref"]), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
     pr["files"], pr["added"] = set(), set()
     changes = git("diff", "--name-status", "--no-renames", "-z", old, new).split("\0")
