@@ -251,6 +251,18 @@ void CheckVisionManager() {
     Require(libSceVisionManagerUnknown__minus_R5dI6KjYpY_nid_no_patch(nullptr, output) == VisionInvalid);
     Require(libSceVisionManagerUnknown__minus_R5dI6KjYpY_nid_no_patch(inputs[0], nullptr) == VisionInvalid);
     Require(output[0] == 0xaaaaaaaa);
+
+    const auto* unreadable = reinterpret_cast<const std::int32_t*>(0x10);
+    errno = 71;
+    Require(sceVisionManagerGetLibraryVersion(reinterpret_cast<std::uint64_t*>(0x10)) == VisionInvalid);
+    Require(sceVisionManagerGetNumOfRegisterUserDataSlot(LibraryVersion, reinterpret_cast<std::uint32_t*>(0x10)) == VisionInvalid);
+    Require(sceVisionManagerRequestFindPad(&context, unreadable) == VisionInvalid);
+    Require(sceVisionManagerRequestFindPadCorrespondRegion(&context, unreadable, 1, &context) == VisionInvalid);
+    Require(sceVisionManagerRequestPadTracking(&context, unreadable) == VisionInvalid);
+    Require(libSceVisionManagerUnknown__minus_R5dI6KjYpY_nid_no_patch(reinterpret_cast<const std::uint32_t*>(0x10), output) == VisionInvalid);
+    Require(output[0] == 0xaaaaaaaa);
+    Require(libSceVisionManagerUnknown__minus_R5dI6KjYpY_nid_no_patch(inputs[0], reinterpret_cast<std::uint32_t*>(0x10)) == VisionInvalid);
+    Require(errno == 71);
 }
 
 void CheckDebugSyscore() {

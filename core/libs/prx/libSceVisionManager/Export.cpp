@@ -70,16 +70,17 @@ int APS5_VABI sceVisionManagerGetHitCountOfRegisterUserData() {
 }
 
 int APS5_VABI sceVisionManagerGetLibraryVersion(std::uint64_t* version) {
-    if (version == nullptr) return ErrorInvalidArgument;
-    *version = LibraryVersion;
+    if (version == nullptr || !GuestCopyOut_nid_no_patch(version, &LibraryVersion, sizeof(LibraryVersion))) return ErrorInvalidArgument;
     return 0;
 }
 
 int APS5_VABI sceVisionManagerGetNumOfRegisterUserDataSlot(std::uint64_t version, std::uint32_t* count) {
     if (count == nullptr) return ErrorInvalidArgument;
-    if (version == RegisterUserDataVersion) *count = 16;
-    else if (version == LibraryVersion) *count = 30;
+    std::uint32_t slots = 0;
+    if (version == RegisterUserDataVersion) slots = 16;
+    else if (version == LibraryVersion) slots = 30;
     else return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(count, &slots, sizeof(slots))) return ErrorInvalidArgument;
     return 0;
 }
 
@@ -198,14 +199,16 @@ int APS5_VABI sceVisionManagerRequestFindFace() {
 }
 
 int APS5_VABI sceVisionManagerRequestFindPad(void* context, const std::int32_t* parameter) {
-    if (context == nullptr || parameter == nullptr || *parameter == 0) return ErrorInvalidArgument;
-    return *parameter < 5 ? ErrorUnavailable : ErrorInvalidArgument;
+    std::int32_t value = 0;
+    if (context == nullptr || parameter == nullptr || !GuestCopyIn_nid_no_patch(&value, parameter, sizeof(value)) || value == 0) return ErrorInvalidArgument;
+    return value < 5 ? ErrorUnavailable : ErrorInvalidArgument;
 }
 
 int APS5_VABI sceVisionManagerRequestFindPadCorrespondRegion(void* context, const std::int32_t* parameter, std::int32_t region, void* result) {
-    if (context == nullptr || parameter == nullptr || *parameter == 0) return ErrorInvalidArgument;
+    std::int32_t value = 0;
+    if (context == nullptr || parameter == nullptr || !GuestCopyIn_nid_no_patch(&value, parameter, sizeof(value)) || value == 0) return ErrorInvalidArgument;
     if (region < 1 || region > 4 || result == nullptr) return ErrorInvalidArgument;
-    return *parameter < 5 ? ErrorUnavailable : ErrorInvalidArgument;
+    return value < 5 ? ErrorUnavailable : ErrorInvalidArgument;
 }
 
 int APS5_VABI sceVisionManagerRequestFindUser() {
@@ -237,8 +240,9 @@ int APS5_VABI sceVisionManagerRequestOpen() {
 
 int APS5_VABI sceVisionManagerRequestPadTracking(void* context, const std::int32_t* parameter) {
     static_cast<void>(context);
-    if (parameter == nullptr || *parameter == 0) return ErrorInvalidArgument;
-    return *parameter < 4 ? ErrorUnavailable : ErrorInvalidArgument;
+    std::int32_t value = 0;
+    if (parameter == nullptr || !GuestCopyIn_nid_no_patch(&value, parameter, sizeof(value)) || value == 0) return ErrorInvalidArgument;
+    return value < 4 ? ErrorUnavailable : ErrorInvalidArgument;
 }
 
 int APS5_VABI sceVisionManagerRequestRecogUtility() {
@@ -305,9 +309,12 @@ extern "C" {
 
 int APS5_VABI libSceVisionManagerUnknown__minus_R5dI6KjYpY_nid_no_patch(const std::uint32_t* input, std::uint32_t* output) {
     if (input == nullptr || output == nullptr) return ErrorInvalidArgument;
-    std::fill_n(output, 8, 0u);
-    const auto largest = std::max(input[0], input[1]);
-    if (largest >= 10) output[0] = largest >= 30 ? 10 : 5;
+    std::uint32_t values[2]{};
+    if (!GuestCopyIn_nid_no_patch(values, input, sizeof(values))) return ErrorInvalidArgument;
+    std::uint32_t levels[8]{};
+    const auto largest = std::max(values[0], values[1]);
+    if (largest >= 10) levels[0] = largest >= 30 ? 10 : 5;
+    if (!GuestCopyOut_nid_no_patch(output, levels, sizeof(levels))) return ErrorInvalidArgument;
     return 0;
 }
 APS5_EXPORT("-R5dI6KjYpY", libSceVisionManagerUnknown__minus_R5dI6KjYpY_nid_no_patch);
