@@ -550,7 +550,7 @@ void IndirectRangeUsesStoredVertices(const GuestBlock& fetch, const GuestBlock& 
             Require(recorder->Recording() && recorder->Submissions() < serial, "the GPU argument producer retired before the consumer began");
             Require(recorder->PendingLeaseSerial(records.At(0), 12) != 0 || recorder->PendingWriteOverlaps(records.At(0), 12), "the GPU argument producer has no tracked pending write");
             observer = std::make_unique<ArgumentReadObserver>(*recorder, records.At(0), *gate);
-            gate->ReleaseAfterSubmission(*recorder, serial);
+            gate->ReleaseAfterSubmission(*recorder, serial, &ProducerReadSeen);
             std::puts("GPU argument producer pending and gated before indirect PM4 submission");
         } else {
             if (counted) {
