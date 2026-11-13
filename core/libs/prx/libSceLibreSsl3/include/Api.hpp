@@ -206,7 +206,7 @@ int APS5_VABI EVP_EncryptInit_nid_postfix(LibreSslEvpCipherCtx* context, const L
 void APS5_VABI EVP_MD_CTX_free_nid_postfix(LibreSsl3::DigestContext* context);
 LibreSsl3::DigestContext* APS5_VABI EVP_MD_CTX_new_nid_postfix();
 int APS5_VABI EVP_PKCS82PKEY_nid_postfix(void);
-int APS5_VABI EVP_PKEY_CTX_ctrl_nid_postfix(void);
+int APS5_VABI EVP_PKEY_CTX_ctrl_nid_postfix(void* context, int keyType, int operationType, int command, int argument, void* pointer);
 int APS5_VABI EVP_PKEY_CTX_new_nid_postfix(void);
 int APS5_VABI EVP_PKEY_decrypt_nid_postfix(void);
 int APS5_VABI EVP_PKEY_decrypt_init_nid_postfix(void);
