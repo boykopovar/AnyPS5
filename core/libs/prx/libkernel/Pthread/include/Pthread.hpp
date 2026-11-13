@@ -153,6 +153,7 @@ struct PthreadPrivate {
     std::size_t stackSize = 0;
     std::atomic<int> waitCount{0};
     std::atomic<KernelCpumask> affinity{DEFAULT_THREAD_AFFINITY};
+    std::atomic<bool> explicitAffinity{false};
     std::atomic<int> priority{DEFAULT_THREAD_PRIORITY};
     int scope = GUEST_SCOPE_SYSTEM;
     int cpuClockThread = 0;
@@ -198,8 +199,10 @@ bool ReplaceGuestThreadStack(std::uintptr_t start, std::size_t bytes, bool readW
 #endif
 int GuestThreadCpuClockId(const PthreadPrivate* thread);
 bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos);
-void SetLiveGuestThreadsAffinity(KernelCpumask mask);
+bool SetLiveGuestThreadsAffinity(KernelCpumask mask);
 KernelCpumask LiveGuestThreadsAffinity();
+KernelCpumask GuestProcessCpusetAffinity();
+bool SetLiveGuestProcessCpuset(KernelCpumask mask);
 bool GuestThreadIsLive(const PthreadPrivate* thread);
 std::unique_lock<std::mutex> LockMainGuestThread_nid_no_patch(PthreadPrivate*& thread);
 std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread);
@@ -216,7 +219,7 @@ struct LiveGuestThreadName {
 std::vector<LiveGuestThreadName> LiveGuestThreadNames();
 bool GetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask& mask);
 bool GetLiveGuestThreadSched_nid_no_patch(std::int64_t tid, int& policy, int& priority);
-bool SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mask);
+int SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mask);
 extern "C" std::size_t GetDefaultStackSize_nid_no_patch();
 extern "C" bool SetDefaultStackSize_nid_no_patch(std::size_t size);
 #if defined(__linux__)
