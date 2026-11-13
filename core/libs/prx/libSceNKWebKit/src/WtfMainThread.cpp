@@ -1,11 +1,14 @@
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include <atomic>
+#include <exception>
+#include <future>
 #include <memory>
 #include <mutex>
-#include <semaphore>
+#include <optional>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 namespace {
 
@@ -18,15 +21,19 @@ std::thread::id s_mainThreadId;
 
 struct MainTask {
     VoidCallableWrapper* callableWrapper = nullptr;
-    std::binary_semaphore* semaphore = nullptr;
+    std::optional<std::promise<void>> completion;
 
     MainTask() = default;
     MainTask(const MainTask&) = delete;
     MainTask& operator=(const MainTask&) = delete;
 
     ~MainTask() {
-        if (callableWrapper) {
-            callableWrapper->vtable->deletingDestructor(callableWrapper);
+        DestroyCallable();
+    }
+
+    void DestroyCallable() {
+        if (VoidCallableWrapper* wrapper = std::exchange(callableWrapper, nullptr)) {
+            wrapper->vtable->deletingDestructor(wrapper);
         }
     }
 };
@@ -49,19 +56,34 @@ VoidCallableWrapper* TakeCallable(VoidFunction* function) {
 
 void APS5_VABI RunMainTask(void* context) {
     std::unique_ptr<MainTask> task(static_cast<MainTask*>(context));
-    task->callableWrapper->vtable->call(task->callableWrapper);
-    if (task->semaphore) {
-        task->semaphore->release();
+    if (!task->completion) {
+        task->callableWrapper->vtable->call(task->callableWrapper);
+        return;
+    }
+    std::exception_ptr failure;
+    try {
+        task->callableWrapper->vtable->call(task->callableWrapper);
+    } catch (...) {
+        failure = std::current_exception();
+    }
+    task->DestroyCallable();
+    if (failure) {
+        task->completion->set_exception(failure);
+    } else {
+        task->completion->set_value();
     }
 }
 
-void DispatchToMain(VoidFunction* function, std::binary_semaphore* semaphore) {
-    RequireCallable(function);
-    auto task = std::make_unique<MainTask>();
-    task->semaphore = semaphore;
-    task->callableWrapper = TakeCallable(function);
+void PostToMain(std::unique_ptr<MainTask> task) {
     WKRunLoopCallOnMainThread(RunMainTask, task.get());
     task.release();
+}
+
+void DispatchToMain(VoidFunction* function) {
+    RequireCallable(function);
+    auto task = std::make_unique<MainTask>();
+    task->callableWrapper = TakeCallable(function);
+    PostToMain(std::move(task));
 }
 
 void CallOnMainAndWait(VoidFunction* function, bool isMain) {
@@ -70,9 +92,12 @@ void CallOnMainAndWait(VoidFunction* function, bool isMain) {
         callableWrapper->vtable->call(callableWrapper);
         return;
     }
-    std::binary_semaphore semaphore{0};
-    DispatchToMain(function, &semaphore);
-    semaphore.acquire();
+    RequireCallable(function);
+    auto task = std::make_unique<MainTask>();
+    std::future<void> finished = task->completion.emplace().get_future();
+    task->callableWrapper = TakeCallable(function);
+    PostToMain(std::move(task));
+    finished.get();
 }
 
 }
@@ -102,11 +127,11 @@ bool APS5_VABI _ZN3WTF22isMainThreadOrGCThreadEv() {
 }
 
 void APS5_VABI _ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE(VoidFunction* function) {
-    DispatchToMain(function, nullptr);
+    DispatchToMain(function);
 }
 
 void APS5_VABI _ZN3WTF17callOnMainRunLoopEONS_8FunctionIFvvEEE(VoidFunction* function) {
-    DispatchToMain(function, nullptr);
+    DispatchToMain(function);
 }
 
 void APS5_VABI _ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE(VoidFunction* function) {

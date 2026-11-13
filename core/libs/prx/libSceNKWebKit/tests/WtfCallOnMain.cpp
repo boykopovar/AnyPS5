@@ -119,12 +119,14 @@ void TestAndWaitBlocksWorker(void (APS5_VABI* callAndWait)(VoidFunction*), const
     Arm(wrapper, true);
     std::atomic<bool> workerReturned{false};
     std::atomic<int> callsSeenOnReturn{-1};
+    std::atomic<int> deletionsSeenOnReturn{-1};
     std::atomic<bool> workerSawNullFunction{false};
     std::thread::id workerId;
     std::thread worker([&] {
         VoidFunction function{&wrapper.base};
         callAndWait(&function);
         callsSeenOnReturn.store(wrapper.calls.load());
+        deletionsSeenOnReturn.store(wrapper.deletingDestructions.load());
         workerSawNullFunction.store(function.callableWrapper == nullptr);
         workerReturned.store(true);
     });
@@ -136,11 +138,62 @@ void TestAndWaitBlocksWorker(void (APS5_VABI* callAndWait)(VoidFunction*), const
     worker.join();
     Require(workerReturned.load(), name);
     Require(callsSeenOnReturn.load() == 1, name);
+    Require(deletionsSeenOnReturn.load() == 1, name);
     Require(workerSawNullFunction.load(), name);
     Require(wrapper.calls.load() == 1, name);
     Require(wrapper.callingThread == std::this_thread::get_id(), name);
     Require(wrapper.callingThread != workerId, name);
     Require(wrapper.deletingDestructions.load() == 1, name);
+    Require(wrapper.completeDestructions.load() == 0, name);
+}
+
+void TestAndWaitInlineThrowKeepsOwnership(void (APS5_VABI* callAndWait)(VoidFunction*), const char* name) {
+    WKRunLoopInitializeMain();
+    CountingWrapper wrapper;
+    Arm(wrapper, false);
+    wrapper.throwFromCall = true;
+    VoidFunction function{&wrapper.base};
+    bool propagated = false;
+    try {
+        callAndWait(&function);
+    } catch (const std::runtime_error&) {
+        propagated = true;
+    }
+    Require(propagated, name);
+    Require(wrapper.calls.load() == 1, name);
+    Require(function.callableWrapper == &wrapper.base, name);
+    Require(wrapper.deletingDestructions.load() == 0, name);
+    s_liveWrappers.fetch_sub(1);
+}
+
+void TestAndWaitWorkerThrowRethrows(void (APS5_VABI* callAndWait)(VoidFunction*), const char* name) {
+    WKRunLoopInitializeMain();
+    CountingWrapper wrapper;
+    Arm(wrapper, true);
+    wrapper.throwFromCall = true;
+    std::atomic<bool> workerCaught{false};
+    std::atomic<int> deletionsSeenOnCatch{-1};
+    std::thread worker([&] {
+        VoidFunction function{&wrapper.base};
+        try {
+            callAndWait(&function);
+        } catch (const std::runtime_error&) {
+            deletionsSeenOnCatch.store(wrapper.deletingDestructions.load());
+            workerCaught.store(true);
+        }
+    });
+    bool loopThrew = false;
+    try {
+        WKRunLoopRunMain();
+    } catch (...) {
+        loopThrew = true;
+    }
+    worker.join();
+    Require(!loopThrew, name);
+    Require(workerCaught.load(), name);
+    Require(deletionsSeenOnCatch.load() == 1, name);
+    Require(wrapper.calls.load() == 1, name);
+    Require(wrapper.callingThread == std::this_thread::get_id(), name);
     Require(wrapper.completeDestructions.load() == 0, name);
 }
 
@@ -195,6 +248,10 @@ int main() {
     TestAndWaitInlineOnMain(_ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE, "callOnMainRunLoopAndWait inline");
     TestAndWaitBlocksWorker(_ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE, "callOnMainThreadAndWait worker");
     TestAndWaitBlocksWorker(_ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE, "callOnMainRunLoopAndWait worker");
+    TestAndWaitInlineThrowKeepsOwnership(_ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE, "callOnMainThreadAndWait inline throw");
+    TestAndWaitInlineThrowKeepsOwnership(_ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE, "callOnMainRunLoopAndWait inline throw");
+    TestAndWaitWorkerThrowRethrows(_ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE, "callOnMainThreadAndWait worker throw");
+    TestAndWaitWorkerThrowRethrows(_ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE, "callOnMainRunLoopAndWait worker throw");
     TestNullFunctionThrows(_ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE, "callOnMainThread null");
     TestNullFunctionThrows(_ZN3WTF17callOnMainRunLoopEONS_8FunctionIFvvEEE, "callOnMainRunLoop null");
     TestNullFunctionThrows(_ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE, "callOnMainThreadAndWait null");
