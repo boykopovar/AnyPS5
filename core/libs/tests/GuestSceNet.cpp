@@ -136,6 +136,12 @@ static void APS5_VABI RecordNetCtlEvent(int event, void* arg) {
     record->arg = arg;
 }
 
+template<typename TCall>
+static bool Throws(TCall call) {
+    try { call(); } catch (const std::exception&) { return true; }
+    return false;
+}
+
 static bool Failed(std::int64_t result, int error) {
     return result == static_cast<int>(0x80410100u | static_cast<unsigned>(error)) && *sceNetErrnoLoc() == error;
 }
@@ -1197,6 +1203,10 @@ static void CheckConnectTimeoutExpiry() {
     }
     if (waited < std::chrono::milliseconds(80)) report("the pending connect returned before its timeout");
     Require(waited >= std::chrono::milliseconds(80));
+    if (threw || result != static_cast<int>(0x80410123)) report("the expired connect did not return EAGAIN");
+    Require(!threw && result == static_cast<int>(0x80410123));
+    Require(Failed(sceNetConnect(pending, address.data(), address.size()), 48));
+    Require(Throws([&] { sceNetConnect(pending, address.data(), address.size()); }));
     int value = -1;
     std::uint32_t length = sizeof(value);
     Require(sceNetGetsockopt(pending, 0xffff, 0x1200, &value, &length) == 0 && value == 0);
