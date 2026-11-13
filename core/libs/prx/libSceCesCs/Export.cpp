@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
 #include <algorithm>
 #include <bit>
 #include <charconv>
@@ -3153,19 +3154,37 @@ void* APS5_VABI sceCesUcsProfileInitSJis2004X0213(void* sheet) {
 
 int APS5_VABI sceCesJiscsToUcs(const void* profile, uint32_t jiscs, uint32_t* ucs) {
     if (!isMeasuredJiscs(jiscs)) throw std::runtime_error("sceCesJiscsToUcs: code " + hexCode(jiscs) + " is neither a single byte, a native JIS sequence, nor a row and cell 0x21-0x7E of planes 0-2; its form is not implemented");
-    if (ucs) *ucs = 0;
+    if (ucs) {
+        const uint32_t zero = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(ucs, &zero, sizeof(zero))) {
+            errno = savedErrno;
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+    }
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isJiscsProfile(profile)) throw std::runtime_error("sceCesJiscsToUcs: a profile other than the eight JIS profiles is not implemented");
     uint32_t code = 0;
     const int result = jiscsToUnicode(profile, jiscs, code);
     if (result != 0) return result;
     if (!ucs) return CES_ERROR_INVALID_DST_BUFFER;
-    *ucs = code;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(ucs, &code, sizeof(code))) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_DST_BUFFER;
+    }
     return 0;
 }
 
 int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jiscs) {
-    if (jiscs) *jiscs = 0;
+    if (jiscs) {
+        const uint32_t zero = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(jiscs, &zero, sizeof(zero))) {
+            errno = savedErrno;
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+    }
     if (!isScalar(ucs)) return CES_ERROR_ILLEGAL_CODE;
     if (ucs > 0xFFFF && ucs >> 16 != 2) throw std::runtime_error("sceCesUcsToJiscs: code point " + hexCode(ucs) + " outside the BMP and plane 2 is not implemented");
     if (!profile) return CES_ERROR_INVALID_PROFILE;
@@ -3175,7 +3194,11 @@ int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jisc
     const int result = unicodeToJiscs(profile, ucs, code);
     if (result != 0) return result;
     if (!jiscs) return CES_ERROR_INVALID_DST_BUFFER;
-    *jiscs = code;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(jiscs, &code, sizeof(code))) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_DST_BUFFER;
+    }
     return 0;
 }
 

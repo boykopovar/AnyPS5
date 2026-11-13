@@ -273,6 +273,10 @@ int main() {
     Require(sceNpSessionSignalingInitializeWithPort(nullptr, 0x217b, 0) == InvalidArgument, "null initialize with port parameter");
     Require(sceNpSessionSignalingInitializeWithPort(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam), 0x217b, 0) == 0, "initialize with port failed");
     Require(sceNpSessionSignalingInitializeWithPort(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam), 0x217b, 0) == AlreadyInitialized, "initialize with port after initialize");
+    errno = 71;
+    Require(sceNpSessionSignalingGetMemoryInfo(reinterpret_cast<SessionSignalingMemoryInfo*>(0x10)) == InvalidArgument, "unwritable memory info rejected");
+    Require(sceNpSessionSignalingGetConnectionStatistics(reinterpret_cast<SessionSignalingConnectionStatistics*>(0x10)) == InvalidArgument, "unwritable statistics rejected");
+    Require(errno == 71, "errno preserved");
     Require(sceNpSessionSignalingGetMemoryInfo(&memoryInfo) == 0 && memoryInfo.poolSize == poolSize && memoryInfo.usedSize == 0 && memoryInfo.peakUsedSize == 0, "memory info after initialize with port");
     Require(sceNpSessionSignalingTerminate() == 0, "final terminate after initialize with port");
 }
