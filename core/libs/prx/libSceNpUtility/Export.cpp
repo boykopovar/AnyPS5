@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpUtility/include/InventoryExports.hpp"
 #include "prx/libSceNpUtility/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <condition_variable>
@@ -23,6 +24,8 @@ static constexpr int SCE_NP_COMMUNITY_ERROR_INVALID_TYPE = static_cast<int>(0x80
 static constexpr int SCE_NP_LOOKUP_ERROR_SYNCHRONOUS_REQUEST = static_cast<int>(0x80550307);
 static constexpr int SCE_NP_SERVICE_CHECKER2_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8055B301);
 static constexpr int SCE_NP_SERVICE_CHECKER2_ERROR_NOT_INITIALIZED = static_cast<int>(0x8055B302);
+static constexpr int AppInfoInvalidArgument = static_cast<int>(0x8055B204);
+static constexpr int TitleMetadataInvalidArgument = static_cast<int>(0x8055AA03);
 static constexpr int SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055B305);
 static constexpr int SCE_NP_SERVICE_CHECKER2_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x8055B304);
 static constexpr int SCE_NP_APP_INFO_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8055B201);
@@ -230,6 +233,13 @@ int AbortRequest(Service& service, int reqId) {
     return 0;
 }
 
+bool CopyOutInt(int* dst, int value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
+
 int PollAsync(Service& service, int reqId, int* result, int synchronousError) {
     if (!result) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(service.mutex);
@@ -237,7 +247,7 @@ int PollAsync(Service& service, int reqId, int* result, int synchronousError) {
     if (request == service.requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (!request->second.async) return synchronousError;
     if (!request->second.finished) return POLL_RUNNING;
-    *result = request->second.result;
+    if (!CopyOutInt(result, request->second.result)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return POLL_FINISHED;
 }
 
@@ -252,7 +262,7 @@ int WaitAsync(Service& service, int reqId, int* result, int synchronousError) {
         return request == service.requests.end() || request->second.finished;
     });
     if (request == service.requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    *result = request->second.result;
+    if (!CopyOutInt(result, request->second.result)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -302,7 +312,7 @@ int APS5_VABI sceNpBandwidthTestAbort(int context_id) {
 
 int APS5_VABI sceNpBandwidthTestGetStatus(int context_id, int* status) {
     (void)context_id;
-    if (status) *status = 0;
+    if (status && !CopyOutInt(status, 0)) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_INVALID_ARGUMENT;
 }
 
@@ -329,35 +339,43 @@ int APS5_VABI sceNpAppInfoIntAbortRequest(void) {
     appInfo.currentRequest = 0;
     return 0;
 }
-int APS5_VABI sceNpAppInfoIntCheckAvailability() {
+int APS5_VABI sceNpAppInfoIntCheckAvailability(std::uint32_t argument1, const void* argument2, std::uint32_t argument3, void* argument4, void* argument5) {
+    if (argument2 == nullptr || argument4 == nullptr || argument5 == nullptr) return AppInfoInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAppInfoIntCheckAvailabilityA() {
+int APS5_VABI sceNpAppInfoIntCheckAvailabilityA(std::uint32_t argument1, std::uint32_t argument2, std::uint32_t argument3, void* argument4, void* argument5) {
+    if (argument4 == nullptr || argument5 == nullptr) return AppInfoInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAppInfoIntCheckAvailabilityAll() {
+int APS5_VABI sceNpAppInfoIntCheckAvailabilityAll(std::uint32_t argument1, const void* argument2, std::uint32_t argument3, void* argument4, std::uint64_t argument5, void* argument6) {
+    if (argument2 == nullptr || (argument4 == nullptr && argument5 != 0) || argument6 == nullptr) return AppInfoInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAppInfoIntCheckAvailabilityAllA() {
+int APS5_VABI sceNpAppInfoIntCheckAvailabilityAllA(std::uint32_t argument1, std::uint32_t argument2, std::uint32_t argument3, void* argument4, std::uint64_t argument5, void* argument6) {
+    if ((argument4 == nullptr && argument5 != 0) || argument6 == nullptr) return AppInfoInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAppInfoIntCheckServiceAvailability() {
+int APS5_VABI sceNpAppInfoIntCheckServiceAvailability(std::uint32_t argument1, const void* argument2, std::uint32_t argument3, std::uint32_t argument4, void* argument5, void* argument6) {
+    if (argument2 == nullptr || argument5 == nullptr || argument6 == nullptr) return AppInfoInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityA() {
+int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityA(std::uint32_t argument1, std::uint32_t argument2, std::uint32_t argument3, std::uint32_t argument4, void* argument5, void* argument6) {
+    if (argument5 == nullptr || argument6 == nullptr) return AppInfoInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityAll() {
+int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityAll(std::uint32_t argument1, const void* argument2, std::uint32_t argument3, std::uint32_t argument4, void* argument5, std::uint64_t argument6, void* argument7) {
+    if (argument2 == nullptr || (argument5 == nullptr && argument6 != 0) || argument7 == nullptr) return AppInfoInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityAllA() {
+int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityAllA(std::uint32_t argument1, std::uint32_t argument2, std::uint32_t argument3, std::uint32_t argument4, void* argument5, std::uint64_t argument6, void* argument7) {
+    if ((argument5 == nullptr && argument6 != 0) || argument7 == nullptr) return AppInfoInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -555,9 +573,10 @@ int APS5_VABI sceNpServiceChecker2IntCreateRequest(int* requestId) {
     if (serviceChecker2.requests.size() >= MAX_SERVICE_CHECKER2_REQUESTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_OBJECTS;
     std::uint32_t id = serviceChecker2.nextRequest;
     while (serviceChecker2.requests.contains(static_cast<int>(id))) id = id >= MAX_SERVICE_CHECKER2_REQUEST_ID ? 1 : id + 1;
+    const int value = static_cast<int>(id);
+    if (!GuestCopyOut_nid_no_patch(requestId, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT;
     serviceChecker2.nextRequest = id >= MAX_SERVICE_CHECKER2_REQUEST_ID ? 1 : id + 1;
-    serviceChecker2.requests.insert(static_cast<int>(id));
-    *requestId = static_cast<int>(id);
+    serviceChecker2.requests.insert(value);
     return 0;
 }
 int APS5_VABI sceNpServiceChecker2IntDestroyRequest(int requestId) {
@@ -596,7 +615,12 @@ int APS5_VABI sceNpServiceChecker2IntInitialize() {
 }
 int APS5_VABI sceNpServiceChecker2IntIsSetServiceType(const std::uint32_t* serviceTypes, std::uint32_t serviceType) {
     if (!serviceTypes || serviceType > 9) return 0;
-    return static_cast<int>((serviceTypes[serviceType >> 5] >> serviceType) & 1);
+    std::uint32_t word = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&word, &serviceTypes[serviceType >> 5], sizeof(word));
+    errno = savedErrno;
+    if (!copied) return 0;
+    return static_cast<int>((word >> serviceType) & 1);
 }
 int APS5_VABI sceNpServiceCheckerIntAbortRequest(std::int32_t requestId) {
     std::lock_guard lock(serviceChecker1.mutex);
@@ -668,7 +692,8 @@ int APS5_VABI sceNpTitleMetadataIntDeleteRequest() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpTitleMetadataIntGetInfo() {
+int APS5_VABI sceNpTitleMetadataIntGetInfo(std::uint32_t argument1, void* argument2, void* argument3) {
+    if (argument2 == nullptr || argument3 == nullptr) return TitleMetadataInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -705,7 +730,12 @@ int APS5_VABI sceNpLookupAbortRequest(int reqId) {
 }
 
 int APS5_VABI sceNpLookupCreateAsyncRequest(int titleCtxId, const std::uint64_t* param) {
-    if (!param || *param != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!param) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::uint64_t value = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, param, sizeof(value));
+    errno = savedErrno;
+    if (!copied || value != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return CreateRequest(lookup, titleCtxId, true);
 }
 
@@ -755,7 +785,12 @@ int APS5_VABI sceNpWordFilterCensorComment(int reqId, const char* comment, void*
 }
 
 int APS5_VABI sceNpWordFilterCreateAsyncRequest(int titleCtxId, const std::uint64_t* param) {
-    if (!param || *param != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!param) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::uint64_t value = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, param, sizeof(value));
+    errno = savedErrno;
+    if (!copied || value != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return CreateRequest(wordFilter, titleCtxId, true);
 }
 

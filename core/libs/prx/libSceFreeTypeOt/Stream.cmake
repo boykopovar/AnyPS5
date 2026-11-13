@@ -10,7 +10,8 @@ if(BUILD_TESTING)
     endif()
     configure_windows_unwind(guest_freetype_stream_tests)
     add_custom_target(guest_freetype_stream_libraries DEPENDS
-        libSceFreeTypeOt ${PATCHED_DIR}/libSceFreeTypeOt.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+        libSceFreeTypeOt ${PATCHED_DIR}/libSceFreeTypeOt.prx ${PATCHED_DIR}/libSceFreeType.prx
+        ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
     add_dependencies(guest_freetype_stream_tests guest_freetype_stream_libraries)
     add_test(NAME guest_freetype_stream COMMAND guest_freetype_stream_tests $<TARGET_FILE:libSceFreeTypeOt> raw)
     add_test(NAME guest_freetype_stream_patched COMMAND guest_freetype_stream_tests ${PATCHED_DIR}/libSceFreeTypeOt.prx patched)

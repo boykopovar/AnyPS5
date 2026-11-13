@@ -1461,7 +1461,7 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
 #else
         constexpr bool owned = false;
 #endif
-        if (owned) copy.buffer = recorder->ReusableOwnedDrawInput(address, bytes, use, &copy.derived);
+        if (owned && recorder->OwnedDrawInputEntries() != 0) copy.buffer = recorder->ReusableOwnedDrawInput(address, bytes, use, &copy.derived);
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;
@@ -1828,7 +1828,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             Require(draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - lastVertex, "auto draw vertex range overflow");
             expand([](std::uint32_t idx) { return idx; });
         }
-        inputs.maxIndex = maxIdx + draw.firstVertex;
+        inputs.maxIndex = draw.indexed ? maxIdx : maxIdx + draw.firstVertex;
         Require(inputs.maxIndex <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
         inputs.indexHandle = indexCopy->Handle();
         inputs.indexOffset = 0;
@@ -2036,6 +2036,7 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
         resident = lookup();
         if (resident != nullptr) materializeRegisterClear(context, color, *resident);
     } catch (const std::exception& error) {
+        resident = nullptr;
         static AgcDriver::Mutex reportMutex;
         static std::set<std::uint64_t> reported;
         std::lock_guard lock(reportMutex);
@@ -2862,7 +2863,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const auto commands = start.commands;
     if (!continued) {
         recorder->PrepareSampleSlot();
-        PerformanceTrace::Count(PerformanceTrace::RenderPassScope);
+        PerformanceTrace::Amount(PerformanceTrace::RenderPassScope, 1);
     }
     if (capture) captureInputs(context, *recorder, commands, resources, drawBindings, record.targets.empty() || record.targets.front() == nullptr ? 0 : record.targets.front()->Descriptor().baseAddress);
     // The draw's [gputime] class range: from its first barrier to the pass's trailing barrier (a
@@ -3925,6 +3926,8 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         }
         imageBarrier(context, commands, binding.target->Image(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
         context.Resolved(&DeviceFunctions::cmdCopyBufferToImage, "vkCmdCopyBufferToImage")(commands, linear, binding.target->Image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        PerformanceTrace::Amount("Graphics.Copy", 1);
+        PerformanceTrace::Amount("Graphics.Copy.bytes", binding.original.size());
         imageBarrier(context, commands, binding.target->Image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
     }
     std::vector<std::shared_ptr<void>> reorderKept;
@@ -4005,6 +4008,8 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         reuse.size = VK_WHOLE_SIZE;
         context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &reuse, 0, nullptr);
         context.Resolved(&DeviceFunctions::cmdCopyImageToBuffer, "vkCmdCopyImageToBuffer")(commands, binding.target->Image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, linear, 1, &copy);
+        PerformanceTrace::Amount("Graphics.Copy", 1);
+        PerformanceTrace::Amount("Graphics.Copy.bytes", binding.original.size());
         if (binding.gpuTiling) {
             memoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
             if (dumpLimit > 0) {
@@ -4266,7 +4271,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         auto stored = recipe.targets[index].lock();
         if (stored == nullptr || !StorageImageCached(context, stored.get()) || !StorageImageServesKeys(*stored, SurfaceForTarget(state.colors[index]).dccAddress)) return miss(DrawRecipeMiss::TargetGone);
         auto resident = refreshResidentTarget(context, state, state.colors[index], outcome, profile, [&] {
-            if (state.colors[index].arrayLastSlice != 0) stored->RefreshLayers(state.colors[index].arraySlice, 1);
+            if (state.colors[index].arrayLastSlice != 0) stored->RefreshLayers(state.colors[index].arraySlice, state.colors[index].layers);
             else stored->Refresh();
             return stored;
         });
