@@ -1080,6 +1080,16 @@ struct NanSpeculationCounterSite {
 [[nodiscard]] bool NanSpeculationSuppressed(std::uint64_t address);
 bool SuppressNanSpeculation(std::uint64_t address);
 [[nodiscard]] std::uint32_t NanSpeculationFallbacks();
+constexpr std::uint32_t NanSpeculationStageCount = 8u;
+struct NanSpeculationStageStats {
+    std::uint32_t programs = 0;
+    std::uint32_t speculated = 0;
+    std::uint32_t declined = 0;
+    std::uint32_t fellBack = 0;
+};
+void NoteNanSpeculationProgram(std::uint32_t stage, bool speculated, bool declined);
+void NoteNanSpeculationFallback(std::uint32_t stage);
+[[nodiscard]] NanSpeculationStageStats NanSpeculationStats(std::uint32_t stage);
 
 class NanSpeculationRetry : public std::runtime_error {
 public:

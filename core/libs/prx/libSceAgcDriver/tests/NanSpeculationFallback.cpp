@@ -128,6 +128,8 @@ int main() {
         if (NanSpeculationFallbacks() != 1u || !NanSpeculationSuppressed(Failing)) return fail("a failing compile did not turn the speculation off for its program");
         if (NanSpeculationSuppressed(Other)) return fail("the fallback turned the speculation off for another program");
         if (SuppressNanSpeculation(Failing)) return fail("the same program was suppressed twice");
+        if (NanSpeculationStats(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Compute)).fellBack != 1u) return fail("the fallback was not counted for its stage");
+        if (NanSpeculationStats(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Vertex)).fellBack != 0u) return fail("the fallback was counted for another stage");
         if (Translated(ShaderStageKind::Compute, {AddF32}, Failing).fastOps != 0u) return fail("a suppressed program was still speculated");
         if (Translated(ShaderStageKind::Compute, {AddF32}, Other).fastOps != 1u) return fail("a program that did not fail lost its speculation");
         RecompileCacheKey::Build(request, failingKey);

@@ -274,6 +274,8 @@ function(add_shader_recompiler target runtimeTarget)
             NanSpeculation
             NanSpeculationCounterSites
             NanSpeculationRetry
+            NanSpeculationStageCount
+            NanSpeculationStats
             NativeCachePath_nid_no_patch
             ImageTableAbi::PoisonCode
             ImageTableAbi::PoisonReasonName

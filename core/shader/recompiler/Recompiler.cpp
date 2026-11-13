@@ -374,6 +374,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
 
     if (NanSpeculation().enabled) {
         const auto& metadata = program.Metadata();
+        NoteNanSpeculationProgram(static_cast<std::uint32_t>(request.shader.stage), metadata.nanSpeculationKept != 0u, metadata.nanSpeculationDeclines != 0u);
         std::fprintf(stderr, "[recompile] nan speculation 0x%llx stage=%d candidates=%u speculated=%u clean=%u declined=%u checks_pruned=%u f32_fast_ops=%u f32_repaired_ops=%u\n", static_cast<unsigned long long>(request.shader.codeAddress), static_cast<int>(stageKind), metadata.nanSpeculationCandidates, metadata.nanSpeculationKept, metadata.nanSpeculationClean, metadata.nanSpeculationDeclines, metadata.nanSpeculationPrunedChecks, metadata.nanSpeculationFastOps, metadata.nanSpeculationRepairedOps);
     }
 
@@ -2344,6 +2345,7 @@ auto withNanSpeculationFallback(const RecompileRequest& request, Impl&& impl) ->
         throw;
     } catch (const std::exception& error) {
         if (!SuppressNanSpeculation(request.shader.codeAddress)) throw;
+        NoteNanSpeculationFallback(static_cast<std::uint32_t>(request.shader.stage));
         const std::string_view reason(error.what());
         std::fprintf(stderr, "[recompile] nan speculation failed for 0x%llx (%u programs fell back): %.200s; recompiling without it\n", static_cast<unsigned long long>(request.shader.codeAddress), NanSpeculationFallbacks(), std::string(reason.substr(0u, reason.find('\n'))).c_str());
         return impl();
@@ -2363,6 +2365,7 @@ auto retryWithoutNanSpeculation(const RecompileRequest& request, Impl&& impl) ->
         throw;
     } catch (const std::exception& error) {
         if (!SuppressNanSpeculation(request.shader.codeAddress)) throw;
+        NoteNanSpeculationFallback(static_cast<std::uint32_t>(request.shader.stage));
         const std::string_view reason(error.what());
         const std::string text(reason.substr(0u, reason.find('\n')));
         std::fprintf(stderr, "[recompile] nan speculation failed for 0x%llx (%u programs fell back): %.200s; preparing again without it\n", static_cast<unsigned long long>(request.shader.codeAddress), NanSpeculationFallbacks(), text.c_str());

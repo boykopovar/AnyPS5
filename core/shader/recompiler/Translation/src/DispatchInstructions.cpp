@@ -200,6 +200,32 @@ std::vector<std::uint64_t>& SuppressedAddresses() {
 
 }
 
+namespace {
+
+std::array<std::array<std::atomic<std::uint32_t>, 4>, NanSpeculationStageCount>& StageStats() {
+    static std::array<std::array<std::atomic<std::uint32_t>, 4>, NanSpeculationStageCount> stats{};
+    return stats;
+}
+
+}
+
+void NoteNanSpeculationProgram(std::uint32_t stage, bool speculated, bool declined) {
+    if (stage >= NanSpeculationStageCount) return;
+    StageStats()[stage][0].fetch_add(1u, std::memory_order_relaxed);
+    if (speculated) StageStats()[stage][1].fetch_add(1u, std::memory_order_relaxed);
+    if (declined) StageStats()[stage][2].fetch_add(1u, std::memory_order_relaxed);
+}
+
+void NoteNanSpeculationFallback(std::uint32_t stage) {
+    if (stage < NanSpeculationStageCount) StageStats()[stage][3].fetch_add(1u, std::memory_order_relaxed);
+}
+
+NanSpeculationStageStats NanSpeculationStats(std::uint32_t stage) {
+    if (stage >= NanSpeculationStageCount) return {};
+    const auto& row = StageStats()[stage];
+    return {row[0].load(std::memory_order_relaxed), row[1].load(std::memory_order_relaxed), row[2].load(std::memory_order_relaxed), row[3].load(std::memory_order_relaxed)};
+}
+
 bool NanSpeculationSuppressed(std::uint64_t address) {
     if (SuppressedCount().load(std::memory_order_acquire) == 0u) return false;
     const std::lock_guard lock(CounterMutex());
