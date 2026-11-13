@@ -248,6 +248,12 @@ std::int32_t APS5_VABI _ZNK6icu_687UVector7indexOfEPvi_nid_postfix(const Vector*
     return Find(Require(self), Element{key}, start, 1);
 }
 
+std::int32_t APS5_VABI _ZNK6icu_687UVector7indexOfEii_nid_postfix(const Vector* self, std::int32_t key, std::int32_t start) {
+    Element element{nullptr};
+    element.integer = key;
+    return Find(Require(self), element, start, 2);
+}
+
 std::int8_t APS5_VABI _ZN6icu_687UVectoreqERKS0__nid_postfix(Vector* self, const Vector* other) {
     const auto& vector = Require(self);
     const auto& source = Require(other);
@@ -381,6 +387,12 @@ void APS5_VABI _ZN6icu_687UVector12sortedInsertE8UElementPFaS1_S1_ER10UErrorCode
 
 void APS5_VABI _ZN6icu_687UVector12sortedInsertEPvPFa8UElementS2_ER10UErrorCode_nid_postfix(Vector* self, void* value, ElementComparator compare, std::int32_t* status) {
     SortedInsert(Require(self), Element{value}, compare, Require(status));
+}
+
+void APS5_VABI _ZN6icu_687UVector12sortedInsertEiPFa8UElementS1_ER10UErrorCode_nid_postfix(Vector* self, std::int32_t value, ElementComparator compare, std::int32_t* status) {
+    Element element{nullptr};
+    element.integer = value;
+    SortedInsert(Require(self), element, compare, Require(status));
 }
 
 void APS5_VABI _ZN6icu_687UVector5sortiER10UErrorCode_nid_postfix(Vector* self, std::int32_t* status) {

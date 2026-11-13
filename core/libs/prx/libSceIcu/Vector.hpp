@@ -58,6 +58,7 @@ void* APS5_VABI _ZNK6icu_687UVector9elementAtEi_nid_postfix(const Icu::Abi::Vect
 std::int32_t APS5_VABI _ZNK6icu_687UVector10elementAtiEi_nid_postfix(const Icu::Abi::Vector* self, std::int32_t index);
 std::int32_t APS5_VABI _ZNK6icu_687UVector7indexOfE8UElementia_nid_postfix(const Icu::Abi::Vector* self, Icu::Abi::Element key, std::int32_t start, std::int8_t hint);
 std::int32_t APS5_VABI _ZNK6icu_687UVector7indexOfEPvi_nid_postfix(const Icu::Abi::Vector* self, void* key, std::int32_t start);
+std::int32_t APS5_VABI _ZNK6icu_687UVector7indexOfEii_nid_postfix(const Icu::Abi::Vector* self, std::int32_t key, std::int32_t start);
 std::int8_t APS5_VABI _ZN6icu_687UVectoreqERKS0__nid_postfix(Icu::Abi::Vector* self, const Icu::Abi::Vector* other);
 std::int8_t APS5_VABI _ZNK6icu_687UVector6equalsERKS0__nid_postfix(const Icu::Abi::Vector* self, const Icu::Abi::Vector* other);
 std::int8_t APS5_VABI _ZNK6icu_687UVector11containsAllERKS0__nid_postfix(const Icu::Abi::Vector* self, const Icu::Abi::Vector* other);
@@ -75,6 +76,7 @@ Icu::Abi::ElementDeleter APS5_VABI _ZN6icu_687UVector10setDeleterEPFvPvE_nid_pos
 Icu::Abi::ElementsEqual APS5_VABI _ZN6icu_687UVector11setComparerEPFa8UElementS1_E_nid_postfix(Icu::Abi::Vector* self, Icu::Abi::ElementsEqual comparer);
 void APS5_VABI _ZN6icu_687UVector12sortedInsertE8UElementPFaS1_S1_ER10UErrorCode_nid_postfix(Icu::Abi::Vector* self, Icu::Abi::Element value, Icu::Abi::ElementComparator compare, std::int32_t* status);
 void APS5_VABI _ZN6icu_687UVector12sortedInsertEPvPFa8UElementS2_ER10UErrorCode_nid_postfix(Icu::Abi::Vector* self, void* value, Icu::Abi::ElementComparator compare, std::int32_t* status);
+void APS5_VABI _ZN6icu_687UVector12sortedInsertEiPFa8UElementS1_ER10UErrorCode_nid_postfix(Icu::Abi::Vector* self, std::int32_t value, Icu::Abi::ElementComparator compare, std::int32_t* status);
 void APS5_VABI _ZN6icu_687UVector5sortiER10UErrorCode_nid_postfix(Icu::Abi::Vector* self, std::int32_t* status);
 void APS5_VABI _ZN6icu_687UVector4sortEPFa8UElementS1_ER10UErrorCode_nid_postfix(Icu::Abi::Vector* self, Icu::Abi::ElementComparator compare, std::int32_t* status);
 void APS5_VABI _ZN6icu_687UVector19sortWithUComparatorEPFiPKvS2_S2_ES2_R10UErrorCode_nid_postfix(Icu::Abi::Vector* self, Icu::Abi::ArrayComparator compare, const void* context, std::int32_t* status);
