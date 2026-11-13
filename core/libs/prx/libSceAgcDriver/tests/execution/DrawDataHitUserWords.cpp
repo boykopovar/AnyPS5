@@ -1,4 +1,6 @@
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -258,6 +260,27 @@ void DirectBufferBaseMovesWithItsPayload() {
     Require(after.dataStagesCompiled - before.dataStagesCompiled >= 1, "a draw whose descriptor base moved reused the pixel stage built for the old base: the rebuild this test documents is gone, flip it to a reuse check (" + Counts(after) + ", before: " + Counts(before) + ")");
 }
 
+void TablesAreKeptOnlyWithTheSwitch(bool expectKept) {
+    Registered(VertexHeader, TriangleVertexCode.data(), sizeof(TriangleVertexCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    auto* table = GuestBlock();
+    auto* data = GuestBlock();
+    data[0] = std::bit_cast<std::uint32_t>(0.25f);
+    const auto address = reinterpret_cast<std::uintptr_t>(data);
+    table[0] = static_cast<std::uint32_t>(address);
+    table[1] = static_cast<std::uint32_t>(address >> 32u) & 0xffffu;
+    table[2] = 16;
+    table[3] = 0x3004bfacu;
+    const auto before = AgcDriver::ShaderMemory::TablesKept();
+    auto commands = Setup(true, PixelCode.data(), 3);
+    PixelUserData(commands, table, 0x11);
+    Append(commands, 0x2d, {3, 2});
+    Submit(std::move(commands));
+    const auto kept = AgcDriver::ShaderMemory::TablesKept() - before;
+    if (expectKept) Require(kept != 0, "a draw handed to the finisher with the table snapshot switch set kept no user-data table");
+    else Require(kept == 0, "a draw kept " + std::to_string(kept) + " user-data tables with the table snapshot switch off");
+}
+
 }
 
 int main() {
@@ -273,6 +296,7 @@ int main() {
         UnreadUserWordsKeepTheStage(verify);
         ReadUserWordsChangeTheOutput();
         DirectBufferBaseMovesWithItsPayload();
+        if (AgcDriver::DriverDetail::DrawFinisher::Enabled() && !verify) TablesAreKeptOnlyWithTheSwitch(std::getenv("APS5_DRAW_TABLE_SNAPSHOT") != nullptr);
         AgcDriverShutdown_nid_postfix();
         std::cout << "Data-only hits " << (verify ? "verified" : "reused") << " the stages whose read user words did not change\n";
         return 0;

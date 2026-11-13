@@ -61,6 +61,9 @@ public:
     static void SetWaitedMsProvider(WaitedMsProvider provider);
     explicit ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> initial, PendingWriteQuery pendingWrite = nullptr, PendingWriteObserver observe = nullptr, HookWaitCounter hookWaits = nullptr, PendingWriteQuery pendingSpan = nullptr);
     ~ShaderMemory();
+    static constexpr std::size_t KeepBytes = 256;
+    bool KeepTable(std::uint64_t address);
+    static std::uint64_t TablesKept();
     ShaderMemory(const ShaderMemory&) = delete;
     ShaderMemory& operator=(const ShaderMemory&) = delete;
     // Returns what the capture resolved (plan, snapshot, specialization) for
@@ -128,6 +131,7 @@ private:
         WordMask raw;
         WordMask read;
         WordMask recent;
+        WordMask kept;
         bool wordwise = false;
         bool lazy = false;
         std::uint64_t backing = 0;
@@ -164,6 +168,7 @@ private:
     // the caller keeps them alive for as long as the capture is used.
     std::vector<std::pair<std::uint64_t, std::span<const std::byte>>> initial;
     std::vector<std::pair<std::uint64_t, Page*>> pages;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> keptRanges;
     std::uint64_t lastBase = ~std::uint64_t{0};
     Page* lastPage = nullptr;
     std::vector<Supplied> supplied;
