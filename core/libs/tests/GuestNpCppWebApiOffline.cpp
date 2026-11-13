@@ -539,7 +539,7 @@ static void TestSmallInstantiations() {
 }
 
 int main() {
-    TestLeaderboardEntryAccessors();
+    for (int iter = 0; iter < 2; ++iter) TestLeaderboardEntryAccessors();
     TestSessionManagerRemaining();
     TestSmallInstantiations();
     TestParameterLifecycles();
