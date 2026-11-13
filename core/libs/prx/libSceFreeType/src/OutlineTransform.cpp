@@ -64,8 +64,17 @@ void APS5_VABI FT_Outline_Transform_nid_postfix(const GuestOutline* outline, con
     NativeOutline native(*outline, __func__);
     const FT_Matrix host{HostCoordinate(matrix->xx, __func__), HostCoordinate(matrix->xy, __func__), HostCoordinate(matrix->yx, __func__),
                          HostCoordinate(matrix->yy, __func__)};
-    FT_Outline_Transform(&native.outline, &host);
-    native.Publish(*const_cast<GuestOutline*>(outline));
+    if constexpr (sizeof(FT_Pos) < sizeof(std::int64_t)) {
+        const GuestMatrix transform{host.xx, host.xy, host.yx, host.yy};
+        for (std::size_t index = 0; index < native.points.size(); ++index) {
+            GuestVector point{native.points[index].x, native.points[index].y};
+            FT_Vector_Transform_nid_postfix(&point, &transform);
+            outline->points[index] = point;
+        }
+    } else {
+        FT_Outline_Transform(&native.outline, &host);
+        native.Publish(*const_cast<GuestOutline*>(outline));
+    }
 }
 
 }
