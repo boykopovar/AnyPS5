@@ -13,6 +13,7 @@
 #include "prx/libSceSsl/SslTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SslCertificateFixture.hpp"
+#include "ProcessParametersFixture.hpp"
 
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
@@ -39,6 +40,7 @@ namespace {
 constexpr int ParallelConnections = 4;
 constexpr int ErrorInvalidId = static_cast<int>(0x8095f006);
 constexpr int ErrorInvalidValue = static_cast<int>(0x8095f007);
+constexpr int ErrorInvalidCert = static_cast<int>(0x8095f00a);
 constexpr int ErrorCnCheck = static_cast<int>(0x8095f00b);
 constexpr int ErrorUnknownCa = static_cast<int>(0x8095f00c);
 constexpr int ErrorNotAfterCheck = static_cast<int>(0x8095f00d);
@@ -378,6 +380,22 @@ struct Sockets {
     int Close(int descriptor) const { return net ? sceNetSocketClose(descriptor) : close_nid_postfix(descriptor); }
 };
 
+struct SslError {
+    int error = 0;
+    std::uint32_t detail = 0;
+    bool operator==(const SslError&) const = default;
+};
+
+SslError LastError(int connection) {
+    SslError result{1, 1};
+    Require(sceSslGetSslError(connection, &result.error, &result.detail) == 0, "read the connection's SSL error");
+    return result;
+}
+
+std::array<std::byte, 64> processParameters{};
+
+void SetSdkVersion(std::uint32_t version) { std::memcpy(processParameters.data() + 16, &version, sizeof(version)); }
+
 std::size_t InUse(int context) {
     SceSsl::MemoryPoolStats stats{};
     Require(sceSslGetMemoryPoolStats(context, &stats) == 0, "read pool statistics");
@@ -391,17 +409,18 @@ int main(int argc, char** argv) {
 #ifndef _WIN32
     std::signal(SIGPIPE, SIG_IGN);
 #endif
+    const std::uint64_t processSize = processParameters.size();
+    const std::uint32_t processMagic = 0x4942524f;
+    std::memcpy(processParameters.data(), &processSize, sizeof(processSize));
+    std::memcpy(processParameters.data() + 8, &processMagic, sizeof(processMagic));
+    SetSdkVersion(0x09000000);
+    Require(ProcessParametersFixture::Install(processParameters.data(), processParameters.size()), "install the process parameters");
     const Sockets sockets{std::strcmp(argv[1], "net") == 0};
     if (sockets.net) Require(sceNetInit_nid_postfix() == 0, "initialize libSceNet");
     Server server;
     std::thread serving([&] {
-        server.Serve(Serve::Close, false);
-        server.Serve(Serve::Close, false);
-        server.Serve(Serve::Close, false);
-        server.Serve(Serve::Close);
-        server.Serve(Serve::Close);
-        server.Serve(Serve::Close);
-        server.Serve(Serve::Close);
+        for (int index = 0; index < 4; ++index) server.Serve(Serve::Close, false);
+        for (int index = 0; index < 6; ++index) server.Serve(Serve::Close);
         server.Serve(Serve::Exchange);
         server.Serve(Serve::Exchange);
         server.Serve(Serve::Drop);
@@ -428,6 +447,7 @@ int main(int argc, char** argv) {
     const int untrusted = sceSslCreateConnection(empty, untrustedSocket, "localhost");
     Require(sceSslConnect(untrusted) == ErrorUnknownCa, "a server certificate without a loaded CA passed the initial verify options");
     Require(sceSslConnect(untrusted) == ErrorUnknownCa, "a second connect did not repeat the verification result");
+    Require(LastError(untrusted) == SslError{ErrorInvalidCert, KnownCaCheck}, "an unknown CA was not recorded as the connection's SSL error");
     std::array<char, 16> scratch{};
     Require(Throws([&] { sceSslRead(untrusted, scratch.data(), 1, 0); }), "a connection that failed verification was readable");
     Require(sceSslClose(untrusted) == 0, "close a connection that failed verification");
@@ -439,6 +459,11 @@ int main(int argc, char** argv) {
         && sceSslSetMinSslVersion(untrusted, VersionTls12) == ErrorInvalidId && sceSslSetVerifyCallback(untrusted, nullptr, nullptr) == ErrorInvalidId
         && sceSslReuseConnection(untrusted, untrustedSocket) == ErrorInvalidId,
         "a deleted connection did not report an invalid id");
+    SslError untouched{7, 7};
+    Require(sceSslGetSslError(untrusted, &untouched.error, &untouched.detail) == ErrorInvalidId && untouched == SslError{7, 7}
+        && sceSslGetSslError(0, &untouched.error, &untouched.detail) == ErrorInvalidId, "the SSL error of a deleted connection or id 0 was read");
+    Require(sceSslGetSslError(untrusted, nullptr, &untouched.detail) == ErrorInvalidValue && sceSslGetSslError(untrusted, &untouched.error, nullptr) == ErrorInvalidValue,
+        "a null SSL error output was accepted");
     std::uint8_t pending = 0;
     Require(sceSslCheckRecvPending(untrusted, &pending) == ErrorInvalidId && pending == 1,
         "a pending check of a deleted connection did not store 1 before reporting the invalid id");
@@ -465,7 +490,13 @@ int main(int argc, char** argv) {
     Require(accepting.count == 1 && accepting.commonName == "commonName=localhost", "the verify callback did not receive the peer chain");
     Require(sceSslConnect(accepted) == 0 && accepting.calls == 1, "a second connect after an accepted callback ran the callback again");
     Require(sceSslRead(accepted, scratch.data(), scratch.size(), 0) == 0, "an accepted connection was not readable");
+    Require(LastError(accepted) == SslError{0, KnownCaCheck}, "a failure the callback accepted was not recorded as detail only");
     Require(sceSslDeleteConnection(accepted) == 0 && sockets.Close(acceptedSocket) == 0, "release the accepted connection");
+    const int bothSocket = sockets.Open(server.port);
+    const int both = sceSslCreateConnection(empty, bothSocket, "example.com");
+    Require(sceSslConnect(both) == ErrorCnCheck, "an unknown CA took precedence over the host name check");
+    Require(LastError(both) == SslError{ErrorInvalidCert, KnownCaCheck | CnCheck}, "both failed checks were not recorded");
+    Require(sceSslDeleteConnection(both) == 0 && sockets.Close(bothSocket) == 0, "release the connection that failed both checks");
     Require(Throws([&] { sceSslGetSubjectName(empty, accepting.leaf); }), "a peer certificate handle outlived its connection");
     Require(sceSslTerm_nid_postfix(empty) == 0, "release the context without CA");
     Require(sceSslTerm_nid_postfix(empty) == ErrorInvalidId, "a second context termination did not report an invalid id");
@@ -490,8 +521,11 @@ int main(int argc, char** argv) {
 
     const int mismatchSocket = sockets.Open(server.port);
     const int mismatch = sceSslCreateConnection(context, mismatchSocket, "example.com");
+    Require(LastError(mismatch) == SslError{}, "a new connection had an SSL error");
+    Require(sceSslGetSslError(mismatch, reinterpret_cast<int*>(0x10), &untouched.detail) == ErrorInvalidValue, "an unwritable SSL error output was accepted");
     Require(sceSslConnect(mismatch) == ErrorCnCheck, "a certificate for another host passed the host name check");
     Require(sceSslConnect(mismatch) == ErrorCnCheck, "a second connect did not repeat the host name result");
+    Require(LastError(mismatch) == SslError{ErrorInvalidCert, CnCheck}, "a host name mismatch was not recorded");
     Require(Throws([&] { sceSslRead(mismatch, root.data(), 1, 0); }), "a failed verification left the connection usable");
     Require(sceSslReuseConnection(mismatch, mismatchSocket) == 0, "a connection that failed verification was not reused");
     Require(sceSslDeleteConnection(mismatch) == 0 && sockets.Close(mismatchSocket) == 0, "release the mismatched connection");
@@ -511,8 +545,24 @@ int main(int argc, char** argv) {
     Require(sceSslConnect(rejected) == ErrorCallbackCheck && rejecting.calls == 2, "a second connect did not run the callback again");
     Require(sceSslRead(rejected, scratch.data(), 1, 0) == ErrorCallbackCheck && rejecting.calls == 3, "a read after the rejection did not run the callback again");
     Require(sceSslWrite(rejected, scratch.data(), 1, 0) == ErrorCallbackCheck && rejecting.calls == 4, "a write after the rejection did not run the callback again");
+    Require(LastError(rejected) == SslError{ErrorInvalidCert, 0}, "a callback rejection was not recorded");
     Require(sceSslClose(rejected) == 0, "close the rejected connection");
     Require(sceSslDeleteConnection(rejected) == 0 && sockets.Close(rejectedSocket) == 0, "release the rejected connection");
+
+    CallbackRecord custom{context, -5};
+    const int customSocket = sockets.Open(server.port);
+    const int customRejected = sceSslCreateConnection(context, customSocket, "localhost");
+    Require(sceSslSetVerifyCallback(customRejected, RecordingCallback, &custom) == 0, "set the callback returning -5");
+    Require(sceSslConnect(customRejected) == -5 && LastError(customRejected) == SslError{}, "a callback result other than -1 was not returned as it is");
+    Require(sceSslDeleteConnection(customRejected) == 0 && sockets.Close(customSocket) == 0, "release the connection with the -5 callback");
+    SetSdkVersion(0x07400000);
+    CallbackRecord older{context, -1};
+    const int olderSocket = sockets.Open(server.port);
+    const int olderRejected = sceSslCreateConnection(context, olderSocket, "localhost");
+    Require(sceSslSetVerifyCallback(olderRejected, RecordingCallback, &older) == 0, "set the callback of the older title");
+    Require(sceSslConnect(olderRejected) == -1 && LastError(olderRejected) == SslError{}, "a -1 from a title built before SDK 7.50 was not returned as it is");
+    Require(sceSslDeleteConnection(olderRejected) == 0 && sockets.Close(olderSocket) == 0, "release the older title's connection");
+    SetSdkVersion(0x09000000);
 
     const int earlySocket = sockets.Open(server.port);
     const int early = sceSslCreateConnection(context, earlySocket, "localhost");
@@ -669,11 +719,13 @@ int main(int argc, char** argv) {
     Require(sceSslGetAlpnSelected(reused) == nullptr, "the old handshake's protocol was reported after the reuse");
     Require(sceSslReuseConnection(reused, secondSocket) == 0, "a second reuse before the handshake failed");
     Require(sceSslConnect(reused) == 0 && server.resumed == resumedBefore, "a second reuse without a handshake in between kept the saved session");
+    Require(resuming.calls == 1, "the verify callback ran again after it had accepted a chain that passed");
     Require(exchange(reused), "exchange over the second socket");
     const int thirdSocket = sockets.Open(server.port);
     Require(sceSslReuseConnection(reused, thirdSocket) == 0, "reuse the session on a third socket");
     Require(sceSslConnect(reused) == 0 && server.resumed == resumedBefore + 1, "the server did not resume the saved session");
-    Require(resuming.calls == 2, "the verify callback ran on a resumed handshake");
+    Require(resuming.calls == 1, "the verify callback ran on a resumed handshake");
+    Require(LastError(reused) == SslError{}, "a verified connection had an SSL error");
     selected = sceSslGetAlpnSelected(reused);
     Require(selected && std::strcmp(selected, "http/1.1") == 0, "the resumed handshake did not negotiate the protocol");
     Require(exchange(reused), "exchange over the resumed session");
@@ -689,8 +741,10 @@ int main(int argc, char** argv) {
     const int refusedResumed = server.resumed;
     const int retrySocket = sockets.Open(server.port);
     Require(sceSslReuseConnection(refused, retrySocket) == 0, "reuse a connection that failed verification");
+    Require(sceSslDisableVerifyOption(refused, CnCheck) == 0, "disable the host name check after the failure");
     Require(sceSslConnect(refused) == ErrorCnCheck && server.resumed == refusedResumed,
-        "a session that failed verification was resumed instead of verified again");
+        "a session that failed verification was resumed, or its recorded failure was forgotten");
+    Require(LastError(refused) == SslError{ErrorInvalidCert, CnCheck}, "the reused connection's SSL error changed");
     Require(sceSslDeleteConnection(refused) == 0 && sockets.Close(refusedSocket) == 0 && sockets.Close(retrySocket) == 0,
         "release the connection that failed verification");
 

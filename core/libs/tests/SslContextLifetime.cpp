@@ -142,6 +142,7 @@ void InFlightSession() {
     Check(owner->pool.current > 0, "session did not allocate backend state");
     session->verified = true;
     session->verifyResult = ErrorCallbackCheck;
+    session->callbackRejected = true;
     State().connections.at(connection).session = session;
     std::weak_ptr<Session> sessionLifetime = session;
     CallbackState callback;

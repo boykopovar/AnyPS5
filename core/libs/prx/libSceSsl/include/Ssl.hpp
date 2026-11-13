@@ -55,7 +55,7 @@ int APS5_VABI sceSslEnableOption();
 int APS5_VABI sceSslEnableOptionInternal();
 int APS5_VABI sceSslGetNanoSSLModuleId(int sslCtxId, int* moduleId);
 int APS5_VABI sceSslGetPeerCert();
-int APS5_VABI sceSslGetSslError();
+int APS5_VABI sceSslGetSslError(int sslConnectionId, int* errNum, std::uint32_t* detail);
 int APS5_VABI sceSslLoadRootCACert();
 int APS5_VABI sceSslRecv(int sslConnectionId, void* buf, std::size_t fulllen);
 int APS5_VABI sceSslReuseConnection(int sslConnectionId, int sockId);

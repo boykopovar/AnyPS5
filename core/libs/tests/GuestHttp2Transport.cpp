@@ -933,7 +933,7 @@ void SslCallbacks(int trusted) {
             Response(client, 200);
         }
         server.Join();
-        Require(changed.calls == 0 && observed.calls == (mode == 4 || mode == 5 ? 0 : 1), "SSL callback snapshot and invocation count");
+        Require(changed.calls == 0 && observed.calls == (mode == 4 || mode == 5 || mode == 10 ? 0 : 1), "SSL callback snapshot and invocation count");
         if (mode == 1) Require((observed.errors & 0x20) != 0, "untrusted chain flags reported");
         else if (mode == 9) Require((observed.errors & 0x4) != 0, "host-name error reported");
         else Require(observed.errors == 0, "successful or disabled checks report no error");
