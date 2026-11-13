@@ -428,6 +428,7 @@ void CheckBackups() {
     Check(sceSaveDataRestoreBackupData(nullptr) == SaveDataErrorParameter, "restoreBackupData null block is PARAMETER");
     Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorParameter, "restoreBackupData null dir_name is PARAMETER");
     Check(sceSaveDataUmountWithBackup(nullptr) == SaveDataErrorParameter, "umountWithBackup null point is PARAMETER");
+    Check(sceSaveDataUmountWithBackup(reinterpret_cast<const SaveDataMountPoint*>(0x10)) == SaveDataErrorParameter, "umountWithBackup unmapped point is PARAMETER");
     check.dir_name = &fresh;
     restore.dir_name = &fresh;
     Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "checkBackupData without a backup is NOT_FOUND");
@@ -940,6 +941,7 @@ int main() {
     Check(sceSaveDataAbort() == SaveDataErrorNotInitialized, "abort pre-init is NOT_INITIALIZED");
     Check(sceSaveDataClearProgress() == SaveDataErrorNotInitialized, "clearProgress pre-init is NOT_INITIALIZED");
     Check(sceSaveDataTerminate() == SaveDataErrorNotInitialized, "terminate pre-init is NOT_INITIALIZED");
+    Check(sceSaveDataIsMounted() == SaveDataErrorNotInitialized, "isMounted pre-init is NOT_INITIALIZED");
     Check(MountedCountThrows(0, nullptr), "mounted count throws before initialization");
     CheckUnmountedCalls();
     Check(sceSaveDataSyncSaveDataMemory(nullptr) == static_cast<int>(0x809F0000), "null param rejected in memory sync");
