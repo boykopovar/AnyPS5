@@ -1299,10 +1299,6 @@ int APS5_VABI _ZN7WebCore17FrameLoaderClient38shouldForceUniversalAccessFromLoca
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore21PlatformKeyboardEvent23setCurrentModifierStateEN3WTF9OptionSetINS_13PlatformEvent8ModifierEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_7BEhz5YZqec_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6710,10 +6706,6 @@ int APS5_VABI WKWebsiteDataStoreClearAdClickAttributionsThroughWebsiteDataRemova
 }
 
 int APS5_VABI _ZN7WebCore9FrameView26setFixedVisibleContentRectERKNS_7IntRectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore7Process13setIdentifierEN3WTF16ObjectIdentifierINS_21ProcessIdentifierTypeEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -20261,14 +20253,6 @@ int APS5_VABI _ZN7WebCore17PageConsoleClient16takeHeapSnapshotEPN3JSC14JSGlobalO
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore17PageConsoleClient21shouldPrintExceptionsEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore17PageConsoleClient24setShouldPrintExceptionsEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore17PageConsoleClient4muteEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -22105,10 +22089,6 @@ int APS5_VABI _ZN7WebCore21PageOverlayController45copyAccessibilityAttributeStri
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore21PlatformKeyboardEvent23getCurrentModifierStateERbS1_S1_S1_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore21RemoteCommandListener6createERNS_27RemoteCommandListenerClientE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -23318,10 +23298,6 @@ int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager26applicationDidBecomeActi
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager28shouldDeactivateAudioSessionEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager29applicationDidEnterBackgroundEb() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -23331,10 +23307,6 @@ int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager29applicationWillBecomeIna
 }
 
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager30applicationWillEnterForegroundEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager31setShouldDeactivateAudioSessionEb() {
     NotImplemented_nid_no_patch(__func__);
 }
 

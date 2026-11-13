@@ -81,6 +81,7 @@ void APS5_VABI _ZN7WebCore7IntSizeC1ERKNS_9FloatSizeE(WebCore::IntSize* self, co
 void APS5_VABI _ZN7WebCore7IntSizeC2ERKNS_9FloatSizeE(WebCore::IntSize* self, const WebCore::FloatSize& s);
 std::uint64_t APS5_VABI _ZN7WebCore7Process10identifierEv();
 void APS5_VABI _ZN7WebCore7Process13setIdentifierEN3WTF23ObjectIdentifierGenericINS_21ProcessIdentifierTypeENS1_38ObjectIdentifierMainThreadAccessTraitsEEE(std::uint64_t identifier);
+void APS5_VABI _ZN7WebCore7Process13setIdentifierEN3WTF16ObjectIdentifierINS_21ProcessIdentifierTypeEEE(std::uint64_t identifier);
 void APS5_VABI _ZN7WebCore8IntPointC1ERKNS_10FloatPointE(WebCore::IntPoint* self, const WebCore::FloatPoint& p);
 void APS5_VABI _ZN7WebCore8IntPointC2ERKNS_10FloatPointE(WebCore::IntPoint* self, const WebCore::FloatPoint& p);
 void APS5_VABI _ZN7WebCore9FloatRect5scaleEff(WebCore::FloatRect* self, float sx, float sy);
