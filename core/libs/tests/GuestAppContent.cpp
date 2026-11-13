@@ -257,6 +257,9 @@ int main() {
     Require(access_nid_postfix("/temp0/keep.txt", 0) == 0);
     size_t available = 0;
     Require(sceAppContentTemporaryDataGetAvailableSpaceKb(&mountPoint, &available) == 0 && available > 0);
+    errno = 71;
+    Require(sceAppContentTemporaryDataGetAvailableSpaceKb(&mountPoint, reinterpret_cast<size_t*>(0x10)) == ErrorParameter);
+    Require(errno == 71);
     Require(sceAppContentTemporaryDataUnmount(&mountPoint) == 0);
     Require(std::filesystem::exists(backing / "keep.txt"));
     Require(access_nid_postfix("/temp0/keep.txt", 0) == -1 && *__error_nid_postfix() == 2);
