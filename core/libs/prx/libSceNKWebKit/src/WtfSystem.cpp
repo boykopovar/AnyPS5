@@ -2,6 +2,8 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include <stdexcept>
 #ifndef _WIN32
 #include <unistd.h>
@@ -11,6 +13,7 @@
 #include <cstdint>
 #include <limits>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -153,6 +156,68 @@ int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOp
 
 void APS5_VABI _ZN3WTF14FileSystemImpl18unlockAndCloseFileEi(int handle) {
     _ZN3WTF14FileSystemImpl9closeFileERi(handle);
+}
+
+}
+
+namespace {
+constexpr int GuestEintr = 4;
+
+const char* PathData(const NKWebKit::WtfAbi::CString& representation) {
+    if (!representation.buffer) throw std::runtime_error("FileSystemImpl: the path has no UTF-8 representation");
+    return reinterpret_cast<const char*>(representation.buffer + 1);
+}
+
+template<class Operation>
+bool LinkPaths(const NKWebKit::WtfAbi::String& targetPath, const NKWebKit::WtfAbi::String& linkPath, Operation operation) {
+    const auto target = _ZNK3WTF6String4utf8ENS_14ConversionModeE(&targetPath, 0);
+    const auto link = _ZNK3WTF6String4utf8ENS_14ConversionModeE(&linkPath, 0);
+    return operation(PathData(target), PathData(link)) == 0;
+}
+
+int ReadFromFile(int handle, void* data, int length) {
+    do {
+        const auto bytesRead = read_nid_postfix(handle, data, static_cast<std::uint64_t>(length));
+        if (bytesRead >= 0) return static_cast<int>(bytesRead);
+    } while (*__error_nid_postfix() == GuestEintr);
+    return -1;
+}
+
+int WriteToFile(int handle, const void* data, int length) {
+    do {
+        const auto bytesWritten = write_nid_postfix(handle, static_cast<const char*>(data), length);
+        if (bytesWritten >= 0) return static_cast<int>(bytesWritten);
+    } while (*__error_nid_postfix() == GuestEintr);
+    return -1;
+}
+
+struct FileCloser {
+    int handle;
+    ~FileCloser() { _ZN3WTF14FileSystemImpl9closeFileERi(handle); }
+};
+}  // namespace
+
+extern "C" {
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl8hardLinkERKNS_6StringES3_(const NKWebKit::WtfAbi::String& targetPath, const NKWebKit::WtfAbi::String& linkPath) {
+    return LinkPaths(targetPath, linkPath, link_nid_postfix);
+}
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_(const NKWebKit::WtfAbi::String& targetPath, const NKWebKit::WtfAbi::String& symbolicLinkPath) {
+    return LinkPaths(targetPath, symbolicLinkPath, symlink_nid_postfix);
+}
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl30appendFileContentsToFileHandleERKNS_6StringERi(const NKWebKit::WtfAbi::String& path, int& target) {
+    FileCloser source{_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(path, 0, true, false)};
+    if (source.handle == -1) return false;
+    constexpr int bufferSize = 1 << 19;
+    std::vector<unsigned char> buffer(bufferSize);
+    while (true) {
+        const int readBytes = ReadFromFile(source.handle, buffer.data(), bufferSize);
+        if (readBytes < 0) return false;
+        if (WriteToFile(target, buffer.data(), readBytes) != readBytes) return false;
+        if (readBytes < bufferSize) return true;
+    }
 }
 
 }

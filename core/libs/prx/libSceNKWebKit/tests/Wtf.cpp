@@ -562,6 +562,88 @@ static void TestFileHandles() {
     std::filesystem::remove_all(root);
 }
 
+static void TestFileLinks() {
+    const auto open = &_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb;
+    const auto close = &_ZN3WTF14FileSystemImpl9closeFileERi;
+    const auto hardLink = &_ZN3WTF14FileSystemImpl8hardLinkERKNS_6StringES3_;
+    const auto symbolicLink = &_ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_;
+    const auto append = &_ZN3WTF14FileSystemImpl30appendFileContentsToFileHandleERKNS_6StringERi;
+    const auto guest = [](const char* text) { return _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(text)); };
+    const auto root = std::filesystem::current_path() / ("nkwebkit-links-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-links", reinterpret_cast<const char*>(hostPath.c_str()));
+    auto source = guest("/nkwebkit-links/source.bin");
+    auto linked = guest("/nkwebkit-links/linked.bin");
+    auto missing = guest("/nkwebkit-links/missing.bin");
+    NKWebKit::WtfAbi::String nullPath;
+    int handle = open(source, 1, true, false);
+    Require(handle >= 0 && sceKernelWrite(handle, "abcdef", 6) == 6);
+    close(handle);
+    Require(hardLink(source, linked));
+    Require(std::filesystem::equivalent(root / "source.bin", root / "linked.bin"));
+    char bytes[8]{};
+    handle = open(linked, 0, true, false);
+    Require(handle >= 0 && sceKernelRead(handle, bytes, sizeof(bytes)) == 6 && std::memcmp(bytes, "abcdef", 6) == 0);
+    close(handle);
+    Require(!hardLink(source, linked));
+    Require(!hardLink(missing, guest("/nkwebkit-links/other.bin")));
+    Require(!std::filesystem::exists(root / "other.bin"));
+    Require(!hardLink(nullPath, guest("/nkwebkit-links/other.bin")));
+    Require(!hardLink(source, nullPath));
+#ifndef _WIN32
+    Require(symbolicLink(guest("source.bin"), guest("/nkwebkit-links/symbolic.bin")));
+    Require(std::filesystem::is_symlink(std::filesystem::symlink_status(root / "symbolic.bin")));
+    Require(std::filesystem::read_symlink(root / "symbolic.bin") == "source.bin");
+    std::memset(bytes, 0, sizeof(bytes));
+    handle = open(guest("/nkwebkit-links/symbolic.bin"), 0, true, false);
+    Require(handle >= 0 && sceKernelRead(handle, bytes, sizeof(bytes)) == 6 && std::memcmp(bytes, "abcdef", 6) == 0);
+    close(handle);
+    Require(!symbolicLink(guest("linked.bin"), guest("/nkwebkit-links/symbolic.bin")));
+    Require(std::filesystem::read_symlink(root / "symbolic.bin") == "source.bin");
+#endif
+    Require(!symbolicLink(nullPath, guest("/nkwebkit-links/empty.bin")));
+    Require(!symbolicLink(guest("source.bin"), nullPath));
+    Require(!std::filesystem::exists(std::filesystem::symlink_status(root / "empty.bin")));
+    auto target = guest("/nkwebkit-links/target.bin");
+    handle = open(target, 2, true, false);
+    Require(handle >= 0 && sceKernelWrite(handle, "head", 4) == 4);
+    Require(append(source, handle));
+    Require(handle >= 0);
+    Require(!append(missing, handle));
+    std::string large((1 << 19) + 12345, '\0');
+    for (std::size_t i = 0; i < large.size(); ++i) large[i] = static_cast<char>(i * 7 + i / 251);
+    auto largePath = guest("/nkwebkit-links/large.bin");
+    int largeHandle = open(largePath, 1, true, false);
+    Require(largeHandle >= 0 && sceKernelWrite(largeHandle, large.data(), large.size()) == static_cast<std::int64_t>(large.size()));
+    close(largeHandle);
+    Require(append(largePath, handle));
+    std::string exact(1 << 19, 'x');
+    auto exactPath = guest("/nkwebkit-links/exact.bin");
+    largeHandle = open(exactPath, 1, true, false);
+    Require(largeHandle >= 0 && sceKernelWrite(largeHandle, exact.data(), exact.size()) == static_cast<std::int64_t>(exact.size()));
+    close(largeHandle);
+    Require(append(exactPath, handle));
+    close(handle);
+    const std::string expected = "headabcdef" + large + exact;
+    std::string contents(expected.size() + 16, '\0');
+    handle = open(target, 0, true, false);
+    std::size_t total = 0;
+    while (true) {
+        const auto bytesRead = sceKernelRead(handle, contents.data() + total, contents.size() - total);
+        Require(bytesRead >= 0);
+        if (!bytesRead) break;
+        total += static_cast<std::size_t>(bytesRead);
+    }
+    close(handle);
+    Require(total == expected.size() && contents.compare(0, total, expected) == 0);
+    int readOnly = open(source, 0, true, false);
+    Require(!append(source, readOnly));
+    close(readOnly);
+    RemovePathAlias_nid_no_patch("/nkwebkit-links");
+    std::filesystem::remove_all(root);
+}
+
 int main() {
     TestAdditionalWtf();
     TestMemoryAllocations();
@@ -573,6 +655,7 @@ int main() {
     TestJscAndPal();
     TestMappedFiles();
     TestFileHandles();
+    TestFileLinks();
     return 0;
 }
 
