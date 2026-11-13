@@ -1,3 +1,4 @@
+// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WebCore/page/PageConsoleClient.cpp
 /*
  * Copyright (C) 2013-2023 Apple Inc. All rights reserved.
  *
