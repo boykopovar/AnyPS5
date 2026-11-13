@@ -11,7 +11,7 @@
 ### Functional
 
 - [tracker lifecycle and devices](../../../core/libs/prx/libSceVrTracker/Export.cpp) (libSceVrTracker) - `sceVrTrackerQueryMemory`, `sceVrTrackerInit`, `sceVrTrackerTerm`, the three `sceVrTrackerRegisterDevice*` calls, `sceVrTrackerUnregisterDevice`, `sceVrTrackerRecalibrate`, `sceVrTrackerSetDurationUntilStatusNotTracking` and `sceVrTrackerGpuWaitAndCpuProcess` follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/a808e76/src/core/libraries/vr_tracker/vr_tracker.cpp), a PS4 implementation: its struct layouts, memory sizes, argument checks, one handle per device type and `DEVICE_NOT_REGISTERED` for an HMD recalibration. Only the 128-byte init parameter is read; the 144-byte one throws. Unlike shadPS4, the init memory ranges are not looked up, a null init parameter and negative device types are refused. Terminating keeps the registered handles, as there. With no camera there is no GPU submission, so the GPU wait returns `NOT_EXECUTE_GPU_SUBMIT`. Not measured on a PS5
-- [sceVrTrackerQueryMemory](../../../core/libs/prx/libSceVrTracker/Export.cpp) (libSceVrTracker) - returning `ArgumentInvalid` (`0x81260806`) for unreadable `param` or unwritable `result` pointers via `GuestCopyIn_nid_no_patch` and `GuestCopyOut_nid_no_patch` is a host-safety fallback with console behavior unmeasured.
+- [sceVrTrackerQueryMemory and sceVrTrackerInit](../../../core/libs/prx/libSceVrTracker/Export.cpp) (libSceVrTracker) - returning `ArgumentInvalid` (`0x81260806`) for unreadable parameter pointers or unwritable result pointers via `GuestCopyIn_nid_no_patch` and `GuestCopyOut_nid_no_patch` while preserving errno is a host-safety fallback with console behavior unmeasured.
 
 ### Additional callable exports
 
