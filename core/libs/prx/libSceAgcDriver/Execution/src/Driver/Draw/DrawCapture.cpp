@@ -211,7 +211,9 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     stageCapture.capture.reset();
     stageCapture.forgetSerial = GuestMemory::ForgetSerial();
     stageCapture.pushOffset = pushOffset;
-    if (request.target.gpuResolvedImages) {
+    static const bool dumpGraphics = std::getenv("APS5_DUMP_GRAPHICS_SHADERS") != nullptr;
+    const bool captured = dumpGraphics || traceCapSync() || (context.profile && (context.dumpTarget != 0 || context.dumpSlot1 != 0));
+    if (request.target.gpuResolvedImages && !captured) {
         if (materializeHeapDirect(context, i, invocation, request, timing)) return stageCapture.compiled;
     }
     const auto capture = [&] {
@@ -235,7 +237,6 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         if (j < i && context.recompiled[j] && context.stageCaptures[j].direct) context.memory.insert(context.memory.end(), context.stageCaptures[j].regions.begin(), context.stageCaptures[j].regions.end());
     }
     request.context.memory = context.memory;
-    static const bool dumpGraphics = std::getenv("APS5_DUMP_GRAPHICS_SHADERS") != nullptr;
     if (dumpGraphics) static_cast<void>(dumpRequest(program.binary.codeAddress, request));
     if (traceCapSync()) traceCapture("draw-capture", program.binary.codeAddress, context.submission.queue, context.memory, Graphics::Recorder::ThreadWaitedMs() - waitedBefore);
     if (context.profile) {
