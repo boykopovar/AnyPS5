@@ -69,6 +69,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF URL escaping](../../../core/libs/prx/libSceNKWebKit/src/WtfUrlEscape.cpp) has no console ABI or behavior verification. `encodeWithURLEscapeSequences` follows [URL.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URL.cpp#L553) and the user-info encode set in URLParser.cpp at the same revision. Lenient UTF-8 conversion follows StringImpl.cpp: interior unpaired surrogates and lone low surrogates become U+FFFD; a trailing unpaired high surrogate retains its three-byte encoding. Unchanged strings share StringImpl through the existing copy helper; encoded strings use the existing guest allocator. Null accessed storage and overflowing output lengths throw. Closes when: compared with a console module.
 
 ### Functional
+- [WebCore standard cursors](../../../core/libs/prx/libSceNKWebKit/src/Cursor.cpp) (libSceNKWebKit) - the 32-byte [Cursor layout](../../../core/libs/prx/libSceNKWebKit/src/CursorAbi.hpp) is derived from [Cursor.h L162-L174](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/Cursor.h#L162-L174) without `MOUSE_CURSOR_SCALE` and not compared with a console module; `Cursor::fromType` throws for values of 64 and up, whose console result is unknown. `handCursor`, `iBeamCursor` and `fromType` otherwise follow [Cursor.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/Cursor.cpp#L56-L275), with `Custom` and values up to 63 returning the pointer cursor. `pointerCursor` must return `StandardCursor(CursorType::Pointer)` when implemented. Closes when: compared with a console module.
 - [WebCore color space conversions and serialization](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColorSpaces.cpp) (libSceNKWebKit) - not checked against a console module. They follow WebKit c55364d53f97 [ColorConversion.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/ColorConversion.cpp) and [ColorSerialization.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/ColorSerialization.cpp), whose declarations match the exported names. Matrix products are not fused into FMA, so a console build that fuses them may differ in the last bit. The `Color` overloads of `serializationForCSS` and `serializationForRenderTreeAsText` and `Color::colorSpaceAndComponents` still throw: that revision packs `Color` differently from the 11.x packing `WebCoreColor.cpp` decodes.
 - [WKSerializedScriptValue](../../../core/libs/prx/libSceNKWebKit/src/SerializedScriptValue.cpp) (libSceNKWebKit) - `WKSerializedScriptValueCreate` and `WKSerializedScriptValueDeserialize` serialize and deserialize JavaScript values via JSON representation (`JSValueCreateJSONString` and `JSValueMakeFromJSONString`) rather than WebKit's full structured clone algorithm; non-serializable objects (such as functions, symbols and circular structures) fail serialization and report errors through the exception pointer on create, deserialization failures set exception to an Error object if provided, and `undefined`, `NaN`, `+Infinity` and `-Infinity` are preserved through explicit markers.
 - [FloatSize from IntSize constructors](../../../core/libs/prx/libSceNKWebKit/src/FloatSize.cpp) (libSceNKWebKit) - both constructor ABI entry points convert the source width and height to `float`, following the pinned [`FloatSize.h`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatSize.h). This adapter is built and tested on Linux; console ABI and runtime behavior are unverified.
@@ -1728,7 +1729,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore10TreeWalker9lastChildEv` | `D8uS+3LygrY` |
 | `_ZN7WebCore10XLinkNames4initEv` | `vlhN1cAt9VA` |
 | `_ZN7WebCore10XMLNSNames4initEv` | `BoCQ-IBM4I0` |
-| `_ZN7WebCore10handCursorEv` | `WvfpvB7jUig` |
 | `_ZN7WebCore10inSameLineERKNS_15VisiblePositionES2_` | `dxHvXvfXua4` |
 | `_ZN7WebCore10resolveDNSERKN3WTF6StringEmONS0_17CompletionHandlerIFvONSt12experimental15fundamentals_v38expectedINS0_6VectorINS_9IPAddressELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEENS_8DNSErrorEEEEEE` | `wWJyB5whlAk` |
 | `_ZN7WebCore11BidiContext41copyStackRemovingUnicodeEmbeddingContextsEv` | `pugWCMMWZ6w` |
@@ -1949,7 +1949,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore11XPathResult12snapshotItemEj` | `uSCkLIMckMk` |
 | `_ZN7WebCore11XPathResultD1Ev` | `MQKw1ar2Lak` |
 | `_ZN7WebCore11XPathResultD2Ev` | `6GmKgqTuk30` |
-| `_ZN7WebCore11iBeamCursorEv` | `WvLsYBhq6RQ` |
 | `_ZN7WebCore11isEndOfLineERKNS_15VisiblePositionE` | `5bZk93kkE5w` |
 | `_ZN7WebCore11prefetchDNSERKN3WTF6StringE` | `3h1io5JBDcA` |
 | `_ZN7WebCore11startOfLineERKNS_15VisiblePositionE` | `lVxn1IsZyGE` |
@@ -3845,7 +3844,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore5Style5Scope8resolverEv` | `XcEf7b3gYfM` |
 | `_ZN7WebCore6Chrome23enableSuddenTerminationEv` | `mkZZVt6In6c` |
 | `_ZN7WebCore6Chrome24disableSuddenTerminationEv` | `39tjjgU19JY` |
-| `_ZN7WebCore6Cursor8fromTypeENS0_4TypeE` | `8-33e2lOOC8` |
 | `_ZN7WebCore6CursorC1EPNS_5ImageERKNS_8IntPointE` | `m38rIXXKp48` |
 | `_ZN7WebCore6CursorC2EPNS_5ImageERKNS_8IntPointE` | `JAEgKfRXTnY` |
 | `_ZN7WebCore6Editor10applyStyleEPNS_15StylePropertiesENS_10EditActionE` | `uswjVhjstSM` |
