@@ -61,6 +61,8 @@ WebCore::ViewportAttributes APS5_VABI _ZN7WebCore25computeViewportAttributesENS_
 WebCore::FloatRect APS5_VABI _ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE( float aspectRatio, const WebCore::FloatRect& srcRect);
 WebCore::FloatRect APS5_VABI _ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE( float aspectRatio, const WebCore::FloatRect& srcRect);
 void APS5_VABI _ZN7WebCore40restrictMinimumScaleFactorToViewportSizeERNS_18ViewportAttributesENS_7IntSizeEf( WebCore::ViewportAttributes& result, WebCore::IntSize visibleViewport, float devicePixelRatio);
+unsigned int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal30constrainedAttachedWindowWidthEjj(unsigned int preferredWidth, unsigned int totalWindowWidth);
+unsigned int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal31constrainedAttachedWindowHeightEjj(unsigned int preferredHeight, unsigned int totalWindowHeight);
 unsigned int APS5_VABI _ZN7WebCore43initializeMaximumHTTPConnectionCountPerHostEv();
 float APS5_VABI _ZN7WebCore44computeMinimumScaleFactorForContentContainedERKNS_18ViewportAttributesERKNS_7IntSizeES5_( const WebCore::ViewportAttributes& result, const WebCore::IntSize& visibleViewport, const WebCore::IntSize& contentsSize);
 void APS5_VABI _ZN7WebCore50restrictScaleFactorToInitialScaleIfNotUserScalableERNS_18ViewportAttributesE(WebCore::ViewportAttributes& result);
