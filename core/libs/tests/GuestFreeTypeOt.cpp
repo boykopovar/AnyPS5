@@ -1,9 +1,11 @@
+#include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_OUTLINE_H
 #include FT_STROKER_H
 #include FT_TRIGONOMETRY_H
+#include FT_SYNTHESIS_H
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -51,6 +53,68 @@ void Require(bool condition, const char* message) {
     if (condition) return;
     std::fprintf(stderr, "libSceFreeTypeOt: %s\n", message);
     std::exit(1);
+}
+
+struct SynthesisExports {
+    decltype(&FT_Init_FreeType_nid_postfix) init;
+    decltype(&FT_Done_FreeType_nid_postfix) finish;
+    decltype(&FT_Open_Face_nid_postfix) open;
+    decltype(&FT_Set_Pixel_Sizes_nid_postfix) pixelSizes;
+    decltype(&FT_Load_Glyph_nid_postfix) load;
+    decltype(&FT_GlyphSlot_Oblique_nid_postfix) oblique;
+    decltype(&FT_GlyphSlot_Embolden_nid_postfix) embolden;
+    decltype(&FT_Done_Face_nid_postfix) doneFace;
+};
+
+SynthesisExports synthesis;
+
+void Synthesis() {
+    const std::vector<unsigned char> bytes = SquareGlyphFont('A', 700);
+    FreeType::GuestLibrary* library = nullptr;
+    FT_Library native = nullptr;
+    Require(synthesis.init(&library) == 0 && library && FT_Init_FreeType(&native) == 0, "initialize synthesis libraries");
+    FreeType::GuestOpenArgs args{};
+    args.flags = FT_OPEN_MEMORY;
+    args.memory_base = bytes.data();
+    args.memory_size = static_cast<std::int64_t>(bytes.size());
+    FreeType::GuestFaceRec* face = nullptr;
+    Require(synthesis.open(library, nullptr, 0, &face) == FT_Err_Invalid_Argument && face == nullptr, "open face without arguments");
+    Require(synthesis.open(nullptr, &args, 0, &face) == FT_Err_Invalid_Library_Handle && face == nullptr, "open face without library");
+    for (const bool embolden : {false, true}) {
+        Require(synthesis.open(library, &args, 0, &face) == 0 && face && face->glyph, "open memory face");
+        FT_Face oracle = nullptr;
+        Require(FT_New_Memory_Face(native, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &oracle) == 0, "open oracle face");
+        Require(face->num_glyphs == oracle->num_glyphs, "glyph count");
+        Require(synthesis.pixelSizes(face, 18, 18) == 0 && FT_Set_Pixel_Sizes(oracle, 18, 18) == 0, "pixel sizes");
+        Require(synthesis.load(face, 1, FT_LOAD_DEFAULT) == 0 && FT_Load_Glyph(oracle, 1, FT_LOAD_DEFAULT) == 0, "load glyph");
+        Require(oracle->glyph->outline.n_points > 0, "glyph has an outline");
+        std::vector<FT_Vector> before(oracle->glyph->outline.points, oracle->glyph->outline.points + oracle->glyph->outline.n_points);
+        if (embolden) {
+            synthesis.embolden(face->glyph);
+            FT_GlyphSlot_Embolden(oracle->glyph);
+        } else {
+            synthesis.oblique(face->glyph);
+            FT_GlyphSlot_Oblique(oracle->glyph);
+        }
+        const FreeType::GuestGlyphSlotRec& actual = *face->glyph;
+        const FT_GlyphSlot expected = oracle->glyph;
+        Require(actual.advance.x == expected->advance.x && actual.advance.y == expected->advance.y, "synthesized advance");
+        Require(actual.metrics.width == expected->metrics.width && actual.metrics.height == expected->metrics.height, "synthesized metrics");
+        Require(actual.outline.n_points == expected->outline.n_points && actual.outline.n_contours == expected->outline.n_contours, "synthesized outline size");
+        for (int index = 0; index < expected->outline.n_points; ++index) {
+            Require(actual.outline.points[index].x == expected->outline.points[index].x && actual.outline.points[index].y == expected->outline.points[index].y, "synthesized outline points");
+        }
+        bool changed = expected->outline.n_points != static_cast<int>(before.size());
+        for (std::size_t index = 0; !changed && index < before.size(); ++index) {
+            changed = before[index].x != expected->outline.points[index].x || before[index].y != expected->outline.points[index].y;
+        }
+        Require(changed, "synthesis changed the outline");
+        Require(synthesis.doneFace(face) == 0 && FT_Done_Face(oracle) == 0, "release faces");
+        face = nullptr;
+    }
+    synthesis.oblique(nullptr);
+    synthesis.embolden(nullptr);
+    Require(synthesis.finish(library) == 0 && FT_Done_FreeType(native) == 0, "release synthesis libraries");
 }
 
 using Events = std::vector<std::array<std::int64_t, 7>>;
@@ -219,6 +283,22 @@ int main(int argc, char** argv) {
     if (!library) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(library != nullptr, "load requested library");
+#ifdef _WIN32
+    const bool faceForwards = patched;
+#else
+    const bool faceForwards = true;
+#endif
+    if (faceForwards) {
+        Resolve(synthesis.init, library, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");
+        Resolve(synthesis.finish, library, patched, "dH02CpEEcYk", "FT_Done_FreeType_nid_postfix");
+        Resolve(synthesis.open, library, patched, "OeNH41MA2Vs", "FT_Open_Face_nid_postfix");
+        Resolve(synthesis.pixelSizes, library, patched, "lJxMIwj81SQ", "FT_Set_Pixel_Sizes_nid_postfix");
+        Resolve(synthesis.load, library, patched, "M156RuYoUbU", "FT_Load_Glyph_nid_postfix");
+        Resolve(synthesis.oblique, library, patched, "wBKAYO7yEXw", "FT_GlyphSlot_Oblique_nid_postfix");
+        Resolve(synthesis.embolden, library, patched, "73vg+nRH68g", "FT_GlyphSlot_Embolden_nid_postfix");
+        Resolve(synthesis.doneFace, library, patched, "OgFczHko0w8", "FT_Done_Face_nid_postfix");
+        Synthesis();
+    }
     Resolve(ot.sin, library, patched, "L1uHkWTazkI", "FT_Sin_nid_postfix");
     Resolve(ot.tan, library, patched, "dojyaLKzKN0", "FT_Tan_nid_postfix");
     Resolve(ot.vectorUnit, library, patched, "3WpTQrvGUcU", "FT_Vector_Unit_nid_postfix");

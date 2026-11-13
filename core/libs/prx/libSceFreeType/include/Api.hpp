@@ -164,8 +164,6 @@ int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::u
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);
 int APS5_VABI sceFreeTypeOtOutlineDone_nid_no_patch();
 int APS5_VABI sceFreeTypeOtOutlineNew_nid_no_patch();
-int APS5_VABI sceFreeTypeOtGlyphSlotEmbolden_nid_no_patch();
-int APS5_VABI sceFreeTypeOtGlyphSlotOblique_nid_no_patch();
 int APS5_VABI sceFreeTypeOtLibrarySetLcdFilter_nid_no_patch();
 int APS5_VABI sceFreeTypeOtLibrarySetLcdFilterWeights_nid_no_patch();
 void* APS5_VABI FT_Get_Module_nid_postfix(FreeType::GuestLibrary* library, const char* moduleName);
@@ -173,5 +171,4 @@ void* APS5_VABI FT_Get_Renderer_nid_postfix(FreeType::GuestLibrary* library, std
 int APS5_VABI FT_Remove_Module_nid_postfix(FreeType::GuestLibrary* library, void* module);
 void APS5_VABI FT_Add_Default_Modules_nid_postfix(FreeType::GuestLibrary* library);
 int APS5_VABI sceFreeTypeOtRemoveModule_nid_no_patch();
-int APS5_VABI sceFreeTypeOtOpenFace_nid_no_patch();
 }
