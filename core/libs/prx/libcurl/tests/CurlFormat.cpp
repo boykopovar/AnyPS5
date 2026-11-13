@@ -5,7 +5,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
+#include <vector>
 
 #if defined(__clang__) && !defined(_WIN32)
 #define __builtin_sysv_va_list va_list
@@ -19,6 +21,65 @@ static void Require(bool condition) {
 
 static bool Equals(const char* actual, const char* expected) {
     return actual != nullptr && std::strcmp(actual, expected) == 0;
+}
+
+struct AllocationTracker {
+    std::vector<size_t> reallocSizes;
+    std::size_t freeCalls = 0;
+    std::size_t nullFrees = 0;
+    std::size_t strdupCalls = 0;
+    bool failRealloc = false;
+    std::map<void*, std::size_t> live;
+};
+
+static AllocationTracker tracker;
+
+static void* APS5_VABI TrackedMalloc(size_t size) {
+    void* pointer = std::malloc(size);
+    if (pointer) tracker.live[pointer] = size;
+    return pointer;
+}
+
+static void APS5_VABI TrackedFree(void* pointer) {
+    ++tracker.freeCalls;
+    if (!pointer) {
+        ++tracker.nullFrees;
+        return;
+    }
+    Require(tracker.live.erase(pointer) == 1);
+    std::free(pointer);
+}
+
+static void* APS5_VABI TrackedRealloc(void* pointer, size_t size) {
+    tracker.reallocSizes.push_back(size);
+    if (tracker.failRealloc) return nullptr;
+    if (pointer) Require(tracker.live.erase(pointer) == 1);
+    void* grown = std::realloc(pointer, size);
+    Require(grown != nullptr);
+    tracker.live[grown] = size;
+    return grown;
+}
+
+static char* APS5_VABI TrackedStrdup(const char* text) {
+    ++tracker.strdupCalls;
+    const std::size_t size = std::strlen(text) + 1;
+    auto* copy = static_cast<char*>(TrackedMalloc(size));
+    if (copy) std::memcpy(copy, text, size);
+    return copy;
+}
+
+static void* APS5_VABI TrackedCalloc(size_t count, size_t size) {
+    void* pointer = std::calloc(count, size);
+    if (pointer) tracker.live[pointer] = count * size;
+    return pointer;
+}
+
+static void ResetTracker() {
+    tracker.reallocSizes.clear();
+    tracker.freeCalls = 0;
+    tracker.nullFrees = 0;
+    tracker.strdupCalls = 0;
+    tracker.failRealloc = false;
 }
 
 static int APS5_VABI BoundedList(char* buffer, size_t size, const char* format, ...) {
@@ -161,6 +222,42 @@ static void TestUnboundedAndAllocated() {
     Require(curl_maprintf_nid_postfix("%s%s", large.c_str(), "bc") == nullptr);
 }
 
+static void TestGuestAllocators() {
+    Require(curl_global_init_mem_nid_postfix(CURL_GLOBAL_DEFAULT, TrackedMalloc, TrackedFree, TrackedRealloc, TrackedStrdup, TrackedCalloc) == CURLE_OK);
+    const std::size_t baseline = tracker.live.size();
+    ResetTracker();
+    const std::string forty(40, 'r');
+    char* text = curl_maprintf_nid_postfix("%s", forty.c_str());
+    Require(Equals(text, forty.c_str()));
+    Require(tracker.reallocSizes == std::vector<size_t>{32, 64});
+    Require(tracker.live.count(text) == 1 && tracker.live[text] == 64);
+    curl_free(text);
+    Require(tracker.freeCalls == 1 && tracker.live.size() == baseline);
+    ResetTracker();
+    char* empty = curl_maprintf_nid_postfix("");
+    Require(Equals(empty, ""));
+    Require(tracker.strdupCalls == 1 && tracker.reallocSizes.empty());
+    curl_free(empty);
+    Require(tracker.live.size() == baseline);
+    ResetTracker();
+    tracker.failRealloc = true;
+    Require(curl_maprintf_nid_postfix("abc") == nullptr);
+    Require(tracker.reallocSizes == std::vector<size_t>{32});
+    Require(tracker.freeCalls == 2 && tracker.nullFrees == 2);
+    ResetTracker();
+    std::string tooMany;
+    for (int index = 0; index < 129; ++index) tooMany += "%d";
+    Require(curl_maprintf_nid_postfix(tooMany.c_str()) == nullptr);
+    Require(tracker.reallocSizes.empty() && tracker.freeCalls == 1 && tracker.nullFrees == 1);
+    ResetTracker();
+    const std::string large(7999998, 'a');
+    Require(curl_maprintf_nid_postfix("%s%s", large.c_str(), "bc") == nullptr);
+    Require(tracker.freeCalls == 2 && tracker.nullFrees == 1);
+    Require(tracker.live.size() == baseline);
+    curl_global_cleanup_nid_postfix();
+    Require(tracker.live.empty());
+}
+
 int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     TestIntegers();
@@ -171,5 +268,6 @@ int main() {
     TestBounds();
     TestLists();
     TestUnboundedAndAllocated();
+    TestGuestAllocators();
     return 0;
 }

@@ -36,6 +36,7 @@
  * page at https://daniel.haxx.se/projects/trio/
  */
 #include "prx/libcurl/src/CurlFormat.hpp"
+#include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/WindowsFormatting.hpp"
@@ -47,8 +48,13 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
-#include <string>
 #include <vector>
+
+extern "C" {
+extern curl_free_callback Curl_cfree;
+extern curl_realloc_callback Curl_crealloc;
+extern curl_strdup_callback Curl_cstrdup;
+}
 
 namespace CurlFormat {
 
@@ -57,6 +63,7 @@ namespace {
 constexpr std::int64_t MaxParameters = 128;
 constexpr std::size_t WorkSize = 326;
 constexpr std::size_t AllocatedLimit = 8000000;
+constexpr std::size_t FirstAllocation = 32;
 constexpr char LowerDigits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
 constexpr char UpperDigits[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 constexpr char NilText[] = "(nil)";
@@ -137,19 +144,47 @@ private:
 class AllocatedOutput final : public IOutput {
 public:
     bool Put(unsigned char value) override {
-        if (text.size() + 2 > AllocatedLimit) {
-            failed = true;
+        const std::size_t fit = length + 2;
+        if (fit > AllocatedLimit) {
+            Release();
             return false;
         }
-        text.push_back(static_cast<char>(value));
+        std::size_t size = capacity;
+        if (!size) {
+            size = fit < FirstAllocation ? FirstAllocation : fit;
+        } else {
+            while (size < fit) size *= 2;
+        }
+        if (size != capacity) {
+            auto* grown = static_cast<char*>(Curl_crealloc(buffer, size));
+            if (!grown) {
+                Release();
+                return false;
+            }
+            buffer = grown;
+            capacity = size;
+        }
+        buffer[length++] = static_cast<char>(value);
+        buffer[length] = '\0';
         return true;
     }
 
+    void Release() {
+        Curl_cfree(buffer);
+        buffer = nullptr;
+        length = 0;
+        capacity = 0;
+        failed = true;
+    }
+
     bool Failed() const { return failed; }
-    const std::string& Text() const { return text; }
+    std::size_t Length() const { return length; }
+    char* Buffer() const { return buffer; }
 
 private:
-    std::string text;
+    char* buffer = nullptr;
+    std::size_t length = 0;
+    std::size_t capacity = 0;
     bool failed = false;
 };
 
@@ -705,13 +740,12 @@ int FormatUnbounded(char* buffer, const char* format, const void* args) {
 char* FormatAllocated(const char* format, const void* args) {
     AllocatedOutput output;
     const int result = Formatter(output, args).Run(format);
-    if (result == -1 || output.Failed()) return nullptr;
-    const std::string& text = output.Text();
-    auto* copy = static_cast<char*>(malloc_nid_postfix(text.size() + 1));
-    if (!copy) return nullptr;
-    std::memcpy(copy, text.data(), text.size());
-    copy[text.size()] = '\0';
-    return copy;
+    if (result == -1 || output.Failed()) {
+        output.Release();
+        return nullptr;
+    }
+    if (output.Length()) return output.Buffer();
+    return Curl_cstrdup("");
 }
 
 }
