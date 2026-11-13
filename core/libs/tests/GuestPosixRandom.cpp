@@ -20,6 +20,7 @@ int main() {
     std::array<unsigned char, 4099> second{};
     first.fill(0xa5);
     arc4random_buf_nid_postfix(nullptr, 0);
+    arc4random_buf_nid_postfix(nullptr, 0);
     arc4random_buf_nid_postfix(first.data(), 0);
 
     Require(std::all_of(first.begin(), first.end(), [](unsigned char value) { return value == 0xa5; }));
