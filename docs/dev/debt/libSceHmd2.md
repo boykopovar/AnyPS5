@@ -21,6 +21,7 @@
 ### Functional
 
 - [sceHmd2ReprojectionInitialize](../../../core/libs/prx/libSceHmd2/Export.cpp) - returning `0x8A720008` (`PARAMETER_NULL`) for an unmapped or unreadable parameter pointer is a defensive host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+- [sceHmd2ReprojectionGetStatus, sceHmd2GazeGetResult, sceHmd2GazeGetResultForFoveatedRendering, Hmd2WriteStateTwo, Hmd2WriteSize0x2000Align0x100, Hmd2WriteFourConstants, Hmd2WriteSixHalvesThenInvalidHandle, Hmd2WriteTwelveHalvesThenInvalidHandle](../../../core/libs/prx/libSceHmd2/Export.cpp) - returning `0x8A720008` (`PARAMETER_NULL`) for an unmapped or unwritable guest pointer via `GuestCopyIn_nid_no_patch` / `GuestCopyOut_nid_no_patch` is a defensive host-safety fallback preserving `errno`; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
 
 ### Silent stubs
 

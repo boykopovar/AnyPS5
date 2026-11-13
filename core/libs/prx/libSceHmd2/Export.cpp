@@ -10,6 +10,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
@@ -99,6 +100,28 @@ std::uint32_t CompiledSdkVersion() {
     return version;
 }
 
+struct ErrnoGuard {
+    int saved{errno};
+    ~ErrnoGuard() { errno = saved; }
+};
+
+template <typename T>
+bool CopyGuestIn(T& dst, const void* src) {
+    const ErrnoGuard guard;
+    return GuestCopyIn_nid_no_patch(&dst, src, sizeof(T));
+}
+
+template <typename T>
+bool CopyGuestOut(void* dst, const T& src) {
+    const ErrnoGuard guard;
+    return GuestCopyOut_nid_no_patch(dst, &src, sizeof(T));
+}
+
+bool CopyGuestOutBytes(void* dst, const void* src, std::size_t bytes) {
+    const ErrnoGuard guard;
+    return GuestCopyOut_nid_no_patch(dst, src, bytes);
+}
+
 std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
     const int savedErrno = errno;
     if (!info) return Hmd2::ParameterNull;
@@ -130,14 +153,14 @@ int APS5_VABI sceHmd2ReprojectionGetStatus(Hmd2::ReprojectionStatus* status) {
     std::lock_guard lock(reprojectionMutex);
     if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
     if (status == nullptr) return Hmd2::ParameterNull;
-    auto* bytes = reinterpret_cast<std::byte*>(status);
-    std::memset(bytes, 0, 0x68);
+    std::array<std::byte, 0x68> localStatus{};
     const std::uint64_t now = sceKernelGetProcessTime();
     const std::uint64_t step = reprojectionState->timingUs != 0 ? reprojectionState->timingUs : Hmd2::ReprojectionTimingDefault;
     for (std::size_t index = 0; index < 4; ++index) {
         const std::uint64_t timestamp = now + index * step;
-        std::memcpy(bytes + 0x28 + index * 8, &timestamp, sizeof(timestamp));
+        std::memcpy(localStatus.data() + 0x28 + index * 8, &timestamp, sizeof(timestamp));
     }
+    if (!CopyGuestOutBytes(status, localStatus.data(), localStatus.size())) return Hmd2::ParameterNull;
     return 0;
 }
 
@@ -185,11 +208,12 @@ std::int32_t APS5_VABI sceHmd2Close(std::int32_t handle) {
 
 static std::int32_t Hmd2GazeHandle(const Hmd2::GazeResultParameter* param, const void* result, std::uint32_t resultSize, const char* name) {
     if (!param || !result) return Hmd2::ParameterNull;
-    std::uint32_t size;
-    std::memcpy(&size, result, sizeof(size));
-    if (param->size != sizeof(Hmd2::GazeResultParameter) || size != resultSize) return Hmd2::ParameterInvalid;
+    Hmd2::GazeResultParameter localParam{};
+    std::uint32_t size = 0;
+    if (!CopyGuestIn(localParam, param) || !CopyGuestIn(size, result)) return Hmd2::ParameterNull;
+    if (localParam.size != sizeof(Hmd2::GazeResultParameter) || size != resultSize) return Hmd2::ParameterInvalid;
     std::lock_guard lock(stateMutex);
-    if (openHandle == 0 || param->handle != openHandle) return Hmd2::InvalidHandle;
+    if (openHandle == 0 || localParam.handle != openHandle) return Hmd2::InvalidHandle;
     NotImplemented_nid_no_patch(name);
     return 0;
 }
@@ -206,16 +230,18 @@ static void Hmd2StoreInvalidGaze(std::byte* result, std::size_t offset) {
 int APS5_VABI sceHmd2GazeGetResult(const Hmd2::GazeResultParameter* param, Hmd2::GazeResult* result) {
     const std::int32_t status = Hmd2GazeHandle(param, result, 0x38, __func__);
     if (status != Hmd2::InvalidHandle) return status;
-    auto* bytes = reinterpret_cast<std::byte*>(result);
-    std::memset(bytes + 4, 0, 0x38 - 4);
-    Hmd2StoreInvalidGaze(bytes, 0x14);
+    std::array<std::byte, 0x38> localResult{};
+    Hmd2StoreInvalidGaze(localResult.data(), 0x14);
+    if (!CopyGuestOutBytes(reinterpret_cast<std::byte*>(result) + 4, localResult.data() + 4, localResult.size() - 4)) return Hmd2::ParameterNull;
     return status;
 }
 
 int APS5_VABI sceHmd2GazeGetResultForFoveatedRendering(const Hmd2::GazeResultParameter* param, Hmd2::FoveatedRenderingResult* result) {
     const std::int32_t status = Hmd2GazeHandle(param, result, 0x18, __func__);
     if (status != Hmd2::InvalidHandle) return status;
-    Hmd2StoreInvalidGaze(reinterpret_cast<std::byte*>(result), 8);
+    std::array<std::byte, 0x14> localResult{};
+    Hmd2StoreInvalidGaze(localResult.data(), 8);
+    if (!CopyGuestOutBytes(reinterpret_cast<std::byte*>(result) + 4, localResult.data() + 4, localResult.size() - 4)) return Hmd2::ParameterNull;
     return status;
 }
 
@@ -893,15 +919,16 @@ APS5_EXPORT("W-ZIlUXcrNA", Hmd2CheckSecondThenError1002);
 std::int32_t APS5_VABI Hmd2WriteStateTwo(void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
     static constexpr std::uint8_t bytes[] = {0x02, 0x00, 0x00, 0x00, 0x00};
-    std::memcpy(a0, bytes, sizeof bytes);
+    if (!CopyGuestOutBytes(a0, bytes, sizeof bytes)) return Hmd2::ParameterNull;
     return BeforeInitialize(0, __func__);
 }
 APS5_EXPORT("omimgG5itSs", Hmd2WriteStateTwo);
 
 std::int32_t APS5_VABI Hmd2WriteSize0x2000Align0x100(std::uint64_t* a0, std::uint64_t* a1) {
     if (a0 == nullptr || a1 == nullptr) return Hmd2::ParameterNull;
-    *a0 = 0x2000;
-    *a1 = 0x100;
+    constexpr std::uint64_t size = 0x2000;
+    constexpr std::uint64_t align = 0x100;
+    if (!CopyGuestOut(a0, size) || !CopyGuestOut(a1, align)) return Hmd2::ParameterNull;
     return BeforeInitialize(0, __func__);
 }
 APS5_EXPORT("6PeHcAaKYg8", Hmd2WriteSize0x2000Align0x100);
@@ -909,7 +936,7 @@ APS5_EXPORT("6PeHcAaKYg8", Hmd2WriteSize0x2000Align0x100);
 std::int32_t APS5_VABI Hmd2WriteFourConstants(void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
     static constexpr std::uint8_t bytes[] = {0xe1, 0xf0, 0x74, 0x3c, 0xd8, 0xf0, 0x74, 0x3c, 0x1f, 0xf1, 0x74, 0x3c, 0xd8, 0xf0, 0x74, 0x3c};
-    std::memcpy(a0, bytes, sizeof bytes);
+    if (!CopyGuestOutBytes(a0, bytes, sizeof bytes)) return Hmd2::ParameterNull;
     return BeforeInitialize(0, __func__);
 }
 APS5_EXPORT("yur+xPdWPAg", Hmd2WriteFourConstants);
@@ -918,7 +945,7 @@ std::int32_t APS5_VABI Hmd2WriteSixHalvesThenInvalidHandle(std::uint64_t a0, voi
     (void)a0;
     if (a1 == nullptr) return Hmd2::ParameterNull;
     static constexpr std::uint8_t bytes[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x3f};
-    std::memcpy(a1, bytes, sizeof bytes);
+    if (!CopyGuestOutBytes(a1, bytes, sizeof bytes)) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::InvalidHandle, __func__);
 }
 APS5_EXPORT("RnieDDp5ge4", Hmd2WriteSixHalvesThenInvalidHandle);
@@ -928,7 +955,7 @@ std::int32_t APS5_VABI Hmd2WriteTwelveHalvesThenInvalidHandle(std::uint64_t a0, 
     (void)a0;
     if (a1 == nullptr) return Hmd2::ParameterNull;
     static constexpr std::uint8_t bytes[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    std::memcpy(a1, bytes, sizeof bytes);
+    if (!CopyGuestOutBytes(a1, bytes, sizeof bytes)) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::InvalidHandle, __func__);
 }
 APS5_EXPORT("b0H-n-tUk0U", Hmd2WriteTwelveHalvesThenInvalidHandle);

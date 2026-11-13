@@ -1,6 +1,7 @@
 #include "prx/libSceHmd2/include/Api.hpp"
 #include "prx/libSceHmd2/Hmd2.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -107,8 +108,10 @@ void CheckGazeStatus() {
 
 int main() {
     Require(sceHmd2Initialize(nullptr) != 0, "initialize reports no headset");
+    errno = EILSEQ;
     CheckGazeResult();
     CheckFoveatedResult();
+    Require(errno == EILSEQ, "gaze guest copy preserves errno");
     CheckGazeStatus();
     std::puts("guest Hmd2 gaze results without a headset: PASS");
     return 0;
