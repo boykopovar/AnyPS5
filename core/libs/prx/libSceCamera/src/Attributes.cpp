@@ -116,7 +116,13 @@ int APS5_VABI sceCameraGetSaturation(std::int32_t handle, std::uint32_t channel,
 }
 
 int APS5_VABI sceCameraGetSharpness(std::int32_t handle, std::uint32_t channel, std::uint32_t* sharpness, void* option) {
-    return Report(handle, channel, sharpness, option, DEFAULT_SHARPNESS);
+    if (const int error = CheckGet(handle, channel, sharpness, option)) return error;
+    const std::uint32_t value = DEFAULT_SHARPNESS;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(sharpness, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return SCE_CAMERA_ERROR_PARAM;
+    return 0;
 }
 
 int APS5_VABI sceCameraGetHue(std::int32_t handle, std::uint32_t channel, std::int32_t* hue, void* option) {

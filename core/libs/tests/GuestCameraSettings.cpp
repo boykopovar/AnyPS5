@@ -120,6 +120,12 @@ void CheckGetters() {
     CheckGetter(sceCameraGetContrast, 32, "the contrast must be 32");
     CheckGetter(sceCameraGetSaturation, 64, "the saturation must be 64");
     CheckGetter(sceCameraGetSharpness, 1, "the sharpness must be 1");
+    errno = 71;
+    Require(sceCameraGetSharpness(1, Channel0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == ErrorParam, "an unwritable sharpness pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable sharpness pointer");
+    alignas(16) std::uint32_t sharpnessBuffer[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    Require(sceCameraGetSharpness(1, Channel0, &sharpnessBuffer[1], nullptr) == 0, "reading sharpness to buffer failed");
+    Require(sharpnessBuffer[0] == 0x5a5a5a5a && sharpnessBuffer[1] == 1 && sharpnessBuffer[2] == 0x5a5a5a5a, "adjacent memory was corrupted");
     std::int32_t hue = 0;
     Require(sceCameraGetHue(1, Channel0, &hue, nullptr) == 0 && hue == 1, "the hue must be 1");
     errno = 71;
