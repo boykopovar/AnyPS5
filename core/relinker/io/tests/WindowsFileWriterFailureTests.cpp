@@ -28,6 +28,7 @@ struct Probe {
     std::filesystem::path Target;
     std::filesystem::path Backup;
     std::filesystem::path Replacement;
+    HANDLE BackupHandle = INVALID_HANDLE_VALUE;
     std::size_t Writes = 0;
     std::size_t Bytes = 0;
     std::size_t Replaces = 0;
@@ -146,6 +147,13 @@ BOOL WINAPI competingOutput(LPCWSTR source, LPCWSTR target, DWORD flags) {
     return MoveFileExW(source, target, flags);
 }
 
+BOOL WINAPI lockBackup(LPCWSTR target, LPCWSTR replacement, LPCWSTR backup, DWORD flags, LPVOID exclude, LPVOID reserved) {
+    probe.Backup = backup;
+    if (!ReplaceFileW(target, replacement, backup, flags, exclude, reserved)) return FALSE;
+    probe.BackupHandle = CreateFileW(backup, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    return TRUE;
+}
+
 BOOL WINAPI reuseMovedPath(LPCWSTR source, LPCWSTR target, DWORD flags) {
     if (!MoveFileExW(source, target, flags)) return FALSE;
     probe.Replacement = source;
@@ -207,6 +215,23 @@ void run(const std::filesystem::path& root, const std::ios::openmode mode, const
         require(write({}), "A file deletable through its parent could not be replaced");
         require(readFile(probe.Target) == expected, "Backup cleanup changed the completed bytes");
         require(stages(directory).empty(), "Replacement retained a backup without delete access");
+    }
+    {
+        const auto directory = setup("locked-backup");
+        WindowsFileOperations operations;
+        operations.Replace = lockBackup;
+        std::string message;
+        try {
+            write(operations);
+        } catch (const Domain::RelinkerException& error) {
+            message = error.what();
+        }
+        require(probe.BackupHandle != INVALID_HANDLE_VALUE, "Cannot lock the recovery backup");
+        require(CloseHandle(probe.BackupHandle) != 0, "Cannot release the recovery backup");
+        require(message.find(Io::Utf8Path(probe.Backup)) != std::string::npos, "A backup cleanup failure did not report its path");
+        require(readFile(probe.Target) == expected, "A backup cleanup failure changed the completed output");
+        require(readFile(probe.Backup) == previous, "A backup cleanup failure lost the previous output");
+        require(stages(directory).size() == 1, "A backup cleanup failure retained unrelated temporary files");
     }
     {
         const auto directory = setup("denied-write");
@@ -308,6 +333,6 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::filesystem::remove_all(directory);
-    std::cout << "14 deterministic Windows output cases passed\n";
+    std::cout << "15 deterministic Windows output cases passed\n";
     return 0;
 }
