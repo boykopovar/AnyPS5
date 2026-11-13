@@ -47,7 +47,7 @@ static void CheckUnstartedAborts() {
 }
 
 int main() {
-    CheckUnstartedAborts();
+    for (int iter = 0; iter < 2; ++iter) CheckUnstartedAborts();
     constexpr int invalidArgument = static_cast<int>(0x80550301);
     constexpr int signedOut = static_cast<int>(0x80550006);
     constexpr int aborted = static_cast<int>(0x80550304);
