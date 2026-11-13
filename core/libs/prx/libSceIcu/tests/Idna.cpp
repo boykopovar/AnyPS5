@@ -438,6 +438,44 @@ void Buffers() {
         }
         uidna_close(native);
     }
+    {
+        Handle guest(0);
+        UErrorCode nativeStatus = U_ZERO_ERROR;
+        auto* native = uidna_openUTS46(0, &nativeStatus);
+        Require(native && nativeStatus == 0, "long explicit input native handle opens");
+        std::u16string input(1025, u'A');
+        for (std::size_t i = 1; i < input.size(); i += 2) input[i] = u'.';
+        input[512] = 0;
+        input.replace(input.size() - 7, 7, u"EXAMPLE");
+        for (bool toAscii : {false, true}) {
+            const GuestConvert guestConvert = toAscii ? uidna_nameToASCII_nid_postfix : uidna_nameToUnicode_nid_postfix;
+            const NativeConvert nativeConvert = toAscii ? uidna_nameToASCII : uidna_nameToUnicode;
+            UIDNAInfo preflight = UIDNA_INFO_INITIALIZER;
+            nativeStatus = U_ZERO_ERROR;
+            const auto required = nativeConvert(native, input.data(), static_cast<std::int32_t>(input.size()),
+                nullptr, 0, &preflight, &nativeStatus);
+            Require(required > 512, "explicit native input includes the suffix after embedded NUL");
+            for (const auto capacity : {required, required + 1}) {
+                std::vector<char16_t> actual(static_cast<std::size_t>(capacity) + 4, 0xa55a);
+                auto expected = actual;
+                Info actualInfo(true);
+                Info expectedInfo(true);
+                std::int32_t status = 0;
+                nativeStatus = U_ZERO_ERROR;
+                const auto count = nativeConvert(native, input.data(), static_cast<std::int32_t>(input.size()),
+                    expected.data() + 2, capacity, &expectedInfo.value, &nativeStatus);
+                const auto result = guestConvert(guest.value, input.data(), static_cast<std::int32_t>(input.size()),
+                    actual.data() + 2, capacity, &actualInfo.value, &status);
+                Require(result == count && status == nativeStatus, "long explicit input exact-capacity status matches native");
+                Require(actual == expected, "long explicit input preserves native output, terminator and entire guarded tail");
+                Require(actual[0] == 0xa55a && actual[1] == 0xa55a && actual[capacity + 2] == 0xa55a &&
+                        actual[capacity + 3] == 0xa55a, "long explicit input leaves both outside guards intact");
+                Require(std::memcmp(&actualInfo.value, &expectedInfo.value, 24) == 0, "long explicit input info matches native");
+                actualInfo.Check();
+            }
+        }
+        uidna_close(native);
+    }
     Handle handle(0);
     for (auto convert : {uidna_nameToASCII_nid_postfix, uidna_nameToUnicode_nid_postfix}) {
         Info info(true);

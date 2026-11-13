@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "unicode/uidna.h"
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -37,8 +38,19 @@ void WriteStatus(std::int32_t* error, std::int32_t before, std::int32_t after) {
 
 std::u16string ReadName(const char16_t* name, std::int32_t length) {
     if (length >= 0) {
-        std::u16string input(static_cast<std::size_t>(length), 0);
-        if (!GuestCopyIn_nid_no_patch(input.data(), name, input.size() * sizeof(char16_t))) NotImplemented_nid_no_patch(__func__);
+        std::u16string input;
+        std::array<char16_t, 256> chunk;
+        auto address = reinterpret_cast<std::uintptr_t>(name);
+        auto remaining = static_cast<std::size_t>(length);
+        while (remaining != 0) {
+            const auto units = std::min(remaining, chunk.size());
+            const auto bytes = units * sizeof(char16_t);
+            if (address > UINTPTR_MAX - bytes ||
+                !GuestCopyIn_nid_no_patch(chunk.data(), reinterpret_cast<const void*>(address), bytes)) NotImplemented_nid_no_patch(__func__);
+            input.append(chunk.data(), units);
+            address += bytes;
+            remaining -= units;
+        }
         return input;
     }
     std::u16string input;
