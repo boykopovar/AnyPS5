@@ -2402,7 +2402,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                     auto& table = tableStage(shader);
                     Require(table.mapAllocation == std::numeric_limits<std::size_t>::max(), "a stage binds two image table maps");
                     table.map = binding.guestDescriptor;
-                    allocations.push_back({0, size, false, std::make_unique<Buffer>(context, size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT), ShaderRecompiler::DescriptorRole::ImageTableMap});
+                    allocations.push_back({0, size, false, std::make_unique<Buffer>(context, size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, context.SnapshotProperties()), ShaderRecompiler::DescriptorRole::ImageTableMap});
                     table.mapAllocation = allocations.size() - 1u;
                     bindings.push_back({{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, flags, nullptr}, {allocations.size() - 1u}});
                     continue;
@@ -5456,10 +5456,13 @@ std::size_t ShaderResources::addDataBuffer(std::span<const std::uint32_t> words)
     const auto size = words.size() * sizeof(std::uint32_t);
     Require(size <= context.limits.maxStorageBufferRange, "shader data buffer exceeds descriptor range limit");
     const bool refreshable = TemplateDataRefresh() && size <= MaxRefreshBytes;
-    auto buffer = std::make_unique<Buffer>(context, size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto buffer = std::make_unique<Buffer>(context, size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, context.SnapshotProperties());
     std::memcpy(buffer->Bytes().data(), words.data(), size);
     Allocation allocation{0, size, false, std::move(buffer)};
-    if (refreshable && keepsTemplateRecords()) allocation.dataWords.assign(words.begin(), words.end());
+    if (keepsTemplateRecords()) {
+        if (refreshable) allocation.dataWords.assign(words.begin(), words.end());
+        else if ((allocation.buffer->Properties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) allocation.deviceWords.assign(words.begin(), words.end());
+    }
     allocations.push_back(std::move(allocation));
     mixDataWords(dataWordsHash, allocations.back().dataWords);
     return allocations.size() - 1;
@@ -6711,7 +6714,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const auto& item = allocations[index];
                 if (item.guest || item.buffer == nullptr || item.size != binding.guestDescriptor.size() * sizeof(std::uint32_t)) return std::nullopt;
                 const bool patched = std::any_of(dataPatches.begin(), dataPatches.end(), [&](const DataPatch& patch) { return patch.allocation == index; });
-                const bool same = !item.dataWords.empty() ? item.dataWords == binding.guestDescriptor : !patched && std::memcmp(item.buffer->Bytes().data(), binding.guestDescriptor.data(), item.size) == 0;
+                const bool same = !item.dataWords.empty() ? item.dataWords == binding.guestDescriptor : !patched && (!item.deviceWords.empty() ? item.deviceWords == binding.guestDescriptor : std::memcmp(item.buffer->Bytes().data(), binding.guestDescriptor.data(), item.size) == 0);
                 if (same) continue;
                 if (item.dataWords.empty() && patched) {
                     if (patchedData != nullptr) *patchedData = true;
@@ -6899,7 +6902,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
                 const auto generation = GuestMemory::CollectWrites(begin, bytes);
                 buffer = recorder.ReusableDrawSnapshot(begin, bytes, Recorder::SnapshotUse::Storage, nullptr, generation, &offset);
                 if (buffer == nullptr) {
-                    buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                    buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, context.SnapshotProperties());
                     std::memcpy(buffer->Bytes().data(), reinterpret_cast<const void*>(begin), bytes);
                     recorder.KeepDrawSnapshot(begin, bytes, generation, registryGeneration, buffer);
                 }

@@ -2918,7 +2918,7 @@ std::shared_ptr<Buffer> snapshotCopy(const Context& context, std::uint64_t addre
         copies.bytes -= bytes.size();
         copies.entries.erase(found);
     }
-    auto buffer = std::make_shared<Buffer>(context, bytes.size(), usage);
+    auto buffer = std::make_shared<Buffer>(context, bytes.size(), usage, context.SnapshotProperties());
     std::memcpy(buffer->Bytes().data(), bytes.data(), bytes.size());
     if (bytes.size() > SnapshotCopies::Budget) return buffer;
     while (!copies.recency.empty() && (copies.bytes + bytes.size() > SnapshotCopies::Budget || copies.entries.size() >= SnapshotCopies::MaxEntries)) {
@@ -6661,7 +6661,7 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     // A buffer made by UploadPrepare for a GPU copy that fell back here (its import went) is kept.
     const bool shared = region.buffer == nullptr && !region.hostBacked && !region.writable && !region.sparse && region.bufferEnd == 0 && region.snapshot.size() == bytes;
     if (shared) region.buffer = snapshotCopy(context, region.begin, region.snapshot, usage);
-    else if (region.buffer == nullptr) region.buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(allocated), usage);
+    else if (region.buffer == nullptr) region.buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(allocated), usage, region.writable && WritesOverlap(region.begin, static_cast<std::size_t>(bytes)) ? HostBufferProperties : context.SnapshotProperties());
     const auto readStart = std::chrono::steady_clock::now();
     if (profile) allocateUs.fetch_add(microsecondsSince(allocateStart), std::memory_order_relaxed);
     // Named for the [hooksync] attribution: the reads below go through the flush hook.

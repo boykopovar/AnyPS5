@@ -1471,7 +1471,7 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
             return copy;
         }
     }
-    copy.buffer = std::make_shared<Buffer>(context, bytes, use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    copy.buffer = use == Recorder::SnapshotUse::Vertex ? std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, context.SnapshotProperties()) : std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     GuestMemory::Read(address, copy.buffer->Bytes(), alignment);
     return copy;
 }
@@ -1499,7 +1499,7 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
         }
         copy.buffer = nullptr;
     }
-    copy.buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    copy.buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, context.SnapshotProperties());
     const auto span = copy.buffer->Bytes();
     GuestMemory::Read(address, span.subspan(0, readable), 1);
     std::fill(span.begin() + static_cast<std::ptrdiff_t>(readable), span.end(), std::byte{0});
@@ -1595,7 +1595,7 @@ bool StripPatches(const State& state, std::span<const CompiledShader> shaders) {
 }
 
 std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, std::size_t bytes) {
-    auto zero = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    auto zero = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, context.SnapshotProperties());
     std::fill(zero->Bytes().begin(), zero->Bytes().end(), std::byte{0});
     return zero;
 }
@@ -1761,7 +1761,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         Require(primitives <= std::numeric_limits<std::uint32_t>::max() / corners, "expanded index count overflow");
         const std::uint32_t outputIndexCount = primitives * corners;
         const std::size_t expandedIndexBytes = static_cast<std::size_t>(outputIndexCount) * sizeof(std::uint32_t);
-        auto indexCopy = std::make_shared<Buffer>(context, expandedIndexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        auto indexCopy = std::make_shared<Buffer>(context, expandedIndexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, context.SnapshotProperties());
         auto* outIndices = reinterpret_cast<std::uint32_t*>(indexCopy->Bytes().data());
         std::uint32_t maxIdx = 0;
         const bool lastProvoking = state.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;

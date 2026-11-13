@@ -109,14 +109,18 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
         // The CPU reads most of these buffers back (write-back, diffs), which is very slow from
         // write-combined memory, so the default host properties prefer cached host memory.
         const bool useSlab = (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 && BufferPool::SlabEligible(capacity, requirements.alignment, requirements.size, context.limits.nonCoherentAtomSize);
-        allocation.memoryTypeIndex = context.BufferMemoryType(requirements.memoryTypeBits, properties, useSlab ? BufferPool::SlabBlockBytes(capacity) : allocation.allocationSize);
-        if (headroom && !context.DeviceLocalHeadroom(allocation.memoryTypeIndex, useSlab ? BufferPool::SlabBlockBytes(capacity) : allocation.allocationSize)) {
+        const auto placedBytes = useSlab ? BufferPool::SlabBlockBytes(capacity) : allocation.allocationSize;
+        this->properties = context.MappedBufferProperties(requirements.memoryTypeBits, properties, placedBytes);
+        allocation.memoryTypeIndex = context.BufferMemoryType(requirements.memoryTypeBits, this->properties, placedBytes);
+        const auto refused = context.RefusedMappedMemoryFallback(requirements.memoryTypeBits, this->properties, allocation.memoryTypeIndex);
+        if (headroom && !context.DeviceLocalHeadroom(allocation.memoryTypeIndex, placedBytes)) {
             context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
             buffer = VK_NULL_HANDLE;
             return;
         }
         if (useSlab) {
-            const auto slot = cache->TakeSlot(context, allocation.memoryTypeIndex, capacity, addressable);
+            const auto slot = cache->TakeSlot(context, allocation.memoryTypeIndex, capacity, addressable, refused);
+            if (slot.memoryType != allocation.memoryTypeIndex) this->properties = HostBufferProperties;
             memory = slot.memory;
             offset = slot.offset;
             slab = true;
@@ -124,13 +128,15 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
             Check(context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, buffer, memory, offset), "vkBindBufferMemory slab");
             initializeAddress(usage);
             mapping = slot.mapping;
-#ifdef __APPLE__
+    #ifdef __APPLE__
             ClearPooledTail(mapping, size, capacity, properties);
-#endif
+    #endif
             ready = true;
             return;
         }
-        memory = cache->AllocateMemory(allocation, "vkAllocateMemory buffer");
+        std::uint32_t allocatedType = allocation.memoryTypeIndex;
+        memory = cache->AllocateMemory(allocation, "vkAllocateMemory buffer", refused, &allocatedType);
+        if (allocatedType != allocation.memoryTypeIndex) this->properties = HostBufferProperties;
         Check(context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory");
         initializeAddress(usage);
         if ((properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) Check(context.Resolved(&DeviceFunctions::mapMemory, "vkMapMemory")(context.device, memory, 0, VK_WHOLE_SIZE, 0, &mapping), "vkMapMemory");

@@ -454,6 +454,7 @@ private:
         bool writeOnly = false;
         // Data buffers: the words the buffer holds once the recorded work ran (see RefreshData).
         std::vector<std::uint32_t> dataWords;
+        std::vector<std::uint32_t> deviceWords;
         std::uint32_t adjustment = 0;
         std::int32_t pushByte = -1;
         std::int64_t dataAllocation = -1;
