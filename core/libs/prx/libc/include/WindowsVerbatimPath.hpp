@@ -238,6 +238,16 @@ inline std::basic_string<CharT> MakeVerbatimWindowsPathForTest_nid_no_patch(
 }
 
 #ifdef _WIN32
+inline std::filesystem::path WindowsAbsolutePath_nid_no_patch(const std::filesystem::path& path, std::error_code& error) {
+    const auto& input = path.native();
+    const auto separator = [](wchar_t c) { return c == L'\\' || c == L'/'; };
+    if (input.size() > 2 && separator(input[0]) && separator(input[1]))
+        return std::filesystem::path(L"\\" + std::filesystem::path(input.substr(1)).lexically_normal().make_preferred().native());
+    auto absolute = path.is_absolute() ? path : (std::filesystem::current_path(error) / path);
+    if (error) return {};
+    return absolute.lexically_normal().make_preferred();
+}
+
 inline std::filesystem::path NativeVerbatimPath_nid_no_patch(
     const std::filesystem::path& path,
     std::error_code& error,
@@ -245,9 +255,8 @@ inline std::filesystem::path NativeVerbatimPath_nid_no_patch(
     const auto& input = path.native();
     if (input.empty()) return path;
     if (input.starts_with(L"\\\\?\\") || input.starts_with(L"\\\\.\\")) return path;
-    auto absolute = path.is_absolute() ? path : (std::filesystem::current_path(error) / path);
+    const auto absolute = WindowsAbsolutePath_nid_no_patch(path, error);
     if (error) return {};
-    absolute = absolute.lexically_normal().make_preferred();
     const auto& native = absolute.native();
     if (native.size() < maxPathLength && !NeedsVerbatimPrefix_nid_no_patch(absolute)) return absolute;
     if (native.starts_with(L"\\\\?\\") || native.starts_with(L"\\\\.\\")) return absolute;
