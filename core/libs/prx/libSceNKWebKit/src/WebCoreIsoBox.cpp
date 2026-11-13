@@ -1,3 +1,4 @@
+// Derived from Source/WebCore/platform/graphics/iso/ISOBox.h@73a35b43be7ae44c084885bd3fa4b403e59723c8
 /*
  * Copyright (C) 2017 Apple Inc. All rights reserved.
  *

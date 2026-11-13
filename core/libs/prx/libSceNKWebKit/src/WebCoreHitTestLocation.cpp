@@ -1,3 +1,4 @@
+// Derived from Source/WebCore/rendering/HitTestLocation.cpp@73a35b43be7ae44c084885bd3fa4b403e59723c8
 /*
  * Copyright (C) 2006, 2008, 2011, 2020 Apple Inc. All rights reserved.
  * Copyright (C) 2012 Nokia Corporation and/or its subsidiary(-ies)
