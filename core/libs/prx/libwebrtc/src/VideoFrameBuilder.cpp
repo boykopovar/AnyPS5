@@ -70,8 +70,6 @@ WebRtcVideoFrameBuilder& Checked(WebRtcVideoFrameBuilder* builder, const char* f
 
 using BufferRelease = int(APS5_VABI*)(const void*);
 
-constexpr std::size_t ReleaseSlot = 1;
-
 void ReleaseVideoFrameBuffer(void* buffer) {
     if (!buffer)
         return;
