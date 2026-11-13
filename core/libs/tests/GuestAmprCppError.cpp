@@ -159,6 +159,43 @@ static void CheckOutOfRange(int code) {
     Require(threw, 3);
 }
 
+static GuestLocale::String* APS5_VABI TestCategoryMessage(GuestLocale::String* result, const LibcException::CategoryObject*, int) {
+    result->reserved = 0;
+    result->size = 16;
+    result->capacity = 31;
+    result->pointer = static_cast<char*>(GuestLocale::AllocateStringStorage(17));
+    std::memcpy(result->pointer, "Invalid argument", 17);
+    return result;
+}
+static const void* const TestCategoryVtable[] = {nullptr, nullptr, nullptr, reinterpret_cast<const void*>(TestCategoryMessage)};
+static const LibcException::CategoryObject TestCategory {TestCategoryVtable};
+
+static void CheckConstructor() {
+    LibcException::SystemErrorObject constructed {};
+    const LibcException::ErrorCode code {0, 22, &TestCategory};
+    _ZNSt12system_errorC2ESt10error_codePKc_nid_postfix(&constructed, code, "invalid argument");
+    Require(constructed.code.reserved == 0 && constructed.code.value == 22 && constructed.code.category == &TestCategory, 50);
+    const char* what = Slot<GuestWhat>(reinterpret_cast<const void* const*>(constructed.base.vtable), 2)(&constructed);
+    Require(what && std::strcmp(what, "invalid argument: Invalid argument") == 0, 51);
+    _ZNSt12system_errorD1Ev_nid_postfix(&constructed.base);
+    Require(constructed.base.message == nullptr, 52);
+
+    LibcException::SystemErrorObject empty {};
+    _ZNSt12system_errorC2ESt10error_codePKc_nid_postfix(&empty, code, "");
+    const char* emptyWhat = Slot<GuestWhat>(reinterpret_cast<const void* const*>(empty.base.vtable), 2)(&empty);
+    Require(emptyWhat && std::strcmp(emptyWhat, "Invalid argument") == 0, 53);
+    _ZNSt12system_errorD1Ev_nid_postfix(&empty.base);
+
+    bool threw = false;
+    try {
+        LibcException::SystemErrorObject invalid {};
+        _ZNSt12system_errorC2ESt10error_codePKc_nid_postfix(&invalid, {0, 22, nullptr}, "invalid argument");
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, 54);
+}
+
 static void CheckCErrorReturns(int code) {
     try {
         _ZSt14_Throw_C_errori_nid_postfix(code);
@@ -171,6 +208,7 @@ static void CheckCErrorReturns(int code) {
 int main() {
     const std::array<void*, 10> api {};
     ApplicationHeapRegister_nid_no_patch(api.data());
+    CheckConstructor();
     FixtureOtherType = _ZTISt11logic_error_nid_postfix;
     for (int code = 0; code < static_cast<int>(std::size(Errors)); ++code) Catch(_ZTISt12system_error_nid_postfix, code);
     Catch(_ZTISt13runtime_error_nid_postfix, 5);

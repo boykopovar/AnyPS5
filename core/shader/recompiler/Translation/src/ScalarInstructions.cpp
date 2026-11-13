@@ -1,14 +1,9 @@
-#include "Translation/ScalarInstructions.hpp"
 #include "Translation/RoundingMode.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <stdexcept>
 #include <string>
 
 namespace ShaderRecompiler {
-
-void TranslateScalarInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateScalarInstruction not implemented");
-}
 
 template <typename TWord>
 bool TranslationContext::sU32Mask(const RdnaInstruction& inst, IrOpcode logicalOpcode, bool binary, bool negateRhs, bool negateResult, TWord&& word) {
@@ -105,18 +100,13 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         const std::uint32_t offset = (field >> 6u) & 0x1fu;
         const std::uint32_t size = ((field >> 11u) & 0x1fu) + 1u;
         if ((field & 0x3fu) != 1u || offset + size > 8u) {
-            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads hardware register " + std::to_string(field & 0x3fu) + " bits " + std::to_string(offset) + ".." + std::to_string(offset + size - 1u) + ": only the MODE round and denormal mode fields are modeled");
-        }
-        if (offset + size > 4u && !declaredFloatMode.has_value()) {
-            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads MODE denormal bits without a declared FLOAT_MODE: not implemented");
+            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads hardware register " + std::to_string(field & 0x3fu) + " bits " + std::to_string(offset) + ".." + std::to_string(offset + size - 1u) + ": only the MODE round and denormal fields are modeled");
         }
         const std::uint32_t mask = ((1u << size) - 1u) << offset;
         if ((rounding.unknown & mask) != 0u) {
-            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads MODE rounding bits that differ between the paths reaching it or were written from an SGPR: not implemented");
+            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads MODE bits that differ between the paths reaching it or were written from an SGPR: not implemented");
         }
-        const std::uint32_t denormals = declaredFloatMode.has_value() ? declaredFloatMode->floatMode & 0xf0u : 0u;
-        const std::uint32_t mode = denormals | rounding.value;
-        writeRawU32(inst.destination, IrU32(ir.Constant((mode >> offset) & (mask >> offset))));
+        writeRawU32(inst.destination, IrU32(ir.Constant((rounding.value >> offset) & (mask >> offset))));
         return true;
     }
     case RdnaOpcode::SCmovkI32: {
@@ -457,7 +447,9 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         emitControlNop();
         return true;
     case RdnaOpcode::SDenormMode:
-        throw std::runtime_error("s_denorm_mode " + std::to_string(inst.source0.value) + " at pc " + std::to_string(inst.programCounter) + ": the recompiler does not model denormal modes");
+        writeRounding(inst);
+        emitControlNop();
+        return true;
     case RdnaOpcode::SSethalt:
         if ((inst.source0.value & 1u) != 0u) {
             throw std::runtime_error("s_sethalt " + std::to_string(inst.source0.value) + " at pc " + std::to_string(inst.programCounter) + " halts the wave until a debugger resumes it");
@@ -500,10 +492,6 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     default:
         return false;
     }
-}
-
-void TranslateScalarInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateScalarInstruction not implemented");
 }
 
 }

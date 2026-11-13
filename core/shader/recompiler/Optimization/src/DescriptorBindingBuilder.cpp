@@ -19,6 +19,18 @@
 
 namespace ShaderRecompiler {
 
+static_assert(PipelineSpecialization::ImageBase + ShaderInfo::MaxImages * PipelineSpecialization::ImageWords <= PipelineSpecialization::VertexBase);
+static_assert(PipelineSpecialization::MipCountBase + ShaderInfo::MaxImages <= PipelineSpecialization::StoreQuantizeBase);
+static_assert(PipelineSpecialization::StoreQuantizeBase + ShaderInfo::MaxImages * PipelineSpecialization::StoreQuantizeWords <= PipelineSpecialization::DescriptorIndexBase);
+static_assert(PipelineSpecialization::CompareBase + ShaderInfo::MaxImages * PipelineSpecialization::CompareWords <= PipelineSpecialization::FoldOffsetBase);
+static_assert(PipelineSpecialization::FoldOffsetBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::UnnormalizedBaseLevelBase);
+static_assert(PipelineSpecialization::UnnormalizedBaseLevelBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::MirrorUnnormalizedBase);
+static_assert(PipelineSpecialization::MirrorUnnormalizedBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::MinLodBase);
+static_assert(PipelineSpecialization::MinLodBase + ShaderInfo::MaxImages <= PipelineSpecialization::SamplerLodBiasBase);
+static_assert(PipelineSpecialization::SamplerLodBiasBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::FmaskFormatBase);
+static_assert(PipelineSpecialization::FmaskFormatBase + ShaderInfo::MaxImages <= PipelineSpecialization::VolumeGatherBase);
+static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
+
 namespace {
 
 [[noreturn]] void fail(const std::string& message) {
@@ -393,7 +405,7 @@ BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, s
 
 DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes, bool shaderImageMinLod) const {
     if (stage == IrShaderStage::Pixel && exportMappings.size() != 8u) fail("fragment runtime export mappings are missing");
-    if (info.images.size() > ShaderInfo::MaxImages) fail("runtime image count exceeds the static capacity");
+    if (info.images.size() > ShaderInfo::MaxImages) fail("runtime image count exceeds the static capacity (" + std::to_string(info.images.size()) + " of " + std::to_string(ShaderInfo::MaxImages) + ")");
     DescriptorBindingPlan plan;
     const auto unnormalized = ProveUnnormalized(info, snapshot);
     for (std::uint32_t index = 0; index < info.samplers.size(); ++index) {
@@ -411,7 +423,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     }
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
-        const bool convertedSample = !info.images[index].srgbDecodeCompatible && index < info.runtimeImageModes.size() && std::ranges::any_of(info.runtimeImageModes.at(index), [](const ImageResource& mode) { return mode.conversionFormat == IrBufferFormat::Format11_11_10UNorm; });
+        const bool convertedSample = !info.images[index].srgbDecodeCompatible && index < info.runtimeImageModes.size() && std::ranges::any_of(info.runtimeImageModes.at(index), [](const ImageResource& mode) { return IsConvertedUnormTextureFormat(mode.conversionFormat); });
         if (info.images[index].volumeGather) {
             if (info.images[index].depthCompare || convertedSample) fail("a 3D gather of a compared or converted image is not implemented");
             compareStates[index] = ResourceMaterializer::VolumeGatherState(info, snapshot, index);

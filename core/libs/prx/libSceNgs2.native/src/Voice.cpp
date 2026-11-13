@@ -1,5 +1,6 @@
 #include "prx/libSceNgs2.native/include/Api.hpp"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -35,6 +36,10 @@ static constexpr int FULL_WAVEFORM_BLOCKS = PS4_LIBRARY ? SCE_NGS2_ERROR_PS4_INV
 
 static float ClampPortVolume(float level) {
     return PS4_LIBRARY ? std::clamp(level, -MAX_PS4_PORT_VOLUME, MAX_PS4_PORT_VOLUME) : std::clamp(level, 0.0f, MAX_PORT_VOLUME);
+}
+
+static void RejectPs4Channels(const Ngs2Voice& voice, std::uint32_t channels) {
+    if (PS4_LIBRARY && (Ngs2Ps4UnsupportedChannels(channels) || channels > voice.rack->maxChannels)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS};
 }
 
 static void SendEvent(Ngs2Voice& voice, std::uint32_t eventId) {
@@ -238,6 +243,7 @@ void Ngs2Voice::ResetSetup() {
     std::fill(ports.begin(), ports.end(), Ngs2Port{});
     for (auto& matrix : matrices) matrix.clear();
     filters.clear();
+    compressor.gain.fill(1.0f);
     fbwLevel = 1.0f;
     lfeLevel = 1.0f;
     channels = 0;
@@ -565,8 +571,26 @@ static void CheckSubmixerFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFi
     if (param.type != 0) throw std::runtime_error("NGS2: submixer filter type " + std::to_string(param.type) + " is not implemented");
 }
 
-static void CheckSubmixerCompressor(const Ngs2SubmixerVoiceCompressorParam& param) {
-    if ((param.flags & 0x1u) == 0) throw std::runtime_error("NGS2: an enabled submixer compressor (flags " + Ngs2Hex(param.flags) + ") is not implemented");
+static void CheckSubmixerCompressor(const Ngs2Voice& voice, const Ngs2SubmixerVoiceCompressorParam& param) {
+    const auto flags = param.flags;
+    if (PS4_LIBRARY && (flags & 1u) != 0) return;
+    if ((flags & ~0x3fu) != 0 || (PS4_LIBRARY ? (flags & 4u) != 0 : ((flags & 0x6u) == 0x6u || (flags & 0x30u) == 0x30u))) {
+        throw std::runtime_error("NGS2: submixer compressor flags " + Ngs2Hex(flags) + " are not implemented");
+    }
+    if ((flags & 1u) != 0) return;
+    if (!(param.knee >= 0.0f && param.knee <= 2.0f)) throw std::runtime_error("NGS2: a submixer compressor knee outside 0 to 2 is not implemented");
+    if (!PS4_LIBRARY && (flags & 8u) != 0 && voice.rack->maxInputs > 1) throw std::runtime_error("NGS2: a submixer compressor side-chain from a second input is not implemented");
+    if (!(param.threshold > 0.0f) || !std::isfinite(param.threshold) || !std::isfinite(param.ratio) || !std::isfinite(param.level) ||
+        !(param.attack_time >= 0.0f) || !std::isfinite(param.attack_time) || !(param.release_time >= 0.0f) || !std::isfinite(param.release_time)) {
+        throw std::runtime_error("NGS2: submixer compressor values outside the measured range are not implemented");
+    }
+}
+
+static void SetSubmixerCompressor(Ngs2Voice& voice, const Ngs2SubmixerVoiceCompressorParam& param) {
+    auto& compressor = voice.compressor;
+    if (!compressor.configured) compressor.gain.fill(1.0f);
+    compressor.param = param;
+    compressor.configured = true;
 }
 
 static void CheckFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
@@ -576,6 +600,23 @@ static void CheckFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterPara
     if (PS4_LIBRARY ? param.location >= PS4_MAX_FILTER_LOCATIONS : param.location >= std::uint64_t{2} + voice.ports.size()) {
         throw Ngs2ReturnCode{PS4_LIBRARY ? SCE_NGS2_ERROR_PS4_INVALID_FILTER_LOCATION : SCE_NGS2_ERROR_INVALID_MODULE_LOCATION};
     }
+}
+
+static bool IsMasteringEffect(const Ngs2Voice& voice, std::uint32_t id) {
+    return !PS4_LIBRARY && voice.rack->rackId == SCE_NGS2_RACK_ID_MASTERING &&
+        (id == SCE_NGS2_MASTERING_VOICE_PARAM_LFE || id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER || id == SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER);
+}
+
+static void CheckMasteringEffect(const Ngs2VoiceParamHeader& param) {
+    if (param.size < sizeof(Ngs2MasteringVoiceEffectParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
+    const auto& effect = reinterpret_cast<const Ngs2MasteringVoiceEffectParam&>(param);
+    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER) {
+        if (effect.enable_flag > 2) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE};
+        return;
+    }
+    if (effect.enable_flag == 0) return;
+    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER && std::isnan(std::bit_cast<float>(effect.value))) return;
+    throw std::runtime_error("NGS2: enabled voice param " + Ngs2Hex(param.id) + " is not implemented");
 }
 
 static Ngs2SamplerVoiceFilterParam SamplerFilterParam(const Ngs2VoiceParamHeader& param) {
@@ -634,6 +675,10 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
         value.lfe_level = std::clamp(value.lfe_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN);
         return value;
     }
+    if (IsMasteringEffect(voice, param.id)) {
+        CheckMasteringEffect(param);
+        return CopyParam(param);
+    }
     if ((param.id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_PITCH_SHIFT) {
         const auto index = param.id & 0x1fu;
         if (index >= voice.customPitchShift.size() || voice.rack->customModuleIds[index] != SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) APS5_INVALID_ARG_EX;
@@ -646,13 +691,15 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
         return CopyParam(param);
     }
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR) {
-        CheckSubmixerCompressor(ParamAs<Ngs2SubmixerVoiceCompressorParam>(param));
+        CheckSubmixerCompressor(voice, ParamAs<Ngs2SubmixerVoiceCompressorParam>(param));
         return CopyParam(param);
     }
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP) {
         const auto& value = ParamAs<Ngs2SubmixerVoiceSetupParam>(param);
         if (value.flags != 0) throw std::runtime_error("NGS2: submixer setup flags are not implemented");
-        if (value.num_io_channels == 0 || value.num_io_channels > voice.rack->maxChannels) APS5_INVALID_ARG_EX;
+        if (value.num_io_channels == 0) APS5_INVALID_ARG_EX;
+        RejectPs4Channels(voice, value.num_io_channels);
+        if (value.num_io_channels > voice.rack->maxChannels) APS5_INVALID_ARG_EX;
         return CopyParam(param);
     }
     if (IsSamplerSetup(voice, param.id)) {
@@ -1049,6 +1096,12 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         ApplyCommonParam(voice, param);
         return;
     }
+    if (param.id == SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP && voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
+        const auto& setup = ParamAs<Ngs2CustomSubmixerVoiceSetupParam>(param);
+        for (const auto count : {setup.num_input_channels, setup.num_output_channels}) {
+            if (PS4_LIBRARY && ((count != 1 && count != 2 && count != 6 && count != 8) || count > voice.rack->maxChannels)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS};
+        }
+    }
     if (rackId == (SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 >> 16) || rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
         Ngs2ApplyCustomParam(voice, param);
         return;
@@ -1072,7 +1125,9 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
                 return;
             }
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR) {
-                CheckSubmixerCompressor(ParamAs<Ngs2SubmixerVoiceCompressorParam>(param));
+                const auto& compressor = ParamAs<Ngs2SubmixerVoiceCompressorParam>(param);
+                CheckSubmixerCompressor(voice, compressor);
+                SetSubmixerCompressor(voice, compressor);
                 return;
             }
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX) {
@@ -1084,6 +1139,7 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             if (param.id != SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP) break;
             if (ParamAs<Ngs2SubmixerVoiceSetupParam>(param).flags != 0) throw std::runtime_error("NGS2: submixer setup flags are not implemented");
+            RejectPs4Channels(voice, ParamAs<Ngs2SubmixerVoiceSetupParam>(param).num_io_channels);
             SetupMixer(voice, ParamAs<Ngs2SubmixerVoiceSetupParam>(param).num_io_channels);
             return;
         case SCE_NGS2_RACK_ID_REVERB:
@@ -1091,7 +1147,10 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
                 const auto& setup = ParamAs<Ngs2ReverbVoiceSetupParam>(param);
                 if (setup.flags != 0) throw std::runtime_error("NGS2: reverb setup flags are not implemented");
                 for (const auto count : {setup.num_input_channels, setup.num_output_channels}) {
-                    if ((count != 1 && count != 2 && count != 6 && count != 8) || count > voice.rack->maxChannels) APS5_INVALID_ARG_EX;
+                    if ((count != 1 && count != 2 && count != 6 && count != 8) || count > voice.rack->maxChannels) {
+                        if (PS4_LIBRARY) throw Ngs2ReturnCode{SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS};
+                        APS5_INVALID_ARG_EX;
+                    }
                 }
                 SetupMixer(voice, setup.num_output_channels);
                 voice.inputChannels = setup.num_input_channels;
@@ -1106,6 +1165,7 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         case SCE_NGS2_RACK_ID_MASTERING:
         case SCE_NGS2_RACK_ID_CUSTOM_MASTERING:
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_SETUP || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP) {
+                RejectPs4Channels(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
                 SetupMixer(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
                 return;
             }
@@ -1117,6 +1177,10 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_OUTPUT) {
                 voice.outputId = ParamAs<Ngs2MasteringVoiceOutputParam>(param).output_id;
+                return;
+            }
+            if (IsMasteringEffect(voice, param.id)) {
+                CheckMasteringEffect(param);
                 return;
             }
             break;
@@ -1236,22 +1300,28 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
     const auto& voice = *found;
     switch (voice.rack->rackId) {
         case SCE_NGS2_RACK_ID_SAMPLER: {
-            if (state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-            auto& sampler = *reinterpret_cast<Ngs2SamplerVoiceState*>(state);
-            if (voice.pendingPlay) { sampler = {}; sampler.voice_state.state_flags = SCE_NGS2_VOICE_STATE_FLAG_INUSE; return SCE_NGS2_OK; }
-            if (voice.rack->system != nullptr && voice.rack->system->renderDepth != 0 && voice.rack->system->jobManagers[0].handle != 0) {
+            const bool commonOnly = PS4_LIBRARY && state_size == sizeof(Ngs2VoiceState);
+            if (!commonOnly && state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+            Ngs2SamplerVoiceState commonResult;
+            auto& sampler = commonOnly ? commonResult : *reinterpret_cast<Ngs2SamplerVoiceState*>(state);
+            if (voice.pendingPlay) {
+                sampler = {};
+                sampler.voice_state.state_flags = SCE_NGS2_VOICE_STATE_FLAG_INUSE;
+            } else if (voice.rack->system != nullptr && voice.rack->system->renderDepth != 0 && voice.rack->system->jobManagers[0].handle != 0) {
                 sampler = voice.publishedSampler;
-                return SCE_NGS2_OK;
+            } else {
+                sampler = {};
+                sampler.voice_state.state_flags = voice.stateFlags;
+                if (voice.state != Ngs2PlayState::Empty) {
+                    sampler.envelope_height = 1.0f;
+                    sampler.peak_height = voice.peakHeight;
+                    sampler.num_decoded_samples = voice.decodedSamples;
+                    sampler.decoded_data_size = voice.decodedBytes;
+                    sampler.user_data = voice.waveformUserData;
+                    sampler.waveform_data = voice.WaveformData();
+                }
             }
-            sampler = {};
-            sampler.voice_state.state_flags = voice.stateFlags;
-            if (voice.state == Ngs2PlayState::Empty) return SCE_NGS2_OK;
-            sampler.envelope_height = 1.0f;
-            sampler.peak_height = voice.peakHeight;
-            sampler.num_decoded_samples = voice.decodedSamples;
-            sampler.decoded_data_size = voice.decodedBytes;
-            sampler.user_data = voice.waveformUserData;
-            sampler.waveform_data = voice.WaveformData();
+            if (commonOnly) *state = sampler.voice_state;
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_REVERB: {

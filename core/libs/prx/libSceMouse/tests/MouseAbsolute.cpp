@@ -177,6 +177,8 @@ int main() {
     Require(readAbsolute(MOUSE_HANDLE, records, 1) == 1 && records[0].x == 70, "the absolute read missed the motion");
     Require(sceMouseRead(MOUSE_HANDLE, relative, 1) == 1 && relative[0].x_axis == 3, "an absolute read took the sample from sceMouseRead");
 
+    Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 100, 100) == MOUSE_OK, "reset before disconnect failed");
+    Motion(20, 0);
     MouseInputEvent disconnect{};
     disconnect.connectionChange = true;
     disconnect.connected = false;
@@ -185,6 +187,19 @@ int main() {
     Require(readAbsolute(MOUSE_HANDLE, records, 4) == 1, "a disconnected mouse did not return one record");
     const AbsoluteRecord zero{};
     Require(std::memcmp(&records[0], &zero, sizeof(zero)) == 0 && records[1].connected == 0xA5, "a disconnected mouse did not return one zeroed record");
+
+    disconnect.connected = true;
+    MousePublishInput_nid_no_patch(disconnect);
+    Require(readAbsolute(MOUSE_HANDLE, records, 4) == 1 && records[0].connected == 1 && records[0].x == 100 && records[0].y == 100,
+            "a reconnected mouse replayed absolute motion from before disconnection");
+
+    Motion(15, 0);
+    disconnect.connected = false;
+    MousePublishInput_nid_no_patch(disconnect);
+    disconnect.connected = true;
+    MousePublishInput_nid_no_patch(disconnect);
+    Require(readAbsolute(MOUSE_HANDLE, records, 4) == 1 && records[0].connected == 1 && records[0].x == 100 && records[0].y == 100,
+            "a reconnect before reading replayed stale absolute motion");
 
     Require(sceMouseClose(MOUSE_HANDLE) == MOUSE_OK, "close failed");
     Require(readAbsolute(MOUSE_HANDLE, records, 1) == MOUSE_ERROR_INVALID_HANDLE, "a closed handle was read");

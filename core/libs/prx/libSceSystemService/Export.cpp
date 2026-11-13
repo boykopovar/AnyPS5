@@ -9,6 +9,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
+#include <atomic>
 #include <filesystem>
 #include <mutex>
 #include <stdexcept>
@@ -33,11 +34,26 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceSystemService/HostUrlBackends.hpp"
 #include "prx/libSceSystemService/DateTimeLocale.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 
 namespace {
+
+HostBrowserLauncher g_defaultUrlLauncher;
+HostMessageBoxConfirmation g_defaultUrlConfirmation;
+std::atomic<IUrlLauncher*> g_urlLauncher{&g_defaultUrlLauncher};
+std::atomic<IUrlConfirmation*> g_urlConfirmation{&g_defaultUrlConfirmation};
+SteadyUrlClock g_steadyUrlClock;
+OpenUrlGate g_urlGate(g_steadyUrlClock);
+
+int OpenWebBrowserUrl(const char* uri) {
+    const OpenUrlMode mode = OpenUrlModeFromEnvironment("sceSystemServiceLaunchWebBrowser");
+    if (mode == OpenUrlMode::Never) return SCE_KERNEL_ERROR_EOPNOTSUPP;
+    const OpenUrlGateOutcome outcome = g_urlGate.Run(mode, uri, *g_urlLauncher.load(), *g_urlConfirmation.load());
+    return outcome == OpenUrlGateOutcome::Launched ? SYSTEM_SERVICE_OK : SCE_KERNEL_ERROR_EOPNOTSUPP;
+}
 
 struct MeasuredParameter {
     int id;
@@ -89,7 +105,7 @@ int WriteStatus(bool* status, bool value, const char* function) {
 
 int WriteStatusOrRefuse(bool* status, bool value, int nullOutputError) {
     if (status == nullptr) return nullOutputError;
-    *status = value;
+    if (!GuestCopyOut_nid_no_patch(status, &value, sizeof(value))) return nullOutputError;
     return SYSTEM_SERVICE_OK;
 }
 
@@ -214,7 +230,10 @@ void CopyRunningTitleId(const std::string& caller, bool running, char* destinati
     if (destination == nullptr) throw std::runtime_error(caller + ": null title ID buffer");
     const std::string titleId = RunningTitleId();
     if (titleId.size() >= TitleIdBufferSize) throw std::runtime_error(caller + ": title ID that does not fit 10 bytes");
-    std::memcpy(destination, titleId.c_str(), titleId.size() + 1);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, titleId.c_str(), titleId.size() + 1);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(caller + ": unwritable title ID buffer");
 }
 
 bool WellFormedTitleId(const char* titleId) {
@@ -454,13 +473,25 @@ int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, s
     if (userId != static_cast<std::uint32_t>(USER_SERVICE_INITIAL_USER_ID)) {
         NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted for a user other than the logged-in user");
     }
-    *adjusted = 0;
+    const std::uint8_t result = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(adjusted, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) {
+        NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted with an unwritable output");
+    }
     return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
     if (adjusted == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
-    return sceShellCoreUtilIsEyeToEyeDistanceAdjusted(userId, adjusted);
+    std::uint8_t result = 0;
+    const int status = sceShellCoreUtilIsEyeToEyeDistanceAdjusted(userId, &result);
+    if (status != SYSTEM_SERVICE_OK) return status;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(adjusted, &result, sizeof(result));
+    errno = savedErrno;
+    return copied ? SYSTEM_SERVICE_OK : SYSTEM_SERVICE_ERROR_PARAMETER;
 }
 
 bool APS5_VABI sceSystemStateMgrIsBdDriveReady() {
@@ -558,7 +589,13 @@ int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri) {
     while (length < 6016 && uri[length] != 0) ++length;
     if (length > 6015) return static_cast<int>(0x80a10007);
     if (std::strncmp(uri, "http:", 5) != 0 && std::strncmp(uri, "https:", 6) != 0 && std::strncmp(uri, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
-    return SCE_KERNEL_ERROR_EOPNOTSUPP;
+    return OpenWebBrowserUrl(uri);
+}
+
+extern "C" void SystemServiceSetUrlHandlers_nid_no_patch(IUrlLauncher* launcher, IUrlConfirmation* confirmation, IUrlClock* clock) {
+    g_urlLauncher = launcher != nullptr ? launcher : &g_defaultUrlLauncher;
+    g_urlConfirmation = confirmation != nullptr ? confirmation : &g_defaultUrlConfirmation;
+    g_urlGate.Reset(clock != nullptr ? *clock : static_cast<IUrlClock&>(g_steadyUrlClock));
 }
 
 int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* arguments, const void* param) {
@@ -700,9 +737,10 @@ int APS5_VABI sceSystemServiceLaunchSystemDeeplink(void) {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void* param) {
+    if (param == nullptr) return;
+    const std::uint32_t fields[2] = {0, 0xffffffff};
+    std::memcpy(param, fields, sizeof(fields));
 }
 
 int APS5_VABI sceSystemStateMgrTickVideoPlayback(void) {
@@ -990,8 +1028,9 @@ int APS5_VABI sceShellCoreUtilRemoveCffConfigFile(void) {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(std::uint32_t* count) {
+    if (count == nullptr) return static_cast<int>(0x80e30005);
+    *count = 50;
     return 0;
 }
 
