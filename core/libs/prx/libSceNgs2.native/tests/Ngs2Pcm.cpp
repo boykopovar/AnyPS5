@@ -322,6 +322,8 @@ static void TestReportedInputLifetime(const PcmFixture& fixture, std::uint32_t c
         const auto state = playback.State();
         const auto expectedState = reference.State();
         Require(state.decoded_data_size == expectedState.decoded_data_size);
+        if (state.decoded_data_size < previous || state.decoded_data_size > data.size())
+            std::fprintf(stderr, "PCM lifetime type=%#x channels=%u rate=%u pitch=%g grain=%u decoded=%llu previous=%llu size=%zu\n", fixture.type, channels, rate, pitch, grain, static_cast<unsigned long long>(state.decoded_data_size), static_cast<unsigned long long>(previous), data.size());
         Require(state.decoded_data_size >= previous && state.decoded_data_size <= data.size());
         Require(state.decoded_data_size % frameBytes == 0);
         if (grain == 0) {
