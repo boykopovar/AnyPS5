@@ -175,6 +175,18 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("not a library under core/libs/prx: libSceMissing", errors.getvalue())
 
+    def test_library_selection_cannot_escape_prx(self):
+        files = {
+            "libSceExample/Export.cpp": "int APS5_VABI sceExample(int* out) { *out = 1; return 0; }\n",
+            "../stray/Export.cpp": "int APS5_VABI sceOutside(int* out) { *out = 2; return 0; }\n",
+        }
+        for name in ("..", "../stray", "libSceExample/.."):
+            with self.subTest(name=name):
+                with contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as raised:
+                    self.run_main(["--json", name], files)
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("not a library under core/libs/prx:", errors.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEFREETYPE_INCLUDE_GUESTOBJECTS_HPP
 
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libSceFreeType/include/GuestSfntTables.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -55,6 +56,7 @@ struct GuestFace {
     std::vector<GuestCharMapRec> charmaps;
     std::vector<GuestCharMapRec*> charmapPointers;
     std::vector<GuestVector> outlinePoints;
+    GuestSfntTables sfntTables{};
     std::unique_ptr<GuestStreamBridge> stream;
 
     ~GuestFace() { UnregisterBitmap_nid_no_patch(&slot.bitmap); }
