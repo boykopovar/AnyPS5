@@ -3021,7 +3021,7 @@ std::int64_t GuestSockets::Readv(int descriptor, const Iovec* iov, int iovcnt) {
     std::size_t copied = 0;
     for (int i = 0; i < iovcnt && copied < static_cast<std::size_t>(result); ++i) {
         const auto amount = std::min(iov[i].length, static_cast<std::size_t>(result) - copied);
-        if (amount != 0) std::memcpy(iov[i].base, buffer.data() + copied, amount);
+        if (amount != 0 && !GuestCopyOut_nid_no_patch(iov[i].base, buffer.data() + copied, amount)) return Fail(14);
         copied += amount;
     }
     return result;
@@ -3043,7 +3043,7 @@ std::int64_t GuestSockets::Writev(int descriptor, const Iovec* iov, int iovcnt) 
     }
     std::size_t copied = 0;
     for (int i = 0; i < iovcnt; ++i) {
-        if (iov[i].length != 0) std::memcpy(buffer.data() + copied, iov[i].base, iov[i].length);
+        if (iov[i].length != 0 && !GuestCopyIn_nid_no_patch(buffer.data() + copied, iov[i].base, iov[i].length)) return Fail(14);
         copied += iov[i].length;
     }
     return Write(descriptor, buffer.data(), total);
