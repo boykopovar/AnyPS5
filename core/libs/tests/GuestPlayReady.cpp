@@ -94,7 +94,7 @@ void CheckVersionString() {
 } // namespace
 
 int main() {
-    CheckBufferInit();
+    for (int iter = 0; iter < 2; ++iter) CheckBufferInit();
     CheckInitParams();
     CheckVersion();
     CheckVersionString();
