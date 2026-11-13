@@ -44,6 +44,7 @@ int main() {
     Require(Fails((root / "missing").string(), Enoent));
     Require(Fails(file + "/below", Enotdir));
     Require(Fails("", Enoent));
+    Require(Fails((root / "missing_dir" / "file").string(), Enoent));
     Require(Fails(std::string(1024, 'a'), Enametoolong));
     Require(revoke_nid_postfix(nullptr) == -1 && Error() == Efault);
 
