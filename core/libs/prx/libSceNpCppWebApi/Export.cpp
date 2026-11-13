@@ -1380,7 +1380,9 @@ std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V123RecordScoreRespo
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody11getSortModeEv(const void* self) {
-    return *reinterpret_cast<const std::int32_t*>(static_cast<const std::uint8_t*>(self) + 0x6c);
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13getEntryLimitEv(const void* self) {
@@ -1388,11 +1390,15 @@ std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefiniti
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13getUpdateModeEv(const void* self) {
-    return *reinterpret_cast<const std::int32_t*>(static_cast<const std::uint8_t*>(self) + 0x74);
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13sortModeIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x70] != 0;
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return false;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15entryLimitIsSetEv(const void* self) {
@@ -1400,7 +1406,9 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionRespons
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15updateModeIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x78] != 0;
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return false;
 }
 
 std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody16getMaxScoreLimitEv(const void* self) {

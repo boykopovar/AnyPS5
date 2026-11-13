@@ -71,20 +71,6 @@ void RequireScoreLimits() {
     Require(!_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody18minScoreLimitIsSetEv(model));
 }
 
-void RequireModes() {
-    Storage storage{};
-    Fill(storage);
-    const void* model = storage.bytes;
-    Put32(storage, 0x6c, 0xfffffffbu);
-    storage.bytes[0x70] = 1;
-    Put32(storage, 0x74, 3);
-    storage.bytes[0x78] = 0;
-    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody11getSortModeEv(model) == -5);
-    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13sortModeIsSetEv(model));
-    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13getUpdateModeEv(model) == 3);
-    Require(!_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15updateModeIsSetEv(model));
-}
-
 void RequireWidthsDoNotOverlap() {
     Storage storage{};
     Fill(storage);
@@ -111,10 +97,6 @@ void RequireFlagsTrackMemory() {
     Require(!_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15entryLimitIsSetEv(model));
     storage.bytes[0x34] = 0x80;
     Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15entryLimitIsSetEv(model));
-    storage.bytes[0x70] = 0;
-    Require(!_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13sortModeIsSetEv(model));
-    storage.bytes[0x70] = 1;
-    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13sortModeIsSetEv(model));
 }
 
 }  // namespace
@@ -122,7 +104,6 @@ void RequireFlagsTrackMemory() {
 int main() {
     RequireLimits();
     RequireScoreLimits();
-    RequireModes();
     RequireWidthsDoNotOverlap();
     RequireFlagsTrackMemory();
     return 0;
