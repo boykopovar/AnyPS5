@@ -290,6 +290,7 @@ void BadPointers() {
 }
 
 int main() {
+    for (int iter = 0; iter < 2; ++iter)
     BadPointers();
     Counting();
     Timed();
