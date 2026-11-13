@@ -280,6 +280,15 @@ void testPs4Buffers() {
         if (field == 2) invalid.option = 1;
         rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, 0, &invalid); }, "VIDEO_OUT_ERROR_INVALID_OPTION");
     }
+    auto strictColorimetry = changed;
+    strictColorimetry.option = 8;
+    check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &strictColorimetry) == 0, "the legacy change with option 8 (strict colorimetry) failed");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->groups[0].attribute.option == 8, "the legacy change did not store option 8");
+    }
+    check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &changed) == 0, "the legacy change back to option 0 failed");
+    unchanged();
     for (int field = 0; field < 3; ++field) {
         auto invalid = changed;
         const int error = field == 0 ? VIDEO_OUT_ERROR_INVALID_ASPECT_RATIO : field == 1 ? VIDEO_OUT_ERROR_INVALID_PITCH : VIDEO_OUT_ERROR_INVALID_TILING_MODE;
@@ -329,6 +338,19 @@ void testPs4Buffers() {
         check(cfg->flipStatus.currentBuffer == 0 && cfg->flipStatus.flipArg == 8 && cfg->flipStatus.flipPendingNum == 0, "the changed legacy flip status is wrong");
     }
     AgcDriverUnregisterVideoOutput_nid_postfix(7, gate);
+    void* const fifth[1] = {storage.data() + 98304};
+    auto strictTiled = tiled;
+    strictTiled.option = 8;
+    check(sceVideoOutRegisterBuffers(handle, 4, fifth, 1, &strictTiled) == 3, "the PS4 tiled buffer with option 8 (strict colorimetry) was not registered as set 3");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->groups[3].attribute.option == 8, "the PS4 buffer option 8 was not stored");
+        auto plain = cfg->groups[3];
+        plain.attribute.option = 0;
+        const auto strict = DescribeVideoOutBuffer(cfg->buffers[4], cfg->groups[3]);
+        const auto same = DescribeVideoOutBuffer(cfg->buffers[4], plain);
+        check(strict.address == same.address && strict.pixelFormat == same.pixelFormat && strict.width == same.width && strict.height == same.height && strict.tilingMode == same.tilingMode && strict.pitchInPixel == same.pitchInPixel && strict.dccAddress == same.dccAddress && strict.dccClearColor == same.dccClearColor && strict.alignment == same.alignment && strict.tilingMode == AgcDriver::DisplayTilingGcn, "the PS4 buffer with option 8 is not described as the same buffer with option 0");
+    }
     sceVideoOutClose(handle);
     const int ps5Handle = sceVideoOutOpen(255, 0, 0, nullptr);
     raw.fill(0xaa);
