@@ -2973,6 +2973,11 @@ void VulkanDevice::RestoreNativeDepth(std::span<const NativeDepthSnapshot> snaps
     Graphics::RestoreNativeDepthSurfaces(graphicsContext(), snapshots);
 }
 
+void VulkanDevice::RestoreNativeDepthWhileIdle(std::span<const NativeDepthSnapshot> snapshots) {
+    require(GuestMemory::GpuMutex().HeldByThisThread(), "native replay restoration requires the guest memory transaction lock");
+    Graphics::RestoreNativeDepthSurfaces(graphicsContext(), snapshots);
+}
+
 namespace {
 
 bool OpportunisticReap() {

@@ -57,6 +57,7 @@ struct RetiredDepth {
     std::size_t planes = 0;
 };
 RetiredDepth RetireReplacedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+RetiredDepth DiscardDepthSurfacesForReplay(VkDevice device);
 std::size_t ResidentDepthOwnersOver(std::uint64_t address, std::size_t bytes, bool gpuOnly);
 void RequireNoNativeDepthFeedback_nid_no_patch(const Context& context, const DepthTarget& target, std::span<const std::shared_ptr<Texture>> sampled);
 void ClearDepthSurfaces(VkDevice device);

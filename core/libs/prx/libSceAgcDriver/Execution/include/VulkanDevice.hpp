@@ -110,6 +110,7 @@ public:
     void WaitIdle();
     std::vector<NativeDepthSnapshot> CaptureNativeDepth();
     void RestoreNativeDepth(std::span<const NativeDepthSnapshot> snapshots);
+    void RestoreNativeDepthWhileIdle(std::span<const NativeDepthSnapshot> snapshots);
     void PrepareForReplacement();
     void startJournalReplay();
     bool ImportGuestMemory(const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice);

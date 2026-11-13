@@ -999,7 +999,7 @@ add_executable(agc_frame_replay EXCLUDE_FROM_ALL
         tools/FrameReplay.cpp
         Execution/src/FrameCapture.cpp
 )
-target_include_directories(agc_frame_replay PRIVATE ${LIBS_INCLUDE_DIR})
+target_include_directories(agc_frame_replay PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
 target_link_libraries(agc_frame_replay PRIVATE libSceAgcDriver libkernel libc libzstd_static)
 if(WIN32)
     target_link_options(agc_frame_replay PRIVATE LINKER:--image-base=0x500000000000)

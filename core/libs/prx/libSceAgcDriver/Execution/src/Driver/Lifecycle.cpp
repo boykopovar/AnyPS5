@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -295,6 +296,21 @@ void Driver::RestoreNativeDepth(std::span<const NativeDepthSnapshot> snapshots) 
     std::lock_guard gpu(GuestMemory::GpuMutex());
     if (device == nullptr) device = std::make_shared<VulkanDevice>();
     device->RestoreNativeDepth(snapshots);
+}
+
+RetiredOwners Driver::DiscardNativeDepthForReplay() {
+    require(GuestMemory::GpuMutex().HeldByThisThread(), "native replay discard requires the guest memory transaction lock");
+    const auto localDevice = device.Load();
+    if (localDevice == nullptr) return {};
+    const auto retired = Graphics::DiscardDepthSurfacesForReplay(localDevice->Device());
+    return {0u, retired.owners, retired.surfaces, retired.planes};
+}
+
+void Driver::RestoreNativeDepthForReplay(std::span<const NativeDepthSnapshot> snapshots) {
+    require(GuestMemory::GpuMutex().HeldByThisThread(), "native replay restoration requires the guest memory transaction lock");
+    if (snapshots.empty()) return;
+    if (device == nullptr) device = std::make_shared<VulkanDevice>();
+    device->RestoreNativeDepthWhileIdle(snapshots);
 }
 
 bool Driver::WaitIdleFor(std::chrono::milliseconds timeout) {

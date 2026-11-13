@@ -178,11 +178,11 @@ void testNativeRepeat(const std::filesystem::path& directory, std::string_view m
         Runs changed;
         static_cast<void>(changedSince(begin, Step, since, changed));
         check(changed.empty(), "native GPU-only D16 mutation unexpectedly changed captured guest pages");
-        static_cast<void>(resetMemory(reader, skipped, since, ResetFault::None, true));
-        check(!AgcDriver::Graphics::ActiveDepthExtent(device->Device(), begin).has_value(), "native repeated reset retained an unmirrored GPU-only D16 owner from the previous window");
+        const auto reset = resetMemory(reader, skipped, since, ResetFault::None, true, &captured);
+        check(reset.retired.depthSurfaces >= (clean ? 2u : companions ? 5u : 4u), "native repeated reset did not discard the full preceding depth graph");
+        check(!AgcDriver::Graphics::DepthSurfaceHolds(context, holdResource, held.get()), "native repeated reset retained an unmirrored GPU-only D16 owner from the previous window");
         check(!AgcDriver::Graphics::ActiveDepthExtent(device->Device(), begin + 4u * Step).has_value(), "native repeated reset retained a clean window-only native companion");
         check(AgcDriver::DriverDetail::DriverTestAccess::Device().get() == device.get(), "native repeated reset replaced the VulkanDevice object");
-        device->RestoreNativeDepth(captured);
         const auto restored = device->CaptureNativeDepth();
         checkNativeRepeatContents(captured, restored);
         check(!AgcDriver::Graphics::DepthSurfaceHolds(context, holdResource, held.get()), "native repeated reset made the retained old view a current owner");

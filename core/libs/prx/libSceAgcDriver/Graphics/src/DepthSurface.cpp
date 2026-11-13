@@ -3444,6 +3444,52 @@ RetiredDepth RetireReplacedDepth_nid_no_patch(std::uintptr_t address, std::size_
     return retired;
 }
 
+RetiredDepth DiscardDepthSurfacesForReplay(VkDevice device) {
+    Require(GuestMemory::GpuMutex().HeldByThisThread(), "native replay discard requires the guest memory transaction lock");
+    RetiredDepth retired;
+    std::lock_guard lock(surfacesMutex());
+    if (drawnDepth != nullptr && drawnDepth->context.device == device) drawnDepth = nullptr;
+    {
+        std::unique_lock guardLock(depthGuardMutex());
+        std::vector<std::shared_ptr<std::atomic<bool>>> owners;
+        for (const auto& range : depthGuards()) {
+            if (range.device != device) continue;
+            if (range.active->load(std::memory_order_acquire) && std::ranges::find(owners, range.active) == owners.end()) owners.push_back(range.active);
+        }
+        retired.owners = owners.size();
+        for (const auto& range : depthGuards()) {
+            if (range.device != device) continue;
+            range.active->store(false, std::memory_order_release);
+            range.hostWritten->store(false, std::memory_order_release);
+        }
+        const auto removed = std::erase_if(depthGuards(), [&](const auto& range) { return range.device == device; });
+        publishDepthGuards(removed != 0);
+    }
+    {
+        std::lock_guard maskLock(htileMasksMutex());
+        std::erase_if(htileMasks(), [&](const HtileMaskWrite& write) { return write.device == device; });
+    }
+    for (const auto& surface : surfaces()) {
+        if (surface->context.device != device || surface->retired) continue;
+        if (surface->target.htileAddress != 0u) {
+            const auto begin = surface->target.htileAddress;
+            const auto bytes = HtileMetadataBytes(surface->target.extent);
+            Require(begin <= std::numeric_limits<std::uint64_t>::max() - bytes, "native replay HTILE range overflows");
+            const auto end = begin + bytes;
+            forgetHtileReads(begin, bytes);
+            std::erase_if(clearedHtiles(), [&](const auto& cleared) { return cleared.first < end && begin < cleared.first + cleared.second; });
+        }
+        surface->active->store(false, std::memory_order_release);
+        surface->hostWritten->store(false, std::memory_order_release);
+        retired.planes += surface->AnyStale() || surface->stencilStale;
+        ++retired.surfaces;
+        retire(*surface);
+    }
+    surfacesSerial.fetch_add(1u, std::memory_order_release);
+    UpdateResidentImageUnmapObserver_nid_no_patch();
+    return retired;
+}
+
 std::size_t ResidentDepthOwnersOver(std::uint64_t address, std::size_t bytes, bool gpuOnly) {
     if (bytes == 0u) return 0;
     const auto end = address + bytes;
@@ -4127,15 +4173,17 @@ void RestoreNativeDepthSurfaces(const Context& context, std::span<const NativeDe
         constexpr auto required = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
         Require((properties.optimalTilingFeatures & required) == required, "native depth snapshot format is unavailable");
     }
+    drawnDepth = nullptr;
     struct DrawnScope {
-        DepthSurface* previous;
-        ~DrawnScope() { drawnDepth = previous; }
-    } scope{drawnDepth};
+        ~DrawnScope() { drawnDepth = nullptr; }
+    } scope;
     std::vector<DepthSurface*> restored;
     for (const auto& snapshot : snapshots) {
-        static_cast<void>(DepthSurfaceView(context, snapshot.target, false, false));
-        const auto found = std::ranges::find_if(surfaces(), [&](const auto& surface) { return surface->context.device == context.device && sameSurface(surface->target, snapshot.target); });
+        const auto view = DepthSurfaceView(context, snapshot.target, false, false);
+        const auto matches = [&](const auto& surface) { return surface->context.device == context.device && surface->active->load(std::memory_order_acquire) && !surface->retired && surface->view == view; };
+        const auto found = std::ranges::find_if(surfaces(), matches);
         Require(found != surfaces().end(), "restored native depth surface is missing");
+        Require(std::ranges::count_if(surfaces(), matches) == 1, "restored native depth view is not unique");
         restored.push_back(found->get());
     }
     if (auto* recorder = RecorderFor(context)) recorder->Sync();

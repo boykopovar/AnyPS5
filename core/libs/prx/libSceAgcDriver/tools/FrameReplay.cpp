@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
+#include "prx/libSceAgcDriver/Execution/include/NativeDepthCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
@@ -603,11 +604,12 @@ void verifyReset(const FrameCaptureReader& reader, const ResetPlan& plan, std::s
     if (wrong.load() != 0) throw std::runtime_error("frame replay: guest memory at " + std::to_string(wrong.load()) + " differs from the captured contents after the reset");
 }
 
-ResetResult resetMemory(const FrameCaptureReader& reader, const Skipped& skipped, std::uint64_t& since, ResetFault fault, bool verify) {
+ResetResult resetMemory(const FrameCaptureReader& reader, const Skipped& skipped, std::uint64_t& since, ResetFault fault, bool verify, const std::vector<AgcDriver::NativeDepthSnapshot>* nativeDepth = nullptr) {
     const auto plan = planReset(reader, skipped);
     ResetResult result;
     result.rangeBytes = plan.rangeBytes;
     exclusive([&] {
+        if (nativeDepth != nullptr) result.retired = AgcDriver::DiscardNativeDepthForReplay_nid_no_patch();
         const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         struct Omission {
             explicit Omission(bool omit) : omit(omit) { if (omit) AgcDriverOmitGpuOwnersForTest_nid_no_patch(true); }
@@ -668,10 +670,12 @@ ResetResult resetMemory(const FrameCaptureReader& reader, const Skipped& skipped
         if (fault == ResetFault::Remap) std::thread([] { GuestAllocations::Mutation mutation; }).join();
         for (const auto& [begin, end] : replaced) since = std::max(since, changedSince(begin, end - begin, std::numeric_limits<std::uint64_t>::max(), changed));
         if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != mapping) throw std::runtime_error("frame replay: guest memory was mapped or unmapped during the reset, which the reset excludes");
-        if (!verify) return;
-        const auto verifyStart = Clock::now();
-        verifyReset(reader, plan, candidates);
-        result.verifySeconds = std::chrono::duration<double>(Clock::now() - verifyStart).count();
+        if (verify) {
+            const auto verifyStart = Clock::now();
+            verifyReset(reader, plan, candidates);
+            result.verifySeconds = std::chrono::duration<double>(Clock::now() - verifyStart).count();
+        }
+        if (nativeDepth != nullptr) AgcDriver::RestoreNativeDepthForReplay_nid_no_patch(*nativeDepth);
     });
     return result;
 }
@@ -1637,7 +1641,11 @@ int run(const Options& options) {
     if (reader.Truncated()) std::fprintf(stderr, "[frame-replay] the capture is truncated; replaying the complete records\n");
     auto skipped = restoreMemory(reader);
     auto resetSince = options.repeat > 1 ? watchBaseline(reader, skipped) : 0;
-    const auto nativeDepthSurfaces = AgcDriverRestoreNativeDepthCapture_nid_no_patch(options.directory.string().c_str());
+    const auto nativeDepthPath = options.directory / AgcDriver::NativeDepthCaptureName;
+    const bool hasNativeDepth = std::filesystem::exists(nativeDepthPath);
+    const auto nativeDepth = AgcDriver::ReadNativeDepthCapture(nativeDepthPath);
+    const auto nativeDepthSurfaces = nativeDepth.size();
+    if (!nativeDepth.empty()) exclusive([&] { AgcDriver::RestoreNativeDepthForReplay_nid_no_patch(nativeDepth); });
     const auto loaded = Clock::now();
     Replay replay{options, reader};
     replay.skipped = std::move(skipped);
@@ -1660,7 +1668,7 @@ int run(const Options& options) {
         double resetSeconds = 0.0;
         if (pass > 0) {
             const auto resetStart = Clock::now();
-            reset = resetMemory(reader, replay.skipped, resetSince, options.resetFault, options.verifyReset);
+            reset = resetMemory(reader, replay.skipped, resetSince, options.resetFault, options.verifyReset, hasNativeDepth ? &nativeDepth : nullptr);
             resetSeconds = std::chrono::duration<double>(Clock::now() - resetStart).count() - reset.verifySeconds;
             replay.pass = pass;
             replay.recording = false;
