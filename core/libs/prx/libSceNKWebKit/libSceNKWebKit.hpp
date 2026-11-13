@@ -24,6 +24,7 @@
 #include "prx/libSceNKWebKit/include/WebCoreParsersExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitConfigExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
+#include "prx/libSceNKWebKit/include/PropertyDescriptorExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfBitVector.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
