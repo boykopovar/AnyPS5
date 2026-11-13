@@ -156,6 +156,19 @@ static void RequireNeverDecreases(int clockId) {
     }
 }
 
+static void Clock20UsesScaledMonotonicTime() {
+    constexpr int clockId = 20;
+    constexpr std::int64_t tickCeilingNanos = 30519;
+    const auto before = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
+    const auto posix = Nanos(clockId);
+    KernelTimespec sceTime{-1, -1};
+    Require(sceKernelClockGettime(clockId, &sceTime) == SCE_OK);
+    const auto sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
+    const auto after = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
+    Require(before - tickCeilingNanos <= posix && posix <= sce && sce <= after);
+    Require(posix % 1000 == 0 && sce % 1000 == 0);
+}
+
 static void WallAndUptimeClocksReportSubsecondResolutions() {
     const int clocks[] = {GUEST_CLOCK_REALTIME, GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST, GUEST_CLOCK_MONOTONIC,
                           GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST, GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE,
@@ -185,6 +198,18 @@ static void SecondClockReportsWholeSeconds() {
         Require(second.tv_sec >= previous);
         previous = second.tv_sec;
     }
+}
+
+static void Clock21TracksProcessCpuTime() {
+    constexpr int clockId = 21;
+    const auto before = Nanos(GUEST_CLOCK_PROF);
+    const auto posix = Nanos(clockId);
+    KernelTimespec sceTime{-1, -1};
+    Require(sceKernelClockGettime(clockId, &sceTime) == SCE_OK);
+    const auto sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
+    const auto after = Nanos(GUEST_CLOCK_PROF);
+    Require(before - 999 <= posix && posix <= sce && sce <= after);
+    Require(posix % 1000 == 0 && sce % 1000 == 0);
 }
 
 static void ProcessClocksAreOrdered() {
@@ -347,7 +372,7 @@ static void TimezoneReportsTheStandardOffsetAndDaylightAmount() {
     RequireTimezone("BRT+3", -180, 0);
     RequireTimezone("EST5EDT", -300, 60);
     RequireTimezone("CET-1CEST", 60, 60);
-    Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000e));
+    Require(sceKernelGettimezone(nullptr) == SCE_OK);
     SetTimeZone("UTC0");
 }
 
@@ -397,7 +422,7 @@ static void ExplicitDaylightRulesRefreshAZeroHostBias() {
 
 static void KernelTimezoneIsUtc() {
     SetTimeZone("UTC0");
-    Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelGettimezone(nullptr) == SCE_OK);
     KernelTimezone zone{-1, -1};
     Require(sceKernelGettimezone(&zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
 }
@@ -409,6 +434,7 @@ int main() {
     OmittedTimeIsFaultAfterClockValidation();
     InvalidClockIdFailsGettime();
     ClockIoErrorIds();
+    Clock20UsesScaledMonotonicTime();
     SettimeIsRefusedLikeAJailedProcess();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();
@@ -445,6 +471,7 @@ int main() {
 
     RequireNeverDecreases(GUEST_CLOCK_VIRTUAL);
     RequireNeverDecreases(GUEST_CLOCK_PROF);
+    Clock21TracksProcessCpuTime();
     ProcessClocksAreOrdered();
     BusyProcessAccumulatesUserTime();
     IdleProcessAccumulatesNone();

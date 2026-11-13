@@ -33,4 +33,34 @@ const void* APS5_VABI WKBundleHitTestResultCopyLinkTitle(const void* hitTestResu
     return result->linkTitle ? NKWebKit::ToRef(result->linkTitle) : NKWebKit::ToRef(NKWebKit::String::FromUtf8(""));
 }
 
+const void* APS5_VABI WKBundleHitTestResultCopyLinkSuggestedFilename(const void* hitTestResultRef) {
+    const auto* result = NKWebKit::Cast<NKWebKit::BundleHitTestResult>(hitTestResultRef, __func__);
+    return result->linkSuggestedFilename ? NKWebKit::ToRef(result->linkSuggestedFilename) : NKWebKit::ToRef(NKWebKit::String::FromUtf8(""));
+}
+
+bool APS5_VABI WKBundleHitTestResultGetIsSelected(const void* hitTestResultRef) {
+    const auto* result = NKWebKit::Cast<NKWebKit::BundleHitTestResult>(hitTestResultRef, __func__);
+    return result->isSelected;
+}
+
+bool APS5_VABI WKBundleHitTestResultIsDownloadableMedia(const void* hitTestResultRef) {
+    const auto* result = NKWebKit::Cast<NKWebKit::BundleHitTestResult>(hitTestResultRef, __func__);
+    return result->isDownloadableMedia;
+}
+
+bool APS5_VABI WKBundleHitTestResultMediaHasAudio(const void* hitTestResultRef) {
+    const auto* result = NKWebKit::Cast<NKWebKit::BundleHitTestResult>(hitTestResultRef, __func__);
+    return result->mediaHasAudio;
+}
+
+bool APS5_VABI WKBundleHitTestResultMediaIsInFullscreen(const void* hitTestResultRef) {
+    const auto* result = NKWebKit::Cast<NKWebKit::BundleHitTestResult>(hitTestResultRef, __func__);
+    return result->mediaIsInFullscreen;
+}
+
+std::uint32_t APS5_VABI WKBundleHitTestResultGetMediaType(const void* hitTestResultRef) {
+    const auto* result = NKWebKit::Cast<NKWebKit::BundleHitTestResult>(hitTestResultRef, __func__);
+    return result->mediaType;
+}
+
 }
