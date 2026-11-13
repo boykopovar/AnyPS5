@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 
 namespace {
 
@@ -84,8 +85,7 @@ bool Grow(Buffer* buffer, std::size_t length) {
     return true;
 }
 
-char* Fail(Buffer* buffer) {
-    LibreSslPutError_nid_no_patch(X509Library, AnyFunction, MallocFailure);
+void FreeBuffer(Buffer* buffer) {
     if (buffer) {
         if (buffer->data) {
             std::memset(buffer->data, 0, buffer->max);
@@ -93,6 +93,11 @@ char* Fail(Buffer* buffer) {
         }
         free_nid_postfix(buffer);
     }
+}
+
+char* Fail(Buffer* buffer) {
+    LibreSslPutError_nid_no_patch(X509Library, AnyFunction, MallocFailure);
+    FreeBuffer(buffer);
     return nullptr;
 }
 
@@ -107,21 +112,21 @@ NameEntry* EntryAt(const Stack* entries, int index, const char* function) {
 extern "C" {
 
 char* APS5_VABI X509_NAME_oneline_nid_postfix(const void* name, char* buffer, int length) {
-    Buffer* grown = nullptr;
+    std::unique_ptr<Buffer, decltype(&FreeBuffer)> grown(nullptr, FreeBuffer);
     if (!buffer) {
-        grown = static_cast<Buffer*>(calloc_nid_postfix(1, sizeof(Buffer)));
+        grown.reset(static_cast<Buffer*>(calloc_nid_postfix(1, sizeof(Buffer))));
         if (!grown) {
             LibreSslPutError_nid_no_patch(BufferLibrary, AnyFunction, MallocFailure);
             return Fail(nullptr);
         }
-        if (!Grow(grown, InitialBuffer)) return Fail(grown);
+        if (!Grow(grown.get(), InitialBuffer)) return Fail(grown.release());
         grown->data[0] = '\0';
         length = InitialBuffer;
     }
     if (!name) {
         if (grown) {
             buffer = grown->data;
-            free_nid_postfix(grown);
+            free_nid_postfix(grown.release());
         }
         constexpr char missing[] = "NO X509_NAME";
         const auto size = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(length));
@@ -170,7 +175,7 @@ char* APS5_VABI X509_NAME_oneline_nid_postfix(const void* name, char* buffer, in
         const int previous = used;
         used += 1 + nameLength + 1 + valueLength;
         if (grown) {
-            if (!Grow(grown, static_cast<std::size_t>(used) + 1)) return Fail(grown);
+            if (!Grow(grown.get(), static_cast<std::size_t>(used) + 1)) return Fail(grown.release());
             out = grown->data + previous;
         } else if (used > length) {
             break;
@@ -198,7 +203,7 @@ char* APS5_VABI X509_NAME_oneline_nid_postfix(const void* name, char* buffer, in
     char* result;
     if (grown) {
         result = grown->data;
-        free_nid_postfix(grown);
+        free_nid_postfix(grown.release());
     } else {
         result = buffer;
     }

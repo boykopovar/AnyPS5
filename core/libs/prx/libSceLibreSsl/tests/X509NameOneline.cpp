@@ -1,7 +1,9 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
+#include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -162,14 +164,34 @@ void Unsupported() {
     RequireThrows([&] { X509_NAME_oneline_nid_postfix(built, nullptr, 0); }, "an entry without a value");
 }
 
+struct Allocation {
+    void* pointer;
+    std::size_t size;
+};
+
 std::vector<std::size_t> allocated;
+std::vector<std::size_t> released;
+std::vector<std::uint64_t> freeErrors;
+std::vector<Allocation> live;
 int frees = 0;
 int failAt = 0;
 int calls = 0;
+bool checkCleanse = false;
 
 void* Record(void* pointer, std::size_t size) {
-    if (pointer) allocated.push_back(size);
+    if (pointer) {
+        allocated.push_back(size);
+        live.push_back({pointer, size});
+    }
     return pointer;
+}
+
+void ResetAllocations() {
+    Require(live.empty(), "all recorded allocations have been freed");
+    allocated.clear();
+    released.clear();
+    freeErrors.clear();
+    frees = calls = 0;
 }
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
@@ -183,7 +205,19 @@ void* APS5_VABI Calloc_nid_no_patch(std::size_t count, std::size_t size) {
 }
 
 void APS5_VABI Free_nid_no_patch(void* pointer) {
-    if (pointer) ++frees;
+    if (pointer) {
+        const auto allocation = std::find_if(live.begin(), live.end(), [pointer](const Allocation& entry) { return entry.pointer == pointer; });
+        Require(allocation != live.end(), "only a live recorded allocation is freed");
+        if (checkCleanse && allocation->size != 24) {
+            const auto* bytes = static_cast<const unsigned char*>(pointer);
+            Require(std::all_of(bytes, bytes + allocation->size, [](unsigned char byte) { return byte == 0; }),
+                "the entire text allocation is cleansed before it is freed");
+        }
+        released.push_back(allocation->size);
+        freeErrors.push_back(LibreSslPeekLastError_nid_no_patch());
+        live.erase(allocation);
+        ++frees;
+    }
     std::free(pointer);
 }
 
@@ -191,6 +225,44 @@ void* APS5_VABI Reallocate_nid_no_patch(void*, std::size_t) { throw std::runtime
 void* APS5_VABI Align_nid_no_patch(std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned allocation"); }
 void* APS5_VABI Realign_nid_no_patch(void*, std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned reallocation"); }
 int APS5_VABI PosixAlign_nid_no_patch(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected posix_memalign"); }
+
+void UnsupportedAllocation(const LibreSslX509Name* name, const std::vector<std::size_t>& sizes, const std::vector<std::size_t>& freeOrder) {
+    ResetAllocations();
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(8, 0xfff, 101);
+    RequireThrows([&] { X509_NAME_oneline_nid_postfix(name, nullptr, 0); }, "an unsupported entry still throws");
+    Require(allocated == sizes, "an unsupported entry uses the expected text allocations");
+    Require(released == freeOrder && live.empty(), "an unsupported entry frees every allocation once in buffer-before-header order");
+    Require(freeErrors == std::vector<std::uint64_t>(freeOrder.size(), UnknownNid), "cleanup preserves the error queue while freeing allocations");
+    Require(ERR_get_error_nid_postfix() == UnknownNid && ERR_get_error_nid_postfix() == 0,
+        "an unsupported entry preserves the seeded error without adding a malloc failure");
+}
+
+void UnsupportedAllocator() {
+    Builder nullEntry;
+    nullEntry.Add(Object(13), "a");
+    LibreSslX509Name* built = nullEntry.Build();
+    built->entries->data[0] = nullptr;
+    UnsupportedAllocation(built, {24, 268}, {268, 24});
+
+    Builder missingValue;
+    missingValue.Add(Object(13), "a");
+    built = missingValue.Build();
+    reinterpret_cast<LibreSslX509NameEntry*>(built->entries->data[0])->value = nullptr;
+    UnsupportedAllocation(built, {24, 268}, {268, 24});
+
+    Builder missingData;
+    missingData.Add(Object(13), "a");
+    built = missingData.Build();
+    static_cast<Asn1String*>(reinterpret_cast<LibreSslX509NameEntry*>(built->entries->data[0])->value)->data = nullptr;
+    UnsupportedAllocation(built, {24, 268}, {268, 24});
+
+    Builder grown;
+    grown.Add(Object(13), std::string(150, 'a')).Add(Object(17), std::string(300, 'b')).Add(Object(13), "a");
+    built = grown.Build();
+    reinterpret_cast<LibreSslX509NameEntry*>(built->entries->data[2])->value = nullptr;
+    UnsupportedAllocation(built, {24, 268, 612}, {268, 612, 24});
+}
 
 void Allocator() {
     std::array<void*, 10> api{
@@ -205,17 +277,28 @@ void Allocator() {
     Require(result && allocated == std::vector<std::size_t>{24, 268, 612}, "the buffer header, 268 bytes for 200, then (len + 3) / 3 * 4 for the full text");
     Require(frees == 2, "the header and the first array are freed");
     free_nid_postfix(result);
+    Require(released == std::vector<std::size_t>{268, 24, 612} && live.empty(), "successful growth transfers only the final text allocation");
+    checkCleanse = true;
     for (int failing = 1; failing <= 3; ++failing) {
         ERR_clear_error_nid_postfix();
-        allocated.clear();
-        frees = calls = 0;
+        ResetAllocations();
         failAt = failing;
         Require(X509_NAME_oneline_nid_postfix(built, nullptr, 0) == nullptr, "a failed allocation returns null");
         Require(ERR_get_error_nid_postfix() == BufferMalloc && ERR_get_error_nid_postfix() == X509Malloc && ERR_get_error_nid_postfix() == 0,
             "a failed allocation reports the buffer and then the X509 malloc failure");
-        Require(frees == static_cast<int>(allocated.size()), "a failed allocation frees what was allocated");
+        Require(frees == static_cast<int>(allocated.size()) && live.empty(), "a failed allocation frees what was allocated");
+        const std::vector<std::size_t> freeOrder = failing == 1 ? std::vector<std::size_t>{}
+            : failing == 2 ? std::vector<std::size_t>{24} : std::vector<std::size_t>{268, 24};
+        Require(released == freeOrder, "an allocation failure frees the text before the buffer header");
+        Require(freeErrors == std::vector<std::uint64_t>(freeOrder.size(), X509Malloc), "the X509 failure is queued before freeing allocations");
     }
     failAt = 0;
+    UnsupportedAllocator();
+    checkCleanse = false;
+    ResetAllocations();
+    Require(Allocated(nullptr) == "NO X509_NAME", "a null name transfers its text allocation to the caller");
+    Require(allocated == std::vector<std::size_t>{24, 268} && released == std::vector<std::size_t>{24, 268} && live.empty(),
+        "a successful null name frees the header before the caller frees the text");
 }
 
 } // namespace
