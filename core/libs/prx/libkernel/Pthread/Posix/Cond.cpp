@@ -64,7 +64,6 @@ int APS5_VABI pthread_cond_setname_np_nid_postfix(PthreadCond* cond, const char*
 }
 
 int APS5_VABI pthread_condattr_destroy_nid_postfix(PthreadCondattr* attr) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadCondattrDestroy(attr));
 }
 
@@ -74,28 +73,29 @@ int APS5_VABI pthread_condattr_init_nid_postfix(PthreadCondattr* attr) {
 }
 
 int APS5_VABI pthread_condattr_setclock_nid_postfix(PthreadCondattr* attr, KernelClockid clock_id) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadCondattrSetclock(attr, clock_id));
 }
 
 int APS5_VABI pthread_condattr_getclock_nid_postfix(const PthreadCondattr* attr, KernelClockid* clockId) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
-    if (!clockId) throw std::invalid_argument("pthread_condattr_getclock: null clock id");
-    *clockId = (*attr)->_clockid;
+    PthreadCondattr handle = nullptr;
+    if (const int error = CondOperations::LoadAttribute(attr, handle)) return toPosix(error);
+    const KernelClockid value = handle->_clockid;
+    if (!GuestCopyOut_nid_no_patch(clockId, &value, sizeof(value))) return PosixThread::GUEST_EFAULT;
     return 0;
 }
 
 int APS5_VABI pthread_condattr_setpshared_nid_postfix(PthreadCondattr* attr, int pshared) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
+    PthreadCondattr handle = nullptr;
+    if (const int error = CondOperations::LoadAttribute(attr, handle)) return toPosix(error);
     if (pshared != POSIX_PROCESS_PRIVATE) return PosixThread::GUEST_EINVAL;
-    (*attr)->_pshared = pshared;
+    handle->_pshared = pshared;
     return 0;
 }
 
 int APS5_VABI pthread_condattr_getpshared_nid_postfix(const PthreadCondattr* attr, int* pshared) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
-    if (!pshared) throw std::runtime_error("pthread_condattr_getpshared: null pshared");
-    *pshared = (*attr)->_pshared;
+    PthreadCondattr handle = nullptr;
+    if (const int error = CondOperations::LoadAttribute(attr, handle)) return toPosix(error);
+    if (!GuestCopyOut_nid_no_patch(pshared, &handle->_pshared, sizeof(handle->_pshared))) return PosixThread::GUEST_EFAULT;
     return 0;
 }
 

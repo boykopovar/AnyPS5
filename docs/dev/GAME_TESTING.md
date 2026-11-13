@@ -44,7 +44,7 @@ cmd /c '.\app.exe > run.log 2>&1'
 - `APS5_NO_PAD_INPUT=1` ignores keyboard and mouse, so a stray press doesn't move a measurement run.
 - `setarch x86_64 -R` (Linux only) turns off address randomisation so addresses match between runs.
 - On Windows, a `--windows-gui` build started without a console writes its output to `anyps5.log` beside the executable, replacing the previous run's file.
-- Some homebrew reopen stdout and stderr into their own storage before `main`, so `run.log` ends at `Transferring control to ELF entry point` while the title keeps running. Titles built on ps5-homebrew-ui, such as CD Player (PPSA98427), Afterglow (PPSA47770) and Surround Sound Studio (PPSA99051), write `download0/hui/dev/app.log` beside the executable and keep the previous run's log as `app.prev.log`. Read that file before reporting a hang or a silent exit.
+- Some homebrew reopen stdout and stderr into their own storage before `main`, so the title's own output, including the reason it exits, is not in `run.log`. Titles built on ps5-homebrew-ui, such as CD Player (PPSA98427), Afterglow (PPSA47770) and Surround Sound Studio (PPSA99051), write `download0/hui/dev/app.log` beside the executable and keep the previous run's log as `app.prev.log`. Read that file before reporting a hang or a silent exit.
 - On Windows the title needs a signed-in desktop. Started from an SSH session (session 0) it has no usable window. Start it inside the user's session instead, for example with a scheduled task that runs interactively. A newly created task does not start on battery power by default and fails silently; allow that in its settings.
 
 ## Check the GPU and the caches
@@ -81,7 +81,7 @@ cmd /c '.\app.exe > run.log 2>&1'
 - **Slowdown:** presents per 10 s far below earlier runs of the same scene. Record the scene (save file or level), since it changes the numbers, and check power and caches first.
 - **Crash on Linux:** take the `ip` from `dmesg` and its offset in the image. Repeat the run under `gdb` (launched by gdb, not attached) for registers, the faulting instructions and all thread stacks.
 - **Crash on Windows:** the `FATAL: unhandled exception ...` report in the log lists the faulting `rip` (for example `app.exe+0x...`), the registers and a stack scan. `APS5_CRASH_INDIRECT_MEMORY=1` adds up to 64 bytes from each pointer in the register dump. `APS5_HANG_DUMP_SECS=<n>` (Windows) prints the crash report with every thread n seconds after start-up and then aborts the title, so set it to a time after the title has stopped. `APS5_TRACE_EXIT=1` reports the process exit point.
-- **Traces (heavy):** `APS5_TRACE_FRAMES=<n>:<m>` or `APS5_TRACE_SECONDS=<s>:<len>` writes a capture for `tools/trace_digest.py`. Traces slow the title and can move the crash; say so when reporting.
+- **Traces (heavy):** `APS5_TRACE_FRAMES=<n>:<m>` or `APS5_TRACE_SECONDS=<s>:<len>` writes a capture for `tools/trace_digest.py`. `python tools/trace_timeline.py capture.json.gz -o timeline.html` writes one HTML page with a bar per traced slice on a time axis, one row per thread; `--from-ms`, `--to-ms`, `--thread` and `--max-slices` narrow it. Traces slow the title and can move the crash; say so when reporting.
 
 ## Measuring performance
 

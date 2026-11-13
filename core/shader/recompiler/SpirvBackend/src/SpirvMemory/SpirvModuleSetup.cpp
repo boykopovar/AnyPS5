@@ -386,6 +386,13 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.EmitCapability(spv::CapabilityInt64);
         state.module.EmitCapability(spv::CapabilityInt64Atomics);
     }
+    if (state.requirements.gdsInt64Atomics) {
+        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) == state.supportedCapabilities.end()) {
+            FailEmit("64-bit GDS atomics need shaderBufferInt64Atomics");
+        }
+        state.module.EmitCapability(spv::CapabilityInt64);
+        state.module.EmitCapability(spv::CapabilityInt64Atomics);
+    }
     if (state.requirements.sharedInt64Atomics) {
         state.module.EmitCapability(spv::CapabilityInt64);
     }
@@ -511,7 +518,7 @@ void DefineModule(SpirvEmitterState& state) {
             state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeStencilRefReplacingEXT);
         }
         const bool merge = !pixel.merges.empty();
-        const std::string mergeName = merge && pixel.merges.front().blend.enabled ? "blending into an unclamped normalized color target" : "a partial write of a packed color target";
+        const std::string mergeName = merge && pixel.merges.front().blend.enabled ? "blending into an unclamped normalized color target" : merge && pixel.merges.front().blendControl != 0u ? "blending into an 11_11_10 float color target" : "a partial write of a packed color target";
         if (merge && (state.depthVariable != 0 || state.stencilRefVariable != 0 || pixel.psDepthExportEnable || pixel.psSampleMaskExportEnable || pixel.psStencilRefExportEnable || pixel.psAlphaToCoverage || pixel.QuadMasked() || (pixel.psPixelKillEnable && !pixel.psEarlyZ && pixel.mergeDepthStencilWrites))) {
             throw std::runtime_error(mergeName + " merges inside the pixel shader after early depth and stencil tests, which a shader that kills pixels under late tests of a draw writing depth or stencil, exports depth, stencil or coverage, or runs with a quad sample mask cannot use");
         }

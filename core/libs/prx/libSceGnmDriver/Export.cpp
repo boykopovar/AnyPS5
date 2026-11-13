@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
@@ -17,6 +18,8 @@
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "prx/libSceVideoOut/include/Buffer.hpp"
+#include "prx/libSceGnmDriver/include/CommandStream.hpp"
+#include "prx/libSceGnmDriverForNeoMode/include/EmbeddedShaders.hpp"
 
 namespace {
 
@@ -71,6 +74,16 @@ constexpr int GNM_ERROR_CAPTURE_FAILED_INTERNAL = static_cast<int>(0x80d1500fu);
 
 using RegisterValue = std::pair<std::uint32_t, std::uint32_t>;
 
+constexpr int Failure = static_cast<int>(0x8EEE00FFu);
+
+std::uint32_t AddressLo(const void* code) {
+    return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code) >> 8);
+}
+
+std::uint32_t AddressHi(const void* code) {
+    return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code) >> 40);
+}
+
 constexpr std::uint32_t Header(std::uint32_t opcode, std::uint32_t bodyWords, bool compute = false) {
     return 0xc0000000u | ((bodyWords - 1) << 16) | (opcode << 8) | (compute ? 2u : 0u);
 }
@@ -116,6 +129,7 @@ struct FrameStart {
 
 std::mutex g_submitMutex;
 bool g_frameStarted = false;
+bool g_workQueued = false;
 
 int CheckSubmission(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes) {
     if (count != 0 && (!dcbs || !dcbBytes)) return GNM_ERROR_SUBMISSION_FAILED_INVALID_ARGUMENT;
@@ -131,14 +145,26 @@ bool IsFiller(std::uint32_t header) {
     return (header >> 30) == 2;
 }
 
+}
+
+namespace GnmDriver {
+
 std::span<const std::uint32_t> PacketAt(std::span<const std::uint32_t> words, std::size_t at, const char* stream) {
     const auto header = words[at];
     if (IsFiller(header)) return words.subspan(at, 1);
-    if ((header >> 30) != 3) throw std::runtime_error(std::string("GnmDriver: unsupported PM4 packet type in the ") + stream);
+    if (const auto type = header >> 30; type != 3) {
+        char what[256];
+        std::snprintf(what, sizeof(what), "GnmDriver: unsupported PM4 packet type %u in the %s: header 0x%08x at dword %zu of %zu", type, stream, header, at, words.size());
+        throw std::runtime_error(what);
+    }
     const std::size_t total = ((header >> 16) & 0x3fffu) + 2;
     if (total > words.size() - at) throw std::runtime_error(std::string("GnmDriver: truncated packet in the ") + stream);
     return words.subspan(at, total);
 }
+
+}
+
+namespace {
 
 std::uint32_t Opcode(std::uint32_t header) {
     return (header >> 8) & 0xffu;
@@ -183,6 +209,10 @@ void Lower(std::vector<std::uint32_t>& out, std::span<const std::uint32_t> packe
 
 std::uint64_t g_constantCounter = 0;
 std::uint64_t g_drawCounter = 0;
+
+}
+
+namespace GnmDriver {
 
 std::vector<std::uint32_t> MergeEngines(std::span<const std::uint32_t> dcb, std::span<const std::uint32_t> ccb) {
     std::vector<std::uint32_t> out;
@@ -229,12 +259,18 @@ std::vector<std::uint32_t> MergeEngines(std::span<const std::uint32_t> dcb, std:
     return out;
 }
 
+}
+
+namespace {
+
 void SubmitLocked(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes) {
     static FrameStart frameStart;
+    static const bool waitIdle = std::getenv("APS5_GNM_SUBMIT_WAIT_IDLE") != nullptr;
+    if (waitIdle && g_workQueued) AgcDriverWaitIdle_nid_postfix();
     std::vector<std::vector<std::uint32_t>> merged;
     for (std::uint32_t i = 0; i < count; ++i) {
         const auto constantWords = ccbBytes ? ccbBytes[i] / 4 : 0;
-        merged.push_back(MergeEngines({dcbs[i], dcbBytes[i] / 4}, {constantWords != 0 ? ccbs[i] : nullptr, constantWords}));
+        merged.push_back(GnmDriver::MergeEngines({dcbs[i], dcbBytes[i] / 4}, {constantWords != 0 ? ccbs[i] : nullptr, constantWords}));
     }
     if (!g_frameStarted) {
         static const bool gcn = (AgcDriverUseGcnShaders_nid_postfix(), true);
@@ -243,6 +279,7 @@ void SubmitLocked(std::uint32_t count, std::uint32_t* const* dcbs, const std::ui
         g_frameStarted = true;
     }
     for (auto& commands : merged) AgcDriverSubmitGraphics_nid_postfix(commands.data(), static_cast<std::uint32_t>(commands.size()));
+    g_workQueued = true;
 }
 
 std::uintptr_t BufferLabel(std::uint32_t handle, std::uint32_t index) {
@@ -415,6 +452,12 @@ int APS5_VABI sceGnmInsertPopMarker(std::uint32_t* cmd, std::uint32_t size) {
     return 0;
 }
 
+int APS5_VABI sceGnmInsertDingDongMarker_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
+    if (!cmd || size != 4) return -1;
+    Nop(cmd, 3);
+    return 0;
+}
+
 int APS5_VABI sceGnmInsertSetColorMarker() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -474,6 +517,14 @@ int APS5_VABI sceGnmGetEqEventType(const KernelEvent* ev) {
     return static_cast<int>(ev->ident);
 }
 
+int APS5_VABI sceGnmGetOffChipTessellationBufferSize_nid_disambig1(void) {
+    return 0x800000;
+}
+
+bool APS5_VABI sceGnmDriverTraceInProgress_nid_disambig1(void) {
+    return false;
+}
+
 bool APS5_VABI sceGnmIsUserPaEnabled() {
     return false;
 }
@@ -530,9 +581,8 @@ int APS5_VABI sceGnmGetEqTimeStamp() {
     return 0;
 }
 
-int APS5_VABI sceGnmGetTheTessellationFactorRingBufferBaseAddress() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI sceGnmGetTheTessellationFactorRingBufferBaseAddress() {
+    return 0xff0000000ull;
 }
 
 int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex() {
@@ -540,9 +590,8 @@ int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex() {
     return 0;
 }
 
-int APS5_VABI sceGnmLogicalCuMaskToPhysicalCuMask() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint32_t APS5_VABI sceGnmLogicalCuMaskToPhysicalCuMask(std::uint32_t, std::uint32_t mask) {
+    return mask;
 }
 
 int APS5_VABI sceGnmMapComputeQueue() {
@@ -571,6 +620,123 @@ int APS5_VABI sceGnmSetupMipStatsReport() {
 }
 
 int APS5_VABI sceGnmUnmapComputeQueue() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmSetEmbeddedPsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
+    if (!cmdbuf) return -1;
+    if (shaderId > 1) return Failure;
+    const bool black = shaderId == 0;
+    const auto* code = black ? GnmNeo::BlackPs.data() : GnmNeo::DepthOnlyPs.data();
+    auto* at = Emit(cmdbuf, OpSetShReg, {8, AddressLo(code), AddressHi(code)});
+    at = Emit(at, OpSetShReg, {10, black ? 0xc0000u : 0x2000u, black ? 4u : 0u});
+    at = Emit(at, OpSetContextReg, {0x1c4, 0, black ? 4u : 2u});
+    at = Emit(at, OpSetContextReg, {0x1b3, 2, 2});
+    at = Emit(at, OpSetContextReg, {0x1b6, 0});
+    at = Emit(at, OpSetContextReg, {0x1b8, 0});
+    at = Emit(at, OpSetContextReg, {0x203, 0x10});
+    at = Emit(at, OpSetContextReg, {0x8f, black ? 0xfu : 3u});
+    at[0] = 0xc00a1000u;
+    at[1] = 0;
+    return 0;
+}
+
+int APS5_VABI sceGnmSetEmbeddedVsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
+    if (!cmdbuf) return -1;
+    if (shaderId != 0) return Failure;
+    const auto* code = GnmNeo::FullscreenVs.data();
+    auto* at = Emit(cmdbuf, OpSetShReg, {0x48, AddressLo(code), AddressHi(code)});
+    at = Emit(at, OpSetShReg, {0x4a, 0xc0000, 4});
+    at = Emit(at, OpSetContextReg, {0x207, 0});
+    at = Emit(at, OpSetContextReg, {0x1b1, 0});
+    at = Emit(at, OpSetContextReg, {0x1c3, 4});
+    at[0] = 0xc00a1000u;
+    at[1] = 0;
+    return 0;
+}
+
+int APS5_VABI sceGnmDestroyWorkloadStream_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmDingDongForWorkload_nid_disambig1(std::uint32_t, std::uint32_t, std::uint64_t) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmDrawIndexMultiInstanced_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmDrawOpaqueAuto_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetGpuBlockStatus_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetGpuInfoStatus_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetLastWaitedAddress_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetNumTcaUnits_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetProtectionFaultTimeStamp_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetShaderProgramBaseAddress_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetShaderStatus_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmInsertThreadTraceMarker_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
