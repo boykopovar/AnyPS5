@@ -588,18 +588,24 @@ const HttpCacheHeader* ExportHeaders(Request& request, const Headers& headers) {
     return array.data();
 }
 
-void FillResponse(Request& request, const Entry& entry, HttpCacheResponse* response) {
-    response->statusCode = entry.status;
-    response->headerCount = entry.headers.size();
-    response->headers = ExportHeaders(request, entry.headers);
-    response->contentLength = entry.pending ? 0 : entry.body.size();
+bool CopyOut(void* dst, const void* src, std::size_t size);
+
+bool FillResponse(Request& request, const Entry& entry, HttpCacheResponse* response) {
+    HttpCacheResponse localResponse{};
+    localResponse.statusCode = entry.status;
+    localResponse.headerCount = entry.headers.size();
+    localResponse.headers = ExportHeaders(request, entry.headers);
+    localResponse.contentLength = entry.pending ? 0 : entry.body.size();
+    return CopyOut(response, &localResponse, sizeof(localResponse));
 }
 
-void FillNextRequest(Request& request, const RequestData& next, HttpCacheRequest* nextRequest) {
-    nextRequest->method = next.method;
-    nextRequest->headerCount = next.headers.size();
-    nextRequest->headers = ExportHeaders(request, next.headers);
-    nextRequest->url = request.strings.emplace_back(next.url).c_str();
+bool FillNextRequest(Request& request, const RequestData& next, HttpCacheRequest* nextRequest) {
+    HttpCacheRequest localNext{};
+    localNext.method = next.method;
+    localNext.headerCount = next.headers.size();
+    localNext.headers = ExportHeaders(request, next.headers);
+    localNext.url = request.strings.emplace_back(next.url).c_str();
+    return CopyOut(nextRequest, &localNext, sizeof(localNext));
 }
 
 int RetrieveFor(Request& request, RequestData data, std::shared_ptr<Entry>& found, const RequestData*& next) {
@@ -729,6 +735,13 @@ int MakeResponse(const HttpCacheResponseHeader* header, ResponseData& response) 
     return 0;
 }
 
+bool CopyOut(void* dst, const void* src, std::size_t size) {
+    const int saved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = saved;
+    return ok;
+}
+
 }
 
 extern "C" {
@@ -833,22 +846,12 @@ static bool CopyIn(void* dst, const void* src, std::size_t size) {
     return ok;
 }
 
-static bool CopyOut(void* dst, const void* src, std::size_t size) {
-    const int saved = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
-    errno = saved;
-    return ok;
-}
-
-static bool CopyInCString(const char* src, std::string& out) {
-    out.clear();
+static bool CopyInUrl(const char* src, std::string& out) {
     if (src == nullptr) return false;
-    for (;;) {
-        char ch = 0;
-        if (!CopyIn(&ch, src + out.size(), 1)) return false;
-        if (ch == '\0') return true;
-        out.push_back(ch);
-    }
+    const int saved = errno;
+    const int rc = CopyGuestString_nid_no_patch(src, 65536, out);
+    errno = saved;
+    return rc == 0;
 }
 
 int APS5_VABI sceHttpCacheReadData(std::int32_t requestId, std::size_t size, void* data) {
@@ -876,24 +879,35 @@ int APS5_VABI sceHttpCacheRetrieve(std::int32_t requestId, const HttpCacheReques
     RequestData data;
     if (const int status = ConvertHeaders(localRequest.headerCount, localRequest.headers, data.headers); status != 0) return status;
     if (localRequest.url == nullptr) NotImplemented_nid_no_patch("sceHttpCacheRetrieve with a null URL");
-    if (!CopyInCString(localRequest.url, data.url)) return ErrorInvalidValue;
+    if (!CopyInUrl(localRequest.url, data.url)) return ErrorInvalidValue;
     data.method = localRequest.method;
+    const Request savedState = *state;
+    std::optional<std::pair<StoreKey, Entry>> savedStored;
+    if (state->hasStore) {
+        const StoreKey key{state->storeUser, data.url, FirstValue(data.headers, "User-Agent")};
+        if (const auto stored = Store.find(key); stored != Store.end()) savedStored = *stored;
+    }
+    auto rollback = [&]() {
+        *state = savedState;
+        if (savedStored) Store.insert_or_assign(savedStored->first, savedStored->second);
+        return ErrorInvalidValue;
+    };
     std::shared_ptr<Entry> found;
     const RequestData* next = nullptr;
     const std::int32_t retrieveResult = RetrieveFor(*state, std::move(data), found, next);
-    if (!CopyOut(result, &retrieveResult, sizeof(retrieveResult))) return ErrorInvalidValue;
+    if (!CopyOut(result, &retrieveResult, sizeof(retrieveResult))) return rollback();
     if (retrieveResult == ResultHit) {
-        if (response == nullptr) return ErrorInvalidValue;
-        FillResponse(*state, *found, response);
+        if (response == nullptr || !FillResponse(*state, *found, response)) return rollback();
         return 0;
     }
     if (retrieveResult != ResultRevalidate) return 0;
-    if (nextRequest == nullptr) return ErrorInvalidValue;
-    if (next == nullptr) NotImplemented_nid_no_patch("sceHttpCacheRetrieve revalidation without a next request");
-    FillNextRequest(*state, *next, nextRequest);
+    if (nextRequest == nullptr || next == nullptr) {
+        if (nextRequest == nullptr) return rollback();
+        NotImplemented_nid_no_patch("sceHttpCacheRetrieve revalidation without a next request");
+    }
+    if (!FillNextRequest(*state, *next, nextRequest)) return rollback();
     if (!StaleUsable(found.get())) return 0;
-    if (response == nullptr) return ErrorInvalidValue;
-    FillResponse(*state, *found, response);
+    if (response == nullptr || !FillResponse(*state, *found, response)) return rollback();
     return 0;
 }
 
@@ -912,8 +926,7 @@ int APS5_VABI sceHttpCacheRevalidate(std::int32_t requestId, const HttpCacheResp
     std::shared_ptr<Entry> found;
     *result = Revalidate(*state, received, found);
     if (!found) return 0;
-    if (response == nullptr) return ErrorInvalidValue;
-    FillResponse(*state, *found, response);
+    if (response == nullptr || !FillResponse(*state, *found, response)) return ErrorInvalidValue;
     return 0;
 }
 
@@ -930,14 +943,17 @@ int APS5_VABI sceHttpCacheSetCacheSharing(std::uint8_t enabled) {
 
 int APS5_VABI sceHttpCacheSetData(std::int32_t requestId, const void* data, std::size_t size) {
     if (data == nullptr) return ErrorInvalidValue;
-    std::string localData(size, '\0');
-    if (size != 0 && !CopyIn(localData.data(), data, size)) return ErrorInvalidValue;
     std::lock_guard lock(Mutex);
     Request* request = FindRequest(requestId);
     if (request == nullptr) return ErrorNotFound;
-    if ((request->state == State::Miss || request->state == State::Replacing) && request->entry && request->entry->pending) {
-        request->entry->body.append(localData);
+    if ((request->state != State::Miss && request->state != State::Replacing) || !request->entry || !request->entry->pending) {
+        return 0;
     }
+    constexpr std::size_t MaxDataChunkSize = 64 * 1024 * 1024;
+    if (size > MaxDataChunkSize) return ErrorInvalidValue;
+    std::string localData(size, '\0');
+    if (size != 0 && !CopyIn(localData.data(), data, size)) return ErrorInvalidValue;
+    request->entry->body.append(localData);
     return 0;
 }
 
@@ -950,7 +966,8 @@ int APS5_VABI sceHttpCacheSetQuota(std::int32_t cacheId, const HttpCacheQuota* q
     HttpCacheQuota localQuota{};
     if (!CopyIn(&localQuota, quota, sizeof(localQuota))) return ErrorInvalidValue;
     if (localQuota.count != 0) {
-        if (localQuota.entries == nullptr) return ErrorInvalidValue;
+        constexpr std::size_t MaxQuotaEntries = 4096;
+        if (localQuota.entries == nullptr || localQuota.count > MaxQuotaEntries) return ErrorInvalidValue;
         std::vector<HttpCacheQuotaEntry> entries(localQuota.count);
         if (!CopyIn(entries.data(), localQuota.entries, entries.size() * sizeof(HttpCacheQuotaEntry))) return ErrorInvalidValue;
         for (const auto& entry : entries) {
