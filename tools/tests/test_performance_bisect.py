@@ -370,6 +370,19 @@ class CliExecutionTests(unittest.TestCase):
         self.assertIn("first measured regression: bad (54.00 FPS)", stdout.getvalue())
         bisect.assert_called_once()
 
+    def test_main_reports_a_non_ascii_output_path_as_utf8(self):
+        from io import BytesIO, TextIOWrapper
+        report = {"first_bad": {"commit": "bad", "median_fps": 54.0},
+                  "previous_good": {"commit": "good", "median_fps": 60.0}}
+        output = Path(tempfile.gettempdir()) / "界" / "report.json"
+        stdout = TextIOWrapper(BytesIO(), encoding="cp1252")
+        with patch.object(performance_bisect, "load_recipe", return_value={}), \
+                patch.object(performance_bisect, "bisect", return_value=report), patch("sys.stdout", stdout):
+            result = performance_bisect.main(["--good", "good", "--bad", "bad", "--recipe", "recipe.json", "--output", str(output)])
+            stdout.flush()
+        self.assertEqual(result, 0)
+        self.assertIn(f"report written to {output}", stdout.buffer.getvalue().decode("utf-8"))
+
     def test_main_rejects_a_missing_temporary_directory(self):
         from contextlib import redirect_stderr
         from io import StringIO
