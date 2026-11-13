@@ -149,7 +149,8 @@ static const bool g_timerResolutionRaised = [] {
     const auto queryResolution = ntdll ? reinterpret_cast<NtQueryTimerResolutionFn>(reinterpret_cast<void*>(GetProcAddress(ntdll, "NtQueryTimerResolution"))) : nullptr;
     ULONG minimum = 0, maximum = 0, current = 0;
     if (queryResolution) queryResolution(&minimum, &maximum, &current);
-    std::fprintf(stderr, "[time] scheduler tick %s (was %.2f ms, now %.2f ms, timed waits %s)\n", raised ? "raised to 0.5 ms" : "unchanged", previous / 10000.0, current / 10000.0, TimedWait::Coarse() ? "coarse" : "fine");
+    const double timerLateUs = TimedWait::Coarse() ? 0.0 : static_cast<double>(TimedWait::TimerLateNanos()) / 1000.0;
+    std::fprintf(stderr, "[time] scheduler tick %s (was %.2f ms, now %.2f ms, timed waits %s, timers fire %.0f us late)\n", raised ? "raised to 0.5 ms" : "unchanged", previous / 10000.0, current / 10000.0, TimedWait::Coarse() ? "coarse" : "fine", timerLateUs);
     return raised;
 }();
 
