@@ -1358,15 +1358,15 @@ int APS5_VABI JoinThread_nid_no_patch(Pthread thread, void** retval, const Kerne
 #ifdef _WIN32
     if (WaitForSingleObject(thread->nativeHandle, INFINITE) != WAIT_OBJECT_0)
         throw std::system_error(GetLastError(), std::system_category(), "Joining guest thread");
-    if (retval) *retval = thread->_retval;
 #else
     if (const int result = pthread_join(thread->hostThread, nullptr); result != 0)
         throw std::system_error(result, std::generic_category(), "Joining guest thread");
     FreeGuestStack(thread);
-    if (retval) *retval = thread->_retval;
 #endif
+    void* const returned = thread->_retval;
+    const bool stored = !retval || GuestCopyOut_nid_no_patch(retval, &returned, sizeof(returned));
     RetainJoinedThread(thread);
-    return SCE_OK;
+    return stored ? SCE_OK : SCE_KERNEL_ERROR_EFAULT;
 }
 
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval) {
