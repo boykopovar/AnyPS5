@@ -255,7 +255,7 @@ class ProcessTests(unittest.TestCase):
     def run_process(self, pull, comments=0, dry_run=False, comment=True):
         calls = []
 
-        def fake(*args):
+        def fake(*args, **kwargs):
             calls.append(args)
             return ""
 
@@ -437,6 +437,20 @@ class MainTests(unittest.TestCase):
                 pr_labels.gh("test", delay=0.01)
         self.assertEqual(len(calls), 1)
         sleep_mock.assert_not_called()
+
+    def test_gh_raises_called_process_error_on_retry_exhaustion(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="HTTP 503: Service Unavailable")
+
+        with patch.object(pr_labels.subprocess, "run", side_effect=fake_run), \
+                patch.object(pr_labels.time, "sleep") as sleep_mock:
+            with self.assertRaises(subprocess.CalledProcessError):
+                pr_labels.gh("test", attempts=3, delay=0.01)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleep_mock.call_count, 2)
 
 
 
