@@ -194,7 +194,7 @@ std::uint32_t EmitDppWriteCondition(SpirvValueEmitContext& ctx, const IrValue& i
         state.module.AddFunction(spv::OpLogicalAnd, TypeBool(state), bounded, writable, target.valid);
         writable = bounded;
         if (!flags.fetchInactive && (flags.control & DppMoveFlags::Lanes8) == 0u) {
-            const auto sourceActive = EmitBallotLaneActiveBool(state, ctx.Ballot(inst.Argument(2)), target.lane);
+            const auto sourceActive = DppQuadRead(state, flags.control) ? EmitDppQuadRead(state, TypeBool(state), ctx.Arg(inst, 2), flags.control) : EmitBallotLaneActiveBool(state, ctx.Ballot(inst.Argument(2)), target.lane);
             writable = Binary(state, spv::OpLogicalAnd, TypeBool(state), writable, sourceActive);
         }
     }
@@ -223,6 +223,10 @@ bool HostSubgroupNarrowerThanWave(const SpirvEmitterState& state) {
 [[noreturn]] void FailOutsideHostSubgroup(const SpirvValueEmitContext& ctx, const IrValue& inst, const std::string& access) {
     const auto& state = ctx.state;
     ctx.Fail(inst, (access + " is outside the " + std::to_string(state.hostSubgroupSize) + "-lane host subgroup that runs this wave" + std::to_string(state.program.WaveSize()) + " program at one lane per invocation").c_str());
+}
+
+bool OneLaneWave(const SpirvEmitterState& state) {
+    return HostSubgroupNarrowerThanWave(state) && HostSubgroupSingleLane(state);
 }
 
 struct WaveReduction {
@@ -580,11 +584,17 @@ public:
         return EitherOrder(test, [mask](const IrValue* word, const IrValue* zero) { return word == mask && IsU32(zero, 0u); }) && ownMask(mask, reader);
     }
 
+    bool Address(const IrValue* value) {
+        value = Resolved(value);
+        return Is(value, IrOpcode::ShiftLeftLogical32) && IsU32(value->Argument(1), 2u) && walk(value->Argument(0), LaneKind);
+    }
+
 private:
     static constexpr std::uint32_t LowKind = 0u;
     static constexpr std::uint32_t HighKind = 1u;
     static constexpr std::uint32_t OwnBitKind = 2u;
     static constexpr std::uint32_t NonEmptyKind = 3u;
+    static constexpr std::uint32_t LaneKind = 4u;
 
     bool ownMask(const IrValue* mask, const IrBlock* reader) {
         return walk(mask, LowKind) && nonEmpty(mask, reader, nullptr);
@@ -605,6 +615,8 @@ private:
             assumed.erase(key);
         } else if (kind == OwnBitKind) {
             result = holdsOwnBit(value);
+        } else if (kind == LaneKind) {
+            result = lane(value);
         } else if (kind != NonEmptyKind) {
             result = ownWord(value, kind);
         }
@@ -675,6 +687,21 @@ private:
         }
     }
 
+    bool lane(const IrValue* value) {
+        if (Is(value, IrOpcode::LaneId)) return true;
+        if (Is(value, IrOpcode::BitwiseAnd32)) return walk(value->Argument(0), LaneKind) || walk(value->Argument(1), LaneKind);
+        return Is(value, IrOpcode::SelectU32) && firstActive(value);
+    }
+
+    bool firstActive(const IrValue* select) {
+        const auto* test = Resolved(select->Argument(0));
+        const IrValue* mask = nullptr;
+        if (!Is(test, IrOpcode::INotEqual32) || !EitherOrder(test, [&](const IrValue* word, const IrValue* zero) { mask = word; return IsU32(zero, 0u); }) || !walk(mask, LowKind) || !walk(select->Argument(2), LaneKind)) return false;
+        const auto first = [mask](const IrValue* value) { return Is(value, IrOpcode::FindILsb32) && Resolved(value->Argument(0)) == mask; };
+        const auto* taken = Resolved(select->Argument(1));
+        return first(taken) || (Is(taken, IrOpcode::IAdd32) && EitherOrder(taken, [&](const IrValue* base, const IrValue* found) { return first(found) && walk(base, LaneKind); }));
+    }
+
     bool ownWord(const IrValue* word, std::uint32_t half) {
         if (word->HasImmediate()) return word->Type() == IrType::U32 && (word->ImmediateU32() & (half == LowKind ? ~1u : ~0u)) == 0u;
         switch (word->Opcode()) {
@@ -686,6 +713,7 @@ private:
             case IrOpcode::BitwiseOr32:
             case IrOpcode::BitwiseXor32: return walk(word->Argument(0), half) && walk(word->Argument(1), half);
             case IrOpcode::SelectU32: return walk(word->Argument(1), half) && walk(word->Argument(2), half);
+            case IrOpcode::ShiftRightLogical32: return walk(word->Argument(0), half);
             default: return false;
         }
     }
@@ -701,6 +729,27 @@ private:
     std::set<std::pair<const IrValue*, std::uint32_t>> assumed;
     std::uint32_t budget = 4096u;
 };
+
+std::optional<std::uint32_t> DppFirstLaneSource(std::uint32_t control) {
+    if ((control & DppMoveFlags::Lanes8) != 0u) return control & 7u;
+    if (control <= 0xffu) return control & 3u;
+    if (control >= 0x101u && control <= 0x10fu) return control & 0xfu;
+    if (control >= 0x121u && control <= 0x12fu) return 16u - (control & 0xfu);
+    if (control == 0x140u) return 15u;
+    if (control == 0x141u) return 7u;
+    if (control >= 0x150u && control <= 0x16fu) return control & 0xfu;
+    return std::nullopt;
+}
+
+std::uint32_t DsSwizzleFirstLaneSource(std::uint32_t control) {
+    if ((control & 0xe000u) == 0xe000u) return 0u;
+    if ((control & 0xc000u) == 0xc000u) {
+        const std::uint32_t rotate = (control >> 5u) & 0x1fu;
+        return ((control & 0x400u) != 0u ? 32u - rotate : rotate) & ~control & 0x1fu;
+    }
+    if ((control & 0x8000u) != 0u) return control & 3u;
+    return ((control >> 5u) ^ (control >> 10u)) & 0x1fu;
+}
 
 bool RowShiftFlags(const IrValue* value, std::uint32_t control, bool zeroFill) {
     const auto flags = value->Flags<DppMoveFlags>();
@@ -1505,11 +1554,24 @@ std::uint32_t EmitFPCos(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto distance = ExactSub(state, ConstantF32(state, 0x3e800000u), absolute);
     const auto pastEighth = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), absolute, ConstantF32(state, 0x3e000000u));
     const auto pastThreeEighths = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), absolute, ConstantF32(state, 0x3ec00000u));
+    const auto middleRange = Binary(state, spv::OpLogicalAnd, TypeBool(state), pastEighth, Unary(state, spv::OpLogicalNot, TypeBool(state), pastThreeEighths));
+    const auto sineLabel = state.module.AllocateId();
+    const auto cosineLabel = state.module.AllocateId();
+    const auto mergeLabel = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, middleRange, sineLabel, cosineLabel);
+    EmitLabel(state, sineLabel);
+    const auto middle = SinTurnSeries(state, distance);
+    state.module.AddFunction(spv::OpBranch, mergeLabel);
+    EmitLabel(state, cosineLabel);
     const auto turns = Select(state, TypeF32(state), pastThreeEighths, ExactSub(state, ConstantF32(state, 0x3f000000u), absolute), absolute);
     const auto low = CosTurnSeries(state, turns);
-    const auto middle = SinTurnSeries(state, distance);
     const auto high = Unary(state, spv::OpFNegate, TypeF32(state), low);
-    const auto series = Select(state, TypeF32(state), pastThreeEighths, high, Select(state, TypeF32(state), pastEighth, middle, low));
+    const auto cosine = Select(state, TypeF32(state), pastThreeEighths, high, low);
+    state.module.AddFunction(spv::OpBranch, mergeLabel);
+    EmitLabel(state, mergeLabel);
+    const auto series = state.module.AllocateId();
+    state.module.AddFunction(spv::OpPhi, TypeF32(state), series, middle, sineLabel, cosine, cosineLabel);
     const auto value = SeriesWhenFar(state, EmitExt(state, TypeF32(state), GLSLstd450Cos, {Binary(state, spv::OpFMul, TypeF32(state), absolute, ConstantF32(state, 0x40c90fdbu))}), series);
     return TrigLinearNearZero(state, value, distance, ConstantF32(state, 0x40c90fdbu), ConstantU32(state, 0x39800000u));
 }
@@ -1527,7 +1589,13 @@ std::uint32_t EmitUndefU1(SpirvEmitterState& state, const IrValue& inst) {
 std::uint32_t EmitDppMoveU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto flags = inst.Flags<DppMoveFlags>();
+    if (DppQuadRead(state, flags.control)) {
+        const auto read = EmitDppQuadRead(state, TypeU32(state), ctx.Arg(inst, 0), flags.control);
+        if (flags.fetchInactive) return read;
+        return EmitNative<spv::OpSelect, IrType::U32>(state, EmitDppQuadRead(state, TypeBool(state), ctx.Arg(inst, 1), flags.control), read, ConstantU32(state, 0u));
+    }
     const auto target = EmitDppTargetLane(state, flags.control);
+    if (const auto lane = DppFirstLaneSource(flags.control); OneLaneWave(state) && lane.value_or(0u) != 0u) FailOutsideHostSubgroup(ctx, inst, "DPP read of lane " + std::to_string(*lane));
     const auto shuffled = ctx.ShuffleInHalf(inst, 0, target.lane);
     if (flags.fetchInactive) {
         return EmitNative<spv::OpSelect, IrType::U32>(state, target.valid, shuffled, ConstantU32(state, 0u));
@@ -1619,6 +1687,11 @@ std::uint32_t EmitPermlane16U32(SpirvValueEmitContext& ctx, const IrValue& inst)
         if (HostSubgroupSingleLane(state) && CrossesElectedMaxScan(inst, state.program)) return ctx.Arg(inst, 0);
         FailOutsideHostSubgroup(ctx, inst, "v_permlanex16_b32 from lanes 16-31");
     }
+    if (!flags.x16 && OneLaneWave(state)) {
+        const auto* select = Resolved(inst.Argument(1));
+        if (select == nullptr || !select->HasImmediate()) FailOutsideHostSubgroup(ctx, inst, "v_permlane16_b32 of a register-selected lane");
+        if (const auto lane = select->ImmediateU32() & 15u; lane != 0u) FailOutsideHostSubgroup(ctx, inst, "v_permlane16_b32 of lane " + std::to_string(lane));
+    }
     const auto subid = EmitSubgroupLocalInvocationId(state);
     const auto row = state.module.AllocateId();
     const auto rowValue = state.module.AllocateId();
@@ -1656,6 +1729,14 @@ std::uint32_t EmitPermlane16U32(SpirvValueEmitContext& ctx, const IrValue& inst)
 
 std::uint32_t EmitBpermuteU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
+    if (OneLaneWave(state)) {
+        const auto* address = Resolved(inst.Argument(1));
+        if (address != nullptr && address->HasImmediate()) {
+            if (const auto lane = (address->ImmediateU32() >> 2u) & 31u; lane != 0u) FailOutsideHostSubgroup(ctx, inst, "ds_bpermute_b32 of lane " + std::to_string(lane));
+        } else if (!OwnLaneSelectorWalk{state.program}.Address(address)) {
+            FailOutsideHostSubgroup(ctx, inst, "ds_bpermute_b32 of a register-selected lane");
+        }
+    }
     const auto source = ctx.Arg(inst, 0);
     const auto shifted = Binary(state, spv::OpShiftRightLogical, TypeU32(state), ctx.Arg(inst, 1), ConstantU32(state, 2u));
     const auto index = Binary(state, spv::OpBitwiseAnd, TypeU32(state), shifted, ConstantU32(state, 31u));
@@ -1682,12 +1763,22 @@ std::uint32_t EmitPermuteU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     return result;
 }
 
+std::uint32_t EmitHalfSwapU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    if (state.program.WaveSize() != 64u) ctx.Fail(inst, "a half-wave exchange outside a wave64 program");
+    if (ctx.otherHalf != nullptr) return ctx.HalfArg(inst, 0, ctx.half ^ 1u);
+    if (!state.spannedWave && (HostSubgroupSingleLane(state) || state.hostSubgroupSize < 64u)) ctx.Fail(inst, "a half-wave exchange without a 64-lane host subgroup");
+    return ctx.Shuffle(inst, 0, Binary(state, spv::OpBitwiseXor, TypeU32(state), EmitLaneId(state), ConstantU32(state, 32u)));
+}
+
 std::uint32_t EmitSwizzleU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     state.module.AddFunction(spv::OpStore, ctx.scratchU32Variable, ctx.Arg(inst, 0));
     const auto source = EmitNative<spv::OpLoad, IrType::U32>(state, ctx.scratchU32Variable);
     const IrValue* control = inst.Argument(1);
-    const auto target = EmitDsSwizzleTargetLane(state, EmitSubgroupLocalInvocationId(state), control->HasImmediate() ? control->ImmediateU32() : 0u);
+    const auto pattern = control->HasImmediate() ? control->ImmediateU32() : 0u;
+    if (const auto lane = DsSwizzleFirstLaneSource(pattern); OneLaneWave(state) && lane != 0u) FailOutsideHostSubgroup(ctx, inst, "ds_swizzle_b32 of lane " + std::to_string(lane));
+    const auto target = EmitDsSwizzleTargetLane(state, EmitSubgroupLocalInvocationId(state), pattern);
     return EmitDsMaskedLaneRead(state, source, target, ctx.Arg(inst, 2));
 }
 
@@ -2042,6 +2133,74 @@ std::uint32_t EmitFPFma16x2(SpirvEmitterState& state, std::uint32_t arg0, std::u
     const auto result = state.module.AllocateId();
     state.module.AddFunction(spv::OpFmaKHR, f16x2, result, Unary(state, spv::OpBitcast, f16x2, arg0), Unary(state, spv::OpBitcast, f16x2, arg1), Unary(state, spv::OpBitcast, f16x2, arg2));
     return Unary(state, spv::OpBitcast, TypeU32(state), Exact(state, result));
+}
+
+static std::uint32_t TypeU16x2(SpirvEmitterState& state) {
+    if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt16)) == state.supportedCapabilities.end()) FailEmit("packed 16-bit integer math needs Int16");
+    state.module.EmitCapability(spv::CapabilityInt16);
+    return state.module.Type(spv::OpTypeVector, state.module.Type(spv::OpTypeInt, 16u, 0u), 2u);
+}
+
+static std::uint32_t EmitInteger16x2(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t arg0, std::uint32_t arg1) {
+    const auto u16x2 = TypeU16x2(state);
+    const auto result = Binary(state, opcode, u16x2, Unary(state, spv::OpBitcast, u16x2, arg0), Unary(state, spv::OpBitcast, u16x2, arg1));
+    return Unary(state, spv::OpBitcast, TypeU32(state), result);
+}
+
+static std::uint32_t EmitShift16x2(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t value, std::uint32_t count) {
+    const auto u16x2 = TypeU16x2(state);
+    const auto u16 = state.module.Type(spv::OpTypeInt, 16u, 0u);
+    const auto fifteen = state.module.Constant(spv::OpConstant, u16, 15u);
+    const auto mask = state.module.Constant(spv::OpConstantComposite, u16x2, fifteen, fifteen);
+    const auto amount = Binary(state, spv::OpBitwiseAnd, u16x2, Unary(state, spv::OpBitcast, u16x2, count), mask);
+    const auto result = Binary(state, opcode, u16x2, Unary(state, spv::OpBitcast, u16x2, value), amount);
+    return Unary(state, spv::OpBitcast, TypeU32(state), result);
+}
+
+static std::uint32_t EmitMinMax16x2(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t arg0, std::uint32_t arg1) {
+    const auto u16x2 = TypeU16x2(state);
+    const auto result = EmitExt(state, u16x2, opcode, {Unary(state, spv::OpBitcast, u16x2, arg0), Unary(state, spv::OpBitcast, u16x2, arg1)});
+    return Unary(state, spv::OpBitcast, TypeU32(state), result);
+}
+
+std::uint32_t EmitIAdd16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitInteger16x2(state, spv::OpIAdd, arg0, arg1);
+}
+
+std::uint32_t EmitISub16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitInteger16x2(state, spv::OpISub, arg0, arg1);
+}
+
+std::uint32_t EmitIMul16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitInteger16x2(state, spv::OpIMul, arg0, arg1);
+}
+
+std::uint32_t EmitShiftLeftLogical16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitShift16x2(state, spv::OpShiftLeftLogical, arg0, arg1);
+}
+
+std::uint32_t EmitShiftRightLogical16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitShift16x2(state, spv::OpShiftRightLogical, arg0, arg1);
+}
+
+std::uint32_t EmitShiftRightArithmetic16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitShift16x2(state, spv::OpShiftRightArithmetic, arg0, arg1);
+}
+
+std::uint32_t EmitSMin16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitMinMax16x2(state, GLSLstd450SMin, arg0, arg1);
+}
+
+std::uint32_t EmitSMax16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitMinMax16x2(state, GLSLstd450SMax, arg0, arg1);
+}
+
+std::uint32_t EmitUMin16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitMinMax16x2(state, GLSLstd450UMin, arg0, arg1);
+}
+
+std::uint32_t EmitUMax16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitMinMax16x2(state, GLSLstd450UMax, arg0, arg1);
 }
 
 std::uint32_t EmitF32ToF16BitsRte(SpirvEmitterState& state, std::uint32_t value) {

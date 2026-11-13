@@ -1,14 +1,18 @@
 #include <cstdio>
+#include <cerrno>
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <atomic>
 #include <array>
+#include <cerrno>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -57,7 +61,12 @@ int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
  if (setting == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *setting = value;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(setting, &value, sizeof(value));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -103,7 +112,13 @@ static int ReportKeyboardSetting(int user_id, int32_t* type, int32_t (*value)())
  if (UserIndex(user_id) < 0) {
   return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
- *type = value();
+ const int32_t result = value();
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(type, &result, sizeof(result));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 bool UserGroupSlotExists(int index) {
@@ -300,6 +315,12 @@ int APS5_VABI sceUserServiceGetAccessibilityChatTranscription(int user_id, int32
 }
 
 int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable(std::int32_t userId, std::int32_t* enabled) {
+ if (!IsUserLoggedIn(userId)) {
+  return USER_SERVICE_ERROR_NOT_LOGGED_IN;
+ }
+ if (enabled == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -317,6 +338,12 @@ int APS5_VABI sceUserServiceGetAccessibilityVibration(int user_id, int32_t* vibr
 }
 
 int APS5_VABI sceUserServiceGetAccessibilityZoom(std::int32_t userId, std::int32_t* zoom) {
+ if (!IsUserLoggedIn(userId)) {
+  return USER_SERVICE_ERROR_NOT_LOGGED_IN;
+ }
+ if (zoom == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -337,7 +364,12 @@ int APS5_VABI sceUserServiceGetAgeLevel(int user_id, uint32_t* age_level) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
  constexpr std::uint32_t Unrestricted = 0xFFFFFFFFu;
- *age_level = Unrestricted;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(age_level, &Unrestricted, sizeof(Unrestricted));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -354,9 +386,14 @@ int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event) {
   return USER_SERVICE_ERROR_NO_EVENT;
  }
  const auto item = eventQueue.front();
+ const SceUserServiceEvent output{item.eventType, item.userId};
+ const int savedError = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(event, &output, sizeof(output));
+ errno = savedError;
+ if (!copied) {
+  NotImplemented_nid_no_patch(__func__);
+ }
  eventQueue.pop_front();
- event->event_type = item.eventType;
- event->user_id = item.userId;
  return USER_SERVICE_OK;
 }
 
@@ -382,7 +419,13 @@ int APS5_VABI sceUserServiceGetInitialUser(int* user_id) {
  if (user_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *user_id = USER_SERVICE_INITIAL_USER_ID;
+ const int initialUser = USER_SERVICE_INITIAL_USER_ID;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(user_id, &initialUser, sizeof(initialUser));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -393,13 +436,20 @@ int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_
  if (user_id_list == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
+ UserServiceLoginUserIdList localList{};
  std::lock_guard lock(userMutex);
  for (int i = 0; i < 4; ++i) {
   if (i < USER_SERVICE_MAX_USERS && userConnected[i]) {
-   user_id_list->user_id[i] = USER_SERVICE_INITIAL_USER_ID + i;
+   localList.user_id[i] = USER_SERVICE_INITIAL_USER_ID + i;
   } else {
-   user_id_list->user_id[i] = USER_SERVICE_USER_ID_INVALID;
+   localList.user_id[i] = USER_SERVICE_USER_ID_INVALID;
   }
+ }
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(user_id_list, &localList, sizeof(localList));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
  return USER_SERVICE_OK;
 }
@@ -425,7 +475,13 @@ int APS5_VABI sceUserServiceGetUserNumber(int user_id, int32_t* number) {
  if (number == nullptr || index < 0) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *number = index + 1;
+ const int32_t userNumber = index + 1;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(number, &userNumber, sizeof(userNumber));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -444,7 +500,11 @@ static int MarkInitialized() {
 
 int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* params) {
  if (params != nullptr) {
-  if (!ValidThreadPriority(params->priority)) {
+  UserServiceInitParam localParams{};
+  const int savedErrno = errno;
+  const bool copied = GuestCopyIn_nid_no_patch(&localParams, params, sizeof(localParams));
+  errno = savedErrno;
+  if (!copied || !ValidThreadPriority(localParams.priority)) {
    return USER_SERVICE_ERROR_INVALID_ARGUMENT;
   }
  }
@@ -485,7 +545,13 @@ int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t user_id, int32_t* valu
     if (value == nullptr) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
-    *value = 0;
+    const int32_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(value, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
     return USER_SERVICE_OK;
 }
 
@@ -493,7 +559,13 @@ int APS5_VABI sceUserServiceGetForegroundUser(int* user_id) {
  if (user_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *user_id = USER_SERVICE_INITIAL_USER_ID;
+ const int foregroundUser = USER_SERVICE_INITIAL_USER_ID;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(user_id, &foregroundUser, sizeof(foregroundUser));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -501,13 +573,20 @@ int APS5_VABI sceUserServiceGetRegisteredUserIdList(UserServiceRegisteredUserIdL
  if (user_id_list == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
+ UserServiceRegisteredUserIdList localList{};
  std::lock_guard lock(userMutex);
  for (int i = 0; i < 16; ++i) {
   if (i < USER_SERVICE_MAX_USERS && userConnected[i]) {
-   user_id_list->user_id[i] = USER_SERVICE_INITIAL_USER_ID + i;
+   localList.user_id[i] = USER_SERVICE_INITIAL_USER_ID + i;
   } else {
-   user_id_list->user_id[i] = USER_SERVICE_USER_ID_INVALID;
+   localList.user_id[i] = USER_SERVICE_USER_ID_INVALID;
   }
+ }
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(user_id_list, &localList, sizeof(localList));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
  return USER_SERVICE_OK;
 }
@@ -517,7 +596,13 @@ int APS5_VABI sceUserServiceGetUserColor(int user_id, int* color) {
  if (color == nullptr || index < 0) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *color = index;
+ const int userColor = index;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(color, &userColor, sizeof(userColor));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -613,7 +698,13 @@ int APS5_VABI sceUserServiceGetCurrentUserGroupIndex(std::int32_t* index) {
     if (index == nullptr) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
-    *index = 0;
+    const std::int32_t zero = 0;
+    const int savedErrnoZero = errno;
+    const bool copiedZero = GuestCopyOut_nid_no_patch(index, &zero, sizeof(zero));
+    errno = savedErrnoZero;
+    if (!copiedZero) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
     const int descriptor = sceKernelOpen("/system_data/priv/home/user_list.dat", 0, 0);
     if (descriptor < 0) {
         return descriptor;
@@ -632,7 +723,12 @@ int APS5_VABI sceUserServiceGetCurrentUserGroupIndex(std::int32_t* index) {
     if (bytesRead != sizeof(storedIndex)) {
         return SCE_KERNEL_ERROR_EIO;
     }
-    *index = storedIndex;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(index, &storedIndex, sizeof(storedIndex));
+    errno = savedErrno;
+    if (!copied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
     return USER_SERVICE_OK;
 }
 
@@ -848,17 +944,18 @@ int APS5_VABI sceUserServiceSetUserGroupName(int groupIndex, const char* name) {
             return USER_SERVICE_ERROR_INVALID_ARGUMENT;
         }
     }
-    const std::size_t nameSize = std::strlen(name);
-    if (nameSize > 128) {
+    std::string guestName;
+    if (CopyGuestString_nid_no_patch(name, 129, guestName) != 0) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
+    const std::size_t nameSize = guestName.size();
     char path[64];
     std::snprintf(path, sizeof(path), "/system_data/priv/home/user_group_name.dat.%d", groupIndex);
     const int descriptor = sceKernelOpen(path, 0x601, 0x180);
     if (descriptor < 0) {
         return descriptor;
     }
-    const std::int64_t bytesWritten = sceKernelWrite(descriptor, name, nameSize);
+    const std::int64_t bytesWritten = sceKernelWrite(descriptor, guestName.data(), nameSize);
     sceKernelClose(descriptor);
     if (bytesWritten < 0) {
         return static_cast<int>(bytesWritten);
@@ -3289,7 +3386,12 @@ int APS5_VABI sceUserServiceGetUserGroupNum(std::int32_t* count) {
     while (groupCount < 128 && UserGroupSlotExists(groupCount)) {
         ++groupCount;
     }
-    *count = groupCount;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(count, &groupCount, sizeof(groupCount));
+    errno = savedErrno;
+    if (!copied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
     return USER_SERVICE_OK;
 }
 

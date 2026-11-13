@@ -26,13 +26,9 @@ int APS5_VABI _ZN15AbstractStorage12SerializableC2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN15AbstractStorage12SerializableD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI _ZN15AbstractStorage12SerializableD1Ev(void*) {}
 
-int APS5_VABI _ZN15AbstractStorage12SerializableD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI _ZN15AbstractStorage12SerializableD2Ev(void*) {}
 
 int APS5_VABI _ZN15AbstractStorage14MemfileContent12readExternalESt10shared_ptrINS_7ContentEE() {
     NotImplemented_nid_no_patch(__func__);
@@ -70,16 +66,16 @@ int APS5_VABI _ZN15AbstractStorage14MemfileContent5WriteEPKvlPl() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN15AbstractStorage14MemfileContent6RemoveEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN15AbstractStorage14MemfileContent6RemoveEv(void*) {
+    return static_cast<int>(0x809E0002u);
 }
 
 int APS5_VABI _ZN15AbstractStorage14MemfileContent8SeekByteEliPl() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN15AbstractStorage14MemfileContent8SeekTimeElPl() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN15AbstractStorage14MemfileContent8SeekTimeElPl(void*, std::int64_t, std::int64_t*) {
+    return static_cast<int>(0x809E0002u);
 }
 
 int APS5_VABI _ZN15AbstractStorage14MemfileContentC1ESbIcSt11char_traitsIcENS_8StlAllocIcEEEN3paf6common9SharedPtrINS6_6BufferEEE() {
@@ -250,12 +246,12 @@ int APS5_VABI _ZN15AbstractStorage4Item11GetPathNameEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN15AbstractStorage4Item11SetMetadataEPN23sceMetadataReaderWriter8MetadataE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN15AbstractStorage4Item11SetMetadataEPN23sceMetadataReaderWriter8MetadataE(void*, void*) {
+    return static_cast<int>(0x809E0005u);
 }
 
-int APS5_VABI _ZN15AbstractStorage4Item13ParseMetadataEPN23sceMetadataReaderWriter8MetadataES3_() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN15AbstractStorage4Item13ParseMetadataEPN23sceMetadataReaderWriter8MetadataES3_(void*, void*, void*) {
+    return static_cast<int>(0x809E0005u);
 }
 
 int APS5_VABI _ZN15AbstractStorage4Item14GetStorageNameEv() {
@@ -418,16 +414,16 @@ int APS5_VABI _ZN15AbstractStorage9AbsMallocEm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK15AbstractStorage14MemfileContent10GetServiceEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK15AbstractStorage14MemfileContent10GetServiceEv(const void*) {
+    return -1;
 }
 
-int APS5_VABI _ZNK15AbstractStorage14MemfileContent13GetCapabilityEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK15AbstractStorage14MemfileContent13GetCapabilityEv(const void*) {
+    return 0x17C1A;
 }
 
-int APS5_VABI _ZNK15AbstractStorage14MemfileContent7GetStatEPNS_4StatE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK15AbstractStorage14MemfileContent7GetStatEPNS_4StatE(const void*, void*) {
+    return static_cast<int>(0x809E0002u);
 }
 
 int APS5_VABI _ZNK15AbstractStorage4Item12GetThumbnailEPSt10shared_ptrINS_7ContentEE() {
@@ -438,16 +434,16 @@ int APS5_VABI _ZNK15AbstractStorage4Item15CreateThumbnailEPvPSt10shared_ptrINS_7
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK15AbstractStorage6Folder7GetTypeEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK15AbstractStorage6Folder7GetTypeEv(const void*) {
+    return 2;
 }
 
-int APS5_VABI _ZNK15AbstractStorage7Content7GetTypeEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK15AbstractStorage7Content7GetTypeEv(const void*) {
+    return 3;
 }
 
-int APS5_VABI _ZNK15AbstractStorage7Storage7GetTypeEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK15AbstractStorage7Storage7GetTypeEv(const void*) {
+    return 1;
 }
 
 }

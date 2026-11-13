@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdarg>
 #include <cstdint>
@@ -31,6 +32,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -71,10 +73,13 @@ constexpr int GuestEperm = 1;
 constexpr int GuestEsrch = 3;
 constexpr int GuestEio = 5;
 constexpr int GuestEbadf = 9;
+constexpr int GuestEnomem = 12;
 constexpr int GuestEfault = 14;
+constexpr int GuestEnotblk = 15;
 constexpr int GuestEnotdir = 20;
 constexpr int GuestEisdir = 21;
 constexpr int GuestEinval = 22;
+constexpr int GuestErange = 34;
 constexpr int GuestEexist = 17;
 constexpr int GuestExdev = 18;
 constexpr int GuestEdeadlk = 11;
@@ -551,6 +556,24 @@ int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len)
     return static_cast<int>(Fail(GuestEinval));
 }
 
+int APS5_VABI getfsstat_nid_postfix(KernelStatfs* buf, std::int64_t bufsize, int mode) {
+    constexpr int MntWait = 1;
+    constexpr int MntNowait = 2;
+    if (bufsize < 0 || (mode != MntWait && mode != MntNowait)) return static_cast<int>(Fail(GuestEinval));
+    if (buf == nullptr || bufsize == 0) return 1;
+    if (static_cast<std::size_t>(bufsize) < sizeof(KernelStatfs)) return 0;
+    const int root = open_nid_postfix("/", 0, 0);
+    if (root < 0) return 0;
+    KernelStatfs result{};
+    const int status = _fstatfs_nid_postfix(root, &result);
+    const int saved = *__error_nid_postfix();
+    close_nid_postfix(root);
+    *__error_nid_postfix() = saved;
+    if (status != 0) return 0;
+    if (!GuestCopyOut_nid_no_patch(buf, &result, sizeof(result))) return static_cast<int>(Fail(GuestEfault));
+    return 1;
+}
+
 int GetModuleInfoExByHandle_nid_no_patch(KernelModule handle, ModuleInfoEx* info);
 
 int APS5_VABI sceKernelGetModuleInfoInternal(KernelModule handle, ModuleInfoEx* info) {
@@ -562,7 +585,8 @@ int APS5_VABI sceKernelGetModuleListInternal(KernelModule* handles, std::size_t 
 }
 
 KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule(const char* moduleFileName, std::size_t args, const void* argp, std::uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
-    return sceKernelLoadStartModule(moduleFileName, args, argp, flags, opt, res);
+    (void)flags;
+    return sceKernelLoadStartModule(moduleFileName, args, argp, 0, opt, res);
 }
 
 int APS5_VABI sceKernelIsModuleLoaded(const char* name) {
@@ -783,8 +807,17 @@ int APS5_VABI fchdir_nid_postfix(int fd) {
 }
 
 int APS5_VABI __getcwd_nid_postfix(char* buffer, std::size_t size) {
-    if (buffer == nullptr) return static_cast<int>(Fail(GuestEfault));
-    return getcwd_nid_postfix(buffer, size) == nullptr ? -1 : 0;
+    const std::size_t limit = std::min<std::size_t>(static_cast<std::uint32_t>(size), GuestPathMax);
+    if (limit < 2) return static_cast<int>(Fail(GuestEinval));
+    std::array<char, GuestPathMax> path{};
+    if (getcwd_nid_postfix(path.data(), path.size()) == nullptr) {
+        const int error = *__error_nid_postfix();
+        return static_cast<int>(Fail(error == GuestErange ? GuestEnomem : error));
+    }
+    const std::size_t required = std::strlen(path.data()) + 1;
+    if (required > limit) return static_cast<int>(Fail(GuestEnomem));
+    if (!GuestCopyOut_nid_no_patch(buffer, path.data(), required)) return static_cast<int>(Fail(GuestEfault));
+    return 0;
 }
 
 int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz);
@@ -875,7 +908,23 @@ int APS5_VABI kldsym_nid_postfix(int fileid, int cmd, void* data) {
     throw std::runtime_error("kldsym: looking up the symbol " + name + " in every kernel module is not supported");
 }
 
-int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
+int APS5_VABI swapon_nid_postfix(const char* name) {
+    std::string copy;
+    if (const int error = CopyPath(name, copy)) return static_cast<int>(Fail(error));
+    if (copy.size() >= GuestPathMax || HasLongComponent(copy)) return static_cast<int>(Fail(GuestEnametoolong));
+    FileStat status{};
+    if (stat_nid_postfix(copy.c_str(), &status) != 0) return -1;
+    constexpr std::uint16_t TypeMask = 0170000;
+    constexpr std::uint16_t CharacterDevice = 0020000;
+    constexpr std::uint16_t BlockDevice = 0060000;
+    const std::uint16_t type = status.st_mode & TypeMask;
+    if (type == CharacterDevice || type == BlockDevice) {
+        throw std::runtime_error("swapon: adding the device " + copy + " as swap space is not supported");
+    }
+    return static_cast<int>(Fail(GuestEnotblk));
+}
+
+static int CreateSymlinkAt(const char* target, int dirfd, const char* created) {
     std::string targetCopy, createdCopy;
     if (const int error = CopyPath(target, targetCopy)) return static_cast<int>(Fail(error));
     if (const int error = CopyPath(created, createdCopy)) return static_cast<int>(Fail(error));
@@ -885,7 +934,15 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
         return -1;
     }
     std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(created, native)) return static_cast<int>(Fail(error));
+    if (std::strlen(created) >= GuestPathMax || HasLongComponent(created)) return static_cast<int>(Fail(GuestEnametoolong));
+    if (dirfd == GuestAtFdcwd || *created == '/') {
+        if (const int error = ResolvePathError_nid_no_patch(created, native)) return static_cast<int>(Fail(error));
+    } else {
+        int error = 0;
+        const char* base = GetDirectoryDescriptorPath_nid_no_patch(dirfd, &error);
+        if (!base) return static_cast<int>(Fail(error));
+        native = std::filesystem::path(base) / std::filesystem::path(reinterpret_cast<const char8_t*>(created));
+    }
     std::error_code error;
 #ifdef _WIN32
     if (GetFileAttributesW(native.wstring().c_str()) != INVALID_FILE_ATTRIBUTES) return static_cast<int>(Fail(GuestEexist));
@@ -918,6 +975,14 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
 #endif
     RecordWrittenPath_nid_no_patch(native);
     return 0;
+}
+
+int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
+    return CreateSymlinkAt(target, GuestAtFdcwd, created);
+}
+
+int APS5_VABI symlinkat_nid_postfix(const char* target, int directory, const char* created) {
+    return CreateSymlinkAt(target, directory, created);
 }
 
 int APS5_VABI openat_nid_postfix(int fd, const char* path, int flags, ...) {
@@ -1051,6 +1116,7 @@ int APS5_VABI fchown_nid_postfix(int fd, std::uint32_t uid, std::uint32_t gid) {
     struct stat status{};
     if (::fstat(fd, &status) != 0) return static_cast<int>(Fail(GuestEbadf));
 #endif
+    if (IsKqueueDescriptor_nid_no_patch(fd)) return static_cast<int>(Fail(GuestEinval));
     RequireGuestOwner("fchown", uid, gid);
     return 0;
 }
@@ -1297,8 +1363,15 @@ int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* wo
     return sceKernelTitleWorkaroundIsEnabled(workaround, bit, enabled);
 }
 
+int APS5_VABI sceKernelTitleWorkaroundIsEnabled2(const KernelTitleWorkaround* workaround, std::uint64_t selector, std::uint32_t bit, std::int32_t* enabled) {
+    if (!workaround || !enabled) return static_cast<int>(0x8002000E);
+    if (bit > 0x7F || selector >= 0x29) return static_cast<int>(0x80020016);
+    return sceKernelTitleWorkaroundIsEnabled(workaround, static_cast<std::int32_t>(bit), enabled);
+}
+
 int APS5_VABI sceKernelGetProcessType(int pid) {
-    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return static_cast<int>(0x80020003);
+    if (pid == 0 || pid == 1) return static_cast<int>(0x80020002);
+    if (pid != getpid_nid_postfix() && pid != -1) return static_cast<int>(0x80020003);
     return 0;
 }
 
