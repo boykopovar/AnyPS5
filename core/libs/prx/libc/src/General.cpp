@@ -963,13 +963,15 @@ extern "C" bool FinalPathComponentIsDot_nid_no_patch(const char* path) {
 
 extern "C" int APS5_VABI chdir_nid_postfix(const char* path) {
     if (!path) { errno = 14; return -1; }
-    if (!*path) { errno = 2; return -1; }
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return -1; }
+    if (copy.empty()) { errno = 2; return -1; }
     try {
         AppArchiveReady_nid_no_patch();
         auto& state = Directories();
         std::lock_guard lock(state.mutex);
-        const auto resolved = Resolve(state, path, false, true);
-        AppArchiveRefuseOnly_nid_no_patch(resolved, path, "changing the working directory to");
+        const auto resolved = Resolve(state, copy.c_str(), false, true);
+        AppArchiveRefuseOnly_nid_no_patch(resolved, copy.c_str(), "changing the working directory to");
         const int error = SetWorkingDirectory(state, resolved);
         if (error) { errno = error == 2 ? NotFoundError_nid_no_patch(resolved) : error; return -1; }
         return 0;
