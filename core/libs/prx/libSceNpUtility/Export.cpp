@@ -605,7 +605,12 @@ int APS5_VABI sceNpServiceChecker2IntInitialize() {
 }
 int APS5_VABI sceNpServiceChecker2IntIsSetServiceType(const std::uint32_t* serviceTypes, std::uint32_t serviceType) {
     if (!serviceTypes || serviceType > 9) return 0;
-    return static_cast<int>((serviceTypes[serviceType >> 5] >> serviceType) & 1);
+    std::uint32_t word = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&word, &serviceTypes[serviceType >> 5], sizeof(word));
+    errno = savedErrno;
+    if (!copied) return 0;
+    return static_cast<int>((word >> serviceType) & 1);
 }
 int APS5_VABI sceNpServiceCheckerIntAbortRequest(std::int32_t requestId) {
     std::lock_guard lock(serviceChecker1.mutex);
@@ -714,7 +719,12 @@ int APS5_VABI sceNpLookupAbortRequest(int reqId) {
 }
 
 int APS5_VABI sceNpLookupCreateAsyncRequest(int titleCtxId, const std::uint64_t* param) {
-    if (!param || *param != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!param) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::uint64_t value = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, param, sizeof(value));
+    errno = savedErrno;
+    if (!copied || value != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return CreateRequest(lookup, titleCtxId, true);
 }
 
@@ -764,7 +774,12 @@ int APS5_VABI sceNpWordFilterCensorComment(int reqId, const char* comment, void*
 }
 
 int APS5_VABI sceNpWordFilterCreateAsyncRequest(int titleCtxId, const std::uint64_t* param) {
-    if (!param || *param != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!param) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::uint64_t value = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, param, sizeof(value));
+    errno = savedErrno;
+    if (!copied || value != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return CreateRequest(wordFilter, titleCtxId, true);
 }
 

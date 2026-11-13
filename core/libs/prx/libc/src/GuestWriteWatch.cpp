@@ -670,6 +670,20 @@ public:
         return true;
     }
 
+    void ReadTraps(std::uintptr_t begin, std::uintptr_t end, void (*trapped)(void*, std::uintptr_t, std::uintptr_t), void* context) {
+        if (!_available || end <= begin || !_trapping.load(std::memory_order_acquire)) return;
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
+        {
+            const Lock lock(_lock);
+            forEachPage(pageStart(begin), pageEnd(end), [&](std::uintptr_t page, std::uint8_t& state) {
+                if ((state & ReadTrapped) == 0) return;
+                if (!runs.empty() && runs.back().second == page) runs.back().second = page + _page;
+                else runs.emplace_back(page, page + _page);
+            });
+        }
+        for (const auto& [runBegin, runEnd] : runs) trapped(context, runBegin, runEnd);
+    }
+
     void ReleaseReads(std::uintptr_t begin, std::uintptr_t end) {
         if (!_available || end <= begin) return;
         const Lock lock(_lock);
@@ -1328,6 +1342,17 @@ bool GuestWriteWatchTrapReads_nid_postfix(std::uintptr_t address, std::size_t by
     static_cast<void>(address);
     static_cast<void>(bytes);
     return false;
+#endif
+}
+
+void GuestWriteWatchReadTraps_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*trapped)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
+#if defined(__APPLE__)
+    if (bytes != 0 && address + bytes > address) Watch::Get().ReadTraps(address, address + bytes, trapped, context);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    static_cast<void>(trapped);
+    static_cast<void>(context);
 #endif
 }
 
