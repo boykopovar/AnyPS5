@@ -74,12 +74,17 @@ bool APS5_VABI WKBundleHitTestResultIsDownloadableMedia(const void* hitTestResul
 bool APS5_VABI WKBundleHitTestResultMediaHasAudio(const void* hitTestResultRef);
 bool APS5_VABI WKBundleHitTestResultMediaIsInFullscreen(const void* hitTestResultRef);
 std::uint32_t APS5_VABI WKBundleInspectorGetTypeID();
+void APS5_VABI WKBundleInspectorClose(const void* inspectorRef);
+void APS5_VABI WKBundleInspectorEvaluateScriptForTest(const void* inspectorRef, const void* scriptRef);
+void APS5_VABI WKBundleInspectorSetPageProfilingEnabled(const void* inspectorRef, bool enabled);
+void APS5_VABI WKBundleInspectorShow(const void* inspectorRef);
 std::uint32_t APS5_VABI WKBundleNavigationActionGetTypeID();
 std::uint32_t APS5_VABI WKBundleNodeHandleGetTypeID();
 const void* APS5_VABI WKBundleNodeHandleCopyDocument(const void* nodeHandleRef);
 const void* APS5_VABI WKBundleNodeHandleCopyDocumentFrame(const void* nodeHandleRef);
 const void* APS5_VABI WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(const void* nodeHandleRef);
 std::uint32_t APS5_VABI WKBundlePageGetTypeID();
+const void* APS5_VABI WKBundlePageGetInspector(const void* pageRef);
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID();
 std::uint32_t APS5_VABI WKBundleRangeHandleGetTypeID();
 std::uint32_t APS5_VABI WKBundleScriptWorldGetTypeID();
