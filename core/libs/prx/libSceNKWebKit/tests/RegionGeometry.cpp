@@ -178,8 +178,63 @@ static void TestRegionGeometryOps() {
     _ZN7WebCore6RegionD1Ev(translated.ptr());
 }
 
+static void TestAffineTransformMapRegion() {
+    RegionHolder emptyHolder;
+    _ZN7WebCore6RegionC1Ev(emptyHolder.ptr());
+    WebCore::AffineTransform translate;
+    _ZN7WebCore15AffineTransform12makeIdentityEv(&translate);
+    _ZN7WebCore15AffineTransform9translateEdd(&translate, 12.6, -4.4);
+
+    WebCore::Region mappedEmpty = _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(&translate, *emptyHolder.ptr());
+    Require(mappedEmpty.isEmpty());
+    Require(_ZNK7WebCore6Region5rectsEv(&mappedEmpty).isEmpty());
+
+    RegionHolder multiHolder;
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(multiHolder.ptr(), WebCore::IntRect{WebCore::IntPoint{10, 20}, WebCore::IntSize{30, 40}});
+    RegionHolder secondHolder;
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(secondHolder.ptr(), WebCore::IntRect{WebCore::IntPoint{100, 10}, WebCore::IntSize{20, 15}});
+    _ZN7WebCore6Region5uniteERKS0_(multiHolder.ptr(), *secondHolder.ptr());
+
+    WebCore::Region translated = _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(&translate, *multiHolder.ptr());
+    Require(!translated.isEmpty());
+    Require(_ZNK7WebCore6Region9totalAreaEv(&translated) == 1500);
+    Require(translated.bounds().m_location.m_x == 23);
+    Require(translated.bounds().m_location.m_y == 6);
+    Require(_ZNK7WebCore6Region8containsERKNS_8IntPointE(&translated, WebCore::IntPoint{23, 16}));
+    Require(_ZNK7WebCore6Region8containsERKNS_8IntPointE(&translated, WebCore::IntPoint{113, 6}));
+
+    WebCore::AffineTransform scaleAndTranslate;
+    _ZN7WebCore15AffineTransform12makeIdentityEv(&scaleAndTranslate);
+    _ZN7WebCore15AffineTransform9translateEdd(&scaleAndTranslate, 5.0, -2.0);
+    _ZN7WebCore15AffineTransform15scaleNonUniformEdd(&scaleAndTranslate, 2.0, 3.0);
+    WebCore::Region scaled = _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(&scaleAndTranslate, *multiHolder.ptr());
+    Require(scaled.bounds().m_location.m_x == 25);
+    Require(scaled.bounds().m_location.m_y == 28);
+    Require(_ZNK7WebCore6Region9totalAreaEv(&scaled) == (60 * 120 + 40 * 45));
+    Require(!_ZNK7WebCore6Region8containsERKNS_8IntPointE(&scaled, WebCore::IntPoint{150, 100}));
+
+    WebCore::AffineTransform zeroScale;
+    _ZN7WebCore15AffineTransform12makeIdentityEv(&zeroScale);
+    _ZN7WebCore15AffineTransform15scaleNonUniformEdd(&zeroScale, 0.0, 1.0);
+    WebCore::Region collapsed = _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(&zeroScale, *multiHolder.ptr());
+    Require(collapsed.isEmpty());
+
+    bool threw = false;
+    try {
+        (void)_ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(nullptr, *multiHolder.ptr());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    _ZN7WebCore6RegionD1Ev(secondHolder.ptr());
+    _ZN7WebCore6RegionD1Ev(multiHolder.ptr());
+    _ZN7WebCore6RegionD1Ev(emptyHolder.ptr());
+}
+
 int main() {
     TestRegionBasicsAndShape();
     TestRegionGeometryOps();
+    TestAffineTransformMapRegion();
     return 0;
 }
