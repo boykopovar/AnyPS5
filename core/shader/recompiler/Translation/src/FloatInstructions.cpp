@@ -681,12 +681,18 @@ bool TranslationContext::floatTernary(const RdnaInstruction& inst, IrOpcode opco
     IrValue* result = &ir.Emit(opcode, IrOpcodeType(opcode), {args[0], args[1], args[2]});
     if (opcode == IrOpcode::FPFma32) result = &flushTinyProduct(args[0], args[1], result, args[2]).Value();
     const bool f32Sources = !mix || !(sourceAt(inst, 0u).opSelHi || sourceAt(inst, 1u).opSelHi || (!accumulator && sourceAt(inst, 2u).opSelHi));
-    if (opcode == IrOpcode::FPFma32 && f32Sources) result = nanResultF32({args[0], args[1], args[2]}, result, &invalidProductF32(args[0], args[1]));
     if (opcode == IrOpcode::FPFma32 && !f32Sources) {
         IrValue& bits = ir.BitCastU32(*result);
         IrValue& nan = ir.UGreaterThan(ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u));
         IrValue& invalid = invalidOperationF32({args[0], args[1], args[2]}, invalidProductF32(args[0], args[1]));
         result = &ir.BitCastF32(ir.Select(ir.LogicalAnd(nan, invalid), ir.Constant(0xffc00000u), bits));
+    }
+    if (opcode == IrOpcode::FPFma32) {
+        std::array<IrValue*, 3> sources = args;
+        for (std::uint32_t index = 0u; mix && index < (accumulator ? 2u : 3u); ++index) {
+            sources[index] = &mixNanSourceF32(sourceAt(inst, index), IrF32(*args[index])).Value();
+        }
+        result = nanResultF32({sources[0], sources[1], sources[2]}, result, &invalidProductF32(args[0], args[1]));
     }
     writeOperand(inst.destination, result);
     return true;
