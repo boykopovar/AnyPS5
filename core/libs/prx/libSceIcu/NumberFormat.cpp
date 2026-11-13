@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libSceIcu/NumberFormatBackend.hpp"
+#include "prx/libSceIcu/Enumeration.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
@@ -23,10 +24,9 @@ struct Entry {
     std::mutex mutex;
     explicit Entry(Native value) : native(std::move(value)) {}
 };
-struct Token { unsigned char value; };
 std::mutex RegistryMutex;
 std::unordered_map<const UNumberFormat*, std::shared_ptr<Entry>> Registry;
-std::vector<std::unique_ptr<Token>> Tokens;
+std::vector<std::unique_ptr<UEnumeration>> Tokens;
 constexpr std::int32_t Unwritten = INT32_MIN;
 
 template<class T>
@@ -75,10 +75,17 @@ std::shared_ptr<Entry> Find(const UNumberFormat* token) {
     return found->second;
 }
 
+void APS5_VABI RefuseClose_nid_no_patch(UEnumeration*) { NotImplemented_nid_no_patch(__func__); }
+std::int32_t APS5_VABI RefuseCount_nid_no_patch(UEnumeration*, std::int32_t*) { NotImplemented_nid_no_patch(__func__); }
+const char16_t* APS5_VABI RefuseUNext_nid_no_patch(UEnumeration*, std::int32_t*, std::int32_t*) { NotImplemented_nid_no_patch(__func__); }
+const char* APS5_VABI RefuseNext_nid_no_patch(UEnumeration*, std::int32_t*, std::int32_t*) { NotImplemented_nid_no_patch(__func__); }
+void APS5_VABI RefuseReset_nid_no_patch(UEnumeration*, std::int32_t*) { NotImplemented_nid_no_patch(__func__); }
+
 UNumberFormat* Publish(Native native) {
     if (!native) return nullptr;
     auto owner = std::make_shared<Entry>(std::move(native));
-    auto storage = std::make_unique<Token>();
+    auto storage = std::make_unique<UEnumeration>(UEnumeration{nullptr, nullptr, RefuseClose_nid_no_patch,
+        RefuseCount_nid_no_patch, RefuseUNext_nid_no_patch, RefuseNext_nid_no_patch, RefuseReset_nid_no_patch});
     auto* token = reinterpret_cast<UNumberFormat*>(storage.get());
     const std::lock_guard lock(RegistryMutex);
     Tokens.push_back(std::move(storage));
