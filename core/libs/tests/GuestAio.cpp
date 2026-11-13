@@ -108,6 +108,23 @@ int main(int argc, char** argv) {
     const std::string seed = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     { std::ofstream stream(file, std::ios::binary); stream << seed; }
     static_assert(sizeof(KernelAioSchedulingParam) == 20);
+    std::array<KernelAioSchedulingParam, 3> defaults{};
+    defaults.fill({7, 7, 7, 7, 7});
+    sceKernelAioInitializeParam(defaults.data());
+    Check(defaults[0].schedulingWindowSize == 32 && defaults[0].delayedCountLimit == 32 && defaults[0].enableSplit == 1);
+    Check(defaults[0].splitSize == 0x100000 && defaults[0].splitChunkSize == 0x100000);
+    Check(defaults[1].schedulingWindowSize == 32 && defaults[1].delayedCountLimit == 32 && defaults[1].enableSplit == 1);
+    Check(defaults[1].splitSize == 0x100000 && defaults[1].splitChunkSize == 0x100000);
+    Check(defaults[2].schedulingWindowSize == 32 && defaults[2].delayedCountLimit == 32 && defaults[2].enableSplit == 0);
+    Check(defaults[2].splitSize == 0 && defaults[2].splitChunkSize == 0);
+    Check(sceKernelAioInitializeImpl(defaults.data(), 0x3c) == 0);
+    KernelAioSchedulingParam consoleParam{7, 7, 7, 7, 7};
+    Check(sceKernelAioSetParam(&consoleParam, 1, 1, 0, 0, 0) == 0);
+    Check(consoleParam.schedulingWindowSize == 1 && consoleParam.delayedCountLimit == 1 && consoleParam.enableSplit == 0);
+    Check(consoleParam.splitSize == 0 && consoleParam.splitChunkSize == 0);
+    Check(sceKernelAioSetParam(&consoleParam, 4, 4, 1, 4096, 4096) == 0);
+    Check(consoleParam.schedulingWindowSize == 4 && consoleParam.delayedCountLimit == 4 && consoleParam.enableSplit == 1);
+    Check(consoleParam.splitSize == 4096 && consoleParam.splitChunkSize == 4096);
     std::array<KernelAioSchedulingParam, 3> schedulingParams{};
     schedulingParams.fill({7, 7, 7, 7, 7});
     Check(sceKernelAioSetParam(&schedulingParams[1], 64, 16, 1, 0x200000, 0x40000) == 0);
