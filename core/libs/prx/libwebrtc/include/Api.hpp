@@ -48,6 +48,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "prx/libwebrtc/include/VideoFrameDimensions.hpp"
+#include "prx/libwebrtc/include/WavReader.hpp"
 
 struct WebRtcVadInstance;
 #include "prx/libwebrtc/include/TaskQueueBase.hpp"
@@ -390,9 +391,9 @@ int APS5_VABI _ZN6webrtc13PushResamplerIsE8ResampleEN3rtc9ArrayViewIKsLln4711EEE
 int APS5_VABI _ZN6webrtc17PushSincResamplerD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc19SmoothingFilterImplC1Ei_nid_postfix(void);
 void APS5_VABI _ZN6webrtc19SmoothingFilterImplD1Ev_nid_postfix(void* object);
-int APS5_VABI _ZN6webrtc9WavReader5ResetEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc9WavReader11ReadSamplesEmPs_nid_postfix(void);
-int APS5_VABI _ZN6webrtc9WavReader5CloseEv_nid_postfix(void);
+void APS5_VABI _ZN6webrtc9WavReader5ResetEv_nid_postfix(WebRtcWavReader* reader);
+std::size_t APS5_VABI _ZN6webrtc9WavReader11ReadSamplesEmPs_nid_postfix(WebRtcWavReader* reader, std::size_t numSamples, std::int16_t* samples);
+void APS5_VABI _ZN6webrtc9WavReader5CloseEv_nid_postfix(WebRtcWavReader* reader);
 int APS5_VABI libwebrtcUnknown42(void);
 int APS5_VABI _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(void);
 int APS5_VABI _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(void);
