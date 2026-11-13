@@ -20,7 +20,7 @@ The report is written by default. Turn it off with the launch flag `--aps5-repor
 
 `anyps5-report.json` is written next to the game's executable. If that folder can't be written, it goes to the AnyPS5 data folder under `reports/<run id>/` and the runtime prints where. `run.id` is that same id: 32 lowercase hex characters, random per run.
 
-The report is written once, when the run ends through the guest's `exit` or `_exit`, and on Linux and macOS also when the entry returns or the host calls `std::exit`. On Windows only `exit` and `_exit` write a report: a return from the entry writes none, because exit handlers of a DLL run inside the loader lock. The Windows and macOS code and the junction test have not been run. A run that is killed, crashes or aborts writes no report.
+The report is written once, when the run ends through the guest's `exit` or `_exit`, and on Linux and macOS also when the entry returns or the host calls `std::exit`. On Windows only `exit` and `_exit` write a report: a return from the entry writes none, because exit handlers of a DLL run inside the loader lock. The Windows and macOS code and the junction test have not been run. A run that stops on an exception nothing catches (`std::terminate`), such as a call to a function that is not implemented, writes the report with exit `abort` before the terminate handler runs, or after it when the game installed its own handler. A run that is killed or crashes writes no report.
 
 ## What `anyps5.modified` means
 
@@ -47,11 +47,18 @@ Every text value in the report goes through the same filter for user names, host
 | `exit` | `clean`, `crash`, `abort` or `killed`. A non-zero exit code from the game is not automatically a crash. |
 | `exitCode` | The process exit code when known, otherwise null. |
 | `averageFps`, `fpsWindowSeconds` | Frames per second measured from the first presented frame to the last, and the length of that window. Both are null with fewer than two presented frames. |
+| `frameMs` | Frame-time percentiles in milliseconds: `p50`, `p90` and `p99` of the intervals between presented frames, over the most recent 2,048 intervals. Null with fewer than two presented frames, or when milestones are not covered. The percentile is nearest-rank, the same math the optional performance trace uses. |
 | `recovered`, `incomplete` | `incomplete` is true when an observation had to be dropped. |
+
+## Run recipe
+
+Next to `anyps5-report.json` the runtime writes `anyps5-recipe.json`, a small JSON file that records how the run was started, so a report can be reproduced. It holds `run.id`, `anyps5.commit` (the build commit, or null), `argv` (the process arguments), `environment` (only the `ANYPS5_*` variables that are set), and `configFiles` (the file names of configuration files the run was given, for example the input mapping, without their folders).
+
+Values pass through the same text filter as the report, so a path or a user name shows as `[redacted]`. A variable whose name contains `TOKEN`, `KEY`, `PASSWORD` or `SECRET` is never written, whatever its value. The recipe is written only when the report is written; the same rules about killed and crashed runs apply.
 
 ## Stop
 
-`stop.kind` is `none` and `stop.reason` is `guest-exit` for a run that ended through the exit path. The schema lists the other kinds and reasons; this build writes only these.
+`stop.kind` is `none` and `stop.reason` is `guest-exit` for a run that ended through the exit path. A run that ended in `std::terminate` has `stop.reason` `runtime-stop`: `stop.kind` is `missing-function` with the function and its `source` when a function that is not implemented threw, otherwise `other` with the exception's text as the message. The schema lists the other kinds and reasons; this build writes only these.
 
 ## What `system` holds
 
@@ -72,6 +79,7 @@ Every text value in the report goes through the same filter for user names, host
 - `milestones.firstDraw` is set when a batch that carries a recorded guest draw or dispatch has been accepted by the GPU queue. A guest draw counts in either kind of batch the runtime submits; a guest compute dispatch counts only when it is recorded into the runtime's main batch (a dispatch that is submitted and waited for on its own does not set the milestone). `firstPresent` and `framesPresented` count guest display buffers that the swapchain queue accepted (a suboptimal one too); internal clears, test pixels and rejected presents are not counted. `loaded` and `started` come from the entry bridge of the converted executable; only the macOS bridge reports them so far, so on other systems those two are left out.
 - `missing.functions` counts calls to a function the runtime does not implement. The library is the folder the stub is compiled in; a call from older code that does not say where it is made has a null library. The name is the exported name without the runtime's suffix; a name that does not fit the schema is not listed and is counted in `truncated.functions`.
 - `shaders.compiled` and `failed` count compilations where they happen (once per variant); reuse of a variant, in memory or from the disk cache, counts as a cache hit.
+- `shaders.compileMs` is the total wall time spent in those compilations, failed ones included, in milliseconds. `shaders.slowCompiles` counts compilations that took more than 100 ms. Both are left out when shader coverage is off. These are measured on the machine that ran the game, so compare them only on the same machine.
 - `shaders.unsupported` lists instructions the recompiler could not translate, by encoding family and numeric opcode (the name is null). It also lists instructions met in shaders that were prepared and never used, so an entry does not by itself mean the run stopped on it; the stop says that.
 - `shaders.imageFormats` counts guest format lookups, internal ones included, with the use shown as `other`, plus the formats the runtime rejected. It measures how often a format was looked up, not how many images used it. `shaders.descriptors` counts the bindings of shaders as they were prepared for a draw; the count measures use, not distinct shaders.
 - `truncated` counts entries (a function, an instruction, a format, a binding kind) that were dropped, once each however many calls they made. When a hook had to give up an observation because the collector was busy, the matching count is at least 1 and the report is marked `incomplete`.

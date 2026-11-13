@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import nid_names
+import progress
 
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
@@ -162,7 +163,7 @@ def macro_definitions(texts):
     for _, text in texts:
         for match in DEFINE.finditer(joined_lines(text)):
             macro, param, body = match.group(1), match.group(2), match.group(3)
-            if re.search(r"\bAPS5_VABI\s+" + re.escape(param) + r"\b", body) is not None:
+            if any(definition.group(1) == param for definition in nid_names.DEFINITION.finditer(mask_code(body))):
                 macros.setdefault(macro, param)
     return macros
 
@@ -186,16 +187,13 @@ def record_provided(provided, name, origin=None):
         provided.setdefault(nid, f"{prefix}under {name} for {base}")
 
 
-def collect_provided(module_dir):
-    texts = source_texts(module_dir)
+def collect_source_exports(texts):
     macros = macro_definitions(texts)
     provided = {}
     for _, text in texts:
-        for line in mask_code(joined_lines(text)).split("\n"):
-            if line.lstrip().startswith("#"):
-                continue
-            for match in VABI.finditer(line):
-                record_provided(provided, match.group(1))
+        code = "\n".join(line for line in mask_code(joined_lines(text)).split("\n") if not line.lstrip().startswith("#"))
+        for match in nid_names.DEFINITION.finditer(code):
+            record_provided(provided, match.group(1))
         for name in nid_names.source_assembly_definitions(text):
             record_provided(provided, name, "defined in assembly")
         for nid, helper in nid_names.source_aliases(text):
@@ -225,6 +223,22 @@ def collect_provided(module_dir):
     return provided
 
 
+def collect_provided(module_dir):
+    texts = source_texts(module_dir)
+    provided = collect_source_exports(texts)
+    owners = progress.shared_source_owners(module_dir)
+    if owners:
+        declared = {}
+        for _, text in texts:
+            for match in VABI.finditer(mask_code(joined_lines(text))):
+                record_provided(declared, match.group(1))
+        for owner in owners:
+            shared = collect_source_exports(source_texts(module_dir.parent / owner))
+            for nid in declared.keys() & shared.keys():
+                provided.setdefault(nid, f"from {owner}: {shared[nid]}")
+    return provided
+
+
 def find_self_calls(module_dir, missing):
     if not missing:
         return []
@@ -234,6 +248,11 @@ def find_self_calls(module_dir, missing):
     calls = []
     for path, text in source_texts(module_dir):
         joined = joined_lines(text)
+        splices = []
+        removed = 0
+        for splice in re.finditer(r"\\\r?\n", text):
+            splices.append(splice.start() - removed)
+            removed += len(splice.group())
         masked = mask_code(joined)
         rows = joined.split("\n")
         try:
@@ -253,7 +272,7 @@ def find_self_calls(module_dir, missing):
             if rows[number - 1].lstrip().startswith("#"):
                 continue
             nid = next(key for key, value in missing.items() if value == name)
-            calls.append((name, nid, rel, number, qual))
+            calls.append((name, nid, rel, number + sum(1 for position in splices if position <= match.start()), qual))
     calls.sort(key=lambda item: (item[0], item[2], item[3], item[4]))
     return calls
 

@@ -533,7 +533,7 @@ int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
         m_events.push_back(event);
         if (event.triggered) ++m_activations;
     }
-    m_cond.NotifyOne();
+    m_cond.NotifyAll();
     WakePollers();
     return EQUEUE_OK;
 }
@@ -563,7 +563,7 @@ int KernelEqueuePrivate::TriggerEvent(uintptr_t ident, int16_t filter, void* tri
         }
         if (!was && it->triggered) ++m_activations;
     }
-    m_cond.NotifyOne();
+    m_cond.NotifyAll();
     WakePollers();
     return EQUEUE_OK;
 }
@@ -600,7 +600,7 @@ int KernelEqueuePrivate::EditEvent(uintptr_t ident, int16_t filter, const std::f
         }
     } activation{*this, *it, it->enabled && it->triggered};
     edit(*it);
-    m_cond.NotifyOne();
+    m_cond.NotifyAll();
     WakePollers();
     return EQUEUE_OK;
 }
@@ -803,15 +803,16 @@ int APS5_VABI sceKernelDeleteUserEvent(KernelEqueue eq, int id) {
 }
 
 int APS5_VABI sceKernelAddHRTimerEvent(KernelEqueue eq, int id, const KernelTimespec* ts, void* udata) {
-    if (ts == nullptr) {
+    KernelTimespec delay{};
+    if (!GuestCopyIn_nid_no_patch(&delay, ts, sizeof(delay))) {
         return SCE_KERNEL_ERROR_EFAULT;
     }
-    if (ts->tv_sec < 0 || ts->tv_nsec < 0 || ts->tv_nsec >= 1000000000LL) {
+    if (delay.tv_sec < 0 || delay.tv_nsec < 0 || delay.tv_nsec >= 1000000000LL) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
     const uint64_t delayNs =
-        static_cast<uint64_t>(ts->tv_sec) * 1000000000ULL +
-        static_cast<uint64_t>(ts->tv_nsec);
+        static_cast<uint64_t>(delay.tv_sec) * 1000000000ULL +
+        static_cast<uint64_t>(delay.tv_nsec);
     const uint64_t nowNs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()
