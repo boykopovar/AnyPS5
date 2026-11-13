@@ -2260,6 +2260,16 @@ static void CheckAtanl() {
     Require(ExtendedBitsAt53Bits(atanl_nid_postfix, 0, 0x0000, 0, 0x0000) && std::fetestexcept(FE_INEXACT) == 0);
 }
 
+static bool Atan2lBitsAt53Bits(long double y, long double x, std::uint64_t mantissa, std::uint16_t signExponent) {
+    const std::uint16_t saved = X87ControlWord();
+    const auto control = static_cast<std::uint16_t>((saved & ~0x0300u) | 0x0200u);
+    asm volatile("fldcw %0" : : "m"(control) : "memory");
+    const long double result = atan2l_nid_postfix(y, x);
+    const std::uint16_t after = X87ControlWord();
+    asm volatile("fldcw %0" : : "m"(saved) : "memory");
+    return after == control && ExtendedBits(result, mantissa, signExponent);
+}
+
 static void CheckAtan2l() {
     const long double infinity = std::numeric_limits<long double>::infinity();
     const long double nan = std::numeric_limits<long double>::quiet_NaN();
@@ -2288,6 +2298,16 @@ static void CheckAtan2l() {
         {-43.0L, 10.0L, 0xabd079e5a0d6b46eull, 0xbfff}, {-42.0L, 8.0L, 0xb0f83635495c46b8ull, 0xbfff},
         {1.0L, -37.0L, 0xc75526a7bc208db6ull, 0x4000}, {1.0L, -28.0L, 0xc6c6f5b3c45bcf19ull, 0x4000},
         {-44.0L, -7.0L, 0xdd419eba488e212eull, 0xbfff}, {-44.0L, -6.0L, 0xda68d37fc3e36443ull, 0xbfff},
+        {0x1p67L, 2.0L, 0xc90fdaa22168c235ull, 0x3fff}, {0x1p68L, 2.0L, 0xc90fdaa22168c235ull, 0x3fff},
+        {-0x1p67L, 2.0L, 0xc90fdaa22168c235ull, 0xbfff}, {-0x1p68L, 2.0L, 0xc90fdaa22168c235ull, 0xbfff},
+        {0x1p67L, -2.0L, 0xc90fdaa22168c235ull, 0x3fff}, {0x1p68L, -2.0L, 0xc90fdaa22168c235ull, 0x3fff},
+        {-0x1p67L, -2.0L, 0xc90fdaa22168c235ull, 0xbfff}, {-0x1p68L, -2.0L, 0xc90fdaa22168c235ull, 0xbfff},
+        {1.0L, -0x1p66L, 0xc90fdaa22168c235ull, 0x4000}, {1.0L, -0x1p67L, 0xc90fdaa22168c235ull, 0x4000},
+        {-1.0L, -0x1p66L, 0xc90fdaa22168c235ull, 0xc000}, {-1.0L, -0x1p67L, 0xc90fdaa22168c235ull, 0xc000},
+        {1.0L, 0x1p66L, 0x8000000000000000ull, 0x3fbd}, {1.0L, 0x1p67L, 0x8000000000000000ull, 0x3fbc},
+        {0x1p-16445L, 1.5L, 0x0000000000000001ull, 0x0000}, {0x1p-16445L, -1.5L, 0xc90fdaa22168c235ull, 0x4000},
+        {-0x1p-16445L, 3.0L, 0, 0x8000}, {0x1p-16440L, 3.0L, 0x000000000000000bull, 0x0000},
+        {1.0L, 0x1p-16445L, 0xc90fdaa22168c235ull, 0x3fff}, {1.0L, -0x1p-16445L, 0xc90fdaa22168c235ull, 0x3fff},
         {0x1p-100L, 2.0L, 0x8000000000000000ull, 0x3f9a}, {-0x1p-100L, 2.0L, 0x8000000000000000ull, 0xbf9a},
         {1.0L, 0x1p-100L, 0xc90fdaa22168c235ull, 0x3fff}, {-1.0L, 0x1p-100L, 0xc90fdaa22168c235ull, 0xbfff},
         {1.0L, -0x1p-100L, 0xc90fdaa22168c235ull, 0x3fff}, {-1.0L, -0x1p-100L, 0xc90fdaa22168c235ull, 0xbfff},
@@ -2302,6 +2322,9 @@ static void CheckAtan2l() {
             std::abort();
         }
     }
+    Require(Atan2lBitsAt53Bits(3.0L, 4.0L, 0xa4bc7d1934f70800ull, 0x3ffe) && Atan2lBitsAt53Bits(1.0L, -2.0L, 0xab63739cbfad7000ull, 0x4000));
+    Require(Atan2lBitsAt53Bits(-3.0L, -4.0L, 0x9fe0bb5bd42b0000ull, 0xc000) && Atan2lBitsAt53Bits(1.0L, -37.0L, 0xc75526a7bc209000ull, 0x4000));
+    Require(Atan2lBitsAt53Bits(-43.0L, 10.0L, 0xabd079e5a0d6b800ull, 0xbfff) && Atan2lBitsAt53Bits(0x1p67L, -2.0L, 0xc90fdaa22168c800ull, 0x3fff));
     Require(std::isnan(atan2l_nid_postfix(nan, 1.0L)) && std::isnan(atan2l_nid_postfix(1.0L, nan)));
     Require(std::isnan(atan2l_nid_postfix(nan, infinity)) && std::isnan(atan2l_nid_postfix(infinity, nan)) && std::isnan(atan2l_nid_postfix(nan, nan)));
 }

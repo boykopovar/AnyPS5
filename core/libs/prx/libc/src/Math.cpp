@@ -4326,18 +4326,18 @@ long double APS5_VABI atanl_nid_postfix(long double x) {
  * ====================================================
  */
 /* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_atan2l.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_atan2l.c */
-bool Atan2lOnAxis(long double yValue, const ExtendedParts& y, const ExtendedParts& x, int quadrant, long double& result) {
+static constexpr std::uint64_t ExtendedFractionMask = 0x7fffffffffffffffull;
+static bool Atan2lOnAxis(long double yValue, const ExtendedParts& y, const ExtendedParts& x, int quadrant, long double& result) {
     static volatile long double tiny = 1.0e-300;
-    constexpr std::uint64_t Fraction = 0x7fffffffffffffffull;
     const long double halfPi = AtanHigh[3];
     const long double pi = Pi;
     const int yExponent = y.signExponent & 0x7fff;
     const int xExponent = x.signExponent & 0x7fff;
     const bool yNegative = (y.signExponent & 0x8000) != 0;
-    if (yExponent == 0 && (y.mantissa & Fraction) == 0) {
+    if (yExponent == 0 && (y.mantissa & ExtendedFractionMask) == 0) {
         if (quadrant < 2) result = yValue;
         else result = quadrant == 2 ? pi + tiny : -pi - tiny;
-    } else if (xExponent == 0 && (x.mantissa & Fraction) == 0) {
+    } else if (xExponent == 0 && (x.mantissa & ExtendedFractionMask) == 0) {
         result = yNegative ? -halfPi - tiny : halfPi + tiny;
     } else if (xExponent == 0x7fff && yExponent == 0x7fff) {
         result = quadrant == 0 ? halfPi * 0.5 + tiny : quadrant == 1 ? -halfPi * 0.5 - tiny : quadrant == 2 ? 1.5 * halfPi + tiny : -1.5 * halfPi - tiny;
@@ -4352,13 +4352,12 @@ bool Atan2lOnAxis(long double yValue, const ExtendedParts& y, const ExtendedPart
 }
 long double APS5_VABI atan2l_nid_postfix(long double y, long double x) {
     constexpr long double PiLow = -5.01655761266833202345e-20L;
-    constexpr std::uint64_t Fraction = 0x7fffffffffffffffull;
     const ExtendedParts py = SplitExtended(y);
     const ExtendedParts px = SplitExtended(x);
     const int yExponent = py.signExponent & 0x7fff;
     const int xExponent = px.signExponent & 0x7fff;
-    if ((xExponent == 0x7fff && (px.mantissa & Fraction) != 0) || (yExponent == 0x7fff && (py.mantissa & Fraction) != 0)) return x + y;
-    if (px.signExponent == 0x3fff && (px.mantissa & Fraction) == 0) return atanl_nid_postfix(y);
+    if ((xExponent == 0x7fff && (px.mantissa & ExtendedFractionMask) != 0) || (yExponent == 0x7fff && (py.mantissa & ExtendedFractionMask) != 0)) return x + y;
+    if (px.signExponent == 0x3fff && (px.mantissa & ExtendedFractionMask) == 0) return atanl_nid_postfix(y);
     int quadrant = ((py.signExponent >> 15) & 1) | ((px.signExponent >> 14) & 2);
     long double result;
     if (Atan2lOnAxis(y, py, px, quadrant, result)) return result;
