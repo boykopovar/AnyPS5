@@ -88,10 +88,15 @@ class DatabaseCacheTests(unittest.TestCase):
             self.assertEqual(stdout.getvalue(), "")
             self.assertFalse(cache.exists())
 
-    def test_existing_database_files_keep_permissive_parsing(self):
+    def test_existing_database_files_require_valid_nids(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "custom.csv"
-            for payload, expected in ((b"", {}), (b"# comment\n", {}), (b"legacy customName\n", {"legacy": "customName"})):
+            valid_nid = "AAAAAAAAAAA"
+            for payload, expected in (
+                (f"{valid_nid} example\n".encode(), {valid_nid: "example"}),
+                (b"# comment\n" + f"{valid_nid} example\n".encode(), {valid_nid: "example"}),
+                (f"{valid_nid} example1\nBBBBBBBBBBB example2\n".encode(), {valid_nid: "example1", "BBBBBBBBBBB": "example2"}),
+            ):
                 with self.subTest(payload=payload):
                     cache.write_bytes(payload)
                     with patch.object(nid_names.urllib.request, "urlopen", side_effect=AssertionError("unexpected download")):
@@ -207,6 +212,19 @@ class DatabaseCacheTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("downloading", result.stderr)
         self.assertIn("sceExample", result.stdout)
+
+    def test_user_provided_database_with_no_valid_nids_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "bad.csv"
+            cache.write_text("not a valid nid\nanother bad line\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "database contains no valid NID records"):
+                nid_names.load_db(cache)
+            result = subprocess.run(
+                [sys.executable, str(Path(nid_names.__file__)), "--db", str(cache), "--nid", "ABCDEFGHIJK", "--json"],
+                capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("no valid NID records", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
 
     def test_interrupted_download_does_not_publish_a_partial_cache(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -565,9 +583,9 @@ class SourceCollectionTests(unittest.TestCase):
                               capture_output=True, timeout=10)
 
     def test_report_preserves_unicode_paths_with_legacy_stdout(self):
-        self.write_source('APS5_EXPORT("AAAAAAAAAAA", exampleUnknown00);\n', "\u8cc7\u6599.cpp")
+        self.write_source('APS5_EXPORT("P+ssLMT0p9s", exampleUnknown00);\n', "\u8cc7\u6599.cpp")
         database = self.root / "aerolib.csv"
-        database.write_bytes(b"")
+        database.write_text("P+ssLMT0p9s exampleUnknown00\n", encoding="utf-8")
         result = self.cli("--db", database)
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
         self.assertIn("core/libs/prx/libSceExample/\u8cc7\u6599.cpp", result.stdout.decode("utf-8"))
