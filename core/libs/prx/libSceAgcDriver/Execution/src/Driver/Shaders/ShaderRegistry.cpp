@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/WorkerAffinity.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -1784,6 +1785,7 @@ private:
     static void* Main(void* argument) {
         Libc::SetHostMxcsr();
         auto& pool = *static_cast<RegistrationPreparePool*>(argument);
+        NameDriverThread("shader prepare");
         PerformanceTrace::BindThread("shader prepare", TraceThread::DefaultCapacity / 8);
         for (;;) {
             Task task;

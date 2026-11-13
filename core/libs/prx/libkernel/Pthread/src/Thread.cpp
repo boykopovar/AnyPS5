@@ -14,6 +14,7 @@
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
+#include "prx/libc/include/general/ThreadName.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <algorithm>
@@ -1146,6 +1147,7 @@ static void* StartNativeThread(void* opaque) {
 #if defined(__linux__)
         self->hostTid = static_cast<int>(gettid());
         RegisterGuestStackMapping(self);
+        if (!self->name.empty()) static_cast<void>(ThreadName::SetCurrent(self->name.c_str()));
 #endif
         args->initialized.set_value();
     } catch (...) {
@@ -1576,6 +1578,9 @@ int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
 #ifdef _WIN32
     SetThreadDescription(static_cast<HANDLE>(thread->nativeHandle), ThreadDescription(thread->name).c_str());
     ApplyJobAffinity(*thread, thread->nativeHandle);
+#elif defined(__linux__)
+    if (thread == CurrentGuestState().current) static_cast<void>(ThreadName::SetCurrent(thread->name.c_str()));
+    else static_cast<void>(ThreadName::SetTask(thread->hostTid, thread->name.c_str()));
 #endif
     return SCE_OK;
 }

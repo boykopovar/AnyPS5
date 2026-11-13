@@ -40,12 +40,18 @@ void NoteWorkerThread();
 }
 #endif
 
-void PinWorkerThread(const char* role) {
+void NameDriverThread(const char* role) {
     TracyZone::NameThread(role);
 #ifdef _WIN32
     const HRESULT nameResult = ThreadName::SetCurrent(role);
     if (FAILED(nameResult)) std::fprintf(stderr, "[thread-name] could not name %s (0x%08lx)\n", role, static_cast<unsigned long>(nameResult));
+#elif defined(__linux__)
+    if (const int error = ThreadName::SetCurrent(role); error != 0) std::fprintf(stderr, "[thread-name] could not name %s (errno %d)\n", role, error);
 #endif
+}
+
+void PinWorkerThread(const char* role) {
+    NameDriverThread(role);
 #ifdef __linux__
     NoteWorkerThread();
 #endif

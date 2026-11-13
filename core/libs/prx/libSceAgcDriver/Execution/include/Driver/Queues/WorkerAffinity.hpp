@@ -7,6 +7,8 @@ namespace AgcDriver::DriverDetail {
 
 std::uint64_t WorkerAffinityMask();
 
+void NameDriverThread(const char* role);
+
 void PinWorkerThread(const char* role);
 
 void ReserveCommitterCore();
