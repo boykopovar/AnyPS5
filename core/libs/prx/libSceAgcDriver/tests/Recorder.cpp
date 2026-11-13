@@ -6569,6 +6569,34 @@ void idlePublishWaitTests(const Device& device, Recorder& recorder) {
     std::cout << "idle publish wait verified\n";
 }
 
+void sharedUntrackedCompareTests(StorageTexture& image) {
+    using namespace AgcDriver::GuestMemory;
+    const auto compared = [&] {
+        const auto before = StorageTexture::UntrackedCompares();
+        image.Refresh();
+        return StorageTexture::UntrackedCompares() != before;
+    };
+    const auto bump = [] {
+        BumpCollectEpoch();
+        const auto point = CollectSince();
+        while (SteadyNanoseconds() <= point) std::this_thread::yield();
+        return point;
+    };
+    const auto point = bump();
+    Require(compared(), "a refresh whose ordering point follows an equal compare's start reused it");
+    BumpCollectEpochSince(point);
+    Require(!compared(), "a refresh in another collect epoch whose ordering point precedes an equal compare's start compared the surface again");
+    RaiseCollectSince(SteadyNanoseconds());
+    Require(compared(), "a raised ordering point reused an equal compare that started before it");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoSharedUntrackedCompares, true);
+    const auto epochPoint = bump();
+    Require(compared(), "APS5_NO_SHARED_UNTRACKED_COMPARES: a new collect epoch reused an equal compare from an earlier one");
+    Require(!compared(), "APS5_NO_SHARED_UNTRACKED_COMPARES: a second refresh in the same collect epoch compared the surface again");
+    BumpCollectEpochSince(epochPoint);
+    Require(compared(), "APS5_NO_SHARED_UNTRACKED_COMPARES: a refresh in another collect epoch reused an equal compare that started after its ordering point");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoSharedUntrackedCompares, false);
+}
+
 bool untrackedForgetTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -6653,6 +6681,7 @@ bool untrackedForgetTests(const Device& device, Recorder& recorder) {
         GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 65536);
         image->Refresh();
         Require(StorageTexture::UntrackedCompares() == compares + 1, "forgetting the surface's own memory left its comparison memo standing");
+        sharedUntrackedCompareTests(*image);
     }
 #ifdef _WIN32
     VirtualFree(other, 0, MEM_RELEASE);

@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/General.hpp"
@@ -3104,9 +3105,16 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
     const auto epoch = GuestMemory::CollectEpoch();
     const auto hint = memoize && epoch != 0 ? GuestMemory::UntrackedHint(address, bytes) : 0;
     const bool forgetting = (GuestMemory::ForgetSerial() & 1u) != 0;
-    const std::array<std::uint64_t, 5> stamp{hint != 0, hint != 0 ? hint : epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetStamp(address, bytes), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
+    const auto since = GuestMemory::CollectSince();
+    const bool byTime = hint == 0 && since != 0 && GuestMemory::CollectWalksShared() && !RuntimeSwitches::Set(RuntimeSwitch::NoSharedUntrackedCompares);
+    const std::array<std::uint64_t, 5> stamp{hint != 0, hint != 0 ? hint : byTime ? 0 : epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetStamp(address, bytes), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
     const bool cacheable = memoize && epoch != 0 && !forgetting;
-    if (cacheable && std::any_of(comparedRanges.begin(), comparedRanges.end(), [&](const ComparedRange& entry) { return entry.address == address && entry.bytes == bytes && entry.stamp == stamp; })) {
+    const auto started = GuestMemory::SteadyNanoseconds();
+    const auto matches = [&](const ComparedRange& entry) {
+        if (entry.address != address || entry.bytes != bytes || entry.stamp[0] != stamp[0] || entry.stamp[2] != stamp[2] || entry.stamp[3] != stamp[3] || entry.stamp[4] != stamp[4]) return false;
+        return byTime ? entry.stamp[1] > since : entry.stamp[1] == stamp[1];
+    };
+    if (cacheable && std::any_of(comparedRanges.begin(), comparedRanges.end(), matches)) {
         std::fill(changed.begin(), changed.end(), GuestMemory::BlockUnchanged);
         return true;
     }
@@ -3118,6 +3126,7 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
             auto found = std::find_if(comparedRanges.begin(), comparedRanges.end(), [&](const ComparedRange& entry) { return entry.address == address && entry.bytes == bytes; });
             if (found == comparedRanges.end()) found = comparedRanges.begin() + nextComparedRange++ % comparedRanges.size();
             *found = {address, bytes, stamp};
+            if (byTime) found->stamp[1] = started;
         }
         return true;
     }

@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <iostream>
 #include <limits>
 #include <mutex>
@@ -316,6 +317,55 @@ void CheckCoverageThreadAndDriverWrites() {
     Require(Walked(Base + Block, 2 * Block, Base + Block + Page, false), "an uncached collection reused an observation");
 }
 
+template <typename Body>
+void OnThread(Body body) {
+    std::exception_ptr failure;
+    std::thread thread([&] {
+        try {
+            body();
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    });
+    thread.join();
+    if (failure != nullptr) std::rethrow_exception(failure);
+}
+
+void CheckSharedWalks() {
+    const auto range = Base + 87 * Block;
+    const auto probe = range + Page;
+    std::uint64_t pointBeforeWalk = 0;
+    OnThread([&] {
+        BumpCollectEpoch();
+        pointBeforeWalk = CollectSince();
+        Require(Walked(range, Block, probe), "the first collect of the block did not reach the write watch");
+    });
+    OnThread([&] {
+        BumpCollectEpochSince(pointBeforeWalk);
+        Require(!Walked(range, Block, probe), "a collect whose ordering point precedes another thread's walk walked again");
+        RaiseCollectSince(SteadyNanoseconds());
+        Require(Walked(range, Block, probe), "a raised ordering point reused another thread's walk made before it");
+    });
+    OnThread([&] {
+        BumpCollectEpoch();
+        Require(Walked(range, Block, probe), "a collect whose ordering point follows a store reused a walk made before it");
+    });
+    OnThread([&] {
+        BumpCollectEpoch();
+        const auto point = CollectSince();
+        BumpCollectEpochSince(pointBeforeWalk);
+        Require(CollectSince() >= point, "an ordering point moved earlier than the thread's previous one");
+        RaiseCollectSince(point + 1);
+        Require(CollectSince() >= point + 1, "raising the ordering point did not move it");
+    });
+    ShareCollectWalks(false);
+    OnThread([&] {
+        BumpCollectEpochSince(pointBeforeWalk);
+        Require(Walked(range, Block, probe), "a collect reused another thread's walk with sharing off");
+    });
+    ShareCollectWalks(true);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -349,6 +399,7 @@ int main(int argc, char** argv) {
         CheckInvalidationReachesBlockKeyedEntry();
         CheckThreadWithoutEpochWalksEveryTime();
         CheckStoreInNewEpochIsFound();
+        CheckSharedWalks();
     } catch (const std::exception& error) {
         std::cerr << "collect memo generation test failed: " << error.what() << "\n";
         return 1;

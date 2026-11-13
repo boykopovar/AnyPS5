@@ -322,6 +322,8 @@ void raiseForgetSlot(std::atomic<std::uint64_t>& slot, std::uint64_t serial) {
 }
 std::atomic<std::uint64_t> forgetBytes{0};
 std::atomic<std::uint64_t> collectMemoHits{0};
+std::atomic<std::uint64_t> sharedWalkHits{0};
+std::atomic<bool> sharedCollectWalks{std::getenv("APS5_NO_SHARED_COLLECT_WALKS") == nullptr};
 std::atomic<std::uint64_t> collectEpochBumps{0};
 std::atomic<std::uint64_t> unwatchSerial{0};
 // Walks that reported at least one written page (the ones the probe pass used to double), and the
@@ -566,7 +568,7 @@ public:
         for (std::size_t i = 0; i < MemoryCounterCount; ++i) {
             AgcDriver::ProfilePrint_nid_no_patch(" %s %llu calls %.0f MiB %.1f s", MemoryCounterNames[i], static_cast<unsigned long long>(totals[i][0]), totals[i][1] / 1048576.0, totals[i][2] / 1e9);
         }
-        AgcDriver::ProfilePrint_nid_no_patch(" collect-memo hits %llu, collect epochs %llu", static_cast<unsigned long long>(collectMemoHits.load()), static_cast<unsigned long long>(collectEpochBumps.load()));
+        AgcDriver::ProfilePrint_nid_no_patch(" collect-memo hits %llu (%llu from other threads' walks), collect epochs %llu", static_cast<unsigned long long>(collectMemoHits.load()), static_cast<unsigned long long>(sharedWalkHits.load()), static_cast<unsigned long long>(collectEpochBumps.load()));
         AgcDriver::ProfilePrint_nid_no_patch(" collect-dirty %llu tracker waits %llu / %llu", static_cast<unsigned long long>(collectDirty.load()), static_cast<unsigned long long>(trackerWaits.load()), static_cast<unsigned long long>(trackerAcquisitions.load()));
         AgcDriver::ProfilePrint_nid_no_patch(" | arena 0x%llx+0x%llx image 0x%llx+0x%llx forgets %llu (%.0f MiB)", static_cast<unsigned long long>(PagesBase()), static_cast<unsigned long long>(PagesSize()), static_cast<unsigned long long>(ImagePagesBase()), static_cast<unsigned long long>(ImagePagesSize()), static_cast<unsigned long long>(forgetCalls.load()), forgetBytes.load() / 1048576.0);
         {
@@ -2024,6 +2026,41 @@ bool walkWrites(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop, 
     return complete;
 }
 
+struct CollectSinceSlot {};
+
+struct SharedWalk {
+    std::uint64_t stop = 0;
+    std::uint64_t started = 0;
+    std::uint64_t unwatched = 0;
+    std::uint64_t mapping = 0;
+};
+
+struct SharedWalks {
+    std::mutex mutex;
+    std::unordered_map<std::uint64_t, SharedWalk> ranges;
+};
+
+SharedWalks& sharedWalks() {
+    static SharedWalks walks;
+    return walks;
+}
+
+bool sharedWalkCovers(std::uint64_t first, std::uint64_t stop, std::uint64_t since, std::uint64_t unwatched, std::uint64_t mapping) {
+    auto& walks = sharedWalks();
+    std::lock_guard lock(walks.mutex);
+    const auto found = walks.ranges.find(first);
+    return found != walks.ranges.end() && stop <= found->second.stop && found->second.started > since && found->second.unwatched == unwatched && found->second.mapping == mapping;
+}
+
+void rememberSharedWalk(std::uint64_t first, std::uint64_t stop, std::uint64_t started, std::uint64_t unwatched, std::uint64_t mapping) {
+    auto& walks = sharedWalks();
+    std::lock_guard lock(walks.mutex);
+    if (walks.ranges.size() >= 65536) walks.ranges.clear();
+    auto& entry = walks.ranges[first];
+    if (entry.started > started && entry.stop >= stop) return;
+    entry = {stop, started, unwatched, mapping};
+}
+
 std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoized) {
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return 0;
     auto& tracker = Tracker();
@@ -2058,7 +2095,14 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
                 return tracker.stable.load(std::memory_order_acquire);
             }
         }
+        const auto since = HostThreadSlot<std::uint64_t, CollectSinceSlot>::Get();
+        if (since != 0 && sharedCollectWalks.load(std::memory_order_relaxed) && sharedWalkCovers(first, stop, since, unwatched, mapping)) {
+            sharedWalkHits.fetch_add(1, std::memory_order_relaxed);
+            collectMemoHits.fetch_add(1, std::memory_order_relaxed);
+            return tracker.stable.load(std::memory_order_acquire);
+        }
     }
+    const auto walkStarted = SteadyNanoseconds();
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     if (!tracker.watched || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || !tracker.covers(address, bytes)) return 0;
@@ -2095,6 +2139,7 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     // Only a completed walk is remembered; a failed one (uncommitted pages) returned 0 above.
     if (collectMemoEnabled()) {
         const auto serial = unwatchSerial.load(std::memory_order_relaxed);
+        if (sharedCollectWalks.load(std::memory_order_relaxed)) rememberSharedWalk(first, stop, walkStarted, serial, mapping);
         if (sharedCollectMemo()) tracker.memo[tracker.nextMemo++ % tracker.memo.size()] = {first, stop, epoch, serial, mapping};
         else {
             if (useMemo && epochal) {
@@ -2189,7 +2234,37 @@ std::uint64_t CollectWrittenBlocks(std::uint64_t address, std::size_t bytes, std
     return tracker.generation.load(std::memory_order_relaxed);
 }
 
+std::uint64_t SteadyNanoseconds() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+void ShareCollectWalks(bool share) {
+    if (sharedCollectWalks.load(std::memory_order_relaxed) != share) sharedCollectWalks.store(share, std::memory_order_relaxed);
+}
+
+bool CollectWalksShared() {
+    return sharedCollectWalks.load(std::memory_order_relaxed);
+}
+
+std::uint64_t CollectSince() {
+    return HostThreadSlot<std::uint64_t, CollectSinceSlot>::Get();
+}
+
+void RaiseCollectSince(std::uint64_t since) {
+    const auto now = SteadyNanoseconds();
+    const auto raised = since == 0 ? now : std::min(since, now);
+    if (raised > HostThreadSlot<std::uint64_t, CollectSinceSlot>::Get()) HostThreadSlot<std::uint64_t, CollectSinceSlot>::Set(raised);
+}
+
+void BumpCollectEpochSince(std::uint64_t since) {
+    const auto now = SteadyNanoseconds();
+    const auto previous = HostThreadSlot<std::uint64_t, CollectSinceSlot>::Get();
+    BumpCollectEpoch();
+    HostThreadSlot<std::uint64_t, CollectSinceSlot>::Set(since == 0 ? now : std::max(previous, std::min(since, now)));
+}
+
 void BumpCollectEpoch() {
+    HostThreadSlot<std::uint64_t, CollectSinceSlot>::Set(SteadyNanoseconds());
     const auto epoch = nextCollectEpoch.fetch_add(1, std::memory_order_relaxed) + 1;
     HostThreadSlot<std::uint64_t, CollectEpochSlot>::Set(epoch);
     auto last = lastBumpedEpoch.load(std::memory_order_relaxed);

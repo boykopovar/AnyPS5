@@ -136,11 +136,24 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     bool warned = false;
 
     struct EpochPoint {
+        Driver* driver;
+        std::uint32_t queue;
+        std::uint64_t address;
+        std::size_t bytes;
+        std::span<const std::uint32_t> packet;
+        std::uint64_t received;
+        bool inherit = true;
         bool bump = true;
+        std::uint64_t since = 0;
         ~EpochPoint() {
-            if (bump) bumpEpoch(&EpochBumps::waits);
+            if (bump && since == 0 && inherit) since = driver->storeOrderingSince(packet, address, bytes, received, queue);
+            if (bump) bumpEpochSince(&EpochBumps::waits, since);
         }
-    } epochPoint;
+    } epochPoint{this, queue, awaited, awaitedBytes, packet, received, !requireMemory};
+    const auto orderedBy = [&](std::uint32_t writer) {
+        if (writer == queue) epochPoint.bump = false;
+        else epochPoint.since = storeOrderingSince(packet, awaited, awaitedBytes, received, queue);
+    };
     bool ownStoreUnlanded = false;
     const auto memorySatisfied = [&] {
         ownStoreUnlanded = false;
@@ -149,22 +162,25 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         ownStoreUnlanded = true;
         return false;
     };
-    const auto storedByOwnLabel = [&] {
+    const auto orderByStore = [&] {
         std::uint32_t writer = queue;
-        return !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer) && writer == queue;
+        if (!requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) orderedBy(writer);
     };
     GuestMemory::CheckRange(reinterpret_cast<const void*>(awaited), awaitedBytes, awaitedBytes);
     if (traceGpu) std::fprintf(stderr, "[gpu] %.1f queue 0x%x waits 0x%llx == 0x%x (now 0x%x)\n", TraceMs(), queue, static_cast<unsigned long long>(awaited), packet[4],
                                *reinterpret_cast<const volatile std::uint32_t*>(awaited));
     if (memorySatisfied()) {
         ++outcomes.atEntry;
-        if (storedByOwnLabel()) epochPoint.bump = false;
+        orderByStore();
         return;
     }
-    if (heldAtSubmit) return;
+    if (heldAtSubmit) {
+        epochPoint.inherit = false;
+        return;
+    }
     if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
         if (writer != queue) notePendingWait(packet, queue, received);
-        else epochPoint.bump = false;
+        orderedBy(writer);
         return;
     }
 
@@ -191,6 +207,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             return false;
         }
         if (hit->late) {
+            epochPoint.inherit = false;
             if (hit->generation == refusedGeneration) return false;
             if (!GuestMemory::UnchangedSinceCollected(awaited, awaitedBytes, hit->generation)) {
                 ++outcomes.lateRefusedCpuStore;
@@ -208,6 +225,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             if (!hit->late) epochPoint.bump = false;
         } else {
             notePendingWait(packet, queue, received);
+            if (!hit->late) epochPoint.since = storeOrderingSince(packet, awaited, awaitedBytes, received, queue);
         }
         return true;
     };
@@ -362,7 +380,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     while (!memorySatisfied()) {
         if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
             if (writer != queue) notePendingWait(packet, queue, received);
-            else epochPoint.bump = false;
+            orderedBy(writer);
             return;
         }
         ++polls;
@@ -439,7 +457,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         }
     }
     ++outcomes.polled;
-    if (storedByOwnLabel()) epochPoint.bump = false;
+    orderByStore();
 }
 
 }

@@ -289,11 +289,35 @@ std::atomic<std::uint64_t>& DrawPipeline::EpochToken() {
     return token;
 }
 
+namespace {
+
+struct EpochSince {
+    std::atomic<std::uint64_t> token{0};
+    std::atomic<std::uint64_t> since{0};
+};
+
+std::array<EpochSince, 4096>& epochSinces() {
+    static std::array<EpochSince, 4096> sinces;
+    return sinces;
+}
+
+}
+
+void DrawPipeline::NoteEpochSince(std::uint64_t token, std::uint64_t since) {
+    auto& slot = epochSinces()[token % epochSinces().size()];
+    slot.token.store(0, std::memory_order_relaxed);
+    slot.since.store(since, std::memory_order_relaxed);
+    slot.token.store(token, std::memory_order_release);
+}
+
 void DrawPipeline::FollowEpoch(std::uint64_t token) {
     static thread_local std::uint64_t followed = 0;
     if (followed == token) return;
     followed = token;
-    GuestMemory::BumpCollectEpoch();
+    const auto& slot = epochSinces()[token % epochSinces().size()];
+    const bool noted = slot.token.load(std::memory_order_acquire) == token;
+    const auto since = slot.since.load(std::memory_order_relaxed);
+    GuestMemory::BumpCollectEpochSince(noted && slot.token.load(std::memory_order_acquire) == token ? since : 0);
 }
 
 unsigned DrawPipeline::Committers() {
