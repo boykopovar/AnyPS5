@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libSceJsc/include/LegacyExports.hpp"
+#include "prx/libSceJsc/include/WtfBitVectorExports.hpp"
 
 #include "prx/libSceJsc/include/ApiBridgeExports.hpp"
 #include "prx/libSceJsc/include/Api.hpp"
