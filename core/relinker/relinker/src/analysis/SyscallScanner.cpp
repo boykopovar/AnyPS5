@@ -137,6 +137,13 @@ static bool IsSdkMmanSyscallStub(const std::vector<std::uint8_t>& code, std::siz
         || MatchesSdkInlineStub(code, syscallOffset, limit, SDK_UNMOUNT_INLINE, 28, recent, codeOffset);
 }
 
+static bool IsInterruptTableEntry(const std::vector<std::uint8_t>& code, std::size_t opcodeOffset, std::size_t limit, const RecentInstructions& recent, FileByteOffset codeOffset) {
+    constexpr std::array<std::uint8_t, 9> entries{INT80_BYTE0, 0x7F, 0xC3, INT80_BYTE0, INT80_BYTE1, 0xC3, INT80_BYTE0, 0x81, 0xC3};
+    if (opcodeOffset < 3 || opcodeOffset > limit || limit - opcodeOffset < 6) return false;
+    const auto start = opcodeOffset - 3;
+    return std::equal(entries.begin(), entries.end(), code.begin() + static_cast<std::ptrdiff_t>(start)) && recent.Contains(codeOffset + start);
+}
+
 static ForbiddenInstruction ClassifyForbiddenInstruction(const std::vector<std::uint8_t>& codeSection, const std::size_t opcodeOffset, const std::size_t limit) {
     if (opcodeOffset >= limit || limit - opcodeOffset < 2u)
         return ForbiddenInstruction::None;
@@ -472,8 +479,9 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
         if (kind == ForbiddenInstruction::None)
             return;
 
-        if (trapSdkStubs && kind == ForbiddenInstruction::Invocation &&
-            (IsSdkSyscallStub(codeSection, opcode, limit) || IsSdkMmanSyscallStub(codeSection, opcode, limit, recent, codeSectionOffset))) {
+        const bool sdkStub = kind == ForbiddenInstruction::Invocation &&
+            (IsSdkSyscallStub(codeSection, opcode, limit) || IsSdkMmanSyscallStub(codeSection, opcode, limit, recent, codeSectionOffset));
+        if (trapSdkStubs && sdkStub) {
             trapped.push_back(opcode);
             std::ostringstream message;
             message << "Trapping SDK syscall instruction at code offset 0x" << std::hex << match.Offset << '\n';
@@ -492,11 +500,22 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
             return;
         }
 
+        if (kind == ForbiddenInstruction::Invocation && IsInterruptTableEntry(codeSection, opcode, limit, recent, codeSectionOffset)) {
+            trapped.push_back(opcode);
+            std::ostringstream message;
+            message << "Trapping int 0x80 in a software interrupt table at code offset 0x" << std::hex << match.Offset << '\n';
+            progress.Message(message.str());
+            return;
+        }
+
         std::ostringstream msg;
         msg << "Forbidden syscall instruction at code offset 0x" << std::hex << match.Offset;
 
         if (number)
             msg << ": syscall number " << std::dec << *number;
+
+        if (sdkStub)
+            msg << "; it is a ps5-payload-dev SDK syscall stub, which --trap-sdk-syscall-stubs replaces with UD2";
 
         RelinkerException error(msg.str(), match.Offset);
         error.InputPath = source;

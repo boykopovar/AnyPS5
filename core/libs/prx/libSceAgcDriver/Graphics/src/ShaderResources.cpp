@@ -145,6 +145,13 @@ TextureKey MakeTextureKey(VkDevice device, std::span<const std::uint32_t> words,
     return key;
 }
 
+struct CommittedSlabs {
+    std::vector<std::uint32_t> slabs;
+    std::uint64_t slabBytes = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    bool operator==(const CommittedSlabs& other) const { return slabs == other.slabs && slabBytes == other.slabBytes; }
+};
+
 struct CachedTexture {
     TextureKey key;
     std::uint64_t address;
@@ -165,6 +172,7 @@ struct CachedTexture {
     // write watch; zero when none was taken.
     std::array<std::uint64_t, 4> untracked{};
     std::uint64_t surfaceBytes = 0;
+    std::optional<CommittedSlabs> slabs;
 };
 
 // Entries in use order (front = most recent) with a hash index by key: a lookup is O(1) and the
@@ -318,11 +326,19 @@ void touchTexture(TextureCache& cache, std::list<CachedTexture>::iterator it) {
 
 constexpr std::uint64_t SpareSnapshotBytes = 256ull << 20;
 
+void expireSpareSnapshots(TextureCache& cache, std::uint64_t present) {
+    while (!cache.spare.empty() && present - cache.spare.front().second > SpareSnapshotPresents) {
+        cache.spareBytes -= cache.spare.front().first.size();
+        cache.spare.erase(cache.spare.begin());
+    }
+}
+
 void parkSnapshot(TextureCache& cache, std::vector<std::byte>& bytes) {
     const auto size = bytes.size();
     if (size == 0) return;
     const auto present = Recorder::Presents();
-    while (!cache.spare.empty() && (present - cache.spare.front().second > SpareSnapshotPresents || cache.spareBytes + size > SpareSnapshotBytes)) {
+    expireSpareSnapshots(cache, present);
+    while (!cache.spare.empty() && cache.spareBytes + size > SpareSnapshotBytes) {
         cache.spareBytes -= cache.spare.front().first.size();
         cache.spare.erase(cache.spare.begin());
     }
@@ -334,11 +350,7 @@ void parkSnapshot(TextureCache& cache, std::vector<std::byte>& bytes) {
 }
 
 std::vector<std::byte> spareSnapshot(TextureCache& cache, std::size_t bytes) {
-    const auto present = Recorder::Presents();
-    while (!cache.spare.empty() && present - cache.spare.front().second > SpareSnapshotPresents) {
-        cache.spareBytes -= cache.spare.front().first.size();
-        cache.spare.erase(cache.spare.begin());
-    }
+    expireSpareSnapshots(cache, Recorder::Presents());
     for (auto spare = cache.spare.begin(); spare != cache.spare.end(); ++spare) {
         if (spare->first.size() != bytes) continue;
         cache.spareBytes -= bytes;
@@ -712,29 +724,33 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0, 
         std::chrono::steady_clock::time_point calculatedAt{};
     } cached;
     const auto now = std::chrono::steady_clock::now();
-    std::lock_guard lock(cached.mutex);
     std::optional<VkPhysicalDeviceMemoryBudgetPropertiesEXT> reported;
-    std::uint64_t sampled = 0;
-    std::uint64_t storage = 0;
-    const auto read = [&] {
-        reported.emplace(VkPhysicalDeviceMemoryBudgetPropertiesEXT{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT});
-        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
-        properties.pNext = &*reported;
-        context.memoryProperties2(context.physical, &properties);
-        cached.device = context.physical;
-        cached.read = now;
-        sampled = SampledTextureMemory();
-        storage = storageCacheBytes();
-        cached.budget = StorageTextureBudget(context.memory, &*reported, sampled, storage);
-        cached.ceiling = StorageTextureCeiling(context.memory, &*reported);
-        cached.calculatedAt = std::chrono::steady_clock::now();
-    };
-    if (cached.device != context.physical || now - cached.read >= std::chrono::seconds(1)) read();
-    const auto needed = std::min(required, cached.ceiling);
-    if (needed > cached.budget && context.bufferPool != nullptr && context.bufferPool->ReclaimIdleDevice(needed - cached.budget, now) != 0) read();
-    if (calculatedAt != nullptr) *calculatedAt = cached.calculatedAt;
-    if (reported) MemoryAccounting::Report(context, *reported, sampled, storage, cached.budget);
-    return cached.budget;
+    StorageTextureBudgetSnapshot snapshot;
+    std::uint64_t budget;
+    {
+        std::lock_guard lock(cached.mutex);
+        const auto read = [&] {
+            reported.emplace(VkPhysicalDeviceMemoryBudgetPropertiesEXT{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT});
+            VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+            properties.pNext = &*reported;
+            context.memoryProperties2(context.physical, &properties);
+            cached.device = context.physical;
+            cached.read = now;
+            const auto sampled = SampledTextureMemory();
+            const auto storage = storageCacheBytes();
+            snapshot = CalculateStorageTextureBudget(context.memory, &*reported, sampled, storage);
+            cached.budget = snapshot.selectedBudget;
+            cached.ceiling = snapshot.ceiling;
+            cached.calculatedAt = std::chrono::steady_clock::now();
+        };
+        if (cached.device != context.physical || now - cached.read >= std::chrono::seconds(1)) read();
+        const auto needed = std::min(required, cached.ceiling);
+        if (needed > cached.budget && context.bufferPool != nullptr && context.bufferPool->ReclaimIdleDevice(needed - cached.budget, now) != 0) read();
+        budget = cached.budget;
+        if (calculatedAt != nullptr) *calculatedAt = cached.calculatedAt;
+    }
+    if (reported) MemoryAccounting::Report(context, *reported, snapshot);
+    return budget;
 }
 
 std::size_t storageEntries() {
@@ -830,6 +846,81 @@ void reportGuestAllocation(const GuestTextureResource& resource, std::uint64_t g
     const auto end = range->address + range->bytes;
     const auto fitting = geometry.thick || geometry.layerBytes == 0 ? 0ull : std::min<std::uint64_t>(geometry.layers, (end - resource.baseAddress) / geometry.layerBytes);
     std::fprintf(stderr, "[gpu] view 0x%llx of %llu MiB lies in the guest allocation 0x%llx..0x%llx (%llu MiB, range 0x%llx..0x%llx, %s%s%s): %llu of its %u slices fit in the range\n", static_cast<unsigned long long>(resource.baseAddress), static_cast<unsigned long long>(guestBytes >> 20u), static_cast<unsigned long long>(range->allocationAddress), static_cast<unsigned long long>(range->allocationAddress + range->allocationBytes), static_cast<unsigned long long>(range->allocationBytes >> 20u), static_cast<unsigned long long>(range->address), static_cast<unsigned long long>(end), range->readable ? "r" : "-", range->writable ? "w" : "-", range->gpu ? "g" : "-", static_cast<unsigned long long>(fitting), geometry.layers);
+}
+
+std::optional<CommittedSlabs> committedSlabs(const GuestTextureResource& resource, std::uint64_t guestBytes, const std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>>& committed) {
+    if (resource.dimension != TextureDimension::k3D) return std::nullopt;
+    const auto geometry = DescribeSurface(resource);
+    const auto slabBytes = geometry.layerBytes;
+    if (slabBytes == 0 || geometry.layers == 0 || geometry.guestBytes != guestBytes || geometry.GuestLayerOffset(geometry.layers - 1u) + slabBytes != guestBytes) return std::nullopt;
+    const auto described = committed.has_value() ? GuestMemory::Commitment{} : GuestMemory::DescribeCommitted(resource.baseAddress, static_cast<std::size_t>(guestBytes));
+    const auto& ranges = committed.has_value() ? *committed : described.ranges;
+    CommittedSlabs result{{}, slabBytes};
+    const auto count = guestBytes / slabBytes;
+    auto range = ranges.begin();
+    for (std::uint64_t slab = 0; slab < count; ++slab) {
+        const auto begin = resource.baseAddress + slab * slabBytes;
+        while (range != ranges.end() && range->second <= begin) ++range;
+        if (range != ranges.end() && range->first < begin + slabBytes) result.slabs.push_back(static_cast<std::uint32_t>(slab));
+    }
+    if (result.slabs.size() == count) return std::nullopt;
+    const auto end = resource.baseAddress + guestBytes;
+    for (const auto& [first, last] : ranges) {
+        if (last > resource.baseAddress && first < end) result.ranges.emplace_back(std::max(first, resource.baseAddress) - resource.baseAddress, std::min(last, end) - resource.baseAddress);
+    }
+    return result;
+}
+
+bool stillCommitted(const std::optional<CommittedSlabs>& now, const std::optional<CommittedSlabs>& snapshot) {
+    if (!now.has_value() || !snapshot.has_value()) return now.has_value() == snapshot.has_value();
+    auto range = now->ranges.begin();
+    for (const auto& [begin, end] : snapshot->ranges) {
+        while (range != now->ranges.end() && range->second <= begin) ++range;
+        if (range == now->ranges.end() || range->first > begin || range->second < end) return false;
+    }
+    return true;
+}
+
+std::size_t snapshotBytes(const std::optional<CommittedSlabs>& slabs, std::size_t guestBytes) {
+    return slabs.has_value() ? static_cast<std::size_t>(slabs->slabs.size() * slabs->slabBytes) : guestBytes;
+}
+
+std::optional<std::span<const std::uint32_t>> packedSlabs(const std::optional<CommittedSlabs>& slabs) {
+    if (!slabs.has_value()) return std::nullopt;
+    return std::span<const std::uint32_t>(slabs->slabs);
+}
+
+std::vector<std::array<std::uint64_t, 3>> slabRuns(const CommittedSlabs& committed) {
+    std::vector<std::array<std::uint64_t, 3>> runs;
+    for (std::size_t index = 0; index < committed.slabs.size(); ++index) {
+        const auto guest = std::uint64_t{committed.slabs[index]} * committed.slabBytes;
+        if (!runs.empty() && runs.back()[0] + runs.back()[2] == guest) runs.back()[2] += committed.slabBytes;
+        else runs.push_back({guest, index * committed.slabBytes, committed.slabBytes});
+    }
+    return runs;
+}
+
+void readSnapshot(const GuestTextureResource& resource, DccKeys keys, const std::optional<CommittedSlabs>& slabs, std::span<std::byte> bytes) {
+    if (!slabs.has_value()) return ReadTextureSurface(resource, keys, bytes);
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
+    for (const auto& [guest, packed, size] : slabRuns(*slabs)) GuestMemory::ReadCommitted(resource.baseAddress + guest, bytes.subspan(static_cast<std::size_t>(packed), static_cast<std::size_t>(size)));
+}
+
+bool equalsCommittedSlabs(std::uint64_t address, const CommittedSlabs& slabs, std::span<const std::byte> bytes) {
+    for (const auto& [guest, packed, size] : slabRuns(slabs)) {
+        if (!GuestMemory::EqualsCommitted(address + guest, bytes.subspan(static_cast<std::size_t>(packed), static_cast<std::size_t>(size)))) return false;
+    }
+    return true;
+}
+
+void reportCommittedSlabs(const GuestTextureResource& resource, const CommittedSlabs& slabs, std::uint64_t guestBytes) {
+    static std::atomic<std::uint64_t> views{0};
+    const auto count = views.fetch_add(1) + 1;
+    if (count > 5 && (count & (count - 1)) != 0) return;
+    const auto geometry = DescribeSurface(resource);
+    std::uint32_t zeroed = 0;
+    for (std::uint32_t layer = 0; layer < geometry.layers; ++layer) zeroed += std::ranges::binary_search(slabs.slabs, geometry.GuestLayerOffset(layer) / slabs.slabBytes) ? 0u : 1u;
+    std::fprintf(stderr, "[gpu] sampled view 0x%llx (%ux%u format %u, dimension %d, tile %d, slices %u..%u) uploads the %zu of its %llu slabs holding committed guest memory (%llu of %llu MiB) and %u zero-filled slices; %llu such views\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.dimension), static_cast<int>(resource.tileMode), resource.baseArray, resource.depthOrLastArray, slabs.slabs.size(), static_cast<unsigned long long>(guestBytes / slabs.slabBytes), static_cast<unsigned long long>((slabs.slabs.size() * slabs.slabBytes) >> 20u), static_cast<unsigned long long>(guestBytes >> 20u), zeroed, static_cast<unsigned long long>(count));
 }
 
 struct PendingLookup {
@@ -1040,6 +1131,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     }
     if (flushAsked) scanned.reset();
     if (!keys.has_value()) keys = scanKeys();
+    const bool slabbed = source == nullptr && generation == 0 && *keys == DccKeys::Uncompressed && resource.dccAddress == 0 && !depthCompare && !srgbExpand && resource.dimension == TextureDimension::k3D;
     if (disabled) {
         if (source != nullptr && depthCompare) {
             auto texture = std::make_shared<Texture>(context, source, resource, components, Texture::DepthCopyTag{});
@@ -1063,9 +1155,11 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         }
         if (source != nullptr) return std::make_shared<Texture>(context, source, resource, components);
         if (const auto clear = SampledClearColor(context, resource, *keys, depthCompare)) return std::make_shared<Texture>(context, *context.detiler, resource, components, std::span<const std::byte>{}, false, layerRows, &*clear);
-        std::vector<std::byte> snapshot(bytes);
-        ReadTextureSurface(resource, *keys, snapshot);
-        return std::make_shared<Texture>(context, *context.detiler, resource, components, snapshot, depthCompare, layerRows);
+        const auto slabs = slabbed ? committedSlabs(resource, guestBytes, std::nullopt) : std::nullopt;
+        if (slabs.has_value()) reportCommittedSlabs(resource, *slabs, guestBytes);
+        std::vector<std::byte> snapshot(snapshotBytes(slabs, bytes));
+        readSnapshot(resource, *keys, slabs, snapshot);
+        return std::make_shared<Texture>(context, *context.detiler, resource, components, snapshot, depthCompare, layerRows, nullptr, packedSlabs(slabs));
     }
     auto snapshotGeneration = generation;
     std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> committed;
@@ -1077,6 +1171,8 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         }
     }
     const auto untracked = source == nullptr && generation == 0 && !committed.has_value() && *keys == DccKeys::Uncompressed ? untrackedKey(address, bytes) : std::array<std::uint64_t, 4>{};
+    auto slabs = slabbed ? committedSlabs(resource, guestBytes, committed) : std::nullopt;
+    const auto snapshotSize = snapshotBytes(slabs, bytes);
     auto& cache = Textures();
     const auto key = MakeTextureKey(context.device, words, components, depthCompare);
     std::lock_guard lock(cache.mutex);
@@ -1098,15 +1194,15 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
                 if (profile) LookupOutcomes::Add(*keys != DccKeys::Uncompressed ? LookupOutcomes::SampledHitClearedView : LookupOutcomes::SampledHitView, start);
                 return it->texture;
             }
-        } else if (source == nullptr && it->surfaceBytes == guestBytes && it->keys == *keys) {
+        } else if (source == nullptr && it->surfaceBytes == guestBytes && it->keys == *keys && it->slabs == slabs && stillCommitted(slabs, it->slabs)) {
             // Unwritten pages need no comparison; partially resident textures compare only committed
             // pages. The compare goes through the flush hook: it waits for recorded work over the
             // surface (counted, and named for the [hooksync] line).
             const auto equalsCommitted = [&] {
-                if (it->bytes.empty()) return false;
+                if (it->slabs.has_value() ? it->bytes.size() != snapshotBytes(it->slabs, bytes) : it->bytes.empty()) return false;
                 if (Recorder::SnapshotWriteOverlaps(address, bytes)) counters.pendingReads.fetch_add(1, std::memory_order_relaxed);
                 const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureCompare);
-                return GuestMemory::EqualsCommitted(address, it->bytes);
+                return it->slabs.has_value() ? equalsCommittedSlabs(address, *it->slabs, it->bytes) : GuestMemory::EqualsCommitted(address, it->bytes);
             };
             const auto unchanged = [&] {
                 if (it->committed != committed) return false;
@@ -1129,18 +1225,17 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
                 return it->texture;
             }
         }
-        if (it->bytes.size() == bytes) recycled = std::move(it->bytes);
+        if (it->bytes.size() == snapshotSize) recycled = std::move(it->bytes);
         else parkSnapshot(cache, it->bytes);
         eraseTexture(cache, it);
         ++cache.counts.stale;
     }
     const auto clear = source == nullptr ? SampledClearColor(context, resource, *keys, depthCompare) : std::nullopt;
-    const bool noSnapshot = source != nullptr || clear.has_value();
-    if (noSnapshot) parkSnapshot(cache, recycled);
-    else if (recycled.empty()) recycled = spareSnapshot(cache, bytes);
-    CachedTexture entry{key, address, noSnapshot ? std::vector<std::byte>{} : (recycled.empty() ? std::vector<std::byte>(bytes) : std::move(recycled)), nullptr, *keys, snapshotGeneration};
+    if (source != nullptr || clear.has_value()) parkSnapshot(cache, recycled);
+    CachedTexture entry{key, address, std::vector<std::byte>{}, nullptr, *keys, snapshotGeneration};
     entry.committed = std::move(committed);
     entry.surfaceBytes = bytes;
+    entry.slabs = std::move(slabs);
     const auto createTexture = [&](auto&&... args) {
         const CacheHold reclaimable(sampledCacheReclaimable);
         return std::make_shared<Texture>(context, std::forward<decltype(args)>(args)...);
@@ -1173,17 +1268,30 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         // Snapshot before the upload so a write racing with it is caught by the next comparison.
         const bool pending = *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
         if (pending) counters.pendingReads.fetch_add(1, std::memory_order_relaxed);
-        ReadTextureSurface(resource, *keys, entry.bytes);
+        if (entry.slabs.has_value()) reportCommittedSlabs(resource, *entry.slabs, guestBytes);
+        constexpr std::size_t SnapshotCompareBytes = 256u << 10u;
+        const bool dropped = *keys == DccKeys::Uncompressed && snapshotSize > SnapshotCompareBytes && (entry.generation != 0 || (!pending && untracked[0] != 0));
+        std::shared_ptr<Buffer> staging;
+        if (dropped) {
+            parkSnapshot(cache, recycled);
+            expireSpareSnapshots(cache, Recorder::Presents());
+            staging = std::make_shared<Buffer>(context, snapshotSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        } else {
+            if (recycled.empty()) recycled = spareSnapshot(cache, snapshotSize);
+            entry.bytes = recycled.empty() ? std::vector<std::byte>(snapshotSize) : std::move(recycled);
+        }
+        const auto read = staging != nullptr ? staging->Bytes() : std::span<std::byte>(entry.bytes);
+        readSnapshot(resource, *keys, entry.slabs, read);
         if (!pending) entry.untracked = untracked;
         static const bool traceTextures = std::getenv("APS5_TRACE_TEXTURES") != nullptr;
         if (traceTextures) {
             std::size_t nonzero = 0;
-            for (std::size_t i = 0; i < entry.bytes.size(); i += 64) nonzero += entry.bytes[i] != std::byte{0};
-            std::fprintf(stderr, "[texture] 0x%llx %ux%u format %u tile %d: %zu of %zu sampled bytes nonzero\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), nonzero, entry.bytes.size() / 64);
+            for (std::size_t i = 0; i < read.size(); i += 64) nonzero += read[i] != std::byte{0};
+            std::fprintf(stderr, "[texture] 0x%llx %ux%u format %u tile %d: %zu of %zu sampled bytes nonzero\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), nonzero, read.size() / 64);
         }
-        entry.texture = createTexture(*context.detiler, resource, components, entry.bytes, depthCompare, layerRows);
+        if (staging != nullptr) entry.texture = createTexture(*context.detiler, resource, components, std::move(staging), depthCompare, layerRows, packedSlabs(entry.slabs));
+        else entry.texture = createTexture(*context.detiler, resource, components, entry.bytes, depthCompare, layerRows, nullptr, packedSlabs(entry.slabs));
         entry.accounted = entry.texture->AllocationBytes();
-        constexpr std::size_t SnapshotCompareBytes = 256u << 10u;
         if (entry.bytes.size() > SnapshotCompareBytes && (entry.generation != 0 || entry.untracked[0] != 0)) parkSnapshot(cache, entry.bytes);
         counters.snapshots.fetch_add(1, std::memory_order_relaxed);
     }
@@ -1467,18 +1575,29 @@ std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory)
 }
 
 std::uint64_t StorageTextureCeiling(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported) {
-    const auto heap = largestDeviceLocalHeap(memory);
-    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return TextureCacheBudget(memory);
-    return std::max<std::uint64_t>(512ull << 20u, std::min<std::uint64_t>(memory.memoryHeaps[*heap].size / 2u, reported->heapBudget[*heap] / 2u));
+    return CalculateStorageTextureBudget(memory, reported, 0, 0).ceiling;
 }
 
 std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes) {
+    return CalculateStorageTextureBudget(memory, reported, sampledBytes, storageBytes).selectedBudget;
+}
+
+StorageTextureBudgetSnapshot CalculateStorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes) {
+    StorageTextureBudgetSnapshot snapshot;
+    snapshot.sampledBytes = sampledBytes;
+    snapshot.storageBytes = storageBytes;
+    snapshot.ceiling = TextureCacheBudget(memory);
+    snapshot.selectedBudget = snapshot.ceiling;
     const auto heap = largestDeviceLocalHeap(memory);
-    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return TextureCacheBudget(memory);
-    const auto budget = reported->heapBudget[*heap];
+    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return snapshot;
+    snapshot.heap = heap;
+    const auto heapBudget = reported->heapBudget[*heap];
     const auto usage = reported->heapUsage[*heap];
-    const auto reserved = usage - std::min<std::uint64_t>(usage, sampledBytes + storageBytes) + sampledBytes + budget / 8u;
-    return std::min<std::uint64_t>(StorageTextureCeiling(memory, reported), std::max<std::uint64_t>(512ull << 20u, budget > reserved ? budget - reserved : 0u));
+    snapshot.reserved = usage - std::min<std::uint64_t>(usage, sampledBytes + storageBytes) + sampledBytes + heapBudget / 8u;
+    snapshot.available = heapBudget > snapshot.reserved ? heapBudget - snapshot.reserved : 0u;
+    snapshot.ceiling = std::max<std::uint64_t>(512ull << 20u, std::min<std::uint64_t>(memory.memoryHeaps[*heap].size / 2u, heapBudget / 2u));
+    snapshot.selectedBudget = std::min<std::uint64_t>(snapshot.ceiling, std::max<std::uint64_t>(512ull << 20u, snapshot.available));
+    return snapshot;
 }
 
 std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes, std::uint64_t storageBytes) {
@@ -6121,6 +6240,7 @@ void ShaderResources::resolveImageTables() {
             GuestTextureResource resource{};
             std::uint64_t guestBytes = 0;
             bool firstLayer = false;
+            std::string rejected;
         };
         const auto decodeEntry = [&](std::uint32_t element, std::span<const std::uint32_t> words) {
             DecodedEntry decoded;
@@ -6130,9 +6250,15 @@ void ShaderResources::resolveImageTables() {
             const bool depthCompare = element < binding.imageDepthCompare.size() && binding.imageDepthCompare[element];
             decoded.firstLayer = shape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray));
             const bool depth1D = depthCompare && ((shape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k1D) || (shape == ShaderRecompiler::DescriptorImageShape::Image2DArray && resource.dimension == TextureDimension::k1DArray));
-            if (!decoded.firstLayer && !depth1D && !MatchesGuestDimension(shape, resource.dimension)) throw std::runtime_error("AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")");
+            if (!decoded.firstLayer && !depth1D && !MatchesGuestDimension(shape, resource.dimension)) {
+                decoded.rejected = "AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")";
+                return decoded;
+            }
             decoded.guestBytes = DescribeSurface(resource).guestBytes;
-            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(decoded.guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(decoded.guestBytes), false).empty()) throw std::runtime_error("AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(decoded.guestBytes) + " bytes) is not mapped");
+            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(decoded.guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(decoded.guestBytes), false).empty()) {
+                decoded.rejected = "AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(decoded.guestBytes) + " bytes) is not mapped";
+                return decoded;
+            }
             static_cast<void>(ResolveTextureFormat(resource.format));
             return decoded;
         };
@@ -6170,8 +6296,11 @@ void ShaderResources::resolveImageTables() {
             try {
                 decoded = decodeEntry(element, words);
             } catch (const std::runtime_error& error) {
-                table.map[faults + element] = rejectTableElement(table, words, error.what());
-                return error.what();
+                decoded.rejected = error.what();
+            }
+            if (!decoded.rejected.empty()) {
+                table.map[faults + element] = rejectTableElement(table, words, decoded.rejected);
+                return decoded.rejected;
             }
             const auto sampled = prepareSampled(element, words, decoded);
             std::shared_ptr<Texture> texture;
@@ -6256,8 +6385,11 @@ void ShaderResources::resolveImageTables() {
             try {
                 decoded = decodeEntry(element, words);
             } catch (const std::runtime_error& error) {
-                table.map[faults + element] = rejectTableElement(table, words, error.what());
-                if (reusable) fresh.elements.push_back({{}, {}, {}, 0, false, true, error.what()});
+                decoded.rejected = error.what();
+            }
+            if (!decoded.rejected.empty()) {
+                table.map[faults + element] = rejectTableElement(table, words, decoded.rejected);
+                if (reusable) fresh.elements.push_back({{}, {}, {}, 0, false, true, decoded.rejected});
                 continue;
             }
             const auto& resource = decoded.resource;
@@ -6981,6 +7113,11 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     // Only the written elements' ranges (AddWritable): a read-only element is neither noted here
     // nor marked as a direct write, so CPU reads of its memory never wait for this work.
     recorder.NotePendingWrites(guestMemory.Writes());
+    if (usesBda && !bdaReadOnly) {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> reachable;
+        guestMemory.AddressStores(reachable);
+        recorder.NotePendingReach(reachable);
+    }
     guestMemory.MarkDirectWrites();
     if (!BuildProfiled()) return;
     auto& counters = BufferWrites();
