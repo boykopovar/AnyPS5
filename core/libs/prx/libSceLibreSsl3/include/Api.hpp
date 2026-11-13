@@ -286,7 +286,7 @@ const char* APS5_VABI ERR_func_error_string_nid_postfix(std::uint64_t error);
 int APS5_VABI EVP_CIPHER_iv_length_nid_postfix(const LibreSsl3EvpCipher* cipher);
 int APS5_VABI EVP_CIPHER_key_length_nid_postfix(const LibreSsl3EvpCipher* cipher);
 const void* APS5_VABI EVP_MD_CTX_md_nid_postfix(const void* context);
-int APS5_VABI EVP_PKEY_CTX_free_nid_postfix();
+void APS5_VABI EVP_PKEY_CTX_free_nid_postfix(void* context);
 int APS5_VABI EVP_PKEY_assign_nid_postfix(LibreSsl3EvpPkey* key, int type, void* data);
 int APS5_VABI EVP_PKEY_bits_nid_postfix(const LibreSsl3EvpPkey* key);
 int APS5_VABI EVP_PKEY_derive_set_peer_nid_postfix();
