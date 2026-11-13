@@ -43,6 +43,9 @@ int main() {
     sceSdecGetVersionSw2(reinterpret_cast<std::uint32_t*>(0x10));
     CheckVersion(sceSdecGetVersionSwHevc, 0x13590001u, "sceSdecGetVersionSwHevc");
     sceSdecGetVersionSwHevc(reinterpret_cast<std::uint32_t*>(0x10));
+    CheckVersion(sceSdecGetVersionSw, 0u, "sceSdecGetVersionSw");
+    CheckVersion(sceSdecGetVersionSw2, 0x13590001u, "sceSdecGetVersionSw2");
+    CheckVersion(sceSdecGetVersionSwHevc, 0x13590001u, "sceSdecGetVersionSwHevc");
     std::puts("sdec version tests passed");
     return 0;
 }
