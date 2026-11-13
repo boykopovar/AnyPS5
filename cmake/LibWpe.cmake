@@ -4,6 +4,9 @@ function(add_bundled_libwpe_key_unicode)
     endif()
 
     set(WPE_SOURCE_DIR ${CMAKE_SOURCE_DIR}/3rdparty/libwpe)
+    if(NOT EXISTS ${WPE_SOURCE_DIR}/src/key-unicode.c)
+        message(FATAL_ERROR "libwpe: ${WPE_SOURCE_DIR}/src/key-unicode.c is missing; initialize the submodule with git submodule update --init 3rdparty/libwpe")
+    endif()
 
     add_library(wpe_key_unicode STATIC EXCLUDE_FROM_ALL ${WPE_SOURCE_DIR}/src/key-unicode.c)
     target_include_directories(wpe_key_unicode PUBLIC ${WPE_SOURCE_DIR}/include)
