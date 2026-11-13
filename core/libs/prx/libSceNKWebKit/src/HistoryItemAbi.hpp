@@ -74,4 +74,7 @@ static_assert(offsetof(HistoryItem, formContentType) == 152);
 static_assert(offsetof(HistoryItem, cachedPage) == 160);
 static_assert(offsetof(HistoryItem, pruningReason) == 168);
 
+using HistoryItemChangedHook = void (*)(HistoryItem*);
+extern HistoryItemChangedHook historyItemChangedHook;
+
 }

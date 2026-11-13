@@ -1,3 +1,4 @@
+#include "../PortabilitySubset.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
@@ -188,8 +189,9 @@ public:
             device.queueCreateInfoCount = 1u;
             device.pQueueCreateInfos = &queue;
             device.pEnabledFeatures = &enabled;
-            device.enabledExtensionCount = static_cast<std::uint32_t>(enabledExtensions.size());
-            device.ppEnabledExtensionNames = enabledExtensions.data();
+            AgcDriver::Tests::PortabilitySubset subset;
+            subset.Enable(context.physical, function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties"),
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), enabledExtensions, device);
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
             if (externalHost) {
                 VkPhysicalDeviceExternalMemoryHostPropertiesEXT host{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
@@ -901,7 +903,7 @@ std::array<std::uint32_t, 8> DepthSampleWords(const DepthTarget& target) {
     return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (format << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (14u << 28u) | (24u << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, (target.iterate256 ? 1u << 10u : 0u) | (target.htilePipeAligned ? 1u << 19u : 0u) | (1u << 21u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u), static_cast<std::uint32_t>(metadata >> 8u)};
 }
 
-enum class PublicationWrite { None, Pages, Queued, PaddingSameValue, Completion, Concurrent, CopyRace, LateStore, PlaneStore, TargetsHeld, Retired, ColorAcquisition, DrawAlias, DrawPending, Reuse, DccAcquisition, DriverSameDepth, DriverSameStencil, DriverSameHtile, SameDepth, SameStencil, SameHtile, ChangedHull, Possible, ImportSameValue };
+enum class PublicationWrite { None, Pages, Queued, PaddingSameValue, Completion, Concurrent, CopyRace, LateStore, PlaneStore, TargetsHeld, Retired, ColorAcquisition, DrawAlias, DrawPending, AliasImported, AliasDrawnAfterImport, StencilAliasImported, StencilAliasRefilled, StencilAliasDrawnAfterImport, Reuse, DccAcquisition, DriverSameDepth, DriverSameStencil, DriverSameHtile, SameDepth, SameStencil, SameHtile, ChangedHull, Possible, ImportSameValue };
 void CheckGuardedWrite() {
     TargetMemory memory(65536u, true);
     for (const std::size_t head : {0u, 1u, 3u, 8u}) {
@@ -987,7 +989,32 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         Context context;
         ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
     } cleanup{recorder, context};
+    const bool stencilAlias = write == PublicationWrite::StencilAliasImported || write == PublicationWrite::StencilAliasRefilled || write == PublicationWrite::StencilAliasDrawnAfterImport;
+    const bool importedAlias = stencilAlias || write == PublicationWrite::AliasImported || write == PublicationWrite::AliasDrawnAfterImport;
+    const bool aliasDrawn = write == PublicationWrite::AliasDrawnAfterImport || write == PublicationWrite::StencilAliasDrawnAfterImport;
+    ColorTarget alias{};
+    alias.address = alias.surfaceAddress = stencilAlias ? target.stencilAddress : target.address;
+    alias.extent = alias.surfaceExtent = extent;
+    alias.format = stencilAlias ? VK_FORMAT_R8_UNORM : VK_FORMAT_R32_SFLOAT;
+    alias.elementBytes = stencilAlias ? 1u : 4u;
+    alias.tileMode = ColorTileMode::RenderTarget;
+    alias.samples = samples;
+    alias.bytes = extent.width * extent.height * alias.elementBytes;
+    const auto aliasBytes = stencilAlias ? stencilBytes : depthBytes;
+    const auto fillStencilAlias = [&] {
+        Require(MultisampledColorFillAbsorbs(alias.address, stencilBytes, 0x5a5a5a5au), "the R8 colour target over the stencil plane did not absorb its fill");
+        NoteDepthMetadataFill(alias.address, stencilBytes, 0x5a5a5a5au);
+        NoteColorMetadataFill(alias.address, stencilBytes, 0x5a5a5a5au);
+    };
+    if (importedAlias) MultisampleTargetView(context, alias);
+    if (stencilAlias) fillStencilAlias();
     const auto view = DepthSurfaceView(context, target);
+    if (importedAlias) Require(MultisampleColorTargetOver(alias.address, aliasBytes).has_value(), "the colour target over the depth or stencil plane was retired by the depth import");
+    if (write == PublicationWrite::StencilAliasRefilled) {
+        fillStencilAlias();
+        Require(DepthSurfaceView(context, target) == view, "a stencil plane fill through its colour alias replaced the native attachment");
+    }
+    if (aliasDrawn) MultisampleTargetView(context, alias);
     if (write == PublicationWrite::DrawAlias) {
         ColorTarget color{};
         color.address = color.surfaceAddress = target.address;
@@ -1360,6 +1387,12 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
                 Require(value == 0.25f + static_cast<float>(index % samples + 1u) / 16.0f, "an unavailable publication capture prevented a depth sample from rendering");
             }
         }
+    } else if (aliasDrawn) {
+        recorder.Sync();
+        const auto held = guestBytes();
+        std::array<std::byte, 1> probe;
+        TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.address, probe); }, "aliases a multisampled colour target whose samples are only on the host");
+        Require(held == guestBytes() && MultisampleColorTargetOver(alias.address, aliasBytes).has_value() && DepthSurfaceAt(target.address), "a refused publication over a colour target drawn after the depth import changed guest bytes or retired a target");
     } else if (write >= PublicationWrite::SameDepth) {
         std::vector<std::pair<std::size_t, std::size_t>> stored;
         if (write == PublicationWrite::SameDepth || write == PublicationWrite::ImportSameValue) stored.emplace_back(0u, sampleOffset);
@@ -1398,6 +1431,7 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
             for (const auto& failure : failures) if (failure) std::rethrow_exception(failure);
         } else AgcDriver::GuestMemory::Read(addresses[trigger] + (first == 0u ? last : 0u), probe);
         Require(DepthSurfaceAt(target.address), "a published native D32S8 owner was retired");
+        if (importedAlias) Require(!MultisampleColorTargetOver(alias.address, aliasBytes).has_value(), "a publication over a colour target the depth surface had taken in kept that colour target resident");
         if (write == PublicationWrite::Pages || write == PublicationWrite::Queued || (write >= PublicationWrite::DriverSameDepth && write <= PublicationWrite::DriverSameHtile)) TargetRefuses([&] { DepthSurfaceView(context, target); }, "guest writes over native multisample depth are not implemented");
         else if (unmap == PublicationUnmap::None) Require(DepthSurfaceView(context, target) == view, "a published native D32S8 owner was not reused");
         protectedHoles.Restore();
@@ -4287,6 +4321,10 @@ int main(int argc, char** argv) {
             CheckDepthPublication(publishing, 4u, PublicationWrite::Completion, true);
             for (const auto write : {PublicationWrite::SameDepth, PublicationWrite::SameStencil, PublicationWrite::SameHtile, PublicationWrite::ChangedHull, PublicationWrite::Possible, PublicationWrite::ImportSameValue}) CheckDepthPublication(publishing, 4u, write, true);
             CheckDepthPublication(publishing, 4u, PublicationWrite::DccAcquisition, true);
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!supported(samples) || (context.limits.framebufferColorSampleCounts & samples) == 0u) continue;
+                for (const auto write : {PublicationWrite::AliasImported, PublicationWrite::AliasDrawnAfterImport, PublicationWrite::StencilAliasImported, PublicationWrite::StencilAliasRefilled, PublicationWrite::StencilAliasDrawnAfterImport}) CheckDepthPublication(publishing, samples, write, true);
+            }
             return 0;
         }
         CheckDrawFeedback();
