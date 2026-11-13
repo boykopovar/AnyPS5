@@ -2,6 +2,7 @@ add_library(libSceIcu SHARED EXCLUDE_FROM_ALL CharacterDigits.cpp Comparisons.cp
 target_include_directories(libSceIcu PRIVATE ${LIBS_INCLUDE_DIR})
 target_sources(libSceIcu PRIVATE RecoveredInventory.cpp)
 configure_windows_unwind(libSceIcu)
+include(ResourceBundle.cmake)
 target_sources(libSceIcu PRIVATE ConverterCallbacks.cpp)
 target_sources(libSceIcu PRIVATE LegacyExports.cpp)
 target_sources(libSceIcu PRIVATE CString.cpp)

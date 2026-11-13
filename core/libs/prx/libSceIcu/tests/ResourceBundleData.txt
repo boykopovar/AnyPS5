@@ -1,0 +1,14 @@
+aps5ResourceFixture {
+    greeting { "h\u00e9llo \u4e16\u754c" }
+    values:array { "first", "\u4e8c", "" }
+    nested:table {
+        word { "nested" }
+        count:int { 42 }
+    }
+    number:int { 1234 }
+    negative:int { -7 }
+    bytes:bin { 0010ff00 }
+    vector:intvector { 1, -2, 17 }
+    empty:bin { "" }
+    alias:alias { "/LOCALE/nested/word" }
+}
