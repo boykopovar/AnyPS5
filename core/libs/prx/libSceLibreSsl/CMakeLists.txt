@@ -16,7 +16,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ExData.cpp)
-target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemReadBioX509.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemReadBioX509.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PemPrivateKey.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_bn_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslBn.cpp)
