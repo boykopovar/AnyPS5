@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -137,15 +138,7 @@ void setDescriptorPadding(ColorTarget& color, DepthTarget* depth, std::uint8_t p
     if (depth != nullptr) std::memset(reinterpret_cast<std::byte*>(depth) + depthBegin, padding, depthEnd - depthBegin);
 }
 
-void draw(AgcDriver::VulkanDevice& device, const ColorTarget& color, const DrawOptions& options = {}) {
-    ShaderRecompiler::RecompileResult vertex;
-    vertex.spirv = std::vector<std::uint32_t>(std::begin(COVER_VERT_SPV), std::end(COVER_VERT_SPV));
-    ShaderRecompiler::RecompileResult fragment;
-    fragment.spirv = std::vector<std::uint32_t>(std::begin(COVER_FRAG_SPV), std::end(COVER_FRAG_SPV));
-    const std::array<CompiledShader, 2> shaders{{
-        {ShaderRecompiler::ShaderStage::Vertex, &vertex, 0},
-        {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}
-    }};
+State drawState(const ColorTarget& color, const DrawOptions& options) {
     State state{};
     state.stages = {ShaderPath::Vertex, 0u, 64u, 64u, std::nullopt, std::nullopt};
     state.color = color;
@@ -171,6 +164,19 @@ void draw(AgcDriver::VulkanDevice& device, const ColorTarget& color, const DrawO
     state.blend.colorWriteMask = options.colorWriteMask;
     state.blends = {state.blend};
     state.blendConstants = {};
+    return state;
+}
+
+void draw(AgcDriver::VulkanDevice& device, const ColorTarget& color, const DrawOptions& options = {}) {
+    ShaderRecompiler::RecompileResult vertex;
+    vertex.spirv = std::vector<std::uint32_t>(std::begin(COVER_VERT_SPV), std::end(COVER_VERT_SPV));
+    ShaderRecompiler::RecompileResult fragment;
+    fragment.spirv = std::vector<std::uint32_t>(std::begin(COVER_FRAG_SPV), std::end(COVER_FRAG_SPV));
+    const std::array<CompiledShader, 2> shaders{{
+        {ShaderRecompiler::ShaderStage::Vertex, &vertex, 0},
+        {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}
+    }};
+    const auto state = drawState(color, options);
     std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
     if (options.prepareOnly) SetDrawStopAfterResolveForTest(DrawStopForTest::ReturnAfterResolve);
     device.Draw(state, {0, 3, 0, 1, 0, false}, shaders);
@@ -677,6 +683,51 @@ std::byte* allocateWatched(std::size_t bytes) {
     return static_cast<std::byte*>(memory);
 }
 
+struct HitCase {
+    const char* name;
+    bool metadata;
+    bool depth;
+};
+
+void memoHitPath(AgcDriver::VulkanDevice& device) {
+    static const char* const benchRepeats = std::getenv("APS5_BENCH_MEMO_HIT");
+    const bool bench = benchRepeats != nullptr && benchRepeats[0] != '\0';
+    const std::size_t repeats = bench ? std::strtoull(benchRepeats, nullptr, 10) : 1000u;
+    const std::size_t samples = bench ? 8u : 2u;
+    const bool disabled = !DrawPipelineEnabled() || std::getenv("APS5_NO_TARGET_MEMO") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    for (const HitCase hitCase : {HitCase{"color", false, false}, HitCase{"color+depth", false, true}, HitCase{"dcc+depth", true, true}}) {
+        auto color = colorTarget(hitCase.metadata);
+        if (hitCase.metadata) {
+            auto* keys = allocateWatched(Keys.size());
+            std::memset(keys, 0xff, Keys.size());
+            color.dccAddress = address(keys);
+        }
+        DrawOptions options;
+        if (hitCase.depth) options.depth = depthTarget(true);
+        reset(device, color);
+        arm(device, color, options);
+        const auto state = drawState(color, options);
+        std::array<std::vector<double>, 2> costs;
+        for (std::size_t sample = 0; sample < samples * 2u; ++sample) {
+            const std::size_t arm = (sample % 4u == 1u || sample % 4u == 2u) ? 1u : 0u;
+            RuntimeSwitches::Assign(RuntimeSwitch::NoTargetMemoOverlapCache, arm == 1u);
+            std::size_t hits = 0;
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            const auto nanoseconds = TargetMemoHitNanosecondsForTest(context, state, repeats, hits);
+            Require(hits == (disabled ? 0u : repeats), std::string("the memo hit path of ") + hitCase.name + " hit " + std::to_string(hits) + " of " + std::to_string(repeats));
+            costs[arm].push_back(static_cast<double>(nanoseconds) / static_cast<double>(repeats));
+        }
+        RuntimeSwitches::Assign(RuntimeSwitch::NoTargetMemoOverlapCache, false);
+        if (!bench) continue;
+        for (std::size_t arm = 0; arm < 2; ++arm) {
+            auto& sorted = costs[arm];
+            std::ranges::sort(sorted);
+            std::printf("bench memo-hit %-12s %-18s ns/draw: median %.1f  Q1 %.1f  Q3 %.1f  min %.1f  max %.1f  (%zu samples of %zu)\n", hitCase.name, arm == 0 ? "cached overlap" : "computed overlap", sorted[sorted.size() / 2], sorted[sorted.size() / 4], sorted[sorted.size() * 3 / 4], sorted.front(), sorted.back(), sorted.size(), repeats);
+        }
+    }
+}
+
 void dccClear(AgcDriver::VulkanDevice& device) {
     auto color = colorTarget(true);
     auto* keys = allocateWatched(Keys.size());
@@ -937,6 +988,68 @@ void colorMemoProofBreak(AgcDriver::VulkanDevice& device) {
     depth.clearDepth = 0.625f;
     mustLookUp(device, color, {.scissor = Right, .depth = depth, .compare = VK_COMPARE_OP_ALWAYS}, "a proof break allowed color reuse while depth fell back");
     expect(device, color, [](std::uint32_t x) { return x < LeftWidth || x >= Width - LeftWidth ? Drawn : Old; }, "proof-break fallback");
+}
+
+void cachedDepthOverlap(AgcDriver::VulkanDevice& device) {
+    const bool disabled = !DrawPipelineEnabled() || std::getenv("APS5_NO_TARGET_MEMO") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    const auto color = colorTarget();
+    const auto disjoint = depthTarget(true);
+    auto onSurface = disjoint;
+    onSurface.address = color.address;
+    auto stencilOnSurface = disjoint;
+    stencilOnSurface.format = VK_FORMAT_D32_SFLOAT_S8_UINT;
+    stencilOnSurface.stencilAddress = color.address;
+    auto htileOnSurface = disjoint;
+    htileOnSurface.htileAddress = color.address;
+    auto sliced = disjoint;
+    sliced.lastSlice = 1;
+    const std::array<std::pair<const char*, DepthTarget>, 4> overlapping{{
+        {"depth plane", onSurface}, {"stencil plane", stencilOnSurface}, {"HTILE", htileOnSurface}, {"sliced", sliced}
+    }};
+    const DrawOptions armed{.depth = disjoint, .compare = VK_COMPARE_OP_ALWAYS};
+    for (const auto& [name, depth] : overlapping) {
+        reset(device, color);
+        arm(device, color, armed);
+        const auto before = lookups();
+        draw(device, color, armed);
+        Require(!LookupOutcomes::Profiled() || (lookups() != before) == memoResolves(), std::string("a repeated draw over a disjoint depth did not reuse its targets (") + name + ")");
+        Require(DepthTargetOverlaps(depth, color.address, color.bytes), std::string("the ") + name + " variant does not overlap the color");
+        if (!disabled) {
+            const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+            const auto hitsWith = [&](const DrawOptions& options) {
+                std::size_t hits = 0;
+                std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+                TargetMemoHitNanosecondsForTest(context, drawState(color, options), 1, hits);
+                return hits;
+            };
+            Require(hitsWith(armed) == 1, std::string("the memo did not hit the depth it was armed with (") + name + ")");
+            Require(hitsWith({.depth = depth, .compare = VK_COMPARE_OP_ALWAYS}) == 0, std::string("a ") + name + " over the color hit the memo proved against another depth");
+            Require(hitsWith(armed) == 1, std::string("a miss over a ") + name + " dropped the memo of the disjoint depth");
+        }
+        mustLookUp(device, color, {.depth = depth, .compare = VK_COMPARE_OP_ALWAYS, .prepareOnly = true}, std::string("a ") + name + " over the color reused the targets proved against another depth");
+    }
+    const bool surfaceLower = address(SurfaceStorage.data()) < address(SourceStorage.data());
+    auto lower = colorTarget();
+    auto higher = lower;
+    lower.address = lower.surfaceAddress = address((surfaceLower ? SurfaceStorage : SourceStorage).data());
+    higher.address = higher.surfaceAddress = address((surfaceLower ? SourceStorage : SurfaceStorage).data());
+    auto small = depthTarget(true);
+    small.address = lower.address;
+    auto grown = small;
+    grown.extent = {16384u, 16384u};
+    Require(!DepthTargetOverlaps(small, higher.address, higher.bytes) && DepthTargetOverlaps(grown, higher.address, higher.bytes), "the depth plane at the lower block does not reach the higher block only by growing its extent");
+    reset(device, higher);
+    arm(device, higher, {.depth = small, .compare = VK_COMPARE_OP_ALWAYS});
+    if (disabled) return;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto hitsWith = [&](const DepthTarget& depth) {
+        std::size_t hits = 0;
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        TargetMemoHitNanosecondsForTest(context, drawState(higher, {.depth = depth, .compare = VK_COMPARE_OP_ALWAYS}), 1, hits);
+        return hits;
+    };
+    Require(hitsWith(small) == 1, "the memo did not hit the depth it was armed with (extent)");
+    Require(hitsWith(grown) == 0, "a depth plane grown over the color by its extent alone hit the memo proved against the smaller plane");
 }
 
 void colorMetadataDepthAlias(AgcDriver::VulkanDevice& device) {
@@ -1217,7 +1330,7 @@ const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 13>
     {"eviction", colorMemoResidentEviction}
 }};
 
-const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 31> Scenarios{{
+const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 33> Scenarios{{
     {"repeated draws", repeatedDraws},
     {"CPU write", cpuWrite},
     {"driver store", driverStore},
@@ -1248,7 +1361,9 @@ const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 31>
     {"array layer outside the scope", arrayLayerOutsideTheScope},
     {"hit target keeps its residency", hitTargetKeepsItsResidency},
     {"depth surface created elsewhere", surfaceCreatedElsewhere},
-    {"depth write on a repeated target", depthWriteOnRepeatedTarget}
+    {"depth write on a repeated target", depthWriteOnRepeatedTarget},
+    {"cached depth overlap", cachedDepthOverlap},
+    {"memo hit path", memoHitPath}
 }};
 
 }
