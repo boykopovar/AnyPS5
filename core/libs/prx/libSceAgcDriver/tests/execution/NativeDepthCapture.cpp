@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/NativeDepthCapture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -124,6 +125,51 @@ void Sample(AgcDriver::VulkanDevice& device, std::uintptr_t address, float expec
     device.Dispatch(shader, 1u, 1u, 1u, {}, request.shader.codeAddress);
     device.WaitIdle();
     for (const auto value : output) Require(format == 5u ? value == static_cast<std::uint32_t>(expected) : std::abs(std::bit_cast<float>(value) - expected) < 2.0f / 65535.0f, "sampling before any replayed draw did not see the restored native plane");
+}
+
+std::shared_ptr<AgcDriver::Graphics::Texture> HoldDepth(AgcDriver::VulkanDevice& device, std::uintptr_t address) {
+    const std::array<std::uint32_t, 8> words{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 255u) | (7u << 20u) | (((Width - 1u) & 3u) << 30u), ((Width - 1u) >> 2u) | ((Height - 1u) << 14u), 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+    const VkComponentMapping identity{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    return AgcDriver::Graphics::DepthSurfaceTexture(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), words, resource, identity);
+}
+
+void RetainedView() {
+    const auto base = Allocate();
+    auto device = OpenVulkanTestDevice();
+    Require(device != nullptr, "retained native depth device unavailable");
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    const auto shaders = DepthFastClearHarness::Compile(*device);
+    DepthFastClearHarness::DrawOptions options;
+    options.depthWrite = true;
+    options.depthCompare = VK_COMPARE_OP_ALWAYS;
+    options.minDepth = options.maxDepth = 0.25f;
+    Require(DepthFastClearHarness::Draw(*device, shaders, Surface(base, 0u), options) == Width * Height, "retained native depth initial draw failed");
+    const auto snapshots = device->CaptureNativeDepth();
+    Require(snapshots.size() == 1u, "retained native depth fixture has no initial plane");
+    const AgcDriver::Graphics::DepthTarget other{base + 2u * Step, 0u, {Width, Height}, VK_FORMAT_D16_UNORM, 1.0f, 0u};
+    static_cast<void>(AgcDriver::Graphics::DepthSurfaceView(context, other, false, false));
+    auto held = HoldDepth(*device, base);
+    Require(held != nullptr, "retained native depth sampled view is missing");
+    const auto oldView = held->View();
+    options.minDepth = options.maxDepth = 0.75f;
+    Require(DepthFastClearHarness::Draw(*device, shaders, Surface(base, 0u), options) == Width * Height, "retained native depth mutation draw failed");
+    device->WaitIdle();
+    const auto retired = AgcDriver::Graphics::RetireReplacedDepth_nid_no_patch(base, 2u << 20u);
+    Require(retired.surfaces >= 2u && !AgcDriver::Graphics::ActiveDepthExtent(device->Device(), base).has_value(), "retained native depth fixture did not discard the old current owner");
+    device->RestoreNativeDepth(snapshots);
+    Sample(*device, base, 0.25f);
+    const auto current = HoldDepth(*device, base);
+    Require(current != nullptr && current != held && current->View() != oldView, "native restoration selected a retained old sampled view as its current owner");
+    const auto restored = device->CaptureNativeDepth();
+    Require(restored.size() == 1u && restored.front().depth == snapshots.front().depth, "native restoration did not rebuild a unique live owner with every captured texel");
+    held.reset();
+    static_cast<void>(AgcDriver::Graphics::DepthSurfaceView(context, other, false, false));
+    options.depthWrite = false;
+    options.depthCompare = VK_COMPARE_OP_EQUAL;
+    options.minDepth = options.maxDepth = 0.25f;
+    Require(DepthFastClearHarness::Draw(*device, shaders, Surface(base, 0u), options) == Width * Height, "native attachment binding failed after the retained old view was released");
+    device->WaitIdle();
 }
 
 void RoundTrip() {
@@ -313,6 +359,7 @@ int main(int argc, char** argv) {
         else if (argc == 2 && std::string_view(argv[1]) == "--mirrorable_stencil") MirrorableStencil();
         else if (argc == 2 && std::string_view(argv[1]) == "--cross_aspect") CrossAspect();
         else if (argc == 2 && std::string_view(argv[1]) == "--preflight") Preflight();
+        else if (argc == 2 && std::string_view(argv[1]) == "--retained_view") RetainedView();
         else { Require(argc == 1, "unknown native depth test arguments"); RoundTrip(); }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

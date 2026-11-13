@@ -1,4 +1,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/NativeDepthCapture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "execution/DepthFastClearHarness.hpp"
 #define main frameReplayToolMain
 #include "../tools/FrameReplay.cpp"
 #undef main
@@ -17,12 +21,23 @@
 #include <limits>
 #include <string_view>
 #include <barrier>
+#include <bit>
+#include <cmath>
 #include <new>
 
 namespace AgcDriver {
 
 struct VulkanDeviceTestAccess {
     static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
+
+namespace AgcDriver::DriverDetail {
+
+struct DriverTestAccess {
+    static void UseDevice(std::shared_ptr<VulkanDevice> value) { Driver::Get().device = std::move(value); }
+    static std::shared_ptr<VulkanDevice> Device() { return Driver::Get().device.Load(); }
 };
 
 }
@@ -65,6 +80,117 @@ FrameCall memoryCall(std::uint64_t group, std::uint64_t thread) {
     call.values = {group};
     call.thread = thread;
     return call;
+}
+
+void checkNativeRepeatContents(std::span<const AgcDriver::NativeDepthSnapshot> expected, std::span<const AgcDriver::NativeDepthSnapshot> actual) {
+    check(actual.size() == expected.size(), "native repeated reset lost a current plane or retained a window-only companion");
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> orders;
+    for (const auto& before : expected) {
+        const auto found = std::ranges::find_if(actual, [&](const auto& after) { return after.target.address == before.target.address && after.target.stencilAddress == before.target.stencilAddress && after.target.format == before.target.format; });
+        check(found != actual.end() && found->depth == before.depth && found->stencil == before.stencil, "native repeated reset did not restore every captured depth and stencil texel before a draw");
+        if (before.depthOrder != 0u) orders.emplace_back(before.depthOrder, found->depthOrder);
+        if (before.stencilOrder != 0u) orders.emplace_back(before.stencilOrder, found->stencilOrder);
+    }
+    for (const auto& left : orders) {
+        check(left.second != 0u, "native repeated reset omitted a captured plane binding");
+        for (const auto& right : orders) check((left.first < right.first) == (left.second < right.second), "native repeated reset changed relative cross-aspect binding precedence");
+    }
+}
+
+void testNativeRepeat(const std::filesystem::path& directory, std::string_view mode) {
+    constexpr std::size_t Step = 131072u;
+    constexpr std::size_t Bytes = 16u * Step;
+    constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
+    const auto texels = Extent.width * Extent.height;
+    auto* bytes = allocate(Bytes);
+    const auto begin = address(bytes);
+    std::uintptr_t arena = 0;
+    std::size_t arenaSize = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arena, &arenaSize);
+    FrameCaptureWriter writer(directory);
+    writer.WriteRange(begin, Bytes, FrameRangeKind::Watched, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable | FrameRangeAccess::Gpu);
+    writer.Finish("{\"arena_base\":" + std::to_string(arena) + "}");
+    const FrameCaptureReader reader(directory);
+    const auto skipped = restoreMemory(reader);
+    check(skipped.bytes == 0u, "native repeated reset skipped captured guest memory");
+    auto since = watchBaseline(reader, skipped);
+    auto opened = OpenVulkanTestDevice();
+    check(opened != nullptr, "native repeated reset device unavailable");
+    auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
+    AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    const auto shaders = DepthFastClearHarness::Compile(*device);
+    const bool companions = mode == "native_repeat_companions";
+    const bool clean = mode == "native_repeat_clean";
+    const auto surface = [&](unsigned index) {
+        return DepthFastClearHarness::Surface{begin + index * Step, index == 1u || index == 2u ? begin + 12u * Step : 0u, 0u, false, index == 1u || index == 2u ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D16_UNORM};
+    };
+    const auto draw = [&](bool mutated) {
+        const auto count = clean ? 1u : 3u;
+        for (unsigned index = 0; index < count; ++index) {
+            DepthFastClearHarness::DrawOptions options;
+            options.depthWrite = true;
+            options.depthCompare = VK_COMPARE_OP_ALWAYS;
+            options.minDepth = options.maxDepth = mutated ? 0.875f : static_cast<float>(index + 1u) * 0.25f;
+            options.stencilTest = index != 0u;
+            options.stencil = {VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS, 255u, 255u, mutated ? 91u : index == 1u ? 37u : 203u};
+            check(DepthFastClearHarness::Draw(*device, shaders, surface(index), options) == texels, "native repeated reset mutation did not cover its attachment");
+        }
+    };
+    draw(false);
+    if (companions) {
+        const AgcDriver::Graphics::DepthTarget companion{begin + 3u * Step, 0u, Extent, VK_FORMAT_D16_UNORM, 0.625f, 0u};
+        static_cast<void>(AgcDriver::Graphics::DepthSurfaceView(context, companion, false, false));
+    }
+    device->WaitIdle();
+    const auto captured = device->CaptureNativeDepth();
+    check(captured.size() == (clean ? 1u : companions ? 4u : 3u), "native repeated reset fixture did not capture its depth/stencil graph");
+    for (const auto& snapshot : captured) {
+        const auto index = static_cast<unsigned>((snapshot.target.address - begin) / Step);
+        const bool d16 = index == 0u || index == 3u;
+        const auto expected = index == 3u ? 0.625f : static_cast<float>(index + 1u) * 0.25f;
+        check(snapshot.depthOrder != 0u && snapshot.depth.size() == texels * (d16 ? 2u : 4u), "native repeated reset fixture has an incomplete captured depth plane");
+        for (std::size_t pixel = 0u; pixel < texels; ++pixel) {
+            if (d16) {
+                std::uint16_t bits = 0u;
+                std::memcpy(&bits, snapshot.depth.data() + pixel * 2u, sizeof(bits));
+                check(std::abs(static_cast<float>(bits) / 65535.0f - expected) < 2.0f / 65535.0f, "native repeated reset fixture captured the wrong D16 contents");
+            } else {
+                std::uint32_t bits = 0u;
+                std::memcpy(&bits, snapshot.depth.data() + pixel * 4u, sizeof(bits));
+                check(bits == std::bit_cast<std::uint32_t>(expected), "native repeated reset fixture captured the wrong D32 contents");
+            }
+        }
+        if (index == 2u) check(snapshot.stencil.size() == texels && std::ranges::all_of(snapshot.stencil, [](std::byte value) { return value == std::byte{203}; }), "native repeated reset fixture lost the captured shared stencil owner");
+        else check(snapshot.stencil.empty(), "native repeated reset fixture captured a nonowner stencil plane");
+    }
+    const auto d16 = surface(0u);
+    const auto holdWords = std::array<std::uint32_t, 8>{static_cast<std::uint32_t>(d16.depth >> 8u), static_cast<std::uint32_t>((d16.depth >> 40u) & 255u) | (7u << 20u) | (((Extent.width - 1u) & 3u) << 30u), ((Extent.width - 1u) >> 2u) | ((Extent.height - 1u) << 14u), 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+    const auto holdResource = AgcDriver::Graphics::DecodeTextureResource(holdWords);
+    const AgcDriver::Graphics::DepthTarget windowOnly{begin + 4u * Step, 0u, Extent, VK_FORMAT_D16_UNORM, 0.875f, 0u};
+    static_cast<void>(AgcDriver::Graphics::DepthSurfaceView(context, windowOnly, false, false));
+    auto held = AgcDriver::Graphics::DepthSurfaceTexture(context, holdWords, holdResource, {});
+    check(held != nullptr, "native repeated reset fixture could not retain the old sampled view");
+    for (unsigned pass = 1u; pass < 3u; ++pass) {
+        draw(true);
+        static_cast<void>(AgcDriver::Graphics::DepthSurfaceView(context, windowOnly, false, false));
+        device->WaitIdle();
+        Runs changed;
+        static_cast<void>(changedSince(begin, Step, since, changed));
+        check(changed.empty(), "native GPU-only D16 mutation unexpectedly changed captured guest pages");
+        static_cast<void>(resetMemory(reader, skipped, since, ResetFault::None, true));
+        check(!AgcDriver::Graphics::ActiveDepthExtent(device->Device(), begin).has_value(), "native repeated reset retained an unmirrored GPU-only D16 owner from the previous window");
+        check(!AgcDriver::Graphics::ActiveDepthExtent(device->Device(), begin + 4u * Step).has_value(), "native repeated reset retained a clean window-only native companion");
+        check(AgcDriver::DriverDetail::DriverTestAccess::Device().get() == device.get(), "native repeated reset replaced the VulkanDevice object");
+        device->RestoreNativeDepth(captured);
+        const auto restored = device->CaptureNativeDepth();
+        checkNativeRepeatContents(captured, restored);
+        check(!AgcDriver::Graphics::DepthSurfaceHolds(context, holdResource, held.get()), "native repeated reset made the retained old view a current owner");
+        std::printf("native repeat pass %u restored %zu exact depth/stencil records on the same device\n", pass + 1u, restored.size());
+    }
+    held.reset();
+    draw(false);
+    device->WaitIdle();
 }
 
 void testMemoryOrder(const std::filesystem::path& directory) {
@@ -1440,7 +1566,8 @@ int main(int argc, char** argv) {
             writeInspectionCapture(directory);
             return 0;
         }
-        if (mode == "order") testMemoryOrder(directory);
+        if (mode == "native_repeat_state" || mode == "native_repeat_clean" || mode == "native_repeat_companions") testNativeRepeat(directory, mode);
+        else if (mode == "order") testMemoryOrder(directory);
         else if (mode == "zero") testReusedMemory(directory);
         else if (mode.starts_with("shader_prologue_")) testShaderCode(directory, true, mode);
         else if (mode == "shared_page") testSharedPage(directory);
