@@ -725,29 +725,33 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0, 
         std::chrono::steady_clock::time_point calculatedAt{};
     } cached;
     const auto now = std::chrono::steady_clock::now();
-    std::lock_guard lock(cached.mutex);
     std::optional<VkPhysicalDeviceMemoryBudgetPropertiesEXT> reported;
-    std::uint64_t sampled = 0;
-    std::uint64_t storage = 0;
-    const auto read = [&] {
-        reported.emplace(VkPhysicalDeviceMemoryBudgetPropertiesEXT{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT});
-        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
-        properties.pNext = &*reported;
-        context.memoryProperties2(context.physical, &properties);
-        cached.device = context.physical;
-        cached.read = now;
-        sampled = SampledTextureMemory();
-        storage = storageCacheBytes();
-        cached.budget = StorageTextureBudget(context.memory, &*reported, sampled, storage);
-        cached.ceiling = StorageTextureCeiling(context.memory, &*reported);
-        cached.calculatedAt = std::chrono::steady_clock::now();
-    };
-    if (cached.device != context.physical || now - cached.read >= std::chrono::seconds(1)) read();
-    const auto needed = std::min(required, cached.ceiling);
-    if (needed > cached.budget && context.bufferPool != nullptr && context.bufferPool->ReclaimIdleDevice(needed - cached.budget, now) != 0) read();
-    if (calculatedAt != nullptr) *calculatedAt = cached.calculatedAt;
-    if (reported) MemoryAccounting::Report(context, *reported, sampled, storage, cached.budget);
-    return cached.budget;
+    StorageTextureBudgetSnapshot snapshot;
+    std::uint64_t budget;
+    {
+        std::lock_guard lock(cached.mutex);
+        const auto read = [&] {
+            reported.emplace(VkPhysicalDeviceMemoryBudgetPropertiesEXT{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT});
+            VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+            properties.pNext = &*reported;
+            context.memoryProperties2(context.physical, &properties);
+            cached.device = context.physical;
+            cached.read = now;
+            const auto sampled = SampledTextureMemory();
+            const auto storage = storageCacheBytes();
+            snapshot = CalculateStorageTextureBudget(context.memory, &*reported, sampled, storage);
+            cached.budget = snapshot.selectedBudget;
+            cached.ceiling = snapshot.ceiling;
+            cached.calculatedAt = std::chrono::steady_clock::now();
+        };
+        if (cached.device != context.physical || now - cached.read >= std::chrono::seconds(1)) read();
+        const auto needed = std::min(required, cached.ceiling);
+        if (needed > cached.budget && context.bufferPool != nullptr && context.bufferPool->ReclaimIdleDevice(needed - cached.budget, now) != 0) read();
+        budget = cached.budget;
+        if (calculatedAt != nullptr) *calculatedAt = cached.calculatedAt;
+    }
+    if (reported) MemoryAccounting::Report(context, *reported, snapshot);
+    return budget;
 }
 
 std::size_t storageEntries() {
@@ -1632,18 +1636,29 @@ std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory)
 }
 
 std::uint64_t StorageTextureCeiling(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported) {
-    const auto heap = largestDeviceLocalHeap(memory);
-    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return TextureCacheBudget(memory);
-    return std::max<std::uint64_t>(512ull << 20u, std::min<std::uint64_t>(memory.memoryHeaps[*heap].size / 2u, reported->heapBudget[*heap] / 2u));
+    return CalculateStorageTextureBudget(memory, reported, 0, 0).ceiling;
 }
 
 std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes) {
+    return CalculateStorageTextureBudget(memory, reported, sampledBytes, storageBytes).selectedBudget;
+}
+
+StorageTextureBudgetSnapshot CalculateStorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes) {
+    StorageTextureBudgetSnapshot snapshot;
+    snapshot.sampledBytes = sampledBytes;
+    snapshot.storageBytes = storageBytes;
+    snapshot.ceiling = TextureCacheBudget(memory);
+    snapshot.selectedBudget = snapshot.ceiling;
     const auto heap = largestDeviceLocalHeap(memory);
-    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return TextureCacheBudget(memory);
-    const auto budget = reported->heapBudget[*heap];
+    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return snapshot;
+    snapshot.heap = heap;
+    const auto heapBudget = reported->heapBudget[*heap];
     const auto usage = reported->heapUsage[*heap];
-    const auto reserved = usage - std::min<std::uint64_t>(usage, sampledBytes + storageBytes) + sampledBytes + budget / 8u;
-    return std::min<std::uint64_t>(StorageTextureCeiling(memory, reported), std::max<std::uint64_t>(512ull << 20u, budget > reserved ? budget - reserved : 0u));
+    snapshot.reserved = usage - std::min<std::uint64_t>(usage, sampledBytes + storageBytes) + sampledBytes + heapBudget / 8u;
+    snapshot.available = heapBudget > snapshot.reserved ? heapBudget - snapshot.reserved : 0u;
+    snapshot.ceiling = std::max<std::uint64_t>(512ull << 20u, std::min<std::uint64_t>(memory.memoryHeaps[*heap].size / 2u, heapBudget / 2u));
+    snapshot.selectedBudget = std::min<std::uint64_t>(snapshot.ceiling, std::max<std::uint64_t>(512ull << 20u, snapshot.available));
+    return snapshot;
 }
 
 std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes, std::uint64_t storageBytes) {
@@ -6303,6 +6318,7 @@ void ShaderResources::resolveImageTables() {
             GuestTextureResource resource{};
             std::uint64_t guestBytes = 0;
             bool firstLayer = false;
+            std::string rejected;
         };
         const auto decodeEntry = [&](std::uint32_t element, std::span<const std::uint32_t> words) {
             DecodedEntry decoded;
@@ -6312,9 +6328,15 @@ void ShaderResources::resolveImageTables() {
             const bool depthCompare = element < binding.imageDepthCompare.size() && binding.imageDepthCompare[element];
             decoded.firstLayer = shape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray));
             const bool depth1D = depthCompare && ((shape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k1D) || (shape == ShaderRecompiler::DescriptorImageShape::Image2DArray && resource.dimension == TextureDimension::k1DArray));
-            if (!decoded.firstLayer && !depth1D && !MatchesGuestDimension(shape, resource.dimension)) throw std::runtime_error("AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")");
+            if (!decoded.firstLayer && !depth1D && !MatchesGuestDimension(shape, resource.dimension)) {
+                decoded.rejected = "AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")";
+                return decoded;
+            }
             decoded.guestBytes = DescribeSurface(resource).guestBytes;
-            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(decoded.guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(decoded.guestBytes), false).empty()) throw std::runtime_error("AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(decoded.guestBytes) + " bytes) is not mapped");
+            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(decoded.guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(decoded.guestBytes), false).empty()) {
+                decoded.rejected = "AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(decoded.guestBytes) + " bytes) is not mapped";
+                return decoded;
+            }
             static_cast<void>(ResolveTextureFormat(resource.format));
             return decoded;
         };
@@ -6352,8 +6374,11 @@ void ShaderResources::resolveImageTables() {
             try {
                 decoded = decodeEntry(element, words);
             } catch (const std::runtime_error& error) {
-                table.map[faults + element] = rejectTableElement(table, words, error.what());
-                return error.what();
+                decoded.rejected = error.what();
+            }
+            if (!decoded.rejected.empty()) {
+                table.map[faults + element] = rejectTableElement(table, words, decoded.rejected);
+                return decoded.rejected;
             }
             const auto sampled = prepareSampled(element, words, decoded);
             std::shared_ptr<Texture> texture;
@@ -6438,8 +6463,11 @@ void ShaderResources::resolveImageTables() {
             try {
                 decoded = decodeEntry(element, words);
             } catch (const std::runtime_error& error) {
-                table.map[faults + element] = rejectTableElement(table, words, error.what());
-                if (reusable) fresh.elements.push_back({{}, {}, {}, 0, false, true, error.what()});
+                decoded.rejected = error.what();
+            }
+            if (!decoded.rejected.empty()) {
+                table.map[faults + element] = rejectTableElement(table, words, decoded.rejected);
+                if (reusable) fresh.elements.push_back({{}, {}, {}, 0, false, true, decoded.rejected});
                 continue;
             }
             const auto& resource = decoded.resource;

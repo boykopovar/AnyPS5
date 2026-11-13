@@ -1,6 +1,7 @@
 #include "prx/libSceVoice/include/Api.hpp"
 #include "prx/libSceVoiceQoS/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -131,6 +132,10 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSGetRemoteEndpoint(connection + 100, &queriedRemote) == argumentInvalid);
     Require(sceVoiceQoSGetLocalEndpoint(connection, &queriedLocal) == 0 && queriedLocal == local);
     Require(sceVoiceQoSGetRemoteEndpoint(connection, &queriedRemote) == 0 && queriedRemote == remote);
+    errno = 71;
+    Require(sceVoiceQoSGetLocalEndpoint(connection, reinterpret_cast<std::int32_t*>(0x10)) == argumentInvalid);
+    Require(sceVoiceQoSGetRemoteEndpoint(connection, reinterpret_cast<std::int32_t*>(0x10)) == argumentInvalid);
+    Require(errno == 71 && queriedLocal == local && queriedRemote == remote);
     std::int32_t duplicate = -1;
     Require(sceVoiceQoSConnect(&duplicate, local, remote) == 0 && duplicate > 0 && duplicate != connection);
     Require(sceVoiceQoSDisconnect(duplicate) == 0);

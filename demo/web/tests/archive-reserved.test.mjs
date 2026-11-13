@@ -27,6 +27,22 @@ const archive = new Archive(await writer.close());
 try { await assert.rejects(archive.inspect(() => {}), /Unsafe ZIP path/); }
 finally { await archive.close(); }
 
-for (const name of ["COM10", "COM\u2074.txt", "COM\u00b9-extra", "content/ordinary.txt"]) {
+for (const device of ["CONIN$", "conout$", "CoNiN$", "CoNoUt$"]) {
+  for (const name of [device, device + ".txt", "content/" + device + "/data.bin"]) {
+    assert.throws(() => validPath(name), /Unsafe ZIP path/);
+    const folder = new Archive([{ path: "main.elf", file: new Blob([header]) }, { path: name, file: new Blob(["resource"]) }]);
+    try { await assert.rejects(folder.inspect(() => {}), /Unsafe ZIP path/); }
+    finally { await folder.close(); }
+
+    const zip = new ZipWriter(new BlobWriter(), { useWebWorkers: false, useCompressionStream: false });
+    await zip.add("main.elf", new Uint8ArrayReader(header));
+    await zip.add(name, new Uint8ArrayReader(new Uint8Array([1])));
+    const selected = new Archive(await zip.close());
+    try { await assert.rejects(selected.inspect(() => {}), /Unsafe ZIP path/); }
+    finally { await selected.close(); }
+  }
+}
+
+for (const name of ["COM10", "COM\u2074.txt", "COM\u00b9-extra", "CONIN$-extra", "CONOUT$-extra.txt", "CONINPUT.txt", "content/ordinary.txt"]) {
   assert.equal(validPath(name), name);
 }
