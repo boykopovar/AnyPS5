@@ -727,6 +727,9 @@ void RingOldSlotWrite(Scene& scene) {
 
 void RingRefusals(Scene& scene) {
     using AgcDriver::Graphics::AddressDrawReuse;
+    // A moved read-only element under a recorded GPU write is read through its host import on the
+    // cached build (ShaderResources::movedInPlace); with the switch it is refused and rebuilt.
+    const bool inPlace = std::getenv("APS5_NO_MOVED_BUFFERS_IN_PLACE") == nullptr;
     {
         Ring ring(scene);
         Require(ring.Draw(90) == 90, "address draw space reuse: the first draw of the ring did not read its slot");
@@ -764,7 +767,29 @@ void RingRefusals(Scene& scene) {
         }
         const auto color = scene.Color();
         Require(color == 170, "address draw space reuse: the draw whose moved vertex buffer a pending fill overlaps read " + std::to_string(color) + " instead of 170");
-        Require(outcomes[AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved read-only vertex buffer a pending GPU write overlaps counted " + outcomes.Text() + ", expected one refusal for a moved GuestBuffers element");
+        Require(outcomes[inPlace ? AddressDrawReuse::Reused : AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved read-only vertex buffer a pending GPU write overlaps counted " + outcomes.Text() + (inPlace ? ", expected one reuse with the buffer read in place" : ", expected one refusal for a moved GuestBuffers element"));
+    }
+    {
+        // The pending fill writes the third vertex: until it runs the buffer holds a triangle without
+        // area, so only a draw that reads the buffer after the GPU wrote it covers the target.
+        constexpr std::size_t Offset = 4096;
+        auto flat = Triangle;
+        flat[2] = flat[0];
+        std::memcpy(scene.spare.Data() + Offset, flat.data(), sizeof(flat));
+        std::array<std::uint32_t, 4> third;
+        std::memcpy(third.data(), Triangle[2].data(), sizeof(third));
+        scene.Store(scene.constants, 0, 110);
+        const Outcomes outcomes;
+        scene.Fetch(scene.spare, Offset);
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            Require(scene.device.FillBuffer(scene.spare.Address(Offset + 2 * sizeof(Triangle[0])), sizeof(third), third), "address draw space reuse: the fill of the moved vertex buffer's third vertex was not recorded on the GPU");
+            const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
+            scene.device.Draw(scene.state, draw, scene.shaders, scene.snapshots);
+        }
+        const auto color = scene.Color();
+        Require(color == 110, "address draw space reuse: the draw whose moved vertex buffer a pending fill completes read " + std::to_string(color) + " instead of 110: it did not see the vertex the GPU wrote");
+        Require(outcomes[inPlace ? AddressDrawReuse::Reused : AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved vertex buffer a pending fill completes counted " + outcomes.Text() + (inPlace ? ", expected one reuse with the buffer read in place" : ", expected one refusal for a moved GuestBuffers element"));
     }
     scene.Fetch(0);
     scene.cachedVertex = false;
