@@ -27,6 +27,7 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <stdexcept>
 #include <utility>
@@ -35,6 +36,8 @@ namespace {
 
 using NKWebKit::WebCoreAbi::HistoryItem;
 using NKWebKit::WebCoreAbi::HistoryItemVectorStorage;
+using NKWebKit::WebCoreAbi::CachedPage;
+using NKWebKit::WebCoreAbi::historyItemChangedHook;
 using NKWebKit::WtfAbi::String;
 using WebCore::IntPoint;
 
@@ -58,6 +61,15 @@ void Assign(String& target, const String& source) {
     String copy(source);
     std::swap(target.impl, copy.impl);
 }
+
+void HistoryItemChangedNoOp(HistoryItem*) {
+}
+
+}
+
+namespace NKWebKit::WebCoreAbi {
+
+HistoryItemChangedHook historyItemChangedHook = &HistoryItemChangedNoOp;
 
 }
 
@@ -124,8 +136,9 @@ bool APS5_VABI _ZNK7WebCore11HistoryItem11hasChildrenEv(const HistoryItem* self)
 }
 
 bool APS5_VABI _ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(const HistoryItem* self) {
-    if (!Checked(self).cachedPage) return false;
-    NotImplemented_nid_no_patch(__func__);
+    const auto* cachedPage = static_cast<const CachedPage*>(Checked(self).cachedPage);
+    if (!cachedPage) return false;
+    return _ZN3WTF13MonotonicTime3nowEv().m_value > cachedPage->expirationTime;
 }
 
 void* APS5_VABI _ZN7WebCore11HistoryItem8formDataEv(HistoryItem* self) {
@@ -135,26 +148,31 @@ void* APS5_VABI _ZN7WebCore11HistoryItem8formDataEv(HistoryItem* self) {
 void APS5_VABI _ZN7WebCore11HistoryItem17setAlternateTitleERKN3WTF6StringE(HistoryItem* self, const String* value) {
     auto& item = Checked(self);
     Assign(item.displayTitle, Checked(value, "null WTF::String"));
+    historyItemChangedHook(&item);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem12setURLStringERKN3WTF6StringE(HistoryItem* self, const String* value) {
     auto& item = Checked(self);
     Assign(item.urlString, Checked(value, "null WTF::String"));
+    historyItemChangedHook(&item);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem20setOriginalURLStringERKN3WTF6StringE(HistoryItem* self, const String* value) {
     auto& item = Checked(self);
     Assign(item.originalURLString, Checked(value, "null WTF::String"));
+    historyItemChangedHook(&item);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem11setReferrerERKN3WTF6StringE(HistoryItem* self, const String* value) {
     auto& item = Checked(self);
     Assign(item.referrer, Checked(value, "null WTF::String"));
+    historyItemChangedHook(&item);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem8setTitleERKN3WTF6StringE(HistoryItem* self, const String* value) {
     auto& item = Checked(self);
     Assign(item.title, Checked(value, "null WTF::String"));
+    historyItemChangedHook(&item);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem18setFormContentTypeERKN3WTF6StringE(HistoryItem* self, const String* value) {
@@ -176,7 +194,9 @@ void APS5_VABI _ZN7WebCore11HistoryItem15setIsTargetItemEb(HistoryItem* self, bo
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem30setShouldRestoreScrollPositionEb(HistoryItem* self, bool value) {
-    Checked(self).shouldRestoreScrollPosition = value;
+    auto& item = Checked(self);
+    item.shouldRestoreScrollPosition = value;
+    historyItemChangedHook(&item);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem31setShouldOpenExternalURLsPolicyENS_28ShouldOpenExternalURLsPolicyE(HistoryItem* self, std::uint8_t value) {

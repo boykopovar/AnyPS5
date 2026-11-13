@@ -274,9 +274,13 @@ std::uint32_t APS5_VABI WKRectGetTypeID() {
     return NKWebKit::TypeID(NKWebKit::ObjectType::Rect);
 }
 
-void APS5_VABI WKRenderLayerGetTypeID() {}
+std::uint32_t APS5_VABI WKRenderLayerGetTypeID() {
+    return NKWebKit::TypeID(NKWebKit::ObjectType::RenderLayer);
+}
 
-void APS5_VABI WKRenderObjectGetTypeID() {}
+std::uint32_t APS5_VABI WKRenderObjectGetTypeID() {
+    return NKWebKit::TypeID(NKWebKit::ObjectType::RenderObject);
+}
 
 std::uint32_t APS5_VABI WKResourceCacheManagerGetTypeID() {
     return 0;

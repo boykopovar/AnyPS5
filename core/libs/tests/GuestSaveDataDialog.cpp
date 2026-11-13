@@ -3,6 +3,16 @@
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cerrno>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -22,6 +32,22 @@ static void RequireRunning() {
     Require(sceSaveDataDialogIsReadyToDisplay() == 1, "save progress must be ready");
 }
 
+struct SaveDataDialogParamOlderSdk {
+    std::uint8_t base_param[48];
+    std::int32_t size;
+    std::int32_t mode;
+    std::int32_t disp_type;
+    std::uint32_t pad0;
+    void* anim_param;
+    void* items;
+    void* user_msg_param;
+    void* sys_msg_param;
+    void* error_code_param;
+    void* prog_bar_param;
+    void* user_data;
+};
+static_assert(sizeof(SaveDataDialogParamOlderSdk) == 120);
+
 int main() {
     SaveDataDialogParam param{};
     param.size = sizeof(param);
@@ -39,8 +65,10 @@ int main() {
     Require(sceSaveDataDialogInitialize() == 0, "initialize");
     Require(sceSaveDataDialogInitialize() == SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED, "double init");
     Require(sceSaveDataDialogOpen(nullptr) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "open with null param");
+    errno = 71;
     Require(sceSaveDataDialogOpen(reinterpret_cast<const void*>(0x10)) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
             "open with unreadable param");
+    Require(errno == 71, "open preserved errno");
     Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_INITIALIZED,
             "unreadable param must leave the dialog initialized");
     Require(sceSaveDataDialogClose(nullptr) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "close while initialized not running");
@@ -165,6 +193,51 @@ int main() {
     Require(sceSaveDataDialogTerminate() == 0, "terminate");
     Require(sceSaveDataDialogTerminate() == SAVE_DATA_DIALOG_ERROR_NOT_INITIALIZED, "terminate when already terminated");
     Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_NONE, "terminated state");
+
+    Require(sceSaveDataDialogInitialize() == 0, "re-initialize for older-SDK buffer");
+    SaveDataDialogParamOlderSdk olderSdkParam{};
+    olderSdkParam.size = sizeof(olderSdkParam);
+    olderSdkParam.mode = 1;
+    Require(sceSaveDataDialogOpen(&olderSdkParam) == 0, "open selection dialog with older-SDK short buffer");
+    Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED, "older-SDK short buffer finishes immediately");
+    Require(sceSaveDataDialogTerminate() == 0, "terminate older-SDK buffer dialog");
+
+#ifdef _WIN32
+    Require(sceSaveDataDialogInitialize() == 0, "re-initialize for boundary test");
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    auto* pages = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    if (pages != nullptr) {
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &oldProtect) != 0, "protect guard page");
+        auto* shortParam = reinterpret_cast<SaveDataDialogParamOlderSdk*>(pages + pageSize - sizeof(SaveDataDialogParamOlderSdk));
+        std::memset(shortParam, 0, sizeof(*shortParam));
+        shortParam->size = sizeof(SaveDataDialogParamOlderSdk);
+        shortParam->mode = 1;
+        Require(sceSaveDataDialogOpen(shortParam) == 0, "open with short older-SDK buffer at page boundary");
+        Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED, "short buffer at page boundary finishes");
+        Require(sceSaveDataDialogTerminate() == 0, "terminate short buffer at page boundary");
+        Require(VirtualFree(pages, 0, MEM_RELEASE) != 0, "free guarded pages");
+    }
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    if (pageSize > 0) {
+        Require(sceSaveDataDialogInitialize() == 0, "re-initialize for boundary test");
+        auto* pages = static_cast<char*>(mmap(nullptr, static_cast<std::size_t>(pageSize) * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        if (pages != MAP_FAILED) {
+            Require(mprotect(pages + pageSize, static_cast<std::size_t>(pageSize), PROT_NONE) == 0, "protect guard page");
+            auto* shortParam = reinterpret_cast<SaveDataDialogParamOlderSdk*>(pages + pageSize - sizeof(SaveDataDialogParamOlderSdk));
+            std::memset(shortParam, 0, sizeof(*shortParam));
+            shortParam->size = sizeof(SaveDataDialogParamOlderSdk);
+            shortParam->mode = 1;
+            Require(sceSaveDataDialogOpen(shortParam) == 0, "open with short older-SDK buffer at page boundary");
+            Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED, "short buffer at page boundary finishes");
+            Require(sceSaveDataDialogTerminate() == 0, "terminate short buffer at page boundary");
+            Require(munmap(pages, static_cast<std::size_t>(pageSize) * 2) == 0, "unmap guarded pages");
+        }
+    }
+#endif
 
     Require(sceSaveDataDialogInitialize() == 0, "re-initialize for empty selection");
     SaveDataDialogParam emptySelectionParam{};
