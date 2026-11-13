@@ -199,6 +199,8 @@ Graphics::DepthClearStatistics Difference(const Graphics::DepthClearStatistics& 
     difference.copiesSkipped = now.copiesSkipped - before.copiesSkipped;
     difference.clears = now.clears - before.clears;
     difference.bytesSkipped = now.bytesSkipped - before.bytesSkipped;
+    difference.dispatchesSkipped = now.dispatchesSkipped - before.dispatchesSkipped;
+    difference.dispatchBytesCleared = now.dispatchBytesCleared - before.dispatchBytesCleared;
     for (std::size_t reason = 0; reason < difference.declined.size(); ++reason) difference.declined[reason] = now.declined[reason] - before.declined[reason];
     return difference;
 }
@@ -263,20 +265,8 @@ void MatcherCases() {
 
 }
 
-std::vector<std::uint32_t> DepthImageTexels(AgcDriver::VulkanDevice& device, const GuestBlock& plane, std::uint32_t format, std::uint32_t texelBytes) {
-    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
-    const auto words = TextureDescriptor(plane.Address(), format);
-    const auto resource = Graphics::DecodeTextureResource(words);
-    std::shared_ptr<Graphics::StorageTexture> mirror;
-    {
-        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-        mirror = Graphics::DepthSurfaceStorage(context, words, resource, 0);
-    }
-    Require(mirror != nullptr, "the plane has no mirror");
-    mirror->MarkDirty();
+std::vector<std::uint32_t> GuestTexels(const GuestBlock& plane, std::uint32_t texelBytes) {
     const std::size_t pitch = std::max<std::size_t>(Width, 256u / texelBytes);
-    Graphics::StorageTexture::FlushPending(plane.Address(), pitch * Height * texelBytes, nullptr, "test");
-    device.WaitIdle();
     std::vector<std::uint32_t> texels(static_cast<std::size_t>(Width) * Height);
     for (std::size_t y = 0; y < Height; ++y) {
         for (std::size_t x = 0; x < Width; ++x) {
@@ -291,6 +281,23 @@ std::vector<std::uint32_t> DepthImageTexels(AgcDriver::VulkanDevice& device, con
         }
     }
     return texels;
+}
+
+std::vector<std::uint32_t> DepthImageTexels(AgcDriver::VulkanDevice& device, const GuestBlock& plane, std::uint32_t format, std::uint32_t texelBytes) {
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto words = TextureDescriptor(plane.Address(), format);
+    const auto resource = Graphics::DecodeTextureResource(words);
+    std::shared_ptr<Graphics::StorageTexture> mirror;
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        mirror = Graphics::DepthSurfaceStorage(context, words, resource, 0);
+    }
+    Require(mirror != nullptr, "the plane has no mirror");
+    mirror->MarkDirty();
+    const std::size_t pitch = std::max<std::size_t>(Width, 256u / texelBytes);
+    Graphics::StorageTexture::FlushPending(plane.Address(), pitch * Height * texelBytes, nullptr, "test");
+    device.WaitIdle();
+    return GuestTexels(plane, texelBytes);
 }
 
 void RequireDepthTexels(AgcDriver::VulkanDevice& device, const GuestBlock& plane, std::uint32_t format, std::uint32_t texelBytes, std::uint32_t expected, const std::string& label) {
@@ -354,6 +361,120 @@ Graphics::DepthClearStatistics ClearSequence(AgcDriver::VulkanDevice& device, co
     }
     RequireDepthTexels(device, plane, Format32Float, 4, std::bit_cast<std::uint32_t>(0.125f), label);
     return Difference(Graphics::DepthClearCounts(), before);
+}
+
+void RequireGuestTexels(AgcDriver::VulkanDevice& device, const GuestBlock& plane, std::uint32_t texelBytes, std::uint32_t expected, const std::string& label) {
+    const std::size_t pitch = std::max<std::size_t>(Width, 256u / texelBytes);
+    Graphics::StorageTexture::FlushPending(plane.Address(), pitch * Height * texelBytes, nullptr, "test");
+    device.WaitIdle();
+    const auto texels = GuestTexels(plane, texelBytes);
+    for (std::size_t texel = 0; texel < texels.size(); ++texel) Require(texels[texel] == expected, label + "guest texel " + std::to_string(texel) + " holds " + std::to_string(texels[texel]) + " after the flush, expected " + std::to_string(expected));
+}
+
+struct DispatchSkip {
+    explicit DispatchSkip(bool enabled) { Graphics::SetDepthClearDispatchSkipForTest(enabled); }
+    ~DispatchSkip() { Graphics::SetDepthClearDispatchSkipForTest(true); }
+    DispatchSkip(const DispatchSkip&) = delete;
+    DispatchSkip& operator=(const DispatchSkip&) = delete;
+};
+
+void DispatchSkipFloatCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, bool skip) {
+    const DispatchSkip enabled(skip);
+    Graphics::SetDepthPlaneClearForTest(true);
+    const auto before = Graphics::DepthClearCounts();
+    const std::string label = std::string("32-bit plane, dispatch skip ") + (skip ? "on" : "off") + ": ";
+    auto& code = NewBlock();
+    std::memcpy(code.Data(), ClearKernel.data(), sizeof(ClearKernel));
+    auto& plane = NewBlock();
+    auto& color = NewBlock();
+    const Surface surface{plane.Address(), 0, 0, false, VK_FORMAT_D32_SFLOAT};
+    const auto drawLess = [&] { return Draw(device, shaders, surface, {.depthCompare = VK_COMPARE_OP_LESS}); };
+    const auto drawGreater = [&] { return Draw(device, shaders, surface, {.depthCompare = VK_COMPARE_OP_GREATER}); };
+    const auto drawEqual = [&] { return Draw(device, shaders, surface, {.depthCompare = VK_COMPARE_OP_EQUAL}); };
+    Require(Draw(device, shaders, surface, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == Covered, label + "the producer did not cover the plane");
+
+    SetColor(color, 1.0f);
+    RunClear(device, code, plane, color, Format32Float, 8, 4);
+    Require(drawLess() == Covered, label + "after a clear to 1.0 the depth test 0.5 < 1.0 did not pass everywhere");
+    Require(drawGreater() == 0u, label + "after a clear to 1.0 a texel passed 0.5 > depth");
+
+    SetColor(color, 0.25f);
+    RunClear(device, code, plane, color, Format32Float, 8, 4);
+    Require(drawGreater() == Covered, label + "after a clear to 0.25 the depth test 0.5 > 0.25 did not pass everywhere");
+    Require(drawLess() == 0u, label + "after a clear to 0.25 a texel passed 0.5 < depth");
+    RequireGuestTexels(device, plane, 4, std::bit_cast<std::uint32_t>(0.25f), label + "clear to 0.25: ");
+    RequireDepthTexels(device, plane, Format32Float, 4, std::bit_cast<std::uint32_t>(0.25f), label + "clear to 0.25: ");
+
+    SetColor(color, 0.75f);
+    RunClear(device, code, plane, color, Format32Float, 4, 4);
+    Require(drawEqual() == 0u, label + "after a clear of the left half to 0.75 a texel holds exactly 0.5");
+    Require(drawLess() == Covered / 2u, label + "after a clear of the left half the right half does not keep 0.25");
+
+    SetColor(color, 2.0f);
+    RunClear(device, code, plane, color, Format32Float, 8, 4);
+
+    SetColor(color, 0.125f);
+    RunClear(device, code, plane, color, Format32Float, 8, 4);
+    Require(drawGreater() == Covered, label + "after the last full clear the depth test 0.5 > 0.125 did not pass everywhere");
+    Require(drawLess() == 0u, label + "after the last full clear a texel passed 0.5 < depth");
+    RequireGuestTexels(device, plane, 4, std::bit_cast<std::uint32_t>(0.125f), label + "last clear: ");
+    RequireDepthTexels(device, plane, Format32Float, 4, std::bit_cast<std::uint32_t>(0.125f), label + "last clear: ");
+
+    const auto difference = Difference(Graphics::DepthClearCounts(), before);
+    Require(difference.clears == 3u, label + "the depth clears were " + std::to_string(difference.clears) + ", expected 3 (1.0, 0.25, 0.125)");
+    if (!skip) {
+        Require(difference.dispatchesSkipped == 0u && difference.dispatchBytesCleared == 0u, label + "a dispatch was left out with the switch off (" + std::to_string(difference.dispatchesSkipped) + ")");
+        return;
+    }
+    Require(difference.dispatchesSkipped == 3u, label + "the dispatches left out were " + std::to_string(difference.dispatchesSkipped) + ", expected 3 (1.0, 0.25, 0.125; not the half plane, not 2.0)");
+    Require(difference.dispatchBytesCleared == 3u * Width * Height * sizeof(float), label + "the mirror clears add up to " + std::to_string(difference.dispatchBytesCleared) + " bytes");
+}
+
+void DispatchSkipSixteenBitCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, bool skip) {
+    const DispatchSkip enabled(skip);
+    Graphics::SetDepthPlaneClearForTest(true);
+    const auto before = Graphics::DepthClearCounts();
+    const std::string label = std::string("16-bit plane, dispatch skip ") + (skip ? "on" : "off") + ": ";
+    auto& code = NewBlock();
+    std::memcpy(code.Data(), ClearKernel.data(), sizeof(ClearKernel));
+    auto& plane = NewBlock();
+    auto& color = NewBlock();
+    const Surface surface{plane.Address(), 0, 0, false, VK_FORMAT_D16_UNORM};
+    const auto drawLess = [&] { return Draw(device, shaders, surface, {.depthCompare = VK_COMPARE_OP_LESS}); };
+    const auto drawGreater = [&] { return Draw(device, shaders, surface, {.depthCompare = VK_COMPARE_OP_GREATER}); };
+    Require(Draw(device, shaders, surface, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == Covered, label + "the producer did not cover the plane");
+
+    SetColor(color, 1.0f);
+    try {
+        RunClear(device, code, plane, color, Format16UNorm, 8, 4);
+    } catch (const std::exception& error) {
+        if (std::string(error.what()).find("unsupported format") == std::string::npos) throw;
+        std::printf("16-bit plane skipped: %s\n", error.what());
+        return;
+    }
+    Require(drawLess() == Covered, label + "after a clear to 1.0 the depth test 0.5 < 1.0 did not pass everywhere");
+    Require(drawGreater() == 0u, label + "after a clear to 1.0 a texel passed 0.5 > depth");
+    RequireGuestTexels(device, plane, 2, 0xffffu, label + "clear to 1.0: ");
+    RequireDepthTexels(device, plane, Format16UNorm, 2, 0xffffu, label + "clear to 1.0: ");
+
+    SetColor(color, 0.0f);
+    RunClear(device, code, plane, color, Format16UNorm, 8, 4);
+    Require(drawGreater() == Covered, label + "after a clear to 0.0 the depth test 0.5 > 0.0 did not pass everywhere");
+    Require(drawLess() == 0u, label + "after a clear to 0.0 a texel passed 0.5 < depth");
+    RequireGuestTexels(device, plane, 2, 0u, label + "clear to 0.0: ");
+    RequireDepthTexels(device, plane, Format16UNorm, 2, 0u, label + "clear to 0.0: ");
+
+    SetColor(color, 0.5f);
+    RunClear(device, code, plane, color, Format16UNorm, 8, 4);
+
+    const auto difference = Difference(Graphics::DepthClearCounts(), before);
+    Require(difference.clears == 2u, label + "the depth clears were " + std::to_string(difference.clears) + ", expected 2 (1.0 and 0.0, not 0.5)");
+    if (!skip) {
+        Require(difference.dispatchesSkipped == 0u && difference.dispatchBytesCleared == 0u, label + "a dispatch was left out with the switch off (" + std::to_string(difference.dispatchesSkipped) + ")");
+        return;
+    }
+    Require(difference.dispatchesSkipped == 2u, label + "the dispatches left out were " + std::to_string(difference.dispatchesSkipped) + ", expected 2");
+    Require(difference.dispatchBytesCleared == 2u * Width * Height * sizeof(std::uint16_t), label + "the mirror clears add up to " + std::to_string(difference.dispatchBytesCleared) + " bytes");
 }
 
 void IntegerViewCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, int mode) {
@@ -553,12 +674,15 @@ int main() {
 
         Graphics::SetDepthPlaneClearForTest(true);
 
+        for (const bool skip : {false, true}) run(skip ? "32-bit plane, dispatch skip" : "32-bit plane, dispatch skip off", [&] { DispatchSkipFloatCase(*device, shaders, skip); });
+        for (const bool skip : {false, true}) run(skip ? "16-bit plane, dispatch skip" : "16-bit plane, dispatch skip off", [&] { DispatchSkipSixteenBitCase(*device, shaders, skip); });
         for (const int mode : {0, 1}) run(mode == 0 ? "integer view, switch off" : "integer view, lever", [&] { IntegerViewCase(*device, shaders, mode); });
         for (const int mode : {0, 1}) run(mode == 0 ? "16-bit plane, switch off" : "16-bit plane, lever", [&] { SixteenBitCase(*device, shaders, mode); });
         for (const int mode : {0, 1}) run(mode == 0 ? "depth and stencil, switch off" : "depth and stencil, lever", [&] { StencilCase(*device, shaders, mode); });
         for (const int mode : {0, 1}) run(mode == 0 ? "plane fill, switch off" : "plane fill, lever", [&] { PlaneFillCase(*device, shaders, mode); });
         for (const int mode : {0, 1}) run(mode == 0 ? "driver submit, switch off" : "driver submit, lever", [&] { DriverMatchCase(*device, shaders, mode); });
         Graphics::SetDepthPlaneClearForTest(true);
+        Graphics::SetDepthClearDispatchSkipForTest(true);
         LibcRunShutdown_nid_postfix();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
