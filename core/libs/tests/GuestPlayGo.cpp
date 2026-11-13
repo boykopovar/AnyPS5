@@ -106,6 +106,7 @@ static int CheckNoPlayGoFile(const char* root) {
     constexpr int notPermitted = static_cast<int>(0x80B2000F);
     constexpr int badOptionalType = static_cast<int>(0x80B20024);
     constexpr int badScenarioConfiguration = static_cast<int>(0x80B20026);
+    constexpr int badChunkId = static_cast<int>(0x80B2000C);
 
     PlayGoInitParams init{};
     int handle = 0;
@@ -159,9 +160,13 @@ static int CheckNoPlayGoFile(const char* root) {
     todo[1].locus = 1;
     Require(scePlayGoSetToDoList(handle, todo, 2) == badLocus);
     todo[1] = {1, 3, 0};
-    RequireMissingChunkMetadata([&] { scePlayGoSetToDoList(handle, todo, 2); });
+    Require(scePlayGoSetToDoList(handle, todo, 2) == 0);
+    todo[1] = {999, 3, 0};
+    Require(scePlayGoSetToDoList(handle, todo, 2) == 0);
+    todo[1] = {1000, 3, 0};
+    Require(scePlayGoSetToDoList(handle, todo, 2) == badChunkId);
     todo[1] = {0xFFFF, 3, 0};
-    RequireMissingChunkMetadata([&] { scePlayGoSetToDoList(handle, todo, 2); });
+    Require(scePlayGoSetToDoList(handle, todo, 2) == badChunkId);
 
     std::uint32_t entries = 1;
     Require(scePlayGoGetToDoList(handle, todo, 2, &entries) == 0 && entries == 0);
@@ -179,7 +184,17 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoGetLocus(handle, &chunk, 1, reinterpret_cast<std::int8_t*>(0x10)) == badPointer);
     const std::uint16_t undeclared[2] = {1, 10};
     std::int8_t loci[2] = {0, 0};
-    RequireMissingChunkMetadata([&] { scePlayGoGetLocus(handle, undeclared, 2, loci); });
+    Require(scePlayGoGetLocus(handle, undeclared, 2, loci) == 0 && loci[0] == 3 && loci[1] == 3);
+    for (std::uint16_t id = 0; id < 1000; ++id) {
+        std::int8_t each = 0;
+        Require(scePlayGoGetLocus(handle, &id, 1, &each) == 0 && each == 3);
+    }
+    for (const std::uint16_t beyond : {std::uint16_t{1000}, std::uint16_t{0xFFFF}}) {
+        std::int8_t each = 0;
+        Require(scePlayGoGetLocus(handle, &beyond, 1, &each) == badChunkId);
+    }
+    const std::uint16_t lastAndBeyond[2] = {999, 1000};
+    Require(scePlayGoGetLocus(handle, lastAndBeyond, 2, loci) == badChunkId);
     const std::uint16_t onlyDeclared[2] = {0, 0};
     Require(scePlayGoGetLocus(handle, onlyDeclared, 2, loci) == 0 && loci[0] == 3 && loci[1] == 3);
     std::uint32_t chunkCount = 0;

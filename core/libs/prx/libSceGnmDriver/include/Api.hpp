@@ -17,6 +17,7 @@ int APS5_VABI sceGnmInsertPushMarker(std::uint32_t* cmd, std::uint32_t size, con
 int APS5_VABI sceGnmInsertSetMarker(std::uint32_t* cmd, std::uint32_t size, const char* marker);
 int APS5_VABI sceGnmInsertPushColorMarker(std::uint32_t* cmd, std::uint32_t size, const char* marker, std::uint32_t color);
 int APS5_VABI sceGnmInsertPopMarker(std::uint32_t* cmd, std::uint32_t size);
+int APS5_VABI sceGnmInsertDingDongMarker_nid_disambig1(std::uint32_t* cmd, std::uint32_t size);
 int APS5_VABI sceGnmInsertSetColorMarker();
 int APS5_VABI sceGnmInsertWaitFlipDone(std::uint32_t* cmd, std::uint32_t size, std::uint32_t handle, std::uint32_t index);
 int APS5_VABI sceGnmSubmitCommandBuffers(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes);
@@ -28,6 +29,8 @@ void APS5_VABI sceGnmFlushGarlic();
 int APS5_VABI sceGnmAddEqEvent(KernelEqueue eq, std::uint64_t id, void* udata);
 int APS5_VABI sceGnmDeleteEqEvent(KernelEqueue eq, std::uint64_t id);
 int APS5_VABI sceGnmGetEqEventType(const KernelEvent* ev);
+int APS5_VABI sceGnmGetOffChipTessellationBufferSize_nid_disambig1(void);
+bool APS5_VABI sceGnmDriverTraceInProgress_nid_disambig1(void);
 bool APS5_VABI sceGnmIsUserPaEnabled();
 bool APS5_VABI sceGnmDriverCaptureInProgress();
 int APS5_VABI sceGnmDriverTriggerCapture();
