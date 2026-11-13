@@ -1,0 +1,40 @@
+#include "unicode/udata.h"
+#include "unicode/utypes.h"
+#include <cstddef>
+#include <cstdint>
+
+namespace {
+
+@ICU_NORMALIZATION_DECLARATIONS@
+
+struct Entry {
+    const char* name;
+    const void* data;
+};
+
+struct CommonData {
+    std::uint16_t headerSize;
+    std::uint8_t magic1;
+    std::uint8_t magic2;
+    UDataInfo info;
+    char padding[8];
+    std::uint32_t count;
+    std::uint32_t reserved;
+    Entry entries[2];
+};
+
+static_assert(offsetof(CommonData, count) == 32);
+static_assert(offsetof(CommonData, entries) == 40);
+static_assert(!U_IS_BIG_ENDIAN);
+
+}
+
+extern "C" U_EXPORT alignas(16) const CommonData U_ICUDATA_ENTRY_POINT = {
+    32, 0xda, 0x27,
+    {sizeof(UDataInfo), 0, U_IS_BIG_ENDIAN, U_CHARSET_FAMILY, sizeof(char16_t), 0,
+     {0x54, 0x6f, 0x43, 0x50}, {1, 0, 0, 0}, {}},
+    {}, 2, 0,
+    {
+@ICU_NORMALIZATION_ENTRIES@
+    }
+};
