@@ -3,6 +3,7 @@ target_sources(libSceJsc PRIVATE LegacyExports.cpp src/PlacementNew.cpp src/WtfS
 target_include_directories(libSceJsc PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceJsc)
 
+target_sources(libSceJsc PRIVATE src/ApiBridge.cpp)
 if(BUILD_TESTING)
     add_test_executable(guest_jsc_string_tests ${LIBS_INCLUDE_DIR}/tests/GuestJscString.cpp)
     target_include_directories(guest_jsc_string_tests PRIVATE ${LIBS_INCLUDE_DIR})
