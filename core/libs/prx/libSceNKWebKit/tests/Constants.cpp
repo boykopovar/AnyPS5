@@ -31,6 +31,15 @@ int main() {
     Require(WKBundleFrameCopyWebArchive() == 0);
     Require(WKBundleFrameCopyWebArchiveFilteringSubframes() == 0);
     Require(WKBundleFrameGetJavaScriptWrapperForFileForWorld() == 0);
+    Require(WKBundleFrameHandlesPageScaleGesture() == 0);
+    Require(WKBundleNavigationActionCopyDownloadAttribute() == 0);
+    Require(WKBundleNavigationActionCopyFormElement() == 0);
+    Require(WKBundleNavigationActionCopyHitTestResult() == 0);
+    Require(WKBundleNavigationActionGetEventModifiers() == 0);
+    Require(WKBundleNavigationActionGetEventMouseButton() == 0);
+    Require(WKBundleNavigationActionGetNavigationType() == 0);
+    Require(WKBundleNavigationActionGetShouldOpenExternalURLs() == 0);
+    Require(WKBundleNavigationActionGetShouldTryAppLinks() == 0);
     Require(WKBundleNodeHandleCopyHTMLFrameElementContentFrame() == 0);
     Require(WKBundleNodeHandleCopyHTMLTableCellElementCellAbove() == 0);
     Require(WKBundleNodeHandleCopyVisibleRange() == 0);
@@ -41,6 +50,7 @@ int main() {
     Require(WKBundlePageCopyContextMenuAtPointInWindow() == 0);
     Require(WKBundlePageCopyContextMenuItems() == 0);
     Require(WKBundlePageGetBackForwardList() == 0);
+    Require(WKBundlePageIsUsingDarkAppearance() == 0);
     Require(WKContextCopyPlugInAutoStartOriginHashes() == 0);
     Require(WKContextDownloadURLRequest() == 0);
     Require(WKContextGetIconDatabase() == 0);
@@ -57,6 +67,7 @@ int main() {
     Require(WKContextMenuItemGetUserData() == 0);
     Require(WKContextMenuItemSeparatorItem() == 0);
     Require(WKContextResumeDownload() == 0);
+    Require(WKFrameCanShowMIMEType() == 0);
     Require(WKFrameCreateFrameInfo() == 0);
     Require(WKFrameIsFrameSet() == 0);
     Require(WKIconDatabaseCopyIconDataForPageURL() == 0);
@@ -71,6 +82,7 @@ int main() {
     Require(WKOpenPanelParametersCopyCapture() == 0);
     Require(WKOpenPanelParametersGetMediaCaptureType() == 0);
     Require(WKPageGetFrameSetLargestFrame() == 0);
+    Require(WKPageGetPaginationLineGridEnabled() == 0);
     Require(WKPageIsMockRealtimeMediaSourceCenterEnabled() == 0);
     Require(WKPlugInInformationReplacementObscuredKey() == 0);
     Require(WKPluginInformationBundleIdentifierKey() == 0);
@@ -90,6 +102,7 @@ int main() {
     Require(WKPreferencesGetApplicationChromeModeEnabled() == 0);
     Require(WKPreferencesGetQTKitEnabled() == 0);
     Require(WKPreferencesGetTypeID() == static_cast<int>(0x00000058u));
+    Require(WKProtectionSpaceCopyCertificateInfo() == 0);
     Require(WKUserContentExtensionStoreCreate() == 0);
     Require(_ZN3JSC12isFromJSCodeEPv() == 0);
     Require(_ZN3JSC22optimizeNextInvocationENS_7JSValueE() == static_cast<int>(0x0000000au));
@@ -136,7 +149,14 @@ int main() {
     Require(_ZN7WebCore22EmptyFrameLoaderClient30dispatchDidPushStateWithinPageEv() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient31dispatchDidCancelClientRedirectEv() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient31dispatchDidDispatchOnloadEventsEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient31dispatchDidStartProvisionalLoadEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient31prepareForDataSourceReplacementEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient31transitionToCommittedForNewPageEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient32updateGlobalHistoryRedirectLinksEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient33dispatchDidReplaceStateWithinPageEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient37dispatchDidReachVisuallyNonEmptyStateEv() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient38dispatchDidLoadResourceFromMemoryCacheEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseEi() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient50dispatchDidReceiveServerRedirectForProvisionalLoadEv() == 0);
     Require(_ZN7WebCore23ISOSchemeInformationBox11boxTypeNameEv() == static_cast<int>(0x73636869u));
     Require(_ZN7WebCore26ISOProtectionSchemeInfoBox11boxTypeNameEv() == static_cast<int>(0x73696e66u));
     Require(_ZN7WebCore27screenSupportsExtendedColorEPNS_6WidgetE() == 0);

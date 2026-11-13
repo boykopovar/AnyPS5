@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -16,10 +17,12 @@ namespace {
 using ReadTimeout = std::int64_t (APS5_VABI*)(const void*);
 using SetTime = std::int64_t (APS5_VABI*)(void*, std::int64_t);
 using ReadVersion = int (APS5_VABI*)(const void*);
+using ReadMasterKey = std::uint64_t (APS5_VABI*)(const void*, unsigned char*, std::uint64_t);
 
 static_assert(std::is_same_v<decltype(&SSL_SESSION_get_timeout_nid_postfix), ReadTimeout>);
 static_assert(std::is_same_v<decltype(&SSL_SESSION_set_time_nid_postfix), SetTime>);
 static_assert(std::is_same_v<decltype(&SSL_SESSION_get_protocol_version_nid_postfix), ReadVersion>);
+static_assert(std::is_same_v<decltype(&SSL_SESSION_get_master_key_nid_postfix), ReadMasterKey>);
 static_assert(sizeof(int) == 4);
 static_assert(std::endian::native == std::endian::little);
 
@@ -73,6 +76,36 @@ void Exercise(std::int32_t version, std::int64_t timeout, std::int64_t oldTime, 
     Check(bytes == expected, "time restoration preserves other fields");
 }
 
+
+void MasterKey() {
+    ++cases;
+    alignas(8) std::array<unsigned char, 256> bytes;
+    std::uint64_t state = 0x9e3779b97f4a7c15;
+    for (auto& byte : bytes) byte = static_cast<unsigned char>(Random(state));
+    constexpr std::size_t Start = 24;
+    constexpr std::uint64_t Length = 20;
+    Write(bytes, Start + 8, Length, 8);
+    for (std::size_t index = 0; index < 48; ++index) bytes[Start + 16 + index] = static_cast<unsigned char>(0x80 + index);
+    const auto sessionBytes = bytes;
+    const void* const session = bytes.data() + Start;
+    ReadMasterKey volatile readMasterKey = SSL_SESSION_get_master_key_nid_postfix;
+    std::array<unsigned char, 64> out;
+    out.fill(0xEE);
+    auto expected = out;
+    for (std::size_t index = 0; index < Length; ++index) expected[index] = bytes[Start + 16 + index];
+    Check(readMasterKey(session, out.data(), out.size()) == Length, "master key returns stored length");
+    Check(out == expected, "master key copies the whole key");
+    Check(bytes == sessionBytes, "master key query preserves session bytes");
+    std::array<unsigned char, 4> shortOut;
+    shortOut.fill(0xEE);
+    Check(readMasterKey(session, shortOut.data(), shortOut.size()) == shortOut.size(), "short output returns copied length");
+    Check(std::equal(shortOut.begin(), shortOut.end(), bytes.begin() + Start + 16), "short output copies the prefix");
+    Check(readMasterKey(session, nullptr, out.size()) == Length, "null output returns stored length");
+    Check(readMasterKey(session, out.data(), 0) == 0, "zero output returns zero");
+    Check(readMasterKey(nullptr, out.data(), out.size()) == 0, "null session returns zero");
+    Write(bytes, Start + 8, 100, 8);
+    Check(readMasterKey(session, out.data(), out.size()) == 48, "overlong stored length clamps to 48");
+}
 }
 
 int main() {
@@ -95,6 +128,7 @@ int main() {
         threw = true;
     }
     Check(threw, "null version rejects undefined upstream input");
+    MasterKey();
     for (auto version : Versions)
         for (auto timeout : Times)
             for (auto time : Times) Exercise(version, timeout, ~time, time, cases + 1);

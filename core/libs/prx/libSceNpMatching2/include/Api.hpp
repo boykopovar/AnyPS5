@@ -57,7 +57,7 @@ int APS5_VABI sceNpMatching2RegisterRoomMessageCallback(std::uint16_t ctxId, voi
 int APS5_VABI sceNpMatching2RegisterSignalingCallback(std::uint16_t ctxId, void* callback, void* userdata);
 int APS5_VABI sceNpMatching2SearchRoom();
 int APS5_VABI sceNpMatching2SendRoomChatMessage();
-int APS5_VABI sceNpMatching2SendRoomMessage();
+int APS5_VABI sceNpMatching2SendRoomMessage(std::uint16_t ctxId, const void* request, const void* requestOpt, std::uint32_t* requestId);
 int APS5_VABI sceNpMatching2SetDefaultRequestOptParam(std::uint16_t ctxId, const void* requestOpt);
 int APS5_VABI sceNpMatching2SetRoomDataExternal(std::uint16_t ctxId, const void* request, const void* requestOpt, std::uint32_t* requestId);
 int APS5_VABI sceNpMatching2SetRoomDataInternal(std::uint16_t ctxId, const void* request, const void* requestOpt, std::uint32_t* requestId);
