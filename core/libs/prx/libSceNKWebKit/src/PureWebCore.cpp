@@ -2,16 +2,18 @@
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
+#include "prx/libkernel/include/Api.hpp"
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 namespace WebCore {
 
 }  // namespace WebCore
 
 namespace {
-int g_presentingApplicationPID = 0;
+std::optional<int> g_presentingApplicationPID;
 }  // namespace
 
 extern "C" {
@@ -70,6 +72,10 @@ unsigned int APS5_VABI _ZN7WebCore43initializeMaximumHTTPConnectionCountPerHostE
 
 void APS5_VABI _ZN7WebCore27setPresentingApplicationPIDEi(int pid) {
     g_presentingApplicationPID = pid;
+}
+
+int APS5_VABI _ZN7WebCore24presentingApplicationPIDEv() {
+    return g_presentingApplicationPID ? *g_presentingApplicationPID : getpid_nid_postfix();
 }
 
 WebCore::FloatRect APS5_VABI _ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(

@@ -1521,3 +1521,15 @@ String APS5_VABI _ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSla
 }
 
 }
+
+namespace NKWebKit::WtfAbi {
+
+StringView ViewOf(const StringImpl* impl) {
+    return View(impl);
+}
+
+char16_t CodeUnitAt(const StringView& view, unsigned index) {
+    return Unit(view, index);
+}
+
+}  // namespace NKWebKit::WtfAbi

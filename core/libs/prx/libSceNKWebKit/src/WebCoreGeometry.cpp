@@ -580,4 +580,31 @@ bool APS5_VABI _ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE(
     return true;
 }
 
+WebCore::FloatRect APS5_VABI _ZN7WebCore9unionRectERKN3WTF6VectorINS_9FloatRectELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE(
+    const NKWebKit::WtfAbi::Vector<WebCore::FloatRect>& rects) {
+    WebCore::FloatRect result;
+    for (const auto& rect : rects) {
+        _ZN7WebCore9FloatRect5uniteERKS0_(&result, rect);
+    }
+    return result;
+}
+
+unsigned APS5_VABI _ZN7WebCore25TextureMapperBackingStore25calculateExposedTileEdgesERKNS_9FloatRectES3_(
+    const WebCore::FloatRect& totalRect, const WebCore::FloatRect& tileRect) {
+    unsigned exposedEdges = WebCore::TextureMapper::NoEdges;
+    if (!tileRect.x()) {
+        exposedEdges |= WebCore::TextureMapper::LeftEdge;
+    }
+    if (!tileRect.y()) {
+        exposedEdges |= WebCore::TextureMapper::TopEdge;
+    }
+    if (tileRect.width() + tileRect.x() >= totalRect.width()) {
+        exposedEdges |= WebCore::TextureMapper::RightEdge;
+    }
+    if (tileRect.height() + tileRect.y() >= totalRect.height()) {
+        exposedEdges |= WebCore::TextureMapper::BottomEdge;
+    }
+    return exposedEdges;
+}
+
 }
