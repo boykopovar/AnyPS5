@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/NativeDepthCapture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "execution/DepthFastClearHarness.hpp"
 #include "NarrowConstantStoreFixture.hpp"
 #define main frameReplayToolMain
@@ -563,8 +564,14 @@ void testNativeRepeatHtileOrphan(const std::filesystem::path& directory) {
         resource.dstSelY = 5u;
         resource.dstSelZ = 6u;
         resource.dstSelW = 7u;
-        auto storage = AgcDriver::Graphics::StorageTexture::Create(context, *context.detiler, resource, 0u);
-        check(storage != nullptr, "orphan HTILE fixture could not import captured raw depth through the existing storage path");
+        std::shared_ptr<AgcDriver::Graphics::StorageTexture> storage;
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            storage = AgcDriver::Graphics::CachedStorageSurface(context, resource);
+        }
+        const auto planeBytes = AgcDriver::Graphics::DepthSliceBytes(Extent, 4u);
+        check(storage != nullptr && storage->Cached() && storage->Descriptor().width == Extent.width && storage->Descriptor().height == Extent.height && AgcDriver::Graphics::StorageTexture::FindLive(depth, planeBytes) == storage, "orphan HTILE fixture did not register the raw captured A storage image for attachment import");
+        std::printf("orphan HTILE raw import: address=%llu cached=1 bytes=%llu live_match=1\n", static_cast<unsigned long long>(depth), static_cast<unsigned long long>(planeBytes));
         AgcDriver::Graphics::DepthTarget imported{depth, 0u, Extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0u};
         imported.depthSwizzle = swizzle;
         static_cast<void>(AgcDriver::Graphics::DepthSurfaceView(context, imported, false, false));
