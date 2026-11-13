@@ -150,6 +150,7 @@ inline constexpr std::uint32_t R_X86_64_DTPOFF64 = 17;
 inline constexpr std::uint32_t R_X86_64_TPOFF64 = 18;
 inline constexpr std::uint32_t R_X86_64_IRELATIVE = 37;
 
+inline constexpr std::uint8_t STB_LOCAL = 0;
 inline constexpr std::uint8_t STB_GLOBAL = 1;
 inline constexpr std::uint8_t STB_WEAK = 2;
 inline constexpr std::uint8_t STT_NOTYPE = 0;

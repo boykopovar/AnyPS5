@@ -291,8 +291,8 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             if (relocation == 0) continue;
             if ((info >> 32) >= image.Symbols.size() || (plt && relocation != 7) || (relocation != 1 && relocation != 6 && relocation != 7 && relocation != 8 && relocation != 16 && relocation != 17 && relocation != 18)) fail("Unsupported relocation or symbol index");
             const auto& referencedSymbol = image.Symbols[info >> 32];
-            if (relocation != 8 && referencedSymbol.Section == 0 && (referencedSymbol.Info >> 4) != 2 && (referencedSymbol.Visibility & 3) != 0)
-                fail("Undefined non-weak symbol has non-default visibility: " + referencedSymbol.Name);
+            if (relocation != 8 && referencedSymbol.Section == 0 && (referencedSymbol.Info >> 4) == 0 && (referencedSymbol.Visibility & 3) != 0)
+                fail("Undefined local symbol has non-default visibility: " + referencedSymbol.Name);
             const auto target = Io::ReadU64(bytes, offset + index);
             const auto addend = Io::ReadU64(bytes, offset + index + 16);
             mapped(target, 8, 2);
