@@ -13,7 +13,7 @@ from pathlib import Path
 import package_headers
 
 ROOT = Path(__file__).resolve().parent.parent
-WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "output-directory.mjs", "worker.mjs",
+WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "i18n.mjs", "output-directory.mjs", "worker.mjs",
              "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 
 
@@ -65,6 +65,36 @@ def tracy_runtime(platform, build):
     return clients
 
 
+def promote_native_assets(staging, output):
+    files = sorted(staging.iterdir())
+    backups = Path(tempfile.mkdtemp(prefix=".release-backup-", dir=output))
+    try:
+        for file in files:
+            destination = output / file.name
+            if os.path.lexists(destination):
+                destination.replace(backups / file.name)
+            file.replace(destination)
+    except BaseException as error:
+        failures = []
+        for file in reversed(files):
+            try:
+                previous = backups / file.name
+                if os.path.lexists(previous):
+                    previous.replace(output / file.name)
+                elif not file.exists():
+                    (output / file.name).unlink()
+            except OSError as recovery_error:
+                failures.append(f"{file.name}: {recovery_error}")
+        if failures:
+            raise RuntimeError(f"Native release promotion failed: {error}; rollback failed: {'; '.join(failures)}; recovery files retained at {backups}") from error
+        try:
+            backups.rmdir()
+        except OSError as cleanup_error:
+            raise RuntimeError(f"Native release promotion failed: {error}; rollback completed but backup cleanup failed at {backups}: {cleanup_error}") from error
+        raise
+    shutil.rmtree(backups)
+
+
 def package(platform, build, output, version):
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", version) or version.endswith("."):
         raise ValueError(f"Invalid release tag for asset filenames: {version}")
@@ -79,6 +109,11 @@ def package(platform, build, output, version):
     if "libharfbuzz.prx" in expected:
         licenses.append((ROOT / "3rdparty/harfbuzz/COPYING", "libs/licenses/harfbuzz.txt"))
         licenses.append((ROOT / "3rdparty/harfbuzz/src/ms-use/COPYING", "libs/licenses/harfbuzz-ms-use.txt"))
+    if "libcairo.prx" in expected:
+        licenses.append((ROOT / "3rdparty/cairo/COPYING", "libs/licenses/cairo.txt"))
+        licenses.append((ROOT / "3rdparty/cairo/COPYING-LGPL-2.1", "libs/licenses/cairo-lgpl-2.1.txt"))
+        licenses.append((ROOT / "3rdparty/cairo/COPYING-MPL-1.1", "libs/licenses/cairo-mpl-1.1.txt"))
+        licenses.append((ROOT / "3rdparty/pixman/COPYING", "libs/licenses/pixman.txt"))
     if "libwebrtc.prx" in expected:
         licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
         licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))
@@ -150,8 +185,7 @@ def package(platform, build, output, version):
                 for source, destination in entries + licenses:
                     archive.add(source, arcname=destination)
         shutil.copy2(binary, staging / asset)
-        for file in sorted(staging.iterdir()):
-            file.replace(output / file.name)
+        promote_native_assets(staging, output)
 
 
 def collect_docs(source, output):

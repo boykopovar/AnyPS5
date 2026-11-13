@@ -58,6 +58,11 @@ struct BufferPair {
         hb_buffer_set_script(native, script);
     }
 
+    void UnicodeFuncs(hb_unicode_funcs_t* funcs) {
+        hb_buffer_set_unicode_funcs_nid_postfix(guest, funcs);
+        hb_buffer_set_unicode_funcs(native, funcs);
+    }
+
     void Compare(bool comparePositions = false) {
         Require(hb_buffer_get_length_nid_postfix(guest) == hb_buffer_get_length(native));
         Require(hb_buffer_get_direction_nid_postfix(guest) == hb_buffer_get_direction(native));
@@ -201,6 +206,39 @@ static void Properties() {
     Require(hb_buffer_get_direction_nid_postfix(pair.guest) == HB_DIRECTION_INVALID);
     Require(hb_buffer_get_script(pair.guest) == HB_SCRIPT_INVALID);
     Require(hb_buffer_get_language(pair.guest) == HB_LANGUAGE_INVALID);
+    pair.Compare();
+    auto* const funcs = hb_icu_get_unicode_funcs_nid_postfix();
+    Require(funcs && funcs == hb_icu_get_unicode_funcs_nid_postfix());
+    Require(hb_unicode_funcs_is_immutable(funcs));
+    Require(hb_unicode_combining_class(funcs, 0x0301) == HB_UNICODE_COMBINING_CLASS_ABOVE);
+    struct CategoryCase {
+        hb_codepoint_t codePoint;
+        hb_unicode_general_category_t category;
+    };
+    constexpr std::array categories{
+        CategoryCase{0x0378, HB_UNICODE_GENERAL_CATEGORY_UNASSIGNED},
+        CategoryCase{'A', HB_UNICODE_GENERAL_CATEGORY_UPPERCASE_LETTER},
+        CategoryCase{0x0301, HB_UNICODE_GENERAL_CATEGORY_NON_SPACING_MARK},
+        CategoryCase{'5', HB_UNICODE_GENERAL_CATEGORY_DECIMAL_NUMBER},
+        CategoryCase{0x2029, HB_UNICODE_GENERAL_CATEGORY_PARAGRAPH_SEPARATOR},
+        CategoryCase{0xe000, HB_UNICODE_GENERAL_CATEGORY_PRIVATE_USE},
+        CategoryCase{0x1f600, HB_UNICODE_GENERAL_CATEGORY_OTHER_SYMBOL},
+        CategoryCase{0x2018, HB_UNICODE_GENERAL_CATEGORY_INITIAL_PUNCTUATION},
+        CategoryCase{0x2019, HB_UNICODE_GENERAL_CATEGORY_FINAL_PUNCTUATION},
+    };
+    for (const auto& [codePoint, category] : categories)
+        Require(hb_unicode_general_category(funcs, codePoint) == category);
+    Require(hb_unicode_script(funcs, 0x0627) == HB_SCRIPT_ARABIC);
+    Require(hb_unicode_mirroring(funcs, '(') == ')');
+    hb_codepoint_t composed = 0;
+    Require(hb_unicode_compose(funcs, 'e', 0x0301, &composed) && composed == 0x00e9);
+    hb_codepoint_t first = 0;
+    hb_codepoint_t second = 0;
+    Require(hb_unicode_decompose(funcs, 0x00e9, &first, &second) && first == 'e' && second == 0x0301);
+    Require(!hb_unicode_decompose(funcs, 'e', &first, &second));
+    pair.UnicodeFuncs(funcs);
+    Require(hb_buffer_get_unicode_funcs(pair.guest) == funcs);
+    Require(hb_buffer_get_unicode_funcs(pair.guest) == hb_buffer_get_unicode_funcs(pair.native));
     pair.Compare();
 }
 

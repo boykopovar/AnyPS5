@@ -156,6 +156,19 @@ static void RequireNeverDecreases(int clockId) {
     }
 }
 
+static void Clock20UsesScaledMonotonicTime() {
+    constexpr int clockId = 20;
+    constexpr std::int64_t tickCeilingNanos = 30519;
+    const auto before = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
+    const auto posix = Nanos(clockId);
+    KernelTimespec sceTime{-1, -1};
+    Require(sceKernelClockGettime(clockId, &sceTime) == SCE_OK);
+    const auto sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
+    const auto after = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
+    Require(before - tickCeilingNanos <= posix && posix <= sce && sce <= after);
+    Require(posix % 1000 == 0 && sce % 1000 == 0);
+}
+
 static void WallAndUptimeClocksReportSubsecondResolutions() {
     const int clocks[] = {GUEST_CLOCK_REALTIME, GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST, GUEST_CLOCK_MONOTONIC,
                           GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST, GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE,
@@ -185,6 +198,18 @@ static void SecondClockReportsWholeSeconds() {
         Require(second.tv_sec >= previous);
         previous = second.tv_sec;
     }
+}
+
+static void Clock21TracksProcessCpuTime() {
+    constexpr int clockId = 21;
+    const auto before = Nanos(GUEST_CLOCK_PROF);
+    const auto posix = Nanos(clockId);
+    KernelTimespec sceTime{-1, -1};
+    Require(sceKernelClockGettime(clockId, &sceTime) == SCE_OK);
+    const auto sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
+    const auto after = Nanos(GUEST_CLOCK_PROF);
+    Require(before - 999 <= posix && posix <= sce && sce <= after);
+    Require(posix % 1000 == 0 && sce % 1000 == 0);
 }
 
 static void ProcessClocksAreOrdered() {
@@ -317,13 +342,13 @@ static std::int32_t RuntimeDaylight(std::int32_t daylight) {
 
 static void RequireZone(const char* zone, std::int64_t utc, std::int64_t standardEast, std::int32_t zoneDaylight, std::int32_t daylightInEffect) {
     SetTimeZone(zone);
-    zoneDaylight = RuntimeDaylight(zoneDaylight);
-    const std::int32_t daylight = daylightInEffect == 0 ? 0 : zoneDaylight;
-    const std::int64_t east = standardEast + daylight;
     std::int64_t local = -1;
     KernelTimesec universal{-1, 0xa5a5a5a5u, 0xa5a5a5a5u};
     std::int32_t universalDst = -1;
     Require(sceKernelConvertUtcToLocaltime(utc, &local, &universal, &universalDst) == SCE_OK);
+    zoneDaylight = RuntimeDaylight(zoneDaylight);
+    const std::int32_t daylight = daylightInEffect == 0 ? 0 : zoneDaylight;
+    const std::int64_t east = standardEast + daylight;
     Require(local == utc + east && universalDst == daylight);
     Require(universal.t == utc && universal.west_sec == static_cast<std::uint32_t>(east - daylight) && universal.dst_sec == static_cast<std::uint32_t>(daylight));
     std::int64_t converted = -1;
@@ -347,7 +372,7 @@ static void TimezoneReportsTheStandardOffsetAndDaylightAmount() {
     RequireTimezone("BRT+3", -180, 0);
     RequireTimezone("EST5EDT", -300, 60);
     RequireTimezone("CET-1CEST", 60, 60);
-    Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000e));
+    Require(sceKernelGettimezone(nullptr) == SCE_OK);
     SetTimeZone("UTC0");
 }
 
@@ -359,12 +384,51 @@ static void CalendarConversionsFollowTheHostZone() {
     RequireZone("BRT+3", summer, -10800, 0, 0);
     RequireZone("EST5EDT", winter, -18000, 3600, 0);
     RequireZone("EST5EDT", summer, -18000, 3600, 3600);
+    constexpr std::int64_t cycle = 146097LL * 86400LL;
+    for (const std::int64_t cycles : {700000000LL, -700000000LL}) {
+        RequireZone("IST-5:30", winter + cycles * cycle, 19800, 0, 0);
+        RequireZone("EST5EDT", winter + cycles * cycle, -18000, 3600, 0);
+        RequireZone("EST5EDT", summer + cycles * cycle, -18000, 3600, 3600);
+    }
     SetTimeZone("UTC0");
 }
 
+#ifdef _WIN32
+static void ExplicitDaylightRulesRefreshAZeroHostBias() {
+    SetTimeZone("EST5EDT");
+    long savedBias = 0;
+    Require(_get_dstbias(&savedBias) == 0);
+    const struct { std::int64_t utc; std::int32_t daylight; } cases[]{
+        {1768478400, 0},
+        {1782907200, 3600}
+    };
+    for (const auto& item : cases) {
+        const std::int64_t expectedLocal = item.utc - 18000 + item.daylight;
+        _dstbias = 0;
+        std::int64_t local = -1;
+        KernelTimesec forward{-1, 0xa5a5a5a5u, 0xa5a5a5a5u};
+        std::int32_t activeDaylight = -1;
+        Require(sceKernelConvertUtcToLocaltime(item.utc, &local, &forward, &activeDaylight) == SCE_OK);
+        Require(local == expectedLocal && activeDaylight == item.daylight);
+        Require(forward.t == item.utc && forward.west_sec == static_cast<std::uint32_t>(-18000)
+            && forward.dst_sec == static_cast<std::uint32_t>(item.daylight));
+        _dstbias = 0;
+        std::int64_t utc = -1;
+        KernelTimesec reverse{-1, 0xa5a5a5a5u, 0xa5a5a5a5u};
+        std::int32_t availableDaylight = -1;
+        Require(sceKernelConvertLocaltimeToUtc(expectedLocal, 0, &utc, &reverse, &availableDaylight) == SCE_OK);
+        Require(utc == item.utc && availableDaylight == 3600);
+        Require(reverse.t == expectedLocal && reverse.west_sec == static_cast<std::uint32_t>(-18000)
+            && reverse.dst_sec == static_cast<std::uint32_t>(item.daylight));
+    }
+    _dstbias = savedBias;
+    SetTimeZone("UTC0");
+}
+#endif
+
 static void KernelTimezoneIsUtc() {
     SetTimeZone("UTC0");
-    Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelGettimezone(nullptr) == SCE_OK);
     KernelTimezone zone{-1, -1};
     Require(sceKernelGettimezone(&zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
 }
@@ -376,9 +440,13 @@ int main() {
     OmittedTimeIsFaultAfterClockValidation();
     InvalidClockIdFailsGettime();
     ClockIoErrorIds();
+    Clock20UsesScaledMonotonicTime();
     SettimeIsRefusedLikeAJailedProcess();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();
+#ifdef _WIN32
+    ExplicitDaylightRulesRefreshAZeroHostBias();
+#endif
     TimezoneReportsTheStandardOffsetAndDaylightAmount();
     SecondClockReportsWholeSeconds();
     WallAndUptimeClocksReportSubsecondResolutions();
@@ -409,6 +477,7 @@ int main() {
 
     RequireNeverDecreases(GUEST_CLOCK_VIRTUAL);
     RequireNeverDecreases(GUEST_CLOCK_PROF);
+    Clock21TracksProcessCpuTime();
     ProcessClocksAreOrdered();
     BusyProcessAccumulatesUserTime();
     IdleProcessAccumulatesNone();
