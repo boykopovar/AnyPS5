@@ -1,4 +1,5 @@
 #include "BdaAbi.hpp"
+#include "BindlessImageAbi.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
@@ -583,6 +584,11 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             Require(mesh, "workgroup memory outside a mesh shader");
         } else if (variable.storage == spv::StorageClassUniformConstant) {
             Require(decoration.set && decoration.binding, "unbound shader resource");
+            if (shader.bindlessHeap && *decoration.set == ShaderRecompiler::BindlessImageAbi::HeapDescriptorSet) {
+                Require(*decoration.binding == ShaderRecompiler::BindlessImageAbi::SamplerBinding || *decoration.binding == ShaderRecompiler::BindlessImageAbi::SampledImageBinding, "a bindless heap resource uses a binding other than the heap's samplers or sampled images");
+                Require((type[0] & 0xffffu) == spv::OpTypeRuntimeArray, "a bindless heap resource must be declared as a runtime descriptor array");
+                continue;
+            }
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
             const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == key.first && item.binding == key.second; });
             Require(descriptors.insert(key).second || (binding != shader.bindings.end() && (binding->role == ShaderRecompiler::DescriptorRole::ImageTable || binding->role == ShaderRecompiler::DescriptorRole::ImageStorageTable)), "duplicate SPIR-V resource binding");
@@ -599,6 +605,10 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             Require(binding->count != 0u && binding->count <= capacity && count != module.constants.end() && count->second == binding->count, "typed heap array length disagrees with compact binding");
         } else {
             Require(variable.storage == spv::StorageClassStorageBuffer && decoration.set && decoration.binding, "unsupported or unbound shader resource");
+            if (shader.bindlessHeap && *decoration.set == ShaderRecompiler::BindlessImageAbi::HeapDescriptorSet) {
+                Require(*decoration.binding == ShaderRecompiler::BindlessImageAbi::HeaderBinding, "a bindless heap buffer uses a binding other than the heap's header");
+                continue;
+            }
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
             if (*decoration.set == ShaderRecompiler::MeshWindowDescriptorSet) {
                 Require(mesh && *decoration.binding == 0u, "mesh window buffer binding is wrong");

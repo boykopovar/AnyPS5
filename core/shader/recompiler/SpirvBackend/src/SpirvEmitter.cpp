@@ -309,7 +309,8 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     if (state.requirements.imageAtomicLocks || state.requirements.bufferAtomicLocks) state.requirements.subgroupBallot = true;
     state.bindlessImages = target.bindlessImages && ResourceMaterializer::UsesBindlessImages(program.Info(), program.Resources().stage);
     const auto supports = [&](spv::Capability capability) { return std::ranges::find(target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != target.supportedCapabilities.end(); };
-    state.bindlessWaveUniform = state.bindlessImages && !HostSubgroupSingleLane(state) && supports(spv::CapabilityGroupNonUniformBallot);
+    state.bindlessWaveUniform = state.bindlessImages && program.Resources().stage == IrShaderStage::Compute && !HostSubgroupSingleLane(state) && supports(spv::CapabilityGroupNonUniformBallot);
+    state.bindlessQuadUniform = state.bindlessImages && program.Resources().stage == IrShaderStage::Pixel && !HostSubgroupSingleLane(state) && supports(spv::CapabilityGroupNonUniformQuad);
     if (HostSubgroupSingleLane(state)) {
         state.requirements.subgroupBallot = false;
         state.requirements.subgroupShuffle = false;

@@ -4701,6 +4701,14 @@ const Graphics::TextureService* VulkanDevice::BindlessService() const {
     return state->textureService.get();
 }
 
+void VulkanDevice::PrimeBindlessDraw(std::span<const std::shared_ptr<const ShaderRecompiler::RecompileResult>> programs) const {
+    if (state->textureService == nullptr) return;
+    const auto context = graphicsContext();
+    for (const auto& program : programs) {
+        if (program != nullptr && program->bindlessHeap) Graphics::PrimeBindlessTables(context, program->bindlessTables);
+    }
+}
+
 void VulkanDevice::BindlessPresentWait() {
     if (!state->textureService || !state->recorder) return;
     PerformanceTimer timing("Vulkan.BindlessPresentWait");

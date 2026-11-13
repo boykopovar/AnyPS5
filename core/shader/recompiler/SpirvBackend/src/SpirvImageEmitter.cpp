@@ -2731,6 +2731,23 @@ BindlessAccess EmitBindlessAccess(SpirvValueEmitContext& ctx, const IrValue& ins
     return access;
 }
 
+bool BindlessQuadUniform(const SpirvEmitterState& state, const IrValue& inst) {
+    return state.bindlessQuadUniform && (inst.Opcode() == IrOpcode::ImageSampleRaw || inst.Opcode() == IrOpcode::ImageQueryLod);
+}
+
+std::uint32_t BindlessQuadSelector(SpirvEmitterState& state, const BindlessAccess& access) {
+    state.module.EmitCapability(spv::CapabilityGroupNonUniformQuad);
+    const auto u32 = TypeU32(state);
+    const auto invalid = ConstantU32(state, InvalidTableSelector);
+    auto fallback = invalid;
+    for (std::uint32_t lane = 4u; lane-- > 0u;) {
+        const auto neighbour = state.module.AllocateId();
+        state.module.AddFunction(spv::OpGroupNonUniformQuadBroadcast, u32, neighbour, ConstantU32(state, spv::ScopeSubgroup), access.selector, ConstantU32(state, lane));
+        fallback = Select(state, u32, Binary(state, spv::OpINotEqual, TypeBool(state), neighbour, invalid), neighbour, fallback);
+    }
+    return Select(state, u32, access.valid, access.selector, fallback);
+}
+
 std::uint32_t BindlessHash(SpirvEmitterState& state, std::span<const std::uint32_t> key) {
     namespace Table = DeviceImageTableAbi;
     const auto u32 = TypeU32(state);
@@ -3285,8 +3302,14 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto modes = base.table != NoTable ? state.program.Info().runtimeImageModes.at(memory.resource) : ResourceMaterializer::RuntimeImageModes(base);
     std::uint32_t tableSelector = 0u;
     std::uint32_t samplerGuard = 0u;
+    std::uint32_t quadValid = 0u;
     if (state.bindlessImages && ResourceMaterializer::BindlessImage(state.program.Info(), state.program.Resources().stage, memory.resource)) {
-        tableSelector = EmitBindlessAccess(ctx, inst, memory).selector;
+        const auto access = EmitBindlessAccess(ctx, inst, memory);
+        tableSelector = access.selector;
+        if (BindlessQuadUniform(state, inst)) {
+            tableSelector = BindlessQuadSelector(state, access);
+            quadValid = access.valid;
+        }
     } else if (tables) {
         const auto access = EmitTableAccess(ctx, inst, memory, base, tableSampler);
         if (access.unsupported) {
@@ -3327,7 +3350,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
         state.module.AddFunction(spv::OpBranchConditional, samplerGuard, guardBody, guardSkip);
         EmitLabel(state, guardBody);
     }
-    const auto resultId = returnsValue && samplerGuard != 0u ? state.module.AllocateId() : guardedId;
+    const auto resultId = returnsValue && (samplerGuard != 0u || quadValid != 0u) ? state.module.AllocateId() : guardedId;
     const auto merge = state.module.AllocateId();
     const auto invalid = tables || exits ? state.module.AllocateId() : merge;
     const auto undefined = returnsValue && !tables && !exits ? state.module.AllocateId() : 0u;
@@ -3381,6 +3404,11 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
         std::vector<std::uint32_t> phi{spv::OpPhi, TypeId(state, inst.Type()), resultId};
         phi.insert(phi.end(), incoming.begin(), incoming.end());
         state.module.AddFunction(phi);
+        if (quadValid != 0u) {
+            const auto mask = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeConstruct, TypeBoolVector(state, 4u), mask, quadValid, quadValid, quadValid, quadValid);
+            state.module.AddFunction(spv::OpSelect, TypeId(state, inst.Type()), guardedId, mask, resultId, ConstantU32CompositeZero(state, 4u));
+        }
     }
     if (samplerGuard != 0u) {
         state.module.AddFunction(spv::OpBranch, guardMerge);

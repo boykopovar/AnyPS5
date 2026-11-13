@@ -278,6 +278,7 @@ struct SpirvEmitterState {
     std::array<std::uint32_t, 2> bindlessProbeFunctions {};
     std::array<std::uint32_t, 2> bindlessLookupFunctions {};
     bool bindlessWaveUniform = false;
+    bool bindlessQuadUniform = false;
     bool bindlessHoistPlanned = false;
     std::unordered_map<const IrBlock*, const IrBlock*> bindlessDominators;
     std::unordered_map<const IrBlock*, std::vector<const IrValue*>> bindlessHoistAt;
