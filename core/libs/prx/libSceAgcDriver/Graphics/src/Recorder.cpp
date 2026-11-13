@@ -3934,6 +3934,11 @@ void Recorder::KeepHighestIndex(std::uint64_t address, std::size_t bytes, Snapsh
     }
 }
 
+void Recorder::OweHostRead() {
+    ensureOpen();
+    open->hostReadOwed = true;
+}
+
 void Recorder::OnComplete(std::function<void()> action) {
     ensureOpen();
     open->completions.push_back(std::move(action));

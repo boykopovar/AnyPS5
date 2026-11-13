@@ -60,6 +60,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -613,6 +614,10 @@ struct VulkanDevice::State {
     bool descriptorBindingPartiallyBound = false;
     bool descriptorBindingVariableDescriptorCount = false;
     bool runtimeDescriptorArray = false;
+    bool storageImageUpdateAfterBind = false;
+    bool updateUnusedWhilePending = false;
+    bool bindlessImages = false;
+    std::unique_ptr<Graphics::BindlessTable> bindlessTable;
     VkPhysicalDeviceDescriptorIndexingPropertiesEXT descriptorIndexingProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES_EXT};
     bool imageInt64Atomics = false;
     bool bufferInt64Atomics = false;
@@ -1192,6 +1197,7 @@ struct VulkanDevice::State {
             }
             Graphics::DestroyShadows(device);
             recorder.reset();
+            bindlessTable.reset();
             // Cached graphics pipelines (with their framebuffers, modules, render passes and layouts)
             // belong to this device and must be destroyed while it lives.
             Graphics::ClearCachedPipelines(device);
@@ -2262,7 +2268,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->descriptorBindingPartiallyBound = descriptorIndexingFeatures.descriptorBindingPartiallyBound == VK_TRUE;
         state->descriptorBindingVariableDescriptorCount = descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount == VK_TRUE;
         state->runtimeDescriptorArray = descriptorIndexingFeatures.runtimeDescriptorArray == VK_TRUE;
-        if (state->storageBufferUpdateAfterBind || state->sampledImageUpdateAfterBind) {
+        state->storageImageUpdateAfterBind = descriptorIndexingFeatures.descriptorBindingStorageImageUpdateAfterBind == VK_TRUE;
+        state->updateUnusedWhilePending = descriptorIndexingFeatures.descriptorBindingUpdateUnusedWhilePending == VK_TRUE;
+        if (state->storageBufferUpdateAfterBind || state->sampledImageUpdateAfterBind || Graphics::BindlessImagesRequested()) {
             VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &state->descriptorIndexingProperties};
             state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
         }
@@ -2539,6 +2547,17 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         deviceInfo.enabledExtensionCount = static_cast<std::uint32_t>(deviceExtensions.size());
         deviceInfo.ppEnabledExtensionNames = deviceExtensions.data();
     }
+    if (Graphics::BindlessImagesRequested()) {
+        const Graphics::BindlessFeatureSupport support{true, robustness2.nullDescriptor == VK_TRUE, state->runtimeDescriptorArray, state->descriptorBindingPartiallyBound, state->descriptorIndexing, state->descriptorIndexing, state->sampledImageUpdateAfterBind, state->storageImageUpdateAfterBind, state->updateUnusedWhilePending};
+        if (const auto missing = Graphics::BindlessUnsupported(support)) {
+            std::fprintf(stderr, "[bindless] APS5_BINDLESS_IMAGES=1 is ignored: the device lacks %s\n", missing->c_str());
+        } else {
+            descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+            descriptorIndexingFeatures.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
+            descriptorIndexingFeatures.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+            state->bindlessImages = true;
+        }
+    }
     deviceInfo.pNext = &bdaFeatures;
     auto shaderProfile = std::make_unique<const ShaderDeviceProfile>(buildTarget(), deviceInfo, state->properties.limits);
     check(state->InstanceFunction<PFN_vkCreateDevice>("vkCreateDevice")(selected, &deviceInfo, nullptr, &state->device), "vkCreateDevice");
@@ -2727,6 +2746,14 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     state->recorder = std::make_unique<Graphics::Recorder>(graphicsContext(), state->timelineSemaphores);
     state->recorder->Activate();
+    if (state->bindlessImages) {
+        const auto context = graphicsContext();
+        const auto capacities = Graphics::DescriptorHeap::DeviceCapacities(context);
+        const auto& limits = state->descriptorIndexingProperties;
+        std::fprintf(stderr, "[bindless] heap: %u sampled images, %u storage images, %u samplers (update-after-bind limits per stage: %u sampled, %u storage, %u samplers, %u resources; per set: %u sampled, %u storage, %u samplers; maxSamplerAllocationCount %u)\n", capacities.sampledImages, capacities.storageImages, capacities.samplers, limits.maxPerStageDescriptorUpdateAfterBindSampledImages, limits.maxPerStageDescriptorUpdateAfterBindStorageImages, limits.maxPerStageDescriptorUpdateAfterBindSamplers, limits.maxPerStageUpdateAfterBindResources, limits.maxDescriptorSetUpdateAfterBindSampledImages, limits.maxDescriptorSetUpdateAfterBindStorageImages, limits.maxDescriptorSetUpdateAfterBindSamplers, state->properties.limits.maxSamplerAllocationCount);
+        state->bindlessTable = std::make_unique<Graphics::BindlessTable>(context, capacities, Graphics::DeviceImageKeys::InitialBuckets, Graphics::DeviceImageKeys::MaxBuckets, Graphics::BindlessRingRecords());
+        std::fprintf(stderr, "[bindless] miss ring: %u records per batch, reported-miss set %u slots (each missing key reported once per clear)\n", state->bindlessTable->RingCapacity(), state->bindlessTable->SeenSlots());
+    }
     state->context = buildContext();
     state->contextReady = true;
     if (window != nullptr) {
@@ -4649,6 +4676,10 @@ ShaderRecompiler::SpirvTarget VulkanDevice::ComputeTarget(std::uint32_t waveSize
     return target;
 }
 
+bool VulkanDevice::BindlessImagesEnabled() const {
+    return state->bindlessTable != nullptr;
+}
+
 std::string VulkanDevice::DeviceName() const {
     return state->properties.deviceName;
 }
@@ -4924,6 +4955,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.bufferInt64Atomics = state->bufferInt64Atomics;
     context.atomicLockTable = state->atomicLockTable ? state->atomicLockTable->DeviceAddress() : 0;
     context.placeholderImages = state->placeholderImages.get();
+    context.bindlessTable = state->bindlessTable.get();
     context.viewportIndexLayer = state->viewportIndexLayer;
     context.imageFormatList = state->imageFormatList;
     context.demoteToHelperInvocation = state->demoteToHelperInvocation;

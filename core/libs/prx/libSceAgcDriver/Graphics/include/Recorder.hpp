@@ -257,6 +257,7 @@ public:
     static constexpr std::size_t KeptIndexRangeIndices = 4096;
     bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest, std::uint32_t* lowest = nullptr);
     void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t registryGeneration, std::optional<std::uint32_t> highest, std::uint32_t lowest = 0);
+    void OweHostRead();
     void OnComplete(std::function<void()> action);
     void OnWriteComplete(std::uint64_t address, std::size_t bytes, std::function<void()> action);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
