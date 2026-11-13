@@ -26,6 +26,7 @@ int main() {
     constexpr auto invalidPort = static_cast<std::int32_t>(0x804e0804u);
     constexpr auto invalidArgument = static_cast<std::int32_t>(0x804e0805u);
     Require(sceVoiceGetPortAttr(128, 1001, nullptr, 1) == notInitialized);
+    Require(sceVoiceGetPortAttr(128, 1001, nullptr, 1) == notInitialized);
     Require(sceVoiceGetPortAttr(0, 1001, nullptr, 1) == notInitialized);
     Require(sceVoiceGetPortAttr(500, 9999, nullptr, -1) == notInitialized);
     VoiceInitParam init{};
@@ -80,6 +81,7 @@ int main() {
     }
     Require(sceVoiceEnd_nid_postfix() == 0);
     Require(sceVoiceGetPortAttr(0, 1001, buffer.data() + 1, 1) == notInitialized);
+    Require(sceVoiceGetPortAttr(128, 1001, nullptr, 1) == notInitialized);
     Require(sceVoiceGetPortAttr(128, 1001, nullptr, 1) == notInitialized);
     return 0;
 }
