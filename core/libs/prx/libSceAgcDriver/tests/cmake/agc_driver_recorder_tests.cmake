@@ -281,6 +281,15 @@ if(BUILD_TESTING)
         set_tests_properties(agc_storage_baseline_settled PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_bda_staging_overlap_barrier COMMAND agc_driver_recorder_tests --bda-staging-overlap-only)
+    set_tests_properties(agc_bda_staging_overlap_barrier PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
+        ENVIRONMENT "VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT"
+        ENVIRONMENT_MODIFICATION "APS5_NO_BATCHED_STAGING=unset:;APS5_BARRIER_VALIDATE=unset:"
+        FAIL_REGULAR_EXPRESSION "SYNC-HAZARD-")
+    if(WIN32)
+        set_property(TEST agc_bda_staging_overlap_barrier APPEND PROPERTY ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_bda_staging COMMAND agc_driver_recorder_tests --bda-staging-only)
     set_tests_properties(agc_bda_staging PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
