@@ -31,8 +31,13 @@
  *
  * The Original Code is the cairo graphics library.
  *
- * The Initial Developers of the Original Code are University of Southern
- * California, Mozilla Foundation and Chris Wilson.
+ * src/cairo-spline.c:
+ * The Initial Developer of the Original Code is University of Southern
+ * California.
+ * src/cairo-fixed-private.h:
+ * The Initial Developer of the Original Code is Mozilla Foundation
+ * src/cairo-path-in-fill.c:
+ * The Initial Developer of the Original Code is Chris Wilson.
  *
  * Contributor(s):
  *	Carl D. Worth <cworth@cworth.org>
