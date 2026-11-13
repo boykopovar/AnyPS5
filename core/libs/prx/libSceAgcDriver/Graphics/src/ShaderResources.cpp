@@ -15,6 +15,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include <algorithm>
 #include <atomic>
 #include <bit>
@@ -546,6 +547,8 @@ struct LookupRecord {
     std::uint64_t generation;
     const StorageTexture* source;
     bool depth = false;
+    std::uint64_t committedGeneration = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> committed;
 };
 
 thread_local std::vector<LookupRecord>* lookupLogSlot = nullptr;
@@ -1219,7 +1222,12 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
                 it->committed = std::move(committed);
                 it->untracked = untracked;
                 touchTexture(cache, it);
-                logLookup({it->texture.get(), resource, guestBytes, *keys, generation, nullptr});
+                LookupRecord record{it->texture.get(), resource, guestBytes, *keys, generation, nullptr};
+                if (generation == 0 && it->committed.has_value()) {
+                    record.committedGeneration = snapshotGeneration;
+                    record.committed = *it->committed;
+                }
+                logLookup(record);
                 reportTextureCounters();
                 if (profile) LookupOutcomes::Add(LookupOutcomes::SampledHitSnapshot, start);
                 return it->texture;
@@ -1297,9 +1305,17 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     }
     const auto budget = sampledBudget(context, cache);
     auto texture = entry.texture;
+    const auto madeRecord = [&] {
+        LookupRecord record{texture.get(), resource, guestBytes, *keys, generation, source.get()};
+        if (source == nullptr && generation == 0 && entry.committed.has_value()) {
+            record.committedGeneration = entry.generation;
+            record.committed = *entry.committed;
+        }
+        return record;
+    };
     if (!admitTexture(cache, key, entry.accounted, budget)) {
         noteReleased(texture, resource.baseAddress);
-        logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
+        logLookup(madeRecord());
         reportCacheCounts(cache, budget);
         reportTextureCounters();
         if (profile) LookupOutcomes::Add(source != nullptr ? LookupOutcomes::SampledMadeView : LookupOutcomes::SampledMadeSnapshot, start);
@@ -1308,7 +1324,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     cache.bytes += entry.accounted;
     entry.present = Recorder::Presents();
     ++cache.counts.inserted;
-    logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
+    logLookup(madeRecord());
     cache.entries.push_front(std::move(entry));
     cache.index[key] = cache.entries.begin();
     if (source != nullptr) cache.views.emplace(source.get(), cache.entries.begin());
@@ -2242,6 +2258,17 @@ bool CachedTableTextures(const ReusedTable& table, std::vector<std::shared_ptr<T
         touchTexture(cache, it);
     }
     return true;
+}
+
+void logTableLookups(const ReusedTable& table, const std::vector<std::shared_ptr<Texture>>& cached) {
+    if (RuntimeSwitches::Set(RuntimeSwitch::NoExtendedFastProofs)) return;
+    std::size_t kept = 0;
+    for (const auto& element : table.elements) {
+        if (element.rejected || element.live) continue;
+        if (kept >= cached.size() || kept >= table.queries.size()) return;
+        logLookup({cached[kept].get(), element.resource, element.guestBytes, DccKeys::Uncompressed, table.queries[kept].generation, nullptr});
+        ++kept;
+    }
 }
 
 void RememberTable(ReusedTable&& table, const ShaderRecompiler::DescriptorBinding& binding) {
@@ -3572,7 +3599,7 @@ void ShaderResources::captureValidation() {
     for (std::size_t i = 0; i < textures.size(); ++i) {
         if (indices[i] == log.size()) continue;
         const auto& found = log[indices[i]];
-        validatedTextures[i] = {found.resource, found.bytes, found.keys, found.generation, 0, found.source, found.depth, true};
+        validatedTextures[i] = {found.resource, found.bytes, found.keys, found.generation, 0, found.source, found.depth, true, found.committedGeneration, found.committed};
     }
     lookupLog().clear();
     const auto trim = [](auto& scratch) {
@@ -3673,6 +3700,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         const auto i = elementAt(k);
         auto& surface = validatedTextures[i];
         if (!surface.valid) return fail(FastFail::NoRecord);
+        surface.committedProved = false;
         if (surface.depth) {
             if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
             continue;
@@ -3682,6 +3710,16 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         const auto bytes = static_cast<std::size_t>(surface.bytes);
         if (!FlushDepthPlanes(address, bytes).empty()) return fail(FastFail::Changed);
         surface.collected = GuestMemory::CollectWrites(address, bytes);
+        if (surface.collected == 0 && surface.generation == 0 && surface.committedGeneration != 0 && surface.source == nullptr && !RuntimeSwitches::Set(RuntimeSwitch::NoExtendedFastProofs)) {
+            struct CommittedTag {};
+            auto& ranges = ThreadScratch<std::vector<std::pair<std::uint64_t, std::uint64_t>>, CommittedTag>();
+            const auto partial = GuestMemory::CollectCommittedWrites(address, bytes, ranges);
+            if (partial != 0 && ranges == surface.committed) {
+                if (Recorder::SnapshotWriteOverlaps(address, bytes) || !GuestMemory::UnchangedCommittedSince(surface.committed, surface.committedGeneration)) return fail(FastFail::Changed);
+                surface.collected = partial;
+                surface.committedProved = true;
+            }
+        }
         if (surface.collected == 0) {
             countCollectRefusal(false, address, bytes);
             return fail(FastFail::Collect);
@@ -3725,7 +3763,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
             if (!source->Cached()) return fail(FastFail::Evicted);
             queries.push_back({address, bytes, source->GenerationFor(address, bytes)});
             images.push_back(source);
-        } else {
+        } else if (!surface.committedProved) {
             queries.push_back({address, bytes, surface.generation});
         }
     }
@@ -3803,7 +3841,10 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     for (std::size_t k = 0; k < elementCount; ++k) {
         const auto i = elementAt(k);
         auto& surface = validatedTextures[i];
-        if (surface.source == nullptr) surface.generation = surface.collected;
+        if (surface.source == nullptr) {
+            if (surface.committedProved) surface.committedGeneration = surface.collected;
+            else surface.generation = surface.collected;
+        }
         surface.keys = scannedKeys[i];
     }
     return true;
@@ -4222,7 +4263,7 @@ bool ShaderResources::reresolveElements(const std::vector<std::size_t>& elements
             lookupLog().clear();
             return false;
         }
-        validatedTextures[i] = {found->resource, found->bytes, found->keys, found->generation, 0, found->source, found->depth, true};
+        validatedTextures[i] = {found->resource, found->bytes, found->keys, found->generation, 0, found->source, found->depth, true, found->committedGeneration, found->committed};
     }
     lookupLog().clear();
     return true;
@@ -4460,6 +4501,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             if (images == nullptr || images->count != table.elementTextures.size()) return false;
             std::vector<std::shared_ptr<Texture>> cached;
             if (auto* reused = FindReusedTable(context.device, *images, CurrentTableState()); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
+                logTableLookups(*reused, cached);
                 auto next = cached.begin();
                 bool same = true;
                 for (std::uint32_t element = 0; same && element < images->count; ++element) {
@@ -6324,6 +6366,7 @@ void ShaderResources::resolveImageTables() {
             if (landed && CurrentTableState() != state) reused = nullptr;
         }
         if (reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
+            logTableLookups(*reused, cached);
             const bool replay = TableReplay() && reused->replayable && reused->imageSamplers == binding.imageSamplers && reused->samplers == samplerKey;
             if (!replay) reused->bound.assign(binding.count, {});
             auto next = cached.begin();
