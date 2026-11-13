@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -29,6 +30,7 @@ using namespace SceVideodec2;
 using namespace H264Fixture;
 using namespace HevcFixture;
 
+constexpr std::uint32_t CodecAvc = 1;
 constexpr std::uint32_t CodecHevc = 974921;
 constexpr std::uint32_t CodecVp9 = 2382845;
 
@@ -188,8 +190,20 @@ void testFailures() {
     config.codecType = 1;
     config.maxFrameWidth = 0;
     checkThrows([&] { sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory); });
+    check(memory.cpuMemorySize != 0 && memory.maxFrameBufferSize == 0, "invalid dimensions keep the work sizes written before the throw");
     config.maxFrameWidth = Width;
+    errno = 71;
+    checkThrows([&] { sceVideodec2QueryDecoderMemoryInfo_nid_postfix(reinterpret_cast<const DecoderConfigInfo*>(0x10), &memory); });
+    checkThrows([&] { sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, reinterpret_cast<DecoderMemoryInfo*>(0x10)); });
+    check(errno == 71, "memory query preserves errno");
+    check(memory.maxFrameBufferSize == 0, "an unreadable config writes nothing");
     check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory) == 0, "memory query failed");
+    check(memory.thisSize == sizeof(DecoderMemoryInfo) && memory.maxFrameBufferSize != 0 && memory.frameBufferAlignment != 0, "memory query fills the sizes");
+    errno = 71;
+    checkThrows([&] { sceVideodec2CreateDecoder_nid_postfix(reinterpret_cast<const DecoderConfigInfo*>(0x10), &memory, &handle); });
+    checkThrows([&] { sceVideodec2CreateDecoder_nid_postfix(&config, reinterpret_cast<const DecoderMemoryInfo*>(0x10), &handle); });
+    checkThrows([&] { sceVideodec2CreateDecoder_nid_postfix(&config, &memory, reinterpret_cast<std::uint64_t*>(0x10)); });
+    check(errno == 71, "preserves errno");
     check(sceVideodec2CreateDecoder_nid_postfix(&config, &memory, &handle) == 0, "decoder creation failed");
     std::vector<std::uint8_t> storage;
     const auto buffer = AlignedFrameStorage(storage, memory.maxFrameBufferSize, memory.frameBufferAlignment);
@@ -765,6 +779,27 @@ void testAvcPictureMetadata() {
         expected.maxDecFrameBuffering = 16;
         check(hash(output) == hashes[picture] && avcFields(queryAvc(output)) == avcFields(expected), "AVC picture " + std::to_string(picture) + " with an inferred DPB size differs");
     }) == ippp.size(), "AVC pictures with an inferred DPB size are missing");
+
+    std::vector<AvcPictureInfo> plain;
+    decodeAll(66, ippp, [&](const OutputInfo& output, std::size_t) { plain.push_back(queryAvc(output)); });
+    check(plain.size() == ippp.size() && ippp[2][4] == 0x09, "the IPPP fixture's third unit does not open with its delimiter");
+    auto samePps = ippp;
+    const std::array<std::uint8_t, 8> chromaOffset{0, 0, 0, 1, 0x68, 0xce, 0x0f, 0xc8};
+    samePps[2].insert(samePps[2].begin() + 6, chromaOffset.begin(), chromaOffset.end());
+    check(decodeAll(66, samePps, [&](const OutputInfo& output, std::size_t picture) {
+        auto expected = plain[picture];
+        if (picture == 2) expected.pictureParameterSetPresentFlag = 1;
+        check(avcFields(queryAvc(output)) == avcFields(expected), "AVC picture " + std::to_string(picture) + " after a PPS replaced under the same SPS differs");
+    }) == ippp.size(), "AVC pictures after a PPS replaced under the same SPS are missing");
+    auto otherSps = ippp;
+    const std::array<std::uint8_t, 35> secondSpsAndPps{0, 0, 0, 1, 0x67, 0x42, 0xc0, 0x0a, 0x56, 0x84, 0x7b, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00, 0x10, 0x00, 0x00, 0x03, 0x03, 0xc0, 0xf1, 0x22, 0x6a,
+        0, 0, 0, 1, 0x68, 0xa3, 0x83, 0xcb, 0x20};
+    otherSps[2].insert(otherSps[2].begin() + 6, secondSpsAndPps.begin(), secondSpsAndPps.end());
+    check(decodeAll(66, otherSps, [&](const OutputInfo& output, std::size_t picture) {
+        check(hash(output) == hashes[picture], "AVC picture " + std::to_string(picture) + " decodes differently after a PPS moved to an identical SPS 1");
+        if (picture < 2) check(avcFields(queryAvc(output)) == avcFields(plain[picture]), "AVC picture " + std::to_string(picture) + " before a PPS moved to another SPS differs");
+        else checkUnprojected(output, sizeof(AvcPictureInfo));
+    }) == ippp.size(), "AVC pictures after a PPS moved to another SPS are missing");
 }
 
 void testEmptyAccessUnit() {
@@ -1039,18 +1074,93 @@ void testConcurrentOwnership() {
     check(sceVideodec2DeleteDecoder_nid_postfix(keeper) == 0, "delete failed");
 }
 
+void testParameterSetsBound() {
+    constexpr std::uint8_t DifferentParameters[] = {
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x0a, 0xda, 0x11,
+        0xec, 0x04, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00,
+        0x0f, 0x03, 0xc4, 0x89, 0xa8, 0x00, 0x00, 0x00, 0x01, 0x68,
+        0xce, 0x0f, 0x2c, 0x80,
+    };
+    const DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, CodecAvc, 1, 0, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 1};
+    DecoderMemoryInfo memory{sizeof(DecoderMemoryInfo)};
+    check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory) == 0, "memory query failed");
+    std::uint64_t handle = 0;
+    check(sceVideodec2CreateDecoder_nid_postfix(&config, &memory, &handle) == 0, "decoder creation failed");
+    std::vector<std::uint8_t> storage;
+    const auto buffer = AlignedFrameStorage(storage, memory.maxFrameBufferSize, memory.frameBufferAlignment);
+    auto units = accessUnits(false);
+    auto first = units.front();
+    std::size_t slice = 0;
+    for (std::size_t index = 0; index + 3 < first.size(); ++index) {
+        if (first[index] != 0 || first[index + 1] != 0 || first[index + 2] != 1) continue;
+        const auto type = first[index + 3] & 0x1fu;
+        if (type >= 1 && type <= 5) {
+            slice = index > 0 && first[index - 1] == 0 ? index - 1 : index;
+            break;
+        }
+        index += 2;
+    }
+    check(slice != 0, "first access unit missing slice");
+    const std::vector<std::uint8_t> validParameters(first.begin(), first.begin() + static_cast<std::ptrdiff_t>(slice));
+    first.erase(first.begin(), first.begin() + static_cast<std::ptrdiff_t>(slice));
+    const InputData paramInput{sizeof(InputData), validParameters.data(), validParameters.size(), 999, 0, 0x9f};
+    FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
+    OutputInfo output{sizeof(OutputInfo)};
+    check(sceVideodec2Decode_nid_postfix(handle, &paramInput, &frame, &output) == 0, "valid parameter unit failed");
+    check(!output.isValid && !frame.isAccepted, "parameter unit produced picture");
+    std::vector<std::uint8_t> largeParameters(2u * 1024u * 1024u + 1u);
+    for (std::size_t offset = 0; offset + sizeof(DifferentParameters) <= largeParameters.size(); offset += sizeof(DifferentParameters)) {
+        std::memcpy(largeParameters.data() + offset, DifferentParameters, sizeof(DifferentParameters));
+    }
+    const InputData largeInput{sizeof(InputData), largeParameters.data(), largeParameters.size(), 1000, 0, 0};
+    bool threw = false;
+    try {
+        sceVideodec2Decode_nid_postfix(handle, &largeInput, &frame, &output);
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()) == "Videodec2: invalid access unit";
+    }
+    check(threw, "oversized parameter unit did not throw");
+    const InputData sliceInput{sizeof(InputData), first.data(), first.size(), 1001, 0, 0xa0};
+    check(sceVideodec2Decode_nid_postfix(handle, &sliceInput, &frame, &output) == 0, "slice decode failed after rejected parameter unit");
+    if (!output.isValid) check(sceVideodec2Flush_nid_postfix(handle, &frame, &output) == 0, "flush failed");
+    check(output.isValid && frame.isAccepted, "slice failed to produce picture");
+    auto expected = streamRecord(DisplayOrderUnits[0]);
+    expected.sequenceParameterSetPresentFlag = 0;
+    expected.pictureParameterSetPresentFlag = 0;
+    expected.auDelimiterPresentFlag = 0;
+    expected.ptsData = 1001;
+    expected.dtsData = 0;
+    expected.attachedData = 0xa0;
+    check(avcFields(queryAvc(output)) == avcFields(expected), "AVC picture info differs from original staged state");
+    check(sceVideodec2Reset_nid_postfix(handle) == 0, "reset failed");
+    check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
+}
+
 }
 
 void testComputeQueues() {
     SceVideodec2::ComputeMemoryInfo memory{sizeof(SceVideodec2::ComputeMemoryInfo), 0, nullptr};
-    checkThrows([] { sceVideodec2QueryComputeMemoryInfo_nid_postfix(nullptr); });
+    check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(nullptr) == static_cast<int>(0x811D0102u), "a null compute memory info must be refused");
+    errno = 71;
+    check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(reinterpret_cast<SceVideodec2::ComputeMemoryInfo*>(0x10)) == static_cast<int>(0x811D0102u), "an unmapped compute memory info must be refused");
+    check(errno == 71, "errno mutated on unmapped compute memory info refusal");
+    SceVideodec2::ComputeMemoryInfo shortInfo{0x10, 0x5a5a5a5a5a5a5a5aull, nullptr};
+    check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(&shortInfo) == static_cast<int>(0x811D0101u) && shortInfo.cpuGpuMemorySize == 0x5a5a5a5a5a5a5a5aull, "a 16-byte compute memory info must be refused");
+    SceVideodec2::ComputeMemoryInfo highInfo{0xcccccccc00000018ull, 0x5a5a5a5a5a5a5a5aull, nullptr};
+    check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(&highInfo) == static_cast<int>(0x811D0101u) && highInfo.cpuGpuMemorySize == 0x5a5a5a5a5a5a5a5aull, "the size check must read all 64 bits");
     check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(&memory) == 0 && memory.cpuGpuMemorySize == (1u << 20u), "the compute work memory is not 1 MiB");
+    check(sceVideodec2ReleaseComputeQueue_nid_postfix(0) == static_cast<int>(0x811D0110u), "releasing queue 0 must be refused");
     const SceVideodec2::ComputeConfigInfo config{sizeof(SceVideodec2::ComputeConfigInfo), 0, 0, false};
     std::uint64_t first = 0;
     std::uint64_t second = 0;
     checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(nullptr, &memory, &first); });
     checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, nullptr, &first); });
     checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, nullptr); });
+    errno = 71;
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(reinterpret_cast<const SceVideodec2::ComputeConfigInfo*>(0x10), &memory, &first); });
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, reinterpret_cast<const SceVideodec2::ComputeMemoryInfo*>(0x10), &first); });
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, reinterpret_cast<std::uint64_t*>(0x10)); });
+    check(errno == 71, "preserves errno");
     check(first == 0, "a rejected allocation wrote a queue");
     check(sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, &first) == 0 && first != 0, "the first compute queue was not allocated");
     check(sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, &second) == 0 && second != 0 && second != first, "a second compute queue repeats the first");
@@ -1097,6 +1207,7 @@ int main() {
         testFlushAfterEveryUnit();
         testPictureOwnership();
         testConcurrentOwnership();
+        testParameterSetsBound();
         std::puts("Videodec2 tests passed");
         return 0;
     } catch (const std::exception& error) {

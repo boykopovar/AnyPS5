@@ -4,6 +4,7 @@
 #include <atomic>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/PrimedSharedMutex.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <chrono>
@@ -15,7 +16,6 @@
 #include <thread>
 #include <unordered_map>
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
 
 static constexpr int SCE_OK = 0;
@@ -97,7 +97,7 @@ struct EventFlagHandle {
     bool opened = false;
 };
 
-std::shared_mutex eventFlagRegistryMutex;
+PrimedSharedMutex eventFlagRegistryMutex;
 std::unordered_map<KernelEventFlag, std::shared_ptr<EventFlagHandle>> eventFlagRegistry;
 
 std::shared_ptr<EventFlagHandle> ResolveEventFlag(KernelEventFlag handle) {
@@ -138,6 +138,14 @@ static bool IsSatisfied(uint64_t pattern, uint64_t bitPattern, uint32_t waitMode
     return (waitMode & EVF_WAITMODE_AND) ? (pattern & bitPattern) == bitPattern : (pattern & bitPattern) != 0;
 }
 
+static int CopyEventFlagName(const char* name, std::string& copy) {
+    const int error = CopyGuestString_nid_no_patch(name, EVF_NAME_CAPACITY, copy);
+    if (error == 0) return SCE_OK;
+    if (error == 63) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    if (error == 12) return SCE_KERNEL_ERROR_ENOMEM;
+    return SCE_KERNEL_ERROR_EFAULT;
+}
+
 static void Consume(KernelEventFlagPrivate* flag, uint64_t bitPattern, uint32_t waitMode, uint64_t* resultPattern) {
     if (resultPattern) *resultPattern = flag->_pattern;
     if (waitMode & EVF_WAITMODE_CLEAR_ALL) flag->_pattern = 0;
@@ -152,12 +160,13 @@ int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, ui
     if ((attr & EVF_ATTR_SINGLE) && (attr & EVF_ATTR_MULTI)) return SCE_KERNEL_ERROR_EINVAL;
     if ((attr & EVF_ATTR_TH_FIFO) && (attr & EVF_ATTR_TH_PRIO)) return SCE_KERNEL_ERROR_EINVAL;
     if ((attr & ~(EVF_ATTR_TH_FIFO | EVF_ATTR_TH_PRIO | EVF_ATTR_SINGLE | EVF_ATTR_MULTI | EVF_ATTR_SHARED)) != 0) return SCE_KERNEL_ERROR_EINVAL;
-    if (std::strlen(name) >= EVF_NAME_CAPACITY) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    std::string nameCopy;
+    if (const int error = CopyEventFlagName(name, nameCopy)) return error;
     KernelEventFlag handle = nullptr;
     std::shared_ptr<KernelEventFlagPrivate> flag;
     try {
         flag = std::make_shared<KernelEventFlagPrivate>();
-        flag->_name = name;
+        flag->_name = nameCopy;
         flag->_pattern = init_pattern;
         flag->_multipleWaiters = (attr & EVF_ATTR_MULTI) != 0;
         flag->_shared = (attr & EVF_ATTR_SHARED) != 0;
@@ -175,20 +184,21 @@ int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, ui
         return SCE_KERNEL_ERROR_ENOMEM;
     }
     *ef = handle;
-    if (TraceSync()) std::fprintf(stderr, "[evf] create %p '%s' attr=0x%x init=0x%llx\n", static_cast<void*>(handle), name, attr, static_cast<unsigned long long>(init_pattern));
+    if (TraceSync()) std::fprintf(stderr, "[evf] create %p '%s' attr=0x%x init=0x%llx\n", static_cast<void*>(handle), nameCopy.c_str(), attr, static_cast<unsigned long long>(init_pattern));
     return SCE_OK;
 }
 
 int APS5_VABI sceKernelOpenEventFlag(KernelEventFlag* ef, const char* name) {
     if (!name) return SCE_KERNEL_ERROR_EFAULT;
-    if (std::strlen(name) >= EVF_NAME_CAPACITY) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    std::string nameCopy;
+    if (const int error = CopyEventFlagName(name, nameCopy)) return error;
     try {
         std::unique_lock lock(eventFlagRegistryMutex);
         std::shared_ptr<KernelEventFlagPrivate> target;
         for (const auto& [handle, entry] : eventFlagRegistry) {
             if (entry->opened || !entry->flag->_shared) continue;
             std::lock_guard flagLock(entry->flag->_mutex);
-            if (entry->flag->_deleted || entry->flag->_name != name) continue;
+            if (entry->flag->_deleted || entry->flag->_name != nameCopy) continue;
             target = entry->flag;
             break;
         }

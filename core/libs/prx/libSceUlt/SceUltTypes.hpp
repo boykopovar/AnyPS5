@@ -10,9 +10,11 @@
 #include <memory>
 #include <list>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 constexpr int ULT_OK = 0;
 constexpr int ULT_ERROR_NULL = -2139029503;
@@ -34,6 +36,22 @@ inline int InitializeOptParam(UltOptParam* optParam) {
     }
     std::memset(optParam, 0, sizeof(*optParam));
     return ULT_OK;
+}
+
+template <std::size_t Size>
+bool CopyUltName(char (&destination)[Size], const char* name) {
+    if (name == nullptr) return true;
+    std::string copy;
+    const int error = CopyGuestString_nid_no_patch(name, Size - 1, copy);
+    if (error == 63) return GuestCopyIn_nid_no_patch(destination, name, Size - 1);
+    if (error != 0) return false;
+    copy.copy(destination, copy.size());
+    return true;
+}
+
+inline bool ClearUltObject(void* object, std::size_t bytes) {
+    static constexpr std::byte zero[4096]{};
+    return GuestCopyOut_nid_no_patch(object, zero, bytes);
 }
 
 struct alignas(8) UltCommonOptParam {
@@ -362,6 +380,7 @@ struct UltUlthreadState {
     std::atomic<bool> _exited{false};
     char _name[32]{};
     std::uint32_t _contextAttribute = 0;
+    bool _joining = false;
 };
 
 #endif
