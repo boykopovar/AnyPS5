@@ -121,6 +121,7 @@ def package(platform, build, output, version):
         licenses.append((ROOT / "3rdparty/opus/COPYING", "libs/licenses/opus.txt"))
     if "libSceNKWebKitRequirements.prx" in expected:
         licenses.append((ROOT / "3rdparty/sqlite/LICENSE.md", "libs/licenses/sqlite.txt"))
+        licenses.append((ROOT / "3rdparty/libwpe/COPYING", "libs/licenses/libwpe.txt"))
     if "libfontconfig.prx" in expected:
         licenses.append((ROOT / "3rdparty/fontconfig/COPYING", "libs/licenses/fontconfig.txt"))
         licenses.append((ROOT / "core/libs/prx/libfontconfig/Unicode-LICENSE.txt", "libs/licenses/fontconfig-unicode.txt"))

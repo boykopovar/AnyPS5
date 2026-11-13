@@ -7,8 +7,9 @@ set_target_properties(zlibstatic PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIB
 
 include(${CMAKE_SOURCE_DIR}/cmake/LibXml2.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/LibPsl.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/LibWpe.cmake)
 
-add_library(libSceNKWebKitRequirements SHARED EXCLUDE_FROM_ALL Export.cpp Zlib.cpp src/Sqlite.cpp Jpeg.cpp Xml.cpp Psl.cpp)
+add_library(libSceNKWebKitRequirements SHARED EXCLUDE_FROM_ALL Export.cpp Zlib.cpp src/Sqlite.cpp Jpeg.cpp Xml.cpp Psl.cpp Wpe.cpp)
 target_include_directories(libSceNKWebKitRequirements PRIVATE ${LIBS_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/3rdparty/libjpeg-turbo/src
     ${CMAKE_BINARY_DIR}/libjpeg-turbo/include
@@ -18,7 +19,7 @@ target_include_directories(libSceNKWebKitRequirements PRIVATE ${LIBS_INCLUDE_DIR
     ${CMAKE_BINARY_DIR}/3rdparty/libpsl)
 set_target_properties(libSceNKWebKitRequirements PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libSceNKWebKitRequirements)
-target_link_libraries(libSceNKWebKitRequirements PRIVATE sqlite3 zlibstatic jpeg_turbo LibXml2 psl)
+target_link_libraries(libSceNKWebKitRequirements PRIVATE sqlite3 zlibstatic jpeg_turbo LibXml2 psl wpe_key_unicode)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libSceNKWebKitRequirements PRIVATE LINKER:--exclude-libs,ALL)
 endif()
@@ -47,6 +48,17 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
+
+    add_test_executable(guest_nk_req_wpe_tests tests/Wpe.cpp)
+    target_include_directories(guest_nk_req_wpe_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_nk_req_wpe_tests PRIVATE libSceNKWebKitRequirements libc)
+    configure_windows_unwind(guest_nk_req_wpe_tests)
+    add_test(NAME guest_nk_req_wpe COMMAND guest_nk_req_wpe_tests)
+    set_tests_properties(guest_nk_req_wpe PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_nk_req_wpe PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")
+    endif()
 
     add_test_executable(guest_webkit_zlib_tests ${LIBS_INCLUDE_DIR}/tests/GuestWebKitZlib.cpp)
     target_include_directories(guest_webkit_zlib_tests PRIVATE ${LIBS_INCLUDE_DIR})
