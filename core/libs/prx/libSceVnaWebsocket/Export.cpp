@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVnaWebsocket/include/InventoryExports.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -42,14 +43,21 @@ APS5_EXPORT("DP4477brt60", libSceVnaWebsocketUnknown_DP4477brt60_nid_no_patch);
 
 void* APS5_VABI libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch(void* destination, const void* source) {
     if (destination == nullptr || source == nullptr) throw std::invalid_argument("J3fL2giuM+0: null object");
-    auto* to = static_cast<unsigned char*>(destination);
-    const auto* from = static_cast<const unsigned char*>(source);
+    unsigned char buffer[24];
+    const int savedErrno = errno;
+    const bool readSource = GuestCopyIn_nid_no_patch(buffer, source, sizeof(buffer));
+    errno = savedErrno;
+    if (!readSource) throw std::invalid_argument("J3fL2giuM+0: unmapped source");
     unsigned char tail[8];
-    std::memcpy(tail, from + 16, sizeof(tail));
-    std::memcpy(to + 16, tail, sizeof(tail));
+    std::memcpy(tail, buffer + 16, sizeof(tail));
     unsigned char head[16];
-    std::memcpy(head, from, sizeof(head));
-    std::memcpy(to, head, sizeof(head));
+    std::memcpy(head, buffer, sizeof(head));
+    unsigned char output[24];
+    std::memcpy(output + 16, tail, sizeof(tail));
+    std::memcpy(output, head, sizeof(head));
+    const bool wroteDest = GuestCopyOut_nid_no_patch(destination, output, sizeof(output));
+    errno = savedErrno;
+    if (!wroteDest) throw std::invalid_argument("J3fL2giuM+0: unmapped destination");
     return destination;
 }
 APS5_EXPORT("J3fL2giuM+0", libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch);
@@ -106,7 +114,14 @@ APS5_EXPORT("es11O5Z1er4", libSceVnaWebsocketUnknown_es11O5Z1er4_nid_no_patch);
 
 void* APS5_VABI libSceVnaWebsocketUnknown_fxgYzL5aGyw_nid_no_patch(void* destination, const void* source) {
     if (destination == nullptr || source == nullptr) throw std::invalid_argument("fxgYzL5aGyw: null object");
-    std::memmove(destination, source, 44);
+    unsigned char buffer[44];
+    const int savedErrno = errno;
+    const bool readSource = GuestCopyIn_nid_no_patch(buffer, source, sizeof(buffer));
+    errno = savedErrno;
+    if (!readSource) throw std::invalid_argument("fxgYzL5aGyw: unmapped source");
+    const bool wroteDest = GuestCopyOut_nid_no_patch(destination, buffer, sizeof(buffer));
+    errno = savedErrno;
+    if (!wroteDest) throw std::invalid_argument("fxgYzL5aGyw: unmapped destination");
     return destination;
 }
 APS5_EXPORT("fxgYzL5aGyw", libSceVnaWebsocketUnknown_fxgYzL5aGyw_nid_no_patch);
