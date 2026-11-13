@@ -9310,10 +9310,6 @@ int APS5_VABI _ZN7WebCore17LibWebRTCProviderC1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore24parseHEVCCodecParametersERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore21NetworkStorageSession18grantStorageAccessERKNS_17RegistrableDomainES3_N3WTF8OptionalINS4_16ObjectIdentifierINS_19FrameIdentifierTypeEEEEENS6_INS_18PageIdentifierTypeEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
