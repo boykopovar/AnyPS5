@@ -1,92 +1,126 @@
+#include "prx/libSceCommonDialog/include/Exports.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <stdexcept>
+
+namespace {
+
+constexpr int kResult80B8000E = static_cast<int>(0x80B8000Eu);
+
+bool HasClientImplementation(const void* client) {
+    std::uint64_t implementation = 0;
+    if (client == nullptr || !GuestCopyIn_nid_no_patch(&implementation, static_cast<const std::byte*>(client) + 8, sizeof(implementation))) {
+        throw std::invalid_argument("CommonDialogUtil client: unreadable client");
+    }
+    return implementation != 0;
+}
+
+} // namespace
 
 extern "C" {
 
-int APS5_VABI sceCommonDialogPending_001_nid_no_patch() {
+int APS5_VABI _ZN3sce16CommonDialogUtil12getSelfAppIdEv() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("2RdicdHhtGA", sceCommonDialogPending_001_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_002_nid_no_patch() {
+int APS5_VABI _ZN3sce16CommonDialogUtil6Client11closeModuleEv(void* self) {
+    if (!HasClientImplementation(self)) {
+        return kResult80B8000E;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("I+tdxsCap08", sceCommonDialogPending_002_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_003_nid_no_patch() {
+int APS5_VABI _ZN3sce16CommonDialogUtil6Client11updateStateEv(void* self) {
+    if (!HasClientImplementation(self)) {
+        return kResult80B8000E;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("v4+gzuTkv6k", sceCommonDialogPending_003_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_004_nid_no_patch() {
+int APS5_VABI _ZN3sce16CommonDialogUtil6Client15launchCmnDialogEv(void* self) {
+    if (!HasClientImplementation(self)) {
+        return -1;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("CwCzG0nnLg8", sceCommonDialogPending_004_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_005_nid_no_patch() {
+int APS5_VABI _ZN3sce16CommonDialogUtil6ClientD0Ev() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("Ib1SMmbr07k", sceCommonDialogPending_005_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_006_nid_no_patch() {
+int APS5_VABI _ZN3sce16CommonDialogUtil6ClientD1Ev() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("6TIMpGvsrC4", sceCommonDialogPending_006_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_007_nid_no_patch() {
+int APS5_VABI _ZN3sce16CommonDialogUtil6ClientD2Ev() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("+UyKxWAnqIU", sceCommonDialogPending_007_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_008_nid_no_patch() {
+int APS5_VABI _ZNK3sce16CommonDialogUtil6Client10isCloseReqEv(const void* self) {
+    if (!HasClientImplementation(self)) {
+        return 0;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("bUCx72-9f0g", sceCommonDialogPending_008_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_009_nid_no_patch() {
+int APS5_VABI _ZNK3sce16CommonDialogUtil6Client13getFinishDataEPvm(const void* self, void* data, std::uint64_t size) {
+    (void)data;
+    (void)size;
+    if (!HasClientImplementation(self)) {
+        return kResult80B8000E;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("xZtXq554Lbg", sceCommonDialogPending_009_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_010_nid_no_patch() {
+int APS5_VABI _ZNK3sce16CommonDialogUtil6Client14getClientStateEv(const void* self) {
+    if (!HasClientImplementation(self)) {
+        return -1;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("C-EZ3PkhibQ", sceCommonDialogPending_010_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_011_nid_no_patch() {
+int APS5_VABI _ZNK3sce16CommonDialogUtil6Client19isInitializedStatusEv(const void* self) {
+    if (!HasClientImplementation(self)) {
+        return 0;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("70niEKUAnZ0", sceCommonDialogPending_011_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_012_nid_no_patch() {
+int APS5_VABI _ZNK3sce16CommonDialogUtil6Client8getAppIdEv(const void* self) {
+    if (!HasClientImplementation(self)) {
+        return -1;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("mdJgdwoM0Mo", sceCommonDialogPending_012_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_013_nid_no_patch() {
+int APS5_VABI _ZNK3sce16CommonDialogUtil6Client8isFinishEv(const void* self) {
+    if (!HasClientImplementation(self)) {
+        return 0;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("87GekE1nowg", sceCommonDialogPending_013_nid_no_patch);
 
-int APS5_VABI sceCommonDialogPending_014_nid_no_patch() {
+int APS5_VABI _ZNK3sce16CommonDialogUtil6Client9getResultEv(const void* self) {
+    if (!HasClientImplementation(self)) {
+        return kResult80B8000E;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("6ljeTSi+fjs", sceCommonDialogPending_014_nid_no_patch);
 
 }

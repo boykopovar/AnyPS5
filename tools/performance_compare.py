@@ -10,6 +10,14 @@ CONTEXT = ("gpu", "driver", "os", "resolution")
 OPTIONAL_STRINGS = ("cpu", "title_id", "title", "content_version")
 OPTIONAL_INTEGERS = ("cpu_threads", "memory_mib")
 PERCENTILES = ("p50", "p90", "p99", "max")
+GRAPHICS_LABELS = {
+    "render_passes": "render passes",
+    "continued_draws": "continued draws",
+    "barriers": "barriers",
+    "merged_barriers": "merged barriers",
+    "copies": "copies",
+    "copy_mib": "copy MiB",
+}
 
 
 def number(value, name):
@@ -77,6 +85,9 @@ def validate(summary):
         raise ValueError("top_phases_ms_per_frame must be an object")
     for name, value in phases.items():
         number(value, f"top_phases_ms_per_frame.{name}")
+    graphics = summary.get("graphics_track", {})
+    if not isinstance(graphics, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in graphics.items()):
+        raise ValueError("graphics_track must map names to non-negative integers")
     return summary
 
 
@@ -128,6 +139,21 @@ def delta(baseline, candidate):
     return {"baseline": baseline, "candidate": candidate, "change": change, "change_pct": percent}
 
 
+def graphics_metrics(summary):
+    track = summary.get("graphics_track")
+    if track is None:
+        return {name: None for name in GRAPHICS_LABELS}
+    presents = summary["presents"]
+    return {
+        "render_passes": track.get("Graphics.RenderPass", 0) / presents,
+        "continued_draws": track.get("Graphics.RenderPass.Continued", 0) / presents,
+        "barriers": sum(value for name, value in track.items() if name.startswith("Graphics.Barrier.")) / presents,
+        "merged_barriers": sum(value for name, value in track.items() if name.startswith("Graphics.BarrierMerged.")) / presents,
+        "copies": track.get("Graphics.Copy", 0) / presents,
+        "copy_mib": track.get("Graphics.Copy.bytes", 0) / presents / (1024 * 1024),
+    }
+
+
 def compare(baseline, candidate):
     metrics = {f"frame_ms.{key}": delta(baseline["frame_ms"][key], candidate["frame_ms"][key])
                for key in PERCENTILES}
@@ -138,6 +164,12 @@ def compare(baseline, candidate):
     after_phases = candidate["top_phases_ms_per_frame"]
     phases = {name: delta(before_phases.get(name), after_phases.get(name))
               for name in sorted(before_phases.keys() | after_phases.keys())}
+    before_workers, after_workers = baseline["worker_busy_pct"], candidate["worker_busy_pct"]
+    workers = {name: delta(before_workers.get(name), after_workers.get(name))
+               for name in sorted(before_workers.keys() | after_workers.keys())}
+    before_graphics = graphics_metrics(baseline)
+    after_graphics = graphics_metrics(candidate)
+    graphics = {name: delta(before_graphics[name], after_graphics[name]) for name in GRAPHICS_LABELS}
     contexts = []
     for summary in (baseline, candidate):
         context = {key: summary[key] for key in CONTEXT}
@@ -152,7 +184,11 @@ def compare(baseline, candidate):
                    if contexts[0].get(key) != contexts[1].get(key)}
     notes = ["Compare captures from the same machine, title, content version and scene; matching recorded metadata cannot verify the physical machine or scene.",
              "Changes are candidate minus baseline. A negative frame-time change means a shorter frame interval.",
-             "A missing top phase is unreported, not zero; its change is unavailable."]
+             "A missing top phase is unreported, not zero; its change is unavailable.",
+             "Worker busy changes are percentage points; change (%) is relative to the baseline. "
+             "Workers are matched by their recorded names; a missing worker is unreported, not idle."]
+    if any(values["baseline"] is not None or values["candidate"] is not None for values in graphics.values()):
+        notes.append("Graphics-track rates are per present; a capture without a graphics track is unknown, not zero.")
     if differences:
         notes.append("Recorded configuration differs; these measurements do not isolate the code change.")
     for label, summary in (("baseline", baseline), ("candidate", candidate)):
@@ -171,7 +207,8 @@ def compare(baseline, candidate):
         if missing:
             notes.append(f"{label}: missing configuration: {', '.join(missing)}.")
     return {"baseline": baseline, "candidate": candidate, "configuration_differences": differences,
-            "metrics_ms": metrics, "top_phases_ms_per_frame": phases, "notes": notes}
+            "metrics_ms": metrics, "top_phases_ms_per_frame": phases, "worker_busy_pct": workers,
+            "graphics_track": graphics, "notes": notes}
 
 
 def cell(value):
@@ -191,13 +228,22 @@ def markdown(report):
         lines.extend(["", "## Configuration differences", "", "| Setting | Baseline | Candidate |", "| --- | --- | --- |"])
         for key, values in report["configuration_differences"].items():
             lines.append(f"| {cell(key)} | {cell(values['baseline'])} | {cell(values['candidate'])} |")
-    for title, key in (("Frame and GPU times (ms)", "metrics_ms"), ("Top phases (ms per frame)", "top_phases_ms_per_frame")):
-        lines.extend(["", f"## {title}", "", "| Metric | Baseline | Candidate | Change | Change (%) |",
+    for title, key, change in (("Frame and GPU times (ms)", "metrics_ms", "Change"),
+                               ("Top phases (ms per frame)", "top_phases_ms_per_frame", "Change"),
+                               ("Worker busy time (%)", "worker_busy_pct", "Change (pp)")):
+        lines.extend(["", f"## {title}", "", f"| Metric | Baseline | Candidate | {change} | Change (%) |",
                       "| --- | ---: | ---: | ---: | ---: |"])
         for name, values in report[key].items():
             columns = ["n/a" if values[field] is None else format(values[field], "+.3f" if field.startswith("change") else ".3f")
                        for field in ("baseline", "candidate", "change", "change_pct")]
             lines.append(f"| {cell(name)} | {' | '.join(columns)} |")
+    if any(values["baseline"] is not None or values["candidate"] is not None for values in report["graphics_track"].values()):
+        lines.extend(["", "## Graphics track (per present)", "", "| Metric | Baseline | Candidate | Change | Change (%) |",
+                      "| --- | ---: | ---: | ---: | ---: |"])
+        for name, values in report["graphics_track"].items():
+            columns = ["n/a" if values[field] is None else format(values[field], "+.3f" if field.startswith("change") else ".3f")
+                       for field in ("baseline", "candidate", "change", "change_pct")]
+            lines.append(f"| {cell(GRAPHICS_LABELS.get(name, name))} | {' | '.join(columns)} |")
     return "\n".join(lines) + "\n"
 
 

@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "AllocationFailure.hpp"
 #include "SlabReturn.hpp"
+#include <array>
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -54,6 +56,7 @@ struct MockDevice {
     std::map<VkDeviceMemory, std::uint32_t> memoryTypes;
     std::map<VkBuffer, std::pair<VkDeviceMemory, VkDeviceSize>> bound;
     std::set<VkBuffer> liveBuffers;
+    std::map<VkImage, VkDeviceSize> imageBytes;
     std::deque<VkResult> results;
     VkDeviceSize limit = 0;
     VkResult pressureResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
@@ -63,6 +66,9 @@ struct MockDevice {
     unsigned binds = 0;
     unsigned maps = 0;
     unsigned unmaps = 0;
+    std::uint32_t typeBits = 3;
+    std::uint64_t lookups = 0;
+    bool anyName = false;
 };
 
 MockDevice mock;
@@ -76,7 +82,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateBuffer(VkDevice, const VkBufferCreateIn
 }
 
 VKAPI_ATTR void VKAPI_CALL mockGetBufferMemoryRequirements(VkDevice, VkBuffer buffer, VkMemoryRequirements* requirements) {
-    *requirements = {mock.sizes.at(buffer), 256, 3};
+    *requirements = {mock.sizes.at(buffer), 256, mock.typeBits};
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
@@ -139,7 +145,45 @@ VKAPI_ATTR VkDeviceAddress VKAPI_CALL mockGetBufferDeviceAddress(VkDevice, const
     return 0x100000000000ULL + reinterpret_cast<std::uintptr_t>(info->buffer) * 0x10000;
 }
 
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateImage(VkDevice, const VkImageCreateInfo* info, const VkAllocationCallbacks*, VkImage* image) {
+    *image = reinterpret_cast<VkImage>(static_cast<std::uintptr_t>(mock.next++));
+    mock.imageBytes[*image] = VkDeviceSize{info->extent.width} * info->extent.height * 4;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockGetImageMemoryRequirements(VkDevice, VkImage image, VkMemoryRequirements* requirements) {
+    *requirements = {mock.imageBytes.at(image), 4096, 1};
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockBindImageMemory(VkDevice, VkImage image, VkDeviceMemory memory, VkDeviceSize offset) {
+    return offset + mock.imageBytes.at(image) <= mock.memoryBytes.at(memory) ? VK_SUCCESS : VK_ERROR_OUT_OF_DEVICE_MEMORY;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateImageView(VkDevice, const VkImageViewCreateInfo*, const VkAllocationCallbacks*, VkImageView* view) {
+    *view = reinterpret_cast<VkImageView>(static_cast<std::uintptr_t>(mock.next++));
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockDestroyImageView(VkDevice, VkImageView, const VkAllocationCallbacks*) {}
+
+VKAPI_ATTR void VKAPI_CALL mockDestroyImage(VkDevice, VkImage image, const VkAllocationCallbacks*) {
+    Expect(mock.imageBytes.erase(image) == 1, "an unknown image was destroyed");
+}
+
+VKAPI_ATTR void VKAPI_CALL mockFormatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
+    *properties = {};
+    properties->optimalTilingFeatures = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockImageFormatProperties(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags, VkImageCreateFlags, VkImageFormatProperties* properties) {
+    *properties = {{16384, 16384, 1}, 1, 1, VK_SAMPLE_COUNT_1_BIT, VkDeviceSize{1} << 32u};
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockUnnamed() {}
+
 PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
+    ++mock.lookups;
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
         {"vkCreateBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCreateBuffer)},
         {"vkGetBufferMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(mockGetBufferMemoryRequirements)},
@@ -150,9 +194,16 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkDestroyBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyBuffer)},
         {"vkFreeMemory", reinterpret_cast<PFN_vkVoidFunction>(mockFreeMemory)},
         {"vkGetBufferDeviceAddressKHR", reinterpret_cast<PFN_vkVoidFunction>(mockGetBufferDeviceAddress)},
+        {"vkCreateImage", reinterpret_cast<PFN_vkVoidFunction>(mockCreateImage)},
+        {"vkGetImageMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(mockGetImageMemoryRequirements)},
+        {"vkBindImageMemory", reinterpret_cast<PFN_vkVoidFunction>(mockBindImageMemory)},
+        {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(mockCreateImageView)},
+        {"vkDestroyImageView", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyImageView)},
+        {"vkDestroyImage", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyImage)},
     };
     const auto it = table.find(name);
-    return it == table.end() ? nullptr : it->second;
+    if (it == table.end()) return mock.anyName ? reinterpret_cast<PFN_vkVoidFunction>(mockUnnamed) : nullptr;
+    return it->second;
 }
 
 VkDeviceMemory MemoryOf(VkBuffer buffer) {
@@ -176,11 +227,15 @@ Context mockContext() {
 
 VkDeviceSize reportedBudget = 0;
 VkDeviceSize reportedUsage = 0;
+VkDeviceSize reportedSecondBudget = 0;
+VkDeviceSize reportedSecondUsage = 0;
 
 VKAPI_ATTR void VKAPI_CALL mockMemoryProperties2(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
     auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
     reported->heapBudget[0] = reportedBudget;
     reported->heapUsage[0] = reportedUsage;
+    reported->heapBudget[2] = reportedSecondBudget;
+    reported->heapUsage[2] = reportedSecondUsage;
 }
 
 std::uint64_t diagnosticBudgetQueries = 0;
@@ -218,17 +273,51 @@ void HostPlacement() {
         placed = MemoryOf(large.Handle());
         Expect(mock.memoryTypes.at(placed) == 1, "a device buffer over the device-local budget was not placed in the host memory type");
     }
-    Expect(!mock.memoryBytes.contains(placed) && mock.liveBuffers.empty(), "a device buffer placed in host memory was kept in the device pool after its release");
+    Expect(mock.memoryBytes.contains(placed), "a device buffer placed in host memory was not kept in the pool after its release");
+    {
+        DeviceBuffer again(context, 176 * MiB, usage);
+        Expect(MemoryOf(again.Handle()) == placed, "a device buffer over the device-local budget did not reuse the retained host-placed buffer");
+    }
     reportedUsage = 200 * MiB;
     VkDeviceMemory device = VK_NULL_HANDLE;
     {
         DeviceBuffer large(context, 176 * MiB, usage);
         device = MemoryOf(large.Handle());
-        Expect(mock.memoryTypes.at(device) == 0, "a device buffer within the device-local budget was not placed in device-local memory");
+        Expect(mock.memoryTypes.at(device) == 0 && device != placed, "a device buffer within the device-local budget reused host memory instead of device-local memory");
     }
     Expect(mock.memoryBytes.contains(device), "a device-local buffer was not kept in the device pool after its release");
     DeviceBuffer again(context, 176 * MiB, usage);
     Expect(MemoryOf(again.Handle()) == device, "a retained device-local buffer was not reused");
+}
+
+std::uint64_t cacheReleases = 0;
+
+VkDeviceSize ReleaseEverything(VkDeviceSize bytes, bool) {
+    ++cacheReleases;
+    return bytes;
+}
+
+void HostSlotBeforeCacheRelease() {
+    mock = MockDevice{};
+    auto context = budgetContext();
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    reportedBudget = 1620 * MiB;
+    reportedUsage = 1600 * MiB;
+    VkDeviceMemory placed = VK_NULL_HANDLE;
+    {
+        DeviceBuffer large(context, 176 * MiB, usage);
+        placed = MemoryOf(large.Handle());
+        Expect(mock.memoryTypes.at(placed) == 1, "a device buffer over the device-local budget was not placed in the host memory type");
+    }
+    context.cacheReclaim = ReleaseEverything;
+    cacheReleases = 0;
+    {
+        DeviceBuffer again(context, 176 * MiB, usage);
+        Expect(MemoryOf(again.Handle()) == placed, "a retained host-placed buffer was passed over for a texture-cache release");
+        Expect(cacheReleases == 0, "taking a retained host-placed buffer asked the texture caches to release memory");
+    }
+    DeviceBuffer fresh(context, 64 * MiB, usage);
+    Expect(mock.memoryTypes.at(MemoryOf(fresh.Handle())) == 0 && cacheReleases == 1, "a new device buffer over the device-local budget did not get device-local memory after the texture caches released room");
 }
 
 void RefusedDevicePlacement() {
@@ -244,9 +333,13 @@ void RefusedDevicePlacement() {
         placed = MemoryOf(refused.Handle());
         Expect(mock.memoryTypes.at(placed) == 1, "a device buffer whose device-local allocation ran out of device memory within the reported budget was not placed in the host memory type");
     }
-    Expect(!mock.memoryBytes.contains(placed) && mock.liveBuffers.empty(), "a device buffer placed in host memory after a refused device-local allocation was kept in the device pool after its release");
+    {
+        DeviceBuffer within(context, 4 * MiB, usage);
+        Expect(MemoryOf(within.Handle()) != placed && mock.memoryTypes.at(MemoryOf(within.Handle())) == 0, "a device buffer within the device-local budget reused a host-placed buffer");
+    }
     mock.results = {VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
     context.memory.memoryHeaps[1].flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+    const auto live = mock.liveBuffers.size();
     bool threw = false;
     try {
         DeviceBuffer refused(context, 9 * MiB, usage);
@@ -254,7 +347,59 @@ void RefusedDevicePlacement() {
         threw = true;
     }
     Expect(threw, "a refused device-local allocation without a host memory type did not fail");
-    Expect(mock.liveBuffers.empty(), "a failed device buffer left its VkBuffer alive");
+    Expect(mock.liveBuffers.size() <= live, "a failed device buffer left its VkBuffer alive");
+}
+
+void StagingHeadroom() {
+    mock = MockDevice{};
+    {
+        auto context = budgetContext();
+        constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        reportedBudget = 2048 * MiB;
+        reportedUsage = 1000 * MiB;
+        VkDeviceMemory retained = VK_NULL_HANDLE;
+        {
+            const auto shadow = Buffer::WithinDeviceLocalHeadroom(context, 24 * MiB, usage);
+            Expect(shadow != nullptr && mock.memoryTypes.at(MemoryOf(shadow->Handle())) == 0, "a staging buffer with room in its heap's budget was not made device-local");
+            if (shadow) retained = MemoryOf(shadow->Handle());
+        }
+        Expect(mock.memoryBytes.contains(retained), "a released staging buffer was not retained by the pool");
+        reportedUsage = 1900 * MiB;
+        const auto made = mock.allocations;
+        const auto buffers = mock.liveBuffers.size();
+        {
+            const auto reused = Buffer::WithinDeviceLocalHeadroom(context, 24 * MiB, usage);
+            Expect(reused != nullptr && MemoryOf(reused->Handle()) == retained && mock.allocations == made, "a retained staging buffer was refused within the last eighth of the budget, although reusing it allocates nothing");
+        }
+        const auto refused = Buffer::WithinDeviceLocalHeadroom(context, 40 * MiB, usage);
+        Expect(refused == nullptr && mock.allocations == made, "a staging buffer that needs a new allocation within the last eighth of its heap's budget was not refused");
+        Expect(mock.liveBuffers.size() == buffers, "a refused staging buffer left its VkBuffer alive");
+    }
+    mock = MockDevice{};
+    {
+        auto context = budgetContext();
+        context.memory.memoryHeapCount = 3;
+        context.memory.memoryHeaps[2] = {2048 * MiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+        context.memory.memoryTypeCount = 3;
+        context.memory.memoryTypes[2] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 2};
+        constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        reportedBudget = 2048 * MiB;
+        reportedSecondBudget = 2048 * MiB;
+        mock.typeBits = 6;
+        const auto make = [&](const char* what, VkDeviceSize firstUsage, VkDeviceSize secondUsage, std::size_t bytes, bool expected) {
+            reportedUsage = firstUsage;
+            reportedSecondUsage = secondUsage;
+            const auto made = mock.allocations;
+            const auto shadow = Buffer::WithinDeviceLocalHeadroom(context, bytes, usage);
+            Expect((shadow != nullptr) == expected, std::string(what) + (expected ? ": refused" : ": made"));
+            if (shadow) Expect(mock.memoryTypes.at(MemoryOf(shadow->Handle())) == 2, std::string(what) + ": not allocated from the second device-local type");
+            else Expect(mock.allocations == made, std::string(what) + ": allocated although refused");
+        };
+        make("the first device-local heap is full, the buffer's mask allows only the second", 1900 * MiB, 1000 * MiB, 24 * MiB + 4096, true);
+        make("the second device-local heap is full, the buffer's mask allows only the second", 1000 * MiB, 1900 * MiB, 40 * MiB, false);
+    }
+    reportedSecondBudget = 0;
+    reportedSecondUsage = 0;
 }
 
 void AttachmentReclaim() {
@@ -937,6 +1082,35 @@ void IdleDeviceReclaim() {
     Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "idle device reclaim leaked an allocation");
 }
 
+void IdleReclaimSkipsHostPlaced() {
+    mock = MockDevice{};
+    {
+        auto context = budgetContext();
+        constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        reportedBudget = 1620 * MiB;
+        reportedUsage = 1600 * MiB;
+        VkDeviceMemory placed = VK_NULL_HANDLE;
+        {
+            DeviceBuffer large(context, 176 * MiB, usage);
+            placed = MemoryOf(large.Handle());
+            Expect(mock.memoryTypes.at(placed) == 1, "the older device buffer was not placed in host memory");
+        }
+        reportedUsage = 200 * MiB;
+        VkDeviceMemory device = VK_NULL_HANDLE;
+        {
+            DeviceBuffer small(context, 4 * MiB, usage);
+            device = MemoryOf(small.Handle());
+            Expect(mock.memoryTypes.at(device) == 0, "the younger device buffer was not placed in device-local memory");
+        }
+        auto& pool = *context.bufferPool;
+        const auto start = std::chrono::steady_clock::time_point{std::chrono::seconds(1)};
+        Expect(pool.ReclaimIdleDevice(MiB, start) == 0, "the first pressure observation reclaimed a buffer");
+        Expect(pool.ReclaimIdleDevice(MiB, start + std::chrono::seconds(1)) == 4 * MiB, "idle device reclaim counted a host-placed buffer as device memory");
+        Expect(mock.memoryBytes.contains(placed) && !mock.memoryBytes.contains(device), "idle device reclaim freed the host-placed buffer instead of the idle device-local one");
+    }
+    Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "host-placed reclaim test leaked an allocation");
+}
+
 void IdleReclaimPreservesWorkingSet() {
     mock = MockDevice{};
     {
@@ -1072,6 +1246,25 @@ void ImageMemoryReclaim() {
         Expect(false, std::string("the cache release of an image did not permit recovery: ") + error.what());
     }
     reclaimImageContext = nullptr;
+}
+
+void RenderTargetMemoryReuse() {
+    mock = MockDevice{};
+    auto context = mockContext();
+    context.formatProperties = mockFormatProperties;
+    context.imageFormatProperties = mockImageFormatProperties;
+    context.limits.maxFramebufferWidth = 16384;
+    context.limits.maxFramebufferHeight = 16384;
+    GetBufferPool(context);
+    ColorTarget color{};
+    color.extent = {3072, 2048};
+    color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    color.bytes = 3072 * 2048 * 4;
+    { RenderTarget first(context, color, true); }
+    Expect(mock.frees == 0 && context.bufferPool->RetainedImages() == 1, "a released render target freed its image memory instead of returning it to the image pool");
+    { RenderTarget second(context, color, true); }
+    Expect(mock.allocations == 1, "a second render target of the same size allocated new image memory instead of the pooled one");
+    Expect(mock.imageBytes.empty(), "a render target leaked its image");
 }
 
 void ImageMemoryOverBudget() {
@@ -1247,7 +1440,7 @@ void MemoryAccountingChecks() {
     reported.heapBudget[0] = 2000 * MiB;
     reported.heapUsage[1] = 32 * MiB;
     reported.heapBudget[1] = 16000 * MiB;
-    MemoryAccounting::Report(context, reported, 100 * MiB, 200 * MiB, 512 * MiB);
+    MemoryAccounting::Report(context, reported, CalculateStorageTextureBudget(context.memory, &reported, 100 * MiB, 200 * MiB));
     ReleaseImageMemory(context, first, 4 * MiB, 0);
     ReleaseImageMemory(other, second, 4 * MiB, 0);
     context.bufferPool.reset();
@@ -1342,9 +1535,97 @@ void MemoryAccountingBudgetCap(bool floor = false) {
     if (floor) context.memory.memoryHeaps[0].size = 256 * MiB;
     VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     reported.heapBudget[0] = (floor ? 256 : 2048) * MiB;
-    const auto selected = StorageTextureBudget(context.memory, &reported, 0, 0);
-    Expect(selected == (floor ? 512 : 1024) * MiB, "an unpressured storage budget did not select its ceiling");
-    MemoryAccounting::Report(context, reported, 0, 0, selected);
+    const auto snapshot = CalculateStorageTextureBudget(context.memory, &reported, 0, 0);
+    Expect(snapshot.selectedBudget == (floor ? 512 : 1024) * MiB, "an unpressured storage budget did not select its ceiling");
+    MemoryAccounting::Report(context, reported, snapshot);
+}
+
+void MemoryAccountingBudgetSnapshot() {
+    Expect(MemoryAccounting::Enabled(), "memory accounting is not enabled");
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    auto context = budgetContext();
+    context.device = reinterpret_cast<VkDevice>(std::uintptr_t{107});
+    context.memory.memoryHeapCount = 3;
+    context.memory.memoryHeaps[0] = {256 * MiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    context.memory.memoryHeaps[1] = {32 * GiB, 0};
+    context.memory.memoryHeaps[2] = {16 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    reported.heapBudget[0] = GiB;
+    reported.heapBudget[1] = 32 * GiB;
+    reported.heapBudget[2] = 10 * GiB;
+    reported.heapUsage[2] = 8 * GiB + 512 * MiB;
+    const auto snapshot = CalculateStorageTextureBudget(context.memory, &reported, GiB, 2 * GiB);
+    Expect(snapshot.heap && *snapshot.heap == 2, "the budget snapshot selected a host heap or a smaller device heap");
+    Expect(snapshot.sampledBytes == GiB && snapshot.storageBytes == 2 * GiB, "the budget snapshot lost its sampled or cached memory input");
+    Expect(snapshot.reserved == 7936 * MiB && snapshot.available == 2304 * MiB && snapshot.ceiling == 5 * GiB && snapshot.selectedBudget == 2304 * MiB, "the budget snapshot lost the non-cache reservation, headroom or pressured selection");
+    Expect(snapshot.selectedBudget == StorageTextureBudget(context.memory, &reported, GiB, 2 * GiB) && snapshot.ceiling == StorageTextureCeiling(context.memory, &reported), "scalar budget queries disagree with their diagnostic snapshot");
+    MemoryAccounting::Report(context, reported, snapshot);
+    const auto unavailable = CalculateStorageTextureBudget(context.memory, nullptr, GiB, 2 * GiB);
+    Expect(!unavailable.heap && unavailable.ceiling == 4 * GiB && unavailable.selectedBudget == 4 * GiB && unavailable.reserved == 0 && unavailable.available == 0, "an unavailable Vulkan budget did not preserve the fallback without reported pressure terms");
+    Expect(unavailable.sampledBytes == GiB && unavailable.storageBytes == 2 * GiB, "a fallback snapshot lost its cache inputs");
+    reported.heapBudget[2] = 0;
+    const auto zeroBudget = CalculateStorageTextureBudget(context.memory, &reported, 0, 0);
+    Expect(!zeroBudget.heap && zeroBudget.selectedBudget == 4 * GiB && zeroBudget.ceiling == 4 * GiB && zeroBudget.reserved == 0 && zeroBudget.available == 0, "a zero budget for the largest heap did not use the fallback");
+    auto small = context.memory;
+    small.memoryHeapCount = 1;
+    reported.heapBudget[0] = 256 * MiB;
+    reported.heapUsage[0] = 300 * MiB;
+    const auto floor = CalculateStorageTextureBudget(small, &reported, 0, 0);
+    Expect(floor.heap && *floor.heap == 0 && floor.reserved == 332 * MiB && floor.available == 0 && floor.ceiling == 512 * MiB && floor.selectedBudget == 512 * MiB, "a heap over its budget lost saturating availability or the shared ceiling and selection floor");
+    if (failures == 0) std::puts("storage budget snapshots preserve pressure, fallbacks and the floor");
+}
+
+void TableFill() {
+    mock = MockDevice{};
+    mock.anyName = true;
+    const auto context = mockContext();
+    DeviceFunctions filled{};
+    FillDeviceFunctions(context, filled);
+    mock.anyName = false;
+    const std::array<std::pair<bool, const char*>, 8> entries{{
+        {filled.createBuffer == mockCreateBuffer, "vkCreateBuffer"},
+        {filled.destroyBuffer == mockDestroyBuffer, "vkDestroyBuffer"},
+        {filled.getBufferMemoryRequirements == mockGetBufferMemoryRequirements, "vkGetBufferMemoryRequirements"},
+        {filled.bindBufferMemory == mockBindBufferMemory, "vkBindBufferMemory"},
+        {filled.allocateMemory == mockAllocateMemory, "vkAllocateMemory"},
+        {filled.freeMemory == mockFreeMemory, "vkFreeMemory"},
+        {filled.mapMemory == mockMapMemory, "vkMapMemory"},
+        {filled.unmapMemory == mockUnmapMemory, "vkUnmapMemory"},
+    }};
+    for (const auto& [same, name] : entries) Expect(same, std::string("the device function table's member for ") + name + " was not filled from that name");
+}
+
+void TableLookups() {
+    mock = MockDevice{};
+    auto context = mockContext();
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    std::size_t round = 0;
+    const auto cycle = [&](const Context& owner) {
+        ++round;
+        for (const std::size_t size : {std::size_t{200}, std::size_t{300}}) {
+            Buffer host(owner, size + round * 8, usage);
+            DeviceBuffer device(owner, (size + round * 8) * 1024, usage);
+        }
+    };
+    cycle(context);
+    const auto untabled = mock.lookups;
+    cycle(context);
+    Expect(mock.lookups > untabled, "a buffer cycle of new sizes without a device function table looked nothing up by name, so the tabled count proves nothing");
+    DeviceFunctions table{};
+    table.createBuffer = mockCreateBuffer;
+    table.destroyBuffer = mockDestroyBuffer;
+    table.getBufferMemoryRequirements = mockGetBufferMemoryRequirements;
+    table.bindBufferMemory = mockBindBufferMemory;
+    table.allocateMemory = mockAllocateMemory;
+    table.freeMemory = mockFreeMemory;
+    table.mapMemory = mockMapMemory;
+    table.unmapMemory = mockUnmapMemory;
+    auto tabled = context;
+    tabled.functions = &table;
+    cycle(tabled);
+    const auto before = mock.lookups;
+    cycle(tabled);
+    Expect(mock.lookups == before, "a host and a device buffer cycle of new sizes looked up " + std::to_string(mock.lookups - before) + " Vulkan functions by name while the device's function table holds them");
 }
 
 int main(int argc, char** argv) {
@@ -1361,6 +1642,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--memory-accounting-budget-floor") {
             MemoryAccountingBudgetCap(true);
+            return failures == 0 ? 0 : 1;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--memory-accounting-budget-snapshot") {
+            MemoryAccountingBudgetSnapshot();
             return failures == 0 ? 0 : 1;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--small-device-retention") {
@@ -1384,6 +1669,8 @@ int main(int argc, char** argv) {
         SizeClassesAndDirections();
         LargerClass();
         ExactSizeReuse();
+        TableFill();
+        TableLookups();
         KeptUntilFence();
         SmallDeviceRetention();
         Budget();
@@ -1413,9 +1700,13 @@ int main(int argc, char** argv) {
         ImageCacheReclaim();
         ImageMemoryReuse();
         ImageMemoryReclaim();
+        RenderTargetMemoryReuse();
         ImageMemoryOverBudget();
         HostPlacement();
+        HostSlotBeforeCacheRelease();
         RefusedDevicePlacement();
+        IdleReclaimSkipsHostPlaced();
+        StagingHeadroom();
         AttachmentReclaim();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

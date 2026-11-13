@@ -18,6 +18,7 @@ constexpr int kNotInit = static_cast<int>(0x80EE0001);
 constexpr int kAlreadyInit = static_cast<int>(0x80EE0002);
 constexpr int kInvalidArg = static_cast<int>(0x80EE0003);
 constexpr int kInvalidHandle = static_cast<int>(0x80EE0004);
+constexpr int kMaxCombined = static_cast<int>(0x80EE0005);
 constexpr int kAlreadyOpened = static_cast<int>(0x80EE0007);
 constexpr std::int32_t kUserId = 0x10000000;
 constexpr std::int32_t kFirstHandle = 0x30B0100;
@@ -78,6 +79,22 @@ void RequireNotInit(std::int32_t handle) {
     Require(sceMoveSetVibration(handle, 0xFF) == kNotInit);
     Require(sceMoveSetLightSphere(handle, 0xFF, 0, 0) == kNotInit);
     Require(sceMoveResetLightSphere(handle) == kNotInit);
+    std::uint64_t address = 0x5a5a5a5a5a5a5a5a;
+    std::uint32_t deviceId = 0x5a5a5a5a;
+    Require(sceMoveGetBluetoothAddress(handle, &address) == kNotInit);
+    Require(sceMoveGetBluetoothAddress(handle, nullptr) == kNotInit);
+    Require(sceMoveGetCalibrationInfo(handle, buffer.bytes) == kNotInit);
+    Require(sceMoveGetCalibrationInfo(handle, nullptr) == kNotInit);
+    Require(sceMoveGetDeviceId(handle, &deviceId) == kNotInit);
+    Require(sceMoveGetDeviceId(handle, nullptr) == kNotInit);
+    Require(sceMoveIsReproductionModel() == kNotInit);
+    Require(sceMoveIsValidHandle(handle) == 0);
+    Require(sceMoveReadStateRecentForTracker() == kNotInit);
+    Require(sceMoveSetCalibrationMode(handle, 1) == kNotInit);
+    Require(address == 0x5a5a5a5a5a5a5a5a && deviceId == 0x5a5a5a5a);
+    Require(sceMoveSetExtensionPortOutput() == kNotInit);
+    Require(sceMoveSetLightSphereForTracker() == kNotInit);
+    Require(sceMoveWriteCalibrationInfo() == kNotInit);
     Require(sceMoveTerm() == kNotInit);
     Require(buffer.Untouched());
     Require(count == -7);
@@ -99,6 +116,17 @@ void RequireUnknownHandle(std::int32_t handle) {
     Require(sceMoveReadStateLatest(handle, nullptr) == kInvalidArg);
     Require(sceMoveReadStateRecent(handle, -1, buffer.bytes, &count) == kInvalidArg);
     Require(sceMoveReadStateRecent(handle, 0, buffer.bytes, nullptr) == kInvalidArg);
+    std::uint64_t address = 0x5a5a5a5a5a5a5a5a;
+    std::uint32_t deviceId = 0x5a5a5a5a;
+    Require(sceMoveGetBluetoothAddress(handle, &address) == kInvalidHandle);
+    Require(sceMoveGetBluetoothAddress(handle, nullptr) == kInvalidArg);
+    Require(sceMoveGetCalibrationInfo(handle, buffer.bytes) == kInvalidHandle);
+    Require(sceMoveGetCalibrationInfo(handle, nullptr) == kInvalidArg);
+    Require(sceMoveGetDeviceId(handle, &deviceId) == kInvalidHandle);
+    Require(sceMoveGetDeviceId(handle, nullptr) == kInvalidArg);
+    Require(sceMoveSetCalibrationMode(handle, 1) == kInvalidHandle);
+    Require(sceMoveIsValidHandle(handle) == 0);
+    Require(address == 0x5a5a5a5a5a5a5a5a && deviceId == 0x5a5a5a5a);
     Require(buffer.Untouched());
     Require(count == -7);
 }
@@ -154,6 +182,14 @@ int main() {
     Require(sceMoveSetVibration(first, 0xFF) == kNoControllerConnected);
     Require(sceMoveSetLightSphere(first, 0, 0xFF, 0) == kNoControllerConnected);
     Require(sceMoveResetLightSphere(first) == kOk);
+    Require(sceMoveIsValidHandle(first) == 1);
+    Require(sceMoveIsValidHandle(second) == 1);
+    Require(sceMoveIsValidHandle(first + 1) == 0);
+    Require(sceMoveSetCalibrationMode(first, 1) == kOk);
+    Require(sceMoveSetCalibrationMode(first, -5) == kOk);
+    Require(sceMoveGetBluetoothAddress(first, nullptr) == kInvalidArg);
+    Require(sceMoveGetCalibrationInfo(first, nullptr) == kInvalidArg);
+    Require(sceMoveGetDeviceId(first, nullptr) == kInvalidArg);
 
     Require(sceMoveClose(first) == kOk);
     RequireUnknownHandle(first);
@@ -170,5 +206,17 @@ int main() {
     const std::int32_t third = sceMoveOpen(kUserId, 0, 0);
     Require(third == kFirstHandle + 3 * kHandleStep);
     Require(sceMoveClose(third) == kOk);
+
+    std::array<std::int32_t, 8> slots{};
+    int slotIndex = 0;
+    for (int t = 0; t < 2; ++t) {
+        for (int i = 0; i < 4; ++i) {
+            slots[slotIndex++] = sceMoveOpen(kUserId, t, i);
+        }
+    }
+    for (const auto h : slots) Require(h > 0);
+    Require(sceMoveOpen(kUserId, 2, 0) == kMaxCombined);
+    for (const auto h : slots) Require(sceMoveClose(h) == kOk);
+
     Require(sceMoveTerm() == kOk);
 }

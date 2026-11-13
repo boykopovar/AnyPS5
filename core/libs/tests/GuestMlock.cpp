@@ -23,20 +23,9 @@
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-static void RequireLockAllInvalid(int flags) {
+static void RequireLockAllDenied(int flags) {
     *__error_nid_postfix() = 0;
-    Require(mlockall_nid_postfix(flags) == -1 && *__error_nid_postfix() == 22);
-}
-
-static void RequireLockAllUnsupported(int flags) {
-    bool rejected = false;
-    try {
-        mlockall_nid_postfix(flags);
-
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-    Require(rejected);
+    Require(mlockall_nid_postfix(flags) == -1 && *__error_nid_postfix() == 1);
 }
 
 #if defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
@@ -77,67 +66,67 @@ int main() {
     auto* bytes = static_cast<unsigned char*>(mapped);
 
     *__error_nid_postfix() = untouched;
-    Require(mlock_nid_postfix(mapped, 0) == 0);
+    Require(sceKernelMlock_nid_postfix(mapped, 0) == 0);
     Require(*__error_nid_postfix() == untouched);
 #ifdef HAS_LOCKED_KILOBYTES
     const auto lockedBefore = LockedKilobytes();
 #endif
-    Require(mlock_nid_postfix(bytes + 1, length - page) == 0);
+    Require(sceKernelMlock_nid_postfix(bytes + 1, length - page) == 0);
 #ifdef HAS_LOCKED_KILOBYTES
     Require(LockedKilobytes() - lockedBefore == length / 1024);
 #endif
-    Require(mlock_nid_postfix(mapped, length) == 0);
-    Require(mlock_nid_postfix(mapped, length) == 0);
+    Require(sceKernelMlock_nid_postfix(mapped, length) == 0);
+    Require(sceKernelMlock_nid_postfix(mapped, length) == 0);
 #ifdef __APPLE__
     Require(WiredCount(mapped) == 1);
     void* remapped = mapped;
     Require(sceKernelMapFlexibleMemory(&remapped, length, 3, 0x10) == 0 && remapped == mapped);
     Require(WiredCount(mapped) == 0);
-    Require(mlock_nid_postfix(mapped, length) == 0);
+    Require(sceKernelMlock_nid_postfix(mapped, length) == 0);
     Require(WiredCount(mapped) == 1);
 #endif
     bytes[length - 1] = 7;
 
     *__error_nid_postfix() = untouched;
-    Require(munlock_nid_postfix(mapped, 0) == 0);
+    Require(sceKernelMunlock_nid_postfix(mapped, 0) == 0);
     Require(*__error_nid_postfix() == untouched);
-    Require(munlock_nid_postfix(bytes + 1, length - page) == 0);
+    Require(sceKernelMunlock_nid_postfix(bytes + 1, length - page) == 0);
 #ifdef HAS_LOCKED_KILOBYTES
     Require(LockedKilobytes() == lockedBefore);
 #elif defined(_WIN32)
     Require(!VirtualUnlock(mapped, length) && GetLastError() == ERROR_NOT_LOCKED);
 #endif
     *__error_nid_postfix() = untouched;
-    Require(munlock_nid_postfix(mapped, length) == 0);
+    Require(sceKernelMunlock_nid_postfix(mapped, length) == 0);
     Require(*__error_nid_postfix() == untouched);
 #ifdef __APPLE__
     Require(WiredCount(mapped) == 0);
 #endif
     bytes[0] = 7;
-    Require(mlock_nid_postfix(mapped, page) == 0);
+    Require(sceKernelMlock_nid_postfix(mapped, page) == 0);
 #ifdef HAS_LOCKED_KILOBYTES
     Require(LockedKilobytes() - lockedBefore == page / 1024);
 #endif
-    Require(munlock_nid_postfix(mapped, length) == 0);
+    Require(sceKernelMunlock_nid_postfix(mapped, length) == 0);
 #ifdef HAS_LOCKED_KILOBYTES
     Require(LockedKilobytes() == lockedBefore);
 #elif defined(_WIN32)
     Require(!VirtualUnlock(mapped, page) && GetLastError() == ERROR_NOT_LOCKED);
 #endif
-    Require(mlock_nid_postfix(mapped, page) == 0);
-    Require(munlock_nid_postfix(mapped, page) == 0);
+    Require(sceKernelMlock_nid_postfix(mapped, page) == 0);
+    Require(sceKernelMunlock_nid_postfix(mapped, page) == 0);
 #ifdef HAS_LOCKED_KILOBYTES
     Require(LockedKilobytes() == lockedBefore);
 #elif defined(_WIN32)
     Require(!VirtualUnlock(mapped, page) && GetLastError() == ERROR_NOT_LOCKED);
 #endif
-    Require(mlock_nid_postfix(mapped, page) == 0);
+    Require(sceKernelMlock_nid_postfix(mapped, page) == 0);
 #ifdef HAS_LOCKED_KILOBYTES
     Require(LockedKilobytes() - lockedBefore == page / 1024);
 #endif
-    Require(mlock_nid_postfix(mapped, page) == 0);
+    Require(sceKernelMlock_nid_postfix(mapped, page) == 0);
     *__error_nid_postfix() = untouched;
-    Require(munlockall_nid_postfix() == 0);
+    Require(sceKernelMunlockall_nid_postfix() == 0);
     Require(*__error_nid_postfix() == untouched);
 #ifdef HAS_LOCKED_KILOBYTES
     Require(LockedKilobytes() == lockedBefore);
@@ -147,13 +136,8 @@ int main() {
     Require(!VirtualUnlock(mapped, page) && GetLastError() == ERROR_NOT_LOCKED);
 #endif
 
-    *__error_nid_postfix() = 0;
-    Require(mlock_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == -1);
-    Require(*__error_nid_postfix() == 22);
-    *__error_nid_postfix() = 0;
-    Require(munlock_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == -1);
-    Require(*__error_nid_postfix() == 22);
     constexpr int sceInvalid = static_cast<int>(0x80020016u);
+    constexpr int sceOutOfMemory = static_cast<int>(0x8002000cu);
     Require(sceKernelMlock_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == sceInvalid);
     Require(sceKernelMunlock_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == sceInvalid);
     Require(sceKernelMlock_nid_postfix(mapped, 0) == 0 && sceKernelMunlock_nid_postfix(mapped, 0) == 0);
@@ -163,32 +147,37 @@ int main() {
     void* reserved = nullptr;
     Require(sceKernelReserveVirtualRange(&reserved, page, 0, 0) == 0);
 #if !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
-    *__error_nid_postfix() = 0;
-    Require(mlock_nid_postfix(reserved, page) == -1 && *__error_nid_postfix() == 12);
+    Require(sceKernelMlock_nid_postfix(reserved, page) == sceOutOfMemory);
 #endif
     *__error_nid_postfix() = untouched;
-    Require(munlock_nid_postfix(reserved, page) == 0);
+    Require(sceKernelMunlock_nid_postfix(reserved, page) == 0);
     Require(*__error_nid_postfix() == untouched);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page) == 0);
 
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), length) == 0);
 #if !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
-    *__error_nid_postfix() = 0;
-    Require(mlock_nid_postfix(mapped, page) == -1 && *__error_nid_postfix() == 12);
-    *__error_nid_postfix() = 0;
-    Require(munlock_nid_postfix(mapped, page) == -1 && *__error_nid_postfix() == 12);
+    Require(sceKernelMlock_nid_postfix(mapped, page) == sceOutOfMemory);
+    Require(sceKernelMunlock_nid_postfix(mapped, page) == sceOutOfMemory);
 #endif
 
-    RequireLockAllInvalid(0);
-    RequireLockAllInvalid(4);
-    RequireLockAllInvalid(1 | 4);
-    RequireLockAllInvalid(-1);
-    RequireLockAllUnsupported(1);
-    RequireLockAllUnsupported(2);
-    RequireLockAllUnsupported(1 | 2);
+    for (const int flags : {0, 1, 2, 3, 4, 1 | 4, -1}) RequireLockAllDenied(flags);
+    for (const std::size_t size : {std::size_t{0}, page, length, std::numeric_limits<std::size_t>::max()}) {
+        *__error_nid_postfix() = 0;
+        Require(mlock_nid_postfix(mapped, size) == -1 && *__error_nid_postfix() == 1);
+        *__error_nid_postfix() = 0;
+        Require(munlock_nid_postfix(mapped, size) == -1 && *__error_nid_postfix() == 1);
+    }
+    for (const void* address : {static_cast<const void*>(nullptr), reinterpret_cast<const void*>(0x10), static_cast<const void*>(reserved), reinterpret_cast<const void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1)}) {
+        *__error_nid_postfix() = 0;
+        Require(mlock_nid_postfix(address, page * 2) == -1 && *__error_nid_postfix() == 1);
+        *__error_nid_postfix() = 0;
+        Require(munlock_nid_postfix(address, page * 2) == -1 && *__error_nid_postfix() == 1);
+    }
 
     *__error_nid_postfix() = untouched;
-    Require(munlockall_nid_postfix() == 0);
+    Require(sceKernelMunlockall_nid_postfix() == 0);
     Require(*__error_nid_postfix() == untouched);
+    *__error_nid_postfix() = 0;
+    Require(munlockall_nid_postfix() == -1 && *__error_nid_postfix() == 1);
     return 0;
 }

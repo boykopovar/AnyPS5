@@ -93,8 +93,8 @@ def asset_metadata(asset, maximum):
         raise ValueError(f"Invalid release asset {name}: archive size must be a positive integer no greater than {maximum}")
     if not isinstance(asset.get("browser_download_url"), str) or not asset["browser_download_url"]:
         raise ValueError(f"Invalid release asset {name}: browser_download_url must be nonempty text")
-    if asset.get("digest") is not None and not isinstance(asset["digest"], str):
-        raise ValueError(f"Invalid release asset {name}: digest must be text or null")
+    if type(asset.get("digest")) is not str or not re.fullmatch(r"sha256:[0-9a-f]{64}", asset["digest"]):
+        raise ValueError(f"Invalid release asset {name}: digest must be sha256 followed by 64 lowercase hex digits")
     return asset
 
 
@@ -144,7 +144,7 @@ def publish_libraries(output, release=None):
             if size != asset["size"]:
                 raise ValueError("Incomplete release archive")
             checksum = digest.hexdigest()
-            if asset.get("digest") and asset["digest"] != "sha256:" + checksum:
+            if asset["digest"] != "sha256:" + checksum:
                 raise ValueError("Release archive checksum mismatch")
             with zipfile.ZipFile(temporary) as archive:
                 files = archive.infolist()
@@ -158,13 +158,20 @@ def publish_libraries(output, release=None):
                     raise ValueError("Library ZIP links and special files are not supported")
                 names = {}
                 for file in files:
+                    parts = file.filename.removesuffix("/").split("/")
                     if (file.orig_filename != file.filename or not file.filename.startswith("libs/")
-                            or any(part in ("..", ".", "") for part in file.filename.rstrip("/").split("/")) or "\\" in file.filename):
+                            or any(ord(char) < 32 or char in '\\<>:"|?*' for char in file.filename)
+                            or any(part in ("..", ".", "") or part.endswith((".", " "))
+                                   or re.match(r"(?:con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)", part, re.IGNORECASE)
+                                   for part in parts)):
                         raise ValueError("Invalid library archive layout")
                     name = file.filename.rstrip("/").lower()
                     if name in names:
                         raise ValueError(f"Duplicate library archive path: {file.filename}")
                     names[name] = file.is_dir()
+                runtimes = [file for file in files if not file.is_dir() and file.filename.lower().endswith(".prx")]
+                if not runtimes or any(file.file_size == 0 for file in runtimes):
+                    raise ValueError("Library archive must contain nonempty runtime modules")
                 for name in names:
                     parts = name.split("/")
                     if any(names.get("/".join(parts[:index])) is False for index in range(1, len(parts))):
@@ -204,7 +211,7 @@ def publish_release(output):
     if len(data) != asset["size"]:
         raise ValueError("Incomplete or oversized web release archive")
     checksum = hashlib.sha256(data).hexdigest()
-    if asset.get("digest") and asset["digest"] != "sha256:" + checksum:
+    if asset["digest"] != "sha256:" + checksum:
         raise ValueError("Web release archive checksum mismatch")
     if output.is_symlink() or (output.exists() and not output.is_dir()):
         raise ValueError(f"Release output is not a directory: {output}")
@@ -274,7 +281,7 @@ def main(argv=None):
     parser.add_argument("--release", "--libraries", dest="release", action="store_true",
                         help="Download the matching converter and libraries from the latest release")
     args = parser.parse_args(argv)
-    output = args.build.resolve() / "web"
+    output = Path(os.path.realpath(args.build)) / "web"
     try:
         if args.release:
             publish_release(output)

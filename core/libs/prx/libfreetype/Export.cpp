@@ -2,131 +2,69 @@
 #include "prx/libfreetype/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include FT_MODULE_H
+#ifdef ANYPS5_BUNDLED_FREETYPE
+#include <freetype/internal/ftobjs.h>
+#endif
+
+#include <string>
 
 extern "C" {
 
-int APS5_VABI libfreetypeUnknown__plus_AF9KH7aZbc_nid_no_patch() {
+void APS5_VABI FT_Set_Default_Properties_nid_postfix(FreeType::GuestLibrary* library) {
+    std::string environment;
+    if (!CopyGuestEnvironment_nid_no_patch("FREETYPE_PROPERTIES", environment)) return;
+#ifdef ANYPS5_BUNDLED_FREETYPE
+    if (!library) NotImplemented_nid_no_patch(__func__);
+    std::size_t position = 0;
+    while (position < environment.size()) {
+        if (environment[position] == ' ' || environment[position] == '\t') {
+            ++position;
+            continue;
+        }
+        const auto separator = environment.find(':', position);
+        if (separator == std::string::npos || separator == position || separator - position > 128) break;
+        const auto assignment = environment.find('=', separator + 1);
+        if (assignment == std::string::npos || assignment == separator + 1 || assignment - separator - 1 > 128) break;
+        const auto end = environment.find_first_of(" \t", assignment + 1);
+        const auto valueEnd = end == std::string::npos ? environment.size() : end;
+        if (valueEnd == assignment + 1 || valueEnd - assignment - 1 > 128) break;
+        const std::string module = environment.substr(position, separator - position);
+        const std::string property = environment.substr(separator + 1, assignment - separator - 1);
+        std::string value = environment.substr(assignment + 1, valueEnd - assignment - 1);
+        ft_property_string_set(library->host, module.c_str(), property.c_str(), value.data());
+        position = valueEnd;
+    }
+#else
     NotImplemented_nid_no_patch(__func__);
+#endif
 }
-APS5_EXPORT("+AF9KH7aZbc", libfreetypeUnknown__plus_AF9KH7aZbc_nid_no_patch);
-
-int APS5_VABI libfreetypeUnknown__plus_sDVkl3aAR8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("+sDVkl3aAR8", libfreetypeUnknown__plus_sDVkl3aAR8_nid_no_patch);
-
-int APS5_VABI libfreetypeUnknown_iuebdW9Mi0U_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("iuebdW9Mi0U", libfreetypeUnknown_iuebdW9Mi0U_nid_no_patch);
-
-int APS5_VABI libfreetypeUnknown_qCyybpSyZzI_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("qCyybpSyZzI", libfreetypeUnknown_qCyybpSyZzI_nid_no_patch);
-
-int APS5_VABI libfreetypeUnknown_ypZKJwPSVgQ_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("ypZKJwPSVgQ", libfreetypeUnknown_ypZKJwPSVgQ_nid_no_patch);
 
 }
 
 extern "C" {
 
-int APS5_VABI freetypeLegacyUnknown_4kVFLShKGkQ_nid_no_patch() {
+int APS5_VABI freetypeLegacyBitmapBlend_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("4kVFLShKGkQ", freetypeLegacyUnknown_4kVFLShKGkQ_nid_no_patch);
+APS5_EXPORT("C3-qsnriefE", freetypeLegacyBitmapBlend_nid_no_patch);
 
-int APS5_VABI freetypeLegacyUnknown_C3_minus_qsnriefE_nid_no_patch() {
+int APS5_VABI freetypeLegacyFtcManagerNew_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("C3-qsnriefE", freetypeLegacyUnknown_C3_minus_qsnriefE_nid_no_patch);
+APS5_EXPORT("DYbLD-s1oiQ", freetypeLegacyFtcManagerNew_nid_no_patch);
 
-int APS5_VABI freetypeLegacyUnknown_DYbLD_minus_s1oiQ_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("DYbLD-s1oiQ", freetypeLegacyUnknown_DYbLD_minus_s1oiQ_nid_no_patch);
 
-int APS5_VABI freetypeLegacyUnknown_EPNrOPQ5B14_nid_no_patch() {
+int APS5_VABI freetypeLegacyErrorString_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("EPNrOPQ5B14", freetypeLegacyUnknown_EPNrOPQ5B14_nid_no_patch);
+APS5_EXPORT("boXwTAWsas0", freetypeLegacyErrorString_nid_no_patch);
 
-int APS5_VABI freetypeLegacyUnknown_JuHk_minus_xDmRmI_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("JuHk-xDmRmI", freetypeLegacyUnknown_JuHk_minus_xDmRmI_nid_no_patch);
 
-int APS5_VABI freetypeLegacyUnknown_K9ZOPLPOqbY_nid_no_patch() {
+int APS5_VABI freetypeLegacyNewGlyph_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("K9ZOPLPOqbY", freetypeLegacyUnknown_K9ZOPLPOqbY_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_KVRW5HPnbgU_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("KVRW5HPnbgU", freetypeLegacyUnknown_KVRW5HPnbgU_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_MDsMjUGulyY_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("MDsMjUGulyY", freetypeLegacyUnknown_MDsMjUGulyY_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_NbFQEYieSS0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("NbFQEYieSS0", freetypeLegacyUnknown_NbFQEYieSS0_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_OGVR5us9otU_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("OGVR5us9otU", freetypeLegacyUnknown_OGVR5us9otU_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_PS_minus_iwpPa2tc_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("PS-iwpPa2tc", freetypeLegacyUnknown_PS_minus_iwpPa2tc_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_V476bsxEylk_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("V476bsxEylk", freetypeLegacyUnknown_V476bsxEylk_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_VKuZXhyjtoo_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("VKuZXhyjtoo", freetypeLegacyUnknown_VKuZXhyjtoo_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_Xxtq_plus_Qr5lzI_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("Xxtq+Qr5lzI", freetypeLegacyUnknown_Xxtq_plus_Qr5lzI_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_boXwTAWsas0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("boXwTAWsas0", freetypeLegacyUnknown_boXwTAWsas0_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_ctqkAfkma_minus_k_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("ctqkAfkma-k", freetypeLegacyUnknown_ctqkAfkma_minus_k_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_hKvvpNeUdKo_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("hKvvpNeUdKo", freetypeLegacyUnknown_hKvvpNeUdKo_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_sZq9oSwMGSs_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("sZq9oSwMGSs", freetypeLegacyUnknown_sZq9oSwMGSs_nid_no_patch);
-
-int APS5_VABI freetypeLegacyUnknown_suWwpZzQl00_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("suWwpZzQl00", freetypeLegacyUnknown_suWwpZzQl00_nid_no_patch);
+APS5_EXPORT("sZq9oSwMGSs", freetypeLegacyNewGlyph_nid_no_patch);
 
 }
