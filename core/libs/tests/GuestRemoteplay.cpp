@@ -43,6 +43,10 @@ int main() {
     Require(sceRemoteplayInitialize(heap.data(), heap.size()) == 0);
     status = -1;
     Require(sceRemoteplayGetConnectionStatus(3, &status) == 0 && status == connectionStatusDisconnect);
+    status = -1;
+    Require(sceRemoteplayGetConnectionStatus(0, &status) == 0 && status == connectionStatusDisconnect);
+    status = -1;
+    Require(sceRemoteplayGetConnectionStatus(1, &status) == 0 && status == connectionStatusDisconnect);
     Require(sceRemoteplayTerminate() == 0);
     return 0;
 }
