@@ -58,6 +58,7 @@ alignas(8) Header ConstantPixelHeader{};
 alignas(8) Header OffsetTriangleVertexHeader{};
 alignas(256) std::array<std::uint32_t, 4> IndirectRecord{3, 1, 0, 0};
 alignas(256) std::array<std::uint32_t, 8> OffsetRecords{3, 1, 4, 0, 3, 1, 0, 0};
+alignas(256) std::array<std::uint32_t, 4> OffsetRecord{3, 1, 0, 0};
 
 const Shader* Registered(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
     header.shader.file_header = 0x34333231u;
@@ -313,6 +314,79 @@ void RecordsKeepThePacketsFragmentWord(bool libraries) {
     }
 }
 
+void RecordWordsReachTheShader(bool libraries) {
+    const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
+    const bool cached = std::getenv("APS5_DRAW_CACHE_INDIRECT") != nullptr;
+    const bool forwarded = std::getenv("APS5_DRAW_CACHE_PUSH_WORD") != nullptr;
+    const bool verify = forwarded && std::getenv("APS5_VERIFY_DRAW_PUSH_WORD") != nullptr;
+    Registered(OffsetTriangleVertexHeader, OffsetTriangleVertexCode.data(), sizeof(OffsetTriangleVertexCode), 2);
+    ColorMemory.fill(std::byte{0});
+    const auto submitRecord = [&](std::uint32_t firstVertex) {
+        OffsetRecord[2] = firstVertex;
+        auto commands = Draws(32.0f, OffsetTriangleVertexCode.data(), 1, PixelCode.data(), 1, {});
+        Append(commands, 0x76, {0x00c, std::bit_cast<std::uint32_t>(1.0f)});
+        Append(commands, 0x79, {0x24a, 0});
+        const auto records = reinterpret_cast<std::uintptr_t>(OffsetRecord.data());
+        Append(commands, 0x11, {1, static_cast<std::uint32_t>(records), static_cast<std::uint32_t>(records >> 32u)});
+        Append(commands, 0x24, {0, 0x8c, 0, 2});
+        return Submit(commands);
+    };
+    const auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    submitRecord(4);
+    Require(BrightestColorByte() == 0, mode + ": a CPU-path indirect draw whose record moves the triangle off screen through the patched user word wrote " + std::to_string(BrightestColorByte()) + ", expected nothing");
+    submitRecord(4);
+    const auto seen = submitRecord(4);
+    Require(BrightestColorByte() == 0, mode + ": a repeated CPU-path indirect draw whose record moves the triangle off screen wrote " + std::to_string(BrightestColorByte()) + ", expected nothing: the record's word must reach the shader, not the packet's");
+    const auto after = submitRecord(0);
+    Require(BrightestColorByte() == 255, mode + ": a CPU-path indirect draw whose record puts the triangle on screen wrote " + std::to_string(BrightestColorByte()) + ", expected 255");
+    Require(after.lookups - before.lookups == 4, mode + ": four CPU-path indirect draws made " + std::to_string(after.lookups - before.lookups) + " draw-cache lookups, expected 4");
+    if (cached) Require(after.inserts - before.inserts == 1 && seen.hits - before.hits == 1 && after.hits - before.hits == 2, mode + ": with APS5_DRAW_CACHE_INDIRECT, four CPU-path indirect draws inserted " + std::to_string(after.inserts - before.inserts) + " entries and hit " + std::to_string(after.hits - before.hits) + " times, expected 1 and 2");
+    else Require(after.inserts == before.inserts && after.hits == before.hits, mode + ": without APS5_DRAW_CACHE_INDIRECT, CPU-path indirect draws were cached");
+    const auto wordsForwarded = after.recordWordsForwarded - before.recordWordsForwarded;
+    const auto stagesRecompiled = after.recordStagesRecompiled - before.recordStagesRecompiled;
+    const auto refused = after.recordWordsRefused - before.recordWordsRefused;
+    const auto verified = after.recordWordsVerified - before.recordWordsVerified;
+    if (forwarded) Require(wordsForwarded == 4 && stagesRecompiled == 0 && refused == 0, mode + ": with APS5_DRAW_CACHE_PUSH_WORD, four records forwarded " + std::to_string(wordsForwarded) + " patched words as push data, re-materialized " + std::to_string(stagesRecompiled) + " stages and refused " + std::to_string(refused) + " words, expected 4, 0 and 0");
+    else Require(wordsForwarded == 0 && stagesRecompiled == 4, mode + ": without APS5_DRAW_CACHE_PUSH_WORD, four records forwarded " + std::to_string(wordsForwarded) + " words and re-materialized " + std::to_string(stagesRecompiled) + " stages, expected 0 and 4");
+    Require(verified == (verify ? 4u : 0u), mode + ": " + std::to_string(verified) + " forwarded words were verified against a full build, expected " + std::to_string(verify ? 4 : 0));
+}
+
+void IndirectPointsKeepTheirPointSize(bool libraries) {
+    const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
+    Registered(OffsetTriangleVertexHeader, OffsetTriangleVertexCode.data(), sizeof(OffsetTriangleVertexCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    const auto points = [&](bool indirect) {
+        ColorMemory.fill(std::byte{0});
+        auto commands = Draws(32.0f, OffsetTriangleVertexCode.data(), 1, PixelCode.data(), 1, {});
+        Append(commands, 0x79, {0x242, 1});
+        Append(commands, 0x69, {0x280, (64u << 16u) | 64u});
+        Append(commands, 0x69, {0x281, 0xffff0000u});
+        Append(commands, 0x76, {0x00c, std::bit_cast<std::uint32_t>(1.0f)});
+        Append(commands, 0x79, {0x24a, 0});
+        if (indirect) {
+            OffsetRecord = {3, 1, 0, 0};
+            const auto records = reinterpret_cast<std::uintptr_t>(OffsetRecord.data());
+            Append(commands, 0x11, {1, static_cast<std::uint32_t>(records), static_cast<std::uint32_t>(records >> 32u)});
+            Append(commands, 0x24, {0, 0x8c, 0, 2});
+        } else {
+            Append(commands, 0x2d, {3, 2});
+        }
+        Submit(commands);
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(ColorMemory.data()), ColorMemory.size());
+        return ColorMemory;
+    };
+    const auto covered = [](const std::array<std::byte, 1024>& memory) {
+        std::size_t pixels = 0;
+        for (std::size_t pixel = 0; pixel < memory.size(); pixel += 4) pixels += std::any_of(memory.begin() + static_cast<std::ptrdiff_t>(pixel), memory.begin() + static_cast<std::ptrdiff_t>(pixel + 4), [](std::byte value) { return value != std::byte{0}; }) ? 1u : 0u;
+        return pixels;
+    };
+    const auto direct = points(false);
+    const auto indirect = points(true);
+    const auto directPixels = covered(direct);
+    Require(directPixels > 3, mode + ": a direct draw of three 8-pixel points covered " + std::to_string(directPixels) + " pixels, expected more than one per point");
+    Require(indirect == direct, mode + ": a CPU-path indirect draw of the same three 8-pixel points covered " + std::to_string(covered(indirect)) + " pixels, the direct draw " + std::to_string(directPixels));
+}
+
 void GraphicsRequestDumps(std::string_view mode) {
     const auto directory = std::filesystem::temp_directory_path() / ("agc_graphics_dump-" + std::to_string(std::random_device{}()));
     const auto previous = std::filesystem::current_path();
@@ -402,6 +476,8 @@ int main(int argc, char** argv) {
             RetainedPixelCacheTransitions();
             CpuPathIndirectDrawsAreCachedWhenAsked(libraries);
             RecordsKeepThePacketsFragmentWord(libraries);
+            RecordWordsReachTheShader(libraries);
+            IndirectPointsKeepTheirPointSize(libraries);
         }
         AgcDriverShutdown_nid_postfix();
         Require(AgcDriver::Graphics::PipelineLibraryWorkers() == 0, "the driver's shutdown left the pipeline library worker running");
