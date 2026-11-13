@@ -165,6 +165,13 @@ def module_warning(absent, modules):
     return f"warning: {', '.join(absent)} is not in {modules}; a MISSING case that needs one of them is a build gap, not a missing export"
 
 
+def missing_warning(binary, modules, findings, run=subprocess.run):
+    if not any(kind == "missing" for kind, _ in findings.values()):
+        return None
+    names = required_modules(binary, run=run)
+    return module_warning(absent_modules(modules, names) if names else [], modules)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="replay prosper's PS5 console measurements against the built AnyPS5 modules")
     parser.add_argument("families", nargs="*", metavar="FAMILY", help=f"measurement families to replay (default: all of {', '.join(sorted(FAMILIES))})")
@@ -184,8 +191,6 @@ def main(argv=None):
     known = load_known(args.known)
     skip = {case for case, (kind, _) in known.items() if kind == "skip"}
     cache = cache_directory(os.environ)
-    names = required_modules(binary)
-    absent = absent_modules(modules, names) if names else []
     findings, ran_cases, failed = {}, set(), False
     for family in families:
         golden = fetch(family, cache)
@@ -193,10 +198,9 @@ def main(argv=None):
         print(f"{family}: {summary}")
         findings.update(found)
         ran_cases |= case_ids(golden) - skip
-    if any(kind == "missing" for kind, _ in findings.values()):
-        note = module_warning(absent, modules)
-        if note:
-            print(note)
+    note = missing_warning(binary, modules, findings)
+    if note:
+        print(note)
     if args.write_known:
         write_known(args.known, known, findings)
         print(f"wrote {len(findings)} findings to {args.known}")

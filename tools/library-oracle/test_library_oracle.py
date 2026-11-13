@@ -146,6 +146,19 @@ class ModuleTests(unittest.TestCase):
     def test_there_is_no_warning_without_an_absent_file(self):
         self.assertIsNone(library_oracle.module_warning([], "/m/unpatched"))
 
+    def test_a_run_without_a_missing_case_never_starts_the_replay_for_the_chain(self):
+        run = Script(Done(0, "MODULE\tlibkernel_sys.prx\n", ""))
+        self.assertIsNone(library_oracle.missing_warning("replay", "/m/unpatched", {"a": ("diff", "ret 0x1")}, run))
+        self.assertEqual(run.commands, [])
+
+    def test_a_missing_case_asks_the_replay_and_names_the_files_the_directory_lacks(self):
+        run = Script(Done(0, "MODULE\tlibc.prx\nMODULE\tlibkernel_sys.prx\n", ""))
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "libc.prx").write_bytes(b"")
+            note = library_oracle.missing_warning("replay", directory, {"a": ("missing", "scePthreadBarrierInit")}, run) or ""
+            self.assertEqual(run.commands, [["replay", "--required-modules"]])
+            self.assertIn(f"libkernel_sys.prx is not in {directory}", note)
+
 
 if __name__ == "__main__":
     unittest.main()
