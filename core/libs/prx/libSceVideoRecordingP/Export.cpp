@@ -1,8 +1,11 @@
 #include "prx/libSceVideoRecordingP/include/Api.hpp"
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <cstddef>
+#include <limits>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -46,6 +49,25 @@ bool IsVideoFormat(std::uint32_t format) {
  default:
   return false;
  }
+}
+
+std::uint8_t Limited(double value, double scale) {
+    const long rounded = std::lround(value * scale);
+    return static_cast<std::uint8_t>(std::clamp(rounded, 16L, 240L));
+}
+
+std::uint8_t Luma(double red, double green, double blue) {
+    return Limited(16.0 / 219.0 + 0.2126 * red + 0.7152 * green + 0.0722 * blue, 219.0);
+}
+
+std::uint8_t BlueDifference(double red, double green, double blue) {
+    const double luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    return Limited(128.0 / 224.0 + (blue - luma) / 1.8556, 224.0);
+}
+
+std::uint8_t RedDifference(double red, double green, double blue) {
+    const double luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    return Limited(128.0 / 224.0 + (red - luma) / 1.5748, 224.0);
 }
 
 int CheckParam(const VideoRecordingParam* param) {
@@ -97,12 +119,50 @@ int APS5_VABI sceVideoRecordingCloseByHandle(VideoRecordingContext* handle, int 
 }
 
 int APS5_VABI sceVideoRecordingCopyBGRAtoNV12(void* dst, const void* src, uint32_t width, uint32_t height) {
- (void)dst;
- (void)src;
- (void)width;
- (void)height;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (dst == nullptr || src == nullptr || width == 0 || height == 0) return ErrorInvalidArgument;
+    if ((width & 1u) != 0 || (height & 1u) != 0) return ErrorInvalidArgument;
+    const std::uint64_t pixels = static_cast<std::uint64_t>(width) * height;
+    if (pixels > std::numeric_limits<std::size_t>::max() / 4) return ErrorInvalidArgument;
+    const std::size_t sourceBytes = static_cast<std::size_t>(pixels) * 4;
+    const std::size_t outputBytes = static_cast<std::size_t>(pixels) + static_cast<std::size_t>(pixels / 2);
+    std::vector<std::uint8_t> input(sourceBytes);
+    std::vector<std::uint8_t> output(outputBytes);
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(input.data(), src, sourceBytes);
+    errno = savedErrno;
+    if (!read) return ErrorInvalidArgument;
+    for (std::uint32_t row = 0; row < height; ++row) {
+        for (std::uint32_t column = 0; column < width; ++column) {
+            const std::size_t offset = (static_cast<std::size_t>(row) * width + column) * 4;
+            const double blue = input[offset] / 255.0;
+            const double green = input[offset + 1] / 255.0;
+            const double red = input[offset + 2] / 255.0;
+            output[static_cast<std::size_t>(row) * width + column] = Luma(red, green, blue);
+        }
+    }
+    const std::size_t chromaBase = static_cast<std::size_t>(pixels);
+    for (std::uint32_t row = 0; row < height; row += 2) {
+        for (std::uint32_t column = 0; column < width; column += 2) {
+            double blueDifference = 0.0;
+            double redDifference = 0.0;
+            for (std::uint32_t dy = 0; dy < 2; ++dy) {
+                for (std::uint32_t dx = 0; dx < 2; ++dx) {
+                    const std::size_t offset = (static_cast<std::size_t>(row + dy) * width + column + dx) * 4;
+                    const double blue = input[offset] / 255.0;
+                    const double green = input[offset + 1] / 255.0;
+                    const double red = input[offset + 2] / 255.0;
+                    blueDifference += BlueDifference(red, green, blue);
+                    redDifference += RedDifference(red, green, blue);
+                }
+            }
+            const std::size_t offset = chromaBase + static_cast<std::size_t>(row / 2) * width + column;
+            output[offset] = static_cast<std::uint8_t>(std::lround(blueDifference / 4.0));
+            output[offset + 1] = static_cast<std::uint8_t>(std::lround(redDifference / 4.0));
+        }
+    }
+    const bool written = GuestCopyOut_nid_no_patch(dst, output.data(), output.size());
+    errno = savedErrno;
+    return written ? 0 : ErrorInvalidArgument;
 }
 
 int APS5_VABI sceVideoRecordingGetInfo(std::int32_t info, void*, std::size_t) {
