@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <stdexcept>
+#include "prx/libScePad/include/HostAudioInControl.hpp"
 
 namespace {
 
@@ -57,6 +58,8 @@ std::mutex g_mutex;
 std::array<Port, 8> g_ports{};
 bool g_sdlAudio = false;
 std::int32_t g_mode = 0;
+
+audioin::detail::CaptureMuteGenerations g_captureMuteGenerations;
 
 bool formatOf(std::uint32_t param, Format& format) {
     static constexpr std::uint8_t channels[] = {1, 1, 2};
@@ -162,13 +165,21 @@ int openPort(std::uint32_t len, std::uint32_t freq, std::uint32_t param) {
 }
 
 std::size_t capture(SDL_AudioDeviceID device, std::uint8_t* dest, std::size_t bytes, Clock::time_point deadline) {
+    const std::uint64_t muteState = HostAudioInMuteState_nid_no_patch();
+    const std::uint64_t generation = muteState >> 1;
+    if (g_captureMuteGenerations.Observe(device, generation)) SDL_ClearQueuedAudio(device);
     while (SDL_GetQueuedAudioSize(device) < bytes && Clock::now() < deadline) PreciseSleepUs(1000);
     const std::size_t queued = SDL_GetQueuedAudioSize(device);
     std::array<std::uint8_t, 4096> discard;
     const std::size_t excess = queued > bytes * MAX_QUEUED_BLOCKS ? queued - bytes * MAX_QUEUED_BLOCKS : 0;
     audioin::detail::discardQueuedAudio(excess, discard.data(), discard.size(),
         [device](std::uint8_t* dest, std::uint32_t chunk) { return SDL_DequeueAudio(device, dest, chunk); });
-    return SDL_DequeueAudio(device, dest, static_cast<Uint32>(bytes));
+    const std::size_t captured = SDL_DequeueAudio(device, dest, static_cast<Uint32>(bytes));
+    const std::uint64_t finalMuteState = HostAudioInMuteState_nid_no_patch();
+    const bool muted = (muteState & 1u) != 0 || (finalMuteState & 1u) != 0 || muteState != finalMuteState;
+    const std::size_t delivered = audioin::detail::filterCapturedSamples(dest, bytes, captured, muted);
+    if (muted) SDL_ClearQueuedAudio(device);
+    return delivered;
 }
 
 }
@@ -237,7 +248,10 @@ int32_t APS5_VABI sceAudioInClose(int32_t handle) {
     Port* port;
     if (const int error = findPort(handle, &port)) return error;
     if (port->busy) return AUDIO_IN_ERROR_BUSY;
-    if (port->device != 0) SDL_CloseAudioDevice(port->device);
+    if (port->device != 0) {
+        g_captureMuteGenerations.Forget(port->device);
+        SDL_CloseAudioDevice(port->device);
+    }
     *port = {};
     return 0;
 }

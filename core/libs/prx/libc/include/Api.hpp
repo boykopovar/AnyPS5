@@ -1344,6 +1344,11 @@ int APS5_VABI _ZNSt8__sce_v212_Cnd_destroyEPP12pthread_cond_nid_postfix(void** c
 int APS5_VABI _ZNSt8__sce_v29_Cnd_waitEPP12pthread_condPP13pthread_mutex_nid_postfix(void** condition, void** mutex);
 int APS5_VABI _ZNSt8__sce_v211_Cnd_signalEPP12pthread_cond_nid_postfix(void** condition);
 int APS5_VABI _ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(void** condition);
+void APS5_VABI _ZNSt8__sce_v226_Lock_at_thread_exit_mutexEv_nid_postfix();
+void APS5_VABI _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix();
+void APS5_VABI _ZNSt8__sce_v228_Cnd_register_at_thread_exitEPP12pthread_condPP13pthread_mutexPi_nid_postfix(void** condition, void** mutex, int* ready);
+void APS5_VABI _ZNSt8__sce_v230_Cnd_unregister_at_thread_exitEPP13pthread_mutex_nid_postfix(void** mutex);
+void APS5_VABI _ZNSt8__sce_v232_Cnd_do_broadcast_at_thread_exitEv_nid_postfix();
 int APS5_VABI _ZNSt8__sce_v212_Thrd_detachEP7pthread_nid_postfix(void* thread);
 int APS5_VABI _ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(void* thread, int* code);
 void APS5_VABI _ZNSt8__sce_v211_Thrd_yieldEv_nid_postfix();

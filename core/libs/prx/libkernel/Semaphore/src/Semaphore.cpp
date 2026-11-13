@@ -27,10 +27,9 @@ int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t at
  if (sem == nullptr) {
   APS5_INVALID_ARG_EX;
  }
- if ((attr & ~0x103u) != 0 || (attr & 3u) == 3u || name == nullptr || *name == '\0' || init < 0 || max <= 0 || init > max) {
+ if ((attr & ~0x103u) != 0 || (attr & 3u) == 3u || name == nullptr || init < 0 || max <= 0 || init > max) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
- if (strnlen(name, 32) > 31) return SCE_KERNEL_ERROR_ENAMETOOLONG;
  *sem = new KernelSemaPrivate(init, max, std::string(name), (attr & 3u) == 1u);
  (*sem)->priorityQueue = (attr & 3u) == 2u;
  if (TraceSync()) std::fprintf(stderr, "[sema] create %p '%s' attr=0x%x init=%d max=%d\n", static_cast<void*>(*sem), name, attr, init, max);
@@ -126,9 +125,10 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
   }
  } waiterGuard{sem, &waiter};
 
- const auto waitStart = std::chrono::steady_clock::now();
+ const bool traceWaits = KernelTraceWaitEnabled();
+ const auto waitStart = traceWaits ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
  const auto traceWait = [&](bool timedOut) {
-  KernelTraceWait_nid_postfix("sema", caller, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
+  if (traceWaits) KernelTraceWait_nid_postfix("sema", caller, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
  };
  const auto released = [&] { return waiter.released || sem->deleted || sem->cancelGeneration != generation; };
  bool acquired = true;
