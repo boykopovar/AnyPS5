@@ -179,6 +179,11 @@ int main() {
     Require(localInfo.localAddr == 0xA5A5A5A5u && localInfo.mappedAddr == 0xA5A5A5A5u &&
             localInfo.natStatus == static_cast<std::int32_t>(0xA5A5A5A5u) && localInfo.reserved == 0xA5A5A5A5u,
             "sceNpSignalingGetLocalNetInfo", "output was modified on large size");
+    localInfo.size = (1ULL << 32) | sizeof(localInfo);
+    Require(sceNpSignalingGetLocalNetInfo(context, &localInfo) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "upper 32-bit size was taken");
+    Require(localInfo.localAddr == 0xA5A5A5A5u && localInfo.mappedAddr == 0xA5A5A5A5u &&
+            localInfo.natStatus == static_cast<std::int32_t>(0xA5A5A5A5u) && localInfo.reserved == 0xA5A5A5A5u,
+            "sceNpSignalingGetLocalNetInfo", "output was modified on upper 32-bit size");
     Require(sceNpSignalingGetPeerNetInfo(context, nullptr, &reqId) == InvalidArgument, "sceNpSignalingGetPeerNetInfo", "a null peer was taken");
     Require(sceNpSignalingGetPeerNetInfo(context, &peer, nullptr) == InvalidArgument, "sceNpSignalingGetPeerNetInfo", "a null output was taken");
     reqId = 0xA5A5A5A5u;
@@ -240,6 +245,8 @@ int main() {
     netInfo.size = 0;
     Require(sceNpSignalingGetPeerNetInfoResult(99, 1, &netInfo) == CtxNotFound, "sceNpSignalingGetPeerNetInfoResult", "an unknown context was not refused before the size");
     Require(sceNpSignalingGetPeerNetInfoResult(context, 1, &netInfo) == InvalidArgument, "sceNpSignalingGetPeerNetInfoResult", "size 0 was taken");
+    netInfo.size = (1ULL << 32) | sizeof(netInfo);
+    Require(sceNpSignalingGetPeerNetInfoResult(context, 1, &netInfo) == InvalidArgument, "sceNpSignalingGetPeerNetInfoResult", "upper 32-bit size was taken");
     errno = 71;
     Require(sceNpSignalingGetPeerNetInfoResult(context, 1, inaccessible) == InvalidArgument, "sceNpSignalingGetPeerNetInfoResult", "unreadable peerNetInfo was taken");
     Require(errno == 71, "sceNpSignalingGetPeerNetInfoResult", "errno was not preserved");
