@@ -1251,7 +1251,6 @@ int APS5_VABI _ZN3PAL12CryptoDigest8addBytesEPKvm();
 int APS5_VABI _ZN3PAL12CryptoDigestD1Ev();
 int APS5_VABI _ZN3PAL12CryptoDigestD2Ev();
 int APS5_VABI _ZN3PAL13SleepDisablerD0Ev();
-int APS5_VABI _ZN3PAL19fileSizeDescriptionEm();
 int APS5_VABI _ZN3PAL8KillRing16setToYankedStateEv();
 int APS5_VABI _ZN3PAL8KillRing16startNewSequenceEv();
 int APS5_VABI _ZN3PAL8KillRing4yankEv();
