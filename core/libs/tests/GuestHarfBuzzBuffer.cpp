@@ -207,7 +207,14 @@ static void Properties() {
     Require(hb_buffer_get_script(pair.guest) == HB_SCRIPT_INVALID);
     Require(hb_buffer_get_language(pair.guest) == HB_LANGUAGE_INVALID);
     pair.Compare();
-    hb_unicode_funcs_t* funcs = hb_unicode_funcs_get_default();
+    auto* const funcs = hb_icu_get_unicode_funcs_nid_postfix();
+    Require(funcs && funcs == hb_icu_get_unicode_funcs_nid_postfix());
+    Require(hb_unicode_funcs_is_immutable(funcs));
+    Require(hb_unicode_combining_class(funcs, 0x0301) == HB_UNICODE_COMBINING_CLASS_ABOVE);
+    Require(hb_unicode_script(funcs, 0x0627) == HB_SCRIPT_ARABIC);
+    Require(hb_unicode_mirroring(funcs, '(') == ')');
+    hb_codepoint_t composed = 0;
+    Require(hb_unicode_compose(funcs, 'e', 0x0301, &composed) && composed == 0x00e9);
     pair.UnicodeFuncs(funcs);
     Require(hb_buffer_get_unicode_funcs(pair.guest) == funcs);
     Require(hb_buffer_get_unicode_funcs(pair.guest) == hb_buffer_get_unicode_funcs(pair.native));
