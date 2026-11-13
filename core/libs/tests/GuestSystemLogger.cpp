@@ -68,4 +68,5 @@ int main() {
 
     Require(sceSystemLoggerTerminate() == 0);
     Require(sceSystemLoggerTerminate() == notInitialized);
+    Require(sceSystemLoggerSetLogData("tag", 0, nullptr) == notInitialized);
 }
