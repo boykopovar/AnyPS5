@@ -8,7 +8,7 @@ Print a readable summary of a report with:
 python3 tools/run_report_summary.py path/to/anyps5-report.json
 ```
 
-The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. It reads the local report and does not upload it.
+The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. The output is UTF-8, including when redirected. It reads the local report and does not upload it.
 
 The file stays on your machine. Nothing is uploaded unless you share it.
 

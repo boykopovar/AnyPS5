@@ -72,6 +72,12 @@ public:
         Require(hooks == nullptr, "image memory: native hooks are already active");
         hooks = this;
         context.deviceProc = Resolve;
+        if (context.functions != nullptr) {
+            functions = *context.functions;
+            functions.allocateMemory = nullptr;
+            functions.freeMemory = nullptr;
+            context.functions = &functions;
+        }
     }
 
     ~Hooks() {
@@ -278,6 +284,7 @@ private:
 
     VkDevice device;
     PFN_vkGetDeviceProcAddr original;
+    DeviceFunctions functions;
     std::mutex mutex;
     std::map<VkImage, Binding> bindings;
     std::map<VkImageView, VkImage> views;
