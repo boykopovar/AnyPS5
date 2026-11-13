@@ -308,12 +308,6 @@ void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD1Ev() {
 void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD2Ev() {
 }
 
-void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev() {
-}
-
-void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD2Ev() {
-}
-
 void APS5_VABI _ZN7WebCore4IconD1Ev() {
 }
 
