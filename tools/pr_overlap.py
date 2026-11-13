@@ -1,4 +1,5 @@
 import argparse
+import codecs
 import hashlib
 import json
 import os
@@ -13,7 +14,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 import nid_names
 
 PARENT = 'if .parent then "\\(.parent.owner.login)/\\(.parent.name)" else .nameWithOwner end'
-EXPORT = re.compile(r"^\+.*\bAPS5_VABI\s+(\w+)\s*\(")
+EXPORT = re.compile(r"^[+-].*\bAPS5_VABI\s+(\w+)\s*\(")
 NID_DISAMBIG = re.compile(r"_nid_disambig[0-9]+$")
 DEPENDS = re.compile(r'Depends on:[ \t]*((?:#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*|none\b)?(?:\r?\n[ \t]*[-*][ \t]*#\d+\b[^\r\n]*)*)')
 PLAIN_DEPENDS = re.compile(r'Depends on[ \t]+(#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*)')
@@ -22,6 +23,7 @@ MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
 PROGRESS_EVERY = 100
 MAX_REPORT_CHARS = 60000
+EXPORT_PATHS = ("core/libs/prx/*.cpp", ":(exclude,icase)**/test/**", ":(exclude,icase)**/tests/**")
 _REPO_ROOTS = {}
 
 
@@ -72,7 +74,10 @@ def own(prs, sha):
 
 
 def gh(*args):
-    return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+    try:
+        return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+    except FileNotFoundError as error:
+        raise ValueError("GitHub CLI 'gh' is required on PATH") from error
 
 
 def upstream():
@@ -228,9 +233,9 @@ def merge(*args):
     return lines[0], set(lines[1:]) if result.returncode else set()
 
 
-def commit(tree):
+def commit(tree, ref):
     return git("-c", "user.name=pr_overlap", "-c", "user.email=pr_overlap", "commit-tree", tree,
-               "-p", "refs/pr/base", "-m", "pr_overlap").strip()
+               "-p", "refs/pr/base", "-p", ref, "-m", "pr_overlap").strip()
 
 
 def exports(diff, prefix="+"):
@@ -256,12 +261,25 @@ def exports(diff, prefix="+"):
 
 def changed_source(diff, prefix):
     files, current, path = [], [], None
-    for line in diff.splitlines():
+    in_hunk = False
+    for line in diff.split("\n"):
+        line = line.removesuffix("\r")
         if line.startswith("diff --git "):
             if current and path:
                 files.append((path, "\n".join(current)))
             path = line.split(" b/", 1)[1] if " b/" in line else None
             current = []
+            in_hunk = False
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif not in_hunk and line.startswith("--- " if prefix == "-" else "+++ "):
+            path = line[4:]
+            if path.startswith('"') and path.endswith('"'):
+                path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+            if path == "/dev/null":
+                path = None
+            elif path.startswith(("a/", "b/")):
+                path = path[2:]
         elif line.startswith(prefix) and not line.startswith(prefix * 3):
             current.append(line[1:])
     if current and path:
@@ -323,7 +341,10 @@ def save_export_cache(path, version, files):
         temporary.write_text(json.dumps({"version": version, "files": files}), encoding="utf-8")
         os.replace(temporary, path)
     except OSError:
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def base_sources(root, ref):
@@ -387,7 +408,7 @@ def merge_base(ref):
 
 def scan(pr):
     tree, conflicted = merge("refs/pr/base", pr["ref"])
-    pr["tree"] = None if conflicted else commit(tree)
+    pr["tree"] = None if conflicted else commit(tree, pr["ref"])
     old, new = (merge_base(pr["ref"]), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
     pr["files"], pr["added"] = set(), set()
     changes = git("diff", "--name-status", "--no-renames", "-z", old, new).split("\0")
@@ -395,7 +416,7 @@ def scan(pr):
         pr["files"].add(path)
         if status == "A":
             pr["added"].add(path)
-    diff = git("diff", "-U0", "--no-color", old, new, "--", "core/libs/prx/*.cpp")
+    diff = git("diff", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
     pr["exports"] = exports(diff)
     pr["added_exports"] = source_changed_exports(diff, "+")
     pr["removed_exports"] = source_changed_exports(diff, "-")
@@ -411,7 +432,7 @@ def probe(pr):
             existing.add(path)
     if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
         return files, (set(), {}), existing
-    diff = git("diff", "-U0", "--no-color", base, pr["ref"], "--", "core/libs/prx/*.cpp")
+    diff = git("diff", "-U0", "--no-color", base, pr["ref"], "--", *EXPORT_PATHS)
     return files, (exports(diff), source_changed_exports(diff, "+")), existing
 
 
@@ -453,7 +474,8 @@ def hunks(pr, path):
 
 
 def clashes(a, b, path):
-    ranges = sorted((min(s1, s2), max(e1, e2)) for s1, e1 in hunks(a, path) for s2, e2 in hunks(b, path)
+    left, right = hunks(a, path), hunks(b, path)
+    ranges = sorted((min(s1, s2), max(e1, e2)) for s1, e1 in left for s2, e2 in right
                     if s1 <= e2 + 1 and s2 <= e1 + 1)
     merged = []
     for start, end in ranges:

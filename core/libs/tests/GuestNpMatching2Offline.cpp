@@ -1,5 +1,6 @@
 #include "prx/libSceNpMatching2/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -159,6 +160,9 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
         Require(connectionInfo(context, 5, 1, 1, info) == SignalingPeerNotFound, "connection info", "a never-started context did not return 0x80550E19");
     }
     std::uint16_t port = 0xA5A5;
+    Require(getPort(nullptr) == SignalingInvalidArgument, "sceNpMatching2SignalingGetPort", "a null port did not return SignalingInvalidArgument");
+    errno = 71;
+    Require(getPort(reinterpret_cast<std::uint16_t*>(0x10)) == SignalingInvalidArgument && errno == 71, "sceNpMatching2SignalingGetPort", "an unwritable port did not return SignalingInvalidArgument");
     Require(getPort(&port) == 0 && port == 0, "sceNpMatching2SignalingGetPort", "the port did not start at 0");
     Require(setPort(3659) == 0 && getPort(&port) == 0 && port == 3659, "sceNpMatching2SignalingSetPort", "the port that was set is not reported");
     Require(sceNpMatching2Terminate() == 0, "sceNpMatching2Terminate", "terminating after the requests failed");
@@ -218,15 +222,23 @@ int main() {
     Require(sceNpMatching2SignalingGetLocalNetInfo(&beforeInitInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "invalid size 25 before initialization did not return NOT_INITIALIZED first");
     Require(sceNpMatching2Terminate() == NotInitialized, "sceNpMatching2Terminate", "terminating before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2Initialize(nullptr) == InvalidArgument, "sceNpMatching2Initialize", "a null parameter did not return INVALID_ARGUMENT");
+    errno = 71;
+    Require(sceNpMatching2Initialize(reinterpret_cast<const NpMatching2InitializeParameter*>(0x10)) == InvalidArgument, "sceNpMatching2Initialize", "an unmapped parameter did not return INVALID_ARGUMENT");
+    Require(errno == 71, "sceNpMatching2Initialize", "errno was not preserved");
     init.size = 0x10;
     Require(sceNpMatching2Initialize(&init) == InvalidArgument, "sceNpMatching2Initialize", "an invalid parameter size did not return INVALID_ARGUMENT");
     init.size = 0x20;
     Require(sceNpMatching2Initialize(&init) == InvalidArgument, "sceNpMatching2Initialize", "an invalid size was taken");
+    init.size = (1ULL << 32) | 0x30;
+    Require(sceNpMatching2Initialize(&init) == InvalidArgument, "sceNpMatching2Initialize", "upper 32-bit size was taken");
     init.size = 0x30;
     Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initialization failed");
     Require(sceNpMatching2Initialize(&init) == AlreadyInitialized, "sceNpMatching2Initialize", "initializing when already initialized did not return ALREADY_INITIALIZED");
     Require(sceNpMatching2Initialize(nullptr) == AlreadyInitialized, "sceNpMatching2Initialize", "the parameter was checked before the initialization state");
     Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == InvalidArgument, "sceNpMatching2SignalingGetLocalNetInfo", "a null info was not refused with INVALID_ARGUMENT");
+    errno = 71;
+    Require(sceNpMatching2SignalingGetLocalNetInfo(inaccessibleNetInfo) == InvalidArgument, "sceNpMatching2SignalingGetLocalNetInfo", "an inaccessible info was not refused with INVALID_ARGUMENT");
+    Require(errno == 71, "sceNpMatching2SignalingGetLocalNetInfo", "errno was not preserved");
     constexpr std::uint32_t NetLocalAddrSentinel = 0x12345678u;
     constexpr std::uint32_t NetMappedAddrSentinel = 0x87654321u;
     constexpr std::int32_t NetNatStatusSentinel = 0x5A5A5A5A;
@@ -243,6 +255,11 @@ int main() {
     }
 
     Require(sceNpMatching2CreateContext(nullptr, &context) == InvalidArgument, "sceNpMatching2CreateContext", "a null parameter was taken");
+    errno = 71;
+    Require(sceNpMatching2CreateContext(reinterpret_cast<const NpMatching2CreateContextParameter*>(0x10), &context) == InvalidArgument, "sceNpMatching2CreateContext", "an unmapped parameter was taken");
+    Require(errno == 71, "sceNpMatching2CreateContext", "errno was not preserved");
+    Require(sceNpMatching2CreateContext(&create, reinterpret_cast<std::uint16_t*>(0x10)) == InvalidArgument, "sceNpMatching2CreateContext", "an unmapped context output was taken");
+    Require(errno == 71, "sceNpMatching2CreateContext", "errno was not preserved");
     create.size = 0x30;
     Require(sceNpMatching2CreateContext(&create, &context) == InvalidArgument, "sceNpMatching2CreateContext", "parameter size 0x30 was taken");
     create.size = 0x28;
@@ -275,6 +292,9 @@ int main() {
     Require(peerAddr == PeerAddrSentinel && peerPort == PeerPortSentinel, "sceNpMatching2SignalingGetConnectionStatus", "the peer address or port was written for an inactive member");
     status = StatusSentinel;
     Require(sceNpMatching2SignalingGetConnectionStatus(1, 0, 0, &status, nullptr, nullptr) == 0 && status == ConnStatusInactive, "sceNpMatching2SignalingGetConnectionStatus", "null peer address and port outputs were refused");
+    errno = 71;
+    Require(sceNpMatching2SignalingGetConnectionStatus(1, 0, 0, reinterpret_cast<std::int32_t*>(0x10), nullptr, nullptr) == InvalidArgument, "sceNpMatching2SignalingGetConnectionStatus", "unwritable status was taken");
+    Require(errno == 71, "sceNpMatching2SignalingGetConnectionStatus", "errno was not preserved");
     status = StatusSentinel;
     Require(sceNpMatching2SignalingGetConnectionStatus(99, 1, 1, &status, &peerAddr, &peerPort) == InvalidContextId && status == StatusSentinel, "sceNpMatching2SignalingGetConnectionStatus", "an unknown context was taken or its status written");
     Require(NullStatusThrows(1), "sceNpMatching2SignalingGetConnectionStatus", "a null status for a known context did not throw");
@@ -296,6 +316,11 @@ int main() {
     Require(registerLobbyMessage(1, nullptr, nullptr) == 0, "sceNpMatching2RegisterLobbyMessageCallback", "registering failed");
     created = 77;
     Require(createContextA(nullptr, &created) == InvalidArgument, "sceNpMatching2CreateContextA", "a null parameter was taken");
+    errno = 71;
+    Require(createContextA(reinterpret_cast<const NpMatching2CreateContextParameterA*>(0x10), &created) == InvalidArgument, "sceNpMatching2CreateContextA", "an unmapped parameter was taken");
+    Require(errno == 71, "sceNpMatching2CreateContextA", "errno was not preserved");
+    Require(createContextA(&createA, reinterpret_cast<std::uint16_t*>(0x10)) == InvalidArgument, "sceNpMatching2CreateContextA", "an unmapped context output was taken");
+    Require(errno == 71, "sceNpMatching2CreateContextA", "errno was not preserved");
     createA.size = 0x28;
     Require(createContextA(&createA, &created) == InvalidArgument, "sceNpMatching2CreateContextA", "parameter size 0x28 was taken");
     createA.size = 0x10;

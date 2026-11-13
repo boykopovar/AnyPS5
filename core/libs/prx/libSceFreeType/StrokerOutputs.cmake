@@ -1,5 +1,5 @@
 if(BUILD_TESTING)
-    add_test_executable(guest_freetype_stroker_outputs_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeStrokerOutputs.cpp)
+    add_test_executable(guest_freetype_stroker_outputs_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeStrokerOutputs.cpp)
     target_include_directories(guest_freetype_stroker_outputs_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_stroker_outputs_tests PRIVATE freetype ${CMAKE_DL_LIBS})
     if(WIN32)

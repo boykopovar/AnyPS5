@@ -1,4 +1,5 @@
 #include "prx/libSceAvPlayer/include/Api.hpp"
+#include <cerrno>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -869,6 +870,9 @@ void CheckStreamInfo(AvPlayerInternal* player) {
     AvPlayerStreamInfo unused{};
     Check(sceAvPlayerGetStreamInfo(player, 3, &unused) == OperationFailed, "invalid stream accepted");
     Check(sceAvPlayerGetStreamInfo(player, 0, nullptr) == InvalidParams, "null stream info accepted");
+    errno = 71;
+    Check(sceAvPlayerGetStreamInfo(player, 0, reinterpret_cast<AvPlayerStreamInfo*>(0x10)) == InvalidParams, "unmapped stream info accepted");
+    Check(errno == 71, "preserve errno on unmapped stream info");
 }
 
 void CheckStreamInfoEx(AvPlayerInternal* player) {
@@ -897,6 +901,9 @@ void CheckStreamInfoEx(AvPlayerInternal* player) {
     AvPlayerStreamInfoEx unused{};
     Check(sceAvPlayerGetStreamInfoEx(player, 3, &unused) == OperationFailed, "invalid extended stream accepted");
     Check(sceAvPlayerGetStreamInfoEx(player, 0, nullptr) == InvalidParams, "null extended stream info accepted");
+    errno = 71;
+    Check(sceAvPlayerGetStreamInfoEx(player, 0, reinterpret_cast<AvPlayerStreamInfoEx*>(0x10)) == InvalidParams, "unmapped extended stream info accepted");
+    Check(errno == 71, "preserve errno on unmapped extended stream info");
     Check(sceAvPlayerGetStreamInfoEx(nullptr, 0, &unused) == InvalidParams, "null player accepted");
 }
 
@@ -909,6 +916,9 @@ void TestPlayback() {
     post.demux_video_buffer_size = 64 * 1024;
     Check(sceAvPlayerPostInit(player, &post) == 0, "post init failed");
     Check(sceAvPlayerPostInit(player, nullptr) == InvalidParams, "post init accepted null data");
+    errno = 71;
+    Check(sceAvPlayerPostInit(player, reinterpret_cast<const AvPlayerPostInitData*>(0x10)) == InvalidParams, "unmapped post init accepted");
+    Check(errno == 71, "preserve errno on unmapped post init");
     Check(sceAvPlayerStreamCount(player) == OperationFailed, "stream count without a source");
     Check(sceAvPlayerSetTrickSpeed(player, 100) == OperationFailed, "trick speed accepted without a source");
     Check(sceAvPlayerSetTrickSpeed(player, 0) == OperationFailed, "trick speed checked the speed before the source");
@@ -931,6 +941,25 @@ void TestPlayback() {
 
     AvPlayerFrameInfoEx frame{};
     AvPlayerFrameInfo sound{};
+    AvPlayerFrameInfo videoSimple{};
+    Check(!sceAvPlayerGetAudioData(nullptr, &sound), "null player audio accepted");
+    Check(!sceAvPlayerGetAudioData(player, nullptr), "null audio info accepted");
+    errno = 71;
+    Check(!sceAvPlayerGetAudioData(player, reinterpret_cast<AvPlayerFrameInfo*>(0x10)), "unmapped audio info accepted");
+    Check(errno == 71, "preserve errno on unmapped audio info");
+
+    Check(!sceAvPlayerGetVideoData(nullptr, &videoSimple), "null player video accepted");
+    Check(!sceAvPlayerGetVideoData(player, nullptr), "null video info accepted");
+    errno = 71;
+    Check(!sceAvPlayerGetVideoData(player, reinterpret_cast<AvPlayerFrameInfo*>(0x10)), "unmapped video info accepted");
+    Check(errno == 71, "preserve errno on unmapped video info");
+
+    Check(!sceAvPlayerGetVideoDataEx(nullptr, &frame), "null player video ex accepted");
+    Check(!sceAvPlayerGetVideoDataEx(player, nullptr), "null video ex info accepted");
+    errno = 71;
+    Check(!sceAvPlayerGetVideoDataEx(player, reinterpret_cast<AvPlayerFrameInfoEx*>(0x10)), "unmapped video ex info accepted");
+    Check(errno == 71, "preserve errno on unmapped video ex info");
+
     int frames = 0;
     int sounds = 0;
     std::uint64_t last = 0;
@@ -1153,6 +1182,9 @@ void TestExtendedExports() {
     Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
     Check(sceAvPlayerStartEx(nullptr, nullptr) == InvalidParams, "start accepted a null player");
     Check(sceAvPlayerStartEx(player, nullptr) == InvalidParams, "start accepted null parameters");
+    errno = 71;
+    Check(sceAvPlayerStartEx(player, reinterpret_cast<const AvPlayer::StartInfo*>(0x10)) == InvalidParams, "unmapped start parameters accepted");
+    Check(errno == 71, "preserve errno on unmapped start info");
     AvPlayer::StartInfo startInfo{0, 700};
     Check(sceAvPlayerStartEx(player, &startInfo) == InvalidParams, "start accepted an invalid parameter size");
     startInfo.size = sizeof(startInfo);
@@ -1219,6 +1251,9 @@ void TestWithoutAllocators() {
     AvPlayerInternal* handle = nullptr;
     Check(sceAvPlayerInitEx(&extended, &handle) == 0 && handle != nullptr, "extended init without allocators failed");
     Check(sceAvPlayerInitEx(nullptr, &handle) == InvalidParams, "extended init accepted null data");
+    errno = 71;
+    Check(sceAvPlayerInitEx(&extended, reinterpret_cast<AvPlayerInternal**>(0x10)) == InvalidParams, "extended init rejected unwritable handle");
+    Check(errno == 71, "errno preserved");
     Check(sceAvPlayerClose(handle) == 0, "close failed");
 }
 
@@ -2396,6 +2431,39 @@ int main(int argc, char** argv) {
         TestAudioEofClockRebase();
         TestAudioClockAdvancesAfterEof();
         TestTrailingVideoAfterShortAudio();
+        {
+            errno = 71;
+            Check(sceAvPlayerInit(reinterpret_cast<AvPlayerInitData*>(static_cast<std::uintptr_t>(0x10))) == nullptr && errno == 71,
+                  "unreadable init data must return null without changing errno");
+            AvPlayerInternal* badHandle = nullptr;
+            errno = 71;
+            Check(sceAvPlayerInitEx(reinterpret_cast<const AvPlayerInitDataEx*>(static_cast<std::uintptr_t>(0x10)), &badHandle) ==
+                      AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+                      badHandle == nullptr && errno == 71,
+                  "unreadable extended init data must fail without changing errno");
+            AvPlayerInitData init{};
+            init.num_output_video_framebuffers = 2;
+            AvPlayerInternal* player = sceAvPlayerInit(&init);
+            Check(player != nullptr, "valid init creates player");
+            errno = 71;
+            Check(sceAvPlayerAddSourceEx(player, 0, reinterpret_cast<const AvPlayerSourceDetails*>(static_cast<std::uintptr_t>(0x10))) ==
+                      AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+                      errno == 71,
+                  "unreadable source details must fail without changing errno");
+            AvPlayerSourceDetails badUri{};
+            badUri.uri.name = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
+            badUri.uri.length = 8;
+            errno = 71;
+            Check(sceAvPlayerAddSourceEx(player, 0, &badUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS && errno == 71,
+                  "unreadable source URI must fail without changing errno");
+            AvPlayerSourceDetails oversizedUri{};
+            oversizedUri.uri.name = "movie.mp4";
+            oversizedUri.uri.length = 0xFFFFFFFFu;
+            errno = 71;
+            Check(sceAvPlayerAddSourceEx(player, 0, &oversizedUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS && errno == 71,
+                  "oversized source URI length must fail without allocating");
+            Check(sceAvPlayerClose(player) == 0, "close player");
+        }
         std::puts("AvPlayer tests passed");
         return 0;
     } catch (const std::exception& error) {
