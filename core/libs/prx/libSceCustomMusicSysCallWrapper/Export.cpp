@@ -5,6 +5,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cstdlib>
 
 extern "C" {
 int APS5_VABI sceAudiodecClearContext(int32_t handle);
@@ -121,8 +122,8 @@ std::int64_t APS5_VABI sceCustomMusicFileLseek(int d, std::int64_t offset, int w
     return sceKernelLseek(d, offset, whence);
 }
 
-int APS5_VABI sceCustomMusicFileOpenRead(const char* path, int flags, std::uint16_t mode) {
-    return sceKernelOpen(path, flags, mode);
+int APS5_VABI sceCustomMusicFileOpenRead(const char* path, int, std::uint16_t) {
+    return sceKernelOpen(path, 0, 0555);
 }
 
 std::int64_t APS5_VABI sceCustomMusicFileRead(int d, void* buf, std::size_t nbytes) {
@@ -259,6 +260,7 @@ int APS5_VABI sceCustomMusicPthreadDetach(Pthread thread) {
 
 void APS5_VABI sceCustomMusicPthreadExit(void* retval) {
     scePthreadExit(retval);
+    std::abort();
 }
 
 int APS5_VABI sceCustomMusicPthreadJoin(Pthread thread, void** retval) {
@@ -278,7 +280,8 @@ int APS5_VABI sceCustomMusicPthreadMutexLock(PthreadMutex* mutex) {
 }
 
 int APS5_VABI sceCustomMusicPthreadSetprio(Pthread thread, int prio) {
-    return scePthreadSetprio(thread, prio);
+    const int error = scePthreadSetprio(thread, prio + 254);
+    return error < 0 ? error : 0;
 }
 
 void APS5_VABI sceCustomMusicPthreadYield() {
