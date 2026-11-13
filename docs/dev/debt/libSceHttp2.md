@@ -1,5 +1,7 @@
 # libSceHttp2 technical debt
 
+- [HTTP transport](../../../core/libs/prx/libSceHttp2/Transport.cpp) returns `0x804101e6` after failed DNS lookups and `0x8041013d` when a connection is refused. A [native PS5 HTTP probe](https://github.com/boykopovar/AnyPS5/pull/17570#issuecomment-6741390369) on firmware `13.590.001` confirmed these codes for NXDOMAIN and connection refusal, both as synchronous return values and as asynchronous completion results.
+
 ### Silent stubs
 
 - [sceHttp2RedirectCacheFlush](../../../core/libs/prx/libSceHttp2/Export.cpp) - returns 0 for any argument without checking it, as the 13.42 module does ([#10536](https://github.com/boykopovar/AnyPS5/pull/10536)); redirects are followed without a cache, so there is nothing to flush

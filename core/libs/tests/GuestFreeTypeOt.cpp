@@ -36,6 +36,7 @@ struct Exports {
     decltype(&FT_Outline_Get_Orientation_nid_postfix) orientation;
     decltype(&FT_Outline_Copy_nid_postfix) copy;
     decltype(&FT_Outline_Decompose_nid_postfix) decompose;
+    decltype(&FT_Outline_Get_Bitmap_nid_postfix) outlineBitmap;
 };
 
 struct StrokerExports {
@@ -76,6 +77,8 @@ struct ForwardedExports {
     decltype(&FT_Property_Get_nid_postfix) propertyGet;
     decltype(&FT_Property_Set_nid_postfix) propertySet;
     decltype(&FT_QAlloc_nid_postfix) qalloc;
+    decltype(&FT_Realloc_nid_postfix) realloc;
+    decltype(&FT_QRealloc_nid_postfix) qrealloc;
     decltype(&FT_Get_Module_nid_postfix) getModule;
     decltype(&FT_Remove_Module_nid_postfix) removeModule;
 };
@@ -90,6 +93,46 @@ void* APS5_VABI Allocate(FreeType::GuestMemoryRec* memory, std::int64_t size) {
 }
 
 void APS5_VABI Release(FreeType::GuestMemoryRec*, void* block) { std::free(block); }
+
+bool failReallocation = false;
+
+void* APS5_VABI Resize(FreeType::GuestMemoryRec* memory, std::int64_t current, std::int64_t size, void* block) {
+    ++*static_cast<int*>(memory->user);
+    if (failReallocation) return nullptr;
+    auto* grown = static_cast<unsigned char*>(std::realloc(block, static_cast<std::size_t>(size)));
+    if (grown && size > current) std::memset(grown + current, 0xA5, static_cast<std::size_t>(size - current));
+    return grown;
+}
+
+bool Filled(const void* block, std::int64_t from, std::int64_t to, unsigned char value) {
+    const auto* bytes = static_cast<const unsigned char*>(block);
+    return std::all_of(bytes + from, bytes + to, [value](unsigned char byte) { return byte == value; });
+}
+
+void Reallocations() {
+    int calls = 0;
+    FreeType::GuestMemoryRec memory{&calls, Allocate, Release, Resize};
+    for (const bool cleared : {true, false}) {
+        const auto resize = cleared ? forwarded.realloc : forwarded.qrealloc;
+        calls = 0;
+        void* block = std::malloc(16);
+        std::memset(block, 0x11, 16);
+        Require(resize(&memory, 16, 48, &block) == 0 && block && calls == 1, "grow allocation");
+        Require(Filled(block, 0, 16, 0x11) && Filled(block, 16, 48, cleared ? 0 : 0xA5), "grown region");
+        Require(resize(&memory, 48, 8, &block) == 0 && block && Filled(block, 0, 8, 0x11) && calls == 2, "shrink allocation");
+        failReallocation = true;
+        void* kept = block;
+        Require(resize(&memory, 8, 64, &block) == FT_Err_Out_Of_Memory && block == kept && calls == 3, "failed growth keeps the block");
+        failReallocation = false;
+        Require(resize(&memory, -1, 8, &block) == FT_Err_Invalid_Argument && block == kept, "negative current size");
+        Require(resize(&memory, 8, -1, &block) == FT_Err_Invalid_Argument && block == kept, "negative new size");
+        Require(resize(&memory, 8, 0x80000000ll, &block) == FT_Err_Array_Too_Large && block == kept && calls == 3, "oversized allocation");
+        Require(resize(&memory, 8, 0, &block) == 0 && block == nullptr && calls == 3, "release through zero size");
+        Require(resize(&memory, 0, 0, &block) == 0 && block == nullptr, "zero size without a block");
+        Require(resize(&memory, 0, 24, &block) == 0 && block && Filled(block, 0, 24, 0) && calls == 4, "empty current allocates cleared");
+        Release(&memory, block);
+    }
+}
 
 void Libraries() {
     FreeType::GuestLibrary* library = nullptr;
@@ -143,6 +186,12 @@ void Libraries() {
         Require(forwarded.render(library, &shape, &params) == FT_Outline_Render(native, &nativeShape, &nativeParams), "render result");
         Require(std::any_of(pixels.begin(), pixels.end(), [](unsigned char pixel) { return pixel != 0; }) && pixels == nativePixels, "rendered pixels");
         Require(params.source == &shape, "render source");
+        std::fill(pixels.begin(), pixels.end(), 0);
+        std::fill(nativePixels.begin(), nativePixels.end(), 0);
+        Require(ot.outlineBitmap(library, &shape, &bitmap) == FT_Outline_Get_Bitmap(native, &nativeShape, &nativeBitmap),
+                "outline bitmap result");
+        Require(std::any_of(pixels.begin(), pixels.end(), [](unsigned char pixel) { return pixel != 0; }) &&
+                pixels == nativePixels, "outline bitmap pixels");
     }
     Require(forwarded.render(nullptr, &shape, nullptr) == FT_Outline_Render(nullptr, &nativeShape, nullptr), "render without library");
     Require(forwarded.render(library, nullptr, nullptr) == FT_Outline_Render(native, nullptr, nullptr), "render without outline");
@@ -397,6 +446,9 @@ int main(int argc, char** argv) {
     if (!library) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(library != nullptr, "load requested library");
+    Resolve(ot.outlineBitmap, library, patched, "4RRjK-Wd1lU", "sceFreeTypeOtOutlineGetBitmap_nid_no_patch");
+    Require(ot.outlineBitmap(nullptr, nullptr, nullptr) == FT_Outline_Get_Bitmap(nullptr, nullptr, nullptr),
+            "outline bitmap without library");
 #ifdef _WIN32
     const bool forwards = patched;
     void* dependency = GetModuleHandleA("libSceFreeType.prx");
@@ -423,9 +475,12 @@ int main(int argc, char** argv) {
         Resolve(forwarded.propertyGet, library, patched, "8fAMdZCnewA", "FT_Property_Get_nid_postfix");
         Resolve(forwarded.propertySet, library, patched, "LsB538+IPrE", "FT_Property_Set_nid_postfix");
         Resolve(forwarded.qalloc, library, patched, "hz-J3hohXW8", "FT_QAlloc_nid_postfix");
+        Resolve(forwarded.realloc, library, patched, "HVSaZbxYi2s", "FT_Realloc_nid_postfix");
+        Resolve(forwarded.qrealloc, library, patched, "KVbmKCGGowg", "FT_QRealloc_nid_postfix");
         Resolve(forwarded.getModule, dependency, patched, "swrIPzOxcmM", "FT_Get_Module_nid_postfix");
         Resolve(forwarded.removeModule, library, patched, "5ipBcLYVc2k", "FT_Remove_Module_nid_postfix");
         Libraries();
+        Reallocations();
         Glyphs();
     }
     Resolve(ot.sin, library, patched, "L1uHkWTazkI", "FT_Sin_nid_postfix");
