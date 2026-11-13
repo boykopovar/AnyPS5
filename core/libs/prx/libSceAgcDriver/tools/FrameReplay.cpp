@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -318,6 +319,9 @@ Skipped restoreMemory(const FrameCaptureReader& reader) {
                 continue;
             }
             commit(chunk);
+#if defined(__linux__) || defined(__APPLE__)
+            if (chunk.rangeKind == FrameRangeKind::Watched) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pointer, bytes);
+#endif
             mutation.Add(pointer, bytes, (chunk.access & FrameRangeAccess::Readable) != 0, (chunk.access & FrameRangeAccess::Writable) != 0, gpu);
         }
     }

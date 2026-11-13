@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/TraceRevision.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
@@ -723,13 +724,12 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
         const bool host = first < base || end > base + size;
         const auto access = FrameRangeAccess::Readable | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
         HostMapping::Walk(first, end, "frame capture", [&](const HostMapping::Mapping& mapping) {
-            if (!mapping.readable && !mapping.writable && !mapping.executable) return;
-            const auto add = [&](std::uint64_t address, std::uint64_t regionEnd, bool readable) {
+            const auto add = [&](std::uint64_t address, std::uint64_t regionEnd, bool readable, std::uint32_t protection) {
                 if (address >= regionEnd) return;
                 Range range;
                 range.address = address;
                 range.bytes = regionEnd - address;
-                range.protection = windowsProtection(mapping);
+                range.protection = protection;
                 range.access = access;
                 range.readable = readable;
                 if (host) range.kind = FrameRangeKind::Host;
@@ -742,9 +742,17 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
             };
             const auto address = std::max<std::uint64_t>(first, mapping.start);
             const auto regionEnd = std::min<std::uint64_t>(end, mapping.end);
+            if (!mapping.readable && !mapping.writable && !mapping.executable) {
+                std::vector<std::pair<std::uintptr_t, std::uintptr_t>> trapped;
+                GuestWriteWatch::GuestWriteWatchReadTraps_nid_postfix(static_cast<std::uintptr_t>(address), static_cast<std::size_t>(regionEnd - address), [](void* context, std::uintptr_t begin, std::uintptr_t trapEnd) {
+                    static_cast<std::vector<std::pair<std::uintptr_t, std::uintptr_t>>*>(context)->emplace_back(begin, trapEnd);
+                }, &trapped);
+                for (const auto& [begin, trapEnd] : trapped) add(std::max<std::uint64_t>(begin, address), std::min<std::uint64_t>(trapEnd, regionEnd), true, allocation->writable ? 0x04u : 0x02u);
+                return;
+            }
             const auto backed = std::clamp(fileBackedEnd(mapping), address, regionEnd);
-            add(address, backed, mapping.readable);
-            add(backed, regionEnd, false);
+            add(address, backed, mapping.readable, windowsProtection(mapping));
+            add(backed, regionEnd, false, windowsProtection(mapping));
         });
     }
     return result;
