@@ -15,7 +15,7 @@
 
 ### Functional
 
-- [sceCameraGetWhiteBalance](../../../core/libs/prx/libSceCamera/src/Attributes.cpp) (libSceCamera) - returning SCE_CAMERA_ERROR_PARAM for an unwritable output pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
+- [sceCameraGetWhiteBalance and sceCameraGetAutoExposureGain](../../../core/libs/prx/libSceCamera/src/Attributes.cpp) (libSceCamera) - returning SCE_CAMERA_ERROR_PARAM for an unwritable output pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [sceCameraGetDeviceConfig](../../../core/libs/prx/libSceCamera/src/Config.cpp) (libSceCamera) - returning SCE_CAMERA_ERROR_PARAM for an unwritable output pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 
 - [sceCameraIsAttached](../../../core/libs/prx/libSceCamera/Export.cpp) (libSceCamera) - no camera is ever attached: index 0 returns 0 (not attached) and any other index returns `SCE_CAMERA_ERROR_PARAM` (0x802E0000), as [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/9a8ae4417bbfc79b1a43eb8a2eb0bb602148261e/src/core/libraries/camera/camera.cpp#L187-L200) does without a configured camera, with the error value from its [camera_error.h](https://github.com/shadps4-emu/shadPS4/blob/9a8ae4417bbfc79b1a43eb8a2eb0bb602148261e/src/core/libraries/camera/camera_error.h). Not measured on a console. Closes when: a host camera is exposed to guests.
