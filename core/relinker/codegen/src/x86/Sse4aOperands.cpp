@@ -19,11 +19,14 @@ Sse4aOperands DecodeSse4a(const std::uint8_t* data, const std::size_t length) {
             pos += 1;
             continue;
         }
+        if (b == PrefixLock) {
+            throw CodegenException("SSE4a instruction with a LOCK prefix");
+        }
         if (b == PrefixOperandSize) {
             operandSizeOverride = true;
         } else if (b == PrefixRepne) {
             repnePrefix = true;
-        } else if (b != PrefixLock && b != PrefixRep && b != PrefixAddressSize &&
+        } else if (b != PrefixRep && b != PrefixAddressSize &&
                    b != PrefixSegCs && b != PrefixSegSs && b != PrefixSegDs &&
                    b != PrefixSegEs && b != PrefixSegFs && b != PrefixSegGs) {
             break;

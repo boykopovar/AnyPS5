@@ -1,4 +1,7 @@
+#include "prx/libc/include/exceptions/Unwind.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
@@ -49,24 +52,28 @@ static void RawLog(const char* format, ...) {
     RawWrite(buffer, static_cast<std::size_t>(length));
 }
 
+const char* CaughtWhat(const char** typeName) {
+    if (!globals.caught || !Native(globals.caught->unwind.exception_class)) return nullptr;
+    Header* primary = Primary(globals.caught);
+    if (typeName != nullptr) *typeName = primary->type ? primary->type->name() : nullptr;
+    void* exception = primary->adjusted;
+    if (!exception || !primary->type || !Match(&typeid(std::exception), primary->type, exception)) return nullptr;
+    struct VtableLayout { std::ptrdiff_t offset; const void* type; void (*destroy)(void*); void (*del)(void*); const char* (*whatFn)(const void*); };
+    const void* vtable = *static_cast<const void* const*>(exception);
+    auto* layout = reinterpret_cast<const VtableLayout*>(static_cast<const char*>(vtable) - offsetof(VtableLayout, destroy));
+#ifdef _WIN32
+    if (!primary->_pad) {
+        using GuestWhat = const char* (APS5_VABI *)(const void*);
+        return reinterpret_cast<GuestWhat>(layout->whatFn)(exception);
+    }
+#endif
+    return layout->whatFn(exception);
+}
+
 [[noreturn]] static void DefaultTerminate() {
     if (globals.caught && Native(globals.caught->unwind.exception_class)) {
-        Header* primary = Primary(globals.caught);
-        const char* typeName = primary->type ? primary->type->name() : nullptr;
-        const char* what = nullptr;
-        void* exception = primary->adjusted;
-        if (exception && primary->type && Match(&typeid(std::exception), primary->type, exception)) {
-            struct VtableLayout { std::ptrdiff_t offset; const void* type; void (*destroy)(void*); void (*del)(void*); const char* (*whatFn)(const void*); };
-            const void* vtable = *static_cast<const void* const*>(exception);
-            auto* layout = reinterpret_cast<const VtableLayout*>(static_cast<const char*>(vtable) - offsetof(VtableLayout, destroy));
-#ifdef _WIN32
-            if (!primary->_pad) {
-                using GuestWhat = const char* (__attribute__((sysv_abi)) *)(const void*);
-                what = reinterpret_cast<GuestWhat>(layout->whatFn)(exception);
-            } else
-#endif
-            what = layout->whatFn(exception);
-        }
+        const char* typeName = nullptr;
+        const char* what = CaughtWhat(&typeName);
         int status = 0;
         char* demangled = abi::__cxa_demangle(typeName, nullptr, nullptr, &status);
         const char* displayName = (status == 0 && demangled) ? demangled : typeName;
@@ -85,7 +92,10 @@ static void RawLog(const char* format, ...) {
 
 inline std::atomic<void(*)()> terminateHandler {DefaultTerminate};
 [[noreturn]] void InvokeTerminate(void (*handler)()) {
+    const bool runtimeHandler = handler == nullptr || handler == DefaultTerminate || handler == std::abort;
+    if (runtimeHandler) LibcRunReportTerminate_nid_no_patch(CaughtWhat(nullptr));
     try { if (handler) handler(); } catch (...) {}
+    if (!runtimeHandler) LibcRunReportTerminate_nid_no_patch(CaughtWhat(nullptr));
     std::abort();
 }
 [[noreturn]] void Terminate() { InvokeTerminate(terminateHandler.load(std::memory_order_acquire)); }
@@ -117,7 +127,7 @@ void Release(void* object) {
     }
 }
 
-void APS5_VABI Cleanup(_Unwind_Reason_Code reason, _Unwind_Exception* exception) {
+static void APS5_VABI Cleanup(_Unwind_Reason_Code reason, _Unwind_Exception* exception) {
     if (reason != _URC_FOREIGN_EXCEPTION_CAUGHT) Terminate();
     auto* header = FromUnwind(exception);
     if (exception->exception_class == DependentClass) {
@@ -200,12 +210,15 @@ void VisitBases(const std::type_info* type, BaseLocation location, bool publicPa
 
 void Bases(const std::type_info* type, void* object, Search& search) {
     std::uintptr_t identity = 0;
+    bool reachedPublicly = false;
     auto visitor = [&](const std::type_info* candidate, BaseLocation location, bool publicPath) {
-        if (!publicPath || !Equal(candidate, search.wanted)) return;
-        if (!search.count) { search.found = location.object; identity = location.identity; search.count = 1; }
+        if (!Equal(candidate, search.wanted)) return;
+        if (!search.count) { search.found = location.object; identity = location.identity; search.count = 1; reachedPublicly = publicPath; }
         else if (search.found != location.object || identity != location.identity) search.count = 2;
+        else if (publicPath) reachedPublicly = true;
     };
     VisitBases(type, {object, 0}, true, visitor);
+    if (search.count == 1 && !reachedPublicly) search.count = 0;
 }
 
 bool PointerMatch(const __cxxabiv1::__pbase_type_info* caught, const __cxxabiv1::__pbase_type_info* thrown,
@@ -285,8 +298,10 @@ void APS5_VABI __cxa_free_exception_nid_postfix(void* object) {
     header->unwind.exception_cleanup = Cleanup;
     ++globals.uncaught;
     _Unwind_RaiseException_nid_postfix(&header->unwind);
+
     RawLog("[libc] unhandled exception '%s' thrown from %p\n", type ? type->name() : "?", throwSite);
     __cxa_begin_catch_nid_postfix(&header->unwind);
+
     InvokeTerminate(header->terminate);
 }
 
@@ -343,6 +358,7 @@ void APS5_VABI __cxa_end_catch_nid_postfix() {
         globals.caught = header->next;
         bool foreign = !Native(header->unwind.exception_class);
         _Unwind_DeleteException_nid_postfix(UnwindOf(header));
+
         if (foreign) DeleteForeignHeader(header);
     }
 }
@@ -355,6 +371,7 @@ void APS5_VABI __cxa_end_catch_nid_postfix() {
     if (Native(header->unwind.exception_class)) ++globals.uncaught;
     _Unwind_RaiseException_nid_postfix(UnwindOf(header));
     __cxa_begin_catch_nid_postfix(UnwindOf(header));
+
     InvokeTerminate(header->terminate ? header->terminate : terminateHandler.load());
 }
 
@@ -373,7 +390,7 @@ unsigned APS5_VABI __cxa_uncaught_exceptions_nid_postfix() { return LibcExceptio
 bool APS5_VABI _ZSt18uncaught_exceptionv_nid_postfix() { return __cxa_uncaught_exception_nid_postfix(); }
 int APS5_VABI _ZSt19uncaught_exceptionsv_nid_postfix() { return static_cast<int>(__cxa_uncaught_exceptions_nid_postfix()); }
 [[noreturn]] void APS5_VABI _ZSt9terminatev_nid_postfix() { LibcException::Terminate(); }
-using LibcTerminateHandler = void(*)();
+
 LibcTerminateHandler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(LibcTerminateHandler handler) {
     return LibcException::terminateHandler.exchange(handler ? handler : std::abort);
 }
@@ -388,6 +405,7 @@ void* APS5_VABI __cxa_current_primary_exception_nid_postfix() {
     if (!globals.caught || !Native(globals.caught->unwind.exception_class)) return nullptr;
     void* object = Primary(globals.caught) + 1;
     __cxa_increment_exception_refcount_nid_postfix(object);
+
     return object;
 }
 void* APS5_VABI __cxa_allocate_dependent_exception_nid_postfix() {
@@ -410,9 +428,11 @@ void APS5_VABI __cxa_rethrow_primary_exception_nid_postfix(void* object) {
     header->unwind.exception_class = DependentClass;
     header->unwind.exception_cleanup = Cleanup;
     __cxa_increment_exception_refcount_nid_postfix(object);
+
     ++globals.uncaught;
     _Unwind_RaiseException_nid_postfix(&header->unwind);
     __cxa_begin_catch_nid_postfix(&header->unwind);
+
     InvokeTerminate(header->terminate);
 }
 
@@ -450,6 +470,7 @@ void* APS5_VABI __dynamic_cast_nid_postfix(const void* source, const __cxxabiv1:
 
 [[noreturn]] void APS5_VABI __cxa_call_terminate_nid_postfix(void* exception) {
     __cxa_begin_catch_nid_postfix(exception);
+
     LibcException::Terminate();
 }
 [[noreturn]] void APS5_VABI __cxa_pure_virtual_nid_postfix() { LibcException::Terminate(); }

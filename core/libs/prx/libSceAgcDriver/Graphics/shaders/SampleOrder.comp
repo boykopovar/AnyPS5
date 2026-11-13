@@ -1,0 +1,60 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(binding = 0, TEXEL_FORMAT) uniform restrict uimage2DMS samples;
+
+layout(push_constant) uniform Order {
+    uvec4 map;
+    uvec2 extent;
+    uint count;
+} order;
+
+uvec4 pick(uint source, uvec4 s0, uvec4 s1, uvec4 s2, uvec4 s3, uvec4 s4, uvec4 s5, uvec4 s6, uvec4 s7) {
+    const bool odd = (source & 1u) != 0u;
+    const uvec4 low = (source & 2u) == 0u ? (odd ? s1 : s0) : (odd ? s3 : s2);
+    const uvec4 high = (source & 2u) == 0u ? (odd ? s5 : s4) : (odd ? s7 : s6);
+    return (source & 4u) == 0u ? low : high;
+}
+
+void reorder(ivec2 at, uint map) {
+    if (map == 0x76543210u || uint(at.x) >= order.extent.x || uint(at.y) >= order.extent.y) return;
+    const uvec4 s0 = imageLoad(samples, at, 0);
+    const uvec4 s1 = imageLoad(samples, at, 1);
+    uvec4 s2 = uvec4(0u);
+    uvec4 s3 = uvec4(0u);
+    uvec4 s4 = uvec4(0u);
+    uvec4 s5 = uvec4(0u);
+    uvec4 s6 = uvec4(0u);
+    uvec4 s7 = uvec4(0u);
+    if (order.count > 2u) {
+        s2 = imageLoad(samples, at, 2);
+        s3 = imageLoad(samples, at, 3);
+    }
+    if (order.count > 4u) {
+        s4 = imageLoad(samples, at, 4);
+        s5 = imageLoad(samples, at, 5);
+        s6 = imageLoad(samples, at, 6);
+        s7 = imageLoad(samples, at, 7);
+    }
+    imageStore(samples, at, 0, pick(map & 7u, s0, s1, s2, s3, s4, s5, s6, s7));
+    imageStore(samples, at, 1, pick((map >> 4u) & 7u, s0, s1, s2, s3, s4, s5, s6, s7));
+    if (order.count > 2u) {
+        imageStore(samples, at, 2, pick((map >> 8u) & 7u, s0, s1, s2, s3, s4, s5, s6, s7));
+        imageStore(samples, at, 3, pick((map >> 12u) & 7u, s0, s1, s2, s3, s4, s5, s6, s7));
+    }
+    if (order.count > 4u) {
+        imageStore(samples, at, 4, pick((map >> 16u) & 7u, s0, s1, s2, s3, s4, s5, s6, s7));
+        imageStore(samples, at, 5, pick((map >> 20u) & 7u, s0, s1, s2, s3, s4, s5, s6, s7));
+        imageStore(samples, at, 6, pick((map >> 24u) & 7u, s0, s1, s2, s3, s4, s5, s6, s7));
+        imageStore(samples, at, 7, pick((map >> 28u) & 7u, s0, s1, s2, s3, s4, s5, s6, s7));
+    }
+}
+
+void main() {
+    const ivec2 quad = ivec2(gl_GlobalInvocationID.xy) * 2;
+    reorder(quad, order.map.x);
+    reorder(quad + ivec2(1, 0), order.map.y);
+    reorder(quad + ivec2(0, 1), order.map.z);
+    reorder(quad + ivec2(1, 1), order.map.w);
+}

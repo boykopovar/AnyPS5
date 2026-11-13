@@ -1,10 +1,41 @@
-#include <cstddef>
+#include "prx/libSceSystemLogger2Delivery/include/Api.hpp"
 #include <cstdint>
+#include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
 
-APS5_DUMMY_FUN
+int APS5_VABI sceSystemLogger2DeliveryGetBatchResult() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSystemLogger2DeliveryGetResult() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSystemLogger2DeliverySetBatchDeliveryEvent() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSystemLogger2DeliveryTerminate() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSystemLogger2DeliveryResume() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2DeliverySuspend() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2DeliveryInitialize() {
+    NotImplemented_nid_no_patch(__func__);
+}
 
 }

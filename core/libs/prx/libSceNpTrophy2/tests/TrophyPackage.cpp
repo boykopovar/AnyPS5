@@ -1,6 +1,7 @@
 #include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyPackage.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
+#include "prx/libSceSystemService/LanguageLocale.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -94,7 +95,11 @@ const char StatsDefinition[] = R"({"statDefinitionArray":[
     {"statId":50,"dataType":"uint64","aggregation":"sum"},
     {"statId":60,"dataType":"int32","aggregation":"latest"},
     {"statId":70,"dataType":"uint32","aggregation":"latest","maxValue":"5000000000"},
-    {"dataType":"uint32","aggregation":"latest"}
+    {"dataType":"uint32","aggregation":"latest"},
+    {"statId":80,"dataType":"int32","aggregation":"max","minValue":"0","initialValue":"0"},
+    {"statId":90,"dataType":"uint32","aggregation":"max","initialValue":"3"},
+    {"statId":100,"dataType":"int32","aggregation":"max","initialValue":"-1"},
+    {"statId":110,"dataType":"int32","aggregation":"latest","minValue":"-5"}
 ]})";
 
 const char StatsExtraction[] = R"({"statsExtractionRuleArray":[
@@ -106,7 +111,12 @@ const char StatsExtraction[] = R"({"statsExtractionRuleArray":[
     {"condition":{"eventName":"FILTERED","property":{"path":"$.level"}},"action":{"input":"$.counter","output":{"statId":10}}},
     {"condition":{"eventName":"COUNT"},"action":{"output":{"statId":10}}},
     {"condition":{"eventName":"BRACKETS"},"action":{"input":"$['counter']","output":{"statId":10}}},
-    {"bad":1}
+    {"bad":1},
+    {"condition":{"eventName":"PROGRESS","property":{"path":"$._trophy_id","comparator":"==","value":"5"}},"action":{"input":"$._trophy_progress","output":{"statId":80}}},
+    {"condition":{"eventName":"PROGRESS","property":{"path":"$._trophy_id","comparator":"==","value":6}},"action":{"input":"$._trophy_progress","output":{"statId":90}}},
+    {"condition":{"eventName":"RANGED","property":{"path":"$._trophy_id","comparator":">=","value":"5"}},"action":{"input":"$._trophy_progress","output":{"statId":80}}},
+    {"condition":{"eventName":"NAMED","property":{"path":"$.mode","comparator":"==","value":"delta"}},"action":{"input":"$._trophy_progress","output":{"statId":80}}},
+    {"condition":{"eventName":"EXTRA","property":{"path":"$._trophy_id","comparator":"==","value":"5"},"other":1},"action":{"input":"$._trophy_progress","output":{"statId":80}}}
 ]})";
 
 std::string trophyPackage() {
@@ -263,6 +273,10 @@ void testPackage() {
           "a tropconf.json of more than 1048576 values was read");
     check(contains(failure([] { NpTrophy2::ParseTrophyPackage("not a package", "en-US"); }), "fewer than the 64-byte header"), "a package that is not a container was read");
     check(NpTrophy2::LanguageTag(1) == "en-US" && NpTrophy2::LanguageTag(0) == "ja-JP" && NpTrophy2::LanguageTag(2) == "fr-FR" && NpTrophy2::LanguageTag(29) == "id-ID", "language tags are wrong");
+    for (int language = 0; language <= 30; ++language) {
+        const auto match = SystemServiceLocale::MatchLocale(NpTrophy2::LanguageTag(language));
+        check(match.recognised && match.id == language, "the trophy tag of a console language does not map back to it");
+    }
     bool thrown = false;
     try {
         NpTrophy2::LanguageTag(31);
@@ -310,10 +324,13 @@ void testProgressAndPlatinum() {
 
 void testStatRules() {
     const auto rules = NpTrophy2::ParseStatRules(statPackage());
-    check(rules.stats.size() == 4 && rules.stats.at(10).type == NpTrophy2::StatType::UInt64 && rules.stats.at(30).type == NpTrophy2::StatType::UInt32 && rules.stats.at(30).maximum == UINT32_MAX &&
-              rules.stats.at(40).maximum == 50 && rules.stats.at(10).minimum == 0,
+    check(rules.stats.size() == 7 && rules.stats.at(10).type == NpTrophy2::StatType::UInt64 && rules.stats.at(30).type == NpTrophy2::StatType::UInt32 && rules.stats.at(30).maximum == UINT32_MAX &&
+              rules.stats.at(40).maximum == 50 && rules.stats.at(10).minimum == 0 && rules.stats.at(10).aggregation == NpTrophy2::StatAggregation::Latest,
           "stat definitions were not read");
-    check(rules.events.size() == 3 && rules.events.at("COLLECT").size() == 2 && rules.events.at("COLLECT")[1].input == "total" && rules.events.at("COLLECT")[1].statId == 20 &&
+    check(rules.stats.at(60).type == NpTrophy2::StatType::Int32 && rules.stats.at(60).maximum == INT32_MAX && rules.stats.at(80).aggregation == NpTrophy2::StatAggregation::Max &&
+              rules.stats.at(80).type == NpTrophy2::StatType::Int32 && rules.stats.at(80).initial == 0 && rules.stats.at(90).aggregation == NpTrophy2::StatAggregation::Max && rules.stats.at(90).initial == 3,
+          "int32 and max stat definitions were not read");
+    check(rules.events.size() == 4 && rules.events.at("COLLECT").size() == 2 && rules.events.at("COLLECT")[1].input == "total" && rules.events.at("COLLECT")[1].statId == 20 &&
               rules.events.at("STEPS")[0].input == "player.steps" && rules.events.at("TIME")[0].statId == 30,
           "extraction rules were not read");
     std::set<std::string> skipped(rules.skipped.begin(), rules.skipped.end());
@@ -323,11 +340,17 @@ void testStatRules() {
         }
         return false;
     };
-    check(rules.skipped.size() == 9, "unsupported definitions and rules were not all reported");
-    check(reported("stat 50 has aggregation \"sum\"") && reported("stat 60 has dataType \"int32\"") && reported("stat 70 has maxValue \"5000000000\"") && reported("statDefinitionArray[7] has no unsigned statId"),
+    check(rules.skipped.size() == 13, "unsupported definitions and rules were not all reported");
+    check(reported("stat 50 has aggregation \"sum\"; only \"latest\" and \"max\" are supported") && reported("stat 70 has maxValue \"5000000000\"") && reported("statDefinitionArray[7] has no unsigned statId") &&
+              reported("stat 100 has initialValue \"-1\"") && reported("stat 110 has minValue \"-5\", which is not from 0 to its int32 limit"),
           "unsupported definitions were not reported");
-    check(reported("for SUM writes stat 50") && reported("filters FILTERED") && reported("for COUNT reads no input") && reported("for BRACKETS reads \"$['counter']\"") && reported("[8] has no condition"),
+    check(reported("for SUM writes stat 50") && reported("filters FILTERED") && reported("for COUNT reads no input") && reported("for BRACKETS reads \"$['counter']\"") && reported("[8] has no condition") &&
+              reported("filters RANGED") && reported("filters NAMED") && reported("filters EXTRA"),
           "unsupported rules were not reported");
+    const auto& progress = rules.events.at("PROGRESS");
+    check(progress.size() == 2 && progress[0].filter && progress[0].filter->path == "_trophy_id" && progress[0].filter->value == 5 && progress[0].input == "_trophy_progress" && progress[0].statId == 80 &&
+              progress[1].filter && progress[1].filter->value == 6 && progress[1].statId == 90 && !rules.events.at("COLLECT")[0].filter,
+          "property filters were not read");
     for (const char* input : {"$", "$.", "$..a", "$.a.", "$.a-b", "counter", "$.a b"}) {
         const std::string extraction = std::string(R"({"statsExtractionRuleArray":[{"condition":{"eventName":"E"},"action":{"input":")") + input + R"(","output":{"statId":10}}}]})";
         check(NpTrophy2::ParseStatRules(ucp({{"stats_definition.json", StatsDefinition}, {"stats_extraction.json", extraction}})).events.empty(), "an unsupported input path was accepted");
@@ -386,6 +409,91 @@ NpTrophy2Event event(const char* name, std::vector<NpTrophy2EventProperty> prope
     return {name, std::move(properties)};
 }
 
+void testUnsupportedStatActions() {
+    const char definitions[] = R"({"statDefinitionArray":[
+        {"statId":10,"dataType":"uint64","aggregation":"latest"},
+        {"statId":40,"dataType":"uint32","aggregation":"max","initialValue":2,"maxValue":50}]})";
+    const std::vector<std::pair<std::string, std::string>> unsupported{
+        {R"({"input":"$.counter","output":{"statId":40},"conversion":null})", "conversion"},
+        {R"({"conversion":{},"input":"$.counter","output":{"statId":40}})", "conversion"},
+        {R"({"input":"$.counter","extension":[],"output":{"statId":40}})", "extension"},
+        {R"({"input":"$.counter","output":{"statId":40,"conversion":{}}})", "conversion"},
+        {R"({"input":"$.counter","output":{"extension":false,"statId":40}})", "extension"},
+        {R"({"input":"$.counter","output":{"statId":40},"line\nbreak":null})", R"(line\u000abreak)"},
+        {R"({"input":"$.counter","output":{"statId":40},"nul\u0000key":null})", R"(nul\u0000key)"},
+        {R"({"input":"$.counter","output":{"statId":40,"quote\"\\name":null}})", R"(quote\"\\name)"},
+        {R"({"input":"$.counter","output":{"statId":40,"del\u007fkey":null}})", R"(del\u007fkey)"}
+    };
+    const auto package = NpTrophy2::ParseTrophyPackage(trophyPackage(), "en-US");
+    const NpTrophy2::UnlockedQuery locked = [](std::int32_t) { return false; };
+    for (std::size_t index = 0; index < unsupported.size(); ++index) {
+        const auto& [action, member] = unsupported[index];
+        const auto rejected = std::string(R"({"condition":{"eventName":"GUARDED"},"action":)") + action + "}";
+        const std::string supported = R"({"condition":{"eventName":"GUARDED"},"action":{"input":"$.safe","output":{"statId":10}}})";
+        for (const bool supportedFirst : {false, true}) {
+            const auto extraction = std::string(R"({"statsExtractionRuleArray":[)") +
+                                    (supportedFirst ? supported + "," + rejected : rejected + "," + supported) + "]}";
+            const auto rules = NpTrophy2::ParseStatRules(ucp({{"stats_definition.json", definitions}, {"stats_extraction.json", extraction}}));
+            check(rules.skipped.size() == 1 && contains(rules.skipped[0], supportedFirst ? "statsExtractionRuleArray[1]" : "statsExtractionRuleArray[0]") &&
+                      contains(rules.skipped[0], "GUARDED") && contains(rules.skipped[0], member.c_str()),
+                  "an unsupported action member was not reported with its rule and event");
+            check(rules.skipped[0].find_first_of(std::string("\0\n\r", 3)) == std::string::npos,
+                  "an unsupported member inserted a control character into its diagnostic");
+            check(rules.events.size() == 1 && rules.events.at("GUARDED").size() == 1 && rules.events.at("GUARDED")[0].statId == 10,
+                  "an unsupported action was kept, or a supported action in the same package was dropped");
+            const auto directory = "unsupported-action-" + std::to_string(index) + (supportedFirst ? "-before" : "-after");
+            {
+                NpTrophy2::StatStore stats(directory);
+                stats.Set(InitialUser, 0, 40, 2);
+                const auto changes = NpTrophy2::ApplyStatRules(rules, event("GUARDED", {{"counter", 9, "9"}, {"safe", 7, "7"}}), stats, InitialUser, 0);
+                check(changes.problems.empty() && changes.updates.size() == 1 && changes.updates[0].statId == 10 && changes.updates[0].value == 7 &&
+                          stats.Value(InitialUser, 0, 10) == std::optional<std::uint64_t>(7) && stats.Value(InitialUser, 0, 40) == std::optional<std::uint64_t>(2),
+                      "an unsupported action copied its raw input into a statistic");
+                check(NpTrophy2::ReachedTrophies(package, stats.Values(InitialUser, 0), locked).empty(), "an unsupported action reached a trophy");
+            }
+            NpTrophy2::StatStore restarted(directory);
+            check(restarted.Value(InitialUser, 0, 40) == std::optional<std::uint64_t>(2) && restarted.Value(InitialUser, 0, 10) == std::optional<std::uint64_t>(7),
+                  "an unsupported action changed persisted progress");
+        }
+    }
+
+    const char repeated[] = R"({"statsExtractionRuleArray":[
+        {"condition":{"eventName":"REPEATED"},"action":{"input":"$.missing","input":"$.counter","output":{"statId":999},"output":{"statId":999,"statId":10}}}]})";
+    const auto rules = NpTrophy2::ParseStatRules(ucp({{"stats_definition.json", definitions}, {"stats_extraction.json", repeated}}));
+    check(rules.skipped.empty() && rules.events.at("REPEATED").size() == 1 && rules.events.at("REPEATED")[0].input == "counter" &&
+              rules.events.at("REPEATED")[0].statId == 10,
+          "duplicate supported action members did not keep their last value");
+    NpTrophy2::StatStore stats("repeated-action");
+    const auto changes = NpTrophy2::ApplyStatRules(rules, event("REPEATED", {{"counter", 8, "8"}}), stats, InitialUser, 0);
+    check(changes.problems.empty() && changes.updates.size() == 1 && stats.Value(InitialUser, 0, 10) == std::optional<std::uint64_t>(8),
+          "a direct copy with repeated supported members stopped applying");
+}
+
+void testStatLabels() {
+    const char definitions[] = R"({"statDefinitionArray":[
+        {"statId":10,"statName":"Counter","sourceId":"counter","dataType":"uint64","aggregation":"latest"},
+        {"statId":40,"statName":"Other","dataType":"uint32","aggregation":"max"}]})";
+    const char extraction[] = R"({"statsExtractionRuleArray":[
+        {"condition":{"eventName":"LABELLED"},"action":{"input":"$.counter","output":{"statId":10,"statName":"Counter","sourceId":"counter"}}},
+        {"condition":{"eventName":"LABELLED"},"action":{"input":"$.other","output":{"statId":40,"statName":"Other"}}},
+        {"condition":{"eventName":"WRONG"},"action":{"input":"$.counter","output":{"statId":10,"statName":"Other"}}},
+        {"condition":{"eventName":"WRONG"},"action":{"input":"$.other","output":{"statId":40,"sourceId":"counter"}}},
+        {"condition":{"eventName":"WRONG"},"action":{"input":"$.counter","output":{"statId":10,"sourceId":null}}}]})";
+    const auto rules = NpTrophy2::ParseStatRules(ucp({{"stats_definition.json", definitions}, {"stats_extraction.json", extraction}}));
+    check(rules.events.size() == 1 && rules.events.at("LABELLED").size() == 2 && rules.events.at("LABELLED")[0].statId == 10 && rules.events.at("LABELLED")[1].statId == 40,
+          "a rule labelled with its stat's statName and sourceId was not kept");
+    check(rules.skipped.size() == 3 && contains(rules.skipped[0], "statsExtractionRuleArray[2]") && contains(rules.skipped[0], "statName") &&
+              contains(rules.skipped[1], "statsExtractionRuleArray[3]") && contains(rules.skipped[1], "sourceId") && contains(rules.skipped[2], "statsExtractionRuleArray[4]"),
+          "a rule labelled with another stat's name or source was not reported");
+    NpTrophy2::StatStore stats("labelled-action");
+    const auto changes = NpTrophy2::ApplyStatRules(rules, event("LABELLED", {{"counter", 9, "9"}, {"other", 3, "3"}}), stats, InitialUser, 0);
+    check(changes.problems.empty() && changes.updates.size() == 2 && stats.Value(InitialUser, 0, 10) == std::optional<std::uint64_t>(9) &&
+              stats.Value(InitialUser, 0, 40) == std::optional<std::uint64_t>(3),
+          "a labelled rule did not copy its input");
+    const auto wrong = NpTrophy2::ApplyStatRules(rules, event("WRONG", {{"counter", 5, "5"}, {"other", 7, "7"}}), stats, InitialUser, 0);
+    check(wrong.updates.empty() && stats.Value(InitialUser, 0, 10) == std::optional<std::uint64_t>(9), "a mislabelled rule changed a statistic");
+}
+
 void testApplyStatRules() {
     const auto rules = NpTrophy2::ParseStatRules(statPackage());
     NpTrophy2::StatStore stats("applied");
@@ -412,6 +520,65 @@ void testApplyStatRules() {
     check(latest.updates.size() == 2 && stats.Value(InitialUser, 0, 10) == std::optional<std::uint64_t>(2), "a stat did not keep the latest value");
 }
 
+void testProgressRules() {
+    const auto rules = NpTrophy2::ParseStatRules(statPackage());
+    NpTrophy2::StatStore stats("progress");
+    const auto posted = [&](std::vector<NpTrophy2EventProperty> properties) { return NpTrophy2::ApplyStatRules(rules, event("PROGRESS", std::move(properties)), stats, InitialUser, 0); };
+    const auto progress = [&](std::uint64_t trophy, std::uint64_t value) { return posted({{"_trophy_id", trophy, std::to_string(trophy)}, {"_trophy_progress", value, std::to_string(value)}}); };
+    const auto first = progress(5, 4);
+    check(first.problems.empty() && first.updates.size() == 1 && first.updates[0].statId == 80 && first.updates[0].value == 4 && stats.Value(InitialUser, 0, 80) == std::optional<std::uint64_t>(4) &&
+              !stats.Value(InitialUser, 0, 90),
+          "a filtered rule did not take its trophy's progress, or another trophy's rule did");
+    const auto lower = progress(5, 2);
+    check(lower.updates.size() == 1 && lower.updates[0].value == 4 && stats.Value(InitialUser, 0, 80) == std::optional<std::uint64_t>(4), "a max stat went down");
+    const auto higher = progress(5, 7);
+    check(higher.updates.size() == 1 && higher.updates[0].value == 7 && stats.Value(InitialUser, 0, 80) == std::optional<std::uint64_t>(7), "a max stat did not rise");
+    const auto floor = progress(6, 1);
+    check(floor.updates.size() == 1 && floor.updates[0].statId == 90 && floor.updates[0].value == 3 && stats.Value(InitialUser, 0, 90) == std::optional<std::uint64_t>(3), "a max stat started below its initialValue");
+    const auto signedMax = progress(5, 2147483648ull);
+    check(signedMax.updates.empty() && signedMax.problems.size() == 1 && signedMax.problems[0].reason == "2147483648 is not from 0 to 2147483647", "an int32 stat took a value it cannot hold");
+    const auto other = progress(7, 9);
+    const auto unnamed = posted({{"_trophy_progress", 9, "9"}});
+    const auto negative = posted({{"_trophy_id", std::nullopt, "-5"}, {"_trophy_progress", 9, "9"}});
+    check(other.updates.empty() && other.problems.empty() && unnamed.updates.empty() && unnamed.problems.empty() && negative.updates.empty() && negative.problems.empty() &&
+              stats.Value(InitialUser, 0, 80) == std::optional<std::uint64_t>(7) && stats.Value(InitialUser, 0, 90) == std::optional<std::uint64_t>(3),
+          "a filtered rule took an event for another trophy, or without its trophy id");
+    const auto missing = posted({{"_trophy_id", 5, "5"}});
+    check(missing.updates.empty() && missing.problems.size() == 1 && missing.problems[0].rule == "PROGRESS $._trophy_progress for stat 80", "a matching event without its input was not reported");
+    NpTrophy2::StatStore restarted("progress");
+    check(restarted.Raise(InitialUser, 0, 80, 6) == 7 && restarted.Raise(InitialUser, 0, 80, 8) == 8 && restarted.Raise(InitialUser, 0, 120, 1) == 1, "a raise did not keep the larger value");
+    NpTrophy2::StatStore reread("progress");
+    check(reread.Value(InitialUser, 0, 80) == std::optional<std::uint64_t>(8) && reread.Value(InitialUser, 0, 120) == std::optional<std::uint64_t>(1), "a raised stat was not stored");
+}
+
+}
+
+void testGreaterFilters() {
+    const char definitions[] = R"({"statDefinitionArray":[
+        {"statId":10,"dataType":"int32","aggregation":"max"},
+        {"statId":20,"dataType":"uint32","aggregation":"latest"}]})";
+    const char extraction[] = R"({"statsExtractionRuleArray":[
+        {"condition":{"eventName":"COLLECTED","property":{"path":"$.rings","comparator":">","value":"-1"}},"action":{"input":"$.rings","output":{"statId":10}}},
+        {"condition":{"eventName":"CLIMBED","property":{"path":"$.climbs","comparator":">","value":0}},"action":{"input":"$.climbs","output":{"statId":20}}},
+        {"condition":{"eventName":"CLIMBED","property":{"path":"$.climbs","comparator":">","value":"one"}},"action":{"input":"$.climbs","output":{"statId":20}}},
+        {"condition":{"eventName":"CLIMBED","property":{"path":"$.climbs","comparator":">=","value":"0"}},"action":{"input":"$.climbs","output":{"statId":20}}}]})";
+    const auto rules = NpTrophy2::ParseStatRules(ucp({{"stats_definition.json", definitions}, {"stats_extraction.json", extraction}}));
+    check(rules.events.size() == 2 && rules.events.at("COLLECTED").size() == 1 && rules.events.at("CLIMBED").size() == 1 && rules.skipped.size() == 2 &&
+              contains(rules.skipped[0], "statsExtractionRuleArray[2]") && contains(rules.skipped[1], "statsExtractionRuleArray[3]"),
+          "a filter greater than an integer was not kept, or another comparator or a bound that is not an integer was");
+    NpTrophy2::StatStore stats("greater");
+    const auto collected = [&](std::optional<std::uint64_t> value, const char* text) { return NpTrophy2::ApplyStatRules(rules, event("COLLECTED", {{"rings", value, text}}), stats, InitialUser, 0); };
+    const auto unknown = collected(std::nullopt, "-1");
+    check(unknown.updates.empty() && unknown.problems.empty() && !stats.Value(InitialUser, 0, 10), "a value equal to the bound passed a greater-than filter");
+    const auto none = collected(0, "0");
+    check(none.updates.size() == 1 && stats.Value(InitialUser, 0, 10) == std::optional<std::uint64_t>(0), "a value above a negative bound did not pass");
+    const auto some = collected(12, "12");
+    check(some.updates.size() == 1 && stats.Value(InitialUser, 0, 10) == std::optional<std::uint64_t>(12), "a greater-than filter did not copy its input");
+    const auto climbed = [&](std::uint64_t value) { return NpTrophy2::ApplyStatRules(rules, event("CLIMBED", {{"climbs", value, std::to_string(value)}}), stats, InitialUser, 0); };
+    const auto first = climbed(3);
+    const auto reset = climbed(0);
+    check(first.updates.size() == 1 && reset.updates.empty() && reset.problems.empty() && stats.Value(InitialUser, 0, 20) == std::optional<std::uint64_t>(3),
+          "a value not above the bound changed a latest statistic");
 }
 
 int main() {
@@ -426,7 +593,11 @@ int main() {
     testStatRules();
     testConditions();
     testStatStore();
+    testUnsupportedStatActions();
+    testStatLabels();
     testApplyStatRules();
+    testProgressRules();
+    testGreaterFilters();
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
     std::puts("Trophy package tests passed");

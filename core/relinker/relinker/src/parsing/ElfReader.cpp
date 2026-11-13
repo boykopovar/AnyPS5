@@ -76,7 +76,7 @@ std::uint64_t ElfReader::_readU64At(FileByteOffset fileByteOffset) const {
     return value;
 }
 
-ElfHeader ElfReader::ReadHeader() const {
+void ElfReader::ValidateMagic() const {
     if (_fileBuffer.size() < 0x40) {
         throw RelinkerException("File too small for ELF header");
     }
@@ -85,11 +85,21 @@ ElfHeader ElfReader::ReadHeader() const {
     if (magic == 0x1d3d154f || magic == 0xeef51454) {
         throw RelinkerException("The input is a SELF container, not an ELF");
     }
+    if (magic == 0x4849467f) {
+        throw RelinkerException("The input is a PS5 package (FIH), not an ELF; use an extracted, decrypted ELF executable");
+    }
+    if (magic == 0x544e437f) {
+        throw RelinkerException("The input is a package container (CNT), not an ELF; use an extracted, decrypted ELF executable");
+    }
 
     if (_fileBuffer[0] != 0x7f || _fileBuffer[1] != 'E' ||
         _fileBuffer[2] != 'L' || _fileBuffer[3] != 'F') {
         throw RelinkerException("Invalid ELF magic number: " + formatMagic());
     }
+}
+
+ElfHeader ElfReader::ReadHeader() const {
+    ValidateMagic();
     if (_fileBuffer[4] != 2 || _fileBuffer[5] != 1 || _fileBuffer[6] != 1)
         throw RelinkerException("Expected little-endian ELF64 version 1");
     if (_readU16At(0x12) != 62)
@@ -121,6 +131,10 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     if (header.ProgramHeaderCount != 0 && header.ProgramHeaderEntrySize != 56) {
         throw RelinkerException("Invalid ELF program header entry size: expected 56 bytes", 0x36);
     }
+    const ByteCount tableSize = static_cast<ByteCount>(header.ProgramHeaderCount) * header.ProgramHeaderEntrySize;
+    if (!_rangeFits(header.ProgramHeaderOffset, tableSize, _fileBuffer.size())) {
+        throw RelinkerException("FileByteOffset out of bounds", header.ProgramHeaderOffset);
+    }
 
     std::vector<ProgramHeader> headers;
     FileByteOffset offset = header.ProgramHeaderOffset;
@@ -134,7 +148,7 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
         ph.PhysicalAddress = _readU64At(offset + 0x18);
         ph.FileSize = _readU64At(offset + 0x20);
         ph.MemorySize = _readU64At(offset + 0x28);
-        ph.Alignment = _readU64At(offset + 0x30);
+        ph.Alignment = _readU64At(offset + kPhdrAlignOffset);
 
         if (ph.Type == PT_LOAD && ph.FileSize > ph.MemorySize)
             throw RelinkerException("PT_LOAD file size exceeds memory size", ph.Offset);
@@ -145,8 +159,13 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
         offset += header.ProgramHeaderEntrySize;
     }
 
+    std::vector<ProgramHeader> relroProtections;
     for (auto& relro : headers) {
         if (relro.Type != PT_OS_RELRO || relro.MemorySize == 0) continue;
+        if (relro.FileSize > relro.MemorySize)
+            throw RelinkerException("PT_SCE_RELRO file size exceeds memory size", relro.Offset);
+        if (!_rangeFits(relro.Offset, relro.FileSize, _fileBuffer.size()))
+            throw RelinkerException("Segment offset out of bounds", relro.Offset);
         bool covered = false;
         for (const auto& load : headers) {
             if (load.Type != PT_LOAD || load.MemorySize == 0) continue;
@@ -157,14 +176,18 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
             covered = true;
         }
         if (!covered) {
-            if (relro.FileSize > relro.MemorySize)
-                throw RelinkerException("PT_SCE_RELRO file size exceeds memory size", relro.Offset);
-            if (!_rangeFits(relro.Offset, relro.FileSize, _fileBuffer.size()))
-                throw RelinkerException("Segment offset out of bounds", relro.Offset);
+            auto protection = relro;
+            protection.Type = PT_GNU_RELRO;
+            protection.Flags = PF_R;
+            relroProtections.push_back(protection);
             relro.Type = PT_LOAD;
             relro.Flags = PF_R | PF_W;
+        } else {
+            relro.Type = PT_GNU_RELRO;
+            relro.Flags = PF_R;
         }
     }
+    headers.insert(headers.end(), relroProtections.begin(), relroProtections.end());
 
     bool hasTls = false;
     for (const auto& tls : headers) {
@@ -214,7 +237,35 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
         sh.SectionSize = _readU64At(offset + 0x20);
         sh.Link = _readU32At(offset + 0x28);
         sh.Info = _readU32At(offset + 0x2c);
+        sh.Alignment = _readU64At(offset + kShdrAlignOffset);
         sh.EntrySize = _readU64At(offset + kShdrEntSizeOffset);
+
+        if ((sh.Type == SHT_SYMTAB || sh.Type == SHT_DYNSYM || sh.Type == SHT_RELA || sh.Type == SHT_REL || sh.Type == SHT_DYNAMIC)
+            && sh.Link >= header.SectionHeaderCount) {
+            throw RelinkerException("Section link index out of bounds", offset + kShdrLinkOffset);
+        }
+
+        if (sh.Type != SHT_NULL && sh.Alignment > 1 && !std::has_single_bit(sh.Alignment)) {
+            throw RelinkerException("Section header alignment is not a power of two", offset + kShdrAlignOffset);
+        }
+
+        if ((sh.Type == SHT_SYMTAB || sh.Type == SHT_DYNSYM) && sh.EntrySize != kSymEntrySize) {
+            throw RelinkerException("Invalid symbol table entry size", offset + kShdrEntSizeOffset);
+        }
+
+        if (sh.Type == SHT_RELA && sh.EntrySize != kRelaEntrySize) {
+            throw RelinkerException("Invalid relocation entry size", offset + kShdrEntSizeOffset);
+        }
+
+        if (sh.Type == SHT_REL && sh.EntrySize != 16) {
+            throw RelinkerException("Invalid relocation entry size", offset + kShdrEntSizeOffset);
+        }
+
+        if (sh.Type != SHT_NULL && sh.Type != SHT_NOBITS && sh.SectionSize != 0) {
+            if (!_rangeFits(sh.Offset, sh.SectionSize, _fileBuffer.size())) {
+                throw RelinkerException("Section offset out of bounds", sh.Offset);
+            }
+        }
 
         sh.Name = _resolveShdrName(nameOffset, header);
 
@@ -260,15 +311,11 @@ std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicH
     if (!_rangeFits(dynamicHeader.Offset, dynamicHeader.FileSize, _fileBuffer.size())) {
         throw RelinkerException("Dynamic segment out of bounds", dynamicHeader.Offset);
     }
-    if (dynamicHeader.FileSize % 16 != 0) {
-        throw RelinkerException("Invalid dynamic segment size", dynamicHeader.Offset);
-    }
-
     std::vector<DynamicTag> tags;
     FileByteOffset offset = dynamicHeader.Offset;
     const FileByteOffset end = dynamicHeader.Offset + dynamicHeader.FileSize;
 
-    while (offset < end) {
+    while (end - offset >= 16) {
         DynamicTag tag;
         tag.Tag = static_cast<std::int64_t>(_readU64At(offset));
         tag.Value = _readU64At(offset + 0x08);

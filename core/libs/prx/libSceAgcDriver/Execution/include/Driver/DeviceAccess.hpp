@@ -3,10 +3,9 @@
 
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include <atomic>
-#include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
-#include <mutex>
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
 
 namespace AgcDriver::DriverDetail {
@@ -33,10 +32,8 @@ public:
     void unlock();
 
 private:
-    std::mutex mutex;
-    std::condition_variable changed;
-    std::size_t users = 0;
-    bool replacing = false;
+    static constexpr std::uint32_t Replacing = 0x80000000u;
+    std::atomic<std::uint32_t> state{0};
 };
 
 }

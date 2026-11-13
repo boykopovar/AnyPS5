@@ -36,7 +36,7 @@ def main():
         work = Path(directory)
 
         def run(*arguments):
-            return subprocess.run([str(relinker), *arguments], capture_output=True, text=True, timeout=60)
+            return subprocess.run([str(relinker), *arguments], capture_output=True, text=True, encoding="utf-8", timeout=60)
 
         def case(name):
             root = work / name
@@ -64,8 +64,9 @@ def main():
         assert f"Patch: eboot.bin [flip_bit] va={address:#x} off=" in result.stdout, result.stdout
         assert f"{expected:02x} -> {expected ^ 1:02x} (flip one bit)\n" in result.stdout, result.stdout
         manifest = output.parent / "app.patches.toml"
-        text = manifest.read_text()
+        text = manifest.read_text(encoding="utf-8")
         assert 'main_target = "eboot.bin"' in text and 'name = "flip_bit"' in text, text
+        assert 'main_target = "eboot.bin"\nlinux_base = 0x400000\n' in text, text
         assert f"Patch manifest: {manifest}\n" in result.stdout
         assert f'config = "{source.parent.as_posix()}/relinker-patches.toml"\n' in text, text
 
@@ -153,7 +154,7 @@ def main():
 
 def relocation_overlap(relinker, work):
     def run(*arguments):
-        return subprocess.run([str(relinker), *arguments], capture_output=True, text=True, timeout=60)
+        return subprocess.run([str(relinker), *arguments], capture_output=True, text=True, encoding="utf-8", timeout=60)
 
     def patch_file(path, target, address, expected):
         path.write_text(f'format = 1\n\n[[patch]]\ntarget = "{target}"\nva = {address:#x}\nexpected = "{expected}"\nvalue = "ffff"\n')
@@ -195,7 +196,7 @@ def relocation_overlap(relinker, work):
 
 def writer_overlap(relinker, work):
     def run(*arguments):
-        return subprocess.run([str(relinker), *arguments], capture_output=True, text=True, timeout=60)
+        return subprocess.run([str(relinker), *arguments], capture_output=True, text=True, encoding="utf-8", timeout=60)
 
     def attempt(name, module, options, address, expected, value="ff", target="sce_module/sample.prx"):
         case = work / name

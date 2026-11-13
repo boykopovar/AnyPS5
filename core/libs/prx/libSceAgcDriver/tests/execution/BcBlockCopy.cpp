@@ -35,6 +35,7 @@ constexpr std::uint32_t Format32x2Uint = 62;
 constexpr std::uint32_t Format32x4Uint = 75;
 constexpr std::uint32_t FormatBc1Unorm = 169;
 constexpr std::uint32_t FormatBc7Unorm = 181;
+constexpr std::uint32_t ForceDegamma = 1u << 20u;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t ClampEdge = 2;
 constexpr std::size_t BlockBytes = 1u << 20u;
@@ -130,8 +131,8 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* data, const Shape& sh
     };
 }
 
-std::array<std::uint32_t, 4> SamplerDescriptor() {
-    return {ClampEdge | (ClampEdge << 3u) | (ClampEdge << 6u), 0u, 0u, 0u};
+std::array<std::uint32_t, 4> SamplerDescriptor(std::uint32_t forced) {
+    return {ClampEdge | (ClampEdge << 3u) | (ClampEdge << 6u) | forced, 0u, 0u, 0u};
 }
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData) {
@@ -167,12 +168,12 @@ void Settle(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint64_t
     AgcDriver::GuestMemory::CollectWritesUncached(reinterpret_cast<std::uintptr_t>(texels), bytes);
 }
 
-std::vector<std::uint32_t> Sample(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape) {
+std::vector<std::uint32_t> Sample(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t forced = 0u) {
     std::vector<std::uint32_t> userData(24, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size_bytes()));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size_bytes()));
     const auto texture = TextureDescriptor(texels, shape);
-    const auto sampler = SamplerDescriptor();
+    const auto sampler = SamplerDescriptor(forced);
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     std::copy(texture.begin(), texture.end(), userData.begin() + 8);
@@ -189,12 +190,12 @@ std::vector<std::uint32_t> Sample(AgcDriver::VulkanDevice& device, std::uint8_t*
     return {Output.begin(), Output.end()};
 }
 
-std::vector<std::uint32_t> Reference(AgcDriver::VulkanDevice& device, const Case& test, std::uint32_t value) {
+std::vector<std::uint32_t> Reference(AgcDriver::VulkanDevice& device, const Case& test, std::uint32_t value, std::uint32_t forced = 0u) {
     GuestBlock block;
     auto* texels = block.Data();
     Store(device, texels, test, value);
     Settle(device, texels, SurfaceBytes(texels, test.blocks));
-    return Sample(device, texels, test.compressed);
+    return Sample(device, texels, test.compressed, forced);
 }
 
 void RequireSame(const std::vector<std::uint32_t>& sampled, const std::vector<std::uint32_t>& expected, const std::string& what) {
@@ -208,7 +209,11 @@ void PendingBlocksCase(AgcDriver::VulkanDevice& device, const Case& test) {
     constexpr std::uint32_t Second = 0x9bdf6840u;
     const auto first = Reference(device, test, First);
     const auto second = Reference(device, test, Second);
+    const auto forcedFirst = Reference(device, test, First, ForceDegamma);
+    const auto forcedSecond = Reference(device, test, Second, ForceDegamma);
     Require(first != second, test.name + ": the two block patterns sample alike");
+    Require(forcedFirst != first && forcedSecond != second, test.name + ": a sampler that forces sRGB decoding samples the stored blocks like a plain one");
+    Require(forcedFirst != forcedSecond, test.name + ": the two block patterns sample alike through a sampler that forces sRGB decoding");
     GuestBlock block;
     auto* texels = block.Data();
     const auto bytes = SurfaceBytes(texels, test.compressed);
@@ -222,6 +227,9 @@ void PendingBlocksCase(AgcDriver::VulkanDevice& device, const Case& test) {
     RequireSame(pending, second, test.name + ": sample of pending blocks");
     Store(device, texels, test, First);
     RequireSame(Sample(device, texels, test.compressed), first, test.name + ": sample of blocks stored again");
+    Store(device, texels, test, Second);
+    RequireSame(Sample(device, texels, test.compressed, ForceDegamma), forcedSecond, test.name + ": sRGB-forced sample of pending blocks");
+    Require(AgcDriver::Graphics::StorageTexture::FindPending(reinterpret_cast<std::uintptr_t>(texels), bytes) != nullptr, test.name + ": the sRGB-forced sample stored the pending blocks to guest memory");
 }
 
 }

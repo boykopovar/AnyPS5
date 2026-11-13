@@ -16,6 +16,11 @@ inline constexpr std::int32_t ParameterNull = static_cast<std::int32_t>(0x8a7200
 inline constexpr std::int32_t ParameterInvalid = static_cast<std::int32_t>(0x8a720009);
 inline constexpr std::int32_t Error0004 = static_cast<std::int32_t>(0x8a720004);
 inline constexpr std::int32_t ReprojectionNotInitialized = static_cast<std::int32_t>(0x8a72000b);
+inline constexpr std::int32_t ReprojectionAlreadyInitialized = static_cast<std::int32_t>(0x8a72000c);
+inline constexpr std::int32_t VideoOutInvalidValue = static_cast<std::int32_t>(0x80290001);
+inline constexpr std::int32_t VideoOutInvalidAddress = static_cast<std::int32_t>(0x80290002);
+inline constexpr std::int32_t VideoOutInvalidIndex = static_cast<std::int32_t>(0x8029000a);
+inline constexpr std::int32_t VideoOutNoDevice = static_cast<std::int32_t>(0x80290018);
 inline constexpr std::int32_t Error002C = static_cast<std::int32_t>(0x8a72002c);
 inline constexpr std::int32_t Error1002 = static_cast<std::int32_t>(0x8a721002);
 inline constexpr std::int32_t Error1003 = static_cast<std::int32_t>(0x8a721003);
@@ -24,6 +29,19 @@ inline constexpr std::int32_t Error800d0203 = static_cast<std::int32_t>(0x800d02
 inline constexpr std::int32_t Error100F = static_cast<std::int32_t>(0x8a72100f);
 
 inline constexpr std::uint32_t UserIdSdkVersion = 0x07000000;
+
+inline constexpr std::uint64_t OutputMode89_91Hz = 0x2000c;
+inline constexpr std::uint64_t OutputMode119_88Hz = 0x2000f;
+inline constexpr std::int32_t ReprojectionTimingMin = 2000;
+inline constexpr std::int32_t ReprojectionTimingMax = 7000;
+inline constexpr std::uint32_t ReprojectionTimingDefault = 3000;
+
+inline constexpr std::uint64_t ReprojectionBufferSize = 0x100828;
+inline constexpr std::uint64_t ReprojectionBufferAlign = 0x100;
+inline constexpr std::int32_t AllowPositionalReprojectionMax = 5;
+inline constexpr std::uint64_t ReprojectionPositionalBufferSize = 0x1103000;
+inline constexpr std::uint64_t ReprojectionPositionalBufferSizeStep = 0x1000000;
+inline constexpr std::uint64_t ReprojectionPositionalBufferAlign = 0x1000;
 
 enum class DeviceStatus : std::uint32_t {
     NotDetected = 2,
@@ -57,12 +75,25 @@ static_assert(offsetof(DeviceInformation, hmuMount) == 20);
 static_assert(offsetof(DeviceInformation, virtualImageDistance) == 24);
 static_assert(sizeof(FieldOfView) == 16);
 
+struct ReprojectionState {
+    std::uint64_t outputMode;
+    std::uint32_t timingUs;
+};
+
+static_assert(sizeof(ReprojectionState) == 16);
+static_assert(alignof(ReprojectionState) == 8);
+static_assert(offsetof(ReprojectionState, timingUs) == 8);
+
 struct SizeAlign {
     std::uint64_t size;
     std::uint64_t align;
+
+    constexpr SizeAlign(std::uint64_t size = 0, std::uint64_t align = 0) noexcept : size(size), align(align) {}
 };
 
 static_assert(sizeof(SizeAlign) == 16);
+static_assert(offsetof(SizeAlign, size) == 0);
+static_assert(offsetof(SizeAlign, align) == 8);
 
 }
 
@@ -76,6 +107,7 @@ std::int32_t APS5_VABI sceHmd2GetDeviceInformationByHandle(std::int32_t handle, 
 std::int32_t APS5_VABI sceHmd2GetFieldOfView(std::int32_t handle, Hmd2::FieldOfView* fieldOfView);
 std::int32_t APS5_VABI sceHmd2GetFieldOfViewWithoutHandle(Hmd2::FieldOfView* fieldOfView);
 std::int32_t APS5_VABI sceHmd2SetVibration(std::int32_t handle, std::uint32_t level);
+Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionQueryBufferSizeAlign();
 Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionQueryDisplayBufferSizeAlign();
 Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionQuerySeeThroughBufferSizeAlign();
 Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionGetMirroringDisplayBufferSizeAlign();

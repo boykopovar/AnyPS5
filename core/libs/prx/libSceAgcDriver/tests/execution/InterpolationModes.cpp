@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -262,6 +263,7 @@ struct Generator {
         if (half) return bits;
         const auto value = std::bit_cast<float>(bits);
         if (!std::isfinite(value) || std::fabs(value) > 65504.0f) return Half();
+        if (value == 0.0f) return bits;
         const auto exponent = std::max(std::ilogb(value) - 10, -24);
         return std::bit_cast<std::uint32_t>(static_cast<float>(std::ldexp(std::nearbyint(std::ldexp(value, -exponent)), exponent)));
     }
@@ -301,20 +303,187 @@ void RunRandom(AgcDriver::VulkanDevice& device, bool integer) {
     for (std::size_t index = RandomRows * RandomWords; index < Data.size(); ++index) Require(Data[index] == Sentinel, "random interpolation rows wrote beyond the rows");
 }
 
-int main() {
+constexpr std::uint32_t ChainWords = 8;
+constexpr std::uint32_t ChainGroup = 64;
+alignas(256) std::array<std::uint32_t, (1u << 16u) * ChainWords> ChainData{};
+
+RecompileResult CompileChain(std::span<const std::uint32_t> steps, bool half, bool integer, std::uint32_t iterations = 1u) {
+    IrProgram program;
+    const ShaderStageInputInfo inputs{};
+    SpirvEmitterState state(program, inputs);
+    state.integerInterpolation = integer;
+    auto& module = state.module;
+    module.EmitCapability(spv::CapabilityShader);
+    module.EmitCapability(integer ? spv::CapabilityInt64 : spv::CapabilityFloat64);
+    module.AddMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
+    const auto u32 = TypeU32(state);
+    const auto array = module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, u32);
+    const auto structure = module.Type(spv::OpTypeStruct, array);
+    module.AddAnnotation(spv::OpDecorate, structure, spv::DecorationBlock);
+    module.AddAnnotation(spv::OpMemberDecorate, structure, 0u, spv::DecorationOffset, 0u);
+    const auto buffer = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassStorageBuffer, structure), spv::StorageClassStorageBuffer);
+    module.AddAnnotation(spv::OpDecorate, buffer, spv::DecorationDescriptorSet, 0u);
+    module.AddAnnotation(spv::OpDecorate, buffer, spv::DecorationBinding, 0u);
+    const auto invocation = module.DefineGlobalVariable(TypePointer(state, spv::StorageClassInput, TypeU32Vector(state, 3u)), spv::StorageClassInput);
+    module.AddAnnotation(spv::OpDecorate, invocation, spv::DecorationBuiltIn, spv::BuiltInGlobalInvocationId);
+    const auto element = module.Type(spv::OpTypePointer, spv::StorageClassStorageBuffer, u32);
+    const auto main = module.AllocateId();
+    const auto voidType = module.Type(spv::OpTypeVoid);
+    module.EmitEntryPoint(spv::ExecutionModelGLCompute, main, "main", {invocation});
+    module.AddExecutionMode(main, spv::ExecutionModeLocalSize, ChainGroup, 1u, 1u);
+    module.AddFunction(spv::OpFunction, voidType, main, spv::FunctionControlMaskNone, module.Type(spv::OpTypeFunction, voidType));
+    module.AddFunction(spv::OpLabel, module.AllocateId());
+    const auto id = module.AllocateId();
+    module.AddFunction(spv::OpLoad, TypeU32Vector(state, 3u), id, invocation);
+    const auto lane = module.AllocateId();
+    module.AddFunction(spv::OpCompositeExtract, u32, lane, id, 0u);
+    const auto rowBase = Binary(state, spv::OpIMul, u32, lane, ConstantU32(state, ChainWords));
+    const auto address = [&](std::uint32_t offset) {
+        const auto pointer = module.AllocateId();
+        module.AddFunction(spv::OpAccessChain, element, pointer, buffer, ConstantU32(state, 0u), Binary(state, spv::OpIAdd, u32, rowBase, ConstantU32(state, offset)));
+        return pointer;
+    };
+    const auto load = [&](std::uint32_t offset) {
+        const auto word = module.AllocateId();
+        module.AddFunction(spv::OpLoad, u32, word, address(offset));
+        return Unary(state, spv::OpBitcast, TypeF32(state), word);
+    };
+    IrProgram constants;
+    IrBuilder builder(constants);
+    builder.SetInsertionPoint(constants.CreateBlock());
+    const std::array deltas{load(0u), load(1u), load(2u), load(3u)};
+    const auto coordinate = load(4u);
+    const auto chain = [&](std::uint32_t value) {
+        for (std::uint32_t step = 0; step < steps.size(); ++step) {
+            const auto* flags = &builder.Constant(steps[step]);
+            value = half ? EmitFPInterpolateF16(state, deltas[step % 4u], coordinate, value, flags) : EmitFPInterpolateF32(state, deltas[step % 4u], coordinate, value, flags);
+        }
+        return value;
+    };
+    auto value = load(5u);
+    if (iterations == 1u) {
+        value = chain(value);
+    } else {
+        const auto entry = module.AllocateId();
+        const auto header = module.AllocateId();
+        const auto body = module.AllocateId();
+        const auto next = module.AllocateId();
+        const auto merge = module.AllocateId();
+        const auto counter = module.AllocateId();
+        const auto carried = module.AllocateId();
+        const auto counted = module.AllocateId();
+        const auto chained = module.AllocateId();
+        module.AddFunction(spv::OpBranch, entry);
+        EmitLabel(state, entry);
+        module.AddFunction(spv::OpBranch, header);
+        EmitLabel(state, header);
+        module.AddFunction(spv::OpPhi, u32, counter, ConstantU32(state, 0u), entry, counted, next);
+        module.AddFunction(spv::OpPhi, TypeF32(state), carried, value, entry, chained, next);
+        module.AddFunction(spv::OpLoopMerge, merge, next, spv::LoopControlMaskNone);
+        module.AddFunction(spv::OpBranchConditional, Binary(state, spv::OpULessThan, TypeBool(state), counter, ConstantU32(state, iterations)), body, merge);
+        EmitLabel(state, body);
+        module.AddFunction(spv::OpCopyObject, TypeF32(state), chained, chain(carried));
+        module.AddFunction(spv::OpBranch, next);
+        EmitLabel(state, next);
+        module.AddFunction(spv::OpIAdd, u32, counted, counter, ConstantU32(state, 1u));
+        module.AddFunction(spv::OpBranch, header);
+        EmitLabel(state, merge);
+        value = carried;
+    }
+    module.AddFunction(spv::OpStore, address(6u), Unary(state, spv::OpBitcast, u32, value));
+    module.AddFunction(spv::OpReturn);
+    module.AddFunction(spv::OpFunctionEnd);
+    RecompileResult result{};
+    result.spirv = module.Finalize();
+    const auto base = reinterpret_cast<std::uintptr_t>(ChainData.data());
+    result.bindings.push_back({DescriptorKind::StorageBuffer, DescriptorRole::GuestBuffers, 0u, 0u, 1u,
+        {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(ChainData)), 0x31016facu}, false});
+    return result;
+}
+
+void FillChains(std::uint32_t lanes, bool half, bool special) {
+    Generator generator{half ? 0x6b5f00000001ull : 0x6b5f00000002ull};
+    const auto mantissa = [&]() {
+        const auto bits = generator.Pick(3u) == 0u ? 1u + generator.Pick(23u) : 23u;
+        return static_cast<std::uint32_t>(generator.Next() & 0x7fffffu) & ~((1u << (23u - bits)) - 1u);
+    };
+    const auto value = [&](std::uint32_t lowest, std::uint32_t count) { return (generator.Pick(2u) << 31u) | ((lowest + generator.Pick(count)) << 23u) | mantissa(); };
+    ChainData.fill(Sentinel);
+    for (std::uint32_t lane = 0; lane < lanes; ++lane) {
+        auto* row = &ChainData[lane * ChainWords];
+        for (std::uint32_t index = 0; index < 4u; ++index) row[index] = special && generator.Pick(8u) == 0u ? generator.Half() : special && generator.Pick(8u) == 0u ? generator.Single() : value(112u, 16u);
+        row[4] = special && generator.Pick(8u) == 0u ? generator.Single() : value(117u, 10u) & 0x7fffffffu;
+        row[5] = special && generator.Pick(8u) == 0u ? generator.Single() : value(110u, 24u);
+    }
+}
+
+std::uint32_t ChainReference(const std::uint32_t* row, std::span<const std::uint32_t> steps, bool half) {
+    auto value = row[5];
+    for (std::uint32_t step = 0; step < steps.size(); ++step) value = Reference(row[step % 4u], row[4], value, half, steps[step]);
+    return value;
+}
+
+void RunChains(AgcDriver::VulkanDevice& device, bool integer) {
+    constexpr std::uint32_t lanes = 8192;
+    std::array<std::uint32_t, 2 * RandomModes> steps{};
+    for (std::uint32_t step = 0; step < steps.size(); ++step) steps[step] = ModeFlags[step % ModeFlags.size()] | (((step / ModeFlags.size()) % 4u) << InterpolationRound16Shift);
+    for (const bool half : {false, true}) {
+        FillChains(lanes, half, true);
+        device.Dispatch(CompileChain(steps, half, integer), lanes / ChainGroup, 1u, 1u);
+        device.WaitIdle();
+        for (std::uint32_t lane = 0; lane < lanes; ++lane) {
+            const auto* row = &ChainData[lane * ChainWords];
+            const auto expected = ChainReference(row, steps, half);
+            char message[200];
+            std::snprintf(message, sizeof(message), "%s chain (%s), lane %u: 0x%08x 0x%08x 0x%08x 0x%08x * 0x%08x from 0x%08x gave 0x%08x, reference 0x%08x",
+                half ? "f16" : "f32", integer ? "integer" : "Float64", lane, row[0], row[1], row[2], row[3], row[4], row[5], row[6], expected);
+            Require(row[6] == expected, message);
+        }
+    }
+}
+
+void Benchmark(AgcDriver::VulkanDevice& device, bool integer) {
+    constexpr std::uint32_t lanes = 1u << 16u;
+    constexpr std::uint32_t iterations = 1024;
+    const std::array<std::uint32_t, 4> steps{ModeFlags[0], ModeFlags[0], ModeFlags[0], ModeFlags[0]};
+    for (const bool half : {false, true}) {
+        FillChains(lanes, half, false);
+        const auto program = CompileChain(steps, half, integer, iterations);
+        device.Dispatch(program, lanes / ChainGroup, 1u, 1u);
+        device.WaitIdle();
+        std::array<double, 9> times{};
+        for (auto& milliseconds : times) {
+            const auto start = std::chrono::steady_clock::now();
+            device.Dispatch(program, lanes / ChainGroup, 1u, 1u);
+            device.WaitIdle();
+            milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        }
+        std::sort(times.begin(), times.end());
+        std::printf("%s path, %u lanes x %u chained %s interpolations: median %.3f ms, min %.3f, max %.3f\n", integer ? "integer" : "Float64", lanes, iterations * static_cast<std::uint32_t>(steps.size()), half ? "f16" : "f32", times[4], times.front(), times.back());
+    }
+}
+
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto target = device->Target();
         const bool float64 = std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityFloat64) != target.supportedCapabilities.end();
+        if (argc == 2 && std::string(argv[1]) == "--benchmark") {
+            Benchmark(*device, true);
+            if (float64) Benchmark(*device, false);
+            return 0;
+        }
         for (std::uint32_t mode = 0; mode < ModeFlags.size(); ++mode) {
             Run(*device, mode, true);
             if (float64) Run(*device, mode, false);
         }
         RunRandom(*device, true);
         if (float64) RunRandom(*device, false);
-        std::puts(float64 ? "interpolation modes passed: 32 hardware rows and 2048 random rows against the reference in 32 float modes, 3 ops, integer and Float64 paths"
-                          : "interpolation modes passed: 32 hardware rows and 2048 random rows against the reference in 32 float modes, 3 ops, integer path (the device has no Float64)");
+        RunChains(*device, true);
+        if (float64) RunChains(*device, false);
+        std::puts(float64 ? "interpolation modes passed: 32 hardware rows and 2048 random rows against the reference in 32 float modes, 3 ops, 8192 chains of 64 f32 and f16 interpolations, integer and Float64 paths"
+                          : "interpolation modes passed: 32 hardware rows and 2048 random rows against the reference in 32 float modes, 3 ops, 8192 chains of 64 f32 and f16 interpolations, integer path (the device has no Float64)");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

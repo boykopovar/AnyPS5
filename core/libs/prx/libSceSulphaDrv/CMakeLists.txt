@@ -1,0 +1,25 @@
+add_library(libSceSulphaDrv SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceSulphaDrv PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceSulphaDrv)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_sulpha_config_tests ${LIBS_INCLUDE_DIR}/tests/GuestSulphaConfig.cpp)
+    target_include_directories(guest_sulpha_config_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sulpha_config_tests PRIVATE libSceSulphaDrv libc)
+    configure_windows_unwind(guest_sulpha_config_tests)
+    add_test(NAME guest_sulpha_config COMMAND guest_sulpha_config_tests)
+    if(WIN32)
+        set_tests_properties(guest_sulpha_config PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSulphaDrv>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    add_test_executable(guest_sulpha_driver_tests ${LIBS_INCLUDE_DIR}/tests/GuestSulphaDriver.cpp)
+    target_include_directories(guest_sulpha_driver_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sulpha_driver_tests PRIVATE libSceSulphaDrv libc)
+    configure_windows_unwind(guest_sulpha_driver_tests)
+    add_test(NAME guest_sulpha_driver COMMAND guest_sulpha_driver_tests)
+    if(WIN32)
+        set_tests_properties(guest_sulpha_driver PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSulphaDrv>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

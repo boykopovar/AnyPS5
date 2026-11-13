@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
@@ -8,10 +9,7 @@
 
 namespace {
 // FreeBSD guest ABI: PTHREAD_ONCE_INIT is {0, nullptr}; completed state is 1.
-struct GuestOnce {
-    std::int32_t state;
-    void* mutex;
-};
+
 static_assert(offsetof(GuestOnce, mutex) == 8 && sizeof(GuestOnce) == 16);
 std::mutex onceMutex;
 std::condition_variable onceChanged;
@@ -39,6 +37,7 @@ extern "C" int APS5_VABI pthread_once_nid_postfix(
     CleanupHandler reset{};
     void* const mark = ThreadCancel::CleanupMark();
     __pthread_cleanup_push_imp_nid_postfix(ResetOnce, control, &reset);
+
     try {
         initialize();
     } catch (...) {

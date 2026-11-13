@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 
@@ -9,13 +11,6 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI sceKernelGetdents(int, char*, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI _close_nid_postfix(int);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -43,6 +38,7 @@ static void VerifyCloseReuse(const std::filesystem::path& root, const char* scen
         SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     Require((useUnderscoreClose ? _close_nid_postfix(directory) : close_nid_postfix(directory)) == 0);
+    Require((useUnderscoreClose ? _close_nid_postfix(directory) : close_nid_postfix(directory)) == -1);
 
     const int file = sceKernelOpen(filePath.string().c_str(), SCE_KERNEL_O_RDONLY, 0);
     Require(file >= 0);

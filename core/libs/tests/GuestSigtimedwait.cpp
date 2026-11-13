@@ -1,18 +1,18 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
+#include <array>
 #include <atomic>
+#include <csetjmp>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-struct GuestSignalSet {
-    std::uint32_t bits[4];
-};
-struct GuestTimespec {
-    std::int64_t seconds;
-    std::int64_t nanoseconds;
-};
+
 struct GuestSiginfo {
     std::int32_t signo;
     std::int32_t error;
@@ -28,22 +28,7 @@ struct GuestSiginfo {
     std::int32_t tail;
 };
 using Handler = void (APS5_VABI *)(int);
-extern "C" {
-int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet*, void*, const GuestTimespec*);
-int APS5_VABI sigwaitinfo_nid_postfix(const GuestSignalSet*, void*);
-int APS5_VABI sigwait_nid_postfix(const GuestSignalSet*, int*);
-int APS5_VABI pause_nid_postfix(void);
-Handler APS5_VABI signal_nid_postfix(int, Handler);
-int APS5_VABI raise_nid_postfix(int);
-int APS5_VABI kill_nid_postfix(int, int);
-int APS5_VABI _sigprocmask_nid_postfix(int, const GuestSignalSet*, GuestSignalSet*);
-int APS5_VABI getpid_nid_postfix(void);
-Pthread APS5_VABI scePthreadSelf(void);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest);
-int* APS5_VABI __error_nid_postfix();
-}
+extern "C" unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int);
 volatile int received = 0;
 void APS5_VABI Callback(int value) { received = value; }
 static void Require(bool value) { if (!value) std::abort(); }
@@ -97,8 +82,8 @@ static void CheckTimeoutWithUnrelatedSignals() {
     const GuestSignalSet blocked{{(1u << 1) | (1u << 12), 0, 0, 0}};
     const GuestSignalSet pipe{{1u << 12, 0, 0, 0}};
     const GuestSignalSet interrupt{{1u << 1, 0, 0, 0}};
-    const GuestTimespec timeout{0, 200000000};
-    const GuestTimespec poll{0, 0};
+    const KernelTimespec timeout{0, 200000000};
+    const KernelTimespec poll{0, 0};
     GuestSignalSet previous{};
     Require(_sigprocmask_nid_postfix(1, &blocked, &previous) == 0);
     TimeoutSender sender{scePthreadSelf()};
@@ -118,12 +103,124 @@ static void CheckTimeoutWithUnrelatedSignals() {
     Require(sigtimedwait_nid_postfix(&pipe, nullptr, &poll) == -1 && *__error_nid_postfix() == 35);
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
 }
+constexpr int RoundCount = 300;
+struct RoundSender {
+    Pthread target = nullptr;
+    std::atomic<int> go{0};
+    std::atomic<int> sent{0};
+};
+static void* APS5_VABI SendTwoCodes(void* arg) {
+    auto& sender = *static_cast<RoundSender*>(arg);
+    for (int round = 1; round <= RoundCount; ++round) {
+        while (sender.go.load() != round) std::this_thread::yield();
+        Require(kill_nid_postfix(getpid_nid_postfix(), 2) == 0);
+        Require(pthread_kill_nid_postfix(sender.target, 2) == 0);
+        sender.sent.store(round);
+    }
+    return nullptr;
+}
+static void CheckReportedCodeBelongsToConsumedSignal() {
+    const GuestSignalSet interrupt{{1u << 1, 0, 0, 0}};
+    const KernelTimespec patience{5, 0};
+    const KernelTimespec poll{0, 0};
+    GuestSignalSet previous{};
+    Require(_sigprocmask_nid_postfix(1, &interrupt, &previous) == 0);
+    RoundSender sender;
+    sender.target = scePthreadSelf();
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, SendTwoCodes, &sender, nullptr) == 0);
+    for (int round = 1; round <= RoundCount; ++round) {
+        GuestSiginfo first{};
+        GuestSiginfo second{};
+        sender.go.store(round);
+        Require(sigtimedwait_nid_postfix(&interrupt, &first, &patience) == 2);
+        while (sender.sent.load() != round) std::this_thread::yield();
+        const bool twice = sigtimedwait_nid_postfix(&interrupt, &second, &poll) == 2;
+        Require(twice && first.code != second.code && (first.code == 0x10007 || first.code == 0x10001));
+    }
+    Require(scePthreadJoin(thread, nullptr) == 0);
+    Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
+}
+static std::atomic<int> queuedHandlerRuns{0};
+static void APS5_VABI CountQueuedRun(int) { queuedHandlerRuns.fetch_add(1); }
+static void CheckEverySendIsQueued() {
+    const GuestSignalSet third{{1u << 29, 0, 0, 0}};
+    const KernelTimespec poll{0, 0};
+    GuestSignalSet previous{};
+    GuestSiginfo info{};
+    Require(_sigprocmask_nid_postfix(1, &third, &previous) == 0);
+    for (int index = 0; index < 5; ++index) Require(kill_nid_postfix(getpid_nid_postfix(), 30) == 0);
+    for (int index = 0; index < 5; ++index) Require(sigtimedwait_nid_postfix(&third, &info, &poll) == 30 && info.code == 0x10001);
+    Require(sigtimedwait_nid_postfix(&third, &info, &poll) == -1);
+    Require(kill_nid_postfix(getpid_nid_postfix(), 30) == 0);
+    Require(pthread_kill_nid_postfix(scePthreadSelf(), 30) == 0);
+    Require(kill_nid_postfix(getpid_nid_postfix(), 30) == 0);
+    Require(sigtimedwait_nid_postfix(&third, &info, &poll) == 30 && info.code == 0x10007);
+    Require(sigtimedwait_nid_postfix(&third, &info, &poll) == 30 && info.code == 0x10001);
+    Require(sigtimedwait_nid_postfix(&third, &info, &poll) == 30 && info.code == 0x10001);
+    Require(sigtimedwait_nid_postfix(&third, &info, &poll) == -1);
+    queuedHandlerRuns.store(0);
+    signal_nid_postfix(30, CountQueuedRun);
+    for (int index = 0; index < 3; ++index) Require(kill_nid_postfix(getpid_nid_postfix(), 30) == 0);
+    Require(queuedHandlerRuns.load() == 0);
+    Require(_sigprocmask_nid_postfix(2, &third, nullptr) == 0);
+    Require(queuedHandlerRuns.load() == 3);
+    signal_nid_postfix(30, nullptr);
+    Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
+}
+static std::jmp_buf handlerExit;
+static void APS5_VABI RaiseSecondFromHandler(int) { Require(raise_nid_postfix(31) == 0); }
+static void APS5_VABI RaiseSecondAndLeave(int) {
+    Require(raise_nid_postfix(31) == 0);
+    std::longjmp(handlerExit, 1);
+}
+static int TakeSecondCode(const GuestSignalSet& second) {
+    const KernelTimespec poll{0, 0};
+    GuestSiginfo info{};
+    Require(sigtimedwait_nid_postfix(&second, &info, &poll) == 31);
+    const int code = info.code;
+    Require(sigtimedwait_nid_postfix(&second, &info, &poll) == -1);
+    return code;
+}
+static void CheckRaiseInsideKillHandlerIsFromThread() {
+    const GuestSignalSet second{{1u << 30, 0, 0, 0}};
+    GuestSignalSet previous{};
+    Require(_sigprocmask_nid_postfix(1, &second, &previous) == 0);
+    signal_nid_postfix(30, RaiseSecondFromHandler);
+    Require(kill_nid_postfix(getpid_nid_postfix(), 30) == 0);
+    Require(TakeSecondCode(second) == 0x10007);
+    signal_nid_postfix(30, RaiseSecondAndLeave);
+    if (setjmp(handlerExit) == 0) kill_nid_postfix(getpid_nid_postfix(), 30);
+    Require(TakeSecondCode(second) == 0x10007);
+    Require(raise_nid_postfix(31) == 0);
+    Require(TakeSecondCode(second) == 0x10007);
+    signal_nid_postfix(30, nullptr);
+    Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
+}
+static void CheckShortTimeouts() {
+    const GuestSignalSet pipe{{1u << 12, 0, 0, 0}};
+    for (const std::int64_t nanos : {100000, 1000000}) {
+        const KernelTimespec timeout{0, nanos};
+        std::array<std::chrono::nanoseconds, 31> samples{};
+        for (auto& sample : samples) {
+            const auto before = std::chrono::steady_clock::now();
+            Require(sigtimedwait_nid_postfix(&pipe, nullptr, &timeout) == -1 && *__error_nid_postfix() == 35);
+            sample = std::chrono::steady_clock::now() - before;
+            Require(sample >= std::chrono::nanoseconds(nanos));
+        }
+        std::sort(samples.begin(), samples.end());
+        const auto median = samples[samples.size() / 2];
+        std::fprintf(stderr, "sigtimedwait(%lld ns) median: %lld ns\n", static_cast<long long>(nanos),
+                     static_cast<long long>(median.count()));
+        Require(median < std::chrono::milliseconds(12));
+    }
+}
 int main() {
     const GuestSignalSet empty{{0, 0, 0, 0}};
     const GuestSignalSet pipe{{1u << 12, 0, 0, 0}};
     const GuestSignalSet interrupt{{1u << 1, 0, 0, 0}};
-    const GuestTimespec poll{0, 0};
-    const GuestTimespec expired{0, 1000000000};
+    const KernelTimespec poll{0, 0};
+    const KernelTimespec expired{0, 1000000000};
     GuestSiginfo info{};
     int taken = -1;
     *__error_nid_postfix() = 0;
@@ -140,6 +237,14 @@ int main() {
     Require(sigwait_nid_postfix(&empty, &taken) == 22 && *__error_nid_postfix() == 72 && taken == -1);
     *__error_nid_postfix() = 73;
     Require(sigwait_nid_postfix(&interrupt, nullptr) == 22 && *__error_nid_postfix() == 73);
+    *__error_nid_postfix() = 0;
+    Require(sigtimedwait_nid_postfix(reinterpret_cast<const GuestSignalSet*>(0x10), &info, &poll) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sigtimedwait_nid_postfix(&interrupt, &info, reinterpret_cast<const KernelTimespec*>(0x10)) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sigwaitinfo_nid_postfix(reinterpret_cast<const GuestSignalSet*>(0x10), &info) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 74;
+    Require(sigwait_nid_postfix(reinterpret_cast<const GuestSignalSet*>(0x10), &taken) == 14 && *__error_nid_postfix() == 74);
     RequireUntouched(info);
     *__error_nid_postfix() = 0;
     Require(sigtimedwait_nid_postfix(&interrupt, &info, &poll) == -1 && *__error_nid_postfix() == 35);
@@ -155,15 +260,35 @@ int main() {
     Require(sigwait_nid_postfix(&interrupt, &taken) == 0 && taken == 2 && received == 0);
     Require(raise_nid_postfix(2) == 0 && received == 0);
     Require(sigtimedwait_nid_postfix(&interrupt, &info, &poll) == 2 && received == 0);
-    Require(info.signo == 2 && info.error == 0 && info.code == 0 && info.pid == getpid_nid_postfix() && info.uid == 0);
+    Require(info.signo == 2 && info.error == 0 && info.code == 0x10007 && info.pid == getpid_nid_postfix() && info.uid == 0);
     Require(info.status == 0 && info.address == 0 && info.value == 0 && info.band == 0);
     Require(raise_nid_postfix(2) == 0 && received == 0);
     Require(sigwaitinfo_nid_postfix(&interrupt, &info) == 2 && received == 0);
-    Require(info.signo == 2 && info.code == 0 && info.pid == getpid_nid_postfix());
+    Require(info.signo == 2 && info.code == 0x10007 && info.pid == getpid_nid_postfix());
+    Require(kill_nid_postfix(getpid_nid_postfix(), 2) == 0 && received == 0);
+    Require(sigwaitinfo_nid_postfix(&interrupt, &info) == 2 && received == 0);
+    Require(info.signo == 2 && info.code == 0x10001 && info.pid == getpid_nid_postfix() && info.uid == 0);
     Require(raise_nid_postfix(2) == 0 && received == 0);
     Require(sigwaitinfo_nid_postfix(&interrupt, nullptr) == 2 && received == 0);
     Require(raise_nid_postfix(2) == 0 && received == 0);
     Require(sigtimedwait_nid_postfix(&interrupt, nullptr, nullptr) == 2 && received == 0);
+    const GuestSignalSet alarmSet{{1u << 13, 0, 0, 0}};
+    const KernelTimespec alarmWait{3, 0};
+    GuestSignalSet beforeAlarm{};
+    Require(_sigprocmask_nid_postfix(1, &alarmSet, &beforeAlarm) == 0);
+    Require(GuestAlarm_nid_no_patch(1) == 0);
+    Require(sigtimedwait_nid_postfix(&alarmSet, &info, &alarmWait) == 14);
+    Require(info.signo == 14 && info.code == 0x10006 && info.pid == 0 && info.uid == 0);
+    Require(_sigprocmask_nid_postfix(3, &beforeAlarm, nullptr) == 0);
+    Require(raise_nid_postfix(2) == 0 && received == 0);
+    *__error_nid_postfix() = 75;
+    Require(sigwait_nid_postfix(&interrupt, reinterpret_cast<int*>(0x10)) == 14 && *__error_nid_postfix() == 75);
+    Require(raise_nid_postfix(2) == 0 && received == 0);
+    *__error_nid_postfix() = 0;
+    Require(sigtimedwait_nid_postfix(&interrupt, reinterpret_cast<void*>(0x10), &poll) == -1 && *__error_nid_postfix() == 14);
+    Require(raise_nid_postfix(2) == 0 && received == 0);
+    *__error_nid_postfix() = 0;
+    Require(sigwaitinfo_nid_postfix(&interrupt, reinterpret_cast<void*>(0x10)) == -1 && *__error_nid_postfix() == 14);
     GuestSignalSet current{};
     Require(_sigprocmask_nid_postfix(1, nullptr, &current) == 0 && current.bits[0] == (previous.bits[0] | interrupt.bits[0]));
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
@@ -178,18 +303,18 @@ int main() {
 
     const Pthread self = scePthreadSelf();
     *__error_nid_postfix() = 0;
-    Require(pthread_kill_nid_postfix(nullptr, 13) == 3 && *__error_nid_postfix() == 0);
+    Require(pthread_kill_nid_postfix(nullptr, 13) == 22 && *__error_nid_postfix() == 0);
     Require(pthread_kill_nid_postfix(self, 129) == 22);
     Sender sender{self, 13, -1};
     Pthread senderThread = StartSender(sender);
     Require(sigwaitinfo_nid_postfix(&pipe, &info) == 13);
     JoinSender(senderThread, sender);
-    Require(info.signo == 13 && info.code == 0 && info.pid == getpid_nid_postfix());
+    Require(info.signo == 13 && info.code == 0x10007 && info.pid == getpid_nid_postfix());
     senderThread = StartSender(sender);
     Require(sigtimedwait_nid_postfix(&pipe, nullptr, nullptr) == 13);
     JoinSender(senderThread, sender);
     senderThread = StartSender(sender);
-    const GuestTimespec patience{1, 0};
+    const KernelTimespec patience{1, 0};
     Require(sigtimedwait_nid_postfix(&pipe, &info, &patience) == 13 && info.signo == 13);
     JoinSender(senderThread, sender);
     Require(signal_nid_postfix(15, Callback) != reinterpret_cast<Handler>(static_cast<std::uintptr_t>(-1)));
@@ -213,4 +338,8 @@ int main() {
     }
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
     CheckTimeoutWithUnrelatedSignals();
+    CheckReportedCodeBelongsToConsumedSignal();
+    CheckRaiseInsideKillHandlerIsFromThread();
+    CheckEverySendIsQueued();
+    CheckShortTimeouts();
 }

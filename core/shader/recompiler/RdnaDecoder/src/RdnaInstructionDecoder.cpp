@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstdio>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -15,6 +16,32 @@
 namespace ShaderRecompiler {
 
 namespace {
+
+struct SkippedWord {
+    std::uint32_t programCounter;
+    std::exception_ptr error;
+};
+
+bool endsFallthrough(RdnaOpcode op) {
+    return op == RdnaOpcode::SBranch || op == RdnaOpcode::SEndpgm || op == RdnaOpcode::SCodeEnd;
+}
+
+bool targetsCode(const RdnaInstruction& instruction) {
+    return IsDirectBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SCallB64;
+}
+
+void rejectTargetedSkippedWords(const RdnaProgram& program, const std::vector<SkippedWord>& skippedWords) {
+    for (const auto& instruction : program.instructions) {
+        if (!targetsCode(instruction)) {
+            continue;
+        }
+        for (const auto& skipped : skippedWords) {
+            if (instruction.branchTarget == skipped.programCounter) {
+                std::rethrow_exception(skipped.error);
+            }
+        }
+    }
+}
 
 bool instructionHasLiteral(const RdnaInstruction& instruction) {
     return instruction.source0.kind == RdnaOperandKind::LiteralConstant ||
@@ -90,6 +117,11 @@ RdnaInstructionFamily GetRdnaInstructionFamily(std::uint32_t word) {
 }
 
 RdnaInstruction DecodeRdnaInstruction(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex) {
+    if (GcnGuestShaders()) return DecodeGcnInstruction(programCounter, code, wordIndex);
+    return DecodeRdnaEncodedInstruction(programCounter, code, wordIndex);
+}
+
+RdnaInstruction DecodeRdnaEncodedInstruction(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex) {
     if (wordIndex >= code.size()) {
         throw std::out_of_range("word index is out of the code span bounds");
     }
@@ -153,14 +185,34 @@ void DecodeRdnaProgram(std::span<const std::uint32_t> code, RdnaProgram& program
     program.code = code;
 
     std::uint32_t furthestBranchTarget = 0;
+    bool fallthroughReachable = true;
+    std::vector<SkippedWord> skippedWords;
     for (std::uint32_t wordIndex = 0; wordIndex < code.size();) {
         const std::uint32_t programCounter = wordIndex * static_cast<std::uint32_t>(sizeof(std::uint32_t));
-        program.instructions.push_back(DecodeRdnaInstruction(programCounter, code, wordIndex));
+        RdnaInstruction decoded;
+        std::exception_ptr error;
+        try {
+            decoded = DecodeRdnaInstruction(programCounter, code, wordIndex);
+        } catch (const std::runtime_error&) {
+            error = std::current_exception();
+        } catch (const std::logic_error&) {
+            error = std::current_exception();
+        }
+        if (error) {
+            if (fallthroughReachable) {
+                std::rethrow_exception(error);
+            }
+            skippedWords.push_back({programCounter, error});
+            ++wordIndex;
+            continue;
+        }
+        program.instructions.push_back(decoded);
 
         const RdnaInstruction& instruction = program.instructions.back();
         wordIndex += instruction.wordCount;
+        fallthroughReachable = !endsFallthrough(instruction.op);
 
-        if (IsDirectBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SCallB64) {
+        if (targetsCode(instruction)) {
             const std::uint32_t targetIndex = instruction.branchTarget / static_cast<std::uint32_t>(sizeof(std::uint32_t));
             if (targetIndex >= code.size()) {
                 throw std::out_of_range("branch target is out of the code span bounds");
@@ -169,10 +221,12 @@ void DecodeRdnaProgram(std::span<const std::uint32_t> code, RdnaProgram& program
         }
 
         if ((instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd) && furthestBranchTarget < wordIndex) {
+            rejectTargetedSkippedWords(program, skippedWords);
             return;
         }
     }
 
+    rejectTargetedSkippedWords(program, skippedWords);
     throw std::out_of_range("RDNA program decode reached the code boundary before s_endpgm");
 }
 

@@ -1,0 +1,32 @@
+#version 450
+#extension GL_EXT_shader_image_load_formatted : require
+
+layout(constant_id = 0) const uint ELEMENT_BYTES = 4u;
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) readonly buffer Input { uint data[]; } sourceBuffer;
+layout(set = 0, binding = 1) uniform uimage2DMSArray destinationImage;
+layout(push_constant) uniform Push {
+    uint width;
+    uint height;
+    uint layers;
+    uint fragments;
+    uint firstElement;
+    uint elements;
+    uint rowThreads;
+} params;
+
+void main() {
+    uint index = gl_GlobalInvocationID.y * params.rowThreads + gl_GlobalInvocationID.x;
+    if (index >= params.elements) return;
+    uint element = params.firstElement + index;
+    uint pixel = element / params.fragments;
+    ivec3 coordinate = ivec3(pixel % params.width, (pixel / params.width) % params.height, pixel / (params.width * params.height));
+    uint address = index * ELEMENT_BYTES;
+    uvec4 value = uvec4(0u);
+    if (ELEMENT_BYTES < 4u) {
+        value.x = (sourceBuffer.data[address >> 2u] >> ((address & 3u) * 8u)) & (ELEMENT_BYTES == 1u ? 255u : 65535u);
+    } else {
+        for (uint component = 0u; component < ELEMENT_BYTES / 4u; ++component) value[component] = sourceBuffer.data[(address >> 2u) + component];
+    }
+    imageStore(destinationImage, coordinate, int(element % params.fragments), value);
+}

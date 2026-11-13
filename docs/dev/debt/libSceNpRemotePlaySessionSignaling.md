@@ -1,0 +1,12 @@
+# libSceNpRemotePlaySessionSignaling technical debt
+
+### Functional
+
+- [sceNpRemotePlaySessionSignalingGetMemoryInfo](../../../core/libs/prx/libSceNpRemotePlaySessionSignaling/Export.cpp) (libSceNpRemotePlaySessionSignaling) - returning `0x80553303` (`ErrorInvalidArgument`) when `memoryInfo` output pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceNpRemotePlaySessionSignalingInitialize](../../../core/libs/prx/libSceNpRemotePlaySessionSignaling/Export.cpp) (libSceNpRemotePlaySessionSignaling) - returning `0x80553303` (`ErrorInvalidArgument`) when `param` is unreadable via `GuestCopyIn_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceNpRemotePlaySessionSignalingGetLocalNetInfo](../../../core/libs/prx/libSceNpRemotePlaySessionSignaling/Export.cpp) (libSceNpRemotePlaySessionSignaling) - returning `0x80553303` (`ErrorInvalidArgument`) when `info` output pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceNpRemotePlaySessionSignalingGetConnectionStatus](../../../core/libs/prx/libSceNpRemotePlaySessionSignaling/Export.cpp) (libSceNpRemotePlaySessionSignaling) - returning `0x80553303` (`ErrorInvalidArgument`) when `status` output pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+
+### Unknown function info
+
+- [sceNpRemotePlaySessionSignalingCreateJoinSession, sceNpRemotePlaySessionSignalingJoinSession, sceNpRemotePlaySessionSignalingAbortConnection, sceNpRemotePlaySessionSignalingEstablishConnection, sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession and sceNpRemotePlaySessionSignalingManualUdpJoinSession](../../../core/libs/prx/libSceNpRemotePlaySessionSignaling/Export.cpp) throw through `NotImplemented_nid_no_patch`. In the 13.42 module (sha256 eda6f8ca71e2da324b99ce82700af89ba494130f8f25ec3d2e221e33c2d4be8e) each is a tail jump to a [libSceNpSessionSignaling](libSceNpSessionSignaling.md) function (`CreateJoinActivate`, `JoinActivate`, `ManualUdpAbortConnection`, `ManualUdpEstablishConnection`, `ManualUdpCreateJoin`, `ManualUdpJoin`) that is still a parameterless placeholder there, so their signatures and behaviour are those functions' gaps.

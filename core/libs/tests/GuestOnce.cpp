@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
@@ -6,20 +9,9 @@
 #include <cstdlib>
 #include <thread>
 
-struct GuestOnce { std::int32_t state; void* mutex; };
 static_assert(sizeof(GuestOnce) == 16 && offsetof(GuestOnce, mutex) == 8);
 using Initializer = void (APS5_VABI *)();
-extern "C" {
-int APS5_VABI pthread_once_nid_postfix(GuestOnce*, Initializer);
-int APS5_VABI scePthreadOnce(std::int32_t* once, Initializer init);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-void APS5_VABI scePthreadExit(void* retval);
-int APS5_VABI scePthreadCancel(Pthread thread);
-void APS5_VABI scePthreadTestcancel();
-Pthread APS5_VABI scePthreadSelf();
-void APS5_VABI __pthread_cleanup_push_imp_nid_postfix(void (APS5_VABI* routine)(void*), void* argument, void* info);
-}
+
 static void Require(bool value) { if (!value) std::abort(); }
 static GuestOnce control{}, nested{}, retry{};
 static std::atomic<int> calls{0}, arrived{0};
@@ -41,12 +33,14 @@ static void APS5_VABI ExitInsideInitializer() { scePthreadExit(nullptr); }
 static void APS5_VABI CancelInsideInitializer() {
     Require(scePthreadCancel(scePthreadSelf()) == 0);
     scePthreadTestcancel();
+
 }
 static void APS5_VABI CountRetry() { ++retried; }
 static void APS5_VABI AbortCleanup(void*) { std::abort(); }
 static void APS5_VABI PushAndThrow() {
     std::uintptr_t info[8];
     __pthread_cleanup_push_imp_nid_postfix(AbortCleanup, nullptr, info);
+
     throw 7;
 }
 static GuestOnce pushed{};

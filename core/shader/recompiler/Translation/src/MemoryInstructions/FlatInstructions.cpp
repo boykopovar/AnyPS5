@@ -1,4 +1,3 @@
-#include "Translation/MemoryInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <algorithm>
 #include <array>
@@ -179,7 +178,8 @@ bool TranslationContext::flatStore(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::flatAtomic(const RdnaInstruction& inst, IrOpcode opcode) {
-    const MemoryInfo memory = flatMemoryInfoFromInstruction(inst);
+    MemoryInfo memory = flatMemoryInfoFromInstruction(inst);
+    memory.flushDenormals = floatAtomicFlush(opcode);
     const AddressOperands address = readAddressOperands(inst, 0u);
     const MemoryFlags flags = addMemoryInfo(memory, inst.programCounter);
     IrValue& active = ir.GetExec();

@@ -32,6 +32,11 @@ struct FlipInfo {
     std::int64_t argument;
 };
 
+class EopFlipAlreadyReserved final : public std::runtime_error {
+public:
+    EopFlipAlreadyReserved() : std::runtime_error("EOP flip token is already reserved for this flip") {}
+};
+
 class IFlipRequest {
 public:
     virtual ~IFlipRequest() = default;
@@ -55,6 +60,7 @@ public:
 
 extern "C" std::uint32_t AgcDriverReserveEopFlip_nid_postfix(const AgcDriver::FlipInfo& info);
 extern "C" void AgcDriverSubmitFlip_nid_postfix(const AgcDriver::FlipInfo& info);
+extern "C" std::uint32_t AgcDriverReserveEopFlipAt_nid_postfix(const AgcDriver::FlipInfo& info, std::uint32_t token);
 
 extern "C" void AgcDriverRegisterVideoOutput_nid_postfix(std::uint32_t handle, const std::shared_ptr<AgcDriver::IVideoOutput>& output);
 extern "C" void AgcDriverUnregisterVideoOutput_nid_postfix(std::uint32_t handle, const std::shared_ptr<AgcDriver::IVideoOutput>& output);

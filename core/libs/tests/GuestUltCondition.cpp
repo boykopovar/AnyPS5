@@ -1,3 +1,4 @@
+#include "prx/libSceUlt/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
@@ -9,20 +10,10 @@
 #include <string>
 #include <thread>
 
-extern "C" {
-int APS5_VABI sceUltFinalize();
-int APS5_VABI sceUltMutexCreate(void*, const char*, void*, const UltMutexOptParam*, std::uint32_t);
-int APS5_VABI sceUltMutexLock(void*);
-int APS5_VABI sceUltMutexUnlock(void*);
-int APS5_VABI sceUltMutexDestroy(void*);
-int APS5_VABI _sceUltConditionVariableCreate(void*, const char*, void*, const void*, std::uint32_t);
-int APS5_VABI sceUltConditionVariableWait(void*);
-int APS5_VABI sceUltConditionVariableSignal(void*);
-int APS5_VABI sceUltConditionVariableDestroy(void*);
-}
-
 constexpr int Null = -2139029503;
+constexpr int Alignment = -2139029502;
 constexpr int Invalid = -2139029500;
+constexpr int Permission = -2139029499;
 constexpr int State = -2139029498;
 constexpr int Busy = -2139029497;
 
@@ -41,8 +32,10 @@ struct Fixture {
     Object mutex;
     Object condition;
 
-    Fixture() {
-        CHECK(sceUltMutexCreate(&mutex, "mutex", nullptr, nullptr, 0x12000000) == 0);
+    explicit Fixture(bool recursive = false) {
+        UltMutexOptParam options{};
+        options.attribute = recursive ? 1 : 0;
+        CHECK(sceUltMutexCreate(&mutex, "mutex", nullptr, &options, 0x12000000) == 0);
         CHECK(_sceUltConditionVariableCreate(&condition, "condition", &mutex, nullptr, 0x12000000) == 0);
     }
 
@@ -58,10 +51,13 @@ struct Fixture {
 };
 
 static void Validation() {
-    Fixture f;
+    Fixture f(true);
     Object unused;
     CHECK(sceUltMutexDestroy(nullptr) == Null);
     CHECK(sceUltMutexDestroy(&unused) == State);
+    CHECK(sceUltConditionVariableCreate(nullptr, nullptr, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltConditionVariableCreate(&unused, nullptr, &unused, nullptr, 0) == Invalid);
+    CHECK(sceUltConditionVariableCreate(&f.condition, nullptr, &f.mutex, nullptr, 0) == State);
     CHECK(_sceUltConditionVariableCreate(nullptr, nullptr, nullptr, nullptr, 0) == Null);
     CHECK(_sceUltConditionVariableCreate(&unused, nullptr, &unused, nullptr, 0) == Invalid);
     CHECK(_sceUltConditionVariableCreate(&f.condition, nullptr, &f.mutex, nullptr, 0) == State);
@@ -69,20 +65,22 @@ static void Validation() {
     CHECK(sceUltConditionVariableDestroy(&unused) == State);
     CHECK(sceUltConditionVariableSignal(nullptr) == Null);
     CHECK(sceUltConditionVariableSignal(&unused) == State);
+    CHECK(sceUltConditionVariableSignal(reinterpret_cast<unsigned char*>(&unused) + 1) == Alignment);
+    CHECK(sceUltConditionVariableSignal(reinterpret_cast<unsigned char*>(&unused) + 4) == Alignment);
     CHECK(sceUltConditionVariableWait(nullptr) == Null);
     CHECK(sceUltConditionVariableWait(&unused) == State);
     CHECK(_sceUltConditionVariableCreate(&unused, nullptr, nullptr, nullptr, 0) == Null);
     CHECK(sceUltConditionVariableWait(&f.condition) == State);
-    CHECK(sceUltMutexUnlock(&f.mutex) == State);
+    CHECK(sceUltMutexUnlock(&f.mutex) == Permission);
     bool unsupported = false;
     try { _sceUltConditionVariableCreate(&unused, nullptr, &f.mutex, &unused, 0); }
     catch (const std::runtime_error&) { unsupported = true; }
     CHECK(unsupported);
     f.Lock();
-    CHECK(sceUltMutexDestroy(&f.mutex) == Busy);
+    CHECK(sceUltMutexDestroy(&f.mutex) == State);
     CHECK(sceUltMutexCreate(&f.mutex, nullptr, nullptr, nullptr, 0) == State);
     auto other = std::async(std::launch::async, [&] {
-        CHECK(sceUltMutexUnlock(&f.mutex) == State);
+        CHECK(sceUltMutexUnlock(&f.mutex) == Permission);
         CHECK(sceUltConditionVariableWait(&f.condition) == State);
     });
     other.get();
@@ -91,9 +89,9 @@ static void Validation() {
     try { f.Wait(); } catch (const std::runtime_error&) { unsupported = true; }
     CHECK(unsupported);
     f.Unlock();
-    CHECK(sceUltMutexDestroy(&f.mutex) == Busy);
+    CHECK(sceUltMutexDestroy(&f.mutex) == State);
     f.Unlock();
-    CHECK(sceUltMutexDestroy(&f.mutex) == Busy);
+    CHECK(sceUltMutexDestroy(&f.mutex) == State);
     CHECK(sceUltConditionVariableDestroy(&f.condition) == 0);
     CHECK(sceUltMutexDestroy(&f.mutex) == 0);
     CHECK(sceUltMutexLock(&f.mutex) == State);
@@ -121,13 +119,13 @@ static void Handoff() {
         entered = 1;
         f.Wait();
         CHECK(payload == 42);
-        CHECK(sceUltMutexDestroy(&f.mutex) == Busy);
+        CHECK(sceUltMutexDestroy(&f.mutex) == State);
         f.Unlock();
     });
     Await(entered, 1);
     f.Lock();
     CHECK(sceUltConditionVariableDestroy(&f.condition) == Busy);
-    CHECK(sceUltMutexDestroy(&f.mutex) == Busy);
+    CHECK(sceUltMutexDestroy(&f.mutex) == State);
     CHECK(waiter.wait_for(std::chrono::milliseconds(30)) == std::future_status::timeout);
     f.Unlock();
     f.Lock();
@@ -167,6 +165,56 @@ static void SignalOne() {
         waiter.get();
     }
     CHECK(finished == 3);
+}
+
+static void SignalAll() {
+    Object unused;
+    CHECK(sceUltConditionVariableSignalAll(nullptr) == Null);
+    CHECK(sceUltConditionVariableSignalAll(&unused) == State);
+    Fixture f;
+    CHECK(sceUltConditionVariableSignalAll(&f.condition) == 0);
+    std::atomic<int> entered = 0, holding = 0, finished = 0;
+    const auto waiter = [&] {
+        f.Lock();
+        ++entered;
+        f.Wait();
+        CHECK(++holding == 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        --holding;
+        ++finished;
+        f.Unlock();
+    };
+    std::array<std::future<void>, 4> waiters;
+    waiters[0] = std::async(std::launch::async, waiter);
+    Await(entered, 1);
+    f.Lock();
+    f.Unlock();
+    CHECK(waiters[0].wait_for(std::chrono::milliseconds(30)) == std::future_status::timeout);
+    waiters[1] = std::async(std::launch::async, waiter);
+    waiters[2] = std::async(std::launch::async, waiter);
+    Await(entered, 3);
+    f.Lock();
+    CHECK(sceUltConditionVariableSignalAll(&f.condition) == 0);
+    CHECK(waiters[0].wait_for(std::chrono::milliseconds(30)) == std::future_status::timeout);
+    CHECK(finished == 0);
+    f.Unlock();
+    Await(finished, 3);
+    waiters[3] = std::async(std::launch::async, waiter);
+    Await(entered, 4);
+    f.Lock();
+    f.Unlock();
+    CHECK(waiters[3].wait_for(std::chrono::milliseconds(30)) == std::future_status::timeout);
+    f.Lock();
+    f.Signal();
+    f.Unlock();
+    for (auto& future : waiters) {
+        CHECK(future.wait_for(std::chrono::seconds(3)) == std::future_status::ready);
+        future.get();
+    }
+    CHECK(finished == 4);
+    CHECK(sceUltConditionVariableDestroy(&f.condition) == 0);
+    CHECK(sceUltConditionVariableSignalAll(&f.condition) == State);
+    CHECK(_sceUltConditionVariableCreate(&f.condition, nullptr, &f.mutex, nullptr, 0) == 0);
 }
 
 static void Stress() {
@@ -229,6 +277,7 @@ int main(int argc, char** argv) {
     if (test == "validation") Validation();
     else if (test == "handoff") Handoff();
     else if (test == "signal-one") SignalOne();
+    else if (test == "signal-all") SignalAll();
     else if (test == "stress") Stress();
     else if (test == "finalize-queued") Finalize(false);
     else if (test == "finalize-reacquire") Finalize(true);

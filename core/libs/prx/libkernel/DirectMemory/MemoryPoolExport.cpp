@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstddef>
 #include <exception>
@@ -95,7 +97,7 @@ int APS5_VABI sceKernelMemoryPoolExpand(int64_t search_start, int64_t search_end
   || (alignment != 0 && !PageAligned(alignment))) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
- const int ret = DirectMemoryAlloc(search_start, search_end, len, alignment, -1, phys_addr_out);
+ const int ret = DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, -1, phys_addr_out);
  if (ret == 0) {
   PoolState& pool = Pool();
   std::lock_guard<std::mutex> lock(pool.mutex);
@@ -107,14 +109,15 @@ int APS5_VABI sceKernelMemoryPoolExpand(int64_t search_start, int64_t search_end
 int APS5_VABI sceKernelMemoryPoolGetBlockStats(KernelMemoryPoolBlockStats* output, size_t output_size) {
  if (!output || output_size < sizeof(KernelMemoryPoolBlockStats)) return SCE_KERNEL_ERROR_EINVAL;
  PoolState& pool = Pool();
- std::lock_guard<std::mutex> lock(pool.mutex);
- const size_t total = (pool.expandedBytes + kPoolBlockSize - 1) / kPoolBlockSize;
- const size_t used = (pool.committedBytes + kPoolBlockSize - 1) / kPoolBlockSize;
- output->available_flushed_blocks = static_cast<int32_t>(total > used ? total - used : 0);
- output->available_cached_blocks = 0;
- output->allocated_flushed_blocks = static_cast<int32_t>(used);
- output->allocated_cached_blocks = 0;
- return 0;
+ KernelMemoryPoolBlockStats stats{};
+ {
+  std::lock_guard<std::mutex> lock(pool.mutex);
+  const size_t total = (pool.expandedBytes + kPoolBlockSize - 1) / kPoolBlockSize;
+  const size_t used = (pool.committedBytes + kPoolBlockSize - 1) / kPoolBlockSize;
+  stats.available_flushed_blocks = static_cast<int32_t>(total > used ? total - used : 0);
+  stats.allocated_flushed_blocks = static_cast<int32_t>(used);
+ }
+ return GuestCopyOut_nid_no_patch(output, &stats, sizeof(stats)) ? 0 : SCE_KERNEL_ERROR_EFAULT;
 }
 
 int APS5_VABI sceKernelMemoryPoolReserve(void* addr_in, size_t len, size_t alignment, int flags, void** addr_out) {

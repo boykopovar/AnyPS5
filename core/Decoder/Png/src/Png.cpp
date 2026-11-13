@@ -48,6 +48,37 @@ bool isChunkType(const std::uint8_t* bytes, const char* type) {
     return std::equal(bytes, bytes + 4, type);
 }
 
+std::optional<std::uint16_t> readGrayscaleTransparencyKey(std::span<const std::uint8_t> png) {
+    std::size_t offset = SIGNATURE.size();
+    if (png.size() < offset || !std::equal(SIGNATURE.begin(), SIGNATURE.end(), png.begin())) return std::nullopt;
+    std::optional<std::uint16_t> key;
+    while (png.size() - offset >= CHUNK_OVERHEAD) {
+        const std::uint32_t length = readBigEndian32(&png[offset]);
+        const std::uint8_t* type = &png[offset + 4];
+        if (length > png.size() - offset - CHUNK_OVERHEAD) return std::nullopt;
+        if (isChunkType(type, "tRNS")) {
+            if (length != 2) return std::nullopt;
+            key = static_cast<std::uint16_t>(png[offset + 8] << 8 | png[offset + 9]);
+        }
+        if (isChunkType(type, "IDAT") || isChunkType(type, "IEND")) return key;
+        offset += CHUNK_OVERHEAD + length;
+    }
+    return std::nullopt;
+}
+
+void repairGrayscaleTransparency(const Header& header, std::span<const std::uint8_t> png, Image& image) {
+    if (header.colorType != ColorType::Grayscale || !header.hasTransparency) return;
+    if (header.bitDepth != 1 && header.bitDepth != 2 && header.bitDepth != 4) return;
+    const std::optional<std::uint16_t> key = readGrayscaleTransparencyKey(png);
+    if (!key.has_value()) return;
+    const std::uint16_t mask = static_cast<std::uint16_t>((1u << header.bitDepth) - 1);
+    if ((*key & 0xFF) == (*key & mask)) return;
+    const std::uint8_t transparent = static_cast<std::uint8_t>((*key & mask) * (255u / mask));
+    for (std::size_t offset = 3; offset < image.pixels.size(); offset += 4) {
+        image.pixels[offset] = static_cast<std::uint8_t>(image.pixels[offset - 3] == transparent ? 0 : 255);
+    }
+}
+
 bool isValidFormat(std::uint8_t bitDepth, std::uint8_t colorType) {
     switch (colorType) {
     case 0:
@@ -67,14 +98,19 @@ void appendBigEndian32(std::vector<std::uint8_t>& output, std::uint32_t value) {
     for (int shift = 24; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(value >> shift));
 }
 
+std::uint32_t chunkCrc(std::span<const std::uint8_t> typeAndData) {
+    std::uint32_t crc = 0xFFFFFFFFu;
+    for (const auto byte : typeAndData) crc = (crc >> 8) ^ CRC_TABLE[(crc ^ byte) & 0xFF];
+    return ~crc;
+}
+
 void appendChunk(std::vector<std::uint8_t>& output, const char* type, std::span<const std::uint8_t> data) {
     appendBigEndian32(output, static_cast<std::uint32_t>(data.size()));
     const std::size_t checkedFrom = output.size();
     output.insert(output.end(), type, type + 4);
     output.insert(output.end(), data.begin(), data.end());
-    std::uint32_t crc = 0xFFFFFFFFu;
-    for (std::size_t i = checkedFrom; i < output.size(); ++i) crc = (crc >> 8) ^ CRC_TABLE[(crc ^ output[i]) & 0xFF];
-    appendBigEndian32(output, ~crc);
+    const auto crc = chunkCrc(std::span(output).subspan(checkedFrom));
+    appendBigEndian32(output, crc);
 }
 
 int paethPredictor(int left, int up, int upLeft) {
@@ -158,7 +194,26 @@ std::optional<Image> Decode(std::span<const std::uint8_t> png) {
 
     Image image{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), {}};
     image.pixels.assign(decoded.get(), decoded.get() + static_cast<std::size_t>(image.width) * image.height * 4);
+    const std::optional<Header> header = ParseHeader(png);
+    if (header.has_value()) repairGrayscaleTransparency(*header, png, image);
     return image;
+}
+
+std::vector<std::uint16_t> DecodeRgba16(std::span<const std::uint8_t> png) {
+    if (png.empty() || png.size() > INT_MAX) return {};
+    const auto header = ParseHeader(png);
+    if (!header || header->bitDepth != 16) return {};
+    int width = 0;
+    int height = 0;
+    const std::unique_ptr<stbi_us, decltype(&stbi_image_free)> decoded(
+        stbi_load_16_from_memory(png.data(), static_cast<int>(png.size()), &width, &height, nullptr, 4),
+        stbi_image_free);
+    if (!decoded || width != static_cast<int>(header->width) || height != static_cast<int>(header->height)) return {};
+    return {decoded.get(), decoded.get() + static_cast<std::size_t>(width) * height * 4};
+}
+
+bool CheckChunkCrc(std::span<const std::uint8_t> typeAndData, std::uint32_t expected) {
+    return chunkCrc(typeAndData) == expected;
 }
 
 std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,
@@ -167,7 +222,10 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
     if (options.compressionLevel < 0 || options.compressionLevel > 9 || options.filters == 0 || (options.filters & ~FILTER_ALL) != 0) {
         throw std::invalid_argument("Png::Encode: unsupported options");
     }
-    const std::uint64_t rowSize = static_cast<std::uint64_t>(width) * channels;
+    if (options.bitDepth != 8 && options.bitDepth != 16)
+        throw std::invalid_argument("Png::Encode: unsupported sample depth");
+    const std::uint32_t pixelSize = channels * (options.bitDepth / 8);
+    const std::uint64_t rowSize = static_cast<std::uint64_t>(width) * pixelSize;
     if (width == 0 || height == 0 || rowSize > INT_MAX || (rowSize + 1) * height > INT_MAX) {
         throw std::invalid_argument("Png::Encode: unsupported image size");
     }
@@ -184,7 +242,7 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
         std::uint64_t bestCost = UINT64_MAX;
         for (std::uint8_t filterType = 0; filterType < FILTER_TYPE_COUNT; ++filterType) {
             if ((options.filters & (1u << filterType)) == 0) continue;
-            const std::uint64_t cost =filterRow(row, previousRow, rowSize, channels, filterType, candidate.data());
+            const std::uint64_t cost = filterRow(row, previousRow, rowSize, pixelSize, filterType, candidate.data());
             if (cost >= bestCost) continue;
             bestCost = cost;
             filteredRow[0] = filterType;
@@ -201,11 +259,16 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
     std::vector<std::uint8_t> header;
     appendBigEndian32(header, width);
     appendBigEndian32(header, height);
-    header.insert(header.end(), {8, COLOR_TYPE_BY_CHANNELS[channels], 0, 0, 0});
+    header.insert(header.end(), {options.bitDepth, COLOR_TYPE_BY_CHANNELS[channels], 0, 0, 0});
 
     std::vector<std::uint8_t> output(SIGNATURE.begin(), SIGNATURE.end());
     output.reserve(SIGNATURE.size() + 3 * CHUNK_OVERHEAD + IHDR_SIZE + static_cast<std::size_t>(compressedSize));
     appendChunk(output, "IHDR", header);
+    if (options.whiteBackground) {
+        const auto high = static_cast<std::uint8_t>(options.bitDepth == 16 ? 255 : 0);
+        const std::array<std::uint8_t, 6> background{high, 255, high, 255, high, 255};
+        appendChunk(output, "bKGD", std::span(background).first(channels < 3 ? 2 : 6));
+    }
     appendChunk(output, "IDAT", std::span<const std::uint8_t>(compressed.get(), static_cast<std::size_t>(compressedSize)));
     appendChunk(output, "IEND", {});
     return output;

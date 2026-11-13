@@ -38,7 +38,13 @@ std::vector<std::string> CaptureWrites(TAction action) {
     });
 #else
     int sockets[2];
+#ifdef __APPLE__
+    Require(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets) == 0, "message socket pair");
+    constexpr int bufferBytes = 1 << 20;
+    Require(setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &bufferBytes, sizeof(bufferBytes)) == 0 && setsockopt(sockets[1], SOL_SOCKET, SO_RCVBUF, &bufferBytes, sizeof(bufferBytes)) == 0, "message socket buffers");
+#else
     Require(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sockets) == 0, "message socket pair");
+#endif
     std::FILE* stream = fdopen(sockets[0], "w");
     std::thread reader([&] {
         std::string buffer(1 << 20, '\0');
@@ -65,8 +71,17 @@ std::string Join(const std::vector<std::string>& messages) {
     return text;
 }
 
+std::string ExpectedHead() {
+    const std::string path = __FILE__;
+    const std::string name = "LogMacros.cpp";
+    Require(path.size() > name.size(), "source path");
+    const char separator = path[path.size() - name.size() - 1];
+    Require(separator == '/' || separator == '\\', "source path separator");
+    return std::string("[tests") + separator + name + ":";
+}
+
 bool HasLine(const std::string& text, const std::string& tail, bool timestamped) {
-    const std::string head = "[tests/LogMacros.cpp:";
+    const std::string head = ExpectedHead();
     std::size_t headStart = 0;
     if (timestamped) {
         const auto timestampEnd = text.find(" s] ");
@@ -105,5 +120,20 @@ int main(int argc, char** argv) {
     const auto plainLine = CaptureWrites([](std::FILE* stream) { Require(_APS5_LOG_IMPL_NF(stream, "plain") == 0, "a line without arguments was not flushed"); });
     Require(HasLine(Join(plainLine), "] plain\n", timestamped), "a line without arguments differs");
     Require(plainLine.size() <= 2, "a line without arguments took more than two writes");
+
+    auto testSink = +[](std::FILE*, const char*, std::size_t) -> int {
+        return 42;
+    };
+    LogSink().store(testSink);
+    Require(LogSink().load() == testSink, "sink was not stored");
+    Require(WriteLogLine(stderr, "sink test") == 42, "sink was not invoked");
+    LogSink().store(nullptr);
+    Require(LogSink().load() == nullptr, "sink was not cleared");
+
+    if (timestamped) {
+        const long long t1 = LogTimestampMicros();
+        const long long t2 = LogTimestampMicros();
+        Require(t1 >= 0 && t2 >= t1, "timestamp micros did not advance monotonically");
+    }
     return 0;
 }

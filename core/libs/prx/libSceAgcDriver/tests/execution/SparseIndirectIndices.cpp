@@ -168,7 +168,7 @@ void Target(std::vector<std::uint32_t>& words, void* pointer) {
     Append(words, 0x69, {0x390, static_cast<std::uint32_t>(address >> 40u)});
 }
 
-void Run(SparseIndices& indices, std::uint32_t size, bool multi, bool afterGap, bool unreadable) {
+void Run(SparseIndices& indices, std::uint32_t size, bool multi, bool afterGap, bool unreadable, bool sized = true, std::uint32_t second = DeclaredIndices) {
     indices.Fill(size);
     Reference.fill(Kept);
     Actual.fill(Kept);
@@ -177,7 +177,7 @@ void Run(SparseIndices& indices, std::uint32_t size, bool multi, bool afterGap, 
     const auto first = unreadable ? 16u / size : afterGap ? indices.AfterGap(size) : 0u;
     Records[8] = 3;
     Records[9] = 1;
-    Records[10] = DeclaredIndices;
+    Records[10] = second;
     Records[16] = 3;
     Records[17] = 1;
     Records[18] = 16u / size;
@@ -192,7 +192,7 @@ void Run(SparseIndices& indices, std::uint32_t size, bool multi, bool afterGap, 
     Target(words, Actual.data());
     Append(words, 0x2a, {size == 2 ? 0u : 1u});
     Append(words, 0x26, {Low(indices.Base()), High(indices.Base())});
-    Append(words, 0x13, {DeclaredIndices});
+    if (sized) Append(words, 0x13, {DeclaredIndices});
     Append(words, 0x11, {1, Low(Records.data()), High(Records.data())});
     if (multi) Append(words, 0x38, {0, 0, 0, 0x40000280u, 3, Low(Count.data()), High(Count.data()), 32, 0});
     else Append(words, 0x25, {0, 0, 0, 0});
@@ -204,7 +204,7 @@ void Run(SparseIndices& indices, std::uint32_t size, bool multi, bool afterGap, 
     const auto covered = std::count_if(Reference.begin(), Reference.end(), [](std::byte value) { return value != Kept; });
     Require(covered != 0, "the reference triangle did not draw");
     Require(Actual == Reference, "the sparse indexed indirect draw differs from the reference triangle");
-    std::cout << "sparse indices " << size << " bytes, " << (multi ? "counted multi" : "single") << ", " << (afterGap ? "after gap" : "before gap") << " passed\n";
+    std::cout << "sparse indices " << size << " bytes, " << (multi ? "counted multi" : "single") << ", " << (afterGap ? "after gap" : "before gap") << (sized ? "" : ", no index size") << " passed\n";
 }
 
 }
@@ -218,10 +218,13 @@ int main(int argc, char** argv) {
         Register(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
         Register(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
         SparseIndices indices;
-        if (argc == 2 && std::string(argv[1]) == "--unreadable") {
+        const std::string mode = argc == 2 ? argv[1] : "";
+        if (mode == "--unreadable" || mode == "--no-size-unreadable" || mode == "--no-size-unreadable-record") {
             bool refused = false;
             try {
-                Run(indices, 2, false, false, true);
+                if (mode == "--unreadable") Run(indices, 2, false, false, true);
+                else if (mode == "--no-size-unreadable") Run(indices, 2, false, false, true, false);
+                else Run(indices, 2, true, false, false, false);
             } catch (const std::runtime_error& error) {
                 const std::string message = error.what();
                 refused = message.find("guest memory is not readable") != std::string::npos && message.find("+0x6)") != std::string::npos;
@@ -232,10 +235,11 @@ int main(int argc, char** argv) {
             std::cout << "the unreadable indirect index range was refused\n";
             return 0;
         }
+        const bool sized = mode != "--no-size";
         for (const auto size : {2u, 4u}) {
             for (const auto multi : {false, true}) {
-                Run(indices, size, multi, false, false);
-                Run(indices, size, multi, true, false);
+                Run(indices, size, multi, false, false, sized, sized ? DeclaredIndices : 0u);
+                Run(indices, size, multi, true, false, sized, sized ? DeclaredIndices : 0u);
             }
         }
         AgcDriverShutdown_nid_postfix();

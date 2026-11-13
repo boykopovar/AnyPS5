@@ -1,21 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <mutex>
 #include <thread>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread*, const PthreadAttr*, PthreadEntry, void*, const char*);
-int APS5_VABI scePthreadJoin(Pthread, void**);
-int APS5_VABI scePthreadMutexInit(PthreadMutex*, const PthreadMutexattr*, const char*);
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex*);
-int APS5_VABI scePthreadMutexLock(PthreadMutex*);
-int APS5_VABI scePthreadMutexUnlock(PthreadMutex*);
-int APS5_VABI sceKernelInstallExceptionHandler(int, void*);
-int APS5_VABI sceKernelRemoveExceptionHandler(int);
-int APS5_VABI sceKernelRaiseException(Pthread, int);
-}
 
 static constexpr int SigUsr1 = 30;
 static void Require(bool value) { if (!value) std::abort(); }
@@ -44,9 +34,12 @@ int main() {
     Require(sceKernelRaiseException(worker, SigUsr1) == 0);
     for (int i = 0; i < 5000 && deliveries.load() == 0; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     Require(deliveries.load() == 1);
+    Require(sceKernelRaiseException(worker, SigUsr1) == 0);
+    for (int i = 0; i < 5000 && deliveries.load() < 2; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(deliveries.load() == 2 && !context.acquired.load());
     Require(scePthreadMutexUnlock(&context.mutex) == 0);
     Require(scePthreadJoin(worker, nullptr) == 0);
     Require(context.acquired.load());
     Require(scePthreadMutexDestroy(&context.mutex) == 0);
     Require(sceKernelRemoveExceptionHandler(SigUsr1) == 0);
-}
+}

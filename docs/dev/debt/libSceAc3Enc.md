@@ -1,0 +1,6 @@
+# libSceAc3Enc technical debt
+
+### Unknown function info
+
+- [sceAc3EncCreateEncoder](../../../core/libs/prx/libSceAc3Enc/Export.cpp) (libSceAc3Enc) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAc3Enc.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [The answers without an encoder](../../../core/libs/prx/libSceAc3Enc/Export.cpp) (libSceAc3Enc) - `sceAc3EncCreateEncoder` throws, so no encoder exists here; only the 32-bit results are claimed. In firmware 13.42's `libSceAc3Enc.sprx` (SHA-256 `caa3e58b86fbd1fbf0b9cac022c4a18650129182fe7dce7dc5088aa5a6382a38`), read from disassembly and not run on a console, the encoder handle is kept at `0xc024`, which starts as -1 in the file data and which only `sceAc3EncCreateEncoder` (`0x3f6`) sets to anything else. Encode, EncodeAsync, Flush and DeleteEncoder return `0x80E00001` for a handle that is -1 or differs from it, so for every handle here; `sceAc3EncWaitEncode` (`0x7d0`) returns `0x80E00009` while the async slot `0xc02c` is -1, which only an accepted EncodeAsync changes; `sceAc3EncIsEncoding` (`0x8c0`) answers 0.

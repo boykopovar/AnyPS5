@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
@@ -7,7 +8,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -32,6 +35,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #ifndef _WIN32
@@ -47,6 +51,7 @@ struct VulkanDeviceTestAccess {
 namespace {
 
 using AgcDriver::Graphics::DccKeys;
+using AgcDriver::Graphics::LookupOutcomes;
 using AgcDriver::Graphics::Require;
 using AgcDriver::Graphics::StorageTexture;
 using ShaderRecompiler::ShaderStage;
@@ -416,6 +421,87 @@ void RunReusedKeys(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     Require(Count(texels, SurfaceBytes, 0xff) == Threads * 4u, "reused keys: the write-back lost the image's results");
 }
 
+enum class KeyWrite { Rewrite, PartialRewrite, Beside, RegisterRewrite };
+
+struct KeyWriteMode {
+    std::string_view name;
+    KeyWrite write;
+    std::uint32_t lookupsBefore;
+};
+
+constexpr std::array<KeyWriteMode, 6> KeyWriteModes{{
+    {"--rewrite-after-memo", KeyWrite::Rewrite, 0u},
+    {"--rewrite-after-refresh-proof", KeyWrite::Rewrite, 1u},
+    {"--rewrite-after-epoch-proof", KeyWrite::Rewrite, 2u},
+    {"--partial-rewrite-keeps-store", KeyWrite::PartialRewrite, 0u},
+    {"--write-beside-keys-keeps-store", KeyWrite::Beside, 0u},
+    {"--rewrite-to-register-clear", KeyWrite::RegisterRewrite, 0u},
+}};
+
+int RunKeyWriteAfterMemo(AgcDriver::VulkanDevice& device, std::uint8_t* block, KeyWrite write, std::uint32_t lookupsBefore) {
+    constexpr std::uint8_t Rewritten = 0xc0;
+    constexpr std::uint8_t RegisterClear = 0x20;
+    constexpr std::uint8_t BesideValue = 0x5a;
+    constexpr std::size_t BesideBytes = 256;
+    static_assert(KeysOffset % 4096 == 0 && KeyBytes + BesideBytes <= 4096 && KeysOffset + 4096 <= BlockBytes);
+    auto* texels = block;
+    auto* keys = block + KeysOffset;
+    const auto surface = AddressOf(texels);
+    std::memset(texels, 0x55, SurfaceBytes);
+    std::memset(keys, 0x00, KeyBytes + BesideBytes);
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(texels, keys));
+    const auto context = device.graphicsContext();
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto image = AgcDriver::Graphics::CachedStorageSurface(context, resource);
+    Require(image->Descriptor().dccAddress == AddressOf(keys) && image->UploadedKeys() == DccKeys::Clear0000, "keys written after a memoized collect: the image of a 0000-cleared surface was not cleared from its keys");
+    Require(AgcDriver::Graphics::DccKeyCount(image->Descriptor(), image->GuestBytes()) == KeyBytes, "keys written after a memoized collect: the surface stores more keys than one per 256 bytes");
+    if (!AgcDriver::GuestMemory::Watched(AddressOf(keys), KeyBytes)) {
+        std::puts("keys written after a memoized collect: the keys are not write-watched after the upload: skipped");
+        return VulkanTestSkipped;
+    }
+    const auto collected = AgcDriver::GuestMemory::CollectWrites(AddressOf(keys), KeyBytes);
+    Require(collected != 0, "keys written after a memoized collect: the keys were not collected");
+    for (std::uint32_t lookup = 0; lookup < lookupsBefore; ++lookup) Require(AgcDriver::Graphics::CachedStorageSurface(context, resource) == image, "keys written after a memoized collect: a lookup before the key write made another image");
+    if (write == KeyWrite::Rewrite) std::memset(keys, Rewritten, KeyBytes);
+    else if (write == KeyWrite::PartialRewrite) std::memset(keys + KeyBytes / 2, Rewritten, KeyBytes / 2);
+    else if (write == KeyWrite::RegisterRewrite) std::memset(keys, RegisterClear, KeyBytes);
+    else std::memset(keys + KeyBytes, BesideValue, BesideBytes);
+    const auto provedBefore = StorageTexture::RefreshesProved();
+    const auto ownBefore = AgcDriver::Graphics::ThreadLookupOutcomes().counts[LookupOutcomes::RefreshProved];
+    Require(AgcDriver::Graphics::CachedStorageSurface(context, resource) == image, "keys written after a memoized collect: the lookup after the key write made another image");
+    const auto proved = StorageTexture::RefreshesProved() - provedBefore;
+    const auto own = AgcDriver::Graphics::ThreadLookupOutcomes().counts[LookupOutcomes::RefreshProved] - ownBefore;
+    Require(lookupsBefore != 0u || (proved == 0u && own == 0u), "keys written after a memoized collect: the lookup after the key write was answered by a proof of the refresh instead of a refresh under the memoized collect");
+    Require(lookupsBefore != 1u || (proved == 1u && own == 1u), "keys written after a memoized collect: the lookup after the key write was not answered by the refresh's own proof");
+    Require(lookupsBefore != 2u || (proved == 1u && own == 0u), "keys written after a memoized collect: the lookup after the key write was not answered inside the epoch of the last proof");
+    Require(image->UploadedKeys() == DccKeys::Clear0000, "keys written after a memoized collect: the lookup after the key write did not keep the image under its clear keys");
+    if (write == KeyWrite::Beside) Require(!AgcDriver::GuestMemory::UnchangedSinceCollected(AddressOf(keys), KeyBytes, collected), "keys written after a memoized collect: the guest write beside the keys did not stamp the keys' page");
+    image->MarkDirty();
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test keys written after a memoized collect");
+    device.WaitIdle();
+    const auto requireKeys = [&](std::size_t first, std::size_t count, std::uint8_t expected, const char* what) {
+        const auto found = Count(keys + first, count, expected);
+        char message[384];
+        std::snprintf(message, sizeof(message), "%s: %zu of %zu key bytes are 0x%02x (key %zu is 0x%02x)", what, found, count, expected, first, keys[first]);
+        Require(found == count, message);
+    };
+    if (write == KeyWrite::Rewrite) {
+        requireKeys(0, KeyBytes, Rewritten, "a storage image's first write stored uncompressed keys over keys the guest had replaced by another clear code after a memoized collect");
+        std::puts("keys the guest replaced by another clear code after a memoized collect survive a storage image's first write");
+    } else if (write == KeyWrite::PartialRewrite) {
+        requireKeys(0, KeyBytes / 2, 0xff, "a storage image's first write left clear keys the guest had not touched in place after a partial key rewrite");
+        std::puts("a storage image's first write stores uncompressed keys over the keys a partial key rewrite left untouched");
+    } else if (write == KeyWrite::RegisterRewrite) {
+        requireKeys(0, KeyBytes, RegisterClear, "a storage image's first write stored uncompressed keys over keys the guest had replaced by the register clear code after a memoized collect");
+        std::puts("keys the guest replaced by the register clear code after a memoized collect survive a storage image's first write");
+    } else {
+        requireKeys(0, KeyBytes, 0xff, "a storage image's first write left its clear keys in place for a guest write beside them");
+        std::puts("a storage image's first write stores uncompressed keys beside a guest write in their page");
+    }
+    return 0;
+}
+
 void RunSingleKeys(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     auto* texels = block;
     auto* keys = block + KeysOffset;
@@ -448,6 +534,46 @@ void RunSingleKeys(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     }
     char message[256];
     std::snprintf(message, sizeof(message), "comp-to-single keys: %zu of %u written-back texels are neither the kernel's write nor the first texel of their 256-byte block", wrong, Side * Side);
+    Require(wrong == 0, message);
+}
+
+void RunUniformSingleClear(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    auto* texels = block;
+    auto* keys = block + KeysOffset;
+    const auto surface = AddressOf(texels);
+    const std::uint32_t color = 0x11223344u;
+    std::memset(texels, 0x55, SurfaceBytes);
+    for (std::size_t offset = 0; offset < SurfaceBytes; offset += 256) std::memcpy(texels + offset, &color, 4);
+    std::memset(keys, 0x10, KeyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto texture = TextureDescriptor(texels, keys);
+    std::vector<std::uint32_t> writeData(16, 0u);
+    std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
+    const auto uploads = AgcDriver::Graphics::ThreadLookupOutcomes().counts;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Dispatch(device, WriteCode, writeData);
+    const auto image = StorageTexture::FindPending(surface, SurfaceBytes);
+    Require(image != nullptr && image->UploadedKeys() == DccKeys::Uncompressed, "uniform single-key clear: the first write did not store the keys uncompressed");
+    const auto& uploaded = AgcDriver::Graphics::ThreadLookupOutcomes().counts;
+    Require(uploaded[LookupOutcomes::UploadClear] == uploads[LookupOutcomes::UploadClear] + 1 && uploaded[LookupOutcomes::UploadCpu] == uploads[LookupOutcomes::UploadCpu], "uniform single-key clear: the first write read the surface and uploaded it instead of clearing it on the GPU");
+    const bool stillWatched = AgcDriver::GuestMemory::Watched(surface, SurfaceBytes);
+    Require(image->GuestSnapshotValid() == !stillWatched, stillWatched ? "uniform single-key clear: the upload of write-watched memory kept a guest snapshot, so the surface was read rather than cleared" : "uniform single-key clear: the upload of untracked memory kept no guest bytes to compare");
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test uniform single-key clear");
+    device.WaitIdle();
+    RequireKeys(keys, 0xff, "uniform single-key clear: the keys after the write-back");
+    const AgcDriver::Graphics::ColorTargetLayout layout(Side, Side, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+    std::size_t wrong = 0;
+    for (std::uint32_t y = 0; y < Side; ++y) {
+        for (std::uint32_t x = 0; x < Side; ++x) {
+            const auto offset = layout.Offset(x, y);
+            std::uint32_t texel = 0;
+            std::memcpy(&texel, texels + offset, 4);
+            const auto expected = y == 0 && x < Threads ? 0xffffffffu : color;
+            if (texel != expected) ++wrong;
+        }
+    }
+    char message[256];
+    std::snprintf(message, sizeof(message), "uniform single-key clear: %zu of %u written-back texels are neither the kernel's write nor the proved clear color 0x%08x", wrong, Side * Side, color);
     Require(wrong == 0, message);
 }
 
@@ -635,6 +761,71 @@ void RunUntrackedReuse(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     Require(image->Refresh(), "the GPU-edited image was uploaded twice");
 }
 
+void RunClearKeepsSnapshot(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    auto* texels = block;
+    auto* keys = block + KeysOffset;
+    const auto surface = AddressOf(texels);
+    std::memset(texels, 0x55, SurfaceBytes);
+    std::memset(keys, 0x00, KeyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto texture = TextureDescriptor(texels, keys);
+    std::vector<std::uint32_t> writeData(16, 0u);
+    std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Dispatch(device, WriteCode, writeData);
+    const auto image = StorageTexture::FindPending(surface, SurfaceBytes);
+    Require(image != nullptr, "clear snapshot: the written surface has no pending image");
+    if (AgcDriver::GuestMemory::Watched(surface, SurfaceBytes)) {
+        std::puts("the unwatched block is write-watched: the fast-clear snapshot is not tested");
+        StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
+        device.WaitIdle();
+        return;
+    }
+    const auto writeAndSettle = [&] {
+        Dispatch(device, WriteCode, writeData);
+        StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test clear snapshot");
+        device.WaitIdle();
+        for (int settle = 0; settle < 2; ++settle) {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            image->Refresh();
+        }
+    };
+    const auto clear = [&](const char* what) {
+        const std::array<std::uint32_t, 4> pattern{0u, 0u, 0u, 0u};
+        Require(StorageTexture::NoteKeysFill(AddressOf(keys), KeyBytes, 0x00) == 1, "clear snapshot: the key fill did not cover the surface");
+        if (!device.FillBuffer(AddressOf(keys), KeyBytes, pattern)) {
+            device.WaitIdle();
+            const std::vector<std::byte> filled(KeyBytes, std::byte{0});
+            AgcDriver::GuestMemory::Write(AddressOf(keys), filled);
+        }
+        AgcDriver::Graphics::NoteKeysFillOnGpu(AddressOf(keys), KeyBytes, DccKeys::Clear0000);
+        StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test clear snapshot");
+        device.WaitIdle();
+        const auto snapshots = StorageTexture::GuestSnapshots();
+        image->Refresh();
+        char message[256];
+        std::snprintf(message, sizeof(message), "clear snapshot: %s: the image was uploaded under %s keys, not cleared", what, AgcDriver::Graphics::DccKeysName(image->UploadedKeys()));
+        Require(image->UploadedKeys() == DccKeys::Clear0000, message);
+        return StorageTexture::GuestSnapshots() - snapshots;
+    };
+    writeAndSettle();
+    char message[192];
+    const auto unchanged = clear("a clear over unchanged memory");
+    std::snprintf(message, sizeof(message), "clear snapshot: a clear over unchanged unwatched memory copied its guest bytes %llu times", static_cast<unsigned long long>(unchanged));
+    Require(unchanged == 0, message);
+    Require(image->GuestSnapshotValid(), "clear snapshot: the cleared image kept no guest bytes to compare");
+    writeAndSettle();
+    texels[SurfaceBytes - 1] = 0x33;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(clear("a clear after a CPU store") == 1, "clear snapshot: a clear after a CPU store did not copy the guest bytes once");
+    Dispatch(device, WriteCode, writeData);
+    const auto version = image->Version();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(image->Refresh() && image->Version() == version, "clear snapshot: the copy taken by the clear missed the CPU store, so a refresh uploaded the image");
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test clear snapshot");
+    device.WaitIdle();
+}
+
 #ifndef _WIN32
 // An import window stamps the pages whose write protection it saw resolved as a possible CPU
 // store. A driver that pins imported pages for writing (NVIDIA on Linux) resolves it without
@@ -785,8 +976,52 @@ void RunSharedImport(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
 
 }
 
-int main() {
+void RunMipmappedTarget(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+#ifndef _WIN32
+    constexpr std::uint32_t ChainSide = 64;
+    constexpr std::uint32_t ChainLevels = 7;
+    auto* texels = block;
+    auto* keys = block + KeysOffset;
+    const auto surface = AddressOf(texels);
+    const auto meta = AddressOf(keys);
+    std::memset(texels, 0x55, SurfaceBytes);
+    std::memset(keys, 0x00, KeyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(surface >> 8u);
+    cx[0x390] = static_cast<std::uint32_t>(surface >> 40u);
+    cx[0x31b] = 0;
+    cx[0x31c] = 0x10028028u;
+    cx[0x31d] = 0;
+    cx[0x3b0] = ((ChainLevels - 1u) << 28u) | ((ChainSide - 1u) << 14u) | (ChainSide - 1u);
+    cx[0x3b8] = 0x9000000u | (TileRenderTarget64KB << 14u) | (1u << 30u);
+    cx[0x325] = static_cast<std::uint32_t>(meta >> 8u);
+    cx[0x3a8] = static_cast<std::uint32_t>(meta >> 40u);
+    const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    const auto resource = AgcDriver::Graphics::SurfaceForTarget(color);
+    Require(color.mipCount == ChainLevels && color.dccAddress == 0 && resource.dccAddress == meta, "the resident surface of a mipmapped DCC color target has no keys");
+    const auto bytes = AgcDriver::Graphics::DescribeSurface(resource).guestBytes;
+    Require(bytes <= SurfaceBytes, "the mip chain does not fit the test surface");
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto image = AgcDriver::Graphics::CachedStorageSurface(context, resource);
+    Require(image->UploadedKeys() == DccKeys::Clear0000, "the resident image of a 0000-cleared mipmapped target was not cleared from its keys");
+    image->MarkDirty();
+    Require(AgcDriver::Graphics::CurrentDccKeys(meta, bytes) == DccKeys::Uncompressed, "the first write into a mipmapped DCC target left its keys cleared");
+    Require(AgcDriver::Graphics::TextureClearKeys(resource, bytes) == DccKeys::Uncompressed, "a sampled view of a rendered mipmapped DCC target still reads its clear");
+#else
+    static_cast<void>(device);
+    static_cast<void>(block);
+#endif
+}
+
+int main(int argc, char** argv) {
     try {
+#ifdef _WIN32
+        _putenv_s("APS5_PROFILE_DRAW", "1");
+#else
+        setenv("APS5_PROFILE_DRAW", "1", 1);
+#endif
         std::optional<GuestBlock> block;
         std::optional<GuestBlock> watched;
         std::optional<GuestBlock> untracked;
@@ -796,16 +1031,33 @@ int main() {
         std::optional<GuestBlock> hinted;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 2) {
+            const auto mode = std::find_if(KeyWriteModes.begin(), KeyWriteModes.end(), [&](const KeyWriteMode& entry) { return entry.name == argv[1]; });
+            Require(mode != KeyWriteModes.end(), std::string("DCC keys first write: unknown mode ") + argv[1]);
+            if (!AgcDriver::GuestMemory::WriteWatched()) {
+                std::puts("keys written after a memoized collect: no write watching: skipped");
+                return VulkanTestSkipped;
+            }
+            Require(LookupOutcomes::Profiled(), "keys written after a memoized collect: the driver does not count lookup outcomes under APS5_PROFILE_DRAW");
+            watched.emplace(true);
+            return RunKeyWriteAfterMemo(*device, watched->Data(), mode->write, mode->lookupsBefore);
+        }
         block.emplace(false);
         Run(*device, block->Data());
         untracked.emplace(false);
         RunUntrackedReuse(*device, untracked->Data());
+        std::optional<GuestBlock> cleared;
+        cleared.emplace(false);
+        RunClearKeepsSnapshot(*device, cleared->Data());
         std::optional<GuestBlock> reused;
         reused.emplace(false);
         RunReusedKeys(*device, reused->Data());
         std::optional<GuestBlock> single;
         single.emplace(false);
         RunSingleKeys(*device, single->Data());
+        std::optional<GuestBlock> uniformClear;
+        uniformClear.emplace(false);
+        RunUniformSingleClear(*device, uniformClear->Data());
         std::optional<GuestBlock> sampled;
         sampled.emplace(false);
         std::optional<GuestBlock> sampledOutput;
@@ -817,6 +1069,9 @@ int main() {
         std::optional<GuestBlock> uniform;
         uniform.emplace(false);
         RunUniformKeysBehindKernel(*device, uniform->Data());
+        std::optional<GuestBlock> chain;
+        chain.emplace(false);
+        RunMipmappedTarget(*device, chain->Data());
 #ifdef _WIN32
         shared.emplace(true, true);
         RunSharedImport(*device, shared->Data());
@@ -828,6 +1083,9 @@ int main() {
             std::optional<GuestBlock> sampledWatched;
             sampledWatched.emplace(true);
             RunSingleKeysSampled(*device, sampledWatched->Data(), sampledOutput->Data(), "write-watched");
+            std::optional<GuestBlock> uniformClearWatched;
+            uniformClearWatched.emplace(true);
+            RunUniformSingleClear(*device, uniformClearWatched->Data());
 #ifdef _WIN32
             pendingSingle.emplace(true, true);
 #else
