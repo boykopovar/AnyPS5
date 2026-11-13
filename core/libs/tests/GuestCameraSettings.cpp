@@ -123,8 +123,11 @@ void CheckGetters() {
     std::int32_t hue = 0;
     Require(sceCameraGetHue(1, Channel0, &hue, nullptr) == 0 && hue == 1, "the hue must be 1");
     errno = 71;
-    Require(sceCameraGetHue(1, Channel0, reinterpret_cast<std::int32_t*>(0x10), nullptr) == ErrorParam, "an unmapped hue pointer must report PARAM");
-    Require(errno == 71, "errno preserved");
+    Require(sceCameraGetHue(1, Channel0, reinterpret_cast<std::int32_t*>(0x10), nullptr) == ErrorParam, "an unwritable hue pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable hue pointer");
+    alignas(16) std::int32_t hueBuffer[3] = {-99, -99, -99};
+    Require(sceCameraGetHue(1, Channel0, &hueBuffer[1], nullptr) == 0, "reading hue to buffer failed");
+    Require(hueBuffer[0] == -99 && hueBuffer[1] == 1 && hueBuffer[2] == -99, "adjacent memory was corrupted");
     CameraExposureGain exposure{9, 9, 9, 9};
     Require(sceCameraGetExposureGain(1, Channel0, &exposure, nullptr) == 0, "the exposure must be readable");
     Require(exposure.exposureControl == 0 && exposure.exposure == 20 && exposure.gain == 100 && exposure.mode == 0, "the exposure defaults are wrong");
