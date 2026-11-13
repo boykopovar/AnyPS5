@@ -18,6 +18,10 @@
 
 namespace AgcDriver {
 
+void PreflightNativeDepthForReplay_nid_no_patch(std::span<const NativeDepthSnapshot> snapshots) {
+    DriverDetail::Driver::Get().PreflightNativeDepthForReplay(snapshots);
+}
+
 RetiredOwners DiscardNativeDepthForReplay_nid_no_patch() {
     return DriverDetail::Driver::Get().DiscardNativeDepthForReplay();
 }

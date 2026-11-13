@@ -32,6 +32,7 @@ struct RetiredOwners {
     std::uint64_t depthPlanes = 0;
 };
 
+void PreflightNativeDepthForReplay_nid_no_patch(std::span<const NativeDepthSnapshot> snapshots);
 RetiredOwners DiscardNativeDepthForReplay_nid_no_patch();
 void RestoreNativeDepthForReplay_nid_no_patch(std::span<const NativeDepthSnapshot> snapshots);
 
