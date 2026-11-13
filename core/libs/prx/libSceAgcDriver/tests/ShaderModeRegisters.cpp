@@ -97,6 +97,7 @@ constexpr std::uint32_t vCvtF32I32 = 0x7e000b00;
 constexpr std::uint32_t vCvtF32U32 = 0x7e000d00;
 constexpr std::uint32_t vCvtF16F32 = 0x7e001500;
 constexpr std::uint32_t vAddF16 = 0x64000300;
+constexpr std::uint32_t vFractF16 = 0x7e00bf00;
 
 std::uint32_t roundMode(std::uint32_t value) {
     return 0xbfa40000u | value;
@@ -308,8 +309,17 @@ void verifyUnmodelledDirectedRounding() {
     for (std::uint32_t directed = 1; directed < 4; ++directed) {
         const std::array<std::uint32_t, 3> f32{roundMode(directed), vAddF32, endProgram};
         expectRejected(f32, ShaderFloatMode{0xc0}, "does not model directed rounding", 4);
-        const std::array<std::uint32_t, 3> f16{roundMode(directed << 2u), vAddF16, endProgram};
+        const std::array<std::uint32_t, 3> f16{roundMode(directed << 2u), vFractF16, endProgram};
         expectRejected(f16, ShaderFloatMode{0xc0}, "does not model directed rounding", 4);
+    }
+}
+
+void verifyDirectedF16Arithmetic() {
+    for (std::uint32_t rounding = 1; rounding < 4; ++rounding) {
+        const std::array<std::uint32_t, 3> runtime{roundMode(rounding << 2u), vAddF16, endProgram};
+        const std::array<std::uint32_t, 2> declared{vAddF16, endProgram};
+        const auto added = opcodeSequence(translate(runtime, ShaderFloatMode{0xc0}));
+        require(added == opcodeSequence(translate(declared, ShaderFloatMode{0xc0u | (rounding << 2u)})), "runtime f16 rounding of v_add_f16 does not match the declared rounding");
     }
 }
 
@@ -405,14 +415,14 @@ int main() {
         const char* name;
         void (*run)();
     };
-    constexpr std::array<Check, 21> checks{{
+    constexpr std::array<Check, 22> checks{{
         {"encodings", verifyEncodings}, {"reads", verifyReads}, {"dynamicWrites", verifyDynamicWrites},
         {"partialOverwrite", verifyDynamicWriteSurvivesPartialOverwrite}, {"immediateWrites", verifyImmediateWrites},
         {"denormalImmediateWrites", verifyDenormalImmediateWrites}, {"roundInstruction", verifyRoundInstruction},
         {"denormInstruction", verifyDenormInstruction}, {"unsupportedReads", verifyUnsupportedReads}, {"branch", verifyBranch},
         {"diamond", verifyDiamond}, {"directed32", verifyRoundingBeforeDirected32Use}, {"restored", verifyRoundingRestoredBeforeUse},
         {"untouchedFields", verifyUntouchedFieldsStayAccepted}, {"unmodelled", verifyUnmodelledDirectedRounding},
-        {"directedF16", verifyDirectedF16Conversion}, {"denormBeforeUse", verifyDenormBeforeUse}, {"denormDiamond", verifyDenormDiamond},
+        {"directedF16", verifyDirectedF16Conversion}, {"directedF16Arithmetic", verifyDirectedF16Arithmetic}, {"denormBeforeUse", verifyDenormBeforeUse}, {"denormDiamond", verifyDenormDiamond},
         {"loop", verifyRoundingInLoop}, {"propagation", verifyRecompilePropagation}, {"denormalAfterRounding", verifyDenormalReadsAfterRoundingWrites},
     }};
     int failures = 0;
