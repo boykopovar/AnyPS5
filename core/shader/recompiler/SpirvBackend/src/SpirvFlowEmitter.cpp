@@ -1,3 +1,4 @@
+#include "SpirvBackend/SpirvImageEmitter.hpp"
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
 #include "PipelineSpecialization.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
@@ -1311,6 +1312,7 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
         state.laneHalf = 0;
         state.laneValueShared = false;
     }
+    EmitBindlessEntryProbes(ctx);
 }
 
 void PatchStructuredPhis(SpirvValueEmitContext& ctx, StructuredFunctionState& functionState) {
