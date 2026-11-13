@@ -65,6 +65,7 @@ bool IsTemporaryMountPoint(const AppContentMountPoint* mountPoint) {
     return std::strncmp(mountPoint->data, TEMPORARY_MOUNT_POINT, sizeof(mountPoint->data)) == 0;
 }
 
+std::atomic<std::uint64_t> download0ExpandedMiB{0};
 std::atomic<std::uint64_t> download1QuotaBytes{0};
 std::atomic<std::uint64_t> download2QuotaBytes{0};
 
@@ -273,7 +274,7 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
     if (!IsDownloadMountPoint(mountPoint)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
     std::uint64_t quotaKb = 0;
     if (std::strncmp(mountPoint->data, DOWNLOAD_MOUNT_POINT, sizeof(mountPoint->data)) == 0) {
-        const std::uint64_t quotaMiB = GetAppDownloadDataSizeMiB_nid_postfix();
+        const std::uint64_t quotaMiB = std::max(GetAppDownloadDataSizeMiB_nid_postfix(), download0ExpandedMiB.load());
         if (quotaMiB > std::numeric_limits<std::uint64_t>::max() / 1024u) throw std::overflow_error("AppContent download quota exceeds KiB range");
         quotaKb = quotaMiB * 1024u;
     } else if (std::strncmp(mountPoint->data, "/download1", sizeof(mountPoint->data)) == 0) {
@@ -422,14 +423,20 @@ int APS5_VABI sceAppContentAppParamGetString(uint32_t paramId, char* value, size
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAppContentDownload0Expand(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAppContentDownload0Expand(size_t size) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (size == 0) NotImplemented_nid_no_patch(__func__);
+    const auto directory = ResolvePath_nid_no_patch(DOWNLOAD_MOUNT_POINT);
+    if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
+    std::uint64_t current = download0ExpandedMiB.load();
+    while (size > current && !download0ExpandedMiB.compare_exchange_weak(current, size)) {}
     return 0;
 }
 
-int APS5_VABI sceAppContentDownload0Shrink(void) {
+int APS5_VABI sceAppContentDownload0Shrink(size_t size) {
+    (void)size;
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAppContentDownload1Expand(size_t size) {
@@ -442,9 +449,10 @@ int APS5_VABI sceAppContentDownload1Expand(size_t size) {
     return 0;
 }
 
-int APS5_VABI sceAppContentDownload1Shrink(void) {
+int APS5_VABI sceAppContentDownload1Shrink(size_t size) {
+    (void)size;
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAppContentDownload2Expand(size_t size) {
@@ -457,9 +465,10 @@ int APS5_VABI sceAppContentDownload2Expand(size_t size) {
     return 0;
 }
 
-int APS5_VABI sceAppContentDownload2Shrink(void) {
+int APS5_VABI sceAppContentDownload2Shrink(size_t size) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (size == 0) return SCE_APP_CONTENT_ERROR_PARAMETER;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 APS5_EXPORT("SWVxsi-ZBlw", sceAppContentUnknown_SWVxsi_ZBlw);
