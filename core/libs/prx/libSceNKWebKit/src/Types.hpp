@@ -10,6 +10,11 @@
 #include <string_view>
 #include <vector>
 
+struct WKGeolocationProviderBase {
+    std::uint32_t version;
+    const void* clientInfo;
+};
+
 namespace NKWebKit {
 
 std::optional<std::u16string> DecodeUtf8(const char* text, std::size_t length);
@@ -372,6 +377,15 @@ public:
     bool canShowMIMEType() const noexcept { return canShowMIMEType_; }
 private:
     bool canShowMIMEType_ = true;
+};
+
+class GeolocationManager final : public ObjectOf<ObjectType::GeolocationManager> {
+public:
+    WKGeolocationProviderBase provider{0, nullptr};
+    bool hasProvider = false;
+    Retained<Object> lastPosition;
+    bool hasError = false;
+    std::u16string lastErrorMessage;
 };
 
 }  // namespace NKWebKit
