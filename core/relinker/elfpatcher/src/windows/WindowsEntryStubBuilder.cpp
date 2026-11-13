@@ -73,7 +73,7 @@ std::u16string toUtf16(const std::string& text) {
 
 }
 
-WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules, const std::set<std::string>& unmatchedImportModules, const bool traceImports) const {
+WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules, const std::set<std::string>& unmatchedImportModules, const bool traceImports, const std::vector<Domain::RvaRange>& relroRanges) const {
     if (!imports.empty() && libraries.empty())
         throw Domain::RelinkerException("ELF imports have no DT_NEEDED libraries");
     const auto path = normalizeRunPath(runPath);
@@ -261,6 +261,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     }
 
     const auto lastError = reserve(4);
+    const auto previousProtection = reserve(4);
     const auto unresolvedCount = reserve(4);
     const auto errorDigits = reserve(11);
     const auto errorMessage = reserve(ErrorMessageCapacity);
@@ -299,6 +300,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     errors.push_back("FAIL: cannot make the executable directory the current directory\n");
     const auto traceError = errors.size();
     errors.push_back("FAIL: libc.prx does not export TraceImport_nid_no_patch\n");
+    const auto relroError = errors.size();
+    errors.push_back("FAIL: cannot make a RELRO range read-only\n");
     std::vector<std::uint32_t> errorRvas;
     for (const auto& error : errors)
         errorRvas.push_back(addString(error));
@@ -797,8 +800,26 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Emit({0x85, 0xc0});
         unresolvedBranches.push_back(code.Branch({0x0f, 0x85}));
     }
+    const auto protectRelro = [&](const Domain::RvaRange& range, const std::optional<std::uint32_t> handle) {
+        if (handle.has_value()) {
+            code.Rip({0x48, 0x8b, 0x0d}, *handle);
+            code.Emit({0xb8});
+            code.U32(range.Rva);
+            code.Emit({0x48, 0x01, 0xc1});
+        } else code.Rip({0x48, 0x8d, 0x0d}, range.Rva);
+        code.Emit({0xba});
+        code.U32(range.Size);
+        code.Emit({0x41, 0xb8, 2, 0, 0, 0});
+        code.Rip({0x4c, 0x8d, 0x0d}, previousProtection);
+        call("VirtualProtect");
+        requireNonzero(relroError, 0xc0000045u);
+    };
+    for (std::size_t index = 0; index < guestModules.size(); ++index) {
+        for (const auto& range : guestModules[index].RelroRanges) protectRelro(range, CheckedRva(handles + index * 8));
+    }
     for (const auto message : deferredImports) writeString(message);
     guestStartup.Initialize(code, guestModules, handles);
+    for (const auto& range : relroRanges) protectRelro(range, std::nullopt);
     writeString(enteringElf);
     code.Rip({0x48, 0x8d, 0x0d}, shellLibrary);
     code.Emit({0x31, 0xd2, 0x41, 0xb8, 0, 8, 0, 0});
