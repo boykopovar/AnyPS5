@@ -544,6 +544,23 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_numbering_system_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/NumberingSystemBehavior.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/NumberingSystemOracle.cpp)
+    target_include_directories(guest_icu_numbering_system_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_numbering_system_tests PRIVATE libSceIcu libkernel libc icu_i18n)
+    configure_windows_unwind(guest_icu_numbering_system_tests)
+    foreach(mode selection enumeration status memory)
+        add_test(NAME guest_icu_numbering_system_${mode} COMMAND guest_icu_numbering_system_tests ${mode})
+        set_tests_properties(guest_icu_numbering_system_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_icu_numbering_system_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
+    endforeach()
+endif()
+
 set(ICU_RECOVERED_SOURCES
     DateTimePatternGeneratorBackend.cpp
     Calendar.cpp
