@@ -195,9 +195,9 @@ void FileStreams() {
     Require(factory->createStreamFromFilename(&stream, MissingPath, "rb") == FileError, "missing file code");
     Require(stream && stream != reinterpret_cast<Jxr::Stream*>(1) && stream->state[0] == 0 && HasFileSlots(stream), "missing file stream");
     Require(liveBlocks == blocks + 1, "missing file stream is not kept");
-    Require(WMPFree_nid_postfix(reinterpret_cast<void**>(&stream)) == 0 && !stream && liveBlocks == blocks, "missing file stream release");
+    Require(stream->close(&stream) == 0 && !stream && liveBlocks == blocks, "missing file stream close");
     Require(factory->createStreamFromFilename(&stream, FilePath, "z") == FileError && stream && stream->state[0] == 0, "invalid mode code");
-    Require(WMPFree_nid_postfix(reinterpret_cast<void**>(&stream)) == 0 && liveBlocks == blocks, "invalid mode stream release");
+    Require(stream->close(&stream) == 0 && !stream && liveBlocks == blocks, "invalid mode stream close");
 
     failAllocation = true;
     stream = reinterpret_cast<Jxr::Stream*>(1);

@@ -62,7 +62,8 @@ std::int64_t AllocateZeroed(void** out, std::size_t size) {
 
 std::int64_t APS5_VABI CloseWS_File_nid_no_patch(Jxr::Stream** stream) {
     if (!stream || !*stream) APS5_INVALID_ARG_EX;
-    fclose_nid_postfix(reinterpret_cast<FileStream*>((*stream)->state[0]));
+    auto* file = reinterpret_cast<FileStream*>((*stream)->state[0]);
+    if (file) fclose_nid_postfix(file);
     return WMPFree_nid_postfix(reinterpret_cast<void**>(stream));
 }
 
