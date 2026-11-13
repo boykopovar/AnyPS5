@@ -154,7 +154,15 @@ void DecodeTests() {
     SetViewport(queue, 15, 2.0f, 30.0f, 3.0f, 20.0f, 0.5f, 0.25f);
     queue.context[0xb2] = 26u;
     queue.context[0xb3] = (3u << 16u) | 33u;
-    const auto state = AgcDriver::Graphics::DecodeState(queue);
+    std::vector<AgcDriver::Graphics::RegisterRead> log;
+    const auto state = [&] {
+        const AgcDriver::Graphics::RegisterReadLogScope logScope(&log);
+        return AgcDriver::Graphics::DecodeState(queue);
+    }();
+    const auto logged = [&](std::uint32_t offset) { return std::ranges::any_of(log, [&](const AgcDriver::Graphics::RegisterRead read) { return read.bank == AgcDriver::Graphics::RegisterBank::Context && read.offset == offset; }); };
+    Require(logged(0x96u) && logged(0xb3u) && logged(0x115u) && logged(0x16eu), "the multi viewport decode did not read viewports 1 and 15 through the register facade");
+    for (const auto read : log) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a register the multi viewport decode reads: " + std::string(AgcDriver::Graphics::RegisterBankName(read.bank)) + " " + std::to_string(read.offset));
+    Require(!AgcDriver::Graphics::DrawKeyCovers({AgcDriver::Graphics::RegisterBank::Context, 0x16fu}), "DrawKeyRegisters covers past PA_CL_VPORT_ZOFFSET_15");
     Require(state.viewportExports == (1u << 19u), "the viewport index export bit was not kept");
     Require(state.extraViewports.size() == AgcDriver::Graphics::MaxViewports - 1u && state.viewportScissors.size() == AgcDriver::Graphics::MaxViewports, "a viewport index export did not decode all sixteen viewports");
     Require(AgcDriver::Graphics::ViewportCount(state) == AgcDriver::Graphics::MaxViewports, "the viewport count is not sixteen");
@@ -199,8 +207,14 @@ void DecodeTests() {
     auto stripped = state;
     AgcDriver::Graphics::ApplyViewportIndex(unsupported, stripped);
     Require(stripped.viewportExports == 0u && stripped.extraViewports.empty() && stripped.viewportScissors.empty() && Same(stripped.scissor, baseline.scissor), "a device without multiViewport kept the extra viewports");
+    AgcDriver::Graphics::Context noLayer{};
+    noLayer.multiViewport = true;
+    auto vertexWithoutLayer = state;
+    AgcDriver::Graphics::ApplyViewportIndex(noLayer, vertexWithoutLayer);
+    Require(vertexWithoutLayer.viewportExports == 0u && vertexWithoutLayer.extraViewports.empty() && Same(vertexWithoutLayer.scissor, baseline.scissor), "a vertex draw without VK_EXT_shader_viewport_index_layer kept the extra viewports");
     AgcDriver::Graphics::Context supported{};
     supported.multiViewport = true;
+    supported.viewportIndexLayer = true;
     auto kept = state;
     AgcDriver::Graphics::ApplyViewportIndex(supported, kept);
     Require(kept.viewportExports == state.viewportExports && kept.extraViewports.size() == state.extraViewports.size() && Same(kept.scissor, state.scissor), "a multiViewport device dropped the extra viewports");

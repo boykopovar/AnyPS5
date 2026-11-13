@@ -38,7 +38,8 @@ void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPi
 
 void ApplyViewportIndex(const Context& context, State& state) {
     if (state.viewportExports == 0u) return;
-    const bool direct = (state.stages.path == ShaderPath::Vertex && !state.stages.tessellation && !state.rectList) || state.stages.mesh.has_value();
+    const bool vertex = state.stages.path == ShaderPath::Vertex && !state.stages.tessellation && !state.rectList && !state.stages.mesh.has_value();
+    const bool direct = (vertex && context.viewportIndexLayer) || state.stages.mesh.has_value();
     if (context.multiViewport && direct) {
         Require(ViewportCount(state) == MaxViewports && state.viewportScissors.size() == MaxViewports, "a viewport index draw must declare all 16 viewports, since the 4-bit index can name any of them");
         return;
@@ -46,7 +47,7 @@ void ApplyViewportIndex(const Context& context, State& state) {
     static bool reported = false;
     if (!reported) {
         reported = true;
-        std::fprintf(stderr, "[gpu] viewport index vertex exports are ignored: %s\n", context.multiViewport ? "only vertex and mesh draws select a viewport" : "the device has no multiViewport with 16 viewports");
+        std::fprintf(stderr, "[gpu] viewport index vertex exports are ignored: %s\n", !context.multiViewport ? "the device has no multiViewport with 16 viewports" : vertex ? "the device has no VK_EXT_shader_viewport_index_layer for vertex draws" : "only vertex and mesh draws select a viewport");
     }
     if (!state.viewportScissors.empty()) state.scissor = state.viewportScissors.front();
     state.viewportExports = 0u;
