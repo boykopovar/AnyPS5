@@ -590,6 +590,7 @@ if(BUILD_TESTING)
 endif()
 
 set(ICU_RECOVERED_SOURCES
+    CalendarBackend.cpp
     NumberingSystemBackend.cpp
     DateTimePatternGeneratorBackend.cpp
     Calendar.cpp

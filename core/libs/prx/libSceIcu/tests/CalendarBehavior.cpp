@@ -89,6 +89,13 @@ void Fields() {
             }
         }
     }
+    for (double time : {-8640000000000000.0, 8640000000000000.0, -1.0e20, 1.0e20,
+             std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()}) {
+        Handle value(u"UTC", -1, "en_US", 1);
+        value.Set(0.0);
+        value.Set(time);
+        value.Fields();
+    }
     const std::array<char16_t, 7> embedded{u'U', u'T', u'C', 0, u'X', u'Y', 0};
     for (auto length : {-99, -1, 0, 3, 6}) {
         Handle value(embedded.data(), length, "en_US", 1);
