@@ -1751,12 +1751,14 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
                     break;
                 }
             }
-            if (written) std::fprintf(stderr, "[run-report] wrote %s\n", reportPath.filename().string().c_str());
-            else std::fprintf(stderr, "[run-report] could not write %s: %s\n", reportPath.filename().string().c_str(), error.c_str());
+            if (exit != Exit::Abort) {
+                if (written) std::fprintf(stderr, "[run-report] wrote %s\n", reportPath.filename().string().c_str());
+                else std::fprintf(stderr, "[run-report] could not write %s: %s\n", reportPath.filename().string().c_str(), error.c_str());
+            }
         } catch (const std::exception& failure) {
-            std::fprintf(stderr, "[run-report] could not write the report: %s\n", failure.what());
+            if (exit != Exit::Abort) std::fprintf(stderr, "[run-report] could not write the report: %s\n", failure.what());
         } catch (...) {
-            std::fputs("[run-report] could not write the report\n", stderr);
+            if (exit != Exit::Abort) std::fputs("[run-report] could not write the report\n", stderr);
         }
         std::lock_guard guard(mutex);
         state = 2;
@@ -1773,6 +1775,18 @@ namespace {
 
 std::atomic<bool (*)(RunReportGame*)> gameProvider{nullptr};
 RunReport::Collector* collector = nullptr;
+
+struct MissingFunctionStop {
+    std::string raw;
+    std::string library;
+    std::string name;
+    std::optional<std::string> source;
+};
+
+MissingFunctionStop& lastMissing() {
+    thread_local MissingFunctionStop missing;
+    return missing;
+}
 
 [[maybe_unused]] void FinishAtExit() {
     if (collector != nullptr && !collector->Finished()) collector->Finish(RunReport::Exit::Clean, RunReport::Stop{RunReport::Kind::None, RunReport::Reason::GuestExit, std::nullopt}, std::nullopt);
@@ -1877,6 +1891,21 @@ extern "C" void LibcRunReportFinishExit_nid_no_patch(int exitCode) noexcept {
     collector->Finish(RunReport::Exit::Clean, RunReport::Stop{RunReport::Kind::None, RunReport::Reason::GuestExit, std::nullopt}, exitCode);
 }
 
+extern "C" void LibcRunReportTerminate_nid_no_patch(const char* what) noexcept {
+    if (collector == nullptr || collector->Finished()) return;
+    try {
+        RunReport::Stop stop{RunReport::Kind::Other, RunReport::Reason::RuntimeStop, std::nullopt, what != nullptr ? std::optional<std::string>(what) : std::nullopt};
+        const auto& missing = lastMissing();
+        if (what != nullptr && !missing.raw.empty() && std::string_view(what) == missing.raw + " not implemented") {
+            stop.kind = RunReport::Kind::MissingFunction;
+            stop.source = missing.source;
+            stop.message = "Called " + (missing.library.empty() ? std::string() : missing.library + " ") + missing.name + ", which is not implemented.";
+        }
+        collector->Finish(RunReport::Exit::Abort, std::move(stop), std::nullopt);
+    } catch (...) {
+    }
+}
+
 extern "C" void LibcRunReportQuitRequested_nid_no_patch() noexcept {
     if (collector != nullptr) collector->NoteQuitRequested();
 }
@@ -1953,7 +1982,12 @@ extern "C" void LibcRunReportMissingFunction_nid_no_patch(const char* name, cons
         if (collector == nullptr || name == nullptr) return;
         const std::string_view path = file != nullptr ? file : "";
         const auto source = RunReport::SourceOf(path, line);
-        collector->NoteMissingFunction(source ? LibraryOf(*source) : std::string(), ExportName(name), source.value_or(""));
+        auto& missing = lastMissing();
+        missing.raw = name;
+        missing.library = source ? LibraryOf(*source) : std::string();
+        missing.name = std::string(ExportName(name));
+        missing.source = source;
+        collector->NoteMissingFunction(missing.library, missing.name, source.value_or(""));
     } catch (...) {
     }
 }
