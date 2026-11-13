@@ -388,6 +388,9 @@ int main() {
     hitNum = 0x5a5a5a5a;
     Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 0, &hitNum) == 0);
     Require(hitNum == 0);
+    errno = 71;
+    Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 0, reinterpret_cast<uint32_t*>(0x10)) == ErrorParameter);
+    Require(errno == 71);
     hitNum = 0x5a5a5a5a;
     Require(sceAppContentGetAddcontInfoListByIroTag(1, reinterpret_cast<AppContentAddcontInfo*>(info), 1, &hitNum) == 0);
     Require(hitNum == 0);

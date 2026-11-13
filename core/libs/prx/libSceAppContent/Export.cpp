@@ -480,7 +480,13 @@ int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(uint32_t iroTag, AppConten
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)iroTag;
     if ((!list || listNum == 0) && !hitNum) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (hitNum) *hitNum = 0;
+    if (hitNum) {
+        const uint32_t localHitNum = 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(hitNum, &localHitNum, sizeof(localHitNum));
+        errno = savedErrno;
+        if (!copied) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    }
     return 0;
 }
 
