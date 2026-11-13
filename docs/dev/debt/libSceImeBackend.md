@@ -5,6 +5,10 @@
 - [sceImeBackendForTestFunction](../../../core/libs/prx/libSceImeBackend/Export.cpp) (libSceImeBackend) - returns ErrorInternal (0x80bc00ff) unconditionally, matching sister export sceImeForTestFunction; test diagnostics backend remains unverified
 - [sceImeBackendGetCandidateList, sceImeBackendGetCandidateListSize, sceImeBackendGetCandidateSelect](../../../core/libs/prx/libSceImeBackend/Export.cpp) (libSceImeBackend) - the host backend has no conversion engine, so it reports an empty candidate list and selection zero for every input. The module builds candidates from its dictionaries and IPMI client, which are not modelled.
 
+### Functional
+
+- [`sceImeBackendParamInit`](../../../core/libs/prx/libSceImeBackend/Export.cpp) (libSceImeBackend) - a parameter block at an unmapped guest address is left unwritten and the call returns without an error; the console's result is not measured.
+
 ### Unknown function info
 
 - [sceImeBackendParamInit](../../../core/libs/prx/libSceImeBackend/Export.cpp) (libSceImeBackend) - the layout of the 40-byte parameter block is unknown. It follows firmware 13.42's libSceImeBackend.sprx, read from its disassembly and run natively on x86-64 (not a console): it takes one pointer and returns nothing; a null pointer is ignored; otherwise it writes 0xFFFFFFFF as a 32-bit value at byte 0, clears bytes 4 to 39 and leaves later bytes unchanged

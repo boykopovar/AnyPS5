@@ -60,13 +60,13 @@ def main():
     assert os.name == 'nt'
     relinker, libraries = (Path(value).resolve() for value in sys.argv[1:3])
     variant = sys.argv[3]
-    runtime = Path(sys.argv[4]).resolve()
+    runtime = Path(sys.argv[4]).resolve().parent
     assert variant in ('libkernel_sys.prx', 'libkernel_web.prx')
     with fixture_directory('anyps5-timed-join-') as directory:
         work = Path(directory)
         (work / 'libs').mkdir()
         (work / 'prx').mkdir()
-        for name in (variant, 'libkernel.prx', 'libc.prx'):
+        for name in dict.fromkeys((variant, 'libkernel_sys.prx', 'libkernel.prx', 'libc.prx')):
             shutil.copy2(libraries / name, work / 'libs' / name)
         for name in ('libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll'):
             shutil.copy2(runtime / name, work / 'libs' / name)

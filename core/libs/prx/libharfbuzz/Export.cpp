@@ -1,39 +1,38 @@
 #include <cstdint>
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libharfbuzz/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "IcuScriptNames.hpp"
+
+#include <hb-ft.h>
+
+namespace {
+
+void APS5_VABI FinalizeCachedFace(void* object) {
+    auto* face = static_cast<FreeType::GuestFaceRec*>(object);
+    hb_face_destroy(static_cast<hb_face_t*>(face->generic.data));
+}
+
+}
 
 extern "C" {
 
-int APS5_VABI hb_blob_create_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+hb_face_t* APS5_VABI hb_ft_face_create_cached_nid_postfix(FreeType::GuestFaceRec* face) {
+    const auto* owner = face ? static_cast<const FreeType::GuestFace*>(face->internal) : nullptr;
+    if (!owner || &owner->rec != face || !owner->host || owner->finalized) NotImplemented_nid_no_patch(__func__);
+
+    auto& generic = face->generic;
+    if (!generic.data || generic.finalizer != FinalizeCachedFace) {
+        if (generic.finalizer) generic.finalizer(face);
+        generic = {hb_ft_face_create(owner->host, nullptr), FinalizeCachedFace};
+    }
+    return hb_face_reference(static_cast<hb_face_t*>(generic.data));
 }
 
-int APS5_VABI hb_face_create_for_tables_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_face_destroy_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_ft_face_create_cached_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_icu_script_to_script_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_ot_layout_language_find_feature_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_ot_layout_script_get_language_tags_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_ot_layout_table_get_script_tags_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint32_t APS5_VABI hb_icu_script_to_script_nid_postfix(std::int32_t scriptCode) {
+    if (scriptCode < 0 || static_cast<std::size_t>(scriptCode) >= HarfBuzz::IcuScriptNames.size()) return HB_SCRIPT_INVALID;
+    const auto name = HarfBuzz::IcuScriptNames[static_cast<std::size_t>(scriptCode)];
+    return hb_script_from_string(name.data(), static_cast<int>(name.size()));
 }
 
 std::uint32_t APS5_VABI hb_ot_tag_to_script_nid_postfix(std::uint32_t tag) {
@@ -80,10 +79,6 @@ std::uint32_t APS5_VABI hb_ot_tag_to_script_nid_postfix(std::uint32_t tag) {
     }
 
     return tag & ~0x20000000u;
-}
-
-int APS5_VABI hb_shape_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 }

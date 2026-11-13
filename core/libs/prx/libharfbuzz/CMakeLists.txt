@@ -1,6 +1,8 @@
 set(harfbuzzSourceDir ${CMAKE_SOURCE_DIR}/3rdparty/harfbuzz)
 add_library(harfbuzz_backend STATIC EXCLUDE_FROM_ALL ${harfbuzzSourceDir}/src/harfbuzz.cc)
 target_include_directories(harfbuzz_backend PUBLIC ${harfbuzzSourceDir}/src)
+target_compile_definitions(harfbuzz_backend PRIVATE HAVE_FREETYPE)
+target_link_libraries(harfbuzz_backend PRIVATE freetype)
 set_target_properties(harfbuzz_backend PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         CXX_VISIBILITY_PRESET hidden
@@ -8,13 +10,18 @@ set_target_properties(harfbuzz_backend PROPERTIES
 install(FILES ${harfbuzzSourceDir}/COPYING DESTINATION licenses/harfbuzz)
 install(FILES ${harfbuzzSourceDir}/src/ms-use/COPYING DESTINATION licenses/harfbuzz/ms-use)
 
-add_library(libharfbuzz SHARED EXCLUDE_FROM_ALL Export.cpp Buffer.cpp FontFunctions.cpp)
+add_library(libharfbuzz SHARED EXCLUDE_FROM_ALL Export.cpp Buffer.cpp FontFunctions.cpp Layout.cpp)
 target_include_directories(libharfbuzz PUBLIC ${LIBS_INCLUDE_DIR})
-target_link_libraries(libharfbuzz PRIVATE harfbuzz_backend)
+target_link_libraries(libharfbuzz PRIVATE harfbuzz_backend freetype)
+target_sources(libharfbuzz PRIVATE Lifecycle.cpp)
 configure_windows_unwind(libharfbuzz)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libharfbuzz PRIVATE LINKER:--exclude-libs,ALL)
+elseif(APPLE)
+    target_link_options(libharfbuzz PRIVATE "LINKER:-exported_symbol,*_nid_*")
 endif()
+
+include(Layout.cmake)
 
 if(BUILD_TESTING)
     add_test_executable(guest_harfbuzz_tests ${LIBS_INCLUDE_DIR}/tests/GuestHarfBuzz.cpp)
@@ -38,6 +45,7 @@ if(BUILD_TESTING)
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libharfbuzz>")
         endif()
     endforeach()
+    include(Lifecycle.cmake)
     add_test_executable(guest_harfbuzz_font_tests ${LIBS_INCLUDE_DIR}/tests/GuestHarfBuzzFont.cpp)
     target_include_directories(guest_harfbuzz_font_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_harfbuzz_font_tests PRIVATE harfbuzz_backend ${CMAKE_DL_LIBS})
@@ -85,3 +93,5 @@ if(BUILD_TESTING)
             "LD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR};LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_harfbuzz_font_tests>;LD_LIBRARY_PATH=path_list_prepend:${harfbuzzFontModuleDir}")
     endif()
 endif()
+
+include(Shaping.cmake)
