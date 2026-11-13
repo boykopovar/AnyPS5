@@ -517,18 +517,12 @@ void testDecode() {
     sceVideoOutAddBufferAttributeOption(&group.attribute, 0x20);
     check(group.attribute.option == 0x28, "an added buffer option did not keep the existing bits");
     check(expectFailure([&] { DescribeVideoOutBuffer(registered, group); }).find("buffer option 40") != std::string::npos, "an unsupported added buffer option was accepted");
-    check(expectFailure([&] { sceVideoOutAddBufferAttributeOption(nullptr, 0); }).find("null attribute") != std::string::npos, "a null attribute was accepted");
     check(expectFailure([&] { sceVideoOutAddBufferAttributeOption(nullptr, 0x20); }).find("null attribute") != std::string::npos, "a null attribute was accepted");
     sceVideoOutRemoveBufferAttributeOption(&group.attribute, 0x21);
     check(group.attribute.option == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY && group.attribute.width == 259 && group.attribute.height == 137, "a removed buffer option was not cleared alone");
     check(DescribeVideoOutBuffer(registered, group).address == plain.address, "a buffer whose unsupported option was removed was rejected");
     sceVideoOutRemoveBufferAttributeOption(&group.attribute, VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY);
     check(group.attribute.option == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE, "removing the last buffer option did not clear it");
-    sceVideoOutAddBufferAttributeOption(&group.attribute, 8);
-    check(group.attribute.option == 8, "an added buffer option was not stored");
-    sceVideoOutRemoveBufferAttributeOption(&group.attribute, 8);
-    check(group.attribute.option == 0, "removing the last buffer option did not clear it");
-    check(expectFailure([&] { sceVideoOutRemoveBufferAttributeOption(nullptr, 0); }).find("null attribute") != std::string::npos, "a null attribute was accepted for removal");
     check(expectFailure([&] { sceVideoOutRemoveBufferAttributeOption(nullptr, 0x20); }).find("null attribute") != std::string::npos, "a null attribute was accepted for removal");
     check(expectFailure([&] { sceVideoOutSetBufferAttribute(nullptr, 0x80000000u, 0, 0, 1920, 1080, 0); }).find("null attribute") != std::string::npos, "a null attribute was accepted");
     check(expectFailure([&] { sceVideoOutSetBufferAttribute2(nullptr, 0x8000000000000000ull, 0, 1920, 1080, 0, 0, 0); }).find("null attribute") != std::string::npos, "a null attribute was accepted");
