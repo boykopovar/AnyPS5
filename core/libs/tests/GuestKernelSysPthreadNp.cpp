@@ -14,7 +14,6 @@
 namespace {
 
 constexpr int GUEST_EDEADLK = 11;
-constexpr int GUEST_EFAULT = 14;
 constexpr int GUEST_EINVAL = 22;
 constexpr int GUEST_EFAULT = 14;
 constexpr int GUEST_ERANGE = 34;
