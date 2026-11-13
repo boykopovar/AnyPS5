@@ -7,8 +7,6 @@
 #include <cstring>
 #include <type_traits>
 
-extern "C" std::uint64_t APS5_VABI NotImplementedCalls_nid_no_patch();
-
 namespace {
 
 using NKWebKit::WtfAbi::String;
