@@ -1686,6 +1686,7 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
     }
     if (state.stages.tessellation) Require(draw.indexCount % state.stages.tessellation->inputControlPoints == 0, "incomplete tessellation patch");
     ValidateViewport(context, state.viewport);
+    for (const auto& viewport : state.extraViewports) ValidateViewport(context, viewport);
     ValidateDepthBounds(context, state);
     ValidateSampleMask(context, state, shaders);
     timer.phase(PhaseValidate);

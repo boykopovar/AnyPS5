@@ -434,9 +434,15 @@ void DefineModule(SpirvEmitterState& state) {
             state.module.EmitCapability(spv::CapabilityShaderViewportIndexLayerEXT);
         }
     }
-    if (state.viewportIndexVariable != 0) {
+    if (state.viewportIndexVariable != 0 && layerExtension) {
+        state.module.EmitCapability(spv::CapabilityShaderViewportIndexLayerEXT);
+        state.module.EmitExtension("SPV_EXT_shader_viewport_index_layer");
+    } else if (state.viewportIndexVariable != 0) {
         state.module.RequireVersion(0x00010500u);
         state.module.EmitCapability(spv::CapabilityShaderViewportIndex);
+    }
+    if (StageOf(state) == IrShaderStage::Mesh && std::ranges::any_of(state.outputs, [](const SpirvOutputBinding& output) { return output.kind == StageOutputKind::ViewportIndex; })) {
+        state.module.EmitCapability(spv::CapabilityMultiViewport);
     }
     if (InputVariableForKind(state, StageInputKind::SampleId) != 0) {
         state.module.EmitCapability(spv::CapabilitySampleRateShading);

@@ -424,6 +424,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     appendKey(keys.vertexInput, state.topology);
     appendKey(keys.vertexInput, state.primitiveRestart);
     appendKey(keys.preRasterization, state.provokingVertexMode);
+    appendKey(keys.preRasterization, ViewportCount(state));
     appendKey(keys.preRasterization, state.polygonMode);
     appendKey(keys.preRasterization, state.lineWidth);
     appendKey(keys.preRasterization, state.negativeOneToOne);
@@ -674,8 +675,9 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         VkPipelineViewportDepthClipControlCreateInfoEXT depthClip{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_DEPTH_CLIP_CONTROL_CREATE_INFO_EXT};
         depthClip.negativeOneToOne = state.negativeOneToOne;
         if (state.negativeOneToOne) viewports.pNext = &depthClip;
-        viewports.viewportCount = 1;
-        viewports.scissorCount = 1;
+        Require(!patches || state.extraViewports.empty(), "a viewport index through the barycentric patch stages is unsupported");
+        viewports.viewportCount = ViewportCount(state);
+        viewports.scissorCount = ViewportCount(state);
         PipelineLibraryKeys keys;
         libraries = libraryKeys(keys, context, state, vertexInput, resources, shaders);
         std::vector<VkDynamicState> dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
@@ -984,12 +986,25 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
     Continue(commands, state, masked);
 }
 
+void Pipeline::setViewports(VkCommandBuffer commands, const State& state) const {
+    if (state.extraViewports.empty()) {
+        context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
+        context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
+        return;
+    }
+    Require(state.viewportScissors.size() == ViewportCount(state), "every viewport needs a scissor");
+    std::array<VkViewport, MaxViewports> viewports{};
+    viewports[0] = state.viewport;
+    std::copy(state.extraViewports.begin(), state.extraViewports.end(), viewports.begin() + 1);
+    context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, ViewportCount(state), viewports.data());
+    context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, ViewportCount(state), state.viewportScissors.data());
+}
+
 void Pipeline::Continue(VkCommandBuffer commands, const State& state, const State* masked) const {
     if (optimized != nullptr) optimized->Schedule();
     const auto best = optimized != nullptr ? optimized->handle.load() : VK_NULL_HANDLE;
     context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, best != VK_NULL_HANDLE ? best : pipeline);
-    context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
-    context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
+    setViewports(commands, state);
     setColorWriteMasks(commands, state, masked, false);
     if (state.stencilReplayReference) context.Resolved(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, *state.stencilReplayReference);
     if (libraries) {
@@ -1038,8 +1053,7 @@ void Pipeline::ContinueBackFaces(VkCommandBuffer commands, const State& state, c
     Require(backFaces != VK_NULL_HANDLE, "the pipeline draws both faces in one pass");
     context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, backFaces);
     setColorWriteMasks(commands, state, masked, false);
-    context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
-    context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
+    setViewports(commands, state);
     context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, HostDepthBiasConstant(context, state.depth->format, state.backDepthBiasConstant), state.depthBiasClamp, state.backDepthBiasSlope);
     if (depthBounds) context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, state.minDepthBounds, state.maxDepthBounds);
 }
@@ -1116,6 +1130,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     append(key, state.lineWidth);
     append(key, state.frontFace);
     append(key, state.provokingVertexMode);
+    append(key, ViewportCount(state));
     append(key, state.negativeOneToOne);
     append(key, state.depthClamp && context.depthClamp);
     append(key, state.conservativeRasterization);

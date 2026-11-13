@@ -157,9 +157,12 @@ struct State {
     std::uint32_t meshLayerBase = 0;
     std::uint32_t meshLayerCount = 0xffffffffu;
     std::uint32_t layerExports = 0;
+    std::uint32_t viewportExports = 0;
     VkPrimitiveTopology topology;
     bool primitiveRestart = false;
     VkViewport viewport;
+    std::vector<VkViewport> extraViewports;
+    std::vector<VkRect2D> viewportScissors;
     bool negativeOneToOne;
     bool depthClamp = false;
     float depthScale = 1;
@@ -205,6 +208,8 @@ struct State {
 // PA_CL_VS_OUT_CNTL bits that place position exports (clip and cull distances, the misc and the two
 // distance vectors); a vertex program that exports pos1..pos3 depends on them.
 inline constexpr std::uint32_t PositionExportLayoutBits = 0xffffu | (1u << 21u) | (1u << 22u) | (1u << 23u);
+inline constexpr std::uint32_t ViewportIndexExport = 1u << 19u;
+inline constexpr std::uint32_t MaxViewports = 16;
 
 inline constexpr std::uint8_t CopyRop = 0xccu;
 VkLogicOp LogicOpFromRop(std::uint8_t rop);
@@ -213,6 +218,8 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup = 
 void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex);
 State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyDepthRemap(const Context& context, State& state);
+void ApplyViewportIndex(const Context& context, State& state);
+inline std::uint32_t ViewportCount(const State& state) { return 1u + static_cast<std::uint32_t>(state.extraViewports.size()); }
 void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 void ApplyReadOnlyDepthBoundsComparison(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel, bool enabled);
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);

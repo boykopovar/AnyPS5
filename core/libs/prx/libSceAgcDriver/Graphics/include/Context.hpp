@@ -258,6 +258,7 @@ struct Context {
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;
+    bool multiViewport = false;
     bool largePoints = false;
     bool sampleRateShading = false;
     bool fillModeNonSolid = false;

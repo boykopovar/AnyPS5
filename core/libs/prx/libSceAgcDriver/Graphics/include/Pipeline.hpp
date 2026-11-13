@@ -79,6 +79,7 @@ private:
     void release() noexcept;
     void setLibraryState(VkCommandBuffer commands, const State& state) const;
     void setColorWriteMasks(VkCommandBuffer commands, const State& state, const State* masked, bool secondChannel) const;
+    void setViewports(VkCommandBuffer commands, const State& state) const;
     Context context;
     std::vector<VkShaderModule> _modules;
     VkPipelineLayout layout = VK_NULL_HANDLE;

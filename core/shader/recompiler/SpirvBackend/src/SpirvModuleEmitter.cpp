@@ -880,7 +880,8 @@ void EmitAuxPositionExport(SpirvValueEmitContext& ctx, std::uint32_t data, const
             if (output.viewport) {
                 const auto viewport = state.module.AllocateId();
                 state.module.AddFunction(spv::OpBitFieldUExtract, TypeU32(state), viewport, raw, ConstantU32(state, 16u), ConstantU32(state, 4u));
-                state.module.AddFunction(spv::OpStore, state.viewportIndexVariable, viewport);
+                const auto pointer = state.program.Resources().stage == IrShaderStage::Mesh ? MeshOutputPointer(state, StageOutputKind::ViewportIndex) : state.viewportIndexVariable;
+                state.module.AddFunction(spv::OpStore, pointer, viewport);
             }
             continue;
         }
@@ -1080,8 +1081,12 @@ bool IsMeshDistance(StageOutputKind kind) {
     return kind == StageOutputKind::ClipDistance || kind == StageOutputKind::CullDistance;
 }
 
+bool IsMeshPrimitiveOutput(StageOutputKind kind) {
+    return kind == StageOutputKind::Layer || kind == StageOutputKind::ViewportIndex;
+}
+
 std::uint32_t MeshOutputType(SpirvEmitterState& state, StageOutputKind kind) {
-    if (kind == StageOutputKind::Layer) {
+    if (IsMeshPrimitiveOutput(kind)) {
         return TypeU32(state);
     }
     return IsMeshDistance(kind) || kind == StageOutputKind::PointSize ? TypeF32(state) : TypeF32Vector(state, 4u);
@@ -1291,22 +1296,23 @@ void DefineMeshOutputs(SpirvEmitterState& state) {
             output.meshDataVariable = MeshArray(state, spv::StorageClassPrivate, TypeF32(state), state.laneCount);
             continue;
         }
-        if (output.kind != StageOutputKind::Position && output.kind != StageOutputKind::Parameter && output.kind != StageOutputKind::Layer && output.kind != StageOutputKind::PointSize) {
+        if (output.kind != StageOutputKind::Position && output.kind != StageOutputKind::Parameter && !IsMeshPrimitiveOutput(output.kind) && output.kind != StageOutputKind::PointSize) {
             throw std::runtime_error("unsupported mesh output kind");
         }
         const auto type = MeshOutputType(state, output.kind);
-        const bool shared = output.kind == StageOutputKind::Layer;
+        const bool shared = IsMeshPrimitiveOutput(output.kind);
         output.meshDataVariable = MeshArray(state, shared ? spv::StorageClassWorkgroup : spv::StorageClassPrivate, type, shared ? mesh.maxVertices : state.laneCount);
         if (state.meshBarycentricVertex && output.kind == StageOutputKind::Parameter && std::ranges::find(state.meshExportedLocations, output.location) == state.meshExportedLocations.end()) {
             continue;
         }
-        const auto layerBlock = output.kind == StageOutputKind::Layer ? state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, spv::BuiltInLayer}}, {spv::OpMemberDecorate, {0u, spv::DecorationPerPrimitiveEXT}}, {spv::OpDecorate, {spv::DecorationBlock}}}, type) : 0u;
-        output.variableId = MeshArray(state, spv::StorageClassOutput, output.kind == StageOutputKind::Layer ? layerBlock : type, output.kind == StageOutputKind::Layer ? mesh.maxPrimitives : mesh.maxVertices);
+        const auto primitiveBuiltIn = output.kind == StageOutputKind::Layer ? spv::BuiltInLayer : spv::BuiltInViewportIndex;
+        const auto primitiveBlock = shared ? state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, static_cast<std::uint32_t>(primitiveBuiltIn)}}, {spv::OpMemberDecorate, {0u, spv::DecorationPerPrimitiveEXT}}, {spv::OpDecorate, {spv::DecorationBlock}}}, type) : 0u;
+        output.variableId = MeshArray(state, spv::StorageClassOutput, shared ? primitiveBlock : type, shared ? mesh.maxPrimitives : mesh.maxVertices);
         state.interfaceVariables.push_back(output.variableId);
         state.module.AddName(output.variableId, output.debugName);
         if (output.kind == StageOutputKind::Parameter) {
             state.module.AddAnnotation(spv::OpDecorate, output.variableId, spv::DecorationLocation, output.location);
-        } else if (output.kind != StageOutputKind::Layer) {
+        } else if (!shared) {
             state.module.AddAnnotation(spv::OpDecorate, output.variableId, spv::DecorationBuiltIn, output.kind == StageOutputKind::PointSize ? spv::BuiltInPointSize : spv::BuiltInPosition);
         }
         if (output.kind == StageOutputKind::Position) {
@@ -1500,7 +1506,7 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
         state.module.AddFunction(spv::OpULessThan, TypeBool(state), isVertex, index, vertices);
         EmitIfCondition(state, isVertex, [&]() {
             for (const auto& output : state.outputs) {
-                if (output.kind == StageOutputKind::Layer || output.variableId == 0u) {
+                if (IsMeshPrimitiveOutput(output.kind) || output.variableId == 0u) {
                     continue;
                 }
                 const auto type = MeshOutputType(state, output.kind);
@@ -1558,6 +1564,15 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
             const auto culled = state.module.AllocateId();
             state.module.AddFunction(spv::OpINotEqual, TypeBool(state), culled, nullBit, ConstantU32(state, 0u));
             auto decision = culled;
+            for (const auto& output : state.outputs) {
+                if (output.kind != StageOutputKind::ViewportIndex) {
+                    continue;
+                }
+                const auto viewport = MeshLoad(state, output.meshDataVariable, spv::StorageClassWorkgroup, TypeU32(state), vertex.at(state.inputInfo.vertex->mesh.provokingVertex));
+                const auto pointer = state.module.AllocateId();
+                state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassOutput, TypeU32(state)), pointer, output.variableId, index, ConstantU32(state, 0u));
+                state.module.AddFunction(spv::OpStore, pointer, viewport);
+            }
             for (const auto& output : state.outputs) {
                 if (output.kind != StageOutputKind::Layer) {
                     continue;
@@ -1645,7 +1660,7 @@ std::uint32_t MeshOutputPointer(SpirvEmitterState& state, StageOutputKind kind, 
     if (output == state.outputs.end()) {
         throw std::runtime_error("mesh export has no output binding");
     }
-    const bool shared = kind == StageOutputKind::Layer;
+    const bool shared = IsMeshPrimitiveOutput(kind);
     return MeshElement(state, output->meshDataVariable, shared ? spv::StorageClassWorkgroup : spv::StorageClassPrivate, MeshOutputType(state, kind), shared ? EmitLocalInvocationIndex(state) : ConstantU32(state, state.laneHalf));
 }
 
