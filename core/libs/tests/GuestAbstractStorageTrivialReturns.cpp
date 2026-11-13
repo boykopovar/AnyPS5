@@ -57,6 +57,7 @@ int main() {
     Require(_ZNK15AbstractStorage7Storage7GetTypeEv(object.data()) == 1);
     Require(_ZNK15AbstractStorage6Folder7GetTypeEv(object.data()) == 2);
     Require(_ZNK15AbstractStorage7Content7GetTypeEv(object.data()) == 3);
+    Require(_ZNK15AbstractStorage7Content7GetTypeEv(object.data()) == 3);
 
     Require(Unchanged(object));
     Require(Unchanged(first));
