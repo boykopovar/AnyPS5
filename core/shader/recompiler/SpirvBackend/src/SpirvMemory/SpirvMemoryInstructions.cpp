@@ -81,7 +81,9 @@ std::uint32_t LoadWordInBounds(SpirvValueEmitContext& ctx, const MemoryResourceA
     const auto load = [&](std::uint32_t element) {
         const auto pointer = EmitMemoryElementPointer(state, resource, element);
         const auto value = state.module.AllocateId();
-        if (resource.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, resource.memoryAccess);
+        static const bool atomicLoads = std::getenv("APS5_COHERENT_ATOMIC_LOADS") != nullptr;
+        if (resource.memoryAccess != 0u && atomicLoads) state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u));
+        else if (resource.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, resource.memoryAccess);
         else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
         return value;
     };

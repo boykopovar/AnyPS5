@@ -34,6 +34,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include <pthread.h>
+#include <sys/qos.h>
+#endif
 
 namespace AgcDriver::Graphics {
 
@@ -1394,6 +1398,8 @@ private:
     void run() {
 #ifdef _WIN32
         if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL)) std::fprintf(stderr, "[pipeline-journal] replay thread priority not lowered (error %lu)\n", GetLastError());
+#elif defined(__APPLE__)
+        if (const int error = pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0); error != 0) std::fprintf(stderr, "[pipeline-journal] replay thread priority not lowered (error %d)\n", error);
 #endif
         std::call_once(loadOnce, [&] {
             try {

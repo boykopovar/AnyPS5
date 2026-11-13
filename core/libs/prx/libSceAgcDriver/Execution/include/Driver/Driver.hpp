@@ -111,6 +111,7 @@ public:
     bool WaitIdleUnlessTitleWaitsFor(std::chrono::milliseconds timeout);
     bool WaitSettledFor(std::chrono::milliseconds timeout);
     void ReleaseSettled();
+    bool SettledHeld();
     bool Settled();
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);

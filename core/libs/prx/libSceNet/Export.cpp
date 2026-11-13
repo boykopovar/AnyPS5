@@ -445,6 +445,7 @@ bool g_net_inited = false;
 bool g_net_init_param_set = false;
 std::array<std::uint8_t, 32> g_net_init_param{};
 std::atomic<GuestSceNetTest::ResolverLookup> g_resolverLookupForTests{nullptr};
+std::atomic<GuestSceNetTest::ResolverReverseLookup> g_resolverReverseLookupForTests{nullptr};
 
 int* errno_slot() {
     static thread_local int e = 0;
@@ -959,6 +960,10 @@ std::optional<std::uint32_t> InterfaceIdOfHostIndex(std::uint32_t index) {
 
 void GuestSceNetTest::SetResolverLookupForTests_nid_no_patch(ResolverLookup lookup) noexcept {
     g_resolverLookupForTests.store(lookup);
+}
+
+void GuestSceNetTest::SetResolverReverseLookupForTests_nid_no_patch(ResolverReverseLookup lookup) noexcept {
+    g_resolverReverseLookupForTests.store(lookup);
 }
 
 extern "C" {
@@ -2835,14 +2840,21 @@ int APS5_VABI sceNetEtherNtostr(const NetEtherAddr* n, char* str, size_t len) {
     if (n == nullptr || str == nullptr || len < 18) {
         return fail(NET_EINVAL);
     }
-    std::snprintf(str, len, "%02x:%02x:%02x:%02x:%02x:%02x", n->data[0], n->data[1], n->data[2], n->data[3], n->data[4], n->data[5]);
+    NetEtherAddr address{};
+    if (!GuestCopyIn_nid_no_patch(&address, n, sizeof(address))) return fail(NET_EFAULT);
+    std::array<char, 18> text{};
+    std::snprintf(text.data(), text.size(), "%02x:%02x:%02x:%02x:%02x:%02x", address.data[0], address.data[1], address.data[2],
+                  address.data[3], address.data[4], address.data[5]);
+    if (!GuestCopyOut_nid_no_patch(str, text.data(), text.size())) return fail(NET_EFAULT);
     return 0;
 }
 
 int APS5_VABI sceNetEtherStrton(const char* text, NetEtherAddr* address) {
     if (text == nullptr || address == nullptr) return fail(NET_EINVAL);
-    for (std::size_t index = 0; index < 17; ++index) {
-        if (text[index] == '\0') return fail(NET_EINVAL);
+    std::array<char, 17> input{};
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        if (!GuestCopyIn_nid_no_patch(&input[index], text + index, 1)) return fail(NET_EFAULT);
+        if (input[index] == '\0') return fail(NET_EINVAL);
     }
     const auto hexDigit = [](char character) {
         if (character >= '0' && character <= '9') return character - '0';
@@ -2852,12 +2864,12 @@ int APS5_VABI sceNetEtherStrton(const char* text, NetEtherAddr* address) {
     };
     NetEtherAddr parsed{};
     for (std::size_t index = 0; index < sizeof(parsed.data); ++index) {
-        if (static_cast<unsigned char>(text[index * 3]) >= 128 || static_cast<unsigned char>(text[index * 3 + 1]) >= 128) {
+        if (static_cast<unsigned char>(input[index * 3]) >= 128 || static_cast<unsigned char>(input[index * 3 + 1]) >= 128) {
             NotImplemented_nid_no_patch(__func__);
         }
-        parsed.data[index] = static_cast<std::uint8_t>(hexDigit(text[index * 3]) * 16 + hexDigit(text[index * 3 + 1]));
+        parsed.data[index] = static_cast<std::uint8_t>(hexDigit(input[index * 3]) * 16 + hexDigit(input[index * 3 + 1]));
     }
-    *address = parsed;
+    if (!GuestCopyOut_nid_no_patch(address, &parsed, sizeof(parsed))) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -3001,14 +3013,16 @@ int reverse_lookup(int rid, const sockaddr* address, NativeLength addressLength,
     std::uint64_t generation = 0;
     if (const int error = begin_lookup(rid, &Resolver::abort_aton, generation)) return error;
     std::vector<char> name(static_cast<std::size_t>(len));
-    const int result = ::getnameinfo(address, addressLength, name.data(), static_cast<NativeLength>(len), nullptr, 0, NI_NAMEREQD);
+    const auto reverseLookup = g_resolverReverseLookupForTests.load();
+    const int result = reverseLookup ? reverseLookup(address, static_cast<std::size_t>(addressLength), name.data(), name.size())
+                                     : ::getnameinfo(address, addressLength, name.data(), static_cast<NativeLength>(len), nullptr, 0, NI_NAMEREQD);
     if (result != 0) {
         set_errno(result == EAI_AGAIN ? NET_ETIMEDOUT : NET_ENOENT);
         log_soft(func, "host reverse DNS lookup failed");
         return end_lookup(rid, generation, NET_ERROR_RESOLVER_ENODNS);
     }
     if (const int error = end_lookup(rid, generation, 0)) return error;
-    std::memcpy(hostname, name.data(), std::strlen(name.data()) + 1);
+    if (!GuestCopyOut_nid_no_patch(hostname, name.data(), std::strlen(name.data()) + 1)) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -3019,7 +3033,7 @@ int APS5_VABI sceNetResolverStartAton(int rid, const void* addr, char* hostname,
     if (!addr || !hostname || len <= 0) return fail(NET_EINVAL);
     sockaddr_in address{};
     address.sin_family = AF_INET;
-    std::memcpy(&address.sin_addr, addr, sizeof(address.sin_addr));
+    if (!GuestCopyIn_nid_no_patch(&address.sin_addr, addr, sizeof(address.sin_addr))) return fail(NET_EFAULT);
     return reverse_lookup(rid, reinterpret_cast<const sockaddr*>(&address), sizeof(address), hostname, len, __func__);
 }
 
@@ -3030,7 +3044,7 @@ int APS5_VABI sceNetResolverStartAton6(int rid, const void* addr, char* hostname
     if (!addr || !hostname || len <= 0) return fail(NET_EINVAL);
     sockaddr_in6 address{};
     address.sin6_family = AF_INET6;
-    std::memcpy(&address.sin6_addr, addr, sizeof(address.sin6_addr));
+    if (!GuestCopyIn_nid_no_patch(&address.sin6_addr, addr, sizeof(address.sin6_addr))) return fail(NET_EFAULT);
     return reverse_lookup(rid, reinterpret_cast<const sockaddr*>(&address), sizeof(address), hostname, len, __func__);
 }
 

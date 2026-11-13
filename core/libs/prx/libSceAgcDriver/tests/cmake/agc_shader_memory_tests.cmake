@@ -92,6 +92,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_shader_bindless agc_shader_selected_records_image_limit agc_shader_selected_records_pair_limit agc_shader_selected_records_direct_image_limit agc_shader_selected_records_direct_pair_limit agc_shader_srt_read_patching agc_shader_type_zero_image_materialization agc_shader_frontend_pair agc_shader_frontend_pair_off agc_shader_layout_pair agc_shader_layout_pair_off agc_shader_result_memo_budget agc_shader_result_memo_budget_threads agc_shader_result_memo_budget_masked agc_shader_entry_lane_proof_budget agc_shader_sampler_limits agc_shader_image_limits_table agc_shader_image_limits_mixed agc_shader_image_limits_refusals PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     agc_add_default_test(agc_shader_memory_tests)
+    add_test(NAME agc_shader_memory_coherent_atomic_loads COMMAND agc_shader_memory_tests)
+    set_tests_properties(agc_shader_memory_coherent_atomic_loads PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_COHERENT_ATOMIC_LOADS=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_shader_memory_coherent_atomic_loads PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
 endif()
 
 if(BUILD_TESTING)
