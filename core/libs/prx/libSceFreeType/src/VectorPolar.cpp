@@ -22,6 +22,11 @@ FT_Fixed HostValue(std::int64_t value, const char* function) {
     return static_cast<FT_Fixed>(value);
 }
 
+FT_Angle HostAngle(std::int64_t angle) {
+    const auto normalized = NormalizeAngle_nid_no_patch(angle);
+    return normalized == 0 && angle != 0 ? FT_ANGLE_2PI : normalized;
+}
+
 FT_Vector HostVector(const GuestVector& vector, const char* function) {
     return {HostValue(vector.x, function), HostValue(vector.y, function)};
 }
@@ -43,7 +48,7 @@ std::int64_t APS5_VABI FT_Vector_Length_nid_postfix(const GuestVector* vector) {
 void APS5_VABI FT_Vector_Rotate_nid_postfix(GuestVector* vector, std::int64_t angle) {
     if (!vector) return;
     FT_Vector native = HostVector(*vector, __func__);
-    FT_Vector_Rotate(&native, HostValue(angle, __func__));
+    FT_Vector_Rotate(&native, HostAngle(angle));
     GuestArena::HostWrite write(vector, sizeof(*vector));
     *vector = {native.x, native.y};
 }
@@ -63,7 +68,7 @@ void APS5_VABI FT_Vector_Polarize_nid_postfix(const GuestVector* vector, std::in
 void APS5_VABI FT_Vector_From_Polar_nid_postfix(GuestVector* vector, std::int64_t length, std::int64_t angle) {
     if (!vector) return;
     FT_Vector native{};
-    FT_Vector_From_Polar(&native, HostValue(length, __func__), HostValue(angle, __func__));
+    FT_Vector_From_Polar(&native, HostValue(length, __func__), HostAngle(angle));
     GuestArena::HostWrite write(vector, sizeof(*vector));
     *vector = {native.x, native.y};
 }

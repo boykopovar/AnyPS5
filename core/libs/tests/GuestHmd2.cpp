@@ -4,6 +4,7 @@
 #include "prx/libSceHmd2/Hmd2.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 
+#include <cerrno>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -41,6 +42,12 @@ void TestCallsWithoutReprojectionSession() {
         Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, &time) == Hmd2::ReprojectionNotInitialized, "predicted display time without a reprojection session");
         Require(time == 0xaaaaaaaaaaaaaaaa, "predicted display time was written without a reprojection session");
     }
+    std::array<std::uint8_t, 0x68> status{};
+    status.fill(0xaa);
+    const auto statusBefore = status;
+    Require(sceHmd2ReprojectionGetStatus(nullptr) == Hmd2::ReprojectionNotInitialized, "status into a null output without a reprojection session");
+    Require(sceHmd2ReprojectionGetStatus(reinterpret_cast<Hmd2::ReprojectionStatus*>(status.data())) == Hmd2::ReprojectionNotInitialized, "status without a reprojection session");
+    Require(status == statusBefore, "status was written without a reprojection session");
     constexpr std::array<std::uint64_t, 5> flags{0, 1, 1ull << 32, 2, ~0ull};
     for (const std::uint64_t flag : flags) {
         Require(sceHmd2ReprojectionSetRenderConfig(flag, 0, 0) == Hmd2::ReprojectionNotInitialized, "render config without a reprojection session");
@@ -74,6 +81,16 @@ void TestNamedCallsBeforeInitialize() {
     Require(sceHmd2InternalLedDetectorOpen() == 0 && sceHmd2InternalLedDetectorClose() == 0, "LED detector open and close before initialization");
     Require(sceHmd2InternalTrackingStart() == -1 && sceHmd2InternalTrackingStop() == -1, "tracking start and stop before initialization");
     Require(sceHmd2InternalLedDetectorStart() == -1 && sceHmd2InternalLedDetectorStop() == -1, "LED detector start and stop before initialization");
+    Require(sceHmd2InternalRegisterVibrationCallback() == 0 && sceHmd2InternalUnregisterVibrationCallback() == 0, "vibration callback register and unregister before initialization");
+    Require(sceHmd2InternalPowerEventInitialize() == 0, "power event initialization before initialization");
+    Require(sceHmd2InternalDfuOpen() == 0 && sceHmd2InternalDfuClose() == 0, "DFU open and close before initialization");
+    Require(sceHmd2InternalCrashReportOpen() == 0 && sceHmd2InternalCrashReportClose() == 0, "crash report open and close before initialization");
+    Require(sceHmd2InternalRelocalizerOpen() == 0 && sceHmd2InternalRelocalizerClose() == 0, "relocalizer open and close before initialization");
+    Require(sceHmd2InternalImageOpen() == 0 && sceHmd2InternalImageClose() == 0, "image open and close before initialization");
+    Require(sceHmd2InternalGenDataOpen() == 0 && sceHmd2InternalGenDataClose() == 0, "generated data open and close before initialization");
+    Require(sceHmd2InternalSlamTraceOpen() == 0 && sceHmd2InternalSlamTraceClose() == 0, "SLAM trace open and close before initialization");
+    Require(sceHmd2InternalGazeOpen() == 0 && sceHmd2InternalGazeClose() == 0, "gaze open and close before initialization");
+    Require(sceHmd2InternalGazeStart() == 0 && sceHmd2InternalGazeStop() == 0, "gaze start and stop before initialization");
 }
 
 void TestBeforeInitialize() {
@@ -86,6 +103,9 @@ void TestBeforeInitialize() {
     Hmd2::FieldOfView fieldOfView{};
     Require(sceHmd2GetFieldOfViewWithoutHandle(&fieldOfView) == Hmd2::NotInitialized, "field of view before initialization");
     Require(sceHmd2GetFieldOfView(0, &fieldOfView) == Hmd2::InvalidHandle, "field of view of handle 0 before initialization");
+    errno = 0;
+    Require(sceHmd2GetDeviceInformation(reinterpret_cast<Hmd2::DeviceInformation*>(0x10)) == Hmd2::ParameterNull, "unwritable device info rejects");
+    Require(errno == 0, "preserves errno");
     Require(sceHmd2GetDeviceInformationByHandle(0, &info) == Hmd2::NotInitialized, "device information of handle 0 before initialization");
     Require(sceHmd2Open(USER_SERVICE_INITIAL_USER_ID, 0, 0, nullptr) == Hmd2::NotInitialized, "open before initialization");
     Require(sceHmd2Close(0) == Hmd2::NotInitialized, "close before initialization");
@@ -348,6 +368,9 @@ void TestReprojection() {
     std::uint8_t display[64]{};
     Hmd2::ReprojectionInitializeParameter initParam{};
     Require(sceHmd2ReprojectionInitialize(nullptr, nullptr) == Hmd2::ParameterNull, "initialization without a param");
+    errno = 71;
+    Require(sceHmd2ReprojectionInitialize(reinterpret_cast<const Hmd2::ReprojectionInitializeParameter*>(0x10), nullptr) == Hmd2::ParameterNull, "initialization with unmapped param");
+    Require(errno == 71, "errno preserved");
     Require(sceHmd2ReprojectionInitialize(&initParam, nullptr) == Hmd2::ParameterNull, "initialization without buffers");
     initParam.workMemory = work;
     Require(sceHmd2ReprojectionInitialize(&initParam, nullptr) == Hmd2::ParameterNull, "initialization without a display memory");
@@ -370,6 +393,18 @@ void TestReprojection() {
     Require(state->timingUs == 2100, "a rejected upper timing changed the recorded setting");
     Require(sceHmd2ReprojectionSetTiming(2000) == 0 && state->timingUs == 2000, "the range's lower end did not succeed");
     Require(sceHmd2ReprojectionSetTiming(7000) == 0 && state->timingUs == 7000, "the range's upper end did not succeed");
+    std::array<std::uint8_t, 0x68> status{};
+    status.fill(0xaa);
+    Require(sceHmd2ReprojectionGetStatus(nullptr) == Hmd2::ParameterNull, "status into a null output inside a reprojection session");
+    Require(sceHmd2ReprojectionGetStatus(reinterpret_cast<Hmd2::ReprojectionStatus*>(status.data())) == 0, "status inside a reprojection session");
+    std::array<std::uint64_t, 4> timestamps{};
+    std::memcpy(timestamps.data(), status.data() + 0x28, sizeof(timestamps));
+    for (std::size_t index = 0; index < 4; ++index) {
+        Require(timestamps[index] != 0xaaaaaaaaaaaaaaaa, "status timestamp was not written");
+        if (index > 0) Require(timestamps[index] > timestamps[index - 1], "status timestamps do not advance");
+    }
+    for (std::size_t index = 0; index < 0x28; ++index) Require(status[index] == 0, "status prefix was not cleared");
+    for (std::size_t index = 0x48; index < status.size(); ++index) Require(status[index] == 0, "status suffix was not cleared");
     Require(sceHmd2ReprojectionEnableVrMode(0x2000C) == Hmd2::VideoOutNoDevice, "enabling VR mode did not report no device");
     Require(sceHmd2ReprojectionEnableVrMode(0x2000F) == Hmd2::VideoOutNoDevice, "enabling the second VR mode did not report no device");
     Require(sceHmd2ReprojectionEnableVrMode(0) == Hmd2::VideoOutInvalidValue, "an unknown output mode did not report invalid value");
@@ -416,11 +451,27 @@ void TestReprojection() {
             "the re-initialized state carries the default timing");
 }
 
+void TestNamedErrorAnswersBeforeInitialize() {
+    Require(sceHmd2InternalSetVolume() == Hmd2::Error0004 && sceHmd2InternalResetViewPosition() == Hmd2::Error0004, "volume and view position before initialization");
+    Require(sceHmd2InternalClearTrackerFts() == Hmd2::Error0004 && sceHmd2InternalSetSlamCommand() == Hmd2::Error0004, "tracker FTS and SLAM command before initialization");
+    Require(sceHmd2InternalDfuStart() == Hmd2::Error0004, "DFU start before initialization");
+    Require(sceHmd2InternalDecryptData() == Hmd2::ParameterNull && sceHmd2InternalGetMirroringMode() == Hmd2::ParameterNull, "decrypt and mirroring mode before initialization");
+    Require(sceHmd2InternalRelocalizerSetResultData() == Hmd2::ParameterNull && sceHmd2InternalGetFlipInfo() == Hmd2::ParameterNull, "relocalizer result data and flip info before initialization");
+    Require(sceHmd2InternalSetPositionResetIcon() == Hmd2::ParameterInvalid && sceHmd2InternalSetPowerOff() == Hmd2::ParameterInvalid, "position reset icon and power off before initialization");
+    Require(sceHmd2InternalSetBudgetMode() == Hmd2::ParameterInvalid && sceHmd2InternalSetForceIcon() == Hmd2::ParameterInvalid, "budget mode and force icon before initialization");
+    Require(sceHmd2InternalBindDeviceWithUserId() == Hmd2::ParameterInvalid, "device bind by user id before initialization");
+    Require(sceHmd2InternalRelocalizerStart() == -1 && sceHmd2InternalRelocalizerStop() == -1, "relocalizer start and stop before initialization");
+    Require(sceHmd2InternalImageStart() == -1 && sceHmd2InternalImageStop() == -1, "image start and stop before initialization");
+    Require(sceHmd2InternalGenDataStart() == -1 && sceHmd2InternalGenDataStop() == -1, "generated data start and stop before initialization");
+    Require(sceHmd2InternalSlamTraceStart() == -1 && sceHmd2InternalSlamTraceStop() == -1, "SLAM trace start and stop before initialization");
+}
+
 int main() {
     SizeQueriesReturnTheConsoleSizes();
     InstallProcessParameters();
     TestBeforeInitialize();
     TestNamedCallsBeforeInitialize();
+    TestNamedErrorAnswersBeforeInitialize();
     TestWithoutHeadset();
     TestReprojection();
     Require(sceHmd2GazeActivateGazeTracking(0) == 0, "gaze activation before initialization");

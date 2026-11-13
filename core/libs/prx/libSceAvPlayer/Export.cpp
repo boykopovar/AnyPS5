@@ -1,4 +1,5 @@
 #include "prx/libSceAvPlayer/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -7,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
 #include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
@@ -99,27 +101,81 @@ int APS5_VABI sceAvPlayerEnableStream(AvPlayerInternal* h, uint32_t stream_id) {
 
 Bool APS5_VABI sceAvPlayerGetAudioData(AvPlayerInternal* h, AvPlayerFrameInfo* audio_info) {
     if (!h || !audio_info) return false;
-    return ToPlayer(h)->GetAudioData(*audio_info);
+    AvPlayerFrameInfo localInfo{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localInfo, audio_info, sizeof(localInfo))) {
+        errno = savedErrno;
+        return false;
+    }
+    errno = savedErrno;
+    if (!ToPlayer(h)->GetAudioData(localInfo)) return false;
+    const bool copied = GuestCopyOut_nid_no_patch(audio_info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    return copied;
 }
 
 int APS5_VABI sceAvPlayerGetStreamInfo(AvPlayerInternal* h, uint32_t stream_id, AvPlayerStreamInfo* info) {
     if (!h || !info) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
-    return ToPlayer(h)->GetStreamInfo(stream_id, *info);
+    AvPlayerStreamInfo localInfo{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo))) {
+        errno = savedErrno;
+        return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    }
+    errno = savedErrno;
+    const int res = ToPlayer(h)->GetStreamInfo(stream_id, localInfo);
+    if (res != 0) return res;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    return 0;
 }
 
 int APS5_VABI sceAvPlayerGetStreamInfoEx(AvPlayerInternal* h, uint32_t stream_id, AvPlayerStreamInfoEx* info) {
     if (!h || !info) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
-    return ToPlayer(h)->GetStreamInfoEx(stream_id, *info);
+    AvPlayerStreamInfoEx localInfo{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo))) {
+        errno = savedErrno;
+        return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    }
+    errno = savedErrno;
+    const int res = ToPlayer(h)->GetStreamInfoEx(stream_id, localInfo);
+    if (res != 0) return res;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    return 0;
 }
 
 Bool APS5_VABI sceAvPlayerGetVideoData(AvPlayerInternal* h, AvPlayerFrameInfo* video_info) {
     if (!h || !video_info) return false;
-    return ToPlayer(h)->GetVideoData(*video_info);
+    AvPlayerFrameInfo localInfo{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localInfo, video_info, sizeof(localInfo))) {
+        errno = savedErrno;
+        return false;
+    }
+    errno = savedErrno;
+    if (!ToPlayer(h)->GetVideoData(localInfo)) return false;
+    const bool copied = GuestCopyOut_nid_no_patch(video_info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    return copied;
 }
 
 Bool APS5_VABI sceAvPlayerGetVideoDataEx(AvPlayerInternal* h, AvPlayerFrameInfoEx* video_info) {
     if (!h || !video_info) return false;
-    return ToPlayer(h)->GetVideoData(*video_info);
+    AvPlayerFrameInfoEx localInfo{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localInfo, video_info, sizeof(localInfo))) {
+        errno = savedErrno;
+        return false;
+    }
+    errno = savedErrno;
+    if (!ToPlayer(h)->GetVideoData(localInfo)) return false;
+    const bool copied = GuestCopyOut_nid_no_patch(video_info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    return copied;
 }
 
 AvPlayerInternal* APS5_VABI sceAvPlayerInit(AvPlayerInitData* init) {
@@ -143,7 +199,14 @@ int APS5_VABI sceAvPlayerInitEx(const AvPlayerInitDataEx* init_ex, AvPlayerInter
         init.auto_start = init_ex->auto_start;
     }
     init.default_language = init_ex->default_language;
-    *handle = new Player(init, VideoBufferCount(init.num_output_video_framebuffers));
+    auto* player = new Player(init, VideoBufferCount(init.num_output_video_framebuffers));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(handle, &player, sizeof(player));
+    errno = savedErrno;
+    if (!copied) {
+        delete player;
+        return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    }
     return SCE_OK;
 }
 
@@ -164,7 +227,12 @@ int APS5_VABI sceAvPlayerPause(AvPlayerInternal* h) {
 
 int APS5_VABI sceAvPlayerPostInit(AvPlayerInternal* h, const AvPlayerPostInitData* post_init) {
     if (!h || !post_init) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
-    return ToPlayer(h)->PostInit(*post_init);
+    AvPlayerPostInitData localPost{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localPost, post_init, sizeof(localPost));
+    errno = savedErrno;
+    if (!copied) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    return ToPlayer(h)->PostInit(localPost);
 }
 
 int APS5_VABI sceAvPlayerResume(AvPlayerInternal* h) {
@@ -206,8 +274,13 @@ int APS5_VABI sceAvPlayerStart(AvPlayerInternal* h) {
 }
 
 int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal* handle, const StartInfo* startInfo) {
-    if (handle == nullptr || startInfo == nullptr || startInfo->size != sizeof(*startInfo)) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
-    return ToPlayer(handle)->Start(startInfo->startTime);
+    if (handle == nullptr || startInfo == nullptr) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    StartInfo localStart{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localStart, startInfo, sizeof(localStart));
+    errno = savedErrno;
+    if (!copied || localStart.size != sizeof(localStart)) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    return ToPlayer(handle)->Start(localStart.startTime);
 }
 
 int APS5_VABI sceAvPlayerStop(AvPlayerInternal* h) {

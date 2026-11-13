@@ -119,6 +119,7 @@ void CheckUnwindInfo() {
         threw = true;
     }
     Require(threw);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, nullptr); }));
 }
 #endif
 
@@ -475,4 +476,20 @@ int main() {
     Require(sceSysmoduleUnloadModule(kAudioPropagationModuleId) == 0);
     Require(sceSysmoduleIsLoaded(kAudioPropagationModuleId) == kModuleUnloaded);
     Require(sceSysmoduleGetModuleHandleInternal(kAudioPropagationModuleId, &audioPropagationHandle) == kModuleUnloaded);
+
+    constexpr int kKernelEinval = static_cast<int>(0x80020016);
+    int moduleResult = -1;
+    Require(sceSysmoduleLoadModuleByNameInternal(nullptr, 0, nullptr, 0, &moduleResult) == kKernelEinval);
+    Require(moduleResult == -1);
+    KernelModule byName = sceSysmoduleLoadModuleByNameInternal("libSceFiber", 0, nullptr, 0, &moduleResult);
+    Require(byName > 0);
+    Require(moduleResult == 0);
+    void* byNameSymbol = nullptr;
+    Require(sceKernelDlsym(byName, "sceFiberOptParamInitialize", &byNameSymbol) == 0);
+    Require(byNameSymbol != nullptr);
+    moduleResult = -1;
+    Require(sceSysmoduleLoadModuleByNameInternal("libSceFiber", 0, nullptr, 0, &moduleResult) > 0);
+    moduleResult = -1;
+    Require(sceSysmoduleLoadModuleByNameInternal("libSceNoSuchModule", 0, nullptr, 0, &moduleResult) < 0);
+    Require(sceKernelStopUnloadModule(byName, 0, nullptr, 0, nullptr, nullptr) == 0);
 }

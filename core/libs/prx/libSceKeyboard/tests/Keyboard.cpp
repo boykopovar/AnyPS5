@@ -12,6 +12,8 @@
 #include <source_location>
 #include <stdexcept>
 
+static constexpr int InitialUserId = 0x10000000;
+
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (value) return;
     std::fprintf(stderr, "%s:%u: keyboard assertion failed\n", location.file_name(), location.line());
@@ -88,6 +90,32 @@ static void CheckKanaLed() {
     }
 }
 
+static void CheckHistoryWrap() {
+    for (std::uint16_t key = 0x04; key < 0x04 + 20; ++key) {
+        KeyboardInputEvent event{};
+        event.keyCode = key;
+        event.pressed = true;
+        KeyboardPublishInput_nid_postfix(event);
+        event.pressed = false;
+        KeyboardPublishInput_nid_postfix(event);
+    }
+
+    KeyboardData data[16]{};
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 5) == 5);
+    Require(data[5].timestamp == 0);
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, data + 5, 7) == 7);
+    Require(data[12].timestamp == 0);
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, data + 12, 4) == 4);
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 0);
+    for (int index = 0; index < 16; ++index) {
+        Require(data[index].connected && data[index].length == 1);
+        Require(data[index].key_code[0] == (index % 2 == 0 ? 0x10 + index / 2 : 0));
+        if (index > 0) Require(data[index - 1].timestamp <= data[index].timestamp);
+    }
+    Require(sceKeyboardReadState(KEYBOARD_HANDLE, data) == KEYBOARD_OK);
+    Require(data[0].connected && data[0].length == 1 && data[0].key_code[0] == 0);
+}
+
 int main() {
     KeyboardData data[16]{};
     KeyboardCharData charData{};
@@ -113,11 +141,17 @@ int main() {
     Require(sceKeyboardOpen(1, 1, 0, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
-    Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_HANDLE);
+    Require(sceKeyboardOpen(-1, 0, 0, nullptr) == KEYBOARD_ERROR_INVALID_USER_ID);
+    Require(sceKeyboardOpen(0, 0, 0, nullptr) == KEYBOARD_ERROR_UNKNOWN_USER);
+    Require(sceKeyboardOpen(InitialUserId, 0, 0, nullptr) == KEYBOARD_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 0) == KEYBOARD_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId + 1, 0, 0) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 1, 0) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 1) == KEYBOARD_ERROR_NO_HANDLE);
     CheckInvalidKeys(true);
     CheckUnconvertedKeys();
     CheckKanaLed();
-    Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_ALREADY_OPENED);
+    Require(sceKeyboardOpen(InitialUserId, 0, 0, nullptr) == KEYBOARD_ERROR_ALREADY_OPENED);
     Require(sceKeyboardGetConnection(42, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_OK && connected);
@@ -230,9 +264,14 @@ int main() {
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardReadState(KEYBOARD_HANDLE, data) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_ERROR_INVALID_HANDLE);
-    Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_HANDLE);
+    Require(sceKeyboardOpen(InitialUserId, 0, 0, nullptr) == KEYBOARD_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 0) == KEYBOARD_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId + 1, 0, 0) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 1, 0) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 1) == KEYBOARD_ERROR_NO_HANDLE);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].length == 1 && data[0].key_code[0] == 0);
     Require(data[0].connected);
+    CheckHistoryWrap();
     KeyboardInputEvent pressed{};
     pressed.keyCode = 0x04;
     pressed.pressed = true;
@@ -253,6 +292,7 @@ int main() {
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].connected);
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);
     Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, &deviceId) == KEYBOARD_ERROR_INVALID_HANDLE && deviceId == -1);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 0) == KEYBOARD_ERROR_NO_HANDLE);
 
     bool threwConnect = false;
     try {
