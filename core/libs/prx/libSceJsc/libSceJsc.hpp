@@ -10,3 +10,4 @@
 #include "prx/libSceJsc/include/PlacementNewExports.hpp"
 #include "prx/libSceJsc/include/WtfStringSearchExports.hpp"
 #include "prx/libSceJsc/include/WtfUrlExports.hpp"
+#include "prx/libSceJsc/include/YarrFlagsExports.hpp"

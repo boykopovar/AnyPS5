@@ -24,6 +24,8 @@
 
 - [WTF time comparison and StringBuilder::isAllASCII](../../../core/libs/prx/libSceJsc/src/WtfUrl.cpp) - the console WTF version, the `ClockType` width (modelled as 32-bit) and the `Seconds` and `StringBuilder` layouts are unmeasured; only the test harness builds these objects. `TimeWithDynamicClockType::operator<` and `Seconds::operator+` follow [TimeWithDynamicClockType.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/TimeWithDynamicClockType.cpp#L95-L99) and [its header](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/TimeWithDynamicClockType.h#L82-L85); `isAllASCII` follows [StringBuilder.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/StringBuilder.cpp#L458-L466) and [its header](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/StringBuilder.h#L365-L376). Different clock types, an overflowed builder, a nonzero length without characters and null pointers throw where WebKit crashes or faults.
 
+- [JSC::Yarr::parseFlags](../../../core/libs/prx/libSceJsc/src/YarrFlags.cpp) (libSceJsc) - not compared with a console module; the console JavaScriptCore version is unverified. It follows the PS5 11.x [YarrFlags.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/JavaScriptCore/yarr/YarrFlags.cpp#L34-L60) and the flag table of its [YarrFlags.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/JavaScriptCore/yarr/YarrFlags.h#L35-L56): `d g i m s u v y` set bits 0 to 7, and an unknown or repeated code unit or both `u` and `v` give no value. The `std::optional<OptionSet<Flags>>` result is the 16-bit set at byte 0 and the engaged flag at byte 2, 4 bytes in the return register; the 16-byte `StringView` is passed by value. A null character pointer with a nonzero length throws where WebKit faults. Closes when: compared with a console module.
+
 ### Known export names; ABI prototypes unverified
 
 - The 133 throwing JavaScriptCore, Inspector, WTF and bmalloc exports in [Export.cpp](../../../core/libs/prx/libSceJsc/Export.cpp) are present in the PS5 3.20 `libSceJsc` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
@@ -56,7 +58,7 @@
   - `fj3HITuKDPs`
   - `uF3DZ2xR1sA`
 
-- [Additional callable exports](../../../core/libs/prx/libSceJsc/Export.cpp) - 330 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceJsc.c) and the [selected export metadata](https://gist.github.com/kyon-eth/e699987524d8485a9de9740280cfe4c1/09c89f4d64a17da12485e0eb637620ced4f6eeb2) from two version-labelled images (SHA-256 `d2a5f8a8807f23cb71170a5d3b779a57636f5a3480d92955e4255545ffe1e97e`). The labels are not authenticated. Apart from the 13 register-set queries and constructors and the two `Deprecated::ScriptValue` getters in the firmware 13.42 entries below, prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality. Shared WebKit exports require separate loader analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceJsc/Export.cpp) - 329 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceJsc.c) and the [selected export metadata](https://gist.github.com/kyon-eth/e699987524d8485a9de9740280cfe4c1/09c89f4d64a17da12485e0eb637620ced4f6eeb2) from two version-labelled images (SHA-256 `d2a5f8a8807f23cb71170a5d3b779a57636f5a3480d92955e4255545ffe1e97e`). The labels are not authenticated. Apart from the 13 register-set queries and constructors and the two `Deprecated::ScriptValue` getters in the firmware 13.42 entries below, prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality. Shared WebKit exports require separate loader analysis.
 
 | Name | NID |
 | --- | --- |
@@ -184,7 +186,6 @@
 | `_ZN3JSC4Heap16objectTypeCountsEv` | `ShbGcHuwSMk` |
 | `_ZN3JSC4Heap20addMarkingConstraintESt10unique_ptrINS_17MarkingConstraintESt14default_deleteIS2_EE` | `WN26C5qp7ZY` |
 | `_ZN3JSC4Heap25protectedObjectTypeCountsEv` | `4gT52GwiD0A` |
-| `_ZN3JSC4Yarr10parseFlagsEN3WTF10StringViewE` | `5mlTo8nbdYU` |
 | `_ZN3JSC4Yarr11YarrPatternC1ERKN3WTF6StringENS2_9OptionSetINS0_5FlagsEEERNS0_9ErrorCodeE` | `g7Id6p6fdis` |
 | `_ZN3JSC4Yarr11YarrPatternC2ERKN3WTF6StringENS2_9OptionSetINS0_5FlagsEEERNS0_9ErrorCodeE` | `7YAFidwFyxs` |
 | `_ZN3JSC4Yarr11byteCompileERNS0_11YarrPatternEPN3WTF20BumpPointerAllocatorERNS0_9ErrorCodeEPNS3_4LockE` | `AHTpMEo172c` |
