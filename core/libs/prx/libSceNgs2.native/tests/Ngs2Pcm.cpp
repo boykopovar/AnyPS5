@@ -291,7 +291,7 @@ static void TestNumericEdges() {
 }
 
 static void TestReportedInputLifetime(const PcmFixture& fixture, std::uint32_t channels, std::uint32_t rate, float pitch) {
-    constexpr std::uint32_t Frames = 2048;
+    constexpr std::uint32_t Frames = 16384;
     constexpr std::uint32_t LateFrame = 512;
     const auto frameBytes = channels * fixture.bytes;
     std::vector<std::uint8_t> data(Frames * frameBytes), expected(data.size()), original(data.size());
