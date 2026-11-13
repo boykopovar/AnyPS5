@@ -1393,9 +1393,15 @@ int APS5_VABI VLONG_freeVlongQueue() {
     return 0;
 }
 
-int APS5_VABI sceSslCheckRecvPending() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSslCheckRecvPending(int sslConnectionId, std::uint8_t* pending) {
+    if (!pending) return ErrorInvalidValue;
+    const std::uint8_t value = 1;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(pending, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidValue;
+    std::lock_guard lock(State().mutex);
+    return FindConnection(sslConnectionId) ? 0 : ErrorInvalidId;
 }
 
 int APS5_VABI sceSslCreateSslConnection(int sslCtxId, int sockId, const char* host) {

@@ -437,6 +437,14 @@ int main(int argc, char** argv) {
         && sceSslSetMinSslVersion(untrusted, VersionTls12) == ErrorInvalidId && sceSslSetVerifyCallback(untrusted, nullptr, nullptr) == ErrorInvalidId
         && sceSslReuseConnection(untrusted, untrustedSocket) == ErrorInvalidId,
         "a deleted connection did not report an invalid id");
+    std::uint8_t pending = 0;
+    Require(sceSslCheckRecvPending(untrusted, &pending) == ErrorInvalidId && pending == 1,
+        "a pending check of a deleted connection did not store 1 before reporting the invalid id");
+    pending = 0;
+    Require(sceSslCheckRecvPending(0, &pending) == ErrorInvalidId && pending == 1, "a pending check of connection id 0 changed");
+    Require(sceSslCheckRecvPending(untrusted, nullptr) == ErrorInvalidValue, "a pending check accepted a null output");
+    Require(sceSslCheckRecvPending(untrusted, reinterpret_cast<std::uint8_t*>(0x10)) == ErrorInvalidValue,
+        "a pending check accepted an unwritable output");
 
     const int unverifiedSocket = sockets.Open(server.port);
     const int unverified = sceSslCreateConnection(empty, unverifiedSocket, "localhost");
@@ -553,6 +561,8 @@ int main(int argc, char** argv) {
     }
     Require(sceSslRead(polling, buffer.data(), buffer.size(), 0) == ErrorWantPollIn, "a non-blocking read with nothing to read did not ask to poll");
     Require(sceSslRead(polling, buffer.data(), buffer.size(), 1) == ErrorWantPollIn, "a non-blocking partial read with nothing to read did not ask to poll");
+    std::uint8_t idle = 0;
+    Require(sceSslCheckRecvPending(polling, &idle) == 0 && idle == 1, "a pending check of a live connection did not report pending data");
     Require(sceSslWrite(polling, request, 4, 0) == 4, "write the non-blocking request");
     int received;
     for (rounds = 0; (received = sceSslRead(polling, buffer.data(), buffer.size(), 1)) == ErrorWantPollIn; Settle())
@@ -689,6 +699,8 @@ int main(int argc, char** argv) {
     Require(sceSslRecv(single, buffer.data(), 4) == 2 && std::memcmp(buffer.data(), "po", 2) == 0, "a single-transfer read waited for a second record");
     Require(sceSslRead(single, buffer.data(), 4, 0) == 2 && std::memcmp(buffer.data(), "ng", 2) == 0, "a single-transfer read missed the second record");
     Require(sceSslRead(single, buffer.data(), buffer.size(), 0) == 0, "close notify did not end the single-transfer stream");
+    std::uint8_t drained = 0;
+    Require(sceSslCheckRecvPending(single, &drained) == 0 && drained == 1, "a pending check of a single-transfer connection failed");
     Require(sceSslDeleteSslConnection(single) == 0 && sockets.Close(singleSocket) == 0, "release the single-transfer connection");
     Require(sceSslDeleteSslConnection(single) == ErrorInvalidId && sceSslConnect(single) == ErrorInvalidId, "a deleted single-transfer connection was still known");
 

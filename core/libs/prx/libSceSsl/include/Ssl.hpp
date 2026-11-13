@@ -45,7 +45,7 @@ int APS5_VABI CRYPTO_initAsymmetricKey(void* key);
 int APS5_VABI CRYPTO_uninitAsymmetricKey();
 int APS5_VABI RSA_verifySignature();
 int APS5_VABI VLONG_freeVlongQueue();
-int APS5_VABI sceSslCheckRecvPending();
+int APS5_VABI sceSslCheckRecvPending(int sslConnectionId, std::uint8_t* pending);
 int APS5_VABI sceSslCreateSslConnection(int sslCtxId, int sockId, const char* host);
 int APS5_VABI sceSslDeleteSslConnection(int sslConnectionId);
 int APS5_VABI sceSslDisableOption();
