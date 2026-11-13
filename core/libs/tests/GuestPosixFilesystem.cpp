@@ -31,6 +31,19 @@ static void Require(bool condition, std::source_location location = std::source_
     }
 }
 
+static void RequireCloseOnExec(int fd, bool closeOnExec) {
+    Require(fcntl_nid_postfix(fd, 1) == (closeOnExec ? 1 : 0));
+#ifdef _WIN32
+    DWORD handleFlags = 0;
+    Require(GetHandleInformation(reinterpret_cast<HANDLE>(::_get_osfhandle(fd)), &handleFlags));
+    Require(((handleFlags & HANDLE_FLAG_INHERIT) == 0) == closeOnExec);
+#else
+    const int nativeFlags = ::fcntl(fd, F_GETFD);
+    Require(nativeFlags >= 0);
+    Require(((nativeFlags & FD_CLOEXEC) != 0) == closeOnExec);
+#endif
+}
+
 int main() {
     std::random_device random;
     const auto root = std::filesystem::temp_directory_path() /
@@ -39,7 +52,7 @@ int main() {
     AddPathAlias_nid_no_patch("/anyps5-posix-test", root.string().c_str());
     constexpr int shared = 0x10;
     constexpr int exclusive = 0x20;
-    constexpr int closeOnExec = 0x100000;
+    constexpr int closeOnExec = SCE_KERNEL_O_CLOEXEC;
     const std::array flagsToTest{0, SCE_KERNEL_O_APPEND, SCE_KERNEL_O_SYNC, shared, exclusive,
         closeOnExec, shared | exclusive, shared | closeOnExec,
         exclusive | SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC | closeOnExec, SCE_KERNEL_O_DIRECT,
@@ -51,15 +64,10 @@ int main() {
         Require(temporary.starts_with("/anyps5-posix-test/mkostemp-") && temporary.size() == std::strlen("/anyps5-posix-test/mkostemp-XXXXXXXX"));
         Require(temporary.substr(temporary.size() - 8).find_first_not_of(
             "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") == std::string::npos);
-        Require(fcntl_nid_postfix(fd, 1) == ((flags & closeOnExec) ? 1 : 0));
+        RequireCloseOnExec(fd, (flags & closeOnExec) != 0);
         Require((fcntl_nid_postfix(fd, 3) & (SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC)) ==
             (flags & (SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC)));
-#ifdef _WIN32
-        DWORD handleFlags = 0;
-        Require(GetHandleInformation(reinterpret_cast<HANDLE>(::_get_osfhandle(fd)), &handleFlags));
-        if (flags & closeOnExec) Require((handleFlags & HANDLE_FLAG_INHERIT) == 0);
-#else
-        Require((::fcntl(fd, F_GETFD) & FD_CLOEXEC) == ((flags & closeOnExec) ? FD_CLOEXEC : 0));
+#ifndef _WIN32
         const int nativeStatus = ::fcntl(fd, F_GETFL);
         Require(nativeStatus >= 0);
         Require((nativeStatus & O_APPEND) == ((flags & SCE_KERNEL_O_APPEND) ? O_APPEND : 0));
@@ -75,8 +83,9 @@ int main() {
         Require(read_nid_postfix(fd, content.data(), content.size()) == ((flags & SCE_KERNEL_O_APPEND) ? 3 : 2));
         Require(std::string(content.data(), (flags & SCE_KERNEL_O_APPEND) ? 3 : 2) ==
             ((flags & SCE_KERNEL_O_APPEND) ? "abc" : "cb"));
-        const int secondFd = open_nid_postfix(temporary.c_str(), SCE_KERNEL_O_RDWR, 0);
+        const int secondFd = open_nid_postfix(temporary.c_str(), SCE_KERNEL_O_RDWR | (flags & closeOnExec), 0);
         Require(secondFd >= 0);
+        RequireCloseOnExec(secondFd, (flags & closeOnExec) != 0);
         const int lockResult = flock_nid_postfix(secondFd, 1 | 4);
         if (flags & exclusive) Require(lockResult == -1 && *__error_nid_postfix() == 35);
         else {

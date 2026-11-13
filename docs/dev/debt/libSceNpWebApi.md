@@ -3,6 +3,7 @@
 ### Functional
 
 - [sceNpWebApiGetMemoryPoolStats](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi) - returning `0x80552902` (`SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT`) when the `stats` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceNpWebApiCreateRequest, sceNpWebApiIntCreateRequest, sceNpWebApiIntInitialize](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi) - returning `0x80552902` (`SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT`) when `contentParameter`, `internalArgs`, or `args` are unreadable via `GuestCopyIn_nid_no_patch`, or when `requestId` is unwritable via `GuestCopyOut_nid_no_patch`, is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
 
 ### Additional callable exports
 
