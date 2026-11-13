@@ -55,6 +55,13 @@ int main() {
     Require(sceFontGetFontGlyphsCount(nullptr, unmappedCount) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     Require(errno == 71);
 
+    Require(sceFontRendererGetOutlineBufferSize(renderer, nullptr) == sceFontRendererGetOutlineBufferSize(renderer, unmappedCount));
+    Require(sceFontRendererGetOutlineBufferSize(nullptr, nullptr) == sceFontRendererGetOutlineBufferSize(nullptr, unmappedCount));
+    Require(sceFontGetPixelResolution(library, nullptr) == sceFontGetPixelResolution(library, unmappedCount));
+    Require(sceFontGetPixelResolution(nullptr, nullptr) == sceFontGetPixelResolution(nullptr, unmappedCount));
+    Require(sceFontGetLibrary(nullptr, nullptr) == sceFontGetLibrary(nullptr, unmappedLibrary));
+    Require(sceFontGetFontGlyphsCount(nullptr, nullptr) == sceFontGetFontGlyphsCount(nullptr, unmappedCount));
+
     std::uint32_t size = 7;
     Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x4000);
     std::uint32_t subPixelCount = 1;
