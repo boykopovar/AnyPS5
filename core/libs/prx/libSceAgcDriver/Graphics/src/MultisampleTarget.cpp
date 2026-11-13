@@ -1293,6 +1293,11 @@ std::atomic<std::uint64_t>& guardedGeneration() {
     return generation;
 }
 
+std::atomic<std::uint64_t>& claimsReleased() {
+    static std::atomic<std::uint64_t> released{0};
+    return released;
+}
+
 std::atomic<bool>& omitOwnersForTest() {
     static std::atomic<bool> omit{false};
     return omit;
@@ -1304,11 +1309,6 @@ std::atomic<std::uint64_t>& inventoryWalks() {
 }
 
 std::size_t retireTargetsOver(std::uint64_t address, std::size_t bytes);
-
-std::atomic<std::uint64_t>& claimsReleased() {
-    static std::atomic<std::uint64_t> released{0};
-    return released;
-}
 
 std::atomic<std::uint64_t>& guardSpansGeneration() {
     static std::atomic<std::uint64_t> generation{0};

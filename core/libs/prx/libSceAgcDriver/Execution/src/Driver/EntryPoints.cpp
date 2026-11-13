@@ -18,6 +18,14 @@
 
 namespace AgcDriver {
 
+RetiredOwners DiscardNativeDepthForReplay_nid_no_patch() {
+    return DriverDetail::Driver::Get().DiscardNativeDepthForReplay();
+}
+
+void RestoreNativeDepthForReplay_nid_no_patch(std::span<const NativeDepthSnapshot> snapshots) {
+    DriverDetail::Driver::Get().RestoreNativeDepthForReplay(snapshots);
+}
+
 void Submit(const Packet* packet, std::uint32_t queue) try {
     KernelNoteGpuSubmit_nid_no_patch();
     auto& driver = DriverDetail::Driver::Get();

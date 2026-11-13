@@ -13,6 +13,8 @@
 
 namespace AgcDriver {
 
+struct NativeDepthSnapshot;
+
 void Submit(const Packet* packet, std::uint32_t queue);
 
 struct AwaitedWait {
@@ -29,6 +31,9 @@ struct RetiredOwners {
     std::uint64_t depthSurfaces = 0;
     std::uint64_t depthPlanes = 0;
 };
+
+RetiredOwners DiscardNativeDepthForReplay_nid_no_patch();
+void RestoreNativeDepthForReplay_nid_no_patch(std::span<const NativeDepthSnapshot> snapshots);
 
 }
 
