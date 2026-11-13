@@ -244,10 +244,11 @@ static bool DecodeFrame(Ngs2Voice& voice) {
 }
 
 static bool EnsureFrames(Ngs2Voice& voice, std::size_t count) {
-    while ((voice.state == Ngs2PlayState::Playing || voice.state == Ngs2PlayState::Paused || voice.outputTransition == Ngs2VoiceTransition::Stop) && BufferedFrames(voice) < count) {
+    const bool decoding = voice.state == Ngs2PlayState::Playing || voice.state == Ngs2PlayState::Paused;
+    while (decoding && BufferedFrames(voice) < count) {
         if (!DecodeFrame(voice)) return false;
     }
-    return voice.state == Ngs2PlayState::Playing || voice.state == Ngs2PlayState::Paused || voice.outputTransition == Ngs2VoiceTransition::Stop;
+    return decoding || (voice.outputTransition == Ngs2VoiceTransition::Stop && BufferedFrames(voice) >= count);
 }
 
 std::uint32_t Ngs2ReadSamplerAtrac9(Ngs2Voice& voice, float* dest, std::uint32_t stride, std::uint32_t count) {
