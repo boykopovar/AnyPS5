@@ -17590,18 +17590,6 @@ int APS5_VABI _ZN7WebCore13HitTestResultaSERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore13IdentifierRep3getEPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore13IdentifierRep3getEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore13IdentifierRep7isValidEPS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore13JSCSSRuleList9toWrappedERN3JSC2VMENS1_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
