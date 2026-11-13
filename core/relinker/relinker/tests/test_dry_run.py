@@ -6,6 +6,7 @@ import tempfile
 
 from test_game_patches import patch_site, patch_text
 from test_guest_intel_trampolines import main_fixture
+from test_guest_needed_modules import executable_with_needed, module_with_needed
 from test_secondary_output_collisions import prepare_secondary
 
 
@@ -148,6 +149,24 @@ def check_failures(relinker, root):
     paths["registry"].write_bytes(b"existing registry")
     os.link(paths["registry"], paths["needed"])
     run(relinker, paths["executable"].parent, command, code=2, error="Output paths collide")
+
+    bad_library = b"invalid-\xff.prx"
+    for with_module in (False, True):
+        case = root / ("invalid-module-registry" if with_module else "invalid-executable-registry")
+        case.mkdir()
+        source = case / "input.elf"
+        source.write_bytes(main_fixture() if with_module else executable_with_needed(bad_library))
+        if with_module:
+            (case / "sce_module").mkdir()
+            (case / "sce_module" / "consumer.prx").write_bytes(module_with_needed((bad_library,), (0,)))
+        output = case / "output"
+        output.write_bytes(b"previous executable")
+        (case / "output.registry.json").write_bytes(b"previous registry")
+        command = [*([] if with_module else ["--skip-sce-module"]), "--registry", source, output]
+        before = snapshot(case)
+        for dry in (True, False):
+            run(relinker, case, command, dry=dry, code=2, error="Invalid UTF-8 lead byte in call registry string")
+            assert snapshot(case) == before, "registry validation changed an output"
 
 
 def main():

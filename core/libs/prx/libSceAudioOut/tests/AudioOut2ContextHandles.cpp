@@ -110,6 +110,22 @@ void UncreatedContextIsInvalid() {
     Require(sceAudioOut2ContextDestroy(live) == 0, "a live context was not destroyed");
 }
 
+void QueueLevelRejectsUnwritableOutputs() {
+    const auto context = CreateContext();
+    auto* const invalidOutput = reinterpret_cast<std::uint32_t*>(0x10);
+    std::uint32_t level = 77;
+    std::uint32_t available = 78;
+    errno = 73;
+    Require(sceAudioOut2ContextGetQueueLevel(context, invalidOutput, &available) == static_cast<int>(0x80260502), "an unwritable queue-level output was accepted");
+    Require(available == 78 && errno == 73, "a failed queue-level copy changed the other output or errno");
+    Require(sceAudioOut2ContextGetQueueLevel(context, &level, invalidOutput) == static_cast<int>(0x80260502), "an unwritable available-queue output was accepted");
+    Require(level <= 1 && errno == 73, "a failed available-queue copy lost the first output or changed errno");
+    Require(sceAudioOut2LoContextGetQueueLevel(context, invalidOutput, nullptr) == static_cast<int>(0x80260502), "the low-latency wrapper accepted an unwritable queue-level output");
+    Require(errno == 73, "the low-latency wrapper changed errno");
+    Require(sceAudioOut2ContextGetQueueLevel(context, &level, &available) == 0 && level + available == 1, "a valid queue query failed after rejected outputs");
+    Require(sceAudioOut2ContextDestroy(context) == 0, "the queue-query context was not destroyed");
+}
+
 void ContextMemoryNullSize() {
     AudioOut2ContextParam params{};
     Require(sceAudioOut2ContextResetParam(&params) == 0, "the context parameters did not reset");
@@ -228,6 +244,11 @@ void FirmwareExSignatures() {
     Require(errno == 73, "an unwritable port attribute value changed host errno");
     FreePage(readOnlyValue);
     getVolume.value = readBack;
+    volume[0] = 0.75f;
+    volume[1] = 0.125f;
+    Require(sceAudioOut2PortSetAttributesEx(exPort, &setVolume, 1) == 0, "the attribute set through sceAudioOut2PortSetAttributesEx was refused");
+    Require(sceAudioOut2LoPortGetAttributes(exPort, &getVolume, 1) == 0 && readBack[0] == 0.75f && readBack[1] == 0.125f, "the volume set through sceAudioOut2PortSetAttributesEx did not round trip");
+    Require(sceAudioOut2PortSetAttributesEx(portSentinel, &setVolume, 1) == errorInvalidHandle, "sceAudioOut2PortSetAttributesEx accepted a dead port");
     AudioOut2Attribute badAttribute{};
     badAttribute.attribute_id = 5;
     badAttribute.value = readBack;
@@ -298,6 +319,7 @@ int main() {
     OversizedGrainIsRefused();
     BadGuestPointersAreRefused();
     UncreatedContextIsInvalid();
+    QueueLevelRejectsUnwritableOutputs();
     DestroyedContextIsInvalid();
     std::filesystem::remove(path);
     std::puts("audio out2 context handles: PASS");
