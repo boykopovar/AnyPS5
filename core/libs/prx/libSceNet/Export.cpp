@@ -1404,6 +1404,9 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     }
     if (!listener.listening) return fail(NET_EINVAL);
     if (addr && !addrlen) return fail(NET_EINVAL);
+    std::uint32_t capacity = 0;
+    if (addr && (!GuestCopyIn_nid_no_patch(&capacity, addrlen, sizeof(capacity)) ||
+        !GuestCopyOut_nid_no_patch(addrlen, &capacity, sizeof(capacity)))) return fail(NET_EFAULT);
     sockaddr_storage peer{};
     NativeLength peer_length = sizeof(peer);
     const NativeSocket accepted = native_transfer(*listener.native, 0, false, [&](int) {
@@ -1455,9 +1458,14 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
             return fail(error);
         }
     }
-    if (addr && !native_to_guest_address(peer, addr, addrlen)) {
-        sceNetSocketClose(descriptor);
-        return fail(NET_EAFNOSUPPORT);
+    if (addr) {
+        std::array<std::uint8_t, 28> bytes{};
+        const bool converted = native_to_guest_address(peer, bytes.data(), &capacity);
+        if (!converted || !GuestCopyOut_nid_no_patch(addr, bytes.data(), capacity) ||
+            !GuestCopyOut_nid_no_patch(addrlen, &capacity, sizeof(capacity))) {
+            sceNetSocketClose(descriptor);
+            return fail(converted ? NET_EFAULT : NET_EAFNOSUPPORT);
+        }
     }
     return descriptor;
 }
