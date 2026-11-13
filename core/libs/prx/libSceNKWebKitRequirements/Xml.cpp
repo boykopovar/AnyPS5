@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKitRequirements/include/GuestXml.hpp"
 #include "prx/libSceNKWebKitRequirements/include/Identified.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <libxml/parser.h>
 #include <libxml/parserInternals.h>
@@ -9,6 +10,7 @@
 #include <libxml/entities.h>
 #include <libxml/xmlIO.h>
 #include <libxml/SAX2.h>
+#include <private/entities.h>
 
 #include <array>
 #include <cstdarg>
@@ -84,7 +86,7 @@ static XmlBinding* RequireBinding(void* ctx, const char* function) {
     return b;
 }
 
-static void SyncHostErrorToGuest(xmlErrorPtr h, NKWebKit::GuestXmlError* g, XmlBinding* b) {
+static void SyncHostErrorToGuest(const xmlError* h, NKWebKit::GuestXmlError* g, XmlBinding* b) {
     if (!h || !g) return;
     g->domain = h->domain;
     g->code = h->code;
@@ -153,7 +155,7 @@ static NKWebKit::GuestDoc* GuestDocFor(xmlDocPtr h) {
     return doc.get();
 }
 
-static void SyncHostInputToGuest(xmlParserInputPtr h, NKWebKit::GuestParserInput* g) {
+static void SyncHostInputToGuest(xmlParserCtxtPtr ctxt, xmlParserInputPtr h, NKWebKit::GuestParserInput* g) {
     if (!h || !g) return;
     g->buf = h->buf;
     g->filename = h->filename;
@@ -168,7 +170,7 @@ static void SyncHostInputToGuest(xmlParserInputPtr h, NKWebKit::GuestParserInput
     g->free = reinterpret_cast<void*>(h->free);
     g->encoding = h->encoding;
     g->version = h->version;
-    g->standalone = h->standalone;
+    g->standalone = ctxt->inputNr > 0 && ctxt->inputTab[0] == h ? ctxt->standalone : -1;
     g->id = h->id;
 }
 
@@ -210,7 +212,7 @@ static void SyncHostToGuest(XmlBinding* b) {
     }
 
     if (h->input) {
-        SyncHostInputToGuest(h->input, &b->guest_input);
+        SyncHostInputToGuest(h, h->input, &b->guest_input);
         g->input = &b->guest_input;
     } else {
         g->input = nullptr;
@@ -276,8 +278,21 @@ static NKWebKit::GuestEntity* SyncHostEntityToGuest(xmlEntityPtr h) {
     g->nexte = nullptr;
     g->URI = h->URI;
     g->owner = h->owner;
-    g->checked = h->checked;
+    g->checked = (h->flags & XML_ENT_CHECKED) ? 2 : 0;
     return g;
+}
+
+static xmlEntityPtr HostEntityForMirror(const NKWebKit::GuestEntity* mirror) {
+    std::lock_guard<std::mutex> lock(g_xmlMutex);
+    for (const auto& [host, guest] : g_globalEntities) {
+        if (guest.get() == mirror) return host;
+    }
+    for (const auto& [doc, entities] : g_docEntities) {
+        for (const auto& [host, guest] : entities) {
+            if (guest.get() == mirror) return host;
+        }
+    }
+    return nullptr;
 }
 
 static void HostStartElementNs(void* ctx, const xmlChar* localname, const xmlChar* prefix, const xmlChar* URI, int nb_namespaces, const xmlChar** namespaces, int nb_attributes, int nb_defaulted, const xmlChar** attributes) {
@@ -402,6 +417,7 @@ static xmlEntityPtr HostGetEntity(void* ctx, const xmlChar* name) {
     void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
     auto* gent = b->guest_sax->getEntity(guest_ctx, reinterpret_cast<const uint8_t*>(name));
     if (!gent) return nullptr;
+    if (auto* host = HostEntityForMirror(gent)) return host;
     static thread_local xmlEntity s_hostEntity{};
     s_hostEntity._private = gent->_private;
     s_hostEntity.type = static_cast<xmlElementType>(gent->type);
@@ -421,7 +437,8 @@ static xmlEntityPtr HostGetEntity(void* ctx, const xmlChar* name) {
     s_hostEntity.nexte = nullptr;
     s_hostEntity.URI = reinterpret_cast<const xmlChar*>(gent->URI);
     s_hostEntity.owner = gent->owner;
-    s_hostEntity.checked = gent->checked;
+    s_hostEntity.flags = 0;
+    s_hostEntity.expandedSize = 0;
     return &s_hostEntity;
 }
 
@@ -431,6 +448,7 @@ static xmlEntityPtr HostGetParameterEntity(void* ctx, const xmlChar* name) {
     void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
     auto* gent = b->guest_sax->getParameterEntity(guest_ctx, reinterpret_cast<const uint8_t*>(name));
     if (!gent) return nullptr;
+    if (auto* host = HostEntityForMirror(gent)) return host;
     static thread_local xmlEntity s_hostPE{};
     s_hostPE._private = gent->_private;
     s_hostPE.type = static_cast<xmlElementType>(gent->type);
@@ -450,7 +468,8 @@ static xmlEntityPtr HostGetParameterEntity(void* ctx, const xmlChar* name) {
     s_hostPE.nexte = nullptr;
     s_hostPE.URI = reinterpret_cast<const xmlChar*>(gent->URI);
     s_hostPE.owner = gent->owner;
-    s_hostPE.checked = gent->checked;
+    s_hostPE.flags = 0;
+    s_hostPE.expandedSize = 0;
     return &s_hostPE;
 }
 
@@ -480,7 +499,7 @@ static void HostReference(void* ctx, const xmlChar* name) {
     b->guest_sax->reference(guest_ctx, reinterpret_cast<const uint8_t*>(name));
 }
 
-static void HostSerror(void* userData, xmlErrorPtr error) {
+static void HostSerror(void* userData, const xmlError* error) {
     auto* b = static_cast<XmlBinding*>(userData);
     if (!b || !b->guest_sax || !b->guest_sax->serror) return;
     void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
@@ -680,7 +699,7 @@ NKWebKit::GuestParserCtxt* APS5_VABI xmlCreatePushParserCtxt_nid_postfix(NKWebKi
 NKWebKit::GuestXmlError* APS5_VABI xmlCtxtGetLastError_nid_postfix(void* ctx) {
     if (!ctx) return nullptr;
     auto* b = RequireBinding(ctx, __func__);
-    xmlErrorPtr err = xmlCtxtGetLastError(b->host_ctxt);
+    const xmlError* err = xmlCtxtGetLastError(b->host_ctxt);
     if (!err) return nullptr;
     SyncHostErrorToGuest(err, &b->guest_error, b);
     return &b->guest_error;
@@ -779,6 +798,8 @@ int APS5_VABI xmlParseContent_nid_postfix(NKWebKit::GuestParserCtxt* ctxt) {
     auto* b = FindBinding(ctxt);
     if (!b || !b->host_ctxt) return -1;
     SyncGuestToHost(b);
+    if (!b->host_ctxt->myDoc && b->host_ctxt->sax && b->host_ctxt->sax->startElementNs == xmlSAX2StartElementNs)
+        NotImplemented_nid_no_patch("xmlParseContent: libxml2 tree building without a document");
     xmlParseContent(b->host_ctxt);
     SyncHostToGuest(b);
     return 0;

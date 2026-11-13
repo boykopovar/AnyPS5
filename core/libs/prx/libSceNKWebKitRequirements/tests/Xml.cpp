@@ -195,13 +195,15 @@ void TestMemoryParserAndEntities() {
     NKWebKit::GuestParserCtxt* ctxt = xmlCreateMemoryParserCtxt_nid_postfix(memXml, static_cast<int>(std::strlen(memXml)));
     AssertTrue(ctxt != nullptr, "xmlCreateMemoryParserCtxt returned null");
 
+    xmlSAX2StartDocument_nid_postfix(ctxt);
+
     int contentRet = xmlParseContent_nid_postfix(ctxt);
     AssertTrue(contentRet == 0, "xmlParseContent failed");
+    AssertTrue(ctxt->myDoc != nullptr, "xmlParseContent did not report the started document");
 
     int encRet = xmlSwitchEncoding_nid_postfix(ctxt, 1);
     (void)encRet;
 
-    xmlSAX2StartDocument_nid_postfix(ctxt);
     xmlSAX2InternalSubset_nid_postfix(ctxt, reinterpret_cast<const uint8_t*>("greeting"), nullptr, nullptr);
     xmlSAX2EntityDecl_nid_postfix(ctxt, reinterpret_cast<const uint8_t*>("customEnt"), 1, nullptr, nullptr, reinterpret_cast<const uint8_t*>("customVal"));
     xmlSAX2EndDocument_nid_postfix(ctxt);
@@ -518,6 +520,41 @@ void TestUnknownContexts() {
     rejects([&] { xmlSAX2EntityDecl_nid_postfix(&stray, reinterpret_cast<const uint8_t*>("e"), 1, nullptr, nullptr, reinterpret_cast<const uint8_t*>("v")); }, "xmlSAX2EntityDecl should reject a context it did not create");
 }
 
+void TestInputStandaloneFollowsDocument() {
+    const struct {
+        const char* xml;
+        int32_t standalone;
+    } cases[] = {
+        {"<?xml version=\"1.0\" standalone=\"yes\"?><r>", 1},
+        {"<?xml version=\"1.0\" standalone=\"no\"?><r>", 0},
+        {"<?xml version=\"1.0\"?><r>", -2},
+        {"<r>", -1},
+    };
+    for (const auto& item : cases) {
+        NKWebKit::GuestSAXHandler sax{};
+        NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(&sax, nullptr, nullptr, 0, "standalone.xml");
+        AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+        xmlParseChunk_nid_postfix(ctxt, item.xml, static_cast<int>(std::strlen(item.xml)), 0);
+        AssertTrue(ctxt->input != nullptr, "the parser has no input");
+        AssertTrue(ctxt->input->standalone == item.standalone, "the input reports a wrong standalone value");
+        xmlFreeParserCtxt_nid_postfix(ctxt);
+    }
+}
+
+void TestParseContentWithoutDocumentThrows() {
+    const char memXml[] = "<greeting>Hello</greeting>";
+    NKWebKit::GuestParserCtxt* ctxt = xmlCreateMemoryParserCtxt_nid_postfix(memXml, static_cast<int>(std::strlen(memXml)));
+    AssertTrue(ctxt != nullptr, "xmlCreateMemoryParserCtxt returned null");
+    bool thrown = false;
+    try {
+        xmlParseContent_nid_postfix(ctxt);
+    } catch (const std::runtime_error&) {
+        thrown = true;
+    }
+    AssertTrue(thrown, "xmlParseContent should throw when libxml2 would build a tree without a document");
+    xmlFreeParserCtxt_nid_postfix(ctxt);
+}
+
 } // namespace
 
 int main() {
@@ -530,6 +567,8 @@ int main() {
     TestEntityResultsStayDistinct();
     TestGuestCharsetReachesHost();
     TestUnknownContexts();
+    TestInputStandaloneFollowsDocument();
+    TestParseContentWithoutDocumentThrows();
     TestInputHandlersAndOpenContexts();
     TestFailedRegistrations();
     std::printf("Xml tests passed.\n");
