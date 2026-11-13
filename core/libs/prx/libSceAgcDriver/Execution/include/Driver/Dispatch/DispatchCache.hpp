@@ -62,6 +62,8 @@ struct DispatchVariant {
     std::uint32_t flatBinding = NoFlatBinding;
 
     std::uint32_t pushOffset = 0;
+    std::shared_ptr<const ShaderRecompiler::SourceHandle> prepared;
+    std::vector<std::vector<std::pair<std::uint32_t, std::uint32_t>>> bufferWordBuffers;
     std::vector<std::int8_t> runBases;
     std::uint64_t relocatableWords = 0;
     std::uint64_t userWordsWalked = 0;
@@ -73,6 +75,8 @@ struct DispatchVariant {
     std::shared_ptr<DispatchVariant> donor;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> shaderDataPatches;
     std::uint64_t userDataMask = ~std::uint64_t{0};
+    std::vector<std::byte> patchedPushConstants;
+    bool dataPatched = false;
     std::shared_ptr<const ShaderRecompiler::ShaderVertexStageInfo> vertexInfo;
 
     std::shared_ptr<ShaderMemory> memory;

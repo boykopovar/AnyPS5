@@ -694,6 +694,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     const bool needsShaderData = layout.UsesPushData() || plan.storageData;
     auto shaderData = needsShaderData ? ShaderDataDwordsFor(layout, userDataBase, snapshot, partialThreads, plan.imageMetadata, plan.runtimeState) : std::vector<std::uint32_t>{};
     allocation.shaderDataUserWords.clear();
+    allocation.bufferBaseSlots.clear();
     if (needsShaderData) {
         allocation.shaderDataUserWords.reserve(layout.userDataRegisters.size());
         for (const auto reg : layout.userDataRegisters) allocation.shaderDataUserWords.push_back(reg - userDataBase);
@@ -707,6 +708,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
         switch (physical.role) {
         case DescriptorRole::GuestBuffers:
             physical.guestDescriptor = GuestBuffersDescriptor(entry.resources, snapshot);
+            for (std::uint32_t element = 0; element < entry.resources.size(); ++element) allocation.bufferBaseSlots.push_back({entry.resources[element], static_cast<std::uint32_t>(bindings.size()), element * 4u});
             writtenHere += entry.writtenBuffers;
             readOnlyHere += entry.readOnlyBuffers;
             break;

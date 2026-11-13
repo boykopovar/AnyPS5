@@ -147,7 +147,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                     auto outcome = EntryOutcome::Differing;
                     bool anyLayout = false;
                     for (std::size_t rank = 0; rank < variants.size(); ++rank) {
-                        const auto& variant = variants[rank];
+                        auto variant = variants[rank];
                         if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
                         if (variant->pushOffset != cursor) continue;
                         if (programs[i].binary.stage == ShaderRecompiler::ShaderStage::Mesh && !std::equal(variant->meshIndexDescriptor.begin(), variant->meshIndexDescriptor.end(), programs[i].userData.begin() + ShaderRecompiler::MeshIndexBufferUserWord)) {
@@ -159,8 +159,19 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                         regions.clear();
                         appendEntryRegions(*variant, regions);
                         ++compared;
-                        auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling, live);
-                        if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling, live);
+                        const bool data = drawRelocationEnabled() && !variant->bufferWordBuffers.empty();
+                        auto* validateLive = data ? &liveData : live;
+                        auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling, validateLive);
+                        if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling, validateLive);
+                        if (data && result == EntryOutcome::EqualData) {
+                            auto patched = patchBufferWords(*variant, liveData);
+                            result = patched != nullptr ? EntryOutcome::Equal : EntryOutcome::Differing;
+                            if (patched != nullptr) {
+                                variant = std::move(patched);
+                                regions.clear();
+                                appendEntryRegions(*variant, regions);
+                            }
+                        }
                         if (!anyLayout) outcome = result;
                         anyLayout = true;
                         if (result != EntryOutcome::Equal && result != EntryOutcome::EqualData) continue;

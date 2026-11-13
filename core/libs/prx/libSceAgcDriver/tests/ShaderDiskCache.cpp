@@ -197,6 +197,7 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(left.workgroupMemoryDwords == right.workgroupMemoryDwords, prefix + "workgroup memory stride differs");
     require(left.poisonedSrtReads == right.poisonedSrtReads, prefix + "poisoned SRT read counts differ");
     require(left.shaderDataUserWords == right.shaderDataUserWords, prefix + "shader-data user words differ");
+    require(left.bufferBaseSlots == right.bufferBaseSlots, prefix + "buffer base slots differ");
     require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
     require(left.imageTableReadRanges == right.imageTableReadRanges, prefix + "image table read ranges differ");
     require(left.userDataRegisterReads == right.userDataRegisterReads, prefix + "user data register read mask differs");
@@ -297,6 +298,7 @@ RecompileResult sampleResult() {
     result.stencilReferenceDword = 23u;
     result.poisonedSrtReads = 3;
     result.shaderDataUserWords = {2u, 0xffffffffu, 9u};
+    result.bufferBaseSlots = {{0u, 1u, 4u}, {3u, 0u, 0xffffffffu}};
     result.barycentricEmulation = {true, false, true};
     result.meshBarycentrics = MeshBarycentricLayout{{true, true, false}, {FragmentParameter{0, 2, false, true}, FragmentParameter{3, 3, false, false}}};
     result.variantId = 99;

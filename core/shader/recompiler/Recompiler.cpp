@@ -1372,6 +1372,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         }
     }
     result.shaderDataUserWords = std::move(bindings.shaderDataUserWords);
+    result.bufferBaseSlots = std::move(bindings.bufferBaseSlots);
     result.poisonedSrtReads = static_cast<std::uint32_t>(snapshot.srtPoison.size()) + snapshot.nullRootReads;
     if (!tables.map.empty()) {
         result.imageTablePoison.reserve(tables.poison.size());
@@ -2137,16 +2138,52 @@ namespace {
 
 // The capture's materialization; with pure flat slots in the plan the walk's read addresses are
 // traced into the capture (ResourceCapture::readTrace).
+void noteBufferBaseWords(ResourceCapture& capture) {
+    const auto& plan = *capture.plan;
+    const auto& use = capture.userDataUse;
+    for (std::uint32_t buffer = 0; buffer < plan.info.buffers.size() && buffer < plan.materializationSources.size(); ++buffer) {
+        const auto source = plan.materializationSources[buffer];
+        const void* lead = nullptr;
+        bool single = true;
+        for (const auto& [index, instruction] : use.sourceLeads) {
+            if (index != source) continue;
+            if (lead != nullptr && lead != instruction) single = false;
+            lead = instruction;
+        }
+        if (lead == nullptr || !single || std::find(use.operandReads.begin(), use.operandReads.end(), lead) != use.operandReads.end()) continue;
+        std::uint64_t address = 0;
+        std::size_t found = 0;
+        for (std::size_t read = 0; read < use.readInstructions.size() && read < use.reads.size(); ++read) {
+            if (use.readInstructions[read] != lead) continue;
+            if (found != 0 && use.reads[read].first != address) single = false;
+            address = use.reads[read].first;
+            ++found;
+        }
+        for (std::size_t read = 0; read < use.readInstructions.size() && read < use.reads.size(); ++read) {
+            if (use.reads[read].first == address && use.readInstructions[read] != lead) single = false;
+        }
+        std::int64_t flatOffset = -1;
+        for (const auto& read : plan.srtReads) {
+            if (read.value == nullptr || read.value->Resolve() != lead) continue;
+            if (flatOffset >= 0) single = false;
+            flatOffset = read.flatOffset;
+        }
+        if (found != 0 && single) capture.bufferBaseWords.push_back({buffer, address, flatOffset});
+    }
+}
+
 void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
     const auto& plan = *capture.plan;
     SrtRuntime traced = runtime;
     traced.userDataUse = &capture.userDataUse;
     if (std::none_of(plan.pureFlatSlots.begin(), plan.pureFlatSlots.end(), [](std::uint8_t pure) { return pure != 0u; })) {
         ResourceMaterializer{}.Materialize(plan, traced, capture.snapshot);
+        noteBufferBaseWords(capture);
         return;
     }
     traced.readTrace = &capture.readTrace;
     ResourceMaterializer{}.Materialize(plan, traced, capture.snapshot);
+    noteBufferBaseWords(capture);
     auto& other = capture.readTrace.otherReads;
     if (other.size() > 1) {
         std::sort(other.begin(), other.end());

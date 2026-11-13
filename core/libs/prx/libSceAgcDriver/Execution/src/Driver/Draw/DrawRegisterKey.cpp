@@ -131,8 +131,9 @@ std::uint64_t Driver::drawIdentityKey(const QueueState& queue, const ShaderRegis
     return key == 0 ? 1 : key;
 }
 
-std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegistry& registry, std::uint64_t deviceSerial, std::uint64_t* shape, std::array<std::uint64_t, 5>* components, const DrawRelocation* relocation, std::uint64_t* alias) {
-    const bool aliased = alias != nullptr && relocation != nullptr && !relocation->words.empty();
+std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegistry& registry, std::uint64_t deviceSerial, std::uint64_t* shape, std::array<std::uint64_t, 5>* components, const DrawRelocation* relocation, DrawAliasKeys* aliases) {
+    const bool aliased = aliases != nullptr && relocation != nullptr && !relocation->words.empty();
+    std::array<std::uint64_t, DrawAliasKeys::Stages> content{};
     bool readable = true;
     std::uint64_t other = 0x6c62272e07bb0142ull;
     const auto mixOther = [&](std::uint64_t value) {
@@ -150,7 +151,12 @@ std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegis
         forEachKeyedUserWord(queue, allUserWords, [&](std::uint32_t offset, std::uint32_t value) {
             mixOther(offset);
             const auto word = std::find_if(relocation->words.begin(), relocation->words.end(), [&](const RelocatableUserWord& candidate) { return candidate.reg == offset; });
-            mixOther(word != relocation->words.end() ? relocatedContentKey(*word, value, readable) : value);
+            if (word == relocation->words.end()) {
+                mixOther(value);
+                return;
+            }
+            auto& stage = content[DrawAliasKeys::Stage(offset)];
+            stage = (stage ^ offset ^ relocatedContentKey(*word, value, readable)) * 0x100000001b3ull;
         });
         mixOther(deviceSerial);
     }
@@ -190,7 +196,10 @@ std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegis
         }
     }
     if (shape != nullptr) *shape = shapeKey;
-    if (aliased && readable) *alias = other == 0 ? 1 : other;
+    if (aliased && readable) {
+        aliases->structure = other == 0 ? 1 : other;
+        aliases->content = content;
+    }
     return key;
 }
 

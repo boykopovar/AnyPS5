@@ -133,6 +133,8 @@ struct StageCapture {
     std::uint32_t pushOffset = 0;
     ShaderRecompiler::SrtUserDataUse userDataUse;
     std::uint64_t userDataMask = ~std::uint64_t{0};
+    std::shared_ptr<const ShaderRecompiler::SourceHandle> prepared;
+    std::vector<ShaderRecompiler::BufferBaseWord> bufferBaseWords;
 };
 
 struct RelocatableUserWord {
@@ -140,6 +142,7 @@ struct RelocatableUserWord {
     std::vector<std::pair<std::int64_t, std::uint32_t>> reads;
     bool value = false;
     std::uint32_t high = 0;
+    std::vector<std::int64_t> dataOffsets;
 };
 
 struct DrawRelocation {
@@ -152,8 +155,30 @@ struct DrawUserPatch {
     std::uint32_t index, value;
 };
 
+struct DrawAliasKeys {
+    static constexpr std::size_t Stages = 3;
+    std::uint64_t structure = 0;
+    std::array<std::uint64_t, Stages> content{};
+    static std::size_t Stage(std::uint32_t reg) { return reg >= 0x10cu ? 2 : reg >= 0x08cu ? 1 : 0; }
+    std::uint64_t Key(std::uint64_t stageKey, std::uint32_t userDataBase) const { return (stageKey ^ (content[Stage(userDataBase)] + 0x9e3779b97f4a7c15ull)) * 0x100000001b3ull + userDataBase; }
+};
+
+struct DrawStageDonor {
+    std::weak_ptr<DispatchVariant> variant;
+    std::vector<std::uint32_t> userData;
+    std::uint64_t ownerKey = 0;
+    std::weak_ptr<const DrawEntry> owner;
+};
+
+struct DrawDecodeDonor {
+    std::shared_ptr<const DrawDecode> decode;
+    std::vector<std::uint64_t> stageKeys;
+};
+
 struct DrawRelocationPending {
-    std::uint64_t key = 0, alias = 0, identity = 0;
+    std::uint64_t key = 0, identity = 0;
+    DrawAliasKeys aliases;
+    std::shared_ptr<const DrawRelocation> relocation;
 };
 
 struct DrawRelocationTrial {
