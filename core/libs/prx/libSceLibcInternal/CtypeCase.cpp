@@ -1,4 +1,4 @@
-#include "prx/libSceLibcInternal/CtypeCase.hpp"
+#include "prx/libSceLibcInternal/include/Ctype.hpp"
 #include "prx/libc/include/General.hpp"
 #include <bit>
 #include <cstddef>
