@@ -1,7 +1,5 @@
 # libSceVideoCoreServerInterface technical debt
 
-### Unknown function info
-
 ### Functional
 
 - [sceVideoCoreAbortRequest, sceVideoCoreAddStream, sceVideoCoreAsyncAddStream, sceVideoCoreAsyncSendRequest, sceVideoCoreCancelThumbnail, sceVideoCoreChangeActiveStatus, sceVideoCoreChangeAudioStream, sceVideoCoreChangeDisplaySize, sceVideoCoreChangeHdcpSetting, sceVideoCoreChangeSubtitle and sceVideoCoreDeleteStream](../../../core/libs/prx/libSceVideoCoreServerInterface/Export.cpp) (libSceVideoCoreServerInterface) - return 0, as firmware 13.42 does: read from its disassembly and run under a CPU emulator on x86-64, not on a console, each prints `[ERR]<name>() ` (`printf`) and `This API is not available.` (`puts`), then clears `eax` and returns. The prints are not reproduced. No argument is read, so the declarations keep no parameters; other firmware versions were not read.
