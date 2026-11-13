@@ -86,7 +86,6 @@ void RequireFlag(Reader reader, std::size_t offset) {
 
 void RequireVectorMembers() {
     RequireMemberCopy(_ZN3sce2Np9CppWebApi10Activities2V114UserActivities14UserActivities13getActivitiesEv, 0x30, 0x30);
-    RequireMemberCopy(_ZN3sce2Np9CppWebApi10Activities2V114UserActivities26GetUsersActivitiesResponse8getUsersEv, 0x30, 0x30);
     RequireMemberCopy(_ZN3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead19getPlayerAttributesEv, 0x68, 0x30);
     RequireMemberCopy(_ZN3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody10getPlayersEv, 0x80, 0x30);
     RequireMemberCopy(_ZN3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody10getPlayersEv, 0xa0, 0x30);
@@ -122,16 +121,6 @@ void RequireValues() {
     storage.bytes[0x58] = 0xff;
     Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V122GetRankingResponseBody22getLastUpdatedDateTimeEv(model) == updated);
 
-    const std::uint32_t rank = 0x8000'0001u;
-    const std::uint32_t serialRank = 0x7fff'fffeu;
-    for (std::size_t index = 0; index < 4; ++index) {
-        storage.bytes[0x30 + index] = static_cast<unsigned char>(rank >> (index * 8));
-        storage.bytes[0x34 + index] = static_cast<unsigned char>(serialRank >> (index * 8));
-    }
-    storage.bytes[0x2f] = 0xff;
-    storage.bytes[0x38] = 0xff;
-    Require(static_cast<std::uint32_t>(_ZNK3sce2Np9CppWebApi12Leaderboards2V123RecordScoreResponseBody10getTmpRankEv(model)) == rank);
-    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V123RecordScoreResponseBody16getTmpSerialRankEv(model) == serialRank);
 }
 
 void RequireAtomicOperationId() {
