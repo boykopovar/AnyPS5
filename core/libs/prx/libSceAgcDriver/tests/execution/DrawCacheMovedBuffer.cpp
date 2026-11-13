@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <bit>
@@ -19,7 +20,7 @@ namespace {
 using AgcDriver::Graphics::Require;
 using AgcDriver::DriverDetail::DrawMiss;
 
-alignas(256) constexpr std::array<std::uint32_t, 8> VertexCode{0x7e000208u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0xf80008cfu, 0x03020100u, 0xbf810000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u, 0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 12> PixelCode{0xf4080100u, 0xfa000000u, 0xf4200202u, 0xfa000000u, 0x7e000208u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
 alignas(16) std::array<std::uint32_t, 4> Table{};
 alignas(16) std::array<float, 4> First{1.0f, 0.0f, 0.0f, 0.0f};
@@ -102,10 +103,22 @@ void MovedBufferHitsTheCache(bool libraries) {
     const auto draw = [&](std::initializer_list<const float*> sources) {
         const auto address = reinterpret_cast<std::uintptr_t>(*sources.begin());
         Table = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), 16u, 0x31016facu};
+        ColorMemory.fill(std::byte{0x40});
         auto commands = DrawFrom(sources);
         Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
         Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
         AgcDriverWaitIdle_nid_postfix();
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(ColorMemory.data()), ColorMemory.size());
+        const auto red = static_cast<std::uint8_t>(**sources.begin() * 255.0f + 0.5f);
+        const std::array<std::uint8_t, 4> expected{red, 0u, 0u, red};
+        std::size_t drawn = 0;
+        for (std::size_t at = 0; at < ColorMemory.size(); at += 4u) {
+            const std::array<std::uint8_t, 4> pixel{static_cast<std::uint8_t>(ColorMemory[at]), static_cast<std::uint8_t>(ColorMemory[at + 1]), static_cast<std::uint8_t>(ColorMemory[at + 2]), static_cast<std::uint8_t>(ColorMemory[at + 3])};
+            if (pixel == std::array<std::uint8_t, 4>{0x40u, 0x40u, 0x40u, 0x40u}) continue;
+            Require(pixel == expected, mode + ": a moved-buffer draw produced a stale or incorrect pixel at " + std::to_string(at / 4u));
+            ++drawn;
+        }
+        Require(drawn != 0u, mode + ": a moved-buffer draw wrote no pixels");
         return AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
     };
     draw({First.data()});
