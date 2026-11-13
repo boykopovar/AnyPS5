@@ -301,11 +301,13 @@ public:
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }
+    bool WrittenInPlace(std::uint64_t address, std::size_t bytes) const { return guestMemory.WrittenInPlace(address, bytes); }
     // Whether a region the recorded work reads in place through a host import overlaps the range.
     bool ReadsOverlap(std::uint64_t address, std::size_t bytes) const;
     // The recorder's hazard tracker inputs (Recorder::NoteAccess): the written elements' guest
     // ranges, the regions read in place, and the storage images with whether each is written.
     const std::vector<std::pair<std::uint64_t, std::uint64_t>>& GpuWrites() const { return guestMemory.Writes(); }
+    const std::vector<std::pair<std::uint64_t, std::uint64_t>>& AtomicOnlyRanges() const { return atomicOnlyRanges; }
     const std::vector<std::pair<std::uint64_t, std::uint64_t>>& WriteOnlyRanges() const { return writeOnlyRanges; }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> InPlaceReads() const { return guestMemory.InPlaceReads(); }
     void InPlaceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const { guestMemory.InPlaceReads(out); }
@@ -452,6 +454,7 @@ private:
         // Guest buffers: whether the shader may store to the range (see addGuestBuffer).
         bool written = true;
         bool writeOnly = false;
+        bool atomicOnly = false;
         // Data buffers: the words the buffer holds once the recorded work ran (see RefreshData).
         std::vector<std::uint32_t> dataWords;
         std::uint32_t adjustment = 0;
@@ -527,7 +530,7 @@ private:
     // `written` is the element's DescriptorBinding::bufferWritten: a read-only element binds the
     // same way but is left out of the write set (no write-back, no pending-write note). `atomic`
     // is its bufferAtomic (see GuestBufferMemory::AddWritable).
-    std::size_t addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read, std::uint32_t extent);
+    std::size_t addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read, std::uint32_t extent, bool atomicOnly = false);
     std::uint64_t guestBufferBytes(std::span<const std::uint32_t> words) const;
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     void requireGuestBuffers(std::span<const MovedBuffer> moved = {}) const;
@@ -733,6 +736,7 @@ private:
     std::chrono::steady_clock::time_point lastFullWalk = std::chrono::steady_clock::now();
     std::uint64_t walkImportGeneration = HostImportSetGeneration();
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writeOnlyRanges;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> atomicOnlyRanges;
     bool drawBuild = false;
     std::uint64_t dispatchThreads = 0;
     std::optional<std::pair<std::uint64_t, std::size_t>> htileClear;

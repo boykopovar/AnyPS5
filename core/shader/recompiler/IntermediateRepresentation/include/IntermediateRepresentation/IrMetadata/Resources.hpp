@@ -21,6 +21,7 @@ struct BufferResource {
     bool read = false;
     bool written = false;
     bool atomic = false;
+    bool plain = false;
     bool formatted = false;
     bool descriptorFormatted = false;
     std::uint32_t formattedReadMask = 0;

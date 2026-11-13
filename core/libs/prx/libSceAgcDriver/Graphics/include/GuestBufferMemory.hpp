@@ -354,7 +354,7 @@ public:
     // (DescriptorBinding::bufferWritten): the CPU never has to wait for it. `atomic` marks an
     // element the shader updates atomically (DescriptorBinding::bufferAtomic), staged in device
     // memory whatever its size (see AllowDeviceStaging).
-    void AddWritable(std::uint64_t address, std::size_t bytes, bool atomic = false, bool swept = false);
+    void AddWritable(std::uint64_t address, std::size_t bytes, bool atomic = false, bool swept = false, bool inPlace = false);
     void AddReadable(std::uint64_t address, std::size_t bytes);
     // Device-local staging of written and atomic elements inside host imports (see
     // GuestBufferMemory.cpp): allowed only for a build whose every use records its work and then
@@ -404,6 +404,7 @@ public:
     void WriteBack();
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const;
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const;
+    bool WrittenInPlace(std::uint64_t address, std::size_t bytes) const;
     // Guest ranges the shader may write through descriptors, as [begin, end).
     const std::vector<std::pair<std::uint64_t, std::uint64_t>>& Writes() const { return writes; }
     // Whether any written range lives in a copied buffer, so a write-back must run once the GPU is done.
@@ -523,6 +524,7 @@ private:
         // An element the shader updates atomically lies inside (AddWritable's `atomic`).
         bool atomic = false;
         bool swept = false;
+        bool inPlace = false;
         // The gpuCopy buffer is a device-local staging shadow (see stagingEligible): no host
         // mapping, so nothing is ever stored from it by the CPU, and the region is taken even when
         // the import could bind it in place.
@@ -562,7 +564,7 @@ private:
     // The region of a descriptor-bound range (AddWritable/AddReadable), committed pages only. A
     // range inside a base region of the space adds nothing: the region serves it, as today's merge
     // of the two did.
-    void addDescriptorRegion(std::uint64_t address, std::size_t bytes, bool atomic, bool swept, bool readOnly);
+    void addDescriptorRegion(std::uint64_t address, std::size_t bytes, bool atomic, bool swept, bool readOnly, bool inPlace = false);
     static bool servesView(const Region& region, std::uint64_t view);
     static bool sparseHeapCandidate(const Region& region);
     bool bindSparseMirror(Region& region, const GuestAllocations::Lease& lease);

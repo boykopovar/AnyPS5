@@ -4514,6 +4514,22 @@ bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
     Require(boundInPlace(address + 4096, 4u << 20u, false) != context.discreteGpu, context.discreteGpu ? "a written-only 4 MiB element was bound in place on a discrete GPU" : "a written-only 4 MiB element was staged past the written window");
     Require(boundInPlace(address + 4096, 12u << 20u, false), "a written-only 12 MiB element was staged past the discrete written window");
     Require(!boundInPlace(address + 4096, 4u << 20u, true), "a read and written 4 MiB element was bound in place");
+    const auto counterInPlace = [&](bool drawAtomicOnly) {
+        const auto counter = address + 4096;
+        GuestBufferMemory memory(context);
+        memory.AllowDeviceStaging();
+        memory.AddWritable(counter, 64, true, false, drawAtomicOnly);
+        memory.Upload(false);
+        const auto reads = memory.InPlaceReads();
+        const bool direct = reads.size() == 1 && reads[0].first == counter && reads[0].second == counter + 64;
+        Require(direct || reads.empty(), "an atomic counter was bound neither in place nor staged");
+        Require(memory.WrittenInPlace(counter, 64) == direct, "an atomic counter's written-in-place answer disagrees with its binding");
+        memory.RecordCopyBacks(recorder);
+        recorder.Sync();
+        return direct;
+    };
+    Require(!counterInPlace(false), "an atomic 64-byte counter was not staged");
+    Require(counterInPlace(true), "a 64-byte counter a draw only updates atomically was staged");
     const auto buildInPlace = [&](std::uint64_t dispatchThreads, bool read, std::uint32_t stride, std::uint32_t extent, std::uint32_t elementBytes = 12u << 20u) {
         const auto element = address + 4096;
         const std::uint32_t records = stride != 0 ? elementBytes / stride : elementBytes;

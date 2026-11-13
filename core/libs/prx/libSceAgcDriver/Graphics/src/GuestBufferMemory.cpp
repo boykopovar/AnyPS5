@@ -5471,7 +5471,7 @@ bool mirrorOverlaps(const Regions& base, std::uint64_t begin, std::uint64_t end)
 
 }
 
-void GuestBufferMemory::addDescriptorRegion(std::uint64_t address, std::size_t bytes, bool atomic, bool swept, bool readOnly) {
+void GuestBufferMemory::addDescriptorRegion(std::uint64_t address, std::size_t bytes, bool atomic, bool swept, bool readOnly, bool inPlace) {
     validate(address, bytes);
     const auto begin = address & ~std::uint64_t{3};
     const auto end = begin == address ? address + bytes : (address + bytes + 3) & ~std::uint64_t{3};
@@ -5505,6 +5505,7 @@ void GuestBufferMemory::addDescriptorRegion(std::uint64_t address, std::size_t b
     Region region{begin, end, true, {}, nullptr};
     region.atomic = atomic;
     region.swept = swept;
+    region.inPlace = inPlace;
     region.lastView = begin;
     region.overlay = overlay;
     auto committed = GuestMemory::DescribeCommitted(begin, static_cast<std::size_t>(end - begin));
@@ -5584,12 +5585,12 @@ bool GuestBufferMemory::bindSparseMirror(Region& region, const GuestAllocations:
     return true;
 }
 
-void GuestBufferMemory::AddWritable(std::uint64_t address, std::size_t bytes, bool atomic, bool swept) {
+void GuestBufferMemory::AddWritable(std::uint64_t address, std::size_t bytes, bool atomic, bool swept, bool inPlace) {
     if (space != nullptr && std::any_of(readsOverBase.begin(), readsOverBase.end(), [&](const auto& range) { return address < range.second && range.first < address + bytes; })) {
         Spaces().dissolvedOverlap.fetch_add(1, std::memory_order_relaxed);
         dissolveSpace(false);
     }
-    addDescriptorRegion(address, bytes, atomic, swept, false);
+    addDescriptorRegion(address, bytes, atomic, swept, false, inPlace);
     writes.emplace_back(address, address + bytes);
 }
 
@@ -6137,7 +6138,7 @@ bool GuestBufferMemory::StagingDecisionsCurrent() const {
 }
 
 bool GuestBufferMemory::stagingWanted(const Region& region, bool addressable) const {
-    if (!stagingAllowed || (addressable && !region.overlay) || region.unstaged || !gpuCopiesEnabled() || region.sparse || region.mirror != nullptr) return false;
+    if (!stagingAllowed || (addressable && !region.overlay) || region.unstaged || region.inPlace || !gpuCopiesEnabled() || region.sparse || region.mirror != nullptr) return false;
     const auto bytes = region.end - region.begin;
     if (!WritesOverlap(region.begin, static_cast<std::size_t>(bytes))) return false;
     if (region.atomic && atomicStagingEnabled() && bytes <= atomicStageMax()) return true;
@@ -6231,6 +6232,7 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
             previous.lastView = std::max({previous.lastView, region.lastView, region.begin});
             if (region.end > previous.end) previous.direct = nullptr;
             previous.atomic = previous.atomic || region.atomic;
+            previous.inPlace = previous.inPlace && region.inPlace;
             previous.swept = previous.swept || region.swept;
             previous.sparseHeap = previous.sparseHeap || region.sparseHeap;
             // A range starting before the mirror (only possible after the swap) keeps its prefix; the
@@ -7216,6 +7218,18 @@ bool GuestBufferMemory::CopiedWritesOverlap(std::uint64_t address, std::size_t b
         return true;
     }
     return false;
+}
+
+bool GuestBufferMemory::WrittenInPlace(std::uint64_t address, std::size_t bytes) const {
+    if (bytes == 0) return false;
+    bool any = false;
+    for (const auto& [begin, end] : writes) {
+        if (!(address < end && begin < address + bytes)) continue;
+        const auto* found = owner(begin, end);
+        if (found == nullptr || found->direct == nullptr) return false;
+        any = true;
+    }
+    return any;
 }
 
 void GuestBufferMemory::RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const {
