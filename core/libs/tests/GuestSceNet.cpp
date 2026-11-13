@@ -1725,6 +1725,57 @@ static void CheckEtherAddress() {
     }
 }
 
+static void CheckEtherPointerFaults() {
+    const NetEtherAddr address{{0, 1, 2, 10, 11, 15}};
+    const NetEtherAddr unchanged{{0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5}};
+    const char valid[] = "00:01:02:0a:0b:0f";
+    std::array<char, 18> text{};
+    text.fill('#');
+    Require(Failed(sceNetEtherNtostr(reinterpret_cast<const NetEtherAddr*>(std::uintptr_t{0x10}), text.data(), text.size()), 14));
+    Require(std::all_of(text.begin(), text.end(), [](char character) { return character == '#'; }));
+    Require(Failed(sceNetEtherNtostr(&address, reinterpret_cast<char*>(std::uintptr_t{0x10}), text.size()), 14));
+    Require(Failed(sceNetEtherNtostr(reinterpret_cast<const NetEtherAddr*>(std::uintptr_t{0x10}), text.data(), 17), 22));
+    auto output = unchanged;
+    Require(Failed(sceNetEtherStrton(reinterpret_cast<const char*>(std::uintptr_t{0x10}), &output), 14));
+    Require(std::memcmp(&output, &unchanged, sizeof(output)) == 0);
+    Require(Failed(sceNetEtherStrton(valid, reinterpret_cast<NetEtherAddr*>(std::uintptr_t{0x10})), 14));
+
+    constexpr std::size_t page = 0x4000;
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &physical) == 0);
+    void* mapping = nullptr;
+    Require(sceKernelMapDirectMemory(&mapping, page * 2, 3, 0, physical, 0) == 0);
+    auto* boundary = static_cast<char*>(mapping) + page;
+    std::memcpy(boundary - 17, valid, 17);
+    std::memset(mapping, '#', text.size());
+    Require(sceKernelMprotect(boundary, page, 0) == 0);
+    output = unchanged;
+    Require(sceNetEtherStrton(boundary - 17, &output) == 0);
+    Require(std::memcmp(&output, &address, sizeof(output)) == 0);
+    output = unchanged;
+    Require(Failed(sceNetEtherStrton(boundary - 16, &output), 14));
+    Require(std::memcmp(&output, &unchanged, sizeof(output)) == 0);
+    boundary[-16] = '\0';
+    Require(Failed(sceNetEtherStrton(boundary - 16, &output), 22));
+    Require(std::memcmp(&output, &unchanged, sizeof(output)) == 0);
+    Require(Failed(sceNetEtherNtostr(reinterpret_cast<const NetEtherAddr*>(boundary - 5), text.data(), text.size()), 14));
+    Require(std::all_of(text.begin(), text.end(), [](char character) { return character == '#'; }));
+    std::memcpy(boundary - 17, valid, 17);
+    std::memcpy(static_cast<char*>(mapping) + 64, &address, sizeof(address));
+    Require(sceKernelMprotect(mapping, page, 1) == 0);
+    output = unchanged;
+    Require(sceNetEtherStrton(boundary - 17, &output) == 0);
+    Require(std::memcmp(&output, &address, sizeof(output)) == 0);
+    Require(sceNetEtherNtostr(reinterpret_cast<const NetEtherAddr*>(static_cast<char*>(mapping) + 64), text.data(), text.size()) == 0);
+    Require(std::strcmp(text.data(), valid) == 0);
+    Require(Failed(sceNetEtherNtostr(&address, static_cast<char*>(mapping), 18), 14));
+    Require(std::all_of(static_cast<char*>(mapping), static_cast<char*>(mapping) + 18, [](char character) { return character == '#'; }));
+    Require(Failed(sceNetEtherStrton(valid, static_cast<NetEtherAddr*>(mapping)), 14));
+    Require(std::all_of(static_cast<char*>(mapping), static_cast<char*>(mapping) + 18, [](char character) { return character == '#'; }));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, page * 2) == 0);
+}
+
 static void CheckSystemTime() {
     *sceNetErrnoLoc() = 22;
     sceNetGetSystemTime(nullptr);
@@ -2644,9 +2695,14 @@ static void CheckDatagramDisconnect() {
     for (const int descriptor : {peer, other, dissolved}) Require(sceNetSocketClose(descriptor) == 0);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--ether-pointer-faults") == 0) {
+        CheckEtherPointerFaults();
+        return 0;
+    }
     CheckEtherAddress();
     CheckEtherNtostrErrors();
+    CheckEtherPointerFaults();
     const auto epoch = std::chrono::steady_clock::time_point{};
     Require(KernelSocketSelect::DeadlineAfter(epoch, 2, 250000) == epoch + std::chrono::milliseconds(2250));
     Require(KernelSocketSelect::DeadlineAfter(epoch, INT64_MAX, 0) == std::chrono::steady_clock::time_point::max());
