@@ -482,20 +482,28 @@ int APS5_VABI sceAudio3dPortSetAttribute(uint32_t port_id, uint32_t attribute_id
 }
 
 int APS5_VABI sceAudio3dObjectReserve(uint32_t port_id, uint32_t* object_id) {
+    uint32_t outId = AUDIO3D_OBJECT_INVALID;
     const int result = [&] {
         std::lock_guard lock(g_mutex);
         if (!PortIsOpen(port_id)) return AUDIO3D_ERROR_INVALID_PORT;
         if (object_id == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
-        *object_id = AUDIO3D_OBJECT_INVALID;
+        const int savedErrno = errno;
+        const bool initialOk = GuestCopyOut_nid_no_patch(object_id, &outId, sizeof(outId));
+        errno = savedErrno;
+        if (!initialOk) return AUDIO3D_ERROR_INVALID_PARAMETER;
         if (g_port.objects.size() >= g_port.max_objects) return AUDIO3D_ERROR_OUT_OF_RESOURCES;
         do {
             ++g_port.next_object_id;
         } while (g_port.next_object_id == 0 || g_port.next_object_id == AUDIO3D_OBJECT_INVALID || g_port.objects.contains(g_port.next_object_id));
         g_port.objects.insert(g_port.next_object_id);
-        *object_id = g_port.next_object_id;
+        outId = g_port.next_object_id;
+        const int savedErrno2 = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(object_id, &outId, sizeof(outId));
+        errno = savedErrno2;
+        if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
         return 0;
     }();
-    Report(port_id, result == 0 ? *object_id : AUDIO3D_OBJECT_INVALID, result, __func__, "H&O", port_id, object_id);
+    Report(port_id, result == 0 ? outId : AUDIO3D_OBJECT_INVALID, result, __func__, "H&O", port_id, object_id);
     return result;
 }
 
