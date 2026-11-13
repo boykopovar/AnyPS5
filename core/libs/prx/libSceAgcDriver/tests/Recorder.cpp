@@ -6859,6 +6859,94 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied
     Require(range.reused && !range.highest.has_value(), "an empty in-place index range was scanned again");
 }
 
+bool indexBehindWriterTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    constexpr std::size_t bytes = 65536;
+    void* block = context.hostImportAlignment != 0 ? AllocateWatched(bytes, 65536) : nullptr;
+    if (block == nullptr) {
+        std::cout << "host imports or write watching unavailable: index ranges behind a pending GPU writer not tested\n";
+        return false;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+        }
+    } unregister{context, block};
+    const auto* whole = HostImportFor(context, address, bytes);
+    if (whole == nullptr) {
+        std::cout << "host import of the watched block refused: index ranges behind a pending GPU writer not tested\n";
+        return false;
+    }
+    context.recorder = &recorder;
+    context.drawInputsInPlace = false;
+    context.limits.maxDrawIndexedIndexValue = 0xffffffffu;
+    recorder.Sync();
+    const bool configured = RuntimeSwitches::Set(RuntimeSwitch::IndexInPlaceBehindWriter);
+    struct Restore {
+        bool configured;
+        ~Restore() { RuntimeSwitches::Assign(RuntimeSwitch::IndexInPlaceBehindWriter, configured); }
+    } restore{configured};
+    const auto attempt = [&](const Context& with, std::uint64_t at, std::uint32_t indexSize, bool vertexAttributes, bool meshStage, std::uint32_t firstVertex) {
+        IndexBehindWriter outcome = IndexBehindWriter::Count;
+        const auto* import = InPlaceIndexBehindWriter(with, at, 256, indexSize, vertexAttributes, meshStage, false, firstVertex, &outcome);
+        return std::pair<const HostImport*, IndexBehindWriter>(import, outcome);
+    };
+    const auto indices = address + 4096;
+    recorder.NotePendingWrite(indices, 16);
+    Require(recorder.PendingWriteOverlaps(indices, 256), "the pending GPU write over the index range was not noted");
+    RuntimeSwitches::Assign(RuntimeSwitch::IndexInPlaceBehindWriter, false);
+    const auto off = attempt(context, indices, 4, false, false, 0);
+    Require(off.first == nullptr && off.second == IndexBehindWriter::Off, "an index range behind a pending GPU writer was bound in place without APS5_INDEX_IN_PLACE_BEHIND_WRITER");
+    Require(!recorder.PendingReadOverlaps(indices, 256), "an index range left on the copy path was noted as an in-place read");
+    RuntimeSwitches::Assign(RuntimeSwitch::IndexInPlaceBehindWriter, true);
+    const auto taken = attempt(context, indices, 4, false, false, 0);
+    Require(taken.first != nullptr && taken.second == IndexBehindWriter::Taken && taken.first->base <= indices && indices + 256 <= taken.first->base + taken.first->bytes, "an index range behind a pending GPU writer was not bound in place with APS5_INDEX_IN_PLACE_BEHIND_WRITER");
+    Require(recorder.PendingWriteOverlaps(indices, 256), "binding an index range behind a pending GPU writer waited for the writer");
+    const auto read = recorder.DescribePendingRead(indices, 256);
+    Require(read.has_value() && read->kind == Recorder::ReadKind::DrawInput && read->open, "the read of an index range bound behind a pending GPU writer was not noted on the open batch");
+    Require(attempt(context, address + 16384, 4, false, false, 0).second == IndexBehindWriter::NoWriter, "an index range without a pending GPU writer left the copy path");
+    Require(attempt(context, indices, 4, true, false, 0).second == IndexBehindWriter::VertexAttributes, "an index range of a draw with vertex attributes, which needs its highest index on the CPU, was bound behind a pending GPU writer");
+    Require(attempt(context, indices, 4, false, true, 0).second == IndexBehindWriter::MeshStage, "an index range of a mesh draw was bound behind a pending GPU writer");
+    IndexBehindWriter restartOutcome = IndexBehindWriter::Count;
+    Require(InPlaceIndexBehindWriter(context, indices, 256, 4, false, false, true, 0, &restartOutcome) == nullptr && restartOutcome == IndexBehindWriter::PrimitiveRestart, "an index range of a draw with primitive restart, which is skipped when it holds restart indices only, was bound behind a pending GPU writer");
+    IndexBehindWriter shortOutcome = IndexBehindWriter::Count;
+    Require(InPlaceIndexBehindWriter(context, indices, 2, 4, false, false, false, 0, &shortOutcome) == nullptr && shortOutcome == IndexBehindWriter::Off, "an index range shorter than one index, which is skipped on the copy path, was bound behind a pending GPU writer");
+    Require(attempt(context, indices, 4, false, false, 1).second == IndexBehindWriter::VertexOffset, "a 32-bit index range whose vertex offset can overflow was bound behind a pending GPU writer");
+    Require(attempt(context, indices, 2, false, false, 0xffff0000u).second == IndexBehindWriter::Taken, "a 16-bit index range whose vertex offset cannot overflow was not bound behind a pending GPU writer");
+    Require(attempt(context, indices, 2, false, false, 0xffff0001u).second == IndexBehindWriter::VertexOffset, "a 16-bit index range whose vertex offset can overflow was bound behind a pending GPU writer");
+    Require(attempt(context, indices + 2, 4, false, false, 0).second == IndexBehindWriter::NoImport, "an index range misaligned for its format was bound behind a pending GPU writer");
+    auto limited = context;
+    limited.limits.maxDrawIndexedIndexValue = 0xffffffu;
+    Require(attempt(limited, indices, 4, false, false, 0).second == IndexBehindWriter::IndexLimit, "an index range was bound behind a pending GPU writer on a device whose index limit needs the highest index");
+    auto unrecorded = context;
+    unrecorded.recorder = nullptr;
+    Require(attempt(unrecorded, indices, 4, false, false, 0).second == IndexBehindWriter::Off, "an index range was bound behind a pending GPU writer without a recorder");
+    const std::array<std::byte, 4> label{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+    recorder.NotePendingWrite(address + 12288, 16);
+    recorder.RecordStore(whole->buffer, address + 12288 - whole->base, label, address + 12288);
+    Require(recorder.QueuedStoreOverlaps(address + 12288, 4), "the label store was not queued");
+    Require(attempt(context, address + 12288, 4, false, false, 0).second == IndexBehindWriter::LabelOrStore, "an index range under a queued label store was bound behind a pending GPU writer");
+    recorder.Sync();
+    Require(!recorder.PendingReadOverlaps(indices, 256), "the read of an index range bound behind a pending GPU writer outlived its batch");
+    Require(attempt(context, indices, 4, false, false, 0).second == IndexBehindWriter::NoWriter, "an index range whose GPU writer completed left the copy path");
+    return true;
+}
+
 // Unit shadows (UnitShadow.hpp) over a host import of write-watched arena memory: a retile piece's
 // slab destination and its seeds, freshness from the tracker (a publish never stamps, a CPU write
 // makes the unit stale), the scopes, the slab boundary, and the retire publish. With
@@ -17676,6 +17764,11 @@ int main(int argc, char** argv) {
             drawInputReuseTests(device, recorder);
             vertexWindowSeriesTests(device, recorder);
             std::cout << "Draw input reuse tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--index-behind-writer-only") {
+            if (!indexBehindWriterTests(device, recorder)) return 77;
+            std::cout << "Index ranges behind a pending GPU writer tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-inputs-copied-only") {

@@ -72,6 +72,8 @@ bool BindsIndexCopy(const State& state);
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride = 0);
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived, std::uint32_t lowest = 0);
 const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite = nullptr);
+enum class IndexBehindWriter : std::uint8_t { Taken, Off, NoWriter, VertexAttributes, IndexLimit, MeshStage, PrimitiveRestart, VertexOffset, UnitShadow, PendingStorage, LabelOrStore, CopiedWriter, NoImport, Refused, Count };
+const HostImport* InPlaceIndexBehindWriter(const Context& context, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool vertexAttributes, bool meshStage, bool primitiveRestart, std::uint32_t firstVertex, IndexBehindWriter* outcome = nullptr);
 struct InPlaceIndices {
     std::optional<std::uint32_t> highest;
     std::uint32_t lowest = 0;
