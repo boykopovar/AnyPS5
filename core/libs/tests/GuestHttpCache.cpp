@@ -3,6 +3,7 @@
 #include "prx/libSceRtc/libSceRtc.hpp"
 #include "prx/libSceUserService/libSceUserService.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -489,5 +490,34 @@ int main() {
     TestSystemLifecycle();
     TestSystemPathMemory();
     TestPublicResponses();
+    {
+        const int cache = sceHttpCacheInit(0);
+        Require(cache > 0);
+        const int request = sceHttpCacheCreateRequest(cache, -1);
+        Require(request > 0);
+        std::int32_t result = 0;
+        Response response{};
+        Request next{};
+        errno = 71;
+        Require(sceHttpCacheRetrieve(request, reinterpret_cast<const Request*>(static_cast<std::uintptr_t>(0x10)),
+                                     &response, &next, &result) == InvalidValue && errno == 71);
+        Request badUrlRequest{};
+        badUrlRequest.method = 1;
+        badUrlRequest.url = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
+        errno = 71;
+        Require(sceHttpCacheRetrieve(request, &badUrlRequest, &response, &next, &result) == InvalidValue && errno == 71);
+        Request goodRequest{};
+        goodRequest.method = 1;
+        goodRequest.url = "https://example.com/item";
+        errno = 71;
+        Require(sceHttpCacheRetrieve(request, &goodRequest, &response, &next,
+                                     reinterpret_cast<std::int32_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidValue && errno == 71);
+        errno = 71;
+        Require(sceHttpCacheSetData(request, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)), 16) == InvalidValue && errno == 71);
+        errno = 71;
+        Require(sceHttpCacheSetQuota(cache, reinterpret_cast<const Quota*>(static_cast<std::uintptr_t>(0x10))) == InvalidValue && errno == 71);
+        Require(sceHttpCacheDeleteRequest(request) == 0);
+        Require(sceHttpCacheTerm(cache) == 0);
+    }
     return 0;
 }
