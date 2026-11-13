@@ -37,8 +37,13 @@ namespace {
     throw std::runtime_error(message);
 }
 
-std::uint32_t bufferReadExtent(const BufferResource& buffer, std::uint32_t word3) {
+std::uint32_t bufferReadExtent(const BufferResource& buffer, std::uint32_t word3, const ResourceSnapshot& snapshot) {
     if (!buffer.baseFormattedReads || !buffer.read || buffer.written || buffer.atomic || buffer.scalar || buffer.formattedReadMask == 0u) return 0u;
+    if (!buffer.baseReadZeroMasks.empty() && snapshot.nullRootReads != 0u) return 0u;
+    for (const auto& proof : buffer.baseReadZeroMasks) {
+        if (proof.slot >= snapshot.flattenedSrt.size() || (snapshot.flattenedSrt[proof.slot] & proof.mask) != 0u) return 0u;
+        if (std::ranges::any_of(snapshot.srtPoison, [&](const auto& poison) { return poison.slot == proof.slot; })) return 0u;
+    }
     const auto format = (word3 >> 12u) & 0x7fu;
     if (format == 0u || format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float)) return 0u;
     const auto info = GetFormatInfo(static_cast<IrBufferFormat>(format));
@@ -415,6 +420,10 @@ bool BufferDescriptorPresent(const DescriptorValue& descriptor) {
     return descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
 }
 
+std::uint32_t BaseFormattedReadExtent(const BufferResource& buffer, std::uint32_t word3, const ResourceSnapshot& snapshot) {
+    return bufferReadExtent(buffer, word3, snapshot);
+}
+
 BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, std::span<const BufferSubstitute> substitutes, std::size_t index) {
     const bool present = BufferDescriptorPresent(descriptor);
     if (!present && !substitutes.empty()) return index < substitutes.size() && substitutes[index].known ? substitutes[index] : BufferSubstitute{};
@@ -605,7 +614,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.bufferWritten.push_back(buffer.written || buffer.atomic);
                 physical.bufferRead.push_back(buffer.read);
                 physical.bufferExtent.push_back(buffer.maxByteExtent);
-                physical.bufferReadExtent.push_back(bufferReadExtent(buffer, BufferSpecializationFields(snapshot.buffers.at(resource), substitutes, resource).word3));
+                physical.bufferReadExtent.push_back(BaseFormattedReadExtent(buffer, BufferSpecializationFields(snapshot.buffers.at(resource), substitutes, resource).word3, snapshot));
                 if (buffer.written || buffer.atomic) ++entry.writtenBuffers;
                 else ++entry.readOnlyBuffers;
             }

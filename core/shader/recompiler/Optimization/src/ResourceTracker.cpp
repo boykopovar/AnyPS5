@@ -2228,16 +2228,41 @@ private:
         return static_cast<std::uint32_t>(m_info.buffers.size() - 1);
     }
 
-    static void Merge(BufferResource& resource, const MemoryInfo& memory, const IrValue& inst, std::uint32_t pc) {
+    bool ZeroReadOffset(BufferResource& resource, const IrValue* value) const {
+        value = value->Resolve();
+        if (value->Type() != IrType::U32) return false;
+        if (value->HasImmediate()) return value->ImmediateU32() == 0u;
+        std::uint32_t mask = ~0u;
+        if (value->Opcode() == IrOpcode::BitwiseAnd32 && value->ArgumentCount() == 2u) {
+            const auto* left = value->Argument(0u)->Resolve();
+            const auto* right = value->Argument(1u)->Resolve();
+            if (left->Type() == IrType::U32 && left->HasImmediate()) std::swap(left, right);
+            if (right->Type() != IrType::U32 || !right->HasImmediate()) return false;
+            mask = right->ImmediateU32();
+            value = left;
+        }
+        if (value->Opcode() == IrOpcode::ShiftRightLogical32 && value->ArgumentCount() == 2u) {
+            const auto* shift = value->Argument(1u)->Resolve();
+            if (shift->Type() != IrType::U32 || !shift->HasImmediate() || shift->ImmediateU32() >= 32u) return false;
+            mask <<= shift->ImmediateU32();
+            value = value->Argument(0u)->Resolve();
+        }
+        if (value->Type() != IrType::U32 || value->Opcode() != IrOpcode::ReadConst || value->ArgumentCount() != 2u || value->Argument(0u)->Resolve()->Opcode() != IrOpcode::GetSrtResource) return false;
+        const auto* slot = value->Argument(1u)->Resolve();
+        if (slot->Type() != IrType::U32 || !slot->HasImmediate() || slot->ImmediateU32() >= m_program.Resources().srtReads.size()) return false;
+        const auto found = std::ranges::find_if(resource.baseReadZeroMasks, [&](const auto& proof) { return proof.slot == slot->ImmediateU32(); });
+        if (found == resource.baseReadZeroMasks.end()) resource.baseReadZeroMasks.push_back({slot->ImmediateU32(), mask});
+        else found->mask |= mask;
+        return true;
+    }
+
+    void Merge(BufferResource& resource, const MemoryInfo& memory, const IrValue& inst, std::uint32_t pc) {
         const auto op = inst.Opcode();
         const auto access = BufferAccessOf(op);
         const bool atomic = access == BufferAccess::Atomic;
         const bool write = access == BufferAccess::Write || atomic;
-        const auto zero = [](const IrValue* value) {
-            value = value->Resolve();
-            return value->Type() == IrType::U32 && value->HasImmediate() && value->ImmediateU32() == 0u;
-        };
-        resource.baseFormattedReads = resource.baseFormattedReads && memory.kind == ResourceKind::Buffer && access == BufferAccess::Read && memory.formatted && !memory.typed && memory.dataBits == 32u && memory.offset == 0u && inst.ArgumentCount() == 5u && zero(inst.Argument(2u)) && zero(inst.Argument(3u));
+        resource.baseFormattedReads = resource.baseFormattedReads && memory.kind == ResourceKind::Buffer && access == BufferAccess::Read && memory.formatted && !memory.typed && memory.dataBits == 32u && memory.offset == 0u && inst.ArgumentCount() == 5u && ZeroReadOffset(resource, inst.Argument(2u)) && ZeroReadOffset(resource, inst.Argument(3u));
+        if (!resource.baseFormattedReads) resource.baseReadZeroMasks.clear();
         resource.firstUsePc = std::min(resource.firstUsePc, pc);
         resource.maxByteExtent = std::max(resource.maxByteExtent, byteExtent(memory));
         resource.read = resource.read || !write || atomic;

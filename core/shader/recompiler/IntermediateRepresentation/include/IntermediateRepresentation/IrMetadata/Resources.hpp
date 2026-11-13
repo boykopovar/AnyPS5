@@ -11,6 +11,13 @@
 
 namespace ShaderRecompiler {
 
+struct BufferReadZeroMask {
+    std::uint32_t slot = 0;
+    std::uint32_t mask = 0;
+
+    bool operator==(const BufferReadZeroMask& other) const = default;
+};
+
 struct BufferResource {
     static constexpr std::uint32_t NoImageAlias = std::numeric_limits<std::uint32_t>::max();
 
@@ -27,6 +34,7 @@ struct BufferResource {
     bool scalar = false;
     std::uint8_t typedAlignment = 1;
     bool baseFormattedReads = false;
+    std::vector<BufferReadZeroMask> baseReadZeroMasks;
 
     bool operator==(const BufferResource& other) const = default;
 };

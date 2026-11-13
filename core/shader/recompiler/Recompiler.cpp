@@ -1046,6 +1046,7 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
         key.push_back(fields.word1);
         key.push_back(fields.word3);
         key.push_back(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
+        key.push_back(BaseFormattedReadExtent(variant.info.info.buffers[index], fields.word3, snapshot));
     }
     for (std::size_t index = 0; index < variant.info.info.images.size(); ++index) {
         const auto& descriptor = snapshot.images.at(index);
@@ -1837,7 +1838,7 @@ void reportResultMemo() {
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
 // flattened SRT, the user data, the uniform fill) and, for the vertex family, the V# table the
 // attributes are resolved from.
-std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot, bool masked, std::span<const BufferSubstitute> substitutes = {}) {
+std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot, const ShaderInfo& info, bool masked, std::span<const BufferSubstitute> substitutes = {}) {
     std::uint64_t hash = 0xcbf29ce484222325ull;
     const auto mix = [&](std::uint64_t value) {
         hash ^= value;
@@ -1875,6 +1876,9 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             mix(fields.word3);
             mix(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
         }
+    }
+    for (std::size_t index = 0; index < info.buffers.size(); ++index) {
+        mix(BaseFormattedReadExtent(info.buffers[index], BufferSpecializationFields(snapshot.buffers.at(index), substitutes, index).word3, snapshot));
     }
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);
@@ -1984,7 +1988,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto variantId = variant->artifact.variantId;
     const auto substitutes = bufferSubstitutesEnabled() && variant->substitutes != nullptr ? variant->substitutes->Slots() : std::vector<BufferSubstitute>{};
-    const auto hash = snapshotHash(request, snapshot, false, substitutes);
+    const auto hash = snapshotHash(request, snapshot, variant->info.info, false, substitutes);
     const auto index = (variantId * 0x9e3779b97f4a7c15ull) ^ hash;
     auto& counters = resultMemoCounters();
     {
@@ -2002,7 +2006,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
         }
     }
     const bool masking = MaskedResultMemo();
-    const auto maskedHash = masking ? snapshotHash(request, snapshot, true, substitutes) : 0u;
+    const auto maskedHash = masking ? snapshotHash(request, snapshot, variant->info.info, true, substitutes) : 0u;
     const auto maskedIndex = (variantId * 0x9e3779b97f4a7c15ull) ^ maskedHash;
     std::shared_ptr<const RecompileResult> donor;
     std::shared_ptr<const MemoPatch> donorPatch;

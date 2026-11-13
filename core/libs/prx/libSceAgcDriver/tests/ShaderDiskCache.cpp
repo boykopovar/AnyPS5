@@ -336,6 +336,7 @@ CompiledVariant sampleVariant() {
     buffer.formattedReadMask = 5u;
     buffer.typedAlignment = 2u;
     buffer.baseFormattedReads = true;
+    buffer.baseReadZeroMasks = {{2u, 0x00ff0000u}, {5u, 0xffffu}};
     info.info.buffers = {buffer, BufferResource{}};
     ImageResource image{};
     image.source = 5;

@@ -98,7 +98,7 @@ static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
 static_assert(sizeof(CompiledShaderInfo) == 352, "CompiledShaderInfo changed: update the info encoder");
 static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
-static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
+static_assert(sizeof(BufferResource) == 56, "BufferResource changed: update the info encoder");
 static_assert(sizeof(ImageResource) == 108, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
 static_assert(sizeof(SampledResourcePair) == 16, "SampledResourcePair changed: update the info encoder");
@@ -144,7 +144,7 @@ constexpr std::size_t fieldCount() {
 }
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
-static_assert(fieldCount<BufferResource>() == 13, "BufferResource changed: update the info encoder");
+static_assert(fieldCount<BufferResource>() == 14, "BufferResource changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 50, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
@@ -781,6 +781,10 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(buffer.scalar);
         out.Value(buffer.typedAlignment);
         out.Value(buffer.baseFormattedReads);
+        out.List(buffer.baseReadZeroMasks, [](Writer& nested, const BufferReadZeroMask& proof) {
+            nested.Value(proof.slot);
+            nested.Value(proof.mask);
+        });
     });
     writer.List(info.images, [](Writer& out, const ImageResource& image) {
         out.Value(image.source);
@@ -884,7 +888,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
 void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     reader.Value(info.scratchDwords);
     reader.Value(info.sharedMemoryBytes);
-    reader.List(info.buffers, 28, [](Reader& in, BufferResource& buffer) {
+    reader.List(info.buffers, 36, [](Reader& in, BufferResource& buffer) {
         in.Value(buffer.source);
         in.Value(buffer.firstUsePc);
         in.Value(buffer.maxByteExtent);
@@ -898,6 +902,10 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(buffer.scalar);
         in.Value(buffer.typedAlignment);
         in.Value(buffer.baseFormattedReads);
+        in.List(buffer.baseReadZeroMasks, 8, [](Reader& nested, BufferReadZeroMask& proof) {
+            nested.Value(proof.slot);
+            nested.Value(proof.mask);
+        });
     });
     reader.List(info.images, 77, [](Reader& in, ImageResource& image) {
         in.Value(image.source);
