@@ -1,6 +1,7 @@
 add_library(libwebrtc SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
 target_include_directories(libwebrtc PRIVATE ${LIBS_INCLUDE_DIR})
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoFrameDimensions.cpp)
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoSinkWants.cpp)
 configure_windows_unwind(libwebrtc)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RtcpNack.cpp)
 
@@ -61,6 +62,18 @@ target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RateTracker.cpp
 target_link_libraries(libwebrtc PRIVATE libc)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_webrtc_video_sink_wants_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/VideoSinkWants.cpp)
+    target_include_directories(guest_webrtc_video_sink_wants_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_webrtc_video_sink_wants_tests PRIVATE libwebrtc libc)
+    configure_windows_unwind(guest_webrtc_video_sink_wants_tests)
+    foreach(case default copy destructor)
+        add_test(NAME guest_webrtc_video_sink_wants_${case} COMMAND guest_webrtc_video_sink_wants_tests ${case})
+        set_tests_properties(guest_webrtc_video_sink_wants_${case} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_webrtc_video_sink_wants_${case} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     add_test_executable(guest_webrtc_rate_tracker_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/RateTracker.cpp)
     target_include_directories(guest_webrtc_rate_tracker_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_webrtc_rate_tracker_tests PRIVATE libwebrtc libc)
