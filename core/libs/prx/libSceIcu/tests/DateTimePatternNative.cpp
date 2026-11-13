@@ -21,6 +21,8 @@ using Generator = std::unique_ptr<UDateTimePatternGenerator, decltype(&udatpg_cl
 Bundle Open(const char* package, const char* locale) {
     UErrorCode status = U_ZERO_ERROR;
     Bundle result(ures_open(package, locale, &status), ures_close);
+    if (!result || U_FAILURE(status) || status == U_USING_DEFAULT_WARNING)
+        std::fprintf(stderr, "native resource: package=%s locale=%s status=%s\n", package ? package : "default", locale, u_errorName(status));
     Require(result && U_SUCCESS(status) && status != U_USING_DEFAULT_WARNING, "native data bundle available without default-locale substitution");
     return result;
 }
