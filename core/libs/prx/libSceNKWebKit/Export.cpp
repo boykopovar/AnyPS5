@@ -14576,10 +14576,6 @@ int APS5_VABI _ZN3WTF11OSAllocator18releaseDecommittedEPvm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF11OSAllocator23hintMemoryNotNeededSoonEPvm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF11OSAllocator6commitEPvmbb() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -14838,10 +14834,6 @@ int APS5_VABI _ZN3WTF14FileSystemImpl10fileExistsERKNS_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14FileSystemImpl14setMetadataURLERKNS_6StringES3_S3_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -14866,15 +14858,7 @@ int APS5_VABI _ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE() 
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14FileSystemImpl25createTemporaryZipArchiveERKNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl29makeSafeToUseMemoryMapForPathERKNS_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -15247,14 +15231,6 @@ int APS5_VABI _ZN3WTF21RefCountedLeakCounterC2EPKc() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF21bootSessionUUIDStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF21currentSearchLocaleIDEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF21sentenceBreakIteratorENS_10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -15336,10 +15312,6 @@ int APS5_VABI _ZN3WTF24AutomaticThreadConditionD2Ev() {
 }
 
 int APS5_VABI _ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF24currentTextBreakLocaleIDEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -15508,14 +15480,6 @@ int APS5_VABI _ZN3WTF6Thread20numberOfThreadGroupsEv() {
 }
 
 int APS5_VABI _ZN3WTF6Thread27exchangeIsCompilationThreadEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF6Thread31setCurrentThreadIsUserInitiatedEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF6Thread33setCurrentThreadIsUserInteractiveEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
