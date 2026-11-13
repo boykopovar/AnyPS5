@@ -4,6 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI sceGicGetValue();
+int APS5_VABI sceGicGetValue(void* output);
 
 }

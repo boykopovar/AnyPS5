@@ -9,10 +9,13 @@
 namespace {
 
 constexpr int invalidParameter = static_cast<int>(0x805C0001);
+constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
 constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
 constexpr int invalidEncode = static_cast<int>(0x805C0014);
 constexpr int outOfCodeSpace = static_cast<int>(0x805C0015);
 constexpr int unassignedCode = static_cast<int>(0x805C0020);
+constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
+constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
 
 void Require(bool value) { if (!value) std::abort(); }
 
@@ -103,8 +106,16 @@ void CheckEuc() {
     std::uint32_t used = 0;
     std::uint32_t produced = 0;
     Require(sceCesMbcsStrToUtf32Str(context, Bytes("\x8F\xA1\xA1"), 3, &used, wide, 4, &produced) == 0 && produced == 1 && wide[0] == 0x20089);
+    Require(sceCesMbcsStrToUtf32Str(nullptr, Bytes("\x8F\xA1\xA1"), 3, &used, wide, 4, &produced) == invalidParameter);
+    Require(sceCesMbcsStrToUtf32Str(context, nullptr, 3, &used, wide, 4, &produced) == invalidSrcBuffer);
+    Require(sceCesMbcsStrToUtf32Str(context, Bytes("\x8F\xA1\xA1"), 3, &used, nullptr, 4, &produced) == invalidDstBuffer);
+    Require(sceCesMbcsStrToUtf32Str(context, Bytes("\x8F\xA1\xA1"), 3, &used, wide, 0, &produced) == dstBufferEnd);
     std::uint8_t utf8[8] = {};
     Require(sceCesMbcToUtf8(sheet, Bytes("\xAE\xA1"), 2, &used, utf8, sizeof(utf8), &produced) == 0 && used == 2 && produced == 3 && std::memcmp(utf8, "\xE4\xBF\xB1", 3) == 0);
+    Require(sceCesMbcToUtf8(nullptr, Bytes("\xAE\xA1"), 2, &used, utf8, sizeof(utf8), &produced) == invalidParameter);
+    Require(sceCesMbcToUtf8(sheet, nullptr, 2, &used, utf8, sizeof(utf8), &produced) == invalidSrcBuffer);
+    Require(sceCesMbcToUtf8(sheet, Bytes("\xAE\xA1"), 2, &used, nullptr, sizeof(utf8), &produced) == invalidDstBuffer);
+    Require(sceCesMbcToUtf8(sheet, Bytes("\xAE\xA1"), 2, &used, utf8, 1, &produced) == dstBufferEnd);
     std::uint16_t ucs2 = 0;
     Require(sceCesEucJpToUcs2(sheet, Bytes("\xA4\xA2"), 2, &used, &ucs2) == invalidParameter);
     alignas(8) std::uint8_t euc[64] = {};

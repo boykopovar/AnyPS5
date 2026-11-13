@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import trace_digest
 import trace_intervals_csv
 from test_trace_digest import interval_line
