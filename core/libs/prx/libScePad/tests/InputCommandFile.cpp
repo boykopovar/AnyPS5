@@ -98,6 +98,16 @@ int main() {
         Check(sticks.Poll(1200000) == Pad::InputCommandFile::Input{0, false, {}, false, true});
         Check(sticks.Poll(1300000) == Pad::InputCommandFile::Input{0, false, {}, true, true});
         Check(sticks.Poll(1400000) == Pad::InputCommandFile::Input{});
+        write("APS5_PAD_TIMELINE 1 17 2\n0 100 0 255 128 64 0\n100 100 16384\n");
+        Check(sticks.Poll(1500000) == Pad::InputCommandFile::Input{0, true, {255, 128, 64, 0}});
+        Check(sticks.Poll(1600000) == Pad::InputCommandFile::Input{16384});
+        Check(sticks.Poll(1700000) == Pad::InputCommandFile::Input{});
+        for (const char* row : {"0 100 0 255\n", "0 100 0 255 128 64\n", "0 100 0 255 128 64 0 1\n", "0 100 0 256 128 64 0\n", "0 100 0 255 128 64 x\n"}) {
+            write(std::string("APS5_PAD_TIMELINE 1 18 1\n") + row);
+            Check(sticks.Poll(1800000) == Pad::InputCommandFile::Input{});
+        }
+        write("APS5_PAD_TIMELINE 1 19 1\n0+100+8+0+255+128+64\n");
+        Check(sticks.Poll(1900000) == Pad::InputCommandFile::Input{8, true, {0, 255, 128, 64}});
         write("APS5_PAD_TIMELINE 1 17 1\n0 100 8388608\n");
         Check(sticks.Poll(1500000) == Pad::InputCommandFile::Input{});
         std::filesystem::remove(path);
