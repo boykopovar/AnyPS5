@@ -16,6 +16,11 @@ static std::mutex g_serviceMutex;
 static int g_serviceReferences = 0;
 static constexpr int ErrorNullArgument = static_cast<int>(0x80A30003);
 static constexpr int ErrorNotInitialized = static_cast<int>(0x80A31000);
+
+static bool ServiceInitialized() {
+    std::lock_guard lock(g_serviceMutex);
+    return g_serviceReferences > 0;
+}
 static constexpr int GuestEnomem = 12;
 static constexpr int GuestEfault = 14;
 
@@ -32,6 +37,7 @@ int APS5_VABI sceAppInstUtilTerminate(void) {
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppInstallAll(void* reserved) {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -77,10 +83,14 @@ int APS5_VABI sceAppInstUtilAppExists(const char* titleId, int32_t* exists) {
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppGetSize(const char* titleId, std::uint64_t* size) {
+    if (titleId == nullptr || size == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppInstallPkg(const char* packagePath, std::uint64_t serviceArgument) {
+    if (packagePath == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -99,10 +109,14 @@ int APS5_VABI sceAppInstUtilAppUnInstall(const char* titleId) {
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppUnInstallAddcont(const char* titleId, const char* contentLabel) {
+    if (titleId == nullptr || contentLabel == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppUnInstallPat(const char* titleId) {
+    if (titleId == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -112,24 +126,35 @@ int APS5_VABI sceAppInstUtilAppUnInstallTheme(const char* contentId) {
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppUnInstallTypes(const char* titleId, std::uint32_t types) {
+    if (titleId == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceAppInstUtilGetInstallProgressInfo(const char* titleId, AppInstallProgressInfo* info) {
+    if (titleId == nullptr || info == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceAppInstUtilGetInstallProgress(const char* titleId, void* progress) {
+    if (titleId == nullptr || progress == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceAppInstUtilGetPrimaryAppSlot(const char* titleId, void* slot) {
+    if (titleId == nullptr || slot == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilCheckLatestPatch2() {
+int APS5_VABI sceAppInstUtilCheckLatestPatch2(std::uint32_t argument1, const void* argument2, const void* argument3) {
+    if (argument2 == nullptr || argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceAppInstUtilAppGetIrremovableAppList2() {
@@ -140,20 +165,29 @@ int APS5_VABI sceAppInstUtilGetAddons2() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAppInstUtilInstallPatch2() {
+int APS5_VABI sceAppInstUtilInstallPatch2(const void* argument1, const void* argument2, const void* argument3) {
+    if (argument1 == nullptr || argument2 == nullptr || argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceAppInstUtilAppUnInstall3() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAppInstUtilGetPatchInstallStatus2() {
+int APS5_VABI sceAppInstUtilGetPatchInstallStatus2(const void* argument1, const void* argument2, const void* argument3) {
+    if (argument1 == nullptr || argument2 == nullptr || argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppRequestMoveApps2() {
+int APS5_VABI sceAppInstUtilAppRequestMoveApps2(std::uint32_t argument1, std::uint32_t argument2, const void* argument3) {
+    if (argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceAppInstUtilGetContentSize3() {
@@ -180,47 +214,65 @@ int APS5_VABI sceAppInstUtilAppUnInstallForRemote2(void) {
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppGetAddcontListTotalSize(void) {
+int APS5_VABI sceAppInstUtilAppGetAddcontListTotalSize(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppGetAddcontInfo(void) {
+int APS5_VABI sceAppInstUtilAppGetAddcontInfo(const void* argument1, const void* argument2, const void* argument3) {
+    if (argument1 == nullptr || argument2 == nullptr || argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppGetAddcontInfoByContentId(void) {
+int APS5_VABI sceAppInstUtilAppGetAddcontInfoByContentId(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetAddcontInstalledStatus(void) {
+int APS5_VABI sceAppInstUtilGetAddcontInstalledStatus(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppGetInsertedDiscTitleId(void) {
+int APS5_VABI sceAppInstUtilAppGetInsertedDiscTitleId(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppUpdateStartTime(void) {
+int APS5_VABI sceAppInstUtilAppUpdateStartTime(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppInstallSharePlayLink(void) {
+int APS5_VABI sceAppInstUtilAppInstallSharePlayLink(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppInstallSharePlayLinkByUser(void) {
+int APS5_VABI sceAppInstUtilAppInstallSharePlayLinkByUser(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppGetAddcontNum(void) {
+int APS5_VABI sceAppInstUtilAppGetAddcontNum(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -230,107 +282,148 @@ int APS5_VABI sceAppInstUtilAppCancelUnInstall(void) {
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppDestroyMetadata(void) {
+int APS5_VABI sceAppInstUtilAppDestroyMetadata(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilCheckAppSystemVer(void) {
+int APS5_VABI sceAppInstUtilCheckAppSystemVer(const void* argument1, const void* argument2, const void* argument3) {
+    if (argument1 == nullptr || argument2 == nullptr || argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppConvertAppDownloadToDisc(void) {
+int APS5_VABI sceAppInstUtilAppConvertAppDownloadToDisc(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetMainAppTitleIdForSP(void) {
+int APS5_VABI sceAppInstUtilGetMainAppTitleIdForSP(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetSubAppTitleIdForSP(void) {
+int APS5_VABI sceAppInstUtilGetSubAppTitleIdForSP(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetMainAppTitleId(void) {
+int APS5_VABI sceAppInstUtilGetMainAppTitleId(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetSubAppTitleId(void) {
+int APS5_VABI sceAppInstUtilGetSubAppTitleId(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppGetAppInstallStatus(void) {
+int APS5_VABI sceAppInstUtilAppGetAppInstallStatus(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppDestroyPkg(void) {
+int APS5_VABI sceAppInstUtilAppDestroyPkg(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilJson(void) {
+int APS5_VABI sceAppInstUtilJson(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetInsertedDiscRoleType(void) {
+int APS5_VABI sceAppInstUtilGetInsertedDiscRoleType(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceAppInstUtilRequestInstallDiscGame(void) {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilRequestDataDiscCopy(void) {
+int APS5_VABI sceAppInstUtilRequestDataDiscCopy(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilCancelDataDiscCopy(void) {
+int APS5_VABI sceAppInstUtilCancelDataDiscCopy(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetDataDiscCopyProgress(void) {
+int APS5_VABI sceAppInstUtilGetDataDiscCopyProgress(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilSetPrimaryAppSlot(void) {
+int APS5_VABI sceAppInstUtilSetPrimaryAppSlot(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetAppSlotInfoList(void) {
+int APS5_VABI sceAppInstUtilGetAppSlotInfoList(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetAppEmptySlot(void) {
+int APS5_VABI sceAppInstUtilGetAppEmptySlot(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppInstallGetLinkState(void) {
+int APS5_VABI sceAppInstUtilAppInstallGetLinkState(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppUnInstallForMultiInstall(void) {
+int APS5_VABI sceAppInstUtilAppUnInstallForMultiInstall(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppInstallPs4CloudGame(void) {
+int APS5_VABI sceAppInstUtilAppInstallPs4CloudGame(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -340,7 +433,9 @@ int APS5_VABI sceAppInstUtilAppStoreCompilationDiscInfo(void) {
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppGetCompilationDiscInfo(void) {
+int APS5_VABI sceAppInstUtilAppGetCompilationDiscInfo(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -355,7 +450,9 @@ int APS5_VABI sceAppInstUtilAppGetInsertedDiscTitleIdList(void) {
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppInstallRequestCompilationDiscApp(void) {
+int APS5_VABI sceAppInstUtilAppInstallRequestCompilationDiscApp(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -376,26 +473,33 @@ int APS5_VABI sceAppInstUtilAppRequestMoveApps(void) {
 }
 
 int APS5_VABI sceAppInstUtilAppProhibitDownloadInstall(void) {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceAppInstUtilAppAllowDownloadInstall(void) {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetAppMoveProgressInfo(void) {
+int APS5_VABI sceAppInstUtilGetAppMoveProgressInfo(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceAppInstUtilAppCancelMoveApps(void) {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppGetMoveErrorAppList(void) {
+int APS5_VABI sceAppInstUtilAppGetMoveErrorAppList(const void* argument1, std::uint64_t argument2, const void* argument3) {
+    if (argument1 == nullptr || argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -410,7 +514,9 @@ int APS5_VABI sceAppInstUtilAppCancelGetAllAppSize(void) {
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppGetInsertedDiscMasterDataId(void) {
+int APS5_VABI sceAppInstUtilAppGetInsertedDiscMasterDataId(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -425,47 +531,64 @@ int APS5_VABI sceAppInstUtilAppCancelGetAppOtherSize(void) {
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetInsertedDiscTotal(void) {
+int APS5_VABI sceAppInstUtilGetInsertedDiscTotal(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppSetRemasterInstallType(void) {
+int APS5_VABI sceAppInstUtilAppSetRemasterInstallType(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetInstallProgressInfoForMultiDisc(void) {
+int APS5_VABI sceAppInstUtilGetInstallProgressInfoForMultiDisc(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilMountBdEmu(void) {
+int APS5_VABI sceAppInstUtilMountBdEmu(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceAppInstUtilUnmountBdEmu(void) {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetInstallStatus(void) {
+int APS5_VABI sceAppInstUtilGetInstallStatus(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilResumeInstall(void) {
+int APS5_VABI sceAppInstUtilResumeInstall(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilPauseInstall(void) {
+int APS5_VABI sceAppInstUtilPauseInstall(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilRegisterDownload(void) {
+int APS5_VABI sceAppInstUtilRegisterDownload(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -475,47 +598,65 @@ int APS5_VABI sceAppInstUtilInstall(void) {
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilStartInstall(void) {
+int APS5_VABI sceAppInstUtilStartInstall(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilInstallPatch(void) {
+int APS5_VABI sceAppInstUtilInstallPatch(const void* argument1, const void* argument2, const void* argument3) {
+    if (argument1 == nullptr || argument2 == nullptr || argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetPatchInstallStatus(void) {
+int APS5_VABI sceAppInstUtilGetPatchInstallStatus(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilResumePatchInstall(void) {
+int APS5_VABI sceAppInstUtilResumePatchInstall(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilPausePatchInstall(void) {
+int APS5_VABI sceAppInstUtilPausePatchInstall(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilCancelInstallPatch(void) {
+int APS5_VABI sceAppInstUtilCancelInstallPatch(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilCancelInstallAddcont(void) {
+int APS5_VABI sceAppInstUtilCancelInstallAddcont(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilCancelInstall(void) {
+int APS5_VABI sceAppInstUtilCancelInstall(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilCancelForMultiInstall(void) {
+int APS5_VABI sceAppInstUtilCancelForMultiInstall(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -525,17 +666,23 @@ int APS5_VABI sceAppInstUtilInstallByPackage(void) {
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilIsRestoreState(void) {
+int APS5_VABI sceAppInstUtilIsRestoreState(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetRestoreState(void) {
+int APS5_VABI sceAppInstUtilGetRestoreState(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetAddons(void) {
+int APS5_VABI sceAppInstUtilGetAddons(const void* argument1, std::uint32_t argument2, std::uint32_t argument3, std::uint32_t argument4, const void* argument5) {
+    if (argument1 == nullptr || argument5 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -555,32 +702,43 @@ int APS5_VABI sceAppInstUtilCancelGetInformation(void) {
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetWorkspaceStatus(void) {
+int APS5_VABI sceAppInstUtilGetWorkspaceStatus(const void* argument1, const void* argument2, const void* argument3) {
+    if (argument1 == nullptr || argument2 == nullptr || argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilDeleteWorkspace(void) {
+int APS5_VABI sceAppInstUtilDeleteWorkspace(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetParentalControlLevel(void) {
+int APS5_VABI sceAppInstUtilGetParentalControlLevel(const void* argument1, std::uint32_t argument2, const void* argument3) {
+    if (argument1 == nullptr || argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilCheckLatestPatch(void) {
+int APS5_VABI sceAppInstUtilCheckLatestPatch(std::uint32_t argument1, const void* argument2, const void* argument3) {
+    if (argument2 == nullptr || argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceAppInstUtilCancelCheckPatch(void) {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppInstallPsNowIcon(void) {
+int APS5_VABI sceAppInstUtilAppInstallPsNowIcon(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -605,7 +763,9 @@ int APS5_VABI sceAppInstUtilGetContentSize2(void) {
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppInstallContentPush(void) {
+int APS5_VABI sceAppInstUtilAppInstallContentPush(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -616,31 +776,42 @@ int APS5_VABI sceAppInstUtilGetAvailableStorage(void) {
 }
 
 int APS5_VABI sceAppInstUtilSwitchInstallLocation(void) {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetConfigList(void) {
+int APS5_VABI sceAppInstUtilGetConfigList(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilSwitchConfig(void) {
+int APS5_VABI sceAppInstUtilSwitchConfig(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilRestoreDataSource(void) {
+int APS5_VABI sceAppInstUtilRestoreDataSource(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilGetNeededStorageSize(void) {
+int APS5_VABI sceAppInstUtilGetNeededStorageSize(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilAppGetStorageDestType(void) {
+int APS5_VABI sceAppInstUtilAppGetStorageDestType(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -693,23 +864,34 @@ extern "C" {
 
 
 
-int APS5_VABI libSceAppInstUtilUnknown_2WQuFX8yYXg_nid_no_patch() {
+int APS5_VABI libSceAppInstUtilUnknown_2WQuFX8yYXg_nid_no_patch(const void* argument1, const void* argument2, const void* argument3) {
+    if (argument1 == nullptr || argument2 == nullptr || argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("2WQuFX8yYXg", libSceAppInstUtilUnknown_2WQuFX8yYXg_nid_no_patch);
 
-int APS5_VABI libSceAppInstUtilUnknown_4vqRxwpIE1M_nid_no_patch() {
+int APS5_VABI libSceAppInstUtilUnknown_4vqRxwpIE1M_nid_no_patch(const void* argument1, const void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("4vqRxwpIE1M", libSceAppInstUtilUnknown_4vqRxwpIE1M_nid_no_patch);
 
 int APS5_VABI libSceAppInstUtilUnknown_9QIC1kZpSG4_nid_no_patch() {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("9QIC1kZpSG4", libSceAppInstUtilUnknown_9QIC1kZpSG4_nid_no_patch);
 
-int APS5_VABI libSceAppInstUtilUnknown_K73u2VX0JFo_nid_no_patch() {
+int APS5_VABI libSceAppInstUtilUnknown_K73u2VX0JFo_nid_no_patch(const void* argument1, const void* argument2, std::uint64_t argument3, const void* argument4) {
+    if (argument1 == nullptr || argument2 == nullptr || argument4 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("K73u2VX0JFo", libSceAppInstUtilUnknown_K73u2VX0JFo_nid_no_patch);
 
@@ -719,7 +901,9 @@ int APS5_VABI libSceAppInstUtilUnknown_LsUZe38RhCs_nid_no_patch() {
 APS5_EXPORT("LsUZe38RhCs", libSceAppInstUtilUnknown_LsUZe38RhCs_nid_no_patch);
 
 int APS5_VABI libSceAppInstUtilUnknown_N6H7LMfZD5Q_nid_no_patch() {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("N6H7LMfZD5Q", libSceAppInstUtilUnknown_N6H7LMfZD5Q_nid_no_patch);
 
@@ -728,18 +912,26 @@ int APS5_VABI libSceAppInstUtilUnknown_NXqdUFpinmo_nid_no_patch() {
 }
 APS5_EXPORT("NXqdUFpinmo", libSceAppInstUtilUnknown_NXqdUFpinmo_nid_no_patch);
 
-int APS5_VABI libSceAppInstUtilUnknown_QMjuGVPtjUY_nid_no_patch() {
+int APS5_VABI libSceAppInstUtilUnknown_QMjuGVPtjUY_nid_no_patch(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("QMjuGVPtjUY", libSceAppInstUtilUnknown_QMjuGVPtjUY_nid_no_patch);
 
-int APS5_VABI libSceAppInstUtilUnknown_R_minus_OUApMZ1d8_nid_no_patch() {
+int APS5_VABI libSceAppInstUtilUnknown_R_minus_OUApMZ1d8_nid_no_patch(const void* argument1, const void* argument2, const void* argument3) {
+    if (argument1 == nullptr || argument2 == nullptr || argument3 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("R-OUApMZ1d8", libSceAppInstUtilUnknown_R_minus_OUApMZ1d8_nid_no_patch);
 
 int APS5_VABI libSceAppInstUtilUnknown_T9h6l8bFKGE_nid_no_patch() {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("T9h6l8bFKGE", libSceAppInstUtilUnknown_T9h6l8bFKGE_nid_no_patch);
 
@@ -749,27 +941,39 @@ int APS5_VABI libSceAppInstUtilUnknown_X5Q7QxodFcg_nid_no_patch() {
 APS5_EXPORT("X5Q7QxodFcg", libSceAppInstUtilUnknown_X5Q7QxodFcg_nid_no_patch);
 
 int APS5_VABI libSceAppInstUtilUnknown_XWjOLtdgxa4_nid_no_patch() {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("XWjOLtdgxa4", libSceAppInstUtilUnknown_XWjOLtdgxa4_nid_no_patch);
 
-int APS5_VABI libSceAppInstUtilUnknown_Y_plus_ln_minus_TkY_plus_hA_nid_no_patch() {
+int APS5_VABI libSceAppInstUtilUnknown_Y_plus_ln_minus_TkY_plus_hA_nid_no_patch(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("Y+ln-TkY+hA", libSceAppInstUtilUnknown_Y_plus_ln_minus_TkY_plus_hA_nid_no_patch);
 
-int APS5_VABI libSceAppInstUtilUnknown_Zv_plus_26GDSKcQ_nid_no_patch() {
+int APS5_VABI libSceAppInstUtilUnknown_Zv_plus_26GDSKcQ_nid_no_patch(const void* argument1, std::uint64_t argument2, const void* argument3, const void* argument4) {
+    if (argument1 == nullptr || argument3 == nullptr || argument4 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("Zv+26GDSKcQ", libSceAppInstUtilUnknown_Zv_plus_26GDSKcQ_nid_no_patch);
 
 int APS5_VABI libSceAppInstUtilUnknown_ecad2GAw55Y_nid_no_patch() {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("ecad2GAw55Y", libSceAppInstUtilUnknown_ecad2GAw55Y_nid_no_patch);
 
 int APS5_VABI libSceAppInstUtilUnknown_gFlBHjtrMDI_nid_no_patch() {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("gFlBHjtrMDI", libSceAppInstUtilUnknown_gFlBHjtrMDI_nid_no_patch);
 
@@ -784,7 +988,9 @@ int APS5_VABI libSceAppInstUtilUnknown_grC16befiso_nid_no_patch() {
 APS5_EXPORT("grC16befiso", libSceAppInstUtilUnknown_grC16befiso_nid_no_patch);
 
 int APS5_VABI libSceAppInstUtilUnknown_j80u95nZ_plus_3A_nid_no_patch() {
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("j80u95nZ+3A", libSceAppInstUtilUnknown_j80u95nZ_plus_3A_nid_no_patch);
 
@@ -798,8 +1004,11 @@ int APS5_VABI libSceAppInstUtilUnknown_pbYNtR2enrY_nid_no_patch() {
 }
 APS5_EXPORT("pbYNtR2enrY", libSceAppInstUtilUnknown_pbYNtR2enrY_nid_no_patch);
 
-int APS5_VABI libSceAppInstUtilUnknown_qn0aziKw_minus_kE_nid_no_patch() {
+int APS5_VABI libSceAppInstUtilUnknown_qn0aziKw_minus_kE_nid_no_patch(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("qn0aziKw-kE", libSceAppInstUtilUnknown_qn0aziKw_minus_kE_nid_no_patch);
 
@@ -818,8 +1027,11 @@ int APS5_VABI libSceAppInstUtilUnknown_xV7MhF_plus_9AQk_nid_no_patch() {
 }
 APS5_EXPORT("xV7MhF+9AQk", libSceAppInstUtilUnknown_xV7MhF_plus_9AQk_nid_no_patch);
 
-int APS5_VABI libSceAppInstUtilUnknown_yYVV_minus_f0zoWY_nid_no_patch() {
+int APS5_VABI libSceAppInstUtilUnknown_yYVV_minus_f0zoWY_nid_no_patch(const void* argument1) {
+    if (argument1 == nullptr) return ErrorNullArgument;
+    if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("yYVV-f0zoWY", libSceAppInstUtilUnknown_yYVV_minus_f0zoWY_nid_no_patch);
 

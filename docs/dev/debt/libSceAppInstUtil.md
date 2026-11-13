@@ -146,3 +146,108 @@
 - [sceAppInstUtilInitialize, sceAppInstUtilTerminate, sceAppInstUtilAppExists](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) (libSceAppInstUtil) - `sceAppInstUtilAppExists` writes 1 only for the running title's id, as another title cannot be launched (`sceSystemServiceLaunchApp` throws). The meanings follow [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/AppInstUtil/AppInstUtil.cs#L18-L88). The results follow firmware 13.42 `libSceAppInstUtil.sprx` (read from disassembly, not measured on a console): initialization is counted and both calls always return 0, and `sceAppInstUtilAppExists` answers 0x80A30003 for a null pointer, then 0x80A31000 while the count is not positive. The console's service may still fail to connect after a successful initialization; that path isn't modelled. The non-zero value a console writes for an installed title is unmeasured
 - [sceAppInstUtilAppExists](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) (libSceAppInstUtil) - the console's answer for an unreadable title id or an unwritable `exists` pointer is unmeasured; AnyPS5 answers 0x80A30003 for both, after the initialization check. How far the console reads the title id is unknown. AnyPS5 reads up to the id's terminator, at most the running title's id length plus one byte. An unreadable byte before the terminator in that window answers 0x80A30003, even after a byte that already differs, where `strcmp` would stop
 - [sceAppInstUtilAppIsInUpdating](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) (libSceAppInstUtil) - writes false for every title id, as AnyPS5 never downloads or applies title updates. Its errors copy `sceAppInstUtilAppExists`: 0x80A30003 for a null pointer, then 0x80A31000 while the initialization count is not positive, then 0x80A30003 for a title id unreadable within the same window or an unwritable output. Its own firmware 13.42 routine has not been read, so the console's results for these cases are unverified
+- [Exports answering only their service checks](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) (libSceAppInstUtil) - the exports below throw after the two checks firmware 13.42's `libSceAppInstUtil.sprx` makes before it calls its install service: 0x80A30003 when an argument listed here is null, then 0x80A31000 while the reference count `sceAppInstUtilInitialize` raises is not above 0. What the service calls do, and the meaning of their arguments, is unknown. The checks were read from disassembly and run under a CPU emulator on x86-64, not measured on a console. Arguments count from 1; a declaration that had no parameters gets them only up to the last checked one, with neutral names, `const void*` for checked ones and the width the module moves for the others.
+
+| Export | Null-checked arguments |
+| --- | --- |
+| `sceAppInstUtilAppInstallAll` | none |
+| `sceAppInstUtilAppGetSize` | 1, 2 |
+| `sceAppInstUtilAppInstallPkg` | 1 |
+| `sceAppInstUtilAppUnInstallAddcont` | 1, 2 |
+| `sceAppInstUtilAppUnInstallPat` | 1 |
+| `sceAppInstUtilAppUnInstallTypes` | 1 |
+| `sceAppInstUtilGetInstallProgressInfo` | 1, 2 |
+| `sceAppInstUtilGetInstallProgress` | 1, 2 |
+| `sceAppInstUtilGetPrimaryAppSlot` | 1, 2 |
+| `sceAppInstUtilCheckLatestPatch2` | 2, 3 |
+| `sceAppInstUtilInstallPatch2` | 1, 2, 3 |
+| `sceAppInstUtilGetPatchInstallStatus2` | 1, 2, 3 |
+| `sceAppInstUtilAppRequestMoveApps2` | 3 |
+| `sceAppInstUtilAppGetAddcontListTotalSize` | 1 |
+| `sceAppInstUtilAppGetAddcontInfo` | 1, 2, 3 |
+| `sceAppInstUtilAppGetAddcontInfoByContentId` | 1, 2 |
+| `sceAppInstUtilGetAddcontInstalledStatus` | 1, 2 |
+| `sceAppInstUtilAppGetInsertedDiscTitleId` | 1 |
+| `sceAppInstUtilAppUpdateStartTime` | 1, 2 |
+| `sceAppInstUtilAppInstallSharePlayLink` | 1, 2 |
+| `sceAppInstUtilAppInstallSharePlayLinkByUser` | 1, 2 |
+| `sceAppInstUtilAppGetAddcontNum` | 1, 2 |
+| `sceAppInstUtilAppDestroyMetadata` | 1 |
+| `sceAppInstUtilCheckAppSystemVer` | 1, 2, 3 |
+| `sceAppInstUtilAppConvertAppDownloadToDisc` | 1, 2 |
+| `sceAppInstUtilGetMainAppTitleIdForSP` | 1, 2 |
+| `sceAppInstUtilGetSubAppTitleIdForSP` | 1, 2 |
+| `sceAppInstUtilGetMainAppTitleId` | 1, 2 |
+| `sceAppInstUtilGetSubAppTitleId` | 1, 2 |
+| `sceAppInstUtilAppGetAppInstallStatus` | 1, 2 |
+| `sceAppInstUtilAppDestroyPkg` | 1 |
+| `sceAppInstUtilJson` | 1, 2 |
+| `sceAppInstUtilGetInsertedDiscRoleType` | 1 |
+| `sceAppInstUtilRequestInstallDiscGame` | none |
+| `sceAppInstUtilRequestDataDiscCopy` | 1 |
+| `sceAppInstUtilCancelDataDiscCopy` | 1 |
+| `sceAppInstUtilGetDataDiscCopyProgress` | 1, 2 |
+| `sceAppInstUtilSetPrimaryAppSlot` | 1 |
+| `sceAppInstUtilGetAppSlotInfoList` | 1, 2 |
+| `sceAppInstUtilGetAppEmptySlot` | 1, 2 |
+| `sceAppInstUtilAppInstallGetLinkState` | 1, 2 |
+| `sceAppInstUtilAppUnInstallForMultiInstall` | 1 |
+| `sceAppInstUtilAppInstallPs4CloudGame` | 1, 2 |
+| `sceAppInstUtilAppGetCompilationDiscInfo` | 1 |
+| `sceAppInstUtilAppInstallRequestCompilationDiscApp` | 1 |
+| `sceAppInstUtilAppProhibitDownloadInstall` | none |
+| `sceAppInstUtilAppAllowDownloadInstall` | none |
+| `sceAppInstUtilGetAppMoveProgressInfo` | 1 |
+| `sceAppInstUtilAppCancelMoveApps` | none |
+| `sceAppInstUtilAppGetMoveErrorAppList` | 1, 3 |
+| `sceAppInstUtilAppGetInsertedDiscMasterDataId` | 1 |
+| `sceAppInstUtilGetInsertedDiscTotal` | 1 |
+| `sceAppInstUtilAppSetRemasterInstallType` | 1 |
+| `sceAppInstUtilGetInstallProgressInfoForMultiDisc` | 1, 2 |
+| `sceAppInstUtilMountBdEmu` | 1, 2 |
+| `sceAppInstUtilUnmountBdEmu` | none |
+| `sceAppInstUtilGetInstallStatus` | 1, 2 |
+| `sceAppInstUtilResumeInstall` | 1 |
+| `sceAppInstUtilPauseInstall` | 1 |
+| `sceAppInstUtilRegisterDownload` | 1, 2 |
+| `sceAppInstUtilStartInstall` | 1 |
+| `sceAppInstUtilInstallPatch` | 1, 2, 3 |
+| `sceAppInstUtilGetPatchInstallStatus` | 1, 2 |
+| `sceAppInstUtilResumePatchInstall` | 1 |
+| `sceAppInstUtilPausePatchInstall` | 1 |
+| `sceAppInstUtilCancelInstallPatch` | 1 |
+| `sceAppInstUtilCancelInstallAddcont` | 1 |
+| `sceAppInstUtilCancelInstall` | 1 |
+| `sceAppInstUtilCancelForMultiInstall` | 1 |
+| `sceAppInstUtilIsRestoreState` | 1, 2 |
+| `sceAppInstUtilGetRestoreState` | 1, 2 |
+| `sceAppInstUtilGetAddons` | 1, 5 |
+| `sceAppInstUtilGetWorkspaceStatus` | 1, 2, 3 |
+| `sceAppInstUtilDeleteWorkspace` | 1 |
+| `sceAppInstUtilGetParentalControlLevel` | 1, 3 |
+| `sceAppInstUtilCheckLatestPatch` | 2, 3 |
+| `sceAppInstUtilCancelCheckPatch` | none |
+| `sceAppInstUtilAppInstallPsNowIcon` | 1, 2 |
+| `sceAppInstUtilAppInstallContentPush` | 1, 2 |
+| `sceAppInstUtilSwitchInstallLocation` | none |
+| `sceAppInstUtilGetConfigList` | 1, 2 |
+| `sceAppInstUtilSwitchConfig` | 1, 2 |
+| `sceAppInstUtilRestoreDataSource` | 1 |
+| `sceAppInstUtilGetNeededStorageSize` | 1, 2 |
+| `sceAppInstUtilAppGetStorageDestType` | 1, 2 |
+| `libSceAppInstUtilUnknown_2WQuFX8yYXg_nid_no_patch` | 1, 2, 3 |
+| `libSceAppInstUtilUnknown_4vqRxwpIE1M_nid_no_patch` | 1, 2 |
+| `libSceAppInstUtilUnknown_9QIC1kZpSG4_nid_no_patch` | none |
+| `libSceAppInstUtilUnknown_K73u2VX0JFo_nid_no_patch` | 1, 2, 4 |
+| `libSceAppInstUtilUnknown_N6H7LMfZD5Q_nid_no_patch` | none |
+| `libSceAppInstUtilUnknown_QMjuGVPtjUY_nid_no_patch` | 1 |
+| `libSceAppInstUtilUnknown_R_minus_OUApMZ1d8_nid_no_patch` | 1, 2, 3 |
+| `libSceAppInstUtilUnknown_T9h6l8bFKGE_nid_no_patch` | none |
+| `libSceAppInstUtilUnknown_XWjOLtdgxa4_nid_no_patch` | none |
+| `libSceAppInstUtilUnknown_Y_plus_ln_minus_TkY_plus_hA_nid_no_patch` | 1 |
+| `libSceAppInstUtilUnknown_Zv_plus_26GDSKcQ_nid_no_patch` | 1, 3, 4 |
+| `libSceAppInstUtilUnknown_ecad2GAw55Y_nid_no_patch` | none |
+| `libSceAppInstUtilUnknown_gFlBHjtrMDI_nid_no_patch` | none |
+| `libSceAppInstUtilUnknown_j80u95nZ_plus_3A_nid_no_patch` | none |
+| `libSceAppInstUtilUnknown_qn0aziKw_minus_kE_nid_no_patch` | 1 |
+| `libSceAppInstUtilUnknown_yYVV_minus_f0zoWY_nid_no_patch` | 1 |
