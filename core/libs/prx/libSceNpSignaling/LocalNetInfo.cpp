@@ -22,7 +22,7 @@ int APS5_VABI sceNpSignalingGetLocalNetInfo(int ctxId, NpSignalingNetInfo* info)
     if (!info) {
         return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     }
-    std::uint32_t size = 0;
+    std::uint64_t size = 0;
     const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&size, &info->size, sizeof(size));
     errno = savedErrno;
