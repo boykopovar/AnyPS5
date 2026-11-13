@@ -1,5 +1,6 @@
 #include "prx/libc/include/RunReport.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1783,9 +1784,10 @@ struct MissingFunctionStop {
     std::optional<std::string> source;
 };
 
+struct MissingFunctionStopTag {};
+
 MissingFunctionStop& lastMissing() {
-    thread_local MissingFunctionStop missing;
-    return missing;
+    return HostThreadLocal<MissingFunctionStop, MissingFunctionStopTag>();
 }
 
 [[maybe_unused]] void FinishAtExit() {

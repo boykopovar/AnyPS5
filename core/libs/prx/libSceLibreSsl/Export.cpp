@@ -180,11 +180,6 @@ int APS5_VABI BIO_write_nid_postfix(LibreSsl::Bio* bio, const void* source, int 
 
 void APS5_VABI CONF_modules_free_nid_postfix(void) {}
 
-int APS5_VABI CONF_modules_load_file_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI CRYPTO_THREADID_set_callback_nid_postfix(void* callback) {
     void* expected = nullptr;
     return threadIdCallback.compare_exchange_strong(expected, callback) ? 1 : 0;
