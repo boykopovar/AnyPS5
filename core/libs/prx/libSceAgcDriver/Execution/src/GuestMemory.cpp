@@ -2240,6 +2240,9 @@ void unwatchLocked(WriteTracker& tracker, std::uint64_t address, std::size_t byt
         unwatchSerial.fetch_add(1, std::memory_order_release);
         bumpSubscriptions(address, bytes, WriteBumpSource::Unwatch);
     }
+    if (bytes != 0 && !tracker.rewatchStamps.empty()) {
+        for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) tracker.rewatchStamps.erase(block);
+    }
 #else
     if (GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(address), bytes)) {
         unwatchSerial.fetch_add(1, std::memory_order_release);
