@@ -39,14 +39,22 @@ bool Contains(const std::vector<int>& cpus, int cpu) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
 #ifndef __linux__
+    static_cast<void>(argc);
+    static_cast<void>(argv);
     std::puts("worker affinity reservation is checked on Linux");
     return 77;
 #else
+    unsetenv("APS5_NO_COMMITTER_CORE");
+    unsetenv("APS5_NO_FINISHER_CORE");
+    unsetenv("APS5_WORKER_AFFINITY_MASK");
+    setenv("APS5_NO_WORKER_AFFINITY", "1", 1);
+    if (argc > 1) setenv("APS5_COMMITTER_CPU", argv[1], 1);
+    else unsetenv("APS5_COMMITTER_CPU");
     const auto& layout = CpuTopology::Get();
     const auto sets = CpuTopology::SysfsCpuSets("/sys/devices/system/cpu", layout.process, layout.hybrid ? layout.efficient : 0);
-    const char* requested = std::getenv("APS5_COMMITTER_CPU");
+    const char* requested = argc > 1 ? argv[1] : nullptr;
     const auto expected = CpuTopology::ChooseReservedCore(sets, {}, requested != nullptr ? std::optional<unsigned>(static_cast<unsigned>(std::strtoul(requested, nullptr, 10))) : std::nullopt);
     if (!expected.has_value()) {
         std::puts("this host reserves no committer core");
@@ -72,6 +80,7 @@ int main() {
         finisher = Allowed();
     });
     finisherThread.join();
+    const auto afterFinisher = Allowed();
     finisherReserved.set_value();
     thread.join();
     const int chosen = static_cast<int>(expected->chosen.id);
@@ -85,6 +94,7 @@ int main() {
     const auto second = CpuTopology::ChooseReservedCore(sets, {expected->chosen}, std::nullopt);
     if (second.has_value()) {
         const int finisherChosen = static_cast<int>(second->chosen.id);
+        Require(!Contains(afterFinisher, finisherChosen), "the finisher reserved no core: another thread of the process kept its processor");
         Require(Contains(finisher, finisherChosen) && !Contains(finisher, chosen), "the finisher is not allowed its own reserved processor alone among the reserved ones");
         Require(!Contains(committerAfterFinisher, finisherChosen), "the committer kept the processor the finisher reserved after it");
         Require(Contains(committerAfterFinisher, chosen), "the finisher reservation took the committer off its reserved processor");
