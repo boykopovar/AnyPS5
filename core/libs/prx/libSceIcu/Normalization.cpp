@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/Normalization.hpp"
 #include "prx/libc/include/General.hpp"
+#include "unicode/unorm.h"
 #include "unicode/unorm2.h"
 #include <cstdint>
 #include <cstring>
@@ -34,6 +35,12 @@ bool InvalidDestination(const char16_t* destination, std::int32_t capacity) {
 
 bool InvalidQuery(const char16_t* text, std::int32_t length) {
     return (text == nullptr && length != 0) || length < -1;
+}
+
+void RequireData(bool ready, const UErrorCode& status) {
+    if (ready && (status == U_MISSING_RESOURCE_ERROR || status == U_FILE_ACCESS_ERROR)) {
+        NotImplemented_nid_no_patch("unorm_compare: normalization data");
+    }
 }
 
 bool InvalidAppend(const char16_t* first, std::int32_t firstLength, std::int32_t capacity, const char16_t* second,
@@ -150,6 +157,15 @@ std::int8_t APS5_VABI unorm2_hasBoundaryAfter_nid_postfix(const Icu::Normalizer2
 
 std::int8_t APS5_VABI unorm2_isInert_nid_postfix(const Icu::Normalizer2* normalizer, std::int32_t character) {
     return unorm2_isInert(Required(normalizer), character);
+}
+
+std::int32_t APS5_VABI unorm_compare_nid_postfix(const char16_t* first, std::int32_t firstLength, const char16_t* second,
+                                                 std::int32_t secondLength, std::uint32_t options, std::int32_t* error) {
+    auto& status = Status(error);
+    const auto ready = U_SUCCESS(status);
+    const auto result = unorm_compare(first, firstLength, second, secondLength, options, &status);
+    RequireData(ready, status);
+    return result;
 }
 
 }

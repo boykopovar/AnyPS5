@@ -12,9 +12,15 @@
 
 - [Inspector and bmalloc placement new](../../../core/libs/prx/libSceJsc/src/PlacementNew.cpp) - tested on the host, not against console binaries; the console code for these 3 overloads is unverified. They return their location argument and ignore the size and tag, as the pinned [`FastMalloc.h`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastMalloc.h#L312-L339) and [`BMalloced.h`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/bmalloc/bmalloc/BMalloced.h#L30-L33) macros define them.
 
+- [WTF string search](../../../core/libs/prx/libSceJsc/src/WtfStringSearch.cpp) - the console WTF version and string layout are unverified. The 18 `StringImpl` queries, `StringView::contains(const char*)` and `protocolIs` read a 24-byte `StringImpl` (8-bit flag `1 << 2`) and a 16-byte `StringView` as in pinned [StringImpl.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringImpl.h), whose declarations match the mangled names, and follow its [StringImpl.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringImpl.cpp), [StringCommon.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringCommon.h) and [URL.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/URL.cpp). Null `this`, reference, match function or C string arguments throw where WebKit faults.
+
+- [WTF URL queries](../../../core/libs/prx/libSceJsc/src/WtfUrl.cpp) (libSceJsc) - the console WTF version and `URL` layout are unverified. `URL::port`, `query`, `isLocalFile`, `protocolIsAbout`, `stringWithoutQueryOrFragmentIdentifier` and `defaultPortForProtocol` read a 40-byte release `URL` and follow pinned [URL.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/URL.cpp), [URLParser.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/URLParser.cpp#L571-L624) and [StringView.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/StringView.cpp#L316-L323). `Optional<uint16_t>` is returned indirectly, flag at byte 0 and value at byte 2. A scheme starting with `w` whose length is not 2 or 3 gets an engaged port 0, as pinned `URLParser` returns `false` there. Non-Latin-1 port whitespace is the Unicode bidi class WS set. Null pointers throw where WebKit faults.
+
+- [WTF time comparison and StringBuilder::isAllASCII](../../../core/libs/prx/libSceJsc/src/WtfUrl.cpp) - the console WTF version, the `ClockType` width (modelled as 32-bit) and the `Seconds` and `StringBuilder` layouts are unmeasured; only the test harness builds these objects. `TimeWithDynamicClockType::operator<` and `Seconds::operator+` follow [TimeWithDynamicClockType.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/TimeWithDynamicClockType.cpp#L95-L99) and [its header](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/TimeWithDynamicClockType.h#L82-L85); `isAllASCII` follows [StringBuilder.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/StringBuilder.cpp#L458-L466) and [its header](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/StringBuilder.h#L365-L376). Different clock types, an overflowed builder, a nonzero length without characters and null pointers throw where WebKit crashes or faults.
+
 ### Known export names; ABI prototypes unverified
 
-- The 140 throwing JavaScriptCore, Inspector, WTF and bmalloc exports in [Export.cpp](../../../core/libs/prx/libSceJsc/Export.cpp) are present in the PS5 3.20 `libSceJsc` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
+- The 136 throwing JavaScriptCore, Inspector, WTF and bmalloc exports in [Export.cpp](../../../core/libs/prx/libSceJsc/Export.cpp) are present in the PS5 3.20 `libSceJsc` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
 
 - [Empty bodies](../../../core/libs/prx/libSceJsc/Export.cpp) (libSceJsc) - the console JavaScriptCore version is unverified; the parameters of five exports come from their mangled names. In firmware 13.42 the `JSC::VM::ClientData` `D1`, `bmalloc::FreeList` `D2`, `Inspector::DebuggerBackendDispatcherHandler` `D2` and `Inspector::TimelineBackendDispatcherHandler` `D1` destructors and `Inspector::InspectorDebuggerAgent::didCreateFrontendAndBackend` return at once without reading an argument, and so do these. Read from disassembly, not measured on a console.
 
@@ -44,7 +50,7 @@
   - `fj3HITuKDPs`
   - `uF3DZ2xR1sA`
 
-- [Additional callable exports](../../../core/libs/prx/libSceJsc/Export.cpp) - 356 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceJsc.c) and the [selected export metadata](https://gist.github.com/kyon-eth/e699987524d8485a9de9740280cfe4c1/09c89f4d64a17da12485e0eb637620ced4f6eeb2) from two version-labelled images (SHA-256 `d2a5f8a8807f23cb71170a5d3b779a57636f5a3480d92955e4255545ffe1e97e`). The labels are not authenticated. Apart from the 13 register-set queries and constructors and the two `Deprecated::ScriptValue` getters in the firmware 13.42 entries below, prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality. Shared WebKit exports require separate loader analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceJsc/Export.cpp) - 331 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceJsc.c) and the [selected export metadata](https://gist.github.com/kyon-eth/e699987524d8485a9de9740280cfe4c1/09c89f4d64a17da12485e0eb637620ced4f6eeb2) from two version-labelled images (SHA-256 `d2a5f8a8807f23cb71170a5d3b779a57636f5a3480d92955e4255545ffe1e97e`). The labels are not authenticated. Apart from the 13 register-set queries and constructors and the two `Deprecated::ScriptValue` getters in the firmware 13.42 entries below, prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality. Shared WebKit exports require separate loader analysis.
 
 | Name | NID |
 | --- | --- |
@@ -243,7 +249,6 @@
 | `_ZN3WTF10AtomString4initEv` | `nQvycLYTm7A` |
 | `_ZN3WTF10StackTrace17captureStackTraceEii` | `fyBcK2uVX9E` |
 | `_ZN3WTF10StackTrace8demangleEPv` | `9U1DoHp0Kcs` |
-| `_ZN3WTF10StringImpl11reverseFindEPS0_j` | `GmJr4Guymvk` |
 | `_ZN3WTF10StringImpl17createFromLiteralEPKcj` | `eiR-c3WYWAE` |
 | `_ZN3WTF10StringImpl17createFromLiteralEPKc` | `mLHS0Q4GV-o` |
 | `_ZN3WTF10StringImpl18simplifyWhiteSpaceEv` | `6kEVUeU2EL8` |
@@ -251,17 +256,11 @@
 | `_ZN3WTF10StringImpl20createWithoutCopyingEPKDsj` | `XVb+0NN54gc` |
 | `_ZN3WTF10StringImpl20createWithoutCopyingEPKhj` | `M0yz1LPGSaE` |
 | `_ZN3WTF10StringImpl23defaultWritingDirectionEPb` | `vKObO5LG+x8` |
-| `_ZN3WTF10StringImpl4findEPFbDsEj` | `KcAJ-JrL2+c` |
-| `_ZN3WTF10StringImpl4findEPS0_j` | `noY4H2ZEXJw` |
-| `_ZN3WTF10StringImpl4findEPS0_` | `wJvsHbLD7aI` |
 | `_ZN3WTF10StringImpl6createEPKh` | `rUSjmJ0daUk` |
 | `_ZN3WTF10StringImpl7replaceEDsPS0_` | `PoT9sdk4N18` |
 | `_ZN3WTF10StringImpl7replaceEPS0_S1_` | `djdfuFWlVPI` |
 | `_ZN3WTF10StringImpl7replaceEjjPS0_` | `MejItkj1J4c` |
-| `_ZN3WTF10StringImpl8endsWithEPS0_` | `PTf-FJo+ApE` |
-| `_ZN3WTF10StringImpl8endsWithERS0_` | `9dOBfs078pg` |
 | `_ZN3WTF10nullStringEv` | `z7ey00+6y+Q` |
-| `_ZN3WTF10protocolIsENS_10StringViewEPKc` | `A2BZJgwBmeI` |
 | `_ZN3WTF11Persistence5CoderINS_10AtomStringEE6decodeERNS0_7DecoderE` | `4dtPhcCb76Y` |
 | `_ZN3WTF11Persistence5CoderINS_6StringEE6decodeERNS0_7DecoderE` | `ZW5gWeh6BKQ` |
 | `_ZN3WTF11Persistence5CoderINS_7CStringEE6decodeERNS0_7DecoderE` | `D93FsJ-Bib4` |
@@ -283,7 +282,6 @@
 | `_ZN3WTF20ObjectIdentifierBase26generateIdentifierInternalEv` | `7Zihjr8aD+Y` |
 | `_ZN3WTF20ObjectIdentifierBase36generateThreadSafeIdentifierInternalEv` | `l9kqixNsNq4` |
 | `_ZN3WTF21LineBreakIteratorPool10sharedPoolEv` | `LVut7lXu51g` |
-| `_ZN3WTF22defaultPortForProtocolENS_10StringViewE` | `8stlbyGspnE` |
 | `_ZN3WTF23openLatin1UTextProviderEPNS_15UTextWithBufferEPKhjP10UErrorCode` | `RxRtEFonL5U` |
 | `_ZN3WTF24acquireLineBreakIteratorENS_10StringViewERKNS_10AtomStringEPKDsjNS_21LineBreakIteratorModeE` | `OmR6AUTosbU` |
 | `_ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator` | `mqVRQv4SBS4` |
@@ -369,27 +367,10 @@
 | `_ZNK3JSC8Profiler8Database4toJSEPNS_14JSGlobalObjectE` | `Ipo19kq3hWA` |
 | `_ZNK3JSC9ClassInfo35hasStaticSetterOrReadonlyPropertiesEv` | `iGxZRUg9NPM` |
 | `_ZNK3WTF10StackTrace4dumpERNS_11PrintStreamEPKc` | `gfTs2aPeHoM` |
-| `_ZNK3WTF10StringImpl10startsWithEPKS0_` | `2K6zyWD2WxI` |
-| `_ZNK3WTF10StringImpl10startsWithERKS0_` | `cXUbCLbi6mw` |
 | `_ZNK3WTF10StringImpl10tryGetUtf8ENS_14ConversionModeE` | `cz5x0BcGOZ8` |
-| `_ZNK3WTF10StringImpl16hasInfixEndingAtERKS0_j` | `Lk6zcChMMfw` |
-| `_ZNK3WTF10StringImpl18hasInfixStartingAtERKS0_j` | `8t7fiGWomPU` |
 | `_ZNK3WTF10StringImpl18tryGetUtf8ForRangeEjjNS_14ConversionModeE` | `PcudeTUiShQ` |
-| `_ZNK3WTF10StringImpl21findIgnoringASCIICaseEPKS0_j` | `kAsMu6O6yZ0` |
-| `_ZNK3WTF10StringImpl21findIgnoringASCIICaseERKS0_j` | `y8jha02Bsu0` |
-| `_ZNK3WTF10StringImpl21findIgnoringASCIICaseERKS0_` | `lkxhdb4gfCk` |
-| `_ZNK3WTF10StringImpl25endsWithIgnoringASCIICaseEPKS0_` | `MvKToaKANpw` |
-| `_ZNK3WTF10StringImpl25endsWithIgnoringASCIICaseERKS0_` | `zKg5AOZL6V0` |
-| `_ZNK3WTF10StringImpl27startsWithIgnoringASCIICaseEPKS0_` | `b355f1hsAGw` |
-| `_ZNK3WTF10StringImpl27startsWithIgnoringASCIICaseERKS0_` | `CxxZ4m5WzGU` |
 | `_ZNK3WTF10StringView10tryGetUtf8ENS_14ConversionModeE` | `T-uddfL1AmI` |
 | `_ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_` | `vFWzXVdtsvk` |
-| `_ZNK3WTF10StringView8containsEPKc` | `CZHdjB7ArhA` |
-| `_ZNK3WTF13StringBuilder10isAllASCIIEv` | `R5rWHiU8BF4` |
-| `_ZNK3WTF3URL11isLocalFileEv` | `2awTIdIwODI` |
-| `_ZNK3WTF3URL15protocolIsAboutEv` | `YeskHF2qK4I` |
-| `_ZNK3WTF3URL38stringWithoutQueryOrFragmentIdentifierEv` | `Qlcy3AKepzU` |
-| `_ZNK3WTF3URL4portEv` | `AxbrDa89hBs` |
 | `_ZNK3WTF6String10tryGetUtf8ENS_14ConversionModeE` | `iQoJc7qieSk` |
 | `_ZNK3WTF6String10tryGetUtf8Ev` | `87OOTOeB8pE` |
 | `_ZNK3WTF6String15stripWhiteSpaceEv` | `gQ0v9iNBI44` |

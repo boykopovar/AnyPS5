@@ -14,6 +14,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import title_run
 
 
+def feature(name):
+    value = getattr(title_run, name, None)
+    assert value is not None, f"title_run.{name} is missing"
+    return value
+
+
 class TitlesTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -34,8 +40,14 @@ class TitlesTests(unittest.TestCase):
             title_run.load_titles(self.write({"PPSA00001": {"rlink": []}}))
 
     def test_wrong_type_is_refused(self):
-        with self.assertRaisesRegex(ValueError, "PPSA00001: seconds must be int"):
+        with self.assertRaisesRegex(ValueError, "PPSA00001: seconds must be a positive integer"):
             title_run.load_titles(self.write({"PPSA00001": {"seconds": "60"}}))
+
+    def test_catalog_seconds_must_be_a_positive_integer(self):
+        for value in (True, False, 0, -1):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "PPSA00001: seconds must be a positive integer"):
+                title_run.load_titles(self.write({"PPSA00001": {"seconds": value}}))
+        self.assertEqual(title_run.load_titles(self.write({"PPSA00001": {"seconds": 30}}))["PPSA00001"]["seconds"], 30)
 
     def test_non_string_items_are_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: env must hold strings"):
@@ -126,6 +138,10 @@ class AnalysisTests(unittest.TestCase):
         text = "[gpu] storage image 0x1 destroyed with GPU results pending\n" * 2
         self.assertEqual(title_run.warning_counts(text)["destroyed with GPU results pending"], 2)
 
+    def test_first_error_reports_a_module_that_did_not_load(self):
+        text = "[time] scheduler tick raised to 0.5 ms\nFailed to load module: libs/libSceSystemService.prx\nGetLastError: 127 - The specified procedure could not be found.\n"
+        self.assertEqual(title_run.first_error(text), "Failed to load module: libs/libSceSystemService.prx")
+
     def test_read_summary(self):
         path = self.root / "aps5-summary.jsonl"
         lines = [{"presents": 300, "window": {"ms": 10000}, "gpu": "A", "driver": "1", "os": "W"},
@@ -151,6 +167,26 @@ class AnalysisTests(unittest.TestCase):
         cut = self.root / "cut.bmp"
         cut.write_bytes(noisy.read_bytes()[:-20])
         self.assertIsNone(title_run.frame_is_uniform(cut))
+
+    def test_malformed_bmp_headers_are_unreadable(self):
+        frame = bmp(self.root / "frame.bmp", 8, 4, lambda x, y: (0, 0, 0))
+        original = frame.read_bytes()
+        mutations = (
+            ("signature", 0, b"ZZ"),
+            ("pixel offset", 10, struct.pack("<I", 12)),
+            ("DIB size", 14, struct.pack("<I", 12)),
+            ("zero width", 18, struct.pack("<i", 0)),
+            ("negative width", 18, struct.pack("<i", -8)),
+            ("zero height", 22, struct.pack("<i", 0)),
+            ("planes", 26, struct.pack("<H", 2)),
+            ("compression", 30, struct.pack("<I", 1)),
+        )
+        for label, offset, value in mutations:
+            with self.subTest(label=label):
+                data = bytearray(original)
+                data[offset:offset + len(value)] = value
+                frame.write_bytes(data)
+                self.assertIsNone(title_run.frame_is_uniform(frame))
 
     def test_unsupported_frame_bit_depth_is_unreadable(self):
         frame = bmp(self.root / "unsupported.bmp", 8, 4, lambda x, y: (0, 0, 0))
@@ -230,7 +266,8 @@ class ReportTests(unittest.TestCase):
         now = summary({"PPSA85300": {"name": "Light", "version": "0.4",
                                      "runs": [run("crashed", error="what(): unsupported MIB 1.1 | x"), run("rendering", "warm", 31.0)]}})
         before = summary({"PPSA85300": {"name": "Light", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]}})
-        self.assertEqual(title_run.render_markdown(now, before), "\n".join([
+        report = title_run.render_markdown(now, before)
+        self.assertTrue(report.startswith("\n".join([
             "AnyPS5 `abc1234`, main + #6814. Windows 11, Radeon 860M, driver 32.0.13058.8001, CPU Ryzen AI 7 350. 2 runs per title, 60 s each.",
             "",
             "Regressions: Light (PPSA85300) rendering -> crashed",
@@ -239,7 +276,8 @@ class ReportTests(unittest.TestCase):
             "|---|---|---|---|---|---|---|---|",
             "| Light | PPSA85300 | 0.4 | crashed | rendering | 31.0 | what(): unsupported MIB 1.1 \\| x | rendering |",
             "",
-        ]))
+        ])))
+        self.assertIn("| Title | ID | Measure | Before | Now |", report)
         self.assertNotIn("Before", title_run.render_markdown(now))
         now["machine"] = {"os": "", "gpu": "", "driver": "", "cpu": "Ryzen AI 7 350"}
         self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
@@ -302,6 +340,14 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(sorted(found), ["PPSA00001", "PPSA00002"])
         self.assertEqual(found["PPSA00001"]["version"], "01.000.110")
         self.assertEqual(found["PPSA00001"]["name"], "Light")
+
+    def test_discover_ignores_duplicates_of_titles_not_asked_for(self):
+        package(self.root / "a/PPSA00001", "PPSA00001")
+        package(self.root / "b/PPSA00001", "PPSA00001")
+        package(self.root / "c/PPSA00002", "PPSA00002")
+        self.assertEqual(sorted(title_run.discover([self.root], ["PPSA00002"])), ["PPSA00002"])
+        with self.assertRaisesRegex(ValueError, "PPSA00001 found more than once"):
+            title_run.discover([self.root], ["PPSA00001"])
 
     def test_source_root_follows_the_build(self):
         build = self.root / "build"
@@ -473,6 +519,17 @@ class PadTests(unittest.TestCase):
         self.assertIsNone(result["pad_queued_s"])
         self.assertFalse((self.work / "pad-input.txt").exists())
 
+    def test_default_audio_driver_is_dummy(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SDL_AUDIODRIVER", None)
+            _, env = self.run_with(None)
+        self.assertEqual(env["SDL_AUDIODRIVER"], "dummy")
+
+    def test_inherited_audio_driver_is_preserved(self):
+        with unittest.mock.patch.dict(os.environ, {"SDL_AUDIODRIVER": "wasapi"}):
+            _, env = self.run_with(None)
+        self.assertEqual(env["SDL_AUDIODRIVER"], "wasapi")
+
 
 class SessionTests(unittest.TestCase):
     WINDOW = ("import ctypes; user32 = ctypes.WinDLL('user32'); user32.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4; "
@@ -563,6 +620,219 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(session.alive())
         session.kill()
         self.assertTrue(wait_until(lambda: not session.alive()))
+
+
+class CompareTests(unittest.TestCase):
+    def summary(self, **titles):
+        return {"titles": {title_id: {"name": f"Game {title_id}", "runs": runs} for title_id, runs in titles.items()}}
+
+    def test_fps_is_compared_on_the_last_run(self):
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0}, {"outcome": "rendering", "fps": 30.0}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0}, {"outcome": "rendering", "fps": 45.5}])
+        compared = feature("compare_runs")(summary, previous)
+        self.assertEqual(compared["PPSA00001"]["fps"], {"before": 30.0, "now": 45.5})
+        self.assertEqual(compared["PPSA00001"]["name"], "Game PPSA00001")
+
+    def test_a_run_that_did_not_start_has_no_fps(self):
+        previous = self.summary(PPSA00001=[{"outcome": "relink-failed", "fps": 0.0}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 12.0}])
+        self.assertEqual(feature("compare_runs")(summary, previous)["PPSA00001"]["fps"], {"before": None, "now": 12.0})
+
+    def test_average_fps_comes_from_the_report(self):
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0, "report": {"averageFps": 58.0}}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": {"averageFps": 61.5}}])
+        self.assertEqual(feature("compare_runs")(summary, previous)["PPSA00001"]["averageFps"], {"before": 58.0, "now": 61.5})
+
+    def test_average_fps_without_a_report_is_not_recorded(self):
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": None}])
+        self.assertEqual(feature("compare_runs")(summary, previous)["PPSA00001"]["averageFps"], {"before": None, "now": None})
+
+    def test_shader_counts_are_paired(self):
+        report = {"shaders": {"compiled": 12, "failed": 1, "cacheHits": 40}}
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0, "report": report}])
+        changed = {"shaders": {"compiled": 3, "failed": 0, "cacheHits": 50}}
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": changed}])
+        self.assertEqual(feature("compare_runs")(summary, previous)["PPSA00001"]["shaders"],
+                         {"compiled": {"before": 12, "now": 3}, "failed": {"before": 1, "now": 0}, "cacheHits": {"before": 40, "now": 50}})
+
+    def test_shader_counts_missing_on_one_side_are_not_recorded(self):
+        report = {"shaders": {"compiled": 12, "failed": 1, "cacheHits": None}}
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": report}])
+        shaders = feature("compare_runs")(summary, previous)["PPSA00001"]["shaders"]
+        self.assertEqual(shaders["compiled"], {"before": None, "now": 12})
+        self.assertEqual(shaders["cacheHits"], {"before": None, "now": None})
+
+    def test_missing_functions_are_diffed_by_library_and_name(self):
+        before = {"missing": [{"library": "libSceNet", "name": "a", "calls": 3}, {"library": None, "name": "b", "calls": 1},
+                              {"library": "libSceNet", "name": "c", "calls": 2}]}
+        now = {"missing": [{"library": "libSceNet", "name": "c", "calls": 5}, {"library": "libSceAudioOut", "name": "d", "calls": 1}]}
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": before}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": now}])
+        diff = feature("compare_runs")(summary, previous)["PPSA00001"]["missingFunctions"]
+        self.assertEqual(diff["onlyBefore"], [{"library": "libSceNet", "name": "a", "calls": 3}, {"library": None, "name": "b", "calls": 1}])
+        self.assertEqual(diff["onlyNow"], [{"library": "libSceAudioOut", "name": "d", "calls": 1}])
+        self.assertEqual(diff["both"], [{"library": "libSceNet", "name": "c", "before": 2, "now": 5}])
+
+    def test_missing_functions_on_one_side_are_not_recorded(self):
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": {"missing": []}}])
+        compared = feature("compare_runs")(summary, previous)["PPSA00001"]
+        self.assertIsNone(compared["missingFunctions"])
+        self.assertEqual(compared["missingFunctionsTruncated"], {"before": None, "now": None})
+
+    def test_unsupported_instructions_are_diffed_by_encoding_opcode_and_modifiers(self):
+        before = {"unsupported": [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": ["clamp"], "count": 2},
+                                  {"encoding": None, "opcode": None, "opcodeValue": 9, "modifiers": None, "count": 1}]}
+        now = {"unsupported": [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": ["clamp"], "count": 7},
+                               {"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": None, "count": 1}]}
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": before}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": now}])
+        diff = feature("compare_runs")(summary, previous)["PPSA00001"]["unsupportedInstructions"]
+        self.assertEqual(diff["onlyBefore"], [{"encoding": None, "opcode": None, "opcodeValue": 9, "modifiers": None, "count": 1}])
+        self.assertEqual(diff["onlyNow"], [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": None, "count": 1}])
+        self.assertEqual(diff["both"], [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": ["clamp"], "before": 2, "now": 7}])
+
+    def test_table_shows_both_sides_and_not_recorded(self):
+        before = {"report": {"averageFps": 58.0, "shaders": {"compiled": 12, "failed": 1, "cacheHits": None},
+                             "missing": [{"library": "libSceNet", "name": "a", "calls": 3}], "unsupported": []}, "fps": 20.0}
+        now = {"report": {"averageFps": None, "shaders": {"compiled": 3, "failed": 0, "cacheHits": 50},
+                          "missing": [{"library": "libSceNet", "name": "b", "calls": 1}], "unsupported": None}, "fps": 25.5, "outcome": "rendering"}
+        compared = feature("compare_runs")(self.summary(PPSA00001=[now]), self.summary(PPSA00001=[before]))
+        lines = feature("render_compare")(compared)
+        self.assertEqual(lines[0], "| Title | ID | Measure | Before | Now |")
+        self.assertIn("| Game PPSA00001 | PPSA00001 | FPS | 20.0 | 25.5 |", lines)
+        self.assertIn("| Game PPSA00001 | PPSA00001 | Average FPS (report) | 58.0 | not recorded |", lines)
+        self.assertIn("| Game PPSA00001 | PPSA00001 | Shader cache hits | not recorded | 50 |", lines)
+        self.assertIn("| Game PPSA00001 | PPSA00001 | Missing functions | 1 | 1 |", lines)
+        self.assertIn("| Game PPSA00001 | PPSA00001 | Unsupported instructions | 0 | not recorded |", lines)
+        self.assertIn("Game PPSA00001 (PPSA00001), missing functions: only before: libSceNet/a; only now: libSceNet/b; in both: 0", lines)
+
+    def test_json_holds_the_comparison_and_null_for_not_recorded(self):
+        before = {"report": {"averageFps": None, "shaders": None, "missing": [{"library": None, "name": "a", "calls": 2}], "unsupported": None,
+                             "truncated": {"functions": 0, "unsupported": 0}}, "fps": 20.0, "outcome": "rendering"}
+        now = {"report": {"averageFps": 60.0, "shaders": {"compiled": 1, "failed": 0, "cacheHits": None}, "missing": [], "unsupported": [],
+                          "truncated": {"functions": 0, "unsupported": 0}}, "fps": 21.0, "outcome": "rendering"}
+        document = json.loads(feature("compare_json")(self.summary(PPSA00001=[now]), self.summary(PPSA00001=[before])))
+        self.assertEqual(document["format"], "title-run-compare")
+        title = document["titles"]["PPSA00001"]
+        self.assertEqual(title["fps"], {"before": 20.0, "now": 21.0})
+        self.assertEqual(title["averageFps"], {"before": None, "now": 60.0})
+        self.assertEqual(title["shaders"]["compiled"], {"before": None, "now": 1})
+        self.assertEqual(title["shaders"]["cacheHits"], {"before": None, "now": None})
+        self.assertEqual(title["missingFunctions"], {"onlyBefore": [{"library": None, "name": "a", "calls": 2}], "onlyNow": [], "both": []})
+        self.assertIsNone(title["unsupportedInstructions"])
+        self.assertEqual(title["missingFunctionsCount"], {"before": 1, "now": 0})
+
+    def test_summaries_from_before_the_report_are_not_recorded_everywhere(self):
+        old = {"outcome": "rendering", "fps": 20.0}
+        document = json.loads(feature("compare_json")(self.summary(PPSA00001=[old]), self.summary(PPSA00001=[old])))
+        title = document["titles"]["PPSA00001"]
+        self.assertEqual(title["averageFps"], {"before": None, "now": None})
+        self.assertEqual(title["missingFunctionsCount"], {"before": None, "now": None})
+        self.assertIsNone(title["missingFunctions"])
+        self.assertIsNone(title["unsupportedInstructions"])
+        lines = feature("render_compare")(feature("compare_runs")(self.summary(PPSA00001=[old]), self.summary(PPSA00001=[old])))
+        self.assertIn("| Game PPSA00001 | PPSA00001 | Shaders compiled | not recorded | not recorded |", lines)
+
+    def test_a_run_that_never_started_records_nothing(self):
+        failed = {"outcome": "relink-failed", "fps": 0.0, "report": None}
+        compared = feature("compare_runs")(self.summary(PPSA00001=[failed]), self.summary(PPSA00001=[{"outcome": "rendering", "fps": 9.0, "report": None}]))
+        self.assertEqual(compared["PPSA00001"]["fps"], {"before": 9.0, "now": None})
+        self.assertEqual(compared["PPSA00001"]["shaders"]["compiled"], {"before": None, "now": None})
+
+    def test_json_needs_a_comparison(self):
+        result = subprocess.run([sys.executable, str(title_run.ROOT / "tools/title_run.py"), "--games", str(title_run.ROOT), "--json"],
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, "--json without --compare must exit with an error")
+        self.assertIn("--json needs --compare", result.stderr, "--json without --compare must say it needs --compare")
+
+    def test_table_has_no_rows_without_common_titles(self):
+        self.assertEqual(feature("compare_runs")(self.summary(PPSA00002=[{"outcome": "rendering", "fps": 1.0}]), self.summary()), {})
+
+    def test_only_titles_in_both_runs_are_compared(self):
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}], PPSA00002=[{"outcome": "rendering", "fps": 1.0}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 2.0}], PPSA00003=[{"outcome": "rendering", "fps": 2.0}])
+        self.assertEqual(list(feature("compare_runs")(summary, previous)), ["PPSA00001"])
+
+
+class RunReportTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+
+    def report(self, **changes):
+        document = {"format": "anyps5-report", "version": 1,
+                    "coverage": {"milestones": True, "missing": True, "shaders": True, "unsupported": True, "imageFormats": True, "descriptors": True},
+                    "truncated": {"functions": 0, "unsupported": 0, "imageFormats": 0, "descriptors": 0},
+                    "run": {"averageFps": 59.9, "fpsWindowSeconds": 12.5, "framesPresented": 750},
+                    "missing": {"functions": [{"library": "libSceNet", "name": "sceNetFoo", "calls": 3}]},
+                    "shaders": {"compiled": 12, "failed": 1, "cacheHits": 40,
+                                "unsupported": [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": ["clamp"], "count": 2}]}}
+        document.update(changes)
+        return document
+
+    def read(self, document):
+        path = self.root / "anyps5-report.json"
+        if isinstance(document, str):
+            path.write_text(document, encoding="utf-8")
+        else:
+            path.write_text(json.dumps(document), encoding="utf-8")
+        return feature("read_report")(path)
+
+    def test_full_report(self):
+        report = self.read(self.report())
+        self.assertEqual(report["averageFps"], 59.9)
+        self.assertEqual(report["shaders"], {"compiled": 12, "failed": 1, "cacheHits": 40})
+        self.assertEqual(report["missing"], [{"library": "libSceNet", "name": "sceNetFoo", "calls": 3}])
+        self.assertEqual(report["unsupported"][0]["opcode"], "V_FOO")
+        self.assertEqual(report["truncated"], {"functions": 0, "unsupported": 0})
+
+    def test_cache_hits_are_optional(self):
+        document = self.report()
+        del document["shaders"]["cacheHits"]
+        self.assertEqual(self.read(document)["shaders"], {"compiled": 12, "failed": 1, "cacheHits": None})
+
+    def test_coverage_off_is_not_recorded(self):
+        document = self.report(coverage={"milestones": True, "missing": False, "shaders": False, "unsupported": False, "imageFormats": True, "descriptors": True})
+        report = self.read(document)
+        self.assertIsNone(report["shaders"])
+        self.assertIsNone(report["missing"])
+        self.assertIsNone(report["unsupported"])
+
+    def test_null_fps_is_kept_as_null(self):
+        document = self.report()
+        document["run"]["averageFps"] = None
+        self.assertIsNone(self.read(document)["averageFps"])
+
+    def test_unreadable_reports_are_not_recorded(self):
+        self.assertIsNone(feature("read_report")(self.root / "missing.json"))
+        self.assertIsNone(self.read("{not json"))
+        self.assertIsNone(self.read([1, 2]))
+        self.assertIsNone(self.read(self.report(format="other")))
+
+    def test_take_report_moves_the_file_into_the_run(self):
+        work, run_dir = self.root / "work", self.root / "run1"
+        work.mkdir()
+        run_dir.mkdir()
+        self.assertIsNone(feature("take_report")(work, run_dir))
+        (work / "anyps5-report.json").write_text(json.dumps(self.report()), encoding="utf-8")
+        self.assertEqual(feature("take_report")(work, run_dir)["averageFps"], 59.9)
+        self.assertFalse((work / "anyps5-report.json").exists())
+        self.assertTrue((run_dir / "anyps5-report.json").is_file())
+
+    def test_wrong_shapes_are_not_recorded(self):
+        report = self.read(self.report(missing={"functions": "many"}, shaders=[1]))
+        self.assertIsNone(report["missing"])
+        self.assertEqual(report["shaders"], {"compiled": None, "failed": None, "cacheHits": None})
+        self.assertIsNone(report["unsupported"])
+
+    def test_list_entries_that_are_not_objects_are_dropped(self):
+        report = self.read(self.report(missing={"functions": [1, {"name": "f", "calls": None}]}))
+        self.assertEqual(report["missing"], [{"name": "f", "calls": None}])
+        self.assertEqual(title_run.tally(report["missing"], ["name"], "calls"), {'["f"]': 0})
 
 
 if __name__ == "__main__":

@@ -30,10 +30,12 @@ void CheckUninitialized() {
     for (const std::uint32_t flags : {0u, 1u, 0xffffffffu}) {
         Require(Failed(sceNetGetDnsInfo(&info, flags), kEnotinit));
         Require(Failed(sceNetSetDnsInfo(&info, flags), kEnotinit));
+        Require(Failed(sceNetSetDnsInfoToKernel(&info, flags), kEnotinit));
         Require(Failed(sceNetGetDns6Info(&info6, flags), kEnotinit));
         Require(Failed(sceNetSetDns6Info(&info6, flags), kEnotinit));
         Require(Failed(sceNetGetDnsInfo(nullptr, flags), kEnotinit));
         Require(Failed(sceNetSetDnsInfo(nullptr, flags), kEnotinit));
+        Require(Failed(sceNetSetDnsInfoToKernel(nullptr, flags), kEnotinit));
         Require(Failed(sceNetGetDns6Info(nullptr, flags), kEnotinit));
         Require(Failed(sceNetSetDns6Info(nullptr, flags), kEnotinit));
         Require(std::memcmp(&info, &before, sizeof(info)) == 0);
@@ -54,6 +56,13 @@ void CheckDns() {
     Require(sceNetSetDnsInfo(&info, 0) == 0);
     Require(sceNetGetDnsInfo(&read, 0) == 2 && read.primaryAddress == 0x08080808u && read.secondaryAddress == 0x04040808u);
     Require(sceNetSetDnsInfo(nullptr, 0) == 0);
+    Require(sceNetGetDnsInfo(&read, 0) >= 0);
+
+    Require(Failed(sceNetSetDnsInfoToKernel(&info, 1), kEinval));
+    Require(Failed(sceNetSetDnsInfoToKernel(&empty, 0), kEinval));
+    Require(sceNetSetDnsInfoToKernel(&info, 0) == 0);
+    Require(sceNetGetDnsInfo(&read, 0) == 2 && read.primaryAddress == 0x08080808u && read.secondaryAddress == 0x04040808u);
+    Require(sceNetSetDnsInfoToKernel(nullptr, 0) == 0);
     Require(sceNetGetDnsInfo(&read, 0) >= 0);
 
     NetDns6Info info6{};
@@ -110,6 +119,8 @@ void CheckUnreadableInfo() {
     Require(sceNetSetDnsInfo(&info, 0) == 0);
     Require(Failed(sceNetSetDnsInfo(static_cast<const NetDnsInfo*>(page), 1), kEinval));
     Require(Failed(sceNetSetDnsInfo(static_cast<const NetDnsInfo*>(page), 0), kEfault));
+    Require(Failed(sceNetSetDnsInfoToKernel(static_cast<const NetDnsInfo*>(page), 1), kEinval));
+    Require(Failed(sceNetSetDnsInfoToKernel(static_cast<const NetDnsInfo*>(page), 0), kEfault));
     NetDnsInfo read{};
     Require(sceNetGetDnsInfo(&read, 0) == 1 && read.primaryAddress == 0x08080808u);
     Require(sceNetSetDnsInfo(nullptr, 0) == 0);
@@ -130,16 +141,7 @@ void CheckUnreadableInfo() {
 }
 
 void CheckKernelDnsThrows() {
-    NetDnsInfo info{0x08080808u, 0};
     NetDns6Info info6{};
-    bool threwV4 = false;
-    try {
-        sceNetSetDnsInfoToKernel(&info, 0);
-    } catch (const std::runtime_error&) {
-        threwV4 = true;
-    }
-    Require(threwV4);
-
     bool threwV6 = false;
     try {
         sceNetSetDns6InfoToKernel(&info6, 0);
