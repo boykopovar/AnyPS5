@@ -129,6 +129,8 @@ int APS5_VABI sceNpMatching2CreateContext(const NpMatching2CreateContextParamete
 }
 
 int APS5_VABI sceNpMatching2CreateJoinRoom() {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -141,6 +143,8 @@ int APS5_VABI sceNpMatching2DestroyContext(std::uint16_t ctxId) {
 }
 
 int APS5_VABI sceNpMatching2GetRoomDataExternalList() {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -151,6 +155,8 @@ int APS5_VABI sceNpMatching2GetRoomDataInternal(std::uint16_t ctxId, const void*
 }
 
 int APS5_VABI sceNpMatching2GetRoomMemberDataInternal() {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -195,11 +201,15 @@ int APS5_VABI sceNpMatching2Initialize(const NpMatching2InitializeParameter* par
 }
 
 int APS5_VABI sceNpMatching2JoinRoom() {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2KickoutRoomMember() {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -240,11 +250,15 @@ int APS5_VABI sceNpMatching2RegisterSignalingCallback(std::uint16_t ctxId, void*
 }
 
 int APS5_VABI sceNpMatching2SearchRoom() {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2SendRoomChatMessage() {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -278,6 +292,8 @@ int APS5_VABI sceNpMatching2SetRoomDataInternal(std::uint16_t ctxId, const void*
 }
 
 int APS5_VABI sceNpMatching2SetRoomMemberDataInternal() {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -322,31 +338,43 @@ int APS5_VABI sceNpMatching2CreateContextA(const NpMatching2CreateContextParamet
 }
 
 int APS5_VABI sceNpMatching2CreateContextInternal(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2CreateJoinRoomA(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2GetLobbyInfoList(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2GetLobbyMemberDataInternal(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2GetLobbyMemberDataInternalList(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2GetMemoryInfo(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -360,31 +388,43 @@ int APS5_VABI sceNpMatching2GetRoomJoinedSlotMaskLocal(std::uint16_t ctxId, std:
 }
 
 int APS5_VABI sceNpMatching2GetRoomMemberDataExternalList(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2GetRoomMemberIdListLocal(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2GetRoomPasswordLocal(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2GetSignalingOptParamLocal(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2GetSslMemoryInfo(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2GetUserInfoListA(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -399,21 +439,29 @@ int APS5_VABI sceNpMatching2GetWorldIdArrayForAllServers(std::uint16_t ctxId, vo
 }
 
 int APS5_VABI sceNpMatching2GrantRoomOwner(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2JoinLobby(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2JoinRoomA(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2LeaveLobby(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -433,11 +481,15 @@ int APS5_VABI sceNpMatching2RegisterLobbyMessageCallback(std::uint16_t ctxId, vo
 }
 
 int APS5_VABI sceNpMatching2RegisterManualUdpSignalingCallback(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2SendLobbyChatMessage(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -448,16 +500,22 @@ int APS5_VABI sceNpMatching2SetExtraInitParam(void) {
 }
 
 int APS5_VABI sceNpMatching2SetLobbyMemberDataInternal(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2SetRoomDataInternalExt(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2SetSignalingOptParam(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
