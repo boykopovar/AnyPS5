@@ -1,4 +1,5 @@
 #include "prx/libScePlayGo/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <charconv>
@@ -13,6 +14,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 // The game is fully installed on the host, so every chunk is local and nothing is pending.
 static constexpr int SCE_PLAYGO_ERROR_BAD_POINTER = static_cast<int>(0x80B2000A);
@@ -156,6 +158,8 @@ static UnlistedChunkAnswer UnlistedChunks() {
     return answer;
 }
 
+constexpr uint16_t NoPlayGoFilesChunkBound = 1000;
+
 static bool IsKnownChunk(uint16_t id) {
     const auto& chunks = Chunks();
     if (chunks.ids.contains(id)) return true;
@@ -167,7 +171,7 @@ static bool IsKnownChunk(uint16_t id) {
     }
     if (chunks.scenario)
         throw std::runtime_error("scePlayGo: sce_sys/playgo-chunk.dat is missing and sce_sys/playgo-scenario.json lists no chunks, so chunk ID " + std::to_string(id) + " outside the listed ids 0 to " + std::to_string(PLAYGO_SCENARIO_CHUNK_COUNT - 1) + " cannot be checked; set APS5_PLAYGO_UNLISTED_CHUNKS=installed or =absent to answer for this dump");
-    throw std::runtime_error("scePlayGo: sce_sys/playgo-chunk.dat and sce_sys/playgo-scenario.json are missing, so chunk ID " + std::to_string(id) + " cannot be checked; set APS5_PLAYGO_UNLISTED_CHUNKS=installed, =absent, or a comma-separated list of chunk ids to answer for this dump");
+    return id < NoPlayGoFilesChunkBound;
 }
 
 static int ValidateChunks(const uint16_t* chunk_ids, uint32_t number_of_entries) {
@@ -185,7 +189,12 @@ static uint64_t SupportedOptionalChunkMask(uint32_t type) {
 static int ValidateOptionalChunkRequest(uint32_t type, const PlayGoOptionalChunk* option) {
     if (!option) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (type > PLAYGO_OPTIONAL_CHUNK_TYPE_LAST) return SCE_PLAYGO_ERROR_BAD_OPTIONAL_TYPE;
-    if (type == PLAYGO_OPTIONAL_CHUNK_TYPE_SCENARIO && (option->bitmask & ~PLAYGO_SCENARIO_MASK_ALL) != 0) return SCE_PLAYGO_ERROR_BAD_SCENARIO_CONFIGURATION;
+    PlayGoOptionalChunk localOption{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
+    errno = savedErrno;
+    if (!copied) return SCE_PLAYGO_ERROR_BAD_POINTER;
+    if (type == PLAYGO_OPTIONAL_CHUNK_TYPE_SCENARIO && (localOption.bitmask & ~PLAYGO_SCENARIO_MASK_ALL) != 0) return SCE_PLAYGO_ERROR_BAD_SCENARIO_CONFIGURATION;
     return 0;
 }
 
@@ -201,25 +210,26 @@ int APS5_VABI scePlayGoGetChunkId(int handle, uint16_t* outChunkIdList, uint32_t
     if (!outEntries) return SCE_PLAYGO_ERROR_BAD_POINTER;
     const auto& valid = Chunks().ids;
     if (!outChunkIdList) {
-        *outEntries = static_cast<uint32_t>(valid.size());
-        return 0;
+        const auto count = static_cast<uint32_t>(valid.size());
+        return GuestCopyOut_nid_no_patch(outEntries, &count, sizeof(count)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
     }
     if (numberOfEntries == 0 || numberOfEntries > 1000) return SCE_PLAYGO_ERROR_BAD_SIZE;
-    uint32_t written = 0;
+    std::vector<uint16_t> list;
     for (const auto id : valid) {
-        if (written == numberOfEntries) break;
-        outChunkIdList[written++] = id;
+        if (list.size() == numberOfEntries) break;
+        list.push_back(id);
     }
-    *outEntries = written;
-    return 0;
+    if (!GuestCopyOut_nid_no_patch(outChunkIdList, list.data(), list.size() * sizeof(uint16_t))) return SCE_PLAYGO_ERROR_BAD_POINTER;
+    const auto written = static_cast<uint32_t>(list.size());
+    return GuestCopyOut_nid_no_patch(outEntries, &written, sizeof(written)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoGetEta(int handle, const uint16_t* chunk_ids, uint32_t number_of_entries, int64_t* out_eta) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!out_eta) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (const int error = ValidateChunks(chunk_ids, number_of_entries)) return error;
-    *out_eta = 0;
-    return 0;
+    const int64_t eta = 0;
+    return GuestCopyOut_nid_no_patch(out_eta, &eta, sizeof(eta)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoGetInstallChunkId(int handle, uint16_t* out_chunk_id_list, uint32_t number_of_entries, uint32_t* out_entries) {
@@ -229,15 +239,13 @@ int APS5_VABI scePlayGoGetInstallChunkId(int handle, uint16_t* out_chunk_id_list
 int APS5_VABI scePlayGoGetInstallSpeed(int handle, int32_t* out_speed) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!out_speed) return SCE_PLAYGO_ERROR_BAD_POINTER;
-    *out_speed = g_installSpeed;
-    return 0;
+    return GuestCopyOut_nid_no_patch(out_speed, &g_installSpeed, sizeof(g_installSpeed)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoGetLanguageMask(int handle, uint64_t* out_language_mask) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!out_language_mask) return SCE_PLAYGO_ERROR_BAD_POINTER;
-    *out_language_mask = g_languageMask;
-    return 0;
+    return GuestCopyOut_nid_no_patch(out_language_mask, &g_languageMask, sizeof(g_languageMask)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoGetLocus(int handle, const uint16_t* chunkIds, uint32_t numberOfEntries, int8_t* outLoci) {
@@ -245,41 +253,44 @@ int APS5_VABI scePlayGoGetLocus(int handle, const uint16_t* chunkIds, uint32_t n
     if (!outLoci) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (chunkIds && numberOfEntries > 1000) return SCE_PLAYGO_ERROR_BAD_SIZE;
     if (const int error = ValidateChunks(chunkIds, numberOfEntries)) return error;
-    for (uint32_t index = 0; index < numberOfEntries; ++index) outLoci[index] = PLAYGO_LOCUS_LOCAL_FAST;
-    return 0;
+    const std::vector<int8_t> loci(numberOfEntries, PLAYGO_LOCUS_LOCAL_FAST);
+    return GuestCopyOut_nid_no_patch(outLoci, loci.data(), loci.size()) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoGetOptionalChunk(int handle, std::uint32_t type, PlayGoOptionalChunk* option) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!option) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (type > PLAYGO_OPTIONAL_CHUNK_TYPE_LAST) return SCE_PLAYGO_ERROR_BAD_OPTIONAL_TYPE;
-    option->bitmask = SupportedOptionalChunkMask(type);
-    return 0;
+    PlayGoOptionalChunk supported{};
+    supported.bitmask = SupportedOptionalChunkMask(type);
+    return GuestCopyOut_nid_no_patch(option, &supported, sizeof(supported)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoGetProgress(int handle, const uint16_t* chunk_ids, uint32_t number_of_entries, PlayGoProgress* out_progress) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!out_progress) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (const int error = ValidateChunks(chunk_ids, number_of_entries)) return error;
-    out_progress->progress_size = 1;
-    out_progress->total_size = 1;
-    return 0;
+    PlayGoProgress progress{};
+    progress.progress_size = 1;
+    progress.total_size = 1;
+    return GuestCopyOut_nid_no_patch(out_progress, &progress, sizeof(progress)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoGetRequiredDisc(int handle, std::uint32_t type, const PlayGoOptionalChunk* option, uint32_t* out_required_disc) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!out_required_disc) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (const int error = ValidateOptionalChunkRequest(type, option)) return error;
-    *out_required_disc = 0;
-    return 0;
+    const uint32_t disc = 0;
+    return GuestCopyOut_nid_no_patch(out_required_disc, &disc, sizeof(disc)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoGetSupportedOptionalChunk(int handle, std::uint32_t type, PlayGoOptionalChunk* option) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!option) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (type > PLAYGO_OPTIONAL_CHUNK_TYPE_LAST) return SCE_PLAYGO_ERROR_BAD_OPTIONAL_TYPE;
-    option->bitmask = SupportedOptionalChunkMask(type);
-    return 0;
+    PlayGoOptionalChunk supported{};
+    supported.bitmask = SupportedOptionalChunkMask(type);
+    return GuestCopyOut_nid_no_patch(option, &supported, sizeof(supported)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoGetToDoList(int handle, PlayGoToDo* out_todo_list, uint32_t number_of_entries, uint32_t* out_entries) {
@@ -287,8 +298,8 @@ int APS5_VABI scePlayGoGetToDoList(int handle, PlayGoToDo* out_todo_list, uint32
     (void)out_todo_list;
     (void)number_of_entries;
     if (!out_entries) return SCE_PLAYGO_ERROR_BAD_POINTER;
-    *out_entries = 0;
-    return 0;
+    const uint32_t entries = 0;
+    return GuestCopyOut_nid_no_patch(out_entries, &entries, sizeof(entries)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoInitialize(const PlayGoInitParams* init) {
@@ -300,8 +311,7 @@ int APS5_VABI scePlayGoInitialize(const PlayGoInitParams* init) {
 int APS5_VABI scePlayGoOpen(int* out_handle, const void* param) {
     (void)param;
     if (!out_handle) return SCE_PLAYGO_ERROR_BAD_POINTER;
-    *out_handle = PLAYGO_HANDLE;
-    return 0;
+    return GuestCopyOut_nid_no_patch(out_handle, &PLAYGO_HANDLE, sizeof(PLAYGO_HANDLE)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoPrefetch(int handle, const uint16_t* chunk_ids, uint32_t number_of_entries, int8_t minimum_locus) {
@@ -335,8 +345,13 @@ int APS5_VABI scePlayGoSetToDoList(int handle, const PlayGoToDo* todo_list, uint
     if (!todo_list) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (number_of_entries == 0) return SCE_PLAYGO_ERROR_BAD_SIZE;
     for (uint32_t index = 0; index < number_of_entries; ++index) {
-        if (!IsKnownChunk(todo_list[index].chunk_id)) return SCE_PLAYGO_ERROR_BAD_CHUNK_ID;
-        const int8_t locus = todo_list[index].locus;
+        PlayGoToDo entry{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&entry, &todo_list[index], sizeof(entry));
+        errno = savedErrno;
+        if (!copied) return SCE_PLAYGO_ERROR_BAD_POINTER;
+        if (!IsKnownChunk(entry.chunk_id)) return SCE_PLAYGO_ERROR_BAD_CHUNK_ID;
+        const int8_t locus = entry.locus;
         if (locus != PLAYGO_LOCUS_NOT_DOWNLOADED && locus != PLAYGO_LOCUS_LOCAL_SLOW && locus != PLAYGO_LOCUS_LOCAL_FAST) return SCE_PLAYGO_ERROR_BAD_LOCUS;
     }
     return 0;
