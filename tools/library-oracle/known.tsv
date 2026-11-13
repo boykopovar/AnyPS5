@@ -41,9 +41,6 @@ agcbuild_AcbResetQueue_b	diff	the packet differs from the console's; not yet ana
 agcbuild_AcbSetFlip_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_AcbSetFlip_b	diff	the console returns null and writes nothing for these arguments
 agcbuild_AcbSetFlip_c	diff	the console returns null and writes nothing for these arguments
-agcbuild_AcbWaitRegMem_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbWaitRegMem_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbWaitRegMem_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbWaitUntilSafeForRendering_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_AcbWaitUntilSafeForRendering_b	diff	the console returns null and writes nothing for these arguments
 agcbuild_AcbWaitUntilSafeForRendering_c	diff	the console returns null and writes nothing for these arguments
@@ -148,9 +145,7 @@ agcbuild_DcbSetUcRegisterDirect_c	throw	AnyPS5 throws for arguments the console 
 agcbuild_DcbSetUcRegistersIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetUcRegistersIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetUcRegistersIndirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbWaitRegMem_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbWaitRegMem_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbWaitRegMem_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbWaitRegMem_b	skip	the ninth argument, pollCycles, comes from the caller's stack, which neither the replay nor the measurement sets
 agcbuild_DcbWaitUntilSafeForRendering_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbWaitUntilSafeForRendering_b	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbWaitUntilSafeForRendering_c	diff	the console returns null and writes nothing for these arguments
