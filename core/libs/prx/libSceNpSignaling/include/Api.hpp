@@ -27,12 +27,20 @@ struct NpSignalingConnectionStatistics {
 };
 static_assert(sizeof(NpSignalingConnectionStatistics) == 0x10);
 
+struct NpSignalingMemoryInfo {
+    std::uint64_t currentInUse;
+    std::uint64_t peakInUse;
+    std::uint64_t maxSystemSize;
+};
+static_assert(sizeof(NpSignalingMemoryInfo) == 0x18);
+
 extern "C" {
 
 int APS5_VABI sceNpSignalingActivateConnection(int ctxId, const void* peerNpId, int* outConnId);
 int APS5_VABI sceNpSignalingCreateContext(const void* npId, void* callback, void* callbackArg, int* outContextId);
 int APS5_VABI sceNpSignalingDeleteContext(int ctxId);
 int APS5_VABI sceNpSignalingGetConnectionInfo(int ctxId, int connId, int infoCode, void* outInfo);
+int APS5_VABI sceNpSignalingGetLocalNetInfo(int ctxId, NpSignalingNetInfo* info);
 int APS5_VABI sceNpSignalingInitialize(std::int64_t memorySize, int threadPriority, int cpuAffinityMask, std::int64_t threadStackSize);
 int APS5_VABI sceNpSignalingSetContextOption(int ctxId, int optionId, int optionValue);
 int APS5_VABI sceNpSignalingTerminate();
@@ -51,5 +59,6 @@ int APS5_VABI sceNpSignalingGetPeerNetInfoA(int ctxId, const void* peerAccount, 
 int APS5_VABI sceNpSignalingCancelPeerNetInfo(int ctxId, int reqId);
 int APS5_VABI sceNpSignalingGetPeerNetInfoResult(int ctxId, int connId, NpSignalingNetInfo* peerNetInfo);
 int APS5_VABI sceNpSignalingGetConnectionStatistics(NpSignalingConnectionStatistics* stats);
+int APS5_VABI sceNpSignalingGetMemoryInfo(NpSignalingMemoryInfo* info);
 
 }

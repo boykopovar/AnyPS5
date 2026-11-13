@@ -5,6 +5,7 @@
 #include FT_FONT_FORMATS_H
 #include FT_TRUETYPE_TABLES_H
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -55,8 +56,23 @@ int GetAdvances(GuestFaceRec* face, std::uint32_t start, std::uint32_t count, st
     FT_Error error = query(flags | FT_ADVANCE_FLAG_FAST_ONLY);
     bool syncSlot = error != FT_Err_Unimplemented_Feature && FastQueryLoadsGlyph(owner->host, flags);
     if (error == FT_Err_Unimplemented_Feature && !(flags & FT_ADVANCE_FLAG_FAST_ONLY)) {
-        error = query(flags);
-        syncSlot = true;
+        if constexpr (sizeof(FT_Fixed) == sizeof(std::int64_t)) {
+            error = query(flags);
+            syncSlot = true;
+        } else {
+            std::vector<std::int64_t> loaded(count);
+            const std::int64_t factor = (flags & FT_LOAD_NO_SCALE) ? 1 : 1024;
+            std::uint32_t written = 0;
+            for (; written < count; ++written) {
+                error = FT_Load_Glyph(owner->host, start + written, flags | FT_LOAD_ADVANCE_ONLY);
+                if (error) break;
+                const FT_Vector advance = owner->host->glyph->advance;
+                loaded[written] = static_cast<std::int64_t>((flags & FT_LOAD_VERTICAL_LAYOUT) ? advance.y : advance.x) * factor;
+            }
+            SyncSlot(*owner);
+            std::copy_n(loaded.data(), written, advances);
+            return error;
+        }
     }
     if (syncSlot) SyncSlot(*owner);
     if constexpr (sizeof(FT_Fixed) == sizeof(std::int64_t)) {

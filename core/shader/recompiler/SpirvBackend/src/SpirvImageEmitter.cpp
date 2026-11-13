@@ -1743,7 +1743,7 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     if (gatherConstText != nullptr && !setup.dref) {
         const auto value = static_cast<std::uint32_t>(std::strtoul(gatherConstText, nullptr, 0));
         const bool integer = resultNumericClass == IrTextureNumericClass::Uint || resultNumericClass == IrTextureNumericClass::Sint;
-        const auto component = integer ? ConstantU32(state, value) : ConstantF32(state, std::bit_cast<std::uint32_t>(static_cast<float>(value)));
+        const auto component = resultNumericClass == IrTextureNumericClass::Sint ? ConstantI32(state, std::bit_cast<std::int32_t>(value)) : integer ? ConstantU32(state, value) : ConstantF32(state, std::bit_cast<std::uint32_t>(static_cast<float>(value)));
         gathered = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeConstruct, ImageVectorType(state, resultNumericClass, 4), gathered, component, component, component, component);
     }
@@ -1933,7 +1933,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         EmitEmulatedSample(ctx, access, setup, false);
         return;
     }
-    if (!setup.dref && image.conversionFormat == IrBufferFormat::Format11_11_10UNorm) {
+    if (!setup.dref && IsConvertedUnormTextureFormat(image.conversionFormat)) {
         EmitEmulatedSample(ctx, access, setup, true);
         return;
     }

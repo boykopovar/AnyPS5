@@ -1,4 +1,5 @@
 #include "prx/libSceAcm/include/Api.hpp"
+#include "prx/libSceAcm/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cerrno>
@@ -6,10 +7,44 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include "SceTypes.hpp"
 
 static void Require(bool value) {
     if (!value) std::abort();
+}
+
+static std::uintptr_t AdvanceRing(std::byte* ring, std::uint32_t capacity, std::uint32_t count, std::uint32_t index, std::uint32_t& nextCount, std::uint32_t& next) {
+    std::memcpy(ring + 0x8, &capacity, sizeof(capacity));
+    std::memcpy(ring + 0xc, &count, sizeof(count));
+    std::memcpy(ring + 0x10, &index, sizeof(index));
+    const auto slot = reinterpret_cast<std::uintptr_t>(libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(ring));
+    std::memcpy(&nextCount, ring + 0xc, sizeof(nextCount));
+    std::memcpy(&next, ring + 0x10, sizeof(next));
+    return slot;
+}
+
+static void TestRingAdvance() {
+    Require(libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(nullptr) == nullptr);
+    alignas(8) std::byte ring[0x18];
+    std::memset(ring, 0xEE, sizeof(ring));
+    const std::uint64_t base = 0x123400000ull;
+    std::memcpy(ring, &base, sizeof(base));
+    std::uint32_t count = 0;
+    std::uint32_t next = 0;
+    Require(AdvanceRing(ring, 3, 0, 7, count, next) == base && count == 1 && next == 0);
+    Require(AdvanceRing(ring, 3, 1, 0, count, next) == base + 1024 && count == 2 && next == 1);
+    Require(AdvanceRing(ring, 3, 2, 1, count, next) == base + 2048 && count == 3 && next == 2);
+    Require(AdvanceRing(ring, 3, 3, 2, count, next) == base && count == 3 && next == 0);
+    Require(AdvanceRing(ring, 0xffffffffu, 5, 0x00ffffffu, count, next) == base && count == 6 && next == 0x01000000u);
+    Require(AdvanceRing(ring, 5, 0xffffffffu, 1, count, next) == base + 2048 && count == 0 && next == 2);
+    Require(AdvanceRing(ring, 0, 0, 9, count, next) == base && count == 0 && next == 0);
+    Require(ring[0x14] == std::byte{0xEE} && ring[0x17] == std::byte{0xEE});
 }
 
 constexpr int BadContext = static_cast<int>(0x81940002);
@@ -73,6 +108,7 @@ int main() {
     outputs[0] = sourceData;
     Require(sceAcm_Panner(&commandBatch, 1, sources, 2, 1, 1, sources, sources, nullptr, outputs) == 0);
     Require(commandBatch.offset == 32 && commandBatch.buffer_size == 128);
+    TestRingAdvance();
     std::uint64_t commandWords[4];
     std::memcpy(commandWords, commands, sizeof(commandWords));
     Require(commandWords[0] == ((std::uint64_t{1} << 34) | (std::uint64_t{1} << 36) | 0x01010300));
@@ -198,6 +234,18 @@ int main() {
     Require(reverb(1, reverbFilters, reverbOutputs) == BadPointer);
     filterA.blockCount = 3;
     Require(ringIs(0, 0) && reverbBatch.offset == 0);
+    std::byte historyBefore[0x8000];
+    std::memcpy(historyBefore, memory, sizeof(historyBefore));
+    reverbInput.currentBlock = 5;
+    reverbInput.availableBlocks = 1;
+    Require(reverb(1, reverbFilters, reverbOutputs) == BadPointer && ringIs(5, 1) && reverbBatch.offset == 0);
+    Require(std::memcmp(historyBefore, memory, sizeof(historyBefore)) == 0);
+    reverbInput.currentBlock = 0;
+    reverbInput.availableBlocks = 0;
+    reverbInput.blockCount = 0x100000;
+    Require(reverb(1, reverbFilters, reverbOutputs) == BadPointer && ringIs(0, 0) && reverbBatch.offset == 0);
+    Require(std::memcmp(historyBefore, memory, sizeof(historyBefore)) == 0);
+    reverbInput.blockCount = 4;
     Require(reverb(0, reverbFilters, reverbOutputs) == BadPointer && ringIs(3, 1));
     Require(reverb(1, reverbFilters, nullptr) == BadPointer && ringIs(2, 2));
     reverbInput.currentBlock = 0;
@@ -305,6 +353,48 @@ int main() {
     commandBatch = {commands, 0, sizeof(commands)};
     std::memset(commands, 0xCC, sizeof(commands));
     Require(sceAcmBatchJobPriority(nullptr, 0) == BadPointer);
+    errno = 71;
+    Require(sceAcmBatchJobPriority(reinterpret_cast<AcmBatchInfo*>(0x10), 0) == BadPointer);
+    Require(errno == 71);
+    commandBatch = {reinterpret_cast<void*>(0x10), 0, sizeof(commands)};
+    errno = 71;
+    Require(sceAcmBatchJobPriority(&commandBatch, 0) == BadPointer);
+    Require(errno == 71);
+    Require(commandBatch.offset == 0);
+#ifdef _WIN32
+    SYSTEM_INFO acmSysInfo{};
+    GetSystemInfo(&acmSysInfo);
+    const std::size_t acmPageSize = acmSysInfo.dwPageSize;
+    auto* const acmReadOnlyMem = static_cast<std::byte*>(VirtualAlloc(nullptr, acmPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(acmReadOnlyMem != nullptr);
+#else
+    const long acmNativePage = sysconf(_SC_PAGESIZE);
+    Require(acmNativePage > 0);
+    const std::size_t acmPageSize = static_cast<std::size_t>(acmNativePage);
+    auto* const acmReadOnlyMem = static_cast<std::byte*>(mmap(nullptr, acmPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(acmReadOnlyMem != MAP_FAILED);
+#endif
+    auto* const readOnlyBatch = reinterpret_cast<AcmBatchInfo*>(acmReadOnlyMem);
+    readOnlyBatch->buffer = commands;
+    readOnlyBatch->offset = 0;
+    readOnlyBatch->buffer_size = sizeof(commands);
+#ifdef _WIN32
+    DWORD acmOldProtect = 0;
+    Require(VirtualProtect(acmReadOnlyMem, acmPageSize, PAGE_READONLY, &acmOldProtect) != 0);
+#else
+    Require(mprotect(acmReadOnlyMem, acmPageSize, PROT_READ) == 0);
+#endif
+    errno = 71;
+    Require(sceAcmBatchJobPriority(readOnlyBatch, 0) == BadPointer);
+    Require(errno == 71);
+    Require(readOnlyBatch->offset == 0);
+    Require(commands[0] == std::byte{0xCC});
+#ifdef _WIN32
+    VirtualFree(acmReadOnlyMem, 0, MEM_RELEASE);
+#else
+    munmap(acmReadOnlyMem, acmPageSize);
+#endif
+    commandBatch = {commands, 0, sizeof(commands)};
     Require(sceAcmBatchJobPriority(&commandBatch, 4) == BadPointer && commandBatch.offset == 0);
     Require(sceAcmBatchJobPriority(&commandBatch, 0xFFFFFFFFu) == BadPointer && commandBatch.offset == 0);
     Require(sceAcmBatchJobPriority(&commandBatch, 3) == 0 && commandBatch.offset == 8);
@@ -321,6 +411,29 @@ int main() {
     Require(sceAcmBatchJobPriority(&commandBatch, 1) == 0 && commandBatch.offset == sizeof(commands));
     std::memcpy(priorityWords, commands + sizeof(commands) - 8, sizeof(std::uint64_t));
     Require(priorityWords[0] == 0x110);
+    alignas(128) std::byte notification[256];
+    std::memset(notification, 0xAB, sizeof(notification));
+    std::memset(commands, 0xCC, sizeof(commands));
+    commandBatch = {commands, 0, sizeof(commands)};
+    Require(sceAcmBatchJobNotification(nullptr, 1, notification) == BadPointer);
+    Require(sceAcmBatchJobNotification(&commandBatch, 0, notification) == BadPointer && commandBatch.offset == 0);
+    Require(sceAcmBatchJobNotification(&commandBatch, 1, nullptr) == BadPointer && commandBatch.offset == 0);
+    Require(sceAcmBatchJobNotification(&commandBatch, 1, notification + 0x40) == static_cast<int>(0x8194000A) && commandBatch.offset == 0);
+    Require(notification[0] == std::byte{0xAB} && notification[0x40] == std::byte{0xAB});
+    Require(sceAcmBatchJobNotification(&commandBatch, 0x1A5, notification) == 0 && commandBatch.offset == 16 && commandBatch.buffer_size == sizeof(commands));
+    std::uint64_t notificationWords[3];
+    std::memcpy(notificationWords, commands, sizeof(notificationWords));
+    Require(notificationWords[0] == 0xA500000Eull && notificationWords[1] == reinterpret_cast<std::uintptr_t>(notification) && notificationWords[2] == 0xCCCCCCCCCCCCCCCCull);
+    for (std::size_t i = 0; i < 128; ++i) Require(notification[i] == std::byte{0});
+    for (std::size_t i = 128; i < sizeof(notification); ++i) Require(notification[i] == std::byte{0xAB});
+    commandBatch = {commands, sizeof(commands) - 15, sizeof(commands)};
+    Require(sceAcmBatchJobNotification(&commandBatch, 1, notification + 128) == static_cast<int>(0x81940009) && commandBatch.offset == sizeof(commands) - 15);
+    Require(notification[128] == std::byte{0xAB});
+    commandBatch = {commands, sizeof(commands) - 16, sizeof(commands)};
+    Require(sceAcmBatchJobNotification(&commandBatch, 0x100, notification + 128) == 0 && commandBatch.offset == sizeof(commands));
+    std::memcpy(notificationWords, commands + sizeof(commands) - 16, 2 * sizeof(std::uint64_t));
+    Require(notificationWords[0] == 0xE && notificationWords[1] == reinterpret_cast<std::uintptr_t>(notification + 128));
+    Require(notification[128] == std::byte{0} && notification[255] == std::byte{0});
 
     Require(sceAcmContextDestroy(context1) == 0);
     Require(sceAcmContextDestroy(context1) == BadContext);

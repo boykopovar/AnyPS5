@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/Surface.hpp"
+#include "PngSurface.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <atomic>
@@ -332,14 +333,34 @@ CairoSurface* APS5_VABI cairo_surface_create_for_rectangle(CairoSurface* target,
 
     result->isImage = false;
     result->content = State(target)->content;
-    result->parent = cairo_surface_reference(target);
-    result->originX = x;
-    result->originY = y;
-    result->extentWidth = width;
-    result->extentHeight = height;
-    result->scaleX = State(target)->scaleX;
-    result->scaleY = State(target)->scaleY;
+    const auto& source = *State(target);
+    const double scaledX = x * source.scaleX;
+    const double scaledY = y * source.scaleY;
+    const double left = std::ceil(scaledX);
+    const double top = std::ceil(scaledY);
+    result->extentWidth = std::floor(scaledX + width * source.scaleX) - left;
+    result->extentHeight = std::floor(scaledY + height * source.scaleY) - top;
+    if (result->extentWidth < 0 || result->extentHeight < 0) {
+        result->extentWidth = 0;
+        result->extentHeight = 0;
+    }
+    result->originX = left + source.originX;
+    result->originY = top + source.originY;
+    result->parent = cairo_surface_reference(source.parent ? source.parent : target);
+    result->scaleX = State(result->parent)->scaleX;
+    result->scaleY = State(result->parent)->scaleY;
     return Handle(result);
 }
 
+}
+
+CairoSurface* CairoSurfaceError(int status) {
+    return ErrorSurface(status);
+}
+
+CairoPngView CairoPngSource_nid_no_patch(CairoSurface* surface) {
+    const auto& view = *State(surface);
+    const auto& image = view.parent ? *State(view.parent) : view;
+    return {image.data, image.format, image.width, image.height, image.stride,
+            view.originX, view.originY, view.extentWidth, view.extentHeight, !view.isImage};
 }
