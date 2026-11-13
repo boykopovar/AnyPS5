@@ -2,7 +2,7 @@
 
 ### Functional
 
-- [sceNpRemotePlaySessionSignalingGetMemoryInfo](../../../core/libs/prx/libSceNpRemotePlaySessionSignaling/Export.cpp) (libSceNpRemotePlaySessionSignaling) - returning `0x80553303` (`ErrorInvalidArgument`) when the `memoryInfo` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceNpRemotePlaySessionSignalingGetMemoryInfo, sceNpRemotePlaySessionSignalingInitialize, sceNpRemotePlaySessionSignalingGetLocalNetInfo, sceNpRemotePlaySessionSignalingGetConnectionStatus](../../../core/libs/prx/libSceNpRemotePlaySessionSignaling/Export.cpp) (libSceNpRemotePlaySessionSignaling) - returning `0x80553303` (`ErrorInvalidArgument`) when `param` is unreadable or when `memoryInfo`, `info` and `status` output pointers are unwritable via `GuestCopyIn_nid_no_patch` / `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
 
 ### Unknown function info
 
