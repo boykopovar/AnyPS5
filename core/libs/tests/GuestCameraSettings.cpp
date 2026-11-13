@@ -116,6 +116,12 @@ void CheckGetter(GetU32 get, std::uint32_t expected, const char* message) {
 void CheckGetters() {
     CheckGetter(sceCameraGetAutoWhiteBalance, 0, "automatic white balance must be off");
     CheckGetter(sceCameraGetDefectivePixelCancellation, 0, "defective pixel cancellation must be off");
+    errno = 71;
+    Require(sceCameraGetDefectivePixelCancellation(1, Channel0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == ErrorParam, "an unwritable defective pixel cancellation pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable defective pixel cancellation pointer");
+    alignas(16) std::uint32_t defectiveBuffer[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    Require(sceCameraGetDefectivePixelCancellation(1, Channel0, &defectiveBuffer[1], nullptr) == 0, "reading defective pixel cancellation to buffer failed");
+    Require(defectiveBuffer[0] == 0x5a5a5a5a && defectiveBuffer[1] == 0 && defectiveBuffer[2] == 0x5a5a5a5a, "adjacent memory was corrupted");
     CheckGetter(sceCameraGetLensCorrection, 0, "lens correction must be off");
     CheckGetter(sceCameraGetContrast, 32, "the contrast must be 32");
     CheckGetter(sceCameraGetSaturation, 64, "the saturation must be 64");

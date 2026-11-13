@@ -100,7 +100,13 @@ int APS5_VABI sceCameraGetAutoWhiteBalance(std::int32_t handle, std::uint32_t ch
 }
 
 int APS5_VABI sceCameraGetDefectivePixelCancellation(std::int32_t handle, std::uint32_t channel, std::uint32_t* enable, void* option) {
-    return Report(handle, channel, enable, option, 0u);
+    if (const int error = CheckGet(handle, channel, enable, option)) return error;
+    const std::uint32_t value = 0u;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(enable, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return SCE_CAMERA_ERROR_PARAM;
+    return 0;
 }
 
 int APS5_VABI sceCameraGetLensCorrection(std::int32_t handle, std::uint32_t channel, std::uint32_t* enable, void* option) {
