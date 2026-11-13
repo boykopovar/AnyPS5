@@ -39,6 +39,16 @@ jobs:
           shopt -s nullglob
           marker='<!-- pr-overlap -->'
           unpinned() { sed -E 's#/blob/[0-9a-f]{40}/#/blob/main/#g'; }
+          retry() {
+            local attempts=3 delay=1 n=1
+            while :; do
+              "$@" && return 0
+              [ "$n" -ge "$attempts" ] && return 1
+              sleep "$delay"
+              delay=$((delay * 2))
+              n=$((n + 1))
+            done
+          }
           prev=
           for file in "$out"/*.md; do
             [ -z "$prev" ] || record "$prev" "$hash"
@@ -47,18 +57,18 @@ jobs:
             prev=
             [ "$(jq -r --arg pr "$pr" '.[$pr] // empty' "$state")" = "$hash" ] && continue
             prev=$pr
-            comment=$(gh api "repos/$GH_REPO/issues/$pr/comments" --paginate \
+            comment=$(retry gh api "repos/$GH_REPO/issues/$pr/comments" --paginate \
               --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | [.id, .body] | @json" | head -n1)
             id=$(jq -r '.[0] // empty' <<< "${comment:-null}")
             if [ -s "$file" ]; then
               [ "$(jq -r '.[1]' <<< "${comment:-null}" | unpinned)" = "$(unpinned < "$file")" ] && continue
               if [ -n "$id" ]; then
-                gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -F body=@"$file" > /dev/null
+                retry gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -F body=@"$file" > /dev/null
               else
-                gh pr comment "$pr" --body-file "$file"
+                retry gh pr comment "$pr" --body-file "$file"
               fi
             elif [ -n "$id" ]; then
-              gh api -X DELETE "repos/$GH_REPO/issues/comments/$id"
+              retry gh api -X DELETE "repos/$GH_REPO/issues/comments/$id"
             fi
           done
           [ -z "$prev" ] || record "$prev" "$hash"
