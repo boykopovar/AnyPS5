@@ -913,11 +913,15 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
             const auto state = context.SaveSpeculationState();
             const auto checksBefore = program.Metadata().nanSpeculationChecks.size();
             const auto laneWritesBefore = program.Metadata().nanSpeculationLaneWrites.size();
+            const auto fastOpsBefore = program.Metadata().nanSpeculationFastOps;
             context.SetNanFast(true);
             for (std::uint32_t inner = region->begin; inner < region->end; ++inner) translateOne(inner);
             context.SetNanFast(false);
             IrValue* seen = context.TakeNanSeen();
-            const bool declined = seen != nullptr && (!NanSpeculationRestorable(fast, before) || (options.stage == ShaderStageKind::Pixel && !NanSpeculationLaneLocal(fast, before)));
+            const auto fastOps = program.Metadata().nanSpeculationFastOps - fastOpsBefore;
+            const auto emitted = static_cast<std::uint64_t>(instructions.size() - before);
+            const bool cheap = seen != nullptr && (fastOps < speculation.minimumFastOps || static_cast<std::uint64_t>(fastOps) * 100u < emitted * speculation.minimumDensityPercent);
+            const bool declined = seen != nullptr && (cheap || !NanSpeculationRestorable(fast, before) || (options.stage == ShaderStageKind::Pixel && !NanSpeculationLaneLocal(fast, before)));
             if (declined) {
                 while (instructions.size() > before) {
                     IrValue* dropped = instructions.back();
@@ -926,6 +930,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 }
                 program.Metadata().nanSpeculationChecks.resize(checksBefore);
                 program.Metadata().nanSpeculationLaneWrites.resize(laneWritesBefore);
+                program.Metadata().nanSpeculationFastOps = fastOpsBefore;
                 context.RestoreSpeculationState(state);
                 for (std::uint32_t inner = region->begin; inner < region->end; ++inner) translateOne(inner);
                 ++program.Metadata().nanSpeculationDeclines;

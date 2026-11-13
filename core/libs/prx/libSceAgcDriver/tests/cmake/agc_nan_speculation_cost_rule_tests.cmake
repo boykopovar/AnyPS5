@@ -1,0 +1,16 @@
+add_test_executable(agc_nan_speculation_cost_rule_tests EXCLUDE_FROM_ALL tests/NanSpeculationCostRule.cpp)
+target_link_libraries(agc_nan_speculation_cost_rule_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_nan_speculation_cost_rule_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_nan_speculation_cost_rule_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_nan_speculation_cost_rule_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_nan_speculation_cost_rule_ops COMMAND agc_nan_speculation_cost_rule_tests)
+    set_tests_properties(agc_nan_speculation_cost_rule_ops PROPERTIES ENVIRONMENT "COST_RULE_CASE=ops;APS5_NAN_SPECULATION_MIN_OPS=3")
+    add_test(NAME agc_nan_speculation_cost_rule_density COMMAND agc_nan_speculation_cost_rule_tests)
+    set_tests_properties(agc_nan_speculation_cost_rule_density PROPERTIES ENVIRONMENT "COST_RULE_CASE=density;APS5_NAN_SPECULATION_MIN_DENSITY=4000")
+    if(WIN32)
+        set_tests_properties(agc_nan_speculation_cost_rule_ops agc_nan_speculation_cost_rule_density PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

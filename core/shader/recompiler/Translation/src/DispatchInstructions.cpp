@@ -157,6 +157,14 @@ const NanSpeculationConfig& NanSpeculation() {
         for (const auto value : result.stageMinimum) lowest = std::min(lowest, value);
         result.minimumVectorInstructions = lowest;
         result.maximumVectorInstructions = std::max(*std::ranges::max_element(result.stageMinimum), number(std::getenv("APS5_NAN_SPECULATION_MAX"), result.maximumVectorInstructions));
+        const auto percent = [](const char* text) {
+            if (text == nullptr || *text == '\0') return 0u;
+            char* end = nullptr;
+            const auto value = std::strtoul(text, &end, 10);
+            return end != text && *end == '\0' && value <= 4096u ? static_cast<std::uint32_t>(value) : 0u;
+        };
+        result.minimumFastOps = percent(std::getenv("APS5_NAN_SPECULATION_MIN_OPS"));
+        result.minimumDensityPercent = percent(std::getenv("APS5_NAN_SPECULATION_MIN_DENSITY"));
         const char* count = std::getenv("APS5_NAN_SPECULATION_COUNT");
         result.count = result.enabled && count != nullptr && *count != '\0' && std::strcmp(count, "0") != 0;
         return result;

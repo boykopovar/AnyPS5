@@ -1934,6 +1934,7 @@ std::uint64_t SourceVersion() {
             if (speculation.stageMinimum[stage] != speculation.minimumVectorInstructions) version ^= 0x3c6ef372fe94f82bull * (stage + 1u) * speculation.stageMinimum[stage];
         }
         if (speculation.count) version ^= 0xa54ff53a5f1d36f1ull;
+        if (speculation.minimumFastOps != 0u || speculation.minimumDensityPercent != 0u) version ^= 0x510e527fade682d1ull * (static_cast<std::uint64_t>(speculation.minimumFastOps) << 16u | speculation.minimumDensityPercent);
     }
     return version;
 }

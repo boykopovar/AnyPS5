@@ -1064,6 +1064,8 @@ struct NanSpeculationConfig {
     std::uint32_t maximumVectorInstructions = 256u;
     std::array<std::uint32_t, 9> stageMinimum{32u, 32u, 32u, 32u, 32u, 32u, 32u, 32u, 32u};
     bool count = false;
+    std::uint32_t minimumFastOps = 0u;
+    std::uint32_t minimumDensityPercent = 0u;
 };
 [[nodiscard]] const NanSpeculationConfig& NanSpeculation();
 inline constexpr std::uint32_t NanSpeculationCounterBase = 0xc000u;
