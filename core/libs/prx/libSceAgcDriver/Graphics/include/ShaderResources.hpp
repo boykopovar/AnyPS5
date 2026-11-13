@@ -7,8 +7,10 @@
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "Recompiler.hpp"
+#include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <limits>
 #include <list>
@@ -23,6 +25,7 @@
 #include <vector>
 
 namespace AgcDriver { class VulkanDevice; }
+namespace AgcDriver::GuestMemory { struct WriteSubscription; }
 
 namespace AgcDriver::Graphics {
 
@@ -30,7 +33,29 @@ class Recorder;
 
 void FlushCachedTextures(VkDevice device);
 void ClearCachedTextures(VkDevice device);
+struct WriteIndexOutcomes {
+    std::uint64_t accepted = 0;
+    std::uint64_t partial = 0;
+    std::uint64_t fallback = 0;
+    std::uint64_t bumped = 0;
+    std::uint64_t lookedUp = 0;
+    std::uint64_t rebound = 0;
+    std::uint64_t compared = 0;
+    std::uint64_t builds = 0;
+};
+WriteIndexOutcomes WriteIndexOutcomesCounted();
 std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage = false);
+struct StorageTextureBudgetSnapshot {
+    std::optional<std::uint32_t> heap;
+    std::uint64_t sampledBytes = 0;
+    std::uint64_t storageBytes = 0;
+    std::uint64_t reserved = 0;
+    std::uint64_t available = 0;
+    std::uint64_t ceiling = 0;
+    std::uint64_t selectedBudget = 0;
+};
+
+StorageTextureBudgetSnapshot CalculateStorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes);
 std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory);
 std::uint64_t StorageTextureCeiling(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported);
 std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes);
@@ -54,6 +79,7 @@ bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<c
 bool AnyPendingCpuWrites(const Context& context);
 bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std::size_t bytes);
 bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words);
+bool SpirvFaultReportOnly(std::span<const std::uint32_t> words, std::uint32_t set, std::uint32_t binding);
 bool ShaderStoresThroughAddresses(const ShaderRecompiler::SharedSpirv& spirv);
 void LastRecordIndices(std::span<const void* const> logged, std::span<const void* const> objects, std::vector<std::size_t>& indices);
 
@@ -153,10 +179,14 @@ struct ImageTableReuseCounts {
     std::uint64_t replayed = 0;
     std::uint64_t writesKept = 0;
     std::uint64_t writesMade = 0;
+    std::uint64_t variantSurfaces = 0;
+    std::uint64_t variantSubstituted = 0;
+    std::uint64_t variantRejected = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
 std::uint64_t SampledTexturesCleared();
 std::uint64_t SampledLookupKeyScans();
+std::uint64_t SampledLookupKeyProofs();
 
 struct PresyncSurface {
     std::uint64_t address;
@@ -167,7 +197,7 @@ struct PresyncSurface {
 class ShaderResources {
 public:
     ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes);
-    ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {});
+    ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {}, bool deviceStaging = false);
     ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots = {});
     // Two-stage build for dispatches (see build): with `deferred` the constructor runs stage A only,
     // which needs no device lock, and Complete() runs stage B under GuestMemory::GpuMutex; until
@@ -187,6 +217,7 @@ public:
     VkDescriptorSetLayout FragmentLayout() const { return fragment.layout; }
     bool SplitSets() const { return splitSets; }
     PipelineSetLayouts SetLayouts() const { return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey}; }
+    void RequireGuestBuffers() const { requireGuestBuffers(); }
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
     struct DrawBindings {
         DrawBindings() = default;
@@ -213,8 +244,20 @@ public:
         std::size_t size;
         std::span<const std::uint32_t> words;
     };
-    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false) const;
-    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target) const;
+    struct DrawUse {
+        DrawUse() = default;
+        DrawUse(const DrawUse&) = delete;
+        DrawUse& operator=(const DrawUse&) = delete;
+        ~DrawUse();
+        std::shared_ptr<BdaResources> record;
+        std::shared_ptr<DrawBindings> bindings;
+        std::shared_ptr<std::atomic<bool>> ownRecord;
+    };
+    std::shared_ptr<DrawUse> BeginDrawUse(Recorder& recorder) const;
+    void CompleteDrawUse(const DrawUse& use) const;
+    void BindDrawUse(VkCommandBuffer commands, VkPipelineLayout layout, const DrawUse* use) const;
+    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false, const BdaResources* faultRecord = nullptr) const;
+    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, bool* patchedData = nullptr) const;
     static std::uint64_t BytesUpToTarget(std::uint64_t address, std::uint64_t bytes, std::uint64_t stride, const ColorTarget* target);
     enum class MoveRefusal : std::size_t { None, Shape, NotGuest, Written, Limit, Inaccessible, Overlap, Bindings, Count };
     struct MoveProof {
@@ -236,9 +279,25 @@ public:
     bool NeedsCompletion() const { return (bda != nullptr && faultChecks) || guestMemory.HasCopiedWrites(); }
     // Whether a written buffer was copied (its results reach guest memory by the CPU write-back).
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
+    bool HasGpuCopies() const { return guestMemory.HasGpuCopies(); }
+    bool HasHostGpuCopies() const { return guestMemory.HasHostGpuCopies(); }
+    bool HasStagedCopies() const { return guestMemory.HasStagedCopies(); }
+    const void* MemoryOwner() const { return &guestMemory; }
+    void CopyBacksAfterRun(std::shared_ptr<ShaderResources> self) { afterRunSelf = std::move(self); }
+    void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
+    bool SpaceReuse() const { return spaceReuse; }
+    static bool SpaceReuseDisabled();
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
+    bool RetakeSpace() { return guestMemory.RetakeSpace(); }
+    bool SpaceHeld() const { return guestMemory.SpaceHeld(); }
+    SnapshotService SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const { return guestMemory.SnapshotsServedInPlace(snapshots); }
+    std::shared_ptr<const void> ReleaseSpace() { return guestMemory.ReleaseSpace(); }
+    void HoldSpaceThrough(std::uint64_t recorder, std::uint64_t serial) { guestMemory.HoldSpaceThrough(recorder, serial); }
+    bool ReleaseCompletedSpace(std::uint64_t recorder, std::uint64_t completedThrough) { return guestMemory.ReleaseCompletedSpace(recorder, completedThrough); }
     bool UsesAddressTable() const { return usesBda; }
+    std::span<const std::byte> AddressTableBytes() const;
+    bool AddressTableGuardCurrent();
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }
@@ -302,6 +361,7 @@ public:
     struct ProofReport {
         ProofPath path = ProofPath::Fast;
         ProofFailure failure = ProofFailure::None;
+        bool audited = false;
     };
     bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr);
     static bool EpochProofs();
@@ -333,6 +393,12 @@ public:
         std::uint64_t bytes = 0;
     };
     static CollectRefusals CollectRefusalCounts();
+    struct PendingFails {
+        std::uint64_t foreign = 0;
+        std::uint64_t snapshot = 0;
+        std::uint64_t t1Eligible = 0;
+    };
+    static PendingFails PendingFailCounts();
     static std::array<std::uint64_t, static_cast<std::size_t>(FastFail::Count)> FullWalkNanoseconds();
     // Why a Pending failure was left to the full walk instead of the own-object refresh (T1, see
     // refreshOwnObjects); Count: it was not.
@@ -392,6 +458,7 @@ private:
         std::int32_t pushByte = -1;
         std::int64_t dataAllocation = -1;
         std::uint32_t dataByte = 0;
+        bool oversized = false;
     };
     struct DataPatch {
         std::size_t allocation;
@@ -423,6 +490,7 @@ private:
         bool sampled = false;
         bool storage = false;
         std::vector<std::size_t> elementTextures;
+        std::vector<std::uint32_t> representatives;
         std::vector<std::pair<std::uint32_t, std::uint32_t>> samplerRejections;
     };
     std::vector<TableStage> tableStages;
@@ -499,6 +567,7 @@ private:
         bool depthCompare = false;
         VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D;
         bool firstSample = false;
+        bool layerRows = false;
         std::shared_ptr<Texture> texture;
     };
     PreviousSampled previousSampled;
@@ -506,9 +575,9 @@ private:
     std::size_t nextImageRecord = 0;
     // Stage B: the record's texture when the fastRevalidate predicate proves it current under the
     // lock and the cache still holds it; null sends the element to cachedTexture.
-    std::shared_ptr<Texture> fastTexture(const ImageRecord& record);
+    std::shared_ptr<Texture> fastTexture(ImageRecord& record);
     void resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers);
-    void applyAnisoOverride();
+    void applySamplerVariants();
     void forgetDeferredInputs();
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
@@ -536,6 +605,7 @@ private:
         bool depth = false;
         bool valid = false;
     };
+    bool keepsTemplateRecords() const;
     void captureValidation();
     // A surface of this object the fast proof found a foreign image pending over: the element
     // (index into textures, or into storageTextures when `storage`) whose own object stands in for
@@ -559,7 +629,36 @@ private:
     // holds; `reason` receives why the proof failed (Count: it passed), `overlapping` the surfaces
     // of a Pending failure in element order (empty otherwise), `accepted` whether a foreign overlap
     // was accepted by either rule (the verify switch then runs the full walk beside the proof).
-    bool fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted);
+    bool fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted, const std::vector<std::size_t>* only = nullptr, bool withStorage = true);
+    enum class IndexOutcome : std::uint8_t { Accepted, Partial, Fallback };
+    IndexOutcome indexRevalidate(std::span<const CompiledShader> shaders, std::uint64_t serialBefore);
+    void subscribeIndex(std::span<const CompiledShader> shaders);
+    void subscribeBuilt(std::span<const CompiledShader> shaders);
+    void noteIndexProof(std::uint64_t generation, std::uint64_t serialBefore);
+    bool reresolveElements(const std::vector<std::size_t>& elements, std::vector<std::size_t>& replacedElements);
+    struct IndexElement {
+        std::array<std::uint32_t, 8> words{};
+        std::uint32_t count = 0;
+        std::optional<ShaderRecompiler::DescriptorImageShape> shape;
+        bool depthCompare = false;
+        bool known = false;
+    };
+    std::shared_ptr<GuestMemory::WriteSubscription> writeSubscription;
+    std::uint64_t subscribedGeneration = 0;
+    std::uint64_t subscribedPendingSerial = 0;
+    std::vector<std::pair<std::uint64_t, std::size_t>> subscribedBlocks;
+    std::vector<std::size_t> perElementTextures;
+    std::vector<std::size_t> comparedTextures;
+    std::vector<std::size_t> depthCopyTextures;
+    std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> comparedTableSpans;
+    std::vector<IndexElement> indexElements;
+    struct ImagePosition {
+        std::size_t texture;
+        std::size_t position;
+        bool table;
+    };
+    std::vector<ImagePosition> indexImagePositions;
+    bool rebound = false;
     // T1 (design_cpu_final M3): brings the overlapping surfaces' own objects up to date exactly as
     // the full walk's lookups would, in the walk's binding order, without the lookups: a storage
     // image's Refresh (which stores the foreign images over its surface first), a view's source's
@@ -575,11 +674,14 @@ private:
     Context context;
     std::vector<std::uint32_t> layoutKey;
     GuestBufferMemory guestMemory;
+    std::shared_ptr<ShaderResources> afterRunSelf;
     std::size_t maxDrawSnapshotBytes = MaxDrawSnapshotBytes();
     std::unique_ptr<BdaResources> bda;
     std::vector<BdaResources::SrtGuardFaults> srtGuardFaults;
     bool usesBda = false;
     bool bdaReadOnly = true;
+    bool spaceReuse = false;
+    bool faultReportOnly = true;
     std::vector<std::uint64_t> multisampleSources;
     bool usesFaultBuffer = false;
     bool faultChecks = false;
@@ -612,14 +714,24 @@ private:
     std::shared_ptr<const TableDescriptors> keptTable(std::size_t set, std::shared_ptr<const std::vector<std::weak_ptr<Texture>>>& held) noexcept;
     std::uint32_t setOf(const Binding& binding) const;
     std::vector<Allocation> allocations;
-    std::vector<VkDescriptorBufferInfo> descriptorBuffers;
+    mutable std::vector<VkDescriptorBufferInfo> descriptorBuffers;
     std::vector<VkDescriptorImageInfo> descriptorImages;
     std::vector<VkWriteDescriptorSet> descriptorWrites;
+    struct FaultDescriptor {
+        std::size_t write;
+        std::size_t buffer;
+        std::uint32_t element;
+    };
+    std::vector<FaultDescriptor> faultDescriptors;
+    void prepareFaultSlot() const;
+    void writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord) const;
+    std::shared_ptr<std::atomic<bool>> ownRecordBusy = std::make_shared<std::atomic<bool>>(false);
     mutable std::vector<VkDescriptorPoolSize> drawPoolSizes;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write
     // notes (counted in MarkGpuWrites for the [buffers] line).
     std::size_t readOnlyBuffers = 0;
     std::chrono::steady_clock::time_point lastFullWalk = std::chrono::steady_clock::now();
+    std::uint64_t walkImportGeneration = HostImportSetGeneration();
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writeOnlyRanges;
     bool drawBuild = false;
     std::uint64_t dispatchThreads = 0;
@@ -645,11 +757,13 @@ private:
         bool integerBorder = false;
         bool singleLevelImage = false;
         bool mipmappedImage = false;
+        std::optional<std::uint32_t> pinnedLod;
     };
     std::vector<SamplerSource> samplerSources;
     bool reusable = false;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;
+    std::vector<ShaderRecompiler::RegisteredImageView> registeredImageViews;
     // The pending registry's serial at the last Revalidate that proved this object, taken before
     // its checks and kept only when unchanged after them (0: none): while it is still the serial,
     // no image other than the object's own sources has results pending over its surfaces and
@@ -661,6 +775,7 @@ private:
     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
     // The import table's identity when the direct regions' serials were last proved.
     HostImportsProof importsProof;
+    bool importsReconcilable = false;
     // FNV-1a offset basis: the hash of no data buffers (DataWordsHash).
     std::uint64_t dataWordsHash = 14695981039346656037ull;
     void rehashDataWords();

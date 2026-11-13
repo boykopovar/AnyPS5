@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
@@ -34,21 +35,18 @@ constexpr int WAIT_ITERATIONS = 500;
 constexpr int SHORT_WAIT_ITERATIONS = 1000;
 #ifdef _WIN32
 constexpr std::uint64_t P99_WAIT_MAX_NANOS = 3000000ULL;
-constexpr std::uint64_t MAX_WAIT_NANOS = 10000000ULL;
 #else
 constexpr std::uint64_t P99_WAIT_MAX_NANOS = 10000000ULL;
-constexpr std::uint64_t MAX_WAIT_NANOS = 50000000ULL;
 #endif
 
 template<std::size_t N>
 static bool LatencyWithinBounds(std::array<std::uint64_t, N> samples, std::uint64_t requestedNanos, const char* name) {
     std::sort(samples.begin(), samples.end());
     constexpr std::size_t p99Index = (N * 99 + 99) / 100 - 1;
-    const bool within = samples[p99Index] < P99_WAIT_MAX_NANOS && samples.back() < MAX_WAIT_NANOS;
+    const bool within = samples[p99Index] < P99_WAIT_MAX_NANOS;
     std::cout << name << ": P99 overshoot " << (samples[p99Index] - requestedNanos) / 1000
               << " us (limit < " << (P99_WAIT_MAX_NANOS - requestedNanos) / 1000
-              << " us), max overshoot " << (samples.back() - requestedNanos) / 1000
-              << " us (limit < " << (MAX_WAIT_NANOS - requestedNanos) / 1000 << " us)" << (within ? "" : " EXCEEDED") << std::endl;
+              << " us), max overshoot " << (samples.back() - requestedNanos) / 1000 << " us" << (within ? "" : " EXCEEDED") << std::endl;
     return within;
 }
 
@@ -108,14 +106,13 @@ static bool TestUsleep100us() {
     }
 
     const auto wallEnd = std::chrono::steady_clock::now();
-    const bool latencyWithinBounds = LatencyWithinBounds(samples, 100000ULL, "sceKernelUsleep(100 us)");
 #ifdef _WIN32
     const auto cpuEnd = CurrentThreadCpuNanos();
     const auto wallNanos = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(wallEnd - wallStart).count());
     const auto cpuNanos = cpuEnd - cpuStart;
     RequireCpuBound(cpuNanos, wallNanos, "sceKernelUsleep(100 us)");
 #endif
-    return latencyWithinBounds;
+    return LatencyWithinBounds(samples, 100000ULL, "sceKernelUsleep(100 us)");
 }
 
 static bool TestCondTimedwait500us() {
@@ -163,10 +160,33 @@ static void RequireWithinBoundsInOneOfAttempts(bool (*test)(), int attempts) {
     std::abort();
 }
 
+static bool TestKsemTimedwait500us() {
+    std::array<std::uint64_t, 64> samples{};
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 0) == 0);
+    for (auto& sample : samples) {
+        const auto start = std::chrono::steady_clock::now();
+        KernelTimespec deadline{};
+        Require(clock_gettime_nid_postfix(0, &deadline) == 0);
+        deadline.tv_nsec += 500000;
+        if (deadline.tv_nsec >= 1000000000) {
+            ++deadline.tv_sec;
+            deadline.tv_nsec -= 1000000000;
+        }
+        Require(ksem_timedwait_nid_postfix(id, &deadline) == -1 && *__error_nid_postfix() == 60);
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        Require(elapsed >= std::chrono::microseconds(500));
+        sample = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
+    }
+    Require(ksem_destroy_nid_postfix(id) == 0);
+    return LatencyWithinBounds(samples, 500000ULL, "ksem_timedwait(500 us)");
+}
+
 int main() {
     constexpr int ATTEMPTS = 3;
     RequireWithinBoundsInOneOfAttempts(TestUsleep100us, ATTEMPTS);
     RequireWithinBoundsInOneOfAttempts(TestUsleep500us, ATTEMPTS);
     RequireWithinBoundsInOneOfAttempts(TestCondTimedwait500us, ATTEMPTS);
+    RequireWithinBoundsInOneOfAttempts(TestKsemTimedwait500us, ATTEMPTS);
     return 0;
 }

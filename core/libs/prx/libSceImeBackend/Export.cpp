@@ -1,12 +1,18 @@
 #include "prx/libSceImeBackend/include/Api.hpp"
 #include "prx/libSceIme/Export.cpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
+#include <cstring>
 
 extern "C" {
 
-int APS5_VABI sceImeBackendParamInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceImeBackendParamInit(void* param) {
+    if (param == nullptr) return;
+    unsigned char local[0x28] = {};
+    std::memset(local, 0xff, 4);
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(param, local, sizeof(local));
+    errno = savedErrno;
 }
 
 int APS5_VABI sceImeBackendOpen(void) {
@@ -130,8 +136,7 @@ int APS5_VABI sceImeBackendSetConvertMode(void) {
 }
 
 int APS5_VABI sceImeBackendForTestFunction(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorInternal;
 }
 
 int APS5_VABI sceImeBackendDeleteCharacter(void) {

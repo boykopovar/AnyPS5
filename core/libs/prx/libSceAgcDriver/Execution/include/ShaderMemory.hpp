@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_SHADERMEMORY_HPP
 
 #include "Recompiler.hpp"
+#include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
 #include <algorithm>
 #include <array>
 #include <bitset>
@@ -91,6 +92,7 @@ public:
 
 private:
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation);
+    std::shared_ptr<const ShaderRecompiler::ResourceCapture> captureWaitingOnFailure(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation);
     static constexpr std::size_t PageBytes = 4096;
     static constexpr std::size_t PageWords = PageBytes / sizeof(std::uint32_t);
 
@@ -128,6 +130,7 @@ private:
         WordMask recent;
         bool wordwise = false;
         bool lazy = false;
+        std::uint64_t backing = 0;
     };
 
     struct Supplied {
@@ -145,7 +148,10 @@ private:
     static bool unchangedSince(void* context, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp);
     static bool supplyWords(void* context, const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>& words);
     bool invalidateRawPages();
+    bool pagesCurrent();
+    static bool snapshotCurrent(void* context, std::span<const ShaderRecompiler::RegisteredImageView> views);
     Page& page(std::uint64_t base);
+    void preparePage(Page& page, std::uint64_t base);
     [[nodiscard]] std::size_t pageAtOrAfter(std::uint64_t base) const;
     Page& addPage(std::size_t position, std::uint64_t base);
     [[nodiscard]] bool overlapsInitial(std::uint64_t begin, std::uint64_t end) const;
@@ -166,9 +172,12 @@ private:
     PendingWriteObserver observe = nullptr;
     HookWaitCounter hookWaits = nullptr;
     PendingWriteQuery pendingSpan = nullptr;
+    bool spanQuery = false;
     std::size_t descriptorSpanBytes = 0;
     std::uint64_t rawInvalidations = 0;
     std::uint32_t forceSync = 0;
+    std::uint64_t branchReadsRefused = 0;
+    bool waitBranches = false;
 };
 
 // The positions, among a dispatch-cache variant's stored words, of the pure flat-SRT leaves a

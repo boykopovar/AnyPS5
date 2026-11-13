@@ -26,6 +26,8 @@ int main() {
     constexpr auto invalidPort = static_cast<std::int32_t>(0x804e0804u);
     constexpr auto invalidArgument = static_cast<std::int32_t>(0x804e0805u);
     Require(sceVoiceGetPortAttr(128, 1001, nullptr, 1) == notInitialized);
+    Require(sceVoiceGetPortAttr(0, 1001, nullptr, 1) == notInitialized);
+    Require(sceVoiceGetPortAttr(500, 9999, nullptr, -1) == notInitialized);
     VoiceInitParam init{};
     init.app_type = 0x10000000;
     Require(sceVoiceInit(&init, 100) == 0);
@@ -34,7 +36,11 @@ int main() {
     std::array<unsigned char, 6> buffer{0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5};
     const auto original = buffer;
     Require(sceVoiceGetPortAttr(128, 1001, nullptr, 1) == invalidPort);
+    Require(sceVoiceGetPortAttr(255, 1001, buffer.data() + 1, 1) == invalidPort);
     Require(sceVoiceGetPortAttr(0, 1001, nullptr, 1) == invalidArgument);
+    Require(sceVoiceGetPortAttr(0, 9999, buffer.data() + 1, 1) == invalidArgument);
+    Require(sceVoiceGetPortAttr(0, 1001, buffer.data() + 1, -1) == invalidArgument);
+    Require(sceVoiceGetPortAttr(0, 1001, buffer.data() + 1, 0) == invalidArgument);
     for (std::int32_t type = 0; type <= 5; ++type) {
         param = {};
         param.port_type = type;
@@ -46,10 +52,22 @@ int main() {
         if (type == 5) param.device.type = 2;
         std::uint32_t port = 0;
         Require(sceVoiceCreatePort(&port, &param) == 0);
+        if (type == 0 || type >= 3) {
+            std::array<unsigned char, 0x40> info;
+            info.fill(0xcc);
+            Require(sceVoiceGetPortInfo(port, reinterpret_cast<VoicePortInfo*>(info.data())) == static_cast<std::int32_t>(0x804e080au));
+            for (std::size_t i = 0; i < info.size(); ++i) Require(info[i] == (i < 0x20 ? 0 : 0xcc));
+        }
         for (const auto attr : {1000, 1001, 1002, 1003, 2000, 2001, 2002}) {
             const auto size = attr == 1003 ? 2 : attr == 1002 || attr == 2001 ? 4 : 1;
             Require(sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size + 1) == invalidArgument);
-            if (type == (attr == 1003 ? 5 : 0)) {
+            if (type == 0 && attr == 1001) {
+                buffer = original;
+                Require(sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size) == 0);
+                Require(buffer[0] == original[0] && buffer[1] == 0 && buffer[2] == original[2]);
+                Require(buffer[3] == original[3] && buffer[4] == original[4] && buffer[5] == original[5]);
+                buffer = original;
+            } else if (type == (attr == 1003 ? 5 : 0)) {
                 Require(Throws([&] { sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size); }, "device attribute backend"));
             } else {
                 Require(sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size) == invalidArgument);
@@ -61,5 +79,7 @@ int main() {
         Require(sceVoiceGetPortAttr(port, 1001, buffer.data() + 1, 1) == invalidPort);
     }
     Require(sceVoiceEnd_nid_postfix() == 0);
+    Require(sceVoiceGetPortAttr(0, 1001, buffer.data() + 1, 1) == notInitialized);
+    Require(sceVoiceGetPortAttr(128, 1001, nullptr, 1) == notInitialized);
     return 0;
 }

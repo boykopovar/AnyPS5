@@ -8,8 +8,27 @@
 
 using namespace ShaderRecompiler;
 
+static void CheckDeadPhiInputFromLaterBlock() {
+    IrProgram program;
+    auto& header = program.CreateBlock();
+    auto& body = program.CreateBlock();
+    program.SetEntryBlock(header);
+    program.BlockOrder().push_back(&header);
+    program.BlockOrder().push_back(&body);
+    IrBuilder builder(program);
+    builder.SetInsertionPoint(header);
+    auto& phi = builder.Emit(IrOpcode::Phi, IrType::U32, {});
+    builder.SetInsertionPoint(body);
+    auto& step = builder.Emit(IrOpcode::IAdd32, IrType::U32, {&builder.Constant(1u), &builder.Constant(2u)});
+    phi.AddPhiOperand(&body, &step);
+    DeadCodeEliminator{}.Eliminate(program);
+    if (phi.Parent() != nullptr || !header.Instructions().empty()) throw std::runtime_error("an unused phi was not eliminated");
+    if (step.Parent() != nullptr || !body.Instructions().empty()) throw std::runtime_error("the input of an eliminated phi from a later block was not eliminated");
+}
+
 int main() {
     try {
+        CheckDeadPhiInputFromLaterBlock();
         IrProgram program;
         auto& block = program.CreateBlock();
         program.SetEntryBlock(block);
