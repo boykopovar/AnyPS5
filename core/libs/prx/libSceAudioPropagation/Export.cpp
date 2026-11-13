@@ -20,6 +20,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -196,6 +197,28 @@ bool copyGuestOut(T* dst, const T& src) {
     const bool copied = GuestCopyOut_nid_no_patch(dst, &src, sizeof(T));
     errno = savedErrno;
     return copied;
+}
+
+struct PathResult {
+    std::uint32_t pointCount;
+    std::uint32_t flags;
+};
+
+static_assert(offsetof(AudioPath, flags) == offsetof(AudioPath, pointCount) + sizeof(std::uint32_t));
+
+PathState validatedPath(Registry& state, AudioPropagationHandle path, const AudioPath* data, float gain, const char* function) {
+    const auto system = requireObject(state, path, Kind::Path, function).system;
+    AudioPath replacement{};
+    require(data != nullptr && copyGuestIn(replacement, data), function);
+    requireDescriptor(&replacement.desc, PathId, sizeof(AudioPath), function);
+    require(std::isfinite(gain) && gain >= 0.0f && replacement.pointCount <= MaxPathPoints && (replacement.flags & ~(PathInvalid | PathPortal)) == 0, function);
+    for (std::uint32_t index = 0; index < replacement.pointCount; ++index) {
+        const auto& point = replacement.points[index];
+        requireDescriptor(&point.desc, PathPointId, sizeof(PathPoint), function);
+        require(std::isfinite(point.gain) && point.gain >= 0.0f && std::isfinite(point.position[0]) && std::isfinite(point.position[1]) && std::isfinite(point.position[2]), function);
+        if (point.room != 0) require(requireObject(state, point.room, Kind::Room, function).system == system, function);
+    }
+    return PathState{replacement, gain};
 }
 
 }
@@ -472,6 +495,19 @@ std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropaga
     const auto found = state.objects.find(source);
     if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     if (!rays || !paths) return ErrorNullPointer;
+    if (rayCount == 0 && reflectionOrder != 0 && pathCount != 0) {
+        auto* outputs = static_cast<std::byte*>(paths);
+        for (std::uint32_t index = 0; index < pathCount; ++index) {
+            AudioPropagationStructDescriptor desc{};
+            require(copyGuestIn(desc, reinterpret_cast<const AudioPropagationStructDescriptor*>(outputs + index * sizeof(AudioPath) + offsetof(AudioPath, desc))), __func__);
+            requireDescriptor(&desc, PathId, sizeof(AudioPath), __func__);
+        }
+        const PathResult none{0, PathInvalid};
+        for (std::uint32_t index = 0; index < pathCount; ++index) {
+            require(copyGuestOut(reinterpret_cast<PathResult*>(outputs + index * sizeof(AudioPath) + offsetof(AudioPath, pointCount)), none), __func__);
+        }
+        return 0;
+    }
     if (rayCount != 6 || reflectionOrder == 0 || pathCount == 0) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -481,25 +517,25 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPaths(AudioPropagationHa
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
-    static_cast<void>(entries);
-    requireNoPropagation(count == 0, __func__);
+    require(count == 0 || entries != nullptr, __func__);
+    const auto& owned = state.sourcePaths.at(source);
+    std::vector<std::pair<AudioPropagationHandle, PathState>> updates;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        PathEntry entry{};
+        require(copyGuestIn(entry, static_cast<const PathEntry*>(entries) + index), __func__);
+        requireDescriptor(&entry.desc, PathEntryId, PathEntrySize, __func__);
+        require(std::find(owned.begin(), owned.end(), entry.path) != owned.end(), __func__);
+        require(std::none_of(updates.begin(), updates.end(), [&](const auto& update) { return update.first == entry.path; }), __func__);
+        updates.emplace_back(entry.path, validatedPath(state, entry.path, entry.data, entry.gain, __func__));
+    }
+    for (const auto& [path, update] : updates) state.paths.at(path) = update;
     return 0;
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPath(AudioPropagationHandle path, const AudioPath* data, float gain) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
-    const auto system = requireObject(state, path, Kind::Path, __func__).system;
-    requireDescriptor(data != nullptr ? &static_cast<const AudioPath*>(data)->desc : nullptr, PathId, sizeof(AudioPath), __func__);
-    const auto replacement = *static_cast<const AudioPath*>(data);
-    require(std::isfinite(gain) && gain >= 0.0f && replacement.pointCount <= MaxPathPoints && (replacement.flags & ~(PathInvalid | PathPortal)) == 0, __func__);
-    for (std::uint32_t index = 0; index < replacement.pointCount; ++index) {
-        const auto& point = replacement.points[index];
-        requireDescriptor(&point.desc, PathPointId, sizeof(PathPoint), __func__);
-        require(std::isfinite(point.gain) && point.gain >= 0.0f && std::isfinite(point.position[0]) && std::isfinite(point.position[1]) && std::isfinite(point.position[2]), __func__);
-        if (point.room != 0) require(requireObject(state, point.room, Kind::Room, __func__).system == system, __func__);
-    }
-    state.paths.at(path) = PathState{replacement, gain};
+    state.paths.at(path) = validatedPath(state, path, data, gain, __func__);
     return 0;
 }
 
