@@ -456,18 +456,10 @@ int main(int argc, char** argv) {
     if (!library) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(library != nullptr, "load requested library");
-#ifdef _WIN32
     Resolve(ot.setRenderer, library, patched, "Yu9oXRVmTTo", "sceFreeTypeOtSetRenderer_nid_no_patch");
-#else
-    Resolve(ot.setRenderer, library, patched, "Yu9oXRVmTTo", "FT_Set_Renderer_nid_postfix");
-#endif
     Require(ot.setRenderer(nullptr, nullptr, 0, nullptr) == FT_Set_Renderer(nullptr, nullptr, 0, nullptr),
             "reject a missing library");
-#ifdef _WIN32
     Resolve(ot.outlineBitmap, library, patched, "4RRjK-Wd1lU", "sceFreeTypeOtOutlineGetBitmap_nid_no_patch");
-#else
-    Resolve(ot.outlineBitmap, library, patched, "4RRjK-Wd1lU", "FT_Outline_Get_Bitmap_nid_postfix");
-#endif
     Require(ot.outlineBitmap(nullptr, nullptr, nullptr) == FT_Outline_Get_Bitmap(nullptr, nullptr, nullptr),
             "outline bitmap without library");
 #ifdef _WIN32
