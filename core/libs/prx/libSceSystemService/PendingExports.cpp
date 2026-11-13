@@ -543,8 +543,15 @@ int APS5_VABI sceShellCoreUtilActivateAbort(std::intptr_t handle) {
 
 int APS5_VABI sceShellCoreUtilActivateGetStatus(std::intptr_t handle, std::int32_t* status, std::int32_t* result) {
     if (status == nullptr || result == nullptr) return ShellCoreInvalidArgument;
-    *status = ActivationStatus;
-    *result = 0;
+    const std::int32_t localStatus = ActivationStatus;
+    const std::int32_t localResult = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(status, &localStatus, sizeof(localStatus)) ||
+        !GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult))) {
+        errno = savedErrno;
+        return ShellCoreInvalidArgument;
+    }
+    errno = savedErrno;
     return 0;
 }
 
