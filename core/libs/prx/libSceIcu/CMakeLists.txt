@@ -509,6 +509,12 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_icu_date_pattern_generator_tests)
     add_test(NAME guest_icu_date_pattern_generator_open COMMAND guest_icu_date_pattern_generator_tests)
     set_tests_properties(guest_icu_date_pattern_generator_open PROPERTIES TIMEOUT 20)
+    add_test_executable(guest_icu_date_pattern_native_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateTimePatternNative.cpp)
+    target_link_libraries(guest_icu_date_pattern_native_tests PRIVATE icu_i18n)
+    add_test(NAME guest_icu_date_pattern_native_data COMMAND guest_icu_date_pattern_native_tests)
+    add_test(NAME guest_icu_date_pattern_manifest COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateTimePatternData.py ${ICU_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${icu_host_icupkg})
+    set_tests_properties(guest_icu_date_pattern_native_data guest_icu_date_pattern_manifest PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_icu_date_pattern_generator_open PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
