@@ -85,6 +85,9 @@ def positive_integer(value):
 
 
 def main(arguments=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("trace", type=Path, help="aps5-trace-*.json.gz or .json")
     parser.add_argument("-o", "--output", type=Path, help="HTML file to write (default: the trace name with .html)")
