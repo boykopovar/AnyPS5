@@ -41,6 +41,7 @@ int main() {
     Require(output[0] == 7u, "the category is not the applicationCategoryType from param.json");
     Require(output[1] == 0x5a5a5a5au, "the query wrote past the category");
     Require(getAppCategoryType(getpid_nid_postfix(), nullptr) == static_cast<int>(0x80020016), "a null output is not EINVAL");
+    Require(getAppCategoryType(getpid_nid_postfix(), output.data()) == 0 && output[0] == 7u, "repeated query failed");
     Require(getAppCategoryType(getpid_nid_postfix(), reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x8002000e),
             "an unwritable output is not EFAULT");
 
