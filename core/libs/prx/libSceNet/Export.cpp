@@ -1657,7 +1657,8 @@ int64_t APS5_VABI sceNetRecvfrom(int s, void* buf, size_t len, int flags, void* 
         return 0;
     }
 #endif
-    const auto addressBytes = from != nullptr && socket.type == NET_SOCK_DGRAM ?
+    const bool returnAddress = from != nullptr && socket.type == NET_SOCK_DGRAM;
+    const auto addressBytes = returnAddress ?
         std::min<std::uint32_t>(capacity, socket.family == NET_AF_INET ? 16u : 28u) : 0u;
     const GuestArena::HostWrite addressOutput(addressBytes == 0 ? nullptr : from, addressBytes);
     if (!addressOutput.Open()) return fail(NET_EFAULT);
@@ -1669,7 +1670,7 @@ int64_t APS5_VABI sceNetRecvfrom(int s, void* buf, size_t len, int flags, void* 
     int result = native_transfer(*socket.native, flags, false, [&](int) {
         peer_length = sizeof(peer);
         return ::recvfrom(socket.native->value, static_cast<char*>(buf), static_cast<int>(len),
-            native_flags, from ? reinterpret_cast<sockaddr*>(&peer) : nullptr, from ? &peer_length : nullptr);
+            native_flags, returnAddress ? reinterpret_cast<sockaddr*>(&peer) : nullptr, returnAddress ? &peer_length : nullptr);
     });
 #ifdef _WIN32
     if (result < 0 && socket.type == NET_SOCK_DGRAM && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(len);
@@ -1677,7 +1678,8 @@ int64_t APS5_VABI sceNetRecvfrom(int s, void* buf, size_t len, int flags, void* 
     if (result < 0) return fail(native_error());
     if (from) {
         std::array<std::uint8_t, 28> bytes{};
-        if (!native_to_guest_address(peer, bytes.data(), &capacity)) return fail(NET_EAFNOSUPPORT);
+        if (!returnAddress) capacity = 0;
+        else if (!native_to_guest_address(peer, bytes.data(), &capacity)) return fail(NET_EAFNOSUPPORT);
         if (!GuestCopyOut_nid_no_patch(from, bytes.data(), capacity) ||
             !GuestCopyOut_nid_no_patch(fromlen, &capacity, sizeof(capacity))) return fail(NET_EFAULT);
     }

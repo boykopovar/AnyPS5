@@ -2060,6 +2060,14 @@ static void CheckStreamAddressLengths() {
         Require(sceNetGetpeername(accepted, peer.data(), &size) == 0 && size == copied);
         Require(std::memcmp(peer.data(), clientAddress.data(), copied) == 0 && Untouched(peer, copied));
     }
+    const char payload[] = "stream";
+    Require(sceNetSend(client, payload, sizeof(payload), 0) == sizeof(payload));
+    char received[sizeof(payload)]{};
+    Require(Failed(sceNetRecvfrom(accepted, received, sizeof(received), 0, peer.data(),
+                                 reinterpret_cast<std::uint32_t*>(0x10)), 14));
+    size = peer.size();
+    Require(sceNetRecvfrom(accepted, received, sizeof(received), 0, reinterpret_cast<void*>(0x10), &size) == sizeof(payload));
+    Require(size == 0 && std::memcmp(received, payload, sizeof(payload)) == 0);
     const int second = sceNetSocket("fault-client", 2, 1, 6);
     Require(second >= 0 && sceNetConnect(second, listening.data(), listening.size()) == 0);
     const int count = sceNetGetSockInfo(-1, nullptr, 0, 0);
