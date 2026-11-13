@@ -307,6 +307,43 @@ int main() {
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceCreate(system, nullptr); }, "source without output");
     Require(sceAudioPropagationSourceSetAttributes(source, portalAttributes, 3) == 0, "source attributes failed");
 
+    AudioPropagation::SourceInfo sourceInfo{};
+    Require(sceAudioPropagationSourceQueryInfo(source, &sourceInfo) == 0, "source query info failed");
+    Require(sourceInfo.system == system && sourceInfo.position[0] == 0.0f && sourceInfo.position[1] == 0.0f && sourceInfo.position[2] == 0.0f, "default source position");
+    Require(sourceInfo.direction[0] == 0.0f && sourceInfo.direction[1] == 0.0f && sourceInfo.direction[2] == 1.0f, "default source direction");
+    Require(sourceInfo.attribute2Mode == 3 && sourceInfo.attribute2Values[0] == 100.0f && sourceInfo.attribute2Values[1] == 1.0f && sourceInfo.attribute2Values[2] == 1.0f, "default source second attribute");
+    Require(sourceInfo.attribute3Values[0] == 1.0f && sourceInfo.attribute3Values[1] == 30.0f && sourceInfo.attribute3Values[2] == 0.7f && sourceInfo.attribute3Values[3] == 270.0f, "default source third attribute");
+    Require(sourceInfo.pathCapacity == AudioPropagation::MaxPaths, "default source path capacity");
+    Require(sceAudioPropagationSourceQueryInfo(source, nullptr) == AudioPropagation::ErrorNullPointer, "null source info output");
+    Require(sceAudioPropagationSourceQueryInfo(source + 16, &sourceInfo) == AudioPropagation::ErrorInvalidHandle, "unknown source info");
+    errno = 71;
+    Require(sceAudioPropagationSourceQueryInfo(source, reinterpret_cast<AudioPropagation::SourceInfo*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable source info output");
+    Require(errno == 71, "source query info changed errno on an unwritable output");
+
+    const float sourcePosition[4]{1.0f, 2.0f, 3.0f, 0.0f};
+    const float sourceDirection[4]{0.0f, 1.0f, 0.0f, 0.0f};
+    const float secondValues[3]{10.0f, 20.0f, 30.0f};
+    std::uint32_t sourceAttribute2[4]{2};
+    std::memcpy(&sourceAttribute2[1], secondValues, sizeof(secondValues));
+    const float sourceAttribute3[4]{1.5f, 2.5f, 3.5f, 4.5f};
+    AudioPropagation::Attribute sourceAttributes[4]{};
+    const std::uint32_t sourceIds[4]{0, 1, 2, 3};
+    const void* sourcePointers[4]{sourcePosition, sourceDirection, sourceAttribute2, sourceAttribute3};
+    for (int index = 0; index < 4; ++index) {
+        sourceAttributes[index].id = sourceIds[index];
+        sourceAttributes[index].value = sourcePointers[index];
+        sourceAttributes[index].valueSize = 16;
+    }
+    Require(sceAudioPropagationSourceSetAttributes(source, sourceAttributes, 4) == 0, "source info attributes failed");
+    Require(sceAudioPropagationSourceQueryInfo(source, &sourceInfo) == 0, "source query info after attributes");
+    Require(sourceInfo.position[0] == 1.0f && sourceInfo.position[1] == 2.0f && sourceInfo.position[2] == 3.0f, "stored source position");
+    Require(sourceInfo.direction[0] == 0.0f && sourceInfo.direction[1] == 1.0f && sourceInfo.direction[2] == 0.0f, "stored source direction");
+    Require(sourceInfo.attribute2Mode == 2 && sourceInfo.attribute2Values[0] == 10.0f && sourceInfo.attribute2Values[1] == 20.0f && sourceInfo.attribute2Values[2] == 30.0f, "stored source second attribute");
+    Require(sourceInfo.attribute3Values[0] == 1.5f && sourceInfo.attribute3Values[1] == 2.5f && sourceInfo.attribute3Values[2] == 3.5f && sourceInfo.attribute3Values[3] == 4.5f, "stored source third attribute");
+    sourceAttributes[0].valueSize = 8;
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAttributes(source, sourceAttributes, 1); }, "source attribute with a wrong size");
+    Require(sceAudioPropagationSourceQueryInfo(source, &sourceInfo) == 0 && sourceInfo.position[0] == 1.0f, "rejected source attribute changed the stored info");
+
     AudioPropagation::Attribute resets[13]{};
     Require(sceAudioPropagationResetAttributes(nullptr, 1) == AudioPropagation::ErrorNullPointer, "reset on a null array");
     Require(sceAudioPropagationResetAttributes(resets, 0) == AudioPropagation::ErrorInvalidArgument, "reset of zero attributes");
