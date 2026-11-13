@@ -315,7 +315,7 @@ using LibreSsl3InfoCallback = void (APS5_VABI*)(const LibreSsl3Ssl* ssl, int typ
 void APS5_VABI SSL_set_info_callback_nid_postfix(LibreSsl3Ssl* ssl, LibreSsl3InfoCallback callback);
 const LibreSsl3SslMethod* APS5_VABI TLS_method_nid_postfix();
 const LibreSsl3SslMethod* APS5_VABI TLS_server_method_nid_postfix();
-void APS5_VABI X509_EXTENSION_free_nid_postfix(void* extension);
+int APS5_VABI X509_EXTENSION_free_nid_postfix();
 void* APS5_VABI X509_STORE_CTX_get0_param_nid_postfix(LibreSslX509StoreContext* context);
 int APS5_VABI X509_STORE_load_locations_nid_postfix();
 int APS5_VABI X509_VERIFY_PARAM_set_flags_nid_postfix(LibreSslX509VerifyParam* param, std::uint64_t flags);
