@@ -49,8 +49,7 @@ String FormatLocalizedString(const char* format, ...) {
     va_start(args, format);
     va_copy(argsCopy, args);
 
-    char ch;
-    int resultSize = std::vsnprintf(&ch, 1, format, argsCopy);
+    int resultSize = std::vsnprintf(nullptr, 0, format, argsCopy);
     va_end(argsCopy);
 
     if (resultSize <= 0) {

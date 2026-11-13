@@ -4,6 +4,7 @@
 #include "prx/libSceNKWebKit/include/HTTPHeaderFieldExports.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
+#include "prx/libSceNKWebKit/include/LocalizedStringsExports.hpp"
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
 #include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"
@@ -44,4 +45,3 @@
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
 #include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"
 #include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
-#include "prx/libSceNKWebKit/include/LocalizedStringsExports.hpp"
