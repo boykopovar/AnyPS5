@@ -661,6 +661,11 @@ static void VertexAttributes() {
     glVertexAttribPointer_nid_postfix(2, 4, 0x1406, 0, 0, nullptr);
     glGetVertexAttribPointerv_nid_postfix(2, 0x8645, &pointer);
     Require(pointer == nullptr);
+
+    void* nullPointer = local;
+    glGetVertexAttribPointerv_nid_postfix(2, 0x8645, nullptr);
+    Error(0x0500);
+    Require(nullPointer == local);
 }
 
 static void TextureParameters() {

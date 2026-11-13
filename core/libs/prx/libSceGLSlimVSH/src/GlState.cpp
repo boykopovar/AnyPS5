@@ -187,6 +187,7 @@ void APS5_VABI glGetVertexAttribPointerv_nid_postfix(GLuint index, GLenum name, 
     std::lock_guard lock(mutex);
     auto* a = Attrib(index);
     if (!a) return;
+    if (!pointer) { Error_nid_no_patch(0x0500); return; }
     if (name != 0x8645) { Error_nid_no_patch(0x0500); return; }
     *pointer = const_cast<void*>(a->pointer);
 }
