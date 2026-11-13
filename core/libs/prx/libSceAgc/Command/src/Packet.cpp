@@ -152,9 +152,8 @@ std::uint32_t* WriteRegisters(CommandBuffer* buffer, std::uint32_t opcode, const
 
 std::uint32_t* WriteIndirectRegisters(CommandBuffer* buffer, std::uint32_t opcode, const volatile ShaderRegister* registers, std::uint32_t count, const char* function) {
     const auto address = reinterpret_cast<std::uintptr_t>(registers);
-    if (address != 0 || count != 0) CheckAddress(address, 4, function);
-    CheckBits(count, 0x3fffu, function);
-    return Emit(buffer, opcode, {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 0x80000000u, count}, function);
+    Require(address != 0 || count == 0, function, "null register list with a count");
+    return Emit(buffer, opcode, {static_cast<std::uint32_t>(address) & ~3u, static_cast<std::uint32_t>(address >> 32u), 0x80000000u, count & 0x3fffu}, function);
 }
 
 void PatchIndirectAddress(std::uint32_t* packet, std::uint32_t opcode, const volatile ShaderRegister* registers, const char* function) {

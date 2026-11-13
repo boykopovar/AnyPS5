@@ -176,6 +176,29 @@ void testIndirectPlaceholder() {
     }
 }
 
+void testIndirectConsoleArguments() {
+    const std::array writers{sceAgcDcbSetCxRegistersIndirect, sceAgcDcbSetShRegistersIndirect, sceAgcDcbSetUcRegistersIndirect};
+    const std::array headers{0xc0039f00u, 0xc0036300u, 0xc0036400u};
+    struct Case {
+        std::uintptr_t address;
+        std::uint32_t count;
+        std::array<std::uint32_t, 4> words;
+    };
+    const std::array<Case, 3> cases{{
+        {0x11111111u, 0x22222222u, {0x11111110u, 0u, 0x80000000u, 0x2222u}},
+        {1u, 2u, {0u, 0u, 0x80000000u, 2u}},
+        {0x1111111122222222ull, 0x44444444u, {0x22222220u, 0x11111111u, 0x80000000u, 0x444u}},
+    }};
+    for (std::size_t i = 0; i < writers.size(); ++i) {
+        for (const auto& item : cases) {
+            Storage storage;
+            const auto* packet = writers[i](&storage.buffer, reinterpret_cast<const volatile ShaderRegister*>(item.address), item.count);
+            check(packet == storage.words.data() && packet[0] == headers[i] && std::equal(item.words.begin(), item.words.end(), packet + 1), "indirect register packet does not match the console's");
+            check(storage.buffer.cursor_up == storage.words.data() + 5, "indirect register cursor mismatch");
+        }
+    }
+}
+
 void testDirectList() {
     constexpr std::uint32_t sentinel = 0xabcdef01u;
     constexpr std::uint32_t wordSize = sizeof(std::uint32_t);
@@ -237,6 +260,7 @@ int main() {
         testListFromAnyByte();
         testIndirect();
         testIndirectPlaceholder();
+        testIndirectConsoleArguments();
         testDirectList();
         std::puts("AGC register command tests passed");
         return 0;

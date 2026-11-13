@@ -7,9 +7,6 @@ agcbuild_AcbAtomicGds_c	diff	more than six arguments; the console's stack argume
 agcbuild_AcbAtomicMem_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbAtomicMem_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_AcbAtomicMem_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbCondExec_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbCondExec_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbCondExec_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCopyData_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCopyData_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCopyData_c	throw	AnyPS5 throws for arguments the console encodes
@@ -70,9 +67,6 @@ agcbuild_DcbAtomicGds_c	diff	more than six arguments; the console's stack argume
 agcbuild_DcbAtomicMem_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbAtomicMem_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicMem_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbCondExec_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbCondExec_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbCondExec_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbContextStateOp_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbContextStateOp_b	diff	the packet differs from the console's; not yet analysed
 agcbuild_DcbContextStateOp_c	throw	AnyPS5 throws for arguments the console encodes
@@ -122,9 +116,6 @@ agcbuild_DcbSetCfRegisterDirect_a	throw	AnyPS5 throws for arguments the console 
 agcbuild_DcbSetCfRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetCxRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetCxRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCxRegistersIndirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCxRegistersIndirect_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCxRegistersIndirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetFlip_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbSetFlip_b	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbSetFlip_c	diff	the console returns null and writes nothing for these arguments
@@ -140,14 +131,8 @@ agcbuild_DcbSetPredication_b	throw	AnyPS5 throws for arguments the console encod
 agcbuild_DcbSetPredication_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetShRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetShRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetShRegistersIndirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetShRegistersIndirect_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetShRegistersIndirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetUcRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetUcRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetUcRegistersIndirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetUcRegistersIndirect_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetUcRegistersIndirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbWaitRegMem_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbWaitRegMem_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbWaitRegMem_c	throw	AnyPS5 throws for arguments the console encodes
