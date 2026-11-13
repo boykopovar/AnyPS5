@@ -32,6 +32,7 @@ class ExportCacheTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         os.chdir(self.tmp.name)
         run("init", "-q")
+        run("config", "core.safecrlf", "false")
         write("core/libs/prx/libOne/One.cpp", export("sceOneFirst"))
         write("core/libs/prx/libTwo/Two.cpp", export("sceTwoFirst"))
         write("core/libs/prx/libTwo/Copy.cpp", export("sceTwoFirst"))
@@ -107,6 +108,39 @@ class ExportCacheTests(unittest.TestCase):
             found = pr_overlap.base_exports(self.first)
         self.assertEqual(self.names(found), {"sceOneFirst", "sceTwoFirst"})
         self.assertEqual([path.name for path in self.cache.parent.glob("pr_overlap-exports.json*")], [])
+
+    def test_failed_replacement_and_cleanup_keep_the_export_result(self):
+        with patch.object(pr_overlap.os, "replace", side_effect=PermissionError("cache is locked")), \
+                patch.object(Path, "unlink", side_effect=PermissionError("temporary file is locked")):
+            found = pr_overlap.base_exports(self.first)
+        self.assertEqual(self.names(found), {"sceOneFirst", "sceTwoFirst"})
+        self.assertFalse(self.cache.exists())
+
+    def test_failed_write_and_cleanup_keep_the_export_result(self):
+        with patch.object(Path, "write_text", side_effect=PermissionError("cache directory is read-only")), \
+                patch.object(Path, "unlink", side_effect=PermissionError("cleanup is denied")):
+            found = pr_overlap.base_exports(self.first)
+        self.assertEqual(self.names(found), {"sceOneFirst", "sceTwoFirst"})
+        self.assertFalse(self.cache.exists())
+
+    def test_failed_update_preserves_the_old_cache_and_recovers_later(self):
+        pr_overlap.base_exports(self.first)
+        original = self.cache.read_bytes()
+        with patch.object(pr_overlap.os, "replace", side_effect=PermissionError("cache is locked")), \
+                patch.object(Path, "unlink", side_effect=PermissionError("temporary file is locked")):
+            found = pr_overlap.base_exports(self.second)
+        self.assertEqual(self.names(found), {"sceOneFirst", "sceTwoFirst", "sceTwoSecond"})
+        self.assertEqual(self.cache.read_bytes(), original)
+        self.parsed.clear()
+        recovered = pr_overlap.base_exports(self.second)
+        self.assertEqual(recovered, found)
+        self.assertEqual(self.parsed, ["core/libs/prx/libTwo"])
+        self.assertNotEqual(self.cache.read_bytes(), original)
+
+    def test_unexpected_replacement_errors_still_propagate(self):
+        with patch.object(pr_overlap.os, "replace", side_effect=TypeError("unexpected argument type")):
+            with self.assertRaisesRegex(TypeError, "unexpected argument type"):
+                pr_overlap.base_exports(self.first)
 
 
 if __name__ == "__main__":

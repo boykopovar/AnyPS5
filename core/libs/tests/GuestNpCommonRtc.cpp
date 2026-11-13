@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 static void Require(bool value, int line) {
     if (value) return;
@@ -27,9 +28,12 @@ int main() {
 
     char text[0x80];
     std::memset(text, 'x', sizeof(text));
-    CHECK(sceNpRtcFormatRFC3339(text, sizeof(text) - 1, &epoch, 0) == bufferTooSmall && text[0] == 'x');
+    for (std::size_t sz : {std::size_t{0}, std::size_t{1}, std::size_t{0x7f}, sizeof(text) - 1}) {
+        CHECK(sceNpRtcFormatRFC3339(text, sz, &epoch, 0) == bufferTooSmall && text[0] == 'x');
+    }
     CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &epoch, 0) == 0 && std::strcmp(text, "1970-01-01T00:00:00.00Z") == 0);
     CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &epoch, 90) == 0 && std::strcmp(text, "1970-01-01T01:30:00.00+01:30") == 0);
+    CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &epoch, -300) == 0 && std::strcmp(text, "1969-12-31T19:00:00.00-05:00") == 0);
 
     NpTime now{0};
     CHECK(_ZN3sce2np4Time12GetUserClockEPS1_(&now) == 0 && now.tick > unixEpochTick);
@@ -129,6 +133,18 @@ int main() {
             for (int op = 0; op < 6; ++op) CHECK(forms[op](pair.lhs, pair.rhs) == pair.expected[op]);
         }
     }
+    RtcTick parsed{1};
+    CHECK(sceNpRtcParseRFC3339(&parsed, "1970-01-01T00:00:00.00Z") == 0 && parsed.tick == unixEpochTick);
+    parsed.tick = 1;
+    CHECK(sceNpRtcParseRFC3339(&parsed, "1970-01-01T01:30:00.00+01:30") == 0 && parsed.tick == unixEpochTick);
+    CHECK(sceNpRtcParseRFC3339(&parsed, "1970-01-02T00:00:01.50Z") == 0 && parsed.tick == dayLater.tick);
+    CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &dayLater, -300) == 0);
+    parsed.tick = 1;
+    CHECK(sceNpRtcParseRFC3339(&parsed, text) == 0 && parsed.tick == dayLater.tick);
+    CHECK(sceNpRtcParseRFC3339(&parsed, "not a date") < 0);
+    CHECK(sceNpRtcParseRFC3339(&parsed, "") < 0);
+    CHECK(sceNpRtcParseRFC3339(&parsed, "1970-01-01") < 0);
+    CHECK(sceNpRtcParseRFC3339(&parsed, "2020-99-99T99:99:99.00Z") < 0);
     std::puts("NP common RTC tests passed");
     return 0;
 }

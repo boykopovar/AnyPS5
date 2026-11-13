@@ -107,6 +107,7 @@ bool sharesSlots(const IrProgram& program, const ShaderPixelInputInfo& pixel) {
 }
 
 bool HostInterpolationChecker::Lower(IrProgram& program, const ShaderPixelInputInfo& pixel, bool barycentricBuiltins) const {
+    if ((program.Metadata().pixelLinearInputs & program.Metadata().pixelPerspectiveInputs) != 0u) return false;
     std::vector<IrValue*> selects;
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {

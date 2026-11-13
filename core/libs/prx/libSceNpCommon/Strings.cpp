@@ -1,4 +1,6 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <climits>
 #include <cstddef>
@@ -8,6 +10,7 @@
 #include <cstring>
 #include <string_view>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 namespace {
 
@@ -39,7 +42,7 @@ struct Base64Block {
 
 int DecodeLastBlock(const char* src, std::size_t length, const char* alphabet, Base64Block* block) {
     char c[4] = {BASE64_PAD, BASE64_PAD, BASE64_PAD, BASE64_PAD};
-    std::memcpy(c, src, length);
+    if (length != 0) std::memcpy(c, src, length);
     const int v0 = Base64Value(c[0], alphabet);
     const int v1 = Base64Value(c[1], alphabet);
     if (v0 < 0 || v1 < 0) return NP_ERROR_INVALID_CHARACTER;
@@ -193,18 +196,21 @@ int FormatInteger(char* buf, std::size_t size, std::uint64_t magnitude, char sig
     if (radix > 1) {
         for (std::uint64_t rest = magnitude; rest >= radix; rest /= radix) ++digits;
     }
+    const std::size_t outputLength = prefixLength + digits;
     if (buf != nullptr) {
-        if (size < prefixLength + digits + 1) return NP_ERROR_BUFFER_TOO_SMALL;
-        std::memcpy(buf, prefix, prefixLength);
-        char* end = buf + prefixLength + digits;
+        if (size < outputLength + 1) return NP_ERROR_BUFFER_TOO_SMALL;
+        std::array<char, 3 + sizeof(magnitude) * CHAR_BIT + 1> formatted{};
+        std::memcpy(formatted.data(), prefix, prefixLength);
+        char* end = formatted.data() + outputLength;
         *end = '\0';
         std::uint64_t rest = magnitude;
         for (std::size_t i = 0; i < digits; ++i) {
             *--end = HexDigit(static_cast<std::uint32_t>(rest % radix), (flags & NP_FORMAT_UPPERCASE) != 0);
             rest /= radix;
         }
+        if (!GuestCopyOut_nid_no_patch(buf, formatted.data(), outputLength + 1)) return NP_ERROR_INVALID_ARGUMENT;
     }
-    if (length != nullptr) *length = prefixLength + digits;
+    if (length != nullptr && !GuestCopyOut_nid_no_patch(length, &outputLength, sizeof(outputLength))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -229,8 +235,8 @@ int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* 
 
 int CopyToBuffer(char* dst, std::size_t size, const char* src, std::size_t length) {
     if (size < length + 1) return NP_ERROR_BUFFER_TOO_SMALL;
-    std::strncpy(dst, src, size - 1);
-    dst[size - 1] = '\0';
+    std::memcpy(dst, src, length);
+    std::memset(dst + length, 0, size - length);
     return 0;
 }
 
@@ -336,6 +342,27 @@ bool IsValidSequence(const char* text, std::size_t length) {
 
 bool IsAllowedTextByte(unsigned char c) {
     return (c >= 0x20 && c != 0x7F) || c == '\t' || c == '\n' || c == '\r';
+}
+
+struct XmlEntity {
+    char character;
+    const char* text;
+};
+
+constexpr XmlEntity XML_ENTITIES[] = {{'"', "&quot;"}, {'&', "&amp;"}, {'\'', "&apos;"}, {'<', "&lt;"}, {'>', "&gt;"}};
+
+const char* XmlEntityOf(char c) {
+    for (const XmlEntity& entity : XML_ENTITIES) {
+        if (entity.character == c) return entity.text;
+    }
+    return nullptr;
+}
+
+const XmlEntity* XmlEntityAt(const char* text) {
+    for (const XmlEntity& entity : XML_ENTITIES) {
+        if (std::strncmp(text, entity.text, std::strlen(entity.text)) == 0) return &entity;
+    }
+    return nullptr;
 }
 
 bool IsUrlSafe(unsigned char c) {
@@ -452,7 +479,7 @@ int APS5_VABI sceNpStrToUInt64(const char* str, std::uint64_t* value, int base, 
 }
 
 int APS5_VABI sceNpStrBuildHex(char* dst, std::size_t size, const void* src, std::size_t length, bool uppercase) {
-    if (size <= length * 2) return NP_ERROR_BUFFER_TOO_SMALL;
+    if (size == 0 || length > (size - 1) / 2) return NP_ERROR_BUFFER_TOO_SMALL;
     const auto* bytes = static_cast<const std::uint8_t*>(src);
     for (std::size_t i = 0; i < length; ++i) {
         dst[i * 2] = HexDigit(bytes[i] >> 4, uppercase);
@@ -471,10 +498,13 @@ int APS5_VABI sceNpStrnParseHex(const char* hex, std::size_t length, void* out, 
 }
 
 int APS5_VABI sceNpStrcpyToBuf(char* dst, std::size_t size, const char* src) {
+    if (src == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return CopyToBuffer(dst, size, src, std::strlen(src));
 }
 
 int APS5_VABI sceNpStrncpyToBuf(char* dst, std::size_t size, const char* src, std::size_t maxLength) {
+    if (src == nullptr && maxLength == 0) return CopyToBuffer(dst, size, "", 0);
+    if (src == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return CopyToBuffer(dst, size, src, strnlen(src, maxLength));
 }
 
@@ -627,6 +657,66 @@ int APS5_VABI sceNpUtilJsonGetOneChar(char* dst, std::size_t dstSize, const char
     return status;
 }
 
+int APS5_VABI sceNpUtilXmlEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required) {
+    if (src == nullptr || srcLength == 0 || (dst == nullptr && required == nullptr)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const char* const end = src + srcLength;
+    std::size_t length = 0;
+    do {
+        const auto lead = static_cast<unsigned char>(*src);
+        const char* piece = src;
+        std::size_t pieceLength = 1;
+        std::size_t consumed = 1;
+        if (lead < 0x80) {
+            if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+            if (const char* entity = XmlEntityOf(*src)) {
+                piece = entity;
+                pieceLength = std::strlen(entity);
+            }
+        } else {
+            consumed = pieceLength = Utf8SequenceLength(lead);
+            if (pieceLength == 0 || !IsValidSequence(src, pieceLength)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+        }
+        if (dst != nullptr) {
+            if (length + pieceLength > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+            std::memcpy(dst + length, piece, pieceLength);
+        }
+        length += pieceLength;
+        src += consumed;
+    } while (src < end);
+    if (dst != nullptr) {
+        if (length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+        dst[length] = '\0';
+    }
+    if (required != nullptr) *required = length + 1;
+    return 0;
+}
+
+int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required) {
+    if (src == nullptr || srcLength == 0 || (dst == nullptr && required == nullptr)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const char* const end = src + srcLength;
+    std::size_t length = 0;
+    do {
+        if (dst != nullptr && length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+        char character = *src;
+        std::size_t consumed = 1;
+        if (character == '&') {
+            if (const XmlEntity* entity = XmlEntityAt(src)) {
+                character = entity->character;
+                consumed = std::strlen(entity->text);
+            }
+        }
+        if (dst != nullptr) dst[length] = character;
+        ++length;
+        src += consumed;
+    } while (src < end);
+    if (dst != nullptr) {
+        if (length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+        dst[length] = '\0';
+    }
+    if (required != nullptr) *required = length + 1;
+    return 0;
+}
+
 int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const char** character) {
     if (text == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     const char* position = text;
@@ -667,7 +757,7 @@ int APS5_VABI sceNpUtilParseJid(NpJid* jid, const char* text, char* buffer, std:
                 *jid = {};
                 return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
             }
-            std::memcpy(buffer + used, pieces[i].data(), pieces[i].size());
+            std::copy(pieces[i].begin(), pieces[i].end(), buffer + used);
             buffer[used + pieces[i].size()] = '\0';
             copies[i] = buffer + used;
         }

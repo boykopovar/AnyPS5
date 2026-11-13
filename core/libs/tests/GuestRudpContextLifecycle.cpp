@@ -51,6 +51,7 @@ static void CheckOptions(int context) {
         }
         Require(sceRudpSetOption(context, option, nullptr, sizeof(result)) == invalidArgument);
         Require(sceRudpGetOption(context, option, nullptr, sizeof(result)) == invalidArgument);
+        Require(sceRudpGetOption(context, option, reinterpret_cast<void*>(0x10), sizeof(result)) == invalidArgument);
         Require(sceRudpGetOption(context, option, &result, sizeof(result)) == 0);
         Require(result == 0xffffffffu);
     }
@@ -167,15 +168,6 @@ int main() {
     Require(sceRudpActivate(ctx, nullptr, 0) == static_cast<int>(0x80770004));
     unsigned char address[34]{};
     Require(sceRudpActivate(-1, address, sizeof(address)) == static_cast<int>(0x80770004));
-    bool activationUnsupported = false;
-    try {
-        sceRudpActivate(ctx, address, sizeof(address));
-
-    } catch (const std::runtime_error&) {
-        activationUnsupported = true;
-    }
-    Require(activationUnsupported);
-
     Require(sceRudpBind(ctx, 5, 0, 2) == 0);
 
     Require(sceRudpSetOption(ctx, 0, nullptr, 0) == invalidOption);

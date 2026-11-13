@@ -2,6 +2,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -563,6 +564,18 @@ class LibraryImportTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("delay-loaded", result.stdout + result.stderr)
                     self.assertEqual(patched, image)
+
+    def test_huge_name_count_is_rejected_before_allocation(self):
+        for count in (0xFFFFFFFF, 0x40000000):
+            with self.subTest(count=count):
+                image = self.library(["puts"])
+                struct.pack_into("<I", image, 0x600 + 24, count)
+                start = time.monotonic()
+                result, patched = self.patch(image)
+                self.assertLess(time.monotonic() - start, 10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("export name tables out of file bounds", result.stdout + result.stderr)
+                self.assertEqual(patched, image)
 
 
 if __name__ == "__main__":

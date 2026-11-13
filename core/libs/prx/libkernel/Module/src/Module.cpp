@@ -298,8 +298,7 @@ void __aps5_set_module_init_result_nid_no_patch(int result) {
 }
 
 KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, size_t args, const void* argp, uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
- (void)flags;
- (void)opt;
+ if (flags != 0 || opt != nullptr) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EINVAL);
  if (res) *res = 0;
  if (!module_file_name) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
  pendingModuleArgs = {args, argp};
@@ -317,10 +316,10 @@ KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, si
 int APS5_VABI sceKernelStopUnloadModule(KernelModule handle, size_t args, const void* argp, uint32_t flags, const KernelUnloadModuleOpt* opt, int* res) {
  (void)args;
  (void)argp;
- (void)flags;
- (void)opt;
+ if (flags != 0 || opt != nullptr || handle == 0) return SCE_KERNEL_ERROR_EINVAL;
+ if (dlclose_nid_postfix(reinterpret_cast<void*>(static_cast<intptr_t>(handle))) != 0) return SCE_KERNEL_ERROR_ESRCH;
  if (res) *res = 0;
- return dlclose_nid_postfix(reinterpret_cast<void*>(static_cast<intptr_t>(handle))) == 0 ? 0 : SCE_KERNEL_ERROR_ESRCH;
+ return 0;
 }
 
 }
