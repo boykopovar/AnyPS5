@@ -1855,7 +1855,7 @@ void CheckImportWindow() {
     Require(!UnchangedSince(base, Block, after), "a store after the import window was missed");
 }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
 void ResolveUnderGpuMutex(std::uintptr_t begin, std::uintptr_t end) {
     const std::lock_guard held(GpuMutex());
     std::memset(reinterpret_cast<void*>(begin), 0x33, end - begin);
@@ -2606,7 +2606,7 @@ int main(int argc, char** argv) {
             std::cout << "generation wrap test passed\n";
             return 0;
         }
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
         if (argc == 2 && std::string_view(argv[1]) == "--import-over-read-traps") {
             CheckImportOverReadTraps();
             std::cout << "import over read traps test passed\n";

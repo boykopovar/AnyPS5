@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -127,6 +128,48 @@ void CheckHostWrite() {
     GuestWriteWatchReleaseReads_nid_postfix(region.Address(), region.page);
 }
 
+std::mutex holderLock;
+std::atomic<bool> resolving{false};
+thread_local bool holding = false;
+
+void ResolveHeld(std::uintptr_t begin, std::uintptr_t end) {
+    resolving.store(true, std::memory_order_release);
+    const std::lock_guard held(holderLock);
+    Resolve(begin, end);
+}
+
+void CheckHolder() {
+    Require(GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveHeld), "cannot set the read trap resolver");
+    GuestWriteWatchSetReadTrapBypass_nid_postfix(+[] { return holding; });
+    Region region(1);
+    Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(), region.page), "a read-write page was not trapped");
+    std::unique_lock gate(holderLock);
+    holding = true;
+    std::uint8_t seen = 0;
+    std::thread reader([&] { seen = static_cast<volatile std::uint8_t*>(region.base)[0]; });
+    while (!resolving.load(std::memory_order_acquire)) std::this_thread::yield();
+    Require(static_cast<volatile std::uint8_t*>(region.base)[1] == 0x11, "a read by the holder of the resolver's lock saw bytes the resolver had not stored");
+    holding = false;
+    gate.unlock();
+    reader.join();
+    Require(seen == Stored, "a read of a trapped page did not wait for the resolver");
+    Require(resolved.load() == 1, "the trap was not resolved exactly once");
+}
+
+void CheckTrapped() {
+    Region region(4);
+    std::size_t trapped = 0;
+    const auto count = [&] {
+        trapped = 0;
+        GuestWriteWatchReadTraps_nid_postfix(region.Address(), region.bytes, +[](void* context, std::uintptr_t begin, std::uintptr_t end) { *static_cast<std::size_t*>(context) += end - begin; }, &trapped);
+        return trapped;
+    };
+    Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(1), 2 * region.page), "a read-write range was not trapped");
+    Require(count() == 2 * region.page, "the trapped range was not reported");
+    Require(region.ReadFromThread(region.page) == Stored, "a read of a trapped page did not see the resolver's store");
+    Require(count() == 0, "a resolved range was still reported as trapped");
+}
+
 void CheckUnknown() {
     Region region(2, PROT_READ);
     Require(!GuestWriteWatchTrapReads_nid_postfix(region.Address(), region.page), "a read-only mapping was trapped");
@@ -188,13 +231,17 @@ void CheckThreads() {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected trap, release, protect, host, unknown, unregister or threads");
+        Require(argc == 2, "expected trap, release, protect, host, unknown, unregister, threads, holder or trapped");
         if (!GuestWriteWatchAvailable_nid_postfix()) {
             std::puts("the userfaultfd write watch is not available");
             return Skipped;
         }
-        Require(GuestWriteWatchSetReadTrapResolver_nid_postfix(&Resolve), "cannot set the read trap resolver");
         const std::string mode = argv[1];
+        if (mode == "holder") {
+            CheckHolder();
+            return 0;
+        }
+        Require(GuestWriteWatchSetReadTrapResolver_nid_postfix(&Resolve), "cannot set the read trap resolver");
         if (mode == "trap") CheckTrap();
         else if (mode == "release") CheckRelease();
         else if (mode == "protect") CheckProtect();
@@ -202,6 +249,7 @@ int main(int argc, char** argv) {
         else if (mode == "unknown") CheckUnknown();
         else if (mode == "unregister") CheckUnregister();
         else if (mode == "threads") CheckThreads();
+        else if (mode == "trapped") CheckTrapped();
         else throw std::runtime_error("unknown mode");
         return 0;
     } catch (const std::exception& error) {

@@ -535,6 +535,24 @@ public:
         return true;
     }
 
+    void SetBypass(bool (*bypass)()) {
+        _bypass.store(bypass, std::memory_order_release);
+    }
+
+    void Trapped(std::uintptr_t begin, std::uintptr_t end, void (*trapped)(void*, std::uintptr_t, std::uintptr_t), void* context) {
+        if (end <= begin || !_trapping.load(std::memory_order_acquire)) return;
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
+        {
+            const std::lock_guard lock(_lock);
+            for (auto page = pageStart(begin); page < pageEnd(end); page += PageBytes) {
+                if (!closed(page)) continue;
+                if (!runs.empty() && runs.back().second == page) runs.back().second = page + PageBytes;
+                else runs.emplace_back(page, page + PageBytes);
+            }
+        }
+        for (const auto& [runBegin, runEnd] : runs) trapped(context, runBegin, runEnd);
+    }
+
     bool TrapReads(std::uintptr_t begin, std::uintptr_t end) {
         if (end <= begin || _resolver.load(std::memory_order_acquire) == nullptr) return false;
         const auto first = pageStart(begin);
@@ -572,7 +590,8 @@ public:
         {
             const std::lock_guard lock(_lock);
             if (!closed(page)) return retryOpen(page);
-            if (self == _resolverThread.load(std::memory_order_acquire) || ownedBy(page, self)) {
+            const auto bypass = _bypass.load(std::memory_order_acquire);
+            if (self == _resolverThread.load(std::memory_order_acquire) || ownedBy(page, self) || (bypass != nullptr && bypass())) {
                 for (auto& trap : _traps)
                     if (trap.first <= page && page < trap.last) trap.open[(page - trap.first) / PageBytes] = 1;
                 ++_generation;
@@ -965,6 +984,7 @@ private:
     std::uint64_t _batches = 0;
     std::atomic<bool> _trapping{false};
     std::atomic<void (*)(std::uintptr_t, std::uintptr_t)> _resolver{nullptr};
+    std::atomic<bool (*)()> _bypass{nullptr};
     std::once_flag _started;
     std::atomic<bool> _running{false};
     std::atomic<pid_t> _resolverThread{0};
@@ -1860,6 +1880,8 @@ bool GuestWriteWatchSetReadTrapResolver_nid_postfix(void (*resolve)(std::uintptr
 void GuestWriteWatchSetReadTrapBypass_nid_postfix(bool (*bypass)()) {
 #if defined(__APPLE__)
     Watch::Get().SetReadTrapBypass(bypass);
+#elif defined(APS5_LINUX_READ_TRAPS)
+    ReadTraps::Get().SetBypass(bypass);
 #else
     static_cast<void>(bypass);
 #endif
@@ -1880,6 +1902,8 @@ bool GuestWriteWatchTrapReads_nid_postfix(std::uintptr_t address, std::size_t by
 void GuestWriteWatchReadTraps_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*trapped)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
 #if defined(__APPLE__)
     if (bytes != 0 && address + bytes > address) Watch::Get().ReadTraps(address, address + bytes, trapped, context);
+#elif defined(APS5_LINUX_READ_TRAPS)
+    if (bytes != 0 && address + bytes > address) ReadTraps::Get().Trapped(address, address + bytes, trapped, context);
 #else
     static_cast<void>(address);
     static_cast<void>(bytes);

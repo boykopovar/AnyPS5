@@ -1273,7 +1273,7 @@ std::vector<std::uint64_t> PagesOf(std::span<const std::pair<std::uint64_t, std:
 
 std::vector<std::uint8_t> TrappedPages(std::span<const std::uint64_t> pages) {
     std::vector<std::uint8_t> trapped(pages.size(), 0);
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
     for (std::size_t from = 0; from < pages.size();) {
         auto to = from + 1;
