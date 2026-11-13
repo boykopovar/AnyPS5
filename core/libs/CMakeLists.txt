@@ -1660,6 +1660,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
     endif()
 
+    add_test_executable(guest_agc_driver_unknown_tests tests/GuestAgcDriverUnknown.cpp)
+    target_include_directories(guest_agc_driver_unknown_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_agc_driver_unknown_tests PRIVATE libSceAgcDriver libc)
+    configure_windows_unwind(guest_agc_driver_unknown_tests)
+    add_test(NAME guest_agc_driver_unknown COMMAND guest_agc_driver_unknown_tests)
+    if(WIN32)
+        set_tests_properties(guest_agc_driver_unknown PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>")
+    endif()
+
     add_test_executable(guest_gnm_neo_default_state_tests tests/GuestGnmNeoDefaultState.cpp)
     target_include_directories(guest_gnm_neo_default_state_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_gnm_neo_default_state_tests PRIVATE libSceGnmDriverForNeoMode libc)
