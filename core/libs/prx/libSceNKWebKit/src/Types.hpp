@@ -190,6 +190,7 @@ public:
 
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
+    Retained<BundleFrame> frame;
     Retained<URL> absoluteImageURL;
     Retained<URL> absoluteLinkURL;
     Retained<URL> absoluteMediaURL;
@@ -197,6 +198,10 @@ public:
     Retained<String> linkLabel;
     Retained<String> linkTitle;
     Retained<String> linkSuggestedFilename;
+    Retained<BundleNodeHandle> nodeHandle;
+    Retained<BundleNodeHandle> urlElementHandle;
+    RectValue imageRect{{0.0, 0.0}, {0.0, 0.0}};
+    PointValue point{0.0, 0.0};
     bool isSelected = false;
     bool isDownloadableMedia = false;
     bool mediaHasAudio = false;
@@ -372,6 +377,24 @@ public:
     bool canShowMIMEType() const noexcept { return canShowMIMEType_; }
 private:
     bool canShowMIMEType_ = true;
+};
+
+struct WKNotificationProviderBase {
+    int version;
+    const void* clientInfo;
+    void (*show)(const void* page, const void* notification, const void* clientInfo);
+    void (*close)(const void* notification, const void* clientInfo);
+    void (*didDestroyNotificationStore)(const void* clientInfo);
+    void (*clearNotifications)(const void* notificationIDs, const void* clientInfo);
+};
+
+class NotificationManager final : public ObjectOf<ObjectType::NotificationManager> {
+public:
+    WKNotificationProviderBase provider{};
+    bool hasProvider = false;
+    std::vector<std::uint64_t> shownNotificationIDs;
+    std::vector<std::uint64_t> clickedNotificationIDs;
+    std::vector<std::size_t> closedNotificationCounts;
 };
 
 }  // namespace NKWebKit

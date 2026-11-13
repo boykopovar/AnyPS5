@@ -58,6 +58,7 @@ std::uint32_t APS5_VABI WKBundleDOMWindowExtensionGetTypeID();
 const void* APS5_VABI WKBundleDOMWindowExtensionCreate(const void* frameRef, const void* scriptWorldRef);
 const void* APS5_VABI WKBundleDOMWindowExtensionGetFrame(const void* extensionRef);
 const void* APS5_VABI WKBundleDOMWindowExtensionGetScriptWorld(const void* extensionRef);
+const void* APS5_VABI WKBundleFrameCreateHitTestResult(const void* frameRef, NKWebKit::PointValue point);
 std::uint32_t APS5_VABI WKBundleFrameGetTypeID();
 std::uint32_t APS5_VABI WKBundleGetTypeID();
 std::uint32_t APS5_VABI WKBundleHitTestResultGetTypeID();
@@ -68,6 +69,10 @@ const void* APS5_VABI WKBundleHitTestResultCopyAbsolutePDFURL(const void* hitTes
 const void* APS5_VABI WKBundleHitTestResultCopyLinkLabel(const void* hitTestResultRef);
 const void* APS5_VABI WKBundleHitTestResultCopyLinkTitle(const void* hitTestResultRef);
 const void* APS5_VABI WKBundleHitTestResultCopyLinkSuggestedFilename(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultCopyNodeHandle(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultCopyURLElementHandle(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultGetFrame(const void* hitTestResultRef);
+NKWebKit::RectValue APS5_VABI WKBundleHitTestResultGetImageRect(const void* hitTestResultRef);
 bool APS5_VABI WKBundleHitTestResultGetIsSelected(const void* hitTestResultRef);
 std::uint32_t APS5_VABI WKBundleHitTestResultGetMediaType(const void* hitTestResultRef);
 bool APS5_VABI WKBundleHitTestResultIsDownloadableMedia(const void* hitTestResultRef);
