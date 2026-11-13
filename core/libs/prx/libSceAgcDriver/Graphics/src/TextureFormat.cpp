@@ -26,15 +26,21 @@ struct FormatEntry {
 constexpr FormatEntry kFormatLookup[] = {
     {1, VK_FORMAT_R8_UNORM, 1, false},
     {2, VK_FORMAT_R8_SNORM, 1, false},
+    {3, VK_FORMAT_R8_USCALED, 1, false},
+    {4, VK_FORMAT_R8_SSCALED, 1, false},
     {5, VK_FORMAT_R8_UINT, 1, false},
     {6, VK_FORMAT_R8_SINT, 1, false},
     {7, VK_FORMAT_R16_UNORM, 2, false},
     {8, VK_FORMAT_R16_SNORM, 2, false},
+    {9, VK_FORMAT_R16_USCALED, 2, false},
+    {10, VK_FORMAT_R16_SSCALED, 2, false},
     {11, VK_FORMAT_R16_UINT, 2, false},
     {12, VK_FORMAT_R16_SINT, 2, false},
     {13, VK_FORMAT_R16_SFLOAT, 2, false},
     {14, VK_FORMAT_R8G8_UNORM, 2, false},
     {15, VK_FORMAT_R8G8_SNORM, 2, false},
+    {16, VK_FORMAT_R8G8_USCALED, 2, false},
+    {17, VK_FORMAT_R8G8_SSCALED, 2, false},
     {18, VK_FORMAT_R8G8_UINT, 2, false},
     {19, VK_FORMAT_R8G8_SINT, 2, false},
     {20, VK_FORMAT_R32_UINT, 4, false},
@@ -42,6 +48,8 @@ constexpr FormatEntry kFormatLookup[] = {
     {22, VK_FORMAT_R32_SFLOAT, 4, false},
     {23, VK_FORMAT_R16G16_UNORM, 4, false},
     {24, VK_FORMAT_R16G16_SNORM, 4, false},
+    {25, VK_FORMAT_R16G16_USCALED, 4, false},
+    {26, VK_FORMAT_R16G16_SSCALED, 4, false},
     {27, VK_FORMAT_R16G16_UINT, 4, false},
     {28, VK_FORMAT_R16G16_SINT, 4, false},
     {29, VK_FORMAT_R16G16_SFLOAT, 4, false},
@@ -52,6 +60,8 @@ constexpr FormatEntry kFormatLookup[] = {
     {55, VK_FORMAT_A2B10G10R10_SINT_PACK32, 4, false},
     {56, VK_FORMAT_R8G8B8A8_UNORM, 4, false},
     {57, VK_FORMAT_R8G8B8A8_SNORM, 4, false},
+    {58, VK_FORMAT_R8G8B8A8_USCALED, 4, false},
+    {59, VK_FORMAT_R8G8B8A8_SSCALED, 4, false},
     {60, VK_FORMAT_R8G8B8A8_UINT, 4, false},
     {61, VK_FORMAT_R8G8B8A8_SINT, 4, false},
     {62, VK_FORMAT_R32G32_UINT, 8, false},
@@ -59,6 +69,8 @@ constexpr FormatEntry kFormatLookup[] = {
     {64, VK_FORMAT_R32G32_SFLOAT, 8, false},
     {65, VK_FORMAT_R16G16B16A16_UNORM, 8, false},
     {66, VK_FORMAT_R16G16B16A16_SNORM, 8, false},
+    {67, VK_FORMAT_R16G16B16A16_USCALED, 8, false},
+    {68, VK_FORMAT_R16G16B16A16_SSCALED, 8, false},
     {69, VK_FORMAT_R16G16B16A16_UINT, 8, false},
     {70, VK_FORMAT_R16G16B16A16_SINT, 8, false},
     {71, VK_FORMAT_R16G16B16A16_SFLOAT, 8, false},
@@ -206,7 +218,8 @@ bool IsSrgbTextureFormat(std::uint32_t guestFormat) {
 
 bool IgnoresForcedDegamma(std::uint32_t guestFormat) {
     switch (guestFormat) {
-        case 7u: case 8u: case 13u: case 22u: case 23u: case 24u: case 29u: case 36u: case 50u: case 64u: case 65u: case 66u: case 71u: case 77u:
+        case 3u: case 4u: case 7u: case 8u: case 9u: case 10u: case 13u: case 16u: case 17u: case 22u: case 23u: case 24u: case 25u: case 26u: case 29u:
+        case 36u: case 50u: case 58u: case 59u: case 64u: case 65u: case 66u: case 67u: case 68u: case 71u: case 77u:
         case 132u: case 133u: case 134u: case 136u: case 175u: case 176u: case 177u: case 178u: case 179u: case 180u: return true;
         default: return false;
     }
