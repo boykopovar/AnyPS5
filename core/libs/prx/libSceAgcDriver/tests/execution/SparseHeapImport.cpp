@@ -40,6 +40,7 @@ using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 bool ImportsEnabled = true;
+bool SparseMirrors = false;
 
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Words = 64;
@@ -305,7 +306,7 @@ void StorePastEndTests(AgcDriver::VulkanDevice& device, const ShaderRecompiler::
         const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Committed + Block);
         store(heap);
     }
-    {
+    if (SparseMirrors) {
         SparseHeap heap(true, Committed);
         const ImportBudget budget(1);
         store(heap);
@@ -315,6 +316,10 @@ void StorePastEndTests(AgcDriver::VulkanDevice& device, const ShaderRecompiler::
 void DescriptorClampTests(AgcDriver::VulkanDevice& device) {
     if (!ImportsEnabled) {
         std::puts("the switch is off, so the in-place view is not compared with the mirror's");
+        return;
+    }
+    if (!SparseMirrors) {
+        std::puts("the device has no sparse residency, so the mirror view is not compared");
         return;
     }
     constexpr std::uint64_t Committed = 80 * Block;
@@ -372,15 +377,19 @@ int main() {
             return VulkanTestSkipped;
         }
         const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
-        const bool mirrors = context.sparseBinding && context.sparseResidencyBuffer && context.sparseResidencyAliased;
+        SparseMirrors = context.sparseBinding && context.sparseResidencyBuffer && context.sparseResidencyAliased;
         ImportsEnabled = std::getenv("APS5_NO_SPARSE_HEAP_IMPORT") == nullptr;
+        if (!ImportsEnabled && !SparseMirrors) {
+            std::puts("skipped, no sparse residency: the mirror path needs it");
+            return VulkanTestSkipped;
+        }
         const auto compiled = Compile(*device);
         StoreInPlaceTests(*device, compiled);
         RunGrowsTests(*device, compiled);
         GuestWriteBaseChangeTests(*device, compiled);
         StorePastEndTests(*device, compiled);
         DescriptorClampTests(*device);
-        if (mirrors) BudgetFallbackTests(*device, compiled);
+        if (SparseMirrors) BudgetFallbackTests(*device, compiled);
         else std::puts("the device has no sparse residency, so the refused-import fallback is not tested");
         std::puts("sparse heap import tests passed");
         return 0;
