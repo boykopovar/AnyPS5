@@ -332,6 +332,11 @@ bool Driver::WaitSettledFor(std::chrono::milliseconds timeout) {
     return done;
 }
 
+bool Driver::SettledHeld() {
+    std::lock_guard lock(mutex);
+    return captureHold.load(std::memory_order_relaxed);
+}
+
 bool Driver::Settled() {
     std::lock_guard lock(mutex);
     return failure != nullptr || stopping || completed >= accepted || parkedOnTitle();

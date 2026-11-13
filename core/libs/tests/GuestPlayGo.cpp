@@ -151,6 +151,9 @@ static int CheckNoPlayGoFile(const char* root) {
     PlayGoToDo todo[2] = {{0, 3, 0}, {0, 0, 0}};
     Require(scePlayGoSetToDoList(handle + 1, todo, 2) == badHandle);
     Require(scePlayGoSetToDoList(handle, nullptr, 2) == badPointer);
+    errno = 71;
+    Require(scePlayGoSetToDoList(handle, reinterpret_cast<const PlayGoToDo*>(0x10), 2) == badPointer);
+    Require(errno == 71);
     Require(scePlayGoSetToDoList(handle, todo, 0) == badSize);
     Require(scePlayGoSetToDoList(handle, todo, 2) == 0);
     todo[1].locus = 1;

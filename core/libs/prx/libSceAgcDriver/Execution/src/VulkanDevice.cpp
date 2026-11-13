@@ -240,6 +240,7 @@ const ShaderRecompiler::DiagnosticSink runReportSink{
     .unsupportedInstruction = LibcRunReportUnsupportedInstruction_nid_no_patch,
     .imageFormat = LibcRunReportImageFormat_nid_no_patch,
     .descriptor = CountDescriptor,
+    .compileTime = LibcRunReportShaderCompileTime_nid_no_patch,
 };
 [[maybe_unused]] const bool runReportSinkInstalled = (LibcRunReportSetDescriptorCounters_nid_no_patch(descriptorUse), ShaderRecompiler::SetDiagnosticSink(&runReportSink), true);
 
@@ -1871,7 +1872,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     const char* requestedPresentMode = std::getenv("ANYPS5_PRESENT_MODE");
     VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR fifoLatestReadyFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_MODE_FIFO_LATEST_READY_FEATURES_KHR};
     bool fifoLatestReady = false;
-    if (requestedPresentMode != nullptr && std::strcmp(requestedPresentMode, "fifo_latest_ready") == 0 && fifoLatestReadyExtension != nullptr) {
+    if (window != nullptr && requestedPresentMode != nullptr && std::strcmp(requestedPresentMode, "fifo_latest_ready") == 0 && fifoLatestReadyExtension != nullptr) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &fifoLatestReadyFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         fifoLatestReady = fifoLatestReadyFeatures.presentModeFifoLatestReady == VK_TRUE;
