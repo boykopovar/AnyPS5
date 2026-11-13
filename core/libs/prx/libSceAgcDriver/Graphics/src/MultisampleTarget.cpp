@@ -201,7 +201,7 @@ public:
         include(target.address, guardedColorBytes(target));
         include(target.dccAddress, MultisampledDccBytes(target));
         if (target.cmaskAddress != 0) include(target.cmaskAddress, target.cmaskBytes);
-        if (target.samples == 8u && target.fmaskAddress != 0u && target.cmaskAddress != 0u) include(target.fmaskAddress, DescribeSurface(fmaskResource(target)).guestBytes);
+        if (nativeFmaskSamples(target.samples) && target.fmaskAddress != 0u && target.cmaskAddress != 0u) include(target.fmaskAddress, DescribeSurface(fmaskResource(target)).guestBytes);
         hold.emplace(begin, end - begin);
         if (const auto hook = dccPublishHookForTest.load(std::memory_order_acquire)) hook();
     }
