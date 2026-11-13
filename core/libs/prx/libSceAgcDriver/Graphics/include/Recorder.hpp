@@ -481,23 +481,22 @@ public:
     // there must not have a publish recorded for it (UnitShadow), see SyncThrough.
     static bool InCompletion();
     void Activate();
-    bool BeginEncoding(std::source_location where = std::source_location::current());
-    void EndEncoding(std::source_location where = std::source_location::current());
+    enum class Encoding : std::uint8_t { None, Encoded, Inline };
+    Encoding BeginEncoding(std::source_location where = std::source_location::current());
+    void EndEncoding(Encoding encoding, std::source_location where = std::source_location::current());
     bool Encodes() const { return encoder != nullptr; }
     CommandEncoder::UnwindQuiesce UnwindGuard(std::source_location where = std::source_location::current()) const { return CommandEncoder::UnwindQuiesce(encoder.get(), where); }
     class EncodingWindow {
     public:
-        explicit EncodingWindow(Recorder& recorder, std::source_location where = std::source_location::current()) : recorder(recorder), where(where), opened(recorder.BeginEncoding(where)) {}
-        ~EncodingWindow() {
-            if (opened) recorder.EndEncoding(where);
-        }
+        explicit EncodingWindow(Recorder& recorder, std::source_location where = std::source_location::current()) : recorder(recorder), where(where), encoding(recorder.BeginEncoding(where)) {}
+        ~EncodingWindow() { recorder.EndEncoding(encoding, where); }
         EncodingWindow(const EncodingWindow&) = delete;
         EncodingWindow& operator=(const EncodingWindow&) = delete;
 
     private:
         Recorder& recorder;
         std::source_location where;
-        bool opened;
+        Encoding encoding;
     };
     CommandEncoder::Statistics EncoderCounts() const { return encoder != nullptr ? encoder->Counts() : CommandEncoder::Statistics{}; }
     std::vector<CommandEncoder::SiteWaits> EncoderWaitsBySite() const { return encoder != nullptr ? encoder->WaitsBySite() : std::vector<CommandEncoder::SiteWaits>{}; }

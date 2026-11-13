@@ -1831,6 +1831,11 @@ void completionWaitTests(const Device& device, Recorder& recorder) {
 template<typename Lock>
 void encoderFailureFollowsTheBatchTests(const Device& device, Recorder& recorder, Lock& gpu) {
     if (!recorder.Encodes()) return;
+    struct AlwaysHandOff {
+        bool adaptive = RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder);
+        AlwaysHandOff() { RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, true); }
+        ~AlwaysHandOff() { RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, adaptive); }
+    } always;
     const auto& context = device.GetContext();
     std::atomic<int> failures{0};
     CommandEncoder::SetDelayForTesting([&] {
@@ -12173,6 +12178,53 @@ void encoderSegmentQueryTests(const Device& device) {
     std::cout << "Command encoder occlusion segment tests passed (begin waits: encoded " << encoded.segmentBeginWaits << ", quiesced " << quiesced.segmentBeginWaits << "; all waits: encoded " << encoded.committerWaits << ", quiesced " << quiesced.committerWaits << "; committer us/draw with a 5 ms encoder: encoded " << encoded.committerMicros << ", quiesced " << quiesced.committerMicros << ")\n";
 }
 
+void encoderAdaptiveSegmentWaitTests(const Device& device) {
+    if (!CommandEncoder::Enabled() || !device.Graphics() || !device.GetContext().bufferDeviceAddress) return;
+    auto context = device.GetContext();
+    DeviceFunctions table;
+    FillDeviceFunctions(context, table);
+    Recorder recorder(context, false, &table, context.queueFamily);
+    if (!recorder.Encodes()) return;
+    context.functions = &table;
+    const bool adaptive = RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder);
+    const bool record = RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder);
+    const bool segments = RuntimeSwitches::Set(RuntimeSwitch::QuiescedSegments);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, false);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false);
+    RuntimeSwitches::Assign(RuntimeSwitch::QuiescedSegments, true);
+    struct Restore {
+        bool adaptive;
+        bool record;
+        bool segments;
+        ~Restore() {
+            CommandEncoder::SetDelayForTesting({});
+            RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, adaptive);
+            RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, record);
+            RuntimeSwitches::Assign(RuntimeSwitch::QuiescedSegments, segments);
+        }
+    } restore{adaptive, record, segments};
+    CoverPass cover(context);
+    recorder.CountSamples();
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::microseconds(200)); });
+    constexpr std::uint64_t Group = 30;
+    constexpr std::uint64_t Draws = 50 * Group;
+    std::uint64_t inlined = 0;
+    for (std::uint64_t group = 0; group < Draws / Group; ++group) {
+        cover.Draw(recorder);
+        const auto before = recorder.EncoderCounts().inlined;
+        for (std::uint64_t i = 0; i < Group; ++i) {
+            recorder.EndPassSamples();
+            cover.DrawEncodedSampled(recorder, context);
+        }
+        inlined += recorder.EncoderCounts().inlined - before;
+        recorder.Submit();
+    }
+    CommandEncoder::SetDelayForTesting({});
+    recorder.Sync();
+    Require(inlined * 10 >= Draws * 8, "the adaptive hand-off recorded only " + std::to_string(inlined) + " of " + std::to_string(Draws) + " sampled draws inline although each encoded one waited at its occlusion segment for a slow encoder");
+    std::cout << "Command encoder adaptive segment wait tests passed (" << inlined << " of " << Draws << " windows inline)\n";
+}
+
 void uncountedPassTests(const Device& device) {
     auto context = device.GetContext();
     context.bufferDeviceAddress = false;
@@ -16751,6 +16803,7 @@ int main(int argc, char** argv) {
         encoderFailureFollowsTheBatchTests(device, recorder, gpu);
         encoderPassEndSiteTests(device);
         encoderSegmentQueryTests(device);
+        encoderAdaptiveSegmentWaitTests(device);
         encoderRuntimeSwitchTests(device, recorder);
         encoderSlotFallbackTests(device);
         recorder.Activate();

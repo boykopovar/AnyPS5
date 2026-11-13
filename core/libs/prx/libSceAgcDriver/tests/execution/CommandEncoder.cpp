@@ -1008,12 +1008,15 @@ struct Pattern {
     std::uint32_t batch;
     std::uint64_t workNs;
     std::uint64_t encodeNs;
+    bool waitsInWindow = false;
+    std::uint64_t replayDelayNs = 0;
 };
 
 double RunPattern(const Pattern& pattern, CommandEncoder::Handoff handoff, std::uint32_t draws, CommandEncoder::Statistics& counts) {
     const auto commands = Handle<VkCommandBuffer>(0x1700);
     auto table = BurnTable();
     replayNs.store(pattern.encodeNs, std::memory_order_relaxed);
+    if (pattern.replayDelayNs != 0) CommandEncoder::SetDelayForTesting([delay = pattern.replayDelayNs] { BusyFor(std::chrono::nanoseconds(delay)); });
     const auto attached = Attached(Handle<VkDevice>(0x57), table);
     auto& encoder = *attached;
     const auto start = std::chrono::steady_clock::now();
@@ -1022,11 +1025,14 @@ double RunPattern(const Pattern& pattern, CommandEncoder::Handoff handoff, std::
         const bool encoded = encoder.Admit(handoff);
         if (encoded) encoder.Open(commands, RecordingOf(commands));
         table.cmdDraw(commands, 3, 1, 0, 0);
+        if (pattern.waitsInWindow) encoder.Quiesce();
         if (encoded) encoder.Close();
+        else encoder.EndInline();
         if ((index + 1) % pattern.batch == 0) encoder.Quiesce();
     }
     encoder.Quiesce();
     const double ns = NanosecondsSince(start) / draws;
+    CommandEncoder::SetDelayForTesting({});
     counts = encoder.Counts();
     return ns;
 }
@@ -1036,6 +1042,7 @@ int HandoffBench() {
         {"few-draws-per-batch", 3, 1000, 3300},
         {"few-draws-heavy-encode", 3, 1000, 20000},
         {"many-draws-per-batch", 512, 4000, 3300},
+        {"wait-in-window-slow-replay", 1000000, 1000, 300, true, 20000},
     };
     constexpr std::uint32_t Draws = 40000;
     for (const auto& pattern : patterns) {
@@ -1067,68 +1074,95 @@ void HandoffPolicyFollowsItsMeasuredCost() {
     RunPattern({"short batches", 2, 1000, 0}, CommandEncoder::Handoff::Adaptive, Draws, counts);
     Require(counts.inlined * 10 >= static_cast<std::uint64_t>(Draws) * 7, "the adaptive hand-off kept " + std::to_string(Draws - counts.inlined) + " of " + std::to_string(Draws) + " draws on the encoder although each batch cost more to wait for than to record");
     Reset();
-    RunPattern({"first epoch", 64, 0, 0}, CommandEncoder::Handoff::Adaptive, CommandEncoder::EncodeEpoch - 1, counts);
-    Require(counts.inlined == 0, "the adaptive hand-off recorded " + std::to_string(counts.inlined) + " draws of its first measuring epoch inline");
+    RunPattern({"waits in every window", 1000000, 0, 0, true, 20000}, CommandEncoder::Handoff::Adaptive, Draws, counts);
+    Require(counts.inlined * 10 >= static_cast<std::uint64_t>(Draws) * 9, "the adaptive hand-off kept " + std::to_string(Draws - counts.inlined) + " of " + std::to_string(Draws) + " draws on the encoder although every window waited for the encoder thread's own time");
+    Reset();
+    RunPattern({"long batches", 512, 4000, 3300}, CommandEncoder::Handoff::Adaptive, Draws, counts);
+    Require(counts.inlined * 100 <= static_cast<std::uint64_t>(Draws) * 15, "the adaptive hand-off recorded " + std::to_string(counts.inlined) + " of " + std::to_string(Draws) + " draws inline although the encoder took each draw's recording off the producer");
+    Reset();
+    RunPattern({"first block", 64, 0, 0}, CommandEncoder::Handoff::Adaptive, CommandEncoder::ProbeBlock, counts);
+    Require(counts.inlined == 0, "the adaptive hand-off recorded " + std::to_string(counts.inlined) + " draws of its first probe block inline");
 }
 
 struct PolicyRun {
     CommandEncoder::HandoffPolicy policy;
-    CommandEncoder::Measured now;
-    std::uint64_t measured = 0;
+    std::uint64_t encoded = 0;
+    std::uint64_t inlined = 0;
+    std::uint64_t outside = 0;
+    std::vector<CommandEncoder::HandoffDecision> decisions;
 
-    std::uint64_t Windows(std::uint64_t count, std::uint64_t encodeNs, std::uint64_t handoffNs) {
-        std::uint64_t handedOff = 0;
+    void Windows(std::uint64_t count, std::uint64_t encodedNs, std::uint64_t inlineNs, std::uint64_t outsideAfterEncodedNs = 0) {
         for (std::uint64_t window = 0; window < count; ++window) {
-            if (!policy.Next([this] {
-                    ++measured;
-                    return now;
-                }))
-                continue;
-            ++handedOff;
-            now.encodeNs += encodeNs;
-            now.handoffNs += handoffNs;
+            const auto choice = policy.Next();
+            if (choice.timed) {
+                policy.ChargeOutside(outside);
+                if (const auto decision = policy.Charge(choice.encode ? encodedNs : inlineNs)) decisions.push_back(*decision);
+            }
+            outside = choice.encode ? outsideAfterEncodedNs : 0;
+            ++(choice.encode ? encoded : inlined);
         }
-        return handedOff;
     }
 };
 
-void ExpectHandedOff(std::uint64_t handedOff, std::uint64_t expected, std::string_view what) {
-    Require(handedOff == expected, std::string(what) + ": " + std::to_string(handedOff) + " windows handed off, not " + std::to_string(expected));
-}
-
 void HandoffPolicyDecidesFromTheCostItIsGiven() {
-    constexpr auto Epoch = CommandEncoder::EncodeEpoch;
-    constexpr auto Span = CommandEncoder::InlineSpanMin;
-    {
+    constexpr auto Probe = CommandEncoder::ProbeWindows;
+    constexpr auto Half = Probe / 2;
+    constexpr auto Min = CommandEncoder::SettledSpanMin;
+    constexpr auto Max = CommandEncoder::SettledSpanMax;
+    for (const bool encodedWins : {true, false}) {
+        const std::string mode = encodedWins ? "encoded" : "inline";
         PolicyRun run;
-        ExpectHandedOff(run.Windows(40 * Epoch, 20000, 1000), 40 * Epoch, "an encoder that saves more than its hand-off costs");
-        Require(run.measured == 80, "the policy read its counters " + std::to_string(run.measured) + " times over 40 epochs, not twice per epoch");
-    }
-    {
-        PolicyRun run;
-        ExpectHandedOff(run.Windows(Epoch, 20000, 20000), Epoch, "a hand-off that costs exactly what it saves");
-        ExpectHandedOff(run.Windows(Epoch, 20000, 20000), Epoch, "a second hand-off epoch that costs exactly what it saves");
-    }
-    {
-        PolicyRun run;
-        ExpectHandedOff(run.Windows(Epoch, 1000, 20000), Epoch - 1, "the first epoch of a hand-off that costs more than it saves");
-        std::uint64_t span = Span;
-        for (std::uint32_t strike = 1; strike <= 7; ++strike) {
-            ExpectHandedOff(run.Windows(span - 1, 1000, 20000), 0, "the inline span after strike " + std::to_string(strike));
-            ExpectHandedOff(run.Windows(Epoch, 1000, 20000), Epoch - 1, "the losing epoch after inline span " + std::to_string(strike));
-            span = std::min(CommandEncoder::InlineSpanMax, span * 2);
+        const std::uint64_t cheap = 1000;
+        const std::uint64_t dear = 5000;
+        run.Windows(CommandEncoder::ProbeBlock, encodedWins ? cheap : dear, encodedWins ? dear : cheap);
+        Require(run.inlined == 0, "the first probe block of a " + mode + " run was not encoded");
+        run.Windows(Probe - CommandEncoder::ProbeBlock, encodedWins ? cheap : dear, encodedWins ? dear : cheap);
+        Require(run.encoded == Half && run.inlined == Half, "the first probe of a " + mode + " run did not split its windows evenly");
+        Require(run.decisions.size() == 1, "the first probe of a " + mode + " run made " + std::to_string(run.decisions.size()) + " decisions");
+        const auto& first = run.decisions.front();
+        Require(first.encode == encodedWins && first.windows == CommandEncoder::ProbeBlock && first.encodedNs == CommandEncoder::ProbeBlock * (encodedWins ? cheap : dear) && first.inlineNs == CommandEncoder::ProbeBlock * (encodedWins ? dear : cheap) && first.span == Min, "the first decision of a " + mode + " run reported the wrong choice, costs or span");
+        std::uint64_t span = Min;
+        for (std::uint32_t probe = 2; probe <= 8; ++probe) {
+            const auto before = encodedWins ? run.inlined : run.encoded;
+            run.Windows(span + Probe, encodedWins ? cheap : dear, encodedWins ? dear : cheap);
+            Require((encodedWins ? run.inlined : run.encoded) - before == Half, "a settled " + mode + " span and its probe ran the losing mode for " + std::to_string((encodedWins ? run.inlined : run.encoded) - before) + " windows, not one probe's half");
+            span = std::min(Max, span * 2);
+            Require(run.decisions.size() == probe && run.decisions.back().encode == encodedWins && run.decisions.back().span == span, "probe " + std::to_string(probe) + " of a " + mode + " run did not keep its choice and double its span to " + std::to_string(span));
         }
+        Require(Half * 1000 / (Max + Probe) < 8, "a settled hand-off spends more than 0.8 percent of its windows in the losing mode");
     }
     {
         PolicyRun run;
-        ExpectHandedOff(run.Windows(Epoch, 1000, 20000), Epoch - 1, "a losing first epoch");
-        ExpectHandedOff(run.Windows(Span - 1, 1000, 20000), 0, "the first inline span");
-        ExpectHandedOff(run.Windows(Epoch, 1000, 20000), Epoch - 1, "a second losing epoch");
-        ExpectHandedOff(run.Windows(2 * Span - 1, 20000, 1000), 0, "the doubled inline span");
-        ExpectHandedOff(run.Windows(Epoch, 20000, 1000), Epoch, "a winning epoch after two strikes");
-        ExpectHandedOff(run.Windows(Epoch, 1000, 20000), Epoch - 1, "a losing epoch after a win");
-        ExpectHandedOff(run.Windows(Span - 1, 1000, 20000), 0, "the inline span after a win");
-        ExpectHandedOff(run.Windows(1, 1000, 20000), 1, "the window that ends an inline span reset by a win");
+        run.Windows(Probe, 1000, 1500, 1000);
+        Require(run.decisions.size() == 1 && !run.decisions.back().encode, "waits outside the windows that follow encoded windows were not charged to the encoder");
+        Require(run.decisions.back().encodedNs == CommandEncoder::ProbeBlock * 2000, "an encoded probe block with its outside waits cost " + std::to_string(run.decisions.back().encodedNs) + " ns, not " + std::to_string(CommandEncoder::ProbeBlock * 2000));
+    }
+    {
+        PolicyRun preempted;
+        preempted.Windows(CommandEncoder::ProbeBlock - 1, 1000, 1500);
+        preempted.Windows(1, 4000000, 1500);
+        preempted.Windows(Probe - CommandEncoder::ProbeBlock, 1000, 1500);
+        Require(preempted.decisions.size() == 1 && preempted.decisions.back().encode, "one preempted window in one encoded probe block made the hand-off go inline");
+        PolicyRun everyBlock;
+        for (std::uint64_t block = 0; block < CommandEncoder::ProbeWindows / CommandEncoder::ProbeBlock; ++block) {
+            everyBlock.Windows(CommandEncoder::ProbeBlock - 1, 1000, 1500);
+            everyBlock.Windows(1, block % 2 == 0 ? 100000 : 1500, 1500);
+        }
+        Require(everyBlock.decisions.size() == 1 && !everyBlock.decisions.back().encode, "a wait in every encoded probe block was not charged to the encoder");
+    }
+    {
+        PolicyRun run;
+        run.Windows(Probe, 2000, 2000);
+        Require(run.decisions.size() == 1 && run.decisions.back().encode, "a hand-off that costs exactly what inline recording costs was not kept");
+    }
+    {
+        PolicyRun run;
+        run.Windows(Probe, 1000, 5000);
+        run.Windows(Min + 2048 + 4096 + 8192 + 2 * Max + 6 * Probe, 1000, 5000);
+        Require(run.decisions.back().encode && run.decisions.back().span == Max, "a long encoded run did not settle at the longest span");
+        const auto decided = run.decisions.size();
+        run.Windows(Max + Probe, 5000, 1000);
+        Require(run.decisions.size() == decided + 1 && !run.decisions.back().encode && run.decisions.back().span == Min, "a hand-off that started losing was not dropped within one settled span and probe, with the span reset");
     }
 }
 

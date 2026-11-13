@@ -1857,18 +1857,20 @@ VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess, std::source_loc
     return live(where);
 }
 
-bool Recorder::BeginEncoding(std::source_location where) {
-    if (encoder == nullptr || open == nullptr) return false;
+Recorder::Encoding Recorder::BeginEncoding(std::source_location where) {
+    if (encoder == nullptr || open == nullptr) return Encoding::None;
     if (!encoder->OpenOnThisThread()) {
         const auto handoff = RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder) ? CommandEncoder::Handoff::Never : RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder) ? CommandEncoder::Handoff::Always : CommandEncoder::Handoff::Adaptive;
-        if (!encoder->Admit(handoff, where)) return false;
+        if (!encoder->Admit(handoff, where)) return Encoding::Inline;
     }
     encoder->Open(open->commands.Get(BatchCommands::Use::Handoff), open->recording, where);
-    return true;
+    return Encoding::Encoded;
 }
 
-void Recorder::EndEncoding(std::source_location where) {
-    if (encoder != nullptr) encoder->Close(where);
+void Recorder::EndEncoding(Encoding encoding, std::source_location where) {
+    if (encoder == nullptr) return;
+    if (encoding == Encoding::Encoded) encoder->Close(where);
+    else if (encoding == Encoding::Inline) encoder->EndInline();
 }
 
 void Recorder::MarkCovered(VkAccessFlags access) {

@@ -67,8 +67,14 @@ std::mutex& slotMutex() {
     return value;
 }
 
-std::function<void()>& testDelay() {
-    static std::function<void()> value;
+struct TestDelay {
+    std::mutex mutex;
+    std::function<void()> delay;
+    std::atomic<bool> set{false};
+};
+
+TestDelay& testDelay() {
+    static TestDelay value;
     return value;
 }
 
@@ -509,6 +515,7 @@ void CommandEncoder::Close(std::source_location where) {
     if (windows.empty()) {
         target.store(VK_NULL_HANDLE, std::memory_order_relaxed);
         recording = nullptr;
+        if (timedWindow) endTimedWindow();
         return;
     }
     if (windows.back().commands != closed) await(WaitSite::At(Wait::Close, where), flushed);
@@ -583,10 +590,6 @@ bool CommandEncoder::post() noexcept {
     return true;
 }
 
-std::uint64_t CommandEncoder::handoffNs() const noexcept {
-    return waitNs.load(std::memory_order_relaxed) + postNs.load(std::memory_order_relaxed);
-}
-
 bool CommandEncoder::decline(std::source_location where) noexcept {
     inlinedCount.store(inlinedCount.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
     if (executed.load(std::memory_order_acquire) < posted.load(std::memory_order_acquire) || filling != nullptr) Quiesce(WaitSite::At(Wait::Open, where));
@@ -594,16 +597,57 @@ bool CommandEncoder::decline(std::source_location where) noexcept {
 }
 
 bool CommandEncoder::Admit(Handoff handoff, std::source_location where) {
-    if (handoff == Handoff::Never) {
-        policy = HandoffPolicy{};
-        return decline(where);
+    if (inlineDepth != 0) {
+        ++inlineDepth;
+        return false;
     }
-    if (handoff == Handoff::Always) {
+    if (handoff != Handoff::Adaptive) {
         policy = HandoffPolicy{};
+        if (handoff == Handoff::Always) return true;
+        decline(where);
+        ++inlineDepth;
+        return false;
+    }
+    const auto choice = policy.Next();
+    if (choice.encode) {
+        if (choice.timed) startTimedWindow();
         return true;
     }
-    if (policy.Next([this] { return Measured{encodeNs.load(std::memory_order_relaxed), handoffNs()}; })) return true;
-    return decline(where);
+    decline(where);
+    ++inlineDepth;
+    if (choice.timed) startTimedWindow();
+    return false;
+}
+
+void CommandEncoder::EndInline() noexcept {
+    if (inlineDepth == 0 || --inlineDepth != 0) return;
+    if (timedWindow) endTimedWindow();
+}
+
+void CommandEncoder::startTimedWindow() noexcept {
+    policy.ChargeOutside(waitNs.load(std::memory_order_relaxed) - waitsAtWindowEnd);
+    timedWindow = true;
+    windowStart = std::chrono::steady_clock::now();
+}
+
+void CommandEncoder::endTimedWindow() noexcept {
+    timedWindow = false;
+    const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - windowStart).count());
+    waitsAtWindowEnd = waitNs.load(std::memory_order_relaxed);
+    const auto decision = policy.Charge(ns);
+    if (!decision) return;
+    (decision->encode ? encodedDecisions : inlineDecisions).fetch_add(1, std::memory_order_relaxed);
+    if (!profiled) return;
+    const auto now = std::chrono::steady_clock::now();
+    const bool changed = decision->encode != lastDecisionEncoded;
+    lastDecisionEncoded = decision->encode;
+    if (!changed && now - decisionPrintedAt < SitePrintInterval) return;
+    decisionPrintedAt = now;
+    try {
+        AgcDriver::ProfilePrint_nid_no_patch("[encoder] hand-off %s: encoded %.0f ns/window, inline %.0f ns/window over %llu windows each; next probe after %llu windows; %llu encoded and %llu inline decisions so far\n", decision->encode ? "encoded" : "inline", static_cast<double>(decision->encodedNs) / static_cast<double>(decision->windows), static_cast<double>(decision->inlineNs) / static_cast<double>(decision->windows), static_cast<unsigned long long>(decision->windows), static_cast<unsigned long long>(decision->span), static_cast<unsigned long long>(encodedDecisions.load(std::memory_order_relaxed)), static_cast<unsigned long long>(inlineDecisions.load(std::memory_order_relaxed)));
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[encoder] the hand-off decision could not be printed: %s\n", error.what());
+    }
 }
 
 void CommandEncoder::Quiesce(WaitSite site) noexcept {
@@ -688,7 +732,10 @@ void CommandEncoder::execute(Chunk& chunk) {
     const auto start = std::chrono::steady_clock::now();
     {
         std::lock_guard lock(poolMutex);
-        if (testDelay()) testDelay()();
+        if (auto& hook = testDelay(); hook.set.load(std::memory_order_acquire)) {
+            std::lock_guard delayLock(hook.mutex);
+            if (hook.delay) hook.delay();
+        }
         for (std::size_t at = 0; at < chunk.used;) {
             const auto record = *std::launder(reinterpret_cast<const Record*>(chunk.bytes.data() + at));
             record.run(chunk.bytes.data() + at + RecordHeader, chunk.target, real);
@@ -779,7 +826,10 @@ std::string CommandEncoder::Describe(const WaitSite& site) {
 }
 
 void CommandEncoder::SetDelayForTesting(std::function<void()> delay) {
-    testDelay() = std::move(delay);
+    auto& hook = testDelay();
+    std::lock_guard lock(hook.mutex);
+    hook.delay = std::move(delay);
+    hook.set.store(static_cast<bool>(hook.delay), std::memory_order_release);
 }
 
 void BeforeCommandLookup(VkDevice device, std::source_location where) {

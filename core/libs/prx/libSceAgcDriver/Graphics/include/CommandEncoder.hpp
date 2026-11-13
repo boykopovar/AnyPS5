@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <source_location>
 #include <span>
 #include <string>
@@ -64,43 +65,68 @@ public:
         bool reported = false;
     };
     enum class Handoff : std::uint8_t { Always, Adaptive, Never };
-    static constexpr std::uint64_t EncodeEpoch = 256;
-    static constexpr std::uint64_t InlineSpanMin = 1024;
-    static constexpr std::uint64_t InlineSpanMax = 16384;
-    struct Measured {
-        std::uint64_t encodeNs = 0;
-        std::uint64_t handoffNs = 0;
+    static constexpr std::uint64_t ProbeBlock = 64;
+    static constexpr std::uint64_t ProbeWindows = 4 * ProbeBlock;
+    static constexpr std::uint64_t SettledSpanMin = 1024;
+    static constexpr std::uint64_t SettledSpanMax = 16384;
+    struct HandoffChoice {
+        bool encode = true;
+        bool timed = false;
+    };
+    struct HandoffDecision {
+        bool encode = true;
+        std::uint64_t encodedNs = 0;
+        std::uint64_t inlineNs = 0;
+        std::uint64_t windows = 0;
+        std::uint64_t span = 0;
     };
     class HandoffPolicy {
     public:
-        template<typename Measure>
-        bool Next(Measure&& measure) {
-            if (inlined) {
-                if (++windows < span) return false;
-                *this = HandoffPolicy{.strikes = strikes};
+        HandoffChoice Next() {
+            if (!probing) {
+                if (settled < span) {
+                    ++settled;
+                    return {encode, false};
+                }
+                probing = true;
+                probed = 0;
+                blockNs = {};
+                charged = false;
             }
-            if (!measuring) {
-                measuring = true;
-                windows = 0;
-                base = measure();
-            }
-            if (++windows < EncodeEpoch) return true;
-            const Measured now = measure();
-            if (now.handoffNs - base.handoffNs <= now.encodeNs - base.encodeNs) {
-                *this = HandoffPolicy{};
-                return true;
-            }
-            const auto struck = strikes + 1;
-            *this = HandoffPolicy{.inlined = true, .span = std::min(InlineSpanMax, InlineSpanMin << std::min<std::uint32_t>(struck - 1, 4)), .strikes = struck};
-            return false;
+            return {probeEncodes(), true};
         }
+        void ChargeOutside(std::uint64_t ns) {
+            if (probing && charged) blockNs[lastBlock] += ns;
+        }
+        std::optional<HandoffDecision> Charge(std::uint64_t ns) {
+            if (!probing) return std::nullopt;
+            lastBlock = probed / ProbeBlock;
+            blockNs[lastBlock] += ns;
+            charged = true;
+            if (++probed < ProbeWindows) return std::nullopt;
+            const auto chosen = std::min(blockNs[0], blockNs[2]);
+            const auto other = std::min(blockNs[1], blockNs[3]);
+            const auto encodedNs = encode ? chosen : other;
+            const auto inlineNs = encode ? other : chosen;
+            const bool winner = encodedNs <= inlineNs;
+            span = winner == encode && span != 0 ? std::min(SettledSpanMax, span * 2) : SettledSpanMin;
+            encode = winner;
+            probing = false;
+            settled = 0;
+            return HandoffDecision{encode, encodedNs, inlineNs, ProbeBlock, span};
+        }
+        bool Encodes() const { return encode; }
 
-        bool inlined = false;
-        bool measuring = false;
-        std::uint64_t windows = 0;
+    private:
+        bool probeEncodes() const { return ((probed / ProbeBlock) % 2 == 0) == encode; }
+        bool encode = true;
+        bool probing = false;
+        bool charged = false;
+        std::size_t lastBlock = 0;
+        std::uint64_t probed = 0;
+        std::uint64_t settled = 0;
         std::uint64_t span = 0;
-        std::uint32_t strikes = 0;
-        Measured base;
+        std::array<std::uint64_t, ProbeWindows / ProbeBlock> blockNs{};
     };
     static bool Enabled();
     static constexpr std::size_t Slots = 4;
@@ -111,6 +137,7 @@ public:
     void Open(VkCommandBuffer commands, Recording& recording, std::source_location where = std::source_location::current());
     void Close(std::source_location where = std::source_location::current());
     bool Admit(Handoff handoff, std::source_location where = std::source_location::current());
+    void EndInline() noexcept;
     void Quiesce(std::source_location where = std::source_location::current()) noexcept { Quiesce(WaitSite::At(Wait::Quiesce, where)); }
     void Quiesce(WaitSite site) noexcept;
     bool Direct(const char* command) noexcept;
@@ -233,8 +260,17 @@ private:
     std::atomic<std::uint64_t> postNs{0};
     std::atomic<std::uint64_t> inlinedCount{0};
     HandoffPolicy policy;
+    std::uint32_t inlineDepth = 0;
+    bool timedWindow = false;
+    std::chrono::steady_clock::time_point windowStart;
+    std::uint64_t waitsAtWindowEnd = 0;
+    std::atomic<std::uint64_t> encodedDecisions{0};
+    std::atomic<std::uint64_t> inlineDecisions{0};
+    std::chrono::steady_clock::time_point decisionPrintedAt;
+    bool lastDecisionEncoded = true;
     bool decline(std::source_location where) noexcept;
-    std::uint64_t handoffNs() const noexcept;
+    void startTimedWindow() noexcept;
+    void endTimedWindow() noexcept;
     void printSites(bool final) noexcept;
     const bool profiled;
     std::chrono::steady_clock::time_point printedAt;
