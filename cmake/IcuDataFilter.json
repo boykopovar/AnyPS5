@@ -12,6 +12,7 @@
         "normalization": "include",
         "misc": "include",
         "curr_tree": "include",
+        "rbnf_tree": "include",
         "curr_supplemental": "include",
         "zone_tree": "include",
         "zone_supplemental": "include"
