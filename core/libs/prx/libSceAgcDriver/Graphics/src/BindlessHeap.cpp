@@ -378,9 +378,9 @@ std::optional<std::uint32_t> BindlessHeap::StorageSlot(std::uint32_t kind, const
     return imageSlot(kind, owner, view, VK_IMAGE_LAYOUT_GENERAL, nullptr);
 }
 
-std::optional<std::uint32_t> BindlessHeap::ViewSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view) {
+std::optional<std::uint32_t> BindlessHeap::ViewSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view, VkImageLayout layout) {
     Require(isImageKind(kind) && owner != nullptr && view != VK_NULL_HANDLE, "bindless heap: invalid view slot request");
-    return imageSlot(kind, owner, view, VK_IMAGE_LAYOUT_GENERAL, nullptr);
+    return imageSlot(kind, owner, view, layout, nullptr);
 }
 
 std::optional<std::uint32_t> BindlessHeap::imageSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view, VkImageLayout layout, Texture* texture) {

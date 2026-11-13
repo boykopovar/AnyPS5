@@ -1,12 +1,15 @@
 #include "prx/libSceAgcDriver/Execution/include/PresentationUpscaler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/FsrEasuFrag_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/FsrRcasFrag_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/PresentationPassVert_spv.h"
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstring>
 
 namespace AgcDriver {
 namespace {
@@ -29,13 +32,20 @@ struct RcasParameters {
 constexpr std::uint32_t ParameterBytes = sizeof(RcasParameters);
 static_assert(sizeof(EasuParameters) <= ParameterBytes);
 
+struct HeapPush {
+    std::uint8_t parameters[ParameterBytes];
+    std::uint32_t slot;
+};
+
+static_assert(offsetof(HeapPush, slot) == 20 && sizeof(HeapPush) == 24);
+
 }
 
 PresentationUpscaler::PresentationUpscaler(const Graphics::Context& context, std::size_t slotCount, float sharpness) : context(context), sharpness(sharpness), slots(slotCount) {
     Graphics::Require(slotCount != 0, "presentation upscaler needs at least one slot");
     Graphics::Require(std::isfinite(sharpness) && sharpness >= 0.0f && sharpness <= 2.0f, "FSR sharpness must be from 0.0 to 2.0 stops");
     try {
-        VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        heap = Graphics::DescriptorHeapEnabled() && Graphics::BindlessHeap::For(context).DescriptorHeapMode();
         samplerInfo.magFilter = VK_FILTER_NEAREST;
         samplerInfo.minFilter = VK_FILTER_NEAREST;
         samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
@@ -89,10 +99,11 @@ PresentationUpscaler::~PresentationUpscaler() {
 void PresentationUpscaler::release() noexcept {
     for (std::size_t i = 0; i < slots.size(); ++i) {
         Release(i);
-        releaseSurface(slots[i].stage);
-        releaseSurface(slots[i].upscaled);
+        releaseSurface(slots[i], slots[i].stage);
+        releaseSurface(slots[i], slots[i].upscaled);
     }
     for (const auto& [key, entry] : targets) {
+        if (entry.heapPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.heapPipeline, nullptr);
         if (entry.pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.pipeline, nullptr);
         if (entry.renderPass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, entry.renderPass, nullptr);
     }
@@ -131,16 +142,17 @@ void PresentationUpscaler::Release(std::size_t index) noexcept {
     slots[index].transient.clear();
 }
 
-void PresentationUpscaler::releaseSurface(Surface& surface) noexcept {
+void PresentationUpscaler::releaseSurface(Slot& slot, Surface& surface) noexcept {
+    if (surface.sampled && heap) slot.ReleaseHeapSlots(context);
     if (surface.sampled) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, surface.sampled, nullptr);
     if (surface.image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, surface.image, nullptr);
     if (surface.memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, surface.memory, nullptr);
     surface = Surface{};
 }
 
-void PresentationUpscaler::ensureSurface(Surface& surface, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage) {
+void PresentationUpscaler::ensureSurface(Slot& slot, Surface& surface, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage) {
     if (surface.image != VK_NULL_HANDLE && surface.format == format && surface.extent.width == extent.width && surface.extent.height == extent.height) return;
-    releaseSurface(surface);
+    releaseSurface(slot, surface);
     VkFormatProperties properties{};
     context.formatProperties(context.physical, format, &properties);
     VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
@@ -170,7 +182,7 @@ void PresentationUpscaler::ensureSurface(Surface& surface, VkFormat format, VkEx
         surface.format = format;
         surface.extent = extent;
     } catch (...) {
-        releaseSurface(surface);
+        releaseSurface(slot, surface);
         throw;
     }
 }
@@ -194,7 +206,7 @@ VkImage PresentationUpscaler::Stage(std::size_t index, VkFormat format, VkExtent
     Graphics::Require(index < slots.size(), "presentation upscaler slot is out of range");
     Graphics::Require(extent.width != 0 && extent.height != 0, "presentation upscaler stage extent must be non-zero");
     auto& slot = slots[index];
-    ensureSurface(slot.stage, format, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+    ensureSurface(slot, slot.stage, format, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
     return slot.stage.image;
 }
 
@@ -303,7 +315,28 @@ const PresentationUpscaler::Target& PresentationUpscaler::target(VkFormat format
         pipelineInfo.renderPass = created.renderPass;
         const auto lock = context.LockPipelineCacheForUse();
         Graphics::Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &created.pipeline), "vkCreateGraphicsPipelines presentation upscaler");
+        if (heap) {
+            const auto& bindless = Graphics::BindlessHeap::For(context);
+            VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
+            mapping.firstBinding = 0;
+            mapping.bindingCount = 1;
+            mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_COMBINED_SAMPLED_IMAGE_BIT_EXT;
+            mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_PUSH_INDEX_EXT;
+            mapping.sourceData.pushIndex.pushOffset = offsetof(HeapPush, slot);
+            mapping.sourceData.pushIndex.heapIndexStride = static_cast<std::uint32_t>(bindless.ImageHeapStride());
+            mapping.sourceData.pushIndex.heapArrayStride = static_cast<std::uint32_t>(bindless.ImageHeapStride());
+            mapping.sourceData.pushIndex.pEmbeddedSampler = &samplerInfo;
+            VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT};
+            mappingInfo.mappingCount = 1;
+            mappingInfo.pMappings = &mapping;
+            stages[1].pNext = &mappingInfo;
+            auto heapFlags = Graphics::DescriptorHeapFlags();
+            pipelineInfo.pNext = &heapFlags;
+            pipelineInfo.layout = VK_NULL_HANDLE;
+            Graphics::Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &created.heapPipeline), "vkCreateGraphicsPipelines presentation upscaler heap");
+        }
     } catch (...) {
+        if (created.pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, created.pipeline, nullptr);
         if (created.renderPass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, created.renderPass, nullptr);
         throw;
     }
@@ -338,19 +371,30 @@ void PresentationUpscaler::bindSource(VkDescriptorSet set, VkImageView view) con
     context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
 }
 
-void PresentationUpscaler::draw(VkCommandBuffer commands, const Target& entry, VkFramebuffer framebuffer, VkExtent2D extent, VkDescriptorSet set, const void* parameters, std::uint32_t size) const {
+void PresentationUpscaler::draw(VkCommandBuffer commands, Slot& slot, const Target& entry, VkFramebuffer framebuffer, VkExtent2D extent, VkDescriptorSet set, VkImageView source, const void* parameters, std::uint32_t size) const {
+    Graphics::Require(size <= ParameterBytes, "presentation upscaler parameters exceed the push range");
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     begin.renderPass = entry.renderPass;
     begin.framebuffer = framebuffer;
     begin.renderArea = {{0, 0}, extent};
     context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, entry.pipeline);
+    const auto heapSlot = entry.heapPipeline != VK_NULL_HANDLE ? Graphics::BindlessHeap::For(context).ViewSlot(Graphics::HeapPassSampledKind, &slot, source, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) : std::nullopt;
+    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, heapSlot ? entry.heapPipeline : entry.pipeline);
     const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
     const VkRect2D scissor{{0, 0}, extent};
     context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
     context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &scissor);
-    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &set, 0, nullptr);
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, size, parameters);
+    if (heapSlot) {
+        Graphics::BindlessHeap::For(context).BindDescriptorHeaps(commands);
+        HeapPush pushed{};
+        std::memcpy(pushed.parameters, parameters, size);
+        pushed.slot = *heapSlot;
+        Graphics::CmdPushData(context, commands, sizeof(pushed), &pushed);
+    } else {
+        bindSource(set, source);
+        Graphics::CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &set, Graphics::SetBindSite::Presentation);
+        Graphics::CmdPushConstants(context, commands, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, size, parameters);
+    }
     context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
     context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
 }
@@ -361,9 +405,8 @@ void PresentationUpscaler::RecordUpscale(VkCommandBuffer commands, std::size_t i
     auto& slot = slots[index];
     const auto& entry = target(slot.stage.format, finalLayout, Filter::Easu);
     const auto framebuffer = transientFramebuffer(slot, entry.renderPass, destination, slot.stage.format, extent, finalLayout);
-    bindSource(slot.easuSet, slot.stage.sampled);
     const EasuParameters parameters{static_cast<float>(slot.stage.extent.width), static_cast<float>(slot.stage.extent.height), static_cast<float>(extent.width), static_cast<float>(extent.height)};
-    draw(commands, entry, framebuffer, extent, slot.easuSet, &parameters, sizeof(parameters));
+    draw(commands, slot, entry, framebuffer, extent, slot.easuSet, slot.stage.sampled, &parameters, sizeof(parameters));
 }
 
 void PresentationUpscaler::RecordPresent(VkCommandBuffer commands, std::size_t index, std::uint32_t width, std::uint32_t height, VkImage destination, VkExtent2D extent, VkImageLayout finalLayout) {
@@ -376,15 +419,14 @@ void PresentationUpscaler::RecordPresent(VkCommandBuffer commands, std::size_t i
     VkImageView sharpened = slot.stage.sampled;
     if (Upscales(width, height, extent)) {
         const VkExtent2D upscaled{rect.width, rect.height};
-        ensureSurface(slot.upscaled, slot.stage.format, upscaled, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+        ensureSurface(slot, slot.upscaled, slot.stage.format, upscaled, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
         RecordUpscale(commands, index, slot.upscaled.image, upscaled, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         sharpened = slot.upscaled.sampled;
     }
     const auto& entry = target(slot.stage.format, finalLayout, Filter::Rcas);
     const auto framebuffer = transientFramebuffer(slot, entry.renderPass, destination, slot.stage.format, extent, finalLayout);
-    bindSource(slot.rcasSet, sharpened);
     const RcasParameters parameters{rect.x, rect.y, static_cast<std::int32_t>(rect.width), static_cast<std::int32_t>(rect.height), sharpness};
-    draw(commands, entry, framebuffer, extent, slot.rcasSet, &parameters, sizeof(parameters));
+    draw(commands, slot, entry, framebuffer, extent, slot.rcasSet, sharpened, &parameters, sizeof(parameters));
 }
 
 }

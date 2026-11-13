@@ -61,7 +61,7 @@ public:
 
     std::optional<std::uint32_t> TextureSlot(std::uint32_t kind, Texture* texture, VkImageView view, VkImageLayout layout);
     std::optional<std::uint32_t> StorageSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view);
-    std::optional<std::uint32_t> ViewSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view);
+    std::optional<std::uint32_t> ViewSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view, VkImageLayout layout = VK_IMAGE_LAYOUT_GENERAL);
     void ReleaseSlots(const HeapSlotOwner* owner);
     std::uint32_t SlotGeneration(std::uint32_t slot) const;
     const Texture* SlotTexture(std::uint32_t kind, std::uint32_t slot) const;
