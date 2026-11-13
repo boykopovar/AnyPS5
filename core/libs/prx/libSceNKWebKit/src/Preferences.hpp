@@ -488,5 +488,16 @@ void APS5_VABI WKPreferencesSetWebSQLDisabled(const void* preferencesRef, bool v
 void APS5_VABI WKPreferencesSetWebSecurityEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetWebShareEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetXSSAuditorEnabled(const void* preferencesRef, bool value);
+bool APS5_VABI WKPreferencesGetAccessibilityObjectModelEnabled(const void* preferencesRef);
+void APS5_VABI WKPreferencesSetAccessibilityObjectModelEnabled(const void* preferencesRef, bool enabled);
+bool APS5_VABI WKPreferencesGetAriaReflectionEnabled(const void* preferencesRef);
+void APS5_VABI WKPreferencesSetAriaReflectionEnabled(const void* preferencesRef, bool enabled);
+bool APS5_VABI WKPreferencesGetIsITPDatabaseEnabled(const void* preferencesRef);
+void APS5_VABI WKPreferencesSetIsITPDatabaseEnabled(const void* preferencesRef, bool enabled);
+bool APS5_VABI WKPreferencesGetIsNSURLSessionWebSocketEnabled(const void* preferencesRef);
+void APS5_VABI WKPreferencesSetIsNSURLSessionWebSocketEnabled(const void* preferencesRef, bool enabled);
+bool APS5_VABI WKPreferencesUseLegacyTextAlignPositionedElementBehavior(const void* preferencesRef);
+void APS5_VABI WKPreferencesSetUseLegacyTextAlignPositionedElementBehavior(const void* preferencesRef, bool enabled);
+void APS5_VABI WKPreferencesSetApplicationChromeModeEnabled(const void* preferencesRef, bool enabled);
 
 }
