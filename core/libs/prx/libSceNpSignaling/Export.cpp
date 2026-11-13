@@ -312,7 +312,11 @@ int APS5_VABI sceNpSignalingGetPeerNetInfoResult(int ctxId, int connId, NpSignal
     if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!peerNetInfo) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     if (!FindContext(ctxId)) return SCE_NP_SIGNALING_ERROR_CTX_NOT_FOUND;
-    if (peerNetInfo->size != sizeof(NpSignalingNetInfo)) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
+    std::uint32_t size = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, &peerNetInfo->size, sizeof(size));
+    errno = savedErrno;
+    if (!copied || size != sizeof(NpSignalingNetInfo)) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     return SCE_NP_SIGNALING_ERROR_RESULT_NOT_FOUND;
 }
 

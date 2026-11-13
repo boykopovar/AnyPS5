@@ -4,6 +4,8 @@
 
 #include "prx/libSceNpSignaling/include/Api.hpp"
 #include "prx/libSceNpSignaling/include/SignalingState.hpp"
+#include <cerrno>
+#include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -20,7 +22,11 @@ int APS5_VABI sceNpSignalingGetLocalNetInfo(int ctxId, NpSignalingNetInfo* info)
     if (!info) {
         return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     }
-    if (info->size != sizeof(NpSignalingNetInfo)) {
+    std::uint32_t size = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, &info->size, sizeof(size));
+    errno = savedErrno;
+    if (!copied || size != sizeof(NpSignalingNetInfo)) {
         return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     }
     NotImplemented_nid_no_patch(__func__);
