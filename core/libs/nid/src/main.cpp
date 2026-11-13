@@ -19,6 +19,7 @@ std::vector<std::uint8_t> _readFile(const std::string& path) {
 
 void _writeFile(const std::string& path, const std::vector<std::uint8_t>& data) {
     const std::filesystem::path target = Nid::Internal::NativePath(path);
+    const auto permissions = std::filesystem::status(target).permissions();
     std::filesystem::path pending = target;
     pending += ".patching";
     std::error_code discarded;
@@ -31,6 +32,12 @@ void _writeFile(const std::string& path, const std::vector<std::uint8_t>& data) 
             std::filesystem::remove(pending, discarded);
             throw std::runtime_error("cannot write: " + path);
         }
+    }
+    std::error_code permissionError;
+    std::filesystem::permissions(pending, permissions, permissionError);
+    if (permissionError) {
+        std::filesystem::remove(pending, discarded);
+        throw std::runtime_error("cannot preserve permissions: " + path + ": " + permissionError.message());
     }
     std::error_code renamed;
     std::filesystem::rename(pending, target, renamed);

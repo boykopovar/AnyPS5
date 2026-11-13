@@ -1,5 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/CipherList.hpp"
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
 #include <array>
@@ -50,6 +52,8 @@ void ConfModulesFree();
 int I2tAsn1Object(char* buffer, int length, const void* object);
 unsigned long ErrGetError();
 void ErrClearError();
+int CipherListNames(const char* rules, char* buffer, int length);
+int CipherFields(int index, void* fields, int length);
 std::size_t MdContextSize();
 void MdContextInit(void* context);
 int MdContextCleanup(void* context);
@@ -1009,6 +1013,241 @@ void CompareDigestVerify() {
     }
 }
 
+struct CipherListContextInternal {
+    unsigned char beforeCipherListById[256];
+    void* cipherListById;
+    unsigned char rest[200];
+};
+
+struct CipherListContext {
+    const void* method;
+    void* cipherList;
+    unsigned char beforeInternal[96];
+    CipherListContextInternal* internal;
+};
+
+static_assert(sizeof(CipherListContextInternal) == sizeof(LibreSslCtxInternal) && offsetof(CipherListContextInternal, cipherListById) == offsetof(LibreSslCtxInternal, cipherListById));
+static_assert(sizeof(CipherListContext) == sizeof(LibreSslCtx) && offsetof(CipherListContext, cipherList) == offsetof(LibreSslCtx, cipherList) && offsetof(CipherListContext, internal) == offsetof(LibreSslCtx, internal));
+
+void FreeCipherStack(void* pointer) {
+    auto* stack = static_cast<LibreSslStack*>(pointer);
+    if (!stack) return;
+    free_nid_postfix(stack->data);
+    free_nid_postfix(stack);
+}
+
+std::string JoinedCipherNames(const void* list) {
+    const auto* stack = static_cast<const LibreSslStack*>(list);
+    if (!stack) return "(null)";
+    std::string names;
+    for (int index = 0; index < sk_num_nid_postfix(stack); ++index) {
+        if (index) names += ':';
+        names += SSL_CIPHER_get_name_nid_postfix(sk_value_nid_postfix(stack, index));
+    }
+    return names;
+}
+
+bool ByIdStackConsistent(const CipherListContext& ctx) {
+    const auto* ordered = static_cast<const LibreSslStack*>(ctx.cipherList);
+    const auto* byId = static_cast<const LibreSslStack*>(ctx.internal->cipherListById);
+    if (!ordered || !byId || ordered == byId || ordered->num != byId->num || byId->sorted != 1 || !byId->comp || ordered->sorted != 0 || ordered->comp) return false;
+    for (int index = 0; index < ordered->num; ++index) {
+        if (std::find(byId->data, byId->data + byId->num, ordered->data[index]) == byId->data + byId->num) return false;
+        if (index && byId->comp(&byId->data[index - 1], &byId->data[index]) >= 0) return false;
+    }
+    return true;
+}
+
+std::string PrintableRules(const std::string& rules) {
+    static constexpr char digits[] = "0123456789abcdef";
+    std::string text = "\"";
+    for (std::size_t index = 0; index < rules.size() && index < 160; ++index) {
+        const auto byte = static_cast<unsigned char>(rules[index]);
+        if (byte >= 0x20 && byte < 0x7f) {
+            text += static_cast<char>(byte);
+        } else {
+            text += "\\x";
+            text += digits[byte >> 4];
+            text += digits[byte & 15];
+        }
+    }
+    if (rules.size() > 160) text += "...(" + std::to_string(rules.size()) + " bytes)";
+    return text + "\"";
+}
+
+void CompareCipherList(const std::string* rules) {
+    std::string padded;
+    if (rules) {
+        padded = *rules;
+        padded.append(16, '\0');
+    }
+    const char* text = rules ? padded.c_str() : nullptr;
+    CipherListContextInternal internal{};
+    CipherListContext ctx{};
+    ctx.internal = &internal;
+    auto* fake = reinterpret_cast<LibreSslCtx*>(&ctx);
+    ERR_clear_error_nid_postfix();
+    LibreSslReference::ErrClearError();
+    int initial = 0;
+    const auto initialError = Attempt([&] { initial = SSL_CTX_set_cipher_list_nid_postfix(fake, "ALL:!aNULL:!eNULL:!SSLv2"); });
+    ERR_clear_error_nid_postfix();
+    int mineResult = 0;
+    const auto error = Attempt([&] { mineResult = SSL_CTX_set_cipher_list_nid_postfix(fake, text); });
+    std::string mineText = error.empty() ? Describe(mineResult, ERR_get_error_nid_postfix) + " " + JoinedCipherNames(ctx.cipherList) : error;
+    char buffer[16384];
+    const int theirResult = LibreSslReference::CipherListNames(text, buffer, sizeof buffer);
+    const std::string theirText = Describe(theirResult, LibreSslReference::ErrGetError) + " " + buffer;
+    const bool consistent = !error.empty() || ByIdStackConsistent(ctx);
+    Record("SSL_CTX_set_cipher_list", initialError.empty() && initial == 1 && consistent && mineText == theirText,
+        [&] { return (rules ? PrintableRules(*rules) : std::string("null")) + (initialError.empty() && initial == 1 ? "" : " (default list failed)") + (consistent ? "" : " (by-id stack inconsistent)") + "\n      mine   " + mineText + "\n      theirs " + theirText; });
+    FreeCipherStack(ctx.cipherList);
+    FreeCipherStack(internal.cipherListById);
+    ERR_clear_error_nid_postfix();
+    LibreSslReference::ErrClearError();
+}
+
+std::string Repeated(const std::string& unit, int count) {
+    std::string text;
+    for (int index = 0; index < count; ++index) text += unit;
+    return text;
+}
+
+std::string RandomCipherRules(const std::vector<std::string>& aliases, const std::vector<std::string>& ciphers) {
+    static const char* const prefixes[] = {"", "", "", "", "!", "-", "+"};
+    static const char* const separators[] = {":", ":", ":", ":", " ", ",", ";", "::", ": "};
+    static const char junk[] = {'$', '#', '*', '&', '%', '/', '\\', '"', '\'', '(', ')', '[', '{', '<', '=', '?', '~', '`', '^', '|', '_', '\x01', '\x7f', '\x80', '\xff', '@', '+', '-', '!', '.'};
+    const auto alias = [&]() -> const std::string& { return aliases[generator() % aliases.size()]; };
+    const auto cipher = [&]() -> const std::string& { return ciphers[generator() % ciphers.size()]; };
+    std::string rules;
+    if (generator() % 12 == 0) {
+        rules = "DEFAULT";
+        if (generator() % 4) rules += separators[generator() % std::size(separators)];
+    }
+    const int tokens = 1 + static_cast<int>(generator() % 8);
+    for (int index = 0; index < tokens; ++index) {
+        if (index && !rules.empty()) rules += separators[generator() % std::size(separators)];
+        const unsigned kind = static_cast<unsigned>(generator() % 24);
+        if (kind == 0) {
+            rules += "@STRENGTH";
+            continue;
+        }
+        rules += prefixes[generator() % std::size(prefixes)];
+        if (kind < 8) {
+            rules += alias();
+        } else if (kind < 15) {
+            rules += cipher();
+        } else if (kind < 19) {
+            const int parts = 2 + static_cast<int>(generator() % 3);
+            for (int part = 0; part < parts; ++part) {
+                if (part) rules += '+';
+                rules += alias();
+            }
+        } else if (kind == 19) {
+            rules += alias() + "+" + cipher();
+        } else if (kind == 20) {
+            const std::string& name = cipher();
+            rules += name.substr(0, 1 + generator() % name.size());
+        } else if (kind == 21) {
+            std::string name = alias();
+            for (char& letter : name) if (generator() % 3 == 0 && letter >= 'A' && letter <= 'Z') letter = static_cast<char>(letter + 32);
+            rules += name;
+        } else if (kind == 22) {
+            rules += "NOSUCH" + std::to_string(generator() % 10);
+        } else {
+            rules += alias() + "@STRENGTH";
+        }
+    }
+    if (generator() % 6 == 0) {
+        rules += separators[generator() % std::size(separators)];
+        rules += "@STRENGTH";
+    }
+    if (generator() % 40 == 0) rules += prefixes[4 + generator() % 3];
+    if (generator() % 40 == 0) rules += '@';
+    if (generator() % 50 == 0) rules.insert(generator() % (rules.size() + 1), 1, junk[generator() % sizeof junk]);
+    return rules;
+}
+
+void CompareCipherTable() {
+    int theirCount = 0;
+    for (;; ++theirCount) {
+        unsigned char theirs[88];
+        const int copied = LibreSslReference::CipherFields(theirCount, theirs, sizeof theirs);
+        if (copied <= 0) break;
+        std::uint64_t id = 0;
+        std::memcpy(&id, theirs + 16, sizeof id);
+        const auto* mine = static_cast<const unsigned char*>(LibreSslCipherById_nid_no_patch(id));
+        const char* theirName = nullptr;
+        std::memcpy(&theirName, theirs + 8, sizeof theirName);
+        Record("SSL_CIPHER table", copied == 88 && mine && std::memcmp(mine, theirs, 8) == 0 && std::memcmp(mine + 16, theirs + 16, 72) == 0 &&
+            std::strcmp(SSL_CIPHER_get_name_nid_postfix(mine), theirName) == 0,
+            [&] { return std::string(theirName ? theirName : "null") + ": " + (mine ? Hex(mine, 88) : std::string("missing")) + " vs " + Hex(theirs, 88); });
+    }
+    Record("SSL_CIPHER table size", theirCount == LibreSslCipherCount_nid_no_patch(),
+        [&] { return std::to_string(LibreSslCipherCount_nid_no_patch()) + " vs " + std::to_string(theirCount); });
+}
+
+void CompareCipherLists() {
+    std::array<void*, 10> api{};
+    ApplicationHeapRegister_nid_no_patch(api.data());
+    const std::vector<std::string> aliases = {"ALL", "COMPLEMENTOFALL", "COMPLEMENTOFDEFAULT", "kRSA", "kEDH", "DH", "kEECDH", "ECDH", "kGOST", "aRSA", "aDSS", "DSS", "aNULL", "aECDSA", "ECDSA",
+        "aGOST01", "aGOST", "DHE", "EDH", "ECDHE", "EECDH", "NULL", "RSA", "ADH", "AECDH", "DES", "3DES", "RC4", "IDEA", "eNULL", "AES128", "AES256", "AES", "AESGCM", "CAMELLIA128", "CAMELLIA256",
+        "CAMELLIA", "CHACHA20", "AEAD", "MD5", "SHA1", "SHA", "GOST94", "GOST89MAC", "SHA256", "SHA384", "STREEBOG256", "SSLv3", "TLSv1", "TLSv1.2", "LOW", "MEDIUM", "HIGH", "SSLv2", "EXPORT",
+        "EXP", "GOST", "PSK", "SRP", "kPSK", "kSRP", "SEED", "RC2", "DEFAULT", "TLSv1.1", "DTLSv1", "FIPS", "kDHE", "kECDHE", "aDH", "kDH", "STRENGTH"};
+    std::vector<std::string> ciphers;
+    for (int index = 0; index < LibreSslCipherCount_nid_no_patch(); ++index) ciphers.emplace_back(SSL_CIPHER_get_name_nid_postfix(LibreSslCipherAt_nid_no_patch(static_cast<unsigned int>(index))));
+    const std::string everyCipher = [&] {
+        std::string joined;
+        for (const auto& name : ciphers) joined += (joined.empty() ? "" : ":") + name;
+        return joined;
+    }();
+    std::string reversedCiphers;
+    for (auto name = ciphers.rbegin(); name != ciphers.rend(); ++name) reversedCiphers += (reversedCiphers.empty() ? "" : ":") + *name;
+    std::vector<std::string> fixed = {
+        "DEFAULT", "ALL", "HIGH", "MEDIUM", "LOW", "EXPORT", "EXP", "COMPLEMENTOFALL", "COMPLEMENTOFDEFAULT", "ALL:!aNULL:!eNULL:!SSLv2", "HIGH:!aNULL:!MD5",
+        "kEECDH+AESGCM:kEDH+AESGCM", "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256", "EECDH+AES:EDH+AES:!SHA1", "AESGCM", "CHACHA20", "GOST", "CAMELLIA", "3DES", "RC4",
+        "SHA256", "SHA384", "TLSv1.2", "TLSv1", "SSLv3", "SSLv2", "aRSA", "aECDSA", "kRSA", "kDHE", "kEDH", "kECDHE", "kEECDH", "ECDH", "DH", "PSK", "SRP", "NULL", "eNULL", "aNULL", "ADH", "AECDH",
+        "IDEA", "DES", "SEED", "AES", "AES128", "AES256", "aDSS", "DSS", "kGOST", "aGOST", "aGOST01", "GOST94", "GOST89MAC", "STREEBOG256", "AEAD", "MD5", "SHA1", "SHA", "RSA", "ECDHE", "EECDH", "DHE",
+        "EDH", "ECDSA", "CAMELLIA128", "CAMELLIA256", "@STRENGTH", "ALL:@STRENGTH", "DEFAULT:@STRENGTH", "HIGH:@STRENGTH", "ALL:!aNULL:@STRENGTH", "HIGH:MEDIUM:LOW:@STRENGTH", "LOW:MEDIUM:HIGH",
+        "AES128-SHA:AES256-SHA:@STRENGTH", "AES256-SHA:AES128-SHA:@STRENGTH", "ALL:+RC4", "ALL:-RC4", "ALL:!RC4", "ALL:-ALL", "ALL:!ALL", "-ALL:AES128-SHA", "AES128-SHA:-ALL", "+ALL", "!ALL", "-ALL",
+        "!", "+", "-", "@", "@FOO", "@STRENGTHX", "@STRENGTH+AES", "@STRENGTH:ALL", "@STRENGTH@FOO", "@STRENGTH.X", "ALL:@STRENGTH:AES256-SHA", "", " ", "  ", ":::", ";;;", ",,,", " : ; , ",
+        "AES128-SHA AES256-SHA", "AES128-SHA,AES256-SHA", "AES128-SHA;AES256-SHA", "AES128-SHA:AES256-SHA", "AES256-SHA:AES128-SHA", "AES128-SHA:AES256-SHA:-AES128-SHA",
+        "AES128-SHA:AES256-SHA:!AES128-SHA:AES128-SHA", "AES128-SHA:AES256-SHA:+AES128-SHA", "AES128-SHA:AES256-SHA:-AES128-SHA:AES128-SHA", "AES128-SHA:AES256-SHA:-AES128-SHA:+AES128-SHA",
+        "aes128-sha", "Aes128-Sha", "all", "default", "NOSUCHCIPHER", "AES128-SH", "AES128-SHAX", "AES128-SHA-", "AES128-SHA.", "AES128-SHA\x01X", "AES128-SHA\xff", "AES128-SHA$", "$", "$$", "AES128-SHA:$:AES256-SHA",
+        "AES128-SHA:$:@FOO", "..", ".", "A.B", "-.", "TLSv1.2:TLSv1.1", "DEFAULT:AES128-SHA", "DEFAULT:-AES128-SHA", "DEFAULT:!AES128-SHA", "DEFAULT:+AES128-SHA", "DEFAULTX", "DEFAULT:", "DEFAULT@FOO",
+        "DEFAULT:@FOO", "DEFAULT ALL", "DEFAULT,AES128-SHA", "DEFAULT:ECDHE-RSA-NULL-SHA", "DEFAULT:eNULL", "DEFAULT:ADH", "DEFAULT:-ALL", "DEFAULT:!ALL", "DEFAULT:DEFAULT", "DEFAULT:ALL:@STRENGTH",
+        "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-CHACHA20-POLY1305", "AES128+kRSA", "kRSA+AES128", "AES+RC4", "AES128+AES256", "AES+", "+AES", "kEECDH+aRSA+AES256",
+        "kEECDH+aRSA+AES256+SHA384", "ALL+aNULL", "ALL+eNULL", "ALL:!aNULL+kRSA", "HIGH+AES", "HIGH+MEDIUM", "LOW+MEDIUM", "MEDIUM+HIGH", "TLSv1.2+AES", "SSLv3+TLSv1.2", "TLSv1+TLSv1.2", "DES-CBC3-SHA",
+        "RC4-SHA:RC4-MD5", "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256",
+        "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384",
+        "ECDHE-RSA-AES128-SHA256:!aNULL:!MD5:!RC4", "!aNULL:!eNULL:!LOW:!EXP:!RC4:!MD5:!SSLv2:!3DES:@STRENGTH", "ALL:!aNULL:!eNULL:!SSLv2:!LOW:!EXP:!RC4:!MD5:@STRENGTH", "kEECDH:kEDH:!aNULL:!eNULL",
+        "HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA", "AES256+EECDH:AES256+EDH:!aNULL", "ECDH+AESGCM:DH+AESGCM:ECDH+AES256:DH+AES256:ECDH+AES128:DH+AES:RSA+AESGCM:RSA+AES:!aNULL:!MD5:!DSS",
+        "RSA+3DES:!aNULL", "TLSv1.2+kEECDH+AESGCM", "ALL:-TLSv1.2", "ALL:!TLSv1", "ALL:!SSLv3", "ALL:!AEAD", "ALL:!SHA1:!SHA256", "ALL:+AEAD", "ALL:-AES:+AES128",
+        everyCipher, reversedCiphers, Repeated("ALL:", 400), Repeated("AES128-SHA:", 1000), Repeated("ALL+", 300) + "ALL", std::string(5000, 'A'), Repeated("A", 100) + ":AES128-SHA", Repeated(":", 3000) + "AES128-SHA",
+        everyCipher + ":" + everyCipher, "-" + Repeated("ALL:-", 200) + "ALL", Repeated("!AES128-SHA:", 50) + "ALL"};
+    CompareCipherList(nullptr);
+    for (const auto& rules : fixed) CompareCipherList(&rules);
+    for (const auto& cipher : ciphers) {
+        for (const char* prefix : {"", "!", "-", "+"}) {
+            const std::string rules = std::string(prefix) + cipher;
+            CompareCipherList(&rules);
+        }
+        const std::string pair = cipher + ":" + ciphers[generator() % ciphers.size()];
+        CompareCipherList(&pair);
+    }
+    for (const auto& alias : aliases) {
+        for (const char* prefix : {"", "!", "-", "+"}) {
+            const std::string rules = std::string(prefix) + alias;
+            CompareCipherList(&rules);
+        }
+        const std::string strength = "ALL:" + alias + ":@STRENGTH";
+        CompareCipherList(&strength);
+    }
+    for (int round = 0; round < 2500; ++round) {
+        const std::string rules = RandomCipherRules(aliases, ciphers);
+        CompareCipherList(&rules);
+    }
+}
+
 }
 
 int main() {
@@ -1023,6 +1262,8 @@ int main() {
     CompareCertificates();
     CompareStores();
     CompareCreatedObjects();
+    CompareCipherLists();
+    CompareCipherTable();
     long cases = 0;
     long differing = 0;
     for (const auto& [function, count] : counts) {

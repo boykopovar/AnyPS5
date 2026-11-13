@@ -33,10 +33,6 @@ int APS5_VABI cairo_arc_negative() {
 
 
 
-int APS5_VABI cairo_image_surface_create_from_png_stream() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_ft_scaled_font_lock_face() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -70,10 +66,6 @@ int APS5_VABI cairo_scaled_font_get_ctm() {
 }
 
 int APS5_VABI cairo_set_font_size() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_surface_write_to_png_stream() {
     NotImplemented_nid_no_patch(__func__);
 }
 

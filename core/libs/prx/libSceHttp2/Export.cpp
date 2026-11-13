@@ -305,8 +305,10 @@ int APS5_VABI sceHttp2SetAutoRedirect(int id, int enable) {
 }
 
 int APS5_VABI sceHttp2SetConnectionWaitTimeOut(int id, uint32_t usec) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Update(id, __func__, [&](auto& settings) {
+        if (!usec) NotImplemented_nid_no_patch("sceHttp2SetConnectionWaitTimeOut");
+        settings.connectionWaitTimeout = usec;
+    });
 }
 
 int APS5_VABI sceHttp2SetConnectTimeOut(int id, uint32_t usec) {
@@ -424,10 +426,12 @@ int APS5_VABI sceHttp2GetMemoryPoolStats(int lib_http2_ctx_id, Http2MemoryPoolSt
     std::lock_guard lock(g_handlesMutex);
     const auto* context = FindHandle(lib_http2_ctx_id, Http2Kind::Context);
     if (!context) {
-        std::memset(stats, 0, sizeof(*stats));
+        Http2MemoryPoolStats zero{};
+        if (!GuestCopyOut_nid_no_patch(stats, &zero, sizeof(zero))) return ERROR_NULL_POINTER;
         return ERROR_INVALID_ID;
     }
-    *stats = {context->poolSize, 0, 0, 0};
+    Http2MemoryPoolStats localStats{context->poolSize, 0, 0, 0};
+    if (!GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats))) return ERROR_NULL_POINTER;
     return 0;
 }
 

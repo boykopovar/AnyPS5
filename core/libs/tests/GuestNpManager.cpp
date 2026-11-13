@@ -90,6 +90,23 @@ void APS5_VABI SelfUnregisteringCallback(int, std::uint32_t, void* userdata) {
     context->result = sceNpUnregisterStateCallbackA(context->id);
 }
 
+StateCall toolkitStateCall;
+
+void APS5_VABI ToolkitStateCallback(int userId, std::uint32_t state, void* userdata) {
+    toolkitStateCall = {toolkitStateCall.calls + 1, userId, state, nullptr, userdata};
+}
+
+struct ToolkitSelfUnregister {
+    int calls;
+    int result;
+};
+
+void APS5_VABI ToolkitSelfUnregisteringCallback(int, std::uint32_t, void* userdata) {
+    auto* context = static_cast<ToolkitSelfUnregister*>(userdata);
+    ++context->calls;
+    context->result = sceNpUnregisterStateCallbackForToolkit();
+}
+
 void CheckStateCallbacksA() {
     constexpr int CallbackMax = static_cast<int>(0x8055001Du);
     void* const callbacks[] = {
@@ -211,6 +228,53 @@ void CheckGamePresenceCallbacksA() {
     }
     Require(sceNpUnregisterGamePresenceCallbackA(reusedId) == 0, "unregistering reused callback id");
     Require(sceNpUnregisterGamePresenceCallbackA(reusedId) == NotRegistered, "double unregistering reused id");
+}
+
+void CheckToolkitStateCallback() {
+    int userdata = 0;
+    auto* callback = reinterpret_cast<void*>(&StateCallbackA<0>);
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "unregister before any register");
+    Require(sceNpRegisterStateCallbackForToolkit(reinterpret_cast<NpStateCallbackForToolkit>(callback), &userdata) == 0, "register with a dummy callback");
+    Require(sceNpRegisterStateCallbackForToolkit(reinterpret_cast<NpStateCallbackForToolkit>(callback), nullptr) == 0, "register again (overwrite)");
+    Require(sceNpUnregisterStateCallbackForToolkit() == 0, "unregister");
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "unregister again");
+    Require(sceNpRegisterStateCallbackForToolkit(nullptr, &userdata) == 0, "register with nullptr callback");
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "unregister empty slot (callback is null)");
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &userdata) == 0, "register the toolkit callback for delivery");
+    Require(toolkitStateCall.calls == 0, "registering does not invoke the toolkit callback");
+    Require(sceNpCheckCallback() == 0, "check with a pending toolkit callback");
+    Require(SignedOutOnce(toolkitStateCall, &userdata), "the toolkit callback gets SIGNED_OUT once with its user data");
+    Require(sceNpCheckCallback() == 0, "second check with the toolkit slot already delivered");
+    Require(toolkitStateCall.calls == 1, "the toolkit callback got the state again");
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &userdata) == 0, "register again to cancel by unregistering");
+    Require(sceNpUnregisterStateCallbackForToolkit() == 0, "unregister before the check");
+    Require(sceNpCheckCallback() == 0, "check after unregistering before delivery");
+    Require(toolkitStateCall.calls == 1, "unregistering before the check cancelled the delivery");
+    int secondUserdata = 0;
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &userdata) == 0, "register before the replacement");
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &secondUserdata) == 0, "registering again overwrites the pending slot");
+    Require(sceNpCheckCallback() == 0, "check after the replacement");
+    Require(toolkitStateCall.calls == 2 && toolkitStateCall.userId == InitialUserId && toolkitStateCall.state == StateSignedOut &&
+        toolkitStateCall.userdata == &secondUserdata, "the replaced slot delivers once with the new user data");
+    Require(sceNpRegisterStateCallbackForToolkit(nullptr, &userdata) == 0, "register a null callback for delivery");
+    Require(sceNpCheckCallback() == 0, "check with a null toolkit callback");
+    Require(toolkitStateCall.calls == 2, "a null toolkit callback was called");
+    void* const aCallback = reinterpret_cast<void*>(&StateCallbackA<8>);
+    const int aId = sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(aCallback), &userdata);
+    Require(aId >= 1 && aId <= 8, "free state callback slot for the isolation check");
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &secondUserdata) == 0, "register the toolkit callback beside an A callback");
+    Require(sceNpCheckCallback() == 0, "check with the toolkit slot and one A callback");
+    Require(stateCallsA[8].calls == 1 && stateCallsA[8].userdata == &userdata, "the A callback gets its own single delivery");
+    Require(toolkitStateCall.calls == 3 && toolkitStateCall.userdata == &secondUserdata, "the toolkit callback delivers once beside the A callback");
+    Require(legacyStateCall.calls == 1, "the toolkit slot delivered to the legacy callback");
+    Require(sceNpCheckCallback() == 0, "check again after the isolation check");
+    Require(stateCallsA[8].calls == 1 && toolkitStateCall.calls == 3, "a check repeated the toolkit or A delivery");
+    Require(sceNpUnregisterStateCallbackA(aId) == 0, "unregister the A callback of the isolation check");
+    ToolkitSelfUnregister self{};
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitSelfUnregisteringCallback, &self) == 0, "register a self-unregistering toolkit callback");
+    Require(sceNpCheckCallback() == 0, "check with a toolkit callback that unregisters itself");
+    Require(self.calls == 1 && self.result == 0, "a toolkit callback must be able to unregister itself");
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "the toolkit callback did not unregister itself");
 }
 
 void CheckRequestTimeouts() {
@@ -1086,6 +1150,7 @@ int main() {
     CheckStateCallbacksA();
     CheckLegacyStateCallback();
     CheckGamePresenceCallbacksA();
+    CheckToolkitStateCallback();
     CheckRequestTimeouts();
     CheckAsyncRequestLifecycle();
     CheckWaitAsync();
@@ -1151,9 +1216,15 @@ int main() {
     std::uint32_t state = 0x5a5a;
     Require(sceNpGetState(0x10000, &state) == 0 && state == StateSignedOut, "sceNpGetState must report the user as signed out");
     Require(sceNpGetState(0x10000, nullptr) == InvalidArgument, "sceNpGetState must reject a null state");
+    errno = 71;
+    Require(sceNpGetState(0x10000, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable state rejected");
+    Require(errno == 71, "errno preserved");
     bool hasSignedUp = true;
     Require(sceNpHasSignedUp(0x10000, &hasSignedUp) == 0 && !hasSignedUp, "sceNpHasSignedUp must report no sign-up");
     Require(sceNpHasSignedUp(0x10000, nullptr) == InvalidArgument, "sceNpHasSignedUp must reject a null output");
+    errno = 71;
+    Require(sceNpHasSignedUp(0x10000, reinterpret_cast<bool*>(0x10)) == InvalidArgument, "unwritable has_signed_up rejected");
+    Require(errno == 71, "errno preserved");
     Require(sceNpCheckNpReachability(1, 0x10000) == SignedOut, "sceNpCheckNpReachability must report the user as signed out");
     NpCheckPremiumParameter premiumParameter{};
     NpCheckPremiumResult premiumResult{};

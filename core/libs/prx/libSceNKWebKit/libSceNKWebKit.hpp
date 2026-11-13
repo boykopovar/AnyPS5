@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libSceNKWebKit/include/SecurityPolicyExports.hpp"
 #include "prx/libSceNKWebKit/include/CredentialBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/HTTPHeaderFieldExports.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
@@ -18,6 +19,7 @@
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
 #include "prx/libSceNKWebKit/include/SecurityOriginExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/include/ColorSpaceExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreParsersExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitConfigExports.hpp"
@@ -25,6 +27,7 @@
 #include "prx/libSceNKWebKit/include/WtfBitVector.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
+#include "prx/libSceNKWebKit/include/WtfPlatformDefaultsExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfConcurrentPtrHashSet.hpp"
 #include "prx/libSceNKWebKit/include/ArgumentReturnExports.hpp"
 #include "prx/libSceNKWebKit/src/Preferences.hpp"
@@ -40,3 +43,4 @@
 
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
 #include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"
+#include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
