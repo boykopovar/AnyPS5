@@ -13,9 +13,6 @@ agcbuild_AcbCondExec_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCopyData_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCopyData_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCopyData_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbDispatchIndirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbDispatchIndirect_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbDmaData_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbDmaData_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbDmaData_c	throw	AnyPS5 throws for arguments the console encodes
@@ -79,9 +76,6 @@ agcbuild_DcbContextStateOp_c	throw	AnyPS5 throws for arguments the console encod
 agcbuild_DcbCopyData_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbCopyData_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbCopyData_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDispatchIndirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDispatchIndirect_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDmaData_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDmaData_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDmaData_c	throw	AnyPS5 throws for arguments the console encodes
