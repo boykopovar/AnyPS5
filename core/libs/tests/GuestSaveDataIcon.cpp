@@ -216,6 +216,14 @@ static void CheckArguments() {
     Require(sceSaveDataLoadIcon(&point, &empty) == Parameter);
     Require(sceSaveDataSaveIcon(&point, &empty) == Parameter);
     Require(empty.data_size == 0x123456);
+    SaveDataMountPoint unterminated{};
+    std::memset(unterminated.data, 'X', sizeof(unterminated.data));
+    Require(sceSaveDataLoadIcon(&unterminated, &icon) == Parameter);
+    Require(sceSaveDataSaveIcon(&unterminated, &icon) == Parameter);
+    Require(sceSaveDataSaveIconByPath(nullptr, nullptr) == Parameter);
+    Require(sceSaveDataSaveIconByPath(&unterminated, nullptr) == Parameter);
+    Require(sceSaveDataSaveIconByPath(&point, nullptr) == 0);
+    Require(sceSaveDataSaveIconByPath(&point, "icon.png") == 0);
     Require(sceSaveDataLoadIcon(&point, &icon) == NotFound);
     Require(icon.data_size == 0x123456);
     SaveDataMountPoint absent{};
