@@ -14,6 +14,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 
 // Offline reliable-UDP: the library initialises and contexts can be created and bound, but no connection can
 // ever be established because there is no network.
@@ -219,7 +220,7 @@ int APS5_VABI sceRudpGetStatus(void* status, std::size_t size) {
     unsigned char report[RUDP_STATUS_SIZE] = {};
     const auto contexts = static_cast<uint32_t>(g_ctx.size());
     std::memcpy(report + RUDP_STATUS_CURRENT_CONTEXTS, &contexts, sizeof(contexts));
-    std::memcpy(status, report, size);
+    if (!GuestCopyOut_nid_no_patch(status, report, size)) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -304,9 +305,10 @@ int APS5_VABI sceRudpCreateContext(GuestRudpEventHandler handler, void* arg, int
     if (ctxId == nullptr) {
         return RUDP_ERROR_INVALID_ARGUMENT;
     }
-    const int id = g_next_ctx++;
+    const int id = g_next_ctx;
+    if (!GuestCopyOut_nid_no_patch(ctxId, &id, sizeof(id))) return RUDP_ERROR_INVALID_ARGUMENT;
+    ++g_next_ctx;
     g_ctx.emplace(id, RudpContext{});
-    *ctxId = id;
     return 0;
 }
 
@@ -374,7 +376,7 @@ int APS5_VABI sceRudpSetOption(int ctxId, int option, const void* value, uint32_
     if (option < RUDP_OPTION_MAX_PAYLOAD || option > RUDP_OPTION_KEEP_ALIVE_TIMEOUT) return RUDP_ERROR_INVALID_OPTION;
     uint32_t optionValue;
     if (value == nullptr || len != sizeof(optionValue)) return RUDP_ERROR_INVALID_ARGUMENT;
-    std::memcpy(&optionValue, value, sizeof(optionValue));
+    if (!GuestCopyIn_nid_no_patch(&optionValue, value, sizeof(optionValue))) return RUDP_ERROR_INVALID_ARGUMENT;
     context->second.options.insert_or_assign(option, optionValue);
     return 0;
 }
@@ -393,7 +395,7 @@ int APS5_VABI sceRudpGetOption(int ctxId, int option, void* value, uint32_t len)
         NotImplemented_nid_no_patch(__func__);
     }
     if (value == nullptr || len != sizeof(entry->second)) return RUDP_ERROR_INVALID_ARGUMENT;
-    std::memcpy(value, &entry->second, sizeof(entry->second));
+    if (!GuestCopyOut_nid_no_patch(value, &entry->second, sizeof(entry->second))) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -540,7 +542,8 @@ int APS5_VABI sceRudpGetMaxSegmentSize(uint16_t* size) {
     if (size == nullptr) {
         return RUDP_ERROR_INVALID_ARGUMENT;
     }
-    *size = RUDP_MAX_SEGMENT_SIZE;
+    const uint16_t maxSegmentSize = RUDP_MAX_SEGMENT_SIZE;
+    if (!GuestCopyOut_nid_no_patch(size, &maxSegmentSize, sizeof(maxSegmentSize))) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -713,13 +716,21 @@ int APS5_VABI sceRudpGetLocalInfo(int ctxId, int* socketId, void* addr, std::uin
     if (!context.bound) {
         return RUDP_ERROR_NOT_BOUND;
     }
-    if (socketId) *socketId = context.socketId;
-    if (vport) *vport = context.vport;
-    if (muxMode) *muxMode = context.muxMode;
-    if (addr && addrLen && *addrLen > 0) {
-        NotImplemented_nid_no_patch(__func__);
-        return 0;
+    if (socketId && !GuestCopyOut_nid_no_patch(socketId, &context.socketId, sizeof(context.socketId))) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (vport && !GuestCopyOut_nid_no_patch(vport, &context.vport, sizeof(context.vport))) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (muxMode && !GuestCopyOut_nid_no_patch(muxMode, &context.muxMode, sizeof(context.muxMode))) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (!addr || !addrLen) return 0;
+    std::uint32_t requested = 0;
+    if (!GuestCopyIn_nid_no_patch(&requested, addrLen, sizeof(requested))) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (requested == 0) return 0;
+    std::uint8_t socketAddress[0x1c]{};
+    std::uint32_t socketAddressSize = sizeof(socketAddress);
+    if (sceNetGetsockname(context.socketId, socketAddress, &socketAddressSize) != 0) {
+        throw std::runtime_error("sceRudpGetLocalInfo: the answer for a socket sceNetGetsockname rejects was not measured");
     }
+    const std::uint32_t copied = requested > sizeof(socketAddress) ? static_cast<std::uint32_t>(sizeof(socketAddress)) : requested;
+    if (!GuestCopyOut_nid_no_patch(addr, socketAddress, copied)) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (!GuestCopyOut_nid_no_patch(addrLen, &copied, sizeof(copied))) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -802,7 +813,8 @@ int APS5_VABI sceRudpGetContextBufferStatus(int ctxId, void* status, std::size_t
     if (!valid_ctx(ctxId)) {
         return RUDP_ERROR_INVALID_CONTEXT_ID;
     }
-    std::memset(status, 0, size);
+    const unsigned char zeros[RUDP_CONTEXT_BUFFER_STATUS_SIZE] = {};
+    if (!GuestCopyOut_nid_no_patch(status, zeros, size)) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

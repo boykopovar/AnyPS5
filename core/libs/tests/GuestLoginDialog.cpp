@@ -52,6 +52,9 @@ int main() {
 
     Require(sceLoginDialogTerminate() == kErrNotInitialized);
     Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceLoginDialogOpen(reinterpret_cast<const LoginDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     param.size = 63;
     Require(sceLoginDialogOpen(&param) == kErrArgNull);
     param.size = sizeof(param);
@@ -71,6 +74,9 @@ int main() {
     Require(sceLoginDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceLoginDialogOpen(reinterpret_cast<const LoginDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
     Require(sceLoginDialogGetResult(&result) == kErrNotFinished);
     Require(result.result == 1 && result.errorCode == static_cast<int>(0x81340007u));
@@ -116,6 +122,9 @@ int main() {
     Require(sceLoginDialogTerminate() == kErrNotInitialized);
     Require(sceLoginDialogClose() == kErrNotInitialized);
     Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceLoginDialogOpen(reinterpret_cast<const LoginDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceLoginDialogOpen(&param) == kErrNotInitialized);
     Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
     Require(sceLoginDialogGetResult(&result) == kErrNotInitialized);
@@ -136,6 +145,9 @@ int main() {
     Require(sceLoginDialogTerminate() == kErrNotInitialized);
     Require(sceLoginDialogClose() == kErrNotInitialized);
     Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceLoginDialogOpen(reinterpret_cast<const LoginDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceLoginDialogOpen(&param) == kErrNotInitialized);
     Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
     Require(sceLoginDialogGetResult(&result) == kErrNotInitialized);
