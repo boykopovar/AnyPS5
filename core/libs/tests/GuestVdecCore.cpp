@@ -82,6 +82,12 @@ void CheckInstanceSize() {
     Require(sceVdecCoreQueryInstanceSize(&config, &instance, &compute, &reserved) == 0, "instance size");
     Require(instance == 0x40000 && compute == 0x10000 && reserved == 0, "instance, compute and reserved sizes");
     Require(sceVdecCoreQueryInstanceSize(&config, nullptr, nullptr, nullptr) == 0, "instance size with no outputs");
+    errno = 71;
+    Require(sceVdecCoreQueryInstanceSize(reinterpret_cast<const VdecCoreConfigInfo*>(0x10), &instance, &compute, &reserved) == InvalidArgument, "unmapped config");
+    Require(sceVdecCoreQueryInstanceSize(&config, reinterpret_cast<std::uint64_t*>(0x10), &compute, &reserved) == InvalidArgument, "unmapped instance");
+    Require(sceVdecCoreQueryInstanceSize(&config, &instance, reinterpret_cast<std::uint64_t*>(0x10), &reserved) == InvalidArgument, "unmapped compute");
+    Require(sceVdecCoreQueryInstanceSize(&config, &instance, &compute, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument, "unmapped reserved");
+    Require(errno == 71, "errno modified by unmapped instance size query");
 }
 
 void RequireFrameBuffer(const VdecCoreConfigInfo& config, std::uint32_t size, std::uint32_t minCount, std::uint32_t align, std::uint32_t width, std::uint32_t height, const char* message) {
@@ -554,5 +560,53 @@ int main() {
     CheckOutputStaysInItsDestination();
     CheckFlushResetAndSync();
     CheckDeleteWithQueuedInput();
+    {
+        VdecCoreConfigInfo config = Config(DecoderVdec2, CodecAvc, 64, 64);
+        VdecCoreMemoryInfo memory{};
+        void* decoder = nullptr;
+        errno = 71;
+        Require(sceVdecCoreCreateDecoder(reinterpret_cast<const VdecCoreConfigInfo*>(static_cast<std::uintptr_t>(0x10)),
+                                         &memory, nullptr, &decoder) == InvalidArgument &&
+                    decoder == nullptr && errno == 71,
+                "unreadable config must fail without changing errno");
+        errno = 71;
+        Require(sceVdecCoreCreateDecoder(&config, &memory, nullptr,
+                                         reinterpret_cast<void**>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument &&
+                    errno == 71,
+                "unwritable decoder output must fail without changing errno");
+        Require(sceVdecCoreCreateDecoder(&config, &memory, nullptr, &decoder) == 0 && decoder != nullptr, "create decoder");
+        errno = 71;
+        Require(sceVdecCoreMapMemoryBlock(decoder,
+                                          reinterpret_cast<const VdecCoreMemoryBlock*>(static_cast<std::uintptr_t>(0x10)),
+                                          1) == InvalidArgument &&
+                    errno == 71,
+                "unreadable memory block must fail without changing errno");
+        VdecCoreMemoryBlock dummyBlock{};
+        errno = 71;
+        Require(sceVdecCoreMapMemoryBlock(decoder, &dummyBlock, 0xFFFFFFFFu) == InvalidArgument && errno == 71,
+                "oversized memory block count must fail without allocating");
+        errno = 71;
+        Require(sceVdecCoreSetDecodeInput(decoder,
+                                          reinterpret_cast<const VdecCoreInputData*>(static_cast<std::uintptr_t>(0x10)),
+                                          nullptr, nullptr) == InvalidArgument &&
+                    errno == 71,
+                "unreadable input must fail without changing errno");
+        VdecCoreInputData badAu{};
+        badAu.auData = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10));
+        badAu.auSize = 16;
+        errno = 71;
+        Require(sceVdecCoreSetDecodeInput(decoder, &badAu, nullptr, nullptr) == InvalidArgument && errno == 71,
+                "unreadable AU data must fail without changing errno");
+        std::array<std::uint8_t, 16> au{};
+        VdecCoreInputData goodAu{};
+        goodAu.auData = au.data();
+        goodAu.auSize = static_cast<std::uint32_t>(au.size());
+        errno = 71;
+        Require(sceVdecCoreSetDecodeInput(decoder, &goodAu, nullptr,
+                                          reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument &&
+                    errno == 71,
+                "unwritable status must fail without changing errno");
+        Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete decoder");
+    }
     return 0;
 }

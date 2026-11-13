@@ -23,8 +23,8 @@ PROJECT = {
                             "add_test(NAME alpha_data COMMAND alpha_tests ${CMAKE_SOURCE_DIR}/data/input.txt)\n",
     "alpha/main.c": "#include \"alpha.h\"\nint main(void) { return ALPHA; }\n",
     "alpha/alpha.h": "#define ALPHA 0\n",
-    "beta/CMakeLists.txt": "add_executable(beta_tests main.c)\nadd_executable(setup_tests setup.c)\n"
-                           "add_test(NAME beta COMMAND beta_tests)\nadd_test(NAME beta_setup COMMAND setup_tests)\n"
+    "beta/CMakeLists.txt": "add_executable(beta_tests main.c)\nadd_executable(fixture_prepare_tests setup.c)\n"
+                           "add_test(NAME beta COMMAND beta_tests)\nadd_test(NAME beta_setup COMMAND fixture_prepare_tests)\n"
                            "set_tests_properties(beta_setup PROPERTIES FIXTURES_SETUP beta_fixture)\n"
                            "set_tests_properties(beta PROPERTIES FIXTURES_REQUIRED beta_fixture)\n",
     "beta/main.c": "int main(void) { return 0; }\n",
@@ -330,7 +330,7 @@ class SelectArgumentTests(SelectFixture):
             self.select("beta/main.c")
             subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
             built = {path.stem for path in self.build.rglob("*_tests*") if path.is_file() and os.access(path, os.X_OK)}
-            self.assertEqual(built, {"alpha_tests", "beta_tests", "setup_tests"})
+            self.assertEqual(built, {"alpha_tests", "beta_tests", "fixture_prepare_tests"})
         finally:
             cmake.write_text(original, encoding="utf-8")
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
@@ -674,6 +674,43 @@ class CaseInsensitivePathTests(unittest.TestCase):
             self.assertEqual(build.output(os.path.join("tests", "MemoryPoolTest.exe")), "tests/MemoryPoolTest.exe")
             self.assertEqual(build.repo(os.path.join(os.sep, "work", "source", "core", "libSceAgc", "Driver.cpp")), "core/libSceAgc/Driver.cpp")
             self.assertIsNone(build.repo(os.path.join(os.sep, "WORK", "SOURCE", "BUILD", "Generated.h")))
+
+    def test_paths_under_the_resolved_root_map_to_the_root(self):
+        build = self.build()
+        resolved = os.path.join(os.sep, "Users", "Long Name", "Source")
+        names = {build.source: resolved, build.path: os.path.join(resolved, "build")}
+        with mock.patch.object(select_tests, "real_path", lambda path: names.get(path, path)):
+            self.assertEqual(build.repo(os.path.join(resolved, "core", "libSceAgc", "Driver.cpp")), "core/libSceAgc/Driver.cpp")
+            self.assertIsNone(build.repo(os.path.join(resolved, "build", "Generated.h")))
+            self.assertEqual(build.key(os.path.join(resolved, "build", "tests", "MemoryPoolTest.exe")),
+                             build.key(os.path.join("tests", "MemoryPoolTest.exe")))
+
+
+@unittest.skipUnless(shutil.which("ninja") and (shutil.which("gcc") or shutil.which("cc")), "needs ninja and a C compiler")
+class LinkedDirectoryTests(unittest.TestCase):
+    def test_header_the_compiler_reports_under_the_resolved_root_is_an_input_of_its_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            real, link = Path(directory) / "r", Path(directory) / "a_directory_link_with_a_name_longer_than_its_target"
+            for name, content in PROJECT.items():
+                (real / "source" / name).parent.mkdir(parents=True, exist_ok=True)
+                (real / "source" / name).write_text(content, encoding="utf-8")
+            try:
+                link.symlink_to(real, target_is_directory=True)
+            except OSError as error:
+                if getattr(error, "winerror", None) != 1314:
+                    raise
+                import _winapi
+                _winapi.CreateJunction(str(real), str(link))
+            source, build, graph = link / "source", link / "build", Path(directory) / "graph.json"
+            compiler = shutil.which("gcc") or shutil.which("cc")
+            subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
+                           check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(build)], check=True, capture_output=True)
+            SelectTests.tool("dump", build, graph)
+            reasons = {}
+            select_tests.select(json.loads(graph.read_text(encoding="utf-8")), ["alpha/alpha.h"], reasons)
+        self.assertIn("input: alpha/alpha.h", reasons["alpha"])
+        self.assertIn("input: alpha/alpha.h", reasons["alpha_data"])
 
 
 class ChunkTests(unittest.TestCase):
