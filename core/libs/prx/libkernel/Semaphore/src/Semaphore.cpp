@@ -112,10 +112,7 @@ int APS5_VABI sceKernelWaitSema(KernelSema handle, int need, KernelUseconds* tim
  if (sem == nullptr) {
   return SCE_KERNEL_ERROR_ESRCH;
  }
- if (need <= 0) {
-  APS5_INVALID_ARG_EX;
- }
- if (need > sem->maxCount) {
+ if (need <= 0 || need > sem->maxCount) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
 
@@ -155,9 +152,10 @@ int APS5_VABI sceKernelWaitSema(KernelSema handle, int need, KernelUseconds* tim
   }
  } waiterGuard{sem.get(), &waiter};
 
- const auto waitStart = std::chrono::steady_clock::now();
+ const bool traceWaits = KernelTraceWaitEnabled();
+ const auto waitStart = traceWaits ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
  const auto traceWait = [&](bool timedOut) {
-  KernelTraceWait_nid_postfix("sema", caller, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
+  if (traceWaits) KernelTraceWait_nid_postfix("sema", caller, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
  };
  const auto released = [&] { return waiter.released || sem->deleted || sem->cancelGeneration != generation; };
  bool acquired = true;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libkernel_sys/include/CfiCheckFail.hpp"
 
 #include <cstdint>
 
@@ -22,11 +23,11 @@ int APS5_VABI __sys_dynlib_get_list_for_libdbg_nid_postfix();
 int APS5_VABI __sys_dynlib_load_prx_nid_postfix();
 int APS5_VABI __sys_dynlib_unload_prx_nid_postfix();
 int APS5_VABI __sys_get_proc_type_info_nid_postfix();
-int APS5_VABI __sys_is_development_mode_nid_postfix();
+std::uint64_t APS5_VABI __sys_is_development_mode_nid_postfix();
 int APS5_VABI __sys_kqueueex_nid_postfix();
 int APS5_VABI __sys_namedobj_create_nid_postfix();
 int APS5_VABI __sys_namedobj_delete_nid_postfix();
-int APS5_VABI __sys_nanosleep_nid_postfix();
+int APS5_VABI __sys_nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp);
 int APS5_VABI __sys_netabort_nid_postfix();
 int APS5_VABI __sys_netcontrol_nid_postfix();
 int APS5_VABI __sys_netgetiflist_nid_postfix();
@@ -50,13 +51,13 @@ int APS5_VABI __sys_socketclose_nid_postfix();
 int APS5_VABI __sys_suspend_process_nid_postfix();
 int APS5_VABI __sys_test_debug_rwmem_nid_postfix();
 int APS5_VABI __sys_workaround8849_nid_postfix();
-int APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_postfix();
-int APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix();
+void APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable);
+void APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable);
 int APS5_VABI _dup2_nid_postfix(int from, int to);
-int APS5_VABI _execve_nid_postfix();
-int APS5_VABI _execvpe_nid_postfix();
-int APS5_VABI _wait4_nid_postfix();
-int APS5_VABI adjtime_nid_postfix();
+int APS5_VABI _execve_nid_postfix(const char* path, char* const* argv, char* const* envp);
+int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* const* envp);
+int APS5_VABI _wait4_nid_postfix(int pid, int* status, int options, void* usage);
+int APS5_VABI adjtime_nid_postfix(const KernelTimeval* delta, KernelTimeval* oldDelta);
 int APS5_VABI libkernel_sysUnknown_0CV40L3tznI_nid_no_patch();
 std::uint64_t APS5_VABI libkernel_sysUnknown_1WXQlxMpnNA_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_1v23w7Rnkic_nid_no_patch();
@@ -256,7 +257,7 @@ int APS5_VABI mmap2_nid_postfix();
 int APS5_VABI pthread_setschedother_np_nid_postfix();
 int APS5_VABI sceKernelAddDynlibEvent();
 int APS5_VABI sceKernelAddFGCInfo();
-int APS5_VABI sceKernelCreateUuidV1();
+int APS5_VABI sceKernelCreateUuidV1(std::uint8_t* uuid);
 int APS5_VABI sceKernelCreateUuidV7();
 int APS5_VABI sceKernelDeleteDynlibEvent();
 int APS5_VABI sceKernelDeleteFGCInfo();
@@ -272,10 +273,10 @@ int APS5_VABI sceKernelGetCpuCoreClock();
 int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion();
 int APS5_VABI sceKernelGetNandInfo();
 int APS5_VABI sceKernelGetPackageInfo();
-int APS5_VABI sceKernelGetProsperoCompiledSdkVersion();
-int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid();
-int APS5_VABI sceKernelGetPs4CompiledSdkVersion();
-int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid();
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version);
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid(int pid, std::int32_t* version);
+int APS5_VABI sceKernelGetPs4CompiledSdkVersion(std::int32_t* version);
+int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid(int pid, std::int32_t* version);
 int APS5_VABI sceKernelGetResidentFmemCount2();
 int APS5_VABI sceKernelGetToolMemoryRange();
 int APS5_VABI sceKernelGetUpdatemode();
@@ -320,7 +321,6 @@ int APS5_VABI sceKernelPltTrap();
 int APS5_VABI sceKernelSetAcKeyRegResult();
 int APS5_VABI sceKernelSetAppInfoByAppId();
 int APS5_VABI sceKernelSetUpdatemodeDirect();
-int APS5_VABI sceKernelTitleWorkaroundIsEnabled2();
 int APS5_VABI sceKernelTraceAutoCaptureCreate();
 int APS5_VABI sceKernelTraceAutoCaptureDelete();
 int APS5_VABI sceKernelTraceAutoCaptureMap();

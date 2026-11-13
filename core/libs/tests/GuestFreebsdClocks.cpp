@@ -76,29 +76,49 @@ static void UnsupportedResolutionStillThrows() {
 }
 
 static void OmittedTimeIsFaultAfterClockValidation() {
+    constexpr int fault = static_cast<int>(0x8002000eu);
     for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_PROF, GUEST_CLOCK_MONOTONIC,
-             GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID}) {
+             GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE, GUEST_CLOCK_UPTIME_FAST,
+             GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST,
+             GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST,
+             GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID}) {
         *__error_nid_postfix() = 0;
         Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 14);
+        Require(sceKernelClockGettime(clockId, nullptr) == fault);
     }
-    bool rejected = false;
-    try {
-        clock_gettime_nid_postfix(3, nullptr);
-
-    } catch (const std::runtime_error&) {
-        rejected = true;
+    for (const int clockId : {3, 6, 22, 31}) {
+        *__error_nid_postfix() = 0;
+        Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 22);
+        Require(sceKernelClockGettime(clockId, nullptr) == fault);
     }
-    Require(rejected);
+    for (const int clockId : {16, 19}) {
+        *__error_nid_postfix() = 0;
+        Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 5);
+        Require(sceKernelClockGettime(clockId, nullptr) == fault);
+    }
+    Require(sceKernelClockGettime(21, nullptr) == fault);
 }
 
 static void InvalidClockIdFailsGettime() {
     KernelTimespec time{-1, -1};
-    for (const int clockId : {-1, 999}) {
+    for (const int clockId : {-1, 999, 3, 6, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31}) {
         *__error_nid_postfix() = 0;
         Require(clock_gettime_nid_postfix(clockId, &time) == -1 && *__error_nid_postfix() == 22);
         Require(time.tv_sec == -1 && time.tv_nsec == -1);
         *__error_nid_postfix() = 0;
         Require(sceKernelClockGettime(clockId, &time) == static_cast<int>(0x80020016u));
+        Require(time.tv_sec == -1 && time.tv_nsec == -1);
+    }
+}
+
+static void ClockIoErrorIds() {
+    for (const int clockId : {16, 17, 18, 19}) {
+        KernelTimespec time{-1, -1};
+        *__error_nid_postfix() = 0;
+        Require(clock_gettime_nid_postfix(clockId, &time) == -1 && *__error_nid_postfix() == 5);
+        Require(time.tv_sec == -1 && time.tv_nsec == -1);
+        *__error_nid_postfix() = 0;
+        Require(sceKernelClockGettime(clockId, &time) == static_cast<int>(0x80020005u) && *__error_nid_postfix() == 5);
         Require(time.tv_sec == -1 && time.tv_nsec == -1);
     }
 }
@@ -136,6 +156,19 @@ static void RequireNeverDecreases(int clockId) {
     }
 }
 
+static void Clock20UsesScaledMonotonicTime() {
+    constexpr int clockId = 20;
+    constexpr std::int64_t tickCeilingNanos = 30519;
+    const auto before = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
+    const auto posix = Nanos(clockId);
+    KernelTimespec sceTime{-1, -1};
+    Require(sceKernelClockGettime(clockId, &sceTime) == SCE_OK);
+    const auto sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
+    const auto after = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
+    Require(before - tickCeilingNanos <= posix && posix <= sce && sce <= after);
+    Require(posix % 1000 == 0 && sce % 1000 == 0);
+}
+
 static void WallAndUptimeClocksReportSubsecondResolutions() {
     const int clocks[] = {GUEST_CLOCK_REALTIME, GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST, GUEST_CLOCK_MONOTONIC,
                           GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST, GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE,
@@ -165,6 +198,18 @@ static void SecondClockReportsWholeSeconds() {
         Require(second.tv_sec >= previous);
         previous = second.tv_sec;
     }
+}
+
+static void Clock21TracksProcessCpuTime() {
+    constexpr int clockId = 21;
+    const auto before = Nanos(GUEST_CLOCK_PROF);
+    const auto posix = Nanos(clockId);
+    KernelTimespec sceTime{-1, -1};
+    Require(sceKernelClockGettime(clockId, &sceTime) == SCE_OK);
+    const auto sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
+    const auto after = Nanos(GUEST_CLOCK_PROF);
+    Require(before - 999 <= posix && posix <= sce && sce <= after);
+    Require(posix % 1000 == 0 && sce % 1000 == 0);
 }
 
 static void ProcessClocksAreOrdered() {
@@ -266,23 +311,23 @@ static void RequireSettimeError(int clockId, const KernelTimespec* time, int err
     Require(clock_settime_nid_postfix(clockId, time) == -1 && *__error_nid_postfix() == error);
 }
 
-static void SettimeValidatesLikeFreebsd() {
+static void SettimeIsRefusedLikeAJailedProcess() {
     const KernelTimespec valid{1767225600, 5};
     RequireSettimeError(GUEST_CLOCK_REALTIME, nullptr, 14);
     RequireSettimeError(GUEST_CLOCK_MONOTONIC, nullptr, 14);
-    const auto unreadable = reinterpret_cast<const KernelTimespec*>(1);
-    RequireSettimeError(GUEST_CLOCK_REALTIME, unreadable, 14);
-    RequireSettimeError(GUEST_CLOCK_MONOTONIC, unreadable, 14);
-    for (const int clockId : {GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_PROF, GUEST_CLOCK_MONOTONIC, GUEST_CLOCK_REALTIME_PRECISE,
-             GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID, -1, 16})
-        RequireSettimeError(clockId, &valid, 22);
+    for (const std::uintptr_t bad : {std::uintptr_t{1}, std::uintptr_t{0x10}}) {
+        RequireSettimeError(GUEST_CLOCK_REALTIME, reinterpret_cast<const KernelTimespec*>(bad), 14);
+        RequireSettimeError(GUEST_CLOCK_MONOTONIC, reinterpret_cast<const KernelTimespec*>(bad), 14);
+    }
     const KernelTimespec negativeNanoseconds{0, -1};
     const KernelTimespec wholeSecondOfNanoseconds{0, NANOS_PER_SECOND};
     const KernelTimespec negativeSeconds{-1, 0};
-    RequireSettimeError(GUEST_CLOCK_REALTIME, &negativeNanoseconds, 22);
-    RequireSettimeError(GUEST_CLOCK_REALTIME, &wholeSecondOfNanoseconds, 22);
-    RequireSettimeError(GUEST_CLOCK_REALTIME, &negativeSeconds, 22);
-    RequireSettimeError(GUEST_CLOCK_MONOTONIC, &negativeSeconds, 22);
+    for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_PROF, GUEST_CLOCK_MONOTONIC, GUEST_CLOCK_REALTIME_PRECISE,
+             GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID, -1, 16})
+        for (const KernelTimespec* time : {&valid, &negativeNanoseconds, &wholeSecondOfNanoseconds, &negativeSeconds})
+            RequireSettimeError(clockId, time, 1);
+    KernelTimespec now{};
+    Require(clock_gettime_nid_postfix(GUEST_CLOCK_REALTIME, &now) == 0 && now.tv_sec > 0 && now.tv_sec != valid.tv_sec);
 }
 
 static std::int32_t RuntimeDaylight(std::int32_t daylight) {
@@ -297,13 +342,13 @@ static std::int32_t RuntimeDaylight(std::int32_t daylight) {
 
 static void RequireZone(const char* zone, std::int64_t utc, std::int64_t standardEast, std::int32_t zoneDaylight, std::int32_t daylightInEffect) {
     SetTimeZone(zone);
-    zoneDaylight = RuntimeDaylight(zoneDaylight);
-    const std::int32_t daylight = daylightInEffect == 0 ? 0 : zoneDaylight;
-    const std::int64_t east = standardEast + daylight;
     std::int64_t local = -1;
     KernelTimesec universal{-1, 0xa5a5a5a5u, 0xa5a5a5a5u};
     std::int32_t universalDst = -1;
     Require(sceKernelConvertUtcToLocaltime(utc, &local, &universal, &universalDst) == SCE_OK);
+    zoneDaylight = RuntimeDaylight(zoneDaylight);
+    const std::int32_t daylight = daylightInEffect == 0 ? 0 : zoneDaylight;
+    const std::int64_t east = standardEast + daylight;
     Require(local == utc + east && universalDst == daylight);
     Require(universal.t == utc && universal.west_sec == static_cast<std::uint32_t>(east - daylight) && universal.dst_sec == static_cast<std::uint32_t>(daylight));
     std::int64_t converted = -1;
@@ -327,7 +372,7 @@ static void TimezoneReportsTheStandardOffsetAndDaylightAmount() {
     RequireTimezone("BRT+3", -180, 0);
     RequireTimezone("EST5EDT", -300, 60);
     RequireTimezone("CET-1CEST", 60, 60);
-    Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000e));
+    Require(sceKernelGettimezone(nullptr) == SCE_OK);
     SetTimeZone("UTC0");
 }
 
@@ -342,9 +387,42 @@ static void CalendarConversionsFollowTheHostZone() {
     SetTimeZone("UTC0");
 }
 
+#ifdef _WIN32
+static void ExplicitDaylightRulesRefreshAZeroHostBias() {
+    SetTimeZone("EST5EDT");
+    long savedBias = 0;
+    Require(_get_dstbias(&savedBias) == 0);
+    const struct { std::int64_t utc; std::int32_t daylight; } cases[]{
+        {1768478400, 0},
+        {1782907200, 3600}
+    };
+    for (const auto& item : cases) {
+        const std::int64_t expectedLocal = item.utc - 18000 + item.daylight;
+        _dstbias = 0;
+        std::int64_t local = -1;
+        KernelTimesec forward{-1, 0xa5a5a5a5u, 0xa5a5a5a5u};
+        std::int32_t activeDaylight = -1;
+        Require(sceKernelConvertUtcToLocaltime(item.utc, &local, &forward, &activeDaylight) == SCE_OK);
+        Require(local == expectedLocal && activeDaylight == item.daylight);
+        Require(forward.t == item.utc && forward.west_sec == static_cast<std::uint32_t>(-18000)
+            && forward.dst_sec == static_cast<std::uint32_t>(item.daylight));
+        _dstbias = 0;
+        std::int64_t utc = -1;
+        KernelTimesec reverse{-1, 0xa5a5a5a5u, 0xa5a5a5a5u};
+        std::int32_t availableDaylight = -1;
+        Require(sceKernelConvertLocaltimeToUtc(expectedLocal, 0, &utc, &reverse, &availableDaylight) == SCE_OK);
+        Require(utc == item.utc && availableDaylight == 3600);
+        Require(reverse.t == expectedLocal && reverse.west_sec == static_cast<std::uint32_t>(-18000)
+            && reverse.dst_sec == static_cast<std::uint32_t>(item.daylight));
+    }
+    _dstbias = savedBias;
+    SetTimeZone("UTC0");
+}
+#endif
+
 static void KernelTimezoneIsUtc() {
     SetTimeZone("UTC0");
-    Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelGettimezone(nullptr) == SCE_OK);
     KernelTimezone zone{-1, -1};
     Require(sceKernelGettimezone(&zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
 }
@@ -355,16 +433,26 @@ int main() {
     UnsupportedResolutionStillThrows();
     OmittedTimeIsFaultAfterClockValidation();
     InvalidClockIdFailsGettime();
-    SettimeValidatesLikeFreebsd();
+    ClockIoErrorIds();
+    Clock20UsesScaledMonotonicTime();
+    SettimeIsRefusedLikeAJailedProcess();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();
+#ifdef _WIN32
+    ExplicitDaylightRulesRefreshAZeroHostBias();
+#endif
     TimezoneReportsTheStandardOffsetAndDaylightAmount();
     SecondClockReportsWholeSeconds();
     WallAndUptimeClocksReportSubsecondResolutions();
     KernelTimezone zone{-1, -1};
     Require(gettimeofday_nid_postfix(nullptr, nullptr) == SCE_OK);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
-    Require(sceKernelGettimeofday(nullptr) == static_cast<int>(0x8002000eu));
+    constexpr int fault = static_cast<int>(0x8002000eu);
+    Require(sceKernelGettimeofday(nullptr) == fault);
+    auto* const badTimeval = reinterpret_cast<KernelTimeval*>(static_cast<std::uintptr_t>(0x10));
+    *__error_nid_postfix() = 0;
+    Require(gettimeofday_nid_postfix(badTimeval, nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(sceKernelGettimeofday(badTimeval) == fault);
     const std::int64_t beforeSce = Microseconds();
     KernelTimeval sceTime{-1, -1};
     Require(sceKernelGettimeofday(&sceTime) == SCE_OK);
@@ -383,6 +471,7 @@ int main() {
 
     RequireNeverDecreases(GUEST_CLOCK_VIRTUAL);
     RequireNeverDecreases(GUEST_CLOCK_PROF);
+    Clock21TracksProcessCpuTime();
     ProcessClocksAreOrdered();
     BusyProcessAccumulatesUserTime();
     IdleProcessAccumulatesNone();

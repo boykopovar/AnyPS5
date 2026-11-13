@@ -11,6 +11,7 @@ constexpr int GRAPHICS5_ERROR_INVALID_STATIC_BUFFER = static_cast<int>(0x8a6c000
 constexpr std::uint32_t StaticBufferCount = 6;
 constexpr std::size_t StaticBufferBytes = 16;
 constexpr std::size_t StaticQwordOffset = 16;
+constexpr std::uint32_t StaticQwordCount = static_cast<std::uint32_t>((StaticBufferCount * StaticBufferBytes - StaticQwordOffset) / sizeof(std::uint64_t));
 
 std::uint8_t* StaticTable() {
     return static_cast<std::uint8_t*>(AgcDriverStaticTable_nid_postfix());
@@ -33,11 +34,13 @@ int APS5_VABI sceAgcGetStaticBuffer(std::uint32_t index, void* buffer) {
 }
 
 int APS5_VABI sceAgcSetStaticQword(std::uint32_t index, std::uint64_t value) {
+    if (index >= StaticQwordCount) return GRAPHICS5_ERROR_INVALID_STATIC_BUFFER;
     std::memcpy(StaticTable() + StaticQwordOffset + std::size_t{index} * sizeof(value), &value, sizeof(value));
     return 0;
 }
 
 int APS5_VABI sceAgcGetStaticQword(std::uint32_t index, std::uint64_t* value) {
+    if (index >= StaticQwordCount) return GRAPHICS5_ERROR_INVALID_STATIC_BUFFER;
     std::memcpy(value, StaticTable() + StaticQwordOffset + std::size_t{index} * sizeof(*value), sizeof(*value));
     return 0;
 }

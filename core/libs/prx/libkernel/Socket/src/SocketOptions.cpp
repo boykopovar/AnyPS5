@@ -30,6 +30,7 @@ constexpr int GuestBroadcast = 0x20;
 constexpr int GuestLinger = 0x80;
 constexpr int GuestOobInline = 0x100;
 constexpr int GuestAcceptFilter = 0x1000;
+constexpr std::uint32_t GuestAcceptFilterArgumentSize = 256;
 constexpr int GuestNoSigpipe = 0x800;
 constexpr int GuestSendBuffer = 0x1001;
 constexpr int GuestReceiveBuffer = 0x1002;
@@ -170,12 +171,19 @@ int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t s
 
 }
 
+int SendBufferSize(SocketOptionState& state, int family, int type) {
+    EnsureBuffers(state, family, type);
+    return state.sendBuffer;
+}
+
 int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, const void* value, std::uint32_t length) {
     const auto handle = static_cast<NativeHandle>(native);
     if (option == GuestAcceptFilter) {
         bool listening = false;
         if (type != 2 && !NativeListening(native, listening)) return HostError();
         if (!listening) return ErrorInvalid;
+        if (!value) return 0;
+        if (length < GuestAcceptFilterArgumentSize) return ErrorInvalid;
         NotImplemented_nid_no_patch("setsockopt: SO_ACCEPTFILTER on a listening socket");
     }
     if (option == GuestLinger) {
@@ -290,8 +298,7 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
     if (option == GuestAcceptFilter) {
         bool listening = false;
         if (type != 2 && !NativeListening(native, listening)) return HostError();
-        if (!listening) return ErrorInvalid;
-        NotImplemented_nid_no_patch("getsockopt: SO_ACCEPTFILTER on a listening socket");
+        return ErrorInvalid;
     }
     if (option == GuestLinger) {
         linger current{};
@@ -430,8 +437,12 @@ int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4,
             const auto joinedInterface = static_cast<std::uint32_t>(*found);
             std::memcpy(&request.imr_interface, &joinedInterface, sizeof(joinedInterface));
         }
-        if (::setsockopt(handle, IPPROTO_IP, join ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, reinterpret_cast<NativeOptionValue>(&request), sizeof(request)))
+        if (::setsockopt(handle, IPPROTO_IP, join ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, reinterpret_cast<NativeOptionValue>(&request), sizeof(request))) {
+#ifndef _WIN32
+            if (errno == ENODEV) return ErrorAddressNotAvailable;
+#endif
             return HostError();
+        }
         if (join) state.memberships.push_back(key);
         else state.memberships.erase(found);
         return 0;
@@ -545,4 +556,23 @@ extern "C" int GuestSocketSetIpv6LevelOption_nid_no_patch(std::uintptr_t native,
 
 extern "C" int GuestSocketGetIpv6LevelOption_nid_no_patch(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length) {
     return GuestSockets::GetIpv6LevelOption(native, ipv6, option, value, length);
+}
+
+extern "C" int GuestSocketSetLinger_nid_no_patch(std::uintptr_t native, const void* value, std::uint32_t length) {
+    GuestSockets::SocketOptionState state;
+    return GuestSockets::SetSocketLevelOption(native, state, 0, 0, GuestSockets::GuestLinger, value, length);
+}
+
+extern "C" int GuestSocketGetLinger_nid_no_patch(std::uintptr_t native, void* value, std::uint32_t* length) {
+    GuestSockets::SocketOptionState state;
+    return GuestSockets::GetSocketLevelOption(native, state, 0, 0, GuestSockets::GuestLinger, value, length);
+}
+
+extern "C" int GuestSocketSetReuseFlags_nid_no_patch(std::uintptr_t native, int option, int value, int* flags) {
+    if (flags == nullptr || (option != 0x4 && option != 0x200)) throw std::invalid_argument("Invalid socket reuse state");
+    GuestSockets::SocketOptionState state;
+    state.keptFlags = *flags;
+    const int error = GuestSockets::SetSocketLevelOption(native, state, 0, 0, option, &value, sizeof(value));
+    if (error == 0) *flags = state.keptFlags;
+    return error;
 }

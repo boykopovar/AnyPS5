@@ -5,7 +5,7 @@
 
 extern "C" {
 
-int APS5_VABI sceAgcDriverSetHsOffchipParam(uint64_t value0, uint64_t value1, uint64_t value2);
+int APS5_VABI sceAgcDriverSetHsOffchipParam(uint16_t granularity, uint16_t buffering);
 int APS5_VABI sceAgcDriverSetTFRing(const volatile void* base, uint32_t size);
 int APS5_VABI sceAgcDriverGetTFRing(uintptr_t* base, uint32_t* size);
 

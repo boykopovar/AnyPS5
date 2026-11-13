@@ -1,6 +1,28 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/FilesystemError.hpp"
+#include "prx/libkernel/include/Api.hpp"
+
+#include <algorithm>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 
 #include <atomic>
 #include <cstdint>
@@ -77,8 +99,8 @@ int APS5_VABI __sys_get_proc_type_info_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __sys_is_development_mode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI __sys_is_development_mode_nid_postfix() {
+    return 0;
 }
 
 int APS5_VABI __sys_kqueueex_nid_postfix() {
@@ -93,8 +115,14 @@ int APS5_VABI __sys_namedobj_delete_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __sys_nanosleep_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI __sys_nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
+    int oldCancelState = 0;
+    scePthreadSetcancelstate(1, &oldCancelState);
+    const int result = sceKernelNanosleep(rqtp, rmtp);
+    scePthreadSetcancelstate(oldCancelState, nullptr);
+    if (result == 0) return 0;
+    *__error_nid_postfix() = result & 0xFFFF;
+    return -1;
 }
 
 int APS5_VABI __sys_netabort_nid_postfix() {
@@ -189,32 +217,270 @@ int APS5_VABI __sys_workaround8849_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable) {
+    Ubsan::ReportCfiCheckFail(data, value, validVtable, true);
 }
 
-int APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable) {
+    Ubsan::ReportCfiCheckFail(data, value, validVtable, false);
 }
 
 int APS5_VABI _dup2_nid_postfix(int from, int to) {
     return dup2_nid_postfix(from, to);
 }
 
-int APS5_VABI _execve_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+static int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* envp) {
+    constexpr int GuestEfault = 14;
+    constexpr int GuestEacces = 13;
+    constexpr int GuestEnoexec = 8;
+    constexpr int GuestE2big = 7;
+    constexpr int GuestEnoent = 2;
+    constexpr int GuestEnametoolong = 63;
+    constexpr std::size_t GuestPathMax = 1024;
+    constexpr std::size_t GuestArgMax = 262144;
+    const auto fail = [](int error) {
+        *__error_nid_postfix() = error;
+        return -1;
+    };
+    const auto gather = [](const char* guest, std::size_t maxLength, std::string& copy) -> int {
+        for (std::size_t read = 0; read < maxLength;) {
+            const auto address = reinterpret_cast<std::uintptr_t>(guest) + read;
+            const std::size_t boundary = 4096 - address % 4096;
+            const std::size_t bytes = boundary < maxLength - read ? boundary : maxLength - read;
+            char buffer[4096];
+            if (!GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(address), bytes)) return GuestEfault;
+            const auto end = static_cast<const char*>(std::memchr(buffer, 0, bytes));
+            if (end != nullptr) {
+                copy.append(buffer, static_cast<std::size_t>(end - buffer));
+                return 0;
+            }
+            copy.append(buffer, bytes);
+            read += bytes;
+        }
+        return GuestEnametoolong;
+    };
+    if (argv == nullptr) return fail(GuestEfault);
+    std::string fname;
+    if (path != nullptr) {
+        const int error = gather(path, GuestPathMax, fname);
+        if (error != 0) return fail(error);
+    }
+    std::string text;
+    std::vector<std::string> arguments;
+    std::vector<std::string> environment;
+    std::size_t stringspace = GuestArgMax;
+    for (char* const* slot = argv;; ++slot) {
+        char* argument = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&argument, slot, sizeof(argument))) return fail(GuestEfault);
+        if (argument == nullptr) break;
+        text.clear();
+        const int error = gather(argument, stringspace, text);
+        if (error != 0) return fail(error == GuestEnametoolong ? GuestE2big : error);
+        stringspace -= text.size() + 1;
+        arguments.push_back(std::move(text));
+    }
+    if (envp != nullptr) {
+        for (char* const* slot = envp;; ++slot) {
+            char* variable = nullptr;
+            if (!GuestCopyIn_nid_no_patch(&variable, slot, sizeof(variable))) return fail(GuestEfault);
+            if (variable == nullptr) break;
+            text.clear();
+            const int error = gather(variable, stringspace, text);
+            if (error != 0) return fail(error == GuestEnametoolong ? GuestE2big : error);
+            stringspace -= text.size() + 1;
+            environment.push_back(std::move(text));
+        }
+    }
+    if (path == nullptr) NotImplemented_nid_no_patch(__func__);
+    if (fname.empty()) return fail(GuestEnoent);
+    std::filesystem::path native;
+    if (const int error = ResolvePathError_nid_no_patch(fname.c_str(), native)) return fail(error);
+    std::error_code statusError;
+    const auto status = std::filesystem::status(native, statusError);
+    if (status.type() == std::filesystem::file_type::not_found) return fail(NotFoundError_nid_no_patch(native));
+    if (statusError) return fail(FilesystemError(statusError));
+#ifdef _WIN32
+    const bool executable = std::filesystem::is_regular_file(status);
+#else
+    constexpr std::filesystem::perms execute = std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec;
+    const bool executable = (status.permissions() & execute) != std::filesystem::perms::none && std::filesystem::is_regular_file(status);
+#endif
+    if (!executable) return fail(GuestEacces);
+    std::error_code sizeError;
+    const auto size = std::filesystem::file_size(native, sizeError);
+    if (sizeError) return fail(FilesystemError(sizeError));
+    if (size == 0) return fail(GuestEnoexec);
+    if (!ExecutePermission_nid_no_patch(native)) return fail(GuestEacces);
+    std::ifstream image(native, std::ios::binary);
+    if (!image) return fail(GuestEacces);
+    unsigned char header[4]{};
+    image.read(reinterpret_cast<char*>(header), sizeof(header));
+    if (image.gcount() < static_cast<std::streamsize>(sizeof(header))) return fail(GuestEnoexec);
+    if (header[0] == '#' && header[1] == '!') {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    constexpr unsigned char ElfMagic[] = {0x7f, 0x45, 0x4c, 0x46};
+    constexpr unsigned char Ps4SelfMagic[] = {0x4f, 0x15, 0x3d, 0x1d};
+    constexpr unsigned char Ps5SelfMagic[] = {0x54, 0x14, 0xf5, 0xee};
+    if (std::memcmp(header, ElfMagic, sizeof(ElfMagic)) == 0 ||
+        std::memcmp(header, Ps4SelfMagic, sizeof(Ps4SelfMagic)) == 0 ||
+        std::memcmp(header, Ps5SelfMagic, sizeof(Ps5SelfMagic)) == 0) {
+        std::vector<char*> argumentPointers;
+        for (auto& argument : arguments) argumentPointers.push_back(argument.data());
+        argumentPointers.push_back(nullptr);
+        std::vector<char*> environmentPointers;
+        for (auto& variable : environment) environmentPointers.push_back(variable.data());
+        environmentPointers.push_back(nullptr);
+        return execve_nid_postfix(fname.c_str(), argumentPointers.data(), environmentPointers.data());
+    }
+    return fail(GuestEnoexec);
 }
 
-int APS5_VABI _execvpe_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _execve_nid_postfix(const char* path, char* const* argv, char* const* envp) {
+    return GuestExecve_nid_no_patch(path, argv, envp);
 }
 
-int APS5_VABI _wait4_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* const* envp) {
+    constexpr int GuestEacces = 13;
+    constexpr int GuestEnoent = 2;
+    constexpr int GuestE2big = 7;
+    constexpr int GuestEnoexec = 8;
+    constexpr int GuestEnomem = 12;
+    constexpr int GuestEtxtbsy = 26;
+    constexpr int GuestEloop = 62;
+    constexpr int GuestEnametoolong = 63;
+    constexpr int GuestEnotdir = 20;
+    constexpr int GuestEfault = 14;
+    constexpr std::size_t GuestCandidateMax = 1024;
+    const std::string_view DefaultSearchPath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin";
+    const std::string_view ShellPath = "/bin/sh";
+    const auto fail = [](int error) {
+        *__error_nid_postfix() = error;
+        return -1;
+    };
+    std::string searchPath;
+    if (!CopyGuestEnvironment_nid_no_patch("PATH", searchPath)) searchPath = std::string(DefaultSearchPath);
+    std::string nameText;
+    if (name != nullptr) {
+        for (std::size_t read = 0; read < GuestCandidateMax;) {
+            const auto address = reinterpret_cast<std::uintptr_t>(name) + read;
+            const std::size_t boundary = 4096 - address % 4096;
+            const std::size_t bytes = std::min(boundary, GuestCandidateMax - read);
+            char buffer[4096];
+            if (!GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(address), bytes)) return fail(GuestEfault);
+            const auto end = static_cast<const char*>(std::memchr(buffer, 0, bytes));
+            if (end != nullptr) {
+                nameText.append(buffer, static_cast<std::size_t>(end - buffer));
+                break;
+            }
+            nameText.append(buffer, bytes);
+            read += bytes;
+        }
+    } else {
+        return fail(GuestEfault);
+    }
+    if (nameText.size() == GuestCandidateMax) return fail(GuestEnoent);
+    bool accessFailure = false;
+    const auto ladder = [&](const std::string& candidate) {
+        GuestExecve_nid_no_patch(candidate.c_str(), argv, envp);
+        const int refusal = *__error_nid_postfix();
+        switch (refusal) {
+        case GuestE2big:
+        case GuestEnomem:
+        case GuestEtxtbsy:
+            return true;
+        case GuestEloop:
+        case GuestEnametoolong:
+        case GuestEnoent:
+        case GuestEnotdir:
+            return false;
+        case GuestEnoexec: {
+            std::size_t count = 0;
+            for (;;) {
+                char* entry = nullptr;
+                if (!GuestCopyIn_nid_no_patch(&entry, argv + count, sizeof(entry))) {
+                    fail(GuestEfault);
+                    return true;
+                }
+                if (entry == nullptr) break;
+                ++count;
+            }
+            const std::string shell("sh");
+            std::vector<char*> shellArgs;
+            shellArgs.reserve(count + 2);
+            shellArgs.push_back(const_cast<char*>(shell.c_str()));
+            shellArgs.push_back(const_cast<char*>(candidate.c_str()));
+            for (std::size_t index = 1; index < count; ++index) {
+                char* next = nullptr;
+                if (!GuestCopyIn_nid_no_patch(&next, argv + index, sizeof(next))) {
+                    fail(GuestEfault);
+                    return true;
+                }
+                shellArgs.push_back(next);
+            }
+            shellArgs.push_back(nullptr);
+            GuestExecve_nid_no_patch(ShellPath.data(), shellArgs.data(), envp);
+            return true;
+        }
+        default: {
+            std::filesystem::path native;
+            if (const int resolved = ResolvePathError_nid_no_patch(candidate.c_str(), native)) return false;
+            std::error_code lookupError;
+            const auto status = std::filesystem::status(native, lookupError);
+            if (lookupError || status.type() == std::filesystem::file_type::not_found) return false;
+            if (refusal == GuestEacces) {
+                accessFailure = true;
+                return false;
+            }
+            return true;
+        }
+        }
+    };
+    if (nameText.find('/') != std::string::npos) {
+        if (ladder(nameText)) return -1;
+        return fail(accessFailure ? GuestEacces : GuestEnoent);
+    }
+    if (nameText.empty()) return fail(GuestEnoent);
+    std::size_t offset = 0;
+    for (bool finished = false; !finished;) {
+        const auto separator = searchPath.find(':', offset);
+        finished = separator == std::string::npos;
+        const std::string_view element(searchPath.data() + offset, finished ? searchPath.size() - offset : separator - offset);
+        offset = finished ? searchPath.size() : separator + 1;
+        const std::string_view directory = element.empty() ? std::string_view(".") : element;
+        if (directory.size() + nameText.size() + 2 > GuestCandidateMax) continue;
+        std::string candidate(directory);
+        candidate.push_back('/');
+        candidate += nameText;
+        if (ladder(candidate)) return -1;
+    }
+    return fail(accessFailure ? GuestEacces : GuestEnoent);
 }
 
-int APS5_VABI adjtime_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _wait4_nid_postfix(int pid, int* status, int options, void* usage) {
+    return wait4_nid_postfix(pid, status, options, usage);
+}
+
+int APS5_VABI adjtime_nid_postfix(const KernelTimeval* delta, KernelTimeval* oldDelta) {
+    constexpr int GuestEperm = 1;
+    constexpr int GuestEfault = 14;
+    KernelTimeval adjustment{};
+    if (delta != nullptr && !GuestCopyIn_nid_no_patch(&adjustment, delta, sizeof(adjustment))) {
+        *__error_nid_postfix() = GuestEfault;
+        return -1;
+    }
+    if (delta != nullptr) {
+        *__error_nid_postfix() = GuestEperm;
+        return -1;
+    }
+    if (oldDelta != nullptr) {
+        const KernelTimeval pending{};
+        if (!GuestCopyOut_nid_no_patch(oldDelta, &pending, sizeof(pending))) {
+            *__error_nid_postfix() = GuestEfault;
+            return -1;
+        }
+    }
+    return 0;
 }
 
 int APS5_VABI libkernel_sysUnknown_0CV40L3tznI_nid_no_patch() {
@@ -1369,9 +1635,6 @@ int APS5_VABI sceKernelAddFGCInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelCreateUuidV1() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI sceKernelCreateUuidV7() {
     NotImplemented_nid_no_patch(__func__);
@@ -1433,20 +1696,34 @@ int APS5_VABI sceKernelGetPackageInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelGetProsperoCompiledSdkVersion() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version) {
+    if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
+    const int saved = errno;
+    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    const bool copied = GuestCopyOut_nid_no_patch(version, parameters + 0x14, sizeof(*version));
+    errno = saved;
+    if (!copied) return SCE_KERNEL_ERROR_EFAULT;
+    return 0;
 }
 
-int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid(int pid, std::int32_t* version) {
+    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return SCE_KERNEL_ERROR_ESRCH;
+    return sceKernelGetProsperoCompiledSdkVersion(version);
 }
 
-int APS5_VABI sceKernelGetPs4CompiledSdkVersion() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetPs4CompiledSdkVersion(std::int32_t* version) {
+    if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
+    const int saved = errno;
+    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    const bool copied = GuestCopyOut_nid_no_patch(version, parameters + 0x10, sizeof(*version));
+    errno = saved;
+    if (!copied) return SCE_KERNEL_ERROR_EFAULT;
+    return 0;
 }
 
-int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid(int pid, std::int32_t* version) {
+    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return SCE_KERNEL_ERROR_ESRCH;
+    return sceKernelGetPs4CompiledSdkVersion(version);
 }
 
 int APS5_VABI sceKernelGetResidentFmemCount2() {
@@ -1622,10 +1899,6 @@ int APS5_VABI sceKernelSetAppInfoByAppId() {
 }
 
 int APS5_VABI sceKernelSetUpdatemodeDirect() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceKernelTitleWorkaroundIsEnabled2() {
     NotImplemented_nid_no_patch(__func__);
 }
 

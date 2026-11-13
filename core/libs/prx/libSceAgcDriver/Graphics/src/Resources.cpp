@@ -3,15 +3,20 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestWorkMark.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <algorithm>
+#include <array>
 #include <exception>
 #ifdef __APPLE__
 #include <cstring>
 #endif
 
 namespace AgcDriver::Graphics {
+void WriteCheckpointSentinel(const Context& context, VkCommandBuffer commands);
 
 namespace {
 
@@ -33,15 +38,15 @@ VkBuffer BindExactBuffer(const Context& context, std::size_t size, VkBufferUsage
     info.usage = usage;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkBuffer buffer = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer), "vkCreateBuffer pooled");
+    Check(context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &info, nullptr, &buffer), "vkCreateBuffer pooled");
     try {
         VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
+        context.Resolved(&DeviceFunctions::getBufferMemoryRequirements, "vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
         Require(requirements.size <= availableBytes, "pooled buffer memory is smaller than the requested buffer");
         Require(requirements.alignment == 0 || offset % requirements.alignment == 0, "pooled buffer offset breaks the requested buffer's alignment");
-        Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, offset), "vkBindBufferMemory pooled");
+        Check(context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, buffer, memory, offset), "vkBindBufferMemory pooled");
     } catch (...) {
-        context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+        context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, buffer, nullptr);
         throw;
     }
     return buffer;
@@ -74,7 +79,7 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
         ClearPooledTail(mapping, size, std::min<VkDeviceSize>(capacity, allocationBytes), properties);
 #endif
         if (allocation->bufferBytes != size) {
-            context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+            context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, buffer, nullptr);
             buffer = VK_NULL_HANDLE;
             deviceAddress = 0;
             try {
@@ -93,9 +98,9 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
         info.size = size;
         info.usage = this->usage;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer), "vkCreateBuffer");
+        Check(context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &info, nullptr, &buffer), "vkCreateBuffer");
         VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
+        context.Resolved(&DeviceFunctions::getBufferMemoryRequirements, "vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         const VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, nullptr, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
         if (addressable) allocation.pNext = &flags;
@@ -116,7 +121,7 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
             offset = slot.offset;
             slab = true;
             allocationBytes = capacity;
-            Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, offset), "vkBindBufferMemory slab");
+            Check(context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, buffer, memory, offset), "vkBindBufferMemory slab");
             initializeAddress(usage);
             mapping = slot.mapping;
 #ifdef __APPLE__
@@ -126,9 +131,9 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
             return;
         }
         memory = cache->AllocateMemory(allocation, "vkAllocateMemory buffer");
-        Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory");
+        Check(context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory");
         initializeAddress(usage);
-        if ((properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) Check(context.Function<PFN_vkMapMemory>("vkMapMemory")(context.device, memory, 0, VK_WHOLE_SIZE, 0, &mapping), "vkMapMemory");
+        if ((properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) Check(context.Resolved(&DeviceFunctions::mapMemory, "vkMapMemory")(context.device, memory, 0, VK_WHOLE_SIZE, 0, &mapping), "vkMapMemory");
         ready = true;
     } catch (...) {
         release();
@@ -146,12 +151,12 @@ void Buffer::release() noexcept {
         return;
     }
     if (slab) {
-        if (buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+        if (buffer) context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, buffer, nullptr);
         cache->PutSlot(memory, offset);
         return;
     }
-    if (mapping) context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")(context.device, memory);
-    if (buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+    if (mapping) context.Resolved(&DeviceFunctions::unmapMemory, "vkUnmapMemory")(context.device, memory);
+    if (buffer) context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, buffer, nullptr);
     if (memory) MemoryAccounting::Free(context, memory);
 }
 
@@ -194,7 +199,7 @@ DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsa
             ready = true;
             return;
         }
-        context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+        context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, buffer, nullptr);
         buffer = VK_NULL_HANDLE;
         try {
             buffer = BindExactBuffer(context, size, this->usage, memory, 0, allocationBytes);
@@ -210,9 +215,9 @@ DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsa
         info.size = size;
         info.usage = this->usage;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer), "vkCreateBuffer device");
+        Check(context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &info, nullptr, &buffer), "vkCreateBuffer device");
         VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
+        context.Resolved(&DeviceFunctions::getBufferMemoryRequirements, "vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = ClassAllocationBytes(requirements, capacity);
         allocationBytes = allocation.allocationSize;
@@ -221,7 +226,7 @@ DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsa
         std::uint32_t allocatedType = allocation.memoryTypeIndex;
         memory = cache->AllocateMemory(allocation, "vkAllocateMemory device buffer", context.RefusedDeviceMemoryFallback(requirements.memoryTypeBits, allocation.memoryTypeIndex), &allocatedType);
         hostPlaced = allocatedType != deviceType;
-        Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory device");
+        Check(context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory device");
         ready = true;
     } catch (...) {
         release();
@@ -240,7 +245,7 @@ void DeviceBuffer::release() noexcept {
         cache->Put(allocation);
         return;
     }
-    if (buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+    if (buffer) context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, buffer, nullptr);
     if (memory) MemoryAccounting::Free(context, memory);
 }
 
@@ -253,6 +258,8 @@ std::size_t DeviceBuffer::Size() const {
 }
 
 void CopyBuffer(const Context& context, VkCommandBuffer commands, VkBuffer source, VkDeviceSize sourceOffset, VkBuffer destination, VkDeviceSize destinationOffset, VkDeviceSize bytes) {
+    PerformanceTrace::Amount("Graphics.Copy", 1);
+    PerformanceTrace::Amount("Graphics.Copy.bytes", bytes);
     const VkBufferCopy region{sourceOffset, destinationOffset, bytes};
     context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, source, destination, 1, &region);
 }
@@ -276,6 +283,7 @@ void FillDeviceFunctions(const Context& context, DeviceFunctions& functions) {
     functions.cmdEndRenderPass = context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass");
     functions.cmdSetViewport = context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport");
     functions.cmdSetScissor = context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor");
+    if (context.dynamicColorWriteMask) functions.cmdSetColorWriteMask = context.Function<PFN_vkCmdSetColorWriteMaskEXT>("vkCmdSetColorWriteMaskEXT");
     functions.cmdSetDepthBounds = context.Function<PFN_vkCmdSetDepthBounds>("vkCmdSetDepthBounds");
     functions.cmdSetDepthBias = context.Function<PFN_vkCmdSetDepthBias>("vkCmdSetDepthBias");
     if (context.graphicsPipelineLibrary) {
@@ -305,6 +313,14 @@ void FillDeviceFunctions(const Context& context, DeviceFunctions& functions) {
     functions.updateDescriptorSets = context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets");
     functions.allocateDescriptorSets = context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets");
     functions.getFenceStatus = context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus");
+    functions.createBuffer = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer");
+    functions.destroyBuffer = context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer");
+    functions.getBufferMemoryRequirements = context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements");
+    functions.bindBufferMemory = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory");
+    functions.allocateMemory = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory");
+    functions.freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
+    functions.mapMemory = context.Function<PFN_vkMapMemory>("vkMapMemory");
+    functions.unmapMemory = context.Function<PFN_vkUnmapMemory>("vkUnmapMemory");
 }
 
 RenderTarget::RenderTarget(const Context& context, const ColorTarget& target, bool blending) : context(context) {
@@ -368,6 +384,10 @@ VkImageView RenderTarget::View() const {
     return view;
 }
 
+void NoteGuestWorkOnCommandBuffer(VkCommandBuffer commands) {
+    GuestWorkMark::Note(commands);
+}
+
 CommandBatch::CommandBatch(const Context& context) : context(context) {
     // Records into the device's one command pool and submits to its queue: device-lock work only.
     GuestMemory::AssertGpuLockHeld("CommandBatch");
@@ -384,6 +404,7 @@ CommandBatch::CommandBatch(const Context& context) : context(context) {
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         Check(context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(commands, &begin), "vkBeginCommandBuffer");
+        WriteCheckpointSentinel(context, commands);
         // Work recorded so far goes first in queue order, so this batch sees its results.
         if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) recorder->Submit();
     } catch (...) {
@@ -397,8 +418,9 @@ CommandBatch::~CommandBatch() {
 }
 
 void CommandBatch::release() noexcept {
+    GuestWorkMark::Forget(commands);
     if (pending) {
-        auto result = context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus")(context.device, fence);
+        auto result = context.Resolved(&DeviceFunctions::getFenceStatus, "vkGetFenceStatus")(context.device, fence);
         if (result == VK_NOT_READY) result = context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue);
         if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST) std::terminate();
     }
@@ -428,6 +450,7 @@ void CommandBatch::Submit() {
     pending = true;
     submitted = true;
     timing.Mark("queue_submit");
+    if (GuestWorkMark::Take(commands)) LibcRunReportMilestone_nid_no_patch(2);
 }
 
 void CommandBatch::Wait() {
