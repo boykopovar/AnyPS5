@@ -41,5 +41,13 @@ int main() {
     Require(sceKernelClearGameDirectMemory() == SCE_KERNEL_ERROR_ENOSYS);
     Require(sceKernelMapTraceMemory() == SCE_KERNEL_ERROR_ENOSYS);
     Require(sceKernelTraceMemoryTypeProtect() == SCE_KERNEL_ERROR_ENOSYS);
+    for (int iter = 0; iter < 2; ++iter) {
+        Require(pthread_switch_add_np_nid_postfix() == GUEST_ENOTSUP);
+        Require(sceKernelHasNeoMode() == 1);
+        Require(sceKernelIsAuthenticNeo() == 1);
+        Require(sceKernelIsGenuineN() == 1);
+        Require(sceKernelCreateEport() == SCE_KERNEL_ERROR_EPERM);
+        Require(sceKernelDeleteEport() == SCE_KERNEL_ERROR_EPERM);
+    }
     return 0;
 }
