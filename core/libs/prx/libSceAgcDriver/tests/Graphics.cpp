@@ -13156,6 +13156,55 @@ void pipelineStoreLazyBufferPoolTests() {
     Require(mock.live == 0, "lazy buffer pool pipeline tests leaked Vulkan objects");
 }
 
+void pipelineDeferredBuildTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.device = makeHandle<VkDevice>();
+    context.graphicsPipelineLibrary = true;
+    context.pipelineLinkTimeOptimization = false;
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    auto vertex = std::make_unique<ShaderRecompiler::RecompileResult>();
+    ShaderRecompiler::RecompileResult fragment;
+    vertex->spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex->variantId = 401;
+    fragment.variantId = 402;
+    std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, vertex.get(), 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    auto mainKey = std::make_unique<std::array<std::uint32_t, 1>>(std::array<std::uint32_t, 1>{51});
+    std::array<std::uint32_t, 1> fragmentKey{52};
+    const auto mainLayout = makeHandle<VkDescriptorSetLayout>();
+    const auto fragmentLayout = makeHandle<VkDescriptorSetLayout>();
+    Require(DefersPipelineBuild(shaders), "APS5_ASYNC_PIPELINE_WORDS=1 did not defer a pipeline with SPIR-V");
+    const auto created = mock.pipelineCreateCount;
+    std::uint64_t hash = 1;
+    {
+        const PipelineSetLayouts resources{mainLayout, fragmentLayout, true, *mainKey, fragmentKey};
+        Require(ResidentPipelineOrDeferredBuild(context, State{}, VertexInputLayout{}, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &hash) == nullptr && hash == 0, "a cold deferred pipeline was returned before its build");
+    }
+    const auto copiedVertex = *vertex;
+    vertex.reset();
+    mainKey.reset();
+    shaders[0].program = &copiedVertex;
+    const std::array<std::uint32_t, 1> sameMainKey{51};
+    const PipelineSetLayouts resources{mainLayout, fragmentLayout, true, sameMainKey, fragmentKey};
+    std::shared_ptr<Pipeline> resident;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while ((resident = ResidentPipelineOrDeferredBuild(context, State{}, VertexInputLayout{}, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &hash)) == nullptr) {
+        Require(std::chrono::steady_clock::now() < deadline, "a deferred pipeline build never became resident");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    Require(mock.pipelineCreateCount > created, "the deferred build created no pipeline");
+    const auto built = mock.pipelineCreateCount;
+    Require(CachedPipeline(context, State{}, VertexInputLayout{}, resources, shaders) == resident && mock.pipelineCreateCount == built, "the deferred build stored a pipeline under another key than the draw's");
+    VertexInputLayout other;
+    other.bindings.push_back({0, 16u, VK_VERTEX_INPUT_RATE_VERTEX});
+    Require(ResidentPipelineOrDeferredBuild(context, State{}, other, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr) == nullptr, "a second cold configuration was returned before its build");
+    ClearCachedPipelines(context.device);
+    resident.reset();
+    Require(mock.live == 0, "deferred pipeline builds leaked Vulkan objects past ClearCachedPipelines");
+}
+
 // The pipeline store's bound without a GPU: 1536 configurations cycled through the default 1024
 // entries keep coming back after their eviction, so the bound doubles and a later pass finds every
 // pipeline resident; a bound set with APS5_PIPELINE_STORE_ENTRIES never moves.
@@ -13926,6 +13975,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-growth") {
             pipelineStoreGrowthTests(std::getenv("APS5_PIPELINE_STORE_ENTRIES") != nullptr);
             std::cout << "pipeline store bound follows the evicted pipelines that come back\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-deferred-build") {
+            pipelineDeferredBuildTests();
+            std::cout << "deferred pipeline builds skip cold draws and store the draw's pipeline\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-touch") {
