@@ -146,6 +146,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         requests.append((path, self.headers.get("Range")))
         targets.append(self.path)
+        if path.startswith("/length-list/"):
+            self.length_list(path)
+            return
         if path.startswith("/client-unsupported/"):
             location = {"https": "https://{authority}/payload.bin", "scheme": "ftp://{authority}/payload.bin", "userinfo": "http://user@{authority}/payload.bin"}[path.removeprefix("/client-unsupported/")]
             self.send_response(307)
@@ -398,6 +401,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(f"{len(body):X}\r\n".encode() + body + b"\r\n0\r\n" + b"".join(field + b"\r\n" for field in trailers) + b"\r\n")
         else:
             self.wfile.write(body)
+
+
+    def length_list(self, path):
+        _, _, mode, name, _ = path.split("/")
+        content = pathlib.Path("app0", "payload.bin").read_bytes() if mode != "empty" else b""
+        start = 0
+        end = len(content)
+        if mode == "range":
+            match = re.fullmatch(r"bytes=(\d+)-(\d+)", self.headers.get("Range", ""))
+            assert match is not None
+            start, last = map(int, match.groups())
+            end = min(start + 512, last + 1, len(content))
+            if start:
+                assert self.headers.get("If-Range") == '"length-v1"'
+        body = content[start:end]
+        fields = {
+            "single": "{n}",
+            "pair": "{n}, {n}",
+            "compact": "{n},{n}",
+            "whitespace": " \t{n}\t, \t{n} ",
+            "many": "{n}, {n}, {n}",
+            "zeros": "000{n}, {n}",
+            "different": "{n}, {other}",
+            "suffix": "{n}, {n}x",
+            "empty": "",
+            "leading-empty": ", {n}",
+            "trailing-empty": "{n},",
+            "middle-empty": "{n}, , {n}",
+            "plus": "+{n}, {n}",
+            "negative": "-{n}, {n}",
+            "overflow": "18446744073709551616, {n}",
+            "hex": "0x{n}, {n}",
+            "fraction": "{n}.0, {n}",
+            "embedded-space": "{n} 0, {n}",
+            "embedded-tab": "{n}\t0, {n}",
+        }
+        self.send_response(206 if mode == "range" else 200)
+        if mode == "range":
+            self.send_header("Content-Range", f"bytes {start}-{end - 1}/{len(content)}")
+        self.send_header("ETag", '"length-v1"')
+        self.send_header("Content-Length", fields[name].format(n=len(body), other=len(body) + 1))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
 
 
 with Server(("127.0.0.1", 0), Handler) as server, Server(("127.0.0.1", 0), Handler) as destination:

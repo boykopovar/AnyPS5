@@ -341,6 +341,41 @@ void CheckRepresentations(const std::string& base) {
     Check(passed && legacyPassed == 10 && legacySnapshots == 10, "HTTP representation integrity cases failed");
 }
 
+void CheckContentLengths(const std::string& base) {
+    int accepted = 0;
+    int refused = 0;
+    for (const std::string mode : {"full", "range", "empty"}) {
+        for (const char* name : {"single", "pair", "compact", "whitespace", "many", "zeros"}) {
+            auto client = Create();
+            const auto url = base + "/length-list/" + mode + "/" + name + "/payload.bin";
+            if (Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) != 1) {
+                std::fprintf(stderr, "Equivalent Content-Length refused: %s/%s\n", mode.c_str(), name);
+                continue;
+            }
+            const bool empty = mode == "empty";
+            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == (empty ? 0 : 100000), "Content-Length source size differs");
+            if (!empty) {
+                Read(client.get(), 0, 64);
+                Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "Content-Length source seek failed");
+                Read(client.get(), 90000, 64);
+                Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 2) == 100000, "Content-Length source end differs");
+            }
+            End(client.get());
+            ++accepted;
+        }
+        for (const char* name : {"different", "suffix", "empty", "leading-empty", "trailing-empty", "middle-empty",
+                                 "plus", "negative", "overflow", "hex", "fraction", "embedded-space", "embedded-tab"}) {
+            auto client = Create();
+            const auto url = base + "/length-list/" + mode + "/" + name + "/payload.bin";
+            const bool failed = Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 0;
+            Check(failed && Aps5HttpClient_GetSize_nid_postfix(client.get()) == -1, "invalid Content-Length accepted");
+            ++refused;
+        }
+    }
+    std::printf("Content-Length equivalent cases: %d/18; invalid cases refused: %d/39\n", accepted, refused);
+    Check(accepted == 18 && refused == 39, "Content-Length list interoperability failed");
+}
+
 void CheckCancellation(const std::string& base) {
     auto client = Create();
     Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/stall/payload.bin").c_str()) == 1, "stalled source open failed");
@@ -392,6 +427,7 @@ int main(int argc, char** argv) {
         CheckRepresentations(base);
         CheckCancellation(base);
         CheckRangeUnits(base);
+        CheckContentLengths(base);
         std::puts("Reusable HTTP client body, framing, range, cache, reopen, isolation and cancellation tests passed");
         return 0;
     } catch (const std::exception& error) {
