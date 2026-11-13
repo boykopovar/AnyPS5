@@ -3314,7 +3314,14 @@ GpuMutexType& GpuMutex() {
 }
 
 std::function<bool()> YieldToGpuMutexWaiters(std::function<bool()> stop) {
-    return stop;
+    return [stop = std::move(stop), first = true]() mutable {
+        if (stop()) return true;
+        if (first) {
+            first = false;
+            return false;
+        }
+        return GpuMutex().Waiters() != 0;
+    };
 }
 
 void TagGpuLockThread(std::uint32_t queue) {
