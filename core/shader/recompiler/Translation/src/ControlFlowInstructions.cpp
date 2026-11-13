@@ -156,7 +156,7 @@ void TranslationContext::subU32(const RdnaInstruction& inst, bool vector, bool r
     const IrU32& rhs = reverse ? first : second;
     const IrU32 result(ir.ISub(lhs.Value(), rhs.Value()));
     const IrU1 borrow(ir.ULessThan(lhs.Value(), rhs.Value()));
-    writeRawU32(inst.destination, result);
+    writeRawU32(inst.destination, inst.destination.clamp ? IrU32(ir.Select(borrow.Value(), ir.Constant(0u), result.Value())) : result);
     if (vector) {
         writeMask(inst.destination2, borrow);
         return;
