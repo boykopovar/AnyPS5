@@ -19,6 +19,7 @@
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceGnmDriver/include/CommandStream.hpp"
+#include "prx/libSceGnmDriverForNeoMode/include/EmbeddedShaders.hpp"
 
 namespace {
 
@@ -72,6 +73,16 @@ constexpr int GNM_ERROR_CAPTURE_RAZOR_NOT_LOADED = static_cast<int>(0x80d15001u)
 constexpr int GNM_ERROR_CAPTURE_FAILED_INTERNAL = static_cast<int>(0x80d1500fu);
 
 using RegisterValue = std::pair<std::uint32_t, std::uint32_t>;
+
+constexpr int Failure = static_cast<int>(0x8EEE00FFu);
+
+std::uint32_t AddressLo(const void* code) {
+    return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code) >> 8);
+}
+
+std::uint32_t AddressHi(const void* code) {
+    return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code) >> 40);
+}
 
 constexpr std::uint32_t Header(std::uint32_t opcode, std::uint32_t bodyWords, bool compute = false) {
     return 0xc0000000u | ((bodyWords - 1) << 16) | (opcode << 8) | (compute ? 2u : 0u);
@@ -500,6 +511,14 @@ int APS5_VABI sceGnmGetEqEventType(const KernelEvent* ev) {
     return static_cast<int>(ev->ident);
 }
 
+int APS5_VABI sceGnmGetOffChipTessellationBufferSize_nid_disambig1(void) {
+    return 0x800000;
+}
+
+bool APS5_VABI sceGnmDriverTraceInProgress_nid_disambig1(void) {
+    return false;
+}
+
 bool APS5_VABI sceGnmIsUserPaEnabled() {
     return false;
 }
@@ -556,9 +575,8 @@ int APS5_VABI sceGnmGetEqTimeStamp() {
     return 0;
 }
 
-int APS5_VABI sceGnmGetTheTessellationFactorRingBufferBaseAddress() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI sceGnmGetTheTessellationFactorRingBufferBaseAddress() {
+    return 0xff0000000ull;
 }
 
 int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex() {
@@ -566,9 +584,8 @@ int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex() {
     return 0;
 }
 
-int APS5_VABI sceGnmLogicalCuMaskToPhysicalCuMask() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint32_t APS5_VABI sceGnmLogicalCuMaskToPhysicalCuMask(std::uint32_t, std::uint32_t mask) {
+    return mask;
 }
 
 int APS5_VABI sceGnmMapComputeQueue() {
@@ -597,6 +614,123 @@ int APS5_VABI sceGnmSetupMipStatsReport() {
 }
 
 int APS5_VABI sceGnmUnmapComputeQueue() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmSetEmbeddedPsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
+    if (!cmdbuf) return -1;
+    if (shaderId > 1) return Failure;
+    const bool black = shaderId == 0;
+    const auto* code = black ? GnmNeo::BlackPs.data() : GnmNeo::DepthOnlyPs.data();
+    auto* at = Emit(cmdbuf, OpSetShReg, {8, AddressLo(code), AddressHi(code)});
+    at = Emit(at, OpSetShReg, {10, black ? 0xc0000u : 0x2000u, black ? 4u : 0u});
+    at = Emit(at, OpSetContextReg, {0x1c4, 0, black ? 4u : 2u});
+    at = Emit(at, OpSetContextReg, {0x1b3, 2, 2});
+    at = Emit(at, OpSetContextReg, {0x1b6, 0});
+    at = Emit(at, OpSetContextReg, {0x1b8, 0});
+    at = Emit(at, OpSetContextReg, {0x203, 0x10});
+    at = Emit(at, OpSetContextReg, {0x8f, black ? 0xfu : 3u});
+    at[0] = 0xc00a1000u;
+    at[1] = 0;
+    return 0;
+}
+
+int APS5_VABI sceGnmSetEmbeddedVsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
+    if (!cmdbuf) return -1;
+    if (shaderId != 0) return Failure;
+    const auto* code = GnmNeo::FullscreenVs.data();
+    auto* at = Emit(cmdbuf, OpSetShReg, {0x48, AddressLo(code), AddressHi(code)});
+    at = Emit(at, OpSetShReg, {0x4a, 0xc0000, 4});
+    at = Emit(at, OpSetContextReg, {0x207, 0});
+    at = Emit(at, OpSetContextReg, {0x1b1, 0});
+    at = Emit(at, OpSetContextReg, {0x1c3, 4});
+    at[0] = 0xc00a1000u;
+    at[1] = 0;
+    return 0;
+}
+
+int APS5_VABI sceGnmDestroyWorkloadStream_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmDingDongForWorkload_nid_disambig1(std::uint32_t, std::uint32_t, std::uint64_t) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmDrawIndexMultiInstanced_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmDrawOpaqueAuto_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetGpuBlockStatus_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetGpuInfoStatus_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetLastWaitedAddress_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetNumTcaUnits_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetProtectionFaultTimeStamp_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetShaderProgramBaseAddress_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmGetShaderStatus_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmInsertThreadTraceMarker_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

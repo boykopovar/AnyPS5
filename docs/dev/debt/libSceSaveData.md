@@ -25,6 +25,16 @@
 | `Unknown` | `q8KxzjSpPVw` |
 | `Unknown` | `yBM2vzabhEA` |
 
+- [Later callable exports](../../../core/libs/prx/libSceSaveData/InventoryExports.cpp) - the function exports of `libSceSaveData` listed below throw through `NotImplemented_nid_no_patch` on every call; their parameter lists, return types and behavior are unknown, and the parameterless `int` declarations only resolve imports. The [PS5 13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/ba1933f305f1934ed2a12c94479a977844bdbe5a/data/firmware-13.60/libscesavedata-f92dab8a68.jsonl) lists them as function exports of the 13.60-labelled image only, not of its 3.20 reference; the label does not authenticate retail firmware. `sceSaveDataGetRequiredBlocksForCdlg` is not in the pinned NID database; the [later aerolib](https://github.com/zecoxao/sce_symbols/blob/692ca28cdf41ab07eb9faf1b413e388f134411e1/aerolib.csv) gives it for `wJ6oiu+TqK8`, and the name hashes to that NID. Neither source names the others, so they use literal NID aliases.
+
+| Name | NID |
+| --- | --- |
+| `sceSaveDataGetRequiredBlocksForCdlg` | `wJ6oiu+TqK8` |
+| `Unknown` | `KOSXhQAd7Co` |
+| `Unknown` | `VSIY1inHm0U` |
+| `Unknown` | `dBdQn-whUig` |
+| `Unknown` | `ohfDGZ8EKis` |
+
 ### Unknown function info
 
 - [libSceSaveData](../../../core/libs/prx/libSceSaveData/CMakeLists.txt) keeps PSN and cloud exports pending in libSceSaveData.native.md: `sceSaveDataBindPsnAccount`, `sceSaveDataBindPsnAccountForSystemBackup`, `sceSaveDataCheckCloudData`, `sceSaveDataCheckPremiumMember`, `sceSaveDataCheckSyncStatus`, `sceSaveDataCreateUploadData`, `sceSaveDataDeleteCloudData`, `sceSaveDataDownload`, `sceSaveDataGetAllSizeProspero`, `sceSaveDataGetAutoSyncInfo`, `sceSaveDataGetAutoUploadConditions`, `sceSaveDataGetAutoUploadRequestInfo`, `sceSaveDataGetAutoUploadSetting`, `sceSaveDataGetCloudInfo`, `sceSaveDataGetCloudQuotaInfo`, `sceSaveDataManualDownload`, `sceSaveDataManualUpload`, `sceSaveDataNotifySaveDataDownload`, `sceSaveDataSetAutoSyncSettings`, `sceSaveDataSetAutoUploadSetting`, `sceSaveDataSyncCloudList`, `sceSaveDataUpload`. shadPS4 0614ce3 has return-success templates for the PS4 names only; fpPS4 04cefd4, KytyPS5 569ec04 none. PS5 signatures and no-PSN host behaviour unknown.

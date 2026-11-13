@@ -90,11 +90,6 @@ int APS5_VABI sceFreeTypeOlFtaSupportFormatType42_nid_no_patch() {
 }
 APS5_EXPORT("xqjAbn8VNGo", sceFreeTypeOlFtaSupportFormatType42_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOlFtaSupportModules_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("oM0zMNCfXKM", sceFreeTypeOlFtaSupportModules_nid_no_patch);
-
 int APS5_VABI sceFreeTypeOlFtaSupportRendererRaster5_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

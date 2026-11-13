@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PatchVertexLayer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
@@ -57,7 +58,7 @@ bool LogicOpFormat(VkFormat format) {
 
 }
 
-void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline) {
+void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline, std::span<const CompiledShader> shaders) {
     if (!context.pipelineExecutableInfo) return;
     const auto getProperties = context.Function<PFN_vkGetPipelineExecutablePropertiesKHR>("vkGetPipelineExecutablePropertiesKHR");
     const auto getStatistics = context.Function<PFN_vkGetPipelineExecutableStatisticsKHR>("vkGetPipelineExecutableStatisticsKHR");
@@ -74,6 +75,11 @@ void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipel
         std::snprintf(line.data(), line.size(), format, values...);
         report += line.data();
     };
+    for (const auto& shader : shaders) {
+        if (shader.program == nullptr) continue;
+        const auto identity = shader.program->Identity();
+        append("[pipeline-source] stage=0x%x variant=0x%llx pipelineVariant=0x%llx identity=%016llx%016llx\n", VulkanStage(shader.stage), static_cast<unsigned long long>(shader.program->variantId), static_cast<unsigned long long>(shader.program->PipelineVariantId()), static_cast<unsigned long long>(identity.high), static_cast<unsigned long long>(identity.low));
+    }
     for (std::uint32_t index = 0; index < properties.size(); ++index) {
         VkPipelineExecutableInfoKHR executable{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR};
         executable.pipeline = pipeline;
@@ -387,7 +393,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(key, shader.stage);
         appendKey(key, identity.low);
         appendKey(key, identity.high);
-        appendKey(key, shader.pushConstantOffset);
+        appendKey(key, KeyedPushOffset(shader));
         appendKey(key, state.meshLayerBase);
         appendKey(key, state.meshLayerCount);
         if (resources.split) {
@@ -553,7 +559,9 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT meshSubgroup{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT, nullptr, 32u};
         for (std::uint32_t i = 0; i < shaders.size(); ++i) {
             const auto& shader = *shaders[i].program;
-            _modules[i] = CreateShaderModule(context, shader.spirv.data(), shader.spirv.size() * sizeof(std::uint32_t), "vkCreateShaderModule graphics");
+            const auto demoted = barycentricPatches && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? DemoteVertexLayerOutput(shader.spirv.Words()) : std::vector<std::uint32_t>{};
+            const auto words = demoted.empty() ? shader.spirv.Words() : std::span<const std::uint32_t>(demoted);
+            _modules[i] = CreateShaderModule(context, words.data(), words.size() * sizeof(std::uint32_t), "vkCreateShaderModule graphics");
             const auto stage = VulkanStage(shaders[i].stage);
             stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
             stages[i].stage = stage;
@@ -792,7 +800,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             prebuilt = true;
             return;
         }
-        const VkPipelineCache pipelineCache = state.stages.tessellation && !context.tessellationPipelineCache ? VK_NULL_HANDLE : context.pipelineCache;
+        const VkPipelineCache pipelineCache = (state.stages.tessellation || barycentricPatches) && !context.tessellationPipelineCache ? VK_NULL_HANDLE : context.pipelineCache;
         if (libraries) pipeline = LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized, false, _modules);
         else {
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
@@ -812,7 +820,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         _modules.clear();
         timing.Mark("create");
         PerformanceCounters::CountPipeline();
-        LogPipelineStatistics_nid_no_patch(context, pipeline);
+        LogPipelineStatistics_nid_no_patch(context, pipeline, shaders);
     } catch (...) {
         release();
         throw;
@@ -1077,7 +1085,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
         append(key, identity.low);
         append(key, identity.high);
         // Where the stage's push constants sit in the block (AssemblePushConstants).
-        append(key, shader.pushConstantOffset);
+        append(key, KeyedPushOffset(shader));
     }
     append(key, state.meshLayerBase);
     append(key, state.meshLayerCount);

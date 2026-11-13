@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 #include <string>
 #include <stdexcept>
 #include <cstdint>
@@ -105,6 +106,22 @@ static void CheckCharacterScanLengths() {
     }
 }
 
+static void CheckFloatingScanRange() {
+    const auto scan = [](const std::string& input) {
+        double value = 0.0;
+        errno = 0;
+        const int result = sscanf_s_nid_postfix(input.c_str(), "%lf", &value);
+        return std::pair{result, errno};
+    };
+    Require(scan("1.5") == std::pair{1, 0});
+    Require(scan(std::string(4000, '9')) == std::pair{1, 0});
+    Require(scan(std::string(5000, '9')) == std::pair{1, ERANGE});
+    Require(scan("0." + std::string(5000, '0') + "1") == std::pair{1, ERANGE});
+    Require(scan("1e5000") == std::pair{1, ERANGE});
+    Require(scan("1e-5000") == std::pair{1, ERANGE});
+    Require(scan("1e300") == std::pair{1, 0});
+}
+
 static int APS5_VABI PrintList(const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
@@ -128,6 +145,16 @@ static void CheckPositionalUnknownConversion() {
         Require(std::memcmp(&args, &original, sizeof(args)) == 0);
     }
     Require(FormatList(output, sizeof(output), "%1$C%d", 7) == 3 && std::strcmp(output, "%C7") == 0);
+}
+
+static void CheckSecureCountBeforeInputFailure() {
+    for (const auto scan : {sscanf_s_nid_postfix, ScanListS}) {
+        int count = -7;
+        int value = -7;
+        Require(scan("", "%n%d", &count, &value) == 0 && count == 0 && value == -7);
+        Require(scan("  ", "%*n%d", &value) == 0 && value == -7);
+        Require(scan("", " %n%d", &count, &value) == 0 && value == -7);
+    }
 }
 
 static void CheckIgnoredLengths() {
@@ -342,6 +369,11 @@ static void CheckSecureFormat() {
     Require(snprintf_s_nid_postfix(buffer, 5, "%d-%ls", 42, u"abcd") == 7 && std::strcmp(buffer, "42-a") == 0);
     Require(FormatListS(buffer, 1, "%x", 0xabcu) == 3 && buffer[0] == 0);
     Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "") == 0 && buffer[0] == 0);
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%zf|%Ld", 1.5, 12) == 11 && std::strcmp(buffer, "1.500000|12") == 0);
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%hhf", 0.5) == 8 && std::strcmp(buffer, "0.500000") == 0);
+    char pointerText[32];
+    snprintf_s_nid_postfix(pointerText, sizeof(pointerText), "%p", reinterpret_cast<void*>(0x1234));
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%hp", reinterpret_cast<void*>(0x1234)) == static_cast<int>(std::strlen(pointerText)) && std::strcmp(buffer, pointerText) == 0);
     buffer[0] = 'x';
     Require(FormatListS(buffer, sizeof(buffer), nullptr) < 0 && buffer[0] == 0);
     Require(FormatListS(nullptr, sizeof(buffer), "a") < 0 && snprintf_s_nid_postfix(nullptr, sizeof(buffer), "a") < 0);
@@ -466,6 +498,12 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(std::strcmp(buffer, "abcd") == 0 && buffer[5] == '!');
     Require(snprintf_nid_postfix(nullptr, 0, "%s:%d", "abcdef", 123) == 10);
     Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%s]", static_cast<const char*>(nullptr)) == 8 && std::strcmp(buffer, "[(null)]") == 0);
+    const char* none = nullptr;
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%.3s][%.0s][%8.2s][%-6.1s]", none, none, none, none) == 25 &&
+        std::strcmp(buffer, "[(nu][][      (n][(     ]") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "[%.*s]", 4, none) == 6 && std::strcmp(buffer, "[(nul]") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "%2$.3s:%1$d", 7, none) == 5 && std::strcmp(buffer, "(nu:7") == 0);
+    Require(sprintf_nid_postfix(buffer, "%.2s", none) == 2 && std::strcmp(buffer, "(n") == 0);
     buffer[0] = 'x';
     Require(snprintf_nid_postfix(buffer, 1, "%d", 123) == 3 && buffer[0] == 0);
     Require(sprintf_nid_postfix(buffer, "%hhd %hhu %hd %hu %%", 255, 257, 65535, 65537) == 11);
@@ -856,4 +894,4 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckPositionalUnknownConversion(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckFloatingScanRange(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
