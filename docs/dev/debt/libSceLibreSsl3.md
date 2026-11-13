@@ -7,6 +7,7 @@
 - [`X509_set_version`](../../../core/libs/prx/libSceLibreSsl3/src/X509.cpp) follows LibreSSL 4.0.0 `crypto/x509/x509_set.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_set.c) and the `X509_CINF` layout in its `x509_local.h`. Versions outside 0 to 2 return 0 without mutation; a missing version integer is allocated from the guest heap, the encoding is marked modified, and the value is set through `ASN1_INTEGER_set`. A null certificate returns 0 and null certificate info, undefined upstream, throws. The 104-byte `X509_CINF` layout and the `enc.modified` offset 96 are not measured on the console.
 ### Functional
 
+- [X509_digest](../../../core/libs/prx/libSceLibreSsl3/src/X509Digest.cpp) - hashes the certificate body with the supplied `EVP_MD` through libSceLibreSsl `EVP_Digest`. It uses the cached DER encoding (`enc` and `len` at the `X509_CINF` encoding offset) and throws `NotImplemented_nid_no_patch` when no valid cached encoding exists, because `i2d_X509` is still unimplemented. A null certificate, digest or output throws. The PS5 layout, digest selection and console behaviour are unverified. Closes when: compared with the console and certificates without cached encoding are encoded and hashed.
 - [X509_get0_pubkey](../../../core/libs/prx/libSceLibreSsl3/src/X509PublicKeyAccessors.cpp) - reads the cached public key from the certificate-info key structure; a null certificate, info or key returns null, and a null cached key with encoded SPKI data throws `NotImplemented_nid_no_patch` until SPKI decoding exists. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
 - [AES_wrap_key](../../../core/libs/prx/libSceLibreSsl3/src/AesWrap.cpp) - follows [RFC 3394](https://www.rfc-editor.org/rfc/rfc3394) with the default IV `A6A6A6A6A6A6A6A6`, six rounds and the 64-bit counter XORed into the A block; it encrypts through libSceLibreSsl's `AES_encrypt`. Inputs below 16 bytes or not a multiple of 8 return -1 as LibreSSL does (OpenSSL 1.1 returns 0); null key, input or output throws where LibreSSL dereferences it. The PS5 ABI, custom-IV handling and console behaviour are unverified. Closes when: compared with the console.
 - [EVP_EncryptInit](../../../core/libs/prx/libSceLibreSsl3/src/EvpCipherInit.cpp) forwards the four-argument LibreSSL entry point to libSceLibreSsl's `EVP_CipherInit_ex` with encrypt set, so the legacy cipher and context layouts are shared rather than duplicated. A null context throws through the parent, a null cipher on an uninitialised context returns 0, and the parent's cipher checks and callbacks decide the rest. The PS5 ABI and console behaviour are unverified. Closes when: compared with the console.
@@ -107,7 +108,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 71 still-unimplemented callable exports: 67 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 70 still-unimplemented callable exports: 66 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -163,7 +164,6 @@
 | `PEM_read_bio_PUBKEY` | `gn7mRF71J4k` |
 | `i2d_PKCS8_PRIV_KEY_INFO` | `iFlkTGEbE9k` |
 | `X509_CRL_get_ext_d2i` | `je-ydGAbgFg` |
-| `X509_digest` | `k1AHUWet-oU` |
 | `tls_config_set_ciphers` | `lTdt9OsPAV0` |
 | `RSA_pkey_ctx_ctrl` | `mKlCMgWMU84` |
 | `SSL_provide_quic_data` | `mhAgol4ETgY` |
