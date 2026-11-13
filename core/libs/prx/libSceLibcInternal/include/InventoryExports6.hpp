@@ -60,7 +60,6 @@ int APS5_VABI _ZNSt7collateIcEC2EPKcm_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE4syncEv_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE7_UnlockEv_nid_postfix();
 int APS5_VABI _ZNSt7_MpunctIwED0Ev_nid_postfix();
-int APS5_VABI _ZNSt6_MutexC1Ev_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE5imbueERKSt6locale_nid_postfix();
 void APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev_nid_postfix(void* self);
 int APS5_VABI _ZNSt8numpunctIcED0Ev_nid_postfix();
