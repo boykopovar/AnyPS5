@@ -304,6 +304,15 @@ inline std::size_t VertexBufferExtent(const ShaderRecompiler::VertexAttribute& a
     return static_cast<std::size_t>(bytes);
 }
 
+inline std::uint64_t VertexDescriptorEnd(const ShaderRecompiler::VertexAttribute& attribute, std::size_t widened) {
+    const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
+    const auto records = attribute.resource.fields[2];
+    if (stride == 0 || records == 0 || NullVertexDescriptor(attribute)) return 0;
+    const auto address = attribute.resource.fields[0] | (static_cast<std::uint64_t>(attribute.resource.fields[1] & 0xffffu) << 32u);
+    const auto bytes = static_cast<std::uint64_t>(records - 1u) * stride + DecodeVertexFormat(attribute).bytes + widened;
+    return bytes <= std::numeric_limits<std::uint64_t>::max() - address ? address + bytes : 0;
+}
+
 inline std::size_t VertexBufferReadSize(const ShaderRecompiler::VertexAttribute& attribute, std::uint32_t maxIndex, std::uint32_t instances, std::uint32_t firstInstance = 0) {
     Require(instances != 0, "vertex input requires nonzero instance count");
     Require(firstInstance <= std::numeric_limits<std::uint32_t>::max() - (instances - 1u), "vertex input instance range overflow");
