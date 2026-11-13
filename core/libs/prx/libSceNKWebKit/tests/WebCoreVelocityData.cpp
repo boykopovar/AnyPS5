@@ -81,6 +81,11 @@ void TestRingBuffer() {
     Check(history.m_latestDataIndex == 2);
     Check(history.m_lastAppendTimestamp.m_value == 3.0);
     Check(Entry(history, 2, 3.0, 50.0f, 25.0f, 0.5));
+
+    Check(Same(Feed(history, {60.0f, 30.0f}, 4.5, 3.5), 20.0f, -20.0f, 1.0f, 3.5));
+    Check(history.m_historySize == 3);
+    Check(history.m_latestDataIndex == 0);
+    Check(Entry(history, 0, 3.5, 60.0f, 30.0f, 4.5));
 }
 
 void TestFirstSampleInsideThreshold() {
