@@ -687,7 +687,7 @@ int APS5_VABI ENGINE_ctrl_cmd_nid_postfix(void* engine, const char* command, std
 int APS5_VABI ENGINE_finish_nid_postfix(void* engine);
 int APS5_VABI ENGINE_free_nid_postfix(void* engine);
 void* APS5_VABI ENGINE_get_first_nid_postfix(void);
-int APS5_VABI ENGINE_get_id_nid_postfix(void);
+const char* APS5_VABI ENGINE_get_id_nid_postfix(const void* engine);
 void* APS5_VABI ENGINE_get_next_nid_postfix(void* engine);
 int APS5_VABI ENGINE_init_nid_postfix(void* engine);
 void APS5_VABI ENGINE_load_builtin_engines_nid_postfix(void);

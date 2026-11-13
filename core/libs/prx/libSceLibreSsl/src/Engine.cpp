@@ -52,6 +52,12 @@ void* APS5_VABI ENGINE_get_first_nid_postfix(void) {
     return nullptr;
 }
 
+const char* APS5_VABI ENGINE_get_id_nid_postfix(const void* engine) {
+    const char* id = nullptr;
+    if (!engine || !GuestCopyIn_nid_no_patch(&id, engine, sizeof(id))) NotImplemented_nid_no_patch(__func__);
+    return id;
+}
+
 void* APS5_VABI ENGINE_get_next_nid_postfix(void* engine) {
     RequireNoEngine(engine, "ENGINE_get_next of an ENGINE, which this library cannot create");
     return nullptr;

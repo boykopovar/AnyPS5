@@ -122,6 +122,13 @@ int main() {
     Require(ERR_get_error_nid_postfix() == Pack(38, 0xfff, 116), "an unknown engine id pushes ENGINE_R_NO_SUCH_ENGINE");
     Require(ENGINE_by_id_nid_postfix(nullptr) == nullptr, "a null engine id is found");
     Require(ERR_get_error_nid_postfix() == nullEngine, "a null engine id pushes ERR_R_PASSED_NULL_PARAMETER");
+    const char engineId[] = "padlock";
+    const char* engineHeader[] = {engineId, "VIA PadLock"};
+    Require(ENGINE_get_id_nid_postfix(engineHeader) == engineId, "engine id is a borrowed pointer");
+    engineHeader[0] = nullptr;
+    Require(ENGINE_get_id_nid_postfix(engineHeader) == nullptr, "engine id can be unset");
+    RequireThrows([] { ENGINE_get_id_nid_postfix(nullptr); }, "ENGINE_get_id on a null engine");
+    Require(ERR_peek_error_nid_postfix() == 0, "the engine id getter does not push an error");
     Require(ENGINE_get_next_nid_postfix(nullptr) == nullptr, "a null engine has a next one");
     Require(ERR_get_error_nid_postfix() == nullEngine, "ENGINE_get_next of null pushes ERR_R_PASSED_NULL_PARAMETER");
     Require(ENGINE_init_nid_postfix(nullptr) == 0, "a null engine initializes");
