@@ -78,7 +78,10 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_property(TARGET anyps5_curl_backend APPEND PROPERTY INTERFACE_LINK_LIBRARIES pthread)
 endif()
 
-add_library(libcurl SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libcurl SHARED EXCLUDE_FROM_ALL
+    Export.cpp
+    src/FormFree.cpp
+)
 target_include_directories(libcurl PUBLIC ${curlSourceDir}/include PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libcurl PRIVATE libc libkernel anyps5_curl_backend)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -110,13 +113,14 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcurl>")
     endif()
 
-    foreach(test_topic IN ITEMS Utility Url SlistMime Options Handles Transfers)
+    set(curlTestTopics Utility Url SlistMime Options Handles Transfers MimeCallback Allocators)
+    foreach(test_topic IN LISTS curlTestTopics)
         set(test_name guest_curl_${test_topic}_tests)
         string(TOLOWER "${test_topic}" test_slug)
         add_test_executable(${test_name} tests/Curl${test_topic}.cpp)
         target_include_directories(${test_name} PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(${test_name} PRIVATE libcurl libkernel libc)
-        if(test_topic STREQUAL "Transfers")
+        if(test_topic MATCHES "^(Transfers|MimeCallback)$")
             target_link_libraries(${test_name} PRIVATE anyps5_curl_backend)
         endif()
         configure_windows_unwind(${test_name})
