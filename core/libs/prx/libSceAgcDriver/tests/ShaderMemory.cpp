@@ -1408,6 +1408,14 @@ void verifyMayDecideSharedConditions() {
     require(Detail::Evaluator::MayDecide(plan, decided), "MayDecide did not decide 64 levels of shared conditions over a uniform conjunct");
     std::unordered_map<const IrValue*, bool> memo;
     require(!Detail::Evaluator::MayDecide(plan, undecided, memo) && Detail::Evaluator::MayDecide(plan, decided, memo), "MayDecide answered differently through a shared memo");
+    const auto uniformConjunct = [&] { return &make(IrOpcode::LogicalAnd, IrType::Bool, {varying(), &make(IrOpcode::IEqual32, IrType::Bool, {&input, &input})}); };
+    auto& copies = make(IrOpcode::Phi, IrType::Bool, {uniformConjunct(), uniformConjunct()});
+    auto& lanes = make(IrOpcode::Phi, IrType::Bool, {uniformConjunct(), &make(IrOpcode::LogicalAnd, IrType::Bool, {varying(), varying()})});
+    auto& looped = make(IrOpcode::Phi, IrType::Bool, {uniformConjunct()});
+    looped.AddArgument(&looped);
+    require(Detail::Evaluator::MayDecide(plan, &make(IrOpcode::LogicalNot, IrType::Bool, {&copies})), "MayDecide did not decide a branch on a phi of two copies of a condition with a uniform conjunct");
+    require(!Detail::Evaluator::MayDecide(plan, &make(IrOpcode::LogicalNot, IrType::Bool, {&lanes})), "MayDecide decided a phi of a decidable and an undecidable condition");
+    require(Detail::Evaluator::MayDecide(plan, &looped), "MayDecide did not decide a phi that carries one decidable condition around a loop");
 }
 
 void verifyEvaluatedValues() {
