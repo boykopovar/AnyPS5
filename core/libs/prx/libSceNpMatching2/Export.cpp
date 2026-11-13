@@ -185,7 +185,7 @@ int APS5_VABI sceNpMatching2Initialize(const NpMatching2InitializeParameter* par
     std::lock_guard lock(matching2Mutex);
     if (matching2Initialized) return SCE_NP_MATCHING2_ERROR_ALREADY_INITIALIZED;
     if (!param) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
-    std::uint32_t size = 0;
+    std::uint64_t size = 0;
     const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&size, &param->size, sizeof(size));
     errno = savedErrno;
