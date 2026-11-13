@@ -5013,7 +5013,29 @@ void multisampledDepthTests() {
     queue = singleSampleScan();
     queue.context[0x292] = 3;
     for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0;
-    expectFailure([&] { DecodeState(queue); }, "the depth target's sample count differs from the rasterizer's");
+    requireCentered(DecodeState(queue), "a single-sample scan with MSAA_ENABLE into 4x depth and color targets");
+    const auto msaaDepthOnly = [&] {
+        auto queue = depthOnly();
+        queue.context[0x292] = 1;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0;
+        return queue;
+    };
+    queue = msaaDepthOnly();
+    state = DecodeState(queue);
+    Require(state.colors.empty(), "a depth-only single-sample scan with MSAA_ENABLE decoded a color target");
+    requireCentered(state, "a single-sample scan with MSAA_ENABLE into a 4x depth target (PPSA01859's registers)");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a single-sample scan with MSAA_ENABLE into a 4x depth target");
+    queue = msaaDepthOnly();
+    queue.context[0x201] = 0x00040000u;
+    expectFailure([&] { DecodeState(queue); }, "a single-sample scan into a multisampled depth target with Z interpolation or overrasterization (DB_EQAA)");
+    for (const auto primitive : {2u, 3u}) {
+        queue = msaaDepthOnly();
+        queue.userConfig[0x242] = primitive;
+        expectFailure([&] { DecodeState(queue); }, "a single-sample scan into a multisampled depth target for primitives other than triangles and rectangles");
+    }
+    queue = msaaDepthOnly();
+    queue.context[0x2fe] = 0xcc44;
+    expectFailure([&] { DecodeState(queue); }, "MSAA_ENABLE on a single-sample target whose sample is off the pixel center");
     queue = singleSampleScan();
     queue.context[0x2f8] = 0x00100001;
     queue.context[0x292] = 3;
