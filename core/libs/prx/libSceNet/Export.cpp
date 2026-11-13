@@ -4194,8 +4194,9 @@ int APS5_VABI sceNetDumpAbort(std::int32_t dumpId, std::uint32_t flags) {
 int APS5_VABI sceNetDumpCreate(const char* name, std::int32_t bufferSize, std::uint32_t flags) {
     if (!net_initialized()) return fail(NET_ENOTINIT);
     if (name == nullptr) return fail(NET_EINVAL);
-    const bool longName = strnlen(name, 32) > 31;
-    if (longName || bufferSize < 0x800 || flags > 4 || flags == 3) return fail(longName ? NET_ENAMETOOLONG : NET_EINVAL);
+    std::string guestName;
+    if (const int error = CopyGuestString_nid_no_patch(name, 32, guestName)) return fail(error);
+    if (bufferSize < 0x800 || flags > 4 || flags == 3) return fail(NET_EINVAL);
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -4211,7 +4212,10 @@ int APS5_VABI sceNetDumpDestroy(std::int32_t dumpId) {
 
 int APS5_VABI sceNetDumpRead(std::int32_t dumpId, void* buffer, std::int32_t bufferSize, std::uint32_t* flags) {
     if (!net_initialized()) return fail(NET_ENOTINIT);
-    if (buffer == nullptr || bufferSize < 0 || (flags != nullptr && (*flags & ~0x20u) != 0)) return fail(NET_EINVAL);
+    if (buffer == nullptr || bufferSize < 0) return fail(NET_EINVAL);
+    std::uint32_t requested = 0;
+    if (flags != nullptr && !GuestCopyIn_nid_no_patch(&requested, flags, sizeof(requested))) return fail(NET_EFAULT);
+    if ((requested & ~0x20u) != 0) return fail(NET_EINVAL);
     NotImplemented_nid_no_patch(__func__);
 }
 
