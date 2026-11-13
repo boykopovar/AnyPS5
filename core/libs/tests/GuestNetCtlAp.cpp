@@ -55,6 +55,7 @@ int main() {
     int state = -1;
     Require(sceNetCtlApGetState(&state) == 0 && state == 0);
     Require(sceNetCtlApGetState(nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlApGetState(nullptr) == kErrInvalidAddr);
     errno = 71;
     Require(sceNetCtlApGetState(reinterpret_cast<int*>(0x10)) == kErrInvalidAddr);
     Require(errno == 71);
