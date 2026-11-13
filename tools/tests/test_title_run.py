@@ -154,6 +154,30 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(title_run.read_summary(path)["presents"], 500)
         self.assertEqual(title_run.read_summary(self.root / "missing.jsonl")["presents"], 0)
 
+    def test_periodic_presents_are_not_recounted_by_capture_windows(self):
+        identity = {"gpu": "GPU", "driver": "Driver", "os": "OS"}
+        first = dict(identity, interval_start_s=0, interval_end_s=10, presents=100, window={"ms": 10000})
+        second = dict(identity, interval_start_s=10, interval_end_s=20, presents=300, window={"ms": 10000})
+        capture = dict(identity, presents=300, window={"ms": 10000}, trace="aps5-trace-window.json.gz")
+        path = self.root / "aps5-summary.jsonl"
+        for rows in ([capture, first, second], [first, capture, second], [first, second, capture]):
+            with self.subTest(capture_position=rows.index(capture)):
+                path.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
+                self.assertEqual(title_run.read_summary(path), dict(identity, presents=400, fps=20.0))
+
+    def test_empty_periodic_window_does_not_fall_back_to_capture_frames(self):
+        path = self.root / "aps5-summary.jsonl"
+        interval = {"interval_start_s": 0, "interval_end_s": 10, "presents": 0, "window": {"ms": 10000}}
+        capture = {"presents": 300, "window": {"ms": 10000}, "trace": "capture.json.gz"}
+        path.write_text("\n".join(map(json.dumps, [interval, capture])), encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path), {"presents": 0, "fps": 0.0, "gpu": "", "driver": "", "os": ""})
+
+    def test_capture_only_summary_remains_available(self):
+        path = self.root / "aps5-summary.jsonl"
+        capture = {"presents": 300, "window": {"ms": 10000}, "trace": "capture.json.gz", "gpu": "A", "driver": "1", "os": "W"}
+        path.write_text(json.dumps(capture), encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path), {"presents": 300, "fps": 30.0, "gpu": "A", "driver": "1", "os": "W"})
+
     def test_frame_is_uniform(self):
         black = bmp(self.root / "black.bmp", 8, 4, lambda x, y: (0, 0, 0))
         noisy = bmp(self.root / "noisy.bmp", 8, 4, lambda x, y: (3, 2, 1) if x < 7 else (200, 200, 200))
