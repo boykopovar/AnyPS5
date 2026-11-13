@@ -1487,7 +1487,6 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
         if (std::ranges::any_of(targets(), [&](const auto& candidate) { return candidate->context.device == context.device && candidate->Serves(target); })) return;
     }
     if (target.dccAddress != 0u || target.cmaskFastClear) return;
-    Require(target.cmaskAddress == 0u, "initial multisample color contents with CMASK require a modeled metadata import");
     Require(target.layers == 1u && target.arraySlice == 0u && target.arrayLastSlice == 0u && target.depth == 1u && target.depthSlice == 0u && target.mipCount == 1u && target.mip == 0u && !target.mipTail, "initial multisample array, volume or mip contents are not implemented");
     Require(FindGuestColorTargetFormat(target.format, target.elementBytes).has_value(), "initial multisample color format or element size is unsupported");
     Require(target.elementBytes != 0u && target.elementBytes <= 16u && 16u % target.elementBytes == 0u, "initial multisample color texel size is not implemented");
@@ -1514,6 +1513,7 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
     }
     std::shared_ptr<Buffer> upload;
     if (!clear) {
+        Require(target.cmaskAddress == 0u, "initial multisample color contents with CMASK require a modeled metadata import");
         Require(target.tileMode == ColorTileMode::RenderTarget, "nonuniform initial multisample color tiling is not implemented");
         Require(context.detiler != nullptr && context.storageImageMultisample && context.storageImageWriteWithoutFormat, "initial multisample color samples require enabled formatless multisampled storage image writes");
         const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, target.elementBytes, target.samples, target.extent.width, target.extent.height, 1u, target.pipeBankXor);
