@@ -2856,7 +2856,7 @@ template<class Memo>
 void forgetOverlapping(Memo& memo, std::uint64_t address, std::size_t bytes) {
     const auto end = memo.lower_bound(address + bytes);
     for (auto entry = memo.begin(); entry != end;) {
-        if (entry->first + entry->second.bytes > address) entry = memo.erase(entry);
+        if (entry->first >= address || entry->second.bytes > address - entry->first) entry = memo.erase(entry);
         else ++entry;
     }
 }
@@ -3424,6 +3424,16 @@ static bool surfaceFootprintOverlaps(const DepthSurface& surface, std::uint64_t 
     return overlaps(target.address, planeBytes(d16 ? 2u : 4u)) || overlaps(target.stencilAddress, planeBytes(1u)) || overlaps(target.htileAddress, HtileMetadataBytes(target.extent));
 }
 
+void InvalidateDepthMetadataForReplay(std::uint64_t address, std::size_t bytes) {
+    Require(GuestMemory::GpuMutex().HeldByThisThread(), "depth metadata invalidation requires the guest memory transaction lock");
+    if (bytes == 0u) return;
+    Require(address <= std::numeric_limits<std::uint64_t>::max() - bytes, "depth metadata invalidation range overflows");
+    const auto end = address + bytes;
+    std::lock_guard lock(surfacesMutex());
+    forgetHtileReads(address, bytes);
+    std::erase_if(clearedHtiles(), [&](const auto& cleared) { return cleared.second != 0u && cleared.first < end && (cleared.first >= address || cleared.second > address - cleared.first); });
+}
+
 RetiredDepth RetireReplacedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
     RetiredDepth retired;
     retired.owners = retireDepthOver(address, bytes, true);
@@ -3431,8 +3441,7 @@ RetiredDepth RetireReplacedDepth_nid_no_patch(std::uintptr_t address, std::size_
     const auto end = static_cast<std::uint64_t>(address) + bytes;
     std::lock_guard gpu(GuestMemory::GpuMutex());
     std::lock_guard lock(surfacesMutex());
-    forgetHtileReads(address, bytes);
-    std::erase_if(clearedHtiles(), [&](const auto& cleared) { return cleared.first < end && address < cleared.first + cleared.second; });
+    InvalidateDepthMetadataForReplay(address, bytes);
     for (const auto& surface : surfaces()) {
         if (surface->retired || !surfaceFootprintOverlaps(*surface, address, end)) continue;
         surface->active->store(false, std::memory_order_release);
@@ -3475,12 +3484,7 @@ RetiredDepth DiscardDepthSurfacesForReplay(VkDevice device) {
         surface->hostWritten->store(false, std::memory_order_release);
         if (surface->retired) continue;
         if (surface->target.htileAddress != 0u) {
-            const auto begin = surface->target.htileAddress;
-            const auto bytes = HtileMetadataBytes(surface->target.extent);
-            Require(begin <= std::numeric_limits<std::uint64_t>::max() - bytes, "native replay HTILE range overflows");
-            const auto end = begin + bytes;
-            forgetHtileReads(begin, bytes);
-            std::erase_if(clearedHtiles(), [&](const auto& cleared) { return cleared.first < end && begin < cleared.first + cleared.second; });
+            InvalidateDepthMetadataForReplay(surface->target.htileAddress, static_cast<std::size_t>(HtileMetadataBytes(surface->target.extent)));
         }
         retired.planes += surface->AnyStale() || surface->stencilStale;
         ++retired.surfaces;

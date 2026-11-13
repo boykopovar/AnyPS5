@@ -681,7 +681,10 @@ ResetResult resetMemory(const FrameCaptureReader& reader, const Skipped& skipped
             verifyReset(reader, plan, candidates);
             result.verifySeconds = std::chrono::duration<double>(Clock::now() - verifyStart).count();
         }
-        if (nativeDepth != nullptr) AgcDriver::RestoreNativeDepthForReplay_nid_no_patch(*nativeDepth);
+        if (nativeDepth != nullptr) {
+            for (const auto* range : plan.ranges) AgcDriver::InvalidateNativeDepthMetadataForReplay_nid_no_patch(range->address, static_cast<std::size_t>(range->bytes));
+            AgcDriver::RestoreNativeDepthForReplay_nid_no_patch(*nativeDepth);
+        }
     });
     return result;
 }
