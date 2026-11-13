@@ -185,6 +185,9 @@ void CheckRead() {
     std::memcpy(samples.data(), cairo_image_surface_get_data(surface.get()), sizeof(samples));
     Require(samples == std::array<float, 3>{1.f, 0.f, 32768.f / 65535.f});
 
+    auto invalidCrc = rgba;
+    invalidCrc.resize(length);
+    invalidCrc[29] ^= 1;
     rgba.resize(length - 1);
     surface.reset(cairo_image_surface_create_from_png_stream(Read, &stream));
     Require(cairo_surface_status(surface.get()) == 10);
@@ -192,10 +195,9 @@ void CheckRead() {
     stream.error = 1;
     surface.reset(cairo_image_surface_create_from_png_stream(Read, &stream));
     Require(cairo_surface_status(surface.get()) == 1);
-    rgba[29] ^= 1;
-    stream.position = 0;
-    surface.reset(cairo_image_surface_create_from_png_stream(Read, &stream));
-    Require(cairo_surface_status(surface.get()) == 39);
+    InputStream malformed{invalidCrc};
+    surface.reset(cairo_image_surface_create_from_png_stream(Read, &malformed));
+    Require(cairo_surface_status(surface.get()) == 1);
 }
 
 }
