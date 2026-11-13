@@ -67,6 +67,39 @@ void testWriteDataSize() {
     check(sceAgcDcbWriteDataGetSize(1) == 20 && sceAgcDcbWriteDataGetSize(0x3ffd) == 0x3ffd * 4 + 16, "DCB WRITE_DATA size is not four header words plus the payload");
 }
 
+struct LargeStorage {
+    std::array<std::uint32_t, 256> words{};
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+};
+
+bool APS5_VABI clobberAndMove(CommandBuffer* buffer, std::uint32_t, void* userData) {
+    auto& spare = *static_cast<LargeStorage*>(userData);
+    std::fill(buffer->bottom, buffer->top, 0xdeadbeefu);
+    buffer->bottom = spare.words.data();
+    buffer->top = spare.words.data() + spare.words.size();
+    buffer->cursor_up = buffer->bottom;
+    buffer->cursor_down = buffer->top;
+    return true;
+}
+
+void testWriteDataReadsPayloadBeforeCallback() {
+    for (const auto writer : {sceAgcDcbWriteData, sceAgcAcbWriteData}) {
+        for (const std::uint32_t count : {4u, 64u, 65u, 100u}) {
+            LargeStorage full;
+            LargeStorage spare;
+            for (std::uint32_t i = 0; i < count; ++i) full.words[i] = 0x1000u + i;
+            full.buffer.cursor_up = full.words.data() + count;
+            full.buffer.cursor_down = full.buffer.cursor_up + 1;
+            full.buffer.callback = clobberAndMove;
+            full.buffer.user_data = &spare;
+            const auto* packet = writer(&full.buffer, 5, 0, 0x2000, full.words.data(), count, 1, 0);
+            check(packet == spare.words.data() && packet[0] == (0xc0003700u | ((count + 2u) << 16u)) && packet[2] == 0x2000u, "WRITE_DATA header mismatch after the allocation callback");
+            for (std::uint32_t i = 0; i < count; ++i) check(packet[4 + i] == 0x1000u + i, "WRITE_DATA payload was not read before the allocation callback");
+            check(full.buffer.cursor_up == packet + count + 4u, "WRITE_DATA cursor mismatch after the allocation callback");
+        }
+    }
+}
+
 }
 
 int main() {
@@ -74,6 +107,7 @@ int main() {
         testDrawQueueCopy();
         testComputeQueueCopy();
         testWriteDataSize();
+        testWriteDataReadsPayloadBeforeCallback();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
