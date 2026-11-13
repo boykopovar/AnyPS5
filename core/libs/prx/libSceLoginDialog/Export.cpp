@@ -11,15 +11,10 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
-constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
-constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
 constexpr int LOGIN_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x81340001u);
 constexpr int LOGIN_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x81340002u);
 constexpr int LOGIN_DIALOG_ERROR_BUSY = static_cast<int>(0x81340005u);
 constexpr int LOGIN_DIALOG_ERROR_INVALID_ARGUMENT = static_cast<int>(0x81340003u);
-constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 
 constexpr int LOGIN_DIALOG_ERROR_INVALID_USER = static_cast<int>(0x81340007u);
 

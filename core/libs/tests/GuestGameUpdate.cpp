@@ -2,6 +2,7 @@
 #include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -136,6 +137,7 @@ int main() {
     TestRequestArguments(notInitialized, invalidArgument, invalidSize, notFound);
 
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == notInitialized);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, &label, reinterpret_cast<GameUpdateAddcontVersionInfo*>(std::uintptr_t{0x10})) == notInitialized);
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, nullptr) == invalidArgument);
@@ -145,9 +147,17 @@ int main() {
 
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
 
+    errno = 71;
+    Require(sceGameUpdateGetAddcontLatestVersion(0, &label, reinterpret_cast<GameUpdateAddcontVersionInfo*>(std::uintptr_t{0x10})) == invalidArgument);
+    Require(errno == 71);
+
     info.size = sizeof(info);
+    info.found = true;
+    info.content_version[0] = 'X';
+    info.reserved[0] = 0x12345678;
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == 0);
     Require(!info.found);
+    Require(info.content_version[0] == 'X' && info.reserved[0] == 0x12345678);
     TestRequestLifecycle(notFound);
 
     Require(sceGameUpdateTerminate() == 0);

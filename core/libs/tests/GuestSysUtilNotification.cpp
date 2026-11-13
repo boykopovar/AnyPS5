@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <exception>
 #include <string>
+#include <vector>
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -115,6 +116,18 @@ int main() {
     }
 
     Require(sceKernelSendNotificationRequest(0, reinterpret_cast<const void*>(0x10), 3120, 0) == static_cast<int>(0x8002000eu), "invalid request memory must return badAddress");
+    std::vector<std::uint8_t> validReq(3120, 0);
+    constexpr auto invalidArgument = static_cast<int>(0x80020016u);
+    constexpr auto badAddress = static_cast<int>(0x8002000eu);
+    constexpr auto notSupported = static_cast<int>(0x8002002du);
+
+    Require(sceKernelSendNotificationRequest(0, nullptr, 3120, 0) == badAddress, "null request must return badAddress");
+    Require(sceKernelSendNotificationRequest(-1, validReq.data(), 3120, 0) == invalidArgument, "negative device must return invalidArgument");
+    Require(sceKernelSendNotificationRequest(0, validReq.data(), 0, 0) == invalidArgument, "zero size must return invalidArgument");
+    Require(sceKernelSendNotificationRequest(0, validReq.data(), 3119, 0) == invalidArgument, "undersized request must return invalidArgument");
+    Require(sceKernelSendNotificationRequest(0, validReq.data(), 3121, 0) == invalidArgument, "oversized request must return invalidArgument");
+    Require(sceKernelSendNotificationRequest(1, validReq.data(), 3120, 0) == notSupported, "nonzero device must return notSupported");
+    Require(sceKernelSendNotificationRequest(0, validReq.data(), 3120, 1) == notSupported, "nonzero flags must return notSupported");
     std::puts("SysUtil notification tests passed");
     return 0;
 }
