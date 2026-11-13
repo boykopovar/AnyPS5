@@ -941,6 +941,25 @@ void TestPlayback() {
 
     AvPlayerFrameInfoEx frame{};
     AvPlayerFrameInfo sound{};
+    AvPlayerFrameInfo videoSimple{};
+    Check(!sceAvPlayerGetAudioData(nullptr, &sound), "null player audio accepted");
+    Check(!sceAvPlayerGetAudioData(player, nullptr), "null audio info accepted");
+    errno = 71;
+    Check(!sceAvPlayerGetAudioData(player, reinterpret_cast<AvPlayerFrameInfo*>(0x10)), "unmapped audio info accepted");
+    Check(errno == 71, "preserve errno on unmapped audio info");
+
+    Check(!sceAvPlayerGetVideoData(nullptr, &videoSimple), "null player video accepted");
+    Check(!sceAvPlayerGetVideoData(player, nullptr), "null video info accepted");
+    errno = 71;
+    Check(!sceAvPlayerGetVideoData(player, reinterpret_cast<AvPlayerFrameInfo*>(0x10)), "unmapped video info accepted");
+    Check(errno == 71, "preserve errno on unmapped video info");
+
+    Check(!sceAvPlayerGetVideoDataEx(nullptr, &frame), "null player video ex accepted");
+    Check(!sceAvPlayerGetVideoDataEx(player, nullptr), "null video ex info accepted");
+    errno = 71;
+    Check(!sceAvPlayerGetVideoDataEx(player, reinterpret_cast<AvPlayerFrameInfoEx*>(0x10)), "unmapped video ex info accepted");
+    Check(errno == 71, "preserve errno on unmapped video ex info");
+
     int frames = 0;
     int sounds = 0;
     std::uint64_t last = 0;
@@ -1163,6 +1182,9 @@ void TestExtendedExports() {
     Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
     Check(sceAvPlayerStartEx(nullptr, nullptr) == InvalidParams, "start accepted a null player");
     Check(sceAvPlayerStartEx(player, nullptr) == InvalidParams, "start accepted null parameters");
+    errno = 71;
+    Check(sceAvPlayerStartEx(player, reinterpret_cast<const AvPlayer::StartInfo*>(0x10)) == InvalidParams, "unmapped start parameters accepted");
+    Check(errno == 71, "preserve errno on unmapped start info");
     AvPlayer::StartInfo startInfo{0, 700};
     Check(sceAvPlayerStartEx(player, &startInfo) == InvalidParams, "start accepted an invalid parameter size");
     startInfo.size = sizeof(startInfo);
