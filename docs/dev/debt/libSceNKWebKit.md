@@ -61,6 +61,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 ### Functional
 - [WebCore color space conversions and serialization](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColorSpaces.cpp) (libSceNKWebKit) - not checked against a console module. They follow WebKit c55364d53f97 [ColorConversion.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/ColorConversion.cpp) and [ColorSerialization.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/ColorSerialization.cpp), whose declarations match the exported names. Matrix products are not fused into FMA, so a console build that fuses them may differ in the last bit. The `Color` overloads of `serializationForCSS` and `serializationForRenderTreeAsText` and `Color::colorSpaceAndComponents` still throw: that revision packs `Color` differently from the 11.x packing `WebCoreColor.cpp` decodes.
+- [WKPage layout, pagination, and scrollbar controls](../../../core/libs/prx/libSceNKWebKit/src/PageLayout.cpp) (libSceNKWebKit) - `WKPageAreScrollbarAnimationsSuppressed`, `WKPageSetSuppressScrollbarAnimations`, `WKPageHasHorizontalScrollbar`, `WKPageHasVerticalScrollbar`, `WKPageWillHandleHorizontalScrollEvents`, `WKPageGetScrollPinningBehavior`, `WKPageSetScrollPinningBehavior`, `WKPageUseFixedLayout`, `WKPageSetUseFixedLayout`, `WKPageFixedLayoutSize`, `WKPageSetFixedLayoutSize`, `WKPageGetPaginationMode`, `WKPageSetPaginationMode`, `WKPageGetPaginationBehavesLikeColumns`, `WKPageSetPaginationBehavesLikeColumns`, `WKPageSetPaginationLineGridEnabled`, `WKPageGetGapBetweenPages`, `WKPageSetGapBetweenPages`, `WKPageGetPageLength` and `WKPageSetPageLength` manage page layout, fixed viewport sizing, pagination modes and scrollbar states; UI process coordinator synchronization and console execution are unverified.
 - [WKSerializedScriptValue](../../../core/libs/prx/libSceNKWebKit/src/SerializedScriptValue.cpp) (libSceNKWebKit) - `WKSerializedScriptValueCreate` and `WKSerializedScriptValueDeserialize` serialize and deserialize JavaScript values via JSON representation (`JSValueCreateJSONString` and `JSValueMakeFromJSONString`) rather than WebKit's full structured clone algorithm; non-serializable objects (such as functions, symbols and circular structures) fail serialization and report errors through the exception pointer on create, deserialization failures set exception to an Error object if provided, and `undefined`, `NaN`, `+Infinity` and `-Infinity` are preserved through explicit markers.
 - [FloatSize from IntSize constructors](../../../core/libs/prx/libSceNKWebKit/src/FloatSize.cpp) (libSceNKWebKit) - both constructor ABI entry points convert the source width and height to `float`, following the pinned [`FloatSize.h`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatSize.h). This adapter is built and tested on Linux; console ABI and runtime behavior are unverified.
 - [WKRunLoop main run loop dispatch](../../../core/libs/prx/libSceNKWebKit/src/RunLoop.cpp) (libSceNKWebKit) - `WKRunLoopInitializeMain`, `WKRunLoopRunMain`, `WKRunLoopStopMain` and `WKRunLoopCallOnMainThread` run main-thread callbacks via a dedicated FIFO queue and WakeUp-driven pump; nesting loops and non-main run loop targets are unmodelled, tasks still queued when the loop stops are dropped silently at the next InitializeMain, and console execution is unverified.
@@ -163,7 +164,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5949 of the 8703 inventory declarations listed below throw through NotImplemented_nid_no_patch; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5929 of the 8703 inventory declarations listed below throw through NotImplemented_nid_no_patch; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -465,7 +466,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKNotificationManagerProviderDidRemoveNotificationPolicies` | `gjIRPiBLogA` |
 | `WKNotificationManagerProviderDidShowNotification` | `7mQ26kdVI1U` |
 | `WKNotificationManagerSetProvider` | `7LaChig9ovU` |
-| `WKPageAreScrollbarAnimationsSuppressed` | `OQYQvowtC6I` |
 | `WKPageBackgroundExtendsBeyondPage` | `qKJ2G1pGKmU` |
 | `WKPageBeginPrinting` | `hujPhSbtd4A` |
 | `WKPageBlurFocusedNode` | `vAi26oOxOMw` |
@@ -497,7 +497,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageExecuteCommand` | `YbG9PpCoMm8` |
 | `WKPageFindString` | `7I+E3HMa9PI` |
 | `WKPageFindStringMatches` | `n8IqpiMeeZ4` |
-| `WKPageFixedLayoutSize` | `qMOzfrrKkfo` |
 | `WKPageForceRepaint` | `L2jVFKnqSH8` |
 | `WKPageGetAddsVisitedLinks` | `YdnEIPIgM98` |
 | `WKPageGetAllowsRemoteInspection` | `X20cr8FFQkI` |
@@ -507,19 +506,14 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageGetContentsAsString` | `wyMkX6F1ijI` |
 | `WKPageGetContext` | `fLfh+wZ12vQ` |
 | `WKPageGetEstimatedProgress` | `EEXgOrxJ1go` |
-| `WKPageGetGapBetweenPages` | `F-vtAS2uuns` |
 | `WKPageGetImageForFindMatch` | `KPPJLasPz+o` |
 | `WKPageGetIsControlledByAutomation` | `+uRH8ci2Zu8` |
 | `WKPageGetMediaCaptureEnabled` | `c4qOBt1+nO8` |
 | `WKPageGetMediaState` | `F4AnS9A-OSc` |
-| `WKPageGetPageLength` | `FeYrnuEZxkI` |
 | `WKPageGetPageZoomFactor` | `fPJ3h4AHMkU` |
-| `WKPageGetPaginationBehavesLikeColumns` | `QyAWkI0ffLQ` |
-| `WKPageGetPaginationMode` | `kk2zHgt--8E` |
 | `WKPageGetProcessIdentifier` | `llISO4CgRb8` |
 | `WKPageGetSamplingProfilerOutput` | `tnytRb-rZp4` |
 | `WKPageGetScaleFactor` | `is2FV8Y-bMc` |
-| `WKPageGetScrollPinningBehavior` | `L6HDX5ZnQps` |
 | `WKPageGetSelectionAsWebArchiveData` | `Ck7bElZaJ-4` |
 | `WKPageGetSessionBackForwardListItemValueType` | `Xadpbt8wQXo` |
 | `WKPageGetSessionHistoryURLValueType` | `lfWRbhGF-vQ` |
@@ -532,9 +526,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageHandleKeyboardEvent` | `KT3+V4XYj7w` |
 | `WKPageHandleMouseEvent` | `zf4+IDdC57s` |
 | `WKPageHandleWheelEvent` | `9HtGt7M9cMs` |
-| `WKPageHasHorizontalScrollbar` | `gqkmh6zYT9U` |
 | `WKPageHasSelectedRange` | `pY1NNqZbJ+4` |
-| `WKPageHasVerticalScrollbar` | `gmh9dPLZ8rE` |
 | `WKPageHideFindUI` | `BSE1GBeHulw` |
 | `WKPageHorizontalRubberBandingIsEnabled` | `2S-hLekYP7g` |
 | `WKPageIsClosed` | `ErgHdDWCpVc` |
@@ -594,8 +586,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageSetCustomUserAgent` | `wyOUIvHW0EE` |
 | `WKPageSetEnableHorizontalRubberBanding` | `s7QZGcHR6hI` |
 | `WKPageSetEnableVerticalRubberBanding` | `7ZTLaTyAWFA` |
-| `WKPageSetFixedLayoutSize` | `hwMqSlpTWCk` |
-| `WKPageSetGapBetweenPages` | `1UKzOMAA3bM` |
 | `WKPageSetIgnoresViewportScaleLimits` | `B0VJOvGWnWk` |
 | `WKPageSetMaintainsInactiveSelection` | `Iqpp9WOrXeE` |
 | `WKPageSetMayStartMediaWhenInWindow` | `5acW3MSCndw` |
@@ -610,25 +600,18 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageSetPageFindMatchesClient` | `7wjIexo6MvQ` |
 | `WKPageSetPageFormClient` | `cWHdm8MyA08` |
 | `WKPageSetPageInjectedBundleClient` | `uyg+XHR4HbQ` |
-| `WKPageSetPageLength` | `ikZjNtJlWTs` |
 | `WKPageSetPageLoaderClient` | `8Gl+aYTYdtU` |
 | `WKPageSetPageNavigationClient` | `3g8MMjaAs0M` |
 | `WKPageSetPagePolicyClient` | `pJ4iBZ6LEA0` |
 | `WKPageSetPageStateClient` | `8dbxlsbVzdY` |
 | `WKPageSetPageUIClient` | `6RXuTZIVqIg` |
 | `WKPageSetPageZoomFactor` | `pCJUJOonjAM` |
-| `WKPageSetPaginationBehavesLikeColumns` | `iUarLNk0Dkg` |
-| `WKPageSetPaginationLineGridEnabled` | `uqcmh9mV7sI` |
-| `WKPageSetPaginationMode` | `JjOoUWau3hA` |
 | `WKPageSetRubberBandsAtBottom` | `078ew7gQLwA` |
 | `WKPageSetRubberBandsAtLeft` | `E6OA1UUy8+4` |
 | `WKPageSetRubberBandsAtRight` | `GuIr1eWRunc` |
 | `WKPageSetRubberBandsAtTop` | `Nn6eNKOy98M` |
 | `WKPageSetScaleFactor` | `LDsNIDCwcLY` |
-| `WKPageSetScrollPinningBehavior` | `XxfxrsCBl5o` |
-| `WKPageSetSuppressScrollbarAnimations` | `mCIjZT8nfvg` |
 | `WKPageSetTextZoomFactor` | `f-vSeWHQsW4` |
-| `WKPageSetUseFixedLayout` | `0M-vF0rurfc` |
 | `WKPageStopLoading` | `BGuvmFH0-Uo` |
 | `WKPageSupportsTextEncoding` | `3tolGFkslb4` |
 | `WKPageSupportsTextZoom` | `vq8FBoJCd7c` |
@@ -637,10 +620,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageTryClose` | `DxUrwaURmnw` |
 | `WKPageTryRestoreScrollPosition` | `yHiQUEutgJ0` |
 | `WKPageUpdateWebsitePolicies` | `ky0keBcpiTk` |
-| `WKPageUseFixedLayout` | `OufFIenC01c` |
 | `WKPageValidateCommand` | `K82wly5zJoc` |
 | `WKPageVerticalRubberBandingIsEnabled` | `p-jMGxCpEF4` |
-| `WKPageWillHandleHorizontalScrollEvents` | `pYHt5lL67G8` |
 | `WKRegistrableDomainCreate` | `BjwTHxBa4gc` |
 | `WKResourceCacheManagerClearCacheForAllOrigins` | `g-SjvruXQtc` |
 | `WKResourceCacheManagerClearCacheForOrigin` | `Sq7E7Dwlq0w` |
