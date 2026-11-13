@@ -5,6 +5,12 @@
 
 extern "C" {
 
+int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline,
+                                                       const FreeType::GuestBitmap* bitmap) {
+    return FT_Outline_Get_Bitmap_nid_postfix(library, outline, bitmap);
+}
+APS5_EXPORT("4RRjK-Wd1lU", sceFreeTypeOtOutlineGetBitmap_nid_no_patch);
+
 int APS5_VABI FT_Activate_SizeForward_nid_no_patch(FreeType::GuestSizeRec* size) {
     return FT_Activate_Size_nid_postfix(size);
 }
