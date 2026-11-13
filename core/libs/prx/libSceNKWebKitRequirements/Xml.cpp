@@ -31,7 +31,6 @@ struct XmlBinding {
     xmlParserCtxtPtr host_ctxt = nullptr;
     NKWebKit::GuestSAXHandler* guest_sax = nullptr;
     xmlSAXHandler host_sax{};
-    void* guest_user_data = nullptr;
     NKWebKit::GuestXmlError guest_error{};
     std::string error_message;
     std::string error_file;
@@ -297,7 +296,7 @@ static xmlEntityPtr HostEntityForMirror(const NKWebKit::GuestEntity* mirror) {
 static void HostStartElementNs(void* ctx, const xmlChar* localname, const xmlChar* prefix, const xmlChar* URI, int nb_namespaces, const xmlChar** namespaces, int nb_attributes, int nb_defaulted, const xmlChar** attributes) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->startElementNs) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->startElementNs(guest_ctx,
         reinterpret_cast<const uint8_t*>(localname),
         reinterpret_cast<const uint8_t*>(prefix),
@@ -312,7 +311,7 @@ static void HostStartElementNs(void* ctx, const xmlChar* localname, const xmlCha
 static void HostEndElementNs(void* ctx, const xmlChar* localname, const xmlChar* prefix, const xmlChar* URI) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->endElementNs) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->endElementNs(guest_ctx,
         reinterpret_cast<const uint8_t*>(localname),
         reinterpret_cast<const uint8_t*>(prefix),
@@ -322,98 +321,98 @@ static void HostEndElementNs(void* ctx, const xmlChar* localname, const xmlChar*
 static void HostCharacters(void* ctx, const xmlChar* ch, int len) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->characters) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->characters(guest_ctx, reinterpret_cast<const uint8_t*>(ch), len);
 }
 
 static void HostCdataBlock(void* ctx, const xmlChar* value, int len) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->cdataBlock) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->cdataBlock(guest_ctx, reinterpret_cast<const uint8_t*>(value), len);
 }
 
 static void HostComment(void* ctx, const xmlChar* value) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->comment) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->comment(guest_ctx, reinterpret_cast<const uint8_t*>(value));
 }
 
 static void HostProcessingInstruction(void* ctx, const xmlChar* target, const xmlChar* data) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->processingInstruction) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->processingInstruction(guest_ctx, reinterpret_cast<const uint8_t*>(target), reinterpret_cast<const uint8_t*>(data));
 }
 
 static void HostStartDocument(void* ctx) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->startDocument) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->startDocument(guest_ctx);
 }
 
 static void HostEndDocument(void* ctx) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->endDocument) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->endDocument(guest_ctx);
 }
 
 static void HostStartElement(void* ctx, const xmlChar* name, const xmlChar** atts) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->startElement) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->startElement(guest_ctx, reinterpret_cast<const uint8_t*>(name), reinterpret_cast<const uint8_t**>(atts));
 }
 
 static void HostEndElement(void* ctx, const xmlChar* name) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->endElement) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->endElement(guest_ctx, reinterpret_cast<const uint8_t*>(name));
 }
 
 static void HostInternalSubset(void* ctx, const xmlChar* name, const xmlChar* ExternalID, const xmlChar* SystemID) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->internalSubset) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->internalSubset(guest_ctx, reinterpret_cast<const uint8_t*>(name), reinterpret_cast<const uint8_t*>(ExternalID), reinterpret_cast<const uint8_t*>(SystemID));
 }
 
 static void HostExternalSubset(void* ctx, const xmlChar* name, const xmlChar* ExternalID, const xmlChar* SystemID) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->externalSubset) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->externalSubset(guest_ctx, reinterpret_cast<const uint8_t*>(name), reinterpret_cast<const uint8_t*>(ExternalID), reinterpret_cast<const uint8_t*>(SystemID));
 }
 
 static int HostIsStandalone(void* ctx) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->isStandalone) return 0;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     return b->guest_sax->isStandalone(guest_ctx);
 }
 
 static int HostHasInternalSubset(void* ctx) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->hasInternalSubset) return 0;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     return b->guest_sax->hasInternalSubset(guest_ctx);
 }
 
 static int HostHasExternalSubset(void* ctx) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->hasExternalSubset) return 0;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     return b->guest_sax->hasExternalSubset(guest_ctx);
 }
 
 static xmlEntityPtr HostGetEntity(void* ctx, const xmlChar* name) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->getEntity) return nullptr;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     auto* gent = b->guest_sax->getEntity(guest_ctx, reinterpret_cast<const uint8_t*>(name));
     if (!gent) return nullptr;
     if (auto* host = HostEntityForMirror(gent)) return host;
@@ -444,7 +443,7 @@ static xmlEntityPtr HostGetEntity(void* ctx, const xmlChar* name) {
 static xmlEntityPtr HostGetParameterEntity(void* ctx, const xmlChar* name) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->getParameterEntity) return nullptr;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     auto* gent = b->guest_sax->getParameterEntity(guest_ctx, reinterpret_cast<const uint8_t*>(name));
     if (!gent) return nullptr;
     if (auto* host = HostEntityForMirror(gent)) return host;
@@ -475,7 +474,7 @@ static xmlEntityPtr HostGetParameterEntity(void* ctx, const xmlChar* name) {
 static void HostEntityDecl(void* ctx, const xmlChar* name, int type, const xmlChar* publicId, const xmlChar* systemId, xmlChar* content) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->entityDecl) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->entityDecl(guest_ctx,
         reinterpret_cast<const uint8_t*>(name),
         type,
@@ -487,21 +486,21 @@ static void HostEntityDecl(void* ctx, const xmlChar* name, int type, const xmlCh
 static void HostIgnorableWhitespace(void* ctx, const xmlChar* ch, int len) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->ignorableWhitespace) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->ignorableWhitespace(guest_ctx, reinterpret_cast<const uint8_t*>(ch), len);
 }
 
 static void HostReference(void* ctx, const xmlChar* name) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->reference) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     b->guest_sax->reference(guest_ctx, reinterpret_cast<const uint8_t*>(name));
 }
 
 static void HostSerror(void* userData, const xmlError* error) {
     auto* b = static_cast<XmlBinding*>(userData);
     if (!b || !b->guest_sax || !b->guest_sax->serror) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     SyncHostErrorToGuest(error, &b->guest_error, b);
     b->guest_sax->serror(guest_ctx, &b->guest_error);
 }
@@ -520,7 +519,7 @@ static std::string FormatDiagnostic(const char* format, va_list args) {
 static void HostWarning(void* ctx, const char* msg, ...) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->warning) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     va_list args;
     va_start(args, msg);
     const std::string text = FormatDiagnostic(msg, args);
@@ -531,7 +530,7 @@ static void HostWarning(void* ctx, const char* msg, ...) {
 static void HostError(void* ctx, const char* msg, ...) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->error) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     va_list args;
     va_start(args, msg);
     const std::string text = FormatDiagnostic(msg, args);
@@ -542,7 +541,7 @@ static void HostError(void* ctx, const char* msg, ...) {
 static void HostFatalError(void* ctx, const char* msg, ...) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->fatalError) return;
-    void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
+    void* guest_ctx = b->guest_ctxt.userData;
     va_list args;
     va_start(args, msg);
     const std::string text = FormatDiagnostic(msg, args);
@@ -672,8 +671,7 @@ NKWebKit::GuestParserCtxt* APS5_VABI xmlCreateMemoryParserCtxt_nid_postfix(const
 NKWebKit::GuestParserCtxt* APS5_VABI xmlCreatePushParserCtxt_nid_postfix(NKWebKit::GuestSAXHandler* sax, void* user_data, const char* chunk, int size, const char* filename) {
     auto b = std::make_unique<XmlBinding>();
     b->guest_sax = sax;
-    b->guest_user_data = user_data;
-    b->guest_ctxt.userData = user_data;
+    b->guest_ctxt.userData = sax && user_data ? user_data : &b->guest_ctxt;
     b->guest_ctxt.sax = sax;
 
     if (sax) {

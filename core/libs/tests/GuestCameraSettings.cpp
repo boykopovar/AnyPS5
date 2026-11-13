@@ -121,6 +121,12 @@ void CheckGetters() {
     CameraWhiteBalance balance{9, 9, 9, 9};
     Require(sceCameraGetWhiteBalance(1, Channel0, &balance, nullptr) == 0, "the white balance must be readable");
     Require(balance.whiteBalanceControl == 0 && balance.gainRed == 768 && balance.gainBlue == 768 && balance.gainGreen == 512, "the white balance defaults are wrong");
+    errno = 71;
+    Require(sceCameraGetWhiteBalance(1, Channel0, reinterpret_cast<CameraWhiteBalance*>(0x10), nullptr) == ErrorParam, "an unwritable white balance pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable white balance pointer");
+    alignas(16) CameraWhiteBalance balanceBuffer[3] = {{9, 9, 9, 9}, {9, 9, 9, 9}, {9, 9, 9, 9}};
+    Require(sceCameraGetWhiteBalance(1, Channel0, &balanceBuffer[1], nullptr) == 0, "reading white balance to buffer failed");
+    Require(balanceBuffer[0].whiteBalanceControl == 9 && balanceBuffer[1].whiteBalanceControl == 0 && balanceBuffer[1].gainRed == 768 && balanceBuffer[2].whiteBalanceControl == 9, "adjacent memory was corrupted");
     CameraGamma gamma;
     std::memset(&gamma, 0x5a, sizeof(gamma));
     Require(sceCameraGetGamma(1, Channel0, &gamma, nullptr) == 0 && gamma.gammaControl == 0 && gamma.value == 4 && gamma.reserved[15] == 0, "the gamma defaults are wrong");

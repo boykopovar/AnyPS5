@@ -5320,6 +5320,55 @@ void DepthBoundsEmulationTests() {
     Require(stencil.depthTest && stencil.stencilTest, "a stencil test that writes only on a pass refused the depth bounds emulation");
 }
 
+void ReadOnlyDepthBoundsComparisonTests() {
+    auto base = AgcDriver::Graphics::DecodeState(makeState());
+    base.depth = AgcDriver::Graphics::DepthTarget{0x10000, 0, {64, 64}, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.0f, 0};
+    base.depthTest = base.depthWrite = base.stencilTest = base.depthBias = base.depthBiasPerFace = base.depthClamp = false;
+    base.depthBoundsTest = true;
+    base.minDepthBounds = 0.25f;
+    base.maxDepthBounds = 0.75f;
+    base.viewport.minDepth = 0.0f;
+    base.viewport.maxDepth = 1.0f;
+    const ShaderRecompiler::ShaderPixelStageInfo pixel{};
+    auto candidate = base;
+    AgcDriver::Graphics::ApplyReadOnlyDepthBoundsComparison(candidate, pixel, true);
+    Require(candidate.depthTest && !candidate.depthWrite && candidate.depthCompare == VK_COMPARE_OP_GREATER_OR_EQUAL && candidate.viewport.minDepth == 1.0f && candidate.viewport.maxDepth == 1.0f, "read-only depth bounds comparison did not select an all-pass comparison");
+    Require(candidate.depthBoundsTest && candidate.minDepthBounds == base.minDepthBounds && candidate.maxDepthBounds == base.maxDepthBounds && !candidate.stencilTest && candidate.viewport.x == base.viewport.x && candidate.viewport.y == base.viewport.y && candidate.viewport.width == base.viewport.width && candidate.viewport.height == base.viewport.height, "read-only depth bounds comparison changed the original bounds or coverage");
+    const auto unchanged = [&](auto change, const ShaderRecompiler::ShaderPixelStageInfo& program = {}, bool enabled = true) {
+        auto state = base;
+        change(state);
+        const auto before = state;
+        AgcDriver::Graphics::ApplyReadOnlyDepthBoundsComparison(state, program, enabled);
+        Require(state.depthTest == before.depthTest && state.depthWrite == before.depthWrite && state.depthCompare == before.depthCompare && state.viewport.minDepth == before.viewport.minDepth && state.viewport.maxDepth == before.viewport.maxDepth, "read-only depth bounds comparison changed an ineligible draw");
+    };
+    unchanged([](auto&) {}, pixel, false);
+    unchanged([](auto& state) { state.depth.reset(); });
+    unchanged([](auto& state) { state.depthBoundsTest = false; });
+    unchanged([](auto& state) { state.depth->format = VK_FORMAT_D32_SFLOAT; });
+    unchanged([](auto& state) { state.depthTest = true; });
+    unchanged([](auto& state) { state.depthWrite = true; });
+    unchanged([](auto& state) { state.stencilTest = true; });
+    unchanged([](auto& state) { state.depthBias = true; });
+    unchanged([](auto& state) { state.depthBiasPerFace = true; });
+    unchanged([](auto& state) { state.depthRemap.mode = 1; });
+    unchanged([](auto& state) { state.samples = 2; });
+    unchanged([](auto& state) { state.depth->samples = 2; });
+    unchanged([](auto& state) { state.customSampleLocations = true; });
+    unchanged([](auto& state) { state.sampleLocationGrid = true; });
+    unchanged([](auto& state) { state.minDepthBounds = -0.25f; });
+    unchanged([](auto& state) { state.maxDepthBounds = 1.25f; });
+    unchanged([](auto& state) { state.minDepthBounds = 0.9f; });
+    unchanged([](auto& state) { state.minDepthBounds = std::numeric_limits<float>::quiet_NaN(); });
+    unchanged([](auto& state) { state.maxDepthBounds = std::numeric_limits<float>::infinity(); });
+    unchanged([](auto& state) { state.depthClamp = true; state.depthClampMax = 0.5f; });
+    auto readsDepth = pixel;
+    readsDepth.posZ = true;
+    unchanged([](auto&) {}, readsDepth);
+    auto writesDepth = pixel;
+    writesDepth.depthExportEnable = true;
+    unchanged([](auto&) {}, writesDepth);
+}
+
 void UnusedViewportDepthTests() {
     auto queue = makeState();
     queue.context[0x204] = 0;
@@ -14154,6 +14203,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--depth-bounds-state") {
             DepthBoundsBiasTests();
+            ReadOnlyDepthBoundsComparisonTests();
             std::cout << "Depth bounds state checks passed\n";
             return 0;
         }
@@ -14204,6 +14254,7 @@ int main(int argc, char** argv) {
         DepthClipTests();
         DepthRemapTests();
         DepthBoundsEmulationTests();
+        ReadOnlyDepthBoundsComparisonTests();
         UnusedViewportDepthTests();
         DepthStencilTests();
         OneDimensionalColorTests();

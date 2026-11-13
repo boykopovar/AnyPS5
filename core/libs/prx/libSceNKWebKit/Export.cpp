@@ -8477,10 +8477,6 @@ int APS5_VABI _ZN7WebCore17CSSPrimitiveValue14setStringValueENS_11CSSUnitTypeERK
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15AffineTransform5blendERKS0_d() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore12RenderWidget9setWidgetEON3WTF6RefPtrINS_6WidgetENS1_13DumbPtrTraitsIS3_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -30019,10 +30015,6 @@ int APS5_VABI _ZNK7WebCore15ActiveDOMObject20isAllowedToRunScriptEv() {
 }
 
 int APS5_VABI _ZNK7WebCore15ActiveDOMObject30assertSuspendIfNeededWasCalledEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
