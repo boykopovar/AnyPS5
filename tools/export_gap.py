@@ -248,6 +248,11 @@ def find_self_calls(module_dir, missing):
     calls = []
     for path, text in source_texts(module_dir):
         joined = joined_lines(text)
+        splices = []
+        removed = 0
+        for splice in re.finditer(r"\\\r?\n", text):
+            splices.append(splice.start() - removed)
+            removed += len(splice.group())
         masked = mask_code(joined)
         rows = joined.split("\n")
         try:
@@ -267,7 +272,7 @@ def find_self_calls(module_dir, missing):
             if rows[number - 1].lstrip().startswith("#"):
                 continue
             nid = next(key for key, value in missing.items() if value == name)
-            calls.append((name, nid, rel, number, qual))
+            calls.append((name, nid, rel, number + sum(1 for position in splices if position <= match.start()), qual))
     calls.sort(key=lambda item: (item[0], item[2], item[3], item[4]))
     return calls
 

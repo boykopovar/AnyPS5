@@ -1017,6 +1017,12 @@ void Http1Transport(int ssl) {
         Require(std::string_view(raw, size).starts_with(version == 1 ? "HTTP/1.0 200" : "HTTP/1.1 200"), "HTTP1 status line retained");
         Response(client, 200);
         server.Join();
+        if (mode == Mode::Http11Chunked) {
+            char* trailers = nullptr;
+            std::size_t trailerSize = 0;
+            Require(sceHttp2GetAllTrailingHeaders(client.request, &trailers, &trailerSize) == 0 && trailers &&
+                std::string_view(trailers, trailerSize) == "X-Trailer: done\r\n\r\n", "HTTP1 trailing header block retained");
+        }
         Require(server.Upload() == upload, "HTTP1 complete upload");
         Require(server.Headers().find(":method")->second == "POST" && server.Headers().find(":path")->second == "/path?query=yes", "HTTP1 method and target");
         Require(server.Headers().find(":version")->second == (version == 1 ? "HTTP/1.0" : "HTTP/1.1"), "HTTP1 requested version");
@@ -1619,6 +1625,14 @@ void FirstNetworkRequest(int ssl) {
 }
 #endif
 
+void HostNotFound(int ssl) {
+    Client client(ssl);
+    client.Create("https://nonexistent.invalid/");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x804101E6),
+            "lookup failure maps to console DNS error");
+    AfterFailedSend(client, static_cast<int>(0x804101E6));
+}
+
 void Refused(int ssl) {
     mbedtls_net_context listener;
     mbedtls_net_init(&listener);
@@ -1669,7 +1683,7 @@ void Retries(int ssl) {
         client.Create("https://127.0.0.1:1/");
         lookups = 0;
         failedLookups = 100;
-        Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "every lookup failing fails the request");
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x804101e6), "every lookup failing returns the DNS error");
         Require(lookups == retry + 1, "a request makes its retry count plus one lookups before failing");
     }
     Http2SetLookupHook_nid_no_patch(nullptr);
@@ -2034,6 +2048,7 @@ int main(int argc, char** argv) {
             Deadline(ssl, mode, true);
             for (int teardown = 0; teardown < 4; ++teardown) Cancellation(ssl, mode, teardown);
         }
+        HostNotFound(ssl);
         Refused(ssl);
         Capacity(ssl);
         Retries(ssl);

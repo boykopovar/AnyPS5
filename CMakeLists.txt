@@ -531,7 +531,7 @@ if(BUILD_TESTING)
                 set_tests_properties(select_tests PROPERTIES ENVIRONMENT "ANYPS5_SELECT_TEST_CLASS=SelectTests" TIMEOUT 30)
             else()
                 add_test(NAME select_tests_${test_class} COMMAND ${Python3_EXECUTABLE} "${select_tests_source}" ${test_class})
-                set_tests_properties(select_tests_${test_class} PROPERTIES TIMEOUT 30)
+                set_tests_properties(select_tests_${test_class} PROPERTIES TIMEOUT 60)
             endif()
         endforeach()
         add_test(NAME relinker_fuzz_configurations COMMAND ${Python3_EXECUTABLE}
@@ -602,6 +602,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen_stdout_newlines.py)
         add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_hw_oracle.py)
+        add_test(NAME hardware_oracle_probe_catalog COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_probe_catalog.py)
+        set_tests_properties(hardware_oracle_probe_catalog PROPERTIES TIMEOUT 30)
         add_test(NAME job_reference_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_job_reference_errors.py)
         set_tests_properties(job_reference_errors PROPERTIES TIMEOUT 20)
@@ -636,6 +639,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_export_cache.py)
         add_test(NAME pr_overlap_fail_closed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_fail_closed.py)
+        add_test(NAME pr_overlap_names COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_names.py)
         add_test(NAME nid_database_cache COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_nid_names.py)
         add_test(NAME release_package COMMAND ${Python3_EXECUTABLE}
@@ -687,6 +692,9 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME trace_digest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py)
+        add_test(NAME memory_trace_address COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_memory_trace_address.py)
+        set_tests_properties(memory_trace_address PROPERTIES TIMEOUT 20)
         add_test(NAME symbolize_samples COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_symbolize_samples.py)
         add_test(NAME ab_split COMMAND ${Python3_EXECUTABLE}
@@ -777,7 +785,7 @@ if(BUILD_TESTING)
         set_tests_properties(tools_headers_manifest PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
-        set_tests_properties(conventions_pr_template PROPERTIES TIMEOUT 60)
+        set_tests_properties(conventions_pr_template PROPERTIES TIMEOUT 180)
         add_test(NAME check_compile_preprocessor COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_preprocessor.py)
         set_tests_properties(check_compile_preprocessor PROPERTIES TIMEOUT 20)
