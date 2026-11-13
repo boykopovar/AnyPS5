@@ -72,6 +72,17 @@ if(BUILD_TESTING)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")
     endif()
 
+    add_test_executable(guest_nk_req_jpeg_error_state_tests tests/JpegErrorState.cpp)
+    target_include_directories(guest_nk_req_jpeg_error_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_nk_req_jpeg_error_state_tests PRIVATE libSceNKWebKitRequirements jpeg_turbo libc)
+    configure_windows_unwind(guest_nk_req_jpeg_error_state_tests)
+    add_test(NAME guest_nk_req_jpeg_error_state COMMAND guest_nk_req_jpeg_error_state_tests)
+    set_tests_properties(guest_nk_req_jpeg_error_state PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_nk_req_jpeg_error_state PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")
+    endif()
+
     foreach(topic IN ITEMS Jpeg Xml Psl)
         string(TOLOWER ${topic} test_name)
         add_test_executable(guest_nk_req_${test_name}_tests tests/${topic}.cpp)

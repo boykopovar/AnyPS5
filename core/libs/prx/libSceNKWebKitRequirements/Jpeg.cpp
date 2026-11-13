@@ -357,8 +357,6 @@ static void ForwardError(JpegBinding* b) {
         for (int i = 0; i < 8; ++i) {
             g->err->msg_parm.i[i] = b->host_err.msg_parm.i[i];
         }
-        g->err->num_warnings = b->host_err.num_warnings;
-        g->err->trace_level = b->host_err.trace_level;
         if (g->err->error_exit) {
             g->err->error_exit(reinterpret_cast<NKWebKit::GuestCommonPtr>(g));
         }
