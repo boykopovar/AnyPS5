@@ -11,7 +11,7 @@ permissions: {}
 
 concurrency:
   group: conflict-label
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   label:
