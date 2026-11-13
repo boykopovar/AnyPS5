@@ -39,6 +39,8 @@ int main() {
     Require(getUpdVersion(&update.version) == sysKernelGetUpdVersion_nid_postfix(&system.version), "the result differs from sysKernelGetUpdVersion");
     Require(update.version == system.version && update.after == 0xaaaaaaaau, "the version differs from sysKernelGetUpdVersion or more than 4 bytes were written");
     Require(getUpdVersion(nullptr) == static_cast<int>(0x80020016u), "a null output was not refused with EINVAL");
+    Require(getUpdVersion(&update.version) == 0 && update.after == 0xaaaaaaaau, "repeated getUpdVersion failed or corrupted trailing bytes");
+    Require(sysKernelGetUpdVersion_nid_postfix(&system.version) == 0 && system.after == 0xaaaaaaaau, "repeated sysKernelGetUpdVersion failed or corrupted trailing bytes");
     std::puts("update version tests passed");
     return 0;
 }
