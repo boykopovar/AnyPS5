@@ -502,6 +502,19 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_date_pattern_generator_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateTimePatternBehavior.cpp)
+    target_include_directories(guest_icu_date_pattern_generator_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_date_pattern_generator_tests PRIVATE libSceIcu libkernel libc)
+    configure_windows_unwind(guest_icu_date_pattern_generator_tests)
+    add_test(NAME guest_icu_date_pattern_generator_open COMMAND guest_icu_date_pattern_generator_tests)
+    set_tests_properties(guest_icu_date_pattern_generator_open PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_date_pattern_generator_open PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()
+
 set(ICU_RECOVERED_SOURCES
     Calendar.cpp
     Collator.cpp
