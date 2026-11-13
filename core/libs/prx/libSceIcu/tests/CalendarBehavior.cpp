@@ -116,6 +116,10 @@ void Clone() {
     const auto day = original.Get(5);
     copy.Set(-8640000000000000.0, true);
     copy.Fields();
+    Require(copy.Get(2) == 8 && copy.Get(5) == 30, "native cutover setter preserves cached fields");
+    copy.Set(-12219724800000.0);
+    copy.Fields();
+    Require(copy.Get(2) == 9 && copy.Get(5) == 10, "reassigning time recomputes native Gregorian fields");
     Require(original.Get(5) == day, "clone cutover mutation leaves original unchanged");
     copy.Set(1577934245000.0);
     copy.Fields();

@@ -48,6 +48,9 @@ void Check(const char* path) {
     auto* copy = clone(original, &status);
     Require(copy && status <= 0, "actual NID clones state into independent object");
     cutover(copy, -8640000000000000.0, &status);
+    Require(status <= 0 && get(copy, 2, &status) == 8 && get(copy, 5, &status) == 30,
+        "actual NID cutover preserves native cached fields until time reassignment");
+    time(copy, -12219724800000.0, &status);
     Require(status <= 0 && get(copy, 2, &status) == 9 && get(copy, 5, &status) == 10,
         "actual NID proleptic Gregorian cutover changes clone fields");
     Require(get(original, 2, &status) == 8 && get(original, 5, &status) == 30, "actual NID original cutover remains unchanged");
