@@ -87,7 +87,12 @@ int APS5_VABI sceNpCmpNpIdInOrder(const NpIdFull* npId1, const NpIdFull* npId2, 
 
 int APS5_VABI sceNpGetPlatformType(const NpIdFull* npId) {
     if (!npId) return NP_ERROR_INVALID_ARGUMENT;
-    return platformTypeOf(*npId);
+    NpIdFull localId{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localId, npId, sizeof(localId));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
+    return platformTypeOf(localId);
 }
 
 int APS5_VABI sceNpIntGetPlatformType(const NpIdFull* npId) {

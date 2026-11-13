@@ -82,6 +82,9 @@ static int testIds() {
     const NpIdFull ps4 = npIdWithTag("heron-4", 0x00347370);
     const NpIdFull other = npIdWithTag("heron-4", 0x00357370);
     ok &= expect(sceNpGetPlatformType(nullptr) == INVALID_ARGUMENT, "a null NpId has a platform");
+    errno = 71;
+    ok &= expect(sceNpGetPlatformType(reinterpret_cast<const NpIdFull*>(0x10)) == INVALID_ARGUMENT, "an unmapped NpId has a platform");
+    ok &= expect(errno == 71, "errno altered on unmapped NpId");
     ok &= expect(sceNpGetPlatformType(&none) == 0, "an untagged NpId is not platform 0");
     ok &= expect(sceNpGetPlatformType(&ps3) == 1, "the ps3 tag is not platform 1");
     ok &= expect(sceNpGetPlatformType(&vita) == 2, "the psp2 tag is not platform 2");
