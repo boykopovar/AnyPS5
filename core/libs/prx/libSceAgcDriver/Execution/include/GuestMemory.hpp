@@ -206,12 +206,14 @@ public:
     // current acquisition is the outermost, so code that releases the mutex around a wait
     // (Recorder::SyncThrough for the flush hook) gives up no caller's hold.
     std::uint32_t DepthOnThisThread() const;
+    std::uint32_t Waiters() const { return waiters.load(std::memory_order_relaxed); }
 
 private:
     void enter();
     bool tryEnter();
     void acquired();
     Mutex mutex;
+    std::atomic<std::uint32_t> waiters{0};
     // The holder's thread token and recursion depth, written by the holder only; another thread
     // reads the owner just to see that it is not itself.
     std::atomic<const void*> owner{nullptr};

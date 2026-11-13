@@ -210,6 +210,28 @@ void StopsWithinAnImage() {
     Require(Contains(begin, split) && Contains(split, end), "the two stores did not bring both rows of the large image to guest memory");
 }
 
+void CountsMutexWaiters() {
+    auto& mutex = AgcDriver::GuestMemory::GpuMutex();
+    Require(mutex.Waiters() == 0, "the GPU mutex reported a waiter while nobody was blocked on it");
+    std::atomic<bool> acquired{false};
+    std::thread waiter;
+    {
+        std::lock_guard gpuLock(mutex);
+        Require(mutex.Waiters() == 0, "the thread holding the GPU mutex was counted as a waiter");
+        waiter = std::thread([&] {
+            std::lock_guard lock(mutex);
+            acquired.store(true, std::memory_order_release);
+        });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (mutex.Waiters() == 0 && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::microseconds(200));
+        Require(mutex.Waiters() == 1, "a thread blocked on the GPU mutex was not counted as a waiter");
+        Require(!acquired.load(std::memory_order_acquire), "the waiting thread took the GPU mutex while it was held");
+    }
+    waiter.join();
+    Require(acquired.load(std::memory_order_acquire), "the waiting thread never took the GPU mutex");
+    Require(mutex.Waiters() == 0, "the GPU mutex still reported a waiter after the waiting thread had it");
+}
+
 }
 
 int main() {
@@ -221,6 +243,7 @@ int main() {
         struct ShutdownGuard {
             ~ShutdownGuard() { try { AgcDriverShutdown_nid_postfix(); } catch (...) {} }
         } shutdown;
+        CountsMutexWaiters();
         StopsBetweenImages();
         StopsWithinAnImage();
         AgcDriverShutdown_nid_postfix();
