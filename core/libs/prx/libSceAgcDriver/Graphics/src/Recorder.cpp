@@ -1886,7 +1886,10 @@ Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, 
         return {commands, false, true, reason};
     }
     const auto hazard = open->passHazards.Check(access, pass.key == key);
-    if (hazard == PassHazard::None && pass.key == key) return {open->commands.Get(BatchCommands::Use::Interposed), true, false, PassBreak::Continued};
+    if (hazard == PassHazard::None && pass.key == key) {
+        PerformanceTrace::Amount("Graphics.RenderPass.Continued", 1);
+        return {open->commands.Get(BatchCommands::Use::Interposed), true, false, PassBreak::Continued};
+    }
     const auto reason = PassBreakFor(hazard);
     const bool merge = MergeBarriers() && !fenced && !pass.fenced && !pass.afterPass;
     const bool elide = merge && hazard == PassHazard::None;
@@ -1930,6 +1933,7 @@ void Recorder::endOpenRenderPass(PassBreak by, bool barrier, std::source_locatio
     open->hostReadOwed = true;
     pass = {};
     pass.closedBy = by;
+    PerformanceTrace::Amount(PassBreakScopeNames[static_cast<std::size_t>(by)], 1);
 }
 
 void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end) {
@@ -2274,6 +2278,8 @@ namespace {
 constexpr std::uint32_t MaxTimedRanges = 512;
 constexpr std::size_t CommandClasses = static_cast<std::size_t>(Recorder::CommandClass::Count);
 constexpr const char* CommandClassNames[CommandClasses] = {"dispatch-lead", "dispatch-trail", "indirect-args", "label-run", "fill", "fill-clear", "copy", "staging-in", "staging-out", "draw", "storage-upload", "storage-writeback", "dcc-clear", "dcc-keys", "present-blit", "shadow-publish", "template-refresh"};
+constexpr const char* BarrierScopes[CommandClasses] = {"Graphics.Barrier.dispatch-lead", "Graphics.Barrier.dispatch-trail", "Graphics.Barrier.indirect-args", "Graphics.Barrier.label-run", "Graphics.Barrier.fill", "Graphics.Barrier.fill-clear", "Graphics.Barrier.copy", "Graphics.Barrier.staging-in", "Graphics.Barrier.staging-out", "Graphics.Barrier.draw", "Graphics.Barrier.storage-upload", "Graphics.Barrier.storage-writeback", "Graphics.Barrier.dcc-clear", "Graphics.Barrier.dcc-keys", "Graphics.Barrier.present-blit", "Graphics.Barrier.shadow-publish", "Graphics.Barrier.template-refresh"};
+constexpr const char* BarrierMergedScopes[CommandClasses] = {"Graphics.BarrierMerged.dispatch-lead", "Graphics.BarrierMerged.dispatch-trail", "Graphics.BarrierMerged.indirect-args", "Graphics.BarrierMerged.label-run", "Graphics.BarrierMerged.fill", "Graphics.BarrierMerged.fill-clear", "Graphics.BarrierMerged.copy", "Graphics.BarrierMerged.staging-in", "Graphics.BarrierMerged.staging-out", "Graphics.BarrierMerged.draw", "Graphics.BarrierMerged.storage-upload", "Graphics.BarrierMerged.storage-writeback", "Graphics.BarrierMerged.dcc-clear", "Graphics.BarrierMerged.dcc-keys", "Graphics.BarrierMerged.present-blit", "Graphics.BarrierMerged.shadow-publish", "Graphics.BarrierMerged.template-refresh"};
 // [barriers] counters by class (relaxed: only reported) and the [gputime] totals, which the
 // presenter's thread adds to without the GPU mutex (AddGpuTiming).
 std::atomic<std::uint64_t> classBarriers[CommandClasses]{};
@@ -2363,8 +2369,10 @@ bool Recorder::BatchStampsEnabled() {
 }
 
 void Recorder::CountBarriers(CommandClass which, std::uint32_t count) {
+    const auto index = static_cast<std::size_t>(which);
+    PerformanceTrace::Amount(BarrierScopes[index], count);
     if (!DrawOrGpuProfiled()) return;
-    classBarriers[static_cast<std::size_t>(which)].fetch_add(count, std::memory_order_relaxed);
+    classBarriers[index].fetch_add(count, std::memory_order_relaxed);
 }
 
 bool Recorder::MergeBarriers() {
@@ -2383,6 +2391,7 @@ bool Recorder::ElideCovered(CommandClass which, const BarrierMask& wanted, VkAcc
 }
 
 void Recorder::CountMerged(CommandClass which) {
+    PerformanceTrace::Amount(BarrierMergedScopes[static_cast<std::size_t>(which)], 1);
     if (!DrawOrGpuProfiled()) return;
     classMerged[static_cast<std::size_t>(which)].fetch_add(1, std::memory_order_relaxed);
 }
