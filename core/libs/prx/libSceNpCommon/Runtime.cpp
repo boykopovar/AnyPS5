@@ -5,6 +5,7 @@
 #include "prx/libSceRtc/include/Rtc.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <iterator>
 #include <mutex>
 #include <random>
@@ -282,6 +283,23 @@ NpAllocator MemoryHeapAllocator(NpMemoryHeap* heap) {
 constexpr std::size_t NP_OBJECT_HEADER_SIZE = 16;
 
 constexpr int NP_ERROR_OBJECT_ALREADY_INITIALIZED = static_cast<int>(0x80559E03);
+constexpr std::int32_t NP_SEMAPHORE_CREATED = 1;
+constexpr std::int32_t NP_SEMAPHORE_OPENED = 2;
+
+void* const NpSemaphoreVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np9SemaphoreD1Ev), reinterpret_cast<void*>(&_ZN3sce2np9SemaphoreD0Ev),
+};
+
+void RequireSemaphoreInit(const NpSemaphoreObject* self, const char* message) {
+    if (self->state == 0) throw std::invalid_argument(message);
+}
+
+void ReleaseSemaphore(NpSemaphoreObject* self) {
+    if (self->state == NP_SEMAPHORE_OPENED) NotImplemented_nid_no_patch("sce::np::Semaphore: closing an opened semaphore (sceKernelCloseSema)");
+    else if (self->state == NP_SEMAPHORE_CREATED) sceNpDeleteSema(self->sema);
+}
+
 
 void* const NpMutexVtable[] = {
     nullptr, nullptr,
@@ -365,6 +383,7 @@ int SkipAll(NpStreamReader* self, void* handle, NpStreamCtx* ctx, std::int64_t* 
     while (true) {
         std::size_t got = 0;
         int result = StreamRead(self, handle, buffer, sizeof(buffer), &got);
+        if (result >= 0 && got > sizeof(buffer)) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         if (result >= 0) result = StreamNotify(ctx, buffer, got);
         if (skipped != nullptr) *skipped += static_cast<std::int64_t>(got);
         if (result < 0) return result;
@@ -379,6 +398,7 @@ int ReadData(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, st
     int result = 0;
     do {
         result = StreamRead(self, handle, bytes + total, size - total, &got);
+        if (result >= 0 && got > size - total) result = NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         if (result >= 0) result = StreamNotify(ctx, bytes + total, got);
         if (result < 0) break;
         total += got;
@@ -406,8 +426,10 @@ int WriteFilledData(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, char f
     std::memset(buffer, static_cast<std::uint8_t>(fill), sizeof(buffer));
     while (size > 0) {
         std::size_t written = 0;
-        int result = StreamWrite(self, handle, buffer, std::min(static_cast<std::size_t>(size), sizeof(buffer)), &written);
+        const std::size_t chunk = std::min(static_cast<std::size_t>(size), sizeof(buffer));
+        int result = StreamWrite(self, handle, buffer, chunk, &written);
         if (result < 0) return result;
+        if (written > chunk) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         result = StreamNotify(ctx, buffer, written);
         if (result < 0) return result;
         size -= static_cast<std::int64_t>(written);
@@ -422,6 +444,7 @@ int WriteData(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, const void* 
     int result = 0;
     while (total < size) {
         result = StreamWrite(self, handle, bytes + total, size - total, &got);
+        if (result >= 0 && got > size - total) result = NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         if (result >= 0) result = StreamNotify(ctx, bytes + total, got);
         if (result < 0) break;
         total += got;
@@ -429,6 +452,18 @@ int WriteData(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, const void* 
     if (result >= 0) result = 0;
     if (written != nullptr) *written = total;
     return result;
+}
+
+constexpr std::int32_t NP_EVENT_FLAG_CREATED = 1;
+constexpr std::int32_t NP_EVENT_FLAG_OPENED = 2;
+
+void* const NpEventFlagVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np9EventFlagD1Ev), reinterpret_cast<void*>(&_ZN3sce2np9EventFlagD0Ev),
+};
+
+void RequireEventFlagInit(const NpEventFlagObject* self, const char* message) {
+    if (self->state == 0) throw std::invalid_argument(message);
 }
 
 void* AllocateObject(std::size_t size, NpAllocator* allocator) {
@@ -465,9 +500,11 @@ NpMemoryHeap g_ipcClientHeap {};
 
 constexpr int KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
 constexpr int KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
+constexpr int KERNEL_ERROR_ECANCELED = static_cast<int>(0x80020055);
 constexpr int NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80558009);
 constexpr int NP_ERROR_TIMEOUT = static_cast<int>(0x8055800B);
 constexpr int NP_ERROR_EVENT_FLAG_BUSY = static_cast<int>(0x8055800C);
+constexpr int NP_ERROR_CANCELED = static_cast<int>(0x80558010);
 constexpr int NP_ERROR_SEMA_BUSY = static_cast<int>(0x8055800D);
 constexpr int NP_ERROR_MUTEX_BUSY = static_cast<int>(0x8055800F);
 constexpr std::uint32_t NP_MUTEX_FLAG_RECURSIVE = 1;
@@ -592,6 +629,13 @@ int APS5_VABI sceNpCancelEventFlag(KernelEventFlag flag, std::uint64_t pattern, 
     return NpResult(sceKernelCancelEventFlag(flag, pattern, waiting));
 }
 
+int APS5_VABI sceNpWaitEventFlag(KernelEventFlag flag, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result, KernelUseconds* timeout) {
+    const int status = sceKernelWaitEventFlag(flag, pattern, mode, result, timeout);
+    if (status == KERNEL_ERROR_ETIMEDOUT) return NP_ERROR_TIMEOUT;
+    if (status == KERNEL_ERROR_ECANCELED) return NP_ERROR_CANCELED;
+    return NpResult(status);
+}
+
 int APS5_VABI sceNpCreateSema(KernelSema* sema, std::uint32_t flags, int initial, int maximum, const char* name) {
     const std::uint32_t attr = KERNEL_SEMA_ATTR_FIFO + ((flags & NP_SEMA_FLAG_PRIORITY) << KERNEL_SEMA_ATTR_PRIORITY_SHIFT);
     return NpResult(sceKernelCreateSema(sema, name, attr, initial, maximum, nullptr));
@@ -607,6 +651,11 @@ int APS5_VABI sceNpPollSema(KernelSema sema) {
 
 int APS5_VABI sceNpSignalSema(KernelSema sema) {
     return NpResult(sceKernelSignalSema(sema, 1));
+}
+
+int APS5_VABI sceNpWaitSema(KernelSema sema, KernelUseconds* timeout) {
+    const int status = sceKernelWaitSema(sema, 1, timeout);
+    return status == KERNEL_ERROR_ETIMEDOUT ? NP_ERROR_TIMEOUT : NpResult(status);
 }
 
 int APS5_VABI sceNpCreateThread(Pthread* thread, PthreadEntry entry, void* arg, int priority, std::size_t stackSize, KernelCpumask affinity, const char* name) {
@@ -849,9 +898,14 @@ void APS5_VABI sceNpGetSdkVersionUInt(std::uint32_t* version) {
 }
 
 int APS5_VABI sceNpRtcConvertToPosixTime(const RtcTick* tick, std::int64_t* seconds) {
-    if (tick->tick == 0) return NP_ERROR_INVALID_ARGUMENT;
+    if (tick == nullptr || seconds == nullptr) return NP_ERROR_INVALID_ARGUMENT;
+    RtcTick localTick{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localTick, tick, sizeof(localTick));
+    errno = savedErrno;
+    if (!copied || localTick.tick == 0) return NP_ERROR_INVALID_ARGUMENT;
     RtcDateTime time {};
-    const int result = sceRtcSetTick(&time, tick);
+    const int result = sceRtcSetTick(&time, &localTick);
     if (result < 0) return result;
     return NpResult(sceRtcGetTime_t(&time, seconds));
 }
@@ -1061,6 +1115,8 @@ static std::uint64_t ClockUsec() {
     return static_cast<std::uint64_t>(usec);
 }
 
+static thread_local bool calloutContextEnded = false;
+
 static void* APS5_VABI CalloutThread(void* arg) {
     auto* context = static_cast<NpCalloutContext*>(arg);
     sceNpMutexLock(&context->mutex);
@@ -1073,6 +1129,7 @@ static void* APS5_VABI CalloutThread(void* arg) {
             sceNpMutexUnlock(&context->mutex);
 
             head->handler(head->arg);
+            if (calloutContextEnded) return nullptr;
             sceNpMutexLock(&context->mutex);
 
             continue;
@@ -1112,8 +1169,16 @@ int APS5_VABI sceNpCalloutInitCtx(NpCalloutContext* context, const char* name, s
 
 void APS5_VABI sceNpCalloutTermCtx(NpCalloutContext* context) {
     if (context->initialized == 0) return;
-    if (scePthreadEqual(scePthreadSelf(), context->thread) != 0)
-        throw std::runtime_error("sceNpCalloutTermCtx: terminating a callout context from one of its own callouts is not implemented");
+    if (scePthreadEqual(scePthreadSelf(), context->thread) != 0) {
+        sceNpMutexLock(&context->mutex);
+        sceNpMutexUnlock(&context->mutex);
+        sceNpCondDestroy(&context->cond);
+        sceNpMutexDestroy(&context->mutex);
+        scePthreadDetach(context->thread);
+        context->initialized = 0;
+        calloutContextEnded = true;
+        return;
+    }
     sceNpMutexLock(&context->mutex);
 
     context->stopping = 1;
@@ -1264,6 +1329,64 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
     std::putchar('\n');
 }
 
+void APS5_VABI _ZN3sce2np9SemaphoreC1Ev(NpSemaphoreObject* self) {
+    self->vtable = &NpSemaphoreVtable[2];
+    self->state = 0;
+}
+
+void APS5_VABI _ZN3sce2np9SemaphoreC2Ev(NpSemaphoreObject* self) {
+    _ZN3sce2np9SemaphoreC1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np9SemaphoreD1Ev(NpSemaphoreObject* self) {
+    self->vtable = &NpSemaphoreVtable[2];
+    if (self->state == NP_SEMAPHORE_OPENED) NotImplemented_nid_no_patch("sce::np::Semaphore: closing an opened semaphore (sceKernelCloseSema)");
+    else if (self->state == NP_SEMAPHORE_CREATED) sceKernelDeleteSema(self->sema);
+}
+
+void APS5_VABI _ZN3sce2np9SemaphoreD2Ev(NpSemaphoreObject* self) {
+    _ZN3sce2np9SemaphoreD1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np9SemaphoreD0Ev(NpSemaphoreObject* self) {
+    self->vtable = &NpSemaphoreVtable[2];
+    ReleaseSemaphore(self);
+    _ZN3sce2np6ObjectdlEPv(self);
+}
+
+bool APS5_VABI _ZNK3sce2np9Semaphore6IsInitEv(const NpSemaphoreObject* self) {
+    return self->state != 0;
+}
+
+int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(NpSemaphoreObject* self, int initial, int maximum, const char* name) {
+    if (self->state != 0) return NP_ERROR_OBJECT_ALREADY_INITIALIZED;
+    const int result = sceNpCreateSema(&self->sema, 0, initial, maximum, name);
+    if (result < 0) return result;
+    self->state = NP_SEMAPHORE_CREATED;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2np9Semaphore4OpenEPKc(NpSemaphoreObject* self, const char*) {
+    if (self->state != 0) return NP_ERROR_OBJECT_ALREADY_INITIALIZED;
+    NotImplemented_nid_no_patch("sce::np::Semaphore::Open: opening a named semaphore (sceKernelOpenSema)");
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2np9Semaphore7DestroyEv(NpSemaphoreObject* self) {
+    ReleaseSemaphore(self);
+    self->state = 0;
+}
+
+int APS5_VABI _ZN3sce2np9Semaphore4WaitEj(NpSemaphoreObject* self, std::uint32_t usec) {
+    RequireSemaphoreInit(self, "sce::np::Semaphore::Wait: the semaphore is not initialized");
+    KernelUseconds timeout = usec;
+    return NpResult(sceNpWaitSema(self->sema, usec != 0 ? &timeout : nullptr));
+}
+
+int APS5_VABI _ZN3sce2np9Semaphore6SignalEv(NpSemaphoreObject* self) {
+    RequireSemaphoreInit(self, "sce::np::Semaphore::Signal: the semaphore is not initialized");
+    return NpResult(sceNpSignalSema(self->sema));
+}
 void APS5_VABI _ZN3sce2np5MutexC1Ev(NpMutexObject* self) {
     self->vtable = &NpMutexVtable[2];
     self->mutex = nullptr;
@@ -1855,6 +1978,87 @@ bool APS5_VABI _ZN3sce2npneERK20SceNpCommunicationIdRKNS0_8NpCommIdE(const NpCom
 
 bool APS5_VABI _ZN3sce2npneERKNS0_8NpCommIdERK20SceNpCommunicationId(const NpCommIdObject* lhs, const NpCommunicationId* rhs) {
     return !SameCommId(lhs->commId, *rhs);
+}
+
+void APS5_VABI _ZN3sce2np9EventFlagC1Ev(NpEventFlagObject* self) {
+    self->vtable = &NpEventFlagVtable[2];
+    self->state = 0;
+}
+
+void APS5_VABI _ZN3sce2np9EventFlagC2Ev(NpEventFlagObject* self) {
+    _ZN3sce2np9EventFlagC1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np9EventFlag4dtorEv(NpEventFlagObject* self) {
+    if (self->state == NP_EVENT_FLAG_OPENED) sceKernelCloseEventFlag(self->flag);
+    else if (self->state == NP_EVENT_FLAG_CREATED) sceKernelDeleteEventFlag(self->flag);
+}
+
+void APS5_VABI _ZN3sce2np9EventFlagD1Ev(NpEventFlagObject* self) {
+    self->vtable = &NpEventFlagVtable[2];
+    _ZN3sce2np9EventFlag4dtorEv(self);
+}
+
+void APS5_VABI _ZN3sce2np9EventFlagD2Ev(NpEventFlagObject* self) {
+    _ZN3sce2np9EventFlagD1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np9EventFlagD0Ev(NpEventFlagObject* self) {
+    self->vtable = &NpEventFlagVtable[2];
+    if (self->state == NP_EVENT_FLAG_OPENED) sceNpCloseEventFlag(self->flag);
+    else if (self->state == NP_EVENT_FLAG_CREATED) sceNpDeleteEventFlag(self->flag);
+    _ZN3sce2np6ObjectdlEPv(self);
+}
+
+void APS5_VABI _ZN3sce2np9EventFlag4ctorEv(NpEventFlagObject* self) {
+    self->state = 0;
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag6CreateEPKcj(NpEventFlagObject* self, const char* name, std::uint32_t attr) {
+    if (self->state != 0) return NP_ERROR_OBJECT_ALREADY_INITIALIZED;
+    const int result = sceNpCreateEventFlag(&self->flag, name, attr, 0);
+    if (result >= 0) self->state = NP_EVENT_FLAG_CREATED;
+    return result;
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag4OpenEPKc(NpEventFlagObject* self, const char* name) {
+    if (self->state != 0) return NP_ERROR_OBJECT_ALREADY_INITIALIZED;
+    const int result = sceNpOpenEventFlag(&self->flag, name);
+    if (result >= 0) self->state = NP_EVENT_FLAG_OPENED;
+    return result;
+}
+
+void APS5_VABI _ZN3sce2np9EventFlag7DestroyEv(NpEventFlagObject* self) {
+    if (self->state == NP_EVENT_FLAG_OPENED) sceNpCloseEventFlag(self->flag);
+    else if (self->state == NP_EVENT_FLAG_CREATED) sceNpDeleteEventFlag(self->flag);
+    self->state = 0;
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag3SetEm(NpEventFlagObject* self, std::uint64_t pattern) {
+    RequireEventFlagInit(self, "sce::np::EventFlag::Set: the event flag is not initialized");
+    return NpResult(sceKernelSetEventFlag(self->flag, pattern));
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag4PollEmjPm(NpEventFlagObject* self, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result) {
+    RequireEventFlagInit(self, "sce::np::EventFlag::Poll: the event flag is not initialized");
+    return NpResult(sceNpPollEventFlag(self->flag, pattern, mode, result));
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag4WaitEmjPmj(NpEventFlagObject* self, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result, std::uint32_t usec) {
+    RequireEventFlagInit(self, "sce::np::EventFlag::Wait: the event flag is not initialized");
+    KernelUseconds timeout = usec;
+    return sceNpWaitEventFlag(self->flag, pattern, mode, result, usec != 0 ? &timeout : nullptr);
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag5ClearEm(NpEventFlagObject* self, std::uint64_t pattern) {
+    RequireEventFlagInit(self, "sce::np::EventFlag::Clear: the event flag is not initialized");
+    return NpResult(sceKernelClearEventFlag(self->flag, pattern));
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag6CancelEm(NpEventFlagObject* self, std::uint64_t pattern) {
+    RequireEventFlagInit(self, "sce::np::EventFlag::Cancel: the event flag is not initialized");
+    int waiting = 0;
+    return sceNpCancelEventFlag(self->flag, pattern, &waiting);
 }
 
 }

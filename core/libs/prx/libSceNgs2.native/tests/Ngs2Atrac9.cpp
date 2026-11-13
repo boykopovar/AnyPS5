@@ -572,6 +572,34 @@ static void TestRefill(const std::vector<float>& reference) {
     }
 }
 
+static void TestAlignedStreamChunksEndSeparately() {
+    const auto system = CreateSystem();
+    const auto voice = EmptySampler(system);
+    std::vector<std::uint8_t> data(Superframe, Superframe + SuperframeBytes);
+    for (int i = 0; i < 3; ++i) data.insert(data.end(), Superframe, Superframe + SuperframeBytes);
+    callbackFlags.clear();
+    Control(voice, SCE_NGS2_VOICE_PARAM_CALLBACK, Ngs2VoiceCallbackParam{{}, OnBlock, 0, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+    Queue(voice, data.data(), SuperframeBytes, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, SuperframeSamples, 0);
+    for (std::uint32_t i = 1; i < 4; ++i) Queue(voice, data.data() + i * SuperframeBytes, SuperframeBytes, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, SuperframeSamples, 0);
+    Render(system, SuperframeSamples * 4);
+    Require(callbackFlags.size() == 4);
+    Require(sceNgs2SystemDestroy(system, nullptr) == 0);
+}
+
+static void TestAlignedStreamChunksCountTowardBlockLimit() {
+    const auto system = CreateSystem();
+    const auto voice = EmptySampler(system);
+    std::vector<std::uint8_t> data;
+    for (int i = 0; i < 5; ++i) data.insert(data.end(), Superframe, Superframe + SuperframeBytes);
+    Queue(voice, data.data(), SuperframeBytes, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, SuperframeSamples, 0);
+    for (std::uint32_t i = 1; i < 4; ++i) Queue(voice, data.data() + i * SuperframeBytes, SuperframeBytes, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, SuperframeSamples, 0);
+    const Ngs2WaveformBlock block{0, SuperframeBytes, 0, 0, SuperframeSamples, 0, 0};
+    const Ngs2SamplerVoiceWaveformBlocksParam param{{sizeof(Ngs2SamplerVoiceWaveformBlocksParam), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS},
+        data.data() + 4 * SuperframeBytes, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, 1, &block};
+    Require(sceNgs2VoiceControl(voice, &param.header) == SCE_NGS2_ERROR_FULL_WAVEFORM_BLOCKS);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestStarvationAndTruncation(const std::vector<float>& reference) {
     for (bool truncate : {false, true}) {
         const auto system = CreateSystem();
@@ -753,6 +781,26 @@ static void TestDataChunkBeyondBuffer() {
     Require(sceNgs2ParseWaveformData(truncated.data(), truncated.size(), &info) == SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA);
 }
 
+static void TestStoppedVoiceDoesNotReadInput() {
+    for (std::uint32_t grains = 1; grains <= 20; ++grains) {
+        const auto system = CreateSystem();
+        Require(sceNgs2SystemSetGrainSamples(system, 64) == SCE_NGS2_OK);
+        const auto voice = EmptySampler(system);
+        std::vector<std::uint8_t> source;
+        for (std::uint32_t i = 0; i < 8; ++i) source.insert(source.end(), Superframe, Superframe + SuperframeBytes);
+        Queue(voice, source.data(), source.size(), 0, 2048, 256);
+        Render(system, grains * 64, 64);
+        Event(voice, SCE_NGS2_VOICE_EVENT_STOP);
+        std::mt19937 random(50);
+        for (auto& byte : source) byte = static_cast<std::uint8_t>(random());
+        bool threw = false;
+        try { Render(system, 64, 64); } catch (const std::runtime_error&) { threw = true; }
+        Require(!threw);
+        Require(Flags(voice) == 0);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+}
+
 int main() {
     const auto reference = Reference();
     TestSkipAndBlockEnd(reference);
@@ -767,8 +815,11 @@ int main() {
     TestCorruptSuperframeAtPageEnd();
     TestStreamPartitions();
     TestRefill(reference);
+    TestAlignedStreamChunksEndSeparately();
+    TestAlignedStreamChunksCountTowardBlockLimit();
     TestReplacement();
     TestStreamingReplay();
+    TestStoppedVoiceDoesNotReadInput();
     TestStarvationAndTruncation(reference);
     TestAppendBoundaries(reference);
     TestBlockOnEmptyAtrac9Voice();

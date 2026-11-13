@@ -22,6 +22,8 @@ extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8messagesIcE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8messagesIwE2idE_nid_postfix;
 extern std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[17];
 extern std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13];
 extern std::uintptr_t _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[14];
@@ -72,6 +74,16 @@ static void CheckInputFacetObjects() {
     _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
     _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
     for (const auto slot : _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) Require(slot == 0);
+}
+
+static void CheckMessagesFacetIds() {
+    Require(sizeof(_ZNSt8messagesIcE2idE_nid_postfix) == 8 && sizeof(_ZNSt8messagesIwE2idE_nid_postfix) == 8);
+    Require(_ZNSt8messagesIcE2idE_nid_postfix == 0 && _ZNSt8messagesIwE2idE_nid_postfix == 0);
+    _ZNSt8messagesIcE2idE_nid_postfix = 3;
+    _ZNSt8messagesIwE2idE_nid_postfix = 5;
+    Require(_ZNSt8messagesIcE2idE_nid_postfix == 3 && _ZNSt8messagesIwE2idE_nid_postfix == 5);
+    _ZNSt8messagesIcE2idE_nid_postfix = 0;
+    _ZNSt8messagesIwE2idE_nid_postfix = 0;
 }
 
 static void CheckCodecvtWideVtableObject() {
@@ -583,6 +595,42 @@ static void CheckTimePutVtableObject() {
     }
 }
 
+static void CheckCtypeCharConversions() {
+    GuestLocale::CtypeVtable vtable{};
+    vtable.widen = &_ZNKSt5ctypeIcE8do_widenEc_nid_postfix;
+    vtable.widenRange = &_ZNKSt5ctypeIcE8do_widenEPKcS2_Pc_nid_postfix;
+    vtable.narrow = &_ZNKSt5ctypeIcE9do_narrowEcc_nid_postfix;
+    vtable.narrowRange = &_ZNKSt5ctypeIcE9do_narrowEPKcS2_cPc_nid_postfix;
+    const GuestLocale::Facet facet{&vtable.facet, 0, 0};
+    const auto* slots = reinterpret_cast<const GuestLocale::CtypeVtable*>(facet.vtable);
+    for (int value = CHAR_MIN; value <= CHAR_MAX; ++value) {
+        const char character = static_cast<char>(value);
+        Require(slots->widen(&facet, character) == character);
+        Require(slots->narrow(&facet, character, '?') == character);
+        Require(slots->narrow(&facet, character, '\0') == character);
+    }
+    const char source[] = {'A', '\0', 'z', '\x7f', '\x80', '\xff', ' '};
+    std::array<char, sizeof(source) + 1> destination{};
+    destination.fill('#');
+    Require(slots->widenRange(&facet, source, source + sizeof(source), destination.data()) == source + sizeof(source));
+    Require(std::memcmp(destination.data(), source, sizeof(source)) == 0 && destination.back() == '#');
+    destination.fill('#');
+    Require(slots->narrowRange(&facet, source + 1, source + 5, '?', destination.data()) == source + 5);
+    Require(std::memcmp(destination.data(), source + 1, 4) == 0 && destination[4] == '#');
+    Require(slots->widenRange(&facet, source, source, nullptr) == source);
+    Require(slots->narrowRange(&facet, source + 3, source + 3, '?', nullptr) == source + 3);
+}
+
+static void CheckTimePutWideVtableObject() {
+    Require(sizeof(_ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix) == kTimePutWideVtableSlots * sizeof(std::uintptr_t));
+    for (std::uintptr_t& slot : _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 static void CheckNumPutVtableObject() {
     Require(sizeof(_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kNumPutCharVtableSlots * sizeof(std::uintptr_t));
     for (std::uintptr_t& slot : _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
@@ -630,6 +678,16 @@ static void CheckMoneyGetVtableObject() {
     }
 }
 
+static void CheckMoneyPutVtableObject() {
+    Require(sizeof(_ZTVSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kMoneyPutCharVtableSlots * sizeof(std::uintptr_t));
+    for (std::uintptr_t& slot : _ZTVSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 int main() {
     std::array<void*, 10> heapApi{};
     heapApi[0] = reinterpret_cast<void*>(&TestHeapAllocate);
@@ -650,6 +708,7 @@ int main() {
     CheckStandardStreams();
     CheckWideCaseTranslation();
     CheckInputFacetObjects();
+    CheckMessagesFacetIds();
     CheckCodecvtWideVtableObject();
     CheckWideNumPutVtableObject();
     CheckFacetGetcat();
@@ -659,12 +718,15 @@ int main() {
     CheckNumGetWideVtableObject();
     CheckNumPutVtableObject();
     CheckCtypeVtableObject();
+    CheckCtypeCharConversions();
     CheckWideCtypeVtableObject();
     CheckCodecvtVtableObject();
     CheckTimePutVtableObject();
     CheckMoneyGetVtableObject();
     CheckNumpunctVtableObject();
     CheckMessagesVtableObject();
+    CheckTimePutWideVtableObject();
+    CheckMoneyPutVtableObject();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();

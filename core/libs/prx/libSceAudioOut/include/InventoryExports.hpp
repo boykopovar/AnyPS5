@@ -5,12 +5,12 @@
 extern "C" {
 
 int APS5_VABI sceAudioOut2GetSystemDebugState();
-int APS5_VABI sceAudioOut2LoContextCreateEx();
-int APS5_VABI sceAudioOut2LoContextGetAttributes();
-int APS5_VABI sceAudioOut2LoContextQueryMemoryEx();
-int APS5_VABI sceAudioOut2LoPortCreateEx();
-int APS5_VABI sceAudioOut2LoPortGetAttributes();
-int APS5_VABI sceAudioOut2LoPortSetAttributesEx();
+int APS5_VABI sceAudioOut2LoContextCreateEx(const AudioOut2ContextParam* params, const void* exParams, void* buffer, size_t bufferSize, AudioOut2ContextHandle* ctx);
+int APS5_VABI sceAudioOut2LoContextGetAttributes(AudioOut2ContextHandle ctx, AudioOut2Attribute* attributes, uint32_t num);
+int APS5_VABI sceAudioOut2LoContextQueryMemoryEx(const AudioOut2ContextParam* params, const void* exParams, size_t* memorySize);
+int APS5_VABI sceAudioOut2LoPortCreateEx(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params, AudioOut2PortHandle* port);
+int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut2Attribute* attributes, uint32_t num);
+int APS5_VABI sceAudioOut2LoPortSetAttributesEx(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num);
 int APS5_VABI sceAudioOut2PortSetAttributesEx();
 int APS5_VABI sceAudioOut2SetHrtfIdForCronos();
 int APS5_VABI sceAudioOut2SetSpeakerInfo();

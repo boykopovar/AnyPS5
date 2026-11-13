@@ -1,43 +1,24 @@
 # libharfbuzz technical debt
 
-### Callable exports
+### Functional
 
-- [Callable exports](../../../core/libs/prx/libharfbuzz/Export.cpp) - 35 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libharfbuzz.c) and the [selected export metadata](https://gist.github.com/kyon-eth/510aa3fcaf09cbe8b52048b44e4e67c0/b909f17c99ecd6323c085f70064548789062d57e) from an older `libharfbuzz` image and a later `libSceVshHarfBuzz` image (SHA-256 `25af97e02c1fa8d318ff3697eb8a79057ee9b8c5e5e4ec321f25114aceb05628`). The later image has a different module and library identity; matching NIDs do not establish forwarding or equivalent behavior. The version labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Blob and face lifecycle](../../../core/libs/prx/libharfbuzz/Lifecycle.cpp): Console ABI, HarfBuzz version, object layouts and allocation failures are unverified. The three exports follow pinned [HarfBuzz 10.0.1](https://github.com/harfbuzz/harfbuzz/tree/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc), including immediate data destruction for copied, empty or oversized blobs and final-reference destruction for borrowed blobs and faces. Table and destruction callbacks cross through guest System V bridges. Backend-owned objects cannot be mixed with foreign HarfBuzz layouts. Bridge allocation failures throw `std::bad_alloc`; unsupported memory modes and null data for nonzero lengths below 2 GiB throw before taking caller ownership. Other inaccessible pointers and callbacks are not validated, and source memory for borrowed blobs must remain valid until the backend releases it. No console or title execution was performed.
 
-| Name | NID |
-| --- | --- |
-| `hb_blob_create` | `hj1KIIN5D54` |
-| `hb_buffer_add_utf16` | `P+hgu937lFs` |
-| `hb_buffer_create` | `7f13XmbjTZo` |
-| `hb_buffer_destroy` | `K-y1p7Z9THQ` |
-| `hb_buffer_get_direction` | `0UafewjjWpM` |
-| `hb_buffer_get_glyph_infos` | `ENsHmJCNG4Q` |
-| `hb_buffer_get_glyph_positions` | `43mnfTQPCbw` |
-| `hb_buffer_get_length` | `leHmVbjHyGw` |
-| `hb_buffer_guess_segment_properties` | `DcrJr531A4w` |
-| `hb_buffer_reset` | `PEggcTbDlfE` |
-| `hb_buffer_set_direction` | `845S2XQdxhw` |
-| `hb_buffer_set_script` | `eGbbvD8o7go` |
-| `hb_face_create_for_tables` | `l7GEYs5PMVU` |
-| `hb_face_destroy` | `ULNHQXciJ3s` |
-| `hb_font_create` | `FVhYusaWqA4` |
-| `hb_font_destroy` | `-8t2aEtFws4` |
-| `hb_font_funcs_create` | `8ZddTpSAKIg` |
-| `hb_font_funcs_make_immutable` | `LyOypNLMoz0` |
-| `hb_font_funcs_set_glyph_extents_func` | `ReQKurupflQ` |
-| `hb_font_funcs_set_glyph_func` | `Mh4YoQ4Y57s` |
-| `hb_font_funcs_set_glyph_h_advance_func` | `SfmbF51JL1Y` |
-| `hb_font_funcs_set_glyph_h_origin_func` | `qv9cZX3xWQo` |
-| `hb_font_funcs_set_nominal_glyph_func` | `88WaPmXp6x8` |
-| `hb_font_funcs_set_variation_glyph_func` | `ik7nXsVUdMw` |
-| `hb_font_make_immutable` | `IThWGmihQUM` |
-| `hb_font_set_funcs` | `WH6phgWx6TI` |
-| `hb_font_set_ppem` | `ztxZdb1IY+M` |
-| `hb_font_set_scale` | `eG5EI3x6twg` |
-| `hb_ft_face_create_cached` | `RTxFQhlbF+U` |
-| `hb_icu_script_to_script` | `u0E8Xi0easM` |
-| `hb_ot_layout_language_find_feature` | `qos3JIrKrDg` |
-| `hb_ot_layout_script_get_language_tags` | `HH-sRSNiSaU` |
-| `hb_ot_layout_table_get_script_tags` | `wf6CfVJj9PQ` |
-| `hb_ot_tag_to_script` | `uKjh3hI1npw` |
-| `hb_shape` | `dM3hP4y99rM` |
+- [The twelve buffer exports](../../../core/libs/prx/libharfbuzz/Buffer.cpp) have no console or title verification. Their signatures, 20-byte glyph records, Unicode properties, UTF-16 decoding and buffer behavior follow the pinned [HarfBuzz 10.0.1](https://github.com/harfbuzz/harfbuzz/tree/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc) public API and backend; the console revision and its Unicode data are unknown. Buffers are opaque host allocations, not console object layouts. Returned arrays belong to that backend and remain valid only until the buffer contents change. Segment-property guessing uses the host process's default language, not a console language setting. Handles from another HarfBuzz instance cannot be mixed with these buffers. Null buffer handles throw except for destruction, which accepts null as the public API does; console null-handle behavior is unverified.
+
+- [Buffer unicode funcs](../../../core/libs/prx/libharfbuzz/Buffer.cpp): `hb_buffer_set_unicode_funcs`/`hb_buffer_set_unicode_funcs_nid_postfix` forwards to the pinned [HarfBuzz 10.0.1](https://github.com/harfbuzz/harfbuzz/tree/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc) backend; the console ABI is unverified. The stored and returned `hb_unicode_funcs_t*` is a backend pointer; handles from another HarfBuzz instance cannot be mixed with these buffers. No console or title execution was performed.
+
+- [Font functions](../../../core/libs/prx/libharfbuzz/FontFunctions.cpp): Console ABI, HarfBuzz version and behavior have not been measured. Fourteen font lifecycle, callback-table, immutability, scale and ppem APIs follow source-built [HarfBuzz 10.0.1](https://github.com/harfbuzz/harfbuzz/blob/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc/src/hb-font.h). They use backend-owned opaque handles and bridge native callbacks and destruction to guest System V callbacks. Callback data and font data are distinct; replacement and final release follow the backend's reference counting. Foreign object layouts and forwarding from `libSceVshHarfBuzz` are not established. Bridge allocation failure throws `std::bad_alloc`; no console allocation-failure equivalence is claimed.
+- [Font callbacks](../../../core/libs/prx/libharfbuzz/FontFunctions.cpp) are exercised by runtime tests using actual exports before and after NID patching and through native shaping with guest callbacks. They establish adapter behavior only. Null destruction and null-face construction follow the backend; other null font/function-table operations throw because no console contract is established. No title compatibility is claimed.
+
+- [Legacy glyph setter](../../../core/libs/prx/libharfbuzz/FontFunctions.cpp): A null callback throws before changing the table or taking ownership of caller data. The pinned deprecated backend setter installs trampolines that later invoke that null pointer; this host-safety rejection has not been measured on a console. Modern nominal/variation null setters still reset their callbacks through the backend.
+
+- [hb_ot_layout_table_get_script_tags, hb_ot_layout_script_get_language_tags and hb_ot_layout_language_find_feature](../../../core/libs/prx/libharfbuzz/Layout.cpp): Console signatures, HarfBuzz version and table-query behavior are unverified. The adapters use backend-owned opaque faces and follow pinned [HarfBuzz 10.0.1](https://github.com/harfbuzz/harfbuzz/blob/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc/src/hb-ot-layout.cc), including pagination, default-language and missing-feature indices. Foreign handle layouts are unverified. Null faces and a null tag array with a nonzero output count throw; invalid caller memory is not generally validated. A refused guest host-write scope throws before changing any caller output, an unmeasured host-boundary policy. Enumeration preflights the total to bracket only the tags the native query writes; other thread mutation of the face during a query remains the caller's synchronization responsibility.
+
+- [hb_ot_tag_to_script](../../../core/libs/prx/libharfbuzz/Export.cpp) follows a disassembly of firmware 13.42 `libSceVshHarfBuzz.sprx` (export at `0x4a850`) and has not been measured on a console. Tags ending in `2` or `3` map through the ten Indic version-2 tags or to `Zzzz`; `DFLT` returns 0; `math` returns `Zmth`; a space in the third or fourth byte repeats the previous byte; any other tag only clears bit 5 of its first byte without validating letters. It does not call the pinned HarfBuzz backend, so it may differ from HarfBuzz 10.0.1 on some tags.
+
+- [hb_icu_script_to_script](../../../core/libs/prx/libharfbuzz/Export.cpp) has no console or title verification. It uses the 193 script names from [ICU 68.2 uscript.h](https://github.com/unicode-org/icu/blob/release-68-2/icu4c/source/common/unicode/uscript.h), regenerated by [harfbuzz_icu_script_names.py](../../../tools/harfbuzz_icu_script_names.py), and the pinned [HarfBuzz 10.0.1 conversion](https://github.com/harfbuzz/harfbuzz/blob/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc/src/hb-icu.cc#L74-L81). Codes outside the ICU 68.2 range return `HB_SCRIPT_INVALID`; the console ICU revision and accepted range are unknown.
+
+- [hb_shape](../../../core/libs/prx/libharfbuzz/Shaping.cpp) forwards backend-owned fonts and buffers to pinned [HarfBuzz 10.0.1 hb-shape.cc](https://github.com/harfbuzz/harfbuzz/blob/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc/src/hb-shape.cc#L129-L196), converting the four unsigned 32-bit feature fields from [hb-common.h](https://github.com/harfbuzz/harfbuzz/blob/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc/src/hb-common.h). Empty buffers return before accessing fonts or features; null buffers and nonempty buffers with null fonts or null feature arrays of nonzero length throw in place of upstream undefined behavior. Inaccessible pointers and foreign handles are not validated. Feature-copy allocation failures throw `std::bad_alloc`; console ABI, revision and allocation-failure equivalence remain unverified. No console or title execution was performed.
+
+- [hb_ft_face_create_cached](../../../core/libs/prx/libharfbuzz/Export.cpp): The signature and cache behavior follow [HarfBuzz 10.0.1](https://github.com/harfbuzz/harfbuzz/blob/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc/src/hb-ft.cc#L1225-L1267). The guest FreeType face holds the cache reference in its generic field. The previous guest finalizer runs on replacement, and FreeType releases the cache reference on face teardown. Callers must release the HarfBuzz references before the FreeType face and synchronize access to the shared face. A null face or a guest record without a live AnyPS5 FreeType owner throws. Arbitrary foreign pointers are outside the supported ABI. Console FreeType and HarfBuzz versions, object layouts, and behavior remain unverified.

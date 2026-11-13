@@ -340,6 +340,39 @@ static void TestPublicKeyInfo() {
     });
 }
 
+static void TestAddedPublicKeyObjects() {
+    const auto bits = Concat({{0x00}, StandardKey()});
+    const struct { const char* oid; const char* encoding; } cases[] {
+        {"1.2.840.113549.1.1.1", "2a864886f70d010101"},
+        {"2.5.8.1.1", "55080101"},
+    };
+    bool refused[2] {};
+    for (std::size_t index = 0; index < std::size(cases); ++index) {
+        OBJ_cleanup_nid_postfix();
+        ERR_clear_error_nid_postfix();
+        Require(OBJ_create_nid_postfix(cases[index].oid, "testKey", "Test Key") >= 956);
+        const auto der = PublicKeyInfo(Concat({Encode(0x06, Hex(cases[index].encoding)), Null}), bits);
+        const unsigned char* input = der.data();
+        auto* output = RSA_new_nid_postfix();
+        const auto* original = output;
+        LibreSslRsa* decoded = nullptr;
+        try {
+            decoded = d2i_RSA_PUBKEY_nid_postfix(&output, &input, static_cast<long>(der.size()));
+            refused[index] = decoded == nullptr;
+            if (decoded) std::fprintf(stderr, "registered RSA OID %s: expected null or not implemented, got a key\n", cases[index].oid);
+        } catch (const std::runtime_error& error) {
+            refused[index] = std::strstr(error.what(), "d2i_RSA_PUBKEY") && std::strstr(error.what(), "not implemented");
+        }
+        refused[index] = refused[index] && input == der.data() && output == original;
+        if (decoded && decoded != output) RSA_free_nid_postfix(decoded);
+        RSA_free_nid_postfix(output);
+        OBJ_cleanup_nid_postfix();
+        ERR_clear_error_nid_postfix();
+    }
+    Require(refused[0]);
+    Require(refused[1]);
+}
+
 static void TestPublicKeyInfoVariants() {
     const auto rsaKey = StandardKey();
     const auto bits = Concat({{0x00}, rsaKey});
@@ -503,6 +536,59 @@ static void TestPublicDecrypt() {
     Require(RSA_public_decrypt_nid_postfix(256, sevenPadding.data(), out.data(), rsa, PaddingPkcs1) == -1);
     Require(RSA_public_decrypt_nid_postfix(256, eightPadding.data(), out.data(), rsa, PaddingPkcs1) == 245);
     Require(Bytes(out.begin(), out.begin() + 245) == payload);
+    RSA_free_nid_postfix(rsa);
+}
+
+static void RequireX931Error(const Bytes& block, LibreSslRsa* rsa, unsigned long reason, std::source_location location = std::source_location::current()) {
+    Bytes out(200, 0xEE);
+    ERR_clear_error_nid_postfix();
+    Require(RSA_public_decrypt_nid_postfix(static_cast<int>(block.size()), block.data(), out.data(), rsa, PaddingX931) == -1, location);
+    Require((ERR_get_error_nid_postfix() & 0xfff) == reason, location);
+    Require((ERR_get_error_nid_postfix() & 0xfff) == 114, location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
+}
+
+static void TestPublicDecryptX931() {
+    const Bytes modulus(128, 0xFF);
+    const auto der = PublicKeyInfo(Concat({RsaEncryption, Null}), Concat({{0x00}, RsaKey(Concat({{0x00}, modulus}), {0x01})}));
+    auto* rsa = Decode(der, static_cast<long>(der.size()));
+    Require(rsa != nullptr);
+    const Bytes data = Hex("0102030405060708090a0b0c0d0e0f1011121314");
+
+    Bytes padded {0x6B};
+    padded.insert(padded.end(), 128 - 3 - data.size(), 0xBB);
+    padded[padded.size() - 1] = 0xBA;
+    const auto block = Concat({padded, data, {0x33, 0xCC}});
+    Require(block.size() == 128);
+    Bytes out(200, 0xEE);
+    Require(RSA_public_decrypt_nid_postfix(128, block.data(), out.data(), rsa, PaddingX931) == static_cast<int>(data.size()) + 1);
+    Require(Bytes(out.begin(), out.begin() + 20) == data && out[20] == 0x33 && out[21] == 0xEE);
+
+    Bytes flipped(128);
+    for (std::size_t index = 0; index < 128; ++index) flipped[index] = static_cast<unsigned char>(0xFF - block[index]);
+    std::fill(out.begin(), out.end(), 0xEE);
+    Require(RSA_public_decrypt_nid_postfix(128, flipped.data(), out.data(), rsa, PaddingX931) == static_cast<int>(data.size()) + 1);
+    Require(Bytes(out.begin(), out.begin() + 20) == data && out[20] == 0x33);
+
+    Bytes direct {0x6A};
+    direct.insert(direct.end(), 125, 0x5A);
+    direct.insert(direct.end(), {0x01, 0xCC});
+    std::fill(out.begin(), out.end(), 0xEE);
+    Require(RSA_public_decrypt_nid_postfix(128, direct.data(), out.data(), rsa, PaddingX931) == 126);
+    Require(out[0] == 0x5A && out[124] == 0x5A && out[125] == 0x01 && out[126] == 0xEE);
+
+    auto badHeader = block;
+    badHeader[0] = 0x6C;
+    RequireX931Error(badHeader, rsa, 137);
+    auto badPadding = block;
+    badPadding[1] = 0xBC;
+    RequireX931Error(badPadding, rsa, 138);
+    auto noPadding = block;
+    noPadding[1] = 0xBA;
+    RequireX931Error(noPadding, rsa, 138);
+    auto badTrailer = direct;
+    badTrailer[127] = 0x1C;
+    RequireX931Error(badTrailer, rsa, 139);
     RSA_free_nid_postfix(rsa);
 }
 
@@ -738,6 +824,38 @@ static void TestVerify() {
     RSA_free_nid_postfix(rsa);
 }
 
+static void TestAddedDigestObjects() {
+    const auto spki = Hex(CavpSpki);
+    auto* rsa = Decode(spki, static_cast<long>(spki.size()));
+    const auto digest = Pattern(20, 11);
+    const struct { const char* oid; const char* encoding; int type; int expected; } cases[] {
+        {"1.2.3.4", "2a0304", -1, 1},
+        {"2.16.840.1.101.3.4.2.1", "608648016503040201", DigestSha256, 0},
+    };
+    bool accepted[2] {};
+    for (std::size_t index = 0; index < std::size(cases); ++index) {
+        OBJ_cleanup_nid_postfix();
+        ERR_clear_error_nid_postfix();
+        const int nid = OBJ_create_nid_postfix(cases[index].oid, "testDigest", "Test Digest");
+        Require(nid >= 956);
+        const int type = cases[index].type < 0 ? nid : cases[index].type;
+        const auto signature = Sign(DigestInfo(Hex(cases[index].encoding), Null, digest));
+        try {
+            const int result = Verify(type, digest, signature, rsa);
+            accepted[index] = result == cases[index].expected;
+            if (!accepted[index]) std::fprintf(stderr, "added digest %s: expected %d or not implemented, got %d\n", cases[index].oid, cases[index].expected, result);
+        } catch (const std::runtime_error& error) {
+            Require(std::strstr(error.what(), "RSA_verify") && std::strstr(error.what(), "not implemented"));
+            accepted[index] = true;
+        }
+        OBJ_cleanup_nid_postfix();
+        ERR_clear_error_nid_postfix();
+    }
+    RSA_free_nid_postfix(rsa);
+    Require(accepted[0]);
+    Require(accepted[1]);
+}
+
 int main() {
     InitializeHeap();
     TestFlags();
@@ -746,9 +864,12 @@ int main() {
     TestFree();
     TestPublicKeyInfo();
     TestPublicKeyInfoVariants();
+    TestAddedPublicKeyObjects();
     TestPublicDecrypt();
+    TestPublicDecryptX931();
     TestPublicEncrypt();
     TestPublicKeyChecks();
     TestVerify();
+    TestAddedDigestObjects();
     std::puts("libSceLibreSsl RSA tests passed");
 }

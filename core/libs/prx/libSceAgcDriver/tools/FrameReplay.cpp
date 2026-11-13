@@ -69,10 +69,9 @@ struct Options {
     bool pace = true;
     bool strict = false;
     std::chrono::milliseconds paceTimeout{10000};
-    std::chrono::milliseconds memoryPaceTimeout{10000};
     std::chrono::milliseconds releaseAfter{3};
     std::chrono::milliseconds drainTimeout{10000};
-    std::chrono::milliseconds busyDrainTimeout{600000};
+    std::chrono::milliseconds busyTimeout{600000};
     bool release = true;
     bool synthesize = true;
     std::size_t repeat = 1;
@@ -85,7 +84,13 @@ struct Options {
 
 class Frames {
 public:
+    void SetSize(std::uint32_t displayWidth, std::uint32_t displayHeight) {
+        width = displayWidth;
+        height = displayHeight;
+    }
+
     void MarkReady() {
+        AgcDriverTracePresent_nid_postfix(width, height);
         std::lock_guard lock(mutex);
         ready.push_back(Clock::now());
     }
@@ -109,6 +114,8 @@ private:
     mutable std::mutex mutex;
     std::vector<Clock::time_point> ready;
     std::exception_ptr failure;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
 };
 
 class ReplayFlip final : public AgcDriver::IFlipRequest {
@@ -273,6 +280,7 @@ void restoreSnapshot(const FrameCaptureReader& reader, const Skipped& skipped) {
 }
 
 Skipped restoreMemory(const FrameCaptureReader& reader) {
+    if (reader.Version() < 2) throw std::runtime_error("frame replay: calls format 1 does not record whether GPU writes had landed before each memory delta was read; record the capture again");
     std::uintptr_t base = 0;
     std::size_t size = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &size);
@@ -338,6 +346,7 @@ struct Replay {
     std::atomic<std::uint64_t> failedRegistrations{0};
     std::atomic<std::uint64_t> submits{0};
     std::atomic<std::uint64_t> deltaBytes{0};
+    std::atomic<std::uint64_t> parkRestores{0};
     std::atomic<std::int64_t> paceWaitedNs{0};
     std::atomic<bool> stalled{false};
     std::atomic<std::uint64_t> stalledAt{0};
@@ -352,6 +361,13 @@ struct Replay {
     bool recording = false;
     Clock::time_point startedAt{};
     Clock::time_point endedAt{};
+
+    struct SettledHold {
+        bool held;
+        ~SettledHold() {
+            if (held) AgcDriverReleaseSettled_nid_postfix();
+        }
+    };
 
     double paceWaitedSeconds() const {
         return static_cast<double>(paceWaitedNs.load()) / 1e9;
@@ -380,7 +396,7 @@ struct Replay {
     }
 
     static bool paced(FrameCallKind kind) {
-        return kind == FrameCallKind::Submit || kind == FrameCallKind::Flip || kind == FrameCallKind::ReserveEopFlip || kind == FrameCallKind::Suspend || kind == FrameCallKind::Memory;
+        return kind == FrameCallKind::Submit || kind == FrameCallKind::Flip || kind == FrameCallKind::ReserveEopFlip || kind == FrameCallKind::Suspend;
     }
 
     void pace(const FrameCall& call) {
@@ -390,16 +406,16 @@ struct Replay {
             stalled.store(false);
         }
         const auto inFlight = call.accepted - call.completed;
-        const bool memory = call.kind == FrameCallKind::Memory;
         const auto began = Clock::now();
-        const auto deadline = began + (memory ? options.memoryPaceTimeout : options.paceTimeout);
+        const auto deadline = began + options.paceTimeout;
+        const auto limit = began + options.busyTimeout;
         const auto waited = [&] { paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count(); };
         while (true) {
             const auto [accepted, completed] = progress();
             if (accepted - completed <= inFlight) return waited();
-            if (Clock::now() >= deadline) {
+            const auto now = Clock::now();
+            if (now >= deadline && (now >= limit || (AgcDriverSettled_nid_postfix() && progress() == std::pair{accepted, completed}))) {
                 waited();
-                if (memory) return;
                 stalled.store(true);
                 stalledAt.store(completed);
                 std::fprintf(stderr, "[frame-replay] pacing gave up at call %llu (%s): serials %llu/%llu, the capture had %llu in flight\n", static_cast<unsigned long long>(call.ordinal),
@@ -475,14 +491,21 @@ struct Replay {
             traced(call, [] { AgcDriverSuspendPoint_nid_postfix(); });
             return;
         case FrameCallKind::Memory: {
-            std::lock_guard lock(memoryMutex);
-            const auto found = groups.find(call.values.at(0));
-            if (found == groups.end()) return;
-            for (const auto* chunk : found->second) {
-                if (skipped.Overlaps(*chunk)) continue;
-                restore(reader, *chunk);
-                deltaBytes += chunk->bytes;
+            const std::unique_lock lock(memoryMutex);
+            const bool pacing = options.pace && recording;
+            bool parkedAsCaptured = true;
+            std::vector<StagedWord> staged;
+            {
+                const auto began = Clock::now();
+                const bool settled = !pacing || AgcDriverHoldSettled_nid_postfix(stalled.load() && progress().second == stalledAt.load() ? 0 : options.busyTimeout.count());
+                const SettledHold hold{pacing};
+                paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
+                if (!settled && options.strict) throw std::runtime_error("frame replay: the replay did not settle before memory delta " + std::to_string(call.ordinal));
+                parkedAsCaptured = !pacing || !settled || call.values.size() < 2 || atCapturedPark(call);
+                staged = restoreGroup(call.values.at(0), false, heldWaits());
             }
+            releaseStaged(staged);
+            if (!parkedAsCaptured) restoreAtCapturedPark(call);
             return;
         }
         case FrameCallKind::FrameStart:
@@ -491,6 +514,121 @@ struct Replay {
             return;
         }
         throw std::runtime_error("frame replay: unknown call kind");
+    }
+
+    static bool rewindWait(const AgcDriver::AwaitedWait& wait) {
+        return wait.function == 0 && wait.bytes == 0;
+    }
+
+    bool atCapturedPark(const FrameCall& call) {
+        std::array<AgcDriver::AwaitedWait, 64> awaited{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
+        std::vector<std::uint64_t> parked;
+        for (std::size_t slot = 0; slot < count; ++slot) parked.push_back(awaited[slot].address);
+        std::ranges::sort(parked);
+        const auto [accepted, completed] = progress();
+        return accepted - completed == call.accepted - call.completed && std::ranges::equal(parked, std::span(call.values).subspan(2));
+    }
+
+    void restoreAtCapturedPark(const FrameCall& call) {
+        const auto began = Clock::now();
+        const auto deadline = began + options.busyTimeout;
+        while (Clock::now() < deadline) {
+            if (atCapturedPark(call) && AgcDriverHoldSettled_nid_postfix(0)) {
+                const SettledHold hold{true};
+                if (!atCapturedPark(call)) continue;
+                restoreGroup(call.values.at(0), true);
+                ++parkRestores;
+                break;
+            }
+            if (AgcDriverSettled_nid_postfix() && !atCapturedPark(call)) break;
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
+        }
+        paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
+    }
+
+    struct StagedWord {
+        std::uint64_t address;
+        std::vector<std::byte> value;
+    };
+
+    static std::vector<AgcDriver::AwaitedWait> heldWaits() {
+        std::array<AgcDriver::AwaitedWait, 64> awaited{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
+        std::vector<AgcDriver::AwaitedWait> held;
+        for (std::size_t slot = 0; slot < count; ++slot) {
+            if (!rewindWait(awaited[slot]) && awaited[slot].bytes != 0) held.push_back(awaited[slot]);
+        }
+        if (held.size() < 2) held.clear();
+        return held;
+    }
+
+    void releaseStaged(const std::vector<StagedWord>& words) {
+        for (const auto& word : words) {
+            const bool settled = AgcDriverHoldSettled_nid_postfix(options.busyTimeout.count());
+            const SettledHold hold{true};
+            if (!settled) return;
+            AgcDriverPrepareCommandWrite_nid_no_patch(word.address, word.value.size());
+            std::memcpy(reinterpret_cast<void*>(static_cast<std::uintptr_t>(word.address)), word.value.data(), word.value.size());
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+        }
+    }
+
+    std::vector<StagedWord> restoreGroup(std::uint64_t group, bool again, const std::vector<AgcDriver::AwaitedWait>& held = {}) {
+        std::vector<StagedWord> staged;
+        const auto found = groups.find(group);
+        if (found == groups.end()) return staged;
+        std::array<AgcDriver::AwaitedWait, 64> awaited{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
+        std::vector<std::uint64_t> parked;
+        for (std::size_t slot = 0; slot < count; ++slot) {
+            if (rewindWait(awaited[slot])) parked.push_back(awaited[slot].address);
+        }
+        std::vector<std::pair<std::uint32_t*, std::uint32_t>> controls;
+        for (const auto* chunk : found->second) {
+            if (skipped.Overlaps(*chunk)) continue;
+            auto bytes = reader.Read(*chunk);
+            auto* const target = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk->address));
+            AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
+            for (auto at = static_cast<std::size_t>((4 - chunk->address % 4) % 4); at + 4 <= bytes.size(); at += 4) {
+                std::uint32_t value = 0;
+                std::memcpy(&value, bytes.data() + at, sizeof(value));
+                if ((value & AgcDriver::Pm4::RewindValid) == 0) continue;
+                std::uint32_t header = 0;
+                if (at >= 4) std::memcpy(&header, bytes.data() + at - 4, sizeof(header));
+                const bool rewind = (header >> 30u) == 3u && ((header >> 8u) & 0xffu) == 0x59u;
+                if (!rewind && std::find(parked.begin(), parked.end(), chunk->address + at) == parked.end()) continue;
+                if (!again) controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
+                std::memcpy(bytes.data() + at, target + at, sizeof(value));
+            }
+            for (const auto& wait : held) {
+                if (wait.address < chunk->address || wait.address + wait.bytes > chunk->address + bytes.size()) continue;
+                const auto offset = static_cast<std::size_t>(wait.address - chunk->address);
+                staged.push_back({wait.address, {bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.begin() + static_cast<std::ptrdiff_t>(offset + wait.bytes)}});
+                std::memcpy(bytes.data() + offset, target + offset, wait.bytes);
+            }
+            std::memcpy(target, bytes.data(), bytes.size());
+            deltaBytes += chunk->bytes;
+        }
+        for (const auto& [control, value] : controls) std::atomic_ref<std::uint32_t>(*control).store(value, std::memory_order_release);
+        return staged;
+    }
+
+    bool releaseRewind(const FrameCall& call, const AgcDriver::AwaitedWait& wait) {
+        if (call.kind != FrameCallKind::Memory) return false;
+        const auto found = groups.find(call.values.at(0));
+        if (found == groups.end()) return false;
+        for (const auto* chunk : found->second) {
+            if (chunk->address > wait.address || wait.address + 4 > chunk->address + chunk->bytes || skipped.Overlaps(*chunk)) continue;
+            const auto bytes = reader.Read(*chunk);
+            std::uint32_t value = 0;
+            std::memcpy(&value, bytes.data() + (wait.address - chunk->address), sizeof(value));
+            if ((value & AgcDriver::Pm4::RewindValid) == 0 || !AgcDriverHoldSettled_nid_postfix(0)) return false;
+            const SettledHold hold{true};
+            restoreGroup(call.values.at(0), false);
+            return true;
+        }
+        return false;
     }
 
     static std::uint64_t load(std::uint64_t address, std::size_t bytes) {
@@ -549,16 +687,19 @@ struct Replay {
     }
 
     void releaseAwaited(std::span<const FrameCall> calls, std::size_t from) {
-        std::lock_guard lock(memoryMutex);
         std::array<AgcDriver::AwaitedWait, 64> awaited{};
         const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
-        for (std::size_t slot = 0; slot < count; ++slot) {
+        bool released = false;
+        for (std::size_t slot = 0; slot < count && !released; ++slot) {
             const auto& wait = awaited[slot];
             if (wait.address == 0) continue;
             const std::size_t bytes = wait.bytes == 8 ? 8 : 4;
             if (wait.function != 0 && satisfies(wait, load(wait.address, bytes))) continue;
-            bool released = false;
-            for (auto index = from; index < calls.size() && !released; ++index) released = writeRecordedValue(calls[index], wait);
+            if (rewindWait(wait)) {
+                for (auto index = from; index < calls.size() && !released; ++index) released = releaseRewind(calls[index], wait);
+                if (released) ++earlyReleases;
+                continue;
+            }
             for (auto index = std::min(from, calls.size()); index > 0 && !released; --index) {
                 released = writeRecordedValue(calls[index - 1], wait);
                 if (released) ++lateReleases;
@@ -587,17 +728,18 @@ struct Replay {
         stalled.store(false);
         std::thread breaker([&] {
             if (!options.release) return;
-            auto lastCompleted = progress().second;
+            auto lastSeen = progress();
             auto lastProgress = Clock::now();
             while (!finished.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                const auto completed = progress().second;
-                if (completed != lastCompleted) {
-                    lastCompleted = completed;
+                const auto seen = progress();
+                const std::unique_lock lock(memoryMutex, std::try_to_lock);
+                if (seen != lastSeen || !lock.owns_lock()) {
+                    lastSeen = seen;
                     lastProgress = Clock::now();
                     continue;
                 }
-                if (Clock::now() - lastProgress < options.releaseAfter) continue;
+                if (Clock::now() - lastProgress < options.releaseAfter || !AgcDriverSettled_nid_postfix() || progress() != lastSeen) continue;
                 releaseAwaited(calls, sequenced.load());
                 lastProgress = Clock::now();
             }
@@ -654,7 +796,7 @@ struct Replay {
                 std::fprintf(stderr, "[frame-replay] draining: %llu submissions pending for %.0f s (serials %llu/%llu), blocked on%s\n", static_cast<unsigned long long>(unfinished),
                              std::chrono::duration<double>(now - lastProgress).count(), static_cast<unsigned long long>(completed), static_cast<unsigned long long>(accepted), describeBlocked().c_str());
             }
-            if (now - lastProgress >= options.busyDrainTimeout) {
+            if (const auto quiet = now - lastProgress; quiet >= options.busyTimeout || (quiet >= options.drainTimeout && AgcDriverSettled_nid_postfix())) {
                 std::fprintf(stderr, "[frame-replay] %llu submissions did not complete after the last captured call (serials %llu/%llu), blocked on%s\n", static_cast<unsigned long long>(unfinished),
                              static_cast<unsigned long long>(completed), static_cast<unsigned long long>(accepted), describeBlocked().c_str());
                 return;
@@ -693,11 +835,12 @@ struct Replay {
 };
 
 int usage() {
-    std::fprintf(stderr, "usage: agc_frame_replay <capture directory> [--no-pace] [--no-release] [--release-after-ms <n>] [--strict]\n"
+    std::fprintf(stderr, "usage: agc_frame_replay <capture directory> [--no-pace] [--pace-timeout-ms <n>] [--no-release] [--release-after-ms <n>] [--strict]\n"
                          "                        [--repeat <n>] [--cold-pipelines] [--dump <address>:<bytes>:<file>]...\n"
                          "  replays the driver calls and guest memory that APS5_FRAME_CAPTURE=<directory> recorded, through this\n"
                          "  build's AGC driver with no title running, and prints one JSON line with the frame times\n"
                          "  --no-pace           issues calls without waiting for the in-flight depth the title had\n"
+                         "  --pace-timeout-ms   milliseconds a call waits for the captured in-flight depth once no queue runs (10000)\n"
                          "  --no-release        never copies recorded CPU stores early to release a GPU wait\n"
                          "  --release-after-ms  milliseconds without a completion before awaited dwords are released (3)\n"
                          "  --no-synthesize     releases a wait only with a value the capture recorded, never with its reference value\n"
@@ -1087,6 +1230,8 @@ int run(const Options& options) {
         if (chunk.kind == FrameMemoryKind::Delta) replay.groups[chunk.group].push_back(&chunk);
     }
     const auto& calls = reader.Calls();
+    const auto display = std::find_if(calls.begin(), calls.end(), [](const FrameCall& call) { return call.kind == FrameCallKind::DisplayBuffer && call.values.size() >= 4; });
+    if (display != calls.end()) replay.frames.SetSize(static_cast<std::uint32_t>(display->values[2]), static_cast<std::uint32_t>(display->values[3]));
     const auto frameStart = std::find_if(calls.begin(), calls.end(), [](const FrameCall& call) { return call.kind == FrameCallKind::FrameStart; });
     for (auto call = calls.begin(); call != frameStart; ++call) replay.execute(*call);
     const auto journalStart = Clock::now();
@@ -1160,10 +1305,10 @@ int run(const Options& options) {
         frames += measured.frames;
     }
     const auto slowest = frameMs.empty() ? 0.0 : *std::max_element(frameMs.begin(), frameMs.end());
-    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
+    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"park_restores\":%llu,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
                 frames, seconds, seconds > 0 ? static_cast<double>(frames) / seconds : 0.0, percentile(frameMs, 0.5), percentile(frameMs, 0.9), slowest, frameList.c_str(), passList.c_str(),
                 static_cast<unsigned long long>(replay.keptReservations.load()),
-                static_cast<unsigned long long>(replay.submits.load()), static_cast<double>(replay.deltaBytes.load()) / (1024.0 * 1024.0), static_cast<unsigned long long>(replay.paceTimeouts.load()),
+                static_cast<unsigned long long>(replay.submits.load()), static_cast<double>(replay.deltaBytes.load()) / (1024.0 * 1024.0), static_cast<unsigned long long>(replay.parkRestores.load()), static_cast<unsigned long long>(replay.paceTimeouts.load()),
                 replay.paceWaitedSeconds(), static_cast<unsigned long long>(replay.staleRegistrations.load()), static_cast<unsigned long long>(replay.failedRegistrations.load()),
                 static_cast<double>(replay.skipped.bytes) / (1024.0 * 1024.0), replay.threads, static_cast<unsigned long long>(replay.earlyReleases.load()), static_cast<unsigned long long>(replay.lateReleases.load()),
                 static_cast<unsigned long long>(replay.syntheticReleases.load()),
@@ -1192,6 +1337,7 @@ int main(int argc, char** argv) {
         if (argument == "--no-pace") options.pace = false;
         else if (argument == "--no-release") options.release = false;
         else if (argument == "--no-synthesize") options.synthesize = false;
+        else if (argument == "--pace-timeout-ms" && index + 1 < argc) options.paceTimeout = std::chrono::milliseconds(std::strtoll(argv[++index], nullptr, 10));
         else if (argument == "--release-after-ms" && index + 1 < argc) options.releaseAfter = std::chrono::milliseconds(std::strtoll(argv[++index], nullptr, 10));
         else if (argument == "--strict") options.strict = true;
         else if (argument == "--repeat" && index + 1 < argc) options.repeat = std::max<std::size_t>(1, std::strtoull(argv[++index], nullptr, 10));

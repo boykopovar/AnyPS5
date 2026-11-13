@@ -20,6 +20,16 @@ extern unsigned char _ZNSt8__sce_v25wcoutE_nid_postfix[];
 extern unsigned char _ZNSt8__sce_v25wcerrE_nid_postfix[];
 extern unsigned char _ZNSt8__sce_v23cinE_nid_postfix[];
 extern unsigned char _ZNSt8__sce_v24wcinE_nid_postfix[];
+extern unsigned char _ZNSt8__sce_v24clogE_nid_postfix[];
+extern unsigned char _ZNSt8__sce_v25wclogE_nid_postfix[];
+extern unsigned char* _ZNSt8__sce_v28_Ptr_cinE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v29_Ptr_coutE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v29_Ptr_cerrE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v29_Ptr_clogE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v29_Ptr_wcinE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v210_Ptr_wcoutE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v210_Ptr_wcerrE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v210_Ptr_wclogE_nid_postfix;
 }
 
 void* APS5_VABI TestHeapAllocate(std::size_t bytes) { return std::malloc(bytes); }
@@ -77,9 +87,22 @@ int main() {
         _ZNSt8__sce_v25wcerrE_nid_postfix,
         _ZNSt8__sce_v23cinE_nid_postfix,
         _ZNSt8__sce_v24wcinE_nid_postfix,
+        _ZNSt8__sce_v24clogE_nid_postfix,
+        _ZNSt8__sce_v25wclogE_nid_postfix,
     };
-    for (std::size_t index = 0; index < 6; ++index) {
+    unsigned char* pointers[] {
+        _ZNSt8__sce_v29_Ptr_coutE_nid_postfix,
+        _ZNSt8__sce_v29_Ptr_cerrE_nid_postfix,
+        _ZNSt8__sce_v210_Ptr_wcoutE_nid_postfix,
+        _ZNSt8__sce_v210_Ptr_wcerrE_nid_postfix,
+        _ZNSt8__sce_v28_Ptr_cinE_nid_postfix,
+        _ZNSt8__sce_v29_Ptr_wcinE_nid_postfix,
+        _ZNSt8__sce_v29_Ptr_clogE_nid_postfix,
+        _ZNSt8__sce_v210_Ptr_wclogE_nid_postfix,
+    };
+    for (std::size_t index = 0; index < 8; ++index) {
         Require(streams[index][0] == 0);
+        Require(pointers[index] == streams[index]);
         for (std::size_t other = 0; other < index; ++other) Require(streams[index] != streams[other]);
     }
 
