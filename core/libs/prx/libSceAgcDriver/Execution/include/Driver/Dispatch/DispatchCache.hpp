@@ -17,7 +17,6 @@
 #include <memory>
 #include <set>
 #include <span>
-#include <span>
 #include <utility>
 #include <vector>
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"

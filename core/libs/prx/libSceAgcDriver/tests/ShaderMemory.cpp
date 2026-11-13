@@ -3331,6 +3331,9 @@ void verifySrtTape() {
         std::uint64_t asBase = 0;
         std::uint64_t asValue = 0;
         std::vector<std::pair<std::uint64_t, std::int32_t>> userDataReads;
+        std::vector<std::pair<std::uint64_t, std::uintptr_t>> readOrigins;
+        std::vector<std::uintptr_t> operandReads;
+        std::vector<std::pair<std::uint32_t, std::uintptr_t>> sourceLeads;
         bool operator==(const Walk&) const = default;
     };
     const auto walk = [](const IrResourcePlan& plan, SrtRuntime runtime, bool tape) {
@@ -3354,6 +3357,17 @@ void verifySrtTape() {
         out.asBase = use.asBase;
         out.asValue = use.asValue;
         out.userDataReads = use.reads;
+        require(use.reads.size() == use.readInstructions.size(), "SRT tape origin metadata: recorded reads have no instruction origins");
+        for (std::size_t index = 0; index < use.reads.size(); ++index) out.readOrigins.emplace_back(use.reads[index].first, reinterpret_cast<std::uintptr_t>(use.readInstructions[index]));
+        for (const auto* read : use.operandReads) out.operandReads.push_back(reinterpret_cast<std::uintptr_t>(read));
+        for (const auto& [source, lead] : use.sourceLeads) out.sourceLeads.emplace_back(source, reinterpret_cast<std::uintptr_t>(lead));
+        const auto normalize = [](auto& entries) {
+            std::sort(entries.begin(), entries.end());
+            entries.erase(std::unique(entries.begin(), entries.end()), entries.end());
+        };
+        normalize(out.readOrigins);
+        normalize(out.operandReads);
+        normalize(out.sourceLeads);
         std::sort(out.userDataReads.begin(), out.userDataReads.end());
         out.userDataReads.erase(std::unique(out.userDataReads.begin(), out.userDataReads.end()), out.userDataReads.end());
         return out;
@@ -3421,6 +3435,34 @@ void verifySrtTape() {
         require(tape.ok && tape.active.size() == imageActivity + 1u && tape.active[imageActivity] == mode, "SRT tape: the image behind the branch has the wrong activity");
         require(tape.asBase != 0u && tape.asValue != 0u && !tape.userDataReads.empty(), "SRT tape: the guarded program's walk reported no user-data use");
     }
+
+
+    srt.fill(0u);
+    std::copy(valid.begin(), valid.end(), srt.begin());
+    std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+    srt[20] = 1u;
+    SrtUserDataUse preserved;
+    preserved.asBase = 0x40u;
+    preserved.asValue = 0x80u;
+    preserved.reads.emplace_back(srtAddress, -1);
+    const auto* seedInstruction = guardedPlan->descriptorSources.front().dwords[0];
+    preserved.readInstructions.push_back(seedInstruction);
+    preserved.operandReads.push_back(seedInstruction);
+    preserved.sourceLeads.emplace_back(99u, seedInstruction);
+    const auto expectedUse = preserved;
+    auto rejectedRuntime = runtimeFor(userData);
+    std::size_t readCalls = 0;
+    rejectedRuntime.userContext = &readCalls;
+    const auto rejectingRead = [](void* context, std::uint64_t address, std::uint32_t* word) {
+        if (++*static_cast<std::size_t*>(context) >= 2u) return false;
+        std::memcpy(word, reinterpret_cast<const void*>(address), sizeof(*word));
+        return true;
+    };
+    rejectedRuntime.readMemory = rejectingRead;
+    rejectedRuntime.readSpecializationMemory = rejectingRead;
+    rejectedRuntime.userDataUse = &preserved;
+    require(!answers(*guardedPlan, rejectedRuntime) && readCalls >= 2u, "SRT tape origin metadata: rejection did not follow a successful read");
+    require(preserved.asBase == expectedUse.asBase && preserved.asValue == expectedUse.asValue && preserved.reads == expectedUse.reads && preserved.readInstructions == expectedUse.readInstructions && preserved.operandReads == expectedUse.operandReads && preserved.sourceLeads == expectedUse.sourceLeads, "SRT tape origin metadata: refused walk changed its caller's annotations");
 
     const auto nullRuntime = runtimeFor(nullUserData);
     require(!answers(*guardedPlan, nullRuntime), "SRT tape: the tape answered a walk through a null user-data root");
@@ -12186,6 +12228,11 @@ int main(int argc, char** argv) {
             if (argc != 2 || std::string_view(argv[1]) != "--image-limits-" + std::string(part)) continue;
             verifyImageLimits(part);
             std::cout << "Image limits (" << part << ") passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--srt-buffer-origins") {
+            verifySrtTape();
+            std::cout << "SRT tape/interpreter read, operand and source origins agree\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {
