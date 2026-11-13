@@ -521,7 +521,19 @@ if(BUILD_TESTING)
     add_test(NAME guest_icu_date_pattern_manifest COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateTimePatternData.py ${ICU_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${icu_host_icupkg})
     set_tests_properties(guest_icu_date_pattern_native_data guest_icu_date_pattern_manifest PROPERTIES TIMEOUT 20)
+    set(icu_pattern_patched_dir ${CMAKE_BINARY_DIR}/core/libs/libs)
+    add_custom_target(guest_icu_date_pattern_nid_assets DEPENDS
+        ${icu_pattern_patched_dir}/libSceIcu.prx ${icu_pattern_patched_dir}/libkernel.prx ${icu_pattern_patched_dir}/libc.prx)
+    add_test_executable(guest_icu_date_pattern_nid_tests NO_RUNTIME_DLL_STAGING ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateTimePatternNid.cpp)
+    target_include_directories(guest_icu_date_pattern_nid_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_date_pattern_nid_tests PRIVATE ${CMAKE_DL_LIBS})
+    configure_host_test_executable(guest_icu_date_pattern_nid_tests)
+    add_dependencies(guest_icu_date_pattern_nid_tests guest_icu_date_pattern_nid_assets)
+    add_test(NAME guest_icu_date_pattern_nid COMMAND guest_icu_date_pattern_nid_tests ${icu_pattern_patched_dir}/libSceIcu.prx)
+    set_tests_properties(guest_icu_date_pattern_nid PROPERTIES TIMEOUT 20)
     if(WIN32)
+        set_tests_properties(guest_icu_date_pattern_nid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${icu_pattern_patched_dir}")
         set_tests_properties(guest_icu_date_pattern_generator_open PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         foreach(mode literals buffers lifetime memory)
