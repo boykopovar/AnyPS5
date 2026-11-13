@@ -119,12 +119,4 @@ bool APS5_VABI _ZNSt8__sce_v210filesystem12_Current_getERA260_c_nid_postfix(char
     return true;
 }
 
-void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcNS_10error_codeE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathENS_10error_codeE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 }

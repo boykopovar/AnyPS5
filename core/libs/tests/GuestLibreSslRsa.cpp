@@ -340,6 +340,39 @@ static void TestPublicKeyInfo() {
     });
 }
 
+static void TestAddedPublicKeyObjects() {
+    const auto bits = Concat({{0x00}, StandardKey()});
+    const struct { const char* oid; const char* encoding; } cases[] {
+        {"1.2.840.113549.1.1.1", "2a864886f70d010101"},
+        {"2.5.8.1.1", "55080101"},
+    };
+    bool refused[2] {};
+    for (std::size_t index = 0; index < std::size(cases); ++index) {
+        OBJ_cleanup_nid_postfix();
+        ERR_clear_error_nid_postfix();
+        Require(OBJ_create_nid_postfix(cases[index].oid, "testKey", "Test Key") >= 956);
+        const auto der = PublicKeyInfo(Concat({Encode(0x06, Hex(cases[index].encoding)), Null}), bits);
+        const unsigned char* input = der.data();
+        auto* output = RSA_new_nid_postfix();
+        const auto* original = output;
+        LibreSslRsa* decoded = nullptr;
+        try {
+            decoded = d2i_RSA_PUBKEY_nid_postfix(&output, &input, static_cast<long>(der.size()));
+            refused[index] = decoded == nullptr;
+            if (decoded) std::fprintf(stderr, "registered RSA OID %s: expected null or not implemented, got a key\n", cases[index].oid);
+        } catch (const std::runtime_error& error) {
+            refused[index] = std::strstr(error.what(), "d2i_RSA_PUBKEY") && std::strstr(error.what(), "not implemented");
+        }
+        refused[index] = refused[index] && input == der.data() && output == original;
+        if (decoded && decoded != output) RSA_free_nid_postfix(decoded);
+        RSA_free_nid_postfix(output);
+        OBJ_cleanup_nid_postfix();
+        ERR_clear_error_nid_postfix();
+    }
+    Require(refused[0]);
+    Require(refused[1]);
+}
+
 static void TestPublicKeyInfoVariants() {
     const auto rsaKey = StandardKey();
     const auto bits = Concat({{0x00}, rsaKey});
@@ -738,6 +771,38 @@ static void TestVerify() {
     RSA_free_nid_postfix(rsa);
 }
 
+static void TestAddedDigestObjects() {
+    const auto spki = Hex(CavpSpki);
+    auto* rsa = Decode(spki, static_cast<long>(spki.size()));
+    const auto digest = Pattern(20, 11);
+    const struct { const char* oid; const char* encoding; int type; int expected; } cases[] {
+        {"1.2.3.4", "2a0304", -1, 1},
+        {"2.16.840.1.101.3.4.2.1", "608648016503040201", DigestSha256, 0},
+    };
+    bool accepted[2] {};
+    for (std::size_t index = 0; index < std::size(cases); ++index) {
+        OBJ_cleanup_nid_postfix();
+        ERR_clear_error_nid_postfix();
+        const int nid = OBJ_create_nid_postfix(cases[index].oid, "testDigest", "Test Digest");
+        Require(nid >= 956);
+        const int type = cases[index].type < 0 ? nid : cases[index].type;
+        const auto signature = Sign(DigestInfo(Hex(cases[index].encoding), Null, digest));
+        try {
+            const int result = Verify(type, digest, signature, rsa);
+            accepted[index] = result == cases[index].expected;
+            if (!accepted[index]) std::fprintf(stderr, "added digest %s: expected %d or not implemented, got %d\n", cases[index].oid, cases[index].expected, result);
+        } catch (const std::runtime_error& error) {
+            Require(std::strstr(error.what(), "RSA_verify") && std::strstr(error.what(), "not implemented"));
+            accepted[index] = true;
+        }
+        OBJ_cleanup_nid_postfix();
+        ERR_clear_error_nid_postfix();
+    }
+    RSA_free_nid_postfix(rsa);
+    Require(accepted[0]);
+    Require(accepted[1]);
+}
+
 int main() {
     InitializeHeap();
     TestFlags();
@@ -746,9 +811,11 @@ int main() {
     TestFree();
     TestPublicKeyInfo();
     TestPublicKeyInfoVariants();
+    TestAddedPublicKeyObjects();
     TestPublicDecrypt();
     TestPublicEncrypt();
     TestPublicKeyChecks();
     TestVerify();
+    TestAddedDigestObjects();
     std::puts("libSceLibreSsl RSA tests passed");
 }

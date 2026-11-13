@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 #include <thread>
 #include <stdexcept>
 #include <string>
@@ -491,7 +492,11 @@ static int32_t InitializeFiber(FiberObject* object, const char* name, GuestFiber
     if (const auto valid = ValidateContext(addr_context, size_context); valid != SCE_OK) return valid;
     if ((flags & ~(FIBER_FLAG_NO_ULOBJMGR | FIBER_FLAG_CONTEXT_SIZE_CHECK | FIBER_FLAG_SET_FPU_REGISTERS)) != 0) throw std::runtime_error("_sceFiberInitializeWithInternalOptionImpl: unsupported flags " + std::to_string(flags));
     auto* fiber = reinterpret_cast<Fiber*>(object);
-    if (fiber->magic == FIBER_MAGIC) DetachStack(fiber);
+    if (fiber->magic == FIBER_MAGIC) {
+        const auto state = fiber->state.load(std::memory_order_acquire);
+        if (state == FiberState::Running || state == FiberState::Suspending) return SCE_FIBER_ERROR_STATE;
+        DetachStack(fiber);
+    }
     std::memset(object, 0, FIBER_OBJECT_SIZE);
     fiber->magic = FIBER_MAGIC;
     fiber->state.store(FiberState::Idle, std::memory_order_relaxed);
@@ -592,7 +597,11 @@ int32_t APS5_VABI sceFiberReturnToThread(uint64_t arg_on_return, uint64_t* arg_o
 int32_t APS5_VABI sceFiberGetSelf(FiberObject** fiber) {
     if (!fiber) return SCE_FIBER_ERROR_NULL;
     if (!ThreadState().current) return SCE_FIBER_ERROR_PERMISSION;
-    *fiber = reinterpret_cast<FiberObject*>(ThreadState().current);
+    auto* current = reinterpret_cast<FiberObject*>(ThreadState().current);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(fiber, &current, sizeof(current));
+    errno = savedErrno;
+    if (!copied) return SCE_FIBER_ERROR_NULL;
     return SCE_OK;
 }
 

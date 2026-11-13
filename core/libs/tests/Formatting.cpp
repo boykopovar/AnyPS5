@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/ScanQuadLength.hpp"
+#include <bit>
 #include <algorithm>
 #include <array>
 #include <utility>
@@ -11,6 +12,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 #include <string>
 #include <stdexcept>
 #include <cstdint>
@@ -104,6 +106,22 @@ static void CheckCharacterScanLengths() {
     }
 }
 
+static void CheckFloatingScanRange() {
+    const auto scan = [](const std::string& input) {
+        double value = 0.0;
+        errno = 0;
+        const int result = sscanf_s_nid_postfix(input.c_str(), "%lf", &value);
+        return std::pair{result, errno};
+    };
+    Require(scan("1.5") == std::pair{1, 0});
+    Require(scan(std::string(4000, '9')) == std::pair{1, 0});
+    Require(scan(std::string(5000, '9')) == std::pair{1, ERANGE});
+    Require(scan("0." + std::string(5000, '0') + "1") == std::pair{1, ERANGE});
+    Require(scan("1e5000") == std::pair{1, ERANGE});
+    Require(scan("1e-5000") == std::pair{1, ERANGE});
+    Require(scan("1e300") == std::pair{1, 0});
+}
+
 static int APS5_VABI PrintList(const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
@@ -127,6 +145,16 @@ static void CheckPositionalUnknownConversion() {
         Require(std::memcmp(&args, &original, sizeof(args)) == 0);
     }
     Require(FormatList(output, sizeof(output), "%1$C%d", 7) == 3 && std::strcmp(output, "%C7") == 0);
+}
+
+static void CheckSecureCountBeforeInputFailure() {
+    for (const auto scan : {sscanf_s_nid_postfix, ScanListS}) {
+        int count = -7;
+        int value = -7;
+        Require(scan("", "%n%d", &count, &value) == 0 && count == 0 && value == -7);
+        Require(scan("  ", "%*n%d", &value) == 0 && value == -7);
+        Require(scan("", " %n%d", &count, &value) == 0 && value == -7);
+    }
 }
 
 static void CheckIgnoredLengths() {
@@ -465,6 +493,12 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(std::strcmp(buffer, "abcd") == 0 && buffer[5] == '!');
     Require(snprintf_nid_postfix(nullptr, 0, "%s:%d", "abcdef", 123) == 10);
     Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%s]", static_cast<const char*>(nullptr)) == 8 && std::strcmp(buffer, "[(null)]") == 0);
+    const char* none = nullptr;
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%.3s][%.0s][%8.2s][%-6.1s]", none, none, none, none) == 25 &&
+        std::strcmp(buffer, "[(nu][][      (n][(     ]") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "[%.*s]", 4, none) == 6 && std::strcmp(buffer, "[(nul]") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "%2$.3s:%1$d", 7, none) == 5 && std::strcmp(buffer, "(nu:7") == 0);
+    Require(sprintf_nid_postfix(buffer, "%.2s", none) == 2 && std::strcmp(buffer, "(n") == 0);
     buffer[0] = 'x';
     Require(snprintf_nid_postfix(buffer, 1, "%d", 123) == 3 && buffer[0] == 0);
     Require(sprintf_nid_postfix(buffer, "%hhd %hhu %hd %hu %%", 255, 257, 65535, 65537) == 11);
@@ -495,6 +529,61 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(ScanListS("61439ebdf", "%x", &hexWrap) == 1 && hexWrap == 0x1439ebdfu && *__error_nid_postfix() == 7);
     Require(ScanListS("-eb371ade9", "%hx", &shortWrap) == 1 && shortWrap == 0x5217 && *__error_nid_postfix() == 7);
     Require(ScanListS("867259ccd", "%hhX", &byteWrap) == 1 && byteWrap == 0xcd && *__error_nid_postfix() == 7);
+    {
+        const struct {
+            const char* input;
+            const char* format;
+            int result;
+        } prefixes[] = {
+            {"0x", "%x", -1}, {" 0X", "%X", -1}, {"0x1", "%2x", -1}, {"0x", "%i", -1}, {"0x", "%p", -1},
+            {"0xg", "%x", 0}, {"-0x", "%x", 0}, {"+0xz", "%x", 0}, {"-0x1", "%3x", 0}, {"0xg", "%i", 0}, {"0xg", "%p", 0},
+            {"0x", "%f", 0}, {"0x.", "%f", 0}, {"0xp1", "%a", 0}, {"0x", "%2f", 0}, {"0x.8", "%3f", 0}, {"-0x", "%g", 0},
+        };
+        for (const auto& item : prefixes) {
+            unsigned char stored[16];
+            std::memset(stored, 0x55, sizeof(stored));
+            int count = -7;
+            const std::string format = std::string(item.format) + "%n";
+            Require(ScanListS(item.input, format.c_str(), stored, &count) == item.result && count == -7 && stored[0] == 0x55);
+        }
+        unsigned int hex = 0;
+        int count = -7;
+        Require(ScanListS("0x1", "%1x%n", &hex, &count) == 1 && hex == 0 && count == 1);
+        Require(ScanListS("0x1f", "%x%n", &hex, &count) == 1 && hex == 0x1f && count == 4);
+        float point = 0;
+        Require(ScanListS("0x.8", "%f%n", &point, &count) == 1 && point == 0.5f && count == 4);
+        int first = 0;
+        Require(ScanListS("5 0x", "%d %x", &first, &hex) == 1 && first == 5);
+        Require(ScanListS("0x 7", "%*x %d", &first) == 0);
+        for (const char* input : {"nan", "-nan", "-NaN", "-nan(0x5)", "+nan"}) {
+            float single = 0;
+            double wide = 0;
+            unsigned char extended[16];
+            std::memset(extended, 0x55, sizeof(extended));
+            Require(ScanListS(input, "%f", &single) == 1 && std::bit_cast<std::uint32_t>(single) == 0x7fc00000u);
+            Require(ScanListS(input, "%lf", &wide) == 1 && std::bit_cast<std::uint64_t>(wide) == 0x7ff8000000000000ull);
+            Require(ScanListS(input, "%Lf", extended) == 1);
+            std::uint64_t mantissa = 0;
+            std::uint16_t exponent = 0;
+            std::memcpy(&mantissa, extended, 8);
+            std::memcpy(&exponent, extended + 8, 2);
+            Require(mantissa == 0xc000000000000000ull && exponent == 0x7fff);
+            Require(std::all_of(extended + 10, extended + 16, [](unsigned char byte) { return byte == 0x55; }));
+        }
+        const struct {
+            const char* input;
+            const char* format;
+            int expected;
+        } ranges[] = {
+            {"1e40", "%e", 7}, {"1e-50", "%e", 7}, {"0x1p200", "%a", 7}, {"1e400", "%le", 7}, {"1e-320", "%le", 7},
+            {"0x1p20000", "%La", 7}, {"1e5000", "%Le", 34}, {"1e-5000", "%Lg", 34},
+        };
+        for (const auto& item : ranges) {
+            unsigned char stored[16];
+            *__error_nid_postfix() = 7;
+            Require(ScanListS(item.input, item.format, stored) == 1 && *__error_nid_postfix() == item.expected);
+        }
+    }
     Require(sscanf_nid_postfix("0x1f", "%i", &binary) == 1 && binary == 31);
     for (const char* format : {"%hls", "%lhs", "%llls", "%jls", "%lLs", "%5y", "%k"}) {
         for (const char* input : {"ab", ""}) {
@@ -800,4 +889,4 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckPositionalUnknownConversion(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckFloatingScanRange(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }

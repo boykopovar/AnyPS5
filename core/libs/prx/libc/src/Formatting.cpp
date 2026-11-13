@@ -12,6 +12,8 @@
 #include <memory>
 #include <climits>
 #include <stdexcept>
+#include <cmath>
+#include <limits>
 
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
@@ -41,7 +43,8 @@ bool RequiresGuestFormatting(const char* format) {
     while ((format = std::strchr(format, '%')) != nullptr) {
         ++format;
         if (*format == '%') { ++format; continue; }
-        while (*format && std::strchr("-+ #00123456789.*$", *format)) ++format;
+        bool precision = false;
+        while (*format && std::strchr("-+ #00123456789.*$", *format)) precision |= *format++ == '.';
         if (*format == 'S' || *format == 'C' || *format == 'p' ||
             (*format == 'l' && (format[1] == 's' || format[1] == 'c' || format[1] == 'p'))) return true;
         const char* lengthStart = format;
@@ -50,6 +53,7 @@ bool RequiresGuestFormatting(const char* format) {
         const std::string length(lengthStart, format);
         if (*format && LibcDetail::ApplicableLength(length, *format) != length) return true;
         if (*format && std::strchr("aAeEfFgG", *format)) return true;
+        if (precision && *format == 's') return true;
         if (*format) ++format;
     }
     return false;
@@ -227,6 +231,43 @@ int HostFscanf(std::FILE* stream, const char* format, ...) {
     return result;
 }
 
+enum class HexPrefix { Valid, InputFailure, MatchingFailure };
+
+HexPrefix CheckHexPrefix(const char* field, unsigned long width, bool floating) {
+    const unsigned long limit = width == 0 ? ULONG_MAX : width;
+    const bool sign = field[0] == '+' || field[0] == '-';
+    unsigned long index = sign ? 1 : 0;
+    if (index + 1 >= limit || field[index] != '0' || (field[index + 1] != 'x' && field[index + 1] != 'X')) return HexPrefix::Valid;
+    index += 2;
+    const auto hexDigit = [&](unsigned long at) { return at < limit && std::isxdigit(static_cast<unsigned char>(field[at])) != 0; };
+    if (hexDigit(index)) return HexPrefix::Valid;
+    if (floating) return index < limit && field[index] == '.' && hexDigit(index + 1) ? HexPrefix::Valid : HexPrefix::MatchingFailure;
+    const bool ended = index >= limit || field[index] == '\0';
+    return ended && !sign ? HexPrefix::InputFailure : HexPrefix::MatchingFailure;
+}
+
+bool DecimalOutOfRange(const std::string& field) {
+    if (field.find_first_of("xX") != std::string::npos) return false;
+    if (field.find_first_of("eE") == std::string::npos && field.size() < static_cast<std::size_t>(std::numeric_limits<long double>::max_exponent10)) return false;
+    errno = 0;
+    const long double value = std::strtold(field.c_str(), nullptr);
+    return errno == ERANGE && (std::isinf(value) || value == 0.0L);
+}
+
+template <typename T>
+void StoreDefaultNaN(void* target, std::size_t bytes) {
+    T value{};
+    std::memcpy(&value, target, std::min(bytes, sizeof(value)));
+    if (!std::isnan(value)) return;
+    if (bytes == 10) {
+        constexpr unsigned char quiet[10]{0, 0, 0, 0, 0, 0, 0, 0xc0, 0xff, 0x7f};
+        std::memcpy(target, quiet, sizeof(quiet));
+    } else {
+        value = std::numeric_limits<T>::quiet_NaN();
+        std::memcpy(target, &value, bytes);
+    }
+}
+
 class StringSource {
     const char* const start;
     const char* position;
@@ -345,7 +386,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
                     std::memcpy(target, &value, sizeof(value));
                 } else throw std::invalid_argument("Invalid scan count length");
             }
-            if (!secure) converted = true;
+            converted = true;
             continue;
         }
         if (IsWideScan(length, conversion)) {
@@ -468,14 +509,30 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         directive += narrowInteger ? std::string("ll") : HostLength(length, conversion);
         directive += specifier;
         directive += "%n";
+        const bool floating = std::strchr("aAeEfFgG", conversion) != nullptr;
+        if constexpr (TSource::Contiguous) if (floating || std::strchr("xXip", conversion) != nullptr) {
+            const HexPrefix prefix = CheckHexPrefix(source.Remaining(), width, floating);
+            if (prefix == HexPrefix::InputFailure) return finish(converted ? assigned : EOF);
+            if (prefix == HexPrefix::MatchingFailure) return finish(assigned);
+        }
+        const int savedError = errno;
         int consumed = -1;
         const int matched = source.Scan(directive.c_str(), suppress, narrowInteger ? &wideInteger : target, &consumed);
+        if constexpr (TSource::Contiguous) if (floating) {
+            const bool outOfRange = consumed > 0 && DecimalOutOfRange(std::string(source.Remaining(), static_cast<std::size_t>(consumed)));
+            errno = outOfRange ? ERANGE : savedError;
+        }
         if (consumed < 0 || (!suppress && matched != 1)) {
             const bool inputFailure = TSource::Contiguous ? source.Peek() == EOF : matched == EOF;
             return finish(!converted && inputFailure ? EOF : assigned);
         }
         source.Advance(consumed);
         if (narrowInteger) std::memcpy(target, &wideInteger, length == "hh" ? 1 : length == "h" ? 2 : 4);
+        if (floating && !suppress) {
+            if (length == "L") StoreDefaultNaN<long double>(target, 10);
+            else if (length == "l") StoreDefaultNaN<double>(target, sizeof(double));
+            else StoreDefaultNaN<float>(target, sizeof(float));
+        }
         if (capped && conversion != 'c') {
             const int next = source.Peek();
             bool overflow = false;
@@ -606,8 +663,10 @@ int APS5_VABI fprintf_nid_postfix(FileStream* stream, const char* format, ...) {
 }
 
 int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
+    std::string quadHead;
+    format = CutAtQuadScanDirective(format, quadHead);
 #ifndef _WIN32
-    if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
+    if (HasNarrowCharacterScan(format)) {
         std::va_list args;
         va_start(args, format);
         const int result = ScanGuestStream(stream, format, [&] { return va_arg(args, void*); }, [] { return 0u; }, false);
@@ -959,8 +1018,10 @@ int APS5_VABI puts_nid_postfix(const char* s) {
 extern FileStream* __stdinp_nid_postfix;
 
 int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
+    std::string quadHead;
+    format = CutAtQuadScanDirective(format, quadHead);
 #ifndef _WIN32
-    if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
+    if (HasNarrowCharacterScan(format)) {
         LibcDetail::FormatArguments arguments(args);
         return ScanGuestStream(stream, format, [&] { return arguments.Next<void*>(); }, [] { return 0u; }, false);
     }

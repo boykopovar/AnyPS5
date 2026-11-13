@@ -1,9 +1,14 @@
 #include "prx/libSceJxr/include/Api.hpp"
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <memory>
+#include <new>
 #include <stdexcept>
 #include <vector>
 
@@ -86,6 +91,183 @@ std::uint32_t Guest(int operation, Jxr::BitIo* io, std::uint32_t value, std::uin
     case 13: return getSizeWrite_nid_postfix(io);
     default: return 0xffffffffu;
     }
+}
+
+constexpr std::size_t AttachPacketSize = 8192;
+constexpr std::size_t AttachGuardSize = 16;
+constexpr std::uint8_t AttachGuardValue = 0xa7;
+constexpr std::uintptr_t GetPositionMarker = 0x13579;
+constexpr std::uintptr_t SetPositionMarker = 0x2468a;
+
+struct AttachReadProbe {
+    Jxr::BitIo* io;
+    Jxr::Stream* stream;
+    std::uint8_t* start;
+    std::uint8_t* readStart;
+    std::uint8_t* accumulatorStart;
+    std::size_t position;
+    std::int64_t getPositionResult;
+    std::int64_t setPositionResult;
+    std::int64_t readResult;
+    bool writeBuffer;
+    int stage;
+};
+
+AttachReadProbe* activeAttachReadProbe = nullptr;
+
+std::int64_t APS5_VABI AttachGetPosition(Jxr::Stream* stream, std::size_t* position) {
+    auto& probe = *activeAttachReadProbe;
+    Require(stream == probe.stream && position == &probe.io->referenceOffset, "attach read gets original position output");
+    Require(probe.stage == 0, "attach read calls get-position first");
+    Require(probe.io->start != probe.start && probe.io->current != probe.start, "get-position precedes packet pointer updates");
+    probe.stage = 1;
+    stream->state[0] = GetPositionMarker;
+    *position = probe.position;
+    return probe.getPositionResult;
+}
+
+std::int64_t APS5_VABI AttachSetPosition(Jxr::Stream* stream, std::size_t position) {
+    auto& probe = *activeAttachReadProbe;
+    Require(stream == probe.stream && position == probe.position, "attach read sets the callback-provided position");
+    Require(probe.stage == 1 && stream->state[0] == GetPositionMarker, "set-position sees get-position mutations");
+    Require(probe.io->start == probe.start && probe.io->current == probe.start, "packet pointers precede set-position");
+    probe.stage = 2;
+    stream->state[1] = SetPositionMarker;
+    probe.io->start = probe.readStart;
+    return probe.setPositionResult;
+}
+
+std::int64_t APS5_VABI AttachRead(Jxr::Stream* stream, void* buffer, std::size_t size) {
+    auto& probe = *activeAttachReadProbe;
+    Require(stream == probe.stream && buffer == probe.readStart && size == AttachPacketSize, "attach read forwards the full packet");
+    Require(probe.stage == 2 && stream->state[1] == SetPositionMarker, "read sees set-position mutations");
+    probe.stage = 3;
+    if (probe.writeBuffer) {
+        auto* const bytes = static_cast<std::uint8_t*>(buffer);
+        for (std::size_t i = 0; i < size; ++i) bytes[i] = static_cast<std::uint8_t>(i * 37 + 11);
+    }
+    probe.io->start = probe.accumulatorStart;
+    probe.io->referenceOffset = probe.position + 7;
+    return probe.readResult;
+}
+
+void RunAttachRead(bool writeBuffer, std::size_t position, std::int64_t getPositionResult,
+                   std::int64_t setPositionResult, std::int64_t readResult, bool mutateStart = false) {
+    alignas(16) std::array<std::byte, AttachGuardSize + AttachPacketSize + sizeof(Jxr::BitIo) + AttachGuardSize> storage{};
+    std::fill(storage.begin(), storage.begin() + AttachGuardSize, std::byte{AttachGuardValue});
+    std::fill(storage.end() - AttachGuardSize, storage.end(), std::byte{AttachGuardValue});
+    auto* const start = reinterpret_cast<std::uint8_t*>(storage.data() + AttachGuardSize);
+    std::fill(start, start + AttachPacketSize, writeBuffer ? std::uint8_t{0} : std::uint8_t{0x5a});
+    auto* const io = ::new (storage.data() + AttachGuardSize + AttachPacketSize) Jxr::BitIo{};
+    io->shadow = 0x89abcdef;
+    io->accumulator = 0x76543210;
+    io->bitsUsed = 7;
+    io->mask = 0x12345678;
+    io->start = start + 3;
+    io->current = start + 6;
+    io->stream = nullptr;
+    io->referenceOffset = 19;
+    const auto shadow = io->shadow;
+    Jxr::Stream stream{};
+    stream.getPosition = &AttachGetPosition;
+    stream.setPosition = &AttachSetPosition;
+    stream.read = &AttachRead;
+    std::array<std::uint8_t, AttachPacketSize> alternateRead{};
+    std::array<std::uint8_t, 4> alternateAccumulator{0x12, 0x34, 0x56, 0x78};
+    auto* const readStart = mutateStart ? alternateRead.data() : start;
+    auto* const accumulatorStart = mutateStart ? alternateAccumulator.data() : start;
+    AttachReadProbe probe{io, &stream, start, readStart, accumulatorStart, position, getPositionResult,
+                         setPositionResult, readResult, writeBuffer, 0};
+    activeAttachReadProbe = &probe;
+    Require(attachISRead_nid_postfix(io, &stream, reinterpret_cast<void*>(std::uintptr_t{1})) == 0,
+        "attach read returns source success despite callback results");
+    activeAttachReadProbe = nullptr;
+    Require(probe.stage == 3, "attach read invokes callbacks in order");
+    Require(io->shadow == shadow, "attach read preserves shadow");
+    Require(io->start == accumulatorStart && io->current == start && io->stream == &stream, "attach read installs packet state");
+    Require(io->referenceOffset == position + 7 + AttachPacketSize, "attach read advances the callback-written offset with unsigned wrap");
+    Require(io->bitsUsed == 0 && io->mask == ReadMask, "attach read initializes read bit state");
+    Require(io->accumulator == (mutateStart ? 0x12345678 : (writeBuffer ? LoadBigEndian(start) : 0x5a5a5a5a)), "attach read loads the big-endian accumulator after the read callback");
+    Require(std::all_of(storage.begin(), storage.begin() + AttachGuardSize,
+        [](std::byte value) { return value == std::byte{AttachGuardValue}; }), "attach read preserves the leading guard");
+    Require(std::all_of(storage.end() - AttachGuardSize, storage.end(),
+        [](std::byte value) { return value == std::byte{AttachGuardValue}; }), "attach read preserves the trailing guard");
+}
+
+void RunAttachReadEdges() {
+    RunAttachRead(true, std::numeric_limits<std::size_t>::max() - 4095,
+        INT64_C(0x123456789abcdef), -INT64_C(0x123456789abcdef), -INT64_C(0x23456789abcdef));
+    RunAttachRead(false, 0x1122334455667788, -INT64_C(0x123456789abcdef),
+        INT64_C(0x23456789abcdef), -INT64_C(0x3456789abcdef0));
+    RunAttachRead(true, 123, 0, 0, 0, true);
+    Jxr::BitIo io{};
+    Jxr::Stream stream{};
+    RequireInvalidArgument([&] { attachISRead_nid_postfix(&io, &stream, nullptr); }, "attach read rejects a missing callback");
+    RequireInvalidArgument([] { attachISRead_nid_postfix(nullptr, nullptr, nullptr); }, "attach read rejects null state and stream");
+}
+
+Jxr::BitIo* attachingIo = nullptr;
+Jxr::Stream* attachingStream = nullptr;
+std::int64_t positionResult = 0;
+bool storePosition = true;
+bool throwPosition = false;
+int positionCalls = 0;
+
+std::int64_t APS5_VABI AttachmentPosition(Jxr::Stream* stream, std::size_t* position) {
+    Require(stream == attachingStream, "attachment forwards original stream");
+    Require(position == &attachingIo->referenceOffset, "attachment forwards original offset field");
+    Require(attachingIo->bitsUsed == 13 && attachingIo->mask == 37,
+            "position callback precedes bit-state initialization");
+    ++positionCalls;
+    if (throwPosition) throw std::invalid_argument("position callback failure");
+    if (storePosition) *position = std::numeric_limits<std::size_t>::max() - 17;
+    attachingIo->shadow = 0x76543210;
+    return positionResult;
+}
+
+void RunAttachWrite() {
+    alignas(Jxr::BitIo) std::array<std::uint8_t, 8192 + sizeof(Jxr::BitIo) + 16> storage;
+    storage.fill(0xa5);
+    auto* io = std::construct_at(reinterpret_cast<Jxr::BitIo*>(storage.data() + 8192));
+    Jxr::Stream stream{};
+    stream.getPosition = &AttachmentPosition;
+    attachingIo = io;
+    attachingStream = &stream;
+    for (const auto result : {std::int64_t{0}, std::int64_t{1} << 40, -(std::int64_t{1} << 40)}) {
+        for (const bool store : {false, true}) {
+            std::memset(io, 0x5c, sizeof(*io));
+            io->bitsUsed = 13;
+            io->mask = 37;
+            io->referenceOffset = 12345;
+            positionResult = result;
+            storePosition = store;
+            positionCalls = 0;
+            Require(attachISWrite_nid_postfix(io, &stream) == 0, "attachment ignores position callback result");
+            Require(positionCalls == 1, "attachment queries position once");
+            Require(io->referenceOffset == (store ? std::numeric_limits<std::size_t>::max() - 17 : 12345),
+                    "attachment preserves callback offset effect");
+            Require(io->shadow == 0x76543210, "attachment preserves untouched shadow field");
+            Require(io->start == storage.data() && io->current == storage.data(), "attachment locates preceding buffer");
+            Require(io->accumulator == 0 && io->bitsUsed == 0 && io->mask == WriteMask && io->stream == &stream,
+                    "attachment initializes writer state");
+            for (std::size_t i = 0; i < 8192; ++i) Require(storage[i] == 0xa5, "attachment keeps buffer bytes");
+            for (std::size_t i = 8192 + sizeof(*io); i < storage.size(); ++i)
+                Require(storage[i] == 0xa5, "attachment keeps trailing guard bytes");
+        }
+    }
+    io->bitsUsed = 13;
+    io->mask = 37;
+    std::array<std::byte, sizeof(*io)> before;
+    std::memcpy(before.data(), io, sizeof(*io));
+    throwPosition = true;
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(io, &stream); }, "attachment propagates callback exceptions");
+    Require(std::memcmp(before.data(), io, sizeof(*io)) == 0, "throwing position callback prevents initialization");
+    throwPosition = false;
+    stream.getPosition = nullptr;
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(io, &stream); }, "attachment needs a position callback");
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(io, nullptr); }, "attachment needs a stream");
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(nullptr, &stream); }, "attachment needs bit state");
+    std::destroy_at(io);
 }
 
 void RunReads() {
@@ -249,6 +431,8 @@ void RunEdges() {
 } // namespace
 
 int main() {
+    RunAttachReadEdges();
+    RunAttachWrite();
     RunReads();
     RunWrites();
     RunEdges();
