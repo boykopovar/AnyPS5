@@ -1,4 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl3/include/PkeyContext.hpp"
+#include "prx/libSceLibreSsl3/include/PkeyMethod.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstring>
@@ -73,11 +75,19 @@ void APS5_VABI EVP_MD_CTX_free_nid_postfix(DigestContext* context) {
     if (context->engine) NotImplemented_nid_no_patch(__func__);
     if (context->digest && context->digest->cleanup && !(context->flags & Cleaned)) context->digest->cleanup(context);
     if (context->engine) NotImplemented_nid_no_patch(__func__);
-    if (context->keyContext && !(context->flags & KeepKeyContext)) NotImplemented_nid_no_patch(__func__);
     if (context->digest && context->digest->contextSize && context->data && !(context->flags & Reuse)) {
         if (context->digest->contextSize < 0) NotImplemented_nid_no_patch(__func__);
         Clear(context->data, static_cast<std::size_t>(context->digest->contextSize));
         free_nid_postfix(context->data);
+    }
+    if (context->keyContext && !(context->flags & KeepKeyContext)) {
+        const auto* pctx = static_cast<const LibreSsl3PkeyContext*>(context->keyContext);
+        const auto* method = static_cast<const LibreSsl3PkeyMethod*>(pctx->method);
+        if (method && FindNativePkeyMethod_nid_no_patch(method->keyType) == method) {
+            EVP_PKEY_CTX_free_nid_postfix(static_cast<LibreSsl3PkeyContext*>(context->keyContext));
+        } else {
+            NotImplemented_nid_no_patch(__func__);
+        }
     }
     Clear(context, sizeof(*context));
     free_nid_postfix(context);
