@@ -23,8 +23,8 @@ PROJECT = {
                             "add_test(NAME alpha_data COMMAND alpha_tests ${CMAKE_SOURCE_DIR}/data/input.txt)\n",
     "alpha/main.c": "#include \"alpha.h\"\nint main(void) { return ALPHA; }\n",
     "alpha/alpha.h": "#define ALPHA 0\n",
-    "beta/CMakeLists.txt": "add_executable(beta_tests main.c)\nadd_executable(setup_tests setup.c)\n"
-                           "add_test(NAME beta COMMAND beta_tests)\nadd_test(NAME beta_setup COMMAND setup_tests)\n"
+    "beta/CMakeLists.txt": "add_executable(beta_tests main.c)\nadd_executable(fixture_prepare_tests setup.c)\n"
+                           "add_test(NAME beta COMMAND beta_tests)\nadd_test(NAME beta_setup COMMAND fixture_prepare_tests)\n"
                            "set_tests_properties(beta_setup PROPERTIES FIXTURES_SETUP beta_fixture)\n"
                            "set_tests_properties(beta PROPERTIES FIXTURES_REQUIRED beta_fixture)\n",
     "beta/main.c": "int main(void) { return 0; }\n",
@@ -330,7 +330,7 @@ class SelectArgumentTests(SelectFixture):
             self.select("beta/main.c")
             subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
             built = {path.stem for path in self.build.rglob("*_tests*") if path.is_file() and os.access(path, os.X_OK)}
-            self.assertEqual(built, {"alpha_tests", "beta_tests", "setup_tests"})
+            self.assertEqual(built, {"alpha_tests", "beta_tests", "fixture_prepare_tests"})
         finally:
             cmake.write_text(original, encoding="utf-8")
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)

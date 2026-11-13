@@ -95,6 +95,10 @@ uint32_t Ps4TiledPitch(uint32_t tilingMode, uint32_t width, uint32_t pitchInPixe
     return pitchInPixel != 0 ? pitchInPixel : (width + 127u) / 128u * 128u;
 }
 
+bool Ps4BufferOptionAccepted(uint32_t option) {
+    return option == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE || option == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY;
+}
+
 }
 
 extern "C" {
@@ -210,7 +214,7 @@ int APS5_VABI sceVideoOutRegisterBuffers(int handle, int bufferIndexStart, void*
     }
     AgcDriverCheckGuestMemory_nid_postfix(attribute, sizeof(*attribute), alignof(VideoOutBufferAttribute));
     AgcDriverCheckGuestMemory_nid_postfix(addresses, static_cast<std::size_t>(bufferNum) * sizeof(*addresses), alignof(void*));
-    if (attribute->option != 0 || attribute->reserved0 != 0 || attribute->reserved1 != 0) {
+    if (!Ps4BufferOptionAccepted(attribute->option) || attribute->reserved0 != 0 || attribute->reserved1 != 0) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_OPTION");
     }
     if (attribute->tiling_mode > 1) {
@@ -223,6 +227,7 @@ int APS5_VABI sceVideoOutRegisterBuffers(int handle, int bufferIndexStart, void*
     group.attribute.width = attribute->width;
     group.attribute.height = attribute->height;
     group.attribute.pitch_in_pixel = attribute->tiling_mode == 0 ? 0 : attribute->pitch_in_pixel;
+    group.attribute.option = attribute->option;
     group.ps4Pitch = Ps4TiledPitch(attribute->tiling_mode, attribute->width, attribute->pitch_in_pixel);
     group.category = VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED;
     group.occupied = true;
@@ -258,7 +263,7 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute(int handle, int setIndex, c
     if (attribute->aspect_ratio != 0) return VIDEO_OUT_ERROR_INVALID_ASPECT_RATIO;
     if (attribute->width > attribute->pitch_in_pixel) return VIDEO_OUT_ERROR_INVALID_PITCH;
     if (attribute->tiling_mode > 1) return VIDEO_OUT_ERROR_INVALID_TILING_MODE;
-    if (attribute->option != 0) {
+    if (!Ps4BufferOptionAccepted(attribute->option)) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_OPTION");
     }
     auto group = cfg->groups[setIndex];
@@ -269,6 +274,7 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute(int handle, int setIndex, c
     group.attribute.width = attribute->width;
     group.attribute.height = attribute->height;
     group.attribute.pitch_in_pixel = attribute->tiling_mode == 0 ? 0 : attribute->pitch_in_pixel;
+    group.attribute.option = attribute->option;
     group.ps4Pitch = Ps4TiledPitch(attribute->tiling_mode, attribute->width, attribute->pitch_in_pixel);
     for (int i = 0; i < VIDEO_OUT_BUFFER_NUM_MAX; ++i) {
         if (cfg->buffers[i].groupIndex != setIndex) continue;

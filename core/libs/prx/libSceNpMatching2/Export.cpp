@@ -184,7 +184,12 @@ int APS5_VABI sceNpMatching2GetWorldInfoList(std::uint16_t ctxId, const void* re
 int APS5_VABI sceNpMatching2Initialize(const NpMatching2InitializeParameter* param) {
     std::lock_guard lock(matching2Mutex);
     if (matching2Initialized) return SCE_NP_MATCHING2_ERROR_ALREADY_INITIALIZED;
-    if (!param || (param->size != offsetof(NpMatching2InitializeParameter, sslPoolSize) && param->size != sizeof(NpMatching2InitializeParameter))) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    if (!param) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    std::uint64_t size = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, &param->size, sizeof(size));
+    errno = savedErrno;
+    if (!copied || (size != offsetof(NpMatching2InitializeParameter, sslPoolSize) && size != sizeof(NpMatching2InitializeParameter))) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     matching2Initialized = true;
     return 0;
 }
@@ -493,7 +498,11 @@ int APS5_VABI sceNpMatching2SignalingGetConnectionStatus(std::uint16_t ctxId, st
     if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     if (!connStatus) NotImplemented_nid_no_patch(__func__);
     if (const int error = CheckContext(ctxId)) return error;
-    *connStatus = SCE_NP_SIGNALING_CONN_STATUS_INACTIVE;
+    const std::int32_t status = SCE_NP_SIGNALING_CONN_STATUS_INACTIVE;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(connStatus, &status, sizeof(status));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -518,8 +527,13 @@ int APS5_VABI sceNpMatching2SignalingGetPingInfo(std::uint16_t ctxId, const void
 }
 
 int APS5_VABI sceNpMatching2SignalingGetPort(std::uint16_t* port) {
+    if (port == nullptr) return SCE_NP_MATCHING2_SIGNALING_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(matching2Mutex);
-    *port = signalingPort;
+    const std::uint16_t currentPort = signalingPort;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(port, &currentPort, sizeof(currentPort));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_MATCHING2_SIGNALING_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

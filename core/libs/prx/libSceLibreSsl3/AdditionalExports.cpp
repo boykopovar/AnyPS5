@@ -41,10 +41,6 @@ int APS5_VABI SSL_set_accept_state_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_set_alpn_protos_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_EXTENSION_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -270,10 +266,6 @@ int APS5_VABI tls_config_set_ciphers_nid_postfix() {
 }
 
 int APS5_VABI RSA_pkey_ctx_ctrl_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ASN1_get_object_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
