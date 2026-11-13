@@ -354,7 +354,7 @@ void TestInternalApiValidation() {
 }
 
 int main() {
-    TestQueryMemSize();
+    for (int iter = 0; iter < 2; ++iter) TestQueryMemSize();
     TestInitAndClear();
     TestDecodeArguments();
     TestDecodeSamples();
