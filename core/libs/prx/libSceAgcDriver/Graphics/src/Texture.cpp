@@ -31,6 +31,7 @@
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
 #include <algorithm>
+#include <cassert>
 #include <filesystem>
 #include <array>
 #include <bit>
@@ -1822,15 +1823,21 @@ public:
     iterator end() { return textures.end(); }
     void push_back(StorageTexture* texture) {
         textures.push_back(texture);
+        const auto begin = texture->Descriptor().baseAddress;
+        index.Insert(begin, begin + texture->GuestBytes(), texture, nextOrder++);
         changed();
     }
     iterator erase(iterator it) {
+        unindex(*it);
         const auto next = textures.erase(it);
         changed();
         return next;
     }
     void remove(const StorageTexture* texture) {
-        if (std::erase(textures, texture) != 0) changed();
+        if (std::find(textures.begin(), textures.end(), texture) == textures.end()) return;
+        unindex(const_cast<StorageTexture*>(texture));
+        std::erase(textures, texture);
+        changed();
     }
     bool MayOverlap(std::uint64_t address, std::size_t bytes) {
         if (indexed != version) rebuild();
@@ -1838,12 +1845,10 @@ public:
     }
     template <class Visit>
     bool AnyOverlapping(std::uint64_t address, std::size_t bytes, Visit&& visit) {
-        if (indexed != version) rebuild();
         return index.AnyOverlapping(address, bytes, visit);
     }
     template <class Match>
     StorageTexture* FirstOverlapping(std::uint64_t address, std::size_t bytes, Match&& match) {
-        if (indexed != version) rebuild();
         const auto* entry = index.FirstByPosition(address, bytes, match);
         return entry != nullptr ? entry->item : nullptr;
     }
@@ -1870,30 +1875,24 @@ private:
         changes.store(version, std::memory_order_release);
     }
 
+    void unindex(StorageTexture* texture) {
+        const bool found = index.Erase(texture->Descriptor().baseAddress, texture);
+        assert(found);
+        static_cast<void>(found);
+    }
     void rebuild() {
         ranges.clear();
-        index.Clear();
-        for (std::size_t position = 0; position < textures.size(); ++position) {
-            auto* texture = textures[position];
-            const auto begin = texture->Descriptor().baseAddress;
-            const auto end = begin + texture->GuestBytes();
-            ranges.emplace_back(begin, end);
-            index.Add(begin, end, texture, position);
+        for (const auto& entry : index.Entries()) {
+            if (!ranges.empty() && entry.begin <= ranges.back().second) ranges.back().second = std::max(ranges.back().second, entry.end);
+            else ranges.emplace_back(entry.begin, entry.end);
         }
-        index.Seal();
-        std::sort(ranges.begin(), ranges.end());
-        std::size_t merged = 0;
-        for (const auto& range : ranges) {
-            if (merged != 0 && range.first <= ranges[merged - 1].second) ranges[merged - 1].second = std::max(ranges[merged - 1].second, range.second);
-            else ranges[merged++] = range;
-        }
-        ranges.resize(merged);
         indexed = version;
         published.store(std::make_shared<const Snapshot>(Snapshot{version, ranges}), std::memory_order_release);
     }
     std::vector<StorageTexture*> textures;
     Ranges ranges;
     PendingRangeIndex<StorageTexture*> index;
+    std::size_t nextOrder = 0;
     std::uint64_t version = 0;
     std::uint64_t indexed = ~std::uint64_t{0};
     std::atomic<std::uint64_t> changes{0};

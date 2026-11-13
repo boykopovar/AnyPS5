@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/PendingRangeIndex.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <random>
@@ -62,6 +63,51 @@ void RandomAgainstScan() {
     }
 }
 
+void InsertEraseAgainstScan() {
+    std::mt19937_64 random(0xfeed);
+    struct Live {
+        std::uint64_t begin;
+        std::uint64_t end;
+        int item;
+    };
+    AgcDriver::Graphics::PendingRangeIndex<int> index;
+    std::vector<Live> list;
+    int nextItem = 0;
+    std::size_t order = 0;
+    for (int step = 0; step < 20000; ++step) {
+        if (list.empty() || random() % 3 != 0) {
+            const auto begin = (random() % 256) * 4096;
+            const auto end = begin + 1 + random() % (random() % 5 == 0 ? 262144 : 16384);
+            list.push_back({begin, end, nextItem});
+            index.Insert(begin, end, nextItem++, order++);
+        } else {
+            const auto at = static_cast<std::size_t>(random() % list.size());
+            Require(index.Erase(list[at].begin, list[at].item), "the index lost an entry it was given");
+            list.erase(list.begin() + static_cast<std::ptrdiff_t>(at));
+        }
+        Require(index.Size() == list.size(), "the index holds a different number of entries than the list");
+        Require(!index.Erase(1u << 30, -1), "the index erased an entry it was never given");
+        for (int query = 0; query < 8; ++query) {
+            const auto address = (random() % 300) * 4096 + random() % 4096;
+            const auto bytes = static_cast<std::size_t>(random() % 70000);
+            int firstScanned = -1;
+            std::size_t overlapping = 0;
+            for (const auto& live : list) {
+                if (!Overlaps({live.begin, live.end}, address, bytes)) continue;
+                ++overlapping;
+                if (firstScanned < 0 && live.item % 2 == 0) firstScanned = live.item;
+            }
+            std::size_t visited = 0;
+            index.ForEachOverlapping(address, bytes, [&](int) { ++visited; });
+            Require(visited == overlapping, "after inserts and erases the index visited a different number of overlapping entries than the scan");
+            const auto* first = index.FirstByPosition(address, bytes, [](int item) { return item % 2 == 0; });
+            Require((first == nullptr ? -1 : first->item) == firstScanned, "after inserts and erases the index named a different first match than the list order");
+        }
+        const auto& entries = index.Entries();
+        for (std::size_t at = 1; at < entries.size(); ++at) Require(entries[at - 1].begin <= entries[at].begin, "the index entries are out of base order");
+    }
+}
+
 void Edges() {
     AgcDriver::Graphics::PendingRangeIndex<int> index;
     index.Add(100, 200, 1, 0);
@@ -84,6 +130,7 @@ int main() {
     try {
         Edges();
         RandomAgainstScan();
+        InsertEraseAgainstScan();
         std::cout << "pending range index tests passed\n";
         return 0;
     } catch (const std::exception& error) {
