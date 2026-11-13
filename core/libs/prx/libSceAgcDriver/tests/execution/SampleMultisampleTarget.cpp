@@ -1321,6 +1321,68 @@ void UniformInitialRefusals(AgcDriver::VulkanDevice& device) {
     std::puts("uniform initial refusal checks passed: unreadable memory, differing padding, no storage features, retained owner");
 }
 
+AgcDriver::Graphics::ColorTarget DecodeCompressedCmaskTarget(const Block& colorMemory, const Block& cmask, const Block& fmask) {
+    constexpr std::uint32_t shift = 1u;
+    AgcDriver::Registers cx{{0x318, static_cast<std::uint32_t>(colorMemory.Address() >> 8u)}, {0x31b, 0u}, {0x31c, Float16x4Info | 0x4000u}, {0x31d, (shift << 12u) | (shift << 15u)}, {0x31e, 0u}, {0x31f, static_cast<std::uint32_t>(cmask.Address() >> 8u)}, {0x321, static_cast<std::uint32_t>(fmask.Address() >> 8u)}, {0x390, static_cast<std::uint32_t>(colorMemory.Address() >> 40u)}, {0x398, static_cast<std::uint32_t>(cmask.Address() >> 40u)}, {0x3a0, static_cast<std::uint32_t>(fmask.Address() >> 40u)}, {0x3b0, ((Side - 1u) << 14u) | (Side - 1u)}, {0x3b8, TiledAttrib3}};
+    const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    Require(color.samples == 2u && color.elementBytes == 8u && color.cmaskAddress == cmask.Address() && !color.cmaskFastClear && color.dccAddress == 0u, "the CMASK fixture did not decode as a compressed two-sample target without fast clear or DCC");
+    return color;
+}
+
+void FillCompressedCmaskMetadata(Block& cmask, Block& fmask, bool mixed) {
+    for (std::size_t index = 0u; index < cmask.bytes; ++index) cmask.data[index] = mixed ? static_cast<std::uint8_t>(index * 37u) : 0u;
+    for (std::size_t index = 0u; index < fmask.bytes; ++index) fmask.data[index] = static_cast<std::uint8_t>(index * 11u);
+}
+
+int UniformInitialCmask(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if ((context.limits.framebufferColorSampleCounts & 2u) == 0u || (context.limits.sampledImageColorSampleCounts & 2u) == 0u) {
+        std::puts("uniform initial contents under a compressed CMASK skipped, the device has no two-sample color images");
+        return VulkanTestSkipped;
+    }
+    for (const bool mixed : {false, true}) {
+        Block colorMemory(4u * BlockBytes), cmask(BlockBytes), fmask(BlockBytes);
+        FillCompressedCmaskMetadata(cmask, fmask, mixed);
+        StoreWords(colorMemory, colorMemory.bytes, FillOnes);
+        const std::vector<std::uint8_t> before(colorMemory.data, colorMemory.data + colorMemory.bytes), metadata(cmask.data, cmask.data + cmask.bytes);
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            PrepareMultisampleTargetForDraw_nid_no_patch(context, DecodeCompressedCmaskTarget(colorMemory, cmask, fmask));
+        }
+        CheckUniform(LoadSamples(device, TargetDescriptor(colorMemory, 1u), 2u), Ones, mixed ? "uniform initialization under a mixed compressed CMASK" : "uniform initialization under a zero compressed CMASK");
+        Require(std::equal(before.begin(), before.end(), colorMemory.data) && std::equal(metadata.begin(), metadata.end(), cmask.data), "uniform initialization under a compressed CMASK changed guest bytes");
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+        ClearCachedTextures(context.device);
+        ClearMultisampleTargets(context.device);
+        std::printf("uniform initial contents under a %s compressed CMASK import as their texel\n", mixed ? "mixed" : "zero");
+    }
+    return 0;
+}
+
+void UniformInitialCmaskRefusal(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    for (const bool mixed : {false, true}) {
+        Block colorMemory(4u * BlockBytes), cmask(BlockBytes), fmask(BlockBytes);
+        FillCompressedCmaskMetadata(cmask, fmask, mixed);
+        StoreWords(colorMemory, colorMemory.bytes, FillOnes);
+        colorMemory.data[BlockBytes - 1u] ^= 1u;
+        const std::vector<std::uint8_t> before(colorMemory.data, colorMemory.data + colorMemory.bytes);
+        const auto color = DecodeCompressedCmaskTarget(colorMemory, cmask, fmask);
+        std::string refusal;
+        try {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            PrepareMultisampleTargetForDraw_nid_no_patch(context, color);
+        } catch (const std::runtime_error& error) { refusal = error.what(); }
+        Require(refusal.find("with CMASK require a modeled metadata import") != std::string::npos, "differing fragments under a compressed CMASK were not refused: " + refusal);
+        Require(std::equal(before.begin(), before.end(), colorMemory.data), "a refused CMASK import changed guest contents");
+        Require(!MultisampleColorTargetOver(color.address, static_cast<std::size_t>(MultisampledColorBytes(color))), "a refused CMASK import left a resident owner");
+    }
+    std::puts("differing fragments under a zero or mixed compressed CMASK refuse without an owner or byte changes");
+}
+
 void UniformInitialFlushHook(AgcDriver::VulkanDevice& device) {
     using namespace AgcDriver::Graphics;
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -1722,6 +1784,8 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--initial-uniform") { UniformInitialContents(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--initial-uniform_refusals") { UniformInitialRefusals(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--initial-uniform_hook") { UniformInitialFlushHook(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-uniform_cmask") return UniformInitialCmask(*device);
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-uniform_cmask_refusal") { UniformInitialCmaskRefusal(*device); return 0; }
         Block block(4u * BlockBytes);
         Block other(BlockBytes);
         Block output(2u * 1024u * 1024u);
