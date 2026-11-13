@@ -1,5 +1,5 @@
 add_library(libSceJsc SHARED EXCLUDE_FROM_ALL Export.cpp)
-target_sources(libSceJsc PRIVATE LegacyExports.cpp src/PlacementNew.cpp src/WtfStringSearch.cpp src/WtfUrl.cpp)
+target_sources(libSceJsc PRIVATE LegacyExports.cpp src/PlacementNew.cpp src/WtfRandom.cpp src/WtfStringSearch.cpp src/WtfUrl.cpp)
 target_include_directories(libSceJsc PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceJsc)
 
@@ -25,6 +25,15 @@ if(BUILD_TESTING)
     add_test(NAME jsc_wtf_string_search COMMAND jsc_wtf_string_search_tests)
     if(WIN32)
         set_tests_properties(jsc_wtf_string_search PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")
+    endif()
+    add_test_executable(jsc_wtf_random_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/WtfRandom.cpp)
+    target_include_directories(jsc_wtf_random_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(jsc_wtf_random_tests PRIVATE libSceJsc libc)
+    configure_windows_unwind(jsc_wtf_random_tests)
+    add_test(NAME jsc_wtf_random COMMAND jsc_wtf_random_tests)
+    if(WIN32)
+        set_tests_properties(jsc_wtf_random PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")
     endif()
     add_test_executable(jsc_wtf_url_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/WtfUrl.cpp)
