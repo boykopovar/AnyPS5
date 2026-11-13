@@ -1929,6 +1929,12 @@ std::uint64_t SourceVersion() {
     const auto& speculation = NanSpeculation();
     if (speculation.enabled) version ^= 0x6a09e667f3bcc909ull ^ (static_cast<std::uint64_t>(speculation.minimumVectorInstructions) << 32u) ^ speculation.maximumVectorInstructions;
     if (speculation.enabled && speculation.stageMask != NanSpeculationConfig{}.stageMask) version ^= 0xbb67ae8584caa73bull * speculation.stageMask;
+    if (speculation.enabled) {
+        for (std::size_t stage = 0; stage < speculation.stageMinimum.size(); ++stage) {
+            if (speculation.stageMinimum[stage] != speculation.minimumVectorInstructions) version ^= 0x3c6ef372fe94f82bull * (stage + 1u) * speculation.stageMinimum[stage];
+        }
+        if (speculation.count) version ^= 0xa54ff53a5f1d36f1ull;
+    }
     return version;
 }
 

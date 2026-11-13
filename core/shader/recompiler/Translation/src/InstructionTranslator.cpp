@@ -770,7 +770,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
             }
             std::uint32_t end = index;
             while (end < source.instructionEnd && end - index < speculation.maximumVectorInstructions && pureVector(decoded.instructions[end])) ++end;
-            if (end - index >= speculation.minimumVectorInstructions) regions.push_back({index, end});
+            if (end - index >= speculation.stageMinimum[static_cast<std::size_t>(options.stage)]) regions.push_back({index, end});
             index = end;
         }
         return regions;
@@ -946,6 +946,14 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 continue;
             }
             ++program.Metadata().nanSpeculationKept;
+            std::uint32_t counterOffset = 0u;
+            if (speculation.count) {
+                const auto slot = NanSpeculationCounterSlot(options.shaderHash, static_cast<std::uint32_t>(options.stage));
+                if (slot < NanSpeculationCounterSlots) {
+                    counterOffset = NanSpeculationCounterBase + slot * 8u;
+                    context.CountNanSpeculation(counterOffset, options.stage != ShaderStageKind::Pixel);
+                }
+            }
             IrValue* first = before < instructions.size() ? *std::next(instructions.begin(), static_cast<std::ptrdiff_t>(before)) : nullptr;
             std::vector<std::pair<IrValue*, IrValue*>> restores;
             std::unordered_set<std::uint64_t> restored;
@@ -977,6 +985,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
             }
             context.RestoreSpeculationState(state);
             context.SwitchBlock(exact);
+            if (counterOffset != 0u) context.CountNanSpeculation(counterOffset + 4u, options.stage != ShaderStageKind::Pixel);
             for (std::uint32_t inner = region->begin; inner < region->end; ++inner) translateOne(inner);
             currentIndex = region->mergeIndex;
             context.SwitchBlock(*blocks[currentIndex]);

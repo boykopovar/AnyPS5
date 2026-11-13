@@ -1062,8 +1062,19 @@ struct NanSpeculationConfig {
     std::uint32_t stageMask = 0x3bu;
     std::uint32_t minimumVectorInstructions = 32u;
     std::uint32_t maximumVectorInstructions = 256u;
+    std::array<std::uint32_t, 9> stageMinimum{32u, 32u, 32u, 32u, 32u, 32u, 32u, 32u, 32u};
+    bool count = false;
 };
 [[nodiscard]] const NanSpeculationConfig& NanSpeculation();
+inline constexpr std::uint32_t NanSpeculationCounterBase = 0xc000u;
+inline constexpr std::uint32_t NanSpeculationCounterSlots = 2048u;
+struct NanSpeculationCounterSite {
+    std::uint64_t address = 0;
+    std::uint32_t stage = 0;
+    std::uint32_t slot = 0;
+};
+[[nodiscard]] std::uint32_t NanSpeculationCounterSlot(std::uint64_t address, std::uint32_t stage);
+[[nodiscard]] std::vector<NanSpeculationCounterSite> NanSpeculationCounterSites();
 
 struct RectListShaders {
     RecompileResult control;

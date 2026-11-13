@@ -46,6 +46,7 @@ public:
         execHighInactive = state.execHighInactive;
     }
     [[nodiscard]] IrValue& WaveAny(IrValue& flag);
+    void CountNanSpeculation(std::uint32_t byteOffset, bool perWave);
     void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
     void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }

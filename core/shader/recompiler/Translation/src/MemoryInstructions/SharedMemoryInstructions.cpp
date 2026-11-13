@@ -29,6 +29,32 @@ MemoryInfo sharedMemoryInfoFromInstruction(const RdnaInstruction& inst) {
 
 }
 
+void TranslationContext::CountNanSpeculation(std::uint32_t byteOffset, bool perWave) {
+    MemoryInfo memory;
+    memory.kind = ResourceKind::Gds;
+    memory.offset = byteOffset;
+    memory.dataDwords = 1u;
+    memory.dataBits = 32u;
+    memory.componentCount = 1u;
+    IrValue& address = ir.Constant(0u);
+    IrValue& one = ir.Constant(1u);
+    IrValue* active = &ir.GetExec();
+    if (perWave) {
+        const auto mask = ballotMask(IrU1(*active));
+        IrValue& lane = ir.Emit(IrOpcode::LaneId, IrType::U32, {});
+        IrValue& below = ir.ISub(ir.ShiftLeftLogical(ir.Constant(1u), ir.BitwiseAnd(lane, ir.Constant(31u))), ir.Constant(1u));
+        IrValue& lowFree = ir.IEqual(ir.BitwiseAnd(mask[0].Value(), below), ir.Constant(0u));
+        IrValue* first = &lowFree;
+        if (program.WaveSize() == 64u) {
+            IrValue& wide = ir.ULessThan(lane, ir.Constant(32u));
+            IrValue& highFree = ir.LogicalAnd(ir.IEqual(mask[0].Value(), ir.Constant(0u)), ir.IEqual(ir.BitwiseAnd(mask[1].Value(), below), ir.Constant(0u)));
+            first = &ir.LogicalOr(ir.LogicalAnd(wide, lowFree), ir.LogicalAnd(ir.LogicalNot(wide), highFree));
+        }
+        active = &ir.LogicalAnd(*active, *first);
+    }
+    (void)ir.Emit(IrOpcode::SharedAtomicIAdd32, IrType::U32, {&address, &one, active}, addMemoryInfo(memory, 0u));
+}
+
 bool TranslationContext::dsAtomic(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue) {
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
     memory.flushDenormals = floatAtomicFlush(opcode);
