@@ -254,6 +254,7 @@ static void SyncGuestToHost(JpegBinding* b) {
     h->raw_data_out = g->raw_data_out ? TRUE : FALSE;
     h->dct_method = static_cast<J_DCT_METHOD>(g->dct_method);
     h->do_fancy_upsampling = g->do_fancy_upsampling ? TRUE : FALSE;
+    h->CCIR601_sampling = g->CCIR601_sampling ? TRUE : FALSE;
     h->do_block_smoothing = g->do_block_smoothing ? TRUE : FALSE;
     h->quantize_colors = g->quantize_colors ? TRUE : FALSE;
     h->dither_mode = static_cast<J_DITHER_MODE>(g->dither_mode);
