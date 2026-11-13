@@ -143,6 +143,12 @@ int main(int argc, char** argv) {
     bool nullThrew = false;
     try { sceKernelAioSetParam(nullptr, 32, 32, 1, 0x100000, 0x100000); } catch (const std::invalid_argument&) { nullThrew = true; }
     Check(nullThrew);
+    auto* const badParam = reinterpret_cast<KernelAioSchedulingParam*>(1);
+    Check(sceKernelAioSetParam(badParam, 32, 32, 1, 0x100000, 0x100000) == SCE_KERNEL_ERROR_EFAULT);
+    Check(sceKernelAioSetParam(badParam, -1, 32, 1, 0x100000, 0x100000) == SCE_KERNEL_ERROR_EINVAL);
+    bool initializeThrew = false;
+    try { sceKernelAioInitializeParam(badParam); } catch (const std::invalid_argument&) { initializeThrew = true; }
+    Check(initializeThrew);
     Check(sceKernelAioInitializeImpl(schedulingParams.data(), static_cast<std::int32_t>(sizeof(schedulingParams))) == 0);
     std::array<KernelAioSchedulingParam, 4> initParam{};
     initParam.fill({7, 7, 7, 7, 7});
@@ -154,6 +160,13 @@ int main(int argc, char** argv) {
     Check(initParam[2].schedulingWindowSize == 32 && initParam[2].delayedCountLimit == 32 && initParam[2].enableSplit == 0 &&
         initParam[2].splitSize == 0 && initParam[2].splitChunkSize == 0);
     Check(initParam[3].schedulingWindowSize == 7 && initParam[3].splitChunkSize == 7);
+    for (const auto submit : {sceKernelAioSubmitReadCommands, sceKernelAioSubmitWriteCommands,
+                             sceKernelAioSubmitReadCommandsMultiple, sceKernelAioSubmitWriteCommandsMultiple}) {
+        auto* const unreadable = reinterpret_cast<KernelAioRwRequest*>(1);
+        std::int32_t untouchedId = -1;
+        Check(submit(unreadable, 0, 1, &untouchedId) == SCE_KERNEL_ERROR_EINVAL && untouchedId == -1);
+        Check(submit(unreadable, 1, 1, &untouchedId) == SCE_KERNEL_ERROR_EFAULT && untouchedId == -1);
+    }
     const int fd = sceKernelOpen(file.string().c_str(), SCE_KERNEL_O_RDONLY, 0);
     Check(fd >= 0);
     std::array<char, 16> first{};

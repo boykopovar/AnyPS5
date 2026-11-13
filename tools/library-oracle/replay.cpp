@@ -4,6 +4,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <link.h>
 #endif
 
 #include <cstdint>
@@ -110,14 +111,24 @@ void* Symbol(void* module, const std::string& name) {
 #if defined(_WIN32)
     return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(module), name.c_str()));
 #else
-    return dlsym(module, name.c_str());
+    void* address = dlsym(module, name.c_str());
+    link_map* map = nullptr;
+    Dl_info info{};
+    if (!address || dlinfo(module, RTLD_DI_LINKMAP, &map) != 0 || !map || !dladdr(address, &info)) return address;
+    const bool own = info.dli_fbase == reinterpret_cast<void*>(map->l_addr) || (info.dli_fname && map->l_name && std::strcmp(info.dli_fname, map->l_name) == 0);
+    return own ? address : nullptr;
 #endif
+}
+
+const std::vector<std::string>& Fallbacks() {
+    static const std::vector<std::string> names = {"libc.prx", "libSceLibcInternal.prx", "libkernel.prx", "libkernel_sys.prx", "libScePosix.prx"};
+    return names;
 }
 
 void* Resolve(const std::string& library, const std::string& function) {
     std::vector<std::string> modules;
     if (library != "-") modules.push_back(library.substr(0, library.find('.')) + ".prx");
-    for (const char* fallback : {"libc.prx", "libSceLibcInternal.prx", "libkernel.prx", "libkernel_sys.prx", "libScePosix.prx"}) modules.push_back(fallback);
+    for (const auto& fallback : Fallbacks()) modules.push_back(fallback);
     for (const auto& module : modules) {
         void* handle = OpenModule(module);
         if (!handle) continue;
@@ -226,6 +237,10 @@ bool Build(const std::vector<std::string>& tokens, const std::map<std::string, s
 
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    if (argc >= 2 && std::string(argv[1]) == "--required-modules") {
+        for (const auto& name : Fallbacks()) std::printf("MODULE\t%s\n", name.c_str());
+        return 0;
+    }
     if (argc < 3) {
         std::fprintf(stderr, "usage: %s MODULE_DIRECTORY [--skip ID,...] GOLDEN.tsv...\n", argv[0]);
         return 2;
