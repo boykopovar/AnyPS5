@@ -110,6 +110,7 @@
 
 - [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 69 still-unimplemented callable exports: 65 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
+
 | Name | NID |
 | --- | --- |
 | `EC_POINT_get_affine_coordinates_GFp` | `+Tu0gXSas9s` |
