@@ -234,7 +234,7 @@ void ConcurrentSetattr() {
 }
 
 int main() {
-    OpenRules();
+    for (int iter = 0; iter < 2; ++iter) OpenRules();
     Messages();
     Waiting();
     Access();
