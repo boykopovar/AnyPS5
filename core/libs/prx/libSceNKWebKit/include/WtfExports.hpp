@@ -236,6 +236,8 @@ const NKWebKit::WtfAbi::String& APS5_VABI _ZN7WebCore15defaultMIMETypeEv();
 NKWebKit::WtfAbi::HTMLNonNegativeIntegerResult APS5_VABI _ZN7WebCore27parseHTMLNonNegativeIntegerEN3WTF10StringViewE(NKWebKit::WtfAbi::StringView input);
 unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashEPKDsj(const char16_t* characters, unsigned length);
 unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashERKN3WTF6StringE(const NKWebKit::WtfAbi::String* string);
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore19watchAdaptationNameEv();
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore24PerformanceLoggingClient35synchronousScrollingReasonsAsStringEN3WTF9OptionSetINS_26SynchronousScrollingReasonEEE(std::uint8_t reasons);
 bool APS5_VABI _ZN7WebCore8isReloadENS_13FrameLoadTypeE(std::uint8_t type);
 void APS5_VABI _ZN7bmalloc12cryptoRandomEPvm(void* buffer, std::size_t size);
 std::size_t APS5_VABI _ZN7bmalloc15availableMemoryEv();
