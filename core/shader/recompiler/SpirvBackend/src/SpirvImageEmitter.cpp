@@ -2946,8 +2946,6 @@ std::uint32_t DefineBindlessLookup(SpirvEmitterState& state, bool full, bool add
     status = Select(state, u32, slow, constant(BindlessSlow), status);
     if (full) {
         EmitIfCondition(state, both(record, equal(status, constant(BindlessMiss))), [&] {
-            // Report each missing key once per clear of the reported-miss set (DeviceImageTableAbi
-            // HeaderSeen*): the first invocation to claim the key's tag appends it, the others skip.
             const auto seen = BindlessPair(state, BindlessHeaderWord(state, Table::HeaderSeenLow), BindlessHeaderWord(state, Table::HeaderSeenHigh));
             const auto seenSlots = BindlessHeaderWord(state, Table::HeaderSeenSlots);
             auto tag = constant(Table::SeenTagSeed);
