@@ -39,3 +39,4 @@
 
 #include "ConverterHelpers.hpp"
 #include "RecoveredSignatures.hpp"
+#include "Copy.hpp"
