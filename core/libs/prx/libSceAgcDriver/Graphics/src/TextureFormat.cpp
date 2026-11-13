@@ -56,6 +56,8 @@ constexpr FormatEntry kFormatLookup[] = {
     {36, VK_FORMAT_B10G11R11_UFLOAT_PACK32, 4, false},
     {50, VK_FORMAT_A2B10G10R10_UNORM_PACK32, 4, false},
     {51, VK_FORMAT_A2B10G10R10_SNORM_PACK32, 4, false},
+    {52, VK_FORMAT_A2B10G10R10_USCALED_PACK32, 4, false},
+    {53, VK_FORMAT_A2B10G10R10_SSCALED_PACK32, 4, false},
     {54, VK_FORMAT_A2B10G10R10_UINT_PACK32, 4, false},
     {55, VK_FORMAT_A2B10G10R10_SINT_PACK32, 4, false},
     {56, VK_FORMAT_R8G8B8A8_UNORM, 4, false},
@@ -219,7 +221,7 @@ bool IsSrgbTextureFormat(std::uint32_t guestFormat) {
 bool IgnoresForcedDegamma(std::uint32_t guestFormat) {
     switch (guestFormat) {
         case 3u: case 4u: case 7u: case 8u: case 9u: case 10u: case 13u: case 16u: case 17u: case 22u: case 23u: case 24u: case 25u: case 26u: case 29u:
-        case 36u: case 50u: case 58u: case 59u: case 64u: case 65u: case 66u: case 67u: case 68u: case 71u: case 77u:
+        case 36u: case 50u: case 52u: case 53u: case 58u: case 59u: case 64u: case 65u: case 66u: case 67u: case 68u: case 71u: case 77u:
         case 132u: case 133u: case 134u: case 136u: case 175u: case 176u: case 177u: case 178u: case 179u: case 180u: return true;
         default: return false;
     }

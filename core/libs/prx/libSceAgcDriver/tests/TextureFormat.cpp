@@ -259,6 +259,7 @@ void fillContractTests() {
 void guestFormatLookupTests() {
     Require(FindGuestTextureFormat(VK_FORMAT_R8_UNORM, 1) == 1u, "format 1 must look up from R8_UNORM");
     Require(FindGuestTextureFormat(VK_FORMAT_R8_USCALED, 1) == 3u, "format 3 must look up from R8_USCALED");
+    Require(FindGuestTextureFormat(VK_FORMAT_A2B10G10R10_USCALED_PACK32, 4) == 52u, "format 52 must look up from A2B10G10R10_USCALED");
     Require(FindGuestTextureFormat(VK_FORMAT_R16G16B16A16_SSCALED, 8) == 68u, "format 68 must look up from R16G16B16A16_SSCALED");
     Require(FindGuestTextureFormat(VK_FORMAT_R8G8B8A8_UNORM, 4) == 56u, "format 56 must look up from R8G8B8A8_UNORM");
     Require(FindGuestTextureFormat(VK_FORMAT_R8G8B8A8_SNORM, 4) == 57u, "format 57 must look up from R8G8B8A8_SNORM");
@@ -288,7 +289,7 @@ void RunTextureFormatTests() {
     Require(BytesPerElement(1) == 1u, "format 1 must be one byte wide");
     Require(!IsBlockCompressed(1), "format 1 must not be block compressed");
     Require(BlockWidth(1) == 1u && BlockHeight(1) == 1u, "format 1 must have a one-texel block");
-    for (const auto& [format, vkFormat] : std::array<std::pair<std::uint32_t, VkFormat>, 12>{{{3u, VK_FORMAT_R8_USCALED}, {4u, VK_FORMAT_R8_SSCALED}, {9u, VK_FORMAT_R16_USCALED}, {10u, VK_FORMAT_R16_SSCALED}, {16u, VK_FORMAT_R8G8_USCALED}, {17u, VK_FORMAT_R8G8_SSCALED}, {25u, VK_FORMAT_R16G16_USCALED}, {26u, VK_FORMAT_R16G16_SSCALED}, {58u, VK_FORMAT_R8G8B8A8_USCALED}, {59u, VK_FORMAT_R8G8B8A8_SSCALED}, {67u, VK_FORMAT_R16G16B16A16_USCALED}, {68u, VK_FORMAT_R16G16B16A16_SSCALED}}}) {
+    for (const auto& [format, vkFormat] : std::array<std::pair<std::uint32_t, VkFormat>, 14>{{{3u, VK_FORMAT_R8_USCALED}, {4u, VK_FORMAT_R8_SSCALED}, {9u, VK_FORMAT_R16_USCALED}, {10u, VK_FORMAT_R16_SSCALED}, {16u, VK_FORMAT_R8G8_USCALED}, {17u, VK_FORMAT_R8G8_SSCALED}, {25u, VK_FORMAT_R16G16_USCALED}, {26u, VK_FORMAT_R16G16_SSCALED}, {52u, VK_FORMAT_A2B10G10R10_USCALED_PACK32}, {53u, VK_FORMAT_A2B10G10R10_SSCALED_PACK32}, {58u, VK_FORMAT_R8G8B8A8_USCALED}, {59u, VK_FORMAT_R8G8B8A8_SSCALED}, {67u, VK_FORMAT_R16G16B16A16_USCALED}, {68u, VK_FORMAT_R16G16B16A16_SSCALED}}}) {
         Require(ResolveTextureFormat(format) == vkFormat, "guest format " + std::to_string(format) + " must resolve to its scaled Vulkan format");
         Require(ShaderRecompiler::SampledTextureNumericClass(static_cast<ShaderRecompiler::IrBufferFormat>(format)) == ShaderRecompiler::IrTextureNumericClass::Float, "guest format " + std::to_string(format) + " must sample as float");
     }
@@ -344,7 +345,7 @@ void RunTextureFormatTests() {
     reject([] { IsBlockCompressed(200); }, "unsupported guest texture format");
     for (const std::uint32_t format : {128u, 129u, 130u, 170u, 172u, 174u, 182u}) Require(IsSrgbTextureFormat(format), "guest format " + std::to_string(format) + " must be an sRGB texture format");
     for (const std::uint32_t format : {1u, 14u, 56u, 71u, 169u, 171u, 173u, 181u}) Require(!IsSrgbTextureFormat(format), "guest format " + std::to_string(format) + " must not be an sRGB texture format");
-    for (const std::uint32_t format : {3u, 4u, 7u, 9u, 10u, 13u, 16u, 17u, 22u, 25u, 26u, 36u, 50u, 58u, 59u, 67u, 68u, 77u, 132u, 133u, 175u, 179u}) Require(IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must sample the same through FORCE_DEGAMMA");
+    for (const std::uint32_t format : {3u, 4u, 7u, 9u, 10u, 13u, 16u, 17u, 22u, 25u, 26u, 36u, 50u, 52u, 53u, 58u, 59u, 67u, 68u, 77u, 132u, 133u, 175u, 179u}) Require(IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must sample the same through FORCE_DEGAMMA");
     for (const std::uint32_t format : {1u, 2u, 14u, 15u, 56u, 57u, 128u, 130u, 169u, 171u, 173u, 181u}) Require(!IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must not sample the same through FORCE_DEGAMMA");
     convertedDccClearTests();
     singleDccKeysTests();
