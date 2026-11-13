@@ -169,6 +169,22 @@ int main() {
     waiterThread.join();
     Require(waitResult == SCE_KERNEL_ERROR_EINVAL);
 
+    PthreadSem timedSem = nullptr;
+    Require(scePthreadSemInit(&timedSem, 0, 0, nullptr) == SCE_OK);
+    std::atomic<bool> timedWaiting{false};
+    std::atomic<int> timedResult{-1};
+    std::thread timedThread([&] {
+        timedWaiting.store(true, std::memory_order_release);
+        timedResult = scePthreadSemTimedwait(&timedSem, 2000000);
+    });
+    while (!timedWaiting.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(scePthreadSemDestroy(&timedSem) == SCE_OK);
+    timedThread.join();
+    Require(timedResult == SCE_KERNEL_ERROR_ETIMEDOUT);
+
     PthreadSem cancelSem = nullptr;
     Require(scePthreadSemInit(&cancelSem, 0, 0, nullptr) == SCE_OK);
     CancellableWaitContext cancelContext{&cancelSem};
