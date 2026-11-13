@@ -16,6 +16,21 @@ class RunReportSummaryTests(unittest.TestCase):
     def report(self, name):
         return json.loads((ROOT / "docs/run-report-fixtures" / name).read_text(encoding="utf-8"))
 
+    def test_cli_prints_unicode_even_with_ascii_default_encoding(self):
+        report = self.report("stop-none.json")
+        report["game"]["name"] = "Café Game"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            path.write_text(json.dumps(report), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                env={**os.environ, "PYTHONIOENCODING": "ascii"},
+                capture_output=True,
+                timeout=15,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Café Game", result.stdout.decode("utf-8"))
+
     def test_summary_includes_run_context_and_missing_import(self):
         summary = render(self.report("stop-missing-function.json"))
         self.assertIn("Game: Example Game (PPSA12345)", summary)
