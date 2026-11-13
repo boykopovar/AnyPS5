@@ -193,6 +193,18 @@ static void SecondClockReportsWholeSeconds() {
     }
 }
 
+static void Clock21TracksProcessCpuTime() {
+    constexpr int clockId = 21;
+    const auto before = Nanos(GUEST_CLOCK_PROF);
+    const auto posix = Nanos(clockId);
+    KernelTimespec sceTime{-1, -1};
+    Require(sceKernelClockGettime(clockId, &sceTime) == SCE_OK);
+    const auto sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
+    const auto after = Nanos(GUEST_CLOCK_PROF);
+    Require(before - 999 <= posix && posix <= sce && sce <= after);
+    Require(posix % 1000 == 0 && sce % 1000 == 0);
+}
+
 static void ProcessClocksAreOrdered() {
     constexpr std::int64_t profResolution = NANOS_PER_MILLISECOND;
     for (int i = 0; i < 1000; ++i) {
@@ -450,6 +462,7 @@ int main() {
 
     RequireNeverDecreases(GUEST_CLOCK_VIRTUAL);
     RequireNeverDecreases(GUEST_CLOCK_PROF);
+    Clock21TracksProcessCpuTime();
     ProcessClocksAreOrdered();
     BusyProcessAccumulatesUserTime();
     IdleProcessAccumulatesNone();
