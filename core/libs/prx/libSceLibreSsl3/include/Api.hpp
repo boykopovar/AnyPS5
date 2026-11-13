@@ -252,7 +252,7 @@ std::size_t APS5_VABI SSL_get_client_random_nid_postfix(const LibreSsl3Ssl* ssl,
 int APS5_VABI SSL_up_ref_nid_postfix(LibreSsl3Ssl* ssl);
 int APS5_VABI X509_PUBKEY_get0_param_nid_postfix(void** publicKeyAlgorithm, const unsigned char** publicKey, int* publicKeyLength, void** algorithm, const void* pub);
 void APS5_VABI X509_STORE_CTX_free_nid_postfix(LibreSslX509StoreContext* context);
-int APS5_VABI X509_STORE_CTX_init_nid_postfix(void);
+int APS5_VABI X509_STORE_CTX_init_nid_postfix(LibreSslX509StoreContext* context, LibreSslX509Store* store, LibreSsl3X509* leaf, LibreSslStack* untrusted);
 LibreSslX509StoreContext* APS5_VABI X509_STORE_CTX_new_nid_postfix(void);
 int APS5_VABI X509_STORE_up_ref_nid_postfix(LibreSslX509Store* store);
 const LibreSsl3Stack* APS5_VABI X509_get0_extensions_nid_postfix(const LibreSsl3ExtensionsX509* certificate);
