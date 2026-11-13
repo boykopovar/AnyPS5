@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_COMMANDENCODER_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -66,6 +67,41 @@ public:
     static constexpr std::uint64_t EncodeEpoch = 256;
     static constexpr std::uint64_t InlineSpanMin = 1024;
     static constexpr std::uint64_t InlineSpanMax = 16384;
+    struct Measured {
+        std::uint64_t encodeNs = 0;
+        std::uint64_t handoffNs = 0;
+    };
+    class HandoffPolicy {
+    public:
+        template<typename Measure>
+        bool Next(Measure&& measure) {
+            if (inlined) {
+                if (++windows < span) return false;
+                *this = HandoffPolicy{.strikes = strikes};
+            }
+            if (!measuring) {
+                measuring = true;
+                windows = 0;
+                base = measure();
+            }
+            if (++windows < EncodeEpoch) return true;
+            const Measured now = measure();
+            if (now.handoffNs - base.handoffNs <= now.encodeNs - base.encodeNs) {
+                *this = HandoffPolicy{};
+                return true;
+            }
+            const auto struck = strikes + 1;
+            *this = HandoffPolicy{.inlined = true, .span = std::min(InlineSpanMax, InlineSpanMin << std::min<std::uint32_t>(struck - 1, 4)), .strikes = struck};
+            return false;
+        }
+
+        bool inlined = false;
+        bool measuring = false;
+        std::uint64_t windows = 0;
+        std::uint64_t span = 0;
+        std::uint32_t strikes = 0;
+        Measured base;
+    };
     static bool Enabled();
     static constexpr std::size_t Slots = 4;
     static std::unique_ptr<CommandEncoder> Attach(VkDevice device, DeviceFunctions& table);
@@ -196,15 +232,7 @@ private:
     std::atomic<std::uint64_t> encodeNs{0};
     std::atomic<std::uint64_t> postNs{0};
     std::atomic<std::uint64_t> inlinedCount{0};
-    struct Policy {
-        bool inlined = false;
-        bool measuring = false;
-        std::uint64_t windows = 0;
-        std::uint64_t span = 0;
-        std::uint32_t strikes = 0;
-        std::uint64_t baseEncodeNs = 0;
-        std::uint64_t baseHandoffNs = 0;
-    } policy;
+    HandoffPolicy policy;
     bool decline(std::source_location where) noexcept;
     std::uint64_t handoffNs() const noexcept;
     void printSites(bool final) noexcept;

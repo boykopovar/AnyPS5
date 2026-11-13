@@ -593,32 +593,14 @@ bool CommandEncoder::decline(std::source_location where) noexcept {
 
 bool CommandEncoder::Admit(Handoff handoff, std::source_location where) {
     if (handoff == Handoff::Never) {
-        policy = Policy{};
+        policy = HandoffPolicy{};
         return decline(where);
     }
     if (handoff == Handoff::Always) {
-        policy = Policy{};
+        policy = HandoffPolicy{};
         return true;
     }
-    if (policy.inlined) {
-        if (++policy.windows < policy.span) return decline(where);
-        policy = Policy{.strikes = policy.strikes};
-    }
-    if (!policy.measuring) {
-        policy.measuring = true;
-        policy.windows = 0;
-        policy.baseEncodeNs = encodeNs.load(std::memory_order_relaxed);
-        policy.baseHandoffNs = handoffNs();
-    }
-    if (++policy.windows < EncodeEpoch) return true;
-    const auto saved = encodeNs.load(std::memory_order_relaxed) - policy.baseEncodeNs;
-    const auto cost = handoffNs() - policy.baseHandoffNs;
-    if (cost <= saved) {
-        policy = Policy{};
-        return true;
-    }
-    const auto strikes = policy.strikes + 1;
-    policy = Policy{.inlined = true, .span = std::min(InlineSpanMax, InlineSpanMin << std::min<std::uint32_t>(strikes - 1, 4)), .strikes = strikes};
+    if (policy.Next([this] { return Measured{encodeNs.load(std::memory_order_relaxed), handoffNs()}; })) return true;
     return decline(where);
 }
 
