@@ -18,7 +18,8 @@ std::int32_t APS5_VABI uprv_convertToPosix_nid_postfix(std::uint32_t hostID, cha
                                                         std::int32_t* error) {
     auto& status = Status(error);
     if (capacity < 0 || (!posixID && capacity > 0)) APS5_INVALID_ARG_EX;
-    return uprv_convertToPosix(hostID, posixID, capacity, &status);
+    char preflight = 0;
+    return uprv_convertToPosix(hostID, posixID ? posixID : &preflight, capacity, &status);
 }
 
 std::uint32_t APS5_VABI uprv_convertToLCIDPlatform_nid_postfix(const char* localeID, std::int32_t* error) {
