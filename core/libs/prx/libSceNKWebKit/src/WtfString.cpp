@@ -1057,6 +1057,7 @@ const String& APS5_VABI _ZN7WebCore15defaultMIMETypeEv() {
 namespace {
 
 using NKWebKit::WtfAbi::URL;
+using NKWebKit::WtfAbi::URLPort;
 
 StringView Slice(StringView view, unsigned start, unsigned length = MaxStringLength) {
     if (start >= view.length) return {"", 0, true};
@@ -1189,6 +1190,10 @@ bool IsUnicodeCompatibleASCIIWhitespace(char32_t c) {
     return c <= ' ' && (c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\f');
 }
 
+}  // namespace
+
+namespace NKWebKit::WtfAbi {
+
 std::optional<std::uint16_t> URLPort(const URL& url) {
     unsigned portLength = (url.bits >> 3) & 7;
     if (portLength <= 1) return std::nullopt;
@@ -1215,7 +1220,7 @@ std::optional<std::uint16_t> URLPort(const URL& url) {
     return static_cast<std::uint16_t>(val);
 }
 
-}  // namespace
+}  // namespace NKWebKit::WtfAbi
 
 extern "C" {
 bool APS5_VABI _ZN3WTF11portAllowedERKNS_3URLE(const URL* urlPtr) {

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <type_traits>
 
@@ -74,6 +75,7 @@ struct CStringBuffer {
     std::size_t length;
 };
 
+std::optional<std::uint16_t> URLPort(const URL& url);
 void Release(StringImpl* impl);
 void Release(CStringBuffer* buffer);
 

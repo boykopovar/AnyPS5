@@ -38,6 +38,7 @@
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
+#include "prx/libSceNKWebKit/include/URLDecompositionExports.hpp"
 
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 
