@@ -404,6 +404,23 @@ bool pull(InputStream& stream, std::size_t size) {
     return stream.status == 0;
 }
 
+void pullImage(InputStream& stream) {
+    std::size_t offset = SIGNATURE.size();
+    while (stream.status == 0) {
+        const std::size_t headerEnd = offset + CHUNK_HEADER_SIZE;
+        if (stream.data.size() < headerEnd && !pull(stream, headerEnd - stream.data.size())) return;
+        const std::uint32_t length = readBigEndian32(stream.data.data() + offset);
+        if (length > MAX_CHUNK_LENGTH) return;
+        const bool isEnd = std::memcmp(stream.data.data() + offset + 4, "IEND", 4) == 0;
+        const std::size_t chunkEnd = headerEnd + length + CHUNK_CRC_SIZE;
+        while (stream.data.size() < chunkEnd && stream.status == 0) {
+            pull(stream, std::min(INPUT_BLOCK_SIZE, chunkEnd - stream.data.size()));
+        }
+        if (stream.data.size() < chunkEnd || isEnd) return;
+        offset = chunkEnd;
+    }
+}
+
 bool headerAvailable(const std::vector<std::uint8_t>& data) {
     constexpr std::size_t firstChunk = SIGNATURE.size();
     constexpr std::size_t chunkOverhead = 12;
@@ -522,9 +539,9 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
 int32_t APS5_VABI scePngDecDelete(void* handle) {
     Context* context = toContext(handle);
     if (!context) return SCE_PNG_DEC_ERROR_INVALID_HANDLE;
-    forgetStream(context);
     Context cleared{};
-    GuestCopyOut_nid_no_patch(context, &cleared, sizeof(cleared));
+    if (!GuestCopyOut_nid_no_patch(context, &cleared, sizeof(cleared))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    forgetStream(context);
     return 0;
 }
 
@@ -590,7 +607,7 @@ int32_t APS5_VABI scePngDecDecodeWithInputControl(void* handle, const PngDecInpu
     const std::shared_ptr<InputStream> stream = findStream(context);
     if (!stream) throw std::runtime_error("scePngDecDecodeWithInputControl: decoding without a parsed header is not implemented");
     const StreamUse use(stream);
-    while ((*use).status == 0) pull(*use, INPUT_BLOCK_SIZE);
+    pullImage(*use);
     if ((*use).status < 0) return (*use).status;
     PngDecDecodeParam decode{};
     decode.png_mem_addr = (*use).data.data();
