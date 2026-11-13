@@ -34,7 +34,7 @@ int main() {
     auto pool = NKWebKit::Make<NKWebKit::ProcessPool>();
     const void* poolRef = NKWebKit::ToRef(pool);
 
-    auto strEmpty = NKWebKit::Make<NKWebKit::String>(u"custom-empty");
+    auto strEmpty = NKWebKit::Make<NKWebKit::String>(std::u16string(u"custom-empty"));
     const void* emptyRef = NKWebKit::ToRef(strEmpty);
     Require(pool->emptyDocumentURLSchemes.empty());
     WKContextRegisterURLSchemeAsEmptyDocument(poolRef, emptyRef);
@@ -43,7 +43,7 @@ int main() {
     WKContextRegisterURLSchemeAsEmptyDocument(poolRef, emptyRef);
     Require(pool->emptyDocumentURLSchemes.size() == 1);
 
-    auto strSecure = NKWebKit::Make<NKWebKit::String>(u"custom-secure");
+    auto strSecure = NKWebKit::Make<NKWebKit::String>(std::u16string(u"custom-secure"));
     const void* secureRef = NKWebKit::ToRef(strSecure);
     Require(pool->secureURLSchemes.empty());
     WKContextRegisterURLSchemeAsSecure(poolRef, secureRef);
@@ -52,7 +52,7 @@ int main() {
     WKContextRegisterURLSchemeAsSecure(poolRef, secureRef);
     Require(pool->secureURLSchemes.size() == 1);
 
-    auto strCsp = NKWebKit::Make<NKWebKit::String>(u"custom-csp");
+    auto strCsp = NKWebKit::Make<NKWebKit::String>(std::u16string(u"custom-csp"));
     const void* cspRef = NKWebKit::ToRef(strCsp);
     Require(pool->bypassingContentSecurityPolicyURLSchemes.empty());
     WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy(poolRef, cspRef);
@@ -61,7 +61,7 @@ int main() {
     WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy(poolRef, cspRef);
     Require(pool->bypassingContentSecurityPolicyURLSchemes.size() == 1);
 
-    auto strCache = NKWebKit::Make<NKWebKit::String>(u"custom-cache");
+    auto strCache = NKWebKit::Make<NKWebKit::String>(std::u16string(u"custom-cache"));
     const void* cacheRef = NKWebKit::ToRef(strCache);
     Require(pool->cachePartitionedURLSchemes.empty());
     WKContextRegisterURLSchemeAsCachePartitioned(poolRef, cacheRef);
@@ -70,7 +70,7 @@ int main() {
     WKContextRegisterURLSchemeAsCachePartitioned(poolRef, cacheRef);
     Require(pool->cachePartitionedURLSchemes.size() == 1);
 
-    auto strDisplay = NKWebKit::Make<NKWebKit::String>(u"custom-display");
+    auto strDisplay = NKWebKit::Make<NKWebKit::String>(std::u16string(u"custom-display"));
     const void* displayRef = NKWebKit::ToRef(strDisplay);
     Require(pool->canDisplayOnlyIfCanRequestURLSchemes.empty());
     WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest(poolRef, displayRef);
@@ -79,7 +79,7 @@ int main() {
     WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest(poolRef, displayRef);
     Require(pool->canDisplayOnlyIfCanRequestURLSchemes.size() == 1);
 
-    auto strRelax = NKWebKit::Make<NKWebKit::String>(u"custom-relax");
+    auto strRelax = NKWebKit::Make<NKWebKit::String>(std::u16string(u"custom-relax"));
     const void* relaxRef = NKWebKit::ToRef(strRelax);
     Require(pool->domainRelaxationForbiddenURLSchemes.empty());
     WKContextSetDomainRelaxationForbiddenForURLScheme(poolRef, relaxRef);
@@ -88,7 +88,7 @@ int main() {
     WKContextSetDomainRelaxationForbiddenForURLScheme(poolRef, relaxRef);
     Require(pool->domainRelaxationForbiddenURLSchemes.size() == 1);
 
-    auto strRelax2 = NKWebKit::Make<NKWebKit::String>(u"custom-relax-2");
+    auto strRelax2 = NKWebKit::Make<NKWebKit::String>(std::u16string(u"custom-relax-2"));
     const void* relax2Ref = NKWebKit::ToRef(strRelax2);
     WKContextSetDomainRelaxationForbiddenForURLScheme(poolRef, relax2Ref);
     Require(pool->domainRelaxationForbiddenURLSchemes.size() == 2);
