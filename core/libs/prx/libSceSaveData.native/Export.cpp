@@ -2188,7 +2188,7 @@ int APS5_VABI sceSaveDataUmountSys(void) {
     return 0;
 }
 
-static int umountWithBackup(const SaveDataMountPoint* mount_point) {
+static int umountWithBackup(const SaveDataMountPoint* mount_point, std::string* tracePoint) {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
@@ -2196,6 +2196,7 @@ static int umountWithBackup(const SaveDataMountPoint* mount_point) {
     if (!copy_mount_point(mount_point, &localPoint)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    if (tracePoint != nullptr) *tracePoint = localPoint.data;
     SaveDataEvent event{};
     event.type = SAVE_DATA_EVENT_TYPE_UMOUNT_BACKUP;
     event.error_code = SAVE_DATA_OK;
@@ -2228,8 +2229,9 @@ static int umountWithBackup(const SaveDataMountPoint* mount_point) {
 }
 
 int APS5_VABI sceSaveDataUmountWithBackup(const SaveDataMountPoint* mount_point) {
-    const int rc = umountWithBackup(mount_point);
-    SAVEDATA_TRACE("umountWithBackup point=%.*s -> 0x%08x", static_cast<int>(sizeof(SaveDataMountPoint::data)), mount_point != nullptr ? mount_point->data : "(null)", static_cast<unsigned>(rc));
+    std::string point = "(null)";
+    const int rc = umountWithBackup(mount_point, &point);
+    SAVEDATA_TRACE("umountWithBackup point=%s -> 0x%08x", point.c_str(), static_cast<unsigned>(rc));
     return rc;
 }
 

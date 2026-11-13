@@ -860,6 +860,10 @@ int main(int argc, char** argv) {
     Require(sslError == 0 && sslDetail == 0);
     Require(sceHttpsGetSslError(1, nullptr, &sslDetail) == invalidValue);
     Require(sceHttpsGetSslError(1, &sslError, nullptr) == invalidValue);
+    errno = 71;
+    Require(sceHttpsGetSslError(1, reinterpret_cast<int*>(0x10), &sslDetail) == invalidValue);
+    Require(sceHttpsGetSslError(1, &sslError, reinterpret_cast<std::uint32_t*>(0x10)) == invalidValue);
+    Require(errno == 71);
 
     constexpr int parseInvalidResponse = static_cast<int>(0x80432060);
     constexpr int parseInvalidValue = static_cast<int>(0x804321FE);

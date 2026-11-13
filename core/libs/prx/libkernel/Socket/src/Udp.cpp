@@ -1674,6 +1674,10 @@ static int NoteConnectError(Socket& socket) {
 #endif
 int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
     if (const int error = AddressLengthError(address, length)) return Fail(error);
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        if (const int error = forwards->connect(descriptor, address, length)) return Fail(error);
+        return 0;
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (socket->family != GuestUnix && socket->type == 2 && address && length >= 2 && static_cast<const unsigned char*>(address)[1] == 0
@@ -2970,7 +2974,7 @@ std::int64_t GuestSockets::Readv(int descriptor, const Iovec* iov, int iovcnt) {
     std::size_t copied = 0;
     for (int i = 0; i < iovcnt && copied < static_cast<std::size_t>(result); ++i) {
         const auto amount = std::min(iov[i].length, static_cast<std::size_t>(result) - copied);
-        if (amount != 0) std::memcpy(iov[i].base, buffer.data() + copied, amount);
+        if (amount != 0 && !GuestCopyOut_nid_no_patch(iov[i].base, buffer.data() + copied, amount)) return Fail(14);
         copied += amount;
     }
     return result;
@@ -2992,7 +2996,7 @@ std::int64_t GuestSockets::Writev(int descriptor, const Iovec* iov, int iovcnt) 
     }
     std::size_t copied = 0;
     for (int i = 0; i < iovcnt; ++i) {
-        if (iov[i].length != 0) std::memcpy(buffer.data() + copied, iov[i].base, iov[i].length);
+        if (iov[i].length != 0 && !GuestCopyIn_nid_no_patch(buffer.data() + copied, iov[i].base, iov[i].length)) return Fail(14);
         copied += iov[i].length;
     }
     return Write(descriptor, buffer.data(), total);

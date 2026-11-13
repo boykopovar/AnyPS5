@@ -14,6 +14,7 @@ class Page : public ObjectOf<ObjectType::Page> {
 public:
     bool canGoBack = false;
     bool canGoForward = false;
+    mutable Retained<Inspector> inspector;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
@@ -60,6 +61,14 @@ public:
     bool accessibilityEnabled = false;
     bool processTerminationEnabled = true;
     std::vector<std::string> visitedLinks;
+    bool alwaysUsesComplexTextCodePath = false;
+    bool memoryCacheDisabled = false;
+    bool httpPipeliningEnabled = true;
+    bool shouldUseFontSmoothing = true;
+    bool javaScriptConfigurationFileEnabled = false;
+    bool javaScriptGarbageCollectorTimerEnabled = true;
+    bool storageAccessAPIEnabled = false;
+    std::uint32_t garbageCollectJavaScriptObjectsCount = 0;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
