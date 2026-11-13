@@ -52,6 +52,7 @@ constexpr int ErrorCnCheck = static_cast<int>(0x8095f00b);
 constexpr int ErrorUnknownCa = static_cast<int>(0x8095f00c);
 constexpr int ErrorNotAfterCheck = static_cast<int>(0x8095f00d);
 constexpr int ErrorNotBeforeCheck = static_cast<int>(0x8095f00e);
+constexpr int ErrorEagain = static_cast<int>(0x8095f00f);
 constexpr int ErrorFatalAlert = static_cast<int>(0x8095f010);
 constexpr int ErrorBusy = static_cast<int>(0x8095f012);
 constexpr int ErrorWantPollIn = static_cast<int>(0x8095f013);
@@ -345,6 +346,7 @@ struct Session {
     std::uintptr_t socket;
     std::mutex mutex;
     int hostError = 0;
+    bool singleTransfer = false;
     std::uint32_t verifyOptions = 0;
     std::vector<std::string> alpnStrings;
     std::vector<const char*> alpnList;
@@ -495,8 +497,8 @@ struct Session {
 
     int Code(int result, Operation operation) {
         switch (result) {
-            case MBEDTLS_ERR_SSL_WANT_READ: return ErrorWantPollIn;
-            case MBEDTLS_ERR_SSL_WANT_WRITE: return ErrorWantPollOut;
+            case MBEDTLS_ERR_SSL_WANT_READ: return singleTransfer ? ErrorEagain : ErrorWantPollIn;
+            case MBEDTLS_ERR_SSL_WANT_WRITE: return singleTransfer ? ErrorEagain : ErrorWantPollOut;
             case MBEDTLS_ERR_NET_CONN_RESET:
                 reset = true;
                 if (operation == Operation::Write) return ErrorNetPipe;
@@ -549,6 +551,7 @@ struct SslConnection {
     bool systemRoots = false;
     std::shared_ptr<SavedSession> resume;
     bool resumeOffered = false;
+    bool singleTransfer = false;
 };
 
 struct Runtime {
@@ -893,16 +896,29 @@ int APS5_VABI sceSslFreeCaCerts(int sslCtxId, SceSsl::CaCerts* certificates) {
     return 0;
 }
 
-int APS5_VABI sceSslCreateConnection(int sslCtxId, int sockId, const char* host) {
+}
+
+namespace {
+
+int CreateConnection(int sslCtxId, int sockId, const char* host, bool singleTransfer) {
     if (!host) return ErrorInvalidValue;
     std::lock_guard lock(State().mutex);
     if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
     auto& state = State();
     if (state.nextHandle > static_cast<unsigned>(std::numeric_limits<int>::max())) throw std::overflow_error("SSL connection handles exhausted");
     const auto id = static_cast<int>(state.nextHandle);
-    state.connections.emplace(id, SslConnection{sslCtxId, sockId, host, nullptr, nullptr});
+    auto& connection = state.connections.emplace(id, SslConnection{sslCtxId, sockId, host, nullptr, nullptr}).first->second;
+    connection.singleTransfer = singleTransfer;
     ++state.nextHandle;
     return id;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceSslCreateConnection(int sslCtxId, int sockId, const char* host) {
+    return CreateConnection(sslCtxId, sockId, host, false);
 }
 
 int SslTrustSystemRoots_nid_no_patch(int sslConnectionId) {
@@ -963,6 +979,7 @@ int Establish(const char* function, int sslConnectionId, std::shared_ptr<Session
             if (!KernelLookupSocketNative_nid_no_patch(connection->socket, &owner, &native)) return ErrorNetBadDescriptor;
             PoolScope scope(context->pool);
             session = std::make_shared<Session>(connection->context, std::move(context), std::move(owner), native);
+            session->singleTransfer = connection->singleTransfer;
             session->Configure(connection->host, connection->alpn, connection->verifyOptions, connection->systemRoots ? SystemRoots() : nullptr);
             if (connection->resume)
                 CheckBackend(mbedtls_ssl_set_session(&session->ssl, &connection->resume->data), "SSL session resumption setup failed");
@@ -1057,7 +1074,7 @@ int APS5_VABI sceSslRead(int sslConnectionId, void* buf, size_t len, int flags) 
                 session->peekSize = 0;
                 session->peekBuffer.reset();
             }
-            if (flags != 0) break;
+            if (flags != 0 || session->singleTransfer) break;
             continue;
         }
         if (flags == 3 && !session->peekBuffer) session->peekBuffer = Allocate(MBEDTLS_SSL_IN_CONTENT_LEN);
@@ -1070,7 +1087,7 @@ int APS5_VABI sceSslRead(int sslConnectionId, void* buf, size_t len, int flags) 
         }
         if (result > 0) {
             received += static_cast<std::size_t>(result);
-            if (flags != 0) break;
+            if (flags != 0 || session->singleTransfer) break;
             continue;
         }
         if (result == 0 || result == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY || result == MBEDTLS_ERR_SSL_CONN_EOF) break;
@@ -1114,6 +1131,7 @@ int APS5_VABI sceSslWrite(int sslConnectionId, void* buf, size_t len, int flags)
             return code;
         }
         written += static_cast<std::size_t>(result);
+        if (session->singleTransfer) break;
     }
     return static_cast<int>(written);
 }
@@ -1380,14 +1398,12 @@ int APS5_VABI sceSslCheckRecvPending() {
     return 0;
 }
 
-int APS5_VABI sceSslCreateSslConnection() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSslCreateSslConnection(int sslCtxId, int sockId, const char* host) {
+    return CreateConnection(sslCtxId, sockId, host, true);
 }
 
-int APS5_VABI sceSslDeleteSslConnection() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSslDeleteSslConnection(int sslConnectionId) {
+    return sceSslDeleteConnection(sslConnectionId);
 }
 
 int APS5_VABI sceSslDisableOption() {

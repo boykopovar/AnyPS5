@@ -43,6 +43,7 @@ constexpr int ErrorCnCheck = static_cast<int>(0x8095f00b);
 constexpr int ErrorUnknownCa = static_cast<int>(0x8095f00c);
 constexpr int ErrorNotAfterCheck = static_cast<int>(0x8095f00d);
 constexpr int ErrorNotBeforeCheck = static_cast<int>(0x8095f00e);
+constexpr int ErrorEagain = static_cast<int>(0x8095f00f);
 constexpr int ErrorFatalAlert = static_cast<int>(0x8095f010);
 constexpr int ErrorBusy = static_cast<int>(0x8095f012);
 constexpr int ErrorWantPollIn = static_cast<int>(0x8095f013);
@@ -60,9 +61,10 @@ constexpr int GuestSocketLevel = 0xffff;
 constexpr int GuestNonBlocking = 0x1200;
 constexpr int GuestReceiveTimeout = 0x1006;
 constexpr int WaitRounds = 2000;
+constexpr std::size_t SplitRequestSize = 20000;
 const char* ServerProtocols[] = {"http/1.1", nullptr};
 
-enum class Serve { Close, Exchange, Drop, Reset, Alert, HelloReset, HelloPlain };
+enum class Serve { Close, Exchange, Split, Drop, Reset, Alert, HelloReset, HelloPlain };
 enum class Leaf { Valid, Expired, Future };
 
 struct GuestTimeval {
@@ -238,6 +240,7 @@ struct Server {
             const int handshake = mbedtls_ssl_handshake(&ssl);
             if (handshake != 0) failure = "server handshake failed, error " + std::to_string(handshake);
             else if (mode == Serve::Exchange) Exchange(ssl);
+            else if (mode == Serve::Split) Split(ssl);
             else if (mode == Serve::Close) mbedtls_ssl_close_notify(&ssl);
             else if (mode == Serve::Reset) Reset(ssl, client);
         }
@@ -306,6 +309,29 @@ struct Server {
         close(client.fd);
 #endif
         client.fd = -1;
+    }
+
+    void Split(mbedtls_ssl_context& ssl) {
+        std::string request(SplitRequestSize, '\0');
+        std::size_t received = 0;
+        while (received < request.size()) {
+            const int result = mbedtls_ssl_read(&ssl, reinterpret_cast<unsigned char*>(request.data()) + received, request.size() - received);
+            if (result <= 0) {
+                failure = "split server read failed, error " + std::to_string(result);
+                return;
+            }
+            received += static_cast<std::size_t>(result);
+        }
+        if (request.compare(0, 4, "ping") != 0) {
+            failure = "split server received the wrong request";
+            return;
+        }
+        if (mbedtls_ssl_write(&ssl, reinterpret_cast<const unsigned char*>("po"), 2) != 2
+            || mbedtls_ssl_write(&ssl, reinterpret_cast<const unsigned char*>("ng"), 2) != 2) {
+            failure = "split server write failed";
+            return;
+        }
+        if (mbedtls_ssl_close_notify(&ssl) != 0) failure = "split server close notify failed";
     }
 
     void Exchange(mbedtls_ssl_context& ssl) {
@@ -389,6 +415,8 @@ int main(int argc, char** argv) {
         server.Serve(Serve::Close, true, Leaf::Future);
         if (sockets.net) server.Serve(Serve::Exchange);
         for (int index = 0; index < 3; ++index) server.Serve(Serve::Exchange);
+        server.Serve(Serve::Split);
+        server.Serve(Serve::Exchange);
         for (int index = 0; index < ParallelConnections; ++index) server.Serve(Serve::Exchange);
     });
 
@@ -643,6 +671,41 @@ int main(int argc, char** argv) {
     Require(sceSslReuseConnection(reused, thirdSocket) == ErrorInvalidId && sceSslReuseConnection(0, thirdSocket) == ErrorInvalidId,
         "a deleted connection or id 0 was reused");
     Require(InUse(context) == loaded, "the saved session's pool memory was not returned");
+
+    Require(sceSslCreateSslConnection(context, 1000, nullptr) == ErrorInvalidValue, "a single-transfer connection accepted a null host");
+    Require(sceSslCreateSslConnection(empty, 1000, "localhost") == ErrorInvalidId, "a single-transfer connection accepted a terminated context");
+    const int singleSocket = sockets.Open(server.port);
+    const int single = sceSslCreateSslConnection(context, singleSocket, "localhost");
+    Require(single > 0 && sceSslConnect(single) == 0, "the handshake of a single-transfer connection");
+    std::string large(SplitRequestSize, 'x');
+    large.replace(0, 4, "ping");
+    int writes = 0;
+    for (std::size_t sent = 0; sent < large.size(); ++writes) {
+        const int count = sceSslWrite(single, large.data() + sent, large.size() - sent, 0);
+        Require(count > 0 && static_cast<std::size_t>(count) <= 16384, "a single-transfer write sent more than one record");
+        sent += static_cast<std::size_t>(count);
+    }
+    Require(writes > 1, "a single-transfer write sent the whole buffer at once");
+    Require(sceSslRecv(single, buffer.data(), 4) == 2 && std::memcmp(buffer.data(), "po", 2) == 0, "a single-transfer read waited for a second record");
+    Require(sceSslRead(single, buffer.data(), 4, 0) == 2 && std::memcmp(buffer.data(), "ng", 2) == 0, "a single-transfer read missed the second record");
+    Require(sceSslRead(single, buffer.data(), buffer.size(), 0) == 0, "close notify did not end the single-transfer stream");
+    Require(sceSslDeleteSslConnection(single) == 0 && sockets.Close(singleSocket) == 0, "release the single-transfer connection");
+    Require(sceSslDeleteSslConnection(single) == ErrorInvalidId && sceSslConnect(single) == ErrorInvalidId, "a deleted single-transfer connection was still known");
+
+    const int eagainSocket = sockets.Open(server.port);
+    Require(sockets.Set(eagainSocket, GuestNonBlocking, &enabled, sizeof(enabled)) == 0, "make the single-transfer socket non-blocking");
+    const int eagain = sceSslCreateSslConnection(context, eagainSocket, "localhost");
+    for (int result, round = 0; (result = sceSslConnect(eagain)) != 0; Settle()) {
+        Require(result == ErrorEagain, "a single-transfer handshake that would block did not report SSL_ERROR_EAGAIN");
+        Require(++round < WaitRounds, "a single-transfer non-blocking handshake did not finish");
+    }
+    Require(sceSslRead(eagain, buffer.data(), buffer.size(), 0) == ErrorEagain, "a single-transfer read with nothing to read did not report SSL_ERROR_EAGAIN");
+    Require(sceSslWrite(eagain, request, 4, 0) == 4, "write the single-transfer non-blocking request");
+    for (rounds = 0; (received = sceSslRead(eagain, buffer.data(), buffer.size(), 0)) == ErrorEagain; Settle())
+        Require(++rounds < WaitRounds, "the single-transfer non-blocking reply did not arrive");
+    Require(received == 4 && std::memcmp(buffer.data(), "pong", 4) == 0, "read the single-transfer non-blocking reply");
+    Require(sceSslDeleteConnection(eagain) == 0 && sockets.Close(eagainSocket) == 0, "a single-transfer connection was not released by sceSslDeleteConnection");
+    Require(InUse(context) == loaded, "the single-transfer connections did not return their pool memory");
 
     std::array<std::thread, ParallelConnections> clients;
     for (auto& client : clients) {
