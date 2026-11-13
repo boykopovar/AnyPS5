@@ -23,6 +23,9 @@
 #endif
 #include <windows.h>
 #include <winioctl.h>
+#ifndef SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
+#define SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE 0x2
+#endif
 #else
 #include <dlfcn.h>
 #include <sys/mman.h>
@@ -81,6 +84,18 @@ static Function LoadFunction(void* module, const char* name, bool patched, const
     return function;
 }
 
+
+static std::error_code MakeLink(const std::filesystem::path& target, const std::filesystem::path& link, bool directory) {
+    std::error_code error;
+#ifdef _WIN32
+    const DWORD flags = (directory ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0) | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+    if (!CreateSymbolicLinkW(link.c_str(), target.c_str(), flags)) error.assign(static_cast<int>(GetLastError()), std::system_category());
+#else
+    if (directory) std::filesystem::create_directory_symlink(target, link, error);
+    else std::filesystem::create_symlink(target, link, error);
+#endif
+    return error;
+}
 
 int main(int argc, char** argv) {
     Require(argc == 4);
@@ -185,8 +200,7 @@ int main(int argc, char** argv) {
         const auto read = LoadFunction<std::int64_t (APS5_VABI*)(const char*, char*, std::size_t)>(sys, "readlink", patched);
         const auto readAt = LoadFunction<std::int64_t (APS5_VABI*)(int, const char*, char*, std::size_t)>(sys, "readlinkat", patched);
         Require(std::filesystem::create_directory(root / "end"));
-        std::error_code setupError;
-        std::filesystem::create_directory_symlink("end", root / "p33", setupError);
+        const std::error_code setupError = MakeLink("end", root / "p33", true);
 #ifdef _WIN32
         if (setupError.value() == ERROR_PRIVILEGE_NOT_HELD || setupError == std::errc::permission_denied) {
             std::fputs("SKIP: Windows symbolic-link privileges unavailable\n", stderr);
@@ -196,10 +210,10 @@ int main(int argc, char** argv) {
         {
             Require(!setupError);
             for (int index = 32; index > 0; --index)
-                std::filesystem::create_directory_symlink("p" + std::to_string(index + 1), root / ("p" + std::to_string(index)));
+                Require(!MakeLink("p" + std::to_string(index + 1), root / ("p" + std::to_string(index)), true));
             constexpr char target[] = "target-not-followed";
-            std::filesystem::create_symlink(target, root / "end" / "leaf");
-            std::filesystem::create_symlink("cycle", root / "end" / "cycle");
+            Require(!MakeLink(target, root / "end" / "leaf", false));
+            Require(!MakeLink("cycle", root / "end" / "cycle", false));
             const auto call = [&](int variant, const std::string& suffix, char* output, std::size_t size) {
                 const auto relative = (root / suffix).generic_string();
                 switch (variant) {
