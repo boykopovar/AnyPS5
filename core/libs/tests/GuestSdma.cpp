@@ -232,7 +232,7 @@ void RequireRing() {
 }
 
 int main() {
-    RequireOpen();
+    for (int iter = 0; iter < 2; ++iter) RequireOpen();
     RequireNullHandle();
     RequireClosedHandle();
     RequireLinear();
