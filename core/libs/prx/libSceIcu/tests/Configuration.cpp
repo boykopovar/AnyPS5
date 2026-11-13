@@ -1,8 +1,12 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <cstddef>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <initializer_list>
 #include <source_location>
@@ -236,9 +240,111 @@ void Cleanup() {
 
 }
 
+struct AllocatorLog {
+    int allocations = 0;
+    int reallocations = 0;
+    int releases = 0;
+    const void* context = nullptr;
+    void* lastRelease = nullptr;
+    std::size_t lastSize = 0;
+};
+
+AllocatorLog g_log;
+alignas(16) unsigned char g_arena[256];
+
+void* APS5_VABI LoggingAllocate(const void* context, std::size_t size) {
+    ++g_log.allocations;
+    g_log.context = context;
+    g_log.lastSize = size;
+    return g_arena;
+}
+
+void* APS5_VABI LoggingReallocate(const void* context, void* buffer, std::size_t size) {
+    ++g_log.reallocations;
+    g_log.context = context;
+    g_log.lastSize = size;
+    return buffer;
+}
+
+void APS5_VABI LoggingRelease(const void* context, void* buffer) {
+    ++g_log.releases;
+    g_log.context = context;
+    g_log.lastRelease = buffer;
+}
+
+void UprvMemoryWithUserFunctions() {
+    int marker = 0;
+    std::int32_t status = 0;
+    u_cleanup_nid_postfix();
+    u_setMemoryFunctions_nid_postfix(&marker, LoggingAllocate, LoggingReallocate, LoggingRelease, &status);
+    Require(status == 0);
+    g_log = {};
+
+    void* block = uprv_malloc_nid_postfix(40);
+    Require(block == g_arena && g_log.allocations == 1 && g_log.context == &marker && g_log.lastSize == 40);
+
+    void* zero = uprv_malloc_nid_postfix(0);
+    Require(zero != nullptr && zero != g_arena && g_log.allocations == 1);
+
+    Require(uprv_realloc_nid_postfix(block, 80) == block && g_log.reallocations == 1 && g_log.lastSize == 80);
+    Require(g_log.releases == 0);
+
+    Require(uprv_realloc_nid_postfix(block, 0) == zero && g_log.releases == 1 && g_log.lastRelease == block);
+
+    Require(uprv_realloc_nid_postfix(zero, 24) == g_arena && g_log.allocations == 2 && g_log.lastSize == 24 && g_log.reallocations == 1);
+    Require(uprv_realloc_nid_postfix(zero, 0) == zero && g_log.allocations == 2 && g_log.releases == 1);
+
+    std::memset(g_arena, 0x55, sizeof(g_arena));
+    char* copy = uprv_strdup_nid_postfix("icu");
+    Require(copy == reinterpret_cast<char*>(g_arena) && std::memcmp(copy, "icu", 4) == 0 && g_log.lastSize == 4);
+
+    std::memset(g_arena, 0x55, sizeof(g_arena));
+    char* prefix = uprv_strndup_nid_postfix("abcdef", 3);
+    Require(prefix == reinterpret_cast<char*>(g_arena) && std::memcmp(prefix, "abc", 4) == 0 && g_log.lastSize == 4);
+
+    std::memset(g_arena, 0x55, sizeof(g_arena));
+    char* whole = uprv_strndup_nid_postfix("abcdef", -1);
+    Require(std::memcmp(whole, "abcdef", 7) == 0 && g_log.lastSize == 7);
+
+    std::memset(g_arena, 0x55, sizeof(g_arena));
+    char* longer = uprv_strndup_nid_postfix("ab", 2);
+    Require(std::memcmp(longer, "ab", 3) == 0 && g_log.lastSize == 3);
+
+    std::memset(g_arena, 0x55, sizeof(g_arena));
+    char* empty = uprv_strndup_nid_postfix("abc", 0);
+    Require(empty[0] == 0 && g_log.lastSize == 1);
+    u_cleanup_nid_postfix();
+}
+
+void UprvMemoryWithDefaultHeap() {
+    std::array<void*, 10> api{};
+    ApplicationHeapRegister_nid_no_patch(api.data());
+    u_cleanup_nid_postfix();
+
+    auto* block = static_cast<unsigned char*>(uprv_malloc_nid_postfix(16));
+    Require(block != nullptr);
+    std::memset(block, 0xA5, 16);
+    block = static_cast<unsigned char*>(uprv_realloc_nid_postfix(block, 4096));
+    Require(block != nullptr && block[0] == 0xA5 && block[15] == 0xA5);
+    void* zero = uprv_realloc_nid_postfix(block, 0);
+    Require(zero != nullptr && zero == uprv_malloc_nid_postfix(0));
+
+    char* copy = uprv_strdup_nid_postfix("default heap");
+    Require(copy != nullptr && std::string(copy) == "default heap");
+    free_nid_postfix(copy);
+    char* prefix = uprv_strndup_nid_postfix("default heap", 7);
+    Require(prefix != nullptr && std::string(prefix) == "default");
+    free_nid_postfix(prefix);
+    char* whole = uprv_strndup_nid_postfix("heap", -5);
+    Require(whole != nullptr && std::string(whole) == "heap");
+    free_nid_postfix(whole);
+}
+
 int main() {
     Locking();
     Memory();
+    UprvMemoryWithUserFunctions();
+    UprvMemoryWithDefaultHeap();
     DataDirectory();
     TimeZoneDirectory();
     Cleanup();

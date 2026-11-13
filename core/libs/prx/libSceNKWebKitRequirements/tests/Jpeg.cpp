@@ -1,6 +1,7 @@
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
 
 #include <cstddef>
+#include <csetjmp>
 #include <cstdint>
 #include <stdexcept>
 #include <cstdio>
@@ -348,6 +349,91 @@ void TestProgressiveBuffered(const std::vector<uint8_t>& jpegData) {
     jpeg_destroy_decompress_nid_postfix(&cinfo);
 }
 
+bool TestColormap(const std::vector<uint8_t>& jpegData, int colors) {
+    uint8_t palette[3][256]{};
+    uint8_t* rows[] = {palette[0], palette[1], palette[2]};
+    for (int index = 0; index < colors; ++index) {
+        palette[0][index] = static_cast<uint8_t>(index * 47 + 17);
+        palette[1][index] = static_cast<uint8_t>(index * 89 + 37);
+        palette[2][index] = static_cast<uint8_t>(index * 137 + 71);
+    }
+    jpeg_decompress_struct host{};
+    jpeg_error_mgr hostError{};
+    host.err = jpeg_std_error(&hostError);
+    jpeg_create_decompress(&host);
+    jpeg_mem_src(&host, jpegData.data(), jpegData.size());
+    AssertTrue(jpeg_read_header(&host, TRUE) == JPEG_HEADER_OK, "native colormap header");
+    host.quantize_colors = TRUE;
+    host.desired_number_of_colors = 16;
+    host.dither_mode = JDITHER_NONE;
+    host.colormap = colors ? rows : nullptr;
+    host.actual_number_of_colors = colors;
+    jpeg_calc_output_dimensions(&host);
+    AssertTrue(jpeg_start_decompress(&host) == TRUE && host.output_components == 1, "native colormap start");
+    const auto width = host.output_width;
+    const auto height = host.output_height;
+    const int actualColors = host.actual_number_of_colors;
+    std::vector<uint8_t> expected(static_cast<size_t>(width) * height);
+    while (host.output_scanline < height) {
+        JSAMPROW row = expected.data() + host.output_scanline * width;
+        AssertTrue(jpeg_read_scanlines(&host, &row, 1) == 1, "native colormap scanline");
+    }
+    AssertTrue(jpeg_finish_decompress(&host) == TRUE, "native colormap finish");
+    jpeg_destroy_decompress(&host);
+
+    NKWebKit::GuestJpegErrorMgr guestError{};
+    NKWebKit::GuestJpegDecompress guest{};
+    guest.err = jpeg_std_error_nid_postfix(&guestError);
+    jpeg_CreateDecompress_nid_postfix(&guest, 62, sizeof(guest));
+    NKWebKit::GuestJpegSourceMgr source{};
+    source.next_input_byte = jpegData.data();
+    source.bytes_in_buffer = jpegData.size();
+    source.init_source = GuestInitSource;
+    source.fill_input_buffer = GuestFillInputBuffer;
+    source.skip_input_data = GuestSkipInputData;
+    source.resync_to_restart = GuestResyncToRestart;
+    source.term_source = GuestTermSource;
+    guest.src = &source;
+    bool matches = false;
+    try {
+        AssertTrue(jpeg_read_header_nid_postfix(&guest, 1) == JPEG_HEADER_OK, "guest colormap header");
+        guest.quantize_colors = 1;
+        guest.desired_number_of_colors = 16;
+        guest.dither_mode = JDITHER_NONE;
+        guest.colormap = colors ? rows : nullptr;
+        guest.actual_number_of_colors = colors;
+        jpeg_calc_output_dimensions_nid_postfix(&guest);
+        AssertTrue(jpeg_start_decompress_nid_postfix(&guest) == 1, "guest colormap start");
+        AssertTrue(guest.output_width == width && guest.output_height == height && guest.output_components == 1,
+                   "guest colormap dimensions or components differ");
+        std::vector<uint8_t> actual(expected.size());
+        while (guest.output_scanline < height) {
+            uint8_t* row = actual.data() + guest.output_scanline * width;
+            AssertTrue(jpeg_read_scanlines_nid_postfix(&guest, &row, 1) == 1, "guest colormap scanline");
+        }
+        matches = actual == expected && guest.actual_number_of_colors == actualColors;
+        AssertTrue(jpeg_finish_decompress_nid_postfix(&guest) == 1, "guest colormap finish");
+    } catch (const std::runtime_error& error) {
+        std::fprintf(stderr, "JPEG colormap %d: %s\n", colors, error.what());
+    }
+    jpeg_destroy_decompress_nid_postfix(&guest);
+    std::printf("JPEG colormap requested=%d native=%d match=%d\n", colors, actualColors, matches);
+    return matches;
+}
+
+bool TestColormaps() {
+    int passed = 0;
+    for (const bool progressive : {false, true}) {
+        std::vector<uint8_t> jpeg;
+        GenerateJpeg(jpeg, 17, 13, 3, JCS_RGB, progressive, 0, nullptr, 0);
+        for (const int colors : {0, 1, 2, 4, 7, 16, 256}) {
+            if (TestColormap(jpeg, colors)) ++passed;
+        }
+    }
+    std::printf("JPEG colormap native-reference cases: %d/14\n", passed);
+    return passed == 14;
+}
+
 int g_errorExitCalls = 0;
 int g_errorExitCode = -1;
 int g_errorExitParms[2] = {-1, -1};
@@ -357,6 +443,112 @@ void APS5_VABI RecordingErrorExit(NKWebKit::GuestCommonPtr cinfo) {
     g_errorExitCode = cinfo->err->msg_code;
     g_errorExitParms[0] = cinfo->err->msg_parm.i[0];
     g_errorExitParms[1] = cinfo->err->msg_parm.i[1];
+}
+
+struct SamplingResult {
+    bool aligned;
+    int rows;
+    int started;
+    int errors;
+    int code;
+    bool operator==(const SamplingResult&) const = default;
+};
+
+struct SamplingJump {
+    std::jmp_buf jump;
+    SamplingResult* result;
+};
+
+void NativeSamplingError(j_common_ptr info) {
+    auto* context = static_cast<SamplingJump*>(info->client_data);
+    ++context->result->errors;
+    context->result->code = info->err->msg_code;
+    std::longjmp(context->jump, 1);
+}
+
+int StartNativeSampling(j_decompress_ptr info, SamplingResult* result) {
+    SamplingJump context{};
+    context.result = result;
+    info->client_data = &context;
+    info->err->error_exit = NativeSamplingError;
+    if (setjmp(context.jump)) {
+        info->client_data = nullptr;
+        return 0;
+    }
+    const int started = jpeg_start_decompress(info);
+    info->client_data = nullptr;
+    return started;
+}
+
+SamplingResult NativeSampling(const std::vector<uint8_t>& image, int aligned, bool raw, bool fancy) {
+    jpeg_decompress_struct info{};
+    jpeg_error_mgr error{};
+    info.err = jpeg_std_error(&error);
+    jpeg_create_decompress(&info);
+    jpeg_mem_src(&info, image.data(), image.size());
+    AssertTrue(jpeg_read_header(&info, TRUE) == JPEG_HEADER_OK, "native sampling header failed");
+    info.CCIR601_sampling = aligned;
+    info.raw_data_out = raw;
+    info.do_fancy_upsampling = fancy;
+    jpeg_calc_output_dimensions(&info);
+    SamplingResult result{info.CCIR601_sampling != 0, info.rec_outbuf_height, 0, 0, 0};
+    result.started = StartNativeSampling(&info, &result);
+    jpeg_destroy_decompress(&info);
+    return result;
+}
+
+SamplingResult GuestSampling(const std::vector<uint8_t>& image, int aligned, bool raw, bool fancy) {
+    NKWebKit::GuestJpegDecompress info{};
+    NKWebKit::GuestJpegErrorMgr error{};
+    info.err = jpeg_std_error_nid_postfix(&error);
+    error.error_exit = RecordingErrorExit;
+    jpeg_CreateDecompress_nid_postfix(&info, 62, sizeof(info));
+    NKWebKit::GuestJpegSourceMgr source{};
+    source.next_input_byte = image.data();
+    source.bytes_in_buffer = image.size();
+    source.init_source = GuestInitSource;
+    source.fill_input_buffer = GuestFillInputBuffer;
+    source.skip_input_data = GuestSkipInputData;
+    source.resync_to_restart = GuestResyncToRestart;
+    source.term_source = GuestTermSource;
+    info.src = &source;
+    AssertTrue(jpeg_read_header_nid_postfix(&info, 1) == JPEG_HEADER_OK, "guest sampling header failed");
+    info.CCIR601_sampling = aligned;
+    info.raw_data_out = raw;
+    info.do_fancy_upsampling = fancy;
+    jpeg_calc_output_dimensions_nid_postfix(&info);
+    SamplingResult result{info.CCIR601_sampling != 0, info.rec_outbuf_height, 0, 0, 0};
+    g_errorExitCalls = 0;
+    g_errorExitCode = 0;
+    result.started = jpeg_start_decompress_nid_postfix(&info);
+    result.errors = g_errorExitCalls;
+    result.code = g_errorExitCode;
+    jpeg_destroy_decompress_nid_postfix(&info);
+    return result;
+}
+
+void TestSamplingAlignment() {
+    int passed = 0;
+    for (const bool progressive : {false, true}) {
+        for (const bool color : {false, true}) {
+            std::vector<uint8_t> image;
+            GenerateJpeg(image, 32, 32, color ? 3 : 1, color ? JCS_RGB : JCS_GRAYSCALE, progressive, 0, nullptr, 0);
+            for (const bool raw : {false, true}) {
+                for (const bool fancy : {false, true}) {
+                    for (const int aligned : {0, 1, 2, -1}) {
+                        const auto native = NativeSampling(image, aligned, raw, fancy);
+                        const auto guest = GuestSampling(image, aligned, raw, fancy);
+                        AssertTrue(native.errors == (aligned != 0 && !raw), "native sampling refusal control failed");
+                        AssertTrue(!native.errors || native.code == JERR_CCIR601_NOTIMPL, "native sampling error differs");
+                        if (native == guest) ++passed;
+                        else std::fprintf(stderr, "Sampling mismatch: progressive=%d color=%d raw=%d fancy=%d aligned=%d native_rows=%d guest_rows=%d native_error=%d guest_error=%d\n", progressive, color, raw, fancy, aligned, native.rows, guest.rows, native.code, guest.code);
+                    }
+                }
+            }
+        }
+    }
+    std::fprintf(stderr, "JPEG sampling alignment: %d/64 native comparisons passed\n", passed);
+    AssertTrue(passed == 64, "sampling alignment differs from native libjpeg");
 }
 
 void TestBadStructSize() {
@@ -451,8 +643,10 @@ int main(int argc, char** argv) {
     for (const int traceLevel : {0, 1, 3}) TestHeaderDiagnostics(traceLevel, false);
     TestHeaderDiagnostics(0, false, true);
     TestBadStructSize();
+    TestSamplingAlignment();
     TestGuestErrorExit();
     TestDefaultErrorExitThrows();
+    if (!TestColormaps()) return 1;
     std::vector<uint8_t> baselineJpeg;
     const uint8_t app1Data[] = "EXIF_TEST_MARKER_PAYLOAD";
     GenerateJpeg(baselineJpeg, 16, 16, 3, JCS_RGB, false, 0, app1Data, sizeof(app1Data));
