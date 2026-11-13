@@ -41,6 +41,7 @@ int main() {
     Require(sceSslGetMemoryPoolStats(12345, nullptr) == sslInvalidValue);
     CheckRejected(sceSslGetMemoryPoolStats, 12345, sslInvalidId);
     CheckRejected(sceSslGetMemoryPoolStats, -1, sslInvalidId);
+    CheckRejected(sceSslGetMemoryPoolStats, -2, sslInvalidId);
 
     const int http2 = sceHttp2Init(1, ssl, 0x40000, 1);
     Require(http2 > 0);
