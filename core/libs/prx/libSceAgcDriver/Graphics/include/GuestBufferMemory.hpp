@@ -108,6 +108,9 @@ struct HostImportCounts {
     std::uint64_t live = 0;
     std::uint64_t liveBytes = 0;
     std::array<HostImportRequesterCounts, ImportRequesterCount> requesters{};
+    std::uint64_t growing = 0;
+    std::uint64_t budgetChecks = 0;
+    std::uint64_t retiredPinnedBytes = 0;
 };
 
 const char* ImportRequesterName(ImportRequester requester);
@@ -276,6 +279,7 @@ struct AddressSpaceStats {
     std::uint64_t dissolvedImports = 0;
     std::uint64_t waiterDrops = 0;
     std::uint64_t patchedEpoch = 0;
+    std::uint64_t rebuiltGrowth = 0;
 };
 AddressSpaceStats AddressSpaceCounters();
 

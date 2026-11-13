@@ -1,5 +1,6 @@
 #include "prx/libc/include/LogFile.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libc/include/general/LogMacros.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -315,4 +316,22 @@ extern "C" void LogFileFlush_nid_no_patch() {
 
 extern "C" void LogFileRelease_nid_no_patch() {
     log_file::Release();
+}
+
+namespace {
+
+std::atomic<LogSinkFn> g_logSink{nullptr};
+
+}
+
+extern "C" void* LibcLogSinkAddress_nid_no_patch() {
+    return &g_logSink;
+}
+
+extern "C" long long LibcLogTimestampMicros_nid_no_patch() {
+    static const bool timestamps = std::getenv("APS5_LOG_TIMESTAMPS") != nullptr;
+    if (!timestamps) return -1;
+    using Clock = std::chrono::steady_clock;
+    static const auto started = Clock::now();
+    return static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count());
 }
