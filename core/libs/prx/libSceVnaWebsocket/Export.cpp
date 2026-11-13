@@ -43,21 +43,23 @@ APS5_EXPORT("DP4477brt60", libSceVnaWebsocketUnknown_DP4477brt60_nid_no_patch);
 
 void* APS5_VABI libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch(void* destination, const void* source) {
     if (destination == nullptr || source == nullptr) throw std::invalid_argument("J3fL2giuM+0: null object");
-    unsigned char buffer[24];
-    const int savedErrno = errno;
-    const bool readSource = GuestCopyIn_nid_no_patch(buffer, source, sizeof(buffer));
-    errno = savedErrno;
-    if (!readSource) throw std::invalid_argument("J3fL2giuM+0: unmapped source");
+    auto* to = static_cast<unsigned char*>(destination);
+    const auto* from = static_cast<const unsigned char*>(source);
     unsigned char tail[8];
-    std::memcpy(tail, buffer + 16, sizeof(tail));
-    unsigned char head[16];
-    std::memcpy(head, buffer, sizeof(head));
-    unsigned char output[24];
-    std::memcpy(output + 16, tail, sizeof(tail));
-    std::memcpy(output, head, sizeof(head));
-    const bool wroteDest = GuestCopyOut_nid_no_patch(destination, output, sizeof(output));
+    const int savedErrno = errno;
+    const bool readTail = GuestCopyIn_nid_no_patch(tail, from + 16, sizeof(tail));
     errno = savedErrno;
-    if (!wroteDest) throw std::invalid_argument("J3fL2giuM+0: unmapped destination");
+    if (!readTail) throw std::invalid_argument("J3fL2giuM+0: unmapped source");
+    const bool wroteTail = GuestCopyOut_nid_no_patch(to + 16, tail, sizeof(tail));
+    errno = savedErrno;
+    if (!wroteTail) throw std::invalid_argument("J3fL2giuM+0: unmapped destination");
+    unsigned char head[16];
+    const bool readHead = GuestCopyIn_nid_no_patch(head, from, sizeof(head));
+    errno = savedErrno;
+    if (!readHead) throw std::invalid_argument("J3fL2giuM+0: unmapped source");
+    const bool wroteHead = GuestCopyOut_nid_no_patch(to, head, sizeof(head));
+    errno = savedErrno;
+    if (!wroteHead) throw std::invalid_argument("J3fL2giuM+0: unmapped destination");
     return destination;
 }
 APS5_EXPORT("J3fL2giuM+0", libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch);
