@@ -4,6 +4,7 @@
 #include "prx/libSceVideoOut/include/Output.hpp"
 #include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include "prx/libSceVideoOut/include/Event.hpp"
+#include "prx/libSceVideoOut/include/InventoryExports.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -29,6 +30,9 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <SDL.h>
+#endif
 
 #undef main
 
@@ -276,6 +280,15 @@ void testPs4Buffers() {
         if (field == 2) invalid.option = 1;
         rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, 0, &invalid); }, "VIDEO_OUT_ERROR_INVALID_OPTION");
     }
+    auto strictColorimetry = changed;
+    strictColorimetry.option = 8;
+    check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &strictColorimetry) == 0, "the legacy change with option 8 (strict colorimetry) failed");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->groups[0].attribute.option == 8, "the legacy change did not store option 8");
+    }
+    check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &changed) == 0, "the legacy change back to option 0 failed");
+    unchanged();
     for (int field = 0; field < 3; ++field) {
         auto invalid = changed;
         const int error = field == 0 ? VIDEO_OUT_ERROR_INVALID_ASPECT_RATIO : field == 1 ? VIDEO_OUT_ERROR_INVALID_PITCH : VIDEO_OUT_ERROR_INVALID_TILING_MODE;
@@ -325,6 +338,19 @@ void testPs4Buffers() {
         check(cfg->flipStatus.currentBuffer == 0 && cfg->flipStatus.flipArg == 8 && cfg->flipStatus.flipPendingNum == 0, "the changed legacy flip status is wrong");
     }
     AgcDriverUnregisterVideoOutput_nid_postfix(7, gate);
+    void* const fifth[1] = {storage.data() + 98304};
+    auto strictTiled = tiled;
+    strictTiled.option = 8;
+    check(sceVideoOutRegisterBuffers(handle, 4, fifth, 1, &strictTiled) == 3, "the PS4 tiled buffer with option 8 (strict colorimetry) was not registered as set 3");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->groups[3].attribute.option == 8, "the PS4 buffer option 8 was not stored");
+        auto plain = cfg->groups[3];
+        plain.attribute.option = 0;
+        const auto strict = DescribeVideoOutBuffer(cfg->buffers[4], cfg->groups[3]);
+        const auto same = DescribeVideoOutBuffer(cfg->buffers[4], plain);
+        check(strict.address == same.address && strict.pixelFormat == same.pixelFormat && strict.width == same.width && strict.height == same.height && strict.tilingMode == same.tilingMode && strict.pitchInPixel == same.pitchInPixel && strict.dccAddress == same.dccAddress && strict.dccClearColor == same.dccClearColor && strict.alignment == same.alignment && strict.tilingMode == AgcDriver::DisplayTilingGcn, "the PS4 buffer with option 8 is not described as the same buffer with option 0");
+    }
     sceVideoOutClose(handle);
     const int ps5Handle = sceVideoOutOpen(255, 0, 0, nullptr);
     raw.fill(0xaa);
@@ -630,6 +656,28 @@ void testControls() {
     check(sceVideoOutDeleteOutputModeEvent(queue, handle) == 0, "duplicate output mode unsubscription failed");
     expectFailure([&] { sceVideoOutDeleteOutputModeEvent(0, handle); });
     check(sceVideoOutDeleteOutputModeEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "output mode unsubscription on an invalid handle was accepted");
+    check(sceVideoOutSysGetBus(handle) == VIDEO_OUT_BUS_TYPE_MAIN, "the main port's bus is not main");
+    check(sceVideoOutSysGetBus(0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported for a null handle");
+    check(sceVideoOutSysGetBus(handle + 1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported for a port that is not open");
+    check(sceVideoOutSysGetBus(-1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported for a negative handle");
+    check(sceVideoOutSysGetBus(6) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported past the last port");
+    constexpr int invalidIndex = static_cast<int>(0x80290001u);
+    check(sceVideoOutSysAddSetModeEvent2(queue, 2, nullptr) == invalidIndex, "set mode subscription on index 2 was accepted");
+    check(sceVideoOutSysAddSetModeEvent2(queue, -1, nullptr) == invalidIndex, "set mode subscription on a negative index was accepted");
+    check(sceVideoOutSysAddSetModeEvent2(queue, 1, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "set mode subscription on an unopened port was accepted");
+    check(sceVideoOutSysAddSetModeEvent2(queue, 0, &mode) == 0, "set mode subscription on the main port failed");
+    check(owner->GetTriggeredEvents(&event, 1) == 1 && event.udata == &mode && sceVideoOutGetEventId(&event) == VIDEO_OUT_EVENT_SET_MODE, "set mode event missing");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->outputModeEvents.size() == 1, "set mode subscription was not recorded");
+    }
+    check(sceVideoOutDeleteOutputModeEvent(queue, handle) == 0, "set mode unsubscription failed");
+    std::uint32_t pipeline[8];
+    std::fill_n(pipeline, 8, 0xdeadbeefu);
+    check(sceVideoOutGetPipelineStatus(nullptr, 0) == static_cast<int>(0x80290002u), "a null pipeline status was accepted");
+    check(sceVideoOutGetPipelineStatus(pipeline, 1) == static_cast<int>(0x80290002u), "a nonzero pipeline reservation was accepted");
+    check(sceVideoOutGetPipelineStatus(pipeline, 0) == static_cast<int>(0x802900FFu), "the pipeline query did not report the device error");
+    check(pipeline[0] == 0xdeadbeefu && pipeline[7] == 0xdeadbeefu, "the pipeline status wrote on failure");
     check(sceVideoOutAddVblankEvent(queue, handle, nullptr) == 0 && sceVideoOutAddVblankEvent(queue, handle, &settings) == 0, "vblank subscription failed");
     {
         std::lock_guard lock(cfg->mutex);
@@ -693,6 +741,8 @@ void testControls() {
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 1); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0x100000000ull, 0); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 0x100000000ull); });
+    check(sceVideoOutVrrPegToFixedRate(-1, 0, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "VRR peg on handle -1 was not refused");
+    check(sceVideoOutVrrUnpegFromFixedRate(-1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "VRR unpeg on handle -1 was not refused");
     sceVideoOutClose(handle);
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 0); });
     expectFailure([&] { sceVideoOutVrrUnpegFromFixedRate(handle); });
@@ -1444,6 +1494,21 @@ extern "C" [[noreturn]] void Aps5StartGuest_nid_no_patch(void (*entry)(void*, vo
 
 int runTests(int argc, char** argv) {
     VideoOutTestEnvironment environment;
+#ifdef _WIN32
+    const bool wantsDisplay = !(argc == 2 && std::string(argv[1]) == "unavailable");
+    if (wantsDisplay && std::getenv("ANYPS5_REQUIRE_DISPLAY") == nullptr) {
+        if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+            std::printf("skipped, no display or Vulkan device: SDL video driver: %s\n", SDL_GetError());
+            return 77;
+        }
+        SDL_Window* probe = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 64, 64, SDL_WINDOW_VULKAN);
+        if (probe == nullptr) {
+            std::printf("skipped, no display or Vulkan device: %s\n", SDL_GetError());
+            return 77;
+        }
+        SDL_DestroyWindow(probe);
+    }
+#endif
     try {
         if (argc == 2 && std::string(argv[1]) == "decode") testDecode();
         else if (argc == 2 && std::string(argv[1]) == "controls") testControls();
@@ -1478,7 +1543,9 @@ int runTests(int argc, char** argv) {
         try { LibcRunShutdown_nid_postfix(); }
         catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
         const std::string what = error.what();
-        const bool noVulkanWindow = what.find("Vulkan support") != std::string::npos || (what.starts_with("DisplayWindow: ") && what.find("Vulkan") != std::string::npos);
+        const bool noVulkanDevice = dynamic_cast<const AgcDriver::VulkanUnavailable*>(&error) != nullptr ||
+            what.rfind("Vulkan: no Vulkan 1.1", 0) == 0 || what.rfind("Vulkan loader: ", 0) == 0;
+        const bool noVulkanWindow = noVulkanDevice || what.find("Vulkan support") != std::string::npos || (what.starts_with("DisplayWindow: ") && what.find("Vulkan") != std::string::npos);
         if (noVulkanWindow && !std::getenv("ANYPS5_REQUIRE_DISPLAY")) {
             std::printf("skipped, no display or Vulkan device: %s\n", error.what());
             return 77;

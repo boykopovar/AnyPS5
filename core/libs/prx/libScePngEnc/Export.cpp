@@ -8,6 +8,7 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "Decoder/Png.hpp"
 
 namespace {
@@ -170,12 +171,22 @@ int APS5_VABI scePngEncEncode(void* handle, const PngEncEncodeParam* param, PngE
     }
 
     const bool overflow = png.size() > localParam.png_mem_size;
+    const GuestArena::HostWrite infoWrite(outputInfo, outputInfo ? sizeof(*outputInfo) : 0);
+    if (!infoWrite.Open()) return PNG_ENC_ERROR_INVALID_ADDR;
+    const GuestArena::HostWrite pngWrite(localParam.png_mem_addr, overflow ? 0 : png.size());
+    if (!pngWrite.Open()) return PNG_ENC_ERROR_INVALID_ADDR;
+    if (overflow) {
+        if (outputInfo) {
+            PngEncOutputInfo localOutput{0, 0};
+            if (!GuestCopyOut_nid_no_patch(outputInfo, &localOutput, sizeof(localOutput))) return PNG_ENC_ERROR_INVALID_ADDR;
+        }
+        return PNG_ENC_ERROR_DATA_OVERFLOW;
+    }
+    if (!GuestCopyOut_nid_no_patch(localParam.png_mem_addr, png.data(), png.size())) return PNG_ENC_ERROR_INVALID_ADDR;
     if (outputInfo) {
-        PngEncOutputInfo localOutput{overflow ? 0 : static_cast<std::uint32_t>(png.size()), overflow ? 0 : height};
+        PngEncOutputInfo localOutput{static_cast<std::uint32_t>(png.size()), height};
         if (!GuestCopyOut_nid_no_patch(outputInfo, &localOutput, sizeof(localOutput))) return PNG_ENC_ERROR_INVALID_ADDR;
     }
-    if (overflow) return PNG_ENC_ERROR_DATA_OVERFLOW;
-    if (!GuestCopyOut_nid_no_patch(localParam.png_mem_addr, png.data(), png.size())) return PNG_ENC_ERROR_INVALID_ADDR;
     return static_cast<int>(png.size());
 }
 

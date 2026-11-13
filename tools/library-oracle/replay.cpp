@@ -4,6 +4,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <link.h>
 #endif
 
 #include <cstdint>
@@ -110,7 +111,12 @@ void* Symbol(void* module, const std::string& name) {
 #if defined(_WIN32)
     return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(module), name.c_str()));
 #else
-    return dlsym(module, name.c_str());
+    void* address = dlsym(module, name.c_str());
+    link_map* map = nullptr;
+    Dl_info info{};
+    if (!address || dlinfo(module, RTLD_DI_LINKMAP, &map) != 0 || !map || !dladdr(address, &info)) return address;
+    const bool own = info.dli_fbase == reinterpret_cast<void*>(map->l_addr) || (info.dli_fname && map->l_name && std::strcmp(info.dli_fname, map->l_name) == 0);
+    return own ? address : nullptr;
 #endif
 }
 
