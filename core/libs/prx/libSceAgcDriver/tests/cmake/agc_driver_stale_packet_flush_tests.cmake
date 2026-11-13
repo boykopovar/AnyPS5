@@ -10,6 +10,13 @@ if(BUILD_TESTING)
             set_tests_properties(agc_driver_stale_packet_flush_${suffix} PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
+        set_property(TEST agc_driver_stale_packet_flush_${suffix} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                "APS5_NO_LABEL_BATCHING=unset:"
+                "APS5_NO_LABEL_BATCH_SUBMIT=unset:"
+                "APS5_NO_QUEUED_LABELS=unset:"
+                "APS5_LABEL_TRY_EACH_PACKET=unset:"
+                "APS5_LABEL_OWN_LOCK=unset:"
+                "APS5_NO_LABEL_PACKET_FLUSH=unset:")
     endforeach()
     set_tests_properties(agc_driver_stale_packet_flush_stale_deadline PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_BATCH_CAP=64;APS5_LABEL_FLUSH_US=100000;APS5_DRAW_PIPELINE=1;APS5_PIPELINED_DRAWS=32")
