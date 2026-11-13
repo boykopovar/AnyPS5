@@ -13,6 +13,18 @@
 
 namespace {
 
+constexpr int COMMON_DIALOG_STATUS_NONE = 0;
+constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
+constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
+constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
+constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
+constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
+constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
+constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
+
+constexpr int COMMON_DIALOG_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80B8000Au);
+constexpr int COMMON_DIALOG_ERROR_NOT_RUNNING = static_cast<int>(0x80B8000Bu);
+
 int g_status = COMMON_DIALOG_STATUS_NONE;
 std::uint64_t g_userData = 0;
 
@@ -94,15 +106,10 @@ int APS5_VABI sceNpCommerceDialogInitialize() {
 
 int APS5_VABI sceNpCommerceDialogOpen(const NpCommerceDialogParam* param) {
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- NpCommerceDialogParam localParam{};
- const int savedErrno = errno;
- const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
- errno = savedErrno;
- if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
- if (localParam.base.size != sizeof(localParam.base) || localParam.base.magic != static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param)) - 1060003575u || !std::all_of(std::begin(localParam.base.reserved), std::end(localParam.base.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ if (!ValidateCommonDialogBaseParam(param->base)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (!validateParam(localParam)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- g_userData = localParam.userData;
+ if (!validateParam(*param)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ g_userData = param->userData;
  g_status = COMMON_DIALOG_STATUS_FINISHED;
  PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
  return 0;
@@ -120,25 +127,20 @@ int APS5_VABI sceNpCommerceDialogGetResult(NpCommerceDialogResult* result) {
  if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
  if (g_status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
+ const auto sdkVersion = compiledSdkVersion();
  const std::int32_t cancelResult = COMMON_DIALOG_RESULT_USER_CANCELED;
  const std::uint8_t authorized = 0;
  const std::uint64_t userData = g_userData;
  const int savedErrno = errno;
- if (!GuestCopyOut_nid_no_patch(&result->result, &cancelResult, sizeof(cancelResult)) ||
-     !GuestCopyOut_nid_no_patch(&result->authorized, &authorized, sizeof(authorized)) ||
-     !GuestCopyOut_nid_no_patch(&result->userData, &userData, sizeof(userData))) {
-  errno = savedErrno;
-  return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- }
- const auto sdkVersion = compiledSdkVersion();
- if (sdkVersion >= 0x01700000) {
-  const std::uint8_t zeroReserved[sizeof(result->reserved)] = {0};
-  if (!GuestCopyOut_nid_no_patch(result->reserved, zeroReserved, sizeof(zeroReserved))) {
-   errno = savedErrno;
-   return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
-  }
+ bool copied = GuestCopyOut_nid_no_patch(&result->result, &cancelResult, sizeof(cancelResult));
+ if (copied) copied = GuestCopyOut_nid_no_patch(&result->authorized, &authorized, sizeof(authorized));
+ if (copied) copied = GuestCopyOut_nid_no_patch(&result->userData, &userData, sizeof(userData));
+ if (copied && sdkVersion >= 0x01700000) {
+  const std::uint8_t reserved[32]{};
+  copied = GuestCopyOut_nid_no_patch(result->reserved, reserved, sizeof(reserved));
  }
  errno = savedErrno;
+ if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
  return COMMON_DIALOG_RESULT_USER_CANCELED;
 }
 
@@ -171,15 +173,10 @@ int APS5_VABI sceNpCommerceSetPsStoreIconLayout(int layout) {
 
 int APS5_VABI sceNpCommerceDialogOpen2(const NpCommerceDialogParam2* param) {
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- NpCommerceDialogParam2 localParam{};
- const int savedErrno = errno;
- const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
- errno = savedErrno;
- if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
- if (localParam.base.size != sizeof(localParam.base) || localParam.base.magic != static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param)) - 1060003575u || !std::all_of(std::begin(localParam.base.reserved), std::end(localParam.base.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ if (!ValidateCommonDialogBaseParam(param->base)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (!validateParam2(localParam)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- g_userData = localParam.userData;
+ if (!validateParam2(*param)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ g_userData = param->userData;
  g_status = COMMON_DIALOG_STATUS_FINISHED;
  PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
  return 0;

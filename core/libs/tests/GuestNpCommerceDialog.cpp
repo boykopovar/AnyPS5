@@ -35,6 +35,9 @@ void RequireCanceledResult(std::uint64_t userData, bool clearsReserved) {
     Require(result.userData == userData);
     for (const auto value : result.padding) Require(value == 0x33);
     for (const auto value : result.reserved) Require(value == (clearsReserved ? 0 : 0x33));
+    errno = 71;
+    Require(sceNpCommerceDialogGetResult(reinterpret_cast<NpCommerceDialogResult*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
 }
 
 
