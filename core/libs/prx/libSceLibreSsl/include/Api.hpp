@@ -785,10 +785,12 @@ int APS5_VABI OCSP_single_get0_status_nid_postfix(const LibreSslOcspSingleRespon
 void APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void);
 void APS5_VABI OPENSSL_load_builtin_modules_nid_postfix(void);
 int APS5_VABI PEM_X509_INFO_read_bio_nid_postfix(void);
-int APS5_VABI PEM_read_RSAPrivateKey_nid_postfix(void);
+LibreSslRsa* APS5_VABI PEM_read_RSAPrivateKey_nid_postfix(void* stream, LibreSslRsa** rsa,
+                                                    LibreSslPemPasswordCallback passwordCallback, void* userData);
 LibreSslX509* APS5_VABI PEM_read_X509_nid_postfix(void* stream, LibreSslX509** certificate,
                                                   LibreSslPemPasswordCallback passwordCallback, void* userData);
-int APS5_VABI PEM_read_bio_PrivateKey_nid_postfix(void);
+void* APS5_VABI PEM_read_bio_PrivateKey_nid_postfix(LibreSsl::Bio* bio, void** key, LibreSslPemPasswordCallback callback,
+                                                     void* userData);
 LibreSslX509* APS5_VABI PEM_read_bio_X509_nid_postfix(LibreSsl::Bio* bio, LibreSslX509** certificate,
                                                       LibreSslPemPasswordCallback callback, void* userData);
 LibreSslX509* APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(LibreSsl::Bio* bio, LibreSslX509** certificate,
