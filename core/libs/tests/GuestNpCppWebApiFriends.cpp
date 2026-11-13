@@ -299,7 +299,7 @@ static void TestUserProfileBookkeeping() {
 }
 
 int main() {
-    TestUserProfileBookkeeping();
+    for (int iter = 0; iter < 2; ++iter) TestUserProfileBookkeeping();
     TestParameterLifecycle();
     TestOfflineCalls();
     TestFriendModel();
