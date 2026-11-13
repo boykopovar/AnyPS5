@@ -43,6 +43,7 @@ int main() {
     auto* three = reinterpret_cast<std::int64_t*>(third.data());
 
     Require(_ZNK15AbstractStorage14YoutubeContent13GetCapabilityEv(self) == 0x6C0A);
+    Require(_ZNK15AbstractStorage14YoutubeContent13GetCapabilityEv(self) == 0x6C0A);
     Require(_ZNK15AbstractStorage13YoutubeFolder13GetCapabilityEv(self) == 0x1000000000);
     Require(_ZNK15AbstractStorage14YoutubeStorage13GetCapabilityEv(self) == 0x180000000000000);
 
