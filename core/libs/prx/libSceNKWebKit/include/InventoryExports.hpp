@@ -5439,7 +5439,6 @@ int APS5_VABI _ZNK7WebCore15ActiveDOMObject18hasPendingActivityEv();
 int APS5_VABI _ZNK7WebCore15ActiveDOMObject20isAllowedToRunScriptEv();
 int APS5_VABI _ZNK7WebCore15ActiveDOMObject25virtualHasPendingActivityEv();
 int APS5_VABI _ZNK7WebCore15ActiveDOMObject30assertSuspendIfNeededWasCalledEv();
-int APS5_VABI _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE();
 int APS5_VABI _ZNK7WebCore15CSSGroupingRule8cssRulesEv();
 int APS5_VABI _ZNK7WebCore15CertificateInfo12isolatedCopyEv();
 int APS5_VABI _ZNK7WebCore15FocusController18focusedOrMainFrameEv();
