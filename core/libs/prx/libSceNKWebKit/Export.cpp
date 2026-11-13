@@ -23741,10 +23741,6 @@ int APS5_VABI _ZN7WebCore36ISOProtectionSystemSpecificHeaderBoxD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore36registerMemoryReleaseNotifyCallbacksEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore36visiblePositionForPositionWithOffsetERKNS_15VisiblePositionEi() {
     NotImplemented_nid_no_patch(__func__);
 }
