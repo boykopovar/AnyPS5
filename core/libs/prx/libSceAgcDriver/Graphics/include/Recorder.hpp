@@ -490,6 +490,7 @@ public:
     public:
         explicit EncodingWindow(Recorder& recorder, std::source_location where = std::source_location::current()) : recorder(recorder), where(where), encoding(recorder.BeginEncoding(where)) {}
         ~EncodingWindow() { recorder.EndEncoding(encoding, where); }
+        bool Encoded() const { return encoding == Encoding::Encoded; }
         EncodingWindow(const EncodingWindow&) = delete;
         EncodingWindow& operator=(const EncodingWindow&) = delete;
 
@@ -654,6 +655,7 @@ private:
     };
     struct Batch {
         CommandEncoder::Recording recording;
+        std::uint64_t sampleBatch = 0;
         BatchCommands commands;
         VkCommandPool pool = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
@@ -834,8 +836,10 @@ private:
         std::shared_ptr<void> pool;
         VkQueryPool handle;
         std::uint32_t slot = 0;
+        std::uint64_t batch = 0;
     };
     std::vector<SampleSegment> pendingSamples;
+    std::uint64_t sampleBatches = 0;
     bool countingSamples = false;
     int meshArgumentState = 0;
     VkPipelineLayout meshArgumentLayout = VK_NULL_HANDLE;

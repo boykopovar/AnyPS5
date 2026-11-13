@@ -1861,7 +1861,15 @@ Recorder::Encoding Recorder::BeginEncoding(std::source_location where) {
     if (encoder == nullptr || open == nullptr) return Encoding::None;
     if (!encoder->OpenOnThisThread()) {
         const auto handoff = RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder) ? CommandEncoder::Handoff::Never : RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder) ? CommandEncoder::Handoff::Always : CommandEncoder::Handoff::Adaptive;
-        if (!encoder->Admit(handoff, where)) return Encoding::Inline;
+        if (!encoder->Admit(handoff, where)) {
+            try {
+                open->recording.Report();
+            } catch (...) {
+                encoder->EndInline();
+                throw;
+            }
+            return Encoding::Inline;
+        }
     }
     encoder->Open(open->commands.Get(BatchCommands::Use::Handoff), open->recording, where);
     return Encoding::Encoded;
@@ -2010,6 +2018,7 @@ void Recorder::ensureOpen() {
     GuestMemory::AssertGpuLockHeld("Recorder::Commands");
     if (open == nullptr) {
         auto batch = std::make_unique<Batch>();
+        batch->sampleBatch = ++sampleBatches;
         try {
             VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
             allocation.commandPool = encoderPool != VK_NULL_HANDLE ? encoderPool : context.pool;
@@ -2841,7 +2850,7 @@ bool Recorder::encodesSegmentQueries() const {
 }
 
 void Recorder::beginSegment(Batch& batch) {
-    const bool encoded = encodesSegmentQueries();
+    const bool encoded = encodesSegmentQueries() && encoder->OpenOnThisThread();
     if (!encoded) quiesce();
     Require(batch.segments != VK_NULL_HANDLE && batch.segmentNext < SegmentSlots, "an occlusion segment begins without a reset query slot");
     batch.segmentSlot = batch.segmentNext++;
@@ -2852,15 +2861,20 @@ void Recorder::beginSegment(Batch& batch) {
 }
 
 void Recorder::endSegment(Batch& batch, std::source_location where) {
+    bool recorded = false;
     if (encodesSegmentQueries()) {
         const EncodingWindow window(*this, where);
-        encodedQueries->cmdEndQuery(batch.commands.Get(BatchCommands::Use::Interposed), batch.segments, batch.segmentSlot);
-    } else {
+        if (window.Encoded()) {
+            encodedQueries->cmdEndQuery(batch.commands.Get(BatchCommands::Use::Interposed), batch.segments, batch.segmentSlot);
+            recorded = true;
+        }
+    }
+    if (!recorded) {
         quiesce(where);
         function(cmdEndQuery, "vkCmdEndQuery")(batch.commands.Get(BatchCommands::Use::Quiesced), batch.segments, batch.segmentSlot);
     }
     batch.segmentActive = false;
-    pendingSamples.push_back({batch.segmentPool, batch.segments, batch.segmentSlot});
+    pendingSamples.push_back({batch.segmentPool, batch.segments, batch.segmentSlot, batch.sampleBatch});
     segmentsClosed.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -2954,7 +2968,7 @@ void Recorder::endSamples(Batch& batch) {
     if (!batch.sampleActive) return;
     function(cmdEndQuery, "vkCmdEndQuery")(batch.commands.Get(BatchCommands::Use::Quiesced), batch.samples, 0);
     batch.sampleActive = false;
-    if (sampleCounterState > 0 && batch.samplesDrawn) pendingSamples.push_back({batch.samplePool, batch.samples});
+    if (sampleCounterState > 0 && batch.samplesDrawn) pendingSamples.push_back({batch.samplePool, batch.samples, 0, batch.sampleBatch});
     batch.samplesDrawn = false;
 }
 
@@ -5011,6 +5025,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
 
 void Recorder::discard(std::unique_ptr<Batch> batch) noexcept {
     if (encoder != nullptr) encoder->Quiesce();
+    std::erase_if(pendingSamples, [&](const SampleSegment& sample) { return sample.batch == batch->sampleBatch; });
     removeLabels(*batch);
     if (batch->completionLabelCount != 0) completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
     if (batch->completionStoreCount != 0) completionStores.fetch_sub(batch->completionStoreCount, std::memory_order_acq_rel);
