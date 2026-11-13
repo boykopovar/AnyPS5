@@ -38,6 +38,7 @@ int main() {
     std::array<GuestUuid, 3> first{};
     std::array<GuestUuid, 2> second{};
     Require(uuidgen_nid_postfix(first.data(), 0) == -1 && Error() == 22);
+    Require(uuidgen_nid_postfix(first.data(), -1) == -1 && Error() == 22);
     Require(uuidgen_nid_postfix(first.data(), 2049) == -1 && Error() == 22);
     Require(uuidgen_nid_postfix(nullptr, 1) == -1 && Error() == 14);
     Require(uuidgen_nid_postfix(reinterpret_cast<GuestUuid*>(0x10), 1) == -1 && Error() == 14);
