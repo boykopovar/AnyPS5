@@ -168,6 +168,13 @@ int APS5_VABI sceVideoOutDeleteVrrActiveStatusEvent(KernelEqueue eq, int handle)
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceVideoOutSysAddSetModeEvent2(KernelEqueue eq, int index, void* udata) try {
+    if (index != 0 && index != 1) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    return registerVideoOutEvent(index + 1, eq, VIDEO_OUT_EVENT_SET_MODE, udata);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
 int APS5_VABI sceVideoOutGetEventId(const KernelEvent* ev) {
     if (ev == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     if (ev->filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
