@@ -1944,7 +1944,7 @@ void TestCommIdObjects() {
 }
 
 int main() {
-    TestAtomics();
+    for (int iter = 0; iter < 2; ++iter) TestAtomics();
     TestSemaphoresAndFlags();
     TestEventFlagClearAndCancel();
     TestSharedEventFlags();
