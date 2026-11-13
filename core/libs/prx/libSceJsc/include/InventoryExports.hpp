@@ -207,7 +207,6 @@ int APS5_VABI _ZN3WTF10StringImpl18simplifyWhiteSpaceEv();
 int APS5_VABI _ZN3WTF10StringImpl20create8BitIfPossibleEPKDs();
 int APS5_VABI _ZN3WTF10StringImpl20createWithoutCopyingEPKDsj();
 int APS5_VABI _ZN3WTF10StringImpl20createWithoutCopyingEPKhj();
-int APS5_VABI _ZN3WTF10StringImpl23defaultWritingDirectionEPb();
 int APS5_VABI _ZN3WTF10StringImpl6createEPKh();
 int APS5_VABI _ZN3WTF10StringImpl7replaceEDsPS0_();
 int APS5_VABI _ZN3WTF10StringImpl7replaceEPS0_S1_();

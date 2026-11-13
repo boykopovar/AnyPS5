@@ -1,6 +1,7 @@
 add_library(libSceJsc SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_sources(libSceJsc PRIVATE LegacyExports.cpp src/PlacementNew.cpp src/WtfStringSearch.cpp src/WtfUrl.cpp)
 target_include_directories(libSceJsc PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceJsc PRIVATE libSceIcu)
 configure_windows_unwind(libSceJsc)
 target_sources(libSceJsc PRIVATE src/WtfSha1.cpp)
 
@@ -27,7 +28,7 @@ if(BUILD_TESTING)
     add_test(NAME jsc_wtf_string_search COMMAND jsc_wtf_string_search_tests)
     if(WIN32)
         set_tests_properties(jsc_wtf_string_search PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
     add_test_executable(jsc_wtf_url_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/WtfUrl.cpp)
     target_include_directories(jsc_wtf_url_tests PRIVATE ${LIBS_INCLUDE_DIR})
