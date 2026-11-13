@@ -210,6 +210,7 @@ public:
 
 private:
     void enter();
+    void block();
     bool tryEnter();
     void acquired();
     Mutex mutex;
