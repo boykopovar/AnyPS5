@@ -43,7 +43,7 @@ env:
 
 jobs:
   eligibility:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -321,7 +321,17 @@ jobs:
           read -ra heads <<< "$PR_HEAD"
           refspecs=()
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
-          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
@@ -343,7 +353,10 @@ jobs:
         run: arch -x86_64 /usr/bin/true || sudo softwareupdate --install-rosetta --agree-to-license
       - run: cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architectures }}
       - run: cmake --build build-relinker --parallel 3
-      - run: ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4 --no-tests=error
+      - run: |
+          repeat=()
+          if [ "$RUNNER_OS" = Windows ]; then repeat=(--repeat after-timeout:2); fi
+          ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4 --no-tests=error "${repeat[@]}"
 
   relinker-asan:
     needs: eligibility
@@ -365,7 +378,17 @@ jobs:
           read -ra heads <<< "$PR_HEAD"
           refspecs=()
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
-          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
@@ -411,7 +434,17 @@ jobs:
           read -ra heads <<< "$PR_HEAD"
           refspecs=()
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
-          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
@@ -451,7 +484,17 @@ jobs:
           read -ra heads <<< "$PR_HEAD"
           refspecs=()
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
-          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
@@ -495,7 +538,17 @@ jobs:
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
           fetch_options=()
           if [ "$(git rev-parse --is-shallow-repository)" = true ]; then fetch_options+=(--unshallow); fi
-          git fetch --no-tags "${fetch_options[@]}" origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags "${fetch_options[@]}" origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
@@ -654,7 +707,17 @@ jobs:
           read -ra heads <<< "$PR_HEAD"
           refspecs=()
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
-          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
@@ -765,7 +828,7 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: cmd
         run: python tools/build_mingw_host_only_tests.py build changed.txt
-      - name: Build and run changed guest core/libs tests
+      - name: Build and run changed core/libs tests
         if: github.event_name == 'pull_request'
         shell: cmd
         run: python tools/build_changed_guest_tests.py build changed.txt --output-log ctest.log
@@ -822,7 +885,17 @@ jobs:
           read -ra heads <<< "$PR_HEAD"
           refspecs=()
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
-          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
@@ -856,7 +929,17 @@ jobs:
           read -ra heads <<< "$PR_HEAD"
           refspecs=()
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
-          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi

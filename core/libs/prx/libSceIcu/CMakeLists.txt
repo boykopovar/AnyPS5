@@ -1,4 +1,4 @@
-add_library(libSceIcu SHARED EXCLUDE_FROM_ALL CharacterDigits.cpp Comparisons.cpp ConstrainedFieldPosition.cpp Enumeration.cpp ErrorName.cpp Export.cpp Invariant.cpp Iterator.cpp Numeric.cpp Set.cpp Tokenize.cpp Unescape.cpp Version.cpp Utf32.cpp JavaUtf8.cpp Compare.cpp Search.cpp Character.cpp Configuration.cpp LocaleCore.cpp)
+add_library(libSceIcu SHARED EXCLUDE_FROM_ALL CharacterDigits.cpp Comparisons.cpp ConstrainedFieldPosition.cpp Enumeration.cpp ErrorName.cpp Export.cpp Invariant.cpp Iterator.cpp Numeric.cpp Set.cpp Tokenize.cpp Unescape.cpp Version.cpp Utf32.cpp JavaUtf8.cpp Compare.cpp Search.cpp Character.cpp Configuration.cpp LocaleCore.cpp Copy.cpp Utf16Search.cpp)
 target_include_directories(libSceIcu PRIVATE ${LIBS_INCLUDE_DIR})
 target_sources(libSceIcu PRIVATE RecoveredInventory.cpp)
 configure_windows_unwind(libSceIcu)
@@ -9,7 +9,39 @@ target_sources(libSceIcu PRIVATE CompareIter.cpp)
 target_sources(libSceIcu PRIVATE Space.cpp)
 target_sources(libSceIcu PRIVATE Utf8.cpp)
 target_sources(libSceIcu PRIVATE Resource.cpp)
-target_sources(libSceIcu PRIVATE Locale.cpp)
+target_sources(libSceIcu PRIVATE Properties.cpp CaseMapping.cpp)
+target_sources(libSceIcu PRIVATE Bidi.cpp CharsetDetection.cpp Normalization.cpp CodePoints.cpp)
+target_link_libraries(libSceIcu PRIVATE icu_common icu_i18n)
+target_sources(libSceIcu PRIVATE Locale.cpp LocaleMap.cpp)
+target_sources(libSceIcu PRIVATE TerminateBuffer.cpp)
+target_sources(libSceIcu PRIVATE LanguageTag.cpp)
+target_sources(libSceIcu PRIVATE Script.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_language_tag_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LanguageTag.cpp)
+    target_include_directories(guest_icu_language_tag_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_language_tag_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_language_tag_tests)
+    add_test(NAME guest_icu_language_tag COMMAND guest_icu_language_tag_tests)
+    set_tests_properties(guest_icu_language_tag PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_language_tag PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_script_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Script.cpp)
+    target_include_directories(guest_icu_script_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_script_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_script_tests)
+    add_test(NAME guest_icu_script COMMAND guest_icu_script_tests)
+    set_tests_properties(guest_icu_script PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_script PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_icu_locale_core_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuLocaleCore.cpp)
@@ -20,6 +52,19 @@ if(BUILD_TESTING)
     set_tests_properties(guest_icu_locale_core PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_icu_locale_core PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_terminate_buffer_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/TerminateBuffer.cpp)
+    target_include_directories(guest_icu_terminate_buffer_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_terminate_buffer_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_terminate_buffer_tests)
+    add_test(NAME guest_icu_terminate_buffer COMMAND guest_icu_terminate_buffer_tests)
+    set_tests_properties(guest_icu_terminate_buffer PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_terminate_buffer PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
@@ -66,7 +111,7 @@ endif()
 if(BUILD_TESTING)
     add_test_executable(guest_icu_utf8_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuUtf8.cpp)
     target_include_directories(guest_icu_utf8_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_icu_utf8_tests PRIVATE libSceIcu libc)
+    target_link_libraries(guest_icu_utf8_tests PRIVATE libSceIcu libc icu_common)
     configure_windows_unwind(guest_icu_utf8_tests)
     add_test(NAME guest_icu_utf8 COMMAND guest_icu_utf8_tests)
     set_tests_properties(guest_icu_utf8 PROPERTIES TIMEOUT 20)
@@ -103,6 +148,16 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_icu_utf16_search_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuSearch.cpp)
+    target_include_directories(guest_icu_utf16_search_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_utf16_search_tests PRIVATE libSceIcu libc libkernel)
+    configure_windows_unwind(guest_icu_utf16_search_tests)
+    add_test(NAME guest_icu_utf16_search COMMAND guest_icu_utf16_search_tests)
+    set_tests_properties(guest_icu_utf16_search PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_utf16_search PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
     add_test_executable(guest_icu_version_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuVersion.cpp)
     target_include_directories(guest_icu_version_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_icu_version_tests PRIVATE libSceIcu libc)
@@ -307,6 +362,98 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_properties_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Properties.cpp)
+    target_include_directories(guest_icu_properties_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_properties_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_properties_tests)
+    add_test(NAME guest_icu_properties COMMAND guest_icu_properties_tests)
+    set_tests_properties(guest_icu_properties PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_properties PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_case_mapping_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/CaseMapping.cpp)
+    target_include_directories(guest_icu_case_mapping_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_case_mapping_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_case_mapping_tests)
+    add_test(NAME guest_icu_case_mapping COMMAND guest_icu_case_mapping_tests)
+    set_tests_properties(guest_icu_case_mapping PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_case_mapping PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_unicode_data_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/UnicodeData.cpp)
+    target_include_directories(guest_icu_unicode_data_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_compile_definitions(guest_icu_unicode_data_tests PRIVATE ANYPS5_ICU_UNICODE_DATA="${ICU_SOURCE_DIR}/data/unidata/UnicodeData.txt")
+    target_link_libraries(guest_icu_unicode_data_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_unicode_data_tests)
+    add_test(NAME guest_icu_unicode_data COMMAND guest_icu_unicode_data_tests)
+    set_tests_properties(guest_icu_unicode_data PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(guest_icu_unicode_data PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_bidi_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Bidi.cpp)
+    target_include_directories(guest_icu_bidi_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_bidi_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_bidi_tests)
+    add_test(NAME guest_icu_bidi COMMAND guest_icu_bidi_tests)
+    set_tests_properties(guest_icu_bidi PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_bidi PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_charset_detection_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/CharsetDetection.cpp)
+    target_include_directories(guest_icu_charset_detection_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_charset_detection_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_charset_detection_tests)
+    add_test(NAME guest_icu_charset_detection COMMAND guest_icu_charset_detection_tests)
+    set_tests_properties(guest_icu_charset_detection PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_charset_detection PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_normalization_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Normalization.cpp)
+    target_include_directories(guest_icu_normalization_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_normalization_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_normalization_tests)
+    add_test(NAME guest_icu_normalization COMMAND guest_icu_normalization_tests)
+    set_tests_properties(guest_icu_normalization PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_normalization PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_code_points_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/CodePoints.cpp)
+    target_include_directories(guest_icu_code_points_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_code_points_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_code_points_tests)
+    add_test(NAME guest_icu_code_points COMMAND guest_icu_code_points_tests)
+    set_tests_properties(guest_icu_code_points PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_code_points PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
 target_sources(libSceIcu PRIVATE ConverterHelpers.cpp)
 
 if(BUILD_TESTING)
@@ -318,6 +465,94 @@ if(BUILD_TESTING)
     set_tests_properties(guest_icu_converter_helpers PROPERTIES TIMEOUT 10)
     if(WIN32)
         set_tests_properties(guest_icu_converter_helpers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+    add_test_executable(guest_icu_copy_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Copy.cpp)
+    target_include_directories(guest_icu_copy_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_copy_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_copy_tests)
+    add_test(NAME guest_icu_copy COMMAND guest_icu_copy_tests)
+    set_tests_properties(guest_icu_copy PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_copy PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+    add_test_executable(guest_icu_copy_guest_memory_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/CopyGuestMemory.cpp)
+    target_include_directories(guest_icu_copy_guest_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_copy_guest_memory_tests PRIVATE libSceIcu libkernel libc)
+    configure_windows_unwind(guest_icu_copy_guest_memory_tests)
+    add_test(NAME guest_icu_copy_guest_memory COMMAND guest_icu_copy_guest_memory_tests)
+    set_tests_properties(guest_icu_copy_guest_memory PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_copy_guest_memory PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_locale_map_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LocaleMap.cpp)
+    target_include_directories(guest_icu_locale_map_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_locale_map_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_locale_map_tests)
+    add_test(NAME guest_icu_locale_map COMMAND guest_icu_locale_map_tests)
+    set_tests_properties(guest_icu_locale_map PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_locale_map PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+set(ICU_RECOVERED_SOURCES
+    Calendar.cpp
+    Collator.cpp
+    DateFormat.cpp
+    DateIntervalFormat.cpp
+    DateTimePatternGenerator.cpp
+    FieldPositionIterator.cpp
+    FormattedValue.cpp
+    Idna.cpp
+    ListFormatter.cpp
+    LocaleDisplayNames.cpp
+    NumberFormat.cpp
+    NumberFormatter.cpp
+    NumberingSystem.cpp
+    PluralRules.cpp
+    RelativeDateTimeFormatter.cpp
+    ResourceBundle.cpp
+    StringSearch.cpp
+    UText.cpp)
+target_sources(libSceIcu PRIVATE ${ICU_RECOVERED_SOURCES})
+
+if(BUILD_TESTING)
+    set(ICU_RECOVERED_TESTS
+        tests/Calendar.cpp
+        tests/Collator.cpp
+        tests/DateFormat.cpp
+        tests/DateIntervalFormat.cpp
+        tests/DateTimePatternGenerator.cpp
+        tests/FieldPositionIterator.cpp
+        tests/FormattedValue.cpp
+        tests/Idna.cpp
+        tests/ListFormatter.cpp
+        tests/LocaleDisplayNames.cpp
+        tests/NumberFormat.cpp
+        tests/NumberFormatter.cpp
+        tests/NumberingSystem.cpp
+        tests/PluralRules.cpp
+        tests/RecoveredSignatures.cpp
+        tests/RelativeDateTimeFormatter.cpp
+        tests/ResourceBundle.cpp
+        tests/StringSearch.cpp
+        tests/UText.cpp)
+    list(TRANSFORM ICU_RECOVERED_TESTS PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/)
+    add_test_executable(guest_icu_recovered_signatures_tests ${ICU_RECOVERED_TESTS})
+    target_include_directories(guest_icu_recovered_signatures_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_recovered_signatures_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_recovered_signatures_tests)
+    add_test(NAME guest_icu_recovered_signatures COMMAND guest_icu_recovered_signatures_tests)
+    set_tests_properties(guest_icu_recovered_signatures PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_recovered_signatures PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()

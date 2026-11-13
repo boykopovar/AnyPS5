@@ -40,6 +40,7 @@ public:
     const Json* Find(std::string_view key) const;
     bool IsTrue() const;
     std::optional<std::uint64_t> Unsigned() const;
+    std::optional<std::int64_t> Signed() const;
     std::optional<std::int32_t> Id() const;
 };
 
@@ -111,6 +112,7 @@ struct StatDefinition {
 struct StatFilter {
     std::string path;
     std::uint64_t value = 0;
+    std::optional<std::int64_t> greaterThan;
 };
 
 struct StatRule {
