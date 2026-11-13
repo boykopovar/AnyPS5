@@ -702,10 +702,6 @@ int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
-            std::puts("skipped, the device has no shaderBufferInt64Atomics");
-            return VulkanTestSkipped;
-        }
         AgcDriver::QueueState queue;
         const std::string mode = argc > 1 ? argv[1] : "operations";
         for (const auto wave : {32u, 64u}) {
