@@ -526,12 +526,29 @@ void testNativeRepeatHtileOrphan(const std::filesystem::path& directory) {
     constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
     constexpr float CapturedDepth = 0.25f;
     const auto texels = Extent.width * Extent.height;
-    auto* bytes = allocate(8u * Block);
+    auto* bytes = allocate(CapturedBytes);
     const auto begin = address(bytes);
-    for (std::size_t pair = 0u; pair < 4u; ++pair) {
-        for (std::size_t offset = pair * 2u * Block; offset < (pair * 2u + 1u) * Block; offset += sizeof(float)) std::memcpy(bytes + offset, &CapturedDepth, sizeof(float));
-        std::fill_n(bytes + (pair * 2u + 1u) * Block, Block, std::byte{0xff});
+    const auto separatePair = [&](std::uint64_t previous) {
+        constexpr std::uint64_t Gap = 2u << 20u;
+        check(previous <= std::numeric_limits<std::uint64_t>::max() - Gap, "orphan HTILE independent allocation hint overflows");
+        auto* pair = static_cast<std::byte*>(GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(previous + Gap, CapturedBytes, Block));
+        check(pair != nullptr && address(pair) >= previous + Gap, "orphan HTILE independent allocation is not separated from its predecessor");
+        GuestArena::GuestArenaCommit_nid_postfix(pair, CapturedBytes, ReadWrite, CapturedBytes);
+#ifdef __linux__
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pair, CapturedBytes);
+#endif
+        GuestAllocations::Mutation mutation;
+        mutation.Add(pair, CapturedBytes, true, true, true);
+        return pair;
+    };
+    auto* unnotedBytes = separatePair(begin);
+    auto* notedBytes = separatePair(address(unnotedBytes));
+    auto* outsideBytes = separatePair(address(notedBytes));
+    for (auto* pair : std::array{bytes, unnotedBytes, notedBytes, outsideBytes}) {
+        for (std::size_t offset = 0u; offset < Block; offset += sizeof(float)) std::memcpy(pair + offset, &CapturedDepth, sizeof(float));
+        std::fill_n(pair + Block, Block, std::byte{0xff});
     }
+    std::printf("orphan HTILE independent allocation pairs: tested=%llu unnoted=%llu noted=%llu outside=%llu bytes=%zu\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(address(unnotedBytes)), static_cast<unsigned long long>(address(notedBytes)), static_cast<unsigned long long>(address(outsideBytes)), CapturedBytes);
     const std::vector<std::byte> expected(bytes, bytes + CapturedBytes);
     std::uintptr_t arena = 0;
     std::size_t arenaSize = 0;
@@ -586,27 +603,33 @@ void testNativeRepeatHtileOrphan(const std::filesystem::path& directory) {
         const auto cleared = DepthFastClearHarness::Draw(*device, shaders, htiled, options);
         return std::pair{captured, cleared};
     };
-    const auto unnoted = firstHtileBind(begin + 2u * Block);
+    const auto unnoted = firstHtileBind(address(unnotedBytes));
     check(unnoted.first == texels && unnoted.second == 0u, "orphan HTILE unnoted control did not retain raw captured A");
-    check(!AgcDriver::Graphics::NoteHtileDepthClear(begin + 5u * Block, DepthFastClearHarness::HtileBytes), "orphan HTILE noted control unexpectedly found a native completion owner");
-    const auto noted = firstHtileBind(begin + 4u * Block);
+    check(!AgcDriver::Graphics::NoteHtileDepthClear(address(notedBytes) + Block, DepthFastClearHarness::HtileBytes), "orphan HTILE noted control unexpectedly found a native completion owner");
+    const auto noted = firstHtileBind(address(notedBytes));
     check(noted.first == 0u && noted.second == texels, "orphan HTILE noted control did not apply remembered clear B at its first metadata bind");
     std::printf("orphan HTILE independent controls: unnoted_A=%u unnoted_B=%u noted_A=%u noted_B=%u\n", unnoted.first, unnoted.second, noted.first, noted.second);
     check(!AgcDriver::Graphics::ActiveDepthExtent(device->Device(), begin).has_value() && AgcDriver::Graphics::ResidentDepthOwnersOver(begin, CapturedBytes, false) == 0u, "orphan HTILE tested range already has a resident owner before reset");
     check(!AgcDriver::Graphics::NoteHtileDepthClear(begin + Block, DepthFastClearHarness::HtileBytes), "orphan HTILE tested note unexpectedly found a native completion owner");
-    check(!AgcDriver::Graphics::NoteHtileDepthClear(begin + 7u * Block, DepthFastClearHarness::HtileBytes), "orphan HTILE outside-range note unexpectedly found a native completion owner");
+    check(!AgcDriver::Graphics::NoteHtileDepthClear(address(outsideBytes) + Block, DepthFastClearHarness::HtileBytes), "orphan HTILE outside-range note unexpectedly found a native completion owner");
     Runs changed;
     static_cast<void>(changedSince(begin, CapturedBytes, since, changed));
     Runs owned;
     std::exception_ptr failure;
     AgcDriverGpuOwnedRanges_nid_no_patch(begin, CapturedBytes, owned, &failure);
     rethrowDriverFailure(failure);
-    check(changed.empty() && owned.empty() && std::equal(expected.begin(), expected.end(), bytes), "orphan HTILE control changed guest bytes or created reset candidates in the tested range");
+    const auto equal = std::equal(expected.begin(), expected.end(), bytes);
+    std::printf("orphan HTILE pre-reset isolation: changed=%zu owned=%zu byte_equal=%u tested_begin=%llu tested_bytes=%zu\n", changed.size(), owned.size(), equal ? 1u : 0u, static_cast<unsigned long long>(begin), CapturedBytes);
+    for (const auto& [first, last] : changed) std::printf("orphan HTILE changed span: begin=%llu end=%llu bytes=%llu\n", static_cast<unsigned long long>(first), static_cast<unsigned long long>(last), static_cast<unsigned long long>(last - first));
+    for (const auto& [first, length] : owned) std::printf("orphan HTILE owned span: begin=%llu bytes=%llu\n", static_cast<unsigned long long>(first), static_cast<unsigned long long>(length));
+    check(changed.empty(), "orphan HTILE independent controls recorded a change in the tested captured range");
+    check(owned.empty(), "orphan HTILE independent controls created a GPU owner over the tested captured range");
+    check(equal, "orphan HTILE independent controls changed captured guest bytes before reset");
     const std::vector<AgcDriver::NativeDepthSnapshot> emptyNative;
     const auto reset = resetMemory(reader, skipped, since, ResetFault::None, true, &emptyNative);
     check(reset.compared == 0u && reset.rewritten == 0u && std::equal(expected.begin(), expected.end(), bytes), "orphan HTILE reset test became covered by generic changed-page retirement or altered captured bytes");
     const auto restored = firstHtileBind(begin);
-    const auto outside = firstHtileBind(begin + 6u * Block);
+    const auto outside = firstHtileBind(address(outsideBytes));
     std::printf("orphan HTILE reset: changed=0 owned=0 compared=%llu rewritten=%llu restored_A=%u restored_B=%u outside_A=%u outside_B=%u\n", static_cast<unsigned long long>(reset.compared), static_cast<unsigned long long>(reset.rewritten), restored.first, restored.second, outside.first, outside.second);
     check(restored.first == texels && restored.second == 0u, "native replay reset retained an orphan HTILE clear over unchanged captured memory");
     check(outside.first == 0u && outside.second == texels, "native replay reset globally erased an HTILE note outside captured ranges");
