@@ -1,5 +1,9 @@
 # libSceCesCs technical debt
 
+### Functional
+
+- [JISCS conversions](../../../core/libs/prx/libSceCesCs/Export.cpp) safely write output destination pointers using guest copy operations, preserving caller errno across destination write faults.
+
 ### Silent stubs
 
 - [sceCesIso2022JpUcsProfileSetSbcs](../../../core/libs/prx/libSceCesCs/Export.cpp) (libSceCesCs) - sets single-byte character set profile on ISO-2022-JP sheets while preserving errno; rejects invalid profiles with 0x805C0004.
