@@ -28,6 +28,8 @@ void APS5_VABI sceGnmFlushGarlic();
 int APS5_VABI sceGnmAddEqEvent(KernelEqueue eq, std::uint64_t id, void* udata);
 int APS5_VABI sceGnmDeleteEqEvent(KernelEqueue eq, std::uint64_t id);
 int APS5_VABI sceGnmGetEqEventType(const KernelEvent* ev);
+int APS5_VABI sceGnmGetOffChipTessellationBufferSize_nid_disambig1(void);
+bool APS5_VABI sceGnmDriverTraceInProgress_nid_disambig1(void);
 bool APS5_VABI sceGnmIsUserPaEnabled();
 bool APS5_VABI sceGnmDriverCaptureInProgress();
 int APS5_VABI sceGnmDriverTriggerCapture();
