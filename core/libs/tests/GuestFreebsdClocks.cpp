@@ -176,6 +176,19 @@ static void ResolutionsAreTheConsoles() {
     Read(GUEST_CLOCK_PROCESS_CPUTIME_ID);
 }
 
+static void Clock20UsesScaledMonotonicTime() {
+    constexpr int clockId = 20;
+    constexpr std::int64_t tickCeilingNanos = 30519;
+    const auto before = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
+    const auto posix = Nanos(clockId);
+    KernelTimespec sceTime{-1, -1};
+    Require(sceKernelClockGettime(clockId, &sceTime) == SCE_OK);
+    const auto sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
+    const auto after = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
+    Require(before - tickCeilingNanos <= posix && posix <= sce && sce <= after);
+    Require(posix % 1000 == 0 && sce % 1000 == 0);
+}
+
 static void SecondClockReportsWholeSeconds() {
     KernelTimespec sceSecond{-1, -1};
     Require(sceKernelClockGettime(GUEST_CLOCK_SECOND, &sceSecond) == SCE_OK);
@@ -426,6 +439,7 @@ int main() {
     OmittedTimeIsFaultAfterClockValidation();
     InvalidClockIdFailsGettime();
     ClockIoErrorIds();
+    Clock20UsesScaledMonotonicTime();
     SettimeIsRefusedLikeAJailedProcess();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();

@@ -322,6 +322,26 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("libSceAmpr", report)
             self.assertIn("Caller.cpp:2", report)
 
+    def test_self_call_line_counts_spliced_lines(self):
+        nid = nid_names.compute_nid("sceExampleSelfCall")
+        sources = {
+            "#define TWICE(x) \\\n    ((x) + \\\n     (x))\nint useIt(void) {\n    return sceExampleSelfCall(1);\n}\n": "Caller.cpp:5 ",
+            "int useIt(void) {\n    int x = \\\n        sceExampleSelfCall(1);\n    return x;\n}\n": "Caller.cpp:3 ",
+            "int useIt(void) {\n    return sceExampleSelfCall(1, \\\n        2);\n}\n": "Caller.cpp:2 ",
+        }
+        for source, expected in sources.items():
+            for newline in ("\n", "\r\n"):
+                with self.subTest(expected=expected, newline=repr(newline)), tempfile.TemporaryDirectory() as directory:
+                    root, prx, tables = tree(directory)
+                    library = write_module(prx, MODULE, {"Export.cpp": "int APS5_VABI sceExampleOther(void) { return 0; }\n"})
+                    (library / "Caller.cpp").write_bytes(source.replace("\n", newline).encode("utf-8"))
+                    write_table(tables, MODULE, [nid])
+                    db = write_db(directory, [(nid, "sceExampleSelfCall")])
+                    out = Path(directory) / "out.txt"
+                    code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+                    self.assertEqual(code, 0)
+                    self.assertIn(expected, report)
+
     def test_self_call_with_qualifier_needs_renamed_helper(self):
         first = nid_names.compute_nid("sceExampleGlobalCall")
         second = nid_names.compute_nid("sceExampleMemberCall")
