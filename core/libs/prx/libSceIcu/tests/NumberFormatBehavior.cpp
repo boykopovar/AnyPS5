@@ -243,6 +243,19 @@ void RuleBasedAttributes() {
     for (const auto style : {5, 9}) {
         Pair handle(style, "en_US", style == 9 ? u"%first: 0: =0=; %second: 0: =0.00=;" : nullptr);
         for (const auto attribute : {0, 5, 6, 7}) Compare(handle.guest, handle.native, 3, 0, nullptr, 0, attribute);
+        for (const auto attribute : {2, -1, INT32_MAX}) {
+            std::array<char16_t, 256> before{};
+            std::array<char16_t, 256> after{};
+            std::int32_t beforeStatus = 0;
+            std::int32_t afterStatus = 0;
+            const auto beforeLength = Oracle::Double(handle.native, 42.5, before.data(), before.size(), nullptr, &beforeStatus);
+            unum_setAttribute_nid_postfix(handle.guest, attribute, 1);
+            Oracle::SetAttribute(handle.native, attribute, 1);
+            const auto afterLength = Oracle::Double(handle.native, 42.5, after.data(), after.size(), nullptr, &afterStatus);
+            Require(beforeStatus <= 0 && beforeLength == afterLength && afterStatus == beforeStatus && before == after,
+                "rule-based unsupported numeric attributes retain native statusless no-op behavior");
+            Compare(handle.guest, handle.native, 0, 42.5);
+        }
         std::array<char16_t, 2048> names{};
         std::array<char16_t, 256> current{};
         std::int32_t status = 0;
