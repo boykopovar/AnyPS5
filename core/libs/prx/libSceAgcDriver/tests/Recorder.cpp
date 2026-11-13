@@ -12129,6 +12129,76 @@ void firstSampleCopyTrackingTest(const Device& device) {
     context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
 }
 
+template<typename Step>
+void completesWithin(std::chrono::seconds limit, const std::string& what, Step&& step) {
+    auto done = std::make_shared<std::promise<void>>();
+    auto finished = done->get_future();
+    std::thread([done, &step] {
+        try {
+            step();
+            done->set_value();
+        } catch (...) {
+            done->set_exception(std::current_exception());
+        }
+    }).detach();
+    if (finished.wait_for(limit) != std::future_status::ready) {
+        std::cerr << "AGC graphics: " << what << " did not complete within " << limit.count() << " s\n";
+        std::_Exit(1);
+    }
+    finished.get();
+}
+
+void discardedSampleTests(const Device& device) {
+    if (!device.Graphics() || !device.GetContext().bufferDeviceAddress) return;
+    auto context = device.GetContext();
+    Recorder recorder(context);
+    const auto failedSubmit = [&](const std::string& what) {
+        Recorder::FailNextSubmitsForTest(1);
+        std::string message;
+        try {
+            recorder.Submit();
+        } catch (const std::runtime_error& error) {
+            message = error.what();
+        }
+        Recorder::FailNextSubmitsForTest(0);
+        Require(message == "vkQueueSubmit recorder: injected failure", what + " was submitted past an injected failure ('" + message + "')");
+    };
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    auto dump = std::make_shared<Buffer>(context, 256, usage);
+    std::memset(dump->Bytes().data(), 0, 256);
+    CoverPass cover(context);
+    recorder.CountSamples();
+    cover.Draw(recorder);
+    if (!recorder.DumpSamples(dump->DeviceAddress(), 0)) {
+        recorder.Submit();
+        recorder.Sync();
+        std::cout << "occlusion counters are not dumped on the GPU: discarded occlusion segments not tested\n";
+        return;
+    }
+    recorder.Submit();
+    recorder.Sync();
+    const auto base = recorder.SamplesTotal();
+    Require(base != 0, "the cover draw counted no samples before the discarded batch");
+    cover.Draw(recorder);
+    recorder.EndPassSamples();
+    failedSubmit("a batch with ended occlusion segments");
+    std::uint64_t total = 0;
+    completesWithin(std::chrono::seconds(20), "the sample total after a discarded batch", [&] { total = recorder.SamplesTotal(); });
+    Require(total == base, "the sample total after a discarded batch is " + std::to_string(total) + ", not the " + std::to_string(base) + " of the batches that ran");
+    const auto beforeFold = recorder.SamplesTotal();
+    cover.Draw(recorder);
+    recorder.EndPassSamples();
+    recorder.Submit();
+    recorder.Sync();
+    Require(recorder.DumpSamples(dump->DeviceAddress(), 0), "a batch did not fold the occlusion segments of the batch before it");
+    failedSubmit("a batch that folded an earlier batch's occlusion segments");
+    std::uint64_t afterFold = 0;
+    completesWithin(std::chrono::seconds(20), "the sample total after a discarded batch that folded an earlier batch", [&] { afterFold = recorder.SamplesTotal(); });
+    Require(afterFold > beforeFold, "the samples of a submitted batch folded by a discarded batch were lost (" + std::to_string(afterFold) + " after " + std::to_string(beforeFold) + ")");
+    if (context.occlusionQueryPrecise) Require(afterFold == beforeFold + CoverPass::Samples, "the sample total after a discarded batch that folded an earlier batch is " + std::to_string(afterFold) + ", not " + std::to_string(beforeFold + CoverPass::Samples));
+    std::cout << "Recorder discarded sample tests passed\n";
+}
+
 void discardActionTests(const Device& device) {
     auto context = device.GetContext();
     Recorder recorder(context);
@@ -17077,6 +17147,7 @@ int main(int argc, char** argv) {
         shadowedKeyStoreTests(device, recorder);
         sampleDumpTests(device, recorder);
         discardActionTests(device);
+        discardedSampleTests(device);
         copiedDirectOrderingTests(device, recorder);
         copiedWriteBackTests(device, recorder);
         gpu.unlock();

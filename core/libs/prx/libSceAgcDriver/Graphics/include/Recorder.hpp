@@ -21,6 +21,7 @@
 #include <optional>
 #include <span>
 #include <tuple>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 #include <string>
@@ -725,7 +726,16 @@ private:
         bool overwritten = false;
         const Batch* batch = nullptr;
     };
+    struct SampleSegment {
+        std::shared_ptr<void> pool;
+        VkQueryPool handle;
+        std::uint32_t slot = 0;
+        std::uint64_t batch = 0;
+    };
+    static_assert(std::is_nothrow_move_constructible_v<SampleSegment> && std::is_nothrow_move_assignable_v<SampleSegment>);
     struct Batch {
+        std::uint64_t sampleBatch = 0;
+        std::vector<SampleSegment> foldedSamples;
         VkCommandBuffer commands = VK_NULL_HANDLE;
         CommandState graphicsState;
         VkFence fence = VK_NULL_HANDLE;
@@ -902,12 +912,9 @@ private:
     void dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, std::uint32_t dumps, std::uint32_t firstSegment, std::uint32_t lastSegment);
     void foldSegments();
     void foldQueuedDumps(VkCommandBuffer commands, std::span<const Batch::StoreRun::Queued> writes, std::size_t first, std::size_t end, std::uint32_t& dumpIndex, std::uint32_t& consumed);
-    struct SampleSegment {
-        std::shared_ptr<void> pool;
-        VkQueryPool handle;
-        std::uint32_t slot = 0;
-    };
+    void reserveSampleRestore(const Batch& batch);
     std::vector<SampleSegment> pendingSamples;
+    std::uint64_t sampleBatches = 0;
     bool countingSamples = false;
     int meshArgumentState = 0;
     VkPipelineLayout meshArgumentLayout = VK_NULL_HANDLE;
