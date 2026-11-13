@@ -6,6 +6,7 @@
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
@@ -29,6 +30,20 @@ struct Stream {
     unsigned rejectCall{};
     int error{};
 };
+
+struct InputStream {
+    const std::vector<std::uint8_t>& bytes;
+    std::size_t position{};
+    int error{10};
+};
+
+int APS5_VABI Read(void* closure, unsigned char* data, unsigned length) {
+    auto& stream = *static_cast<InputStream*>(closure);
+    if (length > stream.bytes.size() - stream.position) return stream.error;
+    std::memcpy(data, stream.bytes.data() + stream.position, length);
+    stream.position += length;
+    return 0;
+}
 
 int APS5_VABI Collect(void* closure, const unsigned char* data, unsigned length) {
     auto& stream = *static_cast<Stream*>(closure);
@@ -132,11 +147,48 @@ void CheckFailures() {
     Require(cairo_surface_write_to_png_stream(surface.get(), Collect, &healthy) == 0);
 }
 
+void CheckRead() {
+    auto rgba = Decoder::Png::Encode(std::array<std::uint8_t, 8>{128, 64, 32, 128, 255, 1, 2, 0}, 2, 1, 4);
+    InputStream stream{rgba};
+    const auto length = rgba.size();
+    rgba.push_back(0x5a);
+    Surface surface(cairo_image_surface_create_from_png_stream(Read, &stream), cairo_surface_destroy);
+    Require(stream.position == length && cairo_surface_status(surface.get()) == 0);
+    Require(cairo_image_surface_get_format(surface.get()) == 0);
+    Require(cairo_image_surface_get_width(surface.get()) == 2 && cairo_image_surface_get_height(surface.get()) == 1);
+    std::array<std::uint32_t, 2> words{};
+    std::memcpy(words.data(), cairo_image_surface_get_data(surface.get()), sizeof(words));
+    Require(words == std::array<std::uint32_t, 2>{0x80402010, 0});
+
+    const auto rgb = Decoder::Png::Encode(std::array<std::uint8_t, 6>{0xff, 0xff, 0, 0, 0x80, 0}, 1, 1, 3,
+                                          {.bitDepth = 16});
+    stream.position = 0;
+    InputStream wide{rgb};
+    surface.reset(cairo_image_surface_create_from_png_stream(Read, &wide));
+    Require(cairo_surface_status(surface.get()) == 0 && cairo_image_surface_get_format(surface.get()) == 6);
+    std::array<float, 3> samples{};
+    std::memcpy(samples.data(), cairo_image_surface_get_data(surface.get()), sizeof(samples));
+    Require(samples == std::array<float, 3>{1.f, 0.f, 32768.f / 65535.f});
+
+    rgba.resize(length - 1);
+    surface.reset(cairo_image_surface_create_from_png_stream(Read, &stream));
+    Require(cairo_surface_status(surface.get()) == 10);
+    stream.position = 0;
+    stream.error = 1;
+    surface.reset(cairo_image_surface_create_from_png_stream(Read, &stream));
+    Require(cairo_surface_status(surface.get()) == 1);
+    rgba[29] ^= 1;
+    stream.position = 0;
+    surface.reset(cairo_image_surface_create_from_png_stream(Read, &stream));
+    Require(cairo_surface_status(surface.get()) == 39);
+}
+
 }
 
 int main() {
     CheckFormats();
     CheckSubsurfaces();
     CheckFailures();
+    CheckRead();
     std::puts("guest Cairo PNG stream checks passed");
 }

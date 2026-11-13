@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/RunReport.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -20,6 +21,7 @@
 #include <vector>
 
 #ifndef _WIN32
+#include <pthread.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -1432,6 +1434,26 @@ void ChildMissingFunctionTest() {
     }
 }
 
+void ChildUncaughtMissingFunctionTest() {
+    Directory directory;
+    const int status = RunChild(CopySelf(directory), directory.path, "uncaught-missing-function");
+    Require((WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT) || (WIFEXITED(status) && WEXITSTATUS(status) == 128 + SIGABRT), "the run that left an unimplemented function uncaught did not end through abort");
+    const auto text = Report(directory);
+    for (const char* part : {"\"exit\": \"abort\"", "\"reason\": \"runtime-stop\"", "\"kind\": \"missing-function\"", "\"message\": \"Called sceNpUncaught, which is not implemented.\"", "\"name\": \"sceNpUncaught\"", "\"calls\": 1"}) {
+        Require(Contains(text, part), std::string("the report of the run that ended in std::terminate lacks ") + part + ": " + text);
+    }
+}
+
+void ChildTerminateHandlerExitTest() {
+    Directory directory;
+    const int status = RunChild(CopySelf(directory), directory.path, "terminate-handler-exits");
+    Require(WIFEXITED(status) && WEXITSTATUS(status) == 3, "the run whose own terminate handler exits with 3 did not exit with 3");
+    const auto text = Report(directory);
+    for (const char* part : {"\"exit\": \"clean\"", "\"exitCode\": 3", "\"reason\": \"guest-exit\""}) {
+        Require(Contains(text, part), std::string("the report of the run whose terminate handler exits lacks ") + part + ": " + text);
+    }
+}
+
 void ChildEnabledTest() {
     Directory directory;
     const auto copy = CopySelf(directory);
@@ -1529,6 +1551,19 @@ int main(int argc, char** argv) {
                 LibcRunReportFinishExit_nid_no_patch(0);
                 return 0;
             }
+            if (mode == "uncaught-missing-function") {
+                pthread_t thread;
+                pthread_create(&thread, nullptr, [](void*) -> void* { NotImplemented_nid_no_patch("sceNpUncaught"); return nullptr; }, nullptr);
+                pthread_join(thread, nullptr);
+                return 0;
+            }
+            if (mode == "terminate-handler-exits") {
+                _ZSt13set_terminatePFvvE_nid_postfix([] { LibcExit_nid_no_patch(3); });
+                pthread_t thread;
+                pthread_create(&thread, nullptr, [](void*) -> void* { NotImplemented_nid_no_patch("sceNpHandled"); return nullptr; }, nullptr);
+                pthread_join(thread, nullptr);
+                return 0;
+            }
             if (mode == "caught-missing-function") {
                 try { NotImplemented_nid_no_patch("sceNpCaught_nid_postfix"); } catch (const std::exception&) {}
                 LibcRunReportFinishExit_nid_no_patch(0);
@@ -1606,6 +1641,8 @@ int main(int argc, char** argv) {
         Run("child-gpu", ChildGpuTest);
         Run("child-guest-root-not-fixed-at-load", GuestRootIsNotFixedAtLoadTest);
         Run("child-missing-function", ChildMissingFunctionTest);
+        Run("child-uncaught-missing-function", ChildUncaughtMissingFunctionTest);
+        Run("child-terminate-handler-exits", ChildTerminateHandlerExitTest);
 #endif
         std::printf("run report tests: %d passed, %d failed, %d not run\n", passed, failed, notRun);
         if (passed + failed + notRun == 0) {
