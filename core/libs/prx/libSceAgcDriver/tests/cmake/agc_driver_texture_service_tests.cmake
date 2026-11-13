@@ -1,0 +1,23 @@
+add_test_executable(agc_driver_texture_service_tests EXCLUDE_FROM_ALL tests/TextureService.cpp ${agcBindlessLookupHeader})
+target_include_directories(agc_driver_texture_service_tests PRIVATE ${LIBS_INCLUDE_DIR} ${agcTestShaderGeneratedRoot} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${CMAKE_SOURCE_DIR}/core/shader/recompiler/ControlFlow/include ${CMAKE_SOURCE_DIR}/core/shader/recompiler/IntermediateRepresentation/include ${CMAKE_SOURCE_DIR}/core/shader/recompiler/Optimization/include ${CMAKE_SOURCE_DIR}/core/shader/recompiler/RdnaDecoder/include ${CMAKE_SOURCE_DIR}/core/shader/recompiler/SpirvBackend/include ${CMAKE_SOURCE_DIR}/core/shader/recompiler/Translation/include ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+target_link_libraries(agc_driver_texture_service_tests PRIVATE libSceAgcDriver SDL2-static libc)
+set_target_properties(agc_driver_texture_service_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_driver_texture_service_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_driver_texture_service_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_driver_texture_service COMMAND agc_driver_texture_service_tests)
+    add_test(NAME agc_driver_texture_service_driver COMMAND agc_driver_texture_service_tests --driver)
+    add_test(NAME agc_driver_texture_service_flag_off COMMAND agc_driver_texture_service_tests --flag-off)
+    add_test(NAME agc_driver_texture_service_flag_on COMMAND agc_driver_texture_service_tests --flag-on)
+    set_tests_properties(agc_driver_texture_service agc_driver_texture_service_driver agc_driver_texture_service_flag_off PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 120 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(agc_driver_texture_service_flag_on PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_BINDLESS_IMAGES=1;APS5_BINDLESS_STATS=1" SKIP_RETURN_CODE 77 TIMEOUT 120 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_texture_service agc_driver_texture_service_driver agc_driver_texture_service_flag_off PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;APS5_BINDLESS_IMAGES=unset:")
+        set_tests_properties(agc_driver_texture_service_flag_on PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    else()
+        set_tests_properties(agc_driver_texture_service agc_driver_texture_service_driver agc_driver_texture_service_flag_off PROPERTIES ENVIRONMENT_MODIFICATION "APS5_BINDLESS_IMAGES=unset:")
+    endif()
+endif()

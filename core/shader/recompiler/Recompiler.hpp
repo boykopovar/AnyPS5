@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILIER_INCLUDE_SHADER_RECOMPILIER_RECOMPILER_HPP
 
 #include "RuntimeAbi.hpp"
+#include "BindlessImageAbi.hpp"
 #include "PipelineSpecialization.hpp"
 #include "ImageOverwrite.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
@@ -404,6 +405,7 @@ struct SpirvTarget {
     bool spannedShuffleThroughMemory = false;
     bool spannedUnreachableStays = false;
     bool spannedUnreachableVerify = false;
+    bool bindlessImages = false;
 };
 
 struct BindingLayout {
@@ -959,6 +961,7 @@ struct CompiledShaderArtifact {
     bool bdaWrites = false;
     bool layerReplaySafe = false;
     std::uint32_t stencilReferenceDword = 0xffffffffu;
+    bool bindlessHeap = false;
     std::uint64_t variantId = 0;
 };
 
@@ -976,6 +979,7 @@ struct ShaderInvocation {
     std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>> imageTableReadRanges;
     std::uint64_t imageTableShader = 0;
     std::uint32_t imageTableFaults = 0;
+    std::vector<BindlessImageAbi::TableRegistration> bindlessTables;
 };
 
 // What a Vulkan pipeline built from a result depends on besides the fixed-function state and the

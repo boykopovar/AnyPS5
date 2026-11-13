@@ -13,6 +13,11 @@ void EmitImageOperation(SpirvModule& module, const IrValue& value, std::uint32_t
 
 void EmitImageOperation(SpirvValueEmitContext& context, const IrValue& value, std::uint32_t resultId);
 
+
+void DefineBindlessFunctions(SpirvEmitterState& state);
+
+void EmitBindlessEntryProbes(SpirvValueEmitContext& ctx);
+
 }
 
 #endif

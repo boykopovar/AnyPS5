@@ -8,6 +8,7 @@
 #include "IntermediateRepresentation/IrMetadata/ResourceInfo.hpp"
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -50,6 +51,7 @@ struct IrProgramMetadata {
     std::uint32_t nanSpeculationPrunedChecks = 0u;
     std::uint32_t nanSpeculationFastOps = 0u;
     std::uint32_t nanSpeculationRepairedOps = 0u;
+    std::unordered_map<const IrValue*, std::vector<IrValue*>> bindlessHandleWords;
     bool shaderInfoComplete = false;
     IrBindingLayout bindings;
     bool bindingLayoutComplete = false;
