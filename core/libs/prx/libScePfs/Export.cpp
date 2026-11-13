@@ -210,6 +210,12 @@ std::int64_t APS5_VABI scePfsGetWorkBufferSize(void) {
 }
 
 std::int64_t APS5_VABI scePfsPread(void* buffer, std::uint64_t size, std::uint64_t offset, const void* header, void* workBuffer) {
+    if (buffer == nullptr) return InvalidArgument;
+    if (size == 0) return 0;
+    if (offset > OffsetMask48 || header == nullptr || workBuffer == nullptr) return InvalidArgument;
+    const auto* layout = static_cast<const PfsHeaderLayout*>(header);
+    if (layout->magic != PfsMagic) return UnsupportedFormat;
+    if (offset + size > layout->uncompressedSize) return OutOfRange;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
