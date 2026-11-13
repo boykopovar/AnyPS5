@@ -850,13 +850,17 @@ struct Request::State {
                 chunkRemaining = Number(digits, 16);
                 if (!chunkRemaining) {
                     std::size_t bytes = 0;
+                    std::string trailers;
                     for (;;) {
                         const auto trailer = Line(deadline);
                         bytes += trailer.size() + 2;
                         Require(bytes <= 65536, "sceHttp2: trailers exceed host limit");
                         if (trailer.empty()) break;
                         Field(trailer);
+                        trailers += trailer + "\r\n";
                     }
+                    if (!trailers.empty()) trailers += "\r\n";
+                    trailerHeaders = std::move(trailers);
                     ended = true;
                     return 0;
                 }
