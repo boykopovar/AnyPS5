@@ -240,6 +240,35 @@ bool SuppressNanSpeculation(std::uint64_t address) {
     return true;
 }
 
+namespace {
+
+std::vector<std::uint64_t>& AppliedAddresses() {
+    static std::vector<std::uint64_t> addresses;
+    return addresses;
+}
+
+}
+
+void MarkNanSpeculationApplied(std::uint64_t address) {
+    const std::lock_guard lock(CounterMutex());
+    auto& addresses = AppliedAddresses();
+    if (std::ranges::find(addresses, address) == addresses.end()) addresses.push_back(address);
+}
+
+bool NanSpeculationApplied(std::uint64_t address) {
+    const std::lock_guard lock(CounterMutex());
+    return std::ranges::find(AppliedAddresses(), address) != AppliedAddresses().end();
+}
+
+void RestoreNanSpeculation(std::uint64_t address) {
+    const std::lock_guard lock(CounterMutex());
+    auto& addresses = SuppressedAddresses();
+    const auto found = std::ranges::find(addresses, address);
+    if (found == addresses.end()) return;
+    addresses.erase(found);
+    SuppressedCount().fetch_sub(1u, std::memory_order_release);
+}
+
 std::uint32_t NanSpeculationFallbacks() {
     return SuppressedCount().load(std::memory_order_acquire);
 }

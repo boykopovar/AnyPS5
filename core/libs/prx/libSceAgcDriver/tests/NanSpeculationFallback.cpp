@@ -87,9 +87,13 @@ int main() {
 #ifdef _WIN32
     _putenv_s("APS5_NAN_SPECULATION", "1");
     _putenv_s("APS5_NAN_SPECULATION_MIN", "1");
+    _putenv_s("APS5_NAN_SPECULATION_MIN_OPS", "0");
+    _putenv_s("APS5_NAN_SPECULATION_MIN_DENSITY", "0");
 #else
     setenv("APS5_NAN_SPECULATION", "1", 1);
     setenv("APS5_NAN_SPECULATION_MIN", "1", 1);
+    setenv("APS5_NAN_SPECULATION_MIN_OPS", "0", 1);
+    setenv("APS5_NAN_SPECULATION_MIN_DENSITY", "0", 1);
 #endif
     try {
         constexpr std::uint32_t AddF32 = 0x06020300u;
@@ -125,11 +129,12 @@ int main() {
         }
         request.shader.code = code;
         if (!threw) return fail("a request without code compiled");
-        if (NanSpeculationFallbacks() != 1u || !NanSpeculationSuppressed(Failing)) return fail("a failing compile did not turn the speculation off for its program");
-        if (NanSpeculationSuppressed(Other)) return fail("the fallback turned the speculation off for another program");
+        if (NanSpeculationFallbacks() != 0u || NanSpeculationSuppressed(Failing)) return fail("a compile that fails without speculation too turned the speculation off for its program");
+        if (!SuppressNanSpeculation(Failing)) return fail("a program that was not suppressed could not be suppressed");
+        if (NanSpeculationFallbacks() != 1u || !NanSpeculationSuppressed(Failing)) return fail("a suppressed program is not counted");
+        if (NanSpeculationSuppressed(Other)) return fail("the suppression reached another program");
         if (SuppressNanSpeculation(Failing)) return fail("the same program was suppressed twice");
-        if (NanSpeculationStats(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Compute)).fellBack != 1u) return fail("the fallback was not counted for its stage");
-        if (NanSpeculationStats(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Vertex)).fellBack != 0u) return fail("the fallback was counted for another stage");
+        if (NanSpeculationStats(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Compute)).fellBack != 0u) return fail("a fallback that did not recover was counted");
         if (Translated(ShaderStageKind::Compute, {AddF32}, Failing).fastOps != 0u) return fail("a suppressed program was still speculated");
         if (Translated(ShaderStageKind::Compute, {AddF32}, Other).fastOps != 1u) return fail("a program that did not fail lost its speculation");
         RecompileCacheKey::Build(request, failingKey);

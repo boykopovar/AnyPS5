@@ -1079,6 +1079,9 @@ struct NanSpeculationCounterSite {
 [[nodiscard]] std::vector<NanSpeculationCounterSite> NanSpeculationCounterSites();
 [[nodiscard]] bool NanSpeculationSuppressed(std::uint64_t address);
 bool SuppressNanSpeculation(std::uint64_t address);
+void RestoreNanSpeculation(std::uint64_t address);
+void MarkNanSpeculationApplied(std::uint64_t address);
+[[nodiscard]] bool NanSpeculationApplied(std::uint64_t address);
 [[nodiscard]] std::uint32_t NanSpeculationFallbacks();
 constexpr std::uint32_t NanSpeculationStageCount = 8u;
 struct NanSpeculationStageStats {

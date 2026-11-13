@@ -86,6 +86,8 @@ int main() {
     try {
         Set("APS5_NAN_SPECULATION", "1");
         Set("APS5_NAN_SPECULATION_MIN", "compute:1,pixel:4096");
+        Set("APS5_NAN_SPECULATION_MIN_OPS", "0");
+        Set("APS5_NAN_SPECULATION_MIN_DENSITY", "0");
         Set("APS5_NAN_SPECULATION_COUNT", "1");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;

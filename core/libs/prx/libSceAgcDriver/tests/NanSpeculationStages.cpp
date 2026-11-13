@@ -66,9 +66,13 @@ int main() {
 #ifdef _WIN32
     _putenv_s("APS5_NAN_SPECULATION", "1");
     _putenv_s("APS5_NAN_SPECULATION_MIN", "1");
+    _putenv_s("APS5_NAN_SPECULATION_MIN_OPS", "0");
+    _putenv_s("APS5_NAN_SPECULATION_MIN_DENSITY", "0");
 #else
     setenv("APS5_NAN_SPECULATION", "1", 1);
     setenv("APS5_NAN_SPECULATION_MIN", "1", 1);
+    setenv("APS5_NAN_SPECULATION_MIN_OPS", "0", 1);
+    setenv("APS5_NAN_SPECULATION_MIN_DENSITY", "0", 1);
 #endif
     try {
         constexpr std::uint32_t AddF32 = 0x06020300u;

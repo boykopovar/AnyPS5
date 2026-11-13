@@ -951,6 +951,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 continue;
             }
             ++program.Metadata().nanSpeculationKept;
+            MarkNanSpeculationApplied(options.shaderHash);
             std::uint32_t counterOffset = 0u;
             if (speculation.count) {
                 const auto slot = NanSpeculationCounterSlot(options.shaderHash, static_cast<std::uint32_t>(options.stage));

@@ -2341,14 +2341,22 @@ auto withNanSpeculationFallback(const RecompileRequest& request, Impl&& impl) ->
         return impl();
     } catch (const ConvertedSampleRequired&) {
         throw;
+    } catch (const LayerRowSamplesRequired&) {
+        throw;
     } catch (const std::bad_alloc&) {
         throw;
     } catch (const std::exception& error) {
-        if (!SuppressNanSpeculation(request.shader.codeAddress)) throw;
-        NoteNanSpeculationFallback(static_cast<std::uint32_t>(request.shader.stage));
+        if (!NanSpeculationApplied(request.shader.codeAddress) || !SuppressNanSpeculation(request.shader.codeAddress)) throw;
         const std::string_view reason(error.what());
         std::fprintf(stderr, "[recompile] nan speculation failed for 0x%llx (%u programs fell back): %.200s; recompiling without it\n", static_cast<unsigned long long>(request.shader.codeAddress), NanSpeculationFallbacks(), std::string(reason.substr(0u, reason.find('\n'))).c_str());
-        return impl();
+        try {
+            auto result = impl();
+            NoteNanSpeculationFallback(static_cast<std::uint32_t>(request.shader.stage));
+            return result;
+        } catch (...) {
+            RestoreNanSpeculation(request.shader.codeAddress);
+            throw;
+        }
     }
 }
 
@@ -2364,7 +2372,7 @@ auto retryWithoutNanSpeculation(const RecompileRequest& request, Impl&& impl) ->
     } catch (const std::bad_alloc&) {
         throw;
     } catch (const std::exception& error) {
-        if (!SuppressNanSpeculation(request.shader.codeAddress)) throw;
+        if (!NanSpeculationApplied(request.shader.codeAddress) || !SuppressNanSpeculation(request.shader.codeAddress)) throw;
         NoteNanSpeculationFallback(static_cast<std::uint32_t>(request.shader.stage));
         const std::string_view reason(error.what());
         const std::string text(reason.substr(0u, reason.find('\n')));
