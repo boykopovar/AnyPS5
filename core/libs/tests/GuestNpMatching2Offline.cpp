@@ -229,6 +229,8 @@ int main() {
     Require(sceNpMatching2Initialize(&init) == InvalidArgument, "sceNpMatching2Initialize", "an invalid parameter size did not return INVALID_ARGUMENT");
     init.size = 0x20;
     Require(sceNpMatching2Initialize(&init) == InvalidArgument, "sceNpMatching2Initialize", "an invalid size was taken");
+    init.size = (1ULL << 32) | 0x30;
+    Require(sceNpMatching2Initialize(&init) == InvalidArgument, "sceNpMatching2Initialize", "upper 32-bit size was taken");
     init.size = 0x30;
     Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initialization failed");
     Require(sceNpMatching2Initialize(&init) == AlreadyInitialized, "sceNpMatching2Initialize", "initializing when already initialized did not return ALREADY_INITIALIZED");
