@@ -35,6 +35,7 @@ static void* APS5_VABI Waiter(void* arg) {
 int main() {
     PthreadBarrierattrPrivate* attr = nullptr;
     Require(scePthreadBarrierattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadBarrierattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_barrierattr_destroy_nid_postfix(nullptr) == 22);
     Require(pthread_barrierattr_destroy_nid_postfix(&attr) == 22);
@@ -66,6 +67,7 @@ int main() {
     Require(scePthreadBarrierInit(&context.barrier, &attr, WAITERS, "barrier") == 0 && context.barrier != nullptr);
     Require(scePthreadBarrierattrDestroy(&attr) == 0 && attr == nullptr);
     Require(scePthreadBarrierattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadBarrierattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_barrierattr_destroy_nid_postfix(&attr) == 22);
     Require(pthread_barrierattr_destroy_nid_postfix(nullptr) == 22);
