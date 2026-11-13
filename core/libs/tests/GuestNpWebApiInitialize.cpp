@@ -70,6 +70,7 @@ int main() {
     Require(vsh > 0 && vsh != presence, "the VSH library context was not a new context");
     NpWebApiIntInitializeArgs args{1, {}, 0x10000, "internal", sizeof(NpWebApiIntInitializeArgs)};
     Require(intInitialize(nullptr) == InvalidArgument, "null internal arguments were taken");
+    Require(intInitialize(reinterpret_cast<const NpWebApiIntInitializeArgs*>(0x10)) == InvalidArgument, "unreadable internal arguments were taken");
     args.structSize = 0x18;
     Require(intInitialize(&args) == InvalidArgument, "internal arguments of the wrong size were taken");
     args.structSize = sizeof(NpWebApiIntInitializeArgs);
@@ -110,6 +111,8 @@ int main() {
     request = 77;
     Require(intCreateRequest(user + 1, "group", "/v1", 0, nullptr, &setFields, &request) == UserContextNotFound && request == 77, "the user context was not checked before the internal arguments");
     Require(InternalArgumentsThrow(intCreateRequest, user, &setFields, &request) && request == 77, "internal arguments with a field set did not stay unsupported");
+    Require(intCreateRequest(user, "group", "/v1", 0, reinterpret_cast<const NpWebApiContentParameter*>(0x10), nullptr, &request) == InvalidContentParameter && request == 77, "an unreadable content parameter was taken");
+    Require(intCreateRequest(user, "group", "/v1", 0, nullptr, reinterpret_cast<const NpWebApiIntCreateRequestExtraArgs*>(0x10), &request) == InvalidArgument && request == 77, "unreadable internal arguments were taken");
     Require(sceNpWebApiDeleteContext(user) == 0, "the user context could not be deleted");
     Require(registerNotification(user, callback, nullptr) == UserContextNotFound, "a deleted user context was taken");
     Require(sceNpWebApiTerminate(context) == 0, "the library context could not be terminated");

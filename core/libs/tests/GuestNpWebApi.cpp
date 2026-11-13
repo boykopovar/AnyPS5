@@ -199,6 +199,9 @@ void TestRequests() {
     Require(sceNpWebApiCreateRequest(0, "group", "/path", MethodGet, nullptr, &request) == LibContextNotFound, "request of user context 0");
     Require(sceNpWebApiCreateRequest(-1, "group", "/path", MethodGet, nullptr, &request) == LibContextNotFound, "request of user context -1");
     Require(request == 0, "a failed request leaves the id alone");
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPost, reinterpret_cast<const NpWebApiContentParameter*>(0x10), &request) == InvalidContentParameter && request == 0, "an unreadable content parameter was taken");
+    errno = 71;
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, nullptr, reinterpret_cast<std::int64_t*>(0x10)) == InvalidArgument && errno == 71, "a request id was written to an unwritable output");
 
     const NpWebApiContentParameter empty{0, nullptr, {}};
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, &empty, nullptr) == 0, "empty content without a type and no id output");
@@ -561,6 +564,7 @@ void TestMultipartParts() {
     Require(sceNpWebApiAddMultipartPart(multipartRequest, nullptr, &index) == InvalidArgument, "null multipart parameter");
     Require(sceNpWebApiAddMultipartPart(-1, nullptr, &index) == InvalidArgument, "null multipart parameter before lookup");
     Require(index == 0, "failed add part leaves index unmodified");
+    Require(sceNpWebApiAddMultipartPart(multipartRequest, reinterpret_cast<const NpWebApiMultipartPartParameter*>(0x10), &index) == InvalidArgument && index == 0, "an unreadable multipart parameter was taken");
 
     const NpWebApiHttpHeader headers[2] = {{"Header1", "Val1"}, {"Content-Length", "100"}};
     const NpWebApiMultipartPartParameter validParam{headers, 2, 10};
@@ -572,6 +576,8 @@ void TestMultipartParts() {
     Require(sceNpWebApiAddMultipartPart(-1, &nullHeaders, &index) == LibContextNotFound, "null headers before library lookup");
     Require(sceNpWebApiAddMultipartPart(unknownUser, &nullHeaders, &index) == UserContextNotFound, "null headers before user lookup");
     Require(sceNpWebApiAddMultipartPart(multipartRequest + 0x10000, &nullHeaders, &index) == RequestNotFound, "null headers before request lookup");
+    errno = 71;
+    Require(sceNpWebApiAddMultipartPart(multipartRequest, &validParam, reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "a part index was written to an unwritable output");
 
     Require(sceNpWebApiAddMultipartPart(multipartRequest, &validParam, &index) == 0, "add first multipart part");
     Require(index == 1, "first part index is 1");
@@ -661,6 +667,8 @@ void TestUtilityParseNpId() {
     Require(sceNpWebApiUtilityParseNpId(nullptr, &npId) == NpInvalidArgument, "null jsonNpId");
     Require(sceNpWebApiUtilityParseNpId(nullptr, nullptr) == NpInvalidArgument, "null jsonNpId and null npId");
     Require(sceNpWebApiUtilityParseNpId("cGxheWVy", nullptr) == 0, "null npId with valid jsonNpId");
+    errno = 71;
+    Require(sceNpWebApiUtilityParseNpId("cGxheWVy", reinterpret_cast<NpId*>(0x10)) == NpInvalidArgument && errno == 71, "an npId was written to an unwritable output");
 
     std::memset(&npId, 0xCC, sizeof(npId));
     Require(sceNpWebApiUtilityParseNpId("cGxheWVyQHNlZzEvc2VnMi5zZWcz", &npId) == 0, "parse serialized npId");

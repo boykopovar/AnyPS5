@@ -4,6 +4,7 @@
 
 #include "prx/libSceNpWebApi/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
@@ -62,10 +63,11 @@ int APS5_VABI sceNpWebApiUtilityParseNpId(const char* jsonNpId, NpId* npId) {
         }
     }
     if (npId) {
-        std::memset(npId, 0, sizeof(*npId));
-        std::memcpy(npId->handle.data, handle.data(), std::min<std::size_t>(handle.size(), 16));
-        std::memcpy(npId->opt, opt.data(), std::min<std::size_t>(opt.size(), sizeof(npId->opt)));
-        npId->reserved[0] = 0x01;
+        NpId parsed{};
+        std::memcpy(parsed.handle.data, handle.data(), std::min<std::size_t>(handle.size(), 16));
+        std::memcpy(parsed.opt, opt.data(), std::min<std::size_t>(opt.size(), sizeof(parsed.opt)));
+        parsed.reserved[0] = 0x01;
+        if (!GuestCopyOut_nid_no_patch(npId, &parsed, sizeof(parsed))) return SCE_NP_ERROR_INVALID_ARGUMENT;
     }
     return 0;
 }
