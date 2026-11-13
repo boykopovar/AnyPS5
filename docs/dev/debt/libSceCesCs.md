@@ -3,6 +3,7 @@
 ### Functional
 
 - [JISCS conversions](../../../core/libs/prx/libSceCesCs/Export.cpp) safely write output destination pointers using guest copy operations, preserving caller errno across destination write faults.
+- [Profile and context init/setter functions](../../../core/libs/prx/libSceCesCs/Export.cpp) (`sceCesUcsProfileInit*`, `sceCesMbcsUcsContextInit*`, `sceCesIso2022UcsContextInit*`, `sceCes*UcsProfileSetSbcs`, `sceCesGbUcsProfileSet*`) read and write guest profile sheets and context structs via `GuestCopyIn`/`GuestCopyOut` while preserving `errno`, returning `nullptr` / `0x805C0004` / `0x805C0001` on unmapped pointers as a host-safety fallback; console behaviour on non-null unmapped pointers is unmeasured.
 
 ### Silent stubs
 
