@@ -3,6 +3,7 @@
 #include "prx/libSceIdu/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -13,13 +14,13 @@ constexpr int SCE_IDU_ERROR_NOT_INITIALIZED = static_cast<int>(0xFFFFFF9Au);
 
 std::uint32_t ReadWord(const void* source, const char* function) {
     std::uint32_t value = 0;
-    if (!GuestCopyIn_nid_no_patch(&value, source, sizeof(value))) NotImplemented_nid_no_patch(function);
+    if (!GuestCopyIn_nid_no_patch(&value, source, sizeof(value))) throw std::invalid_argument(function);
     return value;
 }
 
 bool IsEmptyString(const char* text, const char* function) {
     char first = 0;
-    if (!GuestCopyIn_nid_no_patch(&first, text, sizeof(first))) NotImplemented_nid_no_patch(function);
+    if (!GuestCopyIn_nid_no_patch(&first, text, sizeof(first))) throw std::invalid_argument(function);
     return first == 0;
 }
 

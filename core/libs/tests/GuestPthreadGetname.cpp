@@ -11,6 +11,7 @@ static constexpr int GUEST_EFAULT = 14;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000e);
 static constexpr int SCE_KERNEL_ERROR_ENAMETOOLONG = static_cast<int>(0x8002003f);
+static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -39,6 +40,37 @@ static void* APS5_VABI ExitNow(void*) {
 static void* APS5_VABI MaximumName(void*) {
     RequireName(pthread_self_nid_postfix(), std::string(31, 'N'));
     return nullptr;
+}
+
+static void CheckUnusableBuffers(Pthread self, Pthread joined) {
+    constexpr std::size_t Page = 0x4000;
+    auto* memory = static_cast<char*>(mmap_nid_postfix(nullptr, 3 * Page, 3, 0x1002, -1, 0));
+    Require(memory != reinterpret_cast<char*>(static_cast<std::uintptr_t>(-1)));
+    char* const end = memory + Page;
+    char* const readOnly = memory + 2 * Page;
+    Require(mprotect_nid_postfix(end, Page, 0) == 0);
+    Require(mprotect_nid_postfix(readOnly, Page, 1) == 0);
+    Require(pthread_rename_np_nid_postfix(self, "kept") == 0);
+    char* const bad[] = {reinterpret_cast<char*>(0x10), end, readOnly, end - 4};
+    for (char* buffer : bad) {
+        Require(pthread_getname_np_nid_postfix(self, buffer) == GUEST_EFAULT);
+        Require(scePthreadGetname(self, buffer) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadGetname(joined, buffer) == SCE_KERNEL_ERROR_EFAULT);
+        Require(pthread_getname_np_nid_postfix(nullptr, buffer) == GUEST_ESRCH);
+        Require(pthread_getname_np_nid_postfix(joined, buffer) == GUEST_ESRCH);
+        Require(scePthreadGetname(reinterpret_cast<Pthread>(0x10), buffer) == SCE_KERNEL_ERROR_ESRCH);
+        Require(scePthreadGetname(nullptr, buffer) == SCE_KERNEL_ERROR_EINVAL);
+    }
+    std::memset(memory, 'Z', Page);
+    char* const exact = end - 5;
+    Require(pthread_getname_np_nid_postfix(self, exact) == 0 && std::memcmp(exact, "kept", 5) == 0);
+    std::memset(memory, 'Z', Page);
+    Require(scePthreadGetname(self, exact) == 0 && std::memcmp(exact, "kept", 5) == 0);
+    Require(exact[-1] == 'Z');
+    Require(scePthreadGetname(self, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(mprotect_nid_postfix(end, Page, 3) == 0);
+    Require(mprotect_nid_postfix(readOnly, Page, 3) == 0);
+    Require(munmap_nid_postfix(memory, 3 * Page) == 0);
 }
 
 int main() {
@@ -86,4 +118,5 @@ int main() {
     const auto untouched = Read(nullptr, GUEST_ESRCH);
     for (unsigned char byte : untouched) Require(byte == 0xAA);
     Require(pthread_getname_np_nid_postfix(self, nullptr) == GUEST_EFAULT);
+    CheckUnusableBuffers(self, joined);
 }
