@@ -687,6 +687,9 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME trace_digest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py)
+        add_test(NAME memory_trace_address COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_memory_trace_address.py)
+        set_tests_properties(memory_trace_address PROPERTIES TIMEOUT 20)
         add_test(NAME symbolize_samples COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_symbolize_samples.py)
         add_test(NAME ab_split COMMAND ${Python3_EXECUTABLE}
