@@ -225,7 +225,7 @@ void ReadUserWordsChangeTheOutput() {
     Require(closeTo(second, 191), "a pixel stage adding user word 2 changed to 0.5 wrote " + std::to_string(second) + ", expected 191 (" + Counts(after) + ", before: " + Counts(before) + ")");
 }
 
-void DirectBufferBaseMovesWithItsPayload() {
+void DirectBufferBaseMovesWithItsPayload(bool verify) {
     Registered(VertexHeader, TriangleVertexCode.data(), sizeof(TriangleVertexCode), 2);
     Registered(DirectBufferPixelHeader, DirectBufferPixelCode.data(), sizeof(DirectBufferPixelCode), 1);
     auto* ring = GuestBlock();
@@ -255,7 +255,12 @@ void DirectBufferBaseMovesWithItsPayload() {
     const auto after = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
     Require(moved > repeated, "a draw whose descriptor base and payload both moved read the old payload: " + std::to_string(repeated) + " then " + std::to_string(moved) + " (" + Counts(after) + ", before: " + Counts(before) + ")");
     Require(after.dataHits == before.dataHits + 1, "a draw whose descriptor base and payload moved was not a data-only hit (" + Counts(after) + ", before: " + Counts(before) + ")");
-    Require(after.dataStagesCompiled - before.dataStagesCompiled >= 1, "a draw whose descriptor base moved reused the pixel stage built for the old base: the rebuild this test documents is gone, flip it to a reuse check (" + Counts(after) + ", before: " + Counts(before) + ")");
+    if (verify) {
+        Require(after.dataStagesCompiled - before.dataStagesCompiled >= 1, "verify mode: a draw whose descriptor base moved did not build its pixel stage for the comparison (" + Counts(after) + ", before: " + Counts(before) + ")");
+    } else {
+        Require(after.dataStagesCompiled == before.dataStagesCompiled, "a draw whose descriptor base moved compiled a stage (" + Counts(after) + ", before: " + Counts(before) + ")");
+        Require(after.dataStagesReused - before.dataStagesReused == 2, "a draw whose descriptor base moved did not reuse both stages (" + Counts(after) + ", before: " + Counts(before) + ")");
+    }
 }
 
 }
@@ -272,7 +277,7 @@ int main() {
         const bool verify = std::getenv("APS5_VERIFY_DRAW_DATA_HITS") != nullptr;
         UnreadUserWordsKeepTheStage(verify);
         ReadUserWordsChangeTheOutput();
-        DirectBufferBaseMovesWithItsPayload();
+        DirectBufferBaseMovesWithItsPayload(verify);
         AgcDriverShutdown_nid_postfix();
         std::cout << "Data-only hits " << (verify ? "verified" : "reused") << " the stages whose read user words did not change\n";
         return 0;

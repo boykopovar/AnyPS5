@@ -259,7 +259,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 phaseMs[DrawRowValidateWait] += waited;
                 counters.validateUs += phaseMs[DrawRowKeyLookupValidate] * 1000;
             }
-        } else if (dataEntry != nullptr && graphics.stages.path == Graphics::ShaderPath::Vertex && dataEntry->stages.size() == programs.size() && dataEntry->decode->programs.size() == programs.size()) {
+        } else if (dataEntry != nullptr && dataEntry->stages.size() == programs.size() && dataEntry->decode->programs.size() == programs.size()) {
             std::uint64_t imagesFlushed = 0, runsSynced = 0;
             const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::DrawCache);
             std::optional<SampledReadScope> sampling;
@@ -271,16 +271,59 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 for (const auto& variant : dataEntry->stages[i]) {
                     if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
                     bool usedEqual = true;
+                    bool movedValues = false;
                     for (std::size_t w = 0; w < now.size() && usedEqual; ++w) {
-                        if (now[w] != was[w] && (w >= 64u || ((variant->userDataMask >> w) & 1u) != 0)) usedEqual = false;
+                        if (now[w] == was[w]) continue;
+                        if (w >= 64u || ((variant->userDataMask >> w) & 1u) == 0u) continue;
+                        if (((variant->valueWords >> w) & 1u) != 0u) {
+                            movedValues = true;
+                            continue;
+                        }
+                        usedEqual = false;
                     }
                     if (!usedEqual) continue;
                     if ((i == 0 && variant->pushOffset != 0) || std::any_of(candidates.begin(), candidates.end(), [&](const auto& candidate) { return candidate.first->pushOffset == variant->pushOffset; })) continue;
+                    std::shared_ptr<DispatchVariant> candidate = variant;
+                    if (movedValues && variant->compiled != nullptr) {
+                        auto relocated = std::make_shared<DispatchVariant>();
+                        relocated->runs = variant->runs;
+                        relocated->words = variant->words;
+                        relocated->forgetSerial = variant->forgetSerial;
+                        relocated->compiled = variant->compiled;
+                        relocated->registeredViews = variant->registeredViews;
+                        relocated->meshIndexDescriptor = variant->meshIndexDescriptor;
+                        relocated->shader = variant->shader;
+                        relocated->dataPositions = variant->dataPositions;
+                        relocated->dataSlots = variant->dataSlots;
+                        relocated->flatBinding = variant->flatBinding;
+                        relocated->pushOffset = variant->pushOffset;
+                        relocated->runBases = variant->runBases;
+                        relocated->relocatableWords = variant->relocatableWords;
+                        relocated->userWordsWalked = variant->userWordsWalked;
+                        relocated->valueWords = variant->valueWords;
+                        relocated->valueSlots = variant->valueSlots;
+                        relocated->calleeWords = variant->calleeWords;
+                        relocated->calleeReads = variant->calleeReads;
+                        relocated->donor = variant->donor != nullptr ? variant->donor : variant;
+                        relocated->userDataMask = variant->userDataMask;
+                        relocated->vertexInfo = variant->vertexInfo;
+                        relocated->shared = variant->shared;
+                        for (const auto& [index, binding, word] : variant->valueSlots) {
+                            if (index < now.size() && now[index] != was[index]) relocated->descriptorPatches.push_back({binding, word, now[index]});
+                        }
+                        const auto& forwarded = variant->compiled->shaderDataUserWords;
+                        for (std::uint32_t slot = 0; slot < forwarded.size(); ++slot) {
+                            const auto index = forwarded[slot];
+                            if (index < now.size() && now[index] != was[index]) relocated->shaderDataPatches.emplace_back(slot, now[index]);
+                        }
+                        applyShaderDataPatches(*relocated);
+                        candidate = std::move(relocated);
+                    }
                     std::vector<ShaderRecompiler::MemoryRegion> regions;
-                    appendEntryRegions(*variant, regions);
-                    auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling);
-                    if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling);
-                    if (result == EntryOutcome::Equal) candidates.emplace_back(variant, std::move(regions));
+                    appendEntryRegions(*candidate, regions);
+                    auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *candidate, regions, imagesFlushed, runsSynced, sampling);
+                    if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *candidate, regions, imagesFlushed, runsSynced, sampling);
+                    if (result == EntryOutcome::Equal) candidates.emplace_back(candidate, std::move(regions));
                 }
             }
         }
