@@ -96,7 +96,6 @@ struct View {
             return _ZN3WTF10StringImpl6createEPKhj(static_cast<const unsigned char*>(input.data) + start, length);
         return _ZN3WTF10StringImpl6createEPKDsj(static_cast<const char16_t*>(input.data) + start, length);
     }
-    String ToStringWithoutCopying() const { return ToString(); }
     std::vector<View> Split(char16_t separator) const {
         std::vector<View> parts;
         unsigned position = 0;
@@ -277,13 +276,11 @@ std::optional<VPCodecConfigurationRecord> ParseVPCodecParameters(View codecView)
     if (configuration.codecName == "vp8" || configuration.codecName == "vp9") {
         if (nextElement == codecSplit.end())
             return configuration;
-        
-        auto codecString = codecView.ToStringWithoutCopying();
+
+        auto codecString = codecView.ToString();
         if (codecString == "vp8.0" || codecString == "vp9.0")
             return configuration;
     }
-
-
 
     if (configuration.codecName != "vp08" && configuration.codecName != "vp09")
         return std::nullopt;
@@ -311,7 +308,6 @@ std::optional<VPCodecConfigurationRecord> ParseVPCodecParameters(View codecView)
     if (!bitDepth || !IsValidBitDepth(*bitDepth))
         return std::nullopt;
     configuration.bitDepth = *bitDepth;
-
 
     if (++nextElement == codecSplit.end())
         return configuration;

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <exception>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -107,8 +108,17 @@ int main() {
             Require(!result && storage[16] == 0);
         }
         Require(!_ZN7WebCore22parseVPCodecParametersEN3WTF10StringViewE({nullptr, 0, true}));
+        for (bool bytes : {true, false}) {
+            bool threw = false;
+            try {
+                _ZN7WebCore22parseVPCodecParametersEN3WTF10StringViewE({nullptr, 1, bytes});
+            } catch (const std::invalid_argument&) {
+                threw = true;
+            }
+            Require(threw);
+        }
         const char16_t nonASCII[] = u"vp09.\u0100.10.8";
-        Require(!_ZN7WebCore22parseVPCodecParametersEN3WTF10StringViewE({nonASCII, 12, false}));
+        Require(!_ZN7WebCore22parseVPCodecParametersEN3WTF10StringViewE({nonASCII, 11, false}));
     } catch (const std::exception& error) {
         std::fprintf(stderr, "VP codec exception: %s\n", error.what());
         return 1;
