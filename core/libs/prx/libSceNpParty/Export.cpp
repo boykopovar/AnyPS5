@@ -1,5 +1,6 @@
 #include "prx/libSceNpParty/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -169,7 +170,10 @@ int APS5_VABI sceNpPartyGetState(std::uint16_t* state) {
     if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (!state) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     const std::uint16_t value = NP_PARTY_STATE_NOT_IN_PARTY;
-    if (!GuestCopyOut_nid_no_patch(state, &value, sizeof(value))) return NP_PARTY_ERROR_INVALID_ARGUMENT;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

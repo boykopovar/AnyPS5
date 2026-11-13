@@ -195,10 +195,13 @@ int main() {
     Require(count == 0);
     Require(sceKernelWaitEqueue(eq, nullptr, 1, &count, &timeout) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelWaitEqueue(eq, &event, 0, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, &event, -1, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelDeleteUserEvent(eq, 7) == SCE_KERNEL_ERROR_ENOENT);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
     Require(sceKernelDeleteEqueue(eq) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelWaitEqueue(0, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelWaitEqueue(1, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelCreateEqueue(nullptr, "errors") == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelCreateEqueue(&eq, nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
@@ -329,6 +332,11 @@ int main() {
     KernelEventFlag ef = nullptr;
     Require(sceKernelCreateEventFlag(nullptr, "test", EVF_ATTR_MULTI, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelCreateEventFlag(&ef, nullptr, EVF_ATTR_MULTI, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    MutexFaultPages eventNamePages;
+    const auto* unreadableEventName = static_cast<const char*>(eventNamePages.Unreadable());
+    KernelEventFlag invalidNameHandle = nullptr;
+    Require(sceKernelCreateEventFlag(&invalidNameHandle, unreadableEventName, EVF_ATTR_SINGLE | EVF_ATTR_MULTI, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL && invalidNameHandle == nullptr);
+    Require(sceKernelCreateEventFlag(&invalidNameHandle, unreadableEventName, EVF_ATTR_MULTI, 0, nullptr) == SCE_KERNEL_ERROR_EFAULT && invalidNameHandle == nullptr);
     Require(sceKernelCreateEventFlag(&ef, "test_zero_attr", 0, 0, nullptr) == SCE_OK);
     Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
     Require(sceKernelCreateEventFlag(&ef, "test_fifo", 0x01, 0, nullptr) == SCE_OK);
@@ -362,6 +370,7 @@ int main() {
     KernelEventFlag opened = nullptr;
     Require(sceKernelOpenEventFlag(nullptr, "test") == SCE_KERNEL_ERROR_ESRCH);
     Require(sceKernelOpenEventFlag(&opened, nullptr) == SCE_KERNEL_ERROR_EFAULT && opened == nullptr);
+    Require(sceKernelOpenEventFlag(&opened, unreadableEventName) == SCE_KERNEL_ERROR_EFAULT && opened == nullptr);
     Require(sceKernelOpenEventFlag(&opened, "") == SCE_KERNEL_ERROR_ESRCH && opened == nullptr);
     Require(sceKernelOpenEventFlag(&opened, "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn") == SCE_KERNEL_ERROR_ENAMETOOLONG && opened == nullptr);
     Require(sceKernelOpenEventFlag(&opened, "SceShellCoreUtilAppFocus") == SCE_KERNEL_ERROR_ESRCH && opened == nullptr);
@@ -475,6 +484,15 @@ int main() {
     KernelUseconds efTimeout = 1000;
     Require(sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_OR, &pattern, &efTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(pattern == 0);
+    for (const std::uint32_t mode : {0x00u, 0x03u, 0x04u, 0x31u}) {
+        pattern = 0xdeadbeef;
+        efTimeout = 1000;
+        Require(sceKernelWaitEventFlag(ef, 1, mode, &pattern, &efTimeout) == SCE_KERNEL_ERROR_EINVAL && pattern == 0xdeadbeef && efTimeout == 1000);
+    }
+    pattern = 0xdeadbeef;
+    efTimeout = 1000;
+    Require(sceKernelWaitEventFlag(ef, 0, EVF_WAITMODE_AND, &pattern, &efTimeout) == SCE_KERNEL_ERROR_EINVAL && pattern == 0xdeadbeef && efTimeout == 1000);
+    pattern = 0;
 
     int waitThreads = -1;
     Require(sceKernelCancelEventFlag(ef, 0x42, &waitThreads) == SCE_OK);

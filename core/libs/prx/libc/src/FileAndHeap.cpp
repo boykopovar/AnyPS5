@@ -717,10 +717,10 @@ FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const 
 }
 
 size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, FileStream* stream) {
-    if (size != 0 && count > std::numeric_limits<std::size_t>::max() / size) { errno = EINVAL; return 0; }
+    if (size == 0 || count == 0) return 0;
+    if (count > std::numeric_limits<std::size_t>::max() / size) { errno = EINVAL; return 0; }
     if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetStreamHandle(stream);
-    if (size == 0 || count == 0) return 0;
     stream->Orientation(-1);
     if (!buffer) throw std::runtime_error("fread: null buffer");
     const auto bytes = size * count;
@@ -745,9 +745,9 @@ size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, File
 }
 
 size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t count, FileStream* stream) {
+    if (size * count == 0) return 0;
     if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetNativeStream(stream);
-    if (size == 0 || count == 0) return 0;
     stream->Orientation(-1);
     if (!buffer) throw std::runtime_error("fwrite: null buffer");
     if (count > std::numeric_limits<std::size_t>::max() / size) throw std::overflow_error("fwrite: buffer size overflow");
@@ -915,6 +915,12 @@ int APS5_VABI fflush_nid_postfix(FileStream* stream) {
     errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
 }
+
+int APS5_VABI malloc_stats_nid_postfix(void* stats) {
+    return ApplicationHeapStats_nid_no_patch(stats);
+}
+
+void* APS5_VABI _sceLibcGetMallocParam_nid_postfix() { return nullptr; }
 
 int APS5_VABI malloc_stats_fast_nid_postfix(void* stats) {
     return ApplicationHeapStatsFast_nid_no_patch(stats);
@@ -1129,43 +1135,6 @@ void* APS5_VABI lsearch_nid_postfix(const void* key, void* base, size_t* count,
     std::memcpy(tail, key, size);
     ++*count;
     return tail;
-}
-
-int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {
-    if (count <= 1) return 0;
-    if (size == 0) {
-        errno = 22;
-        return -1;
-    }
-    if (!compare) throw std::invalid_argument("heapsort: null comparator");
-    if (!base) throw std::invalid_argument("heapsort: null base");
-    if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("heapsort: array size overflow");
-
-    auto* const bytes = static_cast<unsigned char*>(base);
-    const auto siftDown = [bytes, size, compare](size_t root, size_t n) {
-        size_t current = root;
-        while (2 * current + 1 < n) {
-            size_t child = 2 * current + 1;
-            if (child + 1 < n && compare(bytes + (child + 1) * size, bytes + child * size) > 0) {
-                child = child + 1;
-            }
-            if (compare(bytes + child * size, bytes + current * size) <= 0) {
-                break;
-            }
-            SwapElements(bytes + current * size, bytes + child * size, size);
-            current = child;
-        }
-    };
-
-    for (size_t i = count / 2; i > 0; --i) {
-        siftDown(i - 1, count);
-    }
-    for (size_t i = count - 1; i > 0; --i) {
-        SwapElements(bytes, bytes + i * size, size);
-        siftDown(0, i);
-    }
-
-    return 0;
 }
 
 void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
