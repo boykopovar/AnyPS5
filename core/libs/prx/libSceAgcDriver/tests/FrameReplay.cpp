@@ -107,7 +107,7 @@ struct Layout {
     std::uint32_t* label = nullptr;
 };
 
-Layout allocate(std::size_t bytes = BlockBytes) {
+Layout allocate(std::size_t bytes = BlockBytes, std::size_t registrationBytes = 0) {
     auto* const block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
     check(block != nullptr, "cannot allocate guest memory");
     GuestArena::GuestArenaCommit_nid_postfix(block, bytes, 0x04, bytes);
@@ -116,7 +116,9 @@ Layout allocate(std::size_t bytes = BlockBytes) {
 #endif
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true, true);
+        const auto piece = registrationBytes == 0 ? bytes : registrationBytes;
+        check(piece != 0 && bytes % piece == 0, "invalid guest registration size");
+        for (std::size_t offset = 0; offset < bytes; offset += piece) mutation.Add(block + offset, piece, true, true, true);
     }
     Layout layout;
     layout.base = block;
@@ -711,6 +713,41 @@ void testFenceReused(const std::filesystem::path& tool) {
     }(), "the replay did not run both copies behind the fence the title released and re-armed between recorded calls");
 }
 
+void testRegisteredRangeBoundaries(const std::filesystem::path& tool) {
+    const auto layout = allocate(2 * BlockBytes, BlockBytes);
+    auto* const otherTarget = layout.base + BlockBytes + DataBytes;
+    const auto expected = pattern(43);
+    std::memcpy(layout.source, expected.data(), expected.size());
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    copyFrame(layout.firstCommands, layout, otherTarget);
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    auto back = layout;
+    back.source = otherTarget;
+    copyFrame(layout.secondCommands, back, layout.firstTarget);
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    check(equal(layout.firstTarget, expected) && equal(otherTarget, expected), "the driver did not copy across the registered boundary in both directions");
+
+    const auto capture = checkCapture(0);
+    const FrameCaptureReader reader(capture);
+    const auto boundary = at(layout.base + BlockBytes);
+    const auto recorded = [&](std::uint64_t address) {
+        return std::any_of(reader.Chunks().begin(), reader.Chunks().end(), [&](const auto& chunk) {
+            return chunk.kind == FrameMemoryKind::Range && chunk.address == address && chunk.bytes == BlockBytes;
+        });
+    };
+    check(recorded(at(layout.base)) && recorded(boundary), "the capture merged adjacent registered ranges with identical access and protection");
+    const auto dumped = replayed(tool, capture, layout.base, 2 * BlockBytes);
+    check(dumped.size() == 2 * BlockBytes, "the replay dump has the wrong size");
+    check(std::equal(expected.begin(), expected.end(), dumped.begin() + (layout.firstTarget - layout.base)) &&
+              std::equal(expected.begin(), expected.end(), dumped.begin() + (otherTarget - layout.base)),
+          "the replay did not preserve copies across the registered boundary in both directions");
+}
+
 void testQueueBusyPastPacing(const std::filesystem::path& tool) {
     constexpr std::uint32_t ComputeQueue = 0x20;
     constexpr std::size_t CopyBytes = 64u << 20;
@@ -750,9 +787,9 @@ void testQueueBusyPastPacing(const std::filesystem::path& tool) {
 int main(int argc, char** argv) {
     const std::string mode = argc == 3 ? argv[2] : "";
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
-        {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}};
+        {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"allocation_ranges", testRegisteredRangeBoundaries}};
     if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || rewound.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue]\n");
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|allocation_ranges]\n");
         return 2;
     }
     int status = 0;

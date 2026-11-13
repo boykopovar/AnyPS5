@@ -51,7 +51,7 @@ std::string MachODependency(const std::string& name, const std::string& origin) 
     return "@rpath/" + name;
 }
 
-MacOsMachOPatcher::MacOsMachOPatcher(const std::optional<std::uint64_t> fixedBase, std::function<void(std::string_view)> message, const bool traceImports, const bool functionSymbolRoots) : fixedBase(fixedBase), message(std::move(message)), traceImports(traceImports), functionSymbolRoots(functionSymbolRoots) {
+MacOsMachOPatcher::MacOsMachOPatcher(const std::optional<std::uint64_t> fixedBase, std::function<void(std::string_view)> message, const bool traceImports, const bool functionSymbolRoots, std::string identifier) : fixedBase(fixedBase), message(std::move(message)), traceImports(traceImports), functionSymbolRoots(functionSymbolRoots), identifier(std::move(identifier)) {
     if (fixedBase && (*fixedBase < 0x20000 || *fixedBase > 0x7fffffff0000 || (*fixedBase & 0xffff) != 0))
         throw Domain::RelinkerException("Invalid fixed macOS guest image base");
 }
@@ -72,6 +72,7 @@ std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sou
 
     MacOsImageInput input;
     input.Executable = true;
+    input.Identifier = identifier;
     input.FunctionSymbolRoots = functionSymbolRoots;
     input.Source = &sourceElf;
     input.Headers = &originalHeaders;
