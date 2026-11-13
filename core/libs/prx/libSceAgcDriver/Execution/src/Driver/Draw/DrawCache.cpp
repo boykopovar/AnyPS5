@@ -79,6 +79,16 @@ bool Driver::drawCacheIndirect() {
     return indirect;
 }
 
+bool Driver::drawCachePushWord() {
+    static const bool pushWord = std::getenv("APS5_DRAW_CACHE_PUSH_WORD") != nullptr;
+    return pushWord;
+}
+
+bool Driver::verifyDrawPushWord() {
+    static const bool verify = std::getenv("APS5_VERIFY_DRAW_PUSH_WORD") != nullptr;
+    return verify;
+}
+
 void Driver::accountDrawVariant(const DispatchVariant& variant, bool added) {
     if (added) {
         ++drawCacheVariants;

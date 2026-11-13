@@ -19,6 +19,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace AgcDriver {
@@ -52,6 +53,10 @@ struct DeviceQueuePlan {
 };
 
 DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding, bool presents);
+
+enum class PresentationRejection { None, MissingSwapchain, NoSurfaceQueue };
+
+std::string SoftwareFallbackWarning(VkPhysicalDeviceType selectedType, std::string_view selectedName, std::string_view hardwareName, PresentationRejection rejection, bool requested);
 
 class VulkanUnavailable final : public std::runtime_error {
 public:
@@ -372,6 +377,7 @@ public:
         bool firstInstance;
         bool multi;
         bool count;
+        bool indexedPatches;
     };
     IndirectDrawSupport DrawIndirectSupport() const;
     void EnqueueDraw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {});

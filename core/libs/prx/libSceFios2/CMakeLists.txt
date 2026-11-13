@@ -1,4 +1,4 @@
-add_library(libSceFios2 SHARED EXCLUDE_FROM_ALL Export.cpp src/Runtime.cpp src/Control.cpp src/PathQueries.cpp src/PathOperations.cpp src/FileHandles.cpp src/DirectoryHandles.cpp src/Time.cpp)
+add_library(libSceFios2 SHARED EXCLUDE_FROM_ALL Export.cpp src/Runtime.cpp src/Control.cpp src/PathQueries.cpp src/PathOperations.cpp src/FileHandles.cpp src/DirectoryHandles.cpp src/Time.cpp src/Diagnostics.cpp)
 target_include_directories(libSceFios2 PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceFios2)
 
@@ -11,6 +11,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_fios2 PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_fios2 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFios2>")
+    endif()
+
+    add_test_executable(guest_fios2_cache_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestFios2CacheBounds.cpp)
+    target_include_directories(guest_fios2_cache_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_fios2_cache_bounds_tests PRIVATE libSceFios2 libkernel libc)
+    configure_windows_unwind(guest_fios2_cache_bounds_tests)
+    add_test(NAME guest_fios2_cache_bounds COMMAND guest_fios2_cache_bounds_tests)
+    set_tests_properties(guest_fios2_cache_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_fios2_cache_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFios2>")
     endif()
 endif()
