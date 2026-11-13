@@ -26402,10 +26402,6 @@ int APS5_VABI _ZN9Inspector14ConsoleMessage13addToFrontendERNS_25ConsoleFrontend
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector14ConsoleMessage14incrementCountEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector14ConsoleMessage20autogenerateMetadataEPN3JSC14JSGlobalObjectE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -32139,28 +32135,8 @@ int APS5_VABI _ZNK7bmalloc11IsoTLSEntry6extentEv() {
 }
 
 
-int APS5_VABI _ZNK9Inspector14ConsoleMessage12globalObjectEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK9Inspector14ConsoleMessage13argumentCountEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
-
-int APS5_VABI _ZNK9Inspector14ConsoleMessage4typeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK9Inspector14ConsoleMessage5levelEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
-int APS5_VABI _ZNK9Inspector14ConsoleMessage6sourceEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK9Inspector14ConsoleMessage7isEqualEPS0_() {
     NotImplemented_nid_no_patch(__func__);
@@ -32231,14 +32207,6 @@ int APS5_VABI _ZNK9Inspector15RemoteInspector6Client14browserVersionEv() {
 
 
 int APS5_VABI _ZNK9Inspector15RemoteInspector7enabledEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK9Inspector15ScriptArguments10argumentAtEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK9Inspector15ScriptArguments12globalObjectEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
