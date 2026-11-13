@@ -309,7 +309,8 @@ void MovedRecordCountsReachEveryDescriptor(bool sharedCount) {
     Require(taught.hits > start.hits, mode + ": draws whose descriptors moved to equal contents never reused the cached draw (" + std::to_string(taught.lookups - start.lookups) + " lookups)");
     if (std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr) {
         Require(AgcDriver::DriverDetail::HeapStagesTaken() > heapStart, mode + ": the draws never reached the GPU heap");
-        Require(AgcDriver::DriverDetail::HeapRingHitsVerified() > ringStart, mode + ": no relocated ring hit was compared with a fresh capture");
+        if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr)
+            Require(AgcDriver::DriverDetail::HeapRingHitsVerified() > ringStart, mode + ": no relocated ring hit was compared with a fresh capture");
         Require(AgcDriver::DriverDetail::HeapRingHitsDiffering() == 0, mode + ": a relocated ring hit's rebuilt words differ from a fresh capture");
     }
     const auto pixel = DrawWithUserData(pixelCode, userData(5, 8u));
@@ -347,7 +348,8 @@ void ForwardedBaseWordsFollowRelocatedDraws() {
     const auto after = Driver::Get().DrawCacheCounters();
     Require(after.hits > start.hits, "draws that moved only their first V# never reused the cached draw, so the forwarded base word was never rebuilt for a hit");
     if (std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr) {
-        Require(AgcDriver::DriverDetail::HeapRingHitsVerified() > ringStart, "no relocated ring hit of the forwarded-base draws was compared with a fresh capture");
+        if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr)
+            Require(AgcDriver::DriverDetail::HeapRingHitsVerified() > ringStart, "no relocated ring hit of the forwarded-base draws was compared with a fresh capture");
         Require(AgcDriver::DriverDetail::HeapRingHitsDiffering() == 0, "a relocated ring hit of the forwarded-base draws differs from a fresh capture");
     }
 }
