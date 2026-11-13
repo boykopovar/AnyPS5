@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/LogMacros.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
@@ -1781,6 +1782,7 @@ private:
 #endif
 
     static void* Main(void* argument) {
+        Libc::SetHostMxcsr();
         auto& pool = *static_cast<RegistrationPreparePool*>(argument);
         PerformanceTrace::BindThread("shader prepare", TraceThread::DefaultCapacity / 8);
         for (;;) {
@@ -2092,24 +2094,24 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
     {
         std::lock_guard lock(mutex);
         registry = shaders;
-        for (const auto* shader : stages) {
-            const auto fields = GuestShaderFields(shader);
-            const auto address = reinterpret_cast<std::uintptr_t>(const_cast<const void*>(fields.code));
-            require(registry != nullptr && registry->contains(address), "graphics ABI refers to an unregistered shader");
-            const auto selected = RegisteredHeader(*registry, shader);
-            require(selected != nullptr, "graphics ABI refers to a replaced shader header");
-            selectedStages.push_back(selected);
-            const auto& snapshot = *selected;
-            require(snapshot.registeredState != nullptr, "registered shader state is missing");
-            const auto registered = DecodeRegisteredState(snapshot, {});
-            registered.shader.ForEach([&](std::uint32_t offset, std::uint32_t value) { state.shader.insert_or_assign(offset, value); });
-            registered.context.ForEach([&](std::uint32_t offset, std::uint32_t value) { state.context.insert_or_assign(offset, value); });
-            registered.userConfig.ForEach([&](std::uint32_t offset, std::uint32_t value) { state.userConfig.insert_or_assign(offset, value); });
-            if (fields.type != snapshot.type) {
-                const std::size_t count = fields.num_sh_registers;
-                GuestMemory::CheckRange(fields.sh_registers, count * sizeof(ShaderRegister), alignof(ShaderRegister));
-                for (std::size_t index = 0; index < count; ++index) state.shader.insert_or_assign(fields.sh_registers[index].offset, fields.sh_registers[index].value);
-            }
+    }
+    for (const auto* shader : stages) {
+        const auto fields = GuestShaderFields(shader);
+        const auto address = reinterpret_cast<std::uintptr_t>(const_cast<const void*>(fields.code));
+        require(registry != nullptr && registry->contains(address), "graphics ABI refers to an unregistered shader");
+        const auto selected = RegisteredHeader(*registry, shader);
+        require(selected != nullptr, "graphics ABI refers to a replaced shader header");
+        selectedStages.push_back(selected);
+        const auto& snapshot = *selected;
+        require(snapshot.registeredState != nullptr, "registered shader state is missing");
+        const auto registered = DecodeRegisteredState(snapshot, {});
+        registered.shader.ForEach([&](std::uint32_t offset, std::uint32_t value) { state.shader.insert_or_assign(offset, value); });
+        registered.context.ForEach([&](std::uint32_t offset, std::uint32_t value) { state.context.insert_or_assign(offset, value); });
+        registered.userConfig.ForEach([&](std::uint32_t offset, std::uint32_t value) { state.userConfig.insert_or_assign(offset, value); });
+        if (fields.type != snapshot.type) {
+            const std::size_t count = fields.num_sh_registers;
+            GuestMemory::CheckRange(fields.sh_registers, count * sizeof(ShaderRegister), alignof(ShaderRegister));
+            for (std::size_t index = 0; index < count; ++index) state.shader.insert_or_assign(fields.sh_registers[index].offset, fields.sh_registers[index].value);
         }
     }
     for (const auto reg : context) state.context.insert_or_assign(reg.offset, reg.value);
@@ -2241,14 +2243,15 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
         transaction.Commit();
         return;
     }
-    std::shared_ptr<const ShaderSnapshot> snapshot;
+    std::shared_ptr<const ShaderRegistry> registry;
     {
         std::lock_guard lock(mutex);
-        const auto address = reinterpret_cast<std::uintptr_t>(const_cast<const void*>(fields.code));
-        require(shaders != nullptr && shaders->contains(address), "static ABI refers to an unregistered shader");
-        snapshot = RegisteredHeader(*shaders, shader);
-        require(snapshot != nullptr, "static ABI refers to a replaced shader header");
+        registry = shaders;
     }
+    const auto address = reinterpret_cast<std::uintptr_t>(const_cast<const void*>(fields.code));
+    require(registry != nullptr && registry->contains(address), "static ABI refers to an unregistered shader");
+    const auto snapshot = RegisteredHeader(*registry, shader);
+    require(snapshot != nullptr, "static ABI refers to a replaced shader header");
     require(snapshot->registeredState != nullptr, "registered shader state is missing");
     QueueState state{};
     state.shader = snapshot->registeredState->shader.Expand();
@@ -2383,20 +2386,20 @@ void Driver::ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::
     if ((primitiveType != 0 && primitiveType != 7 && primitiveType != 17) || pixel == nullptr) return;
     ShaderPreparationTransaction transaction;
     require(vertex != nullptr && pixel != nullptr, "rectangle ABI requires vertex and fragment shaders");
-    std::shared_ptr<const ShaderSnapshot> front;
-    std::shared_ptr<const ShaderSnapshot> fragment;
+    std::shared_ptr<const ShaderRegistry> registry;
     {
         std::lock_guard lock(mutex);
-        const auto lookup = [&](const Shader* shader) {
-            const auto address = reinterpret_cast<std::uintptr_t>(const_cast<const void*>(GuestShaderFields(shader).code));
-            require(shaders != nullptr && shaders->contains(address), "rectangle ABI refers to an unregistered shader");
-            const auto snapshot = RegisteredHeader(*shaders, shader);
-            require(snapshot != nullptr, "rectangle ABI refers to a replaced shader header");
-            return snapshot;
-        };
-        front = lookup(vertex);
-        fragment = lookup(pixel);
+        registry = shaders;
     }
+    const auto lookup = [&](const Shader* shader) {
+        const auto address = reinterpret_cast<std::uintptr_t>(const_cast<const void*>(GuestShaderFields(shader).code));
+        require(registry != nullptr && registry->contains(address), "rectangle ABI refers to an unregistered shader");
+        const auto snapshot = RegisteredHeader(*registry, shader);
+        require(snapshot != nullptr, "rectangle ABI refers to a replaced shader header");
+        return snapshot;
+    };
+    const auto front = lookup(vertex);
+    const auto fragment = lookup(pixel);
     require(front != fragment, "rectangle stages refer to the same shader");
     const auto localDevice = device.Load();
     require(localDevice != nullptr, "shader registration device is missing");

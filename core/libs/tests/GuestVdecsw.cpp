@@ -1,6 +1,7 @@
 #include "prx/libSceVdecsw/libSceVdecsw.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -132,6 +133,39 @@ void testGenericPictureInfoValidation() {
     check(throws([&] { sceVdecswGetPictureInfo(&output, first.data(), nullptr); }) && first == firstBefore, "generic picture info accepted a foreign frame buffer");
     output.frameBuffer = nullptr;
     check(throws([&] { sceVdecswGetPictureInfo(&output, first.data(), nullptr); }) && first == firstBefore, "generic picture info accepted a null frame buffer");
+}
+
+void testDeliveredPictureInfoValidation() {
+    OutputInfo output{sizeof(OutputInfo)};
+    AvcPictureInfo avc{sizeof(AvcPictureInfo)};
+    HevcPictureInfo hevc{sizeof(HevcPictureInfo)};
+    check(throws([&] { sceVdecswGetAvcPictureInfo(nullptr, &avc, nullptr); }), "AVC picture info accepted a null output descriptor");
+    check(throws([&] { sceVdecswGetAvcPictureInfo(&output, nullptr, nullptr); }), "AVC picture info accepted a null info pointer");
+    check(throws([&] { sceVdecswGetHevcPictureInfo(nullptr, &hevc); }), "HEVC picture info accepted a null output descriptor");
+    check(throws([&] { sceVdecswGetHevcPictureInfo(&output, nullptr); }), "HEVC picture info accepted a null info pointer");
+
+    for (const auto size : {std::size_t{0}, sizeof(std::uint64_t) - 1}) {
+        avc.thisSize = size;
+        check(throws([&] { sceVdecswGetAvcPictureInfo(&output, &avc, nullptr); }), "AVC picture info accepted an undersized info struct");
+        hevc.thisSize = size;
+        check(throws([&] { sceVdecswGetHevcPictureInfo(&output, &hevc); }), "HEVC picture info accepted an undersized info struct");
+    }
+
+    avc.thisSize = sizeof(AvcPictureInfo);
+    hevc.thisSize = sizeof(HevcPictureInfo);
+    output.pictureCount = 0;
+    check(sceVdecswGetAvcPictureInfo(&output, &avc, nullptr) == 0, "empty output AVC picture info failed");
+    check(sceVdecswGetHevcPictureInfo(&output, &hevc) == 0, "empty output HEVC picture info failed");
+
+    output.pictureCount = 2;
+    check(throws([&] { sceVdecswGetAvcPictureInfo(&output, &avc, nullptr); }), "AVC picture info accepted more than one picture");
+    check(throws([&] { sceVdecswGetHevcPictureInfo(&output, &hevc); }), "HEVC picture info accepted more than one picture");
+
+    output.pictureCount = 1;
+    int dummy = 0;
+    output.frameBuffer = &dummy;
+    check(throws([&] { sceVdecswGetAvcPictureInfo(&output, &avc, nullptr); }), "AVC picture info accepted foreign frame buffer");
+    check(throws([&] { sceVdecswGetHevcPictureInfo(&output, &hevc); }), "HEVC picture info accepted foreign frame buffer");
 }
 
 void testGenericPictureInfoLifetime() {
@@ -573,6 +607,7 @@ void testHevcMain10() {
 int main() {
     try {
         testGenericPictureInfoValidation();
+        testDeliveredPictureInfoValidation();
         testGenericPictureInfoLifetime();
         testPictureInfoOfReusedFrameBuffer();
         testDecode();
@@ -585,6 +620,29 @@ int main() {
         testSyncWrappers();
         testVp9PictureInfo();
         testVp9PictureInfoOfAvcPicture();
+        {
+            Session session;
+            errno = 71;
+            check(throws([&] {
+                      std::uint64_t handle = 0;
+                      sceVdecswCreateDecoder(nullptr, reinterpret_cast<const SceVideodec2::DecoderMemoryInfo*>(static_cast<std::uintptr_t>(0x10)), &handle);
+                  }) && errno == 71,
+                  "unreadable memory info must throw without changing errno");
+            errno = 71;
+            check(throws([&] {
+                      sceVdecswSetDecodeInput(session.decoder, reinterpret_cast<const SceVideodec2::InputData*>(static_cast<std::uintptr_t>(0x10)));
+                  }) && errno == 71,
+                  "unreadable decode input must throw without changing errno");
+            const SceVideodec2::InputData badAu{sizeof(SceVideodec2::InputData), reinterpret_cast<const std::uint8_t*>(static_cast<std::uintptr_t>(0x10)), 16, 0, 0, 0};
+            errno = 71;
+            check(throws([&] { sceVdecswSetDecodeInput(session.decoder, &badAu); }) && errno == 71,
+                  "unreadable AU data must throw without changing errno");
+            errno = 71;
+            check(throws([&] {
+                      sceVdecswSetDecodeOutput(session.decoder, reinterpret_cast<const FrameBuffer*>(static_cast<std::uintptr_t>(0x10)));
+                  }) && errno == 71,
+                  "unreadable decode output must throw without changing errno");
+        }
         std::puts("Vdecsw tests passed");
         return 0;
     } catch (const std::exception& error) {
