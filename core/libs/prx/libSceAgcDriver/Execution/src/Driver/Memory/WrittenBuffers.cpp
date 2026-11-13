@@ -165,6 +165,10 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> QueuedDrawReadRanges(const 
         ranges.emplace_back(begin, begin + bytes);
     };
     if (draw.indexed && draw.indexSize != 0 && draw.indexCount != 0) add(draw.indexAddress, static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize);
+    if (draw.indirect) {
+        add(draw.indirect->arguments, std::max<std::uint64_t>(draw.indirect->RangeBytes(), draw.indirect->recordBytes));
+        if (draw.indirect->countIndirect) add(draw.indirect->countAddress, 4);
+    }
     if (stages.empty()) return ranges;
     for (const auto& stage : stages) {
         if (stage.program == nullptr) continue;

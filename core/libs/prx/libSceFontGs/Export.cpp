@@ -3,6 +3,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -778,7 +779,11 @@ int APS5_VABI sceFontGraphicsGnmSurfaceInit(void* surface, const void* config) {
 int APS5_VABI sceFontGraphicsGnmDrawupFillTextureImage(FontGraphicsFrame* graphicsObject, const void* surface, void** output,
                                                      float x, float y, float width, float height) {
     if (output == nullptr) return FontGsInvalidParameter;
-    *output = nullptr;
+    void* zero = nullptr;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(output, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return FontGsInvalidParameter;
     if (graphicsObject == nullptr || surface == nullptr) return FontGsInvalidParameter;
     const auto* const gnm = ReadGnmSurface(surface);
     if (gnm == nullptr || !(x >= 0.0f)) return FontGsInvalidParameter;
@@ -786,9 +791,14 @@ int APS5_VABI sceFontGraphicsGnmDrawupFillTextureImage(FontGraphicsFrame* graphi
     if (!(right >= x) || !(right <= FontGnmDrawupLimit) || !(y >= 0.0f)) return FontGsInvalidParameter;
     const float bottom = y + height;
     if (!(bottom >= y) || !(bottom <= FontGnmDrawupLimit)) return FontGsInvalidParameter;
-    const int error = sceFontGraphicsDrawupFillTextureImageObject(graphicsObject, gnm->fillObject, gnm->mode, output, x, y, width, height);
+    void* record = nullptr;
+    const int error = sceFontGraphicsDrawupFillTextureImageObject(graphicsObject, gnm->fillObject, gnm->mode, &record, x, y, width, height);
     if (error != 0) return error;
-    MarkGnmRecord(*output);
+    MarkGnmRecord(record);
+    const int savedErrno2 = errno;
+    const bool copied2 = GuestCopyOut_nid_no_patch(output, &record, sizeof(record));
+    errno = savedErrno2;
+    if (!copied2) return FontGsInvalidParameter;
     return 0;
 }
 
@@ -796,7 +806,11 @@ int APS5_VABI sceFontGraphicsGnmDrawupFillTexturePattern(FontGraphicsFrame* grap
                                                        std::uint32_t select, std::uint32_t dimension1, std::uint32_t option1,
                                                        std::uint32_t option2, std::uint32_t dimension2, void** output) {
     if (output == nullptr) return FontGsInvalidParameter;
-    *output = nullptr;
+    void* zero = nullptr;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(output, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return FontGsInvalidParameter;
     if (graphicsObject == nullptr || surface == nullptr) return FontGsInvalidParameter;
     const auto* const gnm = ReadGnmSurface(surface);
     if (gnm == nullptr) return FontGsInvalidParameter;

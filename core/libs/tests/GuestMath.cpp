@@ -59,6 +59,21 @@ static void Require(bool value, std::source_location location = std::source_loca
 }
 constexpr int StandardExceptions = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
 
+static void CheckLdexpSpecialValues() {
+    constexpr double infinity = std::numeric_limits<double>::infinity();
+    Require(ldexp_nid_postfix(1., 10) == 1024. && ldexp_nid_postfix(-1.5, 3) == -12. && ldexp_nid_postfix(3., -1) == 1.5);
+    Require(ldexp_nid_postfix(5., 0) == 5.);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(0., 1000)) == 0);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(-0., -1000)) == 0x8000000000000000ull);
+    Require(ldexp_nid_postfix(infinity, -5) == infinity && ldexp_nid_postfix(-infinity, -5) == -infinity);
+    Require(std::isnan(ldexp_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 3)));
+    Require(ldexp_nid_postfix(1., 2000) == infinity && ldexp_nid_postfix(-1., 2000) == -infinity);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(1., -2000)) == 0);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(-1., -2000)) == 0x8000000000000000ull);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(1., -1074)) == 1);
+    Require(ldexp_nid_postfix(0x1p-1074, 1074) == 1.);
+}
+
 static void CheckSquareRoot() {
     Require(sqrt_nid_postfix(4.) == 2. && sqrtf_nid_postfix(6.25f) == 2.5f);
     Require(std::bit_cast<std::uint64_t>(sqrt_nid_postfix(2.)) == 0x3ff6a09e667f3bcdull);
@@ -130,6 +145,16 @@ static void CheckNearbyint() {
     Require(nearbyint_nid_postfix(INFINITY) == INFINITY && nearbyint_nid_postfix(-INFINITY) == -INFINITY);
     Require(std::isnan(nearbyint_nid_postfix(NAN)));
     Require(std::fetestexcept(FE_INEXACT) != 0);
+    for (const double exact : {1.0, -3.0, 0x1p52, 1e300}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(nearbyint_nid_postfix(exact) == exact);
+        Require(std::fetestexcept(FE_INEXACT) == 0);
+    }
+    for (const float exact : {1.0f, -3.0f, 0x1p23f, 3e38f}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(nearbyintf_nid_postfix(exact) == exact);
+        Require(std::fetestexcept(FE_INEXACT) == 0);
+    }
     std::feclearexcept(FE_ALL_EXCEPT);
     std::uint16_t savedControl;
     asm volatile("fnstcw %0" : "=m"(savedControl));
@@ -174,6 +199,14 @@ static void CheckNearbyint() {
     }
     asm volatile("fldcw %0" :: "m"(savedControl));
     _mm_setcsr(savedMxcsr);
+    for (const auto& [input, expected] : {std::pair{0xff800001u, 0xffc00001u}, std::pair{0x7f800001u, 0x7fc00001u}}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint32_t>(nearbyintf_nid_postfix(std::bit_cast<float>(input))) == expected);
+        Require(std::fetestexcept(FE_INVALID) != 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::bit_cast<std::uint32_t>(nearbyintf_nid_postfix(std::bit_cast<float>(0x7fc00000u))) == 0x7fc00000u);
+    Require(std::fetestexcept(FE_INVALID) == 0);
 }
 
 static std::uint16_t X87ControlWord() {
@@ -631,7 +664,7 @@ static void CheckExp2Errno() {
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     double result = exp2_nid_postfix(1024.0);
-    Require(errno == 0);
+    Require(errno == ERANGE);
     Require(std::isinf(result) && result > 0);
     Require(std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
 }
@@ -864,6 +897,25 @@ static void CheckScalbnErrno() {
         Require(std::bit_cast<std::uint32_t>(scalbnf_nid_postfix(1.0f, item.exponent)) == item.expected);
         Require(errno == 1234);
     }
+    constexpr struct {
+        long double value;
+        int exponent;
+        std::uint64_t mantissa;
+        std::uint16_t signExponent;
+    } longDoubles[] = {
+        {1.0L, 16384, 0x8000000000000000ull, 0x7fff},
+        {-1.0L, 20000, 0x8000000000000000ull, 0xffff},
+        {1.0L, -16446, 0, 0},
+        {1.0L, -20000, 0, 0},
+        {0x1p-16445L, -1, 0, 0},
+        {1.0L, -16445, 1, 0},
+        {3.0L, 4, 0xc000000000000000ull, 0x4004},
+    };
+    for (const auto& item : longDoubles) {
+        errno = 1234;
+        Require(ExtendedBits(scalbnl_nid_postfix(item.value, item.exponent), item.mantissa, item.signExponent));
+        Require(errno == 1234);
+    }
 }
 
 static void CheckLongDouble() {
@@ -919,6 +971,36 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     long double value = 0;
     std::memcpy(&value, bytes, sizeof(value));
     return value;
+}
+
+static void CheckExp2ConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0x3ff0000000000000ull, 0}, {0x8000000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x3c8fffffffffffffull, 0x3ff0000000000000ull, 0}, {0x3c90000000000000ull, 0x3ff0000000000000ull, 0},
+        {0xbc90000000000000ull, 0x3ff0000000000000ull, 0}, {0x3ff0000000000000ull, 0x4000000000000000ull, 0},
+        {0xbff0000000000000ull, 0x3fe0000000000000ull, 0}, {0x3fe0000000000000ull, 0x3ff6a09e667f3bcdull, 0},
+        {0x4024000000000000ull, 0x4090000000000000ull, 0}, {0xc024000000000000ull, 0x3f50000000000000ull, 0},
+        {0x408ff80000000000ull, 0x7fe0000000000000ull, 0}, {0x408fffffffffffffull, 0x7feffffffffffd3aull, 0},
+        {0x4090000000000000ull, 0x7ff0000000000000ull, ERANGE}, {0xc08ff00000000000ull, 0x0010000000000000ull, 0},
+        {0xc08ff40000000000ull, 0x000b504f333f9de6ull, 0}, {0xc090c80000000000ull, 0x0000000000000001ull, 0},
+        {0xc090ca0000000000ull, 0x0000000000000001ull, 0}, {0xc090cbffffffffffull, 0x0000000000000001ull, 0},
+        {0xc090cc0000000000ull, 0x0000000000000000ull, ERANGE}, {0x7fefffffffffffffull, 0x7ff0000000000000ull, ERANGE},
+        {0xffefffffffffffffull, 0x0000000000000000ull, ERANGE}, {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0},
+        {0xfff0000000000000ull, 0x0000000000000000ull, 0}, {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0},
+        {0xfff8000000000002ull, 0xfff8000000000002ull, 0}, {0x401c2caf278dc3f3ull, 0x40607dc899331269ull, 0},
+        {0x404ac26689a8dc7aull, 0x4346ec6938394318ull, 0}, {0xbf887a99bea50fb1ull, 0x3fefbc6911ca1674ull, 0},
+        {0x3ff790fb0ae85390ull, 0x400634ce999c9effull, 0}, {0x3fc07bc20a0c887eull, 0x3ff17e6da512eccaull, 0},
+        {0x4033ddceb4331e0aull, 0x412d2ba2089de518ull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(exp2_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
 }
 
 static void CheckLogEdgeFlags() {
@@ -1070,6 +1152,63 @@ static void CheckExpConsoleBits() {
     }
 }
 
+static void CheckErfConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t error;
+        std::uint64_t complement;
+        int complementErrno;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x8000000000000000ull, 0x8000000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x0000000000000001ull, 0x0000000000000001ull, 0x3ff0000000000000ull, 0},
+        {0x007fffffffffffffull, 0x00820dd750429b6cull, 0x3ff0000000000000ull, 0},
+        {0x0080000000000000ull, 0x00820dd750429b6dull, 0x3ff0000000000000ull, 0},
+        {0x3c6fffffffffffffull, 0x3c720dd750429b6cull, 0x3ff0000000000000ull, 0},
+        {0x3c70000000000000ull, 0x3c720dd750429b6dull, 0x3ff0000000000000ull, 0},
+        {0x3e2fffffffffffffull, 0x3e320dd750429b6cull, 0x3feffffffdbe4516ull, 0},
+        {0x3e30000000000000ull, 0x3e320dd750429b6dull, 0x3feffffffdbe4516ull, 0},
+        {0x3fcfffffffffffffull, 0x3fd1af54e232d608ull, 0x3fe728558ee694fcull, 0},
+        {0x3fd0000000000000ull, 0x3fd1af54e232d609ull, 0x3fe728558ee694fcull, 0},
+        {0x3feaffffffffffffull, 0x3fe88d1cd474a2e0ull, 0x3fcdcb8cae2d7480ull, 0},
+        {0x3feb000000000000ull, 0x3fe88d1cd474a2e0ull, 0x3fcdcb8cae2d747eull, 0},
+        {0xbfeb000000000000ull, 0xbfe88d1cd474a2e0ull, 0x3ffc468e6a3a5170ull, 0},
+        {0x3ff0000000000000ull, 0x3feaf767a741088bull, 0x3fc4226162fbddd5ull, 0},
+        {0x3ff3ffffffffffffull, 0x3fed8865d98abe00ull, 0x3fb3bcd133aa0fffull, 0},
+        {0x3ff4000000000000ull, 0x3fed8865d98abe00ull, 0x3fb3bcd133aa0ffcull, 0},
+        {0x4006db6cffffffffull, 0x3fefff9031ef839bull, 0x3f0bf3841f194ad8ull, 0},
+        {0x4006db6d00000000ull, 0x3fefff9031ef839bull, 0x3f0bf3841f194ac3ull, 0},
+        {0x4006db6e00000000ull, 0x3fefff903243cbcdull, 0x3f0bf36f0d0cbb06ull, 0},
+        {0x4017ffffffffffffull, 0x3ff0000000000000ull, 0x3c78cf81557d2101ull, 0},
+        {0x4018000000000000ull, 0x3ff0000000000000ull, 0x3c78cf81557d20b7ull, 0},
+        {0xc018000000000000ull, 0xbff0000000000000ull, 0x4000000000000000ull, 0},
+        {0x4024000000000000ull, 0x3ff0000000000000ull, 0x36a7d8a7f2a8a2d0ull, 0},
+        {0x403bffffffffffffull, 0x3ff0000000000000ull, 0x0000000000000000ull, ERANGE},
+        {0x403c000000000000ull, 0x3ff0000000000000ull, 0x0000000000000000ull, 0},
+        {0xc03c000000000000ull, 0xbff0000000000000ull, 0x4000000000000000ull, 0},
+        {0x7fefffffffffffffull, 0x3ff0000000000000ull, 0x0000000000000000ull, 0},
+        {0x7ff0000000000000ull, 0x3ff0000000000000ull, 0x0000000000000000ull, 0},
+        {0xfff0000000000000ull, 0xbff0000000000000ull, 0x4000000000000000ull, 0},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0x7ff8000000000001ull, 0},
+        {0x400ff61d33b37096ull, 0x3feffffff7632d41ull, 0x3e5139a57ee24a43ull, 0},
+        {0x3ff6c0af626eed43ull, 0x3fee94f29b14a377ull, 0x3fa6b0d64eb5c894ull, 0},
+        {0x400fbae9bd32efceull, 0x3feffffff51582c8ull, 0x3e55d4fa70605759ull, 0},
+        {0x3fa3ce527a209e11ull, 0x3fa65664b6c29cccull, 0x3fee9a99b493d633ull, 0},
+    };
+    for (const auto& item : cases) {
+        const double x = std::bit_cast<double>(item.input);
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(erf_nid_postfix(x)) == item.error && errno == 1234);
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(erfc_nid_postfix(x)) == item.complement);
+        Require(errno == (item.complementErrno != 0 ? item.complementErrno : 1234));
+    }
+    for (const std::uint64_t input : {0x403c000000000000ull, 0x4060000000000000ull, 0x7fefffffffffffffull}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint64_t>(erfc_nid_postfix(std::bit_cast<double>(input))) == 0 && std::fetestexcept(FE_UNDERFLOW) == 0);
+    }
+}
+
 static void CheckLog10EdgeFlags() {
     for (const double input : {-1.0, -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::quiet_NaN()}) {
         errno = 0;
@@ -1195,6 +1334,43 @@ static void CheckNextafterConsoleBits() {
         Require(std::bit_cast<std::uint32_t>(nextafterf_nid_postfix(std::bit_cast<float>(item.x), std::bit_cast<float>(item.y))) == item.expected);
         Require(errno == (item.expectedErrno != 0 ? item.expectedErrno : 1234));
     }
+}
+
+static void CheckLog1pReductionRounding() {
+    const RestoreFloatingPointState saved;
+    const unsigned savedCsr = _mm_getcsr();
+    const struct {
+        std::uint64_t input;
+        std::uint64_t result[4];
+    } cases[] = {
+        {0x3fefffffffffffffull, {0x3fe62e42fefa39efull, 0x3fe62e42fefa39eeull, 0x3fe62e42fefa39f0ull, 0x3fe62e42fefa39eeull}},
+    };
+    const int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    double (APS5_VABI * volatile call)(double) = log1p_nid_postfix;
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13u) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (std::uint16_t sticky : {0u, 5u, 32u}) {
+                for (const auto& item : cases) {
+                    Require(std::fesetenv(FE_DFL_ENV) == 0 && std::fesetround(rounding[mode]) == 0);
+                    Require(fesetexceptflag_nid_postfix(&sticky, 0x3f) == 0);
+                    _mm_setcsr(control | sticky);
+                    GuestFloatingPointEnvironment before;
+                    Require(fegetenv_nid_postfix(&before) == 0 && (before.status & 0x3fu) == sticky);
+                    errno = 1234;
+                    const auto result = std::bit_cast<std::uint64_t>(call(std::bit_cast<double>(item.input)));
+                    const int error = errno;
+                    GuestFloatingPointEnvironment after;
+                    Require(fegetenv_nid_postfix(&after) == 0);
+                    if (result != item.result[mode] || after.mxcsr != (control | sticky | 0x20u) || (after.status & 0x3fu) != sticky || after.control != before.control || error != 1234) {
+                        std::fprintf(stderr, "log1p reduction: input=%016llx mode=%u denorm=%u sticky=%u bits=%016llx csr=%x x87=%x errno=%d\n", static_cast<unsigned long long>(item.input), mode, denorm, sticky, static_cast<unsigned long long>(result), after.mxcsr, after.status, error);
+                        Require(false);
+                    }
+                }
+            }
+        }
+    }
+    _mm_setcsr(savedCsr);
 }
 
 static void CheckLog1pConsoleBits() {
@@ -2036,6 +2212,157 @@ static void CheckAcosl() {
     for (const auto& test : at53Bits) {
         if (!ExtendedBitsAt53Bits(acosl_nid_postfix, test.inputMantissa, test.inputSignExponent, test.outputMantissa, test.outputSignExponent)) {
             std::fprintf(stderr, "Guest acosl at 53 bits failed for %016llx:%04x\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent);
+            std::abort();
+        }
+    }
+}
+
+static void CheckAtanl() {
+    const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
+        {0, 0x0000, 0, 0x0000}, {0, 0x8000, 0, 0x8000},
+        {0x8000000000000000ull, 0x3fde, 0x8000000000000000ull, 0x3fde}, {0x8000000000000000ull, 0x3fdf, 0x8000000000000000ull, 0x3fdf},
+        {0x8000000000000000ull, 0x3ffc, 0xfeadd4d5617b6e33ull, 0x3ffb}, {0xcccccccccccccccdull, 0x3ffb, 0xcc1f1417166261d7ull, 0x3ffb},
+        {0x8000000000000000ull, 0x3ffd, 0xfadbafc96406eb15ull, 0x3ffc}, {0x8000000000000000ull, 0xbffd, 0xfadbafc96406eb15ull, 0xbffc},
+        {0xe000000000000000ull, 0x3ffd, 0xd327761e611fe5b6ull, 0x3ffd}, {0xb000000000000000ull, 0x3ffe, 0x9a2f80e671bdda20ull, 0x3ffe},
+        {0x8000000000000000ull, 0x3ffe, 0xed63382b0dda7b45ull, 0x3ffd}, {0x8000000000000000ull, 0xbffe, 0xed63382b0dda7b45ull, 0xbffd},
+        {0xc000000000000000ull, 0x3ffe, 0xa4bc7d1934f70924ull, 0x3ffe}, {0xe666666666666666ull, 0x3ffe, 0xbb99c540301df2f0ull, 0x3ffe},
+        {0xfd70a3d70a3d70a4ull, 0xbffe, 0xc7c687b990a33ac9ull, 0xbffe}, {0xffffffffffffffffull, 0x3ffe, 0xc90fdaa22168c234ull, 0x3ffe},
+        {0x9800000000000000ull, 0xbfff, 0xdef3876a1cff365dull, 0xbffe}, {0x9c00000000000000ull, 0x4000, 0x973ab94419d2a08cull, 0x3fff},
+        {0x8000000000000000ull, 0xc03f, 0xc90fdaa22168c234ull, 0xbfff}, {0x8000000000000000ull, 0x4040, 0xc90fdaa22168c235ull, 0x3fff},
+        {0x8000000000000000ull, 0x7fff, 0xc90fdaa22168c235ull, 0x3fff}, {0x8000000000000000ull, 0xffff, 0xc90fdaa22168c235ull, 0xbfff},
+        {0xc000000000000000ull, 0x7fff, 0xc000000000000000ull, 0x7fff},
+        {0xcefbbcebcab6d1feull, 0x3ffe, 0xae0f39209d8d55b0ull, 0x3ffe}, {0xcdd3484f06240dc9ull, 0xc000, 0xa2796a67b776da3aull, 0xbfff},
+        {0xaabe336043197207ull, 0x3ffd, 0xa4ce1189200a69d9ull, 0x3ffd}, {0xef160152f75d188cull, 0x3fff, 0x8a24f59a3321c1eeull, 0x3fff},
+    };
+    for (const auto& test : cases) {
+        *__error_nid_postfix() = 12345;
+        const long double result = atanl_nid_postfix(MakeExtended(test.inputMantissa, test.inputSignExponent));
+        if (!ExtendedBits(result, test.outputMantissa, test.outputSignExponent) || *__error_nid_postfix() != 12345) {
+            std::fprintf(stderr, "Guest atanl failed for %016llx:%04x\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent);
+            std::abort();
+        }
+    }
+    *__error_nid_postfix() = 0;
+    const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } at53Bits[] = {
+        {0x8000000000000000ull, 0x3ffd, 0xfadbafc96406e800ull, 0x3ffc}, {0x8000000000000000ull, 0x3ffe, 0xed63382b0dda7800ull, 0x3ffd},
+        {0xc000000000000000ull, 0x3ffe, 0xa4bc7d1934f70800ull, 0x3ffe}, {0xfd70a3d70a3d70a4ull, 0xbffe, 0xc7c687b990a33800ull, 0xbffe},
+        {0x9800000000000000ull, 0xbfff, 0xdef3876a1cff3800ull, 0xbffe}, {0x9c00000000000000ull, 0x4000, 0x973ab94419d2a000ull, 0x3fff},
+        {0x8000000000000000ull, 0x4040, 0xc90fdaa22168c000ull, 0x3fff}, {0x8000000000000000ull, 0xc040, 0xc90fdaa22168c000ull, 0xbfff},
+        {0x8000000000000000ull, 0xffff, 0xc90fdaa22168c000ull, 0xbfff},
+    };
+    for (const auto& test : at53Bits) {
+        if (!ExtendedBitsAt53Bits(atanl_nid_postfix, test.inputMantissa, test.inputSignExponent, test.outputMantissa, test.outputSignExponent)) {
+            std::fprintf(stderr, "Guest atanl at 53 bits failed for %016llx:%04x\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent);
+            std::abort();
+        }
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(ExtendedBitsAt53Bits(atanl_nid_postfix, 0, 0x0000, 0, 0x0000) && std::fetestexcept(FE_INEXACT) == 0);
+}
+
+static bool Atan2lBitsAt53Bits(long double y, long double x, std::uint64_t mantissa, std::uint16_t signExponent) {
+    const std::uint16_t saved = X87ControlWord();
+    const auto control = static_cast<std::uint16_t>((saved & ~0x0300u) | 0x0200u);
+    asm volatile("fldcw %0" : : "m"(control) : "memory");
+    const long double result = atan2l_nid_postfix(y, x);
+    const std::uint16_t after = X87ControlWord();
+    asm volatile("fldcw %0" : : "m"(saved) : "memory");
+    return after == control && ExtendedBits(result, mantissa, signExponent);
+}
+
+static void CheckAtan2l() {
+    const long double infinity = std::numeric_limits<long double>::infinity();
+    const long double nan = std::numeric_limits<long double>::quiet_NaN();
+    const struct { long double y; long double x; std::uint64_t mantissa; std::uint16_t signExponent; } cases[] = {
+        {0.0L, 1.0L, 0, 0x0000}, {-0.0L, 1.0L, 0, 0x8000}, {0.0L, 2.0L, 0, 0x0000}, {-0.0L, 2.0L, 0, 0x8000},
+        {0.0L, 0.0L, 0, 0x0000}, {-0.0L, 0.0L, 0, 0x8000},
+        {0.0L, -2.0L, 0xc90fdaa22168c235ull, 0x4000}, {-0.0L, -2.0L, 0xc90fdaa22168c235ull, 0xc000},
+        {0.0L, -0.0L, 0xc90fdaa22168c235ull, 0x4000}, {-0.0L, -0.0L, 0xc90fdaa22168c235ull, 0xc000},
+        {2.0L, 0.0L, 0xc90fdaa22168c235ull, 0x3fff}, {-2.0L, 0.0L, 0xc90fdaa22168c235ull, 0xbfff},
+        {2.0L, -0.0L, 0xc90fdaa22168c235ull, 0x3fff}, {-2.0L, -0.0L, 0xc90fdaa22168c235ull, 0xbfff},
+        {infinity, 2.0L, 0xc90fdaa22168c235ull, 0x3fff}, {-infinity, 2.0L, 0xc90fdaa22168c235ull, 0xbfff},
+        {infinity, -2.0L, 0xc90fdaa22168c235ull, 0x3fff}, {-infinity, -2.0L, 0xc90fdaa22168c235ull, 0xbfff},
+        {infinity, 1.0L, 0xc90fdaa22168c235ull, 0x3fff}, {-infinity, 1.0L, 0xc90fdaa22168c235ull, 0xbfff},
+        {infinity, infinity, 0xc90fdaa22168c235ull, 0x3ffe}, {-infinity, infinity, 0xc90fdaa22168c235ull, 0xbffe},
+        {infinity, -infinity, 0x96cbe3f9990e91a8ull, 0x4000}, {-infinity, -infinity, 0x96cbe3f9990e91a8ull, 0xc000},
+        {2.0L, infinity, 0, 0x0000}, {-2.0L, infinity, 0, 0x8000},
+        {2.0L, -infinity, 0xc90fdaa22168c235ull, 0x4000}, {-2.0L, -infinity, 0xc90fdaa22168c235ull, 0xc000},
+        {0.0L, infinity, 0, 0x0000}, {-0.0L, infinity, 0, 0x8000},
+        {0.5L, 1.0L, 0xed63382b0dda7b45ull, 0x3ffd}, {-0.5L, 1.0L, 0xed63382b0dda7b45ull, 0xbffd},
+        {1.0L, 2.0L, 0xed63382b0dda7b45ull, 0x3ffd}, {-1.0L, 2.0L, 0xed63382b0dda7b45ull, 0xbffd},
+        {1.0L, -2.0L, 0xab63739cbfad72ccull, 0x4000}, {-1.0L, -2.0L, 0xab63739cbfad72ccull, 0xc000},
+        {3.0L, 4.0L, 0xa4bc7d1934f70924ull, 0x3ffe}, {-3.0L, 4.0L, 0xa4bc7d1934f70924ull, 0xbffe},
+        {3.0L, -4.0L, 0x9fe0bb5bd42affecull, 0x4000}, {-3.0L, -4.0L, 0x9fe0bb5bd42affecull, 0xc000},
+        {1.0L, -10.0L, 0xc2aee20168b5af26ull, 0x4000},
+        {1.0L, 14.0L, 0x9209a5e9b53c23ccull, 0x3ffb}, {1.0L, 18.0L, 0xe35266901da5dbb0ull, 0x3ffa},
+        {-43.0L, 10.0L, 0xabd079e5a0d6b46eull, 0xbfff}, {-42.0L, 8.0L, 0xb0f83635495c46b8ull, 0xbfff},
+        {1.0L, -37.0L, 0xc75526a7bc208db6ull, 0x4000}, {1.0L, -28.0L, 0xc6c6f5b3c45bcf19ull, 0x4000},
+        {-44.0L, -7.0L, 0xdd419eba488e212eull, 0xbfff}, {-44.0L, -6.0L, 0xda68d37fc3e36443ull, 0xbfff},
+        {0x1p67L, 2.0L, 0xc90fdaa22168c235ull, 0x3fff}, {0x1p68L, 2.0L, 0xc90fdaa22168c235ull, 0x3fff},
+        {-0x1p67L, 2.0L, 0xc90fdaa22168c235ull, 0xbfff}, {-0x1p68L, 2.0L, 0xc90fdaa22168c235ull, 0xbfff},
+        {0x1p67L, -2.0L, 0xc90fdaa22168c235ull, 0x3fff}, {0x1p68L, -2.0L, 0xc90fdaa22168c235ull, 0x3fff},
+        {-0x1p67L, -2.0L, 0xc90fdaa22168c235ull, 0xbfff}, {-0x1p68L, -2.0L, 0xc90fdaa22168c235ull, 0xbfff},
+        {1.0L, -0x1p66L, 0xc90fdaa22168c235ull, 0x4000}, {1.0L, -0x1p67L, 0xc90fdaa22168c235ull, 0x4000},
+        {-1.0L, -0x1p66L, 0xc90fdaa22168c235ull, 0xc000}, {-1.0L, -0x1p67L, 0xc90fdaa22168c235ull, 0xc000},
+        {1.0L, 0x1p66L, 0x8000000000000000ull, 0x3fbd}, {1.0L, 0x1p67L, 0x8000000000000000ull, 0x3fbc},
+        {0x1p-16445L, 1.5L, 0x0000000000000001ull, 0x0000}, {0x1p-16445L, -1.5L, 0xc90fdaa22168c235ull, 0x4000},
+        {-0x1p-16445L, 3.0L, 0, 0x8000}, {0x1p-16440L, 3.0L, 0x000000000000000bull, 0x0000},
+        {1.0L, 0x1p-16445L, 0xc90fdaa22168c235ull, 0x3fff}, {1.0L, -0x1p-16445L, 0xc90fdaa22168c235ull, 0x3fff},
+        {0x1p-100L, 2.0L, 0x8000000000000000ull, 0x3f9a}, {-0x1p-100L, 2.0L, 0x8000000000000000ull, 0xbf9a},
+        {1.0L, 0x1p-100L, 0xc90fdaa22168c235ull, 0x3fff}, {-1.0L, 0x1p-100L, 0xc90fdaa22168c235ull, 0xbfff},
+        {1.0L, -0x1p-100L, 0xc90fdaa22168c235ull, 0x3fff}, {-1.0L, -0x1p-100L, 0xc90fdaa22168c235ull, 0xbfff},
+        {0x1p-100L, -1.0L, 0xc90fdaa22168c235ull, 0x4000}, {-0x1p-100L, -1.0L, 0xc90fdaa22168c235ull, 0xc000},
+        {0x1p-100L, 1.0L, 0x8000000000000000ull, 0x3f9b}, {0x1p-100L, 0x1p100L, 0x8000000000000000ull, 0x3f37},
+    };
+    for (const auto& test : cases) {
+        *__error_nid_postfix() = 12345;
+        const long double result = atan2l_nid_postfix(test.y, test.x);
+        if (!ExtendedBits(result, test.mantissa, test.signExponent) || *__error_nid_postfix() != 12345) {
+            std::fprintf(stderr, "Guest atan2l failed for %La, %La\n", test.y, test.x);
+            std::abort();
+        }
+    }
+    Require(Atan2lBitsAt53Bits(3.0L, 4.0L, 0xa4bc7d1934f70800ull, 0x3ffe) && Atan2lBitsAt53Bits(1.0L, -2.0L, 0xab63739cbfad7000ull, 0x4000));
+    Require(Atan2lBitsAt53Bits(-3.0L, -4.0L, 0x9fe0bb5bd42b0000ull, 0xc000) && Atan2lBitsAt53Bits(1.0L, -37.0L, 0xc75526a7bc209000ull, 0x4000));
+    Require(Atan2lBitsAt53Bits(-43.0L, 10.0L, 0xabd079e5a0d6b800ull, 0xbfff) && Atan2lBitsAt53Bits(0x1p67L, -2.0L, 0xc90fdaa22168c800ull, 0x3fff));
+    Require(std::isnan(atan2l_nid_postfix(nan, 1.0L)) && std::isnan(atan2l_nid_postfix(1.0L, nan)));
+    Require(std::isnan(atan2l_nid_postfix(nan, infinity)) && std::isnan(atan2l_nid_postfix(infinity, nan)) && std::isnan(atan2l_nid_postfix(nan, nan)));
+}
+
+static void CheckExp2l() {
+    const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
+        {0, 0x0000, 0x8000000000000000ull, 0x3fff}, {0, 0x8000, 0x8000000000000000ull, 0x3fff},
+        {0x8000000000000000ull, 0x3fbd, 0x8000000000000000ull, 0x3fff}, {0x8000000000000000ull, 0x3fbe, 0x8000000000000000ull, 0x3fff},
+        {0x8000000000000000ull, 0x3ffe, 0xb504f333f9de6484ull, 0x3fff}, {0x8000000000000000ull, 0xbfff, 0x8000000000000000ull, 0x3ffe},
+        {0xa000000000000000ull, 0x4000, 0xb504f333f9de6484ull, 0x4001}, {0xc90fdaa22168c235ull, 0x4000, 0x8d331bf3337c1a6eull, 0x4002},
+        {0x8000000000000000ull, 0x400c, 0x8000000000000000ull, 0x5fff}, {0xfffe000000000000ull, 0x400c, 0xb504f333f9de6484ull, 0x7ffe},
+        {0x8000000000000000ull, 0x400d, 0x8000000000000000ull, 0x7fff}, {0x8000000000000000ull, 0xc00c, 0x8000000000000000ull, 0x1fff},
+        {0xfff8000000000000ull, 0xc00c, 0x8000000000000000ull, 0x0001}, {0x8000000000000000ull, 0xc00d, 0x2000000000000000ull, 0x0000},
+        {0x807b000000000000ull, 0xc00d, 0x0000000000000001ull, 0x0000}, {0x807c000000000000ull, 0xc00d, 0, 0x0000},
+        {0x807e000000000000ull, 0xc00d, 0, 0x0000}, {0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, 0x7fff},
+        {0x8000000000000000ull, 0xffff, 0, 0x0000}, {0xc000000000000000ull, 0x7fff, 0xc000000000000000ull, 0x7fff},
+        {0xc11f6531eb66d9a7ull, 0xbffd, 0xc51a6af3304157efull, 0x3ffe}, {0xf30567547a34c162ull, 0x3ffe, 0xf728f2c7a229ee69ull, 0x3fff},
+        {0x9e0edcc1206967ceull, 0x4001, 0xf57475578cb79c00ull, 0x4003}, {0xa42a5f87d0a7deddull, 0x3ffd, 0x9fdb53724de13c8full, 0x3fff},
+    };
+    for (const auto& test : cases) {
+        *__error_nid_postfix() = 12345;
+        const long double result = exp2l_nid_postfix(MakeExtended(test.inputMantissa, test.inputSignExponent));
+        if (!ExtendedBits(result, test.outputMantissa, test.outputSignExponent) || *__error_nid_postfix() != 12345) {
+            std::fprintf(stderr, "Guest exp2l failed for %016llx:%04x\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent);
+            std::abort();
+        }
+    }
+    *__error_nid_postfix() = 0;
+    const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } at53Bits[] = {
+        {0xc000000000000000ull, 0x3ffe, 0xd744ea8956fc0000ull, 0x3fff}, {0x8000000000000000ull, 0x3ffe, 0xb504f2289304d000ull, 0x3fff},
+        {0xc90fdaa22168c235ull, 0x4000, 0x8c3344cf06c56800ull, 0x4002}, {0xc11f6531eb66d9a7ull, 0xbffd, 0xc51a6b38147d1000ull, 0x3ffe},
+        {0xf30567547a34c162ull, 0x3ffe, 0xf72892019972a000ull, 0x3fff}, {0x9e0edcc1206967ceull, 0x4001, 0xe6d5b29a7f6f4800ull, 0x4003},
+        {0xa42a5f87d0a7deddull, 0x3ffd, 0x9fdb536691df9800ull, 0x3fff}, {0xfffe000000000000ull, 0x400c, 0xb504f51e61c60000ull, 0x7ffe},
+        {0xfff8000000000000ull, 0xc00c, 0x7fecbd8f80fea800ull, 0x0000},
+    };
+    for (const auto& test : at53Bits) {
+        if (!ExtendedBitsAt53Bits(exp2l_nid_postfix, test.inputMantissa, test.inputSignExponent, test.outputMantissa, test.outputSignExponent)) {
+            std::fprintf(stderr, "Guest exp2l at 53 bits failed for %016llx:%04x\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent);
             std::abort();
         }
     }
@@ -3049,6 +3376,126 @@ static void CheckAcosfMsun() {
     Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(std::bit_cast<float>(0x32800000u))) == 0x3fc90fdbu);
 }
 
+struct ExtendedBitCase {
+    std::uint64_t inputMantissa;
+    std::uint16_t inputSignExponent;
+    std::uint64_t outputMantissa;
+    std::uint16_t outputSignExponent;
+};
+
+template <std::size_t Count>
+static void RequireExtendedBitCases(const char* name, long double(APS5_VABI* function)(long double), const ExtendedBitCase (&cases)[Count]) {
+    for (const ExtendedBitCase& test : cases) {
+        const long double input = MakeExtended(test.inputMantissa, test.inputSignExponent);
+        if (!ExtendedBits(function(input), test.outputMantissa, test.outputSignExponent)) {
+            std::fprintf(stderr, "Guest %s failed for %La\n", name, input);
+            std::abort();
+        }
+    }
+}
+
+static bool RaisesOnly(long double (APS5_VABI* function)(long double), long double input, int flag, std::uint64_t mantissa, std::uint16_t signExponent) {
+    std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 0;
+    const long double result = function(input);
+    return ExtendedBits(result, mantissa, signExponent) && std::fetestexcept(flag) != 0 && *__error_nid_postfix() == 0;
+}
+
+static void CheckLongDoubleExponentialHyperbolic() {
+    const long double infinity = std::numeric_limits<long double>::infinity();
+    const long double nan = std::numeric_limits<long double>::quiet_NaN();
+    constexpr std::uint64_t one = 0x8000000000000000ull;
+    Require(ExtendedBits(expl_nid_postfix(-infinity), 0, 0));
+    Require(ExtendedBits(expl_nid_postfix(infinity), one, 0x7fff));
+    Require(std::isnan(expl_nid_postfix(nan)) && std::isnan(expl_nid_postfix(-nan)));
+    Require(ExtendedBits(expl_nid_postfix(0.0L), one, 0x3fff) && ExtendedBits(expl_nid_postfix(-0.0L), one, 0x3fff));
+    Require(ExtendedBits(expl_nid_postfix(MakeExtended(one, 0x3fb4)), one, 0x3fff));
+    Require(ExtendedBits(expl_nid_postfix(MakeExtended(one, 0x3fb3)), one, 0x3fff));
+    Require(ExtendedBits(expl_nid_postfix(MakeExtended(0xb17217f7d1cf79abull, 0x400c)), 0xffffffffffffcd87ull, 0x7ffe));
+    Require(ExtendedBits(expl_nid_postfix(MakeExtended(0xb21dfe7f09e2baa9ull, 0xc00c)), 1, 0));
+    Require(RaisesOnly(expl_nid_postfix, MakeExtended(0xb17217f7d1cf79acull, 0x400c), FE_OVERFLOW, one, 0x7fff));
+    Require(RaisesOnly(expl_nid_postfix, MakeExtended(0xb21dfe7f09e2baaaull, 0xc00c), FE_UNDERFLOW, 0, 0));
+    Require(RaisesOnly(expl_nid_postfix, 20000.0L, FE_OVERFLOW, one, 0x7fff));
+    Require(RaisesOnly(expl_nid_postfix, -20000.0L, FE_UNDERFLOW, 0, 0));
+    Require(ExtendedBits(sinhl_nid_postfix(0.0L), 0, 0) && ExtendedBits(sinhl_nid_postfix(-0.0L), 0, 0x8000));
+    Require(ExtendedBits(sinhl_nid_postfix(infinity), one, 0x7fff) && ExtendedBits(sinhl_nid_postfix(-infinity), one, 0xffff));
+    Require(std::isnan(sinhl_nid_postfix(nan)));
+    Require(ExtendedBits(sinhl_nid_postfix(MakeExtended(one, 0x3fb0)), one, 0x3fb0));
+    Require(ExtendedBits(sinhl_nid_postfix(MakeExtended(one, 0xbfb0)), one, 0xbfb0));
+    Require(RaisesOnly(sinhl_nid_postfix, 12000.0L, FE_OVERFLOW, one, 0x7fff));
+    Require(RaisesOnly(sinhl_nid_postfix, -12000.0L, FE_OVERFLOW, one, 0xffff));
+    Require(ExtendedBits(coshl_nid_postfix(infinity), one, 0x7fff) && ExtendedBits(coshl_nid_postfix(-infinity), one, 0x7fff));
+    Require(std::isnan(coshl_nid_postfix(nan)));
+    Require(ExtendedBits(coshl_nid_postfix(0.0L), one, 0x3fff) && ExtendedBits(coshl_nid_postfix(-0.0L), one, 0x3fff));
+    Require(RaisesOnly(coshl_nid_postfix, 12000.0L, FE_OVERFLOW, one, 0x7fff));
+    Require(RaisesOnly(coshl_nid_postfix, -12000.0L, FE_OVERFLOW, one, 0x7fff));
+    Require(ExtendedBits(tanhl_nid_postfix(infinity), one, 0x3fff) && ExtendedBits(tanhl_nid_postfix(-infinity), one, 0xbfff));
+    Require(std::isnan(tanhl_nid_postfix(nan)));
+    Require(ExtendedBits(tanhl_nid_postfix(0.0L), 0, 0) && ExtendedBits(tanhl_nid_postfix(-0.0L), 0, 0x8000));
+    Require(RaisesOnly(tanhl_nid_postfix, 100.0L, FE_INEXACT, one, 0x3fff));
+    Require(RaisesOnly(tanhl_nid_postfix, -100.0L, FE_INEXACT, one, 0xbfff));
+    Require(ExtendedBits(tanhl_nid_postfix(MakeExtended(one, 0x3fb0)), one, 0x3fb0));
+    Require(ExtendedBits(tanhl_nid_postfix(MakeExtended(one, 0xbfb0)), one, 0xbfb0));
+    const ExtendedBitCase explCases[] = {
+        {0x8000000000000000ull, 0x3fff, 0xadf85458a2bb4a9bull, 0x4000}, {0x8000000000000000ull, 0xbfff, 0xbc5ab1b16779be35ull, 0x3ffd},
+        {0x8000000000000000ull, 0x3ffe, 0xd3094c70f034de4cull, 0x3fff}, {0x998ee0327ad43a68ull, 0x4003, 0xced063cb23a929e1ull, 0x401a},
+        {0xa200000000000000ull, 0xc003, 0xdc9ef0f13e51d696ull, 0x3fe1}, {0xaf08000000000000ull, 0x4008, 0x861276c1dc729571ull, 0x43f1},
+        {0xb172000000000000ull, 0x400c, 0xfa13dba329dd768dull, 0x7ffe}, {0xb172147ae147ae14ull, 0x400c, 0xff212516b14a9f13ull, 0x7ffe},
+        {0xb21d99999999999aull, 0xc00c, 0x0000000000000001ull, 0x0000}, {0xb21df5c28f5c28f6ull, 0xc00c, 0x0000000000000001ull, 0x0000},
+        {0xf000000000000000ull, 0x4000, 0xaa159685133737a3ull, 0x4004}, {0xba60000000000000ull, 0xc008, 0xb165ec0dd639d81eull, 0x3bcb},
+        {0x9c42666666666666ull, 0x400b, 0xf02fd10a51380d76ull, 0x5c2c}, {0x9c4599999999999aull, 0xc00b, 0xb6e653cda16c6d83ull, 0x23d0},
+        {0x8000000000000000ull, 0x3fb3, 0x8000000000000000ull, 0x3fff}, {0x8000000000000000ull, 0x3fb2, 0x8000000000000000ull, 0x3fff},
+        {0x8533333333333333ull, 0x4004, 0x83c200fad1f6abd4ull, 0x402f}, {0x999999999999999aull, 0xbffd, 0xbda6434e1be02747ull, 0x3ffe},
+        {0xffff333333333333ull, 0x400b, 0xaa7c4b7c7b118b5full, 0x6e29}, {0x8000666666666666ull, 0xc00c, 0x9d5d02d926da8e6aull, 0x11d4},
+        {0xabe2cccccccccccdull, 0x400c, 0xc9990b7517c873feull, 0x7dfd},
+    };
+    const ExtendedBitCase sinhlCases[] = {
+        {0x8000000000000000ull, 0x3ffe, 0x8566807f31dcb652ull, 0x3ffe}, {0x8000000000000000ull, 0xbffe, 0x8566807f31dcb652ull, 0xbffe},
+        {0x8000000000000000ull, 0x3fff, 0x966cfe2275cc12d4ull, 0x3fff}, {0xa000000000000000ull, 0x4000, 0xc19b466d85b696a0ull, 0x4001},
+        {0xa000000000000000ull, 0x4003, 0xe758445b47401fcaull, 0x401a}, {0xff9999999999999aull, 0xc004, 0x91d64684b01d4611ull, 0xc05a},
+        {0x8000000000000000ull, 0x4005, 0xa12cc167acbe6903ull, 0x405a}, {0xc880000000000000ull, 0x4005, 0xc61cdc89a5d620abull, 0x408e},
+        {0xb172000000000000ull, 0x400c, 0xfa13dba329dd768dull, 0x7ffd}, {0xb174000000000000ull, 0x400c, 0xce2773666cc8cc68ull, 0x7ffe},
+        {0xb174cccccccccccdull, 0x400c, 0xfbcc14c61aab4f91ull, 0x7ffe}, {0xa2425ff75e14fc32ull, 0x3f9b, 0xa2425ff75e14fc32ull, 0x3f9b},
+        {0x8000000000000000ull, 0x3fd7, 0x8000000000000000ull, 0x3fd7}, {0x83126e978d4fdf3bull, 0x3ff5, 0x831270060e4f15eaull, 0x3ff5},
+        {0xc000000000000000ull, 0x3ffe, 0xd283596e9e347f2full, 0x3ffe}, {0xe99999999999999aull, 0xc001, 0xb909937906bafce5ull, 0xc008},
+        {0xa000000000000000ull, 0x4004, 0xd11069cbcb97545aull, 0x4037}, {0xc800000000000000ull, 0x4002, 0x8306292b260271efull, 0x4010},
+        {0x8000000000000000ull, 0x3fde, 0x8000000000000000ull, 0x3fde}, {0x8000000000000000ull, 0x3fdd, 0x8000000000000000ull, 0x3fdd},
+    };
+    const ExtendedBitCase coshlCases[] = {
+        {0x8000000000000000ull, 0x3ffe, 0x90560c3157468323ull, 0x3fff}, {0x8000000000000000ull, 0xbffe, 0x90560c3157468323ull, 0x3fff},
+        {0x8000000000000000ull, 0x3fff, 0xc583aa8ecfaa8261ull, 0x3fff}, {0xa000000000000000ull, 0x4000, 0xc43bb72598551b35ull, 0x4001},
+        {0xa000000000000000ull, 0x4003, 0xe758445b47402058ull, 0x401a}, {0xff9999999999999aull, 0xc004, 0x91d64684b01d4611ull, 0x405a},
+        {0xa2425ff75e14fc32ull, 0x3f9b, 0x8000000000000000ull, 0x3fff}, {0x8000000000000000ull, 0x3fd7, 0x8000000000000000ull, 0x3fff},
+        {0x83126e978d4fdf3bull, 0x3ff5, 0x80000431bdee0aafull, 0x3fff}, {0xc000000000000000ull, 0x3ffe, 0xa5b82e8f2eb53c3dull, 0x3fff},
+        {0xe99999999999999aull, 0xc001, 0xb9099e8a70f7929aull, 0x4008}, {0xc800000000000000ull, 0x4002, 0x8306292b35a3e88full, 0x4010},
+        {0x8000000000000000ull, 0x3fde, 0x8000000000000000ull, 0x3fff}, {0x8000000000000000ull, 0x3fdd, 0x8000000000000000ull, 0x3fff},
+        {0x0000000000000000ull, 0x0000, 0x8000000000000000ull, 0x3fff}, {0x8000000000000000ull, 0xc000, 0xf0c7d06f96cde14aull, 0x4000},
+    };
+    const ExtendedBitCase tanhlCases[] = {
+        {0x83126e978d4fdf3bull, 0x3ff5, 0x83126bba8b670fe3ull, 0x3ff5}, {0xcccccccccccccccdull, 0x3ffc, 0xca1cc1859d2c7ec0ull, 0x3ffc},
+        {0xf5c28f5c28f5c28full, 0x3ffc, 0xf125cc3a759cc292ull, 0x3ffc}, {0x851eb851eb851eb8ull, 0x3ffd, 0x823306284c6aa0c6ull, 0x3ffd},
+        {0x8000000000000000ull, 0x3ffe, 0xec9a9ebab4579b29ull, 0x3ffd}, {0xa000000000000000ull, 0x3fff, 0xd9291ddb596f713bull, 0x3ffe},
+        {0xbeb851eb851eb852ull, 0x3fff, 0xe7404a52f6b0b074ull, 0x3ffe}, {0xc000000000000000ull, 0x3fff, 0xe7b7cbc36fabbb07ull, 0x3ffe},
+        {0xc000000000000000ull, 0x4000, 0xfebbe888d057ff10ull, 0x3ffe}, {0xf000000000000000ull, 0xc001, 0xfffff5bc51e399caull, 0xbffe},
+        {0x9f9999999999999aull, 0x4004, 0x8000000000000000ull, 0x3fff}, {0xa000000000000000ull, 0x4004, 0x8000000000000000ull, 0x3fff},
+        {0xc800000000000000ull, 0x4005, 0x8000000000000000ull, 0x3fff}, {0x8000000000000000ull, 0x3fb9, 0x8000000000000000ull, 0x3fb9},
+        {0xc4cccccccccccccdull, 0x4002, 0xffffffffd270971bull, 0x3ffe}, {0xe666666666666666ull, 0xbffe, 0xb75f4c16b302e4b0ull, 0xbffe},
+        {0x8ccccccccccccccdull, 0x4000, 0xf9ca4d40c82167e1ull, 0x3ffe}, {0xbd70a3d70a3d70a4ull, 0x3ffd, 0xb53e66d849b3833eull, 0x3ffd},
+        {0xa3d70a3d70a3d70aull, 0x3ffe, 0x909d41d0ffe32b0full, 0x3ffe}, {0xae147ae147ae147bull, 0x3ffe, 0x976dd0aa544fda8full, 0x3ffe},
+        {0xbae147ae147ae148ull, 0x3ffe, 0x9f8135f3af2114fdull, 0x3ffe}, {0xc51eb851eb851eb8ull, 0x3ffe, 0xa59d2b207775bb77ull, 0x3ffe},
+        {0xd1eb851eb851eb85ull, 0x3ffe, 0xacd1611af2569ac9ull, 0x3ffe}, {0xdeb851eb851eb852ull, 0x3ffe, 0xb38d414aa3f61a37ull, 0x3ffe},
+        {0xf0a3d70a3d70a3d7ull, 0x3ffe, 0xbc37868b90aa5375ull, 0x3ffe},
+    };
+    RequireExtendedBitCases("expl", expl_nid_postfix, explCases);
+    RequireExtendedBitCases("sinhl", sinhl_nid_postfix, sinhlCases);
+    RequireExtendedBitCases("coshl", coshl_nid_postfix, coshlCases);
+    RequireExtendedBitCases("tanhl", tanhl_nid_postfix, tanhlCases);
+    Require(ExtendedBitsAt53Bits(expl_nid_postfix, 0x998ee0327ad43a68ull, 0x4003, 0xb4fde6272f734000ull, 0x401d));
+    Require(ExtendedBitsAt53Bits(sinhl_nid_postfix, 0xa000000000000000ull, 0x4000, 0xbed27f7337a23800ull, 0x4001));
+    Require(ExtendedBitsAt53Bits(coshl_nid_postfix, 0x8000000000000000ull, 0x3ffc, 0x81005560b6db7800ull, 0x3fff));
+    Require(ExtendedBitsAt53Bits(tanhl_nid_postfix, 0xbd70a3d70a3d70a4ull, 0x3ffd, 0xb53dad0a7672c000ull, 0x3ffd));
+}
+
 static void CheckLongDoubleHyperbolic() {
     const long double infinity = std::numeric_limits<long double>::infinity();
     const long double nan = std::numeric_limits<long double>::quiet_NaN();
@@ -3110,6 +3557,20 @@ static void CheckLongDoubleFunctions() {
     const float positiveGammaUnderflow = tgammaf_nid_postfix(-4261.2f);
     Require(negativeGammaUnderflow == 0.0f && std::signbit(negativeGammaUnderflow));
     Require(positiveGammaUnderflow == 0.0f && !std::signbit(positiveGammaUnderflow));
+    for (const float x : {171.63002f, 200.0f, 3.0e38f}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isinf(tgammaf_nid_postfix(x)) && std::fetestexcept(FE_DIVBYZERO) != 0 && std::fetestexcept(FE_OVERFLOW) == 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::isinf(tgammaf_nid_postfix(171.62999f)) && std::fetestexcept(FE_OVERFLOW) != 0 && std::fetestexcept(FE_DIVBYZERO) == 0);
+    for (const float x : {-190.00002f, -191.5f, -4261.2f}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(tgammaf_nid_postfix(x) == 0.0f && std::fetestexcept(FE_UNDERFLOW) == 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(tgammaf_nid_postfix(-189.5f) == 0.0f && std::fetestexcept(FE_UNDERFLOW) != 0);
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::isnan(tgammaf_nid_postfix(std::numeric_limits<float>::quiet_NaN())) && std::fetestexcept(FE_INVALID) == 0);
     for (const float x : {0.0f, -0.0f, -INFINITY, INFINITY, 40.0f, 1.0e5f, 3.0e38f, -4261.2f, 0.5f}) {
         errno = 7;
         static_cast<void>(tgammaf_nid_postfix(x));
@@ -3133,6 +3594,81 @@ static void CheckLongDoubleFunctions() {
 
     Require(j0f_nid_postfix(0.0f) == 1.0f && j1f_nid_postfix(0.0f) == 0.0f && jnf_nid_postfix(2, 0.0f) == 0.0f);
     Require(std::fabs(j0f_nid_postfix(2.5f) - static_cast<float>(-0.048383776468198)) < 1e-6f);
+    const struct { std::uint32_t input; std::uint32_t output; } j0fCases[] = {
+        {0x3f800001u, 0x3f43e3fdu},
+        {0x3f800005u, 0x3f43e3f9u},
+        {0x3f800009u, 0x3f43e3f6u},
+        {0x00000000u, 0x3f800000u},
+        {0x00000001u, 0x3f800000u},
+        {0x00000002u, 0x3f800000u},
+        {0x31ffffffu, 0x3f800000u},
+        {0x32000000u, 0x3f800000u},
+        {0x32000001u, 0x3f800000u},
+        {0x38ffffffu, 0x3f800000u},
+        {0x39000000u, 0x3f800000u},
+        {0x39000001u, 0x3f800000u},
+        {0x3f7fffffu, 0x3f43e3ffu},
+        {0x3f800000u, 0x3f43e3ffu},
+        {0x3fffffffu, 0x3e6543a4u},
+        {0x40000000u, 0x3e6543a2u},
+        {0x40000001u, 0x3e654397u},
+        {0x4036db67u, 0xbe54e37eu},
+        {0x4036db68u, 0xbe54e383u},
+        {0x4036db69u, 0xbe54e38bu},
+        {0x4036d916u, 0xbe54d506u},
+        {0x4036d917u, 0xbe54d50eu},
+        {0x4036d918u, 0xbe54d513u},
+        {0x409173eau, 0xbe9e9b6au},
+        {0x409173ebu, 0xbe9e9b65u},
+        {0x409173ecu, 0xbe9e9b62u},
+        {0x40f71c57u, 0x3e6c031eu},
+        {0x40f71c58u, 0x3e6c0317u},
+        {0x40f71c59u, 0x3e6c0311u},
+        {0x40ffffffu, 0x3e2fc543u},
+        {0x41000000u, 0x3e2fc53cu},
+        {0x41000001u, 0x3e2fc52du},
+        {0x4cffffffu, 0xb88ca7e7u},
+        {0x4d000000u, 0xb6bff8d0u},
+        {0x4d000001u, 0xb76f96d3u},
+        {0x57ffffffu, 0x322f6f80u},
+        {0x58000000u, 0x32f9dd24u},
+        {0x58000001u, 0xb2a5adf1u},
+        {0x5f7fffffu, 0x2e89caf5u},
+        {0x5f800000u, 0xaf0cfbe2u},
+        {0x5f800001u, 0xaf4c2fceu},
+        {0x7effffffu, 0x9f0d3ccfu},
+        {0x7f000000u, 0x1f8f85b0u},
+        {0x7f000001u, 0x9e732ee7u},
+        {0x7f7ffffeu, 0x9f4b77acu},
+        {0x7f7fffffu, 0x1e3f4fecu},
+        {0x7f800000u, 0x00000000u},
+        {0x3f80000du, 0x3f43e3f2u},
+        {0x3f800011u, 0x3f43e3efu},
+        {0x3f800015u, 0x3f43e3ebu},
+        {0x3f800019u, 0x3f43e3e8u},
+        {0x3f80001du, 0x3f43e3e4u},
+        {0x3f800021u, 0x3f43e3e1u},
+        {0x3f800025u, 0x3f43e3ddu},
+        {0x3f800029u, 0x3f43e3dau},
+        {0x3f80002du, 0x3f43e3d6u},
+        {0x7fc00123u, 0x7fc00123u},
+        {0x7f800123u, 0x7fc00123u},
+    };
+    bool j0fPassed = true;
+    for (const auto& test : j0fCases) {
+        for (const std::uint32_t sign : {0u, 0x80000000u}) {
+            const auto input = test.input | sign;
+            const auto expected = test.output | (test.input > 0x7f800000u ? sign : 0u);
+            errno = 12345;
+            *__error_nid_postfix() = 12345;
+            const auto result = std::bit_cast<std::uint32_t>(j0f_nid_postfix(std::bit_cast<float>(input)));
+            if (result != expected || errno != 12345 || *__error_nid_postfix() != 12345) {
+                std::fprintf(stderr, "Guest j0f failed for %08x: %08x expected %08x\n", input, result, expected);
+                j0fPassed = false;
+            }
+        }
+    }
+    Require(j0fPassed);
     Require(std::fabs(jnf_nid_postfix(3, 4.0f) - static_cast<float>(0.430171473875622)) < 1e-6f);
     Require(y0f_nid_postfix(0.0f) == -std::numeric_limits<float>::infinity() && y1f_nid_postfix(0.0f) == -std::numeric_limits<float>::infinity());
     Require(ynf_nid_postfix(2, 0.0f) == -std::numeric_limits<float>::infinity());
@@ -3608,6 +4144,55 @@ static void CheckExpm1OverflowEnvironment() {
     _mm_setcsr(savedCsr);
 }
 
+static void CheckLog1pDomainEnvironment() {
+    const RestoreFloatingPointState saved;
+    const unsigned savedCsr = _mm_getcsr();
+    const struct {
+        std::uint64_t input;
+        std::uint64_t result;
+        unsigned sseRaised;
+        unsigned x87Raised;
+        bool domain;
+    } cases[] = {
+        {0xbff0000000000000ull, 0xfff0000000000000ull, 0, 0, false},
+        {0xbff0000000000001ull, 0xfff8000000000000ull, 1, 1, true},
+        {0xc000000000000000ull, 0xfff8000000000000ull, 1, 1, true},
+        {0xffefffffffffffffull, 0xfff8000000000000ull, 1, 1, true},
+        {0xfff0000000000000ull, 0xfff8000000000000ull, 1, 1, true},
+        {0xfff8000000000001ull, 0xfff8000000000001ull, 1, 1, true},
+        {0xfff0000000000001ull, 0xfff8000000000001ull, 1, 1, true},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0, 0, false},
+        {0x7ff0000000000001ull, 0x7ff8000000000001ull, 1, 0, false},
+    };
+    const int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    double (APS5_VABI * volatile call)(double) = log1p_nid_postfix;
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13u) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (unsigned sticky : {0u, 5u, 32u}) {
+                for (const auto& item : cases) {
+                    Require(std::fesetenv(FE_DFL_ENV) == 0 && std::fesetround(rounding[mode]) == 0);
+                    const int seedFlags = ((sticky & 1u) ? FE_INVALID : 0) | ((sticky & 4u) ? FE_DIVBYZERO : 0) | ((sticky & 32u) ? FE_INEXACT : 0);
+                    Require(std::feraiseexcept(seedFlags) == 0);
+                    _mm_setcsr(control | sticky);
+                    GuestFloatingPointEnvironment before;
+                    Require(fegetenv_nid_postfix(&before) == 0);
+                    errno = 1234;
+                    const auto result = std::bit_cast<std::uint64_t>(call(std::bit_cast<double>(item.input)));
+                    const int error = errno;
+                    GuestFloatingPointEnvironment after;
+                    Require(fegetenv_nid_postfix(&after) == 0);
+                    if (result != item.result || after.mxcsr != (control | sticky | item.sseRaised) || (after.status & 0x3fu) != ((before.status & 0x3fu) | item.x87Raised) || after.control != before.control || error != (item.domain ? EDOM : 1234)) {
+                        std::fprintf(stderr, "log1p domain: input=%016llx mode=%u denorm=%u sticky=%u bits=%016llx csr=%x x87=%x errno=%d\n", static_cast<unsigned long long>(item.input), mode, denorm, sticky, static_cast<unsigned long long>(result), after.mxcsr, after.status, error);
+                        Require(false);
+                    }
+                }
+            }
+        }
+    }
+    _mm_setcsr(savedCsr);
+}
+
 int main() {
     CheckFdimFlags();
     CheckRemainderConsoleBits();
@@ -3621,6 +4206,9 @@ int main() {
     CheckCbrtlConsoleBits();
     CheckExtendedMath();
     CheckAcosl();
+    CheckAtanl();
+    CheckAtan2l();
+    CheckExp2l();
     CheckTrigfConsoleBits();
     Require(atof_nid_postfix(" -12.5tail") == -12.5);
     char* end = nullptr;
@@ -3667,12 +4255,22 @@ int main() {
     Require(rand_r_nid_postfix(&randomState) == 2147466840 && randomState == 2147466840u);
     randomState = 0xffffffffu;
     Require(rand_r_nid_postfix(&randomState) == 2147466840 && randomState == 2147466840u);
+    randomState = 0x3039u;
+    Require(rand_r_nid_postfix(&randomState) == 0xc5dee2f && rand_r_nid_postfix(&randomState) == 0x6ac05600);
+    randomState = 0x80000000u;
+    Require(rand_r_nid_postfix(&randomState) == 0x7fffbe58 && rand_r_nid_postfix(&randomState) == 0x6f29c50e);
     srand_nid_postfix(1);
     Require(rand_nid_postfix() == 408024109 && rand_nid_postfix() == 11635919 && rand_nid_postfix() == 196474438);
     srand_nid_postfix(0);
     Require(rand_nid_postfix() == 0 && rand_nid_postfix() == 408024109);
     srand_nid_postfix(0xffffffffu);
     Require(rand_nid_postfix() == 876841727 && rand_nid_postfix() == 830605684);
+    srand_nid_postfix(0x2au);
+    Require(rand_nid_postfix() == 0x3d720f6e && rand_nid_postfix() == 0x3800fec1 && rand_nid_postfix() == 0xf6ada53);
+    srand_nid_postfix(0x7fffffffu);
+    Require(rand_nid_postfix() == 0xdf8cb69 && rand_nid_postfix() == 0x30ba327f && rand_nid_postfix() == 0x2ebfb7d2);
+    srand_nid_postfix(0x80000000u);
+    Require(rand_nid_postfix() == 0x264abf96 && rand_nid_postfix() == 0x1919cb21 && rand_nid_postfix() == 0x39c42149);
     for (int step = 0; step < 1000; ++step) Require(static_cast<unsigned int>(rand_nid_postfix()) <= 0x3fffffffu);
     bool threw = false;
     try { rand_r_nid_postfix(nullptr); } catch (...) { threw = true; }
@@ -3780,6 +4378,7 @@ int main() {
     Require(ilogbf_nid_postfix(std::numeric_limits<float>::denorm_min()) == -149);
     Require(exp2_nid_postfix(-3.) == 0.125);
     Require(ldexp_nid_postfix(0.75, 4) == 12.);
+    CheckLdexpSpecialValues();
     CheckSquareRoot();
     CheckExp2Errno();
     CheckExactOperations();
@@ -3801,6 +4400,7 @@ int main() {
     CheckLog10ConsoleBits();
     CheckLog10EdgeFlags();
     CheckLogbConsoleBits();
+    CheckExp2ConsoleBits();
     CheckExpm1ConsoleBits();
     CheckLog1pConsoleBits();
     CheckNextafterConsoleBits();
@@ -3815,6 +4415,7 @@ int main() {
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
     CheckExpm1ScalingRounding();
+    CheckLog1pReductionRounding();
     CheckTanhSaturationEnvironment();
     CheckFmodConsoleBits();
     CheckFmodEdgeFlags();
@@ -3824,9 +4425,11 @@ int main() {
     CheckAtanhDomainEnvironment();
     CheckAtanhEdgeFlags();
     CheckExpm1OverflowEnvironment();
+    CheckLog1pDomainEnvironment();
     CheckHypotConsoleBits();
     CheckPowConsoleBits();
     CheckExpConsoleBits();
+    CheckErfConsoleBits();
     CheckLog10ConsoleBits();
     CheckAcoshMsunBits();
     CheckAcoshLargeArguments();
@@ -3985,6 +4588,7 @@ int main() {
     CheckScaling();
     CheckLongDoubleFunctions();
     CheckLongDoubleHyperbolic();
+    CheckLongDoubleExponentialHyperbolic();
     CheckDinkumwareFloatCharacteristics();
     CheckFrexpfEnvironment();
 }
