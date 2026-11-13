@@ -63,6 +63,7 @@ void CheckContextState(StateWriter writer, std::uint32_t packetWords, std::uint3
 } // namespace
 
 int main() {
+    for (int iter = 0; iter < 2; ++iter)
     CheckHardwareState(sceGnmDrawInitDefaultHardwareState, 115, {0x100, 4, 0xc0017900u, 0x200, 0xe0000000u});
     CheckHardwareState(sceGnmDrawInitDefaultHardwareState200, 131, {0x200, 0xe0000000u, 0xc0017900u, 0x40000258u, 0x6d007fu});
     CheckHardwareState(sceGnmDrawInitDefaultHardwareState350, 134, {0x200, 0xe0000000u, 0xc0017900u, 0x40000258u, 0x6d007fu});
