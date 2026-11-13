@@ -3354,6 +3354,118 @@ void verifyUncachedSpecializedAcrossProcesses(const char* self) {
     setEnvironment("ANYPS5_SHADER_CACHE_DIR", own.string());
 }
 
+std::string planInputCounts() {
+    const auto totals = ShaderDiskCache::Totals();
+    return " (artifact hits " + std::to_string(totals.hits) + ", misses " + std::to_string(totals.misses) + "; binding plan hits " + std::to_string(totals.bindingPlanHits) + ", misses " + std::to_string(totals.bindingPlanMisses) + ", writes " + std::to_string(totals.bindingPlanWrites) + "; specialized hits " + std::to_string(totals.specializedHits) + ", misses " + std::to_string(totals.specializedMisses) + ", writes " + std::to_string(totals.specializedWrites) + ")";
+}
+
+int runSubstituteProcess(std::string_view mode) {
+    require(ShaderDiskCache::SpecializedEnabled(), "the specialized disk cache is off, so this process cannot show which binding plan a buffer substitute selects");
+    ComputeRequest request(true);
+    const auto bound = request.userData;
+    const std::array<std::uint32_t, 4> other{bound[0], bound[1], bound[2], 0x31004688u};
+    const std::array<std::uint32_t, 4> absent{0u, 0u, 0u, 0u};
+    const auto compile = [&](const std::array<std::uint32_t, 4>& descriptor) {
+        request.userData = descriptor;
+        return Recompile(request.request);
+    };
+    if (mode == "--store-substitute") {
+        const auto first = compile(bound);
+        const auto null = compile(absent);
+        ShaderDiskCache::Flush();
+        const auto totals = ShaderDiskCache::Totals();
+        require(null.variantId == first.variantId && null.spirv.data() == first.spirv.data(), "a null V# did not specialize with the substitute learned from its bound slot" + planInputCounts());
+        require(totals.bindingPlanHits == 0u && totals.bindingPlanWrites > 0u && totals.specializedWrites > 0u, "the first process did not build and store the binding plan and specialized module of the bound slot" + planInputCounts());
+        std::cout << "first process stored the binding plan of a bound slot and reused it for a null V# through the learned substitute\n";
+        return 0;
+    }
+    if (mode == "--load-substitute-unknown") {
+        const auto null = compile(absent);
+        const auto unknown = ShaderDiskCache::Totals();
+        require(unknown.hits > 0u && unknown.misses == 0u, "the second process did not load the base artifact the first process stored" + planInputCounts());
+        require(unknown.bindingPlanHits == 0u && unknown.bindingPlanMisses == 1u, "a null V# with no substitute learned was served the binding plan stored for a learned substitute" + planInputCounts());
+        require(unknown.specializedHits == 0u && unknown.specializedMisses == 1u, "a null V# with no substitute learned was served the specialized module stored for a learned substitute" + planInputCounts());
+        const auto first = compile(bound);
+        const auto loaded = ShaderDiskCache::Totals();
+        require(first.variantId == null.variantId, "the bound slot and the null V# did not share the base artifact");
+        require(loaded.bindingPlanHits == 1u && loaded.bindingPlanMisses == 1u && loaded.specializedHits == 1u && loaded.specializedMisses == 1u, "the bound slot did not load the binding plan and specialized module the first process stored under the same base artifact" + planInputCounts());
+        std::cout << "a null V# with no substitute learned missed the binding plan stored with one, and the bound slot then loaded it\n";
+        return 0;
+    }
+    require(mode == "--load-substitute-changed", "unknown substitute mode");
+    const auto first = compile(other);
+    const auto learned = ShaderDiskCache::Totals();
+    require(learned.hits > 0u && learned.misses == 0u, "the third process did not load the base artifact the first process stored" + planInputCounts());
+    require(learned.bindingPlanHits == 0u && learned.bindingPlanMisses == 1u, "a slot bound with another format was served the binding plan stored for the first process's format" + planInputCounts());
+    const auto null = compile(absent);
+    const auto substituted = ShaderDiskCache::Totals();
+    require(null.variantId == first.variantId && null.spirv.data() == first.spirv.data(), "a null V# did not specialize with the substitute this process learned" + planInputCounts());
+    require(substituted.bindingPlanHits == 0u && substituted.specializedHits == 0u, "a null V# whose slot learned another substitute was served the binding plan or specialized module stored with the first process's substitute" + planInputCounts());
+    const auto restored = compile(bound);
+    const auto loaded = ShaderDiskCache::Totals();
+    require(restored.variantId == first.variantId, "the first process's descriptor did not share the base artifact");
+    require(loaded.bindingPlanHits == 1u && loaded.specializedHits == 1u, "the first process's descriptor did not load its stored binding plan and specialized module under the same base artifact" + planInputCounts());
+    std::cout << "a null V# after another substitute was learned missed the binding plan stored with the first one, and the first descriptor still loaded it\n";
+    return 0;
+}
+
+std::shared_ptr<const RecompileResult> materializeWithMinLod(PlanFixture& fixture, bool minLod) {
+    auto request = fixture.Request(true);
+    std::vector<std::uint32_t> capabilities(request.target.supportedCapabilities.begin(), request.target.supportedCapabilities.end());
+    capabilities.push_back(spv::CapabilityMinLod);
+    request.target.supportedCapabilities = capabilities;
+    request.target.shaderImageMinLod = minLod;
+    const auto handle = PrepareShader(request);
+    RequestMemoryView view(request.context.memory);
+    const auto capture = CaptureResources(request, view.MakeRuntime(request.context.userData, request.shader.codeAddress), *handle);
+    return MaterializeShader(request, *capture, *handle);
+}
+
+bool sameModule(const RecompileResult& left, const RecompileResult& right) {
+    return std::ranges::equal(left.spirv.Words(), right.spirv.Words());
+}
+
+int runMinLodProcess(std::string_view mode) {
+    require(ShaderDiskCache::SpecializedEnabled(), "the specialized disk cache is off, so this process cannot show which binding plan shaderImageMinLod selects");
+    auto fixtures = planFixtures();
+    const auto found = std::ranges::find(fixtures, "guarded image", &PlanFixture::name);
+    require(found != fixtures.end(), "the guarded image fixture is missing");
+    const auto plain = materializeWithMinLod(*found, false);
+    if (mode == "--store-min-lod") {
+        ShaderDiskCache::Flush();
+        const auto totals = ShaderDiskCache::Totals();
+        require(totals.bindingPlanWrites > 0u && totals.specializedWrites > 0u, "the first process did not store the binding plan and specialized module built without the minimum LOD clamp" + planInputCounts());
+        std::cout << "first process stored a binding plan and specialized module built without the minimum LOD clamp\n";
+        return 0;
+    }
+    require(mode == "--load-min-lod", "unknown minimum LOD mode");
+    const auto loaded = ShaderDiskCache::Totals();
+    require(loaded.misses == 0u && loaded.bindingPlanHits == 1u && loaded.bindingPlanMisses == 0u && loaded.specializedHits == 1u && loaded.specializedMisses == 0u, "the second process did not load the binding plan and specialized module stored without the minimum LOD clamp" + planInputCounts());
+    const auto clamped = materializeWithMinLod(*found, true);
+    const auto changed = ShaderDiskCache::Totals();
+    require(!sameModule(*plain, *clamped), "shaderImageMinLod left the module unchanged, so the fixture shows nothing");
+    require(changed.bindingPlanHits == loaded.bindingPlanHits && changed.bindingPlanMisses == 1u, "a request with shaderImageMinLod was served the binding plan stored without it" + planInputCounts());
+    require(changed.specializedHits == loaded.specializedHits && changed.specializedMisses == 1u, "a request with shaderImageMinLod was served the specialized module stored without it" + planInputCounts());
+    require(changed.misses == 1u, "shaderImageMinLod did not select another base artifact" + planInputCounts());
+    std::cout << "a request with shaderImageMinLod missed the binding plan and specialized module stored without it and rebuilt both\n";
+    return 0;
+}
+
+void verifyPlanInputsAcrossProcesses(const char* self) {
+    const auto own = ShaderCacheDirectory();
+    std::error_code error;
+    const auto run = [&](const char* directory, const char* mode) {
+        setEnvironment("ANYPS5_SHADER_CACHE_DIR", (own / directory).string());
+        const std::string command = "\"" + std::string(self) + "\" " + mode;
+        require(std::system(command.c_str()) == 0, std::string("the process ") + mode + " failed");
+    };
+    std::filesystem::remove_all(own / "plan-substitute", error);
+    std::filesystem::remove_all(own / "plan-min-lod", error);
+    for (const auto* mode : {"--store-substitute", "--load-substitute-unknown", "--load-substitute-changed"}) run("plan-substitute", mode);
+    for (const auto* mode : {"--store-min-lod", "--load-min-lod"}) run("plan-min-lod", mode);
+    setEnvironment("ANYPS5_SHADER_CACHE_DIR", own.string());
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -3408,6 +3520,8 @@ int main(int argc, char** argv) {
         if (argc == 2 && (std::string_view(argv[1]) == "--store-specialized" || std::string_view(argv[1]).starts_with("--load-specialized"))) return runSpecializedLoadingProcess(argv[1]);
         if (argc == 2 && std::string_view(argv[1]).starts_with("--specialized-cap-")) return runSpecializedBoundsProcess(argv[1]);
         if (argc == 2 && std::string_view(argv[1]) == "--uncached-specialized") return runUncachedSpecializedProcess();
+        if (argc == 2 && (std::string_view(argv[1]) == "--store-substitute" || std::string_view(argv[1]).starts_with("--load-substitute-"))) return runSubstituteProcess(argv[1]);
+        if (argc == 2 && (std::string_view(argv[1]) == "--store-min-lod" || std::string_view(argv[1]) == "--load-min-lod")) return runMinLodProcess(argv[1]);
         const auto directory = std::filesystem::temp_directory_path() / ("aps5-shader-disk-cache-test-" + std::to_string(std::random_device{}()));
         std::filesystem::remove_all(directory);
         verifyDefaultDirectory(argv[0]);
@@ -3437,6 +3551,7 @@ int main(int argc, char** argv) {
         verifySpecializedAcrossProcesses(argv[0]);
         verifySpecializedBoundsAcrossProcesses(argv[0]);
         verifyUncachedSpecializedAcrossProcesses(argv[0]);
+        verifyPlanInputsAcrossProcesses(argv[0]);
         verifyEmissionFailureMemo();
         verifyFailureMemoSwitch(argv[0]);
         verifyInvocationIsolation();
