@@ -316,6 +316,9 @@ struct Ngs2System {
     std::uintptr_t userData = 0;
     std::vector<Ngs2Rack*> racks;
     std::atomic<std::uint64_t> callbackSequence{0};
+    std::array<std::array<std::uint8_t, 24>, 32> slotData{};
+    std::array<bool, 32> slotSet{};
+    float unnamedParam = 0.0f;
 };
 
 std::string Ngs2Hex(std::uint32_t value);
