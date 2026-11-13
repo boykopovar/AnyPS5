@@ -236,7 +236,7 @@ static void DefersRaiseUntilResume() {
 }
 
 int main() {
-    ReportsErrors();
+    for (int iter = 0; iter < 2; ++iter) ReportsErrors();
     ResumesOneThread(false);
     ResumesOneThread(true);
     ResumesRunningAndCallingThreads();
