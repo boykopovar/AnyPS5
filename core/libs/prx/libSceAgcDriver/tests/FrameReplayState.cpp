@@ -193,6 +193,73 @@ void testNativeRepeat(const std::filesystem::path& directory, std::string_view m
     device->WaitIdle();
 }
 
+void testNativeRetiredStoredOwner(const std::filesystem::path& directory) {
+    constexpr std::size_t Step = 131072u;
+    constexpr std::size_t Bytes = 16u * Step;
+    constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
+    const auto texels = Extent.width * Extent.height;
+    auto* bytes = allocate(Bytes);
+    const auto begin = address(bytes);
+    std::uintptr_t arena = 0;
+    std::size_t arenaSize = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arena, &arenaSize);
+    FrameCaptureWriter writer(directory);
+    writer.WriteRange(begin, Bytes, FrameRangeKind::Watched, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable | FrameRangeAccess::Gpu);
+    writer.Finish("{\"arena_base\":" + std::to_string(arena) + "}");
+    const FrameCaptureReader reader(directory);
+    const auto skipped = restoreMemory(reader);
+    check(skipped.bytes == 0u, "retired native owner fixture skipped captured guest memory");
+    auto since = watchBaseline(reader, skipped);
+    auto opened = OpenVulkanTestDevice();
+    check(opened != nullptr, "retired native owner device unavailable");
+    auto device = std::shared_ptr<AgcDriver::VulkanDevice>(std::move(opened));
+    AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    const auto shaders = DepthFastClearHarness::Compile(*device);
+    const DepthFastClearHarness::Surface surface{begin, 0u, 0u, false, VK_FORMAT_D16_UNORM};
+    DepthFastClearHarness::DrawOptions options;
+    options.depthWrite = true;
+    options.depthCompare = VK_COMPARE_OP_ALWAYS;
+    options.minDepth = options.maxDepth = 0.25f;
+    check(DepthFastClearHarness::Draw(*device, shaders, surface, options) == texels, "retired native owner initial draw failed");
+    const auto captured = device->CaptureNativeDepth();
+    check(captured.size() == 1u && captured.front().depth.size() == texels * 2u, "retired native owner fixture did not capture one complete D16 plane");
+    for (std::size_t pixel = 0u; pixel < texels; ++pixel) {
+        std::uint16_t bits = 0u;
+        std::memcpy(&bits, captured.front().depth.data() + pixel * 2u, sizeof(bits));
+        check(std::abs(static_cast<float>(bits) / 65535.0f - 0.25f) < 2.0f / 65535.0f, "retired native owner fixture captured the wrong initial texel");
+    }
+    const AgcDriver::Graphics::DepthTarget other{begin + 2u * Step, 0u, Extent, VK_FORMAT_D16_UNORM, 1.0f, 0u};
+    static_cast<void>(AgcDriver::Graphics::DepthSurfaceView(context, other, false, false));
+    const std::array<std::uint32_t, 8> words{static_cast<std::uint32_t>(begin >> 8u), static_cast<std::uint32_t>((begin >> 40u) & 255u) | (7u << 20u) | (((Extent.width - 1u) & 3u) << 30u), ((Extent.width - 1u) >> 2u) | ((Extent.height - 1u) << 14u), 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+    auto held = AgcDriver::Graphics::DepthSurfaceTexture(context, words, resource, {});
+    check(held != nullptr && held.use_count() > 1u, "retired native owner fixture did not retain the native sampled texture");
+    const auto oldSampledView = held->View();
+    const auto oldAttachmentView = AgcDriver::Graphics::DepthSurfaceOrderTarget(context, captured.front().target).view;
+    options.minDepth = options.maxDepth = 0.75f;
+    check(DepthFastClearHarness::Draw(*device, shaders, surface, options) == texels, "retired native owner mutation draw failed");
+    static_cast<void>(AgcDriver::Graphics::DepthSurfaceView(context, other, false, false));
+    device->WaitIdle();
+    AgcDriver::Graphics::RetireDepthSurfaces(device->Device(), begin, Step);
+    check(!AgcDriver::Graphics::ActiveDepthExtent(device->Device(), begin).has_value(), "ordinary native retirement did not remove the current owner");
+    check(AgcDriver::Graphics::DepthSurfaceOrderTarget(context, captured.front().target).view == oldAttachmentView, "ordinary retirement did not leave the retained native attachment active for this control");
+    check(held->View() == oldSampledView && held.use_count() > 1u, "ordinary retirement released the retained sampled texture before the reset");
+    std::puts("native stored-owner control: retired attachment remains active and sampled texture retained before reset");
+    static_cast<void>(resetMemory(reader, skipped, since, ResetFault::None, true, &captured));
+    check(!AgcDriver::Graphics::DepthSurfaceHolds(context, resource, held.get()), "native repeated reset reactivated a retired-but-active held depth image");
+    check(AgcDriver::Graphics::DepthSurfaceOrderTarget(context, captured.front().target).view != oldAttachmentView, "native repeated reset reused the retired attachment view");
+    check(AgcDriver::DriverDetail::DriverTestAccess::Device().get() == device.get(), "retired native owner reset replaced the VulkanDevice object");
+    checkNativeRepeatContents(captured, device->CaptureNativeDepth());
+    held.reset();
+    static_cast<void>(AgcDriver::Graphics::DepthSurfaceView(context, other, false, false));
+    options.depthWrite = false;
+    options.depthCompare = VK_COMPARE_OP_EQUAL;
+    options.minDepth = options.maxDepth = 0.25f;
+    check(DepthFastClearHarness::Draw(*device, shaders, surface, options) == texels, "retired native owner failed to bind after the old hold was released");
+    device->WaitIdle();
+}
+
 void testMemoryOrder(const std::filesystem::path& directory) {
     constexpr std::size_t Size = 64u * 1024u * 1024u;
     auto* bytes = allocate(Size);
@@ -1566,7 +1633,8 @@ int main(int argc, char** argv) {
             writeInspectionCapture(directory);
             return 0;
         }
-        if (mode == "native_repeat_state" || mode == "native_repeat_clean" || mode == "native_repeat_companions") testNativeRepeat(directory, mode);
+        if (mode == "native_repeat_stored_owner") testNativeRetiredStoredOwner(directory);
+        else if (mode == "native_repeat_state" || mode == "native_repeat_clean" || mode == "native_repeat_companions") testNativeRepeat(directory, mode);
         else if (mode == "order") testMemoryOrder(directory);
         else if (mode == "zero") testReusedMemory(directory);
         else if (mode.starts_with("shader_prologue_")) testShaderCode(directory, true, mode);
