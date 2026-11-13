@@ -1852,6 +1852,9 @@ public:
         const auto* entry = index.FirstByPosition(address, bytes, match);
         return entry != nullptr ? entry->item : nullptr;
     }
+    void Publish() {
+        if (indexed != version) rebuild();
+    }
     bool SurelyClear(std::uint64_t address, std::size_t bytes) const {
         const auto current = published.load(std::memory_order_acquire);
         return current != nullptr && current->version == changes.load(std::memory_order_acquire) && !Overlaps(current->ranges, address, bytes);
@@ -5789,7 +5792,16 @@ std::uint64_t StorageTexture::StampKeepingNewerResults(std::uint64_t address, st
 bool StorageTexture::AnyPendingOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     if (ranges.empty()) return false;
     auto& pending = Pending();
+    const auto surelyClear = [&] {
+        if (pending.flushingCount.load(std::memory_order_acquire) != 0) return false;
+        for (const auto& [begin, end] : ranges) {
+            if (end > begin && !pending.textures.SurelyClear(begin, static_cast<std::size_t>(end - begin))) return false;
+        }
+        return pending.flushingCount.load(std::memory_order_acquire) == 0;
+    };
+    if (surelyClear()) return false;
     std::lock_guard lock(pending.mutex);
+    pending.textures.Publish();
     const auto overlapsAny = [&](const StorageTexture* texture) {
         for (const auto& [begin, end] : ranges) {
             if (end > begin && texture->overlaps(begin, static_cast<std::size_t>(end - begin))) return true;
