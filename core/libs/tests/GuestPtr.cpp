@@ -37,6 +37,9 @@ void CheckArraysAndBytes() {
     const std::array<Payload, 2> replacement{{{5, 6}, {7, 8}}};
     Require(GuestPtr<Payload>(copied.data()).CopyOut(replacement.data(), replacement.size()), "a writable guest array did not copy out");
     Require(std::memcmp(copied.data(), replacement.data(), sizeof(replacement)) == 0, "a copied-out array differs from its source");
+    Require(GuestPtr<const Payload>(source.data()).CopyIn(copied.data(), 0), "a zero-length guest array did not copy in");
+    Require(GuestPtr<Payload>(copied.data()).CopyOut(replacement.data(), 0), "a zero-length guest array did not copy out");
+    Require(GuestPtr<const Payload>().CopyIn(copied.data(), 0), "a zero-length copy from an empty guest pointer failed");
 
     std::array<std::byte, 16> bytes{};
     const char text[] = "guest";
@@ -45,6 +48,9 @@ void CheckArraysAndBytes() {
     std::array<char, 16> readback{};
     Require(GuestBytes(bytes.data()).CopyIn(readback.data(), sizeof(text)), "a readable guest byte range did not copy in");
     Require(std::memcmp(readback.data(), text, sizeof(text)) == 0, "a copied-in byte range differs from its source");
+    Require(GuestBytes(bytes.data()).CopyIn(readback.data(), 0), "a zero-length guest byte range did not copy in");
+    Require(GuestBytes(bytes.data()).CopyOut(text, 0), "a zero-length guest byte range did not copy out");
+    Require(GuestBytes().CopyOut(text, 0), "a zero-length copy to an empty guest byte range failed");
 }
 
 void CheckFaults() {
