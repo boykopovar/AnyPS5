@@ -300,6 +300,8 @@ if(BUILD_TESTING)
         set_tests_properties(progress_history_date_window PROPERTIES TIMEOUT 20)
         add_test(NAME pr_ready COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_ready.py)
+        add_test(NAME pr_unchanged COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_unchanged.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py ProgressHistoryTests)
         add_test(NAME progress_history_csv COMMAND ${Python3_EXECUTABLE}
