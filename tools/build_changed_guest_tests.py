@@ -65,6 +65,11 @@ def script_test_indices(build_dir, patterns):
     return sorted(indices)
 
 
+def script_test_owners(build_dir, targets_by_name, patterns):
+    resolutions = ctest_resolutions(build_dir, targets_by_name)
+    return sorted({owner for name, (owner, _) in resolutions.items() if any(pattern.match(name) for pattern in patterns)}, key=str.casefold)
+
+
 def guest_test_targets(source_root, targets, changed_paths=None):
     selected = []
     for target in targets.values():
@@ -180,12 +185,13 @@ def run_ctest(build_dir, indices, output_log):
 def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None):
     subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
     scripts = script_test_indices(build_dir, script_tests) if script_tests else []
+    script_owners = script_test_owners(build_dir, targets_by_name, script_tests) if script_tests else []
     if selected:
         for batch in chunks(selected):
             subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
         selected_names = set(selected)
         resolutions = ctest_resolutions(build_dir, targets_by_name, selected_names)
-        additional = sorted({owner for owner, _ in resolutions.values()} - selected_names, key=str.casefold)
+        additional = sorted(({owner for owner, _ in resolutions.values()} | set(script_owners)) - selected_names, key=str.casefold)
         for batch in chunks(additional):
             subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
         missing = sorted(selected_names - {owner for owner, _ in resolutions.values()})
@@ -193,6 +199,8 @@ def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None
             raise ValueError("no ctest registration resolved for: " + ", ".join(missing))
         run_ctest(build_dir, sorted({index for _, index in resolutions.values()} | set(scripts)), output_log)
     elif scripts:
+        for batch in chunks(script_owners):
+            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
         run_ctest(build_dir, scripts, output_log)
     else:
         print("No core/libs test sources changed; the libs build still ran")

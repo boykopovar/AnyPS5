@@ -316,6 +316,28 @@ class Main(unittest.TestCase):
             self.assertEqual(self.main(build, ["core/libs/nid/tests/test_native_paths.py"]), 0)
         self.assertEqual(selections, ["0,0,0,2,3\n", "0,0,0,2,3\n"])
 
+    def test_a_nid_change_builds_the_executable_behind_a_nid_test(self):
+        build = self.fixture([
+            self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx"),
+            self.target("nid_buffer_validation_tests", source="core/libs/nid/tests/BufferValidation.cpp"),
+        ])
+        listing = json.dumps({"tests": [
+            {"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]},
+            {"name": "nid_buffer_validation", "command": ["C:/b/tests/nid_buffer_validation_tests.exe"]},
+            {"name": "nid_gnu_hash", "command": ["C:/python.exe", "test_gnu_hash.py"]},
+        ]})
+        commands = []
+        def execute(cmd, **_):
+            commands.append(list(cmd))
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            self.assertEqual(self.main(build, ["core/libs/nid/src/main.cpp"]), 0)
+        built = [target for cmd in commands if "--target" in cmd for target in cmd[cmd.index("--target") + 1:]]
+        self.assertIn("nid_buffer_validation_tests", built)
+        ran = [index for index, cmd in enumerate(commands) if "-I" in cmd]
+        builds = [index for index, cmd in enumerate(commands) if "--target" in cmd and "nid_buffer_validation_tests" in cmd]
+        self.assertTrue(ran and builds and max(builds) < min(ran))
+
     def test_a_change_outside_nid_does_not_run_the_nid_script_tests(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
         listing = json.dumps({"tests": [{"name": "nid_gnu_hash", "command": ["C:/python.exe", "x.py"]}]})
