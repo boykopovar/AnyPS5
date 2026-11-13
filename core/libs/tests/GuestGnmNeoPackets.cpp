@@ -128,7 +128,7 @@ void CheckVgtControl() {
 } // namespace
 
 int main() {
-    CheckDirectDraws();
+    for (int iter = 0; iter < 2; ++iter) CheckDirectDraws();
     CheckDispatches();
     CheckIndirectDraws();
     CheckComputeWaits();
