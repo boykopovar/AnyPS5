@@ -35,6 +35,10 @@ std::optional<Header> ParseHeader(std::span<const std::uint8_t> png);
 
 std::optional<Image> Decode(std::span<const std::uint8_t> png);
 
+std::vector<std::uint16_t> DecodeRgba16(std::span<const std::uint8_t> png);
+
+bool CheckChunkCrc(std::span<const std::uint8_t> typeAndData, std::uint32_t expected);
+
 inline constexpr std::uint8_t FILTER_NONE = 1 << 0;
 inline constexpr std::uint8_t FILTER_SUB = 1 << 1;
 inline constexpr std::uint8_t FILTER_UP = 1 << 2;
