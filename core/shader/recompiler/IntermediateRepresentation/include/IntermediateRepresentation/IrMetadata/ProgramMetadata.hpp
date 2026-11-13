@@ -8,6 +8,7 @@
 #include "IntermediateRepresentation/IrMetadata/ResourceInfo.hpp"
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -26,6 +27,7 @@ struct IrProgramMetadata {
     bool barycentricBuiltinsUnnormalized = false;
     bool invalidatesCaches = false;
     std::vector<IrValue*> dynamicReads;
+    std::unordered_map<const IrValue*, std::vector<IrValue*>> bindlessHandleWords;
     bool shaderInfoComplete = false;
     IrBindingLayout bindings;
     bool bindingLayoutComplete = false;

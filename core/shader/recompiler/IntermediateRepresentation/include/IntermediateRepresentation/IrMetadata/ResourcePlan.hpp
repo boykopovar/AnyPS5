@@ -144,6 +144,13 @@ struct ImageTableColumnSnapshot {
         bool operator==(const ResourceView& other) const = default;
     };
     std::vector<ResourceView> resourceViews;
+    bool pointer = false;
+    bool indirect = false;
+    std::uint32_t addend = 0;
+    std::uint32_t stride = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t dwords = 0;
+    std::vector<std::uint64_t> addresses;
 
     bool operator==(const ImageTableColumnSnapshot& other) const = default;
 };

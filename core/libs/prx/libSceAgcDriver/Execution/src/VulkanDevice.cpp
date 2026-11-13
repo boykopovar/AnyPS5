@@ -61,6 +61,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessResolvers.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureService.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -618,6 +620,7 @@ struct VulkanDevice::State {
     bool updateUnusedWhilePending = false;
     bool bindlessImages = false;
     std::unique_ptr<Graphics::BindlessTable> bindlessTable;
+    std::unique_ptr<Graphics::TextureService> textureService;
     VkPhysicalDeviceDescriptorIndexingPropertiesEXT descriptorIndexingProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES_EXT};
     bool imageInt64Atomics = false;
     bool bufferInt64Atomics = false;
@@ -1196,6 +1199,7 @@ struct VulkanDevice::State {
                 }
             }
             Graphics::DestroyShadows(device);
+            textureService.reset();
             recorder.reset();
             bindlessTable.reset();
             // Cached graphics pipelines (with their framebuffers, modules, render passes and layouts)
@@ -2756,6 +2760,15 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     state->context = buildContext();
     state->contextReady = true;
+    if (state->bindlessTable) {
+        auto options = Graphics::TextureService::OptionsFromEnvironment(Graphics::SampledTextureCacheBudget(state->context) / 2u);
+        const bool liveBudget = std::getenv("APS5_BINDLESS_BUDGET_MIB") == nullptr;
+        if (liveBudget) options.budgetSource = [context = &state->context] { return Graphics::SampledTextureCacheBudget(*context) / 2u; };
+        state->textureService = std::make_unique<Graphics::TextureService>(*state->bindlessTable, std::make_shared<Graphics::DriverBindlessResolver>(state->context), std::make_shared<Graphics::GuestBindlessMemory>(), options);
+        state->context.textureService = state->textureService.get();
+        const auto budget = liveBudget ? Graphics::SampledTextureCacheBudget(state->context) / 2u : options.budgetBytes;
+        std::fprintf(stderr, "[bindless] texture service: %s, budget %llu MiB%s, idle after %llu submits, commit chunk %u\n", options.lazy ? "lazy (entries resolved from misses only)" : "exact (tables primed before use)", static_cast<unsigned long long>(budget >> 20u), liveBudget ? " (half the sampled texture budget, read at each present)" : " (APS5_BINDLESS_BUDGET_MIB)", static_cast<unsigned long long>(options.idleSubmits), options.commitChunk);
+    }
     if (window != nullptr) {
         require(window->getDrawableSize != nullptr, "missing window drawable size query");
         std::uint32_t drawableWidth = 0;
@@ -4680,6 +4693,39 @@ bool VulkanDevice::BindlessImagesEnabled() const {
     return state->bindlessTable != nullptr;
 }
 
+bool VulkanDevice::TextureServiceRunning() const {
+    return state->textureService != nullptr;
+}
+
+const Graphics::TextureService* VulkanDevice::BindlessService() const {
+    return state->textureService.get();
+}
+
+void VulkanDevice::BindlessPresentWait() {
+    if (!state->textureService || !state->recorder) return;
+    PerformanceTimer timing("Vulkan.BindlessPresentWait");
+    const auto started = std::chrono::steady_clock::now();
+    std::uint64_t serial = 0;
+    {
+        std::lock_guard lock(GuestMemory::GpuMutex());
+        serial = state->textureService->PresentSerial(*state->recorder);
+        if (serial != 0 && !state->recorder->HasTimeline()) state->recorder->Sync();
+    }
+    timing.Mark("present_serial");
+    if (serial != 0 && state->recorder->HasTimeline()) state->recorder->WaitSerial(serial);
+    timing.Mark("wait_serial");
+    const auto waited = serial != 0 ? static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()) : 0u;
+    state->textureService->PrepareRevalidation();
+    timing.Mark("early_prepare");
+    std::lock_guard lock(GuestMemory::GpuMutex());
+    timing.Mark("gpu_mutex_wait");
+    if (serial != 0 && state->recorder->HasTimeline()) state->recorder->FinishUpTo(serial);
+    timing.Mark("finish_up_to");
+    state->textureService->AfterPresentWait(*state->recorder, waited);
+    timing.Mark("after_present_wait");
+    if (Graphics::BindlessStatsRequested()) std::fprintf(stderr, "%s\n", state->textureService->TakeFrameLine(Graphics::BindlessOldPathNanoseconds()).c_str());
+}
+
 std::string VulkanDevice::DeviceName() const {
     return state->properties.deviceName;
 }
@@ -4768,6 +4814,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.float16DenormPreserve = state->float16DenormPreserve;
     target.spannedWaves = state->spannedWaves;
     target.spannedAnySubgroup = state->spannedAnySubgroup;
+    target.bindlessImages = state->bindlessImages;
     target.depthRangeRemap = !state->depthRangeUnrestricted;
     target.fixedPushSlots = state->graphicsPipelineLibrary;
     target.registrationModules = state->graphicsPipelineLibrary;
@@ -4956,6 +5003,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.atomicLockTable = state->atomicLockTable ? state->atomicLockTable->DeviceAddress() : 0;
     context.placeholderImages = state->placeholderImages.get();
     context.bindlessTable = state->bindlessTable.get();
+    context.textureService = state->textureService.get();
     context.viewportIndexLayer = state->viewportIndexLayer;
     context.imageFormatList = state->imageFormatList;
     context.demoteToHelperInvocation = state->demoteToHelperInvocation;
@@ -5936,6 +5984,12 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     };
     if (recorder.HasQueuedKeyStores() && (resources.HoldsLease() || recorder.AnyQueuedKeyStore(touches))) recorder.FlushKeyStores();
     if (recorder.HasQueuedStores() && (resources.HoldsLease() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
+    if (record.shader->program->bindlessHeap) {
+        require(context.bindlessTable != nullptr && context.textureService != nullptr, "a bindless image dispatch needs the device's descriptor heap and texture service");
+        std::unique_lock gpuLock(GuestMemory::GpuMutex(), std::defer_lock);
+        if (!GuestMemory::GpuMutex().HeldByThisThread()) gpuLock.lock();
+        Graphics::ServeBindlessTables(context, recorder, record.shader->program->bindlessTables);
+    }
     static_cast<void>(Graphics::StorageTexture::StoreDrawnLinearTouching("dispatch access", touches, resources.HoldsLease()));
     resources.RequireGuestBuffers();
     std::shared_ptr<ScratchPool> pool;
@@ -5955,6 +6009,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     const auto commands = overlapCapable && unordered ? recorder.OverlapCommands(overlapQueue, runOwners, runAccesses, &covered, overlapped) : recorder.Commands(&covered);
     constexpr VkAccessFlags runLeadingCovered = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
     if (overlapCapable && !overlapped && (covered & runLeadingCovered) != runLeadingCovered) covered = 0;
+    if (record.shader->program->bindlessHeap) covered = 0;
     recordStep(PhaseRecordCommands);
     recorder.Keep(record.objects);
     if (record.resources != nullptr) record.resources->KeepStorageImageBytes(recorder);
@@ -6056,6 +6111,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (record.bindings != nullptr) Graphics::Require(record.bindings->allocation.set != VK_NULL_HANDLE, "dispatch overlay has no descriptor set");
     if (record.bindings != nullptr) context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, 0, 1, &record.bindings->allocation.set, 0, nullptr);
     else resources.Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout);
+    if (record.shader->program->bindlessHeap) context.bindlessTable->Heap().Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, VK_SHADER_STAGE_COMPUTE_BIT);
     if (const auto dwords = record.shader->program->workgroupMemoryDwords; dwords != 0) {
         auto memory = state->WorkgroupMemoryFor(context, record.x, record.y, record.z, dwords);
         context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::WorkgroupMemoryDescriptorSet, 1, &memory->set, 0, nullptr);
@@ -6209,10 +6265,19 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     objects->module = Graphics::CreateShaderModule(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule"), state->device, state->graphicsPipelineLibrary, shader.spirv.data(), shader.spirv.size() * sizeof(std::uint32_t), "vkCreateShaderModule");
     objects->resourcesLayout = setLayout;
     const bool scratchPool = shader.scratchPoolSlotDwords != 0;
-    const std::array<VkDescriptorSetLayout, 3> setLayouts{setLayout, shader.workgroupMemoryDwords != 0 || scratchPool ? state->workgroupMemoryLayout : VK_NULL_HANDLE, scratchPool ? state->workgroupMemoryLayout : VK_NULL_HANDLE};
+    std::array<VkDescriptorSetLayout, ShaderRecompiler::BindlessImageAbi::HeapDescriptorSet + 1u> setLayouts{setLayout, shader.workgroupMemoryDwords != 0 || scratchPool ? state->workgroupMemoryLayout : VK_NULL_HANDLE, scratchPool ? state->workgroupMemoryLayout : VK_NULL_HANDLE, VK_NULL_HANDLE};
     const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes};
     VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layoutInfo.setLayoutCount = scratchPool ? ShaderRecompiler::ScratchPoolDescriptorSet + 1 : shader.workgroupMemoryDwords != 0 ? ShaderRecompiler::WorkgroupMemoryDescriptorSet + 1 : 1;
+    if (shader.bindlessHeap) {
+        require(state->bindlessTable != nullptr, "a bindless image program needs the device's descriptor heap (APS5_BINDLESS_IMAGES=1 on a device that supports it)");
+        auto& heap = state->bindlessTable->Heap();
+        for (auto& layout : setLayouts) {
+            if (layout == VK_NULL_HANDLE) layout = heap.EmptyLayout();
+        }
+        setLayouts[ShaderRecompiler::BindlessImageAbi::HeapDescriptorSet] = heap.Layout(VK_SHADER_STAGE_COMPUTE_BIT);
+        layoutInfo.setLayoutCount = ShaderRecompiler::BindlessImageAbi::HeapDescriptorSet + 1u;
+    }
     layoutInfo.pSetLayouts = setLayouts.data();
     layoutInfo.pushConstantRangeCount = pushStages != 0 ? 1 : 0;
     layoutInfo.pPushConstantRanges = pushStages != 0 ? &push : nullptr;

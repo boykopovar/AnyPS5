@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureService.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -1716,6 +1717,12 @@ std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<
     return cachedTexture(context, words, resource, ViewComponents(resource), 0, false, multisampleViewType);
 }
 
+std::shared_ptr<Texture> CachedTableTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint64_t guestBytes, bool depthCompare) {
+    CompletePendingCpuWrites(context, resource.baseAddress, static_cast<std::size_t>(guestBytes));
+    if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
+    return cachedTexture(context, words, resource, ViewComponents(resource), guestBytes, depthCompare);
+}
+
 bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<const std::uint32_t> second) {
     Require(first.size() == 8 && second.size() == 8, "sampled texture keys take eight descriptor words");
     const VkComponentMapping components{VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
@@ -2448,6 +2455,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 if (flat != programBindings.end()) srtGuardFaults.push_back({IrStage(shader.stage), flat->guestDescriptor});
             }
             const VkShaderStageFlags flags = VulkanStage(shader.stage);
+            for (const auto& [base, bytes] : BindlessReadableRanges(*shader.program)) guestMemory.AddReadable(base, static_cast<std::size_t>(bytes));
             std::uint64_t stageStorageBuffers = 0;
             std::uint64_t stageResources = shader.stage == ShaderRecompiler::ShaderStage::Fragment ? colorAttachments : 0;
             Require(stageResources <= context.limits.maxPerStageResources, "shader descriptors exceed per-stage limits");

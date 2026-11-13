@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureService.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "ImageTableAbi.hpp"
@@ -183,7 +184,7 @@ void dropChunk(FaultArena& arena, const std::shared_ptr<BdaFaultChunk>& chunk, s
 
 }
 
-BdaResources::BdaResources(const Context& context, bool reportOnly) : reportOnly(reportOnly) {
+BdaResources::BdaResources(const Context& context, bool reportOnly) : reportOnly(reportOnly), textureService(context.textureService) {
     static_assert(std::endian::native == std::endian::little);
     Require(ShaderRecompiler::BdaAbi::FaultBufferBytes <= context.limits.maxStorageBufferRange, "BDA fault buffer exceeds storage buffer range limit");
     TakeFaultSlot(context);
@@ -511,6 +512,27 @@ void BdaResources::checkFault(const BdaResources& record) const {
         } else {
             message << ": poison entry " << report.bytes;
         }
+        throw std::runtime_error(message.str());
+    }
+    const auto stageTable = std::find_if(imageTables.begin(), imageTables.end(), [&](const ImageTableFaults& candidate) { return candidate.stage == report.stage; });
+    const std::uint64_t shaderAddress = stageTable != imageTables.end() ? stageTable->shader : 0u;
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::BindlessRefused && textureService != nullptr) {
+        if (const auto rejection = textureService->Rejection(report.bytes + 1u); rejection.has_value()) {
+            std::ostringstream message;
+            message << "image table: shader 0x" << std::hex << shaderAddress << std::dec << " stage " << report.stage << " pc 0x" << std::hex << report.instruction << " selected the descriptor at 0x" << report.address << std::dec << " through the bindless heap " << *rejection;
+            throw std::runtime_error(message.str());
+        }
+    }
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::BindlessMiss || report.reason == ShaderRecompiler::BdaAbi::FaultReason::BindlessRefused) {
+        Require(report.reason == ShaderRecompiler::BdaAbi::FaultReason::BindlessRefused || report.address == 0u, "invalid bindless image fault payload");
+        std::ostringstream message;
+        message << "bindless images: shader ";
+        if (shaderAddress != 0u) message << "0x" << std::hex << shaderAddress << std::dec;
+        else message << "address unavailable";
+        message << " stage " << report.stage << " pc 0x" << std::hex << report.instruction << std::dec;
+        if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::BindlessMiss) message << " missed in the device image table while its miss ring was full (" << report.bytes << " records), so the descriptor was not recorded";
+        else message << " selected the refused device image table entry " << report.bytes;
+        if (report.address != 0u) message << " (descriptor at 0x" << std::hex << report.address << std::dec << ")";
         throw std::runtime_error(message.str());
     }
     std::ostringstream message;

@@ -605,6 +605,31 @@ void DefineDescriptors(SpirvEmitterState& state) {
         }
         }
     }
+    if (state.bindlessImages) {
+        RequireTableIndexing(state);
+        const auto define = [&](std::uint32_t type, const std::string& name, std::uint32_t storage, std::uint32_t binding) {
+            const auto variable = state.module.DefineGlobalVariable(TypePointer(state, storage, type), storage);
+            state.module.AddName(variable, name.c_str());
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, BindlessImageAbi::HeapDescriptorSet);
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, binding);
+            return variable;
+        };
+        const auto& info = state.program.Info();
+        bool sampled = false;
+        for (std::uint32_t resource = 0; resource < info.images.size(); ++resource) {
+            if (!ResourceMaterializer::BindlessImage(info, stage, resource)) continue;
+            for (const auto& mode : info.runtimeImageModes.at(resource)) {
+                if (!TableModeEmitted(mode)) continue;
+                const auto kind = DescriptorBindingForImage(mode);
+                if (std::any_of(state.bindlessImageVariables.begin(), state.bindlessImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; })) continue;
+                state.bindlessImageVariables.push_back({kind, define(state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode)), "bindless_images_" + std::to_string(static_cast<std::uint32_t>(kind)), spv::StorageClassUniformConstant, BindlessImageAbi::SampledImageBinding)});
+                if (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim1DArray) state.module.EmitCapability(spv::CapabilitySampled1D);
+            }
+            for (const auto& pair : info.sampledPairs) sampled = sampled || pair.image == resource;
+        }
+        if (sampled) state.bindlessSamplerVariable = define(state.module.Type(spv::OpTypeRuntimeArray, state.module.Type(spv::OpTypeSampler)), "bindless_samplers", spv::StorageClassUniformConstant, BindlessImageAbi::SamplerBinding);
+        state.bindlessHeaderVariable = define(StorageBufferBlockType(state), "bindless_header", spv::StorageClassStorageBuffer, BindlessImageAbi::HeaderBinding);
+    }
     if (LdsInDeviceMemory(state)) {
         state.ldsBufferVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
         state.module.AddName(state.ldsBufferVariable, "workgroup_memory");

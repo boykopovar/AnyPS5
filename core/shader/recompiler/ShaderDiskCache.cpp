@@ -154,7 +154,7 @@ static_assert(fieldCount<IrResourcePlan>() == 25, "IrResourcePlan changed: updat
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 32, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 4, "DescriptorSource changed: update the plan encoder");
-static_assert(fieldCount<TableColumn>() == 19, "TableColumn changed: update the plan encoder");
+static_assert(fieldCount<TableColumn>() == 20, "TableColumn changed: update the plan encoder");
 static_assert(fieldCount<KeyDomain>() == 4, "KeyDomain changed: update the plan encoder");
 static_assert(fieldCount<ResourceBlock>() == 5, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
@@ -581,6 +581,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.bdaWrites);
     writer.Value(result.layerReplaySafe);
     writer.Value(result.stencilReferenceDword);
+    writer.Value(result.bindlessHeap);
 }
 
 void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
@@ -652,6 +653,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.bdaWrites);
     reader.Value(result.layerReplaySafe);
     reader.Value(result.stencilReferenceDword);
+    reader.Value(result.bindlessHeap);
     result.variantId = 0;
 }
 
@@ -691,6 +693,17 @@ void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
     });
     writer.Value(invocation.imageTableShader);
     writer.Value(invocation.imageTableFaults);
+    writer.List(invocation.bindlessTables, [](Writer& out, const BindlessImageAbi::TableRegistration& table) {
+        out.Value(table.base);
+        out.Value(table.records);
+        out.Value(table.stride);
+        out.List(table.uses, [](Writer& use, const BindlessImageAbi::TableUse& entry) {
+            use.Value(entry.interfaceId);
+            use.Value(entry.samplerClass);
+            for (const auto word : entry.sampler) use.Value(word);
+        });
+        out.Value(table.dwords);
+    });
 }
 
 void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
@@ -732,6 +745,17 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
     });
     reader.Value(invocation.imageTableShader);
     reader.Value(invocation.imageTableFaults);
+    reader.List(invocation.bindlessTables, 24, [](Reader& in, BindlessImageAbi::TableRegistration& table) {
+        in.Value(table.base);
+        in.Value(table.records);
+        in.Value(table.stride);
+        in.List(table.uses, 28, [](Reader& use, BindlessImageAbi::TableUse& entry) {
+            use.Value(entry.interfaceId);
+            use.Value(entry.samplerClass);
+            for (auto& word : entry.sampler) use.Value(word);
+        });
+        in.Value(table.dwords);
+    });
 }
 
 void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
@@ -1194,6 +1218,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
         out.Value(column.selected);
         out.Value(column.selection);
         out.Values(std::span<const std::uint32_t>(source.requiredBlocks));
+        out.Value(column.dynamic);
     });
     writer.List(plan.controlFlow, [&](Writer& out, const ResourceBlock& block) {
         out.Value(valueIndex(block.condition));
@@ -1359,6 +1384,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         in.Value(column.foldedCarry);
         in.Value(column.selected);
         in.Value(column.selection);
+        in.Value(column.dynamic);
         source.tableColumn = table ? std::optional(std::move(column)) : std::nullopt;
         in.Values(source.requiredBlocks);
     });

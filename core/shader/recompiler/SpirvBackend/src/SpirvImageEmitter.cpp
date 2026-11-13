@@ -9,6 +9,8 @@
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "ImageTableAbi.hpp"
+#include "BindlessImageAbi.hpp"
+#include "DeviceImageTableAbi.hpp"
 #include <span>
 #include <initializer_list>
 #include <algorithm>
@@ -18,8 +20,10 @@
 #include <bit>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
 #include <optional>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -2283,6 +2287,7 @@ TableWord EmitTableWord(SpirvValueEmitContext& ctx, const IrValue& inst, std::ui
     const auto& sources = state.program.Resources().descriptorSources;
     if (handle->ArgumentCount() == 0u || source >= sources.size() || !sources[source].tableColumn.has_value()) ctx.Fail(inst, "has an image table handle without its column");
     const auto& column = *sources[source].tableColumn;
+    if (column.dynamic) ctx.Fail(inst, "reads a descriptor whose address is known only at run time outside the bindless heap");
     const auto offset = ctx.Def(handle->Argument(0));
     const auto header = ImageTableAbi::TableHeader(table);
     const auto& parent = sources.at(column.heapSource).tableColumn;
@@ -2395,6 +2400,780 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
     return result;
 }
 
+constexpr std::uint32_t BindlessOk = 0u;
+constexpr std::uint32_t BindlessNull = 1u;
+constexpr std::uint32_t BindlessMiss = 2u;
+constexpr std::uint32_t BindlessRefused = 3u;
+constexpr std::uint32_t BindlessSlow = 4u;
+constexpr std::uint32_t BindlessStatusShift = 24u;
+
+struct BindlessColumn {
+    const TableColumn* column = nullptr;
+    const IrValue* offset = nullptr;
+    std::vector<const IrValue*> heap;
+};
+
+BindlessColumn BindlessColumnOf(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t source, std::size_t argument, std::uint32_t width) {
+    const auto& sources = ctx.state.program.Resources().descriptorSources;
+    const IrValue* handle = inst.Argument(argument)->Resolve();
+    if (source >= sources.size() || !sources[source].tableColumn.has_value()) ctx.Fail(inst, "has a bindless table handle without its column");
+    const auto& column = *sources[source].tableColumn;
+    if (column.heapSource >= sources.size()) ctx.Fail(inst, "has a bindless table column without its heap source");
+    const auto& kept = ctx.state.program.Metadata().bindlessHandleWords;
+    const auto words = kept.find(handle);
+    const auto heapWords = column.dynamic ? (column.address ? 2u : 4u) : sources[column.heapSource].dwordCount;
+    if (handle->ArgumentCount() != width || words == kept.end() || words->second.size() != heapWords) ctx.Fail(inst, "has a bindless table handle without its local heap dwords");
+    BindlessColumn found{&column, handle->Argument(0), {}};
+    for (const auto* reference : words->second) found.heap.push_back(reference->Argument(0));
+    return found;
+}
+
+std::array<const IrValue*, 4> BindlessDirectSampler(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    const IrValue* handle = inst.Argument(1)->Resolve();
+    const auto& kept = ctx.state.program.Metadata().bindlessHandleWords;
+    const auto words = kept.find(handle);
+    if (handle->Opcode() != IrOpcode::GetSamplerResource || words == kept.end() || words->second.size() != 4u) ctx.Fail(inst, "has a bindless direct sampler handle without its canonical S# dwords");
+    return {words->second[0]->Argument(0), words->second[1]->Argument(0), words->second[2]->Argument(0), words->second[3]->Argument(0)};
+}
+
+std::uint32_t BindlessWide(SpirvEmitterState& state, std::uint32_t value) {
+    return Unary(state, spv::OpUConvert, TypeScalarU64(state), value);
+}
+
+std::uint32_t BindlessPair(SpirvEmitterState& state, std::uint32_t low, std::uint32_t high) {
+    const auto u64 = TypeScalarU64(state);
+    return Binary(state, spv::OpBitwiseOr, u64, BindlessWide(state, low), Binary(state, spv::OpShiftLeftLogical, u64, BindlessWide(state, high), BdaConstant(state, 32u)));
+}
+
+std::uint32_t BindlessLow(SpirvEmitterState& state, std::uint32_t value) {
+    return Unary(state, spv::OpUConvert, TypeU32(state), value);
+}
+
+std::uint32_t BindlessHigh(SpirvEmitterState& state, std::uint32_t value) {
+    return Unary(state, spv::OpUConvert, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), value, BdaConstant(state, 32u)));
+}
+
+std::uint32_t BindlessAddSigned(SpirvEmitterState& state, std::uint32_t address, std::uint32_t immediate) {
+    const auto delta = static_cast<std::int32_t>(immediate & ~3u);
+    if (delta == 0) return address;
+    const auto magnitude = static_cast<std::uint64_t>(delta < 0 ? -static_cast<std::int64_t>(delta) : static_cast<std::int64_t>(delta));
+    return Binary(state, delta < 0 ? spv::OpISub : spv::OpIAdd, TypeScalarU64(state), address, BdaConstant(state, magnitude));
+}
+
+std::uint32_t BindlessMin(SpirvEmitterState& state, std::uint32_t left, std::uint32_t right) {
+    return Select(state, TypeScalarU64(state), Binary(state, spv::OpULessThan, TypeBool(state), left, right), left, right);
+}
+
+struct BindlessAddress {
+    std::uint32_t address = 0;
+    std::uint32_t count = 0;
+    std::uint32_t invalid = 0;
+    std::uint32_t base = 0;
+};
+
+BindlessAddress EmitBindlessAddress(SpirvValueEmitContext& ctx, const IrValue& inst, const BindlessColumn& column) {
+    auto& state = ctx.state;
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    const auto& info = *column.column;
+    const auto& heap = column.heap;
+    const auto word = [&](std::uint32_t index) { return ctx.Def(heap[index]); };
+    const auto offset = ctx.Def(column.offset);
+    const auto dwords = BdaConstant(state, info.dwordCount);
+    if (info.address) {
+        if (heap.size() != 2u) ctx.Fail(inst, "has a bindless pointer column without its two address dwords");
+        auto address = Binary(state, spv::OpIAdd, u64, BindlessPair(state, word(0), word(1)), BindlessWide(state, Binary(state, spv::OpBitwiseAnd, u32, offset, ConstantU32(state, ~3u))));
+        address = Binary(state, spv::OpBitwiseAnd, u64, BindlessAddSigned(state, address, info.offset), BdaConstant(state, ~std::uint64_t{3u}));
+        return {address, ConstantU32(state, info.dwordCount), 0u, address};
+    }
+    if (heap.size() != 4u) ctx.Fail(inst, "has a bindless buffer column without its four V# dwords");
+    const auto base = Binary(state, spv::OpBitwiseAnd, u64, BindlessPair(state, word(0), word(1)), BdaConstant(state, 0xffffffffffffull));
+    const auto stride = EmitBitFieldUExtract(state, word(1), ConstantU32(state, 16u), ConstantU32(state, 14u));
+    const auto records = BindlessWide(state, word(2));
+    const auto size = Select(state, u64, Binary(state, spv::OpIEqual, boolean, stride, ConstantU32(state, 0u)), records, Binary(state, spv::OpIMul, u64, BindlessWide(state, stride), records));
+    const auto invalid = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpShiftRightLogical, u32, word(3), ConstantU32(state, 30u)), ConstantU32(state, 0u));
+    const auto inRange = [&](std::uint32_t immediate) {
+        const auto start = Binary(state, spv::OpIAdd, u64, BindlessWide(state, offset), BdaConstant(state, immediate));
+        const auto aligned = Binary(state, spv::OpBitwiseAnd, u64, start, BdaConstant(state, ~std::uint64_t{3u}));
+        const auto limit = BdaConstant(state, 0xffffffffull);
+        const auto carried = Select(state, u64, Binary(state, spv::OpULessThanEqual, boolean, start, limit), Binary(state, spv::OpIAdd, u64, Binary(state, spv::OpShiftRightLogical, u64, Binary(state, spv::OpISub, u64, limit, start), BdaConstant(state, 2u)), BdaConstant(state, 1u)), BdaConstant(state, 0u));
+        const auto end = Binary(state, spv::OpIAdd, u64, aligned, BdaConstant(state, 4u));
+        const auto sized = Select(state, u64, Binary(state, spv::OpUGreaterThanEqual, boolean, size, end), Binary(state, spv::OpIAdd, u64, Binary(state, spv::OpShiftRightLogical, u64, Binary(state, spv::OpISub, u64, size, end), BdaConstant(state, 2u)), BdaConstant(state, 1u)), BdaConstant(state, 0u));
+        return std::pair{aligned, BindlessMin(state, carried, sized)};
+    };
+    if (!info.indirect) {
+        const auto [aligned, count] = inRange(info.offset);
+        const auto clamped = Select(state, u64, invalid, BdaConstant(state, 0u), BindlessMin(state, count, dwords));
+        return {Binary(state, spv::OpIAdd, u64, base, aligned), BindlessLow(state, clamped), invalid, base};
+    }
+    const auto [aligned, count] = inRange(info.offset);
+    const auto readable = Binary(state, spv::OpLogicalAnd, boolean, Unary(state, spv::OpLogicalNot, boolean, invalid), Binary(state, spv::OpUGreaterThanEqual, boolean, count, BdaConstant(state, 2u)));
+    const auto readPointer = [&](std::uint32_t at) {
+        return EmitValueOrDefaultIfCondition(state, readable, TypeU32Vector(state, 2u), state.module.Constant(spv::OpConstantComposite, TypeU32Vector(state, 2u), ConstantU32(state, 0u), ConstantU32(state, 0u)), [&] {
+            const auto read = EmitBdaDwordReads(ctx, inst, at, 0u, 2u, true);
+            const auto value = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 2u), value, read[0], read[1]);
+            return value;
+        });
+    };
+    auto pair = readPointer(Binary(state, spv::OpIAdd, u64, base, aligned));
+    const auto part = [&](std::uint32_t index) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u32, value, pair, index);
+        return value;
+    };
+    auto address = BindlessPair(state, part(0u), part(1u));
+    for (const auto& hop : info.pointerHops) {
+        pair = readPointer(BindlessAddSigned(state, Binary(state, spv::OpIAdd, u64, address, BdaConstant(state, hop.offset & ~3u)), hop.immediate));
+        address = BindlessPair(state, part(0u), part(1u));
+    }
+    address = BindlessAddSigned(state, Binary(state, spv::OpIAdd, u64, address, BdaConstant(state, info.indirectOffset & ~3u)), info.indirectImmediate);
+    return {address, Select(state, u32, readable, ConstantU32(state, info.dwordCount), ConstantU32(state, 0u)), invalid, base};
+}
+
+std::uint32_t BindlessSamplerClass(const SpirvEmitterState& state, const MemoryInfo& memory, const IrValue& inst) {
+    if (!ImageOpcodeInfoOf(inst.Opcode()).needsSampler) return BindlessImageAbi::NoSamplerClass;
+    const auto& samplers = state.program.Info().samplers;
+    if (memory.sampler >= samplers.size()) return BindlessImageAbi::NoSamplerClass;
+    return samplers[memory.sampler].table != NoTable ? BindlessImageAbi::TableSamplerClass : BindlessImageAbi::DirectSamplerClass;
+}
+
+struct BindlessInputs {
+    std::vector<std::uint32_t> scalars;
+    std::vector<const IrValue*> values;
+    bool indirect = false;
+};
+
+BindlessInputs BindlessInputsOf(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory) {
+    auto& state = ctx.state;
+    const auto& info = state.program.Info();
+    BindlessInputs inputs;
+    const auto column = [&](std::uint32_t source, std::size_t argument, std::uint32_t width) {
+        const auto found = BindlessColumnOf(ctx, inst, source, argument, width);
+        inputs.indirect = inputs.indirect || found.column->indirect;
+        inputs.scalars.push_back(source);
+        inputs.values.push_back(found.offset);
+        inputs.values.insert(inputs.values.end(), found.heap.begin(), found.heap.end());
+    };
+    inputs.scalars.push_back(memory.resource);
+    column(info.images.at(memory.resource).source, 0u, 8u);
+    const auto samplerClass = BindlessSamplerClass(state, memory, inst);
+    inputs.scalars.push_back(samplerClass);
+    if (samplerClass == BindlessImageAbi::TableSamplerClass) {
+        column(info.samplers.at(memory.sampler).source, 1u, 4u);
+    } else if (samplerClass == BindlessImageAbi::DirectSamplerClass) {
+        for (const auto* word : BindlessDirectSampler(ctx, inst)) inputs.values.push_back(word);
+    }
+    return inputs;
+}
+
+std::vector<std::uint32_t> BindlessKeyOf(SpirvValueEmitContext& ctx, const BindlessInputs& inputs) {
+    auto key = inputs.scalars;
+    for (const auto* value : inputs.values) key.push_back(ctx.Def(value));
+    return key;
+}
+
+std::uint32_t BindlessVector(SpirvEmitterState& state, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint32_t w) {
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), value, x, y, z, w);
+    return value;
+}
+
+std::uint32_t BindlessExtract(SpirvEmitterState& state, std::uint32_t vector, std::uint32_t index) {
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), value, vector, index);
+    return value;
+}
+
+std::uint32_t BindlessElect(SpirvEmitterState& state) {
+    state.module.EmitCapability(spv::CapabilityGroupNonUniform);
+    const auto elected = state.module.AllocateId();
+    state.module.AddFunction(spv::OpGroupNonUniformElect, TypeBool(state), elected, ConstantU32(state, spv::ScopeSubgroup));
+    return elected;
+}
+
+std::uint32_t BindlessSameAsFirst(SpirvEmitterState& state, std::uint32_t type, std::uint32_t value, std::uint32_t components) {
+    state.module.EmitCapability(spv::CapabilityGroupNonUniformBallot);
+    const auto first = state.module.AllocateId();
+    state.module.AddFunction(spv::OpGroupNonUniformBroadcastFirst, type, first, ConstantU32(state, spv::ScopeSubgroup), value);
+    if (components == 1u) return Binary(state, spv::OpIEqual, TypeBool(state), value, first);
+    const auto all = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAll, TypeBool(state), all, Binary(state, spv::OpIEqual, TypeBoolVector(state, components), value, first));
+    return all;
+}
+
+std::uint32_t BindlessSubgroupAll(SpirvEmitterState& state, std::uint32_t condition) {
+    const auto ballot = state.module.AllocateId();
+    state.module.AddFunction(spv::OpGroupNonUniformBallot, TypeU32Vector(state, 4u), ballot, ConstantU32(state, spv::ScopeSubgroup), Unary(state, spv::OpLogicalNot, TypeBool(state), condition));
+    const auto none = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAll, TypeBool(state), none, Binary(state, spv::OpIEqual, TypeBoolVector(state, 4u), ballot, ConstantU32CompositeZero(state, 4u)));
+    return none;
+}
+
+SpirvBindlessProbe EmitBindlessProbe(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory) {
+    auto& state = ctx.state;
+    const auto& info = state.program.Info();
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto uvec4 = TypeU32Vector(state, 4u);
+    const auto image = EmitBindlessAddress(ctx, inst, BindlessColumnOf(ctx, inst, info.images.at(memory.resource).source, 0u, 8u));
+    const auto samplerClass = BindlessSamplerClass(state, memory, inst);
+    auto samplerAddress = BdaConstant(state, 0u);
+    auto samplerCount = ConstantU32(state, 0u);
+    auto samplerWords = ConstantU32CompositeZero(state, 4u);
+    std::uint32_t addressed = 0u;
+    if (samplerClass == BindlessImageAbi::TableSamplerClass) {
+        const auto sampler = EmitBindlessAddress(ctx, inst, BindlessColumnOf(ctx, inst, info.samplers.at(memory.sampler).source, 1u, 4u));
+        samplerAddress = sampler.address;
+        samplerCount = sampler.count;
+        addressed = 1u;
+    } else if (samplerClass == BindlessImageAbi::DirectSamplerClass) {
+        const auto words = BindlessDirectSampler(ctx, inst);
+        samplerWords = BindlessVector(state, ctx.Def(words[0]), ctx.Def(words[1]), ctx.Def(words[2]), ctx.Def(words[3]));
+    }
+    const auto id = ResourceMaterializer::BindlessInterfaceId(info.images.at(memory.resource), info.runtimeImageModes.at(memory.resource));
+    const auto counts = Binary(state, spv::OpBitwiseOr, u32, image.count, Binary(state, spv::OpShiftLeftLogical, u32, samplerCount, ConstantU32(state, 4u)));
+    SpirvBindlessProbe probe;
+    probe.image = image.address;
+    probe.sampler = samplerAddress;
+    probe.samplerWords = samplerWords;
+    probe.extra = BindlessVector(state, ConstantU32(state, static_cast<std::uint32_t>(id)), ConstantU32(state, static_cast<std::uint32_t>(id >> 32u)), ConstantU32(state, samplerClass), counts);
+    probe.invalid = image.invalid;
+    probe.base = image.base;
+    const auto call = [&] {
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionCall, uvec4, result, state.bindlessProbeFunctions[addressed], probe.image, probe.sampler, probe.samplerWords, probe.extra, ConstantU32(state, 0u), ConstantBool(state, false));
+        return result;
+    };
+    if (!state.bindlessWaveUniform) {
+        probe.uniform = ConstantBool(state, false);
+        probe.result = call();
+        return probe;
+    }
+    const auto words = [&](std::uint32_t address) { return Unary(state, spv::OpBitcast, TypeU32Vector(state, 2u), address); };
+    auto same = Binary(state, spv::OpLogicalAnd, boolean, BindlessSameAsFirst(state, TypeU32Vector(state, 2u), words(probe.image), 2u), BindlessSameAsFirst(state, u32, counts, 1u));
+    if (samplerClass == BindlessImageAbi::TableSamplerClass) same = Binary(state, spv::OpLogicalAnd, boolean, same, BindlessSameAsFirst(state, TypeU32Vector(state, 2u), words(samplerAddress), 2u));
+    if (samplerClass == BindlessImageAbi::DirectSamplerClass) same = Binary(state, spv::OpLogicalAnd, boolean, same, BindlessSameAsFirst(state, uvec4, samplerWords, 4u));
+    const auto uniform = BindlessSubgroupAll(state, same);
+    const auto lead = Binary(state, spv::OpLogicalOr, boolean, Unary(state, spv::OpLogicalNot, boolean, uniform), BindlessElect(state));
+    const auto looked = EmitValueOrDefaultIfCondition(state, lead, uvec4, ConstantU32CompositeZero(state, 4u), call);
+    state.module.EmitCapability(spv::CapabilityGroupNonUniformBallot);
+    const auto broadcast = state.module.AllocateId();
+    state.module.AddFunction(spv::OpGroupNonUniformBroadcastFirst, uvec4, broadcast, ConstantU32(state, spv::ScopeSubgroup), looked);
+    const auto selector = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeBoolVector(state, 4u), selector, uniform, uniform, uniform, uniform);
+    probe.uniform = uniform;
+    probe.result = Select(state, uvec4, selector, broadcast, looked);
+    return probe;
+}
+
+bool BindlessDominates(const SpirvEmitterState& state, const IrBlock* dominator, const IrBlock* block);
+
+const SpirvBindlessProbe& BindlessProbeFor(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory) {
+    auto& state = ctx.state;
+    const auto key = BindlessKeyOf(ctx, BindlessInputsOf(ctx, inst, memory));
+    if (const auto found = state.bindlessHoisted.find(key); found != state.bindlessHoisted.end()) {
+        for (const auto& [block, probe] : found->second) {
+            if (BindlessDominates(state, block, state.currentBlock)) return probe;
+        }
+    }
+    if (state.bindlessProbeBlock != state.currentBlock) {
+        state.bindlessBlockProbes.clear();
+        state.bindlessProbeBlock = state.currentBlock;
+    }
+    if (const auto found = state.bindlessBlockProbes.find(key); found != state.bindlessBlockProbes.end()) return found->second;
+    return state.bindlessBlockProbes.emplace(key, EmitBindlessProbe(ctx, inst, memory)).first->second;
+}
+
+struct BindlessAccess {
+    std::uint32_t valid = 0;
+    std::uint32_t selector = 0;
+};
+
+BindlessAccess EmitBindlessAccess(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory) {
+    auto& state = ctx.state;
+    const auto addressed = BindlessSamplerClass(state, memory, inst) == BindlessImageAbi::TableSamplerClass ? 1u : 0u;
+    if (state.bindlessProbeFunctions[addressed] == 0 || state.bindlessLookupFunctions[addressed] == 0 || state.faultBufferVariable == 0) ctx.Fail(inst, "reads a bindless image without its lookup functions or fault buffer");
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto uvec4 = TypeU32Vector(state, 4u);
+    const auto probe = BindlessProbeFor(ctx, inst, memory);
+    const auto exec = ctx.Arg(inst, inst.ArgumentCount() - 1u);
+    const auto pc = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
+    const auto status = Binary(state, spv::OpShiftRightLogical, u32, BindlessExtract(state, probe.result, 0u), ConstantU32(state, BindlessStatusShift));
+    const auto redo = Binary(state, spv::OpLogicalAnd, boolean, exec, Binary(state, spv::OpUGreaterThanEqual, boolean, status, ConstantU32(state, BindlessMiss)));
+    const auto result = EmitValueOrDefaultIfCondition(state, redo, uvec4, probe.result, [&] {
+        const auto record = state.bindlessWaveUniform ? Binary(state, spv::OpLogicalOr, boolean, Unary(state, spv::OpLogicalNot, boolean, probe.uniform), BindlessElect(state)) : ConstantBool(state, true);
+        const auto looked = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionCall, uvec4, looked, state.bindlessLookupFunctions[addressed], probe.image, probe.sampler, probe.samplerWords, probe.extra, pc, record);
+        return looked;
+    });
+    if (probe.invalid != 0u) {
+        EmitIfCondition(state, Binary(state, spv::OpLogicalAnd, boolean, exec, probe.invalid), [&] {
+            RecordBdaFaultWords(state, BindlessLow(state, probe.base), BindlessHigh(state, probe.base), ConstantU32(state, 0u), pc, BdaAbi::FaultReason::InvalidDescriptor);
+        });
+    }
+    const auto first = BindlessExtract(state, result, 0u);
+    BindlessAccess access;
+    access.valid = Binary(state, spv::OpIEqual, boolean, Binary(state, spv::OpShiftRightLogical, u32, first, ConstantU32(state, BindlessStatusShift)), ConstantU32(state, BindlessOk));
+    access.selector = BindlessExtract(state, result, 1u);
+    state.tableAccess = {};
+    state.tableAccess.element = Binary(state, spv::OpBitwiseAnd, u32, first, ConstantU32(state, BindlessImageAbi::SlotMask));
+    DecorateTableNonUniform(state, state.tableAccess.element);
+    state.tableAccess.dword3 = BindlessExtract(state, result, 2u);
+    if (BindlessSamplerClass(state, memory, inst) != BindlessImageAbi::NoSamplerClass) {
+        state.tableAccess.samplerElement = BindlessExtract(state, result, 3u);
+        DecorateTableNonUniform(state, state.tableAccess.samplerElement);
+    }
+    state.tableAccess.active = true;
+    state.tableAccess.bindless = true;
+    return access;
+}
+
+std::uint32_t BindlessHash(SpirvEmitterState& state, std::span<const std::uint32_t> key) {
+    namespace Table = DeviceImageTableAbi;
+    const auto u32 = TypeU32(state);
+    const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
+    const auto rotate = [&](std::uint32_t value, std::uint32_t bits) {
+        return Binary(state, spv::OpBitwiseOr, u32, Binary(state, spv::OpShiftLeftLogical, u32, value, constant(bits)), Binary(state, spv::OpShiftRightLogical, u32, value, constant(32u - bits)));
+    };
+    auto hash = constant(Table::HashSeed);
+    for (const auto word : key) {
+        const auto mixed = Binary(state, spv::OpIMul, u32, rotate(Binary(state, spv::OpIMul, u32, word, constant(Table::HashC1)), 15u), constant(Table::HashC2));
+        hash = Binary(state, spv::OpIAdd, u32, Binary(state, spv::OpIMul, u32, rotate(Binary(state, spv::OpBitwiseXor, u32, hash, mixed), 13u), constant(5u)), constant(Table::HashRound));
+    }
+    const auto shiftXor = [&](std::uint32_t value, std::uint32_t bits) { return Binary(state, spv::OpBitwiseXor, u32, value, Binary(state, spv::OpShiftRightLogical, u32, value, constant(bits))); };
+    hash = Binary(state, spv::OpBitwiseXor, u32, hash, constant(Table::KeyWords * 4u));
+    hash = Binary(state, spv::OpIMul, u32, shiftXor(hash, 16u), constant(Table::HashMix1));
+    hash = Binary(state, spv::OpIMul, u32, shiftXor(hash, 13u), constant(Table::HashMix2));
+    return shiftXor(hash, 16u);
+}
+
+std::uint32_t BindlessPhysicalPointer(SpirvEmitterState& state, std::uint32_t base, std::uint32_t word) {
+    const auto pointer = state.module.AllocateId();
+    const auto address = Binary(state, spv::OpIAdd, TypeScalarU64(state), base, BindlessWide(state, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), word, ConstantU32(state, 2u))));
+    state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, address);
+    return pointer;
+}
+
+std::uint32_t BindlessPhysicalLoad(SpirvEmitterState& state, std::uint32_t base, std::uint32_t word) {
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, BindlessPhysicalPointer(state, base, word), spv::MemoryAccessAlignedMask, 4u);
+    return value;
+}
+
+std::uint32_t BindlessHeaderWord(SpirvEmitterState& state, std::uint32_t index) {
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.bindlessHeaderVariable, ConstantU32(state, 0u), ConstantU32(state, index));
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
+    return value;
+}
+
+std::uint32_t DefineBindlessLookup(SpirvEmitterState& state, bool full, bool addressed) {
+    namespace Table = DeviceImageTableAbi;
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto uvec4 = TypeU32Vector(state, 4u);
+    const auto boolean = TypeBool(state);
+    const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
+    const auto binary = [&](std::uint32_t op, std::uint32_t type, std::uint32_t left, std::uint32_t right) { return Binary(state, op, type, left, right); };
+    const auto equal = [&](std::uint32_t left, std::uint32_t right) { return binary(spv::OpIEqual, boolean, left, right); };
+    const auto both = [&](std::uint32_t left, std::uint32_t right) { return binary(spv::OpLogicalAnd, boolean, left, right); };
+    const auto either = [&](std::uint32_t left, std::uint32_t right) { return binary(spv::OpLogicalOr, boolean, left, right); };
+    const auto negate = [&](std::uint32_t value) { return Unary(state, spv::OpLogicalNot, boolean, value); };
+    const auto load = [&](std::uint32_t variable, std::uint32_t type) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, type, value, variable);
+        return value;
+    };
+    const auto function = state.module.AllocateId();
+    state.module.AddName(function, std::string(full ? "bindless_lookup" : "bindless_probe") + (addressed ? "_table_sampler" : ""));
+    state.module.AddFunction(spv::OpFunction, uvec4, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, uvec4, u64, u64, uvec4, uvec4, u32, boolean));
+    const auto image = state.module.AllocateId();
+    const auto sampler = state.module.AllocateId();
+    const auto samplerParameter = state.module.AllocateId();
+    const auto extra = state.module.AllocateId();
+    const auto pc = state.module.AllocateId();
+    const auto record = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionParameter, u64, image);
+    state.module.AddFunction(spv::OpFunctionParameter, u64, sampler);
+    state.module.AddFunction(spv::OpFunctionParameter, uvec4, samplerParameter);
+    state.module.AddFunction(spv::OpFunctionParameter, uvec4, extra);
+    state.module.AddFunction(spv::OpFunctionParameter, u32, pc);
+    state.module.AddFunction(spv::OpFunctionParameter, boolean, record);
+    EmitLabel(state, state.module.AllocateId());
+    const auto stepVariable = state.module.AllocateId();
+    const auto doneVariable = state.module.AllocateId();
+    const auto foundVariable = state.module.AllocateId();
+    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, u32), stepVariable, spv::StorageClassFunction);
+    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, boolean), doneVariable, spv::StorageClassFunction);
+    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, uvec4), foundVariable, spv::StorageClassFunction);
+    const auto hashVariable = full ? state.module.AllocateId() : 0u;
+    const auto claimVariable = full ? state.module.AllocateId() : 0u;
+    const auto settledVariable = full ? state.module.AllocateId() : 0u;
+    if (full) {
+        state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, u32), hashVariable, spv::StorageClassFunction);
+        state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, boolean), claimVariable, spv::StorageClassFunction);
+        state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, boolean), settledVariable, spv::StorageClassFunction);
+        state.module.AddFunction(spv::OpStore, hashVariable, constant(0u));
+    }
+    const auto counts = BindlessExtract(state, extra, 3u);
+    const auto imageCount = binary(spv::OpBitwiseAnd, u32, counts, constant(0xfu));
+    const auto samplerCount = binary(spv::OpBitwiseAnd, u32, binary(spv::OpShiftRightLogical, u32, counts, constant(4u)), constant(0xfu));
+    const auto read = [&](std::uint32_t address, std::uint32_t count, std::uint32_t dwords, std::array<std::uint32_t, 8>& words) {
+        if (full) {
+            const auto span = state.bdaSpanReadFunctions[0][0];
+            for (std::uint32_t quad = 0; quad < dwords / 4u; ++quad) {
+                if (span != 0u) {
+                    const auto first = constant(quad * 4u);
+                    const auto clamped = Select(state, u32, binary(spv::OpUGreaterThan, boolean, count, first), binary(spv::OpISub, u32, count, first), constant(0u));
+                    const auto limited = Select(state, u32, binary(spv::OpUGreaterThan, boolean, clamped, constant(4u)), constant(4u), clamped);
+                    const auto used = binary(spv::OpISub, u32, binary(spv::OpShiftLeftLogical, u32, constant(1u), limited), constant(1u));
+                    const auto values = EmitValueOrDefaultIfCondition(state, binary(spv::OpINotEqual, boolean, used, constant(0u)), uvec4, ConstantU32CompositeZero(state, 4u), [&] {
+                        const auto loaded = state.module.AllocateId();
+                        state.module.AddFunction(spv::OpFunctionCall, uvec4, loaded, span, address, constant(quad * 16u), used, pc);
+                        return loaded;
+                    });
+                    for (std::uint32_t dword = 0; dword < 4u; ++dword) words[quad * 4u + dword] = BindlessExtract(state, values, dword);
+                    continue;
+                }
+                for (std::uint32_t dword = 0; dword < 4u; ++dword) {
+                    const auto index = quad * 4u + dword;
+                    words[index] = EmitValueOrZeroIfCondition(state, binary(spv::OpULessThan, boolean, constant(index), count), [&] {
+                        const auto pair = state.module.AllocateId();
+                        state.module.AddFunction(spv::OpFunctionCall, TypeU32Vector(state, 2u), pair, state.bdaDwordReadFunctions[0][0], binary(spv::OpIAdd, u64, address, BdaConstant(state, index * 4u)), pc);
+                        return BindlessExtract(state, pair, 0u);
+                    });
+                }
+            }
+            return ConstantBool(state, true);
+        }
+        if (state.bdaProbeFunction == 0u) {
+            for (std::uint32_t dword = 0; dword < dwords; ++dword) words[dword] = constant(0u);
+            return binary(spv::OpIEqual, boolean, count, constant(0u));
+        }
+        const auto present = binary(spv::OpINotEqual, boolean, count, constant(0u));
+        const auto physical = EmitValueOrDefaultIfCondition(state, present, u64, BdaConstant(state, 0u), [&] {
+            const auto found = state.module.AllocateId();
+            state.module.AddFunction(spv::OpFunctionCall, u64, found, state.bdaProbeFunction, address, binary(spv::OpShiftLeftLogical, u32, count, constant(2u)), pc);
+            return found;
+        });
+        const auto usable = either(negate(present), both(binary(spv::OpINotEqual, boolean, physical, BdaConstant(state, 0u)), binary(spv::OpIEqual, boolean, binary(spv::OpBitwiseAnd, u64, physical, BdaConstant(state, 3u)), BdaConstant(state, 0u))));
+        for (std::uint32_t dword = 0; dword < dwords; ++dword) {
+            words[dword] = EmitValueOrZeroIfCondition(state, both(usable, binary(spv::OpULessThan, boolean, constant(dword), count)), [&] { return BindlessPhysicalLoad(state, physical, constant(dword)); });
+        }
+        return usable;
+    };
+    std::array<std::uint32_t, 8> words{};
+    const auto imageUsable = read(image, imageCount, 8u, words);
+    std::array<std::uint32_t, 8> samplerRead{};
+    const auto samplerUsable = addressed ? read(sampler, samplerCount, 4u, samplerRead) : ConstantBool(state, true);
+    std::array<std::uint32_t, Table::KeyWords> key{};
+    for (std::uint32_t word = 0; word < Table::DescriptorWords; ++word) {
+        const auto mask = BindlessImageAbi::MaskedDescriptorWord(word, 0xffffffffu);
+        key[word] = mask == 0xffffffffu ? words[word] : binary(spv::OpBitwiseAnd, u32, words[word], constant(mask));
+    }
+    key[Table::InterfaceWord] = BindlessExtract(state, extra, 0u);
+    key[Table::InterfaceWord + 1u] = BindlessExtract(state, extra, 1u);
+    key[Table::SamplerClassWord] = BindlessExtract(state, extra, 2u);
+    for (std::uint32_t word = 0; word < Table::SamplerWords; ++word) key[Table::SamplerWord + word] = addressed ? samplerRead[word] : BindlessExtract(state, samplerParameter, word);
+    const auto slow = negate(both(imageUsable, samplerUsable));
+    const auto null = either(equal(imageCount, constant(0u)), both(equal(words[0], constant(0u)), equal(binary(spv::OpBitwiseAnd, u32, words[1], constant(0xffu)), constant(0u))));
+    state.module.AddFunction(spv::OpStore, foundVariable, ConstantU32CompositeZero(state, 4u));
+    EmitIfCondition(state, both(negate(slow), negate(null)), [&] {
+        const auto hash = BindlessHash(state, key);
+        if (full) state.module.AddFunction(spv::OpStore, hashVariable, hash);
+        const auto table = BindlessPair(state, BindlessHeaderWord(state, Table::HeaderTableLow), BindlessHeaderWord(state, Table::HeaderTableHigh));
+        const auto mask = BindlessHeaderWord(state, Table::HeaderMask);
+        const auto home = binary(spv::OpBitwiseAnd, u32, hash, mask);
+        state.module.AddFunction(spv::OpStore, stepVariable, constant(0u));
+        state.module.AddFunction(spv::OpStore, doneVariable, ConstantBool(state, false));
+        const auto loopHeader = state.module.AllocateId();
+        const auto body = state.module.AllocateId();
+        const auto continuation = state.module.AllocateId();
+        const auto merge = state.module.AllocateId();
+        state.module.AddFunction(spv::OpBranch, loopHeader);
+        EmitLabel(state, loopHeader);
+        const auto step = load(stepVariable, u32);
+        const auto done = load(doneVariable, boolean);
+        const auto searching = both(negate(done), binary(spv::OpULessThan, boolean, step, constant(Table::ProbeSteps)));
+        state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, searching, body, merge);
+        EmitLabel(state, body);
+        const auto bucket = binary(spv::OpIMul, u32, binary(spv::OpBitwiseAnd, u32, binary(spv::OpIAdd, u32, home, step), mask), constant(Table::BucketWords));
+        const auto at = [&](std::uint32_t word) { return BindlessPhysicalLoad(state, table, binary(spv::OpIAdd, u32, bucket, constant(word))); };
+        const auto live = equal(at(Table::StateWord), constant(Table::LiveState));
+        auto same = live;
+        for (std::uint32_t word = 0; word < Table::KeyWords; ++word) same = both(same, equal(at(word), key[word]));
+        const auto hit = BindlessVector(state, at(Table::SlotWord), at(Table::ModeWord), at(Table::FaultWord), binary(spv::OpIAdd, u32, at(Table::SamplerSlotWord), constant(1u)));
+        const auto previous = load(foundVariable, uvec4);
+        const auto selector = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeBoolVector(state, 4u), selector, same, same, same, same);
+        state.module.AddFunction(spv::OpStore, foundVariable, Select(state, uvec4, selector, hit, previous));
+        state.module.AddFunction(spv::OpStore, doneVariable, either(negate(live), same));
+        state.module.AddFunction(spv::OpBranch, continuation);
+        EmitLabel(state, continuation);
+        state.module.AddFunction(spv::OpStore, stepVariable, binary(spv::OpIAdd, u32, step, constant(1u)));
+        state.module.AddFunction(spv::OpBranch, loopHeader);
+        EmitLabel(state, merge);
+    });
+    const auto found = load(foundVariable, uvec4);
+    const auto present = binary(spv::OpINotEqual, boolean, BindlessExtract(state, found, 3u), constant(0u));
+    const auto fault = BindlessExtract(state, found, 2u);
+    const auto refused = binary(spv::OpINotEqual, boolean, fault, constant(0u));
+    auto status = Select(state, u32, refused, constant(BindlessRefused), constant(BindlessOk));
+    status = Select(state, u32, present, status, constant(BindlessMiss));
+    status = Select(state, u32, null, constant(BindlessNull), status);
+    status = Select(state, u32, slow, constant(BindlessSlow), status);
+    if (full) {
+        EmitIfCondition(state, both(record, equal(status, constant(BindlessMiss))), [&] {
+            // Report each missing key once per clear of the reported-miss set (DeviceImageTableAbi
+            // HeaderSeen*): the first invocation to claim the key's tag appends it, the others skip.
+            const auto seen = BindlessPair(state, BindlessHeaderWord(state, Table::HeaderSeenLow), BindlessHeaderWord(state, Table::HeaderSeenHigh));
+            const auto seenSlots = BindlessHeaderWord(state, Table::HeaderSeenSlots);
+            auto tag = constant(Table::SeenTagSeed);
+            for (const auto word : key) tag = binary(spv::OpIMul, u32, binary(spv::OpBitwiseXor, u32, tag, word), constant(Table::SeenTagPrime));
+            tag = binary(spv::OpBitwiseOr, u32, tag, constant(1u));
+            const auto unset = equal(seenSlots, constant(0u));
+            state.module.AddFunction(spv::OpStore, claimVariable, unset);
+            state.module.AddFunction(spv::OpStore, settledVariable, unset);
+            state.module.AddFunction(spv::OpStore, stepVariable, constant(0u));
+            const auto seenHash = load(hashVariable, u32);
+            const auto seenMask = binary(spv::OpISub, u32, seenSlots, constant(1u));
+            const auto seenHeader = state.module.AllocateId();
+            const auto seenBody = state.module.AllocateId();
+            const auto seenContinue = state.module.AllocateId();
+            const auto seenMerge = state.module.AllocateId();
+            state.module.AddFunction(spv::OpBranch, seenHeader);
+            EmitLabel(state, seenHeader);
+            const auto seenStep = load(stepVariable, u32);
+            const auto settled = load(settledVariable, boolean);
+            const auto probing = both(negate(settled), binary(spv::OpULessThan, boolean, seenStep, constant(Table::SeenProbeSteps)));
+            state.module.AddFunction(spv::OpLoopMerge, seenMerge, seenContinue, spv::LoopControlMaskNone);
+            state.module.AddFunction(spv::OpBranchConditional, probing, seenBody, seenMerge);
+            EmitLabel(state, seenBody);
+            const auto slotIndex = binary(spv::OpBitwiseAnd, u32, binary(spv::OpIAdd, u32, seenHash, seenStep), seenMask);
+            const auto current = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAtomicLoad, u32, current, BindlessPhysicalPointer(state, seen, slotIndex), constant(spv::ScopeDevice), constant(spv::MemorySemanticsMaskNone));
+            const auto previous = EmitValueOrDefaultIfCondition(state, equal(current, constant(0u)), u32, current, [&] {
+                const auto exchanged = state.module.AllocateId();
+                state.module.AddFunction(spv::OpAtomicCompareExchange, u32, exchanged, BindlessPhysicalPointer(state, seen, slotIndex), constant(spv::ScopeDevice), constant(spv::MemorySemanticsMaskNone), constant(spv::MemorySemanticsMaskNone), tag, constant(0u));
+                return exchanged;
+            });
+            const auto won = equal(previous, constant(0u));
+            state.module.AddFunction(spv::OpStore, claimVariable, won);
+            state.module.AddFunction(spv::OpStore, settledVariable, either(won, equal(previous, tag)));
+            state.module.AddFunction(spv::OpBranch, seenContinue);
+            EmitLabel(state, seenContinue);
+            state.module.AddFunction(spv::OpStore, stepVariable, binary(spv::OpIAdd, u32, seenStep, constant(1u)));
+            state.module.AddFunction(spv::OpBranch, seenHeader);
+            EmitLabel(state, seenMerge);
+            const auto report = either(load(claimVariable, boolean), negate(load(settledVariable, boolean)));
+            EmitIfCondition(state, report, [&] {
+                const auto ring = BindlessPair(state, BindlessHeaderWord(state, Table::HeaderRingLow), BindlessHeaderWord(state, Table::HeaderRingHigh));
+                const auto capacity = BindlessHeaderWord(state, Table::HeaderRingCapacity);
+                const auto index = state.module.AllocateId();
+                state.module.AddFunction(spv::OpAtomicIAdd, u32, index, BindlessPhysicalPointer(state, ring, constant(Table::RingCountWord)), constant(spv::ScopeDevice), constant(spv::MemorySemanticsMaskNone), constant(1u));
+                EmitIfCondition(state, binary(spv::OpULessThan, boolean, index, capacity), [&] {
+                    const auto first = binary(spv::OpIAdd, u32, constant(Table::RingRecordsWord), binary(spv::OpIMul, u32, index, constant(Table::RecordWords)));
+                    const auto store = [&](std::uint32_t word, std::uint32_t value) {
+                        state.module.AddFunction(spv::OpStore, BindlessPhysicalPointer(state, ring, binary(spv::OpIAdd, u32, first, constant(word))), value, spv::MemoryAccessAlignedMask, 4u);
+                    };
+                    for (std::uint32_t word = 0; word < Table::KeyWords; ++word) store(word, key[word]);
+                    store(Table::RecordPcWord, pc);
+                });
+            });
+        });
+        EmitIfCondition(state, both(record, equal(status, constant(BindlessRefused))), [&] {
+            RecordBdaFaultWords(state, BindlessLow(state, image), BindlessHigh(state, image), binary(spv::OpISub, u32, fault, constant(1u)), pc, BdaAbi::FaultReason::BindlessRefused);
+        });
+    }
+    const auto ok = equal(status, constant(BindlessOk));
+    const auto slot = Select(state, u32, ok, binary(spv::OpBitwiseAnd, u32, BindlessExtract(state, found, 0u), constant(BindlessImageAbi::SlotMask)), constant(0u));
+    const auto samplerSlot = Select(state, u32, ok, binary(spv::OpBitwiseAnd, u32, binary(spv::OpISub, u32, BindlessExtract(state, found, 3u), constant(1u)), constant(BindlessImageAbi::SlotMask)), constant(0u));
+    const auto result = BindlessVector(state, binary(spv::OpBitwiseOr, u32, binary(spv::OpShiftLeftLogical, u32, status, constant(BindlessStatusShift)), slot), Select(state, u32, ok, BindlessExtract(state, found, 1u), constant(InvalidTableSelector)), words[3], samplerSlot);
+    state.module.AddFunction(spv::OpReturnValue, result);
+    state.module.AddFunction(spv::OpFunctionEnd);
+    return function;
+}
+
+std::unordered_map<const IrBlock*, std::uint32_t> BindlessLoopComponents(const IrProgram& program) {
+    const auto& order = program.BlockOrder();
+    std::unordered_map<const IrBlock*, std::uint32_t> index;
+    for (std::uint32_t at = 0; at < order.size(); ++at) index.emplace(order[at], at);
+    std::vector<std::uint32_t> number(order.size(), 0u);
+    std::vector<std::uint32_t> low(order.size(), 0u);
+    std::vector<bool> stacked(order.size(), false);
+    std::vector<std::uint32_t> stack;
+    std::unordered_map<const IrBlock*, std::uint32_t> cyclic;
+    std::uint32_t components = 0;
+    std::uint32_t counter = 0;
+    struct Frame {
+        std::uint32_t block;
+        std::size_t next;
+    };
+    for (std::uint32_t root = 0; root < order.size(); ++root) {
+        if (number[root] != 0u) continue;
+        std::vector<Frame> frames{{root, 0u}};
+        number[root] = low[root] = ++counter;
+        stack.push_back(root);
+        stacked[root] = true;
+        while (!frames.empty()) {
+            auto& frame = frames.back();
+            const auto& successors = order[frame.block]->Successors();
+            if (frame.next < successors.size()) {
+                const auto found = index.find(successors[frame.next++]);
+                if (found == index.end()) continue;
+                const auto successor = found->second;
+                if (number[successor] == 0u) {
+                    number[successor] = low[successor] = ++counter;
+                    stack.push_back(successor);
+                    stacked[successor] = true;
+                    frames.push_back({successor, 0u});
+                } else if (stacked[successor]) {
+                    low[frame.block] = std::min(low[frame.block], number[successor]);
+                }
+                continue;
+            }
+            const auto block = frame.block;
+            frames.pop_back();
+            if (!frames.empty()) low[frames.back().block] = std::min(low[frames.back().block], low[block]);
+            if (low[block] != number[block]) continue;
+            std::vector<std::uint32_t> component;
+            for (;;) {
+                const auto member = stack.back();
+                stack.pop_back();
+                stacked[member] = false;
+                component.push_back(member);
+                if (member == block) break;
+            }
+            const auto& own = order[block]->Successors();
+            const bool selfLoop = std::find(own.begin(), own.end(), order[block]) != own.end();
+            if (component.size() > 1u || selfLoop) {
+                for (const auto member : component) cyclic.emplace(order[member], components);
+                ++components;
+            }
+        }
+    }
+    return cyclic;
+}
+
+bool BindlessDominates(const SpirvEmitterState& state, const IrBlock* dominator, const IrBlock* block) {
+    while (block != nullptr) {
+        if (block == dominator) return true;
+        const auto found = state.bindlessDominators.find(block);
+        if (found == state.bindlessDominators.end() || found->second == block) return false;
+        block = found->second;
+    }
+    return false;
+}
+
+void PlanBindlessHoists(SpirvValueEmitContext& ctx) {
+    auto& state = ctx.state;
+    state.bindlessHoistPlanned = true;
+    const auto& order = state.program.BlockOrder();
+    if (order.empty() || !order.front()->Predecessors().empty()) return;
+    std::vector<const IrBlock*> postorder;
+    std::unordered_map<const IrBlock*, std::uint32_t> number;
+    std::vector<std::pair<const IrBlock*, std::size_t>> stack{{order.front(), 0u}};
+    std::unordered_map<const IrBlock*, bool> seen{{order.front(), true}};
+    while (!stack.empty()) {
+        auto& [block, next] = stack.back();
+        const auto& successors = block->Successors();
+        if (next < successors.size()) {
+            const IrBlock* successor = successors[next++];
+            if (!seen[successor]) {
+                seen[successor] = true;
+                stack.push_back({successor, 0u});
+            }
+            continue;
+        }
+        number[block] = static_cast<std::uint32_t>(postorder.size());
+        postorder.push_back(block);
+        stack.pop_back();
+    }
+    auto& idom = state.bindlessDominators;
+    idom[order.front()] = order.front();
+    const auto intersect = [&](const IrBlock* left, const IrBlock* right) {
+        while (left != right) {
+            while (number.at(left) < number.at(right)) left = idom.at(left);
+            while (number.at(right) < number.at(left)) right = idom.at(right);
+        }
+        return left;
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (auto at = postorder.rbegin(); at != postorder.rend(); ++at) {
+            const IrBlock* block = *at;
+            if (block == order.front()) continue;
+            const IrBlock* chosen = nullptr;
+            for (const IrBlock* predecessor : block->Predecessors()) {
+                if (!idom.contains(predecessor)) continue;
+                chosen = chosen == nullptr ? predecessor : intersect(predecessor, chosen);
+            }
+            if (chosen != nullptr && (!idom.contains(block) || idom.at(block) != chosen)) {
+                idom[block] = chosen;
+                changed = true;
+            }
+        }
+    }
+    const auto components = BindlessLoopComponents(state.program);
+    const auto& info = state.program.Info();
+    const auto stage = state.program.Resources().stage;
+    for (const auto& [block, component] : components) {
+        const IrBlock* target = block;
+        while (target != nullptr && components.contains(target) && components.at(target) == component) {
+            const auto found = idom.find(target);
+            target = found == idom.end() || found->second == target ? nullptr : found->second;
+        }
+        if (target == nullptr) continue;
+        for (const IrValue* inst : block->Instructions()) {
+            if (ImageOpcodeInfoOf(inst->Opcode()).access == ImageAccess::None) continue;
+            const auto& memory = ctx.Memory(*inst);
+            if (!ResourceMaterializer::BindlessImage(info, stage, memory.resource)) continue;
+            const auto inputs = BindlessInputsOf(ctx, *inst, memory);
+            const auto available = [&](const IrValue* value) {
+                const IrValue* resolved = value->Resolve();
+                return resolved->HasImmediate() || (resolved->Parent() != nullptr && BindlessDominates(state, resolved->Parent(), target));
+            };
+            const bool hoist = !inputs.indirect && std::all_of(inputs.values.begin(), inputs.values.end(), available);
+            if (!hoist) continue;
+            state.bindlessHoistAt[target].push_back(inst);
+        }
+    }
+}
+
+}
+
+void DefineBindlessFunctions(SpirvEmitterState& state) {
+    if (!state.bindlessImages) return;
+    if (state.bindlessHeaderVariable == 0u || state.bdaDwordReadFunctions[0][0] == 0u || state.bdaFaultFunction == 0u) throw std::runtime_error("bindless images need the heap header, the BDA read functions and the fault buffer");
+    const auto& info = state.program.Info();
+    const auto stage = state.program.Resources().stage;
+    bool tableSamplers = false;
+    for (const auto& pair : info.sampledPairs) tableSamplers = tableSamplers || (ResourceMaterializer::BindlessImage(info, stage, pair.image) && info.samplers.at(pair.sampler).table != NoTable);
+    state.bindlessProbeFunctions[0] = DefineBindlessLookup(state, false, false);
+    state.bindlessLookupFunctions[0] = DefineBindlessLookup(state, true, false);
+    if (!tableSamplers) return;
+    state.bindlessProbeFunctions[1] = DefineBindlessLookup(state, false, true);
+    state.bindlessLookupFunctions[1] = DefineBindlessLookup(state, true, true);
+}
+
+void EmitBindlessEntryProbes(SpirvValueEmitContext& ctx) {
+    auto& state = ctx.state;
+    if (!state.bindlessImages) return;
+    if (!state.bindlessHoistPlanned) PlanBindlessHoists(ctx);
+    const auto planned = state.bindlessHoistAt.find(state.currentBlock);
+    if (planned == state.bindlessHoistAt.end()) return;
+    for (const IrValue* inst : planned->second) {
+        const auto& memory = ctx.Memory(*inst);
+        const auto key = BindlessKeyOf(ctx, BindlessInputsOf(ctx, *inst, memory));
+        auto& probes = state.bindlessHoisted[key];
+        if (std::any_of(probes.begin(), probes.end(), [&](const auto& probe) { return BindlessDominates(state, probe.first, state.currentBlock); })) continue;
+        probes.emplace_back(state.currentBlock, EmitBindlessProbe(ctx, *inst, memory));
+    }
 }
 
 void EmitImageOperation(SpirvModule& module, const IrValue& value, std::uint32_t resultId) {
@@ -2506,7 +3285,9 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto modes = base.table != NoTable ? state.program.Info().runtimeImageModes.at(memory.resource) : ResourceMaterializer::RuntimeImageModes(base);
     std::uint32_t tableSelector = 0u;
     std::uint32_t samplerGuard = 0u;
-    if (tables) {
+    if (state.bindlessImages && ResourceMaterializer::BindlessImage(state.program.Info(), state.program.Resources().stage, memory.resource)) {
+        tableSelector = EmitBindlessAccess(ctx, inst, memory).selector;
+    } else if (tables) {
         const auto access = EmitTableAccess(ctx, inst, memory, base, tableSampler);
         if (access.unsupported) {
             state.tableAccess = {};

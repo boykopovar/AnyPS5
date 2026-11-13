@@ -16,6 +16,7 @@ namespace AgcDriver::Graphics {
 bool LoopGuardTripped();
 
 struct BdaFaultChunk;
+class TextureService;
 
 class BdaResources {
 public:
@@ -87,6 +88,7 @@ private:
     std::shared_ptr<BdaFaultChunk> faultChunk;
     VkDeviceSize faultOffset = 0;
     bool reportOnly = false;
+    const TextureService* textureService = nullptr;
     std::uint64_t lastUse = 0;
     std::size_t tableBytes = 0;
     std::uint64_t tableGuardSerial = 0;

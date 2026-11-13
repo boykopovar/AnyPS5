@@ -85,6 +85,18 @@ struct SpirvTableAccess {
     std::uint32_t samplerElement = 0;
     bool active = false;
     bool uniform = false;
+    bool bindless = false;
+};
+
+struct SpirvBindlessProbe {
+    std::uint32_t image = 0;
+    std::uint32_t sampler = 0;
+    std::uint32_t samplerWords = 0;
+    std::uint32_t extra = 0;
+    std::uint32_t result = 0;
+    std::uint32_t uniform = 0;
+    std::uint32_t invalid = 0;
+    std::uint32_t base = 0;
 };
 
 struct SpirvEmitterState {
@@ -259,6 +271,19 @@ struct SpirvEmitterState {
     std::vector<SpirvTableImageVariable> tableImageVariables;
     std::uint32_t tableSamplerVariable = 0;
     std::uint32_t tableMapVariable = 0;
+    bool bindlessImages = false;
+    std::vector<SpirvTableImageVariable> bindlessImageVariables;
+    std::uint32_t bindlessSamplerVariable = 0;
+    std::uint32_t bindlessHeaderVariable = 0;
+    std::array<std::uint32_t, 2> bindlessProbeFunctions {};
+    std::array<std::uint32_t, 2> bindlessLookupFunctions {};
+    bool bindlessWaveUniform = false;
+    bool bindlessHoistPlanned = false;
+    std::unordered_map<const IrBlock*, const IrBlock*> bindlessDominators;
+    std::unordered_map<const IrBlock*, std::vector<const IrValue*>> bindlessHoistAt;
+    std::map<std::vector<std::uint32_t>, std::vector<std::pair<const IrBlock*, SpirvBindlessProbe>>> bindlessHoisted;
+    std::map<std::vector<std::uint32_t>, SpirvBindlessProbe> bindlessBlockProbes;
+    const IrBlock* bindlessProbeBlock = nullptr;
     std::uint32_t mainFunc = 0;
     std::uint32_t meshGuestFunc = 0;
     std::uint32_t pixelGuestFunc = 0;
