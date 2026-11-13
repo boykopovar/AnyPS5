@@ -26,5 +26,8 @@ int main() {
     RequireThrows([] { sceAppInstUtilAppRecoverApp(nullptr); });
     RequireThrows([] { sceAppInstUtilAppUnInstallTheme("PPSA00000-THME00001"); });
     RequireThrows([] { sceAppInstUtilAppUnInstallTheme(nullptr); });
+    RequireThrows([] { sceAppInstUtilAppPrepareOverwritePkg(""); });
+    RequireThrows([] { sceAppInstUtilAppRecoverApp(""); });
+    RequireThrows([] { sceAppInstUtilAppUnInstallTheme(""); });
     return 0;
 }
