@@ -154,7 +154,9 @@ static boolean HostResyncToRestart(j_decompress_ptr cinfo, int desired) {
     auto* gsrc = b->guest_cinfo->src;
     if (gsrc->resync_to_restart) {
         SyncSourceToGuest(b, gsrc);
+        b->guest_cinfo->unread_marker = cinfo->unread_marker;
         int32_t ret = gsrc->resync_to_restart(b->guest_cinfo, desired);
+        cinfo->unread_marker = b->guest_cinfo->unread_marker;
         b->host_src.next_input_byte = gsrc->next_input_byte;
         b->host_src.bytes_in_buffer = static_cast<size_t>(gsrc->bytes_in_buffer);
         return ret ? TRUE : FALSE;
@@ -582,6 +584,7 @@ int APS5_VABI jpeg_resync_to_restart_nid_postfix(NKWebKit::GuestJpegDecompress* 
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
     int ret = 0;
     SyncGuestToHost(b);
+    b->host_cinfo.unread_marker = cinfo->unread_marker;
     if (!RunGuarded(b, [&] { ret = jpeg_resync_to_restart(&b->host_cinfo, desired); })) {
         HandleException(b);
         return 0;
