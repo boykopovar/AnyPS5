@@ -6324,10 +6324,6 @@ int APS5_VABI _ZN7WebCore11DisplayList22BeginTransparencyLayerD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore12ISOWebVTTCue11boxTypeNameEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList16DrawLinesForTextD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7882,10 +7878,6 @@ int APS5_VABI _ZN7WebCore23CoordinatedBackingStore14removeAllTilesEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore6ISOBox14minimumBoxSizeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore15JSFetchResponse14finishCreationERN3JSC2VME() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7935,10 +7927,6 @@ int APS5_VABI _ZN7WebCore8Settings24setStorageBlockingPolicyENS_14SecurityOrigin
 }
 
 int APS5_VABI _ZN7WebCore20TransformationMatrix8rotate3dEdddd() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15HitTestLocation12rectForPointERKNS_11LayoutPointEjjjj() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8098,10 +8086,6 @@ int APS5_VABI _ZN7WebCore21JSTextTrackCueGenericC1EPN3JSC9StructureERNS_17JSDOMG
 }
 
 int APS5_VABI _ZN7WebCore11DisplayList8FillPathC1ERKNS_4PathE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore40defaultTextEncodingNameForSystemLanguageEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
