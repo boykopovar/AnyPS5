@@ -224,7 +224,7 @@ int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSsl3SslCtx* ctx) {
     return Retain_nid_no_patch(ctx->references);
 }
 
-int APS5_VABI BIO_up_ref_nid_postfix(LibreSsl3Bio* bio) {
+int APS5_VABI BIO_up_ref_nid_postfix(LibreSsl::Bio* bio) {
     if (!bio)
         throw std::invalid_argument("BIO_up_ref requires a BIO");
     return Retain_nid_no_patch(bio->references);

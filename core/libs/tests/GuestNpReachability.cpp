@@ -45,6 +45,9 @@ int main() {
     Require(sceNpGetGamePresenceStatus(nullptr, &presence) == ErrorArgument);
     Require(sceNpGetGamePresenceStatus(&onlineId, nullptr) == ErrorArgument);
     Require(sceNpGetGamePresenceStatus(&onlineId, &presence) == 0 && presence == 0);
+    Require(sceNpGetGamePresenceStatus(reinterpret_cast<const NpOnlineId*>(0x10), &presence) == ErrorArgument);
+    Require(sceNpGetGamePresenceStatus(&onlineId, reinterpret_cast<uint32_t*>(0x10)) == ErrorArgument);
+    Require(sceNpGetGamePresenceStatusA(1, reinterpret_cast<uint32_t*>(0x10)) == ErrorArgument);
     Require(sceNpCheckNpAvailability(1, &onlineId, nullptr) == ErrorUserNotFound);
     Require(sceNpCheckNpAvailability(1, nullptr, nullptr) == ErrorArgument);
     std::uint8_t available[3]{0x55, 0x55, 0x55};
