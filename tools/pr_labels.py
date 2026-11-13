@@ -60,17 +60,21 @@ def needs_capture(title):
 def has_numbers(body):
     body = strip_comments(body)
     candidates = [line.strip() for line in body.splitlines()] + [block.strip() for block in FENCE.findall(body)]
-    commits = set()
+    summaries = []
     for text in candidates:
         if not text.startswith("{"):
             continue
         try:
             summary = json.loads(text)
             if isinstance(summary, dict):
-                commits.add(performance_compare.validate(summary)["commit"])
+                summary = performance_compare.validate(summary)
+                for earlier in summaries:
+                    if earlier["commit"] != summary["commit"] and not performance_compare.compare(earlier, summary)["configuration_differences"]:
+                        return True
+                summaries.append(summary)
         except (ValueError, RecursionError):
             continue
-    return len(commits) >= 2
+    return False
 
 
 def labels_for(pr):
