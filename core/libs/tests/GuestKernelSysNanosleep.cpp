@@ -96,7 +96,7 @@ static void TestPendingCancelDoesNotFire() {
 }
 
 int main() {
-    TestRejectsInvalidRequests();
+    for (int iter = 0; iter < 2; ++iter) TestRejectsInvalidRequests();
     TestNegativeAndZeroSeconds();
     TestValidSleep();
     TestPendingCancelDoesNotFire();
