@@ -1,4 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstdint>
@@ -6,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <utility>
 #include <stdexcept>
 
@@ -25,6 +28,7 @@ void APS5_VABI sceCustomMusicNetCtlTerm();
 
 int32_t APS5_VABI sceAudiodecClearContext(int32_t handle);
 int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode);
+int APS5_VABI sceKernelClose(int d);
 int APS5_VABI sceKernelGettimeofday(KernelTimeval* tp);
 int APS5_VABI sceNetPoolCreate(const char* name, int size, int flags);
 int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
@@ -48,6 +52,7 @@ int32_t APS5_VABI sceAudiodecDeleteDecoder(int32_t handle);
 int32_t APS5_VABI sceAudiodecCpuDecode(const AudiodecCtrl* ctrl, const AudiodecCpuMemory* memory, uint32_t type);
 int APS5_VABI sceKernelNanosleep(const KernelTimespec* rq, KernelTimespec* rm);
 int APS5_VABI scePthreadSetprio(Pthread thread, int prio);
+int APS5_VABI scePthreadGetprio(Pthread thread, int* prio);
 Pthread APS5_VABI scePthreadSelf();
 void APS5_VABI scePthreadYield();
 int APS5_VABI sceNetCtlInit(void);
@@ -95,9 +100,27 @@ int main() {
     KernelTimeval callee_tv {};
     RequireEq(sceCustomMusicAudiodecClearContext(1), sceAudiodecClearContext(1));
     RequireEq(sceCustomMusicAudiodecClearContext(0), sceAudiodecClearContext(0));
-    RequireEq(sceCustomMusicFileOpenRead("/custom_music_forwarder_missing_file", 0, 0),
-              sceKernelOpen("/custom_music_forwarder_missing_file", 0, 0));
-    RequireEq(sceCustomMusicFileOpenRead(nullptr, 0, 0), sceKernelOpen(nullptr, 0, 0));
+    {
+        const auto root = std::filesystem::temp_directory_path() / "anyps5-custom-music-forwarder-open";
+        std::filesystem::remove_all(root);
+        Require(std::filesystem::create_directories(root), __LINE__);
+        AddPathAlias_nid_no_patch("custom-music-forwarder-open", std::filesystem::absolute(root).string().c_str());
+        const char* const fresh = "/custom-music-forwarder-open/suppressed";
+        const int suppressed = sceCustomMusicFileOpenRead(fresh, SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0600);
+        Require(suppressed < 0, __LINE__);
+        Require(!std::filesystem::exists(root / "suppressed"), __LINE__);
+        const int created = sceKernelOpen(fresh, SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0600);
+        Require(created >= 0, __LINE__);
+        Require(std::filesystem::exists(root / "suppressed"), __LINE__);
+        Require(sceKernelClose(created) == 0, __LINE__);
+        const char* const present = "/custom-music-forwarder-open/suppressed";
+        const int byWrapper = sceCustomMusicFileOpenRead(present, SCE_KERNEL_O_WRONLY, 0);
+        const int byWrapperOtherMode = sceCustomMusicFileOpenRead(present, SCE_KERNEL_O_WRONLY, 0777);
+        Require(byWrapper >= 0 && byWrapperOtherMode >= 0, __LINE__);
+        Require(sceKernelClose(byWrapper) == 0 && sceKernelClose(byWrapperOtherMode) == 0, __LINE__);
+        Require(sceCustomMusicFileOpenRead(present, SCE_KERNEL_O_CREAT | SCE_KERNEL_O_WRONLY, 0600) >= 0, __LINE__);
+        Require(sceKernelClose(sceCustomMusicFileOpenRead(present, 0, 0555)) == 0, __LINE__);
+    }
     Require(sceCustomMusicKernelGettimeofday(&wrapper_tv) == sceKernelGettimeofday(&callee_tv), __LINE__);
     RequireEq(sceCustomMusicKernelGettimeofday(nullptr), sceKernelGettimeofday(nullptr));
     const int pool_a = sceCustomMusicNetPoolCreate("anyps5-music-pool", 0, 0);
@@ -124,7 +147,21 @@ int main() {
     RequireSameOutcome(sceCustomMusicAudiodecDeleteDecoder, sceAudiodecDeleteDecoder, __LINE__, -1);
     RequireSameOutcome(sceCustomMusicAudiodecCpuDecode, sceAudiodecCpuDecode, __LINE__, nullptr, nullptr, 0);
     RequireSameOutcome(sceCustomMusicKernelNanosleep, sceKernelNanosleep, __LINE__, nullptr, nullptr);
-    RequireSameOutcome(sceCustomMusicPthreadSetprio, scePthreadSetprio, __LINE__, nullptr, 0);
+    {
+        const Pthread self = scePthreadSelf();
+        Require(self != nullptr, __LINE__);
+        int saved = 0;
+        Require(scePthreadGetprio(self, &saved) == 0, __LINE__);
+        Require(sceCustomMusicPthreadSetprio(self, 2) == 0, __LINE__);
+        int applied = 0;
+        Require(scePthreadGetprio(self, &applied) == 0 && applied == 256, __LINE__);
+        Require(scePthreadSetprio(self, 2) < 0, __LINE__);
+        const int belowRange = sceCustomMusicPthreadSetprio(self, 1);
+        Require(belowRange < 0 && belowRange == scePthreadSetprio(self, 255), __LINE__);
+        const int aboveRange = sceCustomMusicPthreadSetprio(self, 514);
+        Require(aboveRange < 0 && aboveRange == scePthreadSetprio(self, 768), __LINE__);
+        Require(scePthreadSetprio(self, saved) == 0, __LINE__);
+    }
     Require(sceCustomMusicNetCtlInit() == 0, __LINE__);
     {
         const unsigned char address[4] = {192, 0, 2, 5};
