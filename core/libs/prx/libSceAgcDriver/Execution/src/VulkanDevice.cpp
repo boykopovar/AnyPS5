@@ -6362,17 +6362,14 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         bool exactEntry = prepared != nullptr && prepared->exact;
         contentKey = prepared != nullptr && !prepared->key.empty() ? std::move(prepared->key) : DispatchContentKey(shaders[0], context.device);
         auto cached = preparedFind && prepared != nullptr && prepared->cached != nullptr ? std::move(prepared->cached) : state->resourceCache.Find(contentKey);
-        if (cached != nullptr && DispatchMove() && !exactEntry) {
-            Graphics::ShaderResources::MoveProof proof;
-            if (!cached->MovedDispatchBuffers(shaders[0], state->recorder.get(), DispatchMoveBytes(), proof).has_value()) {
-                auto& moves = DispatchMoves();
-                moves.checked.fetch_add(1, std::memory_order_relaxed);
-                moves.refused[static_cast<std::size_t>(proof.refusal)].fetch_add(1, std::memory_order_relaxed);
-                contentKey = DispatchContentKey(shaders[0], context.device, false);
-                refusedMove = true;
-                exactEntry = true;
-                cached = state->resourceCache.Find(contentKey);
-            }
+        if (cached != nullptr && DispatchMove() && !exactEntry && cached->MovedInputsPending(shaders[0])) {
+            auto& moves = DispatchMoves();
+            moves.checked.fetch_add(1, std::memory_order_relaxed);
+            moves.refused[static_cast<std::size_t>(Graphics::ShaderResources::MoveRefusal::OldInputPending)].fetch_add(1, std::memory_order_relaxed);
+            contentKey = DispatchContentKey(shaders[0], context.device, false);
+            refusedMove = true;
+            exactEntry = true;
+            cached = state->resourceCache.Find(contentKey);
         }
         if (cached != nullptr) {
             if (cached->Revalidate(shaders[0])) {
