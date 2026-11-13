@@ -414,7 +414,8 @@ private:
                     mbedtls_ssl_close_notify(&ssl);
                 } else {
                     Exchange(ssl);
-                    if (mode == Mode::CloseHeaders || mode == Mode::CloseBody || mode == Mode::GoAway || mode == Mode::GoAwayLast)
+                    if (mode == Mode::CloseHeaders || mode == Mode::ResetBody || mode == Mode::CloseBody || mode == Mode::GoAway ||
+                        mode == Mode::GoAwayLast)
                         CloseAfterDrain(client);
                 }
             }
