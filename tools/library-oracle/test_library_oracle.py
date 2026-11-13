@@ -167,11 +167,13 @@ class OutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             known = Path(directory) / "界" / "known.tsv"
             known.parent.mkdir()
+            replay = Path(directory) / "library_oracle_replay"
+            replay.write_bytes(b"")
             stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
             with patch.object(library_oracle, "fetch", return_value=Path(directory) / "rtc.golden.tsv"), \
                     patch.object(library_oracle, "replay", return_value=({"rtc_case": ("diff", "ret 0x1")}, "compared 1")), \
                     patch.object(library_oracle, "case_ids", return_value={"rtc_case"}), redirect_stdout(stdout):
-                result = library_oracle.main(["rtc", "--replay", "replay", "--known", str(known), "--write-known"])
+                result = library_oracle.main(["rtc", "--replay", str(replay), "--known", str(known), "--write-known"])
                 stdout.flush()
             self.assertEqual(result, 0)
             self.assertEqual(known.read_text(encoding="utf-8"), "rtc_case\tdiff\n")
