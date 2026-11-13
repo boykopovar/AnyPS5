@@ -19,7 +19,7 @@ struct Entry {
     std::mutex mutex;
     explicit Entry(Native value) : native(std::move(value)) {}
 };
-struct Token {};
+using Token = UEnumeration;
 using Registry = std::unordered_map<const void*, std::shared_ptr<Entry>>;
 std::mutex RegistryMutex;
 Registry Systems;
@@ -128,7 +128,9 @@ UNumberingSystem* Open(const char* name, bool byName, std::int32_t* error) {
             return nullptr;
         }
         auto owner = std::make_shared<Entry>(std::move(native));
-        auto token = std::make_unique<Token>();
+        auto token = std::make_unique<Token>(Token{nullptr, nullptr,
+            CloseEnumeration_nid_no_patch, CountEnumeration_nid_no_patch, UNextEnumeration_nid_no_patch,
+            NextEnumeration_nid_no_patch, ResetEnumeration_nid_no_patch});
         auto* handle = reinterpret_cast<UNumberingSystem*>(token.get());
         WriteStatus(error, before, status);
         const std::lock_guard lock(RegistryMutex);

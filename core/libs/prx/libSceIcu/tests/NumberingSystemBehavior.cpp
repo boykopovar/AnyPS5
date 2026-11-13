@@ -145,6 +145,15 @@ void InaccessibleStatus() {
     std::int32_t status = 0;
     auto* enumeration = unumsys_openAvailableNames_nid_postfix(&status);
     Require(enumeration && status <= 0, "valid enumeration for checked dispatch status");
+    for (const auto incoming : {1, 7, 15}) {
+        auto failed = incoming;
+        auto* foreign = reinterpret_cast<UEnumeration*>(std::uintptr_t{1});
+        Require(uenum_count_nid_postfix(foreign, &failed) == -1 && failed == incoming, "failed status before foreign enumeration dispatch");
+        Require(uenum_next_nid_postfix(foreign, reinterpret_cast<std::int32_t*>(std::uintptr_t{1}), &failed) == nullptr && failed == incoming,
+            "failed status before foreign next/output access");
+        Require(uenum_unext_nid_postfix(foreign, reinterpret_cast<std::int32_t*>(std::uintptr_t{1}), &failed) == nullptr && failed == incoming,
+            "failed status before foreign UTF16/output access");
+    }
     auto* invalid = reinterpret_cast<std::int32_t*>(std::uintptr_t{1});
     Refuses([&] { uenum_count_nid_postfix(enumeration, invalid); });
     Refuses([&] { uenum_next_nid_postfix(enumeration, nullptr, invalid); });
@@ -189,6 +198,10 @@ void Memory() {
     *status = 7;
     Require(sceKernelMprotect(data + page, page, 1) == 0);
     Require(unumsys_open_nid_postfix(reinterpret_cast<const char*>(data), status) == nullptr && *status == 7, "read-only failed status returns before guard access");
+    auto* invalidEnumeration = reinterpret_cast<UEnumeration*>(std::uintptr_t{1});
+    Require(uenum_count_nid_postfix(invalidEnumeration, status) == -1 && *status == 7, "read-only failed status before enumeration object access");
+    Require(uenum_next_nid_postfix(invalidEnumeration, reinterpret_cast<std::int32_t*>(data), status) == nullptr && *status == 7,
+        "read-only failed status before enumeration output access");
     Require(sceKernelMprotect(data + page, page, 3) == 0);
     *status = 0;
     auto* enumeration = unumsys_openAvailableNames_nid_postfix(status);
