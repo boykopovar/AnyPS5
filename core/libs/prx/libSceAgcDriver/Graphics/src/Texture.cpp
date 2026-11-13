@@ -1823,6 +1823,7 @@ public:
     iterator end() { return textures.end(); }
     void push_back(StorageTexture* texture) {
         textures.push_back(texture);
+        if (LabelCandidate(texture)) labelCandidates.push_back(texture);
         const auto begin = texture->Descriptor().baseAddress;
         index.Insert(begin, begin + texture->GuestBytes(), texture, nextOrder++);
         changed();
@@ -1852,6 +1853,10 @@ public:
         const auto* entry = index.FirstByPosition(address, bytes, match);
         return entry != nullptr ? entry->item : nullptr;
     }
+    static bool LabelCandidate(const StorageTexture* texture) {
+        return texture->Descriptor().tileMode == TextureTileMode::kLinear || texture->GuestBytes() <= StorageTexture::OccasionalStoreBytes;
+    }
+    const std::vector<StorageTexture*>& LabelCandidates() const { return labelCandidates; }
     void Publish() {
         if (indexed != version) rebuild();
     }
@@ -1879,6 +1884,7 @@ private:
     }
 
     void unindex(StorageTexture* texture) {
+        if (LabelCandidate(texture)) std::erase(labelCandidates, texture);
         const bool found = index.Erase(texture->Descriptor().baseAddress, texture);
         assert(found);
         static_cast<void>(found);
@@ -1893,6 +1899,7 @@ private:
         published.store(std::make_shared<const Snapshot>(Snapshot{version, ranges}), std::memory_order_release);
     }
     std::vector<StorageTexture*> textures;
+    std::vector<StorageTexture*> labelCandidates;
     Ranges ranges;
     PendingRangeIndex<StorageTexture*> index;
     std::size_t nextOrder = 0;
@@ -5563,7 +5570,8 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
             return std::any_of(pending.textures.begin(), pending.textures.end(), sharesStored) || std::any_of(pending.flushing.begin(), pending.flushing.end(), shares);
         };
 #endif
-        for (const auto* texture : pending.textures) {
+        const auto& candidates = pending.textures.LabelCandidates();
+        for (const auto* texture : candidates) {
             if (texture->descriptor.tileMode != TextureTileMode::kLinear && texture->guestBytes > SmallStoreBytes) continue;
 #if defined(__APPLE__)
             if (trap && !sharesPage(texture) && (texture->readTrapped.load(std::memory_order_acquire) || !DirectMemoryAliased_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) && GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) {
@@ -5573,7 +5581,7 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
 #endif
             ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
         }
-        for (auto* texture : pending.textures) {
+        for (auto* texture : candidates) {
             if (texture->descriptor.tileMode == TextureTileMode::kLinear || texture->guestBytes <= SmallStoreBytes || texture->guestBytes > OccasionalStoreBytes) continue;
             if (device != VK_NULL_HANDLE && texture->context.device != device) continue;
             if (!texture->writtenOccasionally.exchange(false, std::memory_order_relaxed)) continue;
