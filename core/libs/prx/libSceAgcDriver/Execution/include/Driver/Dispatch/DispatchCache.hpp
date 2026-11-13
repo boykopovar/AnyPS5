@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
+#include "UserDataUse.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>

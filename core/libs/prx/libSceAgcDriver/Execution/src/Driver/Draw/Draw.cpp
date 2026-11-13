@@ -675,6 +675,12 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         if (drawHit || verifyHit) {
             ++drawRelocationCounters.hits;
             ++drawRelocationTrials[drawIdentity].hits;
+
+        }
+        if (profile && drawRelocationCounters.lookups >= 100000) reportDrawRelocation();
+    }
+    if ((drawHit || verifyHit) && !drawStageDonorKeys.empty()) {
+        std::lock_guard cacheLock(drawCacheMutex);
             for (const auto key : drawStageDonorKeys) {
                 const auto source = drawStageDonors.find(key);
                 if (source == drawStageDonors.end()) continue;
@@ -687,16 +693,6 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                     ++drawEntryCounters.touches;
                 }
             }
-        }
-        if (profile && drawRelocationCounters.lookups >= 100000) reportDrawRelocation();
-    }
-    if (drawHit && std::any_of(matched.begin(), matched.end(), [](const std::shared_ptr<DispatchVariant>& variant) { return variant != nullptr && variant->dataPatched; })) {
-        std::lock_guard cacheLock(drawCacheMutex);
-        for (std::size_t i = 0; i < matched.size() && i < drawStageDonorKeys.size() && i < programs.size(); ++i) {
-            if (matched[i] == nullptr || !matched[i]->dataPatched || drawStageDonorKeys[i] == 0) continue;
-            matched[i]->dataPatched = false;
-            drawStageDonors[drawStageDonorKeys[i]] = {matched[i], programs[i].userData};
-        }
     }
     if (!userPatches.empty() && !drawHit) {
         auto current = std::make_shared<DrawDecode>(*decode);
