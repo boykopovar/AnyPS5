@@ -81,6 +81,8 @@ int APS5_VABI sceAvPlayerAddSourceEx(AvPlayerInternal* h, uint32_t uri_type, con
     if (!h || uri_type != 0 || !source_details) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     AvPlayerSourceDetails details{};
     if (!CopyGuestIn(&details, source_details, sizeof(details)) || !details.uri.name) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    constexpr uint32_t MaxSourceUriLength = 65536;
+    if (details.uri.length > MaxSourceUriLength) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     std::string uri(details.uri.length, '\0');
     if (details.uri.length > 0 && !CopyGuestIn(uri.data(), details.uri.name, details.uri.length)) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     return ToPlayer(h)->AddSource(uri, details.source_type);

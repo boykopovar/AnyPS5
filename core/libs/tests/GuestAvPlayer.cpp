@@ -2381,6 +2381,12 @@ int main(int argc, char** argv) {
             errno = 71;
             Check(sceAvPlayerAddSourceEx(player, 0, &badUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS && errno == 71,
                   "unreadable source URI must fail without changing errno");
+            AvPlayerSourceDetails oversizedUri{};
+            oversizedUri.uri.name = "movie.mp4";
+            oversizedUri.uri.length = 0xFFFFFFFFu;
+            errno = 71;
+            Check(sceAvPlayerAddSourceEx(player, 0, &oversizedUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS && errno == 71,
+                  "oversized source URI length must fail without allocating");
             Check(sceAvPlayerClose(player) == 0, "close player");
         }
         std::puts("AvPlayer tests passed");
