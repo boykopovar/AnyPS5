@@ -1026,6 +1026,50 @@ void Http1Transport(int ssl) {
     }
 }
 
+void Http1ContentLengthLists(int ssl) {
+    constexpr std::array<std::string_view, 8> valid{
+        "13,13", "13, 13", "13,\t13", " 13\t, \t13 ", "013,00013", "13, 13, 13", "00013, 13", "13,013,00013"
+    };
+    constexpr std::array<std::string_view, 13> invalid{
+        "13,14", "14,13", "13,14,13", "13,", ",13", "13,,13", "13, +13", "13, -13", "13, 13x",
+        "13,18446744073709551616", "0xD,13", "13.0,13", "13, \t"
+    };
+    unsigned accepted = 0;
+    unsigned refused = 0;
+    for (const int version : {1, 2}) {
+        for (const auto value : valid) {
+            try {
+                Server server(version == 1 ? Mode::Http10 : Mode::Http11);
+                server.SetResponse({0, {{"Content-Length", std::string(value)}}});
+                Client client(ssl, 4, 0, version);
+                client.Create(server.Url("127.0.0.1"));
+                Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 equivalent length send");
+                int kind = -1;
+                std::uint64_t length = 0;
+                Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 && kind == 0 && length == 13,
+                    "HTTP1 equivalent length reported");
+                Response(client, 200);
+                server.Join();
+                ++accepted;
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "HTTP1 equivalent length refused: version %d value %.*s: %s\n", version,
+                    static_cast<int>(value.size()), value.data(), error.what());
+            }
+        }
+        for (const auto value : invalid) {
+            Server server(version == 1 ? Mode::Http10 : Mode::Http11);
+            server.SetResponse({0, {{"Content-Length", std::string(value)}}});
+            Client client(ssl, 4, 0, version);
+            client.Create(server.Url("127.0.0.1"));
+            if (Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); })) ++refused;
+            else std::fprintf(stderr, "HTTP1 malformed length accepted: version %d value %.*s\n", version,
+                static_cast<int>(value.size()), value.data());
+        }
+    }
+    std::fprintf(stderr, "HTTP1 equivalent length lists accepted %u/16; malformed lists refused %u/26\n", accepted, refused);
+    Require(accepted == 16 && refused == 26, "HTTP1 Content-Length list normalization failed");
+}
+
 void Http1Policies(int ssl) {
     for (const auto mode : {Mode::Http11, Mode::Http1Plain, Mode::Http10}) {
         Server server(mode);
@@ -1946,6 +1990,7 @@ int main(int argc, char** argv) {
         Http1Transport(ssl);
         Http1ChunkWhitespace(ssl);
         Http1Policies(ssl);
+        Http1ContentLengthLists(ssl);
         Http1Cancellation(ssl);
         Http1BufferedDeadline(ssl);
         Http1Cleartext(ssl);
