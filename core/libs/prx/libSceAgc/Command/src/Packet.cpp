@@ -97,7 +97,8 @@ std::uint32_t* WriteNop(CommandBuffer* buffer, std::uint32_t count, const char* 
 }
 
 std::uint32_t* WriteRegisterRange(CommandBuffer* buffer, std::uint32_t opcode, std::uint32_t offset, const std::uint32_t* values, std::uint32_t count, const char* function) {
-    Require(count != 0 && count <= 0x3fffu && offset <= 0xffffu && count <= 0x10000u - offset, function, "invalid register range");
+    offset &= 0xffffu;
+    Require(count != 0 && count <= 0x3fffu && count <= 0x10000u - offset, function, "invalid register range");
     std::vector<std::uint32_t> snapshot;
     if (values != nullptr) {
         snapshot.resize(count);

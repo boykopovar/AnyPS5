@@ -43,7 +43,6 @@ void testDirect() {
         check(storage.buffer.cursor_up == packet + 3 && sizes[i]() == 12, "direct size/cursor mismatch");
         check(packet[3] == 0xabcdef01u, "direct command overwrote following word");
         const auto before = storage.words;
-        expectFailure([&] { writers[i](&storage.buffer, {0x10000u, 1}); });
         expectFailure([&] { writers[i](nullptr, {0, 1}); });
         storage.buffer.cursor_down = storage.buffer.cursor_up + 2;
         expectFailure([&] { writers[i](&storage.buffer, {0, 1}); });
@@ -65,11 +64,18 @@ void testConfig() {
     check(reserved == range + 5 && reserved[0] == 0xc0026800u && reserved[1] == 0x200u && reserved[2] == 0xabcdef01u && reserved[3] == 0xabcdef01u, "null config values wrote the payload");
     check(storage.buffer.cursor_up == reserved + 4 && reserved[4] == 0xabcdef01u, "config register cursor mismatch");
     const auto before = storage.words;
-    expectFailure([&] { sceAgcDcbSetCfRegisterDirect(&storage.buffer, {0x10000u, 1}); });
     expectFailure([&] { sceAgcDcbSetCfRegisterDirect(nullptr, {0, 1}); });
     expectFailure([&] { sceAgcDcbSetCfRegisterRangeDirect(&storage.buffer, 0x100u, values.data(), 0); });
     expectFailure([&] { sceAgcDcbSetCfRegisterRangeDirect(&storage.buffer, 0xffffu, values.data(), 2); });
     check(storage.words == before && storage.buffer.cursor_up == reserved + 4, "invalid config register write modified buffer");
+    const std::array writers{sceAgcDcbSetCfRegisterDirect, sceAgcDcbSetCxRegisterDirect, sceAgcDcbSetShRegisterDirect, sceAgcDcbSetUcRegisterDirect};
+    const std::array headers{0xc0016800u, 0xc0016900u, 0xc0017600u, 0xc0017900u};
+    for (std::size_t i = 0; i < writers.size(); ++i) {
+        Storage high;
+        auto* packet = writers[i](&high.buffer, {0x22222222u, 0x11111111u});
+        const std::array expectedHigh{headers[i], 0x2222u, 0x11111111u};
+        check(packet == high.words.data() && std::equal(expectedHigh.begin(), expectedHigh.end(), packet) && high.buffer.cursor_up == packet + 3, "a direct register offset above 0xffff was not cut to 16 bits as the console does");
+    }
 }
 
 void testRangeFromAnyByte() {
