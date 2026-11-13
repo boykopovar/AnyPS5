@@ -5,6 +5,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 struct PcmFixture {
@@ -336,7 +337,19 @@ static void TestReportedInputLifetime(const PcmFixture& fixture, std::uint32_t c
     Require(lateWriteVisible);
 }
 
-int main() {
+static void TestReportedInputLifetimes() {
+    for (const auto& fixture : Fixtures)
+        for (const auto channels : {1u, 2u})
+            for (const auto rate : {44100u, 48000u, 96000u})
+                for (const auto pitch : {0.75f, 1.0f, 2.0f})
+                    TestReportedInputLifetime(fixture, channels, rate, pitch);
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--reported-lifetime") == 0) {
+        TestReportedInputLifetimes();
+        return 0;
+    }
     TestSkipWindowContract();
     for (const auto& fixture : Fixtures) {
         TestConstantConversions(fixture);
@@ -347,10 +360,6 @@ int main() {
         TestBounds(fixture);
     }
     TestNumericEdges();
-    for (const auto& fixture : Fixtures)
-        for (const auto channels : {1u, 2u})
-            for (const auto rate : {44100u, 48000u, 96000u})
-                for (const auto pitch : {0.75f, 1.0f, 2.0f})
-                    TestReportedInputLifetime(fixture, channels, rate, pitch);
+    TestReportedInputLifetimes();
     return 0;
 }
