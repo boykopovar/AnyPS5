@@ -4,6 +4,7 @@
 #include "prx/libkernel/libkernel.hpp"
 #include <algorithm>
 #include <array>
+#include <barrier>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -11,6 +12,8 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <stdexcept>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -186,6 +189,25 @@ void Open() {
     Oracle::Close(native);
 }
 
+void RoundingUnnecessary() {
+    Pair handle(0, "en_US", u"0.00");
+    unum_setAttribute_nid_postfix(handle.guest, 11, 7);
+    Oracle::SetAttribute(handle.native, 11, 7);
+    for (int operation : {0, 1}) {
+        std::array<char16_t, 8> output;
+        output.fill(0xa55a);
+        Guarded<Oracle::Field> field;
+        field.value = {0, -91, -92};
+        std::int32_t status = 0;
+        NativeOutput(handle.native, operation, 12.345, "12.345", -1, 0, output.data() + 2, 3, &field.value, &status);
+        Require(status == 0x10111, "native unnecessary rounding actually produces format-inexact error");
+        field.Check();
+        Compare(handle.guest, handle.native, operation, 12.345, "12.345");
+        Compare(handle.guest, handle.native, operation, 12.25, "12.25");
+    }
+    Literal(handle.guest, 12.25, u"12.25");
+}
+
 void Format() {
     std::fputs("classic number fixture: valid double/decimal formatting\n", stderr);
     for (const auto* locale : {"en_US", "de_DE", "ar_EG", "hi_IN"}) {
@@ -214,6 +236,65 @@ void Format() {
     const auto count = unum_formatDecimal_nid_postfix(precision.guest, exact, -1, output.data(), output.size(), nullptr, &status);
     Require(status <= 0 && count == static_cast<std::int32_t>(wanted.size()) && std::u16string_view(output.data(), count) == wanted,
         "decimal formatting preserves precision beyond binary double");
+    RoundingUnnecessary();
+}
+
+void RuleBasedAttributes() {
+    for (const auto style : {5, 9}) {
+        Pair handle(style, "en_US", style == 9 ? u"%first: 0: =0=; %second: 0: =0.00=;" : nullptr);
+        for (const auto attribute : {0, 5, 6, 7}) Compare(handle.guest, handle.native, 3, 0, nullptr, 0, attribute);
+        std::array<char16_t, 2048> names{};
+        std::array<char16_t, 256> current{};
+        std::int32_t status = 0;
+        const auto namesLength = Oracle::Text(handle.native, 7, names.data(), names.size(), &status);
+        Require(namesLength > 0 && status <= 0, "native public rule-set list is populated");
+        status = 0;
+        const auto currentLength = Oracle::Text(handle.native, 6, current.data(), current.size(), &status);
+        Require(currentLength > 0 && status <= 0, "native default rule-set name is populated");
+        const std::u16string_view available(names.data(), namesLength);
+        const std::u16string_view previous(current.data(), currentLength);
+        std::u16string selected;
+        for (std::size_t begin = 0; begin < available.size();) {
+            const auto end = available.find(u';', begin);
+            Require(end != std::u16string_view::npos, "public rule sets use native semicolon separators");
+            const auto candidate = available.substr(begin, end - begin);
+            if (!candidate.empty() && candidate != previous) { selected.assign(candidate); break; }
+            begin = end + 1;
+        }
+        Require(!selected.empty(), "fixture offers a genuinely different default rule set");
+        for (const auto incoming : {0, -128}) {
+            status = incoming;
+            auto expected = incoming;
+            unum_setTextAttribute_nid_postfix(handle.guest, 6, selected.data(), selected.size(), &status);
+            Oracle::SetText(handle.native, 6, selected.data(), selected.size(), &expected);
+            Require(status == expected && status <= 0, "default rule-set mutation follows native status");
+            Compare(handle.guest, handle.native, 3, 0, nullptr, 0, 6);
+            Compare(handle.guest, handle.native, 3, 0, nullptr, 0, 7);
+            Compare(handle.guest, handle.native, 0, 42.5);
+        }
+        for (const auto attribute : {0, 7}) {
+            status = 0;
+            std::int32_t expected = 0;
+            unum_setTextAttribute_nid_postfix(handle.guest, attribute, u"unsupported", -1, &status);
+            Oracle::SetText(handle.native, attribute, u"unsupported", -1, &expected);
+            Require(expected > 0 && status == expected, "rule-based unsupported text setter matches native error");
+            Compare(handle.guest, handle.native, 3, 0, nullptr, 0, 6);
+            Compare(handle.guest, handle.native, 0, 42.5);
+        }
+        status = 0;
+        std::int32_t expected = 0;
+        unum_setTextAttribute_nid_postfix(handle.guest, 6, u"%missing-rule-set", -1, &status);
+        Oracle::SetText(handle.native, 6, u"%missing-rule-set", -1, &expected);
+        Require(expected > 0 && status == expected, "unknown default rule set preserves native error semantics");
+        Compare(handle.guest, handle.native, 3, 0, nullptr, 0, 6);
+    }
+    Pair decimal(1, "en_US");
+    for (const auto attribute : {6, 7}) Compare(decimal.guest, decimal.native, 3, 0, nullptr, 0, attribute);
+    std::int32_t status = 0;
+    std::int32_t expected = 0;
+    unum_setTextAttribute_nid_postfix(decimal.guest, 6, u"%first", -1, &status);
+    Oracle::SetText(decimal.native, 6, u"%first", -1, &expected);
+    Require(expected > 0 && status == expected, "decimal formatter rejects rule-set setter like native");
 }
 
 void Attributes() {
@@ -257,9 +338,116 @@ void Attributes() {
     const auto unchanged = buffer;
     Require(unum_getSymbol_nid_postfix(handle.guest, 0, buffer.data(), buffer.size(), nullptr) == 0 && buffer == unchanged,
         "inherited null symbol status returns without writing output");
+    RuleBasedAttributes();
+}
+
+void ReverseCrossKind() {
+    Pair handle(0, "en_US", u"0.00");
+    auto* enumeration = reinterpret_cast<UEnumeration*>(handle.guest);
+    for (int phase = 0; phase < 2; ++phase) {
+        for (const auto incoming : {1, 7, 15}) {
+            auto status = incoming;
+            auto* inaccessibleLength = reinterpret_cast<std::int32_t*>(std::uintptr_t{1});
+            Require(uenum_count_nid_postfix(enumeration, &status) == -1 && status == incoming,
+                "failed enumeration count bypasses live/retired number token callbacks");
+            Require(uenum_next_nid_postfix(enumeration, inaccessibleLength, &status) == nullptr && status == incoming,
+                "failed enumeration next bypasses live/retired number token and result length");
+            Require(uenum_unext_nid_postfix(enumeration, inaccessibleLength, &status) == nullptr && status == incoming,
+                "failed enumeration unext bypasses live/retired number token and result length");
+        }
+        std::int32_t status = 0;
+        std::int32_t length = 0x12345678;
+        Refuses([&] { uenum_count_nid_postfix(enumeration, &status); });
+        Require(status == 0, "foreign enumeration count refusal preserves number status");
+        Refuses([&] { uenum_next_nid_postfix(enumeration, &length, &status); });
+        Require(status == 0 && length == 0x12345678, "foreign enumeration next refusal preserves output");
+        Refuses([&] { uenum_unext_nid_postfix(enumeration, &length, &status); });
+        Require(status == 0 && length == 0x12345678, "foreign enumeration unext refusal preserves output");
+        Refuses([&] { uenum_close_nid_postfix(enumeration); });
+        if (phase == 0) {
+            Literal(handle.guest, 12.5, u"12.50");
+            unum_close_nid_postfix(handle.guest);
+            handle.guest = nullptr;
+        }
+    }
+}
+
+void CloseRaces() {
+    enum class Outcome { Pending, Completed, Refused, Failed };
+    for (int iteration = 0; iteration < 32; ++iteration) {
+        Pair handle(0, "en_US", u"0.00");
+        auto* original = handle.guest;
+        std::int32_t status = 0;
+        auto* sibling = unum_clone_nid_postfix(original, &status);
+        Require(sibling && status <= 0, "independent clone exists before close race");
+        std::barrier gate(3);
+        UNumberFormat* copied = nullptr;
+        Outcome cloneOutcome = Outcome::Pending;
+        Outcome formatOutcome = Outcome::Pending;
+        auto cloneCall = [&] {
+            std::int32_t local = 0;
+            try {
+                copied = unum_clone_nid_postfix(original, &local);
+                cloneOutcome = copied && local <= 0 ? Outcome::Completed : Outcome::Failed;
+            } catch (const std::runtime_error& error) {
+                cloneOutcome = local == 0 && std::string_view(error.what()).ends_with(" not implemented") ? Outcome::Refused : Outcome::Failed;
+            } catch (...) { cloneOutcome = Outcome::Failed; }
+        };
+        std::thread cloner([&] {
+            if (iteration % 4 == 0) cloneCall();
+            gate.arrive_and_wait();
+            if (iteration % 4 != 0) cloneCall();
+        });
+        std::thread formatter([&] {
+            std::array<char16_t, 16> output;
+            output.fill(0xa55a);
+            const auto unchanged = output;
+            Guarded<Oracle::Field> field;
+            field.value = {0, -91, -92};
+            const auto oldField = field;
+            std::int32_t local = 0;
+            gate.arrive_and_wait();
+            try {
+                const auto count = unum_formatDouble_nid_postfix(original, 12.5, output.data() + 1, 14,
+                    reinterpret_cast<UFieldPosition*>(&field.value), &local);
+                bool intact = output[0] == 0xa55a && output[6] == 0;
+                for (std::size_t i = 7; i < output.size(); ++i) intact &= output[i] == 0xa55a;
+                formatOutcome = count == 5 && local == 0 && std::u16string_view(output.data() + 1, 5) == u"12.50" &&
+                    intact && field.value.field == 0 && field.value.begin == 0 && field.value.end == 2 ? Outcome::Completed : Outcome::Failed;
+            } catch (const std::runtime_error& error) {
+                formatOutcome = local == 0 && output == unchanged &&
+                    std::memcmp(&field.value, &oldField.value, sizeof(Oracle::Field)) == 0 &&
+                    std::string_view(error.what()).ends_with(" not implemented") ? Outcome::Refused : Outcome::Failed;
+            } catch (...) { formatOutcome = Outcome::Failed; }
+            field.Check();
+        });
+        gate.arrive_and_wait();
+        unum_close_nid_postfix(original);
+        handle.guest = nullptr;
+        cloner.join();
+        formatter.join();
+        Require(cloneOutcome == Outcome::Completed || cloneOutcome == Outcome::Refused,
+            "close-vs-clone completes or cleanly refuses a retired token");
+        Require(formatOutcome == Outcome::Completed || formatOutcome == Outcome::Refused,
+            "close-vs-format produces intact expected output or untouched refusal");
+        if (iteration % 4 == 0) Require(cloneOutcome == Outcome::Completed, "barrier keeps a completed clone alive across original close");
+        if (cloneOutcome == Outcome::Completed) {
+            Require(copied != original && copied != sibling, "racing clone has independent token identity");
+            Literal(copied, 12.5, u"12.50");
+            unum_setAttribute_nid_postfix(copied, 8, 3);
+            std::int32_t local = 0;
+            unum_setTextAttribute_nid_postfix(copied, 0, u"raced:", -1, &local);
+            Require(local == 0, "completed clone remains independently mutable after original close");
+            Literal(copied, 12.5, u"raced:12.500");
+            unum_close_nid_postfix(copied);
+        }
+        Literal(sibling, 12.5, u"12.50");
+        unum_close_nid_postfix(sibling);
+    }
 }
 
 void Lifetime() {
+    ReverseCrossKind();
     std::fputs("classic number fixture: valid clone and independent state\n", stderr);
     Pair handle(0, "en_US", u"0.00");
     std::int32_t status = 0;
@@ -300,6 +488,7 @@ void Lifetime() {
     unum_close_nid_postfix(clone);
     Oracle::Close(native);
     unum_close_nid_postfix(nullptr);
+    CloseRaces();
 }
 
 void Memory() {
