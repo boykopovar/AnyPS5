@@ -1,10 +1,12 @@
 #include <codegen/x86/MaskedStoreLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <codegen/CodegenException.hpp>
+#include "LoweringExecution.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <span>
@@ -268,6 +270,10 @@ void execution() {
     std::uint64_t runs = 0;
     for (const auto& form : kForms) {
         for (const bool wide : {false, true}) {
+            if (!LoweringExecution::HostExecutes(maskedStore(form, wide, 1, 2, 0, {0x07}))) {
+                std::cout << "skipped: " << (wide ? "256-bit " : "128-bit ") << form.Name << " execution, the host does not execute it\n";
+                continue;
+            }
             const auto elements = (wide ? 32u : 16u) / form.ElementSize;
             for (std::size_t mode = 0; mode < kAddressings.size(); ++mode) {
                 const auto& addressing = kAddressings[mode];
@@ -336,7 +342,13 @@ void execution() {
                             require(stack[-8 - 128 + static_cast<int>(at)] == kSentinel, "Masked store stub wrote into the red zone");
                         require(std::memcmp(machine.Ymm, input.Ymm, sizeof(input.Ymm)) == 0, "Masked store stub changed a vector register");
                         require(std::memcmp(machine.Gpr, input.Gpr, sizeof(input.Gpr)) == 0, "Masked store stub changed a general register");
-                        require((machine.Flags & 0x8D5) == (input.Flags & 0x8D5), "Masked store stub changed the flags");
+                        if ((machine.Flags & 0x8D5) != (input.Flags & 0x8D5)) {
+                            char detail[256];
+                            std::snprintf(detail, sizeof(detail), "Masked store stub changed the flags: %s %s, addressing %zu, offset %d, mask pattern 0x%02X, %d fault(s), flags 0x%03llX in, 0x%03llX out",
+                                form.Name, wide ? "256-bit" : "128-bit", mode, offset, static_cast<unsigned>(pattern), static_cast<int>(faults),
+                                static_cast<unsigned long long>(input.Flags & 0x8D5), static_cast<unsigned long long>(machine.Flags & 0x8D5));
+                            throw std::runtime_error(detail);
+                        }
                         require(machine.Stack == input.Stack, "Masked store stub did not restore RSP");
                     }
                 }

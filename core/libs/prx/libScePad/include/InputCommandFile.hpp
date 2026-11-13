@@ -11,6 +11,7 @@
 #include <sstream>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -23,6 +24,11 @@ public:
         std::array<std::uint8_t, 4> sticks{};
         bool touchLeft = false;
         bool touchRight = false;
+        bool hasTouch = false;
+        std::uint16_t touchX = 0;
+        std::uint16_t touchY = 0;
+        std::uint8_t touchId = 0;
+        bool touchActive = false;
 
         bool operator==(const Input&) const = default;
     };
@@ -53,6 +59,24 @@ public:
     }
 
     std::uint32_t Buttons(std::uint64_t now) { return Poll(now).buttons; }
+
+    std::uint32_t HeldThrough(std::uint64_t since, std::uint64_t now) const {
+        if (events.empty() || since < started || now < since) return 0;
+        const auto from = since - started;
+        const auto to = now - started;
+        auto event = std::upper_bound(events.begin(), events.end(), from,
+            [](std::uint64_t time, const Event& candidate) { return time < candidate.start; });
+        if (event == events.begin()) return 0;
+        --event;
+        std::uint32_t held = ~0u;
+        for (std::uint64_t covered = from; event != events.end() && event->start <= covered; ++event) {
+            if (covered >= event->end) return 0;
+            held &= event->input.buttons;
+            covered = event->end;
+            if (to < covered) return held;
+        }
+        return 0;
+    }
 
 private:
     struct Event {
@@ -90,8 +114,10 @@ private:
                 if (eventText.find('-') != std::string::npos) return {};
                 fields.clear();
                 fields.str(eventText);
-                std::uint64_t start = 0, duration = 0, buttons = 0;
-                if (!(fields >> start >> duration >> buttons) || fields >> extra) return {};
+                std::uint64_t row[7]{};
+                const int columns = parseRow(eventText, row);
+                if (columns != 3 && columns != 7) return {};
+                const std::uint64_t start = row[0], duration = row[1], buttons = row[2];
                 if ((buttons & ~(0x10fffeull | TouchLeftBit | TouchRightBit)) != 0 || duration == 0 || duration > 5000 ||
                     start < previousEnd || start > 3600000 - duration) return {};
                 previousEnd = start + duration;
@@ -99,6 +125,11 @@ private:
                 input.buttons = static_cast<std::uint32_t>(buttons & 0x10fffeull);
                 input.touchLeft = (buttons & TouchLeftBit) != 0;
                 input.touchRight = (buttons & TouchRightBit) != 0;
+                for (int column = 3; column < columns; ++column) {
+                    if (row[column] > 255) return {};
+                    input.sticks[column - 3] = static_cast<std::uint8_t>(row[column]);
+                }
+                input.hasSticks = columns == 7;
                 command.events.push_back({start * 1000, previousEnd * 1000, input});
             }
             file >> std::ws;
@@ -107,21 +138,37 @@ private:
         }
         fields.clear();
         fields.str(text);
-        std::string tokens[8];
+        std::string tokens[9];
         int count = 0;
-        while (count < 8 && fields >> tokens[count]) ++count;
+        while (count < 9 && fields >> tokens[count]) ++count;
+        Input input;
+        if (count == 4 || count == 8) {
+            std::string_view touch(tokens[--count]);
+            if (!touch.starts_with("touch(") || !touch.ends_with(')')) return {};
+            touch.remove_prefix(6);
+            touch.remove_suffix(1);
+            std::uint64_t coordinates[4]{};
+            for (int i = 0; i < 4; ++i) {
+                const auto comma = touch.find(',');
+                if ((i < 3) != (comma != std::string_view::npos)) return {};
+                if (!parseUnsigned(touch.substr(0, comma), coordinates[i])) return {};
+                if (i < 3) touch.remove_prefix(comma + 1);
+            }
+            if (coordinates[0] >= 1920 || coordinates[1] >= 943 || coordinates[2] > 127 || coordinates[3] > 1) return {};
+            input.hasTouch = true;
+            input.touchX = static_cast<std::uint16_t>(coordinates[0]);
+            input.touchY = static_cast<std::uint16_t>(coordinates[1]);
+            input.touchId = static_cast<std::uint8_t>(coordinates[2]);
+            input.touchActive = coordinates[3] != 0;
+        }
         if (count != 3 && count != 7) return {};
         std::uint64_t values[7]{};
         for (int i = 0; i < count; ++i) {
-            const char* first = tokens[i].data() + (tokens[i].front() == '+' ? 1 : 0);
-            const char* last = tokens[i].data() + tokens[i].size();
-            const auto parsed = std::from_chars(first, last, values[i]);
-            if (first == last || parsed.ec != std::errc{} || parsed.ptr != last) return {};
+            if (!parseUnsigned(tokens[i], values[i])) return {};
         }
         if (values[0] == 0 || (values[1] & ~(0x10fffeull | TouchLeftBit | TouchRightBit)) != 0 || values[2] == 0 || values[2] > 5000) return {};
         Command command;
         command.sequence = values[0];
-        Input input;
         input.buttons = static_cast<std::uint32_t>(values[1] & 0x10fffeull);
         input.touchLeft = (values[1] & TouchLeftBit) != 0;
         input.touchRight = (values[1] & TouchRightBit) != 0;
@@ -132,6 +179,33 @@ private:
         input.hasSticks = count == 7;
         command.events.push_back({0, values[2] * 1000, input});
         return command;
+    }
+
+    static int parseRow(std::string_view text, std::uint64_t (&row)[7]) {
+        const auto space = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f'; };
+        int columns = 0;
+        std::size_t index = 0;
+        while (index < text.size()) {
+            if (space(text[index])) {
+                ++index;
+                continue;
+            }
+            const std::size_t first = index;
+            if (text[index] == '+') ++index;
+            while (index < text.size() && text[index] >= '0' && text[index] <= '9') ++index;
+            if (index < text.size() && !space(text[index]) && text[index] != '+') return -1;
+            if (columns == 7 || !parseUnsigned(text.substr(first, index - first), row[columns])) return -1;
+            ++columns;
+        }
+        return columns;
+    }
+
+    static bool parseUnsigned(std::string_view token, std::uint64_t& value) {
+        if (token.empty()) return false;
+        const char* first = token.data() + (token.front() == '+' ? 1 : 0);
+        const char* last = token.data() + token.size();
+        const auto parsed = std::from_chars(first, last, value);
+        return first != last && parsed.ec == std::errc{} && parsed.ptr == last;
     }
 
     static constexpr std::uint64_t TouchLeftBit = 0x200000;

@@ -2,9 +2,14 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
+#include <initializer_list>
 
 static constexpr int INVALID_ARGUMENT = static_cast<int>(0x80550003);
 static constexpr int INVALID_PLATFORM_TYPE = static_cast<int>(0x80550004);
@@ -15,6 +20,17 @@ static constexpr int MUTEX_BUSY = static_cast<int>(0x8055800F);
 static bool expect(bool condition, const char* message) {
     if (!condition) std::fprintf(stderr, "%s\n", message);
     return condition;
+}
+
+template <typename F>
+static bool expectRuntimeError(F operation, const char* message) {
+    try {
+        operation();
+    } catch (const std::runtime_error&) {
+        return true;
+    } catch (...) {
+    }
+    return expect(false, message);
 }
 
 static NpOnlineId onlineId(const char* text) {
@@ -35,6 +51,8 @@ static int testIds() {
     const NpOnlineId kestrelCopy = onlineId("kestrel_77");
     const NpOnlineId heron = onlineId("heron-4");
     bool ok = expect(sceNpCmpOnlineId(nullptr, &kestrel) == INVALID_ARGUMENT, "a null online ID was compared");
+    ok &= expect(sceNpCmpOnlineId(&kestrel, nullptr) == INVALID_ARGUMENT, "a null second online ID was compared");
+    ok &= expect(sceNpCmpOnlineId(nullptr, nullptr) == INVALID_ARGUMENT, "null online IDs were compared");
     ok &= expect(sceNpCmpOnlineId(&kestrel, &kestrelCopy) == 0, "equal online IDs did not match");
     ok &= expect(sceNpCmpOnlineId(&kestrel, &heron) == NOT_MATCH, "different online IDs matched");
 
@@ -43,6 +61,10 @@ static int testIds() {
     high.reserved[7] = 1;
     std::int32_t order = 5;
     ok &= expect(sceNpCmpNpIdInOrder(&low, &high, nullptr) == INVALID_ARGUMENT, "a null order was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(nullptr, &high, &order) == INVALID_ARGUMENT, "a null first NpId was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(&low, nullptr, &order) == INVALID_ARGUMENT, "a null second NpId was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(nullptr, nullptr, &order) == INVALID_ARGUMENT, "null NpIds were accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(nullptr, nullptr, nullptr) == INVALID_ARGUMENT, "all null arguments were accepted");
     ok &= expect(sceNpCmpNpIdInOrder(&low, &high, &order) == 0 && order == -1, "reserved bytes did not order the NpIds");
     ok &= expect(sceNpCmpNpIdInOrder(&high, &low, &order) == 0 && order == 1, "the reverse order is not 1");
     ok &= expect(sceNpCmpNpIdInOrder(&low, &low, &order) == 0 && order == 0, "an NpId is not equal to itself");
@@ -65,6 +87,99 @@ static int testIds() {
     ok &= expect(sceNpGetPlatformType(&vita) == 2, "the psp2 tag is not platform 2");
     ok &= expect(sceNpGetPlatformType(&ps4) == 3, "the ps4 tag is not platform 3");
     ok &= expect(sceNpGetPlatformType(&other) == INVALID_PLATFORM_TYPE, "an unknown tag was accepted");
+    const NpIdFull companion = npIdWithTag("heron-4", 0x706D6F63);
+    ok &= expect(sceNpGetPlatformType(&companion) == INVALID_PLATFORM_TYPE, "the comp tag has a public platform type");
+    ok &= expect(sceNpIntGetPlatformType(&companion) == 4 && sceNpIntGetPlatformType(&ps4) == 3 && sceNpIntGetPlatformType(&none) == 0,
+        "the internal platform type does not include comp");
+    ok &= expect(sceNpIntGetPlatformType(&other) == INVALID_PLATFORM_TYPE && sceNpIntGetPlatformType(nullptr) == INVALID_ARGUMENT,
+        "the internal platform type accepted an unknown tag or a null NpId");
+
+    NpIdFull tagged = npIdWithTag("heron-4", 0x00357370);
+    const std::uint32_t tags[] = {0, 0x00337370, 0x32707370, 0x00347370};
+    for (std::uint32_t type = 0; type < 4; ++type) {
+        ok &= expect(sceNpSetPlatformType(&tagged, type) == 0 && std::memcmp(tagged.opt + 4, &tags[type], 4) == 0 && sceNpGetPlatformType(&tagged) == static_cast<int>(type),
+            "setting a platform type did not write its tag");
+    }
+    ok &= expect(sceNpSetPlatformType(&tagged, 4) == INVALID_PLATFORM_TYPE && sceNpSetPlatformType(nullptr, 0) == INVALID_ARGUMENT,
+        "the public setter accepted comp or a null NpId");
+    ok &= expect(sceNpIntSetPlatformType(&tagged, 4) == 0 && sceNpIntGetPlatformType(&tagged) == 4, "the internal setter did not write comp");
+    ok &= expect(sceNpIntSetPlatformType(&tagged, 2) == 0 && sceNpGetPlatformType(&tagged) == 2, "the internal setter did not write psp2");
+    ok &= expect(sceNpIntSetPlatformType(&tagged, 5) == INVALID_PLATFORM_TYPE && sceNpIntSetPlatformType(nullptr, 1) == INVALID_ARGUMENT,
+        "the internal setter accepted type 5 or a null NpId");
+
+    constexpr int UTIL_INVALID_ARGUMENT = static_cast<int>(0x80550601);
+    constexpr int UTIL_INVALID_NP_ID = static_cast<int>(0x80550605);
+    NpIdFull canonical = npIdWithTag("heron-4", 0);
+    canonical.reserved[0] = 1;
+    ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(&canonical, 0) == 0 && sceNpGetPlatformType(&canonical) == 3, "an untagged NpId did not get the ps4 tag");
+    ok &= expect(sceNpUtilCanonicalizeNpIdForPsp2(&canonical, 0) == 0 && sceNpGetPlatformType(&canonical) == 3, "an existing tag was replaced");
+    ok &= expect(sceNpUtilCanonicalizeNpIdForPsp2(&canonical, 1) == 0 && sceNpGetPlatformType(&canonical) == 2, "replacing did not write the psp2 tag");
+    NpIdFull foreign = npIdWithTag("heron-4", 0x00337370);
+    foreign.reserved[0] = 0;
+    ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(&foreign, 0) == UTIL_INVALID_NP_ID && sceNpGetPlatformType(&foreign) == 1,
+        "an NpId without reserved[0] set was canonicalized");
+    ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(&foreign, 1) == UTIL_INVALID_NP_ID && sceNpGetPlatformType(&foreign) == 0,
+        "replacing did not clear the tag before the NpId was refused");
+    ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(nullptr, 0) == UTIL_INVALID_ARGUMENT && sceNpUtilCanonicalizeNpIdForPsp2(nullptr, 1) == UTIL_INVALID_ARGUMENT,
+        "canonicalizing a null NpId succeeded");
+    NpIdFull loose = npIdWithTag("heron-4", 0x34737000);
+    ok &= expect(sceNpGetPlatformType(&loose) == 0 && sceNpIntGetPlatformType(&loose) == 0, "a tag with opt[4] zero is not platform 0");
+    const NpIdFull nearCompanion = npIdWithTag("heron-4", 0x716D6F63);
+    ok &= expect(sceNpIntGetPlatformType(&nearCompanion) == INVALID_PLATFORM_TYPE, "comq was taken for comp");
+    loose.reserved[0] = 1;
+    ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(&loose, 0) == 0 && std::memcmp(loose.opt + 4, &tags[3], 4) == 0, "a tag with opt[4] zero was not replaced");
+    const std::int32_t replaceValues[] = {2, 0x100, -1};
+    for (const std::int32_t replace : replaceValues) {
+        NpIdFull replaced = npIdWithTag("heron-4", 0x00337370);
+        replaced.reserved[0] = 1;
+        replaced.opt[0] = 0x5A;
+        ok &= expect(sceNpUtilCanonicalizeNpIdForPsp2(&replaced, replace) == 0 && sceNpGetPlatformType(&replaced) == 2 && replaced.opt[0] == 0x5A,
+            "a non-zero replace did not clear only the tag");
+    }
+    NpIdFull refused = npIdWithTag("heron-4", 0);
+    refused.reserved[0] = 2;
+    ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(&refused, 0) == UTIL_INVALID_NP_ID && sceNpGetPlatformType(&refused) == 0, "reserved[0] 2 was accepted");
+    NpIdFull kept = npIdWithTag("heron-4", 0x00337370);
+    std::memset(kept.opt, 0xA5, 4);
+    kept.reserved[0] = 7;
+    const NpIdFull before = kept;
+    ok &= expect(sceNpSetPlatformType(&kept, 4) == INVALID_PLATFORM_TYPE && std::memcmp(&kept, &before, sizeof(kept)) == 0, "a refused type changed the NpId");
+    ok &= expect(sceNpSetPlatformType(&kept, 3) == 0 && std::memcmp(kept.opt, before.opt, 4) == 0 && std::memcmp(kept.reserved, before.reserved, 8) == 0
+            && std::memcmp(&kept.handle, &before.handle, sizeof(kept.handle)) == 0,
+        "setting a platform type changed bytes outside the tag");
+
+    std::array<std::uint8_t, 12> rawTitleId{};
+    std::array<std::uint8_t, 21> titleIdObject{};
+    for (std::size_t i = 0; i < rawTitleId.size(); ++i) rawTitleId[i] = static_cast<std::uint8_t>(i + 1);
+    std::memcpy(titleIdObject.data() + 8, rawTitleId.data(), rawTitleId.size());
+    ok &= expect(_ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), titleIdObject.data()), "equal title IDs did not compare equal");
+    titleIdObject[8 + 11] = static_cast<std::uint8_t>(rawTitleId.back() ^ 1U);
+    ok &= expect(!_ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), titleIdObject.data()), "different title IDs compared equal");
+    titleIdObject[8 + 11] = rawTitleId.back();
+    titleIdObject[8 + 12] = 1;
+    ok &= expect(_ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), titleIdObject.data()), "title ID comparison read beyond the observed 12-byte range");
+    const auto nearMaximum = reinterpret_cast<const void*>(std::numeric_limits<std::uintptr_t>::max() - 4);
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), nearMaximum); }, "title ID offset overflow did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(nullptr, titleIdObject.data()); }, "null raw title ID did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), nullptr); }, "null title ID object did not throw");
+    const auto unreadable = reinterpret_cast<const void*>(std::uintptr_t{1});
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(unreadable, titleIdObject.data()); }, "unreadable raw title ID did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), unreadable); }, "unreadable title ID object did not throw");
+
+    std::array<std::uint8_t, 136> titleSecretObject{};
+    NpTitleSecret titleSecret{};
+    for (std::size_t i = 0; i < sizeof(titleSecret.data); ++i) titleSecret.data[i] = static_cast<std::uint8_t>(i * 3);
+    std::memcpy(titleSecretObject.data() + 8, titleSecret.data, sizeof(titleSecret.data));
+    ok &= expect(!_ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), &titleSecret), "equal title secrets compared unequal");
+    titleSecretObject[7] = 0xFF;
+    ok &= expect(!_ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), &titleSecret), "title secret comparison included the object prefix");
+    titleSecretObject[8 + 127] ^= 1;
+    ok &= expect(_ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), &titleSecret), "different title secrets compared equal");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(nullptr, &titleSecret); }, "null title secret object did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), nullptr); }, "null raw title secret did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(nearMaximum, &titleSecret); }, "title secret offset overflow did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), unreadable); }, "unreadable raw title secret did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(unreadable, &titleSecret); }, "unreadable title secret object did not throw");
 
     NpOnlineId unterminated = onlineId("abcdefghijklmnop");
     unterminated.data[16] = 'q';
@@ -85,6 +200,68 @@ static int testIds() {
 
 static void* APS5_VABI returnTicket(void* arg) {
     return reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(arg) + 1);
+}
+
+struct Wakeup {
+    PthreadCond cond = nullptr;
+    PthreadMutex mutex = nullptr;
+    bool lightweight = false;
+    int waiting = 0;
+    int woken = 0;
+    bool ready = false;
+};
+
+static void* APS5_VABI waitUntilReady(void* arg) {
+    auto* wakeup = static_cast<Wakeup*>(arg);
+    sceNpMutexLock(&wakeup->mutex);
+    ++wakeup->waiting;
+    int result = 0;
+    while (!wakeup->ready && result == 0) result = wakeup->lightweight ? sceNpLwCondWait(&wakeup->cond, &wakeup->mutex) : sceNpCondWait(&wakeup->cond, &wakeup->mutex);
+    if (result == 0) ++wakeup->woken;
+    sceNpMutexUnlock(&wakeup->mutex);
+    return nullptr;
+}
+
+enum class Wake { One, All, To };
+
+static bool wakeWaiters(bool lightweight, int count, Wake wake) {
+    Wakeup wakeup;
+    wakeup.lightweight = lightweight;
+    bool ok = expect(sceNpMutexInit(&wakeup.mutex, "np-wake", 0) == 0, "the wake mutex was not created");
+    ok &= expect((lightweight ? sceNpLwCondInit(&wakeup.cond, "np-lw-wake") : sceNpCondInit(&wakeup.cond, "np-wake", 0)) == 0 && wakeup.cond, "the wake condition was not created");
+    if (!ok) return false;
+    Pthread threads[2] = {};
+    for (int index = 0; index < count; ++index)
+        if (!expect(scePthreadCreate(&threads[index], nullptr, waitUntilReady, &wakeup, "np-waiter") == 0, "a waiter was not created")) std::abort();
+    for (;;) {
+        sceNpMutexLock(&wakeup.mutex);
+        const bool waiting = wakeup.waiting == count;
+        if (waiting) break;
+        sceNpMutexUnlock(&wakeup.mutex);
+        scePthreadYield();
+    }
+    wakeup.ready = true;
+    int signalled = 0;
+    if (wake == Wake::All) signalled = lightweight ? sceNpLwCondSignalAll(&wakeup.cond) : sceNpCondSignalAll(&wakeup.cond);
+    else if (wake == Wake::To) signalled = lightweight ? sceNpLwCondSignalTo(&wakeup.cond, threads[0]) : sceNpCondSignalTo(&wakeup.cond, threads[0]);
+    else signalled = lightweight ? sceNpLwCondSignal(&wakeup.cond) : sceNpCondSignal(&wakeup.cond);
+    sceNpMutexUnlock(&wakeup.mutex);
+    if (!expect(signalled == 0, "signalling the waiters failed")) std::abort();
+    for (int index = 0; index < count; ++index) ok &= expect(scePthreadJoin(threads[index], nullptr) == 0, "a waiter was not joined");
+    ok &= expect(wakeup.woken == count, "not every waiter returned from its wait");
+    ok &= expect((lightweight ? sceNpLwCondDestroy(&wakeup.cond) : sceNpCondDestroy(&wakeup.cond)) == 0, "the wake condition was not destroyed");
+    ok &= expect(sceNpMutexDestroy(&wakeup.mutex) == 0, "the wake mutex was not destroyed");
+    return ok;
+}
+
+static int testWake() {
+    bool ok = true;
+    for (const bool lightweight : {false, true}) {
+        ok &= expect(wakeWaiters(lightweight, 1, Wake::One), lightweight ? "sceNpLwCondSignal did not wake its waiter" : "sceNpCondSignal did not wake its waiter");
+        ok &= expect(wakeWaiters(lightweight, 2, Wake::All), lightweight ? "sceNpLwCondSignalAll did not wake both waiters" : "sceNpCondSignalAll did not wake both waiters");
+        ok &= expect(wakeWaiters(lightweight, 1, Wake::To), lightweight ? "sceNpLwCondSignalTo did not wake its thread" : "sceNpCondSignalTo did not wake its thread");
+    }
+    return ok ? 0 : 1;
 }
 
 static int testSync() {
@@ -126,14 +303,23 @@ static int testClock() {
 
     bool ok = expect(sceNpGetSystemClockUsec(&usec) == 0, "the clock was not read");
     sceKernelClockGettime(4, &after);
+    ok &= expect(sceNpGetSystemClockUsec(nullptr) == INVALID_ARGUMENT, "a null destination was not rejected");
+    std::int64_t later = -1;
+    ok &= expect(sceNpGetSystemClockUsec(&later) == 0 && later >= usec && usec >= 0, "the clock went backwards");
 
     ok &= expect(usec >= before.tv_sec * 1000000 + before.tv_nsec / 1000 && usec <= after.tv_sec * 1000000 + after.tv_nsec / 1000, "the clock is not the monotonic kernel clock in microseconds");
     char version[12];
     std::memset(version, 'x', sizeof(version));
     sceNpGetSdkVersion(version);
 
-    ok &= expect(std::strcmp(version, "1.00") == 0, "the version is not 1.00");
+    ok &= expect(std::memcmp(version, "1.00\0\0\0\0", 8) == 0, "the version is not 1.00 padded with zeros");
     ok &= expect(version[8] == 'x', "the version was written past 8 bytes");
+
+    std::memset(version, 'x', sizeof(version));
+    sceNpGetNavSdkVersion(version);
+
+    ok &= expect(std::memcmp(version, "00.82\0\0\0", 8) == 0, "the nav SDK version is not 00.82 padded with zeros");
+    ok &= expect(version[8] == 'x', "the nav SDK version was written past 8 bytes");
     return ok ? 0 : 1;
 }
 
@@ -143,6 +329,7 @@ int main(int argc, char** argv) {
     if (std::strcmp(argv[1], "ids") == 0) status = testIds();
     else if (std::strcmp(argv[1], "sync") == 0) status = testSync();
     else if (std::strcmp(argv[1], "clock") == 0) status = testClock();
+    else if (std::strcmp(argv[1], "wake") == 0) status = testWake();
     if (status == 0) std::printf("NpCommon %s tests passed\n", argv[1]);
     return status;
 }

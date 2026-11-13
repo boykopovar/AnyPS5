@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <atomic>
@@ -11,6 +12,7 @@
 #include <string>
 #include <thread>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -18,11 +20,18 @@ namespace {
 
 namespace {
 
+constexpr std::int32_t ioError = static_cast<std::int32_t>(0x80240001);
 constexpr std::int32_t invalidArgument = static_cast<std::int32_t>(0x80240002);
 constexpr std::int32_t noDevice = static_cast<std::int32_t>(0x80240004);
 constexpr std::int32_t notFound = static_cast<std::int32_t>(0x80240005);
 constexpr std::int32_t otherError = static_cast<std::int32_t>(0x802400FF);
 constexpr std::uint8_t absentEndpoint = 0x70;
+constexpr std::int32_t timedOut = static_cast<std::int32_t>(0x80240007);
+
+struct InterruptEndpoint {
+    std::uint8_t address;
+    std::int32_t length;
+};
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -48,6 +57,128 @@ void APS5_VABI MarkDone(UsbdTransfer* transfer) {
 void APS5_VABI MarkDoneThenSignal(UsbdTransfer* transfer) {
     auto* notified = static_cast<std::atomic<bool>*>(transfer->userData);
     notified->store(true, std::memory_order_release);
+}
+
+void FollowerWakesAfterPass() {
+    UsbdTimeval brief{0, 20000};
+    sceUsbdLockEvents();
+    std::atomic<bool> finished{false};
+    std::atomic<std::int32_t> waiterResult{-1};
+    std::atomic<std::int64_t> waited{0};
+    std::thread follower([&] {
+        sceUsbdLockEventWaiters();
+        UsbdTimeval patience{5, 0};
+        const auto start = std::chrono::steady_clock::now();
+        waiterResult.store(sceUsbdHandleEventsLocked(&patience));
+        waited.store(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+        sceUsbdUnlockEventWaiters();
+        finished.store(true);
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!finished.load() && std::chrono::steady_clock::now() < deadline) Require(sceUsbdHandleEventsLocked(&brief) == 0, "the handler failed while another thread waited");
+    Require(finished.load(), "a thread that is not the handler did not return from sceUsbdHandleEventsLocked while the handler released the event lock");
+    follower.join();
+    Require(waiterResult.load() == 0 && waited.load() < 2000, "a thread that is not the handler was not woken when a pass of event handling ended");
+    sceUsbdUnlockEvents();
+    Require(sceUsbdEventHandlerActive() == 0, "the handler stayed active at the end");
+}
+
+void FollowerTimesOutDuringPass() {
+    UsbdTimeval longPass{2, 0};
+    sceUsbdLockEvents();
+    std::atomic<bool> finished{false};
+    std::atomic<std::int32_t> waiterResult{0};
+    std::thread follower([&] {
+        sceUsbdLockEventWaiters();
+        UsbdTimeval shortWait{0, 30000};
+        waiterResult.store(sceUsbdHandleEventsLocked(&shortWait));
+        sceUsbdUnlockEventWaiters();
+        finished.store(true);
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!finished.load() && std::chrono::steady_clock::now() < deadline) Require(sceUsbdHandleEventsLocked(&longPass) == 0, "the handler failed while another thread waited");
+    Require(finished.load(), "a thread that is not the handler did not return from sceUsbdHandleEventsLocked during a pass of event handling");
+    follower.join();
+    Require(waiterResult.load() == timedOut, "a thread that is not the handler did not time out in sceUsbdHandleEventsLocked during a longer pass of event handling");
+    sceUsbdUnlockEvents();
+    Require(sceUsbdEventHandlerActive() == 0, "the handler stayed active at the end");
+}
+
+void FollowerReturnsAfterHeldLock() {
+    UsbdTimeval brief{0, 20000};
+    sceUsbdLockEvents();
+    std::atomic<bool> entered{false};
+    std::atomic<bool> finished{false};
+    std::thread follower([&] {
+        sceUsbdLockEventWaiters();
+        entered.store(true);
+        UsbdTimeval shortWait{0, 30000};
+        sceUsbdHandleEventsLocked(&shortWait);
+        sceUsbdUnlockEventWaiters();
+        finished.store(true);
+    });
+    while (!entered.load()) Require(sceUsbdHandleEventsLocked(&brief) == 0, "the handler failed while another thread queued");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!finished.load() && std::chrono::steady_clock::now() < deadline) Require(sceUsbdHandleEventsLocked(&brief) == 0, "the handler failed while another thread waited");
+    Require(finished.load(), "a thread that is not the handler did not return from sceUsbdHandleEventsLocked after the handler held the event lock past its timeout");
+    follower.join();
+    sceUsbdUnlockEvents();
+    Require(sceUsbdEventHandlerActive() == 0, "the handler stayed active at the end");
+}
+
+void EventLocks() {
+    Require(sceUsbdEventHandlerActive() == 0 && sceUsbdEventHandlingOk() == 0, "an event handler was active before any lock");
+    sceUsbdLockEvents();
+    Require(sceUsbdEventHandlingOk() == 1 && sceUsbdEventHandlerActive() == 1, "the thread that locked events is not the handler");
+    Require(sceUsbdTryLockEvents() == 1, "the holder of the event lock took it again");
+    Require(Throws([] { sceUsbdLockEvents(); }), "one thread took the event lock twice");
+    Require(Throws([] { sceUsbdLockEventWaiters(); }), "the holder of the event lock took it again as a waiter");
+    std::thread([] {
+        Require(sceUsbdTryLockEvents() == 1, "the event lock was taken while another thread held it");
+        Require(sceUsbdEventHandlingOk() == 0 && sceUsbdEventHandlerActive() == 1, "a thread without the lock saw itself as the handler");
+    }).join();
+    sceUsbdUnlockEvents();
+    Require(sceUsbdEventHandlerActive() == 0 && sceUsbdEventHandlingOk() == 0, "the handler stayed active after unlocking events");
+    UsbdTimeval brief{0, 20000};
+    Require(Throws([] { sceUsbdUnlockEvents(); }) && Throws([] { sceUsbdUnlockEventWaiters(); }), "an event lock that was not held was released");
+    Require(Throws([&] { sceUsbdWaitForEvent(&brief); }) && Throws([&] { sceUsbdHandleEventsLocked(&brief); }), "waited or handled events without the event lock");
+    Require(sceUsbdTryLockEvents() == 0 && sceUsbdEventHandlingOk() == 1, "a free event lock was not taken");
+    UsbdTimeval negative{-1, 0};
+    Require(Throws([&] { sceUsbdHandleEventsLocked(&negative); }) && Throws([&] { sceUsbdWaitForEvent(&negative); }), "a negative timeout was accepted");
+    const auto start = std::chrono::steady_clock::now();
+    Require(sceUsbdHandleEventsLocked(&brief) == 0, "the handler failed to handle events");
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15), "the handler returned before the timeout");
+    sceUsbdUnlockEvents();
+
+    sceUsbdLockEventWaiters();
+    Require(sceUsbdEventHandlingOk() == 0, "locking the event waiters made this thread the handler");
+    Require(sceUsbdWaitForEvent(&brief) == 1, "waiting without a handler did not time out");
+    Require(sceUsbdEventHandlingOk() == 1, "a waiter did not take over handling after a timeout with no handler");
+    sceUsbdUnlockEvents();
+    Require(sceUsbdEventHandlerActive() == 0, "the waiter kept handling after unlocking events");
+
+    sceUsbdLockEvents();
+    std::atomic<bool> waiting{false};
+    std::atomic<int> woken{-1};
+    std::atomic<int> handling{-1};
+    std::thread waiter([&] {
+        sceUsbdLockEventWaiters();
+        UsbdTimeval patience{5, 0};
+        waiting.store(true);
+        woken.store(sceUsbdWaitForEvent(&patience));
+        handling.store(sceUsbdEventHandlingOk());
+        sceUsbdUnlockEvents();
+    });
+    while (!waiting.load()) Require(sceUsbdHandleEventsLocked(&brief) == 0, "the handler failed while a waiter queued");
+    sceUsbdUnlockEvents();
+    waiter.join();
+    Require(woken.load() == 0 && handling.load() == 1, "a waiter was not woken and handed the events when the handler unlocked");
+    Require(sceUsbdEventHandlerActive() == 0, "the handler stayed active after the woken waiter unlocked");
+
+    FollowerWakesAfterPass();
+    FollowerTimesOutDuringPass();
+    FollowerReturnsAfterHeldLock();
 }
 
 void Pump(const int& done) {
@@ -96,6 +227,9 @@ void Device() {
     const int speed = sceUsbdGetDeviceSpeed(device);
     Require(speed >= 1 && speed <= 4, "the device speed is not low, full, high or super speed");
     std::printf("device speed %d\n", speed);
+    errno = 71;
+    Require(sceUsbdGetConfiguration(handle, reinterpret_cast<std::int32_t*>(0x10)) == invalidArgument, "unwritable configuration rejected");
+    Require(errno == 71, "errno preserved");
     std::int32_t configuration = -1;
     Require(sceUsbdGetConfiguration(handle, &configuration) == 0 && configuration == activeValue, "configuration differs from the active config descriptor");
     std::uint8_t text[256] = {};
@@ -141,10 +275,11 @@ void Device() {
     std::uint8_t interruptAddress = 0;
     std::uint16_t interruptMax = 0;
     std::uint8_t interruptInterface = 0;
+    std::vector<InterruptEndpoint> interruptEndpoints;
     if (interfaceArray == nullptr) {
         Require(false, "the active config descriptor has no interface array");
     }
-    for (std::uint8_t index = 0; index < interfaces && interruptAddress == 0; ++index) {
+    for (std::uint8_t index = 0; index < interfaces; ++index) {
         const std::uint8_t* alternate = *reinterpret_cast<const std::uint8_t* const*>(interfaceArray + index * 16);
         if (alternate == nullptr) continue;
         const std::uint8_t* endpoints = *reinterpret_cast<const std::uint8_t* const*>(alternate + 16);
@@ -152,8 +287,11 @@ void Device() {
         for (std::uint8_t endpoint = 0; endpoint < alternate[4]; ++endpoint) {
             const std::uint8_t* item = endpoints + endpoint * 32;
             if ((item[2] & 0x80) != 0 && (item[3] & 3) == 3) {
+                const auto maxPacket = static_cast<std::uint16_t>(item[4] | item[5] << 8);
+                interruptEndpoints.push_back({item[2], (maxPacket & 0x7FF) * (1 + ((maxPacket >> 11) & 3))});
+                if (interruptAddress != 0) continue;
                 interruptAddress = item[2];
-                interruptMax = static_cast<std::uint16_t>(item[4] | item[5] << 8);
+                interruptMax = maxPacket;
                 interruptInterface = alternate[2];
             }
         }
@@ -192,14 +330,50 @@ void Device() {
     Require(Throws([&] { sceUsbdFreeTransfer(reinterpret_cast<UsbdTransfer*>(transfer)); }), "an in-flight transfer was freed");
     Pump(done);
     Require(done == 1 && transfer->status == 0 && transfer->actualLength == 18, "asynchronous control transfer did not complete");
+    done = 0;
+    Require(sceUsbdSubmitTransfer(transfer) == 0, "resubmitting the control transfer failed");
+    while (done == 0) Require(sceUsbdHandleEvents() == 0, "sceUsbdHandleEvents failed while a transfer was in flight");
+    Require(transfer->status == 0 && transfer->actualLength == 18, "the control transfer did not complete through sceUsbdHandleEvents");
+    done = 0;
+    sceUsbdLockEvents();
+    Require(sceUsbdEventHandlingOk() == 1, "the thread that locked events cannot handle them");
+    Require(sceUsbdSubmitTransfer(transfer) == 0, "submitting the control transfer under the event lock failed");
+    {
+        UsbdTimeval slice{0, 100000};
+        for (int round = 0; round < 50 && done == 0; ++round) Require(sceUsbdHandleEventsLocked(&slice) == 0, "sceUsbdHandleEventsLocked failed while a transfer was in flight");
+    }
+    sceUsbdUnlockEvents();
+    Require(done == 1 && transfer->status == 0 && transfer->actualLength == 18, "the control transfer did not complete through sceUsbdHandleEventsLocked");
     Require(std::memcmp(setup + 8, descriptor, 18) == 0, "asynchronous device descriptor differs from the cached one");
+    const UsbdTimeval slice{0, 200};
+    std::vector<std::uint8_t> blink;
+    const InterruptEndpoint* raced = nullptr;
+    for (const auto& endpoint : interruptEndpoints) {
+        std::atomic<bool> notified{false};
+        blink.assign(static_cast<std::size_t>(endpoint.length), 0);
+        sceUsbdFillInterruptTransfer(reinterpret_cast<UsbdTransfer*>(transfer), handle, endpoint.address, blink.data(), endpoint.length, &MarkDoneThenSignal, &notified, 0);
+        const std::int32_t submitted = sceUsbdSubmitTransfer(reinterpret_cast<UsbdTransfer*>(transfer));
+        if (submitted != 0) {
+            std::printf("interrupt endpoint 0x%02x refused a transfer: %d\n", endpoint.address, submitted);
+            Require(submitted == ioError, "a refused interrupt transfer did not report the host's I/O error");
+            Require(sceUsbdCancelTransfer(reinterpret_cast<UsbdTransfer*>(transfer)) == notFound, "a refused interrupt transfer stayed in flight");
+            continue;
+        }
+        const std::int32_t cancelled = sceUsbdCancelTransfer(reinterpret_cast<UsbdTransfer*>(transfer));
+        Require(cancelled == 0 || cancelled == notFound, "cancelling an in-flight interrupt transfer failed");
+        while (!notified.load(std::memory_order_acquire)) Require(sceUsbdHandleEventsTimeout(&slice) == 0, "event handling failed while an interrupt transfer was cancelled");
+        Require(transfer->status == 0 || transfer->status == 3, "a cancelled interrupt transfer neither completed nor reported the cancellation");
+        raced = &endpoint;
+        break;
+    }
+    Require(raced != nullptr, "no interrupt IN endpoint accepted a transfer");
+    std::printf("cancel race on interrupt endpoint 0x%02x\n", raced->address);
     bool broken = false;
     {
-        const UsbdTimeval slice{0, 200};
         for (int round = 0; round < 300 && !broken; ++round) {
             std::atomic<bool> notified{false};
-            std::uint8_t blink[64] = {};
-            sceUsbdFillInterruptTransfer(reinterpret_cast<UsbdTransfer*>(transfer), handle, interruptAddress, blink, interruptMax, &MarkDoneThenSignal, &notified, 0);
+            blink.assign(static_cast<std::size_t>(raced->length), 0);
+            sceUsbdFillInterruptTransfer(reinterpret_cast<UsbdTransfer*>(transfer), handle, raced->address, blink.data(), raced->length, &MarkDoneThenSignal, &notified, 0);
 
             const int submitResult = sceUsbdSubmitTransfer(reinterpret_cast<UsbdTransfer*>(transfer));
             if (submitResult != 0) {
@@ -241,8 +415,58 @@ void Device() {
 
 }
 
+void CheckTransferFillers() {
+    auto* transfer = sceUsbdAllocTransfer(3);
+    Require(transfer != nullptr, "transfer allocation failed");
+    std::uint8_t data[64] = {};
+    int device = 0;
+    int user = 0;
+    sceUsbdFillBulkTransfer(transfer, &device, 0x02, data, 64, &MarkDone, &user, 500);
+    Require(transfer->deviceHandle == &device && transfer->endpoint == 0x02 && transfer->type == 2 && transfer->timeout == 500, "bulk transfer target not filled");
+    Require(transfer->buffer == data && transfer->length == 64 && transfer->userData == &user && transfer->callback == &MarkDone, "bulk transfer buffer or callback not filled");
+    sceUsbdFillIsoTransfer(transfer, &device, 0x83, data, 48, 3, &MarkDone, &user, 0);
+    Require(transfer->endpoint == 0x83 && transfer->type == 1 && transfer->length == 48 && transfer->numIsoPackets == 3, "iso transfer not filled");
+    sceUsbdSetIsoPacketLengths(transfer, 16);
+    for (int packet = 0; packet < 3; ++packet) Require(transfer->isoPacketDescriptors[packet].length == 16, "iso packet length not set");
+    Require(sceUsbdGetIsoPacketBuffer(transfer, 0) == data && sceUsbdGetIsoPacketBuffer(transfer, 1) == data + 16 && sceUsbdGetIsoPacketBuffer(transfer, 2) == data + 32, "iso packet buffers do not follow the packet lengths");
+    Require(sceUsbdGetIsoPacketBuffer(transfer, 3) == nullptr, "a packet past the last one has a buffer");
+    sceUsbdSetIsoPacketLengths(transfer, 17);
+    Require(sceUsbdGetIsoPacketBuffer(transfer, 2) == nullptr, "a packet that runs past the transfer buffer has a buffer");
+    sceUsbdSetIsoPacketLengths(transfer, 16);
+    std::uint8_t control[12] = {};
+    sceUsbdFillControlSetup(control, 0x80, 6, 0x0100, 0x0409, 4);
+    Require(control[0] == 0x80 && control[1] == 6 && control[2] == 0x00 && control[3] == 0x01 && control[4] == 0x09 && control[5] == 0x04 && control[6] == 4 && control[7] == 0, "control setup not packed little-endian");
+    sceUsbdFillControlTransfer(transfer, &device, control, &MarkDone, &user, 100);
+    Require(transfer->type == 0 && transfer->endpoint == 0 && transfer->length == 12 && transfer->buffer == control && transfer->timeout == 100, "control transfer not filled from its setup");
+    Require(sceUsbdControlTransferGetSetup(transfer) == control && sceUsbdControlTransferGetData(transfer) == control + 8, "control setup or data pointer wrong");
+    sceUsbdFillControlTransfer(transfer, &device, nullptr, &MarkDone, &user, 100);
+    Require(transfer->length == 0 && sceUsbdControlTransferGetData(transfer) == nullptr, "a control transfer without a buffer has data");
+    Require(Throws([] { sceUsbdFillBulkTransfer(nullptr, nullptr, 0, nullptr, 0, nullptr, nullptr, 0); }), "filling a null bulk transfer did not throw");
+    Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0, 0, 0, 0, 0); }), "filling a null control setup did not throw");
+    Require(Throws([] { sceUsbdGetIsoPacketBuffer(nullptr, 0); }), "the packet buffer of a null transfer did not throw");
+    auto* bulk = sceUsbdAllocTransfer(0);
+    Require(bulk != nullptr, "transfer allocation failed");
+    sceUsbdFillBulkTransfer(bulk, &device, 0x02, nullptr, 16, &MarkDone, &user, 0);
+    Require(sceUsbdSubmitTransfer(bulk) == invalidArgument, "a submit with a null buffer and a length was accepted");
+    sceUsbdFillBulkTransfer(bulk, &device, 0x02, data, -1, &MarkDone, &user, 0);
+    Require(sceUsbdSubmitTransfer(bulk) == invalidArgument, "a submit with a negative length was accepted");
+    sceUsbdFreeTransfer(bulk);
+    Require(Throws([&] { sceUsbdFillIsoTransfer(transfer, &device, 0x83, data, 64, 4, &MarkDone, &user, 0); }), "an iso fill beyond the allocated packets did not throw");
+    auto* small = sceUsbdAllocTransfer(1);
+    Require(small != nullptr, "transfer allocation failed");
+    Require(Throws([&] { sceUsbdFillIsoTransfer(small, &device, 0x83, data, 64, 2, &MarkDone, &user, 0); }), "an iso fill beyond a one packet transfer did not throw");
+    sceUsbdFillIsoTransfer(small, &device, 0x83, data, 16, 1, &MarkDone, &user, 0);
+    small->numIsoPackets = 2;
+    Require(sceUsbdGetIsoPacketBuffer(small, 0) == nullptr, "the packet buffer of a count above the allocation was returned");
+    Require(sceUsbdSubmitTransfer(small) == invalidArgument, "a submit above the allocated packet count was accepted");
+    Require(Throws([&] { sceUsbdSetIsoPacketLengths(small, 8); }), "setting iso packet lengths above the allocated packet count did not throw");
+    sceUsbdFreeTransfer(small);
+    sceUsbdFreeTransfer(transfer);
+}
+
 int main(int argc, char** argv) {
     Require(sceUsbdInit() == 0, "initialization failed");
+    CheckTransferFillers();
     void** list = nullptr;
     const std::int64_t count = sceUsbdGetDeviceList(&list);
     Require(count >= 0 && list != nullptr && list[count] == nullptr, "device list is not a null-terminated array of the reported length");
@@ -256,6 +480,7 @@ int main(int argc, char** argv) {
     sceUsbdFreeDeviceList(list, 1);
 
     Require(Throws([&] { sceUsbdFreeDeviceList(list, 1); }), "a device list was freed twice");
+    EventLocks();
     Require(sceUsbdGetDeviceList(nullptr) == invalidArgument, "null list accepted");
     Require(sceUsbdHandleEventsTimeout(nullptr) == invalidArgument, "null timeout accepted");
     const UsbdTimeval invalid{0, 1000000};
@@ -346,7 +571,7 @@ int main(int argc, char** argv) {
     Require(sceUsbdOpenDeviceWithVidPid(0, 0) == nullptr, "a device with vendor and product 0 was opened");
     sceUsbdFreeTransfer(nullptr);
 
-    Require(sceUsbdEventHandlingOk() == 1, "event handling not allowed");
+    Require(sceUsbdEventHandlingOk() == 0, "a thread without the event lock may handle events");
     sceUsbdFreeConfigDescriptor(nullptr);
 
     Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0x80, 6, 0x0100, 0, 18); }), "null control setup buffer accepted");
@@ -358,7 +583,16 @@ int main(int argc, char** argv) {
     Require(setupBuffer[4] == 0x09 && setupBuffer[5] == 0x04, "index not filled little-endian");
     Require(setupBuffer[6] == 18 && setupBuffer[7] == 0, "length not filled little-endian");
     if (argc == 2 && std::strcmp(argv[1], "device") == 0) Device();
+    errno = 71;
+    Require(sceUsbdGetDeviceList(reinterpret_cast<void***>(0x10)) == invalidArgument, "unwritable device list accepted");
+    Require(sceUsbdHandleEventsTimeout(reinterpret_cast<const UsbdTimeval*>(0x10)) == invalidArgument, "unreadable timeout accepted");
+    Require(sceUsbdHandleEventsLocked(reinterpret_cast<UsbdTimeval*>(0x10)) == invalidArgument, "unreadable locked timeout accepted");
+    Require(sceUsbdWaitForEvent(reinterpret_cast<UsbdTimeval*>(0x10)) == invalidArgument, "unreadable wait timeout accepted");
+    Require(sceUsbdBulkTransfer(&foreign, 0x81, buffer, 8, reinterpret_cast<std::int32_t*>(0x10), 100) == invalidArgument, "unwritable bulk transferred accepted");
+    Require(sceUsbdInterruptTransfer(&foreign, 0x81, buffer, 8, reinterpret_cast<std::int32_t*>(0x10), 100) == invalidArgument, "unwritable interrupt transferred accepted");
+    Require(errno == 71, "guest-copy failure modified errno");
     sceUsbdExit();
+    Require(sceUsbdGetDeviceList(reinterpret_cast<void***>(0x10)) == invalidArgument && errno == 71, "unwritable empty device list accepted");
     Require(sceUsbdOpenDeviceWithVidPid(0, 0) == nullptr, "a device was opened after the library exited");
 
     std::puts("USBD tests passed");

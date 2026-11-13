@@ -39,7 +39,7 @@ def guest_module(symbols):
     return image
 
 
-def needed_module_import(exported, imported, owner, needed_module_tags=(0x6100000F,)):
+def needed_module_import(exported, imported, owner, needed_module_tags=(0x6100000F,), own_modules=()):
     image = guest_fixture(PLAIN_SITE)
     strings, offsets = string_table([exported, imported, owner, owner[:-len(".prx")]])
     assert len(strings) <= 0x40
@@ -50,11 +50,12 @@ def needed_module_import(exported, imported, owner, needed_module_tags=(0x610000
     struct.pack_into("<QQq", image, 0x900, 0x2320, (2 << 32) | 6, 0)
     dynamic(image, 0x600, 176, [(5, 0x2200), (10, len(strings)), (6, 0x2280), (11, 24),
                                 (4, 0x2240), (7, 0x2300), (8, 24), (9, 24), (1, offsets[2]),
-                                *((tag, (1 << 48) | offsets[3]) for tag in needed_module_tags)])
+                                *((tag, (1 << 48) | offsets[3]) for tag in needed_module_tags),
+                                *((0x61000043, (own << 48) | offsets[3]) for own in own_modules)])
     return image
 
 
-def importing_executable(names, modules=()):
+def importing_executable(names, modules=(), own_modules=()):
     image = main_fixture()
     needed = [module + ".prx" for module in modules]
     strings, offsets = string_table([*names, *needed, *modules])
@@ -64,6 +65,7 @@ def importing_executable(names, modules=()):
         struct.pack_into("<QQq", image, RELOCATIONS + (index - 1) * 24, GOT + (index - 1) * 8, (index << 32) | 6, 0)
     tags = [(1, offset) for offset in offsets[len(names):len(names) + len(needed)]]
     tags += [(0x61000045, (index << 48) | offset) for index, offset in enumerate(offsets[len(names) + len(needed):], 1)]
+    tags += [(0x61000043, (own << 48) | offsets[0]) for own in own_modules]
     tags += [(5, STRINGS), (10, len(strings)), (6, SYMBOLS), (11, 24),
              (7, RELOCATIONS), (8, len(names) * 24), (9, 24), (0, 0)]
     for index, tag in enumerate(tags):
@@ -168,9 +170,10 @@ def main():
         output = convert(relinker, work)
         modules = output.parent / "app0" / "sce_module"
         libc = module_symbols((modules / "libc.prx.guest.prx").read_bytes())
-        assert libc == ["AAAAAAAAAAA#guest", "BBBBBBBBBBB#guest", "CCCCCCCCCCC", "EEEEEEEEEEE#guest"], libc
+        assert len(libc) == 5 and libc[:4] == ["AAAAAAAAAAA#guest", "BBBBBBBBBBB#guest", "CCCCCCCCCCC", "EEEEEEEEEEE#guest"], libc
         other = module_symbols((modules / "other.prx.guest.prx").read_bytes())
-        assert other == ["BBBBBBBBBBB#guest", "EEEEEEEEEEE#guest"], other
+        assert len(other) == 3 and other[:2] == ["BBBBBBBBBBB#guest", "EEEEEEEEEEE#guest"], other
+        assert libc[-1] != other[-1] and libc[-1].endswith("#guest") and other[-1].endswith("#guest"), (libc, other)
         check_hash_table((modules / "libc.prx.guest.prx").read_bytes())
         check_hash_table((modules / "other.prx.guest.prx").read_bytes())
         imports = imported_symbols(output.read_bytes())
@@ -185,10 +188,11 @@ def main():
         twins = {"libc.prx": guest_module([("AAAAAAAAAAA", True)]), "other.prx": guest_module([("AAAAAAAAAAA", True)])}
         bound = relink(relinker, work / "needed-one", importing_executable(["AAAAAAAAAAA#B#B"], ["libc"]), twins)
         imports = imported_symbols(bound.read_bytes())
-        assert imports == {"AAAAAAAAAAA#guest"}, imports
+        provider_symbols = set(module_symbols((bound.parent / "app0/sce_module/libc.prx.guest.prx").read_bytes()))
+        assert len(imports) == 1 and imports < provider_symbols and "AAAAAAAAAAA#guest" not in imports, imports
 
         (work / "needed-both" / "sce_module").mkdir(parents=True)
-        (work / "needed-both" / "input.elf").write_bytes(importing_executable(["AAAAAAAAAAA#B#B"], ["libc", "other"]))
+        (work / "needed-both" / "input.elf").write_bytes(importing_executable(["AAAAAAAAAAA"], ["libc", "other"]))
         for name, image in twins.items():
             (work / "needed-both" / "sce_module" / name).write_bytes(image)
         result = subprocess.run([str(relinker), str(work / "needed-both" / "input.elf"), str(work / "needed-both" / "output.elf")],
@@ -255,12 +259,51 @@ def main():
             and f"Input: {module}\n" in result.stderr, result.stderr
         assert not (case / "output.elf").exists()
 
+        for order in ((0, 2), (2, 0)):
+            for name, listed in (("YYYYYYYYYYY#A#A", True), ("YYYYYYYYYYY#A#C", True), ("YYYYYYYYYYY#A#D", False)):
+                case = work / f"own-module-reader-{order[0]}-{name[-1]}"
+                (case / "sce_module").mkdir(parents=True)
+                (case / "input.elf").write_bytes(importing_executable([]))
+                (case / "sce_module" / "libc.prx").write_bytes(needed_module_import("XXXXXXXXXXX", name, "libkernel.prx", (0x61000045,), order))
+                result = subprocess.run([str(relinker), str(case / "input.elf"), str(case / "output.elf")],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=30)
+                assert ("Unknown import module ID" in result.stderr) != listed, (order, name, result.stderr)
+                case = work / f"own-module-pipeline-{order[0]}-{name[-1]}"
+                case.mkdir()
+                (case / "input.elf").write_bytes(importing_executable([name], ("libkernel",), order))
+                result = subprocess.run([str(relinker), "--skip-sce-module", str(case / "input.elf"), str(case / "output.elf")],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=30)
+                assert ("Unknown import module ID" in result.stderr) != listed, (order, name, result.stderr)
+
         guests = relink(relinker, work / "guest-unmatched-ps4", importing_executable([]), {
             "b.prx": provider(7),
             "c.prx": consumer("libFoo2.prx", module_name="libFoo", needed_module_tag=0x6100000F),
         }).parent / "app0" / "sce_module"
         importer = module_symbols((guests / "c.prx.guest.prx").read_bytes())
         assert "shared#guest" in importer, importer
+
+        for exported, expected, unexpected in (("entry", "entry#guest", "entry"), ("other", "entry", "entry#guest")):
+            guests = relink(relinker, work / f"guest-declared-missing-{exported}", importing_executable([]), {
+                "provider.prx": guest_module([(exported, True)]),
+                "third.prx": guest_module([("entry", True)]),
+                "consumer.prx": needed_module_import("ZZZZZZZZZZZ", "entry#A#B", "provider.prx", (0x61000045,)),
+            }).parent / "app0" / "sce_module"
+            importer = module_symbols((guests / "consumer.prx.guest.prx").read_bytes())
+            if exported == "entry":
+                provider_symbols = set(module_symbols((guests / "provider.prx.guest.prx").read_bytes()))
+                assert len(set(importer) & provider_symbols) == 1 and expected not in importer, (exported, importer)
+            else:
+                assert expected in importer and unexpected not in importer, (exported, importer)
+            output = relink(relinker, work / f"executable-declared-missing-{exported}", importing_executable(["entry#B#B"], ["provider"]), {
+                "provider.prx": guest_module([(exported, True)]),
+                "third.prx": guest_module([("entry", True)]),
+            })
+            imports = imported_symbols(output.read_bytes())
+            if exported == "entry":
+                provider_symbols = set(module_symbols((output.parent / "app0/sce_module/provider.prx.guest.prx").read_bytes()))
+                assert len(imports) == 1 and imports < provider_symbols and expected not in imports, (exported, imports)
+            else:
+                assert imports == {expected}, (exported, imports)
     print("Guest symbol name tests passed")
 
 

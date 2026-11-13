@@ -1,9 +1,12 @@
 #include "prx/libSceAgc/include/Agc.hpp"
 #include "prx/libSceAgcDriver/Resource/include/Registration.hpp"
 #include "prx/libSceAgc/Patch/include/WaitRegMem.hpp"
+#include "prx/libSceAgc/Patch/include/IndirectRegisters.hpp"
 #include "prx/libSceAgc/Patch/include/Nop.hpp"
+#include "prx/libSceAgc/Patch/include/QueueEndOfPipeAction.hpp"
 #include "prx/libSceAgc/Misc/include/Suspend.hpp"
 #include "prx/libSceAgc/Misc/include/RegisterDefaults.hpp"
+#include "prx/libSceAgc/Patch/include/Jump.hpp"
 #include "prx/libSceAgc/Misc/include/PacketInfo.hpp"
 #include "prx/libSceAgc/Misc/include/Debug.hpp"
 #include "prx/libSceAgc/DcbState/include/Workload.hpp"
@@ -12,16 +15,24 @@
 #include "prx/libSceAgc/DcbState/include/Display.hpp"
 #include "prx/libSceAgc/DcbState/include/ContextState.hpp"
 #include "prx/libSceAgc/DcbFlow/include/Sync.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Memory.hpp"
+#include "prx/libSceAgc/Acb/include/Memory.hpp"
 #include "prx/libSceAgc/DcbFlow/include/Control.hpp"
 #include "prx/libSceAgc/DcbDraw/include/Instancing.hpp"
+#include "prx/libSceAgc/Acb/include/Dispatch.hpp"
+#include "prx/libSceAgc/Cb/include/Dispatch.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Dispatch.hpp"
 #include "prx/libSceAgc/DcbDraw/include/IndexBuffer.hpp"
 #include "prx/libSceAgc/DcbDraw/include/DrawIndexed.hpp"
 #include "prx/libSceAgc/DcbDraw/include/DrawNonIndexed.hpp"
+#include "prx/libSceAgc/DcbDraw/include/Stats.hpp"
 #include "prx/libSceAgc/Cb/include/Registers.hpp"
 #include "prx/libSceAgc/Acb/include/Control.hpp"
 #include "prx/libSceAgc/Acb/include/Sync.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgc/Command/include/Memory.hpp"
+#include "prx/libSceAgc/Acb/include/Memory.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/RegisterDefaults.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
@@ -215,6 +226,24 @@ void testTagHeaders() {
     }
 }
 
+void testJumpTargetPatch() {
+    const auto target = [](std::uintptr_t address) { return reinterpret_cast<const volatile std::uint32_t*>(address); };
+    Storage storage;
+    auto* packet = sceAgcDcbJump(&storage.buffer, 1, 2, reinterpret_cast<const std::uint32_t*>(0x1000ull), 0x40);
+    check(sceAgcJumpPatchSetTarget_0300(packet, 1, target(0x123456789ab0u), 0x80) == 0, "jump target patch with a cache policy failed");
+    check(packet[1] == 0x56789ab0u && packet[2] == 0x1234u && packet[3] == 0x1f300080u, "jump target patch did not replace the address, size and cache policy only");
+    check(sceAgcJumpPatchSetTarget(packet, target(0x2000u), 0x10) == 0, "jump target patch failed");
+    check(packet[1] == 0x2000u && packet[2] == 0 && packet[3] == 0x1f300010u, "jump target patch without a cache policy changed it");
+    const auto before = storage.words;
+    expectFailure([&] { sceAgcJumpPatchSetTarget_0300(packet, 4, target(0x3000u), 1); });
+    expectFailure([&] { sceAgcJumpPatchSetTarget_0300(packet, 0, target(0x3002u), 1); });
+    expectFailure([&] { sceAgcJumpPatchSetTarget(packet, target(0x3000u), 0x100000u); });
+    packet[0] = Agc::Command::Header(0x3fu, 5);
+    expectFailure([&] { sceAgcJumpPatchSetTarget(packet, target(0x3000u), 1); });
+    packet[0] = before[0];
+    check(storage.words == before, "a refused jump target patch modified the packet");
+}
+
 void testMarkers() {
     Storage dcb;
     Storage acb;
@@ -259,6 +288,29 @@ void testMarkerSpans() {
     expectFailure([&] { sceAgcDcbPushMarkerSpan(&dcb.buffer, nullptr, 4, 0); });
 }
 
+void testEndOfPipeAddressPatch() {
+    const auto label = [](std::uintptr_t address) { return reinterpret_cast<const volatile Label*>(address); };
+    std::array<std::uint32_t, 8> release{};
+    release[0] = Agc::Command::Header(0x49u, 8);
+    release[2] = 1u << 29u;
+    check(sceAgcQueueEndOfPipeActionPatchAddress(release.data(), label(0x123456789abcu)) == 0 && release[3] == 0x56789abcu && release[4] == 0x1234u, "RELEASE_MEM address patch mismatch");
+    release[2] = 2u << 29u;
+    const auto before = release;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(release.data(), label(0x123456789ab4u)); });
+    check(release == before, "a 64-bit RELEASE_MEM accepted a label that is not 8-byte aligned");
+    check(sceAgcQueueEndOfPipeActionPatchAddress(release.data(), label(0x123456789ab8u)) == 0 && release[3] == 0x56789ab8u, "64-bit RELEASE_MEM address patch mismatch");
+    std::array<std::uint32_t, 6> event{};
+    event[0] = Agc::Command::Header(0x47u, 6);
+    event[3] = (1u << 29u) | 0x00ab0000u;
+    check(sceAgcQueueEndOfPipeActionPatchAddress(event.data(), label(0x123456789abcu)) == 0 && event[2] == 0x56789abcu && event[3] == ((1u << 29u) | 0x00ab1234u), "EVENT_WRITE_EOP address patch did not keep the control bits");
+    const auto eventBefore = event;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(event.data(), label(0x1000000000000u)); });
+    check(event == eventBefore, "an EVENT_WRITE_EOP accepted an address above 48 bits");
+    event[0] = Agc::Command::Header(0x47u, 5);
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(event.data(), label(0x1000u)); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(nullptr, label(0x1000u)); });
+}
+
 void testWorkloads() {
     Storage dcb;
     const std::uint32_t ids[2] = {3, 4};
@@ -273,7 +325,10 @@ void testWorkloads() {
     const auto* complete = sceAgcDcbSetWorkloadComplete(&dcb.buffer, 1, 33);
     check(complete == dcb.words.data() + 18 && complete[0] == Agc::Command::Header(0x10, 12, 0) && complete[1] == 1 && complete[2] == 33 && complete[3] == 0xffffffffu && complete[4] == 0xfffffffdu, "workload complete packet");
     for (std::uint32_t word = 5; word < 12; ++word) check(complete[word] == 0, "workload complete packet tail is not zero");
-    check(dcb.buffer.cursor_up == dcb.words.data() + 30, "incorrect workload cursor advance");
+    const auto* inactive = sceAgcDcbSetWorkloadStreamInactive(&dcb.buffer, 1);
+    check(inactive == dcb.words.data() + 30 && inactive[0] == Agc::Command::Header(0x10, 9, 0) && inactive[1] == 1, "workload stream inactive packet");
+    for (std::uint32_t word = 2; word < 9; ++word) check(inactive[word] == 0, "workload stream inactive packet tail is not zero");
+    check(dcb.buffer.cursor_up == dcb.words.data() + 39, "incorrect workload cursor advance");
     const std::uint32_t duplicate[2] = {5, 5};
     const std::uint32_t outOfRange[1] = {64};
     const std::uint32_t top[1] = {63};
@@ -332,16 +387,72 @@ void testWorkloadStreams() {
     check(sceAgcDriverRegisterWorkloadStream(1, record) == 0, "workload stream registration failed");
     Storage registered;
     registered.words.fill(0xdeadbeefu);
-    const auto untouched = registered.words;
-    expectFailure([&] { sceAgcDcbSetWorkloadStreamInactive(&registered.buffer, 1); });
-    expectFailure([&] { sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, ids, 2); });
-    expectFailure([&] { sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 3); });
-    expectFailure([&] { sceAgcAcbSetWorkloadStreamInactive(&registered.buffer, 1); });
-    check(registered.words == untouched && registered.buffer.cursor_up == registered.words.data(), "a workload call that threw modified the buffer");
+    const auto* acbActive = sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, ids, 2);
+    check(acbActive == registered.words.data() && acbActive[0] == Agc::Command::Header(0x10, 18, 0) && acbActive[1] == 1 && acbActive[2] == 0x18 && acbActive[3] == 0, "ACB workloads active packet");
+    for (std::uint32_t word = 4; word < 18; ++word) check(acbActive[word] == 0, "ACB workloads active packet tail is not zero");
+    const auto* acbComplete = sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 33);
+    check(acbComplete == registered.words.data() + 18 && acbComplete[0] == Agc::Command::Header(0x10, 12, 0) && acbComplete[1] == 1 && acbComplete[2] == 33 && acbComplete[3] == 0xffffffffu && acbComplete[4] == 0xfffffffdu, "ACB workload complete packet");
+    for (std::uint32_t word = 5; word < 12; ++word) check(acbComplete[word] == 0, "ACB workload complete packet tail is not zero");
+    const auto* acbInactive = sceAgcAcbSetWorkloadStreamInactive(&registered.buffer, 1);
+    check(acbInactive == registered.words.data() + 30 && acbInactive[0] == Agc::Command::Header(0x10, 9, 0) && acbInactive[1] == 1, "ACB workload stream inactive packet");
+    for (std::uint32_t word = 2; word < 9; ++word) check(acbInactive[word] == 0, "ACB workload stream inactive packet tail is not zero");
+    check(registered.buffer.cursor_up == registered.words.data() + 39, "incorrect ACB workload cursor advance");
+    const std::uint32_t duplicate[2] = {5, 5};
+    const std::uint32_t outOfRange[1] = {64};
+    const std::uint32_t top[1] = {63};
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, duplicate, 2) == nullptr, "ACB duplicate workload ids accepted");
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, outOfRange, 1) == nullptr, "ACB workload id 64 accepted");
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, top, 1) != nullptr, "ACB workload id 63 rejected");
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, ids, 0) == nullptr, "ACB workload count 0 accepted");
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, nullptr, 2) == nullptr, "ACB null workload ids accepted");
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 0, ids, 2) == nullptr, "ACB stream id 0 accepted");
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 32, ids, 2) == nullptr, "ACB stream id 32 accepted");
+    check(sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 64) == nullptr, "ACB workload complete id 64 accepted");
+    check(sceAgcAcbSetWorkloadsActive(nullptr, 1, ids, 2) == nullptr, "ACB null command buffer accepted for active");
     check(sceAgcDcbSetWorkloadStreamInactive(nullptr, 1) == nullptr && sceAgcAcbSetWorkloadsActive(nullptr, 1, ids, 2) == nullptr &&
         sceAgcAcbSetWorkloadComplete(nullptr, 1, 3) == nullptr && sceAgcAcbSetWorkloadStreamInactive(nullptr, 1) == nullptr,
         "a workload call with a null command buffer for a registered stream returned a packet");
     check(sceAgcDriverUnregisterWorkloadStream(1) == 0, "workload stream unregistration failed");
+    check(sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 3) == nullptr, "ACB workload complete packet after unregistration");
+}
+
+void testDrawPackets() {
+    Storage indirect;
+    const auto* draw = sceAgcDcbDrawIndirect(&indirect.buffer, 0x40, 0);
+    const std::array<std::uint32_t, 5> indirectExpected{0xc0032400u, 0x40, 0x280, 0x280, 2};
+    check(draw == indirect.words.data() && std::equal(indirectExpected.begin(), indirectExpected.end(), indirect.words.begin()), "DRAW_INDIRECT packet mismatch");
+    Storage flagged;
+    sceAgcDcbDrawIndirect(&flagged.buffer, 0, 0x100);
+    sceAgcDcbDrawIndirect(&flagged.buffer, 0, 0x100000100ull);
+    check(flagged.words[4] == 0x22u && flagged.words[9] == 2, "DRAW_INDIRECT initiator flags mismatch");
+    Storage offset;
+    sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 0, 0);
+    sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 9, 0);
+    const std::array<std::uint32_t, 10> offsetExpected{0xc0033500u, 1, 16, 0, 0, 0xc0033500u, 9, 16, 9, 0};
+    check(std::equal(offsetExpected.begin(), offsetExpected.end(), offset.words.begin()), "DRAW_INDEX_OFFSET_2 packet mismatch");
+    Storage instances;
+    sceAgcDcbSetNumInstances(&instances.buffer, 3);
+    check(instances.words[0] == 0xc0002f00u && instances.words[1] == 3, "NUM_INSTANCES packet mismatch");
+    Storage size;
+    sceAgcDcbSetIndexSize(&size.buffer, 1, 2);
+    sceAgcDcbSetIndexSize_0600(&size.buffer, 2, 3, 1);
+    const std::array<std::uint32_t, 6> sizeExpected{0xc0017a00u, 0x20000243u, 0x481u, 0xc0017a00u, 0x20000243u, 0x44c2u};
+    check(std::equal(sizeExpected.begin(), sizeExpected.end(), size.words.begin()), "index size packet mismatch");
+    Storage rejected;
+    rejected.words.fill(0xa5a5a5a5u);
+    const auto rejectedWords = rejected.words;
+    const auto* rejectedCursor = rejected.buffer.cursor_up;
+    expectFailure([&] { sceAgcDcbDrawIndirect(&rejected.buffer, 2, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbDrawIndirect(&rejected.buffer, 0, 0x200000000ull); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 3, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 0, 4); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbSetIndexSize_0600(&rejected.buffer, 0, 0, 2); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    check(sceAgcDcbDrawIndirectGetSize() == 20 && sceAgcDcbDrawIndexOffsetGetSize() == 20 && sceAgcDcbSetNumInstancesGetSize() == 8 && sceAgcDcbSetIndexSizeGetSize() == 12, "draw packet sizes");
 }
 
 void testIndexBuffer() {
@@ -455,6 +566,44 @@ void testContextState() {
     check(invalid.buffer.cursor_up == growth.destination.words.data(), "failed reservation advanced cursor");
 }
 
+void testFlowPackets() {
+    const auto* target = reinterpret_cast<const std::uint32_t*>(0x123456789ab0ull);
+    Storage chained;
+    const auto* jump = sceAgcDcbJump(&chained.buffer, 1, 2, target, 0x40);
+    const std::array<std::uint32_t, 4> chainedExpected{0xc0023f00u, 0x56789ab0u, 0x1234u, 0x2f300040u};
+    check(jump == chained.words.data() && std::equal(chainedExpected.begin(), chainedExpected.end(), chained.words.begin()), "chained INDIRECT_BUFFER packet mismatch");
+    Storage called;
+    sceAgcDcbJump(&called.buffer, 0, 0, target, 0xfffffu);
+    check(called.words[3] == 0x0f2fffffu, "unchained INDIRECT_BUFFER control word mismatch");
+    Storage compute;
+    sceAgcAcbJump(&compute.buffer, 1, target, 0x10);
+    check(compute.words[0] == 0xc0023f00u && compute.words[3] == 0x1f300010u, "compute jumps did not chain");
+    Storage rejected;
+    rejected.words.fill(0xa5a5a5a5u);
+    const auto rejectedWords = rejected.words;
+    const auto* rejectedCursor = rejected.buffer.cursor_up;
+    expectFailure([&] { sceAgcDcbJump(&rejected.buffer, 2, 0, target, 1); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbJump(&rejected.buffer, 0, 4, target, 1); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbJump(&rejected.buffer, 0, 0, target, 0x100000u); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcAcbJump(&rejected.buffer, 0, reinterpret_cast<const std::uint32_t*>(0x1002ull), 1); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    check(sceAgcDcbJumpGetSize() == 16 && sceAgcAcbJumpGetSize() == 16, "jump packet sizes");
+    Storage stall;
+    sceAgcDcbStallCommandBufferParser(&stall.buffer);
+    check(stall.words[0] == 0xc0004200u && stall.words[1] == 0 && sceAgcDcbStallCommandBufferParserGetSize() == 8, "PFP_SYNC_ME packet mismatch");
+    Storage rendering;
+    sceAgcDcbWaitUntilSafeForRendering(&rendering.buffer, 7, 2);
+    const std::array<std::uint32_t, 4> renderingExpected{0xc0021018u, 7, 2, 0};
+    check(std::equal(renderingExpected.begin(), renderingExpected.end(), rendering.words.begin()), "rendering wait packet mismatch");
+    Storage reset;
+    sceAgcAcbResetQueue(&reset.buffer, 5, 9);
+    check(reset.words[0] == 0xc0001024u && reset.words[1] == 5 && reset.words[2] == 0, "compute queue reset packet mismatch");
+    expectFailure([&] { sceAgcAcbResetQueue(nullptr, 5, 9); });
+}
+
 void testFlip() {
     Storage storage;
     storage.words.fill(0xdeadbeefu);
@@ -505,6 +654,23 @@ void testRegisters() {
     expectFailure([&] { Agc::Command::PatchIndirectCount(packet, 0x63u, 1, __func__); });
     expectFailure([&] { Agc::Command::PatchIndirectAddress(packet, 0x64u, registers.data(), __func__); });
     check(storage.words == before, "invalid indirect patch modified memory");
+}
+
+void testIndirectRegisterPatches() {
+    using AddRegisters = int (APS5_VABI *)(std::uint32_t*, std::uint32_t);
+    const std::array<ShaderRegister, 2> registers{{{0x10, 7}, {0x11, 8}}};
+    const std::array<std::pair<std::uint32_t, AddRegisters>, 3> kinds{{{0x9fu, sceAgcSetCxRegIndirectPatchAddRegisters}, {0x63u, sceAgcSetShRegIndirectPatchAddRegisters}, {0x64u, sceAgcSetUcRegIndirectPatchAddRegisters}}};
+    for (std::size_t i = 0; i < kinds.size(); ++i) {
+        Storage storage;
+        auto* packet = Agc::Command::WriteIndirectRegisters(&storage.buffer, kinds[i].first, registers.data(), 2, __func__);
+        check(kinds[i].second(packet, 3) == 0 && packet[4] == 5, "indirect register patch did not add to the count");
+        check(kinds[i].second(packet, 0x3fffu - 5u) == 0 && packet[4] == 0x3fffu, "indirect register patch did not reach the largest count");
+        const auto before = storage.words;
+        expectFailure([&] { kinds[i].second(packet, 1); });
+        check(storage.words == before, "an overflowing indirect register patch modified the packet");
+        expectFailure([&] { kinds[(i + 1) % kinds.size()].second(packet, 1); });
+        check(storage.words == before, "an indirect register patch of another packet kind modified the packet");
+    }
 }
 
 void testRegisterRange() {
@@ -578,19 +744,123 @@ void testMemory() {
         waitPacket[6] |= lowMask;
         waitPacket[7] = 0xa5fc0000u;
         const auto tag = waitPacket[2] & 0xffff0000u;
-        const std::uintptr_t address = 0x1236abcd12345679ull;
+        const std::uintptr_t address = 0x123456789ab8ull;
         check(sceAgcWaitRegMemPatchAddress(waitPacket, reinterpret_cast<const volatile void*>(address)) == 0, "wait address patch failed");
-        check(waitPacket[2] == (tag | 0xabcdu) && waitPacket[3] == 0x12345679u, "wait wrapper address patch mismatch");
-        check(waitPacket[6] == ((0x12345679u & ~lowMask) | lowMask) && waitPacket[7] == 0xa5feabcdu, "wait address patch did not preserve control bits");
-        for (std::uint32_t comparison = 0; comparison <= 255; ++comparison) {
+        check(waitPacket[2] == (tag | 0x1234u) && waitPacket[3] == 0x56789ab8u, "wait wrapper address patch mismatch");
+        check(waitPacket[6] == ((0x56789ab8u & ~lowMask) | lowMask) && waitPacket[7] == 0xa5fc1234u, "wait address patch did not preserve control bits");
+        for (std::uint32_t comparison = 0; comparison <= 6; ++comparison) {
             const auto control = waitPacket[5] & ~7u;
             check(sceAgcWaitRegMemPatchCompareFunction(waitPacket, static_cast<std::uint8_t>(comparison)) == 0, "wait comparison patch failed");
-            check(waitPacket[5] == (control | (comparison & 7u)), "wait comparison patch changed control bits");
+            check(waitPacket[5] == (control | comparison), "wait comparison patch changed control bits");
         }
+        const auto beforeComparison = storage.words;
+        for (std::uint32_t comparison = 7; comparison <= 255; ++comparison) {
+            expectFailure([&] { sceAgcWaitRegMemPatchCompareFunction(waitPacket, static_cast<std::uint8_t>(comparison)); });
+        }
+        check(storage.words == beforeComparison, "a rejected wait comparison patch modified packet memory");
     }
+    const auto beforeAddress = storage.words;
+    expectFailure([&] { sceAgcWaitRegMemPatchAddress(packet, reinterpret_cast<const volatile void*>(std::uintptr_t{0x123456789ab4u})); });
+    expectFailure([&] { sceAgcWaitRegMemPatchAddress(truncated, reinterpret_cast<const volatile void*>(std::uintptr_t{0x123456789ab2u})); });
+    check(storage.words == beforeAddress, "a misaligned wait address patch modified packet memory");
+    check(sceAgcWaitRegMemPatchAddress(truncated, reinterpret_cast<const volatile void*>(std::uintptr_t{0x123456789ab4u})) == 0 && truncated[3] == 0x56789ab4u, "32-bit wait rejected a 4-byte aligned address");
+    const auto beforeWideAddress = storage.words;
+    expectFailure([&] { sceAgcWaitRegMemPatchAddress(packet, reinterpret_cast<const volatile void*>(std::uintptr_t{0x1000000000008u})); });
+    expectFailure([&] { sceAgcWaitRegMemPatchAddress(truncated, reinterpret_cast<const volatile void*>(std::uintptr_t{0x1000000000004u})); });
+    check(storage.words == beforeWideAddress, "a wait address above 48 bits modified packet memory");
     const auto beforeMask = storage.words;
     expectFailure([&] { sceAgcWaitRegMemPatchMask(packet + 4, 1); });
     check(storage.words == beforeMask, "invalid mask patch modified packet memory");
+
+    Storage acquireStorage;
+    auto* acquire = sceAgcDcbAcquireMem(&acquireStorage.buffer, 0, 0x1234u, 0x567u, nullptr, 0x1000, 0);
+    check(acquire[0] == Agc::Command::Header(0x58u, 8), "acquire mem header mismatch");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was set");
+    check(sceAgcAcquireMemSetEngine(acquire, 1) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x80001234u, "acquire mem engine bit was not set to 1");
+    check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    check(sceAgcAcquireMemSetEngine(acquire, 1) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x80001234u, "acquire mem engine bit was not set to 1");
+    check(sceAgcAcquireMemSetEngine(acquire, 2) == 0, "sceAgcAcquireMemSetEngine failed with engine 2");
+    check(acquire[1] == 0x1234u, "engine 2 did not clear the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, 3) == 0, "sceAgcAcquireMemSetEngine failed with engine 3");
+    check(acquire[1] == 0x80001234u, "engine 3 did not set the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, 4) == 0, "sceAgcAcquireMemSetEngine failed with engine 4");
+    check(acquire[1] == 0x1234u, "engine 4 did not clear the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, static_cast<std::uint8_t>(0xffffffffu)) == 0, "sceAgcAcquireMemSetEngine failed with 0xffffffff");
+    check(acquire[1] == 0x80001234u, "0xffffffff did not set the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    check(sceAgcAcquireMemSetEngine(acquire, 0xffu) == 0, "sceAgcAcquireMemSetEngine failed with 0xff");
+    check(acquire[1] == 0x80001234u, "0xff did not set the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    const auto beforeAcquire = acquireStorage.words;
+    expectFailure([&] { sceAgcAcquireMemSetEngine(nullptr, 0); });
+    auto* misalignedAcquire = reinterpret_cast<std::uint32_t*>(reinterpret_cast<unsigned char*>(acquire) + 1);
+    expectFailure([&] { sceAgcAcquireMemSetEngine(misalignedAcquire, 0); });
+    check(acquireStorage.words == beforeAcquire, "invalid acquire engine patch modified packet memory");
+    std::uint32_t wrongAcquire[8] = {0xc0065000u, 0x12345678u};
+    check(sceAgcAcquireMemSetEngine(wrongAcquire, 0) == static_cast<int>(0x8a6c000c), "non-ACQUIRE_MEM packet did not return 0x8a6c000c");
+    check(wrongAcquire[0] == 0xc0065000u && wrongAcquire[1] == 0x12345678u, "non-ACQUIRE_MEM packet was modified");
+    check(sceAgcAcquireMemSetEngine(wrongAcquire, 1) == static_cast<int>(0x8a6c000c), "non-ACQUIRE_MEM packet did not return 0x8a6c000c with engine 1");
+    check(wrongAcquire[0] == 0xc0065000u && wrongAcquire[1] == 0x12345678u, "non-ACQUIRE_MEM packet was modified with engine 1");
+
+    std::uint32_t customLengthAcquire[4] = {Agc::Command::Header(0x58u, 4), 0x4321u, 0, 0};
+    check(sceAgcAcquireMemSetEngine(customLengthAcquire, 1) == 0, "custom length acquire mem failed");
+    check(customLengthAcquire[1] == 0x80004321u, "custom length acquire mem engine bit was not set");
+
+    auto* acbAcquire = sceAgcAcbAcquireMem(&acquireStorage.buffer, 0x567u, nullptr, 0x1000, 0);
+    check(acbAcquire[1] == 0x80000000u, "ACB acquire mem engine bit was not default 1");
+    check(sceAgcAcquireMemSetEngine(acbAcquire, 0) == 0, "sceAgcAcquireMemSetEngine failed on ACB acquire");
+    check(acbAcquire[1] == 0u, "ACB acquire mem engine bit was not cleared to 0");
+}
+
+void testEndOfPipePatches() {
+    std::array<std::uint32_t, 8> packet{};
+    packet[0] = Agc::Command::Header(0x49u, 8);
+    packet[1] = 0xf0000fffu;
+    packet[2] = 2u << 29u;
+    check(sceAgcQueueEndOfPipeActionPatchData(packet.data(), 0x1122334455667788ull) == 0, "end-of-pipe data patch failed");
+    check(packet[5] == 0x55667788u && packet[6] == 0x11223344u, "64-bit end-of-pipe data patch did not write both halves");
+    packet[2] = 1u << 29u;
+    check(sceAgcQueueEndOfPipeActionPatchData(packet.data(), 0x0badf00du) == 0, "32-bit end-of-pipe data patch failed");
+    check(packet[5] == 0x0badf00du && packet[6] == 0u, "32-bit end-of-pipe data patch wrote the wrong words");
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(packet.data(), 0x100000000ull); });
+    check(packet[5] == 0x0badf00du && packet[6] == 0u, "a rejected 32-bit data patch changed the packet");
+    check(sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 0x0a5u) == 0, "end-of-pipe GCR control patch failed");
+    check(packet[1] == (0xf0000fffu | (0x0a5u << 12u)), "end-of-pipe GCR control patch did not keep the other control bits");
+    check(sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 0x100u) == 0 && packet[1] == (0xf0000fffu | (0x300u << 12u)), "end-of-pipe GCR control 0x100 did not gain 0x200");
+    check(sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 0x200u) == 0 && packet[1] == (0xf0000fffu | (0x200u << 12u)), "end-of-pipe GCR control 0x200 changed");
+    const auto before = packet;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 0x1000u); });
+    check(packet == before, "a rejected GCR control patch changed the packet");
+    std::array<std::uint32_t, 8> gds{};
+    gds[0] = Agc::Command::Header(0x49u, 8);
+    gds[2] = 5u << 29u;
+    gds[5] = 0x00020010u;
+    const auto gdsBefore = gds;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(gds.data(), 1); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(gds.data(), 0x100000000ull); });
+    check(gds == gdsBefore, "a rejected GDS release data patch changed the packet");
+    check(sceAgcQueueEndOfPipeActionPatchData(gds.data(), 0) == 0 && gds == gdsBefore, "zero data patch changed the GDS offset and size");
+    std::array<std::uint32_t, 8> interruptOnly{};
+    interruptOnly[0] = Agc::Command::Header(0x49u, 8);
+    interruptOnly[2] = 4u << 24u;
+    const auto interruptBefore = interruptOnly;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(interruptOnly.data(), 1); });
+    check(interruptOnly == interruptBefore, "a rejected interrupt-only data patch changed the packet");
+    check(sceAgcQueueEndOfPipeActionPatchData(interruptOnly.data(), 0) == 0 && interruptOnly == interruptBefore, "zero data patch changed an interrupt-only release");
+    interruptOnly[3] = 0x1000u;
+    const auto addressed = interruptOnly;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(interruptOnly.data(), 0); });
+    check(interruptOnly == addressed, "an interrupt-only release with an address accepted a data patch");
+    packet[0] = Agc::Command::Header(0x47u, 6);
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(packet.data(), 1); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 1); });
+    packet[0] = before[0];
+    check(packet == before, "a data or GCR control patch of another packet changed it");
 }
 
 struct AtomicGdsAllocation {
@@ -686,6 +956,45 @@ void testAtomicGds() {
             failed.cursor_up == (accepted ? failure.storage.words.data() : nullptr),
             "atomic GDS wrote a packet after failed or insufficient allocation");
     }
+}
+
+void testCopyDataAndComputeEvents() {
+    Storage graphics;
+    const auto* copy = sceAgcDcbCopyData(&graphics.buffer, 4, 1, 0x1122334450ull, 0xb, 2, 0x12345678u, 0, 1);
+    const std::array<std::uint32_t, 6> graphicsExpected{0xc0044000u, 0x42104205u, 0x12345678u, 0, 0x22334450u, 0x11u};
+    check(copy == graphics.words.data() && std::equal(graphicsExpected.begin(), graphicsExpected.end(), graphics.words.begin()), "graphics COPY_DATA packet mismatch");
+    Storage wide;
+    sceAgcDcbCopyData(&wide.buffer, 4, 0, 0x1000, 0xa, 0, 0x100000000ull, 1, 0);
+    check(wide.words[1] == 0x00010205u && wide.words[2] == 0 && wide.words[3] == 1, "a 64-bit immediate COPY_DATA lost its high word");
+    Storage compute;
+    sceAgcAcbCopyData(&compute.buffer, 2, 0, 0x4000, 5, 0, 7, 0, 0);
+    const std::array<std::uint32_t, 6> computeExpected{0xc0044000u, 0x205u, 7, 0, 0x4000u, 0};
+    check(std::equal(computeExpected.begin(), computeExpected.end(), compute.words.begin()), "compute COPY_DATA packet mismatch");
+    Storage rejected;
+    rejected.words.fill(0xa5a5a5a5u);
+    const auto rejectedWords = rejected.words;
+    const auto* rejectedCursor = rejected.buffer.cursor_up;
+    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 4, 0x1000, 0xa, 0, 1, 0, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 0, 0x1000, 0xa, 4, 1, 0, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcAcbCopyData(&rejected.buffer, 2, 0, 0x4000, 5, 0, 1, 2, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcAcbCopyData(&rejected.buffer, 2, 0, 0x4000, 5, 0, 1, 0, 2); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    check(sceAgcDcbCopyDataGetSize() == 24 && sceAgcAcbCopyDataGetSize() == 24, "COPY_DATA packet sizes");
+    Storage events;
+    sceAgcAcbEventWrite(&events.buffer, 7, nullptr);
+    sceAgcAcbEventWrite(&events.buffer, 0x16, nullptr);
+    const std::array<std::uint32_t, 4> eventsExpected{0xc0004600u, 0x407u, 0xc0004600u, 0x16u};
+    check(std::equal(eventsExpected.begin(), eventsExpected.end(), events.words.begin()), "compute EVENT_WRITE packet mismatch");
+    Storage refused;
+    refused.words.fill(0xa5a5a5a5u);
+    const auto refusedWords = refused.words;
+    const auto* refusedCursor = refused.buffer.cursor_up;
+    expectFailure([&] { sceAgcAcbEventWrite(&refused.buffer, 0x40, nullptr); });
+    check(refused.words == refusedWords && refused.buffer.cursor_up == refusedCursor, "a refused packet changed the command buffer");
+    check(sceAgcAcbEventWriteGetSize(7) == 8, "compute EVENT_WRITE packet size");
 }
 
 void testDebugRaiseException() {
@@ -798,6 +1107,32 @@ void testDefaultsTypes() {
     checkCompactTypes(sceAgcGetRegisterDefaults2Internal(0), 15, 0xf58fea31u, 0x00040400u, 0);
 }
 
+void testDispatchPackets() {
+    Storage graphics;
+    const auto* indirect = sceAgcDcbDispatchIndirect(&graphics.buffer, 0x40, 0x8);
+    check(indirect == graphics.words.data() && graphics.words[0] == 0xc0011600u && graphics.words[1] == 0x40u && graphics.words[2] == 0x49u, "graphics DISPATCH_INDIRECT packet mismatch");
+    Storage compute;
+    const auto* arguments = reinterpret_cast<const volatile void*>(0x123456789abcull);
+    sceAgcAcbDispatchIndirect(&compute.buffer, arguments, 0x2000u);
+    const std::array<std::uint32_t, 4> computeExpected{0xc0021600u, 0x56789abcu, 0x1234u, 0x2041u};
+    check(std::equal(computeExpected.begin(), computeExpected.end(), compute.words.begin()), "compute DISPATCH_INDIRECT packet mismatch");
+    Storage direct;
+    sceAgcCbDispatch(&direct.buffer, 7, 3, 1, 0x8000u);
+    const std::array<std::uint32_t, 5> directExpected{0xc0031500u, 7, 3, 1, 0x8041u};
+    check(std::equal(directExpected.begin(), directExpected.end(), direct.words.begin()), "DISPATCH_DIRECT packet mismatch");
+    Storage rejected;
+    rejected.words.fill(0xa5a5a5a5u);
+    const auto rejectedWords = rejected.words;
+    const auto* rejectedCursor = rejected.buffer.cursor_up;
+    expectFailure([&] { sceAgcCbDispatch(&rejected.buffer, 1, 1, 1, 0x100u); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcAcbDispatchIndirect(&rejected.buffer, reinterpret_cast<const volatile void*>(0x1002ull), 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcAcbDispatchIndirect(&rejected.buffer, nullptr, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    check(sceAgcDcbDispatchIndirectGetSize() == 12 && sceAgcAcbDispatchIndirectGetSize() == 16 && sceAgcCbDispatchGetSize() == 20, "dispatch packet sizes");
+}
+
 void testEventWrite() {
     Storage storage;
     const auto* samplePacket = sceAgcDcbEventWrite(&storage.buffer, 0x38, reinterpret_cast<const void*>(0x1000));
@@ -839,6 +1174,80 @@ void testEventWrite() {
     check(cacheFlushWithAddress.words[0] == 0xc0004600u && cacheFlushWithAddress.words[1] == 0x16u, "incorrect event 0x16 with address packet");
 }
 
+void testAcquireMem() {
+    Storage storage;
+    const auto* base = reinterpret_cast<const volatile void*>(0x1234567890ull);
+    const auto* packet = sceAgcDcbAcquireMem(&storage.buffer, 0, 0, 0x1234u, base, 0x1000, 400);
+    const std::array<std::uint32_t, 8> expected{0xc0065800u, 0, 0x11, 0, 0x12345678u, 0, 25, 0x1234u};
+    check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), storage.words.begin()), "acquire packet does not round its range outward to 256 bytes");
+    const std::array<std::pair<std::uint32_t, std::uint32_t>, 18> polls{{{0, 0}, {1, 0}, {15, 0}, {16, 1}, {39, 2}, {40, 2}, {80, 5}, {160, 10}, {400, 25}, {1000, 62}, {4000, 250}, {100000, 6250}, {1000000, 62500}, {0x100000u, 0xffffu}, {0xfffff0u, 0xffffu}, {0x1000000u, 0xffffu}, {0xffffffffu, 0xffffu}, {0x44444444u, 0xffffu}}};
+    for (const auto& [pollCycles, pollWord] : polls) {
+        Storage measured;
+        sceAgcDcbAcquireMem(&measured.buffer, 0, 0, 0x4380u, base, 0x1000, pollCycles);
+        check(measured.words[6] == pollWord, "acquire poll word is not the poll cycles shifted right by four");
+    }
+    const std::array<std::pair<std::uint32_t, std::uint32_t>, 15> controls{{{0, 0}, {1, 1}, {0x80, 0x80}, {0x4000, 0xc000}, {0x4380, 0xc380}, {0x8000, 0x8000}, {0xc380, 0xc380}, {0x1234, 0x1234}, {0x7ffff, 0x7ffff}, {0x4001, 0xc001}, {0x9000, 0x9000}, {0xd000, 0xd000}, {0x4300, 0xc300}, {0x77fff, 0x7ffff}, {0x10000, 0x10000}}};
+    for (const auto& [gcrControl, gcrWord] : controls) {
+        Storage measured;
+        sceAgcDcbAcquireMem(&measured.buffer, 0, 0, gcrControl, base, 0x1000, 0xa0);
+        check(measured.words[7] == gcrWord, "acquire cache control word does not set bit 15 with bit 14");
+    }
+    Storage whole;
+    sceAgcDcbAcquireMem(&whole.buffer, 0, 0, 0, base, 0xffffffffffffffffull, 0);
+    check(whole.words[0] == 0xc0065800u && whole.words[2] == 0 && whole.words[4] == 0 && whole.words[6] == 0, "an unbounded acquire did not cover the whole address space");
+    Storage large;
+    sceAgcDcbAcquireMem(&large.buffer, 0, 0, 0, base, (1ull << 40u) + 1u, 0);
+    check(large.words[2] == 0 && large.words[4] == 0, "an acquire over 1 TiB did not cover the whole address space");
+    Storage exact;
+    sceAgcDcbAcquireMem(&exact.buffer, 0, 0, 0, base, 1ull << 40u, 0);
+    check(exact.words[2] == 0 && exact.words[4] == 0, "an acquire of exactly 1 TiB did not cover the whole address space");
+    Storage encodable;
+    sceAgcDcbAcquireMem(&encodable.buffer, 0, 0, 0, nullptr, (1ull << 40u) - 0x100u, 0);
+    check(encodable.words[2] == 0xffffffffu && encodable.words[4] == 0, "an acquire just below 1 TiB was not encoded as its exact size");
+    Storage roundedUp;
+    sceAgcDcbAcquireMem(&roundedUp.buffer, 0, 0, 0, reinterpret_cast<const volatile void*>(0x1ull), (1ull << 40u) - 0xffu, 0);
+    check(roundedUp.words[2] == 0 && roundedUp.words[4] == 0, "an acquire rounded up to 1 TiB did not cover the whole address space");
+    Storage asynchronous;
+    sceAgcAcbAcquireMem(&asynchronous.buffer, 0x55u, base, 0x100, 80);
+    const std::array<std::uint32_t, 8> compute{0xc0065800u, 0x80000000u, 2, 0, 0x12345678u, 0, 5, 0x55u};
+    check(std::equal(compute.begin(), compute.end(), asynchronous.words.begin()), "the asynchronous compute acquire did not select engine 1 with no CB/DB operation");
+    Storage rejected;
+    rejected.words.fill(0xa5a5a5a5u);
+    const auto rejectedWords = rejected.words;
+    const auto* rejectedCursor = rejected.buffer.cursor_up;
+    expectFailure([&] { sceAgcDcbAcquireMem(&rejected.buffer, 2, 0, 0, base, 0x100, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbAcquireMem(&rejected.buffer, 0, 0, 0x80000u, base, 0x100, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    Storage saturatedAsync;
+    sceAgcAcbAcquireMem(&saturatedAsync.buffer, 0, base, 0x100, 0xffffffffu);
+    check(saturatedAsync.words[6] == 0xffffu, "the asynchronous compute acquire did not saturate the poll word at 0xffff");
+    check(sceAgcDcbAcquireMemGetSize() == 32 && sceAgcAcbAcquireMemGetSize() == 32, "acquire packet size");
+}
+
+template <typename TWrite>
+std::size_t writtenBytes(TWrite write) {
+    Storage storage;
+    const auto* start = storage.buffer.cursor_up;
+    write(storage.buffer);
+    return static_cast<std::size_t>(storage.buffer.cursor_up - start) * sizeof(std::uint32_t);
+}
+
+void testPacketSizes() {
+    alignas(64) std::uint32_t memory[16]{};
+    const std::array<std::uint32_t, 3> values{1, 2, 3};
+    check(writtenBytes([](CommandBuffer& buffer) { sceAgcDcbDrawIndexAuto(&buffer, 17, 0); }) == sceAgcDcbDrawIndexAutoGetSize(), "auto index draw size differs from its packet");
+    check(writtenBytes([](CommandBuffer& buffer) { sceAgcDcbDrawIndexIndirect(&buffer, 0x40, 0); }) == sceAgcDcbDrawIndexIndirectGetSize(), "indexed indirect draw size differs from its packet");
+    check(writtenBytes([](CommandBuffer& buffer) { sceAgcDcbDrawIndirectMulti(&buffer, 0x40, 0, 5, nullptr, 16, 0); }) == sceAgcDcbDrawIndirectMultiGetSize(), "indirect multi draw size differs from its packets");
+    check(writtenBytes([&](CommandBuffer& buffer) { sceAgcDcbSetIndexBuffer(&buffer, reinterpret_cast<std::uintptr_t>(memory)); }) == sceAgcDcbSetIndexBufferGetSize(), "index buffer size differs from its packet");
+    check(writtenBytes([&](CommandBuffer& buffer) { sceAgcDcbGetLodStats(&buffer, 0, memory, sizeof(memory), 0, 0, 0, 0); }) == sceAgcDcbGetLodStatsGetSize(), "LOD statistics size differs from its packet");
+    check(writtenBytes([&](CommandBuffer& buffer) { sceAgcDcbCondExec(&buffer, memory, 4); }) == sceAgcDcbCondExecGetSize(), "graphics conditional execution size differs from its packet");
+    check(writtenBytes([&](CommandBuffer& buffer) { sceAgcAcbCondExec(&buffer, memory, 4); }) == sceAgcAcbCondExecGetSize(), "compute conditional execution size differs from its packet");
+    check(writtenBytes([](CommandBuffer& buffer) { sceAgcAcbRewind(&buffer, 0); }) == sceAgcAcbRewindGetSize(), "compute rewind size differs from its packet");
+    check(writtenBytes([&](CommandBuffer& buffer) { sceAgcCbSetShRegisterRangeDirect(&buffer, 0x90, values.data(), values.size()); }) == sceAgcCbSetShRegisterRangeDirectGetSize(values.size()), "shader register range size differs from its packet");
+    check(writtenBytes([&](CommandBuffer& buffer) { sceAgcCbSetUcRegisterRangeDirect(&buffer, 0x90, values.data(), values.size()); }) == sceAgcCbSetUcRegisterRangeDirectGetSize(values.size()), "user config register range size differs from its packet");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -852,25 +1261,35 @@ int main(int argc, char** argv) {
         }
         testPackets();
         testEventWrite();
+        testAcquireMem();
         testNop();
+        testDispatchPackets();
         testClearState();
         testIndexedIndirectDraws();
         testTagHeaders();
         testMarkers();
+        testJumpTargetPatch();
         testMarkerSpans();
         testWorkloads();
+        testEndOfPipeAddressPatch();
         testWorkloadStreams();
         testIndexBuffer();
+        testDrawPackets();
         testIndexIndirectArgs();
         testIndirectBase();
         testContextState();
+        testFlowPackets();
         testFlip();
         testRegisters();
+        testIndirectRegisterPatches();
         testRegisterRange();
         testPacketPayloadAddress();
         testMemory();
+        testEndOfPipePatches();
         testAtomicGds();
         testDebugRaiseException();
+        testCopyDataAndComputeEvents();
+        testPacketSizes();
         testDefaults();
         testDefaultsTypes();
         LibcRunShutdown_nid_postfix();

@@ -56,7 +56,7 @@ def build_elf(symbols, needed=()):
     return bytes(image)
 
 
-def build_sectionless_elf(symbols, needed=(), gnu_hash=False, gnu_buckets=(1,)):
+def build_sectionless_elf(symbols, needed=(), gnu_hash=False, gnu_buckets=(1,), extra_dynamic=()):
     strings = b"\0"
     entries = [struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)]
     for name, index, info in symbols:
@@ -88,6 +88,7 @@ def build_sectionless_elf(symbols, needed=(), gnu_hash=False, gnu_buckets=(1,)):
         (6, 0x400000 + symbols_offset),
         (11, 24),
         (hash_tag, 0x400000 + hash_offset),
+        *extra_dynamic,
         (0, 0),
     ))
     image = bytearray(dynamic_offset + len(dynamic))
@@ -157,6 +158,21 @@ def build_pe(names):
     image[0x58 + 240:0x58 + 280] = struct.pack("<8sIIIIIIHHI", b".edata", len(raw), section_rva, len(raw), raw_offset, 0, 0, 0, 0, 0x40000040)
     image[0x58 + 280:0x58 + 320] = struct.pack("<8sIIIIIIHHI", b".text", 16 * max(1, len(names)), 0x2000, 16 * max(1, len(names)), raw_offset + len(raw), 0, 0, 0, 0, 0x60000020)
     return bytes(image) + raw + b"\xc3" * (16 * max(1, len(names)))
+
+
+def with_pe_optional_header(image, magic, size, count):
+    image = bytearray(image)
+    optional = 0x58
+    directory = 96 if magic == 0x10b else 112
+    exports = bytes(image[optional + 112:optional + 120])
+    sections = bytes(image[optional + 240:optional + 320])
+    image[optional + 96:optional + 320] = bytes(224)
+    struct.pack_into("<H", image, 0x40 + 20, size)
+    struct.pack_into("<H", image, optional, magic)
+    struct.pack_into("<I", image, optional + directory - 4, count)
+    image[optional + directory:optional + directory + 8] = exports
+    image[optional + size:optional + size + 80] = sections
+    return bytes(image)
 
 
 def build_pe_with_imports(dlls, names=()):
@@ -242,6 +258,18 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(result.stdout, b"")
 
 
+    def test_deeply_nested_registries_are_audit_errors(self):
+        registry = self.work.root / "game.registry.json"
+        registry.write_text("[" * 200000, encoding="utf-8")
+        code, out, err = self.work.run(registry)
+        self.assertEqual(code, 2, err)
+        self.assertIn("cannot read registry", err)
+        registry.write_text("[]", encoding="utf-8")
+        registry.with_name("game.needed.json").write_text("[" * 200000, encoding="utf-8")
+        code, out, err = self.work.run(registry)
+        self.assertEqual(code, 2, err)
+        self.assertIn("cannot read needed libraries", err)
+
     def test_windows_guest_dependencies_use_host_prx_suffixes(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(build_pe(["AAAAAAAAAAA"]))
@@ -292,17 +320,34 @@ class ImportAuditTests(unittest.TestCase):
                 self.assertEqual(data["library_mismatch"], int(expected_missing))
                 self.assertEqual(data["imports"][0]["providers"], ["LibSceA.prx"])
 
-    def test_elf_guest_dependencies_keep_literal_host_names(self):
+    def test_elf_guest_dependencies_use_host_prx_suffixes(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
         registry, result = work.root / "game.registry.json", work.root / "audit.json"
-        write_registry(registry, [("AAAAAAAAAAA", "libSceA.sprx")])
-        registry.with_name("game.needed.json").write_text(json.dumps(["libSceA.sprx"]))
-        code, _, err = work.run(registry, "--json", str(result))
-        self.assertEqual((code, err), (1, ""))
-        data = json.loads(result.read_text())
-        self.assertEqual(data["missing_libraries"], {"libSceA.sprx": 1})
-        self.assertEqual(data["library_mismatch"], 1)
+        for suffix in (".sprx", ".suprx", ".debug_prx"):
+            with self.subTest(suffix=suffix):
+                name = "libSceA" + suffix
+                write_registry(registry, [("AAAAAAAAAAA", name)])
+                registry.with_name("game.needed.json").write_text(json.dumps([name]))
+                code, _, err = work.run(registry, "--strict-providers", "--json", str(result))
+                self.assertEqual((code, err), (0, ""))
+                data = json.loads(result.read_text())
+                self.assertEqual(data["missing_libraries"], {})
+                self.assertEqual(data["library_mismatch"], 0)
+                self.assertEqual(data["imports"][0]["providers"], ["libSceA.prx"])
+
+    def test_elf_suffix_lookup_keeps_the_suffix_case_and_missing_libraries(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry, result = work.root / "game.registry.json", work.root / "audit.json"
+        for name in ("libSceA.SPRX", "libscea.sprx", "libMissing.sprx"):
+            with self.subTest(name=name):
+                write_registry(registry, [("AAAAAAAAAAA", name)])
+                registry.with_name("game.needed.json").write_text(json.dumps([name]))
+                code, _, err = work.run(registry, "--json", str(result))
+                self.assertEqual((code, err), (1, ""))
+                data = json.loads(result.read_text())
+                self.assertEqual(data["missing_libraries"], {name: 1})
 
     def test_windows_suffix_lookup_preserves_guest_and_missing_libraries(self):
         work = self.work
@@ -419,7 +464,8 @@ class ImportAuditTests(unittest.TestCase):
                                                    (exports, {library}, "module", False),
                                                    (exports, set(), "implemented", True)):
             with self.subTest(kind=kind):
-                records, _ = import_audit.audit([(name, library, False)], providers, {}, {library}, modules)
+                records, _ = import_audit.audit([(name, library, False)], providers, {}, {library}, modules,
+                                               module_exports=exports if modules else {})
                 self.assertEqual(records[0]["class"], kind)
                 self.assertEqual(records[0]["symbol_mismatch"], mismatch)
 
@@ -450,6 +496,60 @@ class ImportAuditTests(unittest.TestCase):
         data = json.loads(report.read_text(encoding="utf-8"))
         self.assertEqual(data["symbol_mismatch"], 0)
         self.assertIsNone(data["stops"][0]["nid"])
+
+    def test_unscoped_windows_imports_resolve_only_in_searched_libraries(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(build_pe(["AAAAAAAAAAA"]))
+        (work.libs / "libSceAForNeo.prx").write_bytes(build_pe(["BBBBBBBBBBB", "CCCCCCCCCCC"]))
+        (work.modules / "libSceFios2.prx.guest.prx").write_bytes(build_pe(["CCCCCCCCCCC"]))
+        registry, result = work.root / "game.registry.json", work.root / "audit.json"
+        write_registry(registry, [("AAAAAAAAAAA", ""), ("BBBBBBBBBBB", ""), ("CCCCCCCCCCC", "")])
+        registry.with_name("game.needed.json").write_text(json.dumps(["libSceA.sprx"]))
+        code, out, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (1, ""))
+        data = json.loads(result.read_text())
+        records = {record["nid"]: record for record in data["imports"]}
+        self.assertEqual((records["AAAAAAAAAAA"]["class"], records["AAAAAAAAAAA"]["providers"]), ("implemented", ["libSceA.prx"]))
+        self.assertEqual((records["BBBBBBBBBBB"]["class"], records["BBBBBBBBBBB"]["providers"]), ("absent", []))
+        self.assertEqual((records["CCCCCCCCCCC"]["class"], records["CCCCCCCCCCC"]["providers"]), ("implemented", ["libSceFios2.prx.guest.prx"]))
+        self.assertEqual(records["BBBBBBBBBBB"]["unsearched_providers"], ["libSceAForNeo.prx"])
+        self.assertEqual(records["AAAAAAAAAAA"]["unsearched_providers"], [])
+        self.assertEqual(records["CCCCCCCCCCC"]["unsearched_providers"], [])
+        self.assertEqual(data["unsearched_providers"], {"libSceAForNeo.prx": 1})
+        self.assertEqual(data["stops"][0]["nid"], "BBBBBBBBBBB")
+        self.assertIn("  libSceAForNeo.prx: 1 imports", out)
+
+    def test_unscoped_windows_imports_search_the_kernel_family_and_libc(self):
+        work = self.work
+        for name, nid in (("libkernel.prx", "KKKKKKKKKKK"), ("libkernel_sys.prx", "SSSSSSSSSSS"), ("libkernel_web.prx", "WWWWWWWWWWW"),
+                          ("libc.prx", "CCCCCCCCCCC"), ("libSceLibcInternal.prx", "IIIIIIIIIII")):
+            (work.libs / name).write_bytes(build_pe([nid]))
+        registry, result = work.root / "game.registry.json", work.root / "audit.json"
+        write_registry(registry, [("SSSSSSSSSSS", ""), ("WWWWWWWWWWW", ""), ("CCCCCCCCCCC", "")])
+        for needed, expected in ((["libkernel_sys.sprx"], ("implemented", "implemented", "implemented")),
+                                 (["libSceLibcInternal.prx"], ("absent", "absent", "implemented")),
+                                 (["libSceLibcInternal.sprx"], ("absent", "absent", "implemented"))):
+            with self.subTest(needed=needed):
+                registry.with_name("game.needed.json").write_text(json.dumps(needed))
+                code, _, err = work.run(registry, "--json", str(result))
+                self.assertEqual(err, "")
+                classes = {record["nid"]: record["class"] for record in json.loads(result.read_text())["imports"]}
+                self.assertEqual((classes["SSSSSSSSSSS"], classes["WWWWWWWWWWW"], classes["CCCCCCCCCCC"]), expected)
+                self.assertEqual(code, 0 if expected[0] == "implemented" else 1)
+
+    def test_unscoped_windows_name_fallback_skips_unsearched_literal_exports(self):
+        work = self.work
+        name, nid = "strlen", nid_names.compute_nid("strlen")
+        (work.libs / "libc.prx").write_bytes(build_pe([nid]))
+        (work.libs / "libkernel_web.prx").write_bytes(build_pe(["WWWWWWWWWWW"]))
+        (work.libs / "libSceOther.prx").write_bytes(build_pe([name]))
+        registry, result = work.root / "game.registry.json", work.root / "audit.json"
+        write_registry(registry, [(name, "")])
+        registry.with_name("game.needed.json").write_text(json.dumps(["libkernel_web.sprx"]))
+        code, out, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (0, ""))
+        record = json.loads(result.read_text())["imports"][0]
+        self.assertEqual((record["class"], record["providers"], record["unsearched_providers"], record["symbol_mismatch"]), ("implemented", ["libc.prx"], [], False))
 
     def test_named_nid_fallback_preserves_stub_and_library_classification(self):
         nid = nid_names.compute_nid(MESSAGE_NAME)
@@ -599,6 +699,16 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(err, f"FAIL: {output}: JSON output is a directory\n")
         self.assertEqual(set(work.root.iterdir()), files)
 
+    def test_long_json_filename_can_be_written_and_replaced(self):
+        root = self.work.root
+        directory = Path("\\\\?\\" + str(root.resolve())) if os.name == "nt" else root
+        output = directory / ("a" * 245 + ".json")
+        files = set(directory.iterdir())
+        for result in ({"complete": True}, {"complete": False}):
+            import_audit.write_json(output, result)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
+            self.assertEqual(set(directory.iterdir()), files | {output})
+
     @unittest.skipUnless(os.name == "posix", "POSIX report permissions")
     def test_new_json_report_permissions_follow_the_process_umask(self):
         script = "\n".join([
@@ -641,7 +751,7 @@ class ImportAuditTests(unittest.TestCase):
             (MESSAGE_NID, 1, GLOBAL_FUNCTION), ("AAAAAAAAAAA", 1, GLOBAL_FUNCTION), ("BBBBBBBBBBB", 1, GLOBAL_FUNCTION),
             ("UNDEFINED11", 0, GLOBAL_FUNCTION), ("LOCALLOCAL1", 1, LOCAL_FUNCTION)]))
         (work.libs / "libc.prx").write_bytes(exporting("CCCCCCCCCCC"))
-        (work.modules / "libSceNpCppWebApi.prx").write_bytes(exporting())
+        (work.modules / "libSceNpCppWebApi.prx").write_bytes(exporting("EEEEEEEEEEE"))
         write_source(work.source, "libSceMsgDialog", STUB_SOURCE.format(name=MESSAGE_NAME) + 'APS5_EXPORT("BBBBBBBBBBB", sceFooUnknown_B);\n' + STUB_SOURCE.format(name="sceFooUnknown_B"))
         registry = work.root / "game.registry.json"
         write_registry(registry, [
@@ -699,6 +809,146 @@ class ImportAuditTests(unittest.TestCase):
         self.assertIn("[library not named]", out)
         self.assertIn("EEEEEEEEEEE  (imported by main.prx)", out)
 
+    def test_guest_provider_origin_survives_host_stub_collision(self):
+        work = self.work
+        name, nid = "sceSynthetic", nid_names.compute_nid("sceSynthetic")
+        library = "libSceSynthetic.prx"
+        write_source(work.source, "libSceSynthetic", STUB_SOURCE.format(name=name))
+        (work.libs / library).write_bytes(exporting(nid))
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        write_registry(registry, [(nid, library), (nid, library, True)])
+        for filename in (library, "libSceSynthetic.sprx", "libSceSynthetic.suprx",
+                         "libSceSynthetic.debug_prx", library + ".guest.prx"):
+            with self.subTest(filename=filename):
+                provider = work.modules / filename
+                provider.write_bytes(exporting(nid))
+                (work.modules / "consumer.prx").write_bytes(build_elf(
+                    [(nid, 0, GLOBAL_FUNCTION), (name, 0, 0x22)], [library]))
+                result = subprocess.run(
+                    [sys.executable, str(Path(import_audit.__file__)), str(registry),
+                     "--libs", str(work.libs), "--modules", str(work.modules),
+                     "--source", str(work.source), "--strict-stubs", "--strict-providers",
+                     "--json", str(report)], capture_output=True, text=True, timeout=20)
+                provider.unlink()
+                self.assertEqual((result.returncode, result.stderr), (0, ""), result.stdout)
+                data = json.loads(report.read_text())
+                self.assertEqual(data["references"], 4)
+                self.assertEqual(data["references_by_class"],
+                                 {"implemented": 2, "partial": 0, "stub": 0, "absent": 0, "module": 2})
+                self.assertEqual(data["missing_libraries"], {})
+                self.assertEqual(data["symbol_mismatch"], 0)
+                records = {(record["nid"], record.get("module")): record for record in data["imports"]}
+                self.assertFalse(records[(nid, None)]["weak"])
+                self.assertTrue(records[(name, "consumer.prx")]["weak"])
+                self.assertIn(filename, records[(nid, "consumer.prx")]["providers"])
+                self.assertTrue(all(record["name"] is None for record in data["imports"]))
+        code, _, err = work.run(registry, "--strict-stubs", "--json", str(report))
+        self.assertEqual((code, err), (1, ""))
+        self.assertEqual(json.loads(report.read_text())["references_by_class"]["stub"], 4)
+        (work.libs / library).unlink()
+        (work.libs / "libc.prx").write_bytes(exporting())
+        (work.modules / library).write_bytes(exporting(nid))
+        code, _, err = work.run(registry, "--strict-stubs", "--json", str(report))
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(report.read_text())["references"], 4)
+
+    def test_guest_collision_requires_export_and_dependency_or_self(self):
+        nid, library = "AAAAAAAAAAA", "libSceSynthetic.prx"
+        stubs = {(library, nid): "sceSynthetic"}
+        cases = (({}, [], "stub"),
+                 ({nid: [library]}, [], "stub"),
+                 ({"BBBBBBBBBBB": [library]}, [library], "stub"),
+                 ({nid: ["other.prx"]}, [library], "stub"),
+                 ({nid: [library]}, ["other.prx"], "stub"),
+                 ({nid: [library]}, [library], "implemented"))
+        for guest_exports, needed, expected in cases:
+            for importer in ("consumer.prx", None):
+                for partial in (frozenset(), frozenset({(library, nid)})):
+                    with self.subTest(exports=guest_exports, needed=needed, importer=importer, partial=bool(partial)):
+                        module_imports = {importer: ([(nid, False)], needed)} if importer else {}
+                        records, _ = import_audit.audit(
+                            [] if importer else [(nid, "", False)], {nid: [library]}, stubs, {library},
+                            import_audit.ModuleNames({library, "other.prx", "consumer.prx"}),
+                            module_imports, guest_exports, needed_libraries=needed, partial=partial)
+                        self.assertEqual(records[0]["class"], "partial" if expected == "stub" and partial else expected)
+                        self.assertEqual(records[0]["references"], 1)
+        module_imports = {library: ([(nid, True)], [])}
+        records, _ = import_audit.audit([], {nid: [library]}, stubs, {library},
+                                       import_audit.ModuleNames({library}), module_imports, {nid: [library]})
+        self.assertEqual(records[0]["class"], "implemented")
+        self.assertTrue(records[0]["weak"])
+
+    def test_named_guest_provider_requires_matching_export(self):
+        work = self.work
+        library, nid = "libSceSynthetic.prx", "AAAAAAAAAAA"
+        (work.libs / library).write_bytes(exporting(nid))
+        write_source(work.source, "libSceSynthetic",
+                     'APS5_EXPORT("AAAAAAAAAAA", sceSynthetic);\n' + STUB_SOURCE.format(name="sceSynthetic"))
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        (work.modules / library).write_bytes(exporting("BBBBBBBBBBB"))
+        (work.modules / "other.prx").write_bytes(exporting(nid))
+        write_registry(registry, [(nid, library)])
+        code, _, err = work.run(registry, "--json", str(report), "--strict-stubs")
+        self.assertEqual((code, err), (1, ""))
+        data = json.loads(report.read_text())
+        self.assertEqual(data["imports"][0]["class"], "absent")
+        self.assertEqual(data["imports"][0]["providers"], [])
+        self.assertEqual(data["stops"][0]["nid"], nid)
+        self.assertEqual(data["references"], 1)
+
+    def test_exact_guest_dependency_precedes_suffix_export(self):
+        work = self.work
+        name, nid = "sceSynthetic", nid_names.compute_nid("sceSynthetic")
+        library, dependency = "libSceSynthetic.prx", "libSceSynthetic.sprx"
+        (work.libs / library).write_bytes(exporting(nid))
+        (work.modules / library).write_bytes(exporting(nid))
+        write_source(work.source, "libSceSynthetic", STUB_SOURCE.format(name=name))
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        write_registry(registry, [(nid, ""), (name, "", True)])
+        import_audit.needed_registry_path(registry).write_text(json.dumps([dependency]))
+        (work.modules / "consumer.prx").write_bytes(build_elf(
+            [(nid, 0, GLOBAL_FUNCTION), (name, 0, 0x22)], [dependency]))
+        for exports, expected, code in ((("BBBBBBBBBBB",), "stub", 1), ((nid,), "implemented", 0)):
+            with self.subTest(exports=exports):
+                (work.modules / dependency).write_bytes(exporting(*exports))
+                result = subprocess.run(
+                    [sys.executable, str(Path(import_audit.__file__)), str(registry),
+                     "--libs", str(work.libs), "--modules", str(work.modules),
+                     "--source", str(work.source), "--strict-stubs", "--json", str(report)],
+                    capture_output=True, text=True, timeout=20)
+                self.assertEqual((result.returncode, result.stderr), (code, ""), result.stdout)
+                data = json.loads(report.read_text())
+                self.assertEqual(data["references"], 4)
+                self.assertEqual(data["references_by_class"][expected], 4)
+                self.assertEqual(data["missing_libraries"], {})
+                records = {(record["nid"], record.get("module")): record for record in data["imports"]}
+                for importer in (None, "consumer.prx"):
+                    self.assertFalse(records[(nid, importer)]["weak"])
+                    self.assertTrue(records[(name, importer)]["weak"])
+                    self.assertEqual(records[(nid, importer)]["providers"],
+                                     [library] if expected == "stub" else [library, dependency])
+
+    def test_named_exact_guest_precedes_suffix_export(self):
+        work = self.work
+        name, nid = "sceSynthetic", nid_names.compute_nid("sceSynthetic")
+        library = "libSceSynthetic.prx"
+        (work.libs / library).write_bytes(exporting(nid))
+        write_source(work.source, "libSceSynthetic", STUB_SOURCE.format(name=name))
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        for exact, other in ((library, "libSceSynthetic.sprx"), ("libSceSynthetic.sprx", library)):
+            with self.subTest(exact=exact):
+                (work.modules / exact).write_bytes(exporting("BBBBBBBBBBB"))
+                (work.modules / other).write_bytes(exporting(nid))
+                write_registry(registry, [(nid, exact), (name, exact, True)])
+                code, _, err = work.run(registry, "--strict-stubs", "--json", str(report))
+                self.assertEqual((code, err), (1, ""))
+                data = json.loads(report.read_text())
+                self.assertEqual(data["references"], 2)
+                self.assertEqual(data["references_by_class"]["absent"], 2)
+                self.assertEqual(data["missing_libraries"], {})
+                self.assertEqual(data["stops"][0]["nid"], nid)
+                self.assertTrue(all(record["providers"] == [] for record in data["imports"]))
+
     def test_module_import_bindings_survive_the_audit(self):
         work = self.work
         (work.libs / "libc.prx").write_bytes(exporting())
@@ -720,6 +970,44 @@ class ImportAuditTests(unittest.TestCase):
                 self.assertFalse(records["mixed"]["weak"])
                 self.assertEqual(data["references"], 3)
                 self.assertIn("optional  (weak import)", out)
+
+    def test_converted_elf_tls_loader_is_not_a_missing_guest_library(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry, result = work.root / "game.registry.json", work.root / "audit.json"
+        write_registry(registry, [])
+        module = work.modules / "consumer.prx.guest.prx"
+        for builder in (build_elf, build_sectionless_elf):
+            with self.subTest(format=builder.__name__):
+                module.write_bytes(builder([("AAAAAAAAAAA", 0, GLOBAL_FUNCTION)],
+                                          ["libSceA.prx", "ld-linux-x86-64.so.2"]))
+                code, _, err = work.run(registry, "--json", str(result))
+                self.assertEqual((code, err), (0, ""))
+                data = json.loads(result.read_text())
+                self.assertEqual(data["missing_libraries"], {})
+                self.assertEqual(data["references"], 1)
+                self.assertEqual(data["unique_by_class"]["implemented"], 1)
+
+    def test_tls_loader_exemption_preserves_other_needed_libraries(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting())
+        registry, result = work.root / "game.registry.json", work.root / "audit.json"
+        write_registry(registry, [])
+        for filename, needed in (("consumer.prx", "ld-linux-x86-64.so.2"),
+                                 ("consumer.prx.guest.prx", "$ORIGIN/ld-linux-x86-64.so.2"),
+                                 ("consumer.prx.guest.prx", "LD-LINUX-X86-64.SO.2"),
+                                 ("consumer.prx.guest.prx", "libMissing.so.1")):
+            with self.subTest(filename=filename, needed=needed):
+                module = work.modules / filename
+                module.write_bytes(build_elf([], [needed]))
+                code, _, err = work.run(registry, "--json", str(result))
+                self.assertEqual((code, err), (1, ""))
+                self.assertEqual(json.loads(result.read_text())["missing_libraries"], {needed: 1})
+                module.unlink()
+        import_audit.needed_registry_path(registry).write_text(json.dumps(["ld-linux-x86-64.so.2"]))
+        code, _, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (1, ""))
+        self.assertEqual(json.loads(result.read_text())["missing_libraries"], {"ld-linux-x86-64.so.2": 0})
 
     def test_module_sidecars_do_not_change_the_audit(self):
         work = self.work
@@ -781,11 +1069,39 @@ class ImportAuditTests(unittest.TestCase):
         record = next(record for record in data["imports"] if record["library"] == "shipping.debug_prx")
         self.assertEqual(record["class"], "module")
 
+    def test_module_suffix_aliases_require_suffixes_on_both_filenames(self):
+        work = self.work
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        cases = (("shipping.prx", "shipping"), ("shipping", "shipping.prx"),
+                 ("shipping.data", "shipping.data.prx"), (".prx", ".sprx"))
+        for windows in (False, True):
+            (work.libs / "libc.prx").write_bytes(build_pe([]) if windows else exporting())
+            for filename, alias in cases:
+                module = work.modules / filename
+                module.write_bytes(exporting("AAAAAAAAAAA"))
+                try:
+                    for needed in (filename, alias):
+                        with self.subTest(windows=windows, filename=filename, needed=needed):
+                            write_registry(registry, [("AAAAAAAAAAA", needed)])
+                            import_audit.needed_registry_path(registry).write_text(json.dumps([needed]), encoding="utf-8")
+                            code, _, err = work.run(registry, "--json", str(report))
+                            exact = needed == filename
+                            self.assertEqual((code, err), (0 if exact else 1, ""))
+                            data = json.loads(report.read_text(encoding="utf-8"))
+                            self.assertEqual(data["missing_libraries"], {} if exact else {needed: 1})
+                            self.assertEqual(data["imports"][0]["class"], "module" if exact else "absent")
+                            self.assertEqual(data["references"], 1)
+                finally:
+                    module.unlink()
+
     def test_module_names_ignore_case_for_windows_output_only(self):
         imports = [("AAAAAAAAAAA", "SDK-Shipping.debug_prx", False)]
-        records, missing = import_audit.audit(imports, {}, {}, set(), import_audit.ModuleNames({"sdk-shipping.prx"}, fold=True))
+        exports = {"AAAAAAAAAAA": ["sdk-shipping.prx"]}
+        records, missing = import_audit.audit(imports, {}, {}, set(), import_audit.ModuleNames({"sdk-shipping.prx"}, fold=True),
+                                             module_exports=exports)
         self.assertEqual((records[0]["class"], missing), ("module", {}))
-        records, missing = import_audit.audit(imports, {}, {}, set(), import_audit.ModuleNames({"sdk-shipping.prx"}))
+        records, missing = import_audit.audit(imports, {}, {}, set(), import_audit.ModuleNames({"sdk-shipping.prx"}),
+                                             module_exports=exports)
         self.assertEqual((records[0]["class"], missing), ("absent", {"SDK-Shipping.debug_prx": 1}))
 
     def test_windows_module_suffix_case_does_not_report_existing_modules_as_missing(self):
@@ -920,6 +1236,61 @@ class ImportAuditTests(unittest.TestCase):
         self.assertNotIn("libSceGone.prx is in", out)
         code, out, err = work.run(registry, "--modules", str(elsewhere))
         self.assertNotIn("libSceMissing.prx is in", out)
+
+    def test_missing_module_hints_follow_the_audit_name_rules(self):
+        work = self.work
+        registry = work.root / "game.registry.json"
+        write_registry(registry, [])
+        needed = ["plugin.prx", "audio.prx", "converted.prx", "$ORIGIN/../prx/scene.prx.guest.prx"]
+        (work.root / "game.needed.json").write_text(json.dumps(needed), encoding="utf-8")
+        elsewhere = work.root / "extra"
+        elsewhere.mkdir()
+        for filename in ("Plugin.prx", "audio.sprx", "converted.prx.guest.prx", "scene.prx.guest.prx"):
+            (elsewhere / filename).write_bytes(exporting())
+        for windows in (False, True):
+            with self.subTest(windows=windows):
+                (work.libs / "libc.prx").write_bytes(build_pe([]) if windows else exporting())
+                code, out, err = work.run(registry)
+                self.assertEqual((code, err), (1, ""))
+                for library in needed[1:]:
+                    self.assertIn(f"{library} is in {elsewhere.resolve()}: pass that directory with --modules", out)
+                self.assertEqual("plugin.prx is in" in out, windows)
+                code, out, err = work.run(registry, "--modules", str(elsewhere))
+                self.assertEqual((code, err), (0 if windows else 1, ""))
+                self.assertNotIn("pass that directory with --modules", out)
+
+    def test_locate_search_root_rejects_registry_symlink_loop(self):
+        loop = self.work.root / "loop.json"
+        try:
+            loop.symlink_to(loop.name)
+        except (OSError, NotImplementedError):
+            self.skipTest("symbolic links are unavailable")
+        with self.assertRaises(import_audit.AuditError) as context:
+            import_audit.locate_search_root(loop)
+        self.assertIn("symbolic link loop", str(context.exception))
+
+    def test_converted_module_resolves_plain_and_origin_library_names(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(exporting())
+        (work.modules / "libSceFace.prx.guest.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        (work.modules / "libc.prx.guest.prx").write_bytes(exporting("BBBBBBBBBBB"))
+        (work.modules / "main.prx").write_bytes(build_elf([], [
+            "$ORIGIN/libSceFace.prx.guest.prx",
+            "$ORIGIN/../../sce_module/libc.prx.guest.prx",
+            "$ORIGIN/../Plugins/libSceFace.prx.guest.prx",
+        ]))
+        registry = work.root / "game.registry.json"
+        write_registry(registry, [("AAAAAAAAAAA", "libSceFace.prx")])
+        (work.root / "game.needed.json").write_text('["libSceFace.prx"]')
+        result = work.root / "audit.json"
+        code, out, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (0, ""))
+        data = json.loads(result.read_text())
+        self.assertEqual(data["missing_libraries"], {})
+        self.assertEqual(data["unique_by_class"]["module"], 1)
+        record = next(record for record in data["imports"] if record["nid"] == "AAAAAAAAAAA")
+        self.assertEqual((record["class"], record["library"]), ("module", "libSceFace.prx"))
+        self.assertNotIn("libSceFace.prx", out)
 
     def test_conflicting_module_files_preserve_or_leave_no_json_report(self):
         work = self.work
@@ -1163,6 +1534,19 @@ class ImportAuditTests(unittest.TestCase):
             ["libSceA.prx"], gnu_hash=True)
         self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("module.prx"), image),
                          ({"AAAAAAAAAAA": False}, {"BBBBBBBBBBB"}, {"libSceA.prx"}))
+
+    def test_sectionless_elf_rejects_conflicting_dynamic_metadata(self):
+        path = Path("module.prx")
+        symbols = [("AAAAAAAAAAA", 0, GLOBAL_FUNCTION), ("BBBBBBBBBBB", 1, GLOBAL_FUNCTION)]
+        needed = ["libSceA.prx", "libSceB.prx"]
+        for gnu_hash in (False, True):
+            with self.subTest(gnu_hash=gnu_hash):
+                image = build_sectionless_elf(symbols, needed, gnu_hash, extra_dynamic=((11, 24),))
+                self.assertEqual(import_audit.elf_program_dynamic_symbols(path, image),
+                                 ({"AAAAAAAAAAA": False}, {"BBBBBBBBBBB"}, set(needed)))
+                image = build_sectionless_elf(symbols, needed, gnu_hash, extra_dynamic=((11, 16), (11, 24)))
+                with self.assertRaisesRegex(import_audit.AuditError, r"module\.prx: conflicting duplicate DT_SYMENT"):
+                    import_audit.elf_program_dynamic_symbols(path, image)
 
     def test_sectionless_elf_gnu_hash_reads_each_chain_entry_once(self):
         symbols = [(f"symbol{index}", int(index != 0), GLOBAL_FUNCTION) for index in range(32)]
@@ -1553,6 +1937,56 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(import_audit.source_stubs(source), {
             ("libOwner.prx", nid): "scePending", ("libShared.prx", nid): "scePending"})
 
+    def test_mixed_shared_cmake_provider_keeps_throwing_body_classes(self):
+        source = self.work.source
+        write_source(source, "libOwner", STUB_SOURCE.format(name="scePending") +
+                     "int APS5_VABI scePartial(int value) { if (value) NotImplemented_nid_no_patch(__func__); return 0; }\n")
+        write_source(source, "libMixed", STUB_SOURCE.format(name="sceLocalPending") + DONE_SOURCE.format(name="sceLocalReady"))
+        (source / "libMixed/CMakeLists.txt").write_text('include(${CMAKE_CURRENT_SOURCE_DIR}/../libOwner/OwnerLibrary.cmake)\n')
+        stubs, partial = import_audit.source_stub_classes(source)
+        pending, guarded, local, ready = (nid_names.compute_nid(name) for name in
+                                          ("scePending", "scePartial", "sceLocalPending", "sceLocalReady"))
+        exports = {pending: ["libOwner.prx", "libMixed.prx"], guarded: ["libOwner.prx", "libMixed.prx"],
+                   local: ["libMixed.prx"], ready: ["libMixed.prx"]}
+        records, _ = import_audit.audit([(nid, None, False) for nid in exports], exports, stubs,
+                                       {"libOwner.prx", "libMixed.prx"}, set(), partial=partial)
+        self.assertEqual({row["nid"]: row["class"] for row in records},
+                         {pending: "stub", guarded: "partial", local: "stub", ready: "implemented"})
+
+    def test_mixed_shared_source_include_keeps_explicit_alias(self):
+        source = self.work.source
+        write_source(source, "libOwner", 'APS5_EXPORT("AAAAAAAAAAA", scePending);\n' + STUB_SOURCE.format(name="scePending"))
+        write_source(source, "libMixed", '#include "prx/libOwner/Export.cpp"\n' + DONE_SOURCE.format(name="sceLocalReady"))
+        stubs, partial = import_audit.source_stub_classes(source)
+        self.assertEqual(stubs, {(library + ".prx", "AAAAAAAAAAA"): "scePending" for library in ("libOwner", "libMixed")})
+        self.assertEqual(partial, set())
+
+    def test_mixed_shared_sources_inherit_every_owner_transitively(self):
+        source = self.work.source
+        write_source(source, "libOwnerA", STUB_SOURCE.format(name="scePending"))
+        write_source(source, "libOwnerB", "int APS5_VABI scePartial(int value) { if (value) NotImplemented_nid_no_patch(__func__); return 0; }\n")
+        write_source(source, "libMixed", DONE_SOURCE.format(name="sceLocalReady"))
+        (source / "libMixed/CMakeLists.txt").write_text(
+            'include(${CMAKE_CURRENT_SOURCE_DIR}/../libOwnerA/OwnerLibrary.cmake)\n'
+            'include(${CMAKE_CURRENT_SOURCE_DIR}/../libOwnerB/OwnerLibrary.cmake)\n')
+        leaf = source / "libLeaf"
+        leaf.mkdir()
+        (leaf / "CMakeLists.txt").write_text('include(${CMAKE_CURRENT_SOURCE_DIR}/../libMixed/OwnerLibrary.cmake)\n')
+        stubs, partial = import_audit.source_stub_classes(source)
+        pending, guarded = nid_names.compute_nid("scePending"), nid_names.compute_nid("scePartial")
+        self.assertEqual(set(stubs), {(library + ".prx", nid) for nid, libraries in
+                                     ((pending, ("libOwnerA", "libMixed", "libLeaf")),
+                                      (guarded, ("libOwnerB", "libMixed", "libLeaf"))) for library in libraries})
+        self.assertEqual(partial, {(library + ".prx", guarded) for library in ("libOwnerB", "libMixed", "libLeaf")})
+
+    def test_mixed_shared_source_cycle_fails(self):
+        source = self.work.source
+        for library, owner in (("libA", "libB"), ("libB", "libA")):
+            write_source(source, library, STUB_SOURCE.format(name="sce" + library))
+            (source / library / "CMakeLists.txt").write_text(f'include(${{CMAKE_CURRENT_SOURCE_DIR}}/../{owner}/OwnerLibrary.cmake)\n')
+        with self.assertRaisesRegex(import_audit.AuditError, "shared source cycle.*libA.*libB"):
+            import_audit.source_stub_classes(source)
+
     def test_transitive_shared_library_preserves_stubs(self):
         source = self.work.source
         write_source(source, "libZOwner", STUB_SOURCE.format(name="scePending"))
@@ -1563,6 +1997,57 @@ class ImportAuditTests(unittest.TestCase):
         nid = nid_names.compute_nid("scePending")
         self.assertEqual(import_audit.source_stubs(source), {
             (library + ".prx", nid): "scePending" for library in ("libA", "libB", "libZOwner")})
+
+    def test_nested_callable_returns_do_not_make_unconditional_stubs_partial(self):
+        prefixes = (
+            "[] { return 1; };",
+            "auto callback = [] { return 1; };",
+            "auto callback = [saved = 1]() mutable noexcept -> int { return saved; };",
+            "auto callback = []<typename T>(T value) -> T { return value; };",
+            "auto callback = [saved = ({ auto nested = [] { return 1; }; nested(); })] { return saved; };",
+            "auto value = [] { return 1; }();",
+            "Consume([] { return 1; });",
+            "if ([] { return true; }()) {}",
+            "struct Local { int Value() { return 1; } };",
+            "class Local { public: int Value() { return 1; } };",
+        )
+        source = self.work.source
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                write_source(source, "libScopes",
+                             f"void Fail() {{ {prefix} NotImplemented_nid_no_patch(__func__); }}\n"
+                             f"int APS5_VABI sceDirect() {{ {prefix} NotImplemented_nid_no_patch(__func__); return 0; }}\n"
+                             "int APS5_VABI sceWrapped() { Fail(); return 0; }\n")
+                expected = {("libScopes.prx", nid_names.compute_nid(name)): name for name in ("sceDirect", "sceWrapped")}
+                self.assertEqual(import_audit.source_stub_classes(source), (expected, set()))
+
+    def test_outer_function_exits_remain_partial_beside_nested_callables(self):
+        exits = (
+            "return;",
+            "if (value) return;",
+            "if (value) { return; }",
+            "if (value) { auto nested = [] { return 1; }; return; }",
+            "exit_label: return;",
+            "exit_label: { return; }",
+            "[[likely]] if (value) return;",
+            "[[likely]] if (value) { return; }",
+            "GUARDED(value) { return; }",
+            "({ if (value) return; });",
+            "auto captured = [saved = ({ if (value) return; 1; })] { return saved; };",
+            "auto captured = [saved = ({ auto nested = [] { return 1; }; if (value) return; nested(); })] { return saved; };",
+            "int saved[] = {1}; auto captured = [first = saved[0], other = ({ if (value) return; 1; })] { return first + other; };",
+            "if (value) goto done;",
+        )
+        source = self.work.source
+        for exit_statement in exits:
+            with self.subTest(exit_statement=exit_statement):
+                write_source(source, "libScopes",
+                             "#define GUARDED(value) if (value)\n"
+                             "void Fail(int value) { auto callback = [] { return 1; }; "
+                             f"{exit_statement} NotImplemented_nid_no_patch(__func__); done: return; }}\n"
+                             "int APS5_VABI sceWrapped(int value) { Fail(value); return value; }\n")
+                stub = ("libScopes.prx", nid_names.compute_nid("sceWrapped"))
+                self.assertEqual(import_audit.source_stub_classes(source), ({stub: "sceWrapped"}, {stub}))
 
     def test_guarded_exports_are_partial_and_unconditional_ones_are_stubs(self):
         source = self.work.source
@@ -1619,6 +2104,64 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(set(stubs), {(library, nid_names.compute_nid(name)) for library in ("libGuard.prx", "libShared.prx") for name in names})
         self.assertEqual(partial, {(library, nid_names.compute_nid(name)) for library in ("libGuard.prx", "libShared.prx")
                                    for name, kind in kinds.items() if kind == "partial"})
+
+    def test_many_host_branches_only_fail_when_every_combination_must_be_read(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(9))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     "void Fail() { NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI sceStub(int value) { NotImplemented_nid_no_patch(__func__); return 0; }\n"
+                     f"int APS5_VABI sceHosts(int value) {{\n{blocks}    return value;\n}}\n"
+                     f"int APS5_VABI sceLastHost(int value) {{\n{blocks}#ifdef HOST_LAST\n    Fail();\n#endif\n    return value;\n}}\n"
+                     f"int APS5_VABI sceNestedHosts(int value) {{\n#ifdef HOST_OUTER\n{blocks}#else\n    Fail();\n#endif\n    return value;\n}}\n")
+        stubs, partial = import_audit.source_stub_classes(source)
+        stub, hosts, last, nested = (("libHosts.prx", nid_names.compute_nid(name))
+                                     for name in ("sceStub", "sceHosts", "sceLastHost", "sceNestedHosts"))
+        self.assertEqual(set(stubs), {stub, last, nested})
+        self.assertEqual(partial, {last, nested})
+        for every in (f"{blocks}    Fail();\n", f"#ifdef HOST_OUTER\n{blocks}#endif\n    Fail();\n"):
+            with self.subTest(every=every):
+                write_source(source, "libHosts",
+                             "void Fail() { NotImplemented_nid_no_patch(__func__); }\n"
+                             f"int APS5_VABI sceEveryHost(int value) {{\n{every}    return value;\n}}\n")
+                with self.assertRaisesRegex(import_audit.AuditError, "more than 256 preprocessor branch combinations"):
+                    import_audit.source_stub_classes(source)
+
+    def test_unrelated_helper_host_branches_do_not_abort_source_classification(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(10))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     f"int PollDescriptors(int value) {{\n{blocks}    return value;\n}}\n"
+                     "int PollAgain(int value) { return PollDescriptors(value); }\n"
+                     "void FirstFail() { LastFail(); }\n"
+                     "void LastFail() { NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI scePoll(int value) { return PollAgain(value); }\n"
+                     "int APS5_VABI sceStub(int value) { FirstFail(); return value; }\n"
+                     "int APS5_VABI scePartial(int value) { if (value) FirstFail(); return value; }\n")
+        stubs, partial = import_audit.source_stub_classes(source)
+        stub = ("libHosts.prx", nid_names.compute_nid("sceStub"))
+        guarded = ("libHosts.prx", nid_names.compute_nid("scePartial"))
+        self.assertEqual(set(stubs), {stub, guarded})
+        self.assertEqual(partial, {guarded})
+
+    def test_relevant_helper_at_the_variant_limit_remains_a_stub(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(8))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     f"void Fail(int value) {{\n{blocks}    NotImplemented_nid_no_patch(__func__);\n}}\n"
+                     "int APS5_VABI sceStub(int value) { Fail(value); return value; }\n")
+        stub = ("libHosts.prx", nid_names.compute_nid("sceStub"))
+        self.assertEqual(import_audit.source_stub_classes(source), ({stub: "sceStub"}, set()))
+
+    def test_relevant_helper_host_branches_keep_the_variant_limit(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(9))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     f"void LastFail(int value) {{\n{blocks}    NotImplemented_nid_no_patch(__func__);\n}}\n"
+                     "void FirstFail(int value) { LastFail(value); }\n"
+                     "int APS5_VABI sceStub(int value) { FirstFail(value); return value; }\n")
+        with self.assertRaisesRegex(import_audit.AuditError, "more than 256 preprocessor branch combinations"):
+            import_audit.source_stub_classes(source)
 
     def test_partial_import_is_its_own_class(self):
         direct, guarded = nid_names.compute_nid("sceDirect"), nid_names.compute_nid("sceGuarded")
@@ -1853,10 +2396,74 @@ class ImportAuditTests(unittest.TestCase):
         ])
 
     def test_pe_ignores_bytes_after_the_declared_directory_count(self):
-        image = bytearray(build_pe(["alpha"]))
-        struct.pack_into("<I", image, 0x58 + 108, 0)
-        with self.assertRaises(import_audit.AuditError):
-            import_audit.pe_exports(Path("lib.prx"), image)
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            for size in (directory, directory + 7, directory + 128):
+                image = with_pe_optional_header(build_pe(["alpha"]), magic, size, 0)
+                for reader in (import_audit.read_exports, import_audit.read_host_imports):
+                    with self.subTest(magic=magic, size=size, reader=reader.__name__):
+                        self.assertEqual(reader(Path("lib.prx"), image), set())
+
+    def test_pe_without_data_directories_reports_absent_imports(self):
+        work = self.work
+        registry, report = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [("AAAAAAAAAAA", "empty.prx")])
+        for magic, size in ((0x10b, 96), (0x10b, 224), (0x20b, 112), (0x20b, 240)):
+            with self.subTest(magic=magic, size=size):
+                image = with_pe_optional_header(build_pe(["AAAAAAAAAAA"]), magic, size, 0)
+                (work.libs / "empty.prx").write_bytes(image)
+                (work.modules / "module.prx.guest.prx").write_bytes(image)
+                code, out, err = work.run(registry, "--json", str(report))
+                self.assertEqual((code, err), (1, ""), out)
+                data = json.loads(report.read_text(encoding="utf-8"))
+                self.assertEqual(data["missing_libraries"], {})
+                self.assertEqual(data["missing_host_dependencies"], [])
+                self.assertEqual(data["imports"][0]["class"], "absent")
+                self.assertEqual(data["imports"][0]["providers"], [])
+                self.assertEqual(data["stops"][0]["nid"], "AAAAAAAAAAA")
+
+    def test_pe_requires_the_complete_fixed_optional_header(self):
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            image = with_pe_optional_header(build_pe(["alpha"]), magic, directory - 1, 0)
+            for reader in (import_audit.read_exports, import_audit.read_host_imports):
+                with self.subTest(magic=magic, reader=reader.__name__):
+                    with self.assertRaisesRegex(import_audit.AuditError, "optional header"):
+                        reader(Path("lib.prx"), image)
+
+    def test_pe_data_directories_must_fit_inside_optional_header(self):
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            for size, count in ((directory, 1), (directory + 7, 1),
+                                (directory + 8, 2), (directory + 15, 2),
+                                (directory + 128, 17), (directory + 8, 0xffffffff)):
+                image = with_pe_optional_header(build_pe(["alpha"]), magic, size, count)
+                for reader in (import_audit.pe_exports, import_audit.pe_imports):
+                    with self.subTest(magic=magic, size=size, count=count, reader=reader.__name__):
+                        with self.assertRaisesRegex(import_audit.AuditError, "data directory count.*optional header"):
+                            reader(Path("lib.prx"), image)
+
+    def test_pe_variable_optional_headers_keep_declared_directories(self):
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            for size, count in ((directory + 8, 1), (directory + 15, 1),
+                                (directory + 16, 2), (directory + 128, 16)):
+                with self.subTest(magic=magic, size=size, count=count):
+                    image = with_pe_optional_header(build_pe(["alpha"]), magic, size, count)
+                    self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"alpha"})
+                    self.assertEqual(import_audit.pe_imports(Path("lib.prx"), image), set())
+
+    def test_invalid_pe_directory_count_preserves_audit_report(self):
+        work = self.work
+        registry, result = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [("AAAAAAAAAAA", "libSceA.prx")])
+        library = work.libs / "libSceA.prx"
+        previous = b'{"previous":"complete report"}\n'
+        for magic, size in ((0x10b, 224), (0x20b, 240)):
+            with self.subTest(magic=magic):
+                library.write_bytes(with_pe_optional_header(build_pe(["AAAAAAAAAAA"]), magic, size, 17))
+                result.write_bytes(previous)
+                code, out, err = work.run(registry, "--json", str(result))
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn("data directory count", err)
+                self.assertIn(str(library), err)
+                self.assertEqual(result.read_bytes(), previous)
 
     def test_pe_null_export_address_is_not_an_export(self):
         image = bytearray(build_pe(["alpha"]))
@@ -1967,6 +2574,137 @@ class ImportAuditTests(unittest.TestCase):
                 struct.pack_into("<IIQQQQQQ", image, phoff + index * 56, *updated)
         self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("padded.prx"), image),
                          ({"alpha": False}, set(), {"libc.prx"}))
+
+    def test_sectionless_dynamic_segment_size_is_bounded_by_dt_null_not_by_16(self):
+        original = build_sectionless_elf([("alpha", 0, GLOBAL_FUNCTION)], ["libc.prx"])
+        _, size_field = elf_dynamic_range_fields(original)
+        size = struct.unpack_from("<Q", original, size_field)[0]
+        extended = bytearray(original + bytes(8))
+        struct.pack_into("<QQ", extended, size_field, size + 8, size + 8)
+        self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("extended.prx"), extended),
+                         ({"alpha": False}, set(), {"libc.prx"}))
+        cut = bytearray(original)
+        struct.pack_into("<QQ", cut, size_field, size - 8, size - 8)
+        with self.assertRaisesRegex(import_audit.AuditError, "not terminated by DT_NULL"):
+            import_audit.elf_program_dynamic_symbols(Path("cut.prx"), cut)
+
+    def test_dynamic_tables_can_span_contiguous_load_segments(self):
+        original = build_sectionless_elf([("required", 0, GLOBAL_FUNCTION), ("provided", 1, GLOBAL_FUNCTION)], ["libc.prx"])
+        dynamic = struct.unpack_from("<IIQQQQQQ", original, 120)
+        tags = dict(struct.unpack_from("<qQ", original, offset) for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16))
+        expected = import_audit.elf_program_dynamic_symbols(Path("control.prx"), original)
+        for cut in (tags[5] - 0x400000 + 5, tags[6] - 0x400000 + 25, tags[4] - 0x400000 + 5):
+            for gap, mapping in ((0, 0), (1, 0), (0, 1)):
+                with self.subTest(cut=cut, gap=gap, mapping=mapping):
+                    image = bytearray(original)
+                    table = len(image)
+                    headers = ((1, 4, 0, 0x400000, 0x400000, cut, cut, 1),
+                               (1, 6, cut + mapping, 0x400000 + cut + gap, 0, len(original) - cut, len(original) - cut, 1), dynamic)
+                    image.extend(b"".join(struct.pack("<IIQQQQQQ", *header) for header in headers))
+                    struct.pack_into("<Q", image, 32, table)
+                    struct.pack_into("<H", image, 56, 3)
+                    if gap or mapping:
+                        with self.assertRaises(import_audit.AuditError):
+                            import_audit.elf_program_dynamic_symbols(Path("gap.prx"), image)
+                    else:
+                        self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("split.prx"), image), expected)
+
+    def test_sectionless_elf_rejects_load_segment_smaller_than_file_size(self):
+        symbols = [("alpha", 0, GLOBAL_FUNCTION), ("beta", 1, GLOBAL_FUNCTION)]
+        needed = ["libc.prx"]
+        image = bytearray(build_sectionless_elf(symbols, needed))
+        phoff = struct.unpack_from("<Q", image, 32)[0]
+        filesz = struct.unpack_from("<Q", image, phoff + 32)[0]
+        for memsz in (filesz - 1, 0, 1):
+            with self.subTest(memsz=memsz):
+                modified = bytearray(image)
+                struct.pack_into("<Q", modified, phoff + 40, memsz)
+                path = Path("memsz.prx")
+                with self.assertRaises(import_audit.AuditError):
+                    import_audit.read_exports(path, bytes(modified))
+                with self.assertRaises(import_audit.AuditError):
+                    import_audit.read_host_imports(path, bytes(modified))
+                with self.assertRaises(import_audit.AuditError):
+                    import_audit.elf_imports(path, bytes(modified))
+
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(build_sectionless_elf([], []))
+        truncated = bytearray(image)
+        struct.pack_into("<Q", truncated, phoff + 40, 0)
+        (work.modules / "test_memsz.prx").write_bytes(truncated)
+        registry = work.root / "game.json"
+        write_registry(registry, [("alpha", "test_memsz.prx")])
+        result = work.root / "audit.json"
+        code, out, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, out), (2, ""))
+        self.assertFalse(result.exists())
+
+        for memsz in (filesz, filesz + 0x1000):
+            with self.subTest(control_memsz=memsz):
+                control = bytearray(image)
+                struct.pack_into("<Q", control, phoff + 40, memsz)
+                path = Path("control.prx")
+                self.assertEqual(import_audit.read_exports(path, bytes(control)), {"beta"})
+                self.assertEqual(import_audit.read_host_imports(path, bytes(control)), {"libc.prx"})
+                self.assertEqual(import_audit.elf_imports(path, bytes(control)), ({"alpha": False}, {"libc.prx"}))
+
+        phnum = struct.unpack_from("<H", image, 56)[0]
+        headers = [struct.unpack_from("<IIQQQQQQ", image, phoff + i * 56) for i in range(phnum)]
+        for zero_offset in (0, len(image) + 0x1000):
+            with self.subTest(zero_offset=zero_offset):
+                zero_load = bytearray(image)
+                zero_headers = list(headers)
+                zero_headers.append((1, 4, zero_offset, 0x500000, 0x500000, 0, 0x1000, 0x1000))
+                table_offset = len(zero_load)
+                zero_load.extend(b"".join(struct.pack("<IIQQQQQQ", *h) for h in zero_headers))
+                struct.pack_into("<Q", zero_load, 32, table_offset)
+                struct.pack_into("<H", zero_load, 56, len(zero_headers))
+                path = Path("zero.prx")
+                self.assertEqual(import_audit.read_exports(path, bytes(zero_load)), {"beta"})
+                self.assertEqual(import_audit.read_host_imports(path, bytes(zero_load)), {"libc.prx"})
+                self.assertEqual(import_audit.elf_imports(path, bytes(zero_load)), ({"alpha": False}, {"libc.prx"}))
+
+        null_load = bytearray(image)
+        null_headers = list(headers)
+        null_headers.append((0, 0xDEADBEEF, 0xFFFFFFFF, 0xBAADF00D, 0xCAFEBABE, 0x10000, 0x10, 0x1000))
+        table_offset = len(null_load)
+        null_load.extend(b"".join(struct.pack("<IIQQQQQQ", *h) for h in null_headers))
+        struct.pack_into("<Q", null_load, 32, table_offset)
+        struct.pack_into("<H", null_load, 56, len(null_headers))
+        path = Path("null.prx")
+        self.assertEqual(import_audit.read_exports(path, bytes(null_load)), {"beta"})
+        self.assertEqual(import_audit.read_host_imports(path, bytes(null_load)), {"libc.prx"})
+        self.assertEqual(import_audit.elf_imports(path, bytes(null_load)), ({"alpha": False}, {"libc.prx"}))
+
+    def test_sectionless_elf_rejects_load_segment_outside_file(self):
+        symbols = [("alpha", 0, GLOBAL_FUNCTION), ("beta", 1, GLOBAL_FUNCTION)]
+        needed = ["libc.prx"]
+        image = bytearray(build_sectionless_elf(symbols, needed))
+        phoff = struct.unpack_from("<Q", image, 32)[0]
+        phnum = struct.unpack_from("<H", image, 56)[0]
+        headers = [struct.unpack_from("<IIQQQQQQ", image, phoff + i * 56) for i in range(phnum)]
+        headers.append((1, 5, len(image) + 0x1000, 0x600000, 0x600000, 0x100, 0x100, 0x1000))
+        table_offset = len(image)
+        image.extend(b"".join(struct.pack("<IIQQQQQQ", *h) for h in headers))
+        struct.pack_into("<Q", image, 32, table_offset)
+        struct.pack_into("<H", image, 56, len(headers))
+        path = Path("outside.prx")
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.read_exports(path, bytes(image))
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.read_host_imports(path, bytes(image))
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.elf_imports(path, bytes(image))
+
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(build_sectionless_elf([], []))
+        (work.modules / "test_outside.prx").write_bytes(image)
+        registry = work.root / "game.json"
+        write_registry(registry, [("alpha", "test_outside.prx")])
+        result = work.root / "audit.json"
+        code, out, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, out), (2, ""))
+        self.assertFalse(result.exists())
 
     def test_module_dependencies_stop_at_dynamic_terminator(self):
         work = self.work
@@ -2121,6 +2859,34 @@ class ImportAuditTests(unittest.TestCase):
             {"importer": "libSceA.prx", "chain": ["libSceA.prx", "libSceB.prx", "LIBSCEMISSING.PRX"]},
             {"importer": "libSceB.prx", "chain": ["libSceB.prx", "LIBSCEMISSING.PRX"]},
         ])
+
+    def test_pe_origin_host_dependency_keeps_case_and_transitive_gaps(self):
+        work = self.work
+        (work.libs / "libSceB.prx").write_bytes(build_pe_with_imports(["LIBSCEMISSING.PRX"]))
+        registry, report = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [])
+        for prefix in ("$ORIGIN/", "${ORIGIN}/", "$ORIGIN/../Plugins/"):
+            with self.subTest(prefix=prefix):
+                (work.libs / "libSceA.prx").write_bytes(build_pe_with_imports([prefix + "LIBSCEB.PRX"]))
+                code, _, err = work.run(registry, "--json", str(report))
+                self.assertEqual((code, err), (1, ""))
+                self.assertEqual(json.loads(report.read_text())["missing_host_dependencies"], [
+                    {"importer": "libSceA.prx", "chain": ["libSceA.prx", "libSceB.prx", "LIBSCEMISSING.PRX"]},
+                    {"importer": "libSceB.prx", "chain": ["libSceB.prx", "LIBSCEMISSING.PRX"]},
+                ])
+
+    def test_elf_origin_host_dependency_keeps_pe_child_case(self):
+        work = self.work
+        (work.libs / "libSceB.prx").write_bytes(build_pe_with_imports(["LIBSCEC.PRX"]))
+        (work.libs / "libSceC.prx").write_bytes(exporting())
+        registry, report = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [])
+        for prefix in ("$ORIGIN/", "${ORIGIN}/", "$ORIGIN/../Plugins/"):
+            with self.subTest(prefix=prefix):
+                (work.libs / "libSceA.prx").write_bytes(build_elf([], [prefix + "libSceB.prx"]))
+                code, out, err = work.run(registry, "--json", str(report))
+                self.assertEqual((code, err), (0, ""), out)
+                self.assertEqual(json.loads(report.read_text())["missing_host_dependencies"], [])
 
     def test_pe_host_dependency_can_find_a_module_with_different_case(self):
         work = self.work
@@ -2289,6 +3055,23 @@ class ImportAuditTests(unittest.TestCase):
         self.assertIn("input", err)
         self.assertEqual(registry.read_bytes(), before)
 
+    def test_symbolic_link_loops_are_reported_as_failures(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry = work.root / "game.json"
+        write_registry(registry, [("AAAAAAAAAAA", "libSceA.prx")])
+        loop = work.root / "loop.json"
+        try:
+            loop.symlink_to(loop.name)
+        except (OSError, NotImplementedError):
+            self.skipTest("symbolic links are unavailable")
+        for arguments in ((registry, "--json", str(loop)), (loop, "--json", str(work.root / "audit.json"))):
+            with self.subTest(arguments=arguments):
+                code, out, err = work.run(*arguments)
+                self.assertEqual((code, out), (2, ""))
+                self.assertTrue(err.startswith("FAIL: "), err)
+                self.assertFalse((work.root / "audit.json").exists())
+
     def test_json_output_preserves_shared_source_cmake_inputs(self):
         work = self.work
         name = "scePending"
@@ -2401,6 +3184,26 @@ class ImportAuditTests(unittest.TestCase):
         write_registry(path, [("AAAAAAAAAAA#A#B", "libSceA.prx")], encoding="utf-8-sig")
         self.assertEqual(import_audit.read_registry(path), [("AAAAAAAAAAA", "libSceA.prx", False)])
 
+    def test_duplicate_registry_keys_cannot_hide_an_absent_import(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry = work.root / "game.registry.json"
+        report = work.root / "audit.json"
+        registry.write_text('[{"nid":"BBBBBBBBBBB","nid":"AAAAAAAAAAA","library":"libSceA.prx"}]', encoding="utf-8")
+        code, out, err = work.run(registry, "--json", str(report))
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn("duplicate JSON key 'nid'", err)
+        self.assertFalse(report.exists())
+
+    def test_duplicate_registry_library_and_weak_fields_are_rejected(self):
+        registry = self.work.root / "game.registry.json"
+        for fields, repeated in ((('"library":"first.prx"', '"library":"second.prx"'), "library"),
+                                 (('"weak":true', '"weak":false'), "weak")):
+            with self.subTest(repeated=repeated):
+                registry.write_text('[{"nid":"AAAAAAAAAAA","library":"libSceA.prx",' + ','.join(fields) + '}]', encoding="utf-8")
+                with self.assertRaisesRegex(import_audit.AuditError, f"duplicate JSON key '{repeated}'"):
+                    import_audit.read_registry(registry)
+
     def test_names_never_download(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
@@ -2472,6 +3275,23 @@ class ImportAuditTests(unittest.TestCase):
                      + STUB_SOURCE.format(name="sceUnreferencedPending"))
         self.assertEqual(self.work.run(registry, "--strict-stubs")[0], 0)
 
+    def test_conditional_stubs_reads_utf8_source_with_explicit_encoding(self):
+        original_read_text = Path.read_text
+        recorded_calls = []
+
+        def recording_read_text(path_self, *args, **kwargs):
+            recorded_calls.append((path_self, kwargs))
+            return original_read_text(path_self, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            lib_dir = Path(directory)
+            cpp_file = lib_dir / "Export.cpp"
+            cpp_file.write_bytes(f"// Non-ASCII \u2014 em-dash\n{DONE_SOURCE.format(name='sceCustomStub')}".encode("utf-8"))
+            with patch.object(Path, "read_text", side_effect=recording_read_text, autospec=True):
+                stubs = import_audit.conditional_stubs(lib_dir)
+            self.assertEqual(stubs, {"sceCustomStub"})
+            self.assertTrue(recorded_calls)
+            self.assertEqual(recorded_calls[0][1].get("encoding"), "utf-8")
 
 
 class StrictProviderTests(unittest.TestCase):

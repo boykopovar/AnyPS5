@@ -1,8 +1,10 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -23,13 +25,24 @@ namespace {
 
 constexpr std::uint64_t UnitBytes = 65536;
 constexpr std::size_t ReasonCount = static_cast<std::size_t>(PublishReason::Count);
-constexpr const char* ReasonNames[ReasonCount] = {"hook", "region", "indirect", "copy-src", "copy-dst", "fill", "fill-clear", "label", "keys", "scanout", "validate", "upload", "tail", "evict", "retire", "teardown", "address"};
+constexpr const char* ReasonNames[ReasonCount] = {"hook", "region", "indirect", "copy-src", "copy-dst", "fill", "fill-clear", "label", "keys", "scanout", "validate", "upload", "tail", "evict", "retire", "teardown", "address", "other"};
 
-std::uint64_t BudgetBytes() {
-    static const std::uint64_t budget = [] {
-        const char* text = std::getenv("APS5_UNIT_SHADOW_MIB");
-        return (text != nullptr ? std::strtoull(text, nullptr, 10) : 1024ull) << 20u;
-    }();
+std::uint64_t BudgetBytes(const Context& context) {
+    static const char* text = std::getenv("APS5_UNIT_SHADOW_MIB");
+    if (text != nullptr) return std::strtoull(text, nullptr, 10) << 20u;
+    static std::once_flag once;
+    static std::uint64_t budget = 0;
+    std::call_once(once, [&] {
+        if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) {
+            budget = UnitShadowBudget(context.memory, nullptr);
+            return;
+        }
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+        properties.pNext = &reported;
+        context.memoryProperties2(context.physical, &properties);
+        budget = UnitShadowBudget(context.memory, &reported);
+    });
     return budget;
 }
 
@@ -203,9 +216,9 @@ std::shared_ptr<ShadowSlab> makeSlab(const Context& context, std::uint64_t first
     VkDeviceMemory memory = VK_NULL_HANDLE;
     try {
         allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        if (context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory) != VK_SUCCESS) memory = VK_NULL_HANDLE;
+        if (MemoryAccounting::Allocate(context, allocation, "unit shadow", &memory) != VK_SUCCESS) memory = VK_NULL_HANDLE;
         if (memory != VK_NULL_HANDLE && context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, 0) != VK_SUCCESS) {
-            context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+            MemoryAccounting::Free(context, memory);
             memory = VK_NULL_HANDLE;
         }
     } catch (const std::exception&) {
@@ -378,12 +391,14 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
         std::lock_guard lock(registry.mutex);
         std::vector<std::uint8_t> changed, cpu;
         changedUnits(*shadow, first, last, changed, cpu);
+        std::uint32_t ended = 0;
         for (auto unit = first; unit <= last; ++unit) {
             const auto k = static_cast<std::size_t>(unit - first);
             if (!selected[k] || !shadow->Live(unit)) continue;
             if (changed[k] == GuestMemory::BlockWritten) {
                 // Newer bytes reached the import since the retile: the slab's are dead.
                 shadow->generation[unit] = 0;
+                ++ended;
                 (cpu[k] != 0 ? Stats().staleDroppedCpu : Stats().staleDroppedDriver).fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
@@ -391,6 +406,7 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
             const auto& slab = shadow->slabs[slabIndex];
             if (slab == nullptr) {
                 shadow->generation[unit] = 0;
+                ++ended;
                 continue;
             }
             const auto [begin, end] = shadow->UnitRange(unit);
@@ -405,11 +421,12 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
                 ranges.emplace_back(begin, end);
             }
             shadow->published[unit] = 1;
+            ++ended;
             slab->lastUse = Recorder::Presents();
             bytes += end - begin;
             ++units;
         }
-        shadow->Recount();
+        shadow->liveUnits -= ended;
     }
     if (units == 0) return 0;
     Stats().published[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
@@ -485,6 +502,14 @@ bool evictOne(Shadows& registry) {
 
 }
 
+std::uint64_t UnitShadowBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported) {
+    constexpr std::uint64_t Ceiling = std::uint64_t{1024} << 20u;
+    constexpr std::uint64_t Floor = std::uint64_t{128} << 20u;
+    const auto heap = LargestDeviceLocalHeap(memory);
+    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return Ceiling;
+    return std::clamp<std::uint64_t>(reported->heapBudget[*heap] / 8u, Floor, Ceiling);
+}
+
 bool UnitShadowEnabled() {
     static const bool enabled = std::getenv("APS5_NO_UNIT_SHADOW") == nullptr && GuestMemory::WriteWatched();
     return enabled;
@@ -513,14 +538,14 @@ PublishReason PublishReasonFor(const char* flushReason) {
     if (is("buffer copy count") || is("dispatch-cache entry")) return PublishReason::Validate;
     if (is("storage image creation") || is("storage refresh")) return PublishReason::Upload;
     if (is("address-based heaps")) return PublishReason::Address;
-    return PublishReason::Hook;
+    return PublishReason::Other;
 }
 
 ShadowSlab::ShadowSlab(const Context& context, VkBuffer buffer, VkDeviceMemory memory, std::uint64_t firstUnit, std::uint32_t units) : context(context), buffer(buffer), memory(memory), firstUnit(firstUnit), units(units) {}
 
 ShadowSlab::~ShadowSlab() {
     if (buffer != VK_NULL_HANDLE) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
-    if (memory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    if (memory != VK_NULL_HANDLE) MemoryAccounting::Free(context, memory);
 }
 
 ShadowSlabPin::ShadowSlabPin(std::shared_ptr<ShadowSlab> slab) : slab(std::move(slab)) {
@@ -596,6 +621,29 @@ bool AnyShadowedOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>
     return false;
 }
 
+std::vector<std::pair<std::uint64_t, std::uint64_t>> LiveShadowedRanges(std::uint64_t address, std::size_t bytes, PublishScope scope) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    if (!UnitShadowEnabled() || scope == PublishScope::None || bytes == 0) return ranges;
+    const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
+    for (const auto& shadow : overlapping(registry, address, end)) {
+        if (shadow->liveUnits == 0) continue;
+        const auto begin = std::max(address, shadow->importBase);
+        const auto stop = std::min(end, shadow->ImportEnd());
+        if (stop <= begin) continue;
+        for (auto unit = shadow->UnitOf(begin); unit <= shadow->UnitOf(stop - 1); ++unit) {
+            if (!shadow->Live(unit)) continue;
+            const auto [unitBegin, unitEnd] = shadow->UnitRange(unit);
+            if (unitEnd <= unitBegin || (scope == PublishScope::PartialUnits && address <= unitBegin && end >= unitEnd)) continue;
+            if (!ranges.empty() && ranges.back().second == unitBegin) ranges.back().second = unitEnd;
+            else ranges.emplace_back(unitBegin, unitEnd);
+        }
+    }
+    if (ranges.size() > 8) ranges.assign(1, {ranges.front().first, ranges.back().second});
+    return ranges;
+}
+
 std::uint64_t SlabBoundary(const HostImport& import, std::uint64_t address) {
     const auto base = import.base & ~(UnitBytes - 1);
     const auto unit = (address - base) / UnitBytes;
@@ -632,7 +680,7 @@ std::optional<ShadowDestination> ShadowDestinationFor(const Context& context, co
         for (;;) {
             {
                 std::lock_guard lock(registry.mutex);
-                if (registry.liveBytes + needed <= BudgetBytes()) break;
+                if (registry.liveBytes + needed <= BudgetBytes(context)) break;
             }
             if (!evictOne(registry)) {
                 Stats().refused.fetch_add(1, std::memory_order_relaxed);
@@ -800,12 +848,12 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
                     ++lost;
                     continue;
                 }
+                if (!shadow->Live(unit)) ++shadow->liveUnits;
                 shadow->generation[unit] = generation;
                 shadow->published[unit] = 0;
                 current->lastUse = present;
             }
         }
-        shadow->Recount();
     }
     if (lost != 0) {
         Stats().slabLost.fetch_add(lost, std::memory_order_relaxed);

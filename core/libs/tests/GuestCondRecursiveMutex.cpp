@@ -55,7 +55,13 @@ static int PosixTimedwait(Context& context) {
 static void WaitWithRecursiveMutex(int (*wait)(Context&)) {
     Context context;
     PthreadMutexattr attr = nullptr;
+    Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSettype(nullptr, MUTEX_TYPE_RECURSIVE) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSettype(&attr, MUTEX_TYPE_RECURSIVE) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrInit(&attr) == SCE_OK);
+    Require(scePthreadMutexattrSettype(&attr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSettype(&attr, 5) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrSettype(&attr, MUTEX_TYPE_RECURSIVE) == SCE_OK);
     Require(scePthreadMutexInit(&context.mutex, &attr, nullptr) == SCE_OK);
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);

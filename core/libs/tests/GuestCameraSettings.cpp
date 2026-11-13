@@ -1,9 +1,16 @@
 #include "prx/libSceCamera/libSceCamera.hpp"
+#include <cerrno>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#include <sys/mman.h>
+#endif
 
 using GetU32 = int(APS5_VABI*)(std::int32_t, std::uint32_t, std::uint32_t*, void*);
 using SetU32 = int(APS5_VABI*)(std::int32_t, std::uint32_t, std::uint32_t, const void*);
@@ -19,11 +26,48 @@ constexpr std::uint32_t Channel0 = 1;
 constexpr std::uint32_t Channel1 = 2;
 constexpr std::uint32_t ChannelBoth = 3;
 
+using AudioGetData = int (APS5_VABI*)(void*);
+
+AudioGetData ResolveAudio(const char* name) {
+#ifdef _WIN32
+    void* symbol = reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("libSceCamera.prx"), name));
+#else
+    void* symbol = dlsym(RTLD_DEFAULT, name);
+#endif
+    if (!symbol) {
+        std::fprintf(stderr, "%s is not exported by libSceCamera\n", name);
+        std::abort();
+    }
+    return reinterpret_cast<AudioGetData>(symbol);
+}
+
 void Require(bool condition, const char* message) {
     if (!condition) {
         std::fprintf(stderr, "Camera settings: %s\n", message);
         std::abort();
     }
+}
+
+void CheckAudioAfterOpen() {
+    std::array<std::uint8_t, 64> data{};
+    data.fill(0xA5);
+    for (const char* name : {"sceCameraAudioGetData", "sceCameraAudioGetData2"}) {
+        const AudioGetData getData = ResolveAudio(name);
+        Require(getData(nullptr) == ErrorParam, "camera audio data must reject a null buffer");
+        Require(getData(reinterpret_cast<void*>(0x10)) == ErrorParam, "camera audio data must reject an inaccessible buffer");
+        errno = 71;
+        Require(getData(reinterpret_cast<void*>(0x10)) == ErrorParam, "inaccessible audio buffer");
+        Require(errno == 71, "errno preserved");
+        Require(getData(data.data()) == 0, "camera audio data must answer 0 after the failed open");
+    }
+    for (const std::uint8_t byte : data) Require(byte == 0xA5, "camera audio data must not be written");
+    Require(sceCameraAudioReset() == 0, "camera audio reset must answer 0");
+    Require(sceCameraAudioClose() == 0, "camera audio close must answer 0");
+}
+
+void CheckInternalCalls() {
+    Require(sceCameraDeviceOpen() == 0, "the device open call must answer 0");
+    Require(sceCameraSetAttributeInternal() == 0, "the internal attribute call must answer 0");
 }
 
 CameraConfig SizedConfig() {
@@ -45,6 +89,9 @@ void CheckBeforeOpen() {
     Require(sceCameraGetDeviceInfo(0, &info) == ErrorNotInit, "device info before open must report NOT_INIT");
     Require(sceCameraGetProductInfo(&value) == ErrorNotInit, "product info before open must report NOT_INIT");
     Require(sceCameraGetRegistryInfo(&value) == ErrorNotInit, "registry info before open must report NOT_INIT");
+    errno = 71;
+    Require(sceCameraGetAttribute(1, reinterpret_cast<CameraAttribute*>(0x10)) == ErrorParam, "unmapped attribute pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
 }
 
 void CheckGetter(GetU32 get, std::uint32_t expected, const char* message) {
@@ -56,9 +103,14 @@ void CheckGetter(GetU32 get, std::uint32_t expected, const char* message) {
     Require(get(99, Channel0, &value, nullptr) == ErrorNotOpen && value == 0x5a5a5a5a, "a fabricated handle must not read settings");
     Require(get(1, 0, &value, nullptr) == ErrorParam, "a getter must reject channel 0");
     Require(get(1, ChannelBoth, &value, nullptr) == ErrorParam, "a getter must reject both channels");
+    Require(get(1, 4, &value, nullptr) == ErrorParam, "a getter must reject channel 4");
+    Require(get(1, 0xFFFFFFFFu, &value, nullptr) == ErrorParam, "a getter must reject invalid channel");
     Require(get(1, Channel0, nullptr, nullptr) == ErrorParam, "a getter must reject a null result");
     Require(get(1, Channel0, &value, &option) == ErrorParam, "a getter must reject an option");
     Require(value == 0x5a5a5a5a, "a refused getter must not write its result");
+    errno = 71;
+    Require(get(1, Channel0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == ErrorParam, "a getter must reject an unmapped pointer");
+    Require(errno == 71, "errno preserved");
 }
 
 void CheckGetters() {
@@ -70,15 +122,30 @@ void CheckGetters() {
     CheckGetter(sceCameraGetSharpness, 1, "the sharpness must be 1");
     std::int32_t hue = 0;
     Require(sceCameraGetHue(1, Channel0, &hue, nullptr) == 0 && hue == 1, "the hue must be 1");
+    errno = 71;
+    Require(sceCameraGetHue(1, Channel0, reinterpret_cast<std::int32_t*>(0x10), nullptr) == ErrorParam, "an unmapped hue pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
     CameraExposureGain exposure{9, 9, 9, 9};
     Require(sceCameraGetExposureGain(1, Channel0, &exposure, nullptr) == 0, "the exposure must be readable");
     Require(exposure.exposureControl == 0 && exposure.exposure == 20 && exposure.gain == 100 && exposure.mode == 0, "the exposure defaults are wrong");
+    errno = 71;
+    Require(sceCameraGetExposureGain(1, Channel0, reinterpret_cast<CameraExposureGain*>(0x10), nullptr) == ErrorParam, "an unmapped exposure pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
     CameraWhiteBalance balance{9, 9, 9, 9};
     Require(sceCameraGetWhiteBalance(1, Channel0, &balance, nullptr) == 0, "the white balance must be readable");
     Require(balance.whiteBalanceControl == 0 && balance.gainRed == 768 && balance.gainBlue == 768 && balance.gainGreen == 512, "the white balance defaults are wrong");
+    errno = 71;
+    Require(sceCameraGetWhiteBalance(1, Channel0, reinterpret_cast<CameraWhiteBalance*>(0x10), nullptr) == ErrorParam, "an unwritable white balance pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable white balance pointer");
+    alignas(16) CameraWhiteBalance balanceBuffer[3] = {{9, 9, 9, 9}, {9, 9, 9, 9}, {9, 9, 9, 9}};
+    Require(sceCameraGetWhiteBalance(1, Channel0, &balanceBuffer[1], nullptr) == 0, "reading white balance to buffer failed");
+    Require(balanceBuffer[0].whiteBalanceControl == 9 && balanceBuffer[1].whiteBalanceControl == 0 && balanceBuffer[1].gainRed == 768 && balanceBuffer[2].whiteBalanceControl == 9, "adjacent memory was corrupted");
     CameraGamma gamma;
     std::memset(&gamma, 0x5a, sizeof(gamma));
     Require(sceCameraGetGamma(1, Channel0, &gamma, nullptr) == 0 && gamma.gammaControl == 0 && gamma.value == 4 && gamma.reserved[15] == 0, "the gamma defaults are wrong");
+    errno = 71;
+    Require(sceCameraGetGamma(1, Channel0, reinterpret_cast<CameraGamma*>(0x10), nullptr) == ErrorParam, "an unmapped gamma pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
     std::uint32_t enable = 9;
     CameraAutoExposureGainTarget target{sizeof(CameraAutoExposureGainTarget), 0x10};
     Require(sceCameraGetAutoExposureGain(1, Channel0, &enable, &target) == 0 && enable == 0, "automatic exposure must be off");
@@ -89,23 +156,54 @@ void CheckGetters() {
 }
 
 void CheckAttribute() {
-    CameraAttribute attribute;
-    std::memset(&attribute, 0x5a, sizeof(attribute));
-    attribute.sizeThis = sizeof(CameraAttribute);
-    attribute.channel = Channel1;
-    Require(sceCameraGetAttribute(1, &attribute) == 0, "the attributes must be readable");
-    Require(attribute.sizeThis == sizeof(CameraAttribute) && attribute.channel == Channel1, "the attribute header must be kept");
-    Require(attribute.framePosition.x == 0 && attribute.exposureGain.exposure == 83 && attribute.exposureGain.gain == 100, "the attribute exposure is wrong");
-    Require(attribute.whiteBalance.gainRed == 768 && attribute.whiteBalance.gainGreen == 512 && attribute.gamma.value == 4, "the attribute colour defaults are wrong");
-    Require(attribute.saturation == 64 && attribute.contrast == 32 && attribute.sharpness == 1 && attribute.hue == 1 && attribute.reserved[3] == 0, "the attribute levels are wrong");
-    attribute.channel = ChannelBoth;
-    Require(sceCameraGetAttribute(1, &attribute) == ErrorParam, "reading both channels at once must be rejected");
-    Require(sceCameraSetAttribute(1, &attribute) == ErrorNotConnected, "writing both channels must report NOT_CONNECTED");
-    attribute.channel = 4;
-    Require(sceCameraSetAttribute(1, &attribute) == ErrorParam, "an unknown channel must be rejected");
-    attribute.channel = Channel0;
-    attribute.sizeThis = sizeof(CameraAttribute) - 4;
-    Require(sceCameraGetAttribute(1, &attribute) == ErrorParam && sceCameraSetAttribute(1, &attribute) == ErrorParam, "an attribute of the wrong size must be rejected");
+    alignas(CameraAttribute) std::array<std::uint8_t, 128> buffer{};
+    buffer.fill(0x5a);
+    auto* attribute = reinterpret_cast<CameraAttribute*>(buffer.data());
+    attribute->sizeThis = sizeof(CameraAttribute);
+    attribute->channel = Channel1;
+    Require(sceCameraGetAttribute(1, attribute) == 0, "the attributes must be readable");
+    Require(attribute->sizeThis == sizeof(CameraAttribute) && attribute->channel == Channel1, "the attribute header must be kept");
+    Require(attribute->framePosition.x == 0 && attribute->exposureGain.exposure == 83 && attribute->exposureGain.gain == 100, "the attribute exposure is wrong");
+    Require(attribute->whiteBalance.gainRed == 768 && attribute->whiteBalance.gainGreen == 512 && attribute->gamma.value == 4, "the attribute colour defaults are wrong");
+    Require(attribute->saturation == 64 && attribute->contrast == 32 && attribute->sharpness == 1 && attribute->hue == 1 && attribute->reserved[3] == 0, "the attribute levels are wrong");
+    for (std::size_t i = sizeof(CameraAttribute); i < buffer.size(); ++i) {
+        Require(buffer[i] == 0x5a, "bytes after 112-byte struct must stay untouched");
+    }
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr, "VirtualAlloc failed");
+#else
+    void* page = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "mmap failed");
+#endif
+    auto* roAttribute = static_cast<CameraAttribute*>(page);
+    roAttribute->sizeThis = sizeof(CameraAttribute);
+    roAttribute->channel = Channel0;
+#ifdef _WIN32
+    DWORD previousProtect;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previousProtect) != 0, "VirtualProtect failed");
+#else
+    Require(mprotect(page, 4096, PROT_READ) == 0, "mprotect failed");
+#endif
+    errno = 71;
+    Require(sceCameraGetAttribute(1, roAttribute) == ErrorParam, "read-only attribute pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, 4096);
+#endif
+    errno = 71;
+    Require(sceCameraGetAttribute(1, reinterpret_cast<CameraAttribute*>(0x10)) == ErrorParam, "an unmapped attribute pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
+    attribute->channel = ChannelBoth;
+    Require(sceCameraGetAttribute(1, attribute) == ErrorParam, "reading both channels at once must be rejected");
+    Require(sceCameraSetAttribute(1, attribute) == ErrorNotConnected, "writing both channels must report NOT_CONNECTED");
+    attribute->channel = 4;
+    Require(sceCameraSetAttribute(1, attribute) == ErrorParam, "an unknown channel must be rejected");
+    attribute->channel = Channel0;
+    attribute->sizeThis = sizeof(CameraAttribute) - 4;
+    Require(sceCameraGetAttribute(1, attribute) == ErrorParam && sceCameraSetAttribute(1, attribute) == ErrorParam, "an attribute of the wrong size must be rejected");
     Require(sceCameraGetAttribute(1, nullptr) == ErrorParam && sceCameraSetAttribute(1, nullptr) == ErrorParam, "a null attribute must be rejected");
 }
 
@@ -113,7 +211,9 @@ void CheckSetter(SetU32 set, std::uint32_t largestValue) {
     std::uint32_t option = 0;
     Require(set(1, ChannelBoth, largestValue, nullptr) == ErrorNotConnected, "a setter must report NOT_CONNECTED");
     Require(set(0, Channel0, 0, nullptr) == ErrorParam, "a setter must reject handle 0");
+    Require(set(1, 0, 0, nullptr) == ErrorParam, "a setter must reject channel 0");
     Require(set(1, 4, 0, nullptr) == ErrorParam, "a setter must reject channel 4");
+    Require(set(1, 0xFFFFFFFFu, 0, nullptr) == ErrorParam, "a setter must reject invalid channel");
     Require(set(1, Channel0, 0, &option) == ErrorParam, "a setter must reject an option");
     if (largestValue != UINT32_MAX) Require(set(1, Channel0, largestValue + 1, nullptr) == ErrorParam, "a setter must reject a value past its range");
 }
@@ -194,13 +294,16 @@ void CheckDevice() {
         Require(sceCameraGetCalibrationData(&refused, out.data()) == ErrorParam, "a bad calibration request must be rejected");
     }
     Require(sceCameraAudioOpen() == ErrorFatal, "camera audio must fail with FATAL");
+    CheckAudioAfterOpen();
 }
 
 }
 
 int main() {
     CheckBeforeOpen();
+    CheckInternalCalls();
     Require(sceCameraOpen(0xFF, 0, 0, nullptr) == 1, "the camera must open");
+    CheckInternalCalls();
     CheckGetters();
     CheckAttribute();
     CheckSetters();

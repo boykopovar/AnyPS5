@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNetCtl/include/InventoryExports.hpp"
 #include "prx/libSceNetCtl/include/NetCtl.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -19,10 +21,12 @@
 #include <netpacket/packet.h>
 #endif
 #ifdef __APPLE__
+#include <net/if_dl.h>
 #include <sys/sysctl.h>
 #endif
 #endif
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -68,7 +72,7 @@ static constexpr std::uint16_t STUN_ATTR_MAPPED_ADDRESS = 0x0001;
 static constexpr std::uint16_t STUN_ATTR_CHANGED_ADDRESS = 0x0005;
 static constexpr std::uint16_t STUN_ATTR_XOR_MAPPED_ADDRESS = 0x0020;
 static constexpr std::uint16_t STUN_ATTR_XOR_MAPPED_ADDRESS_LEGACY = 0x8020;
-static constexpr std::uint16_t STUN_ATTR_OTHER_ADDRESS = 0x802b;
+static constexpr std::uint16_t STUN_ATTR_OTHER_ADDRESS = 0x802c;
 static constexpr std::size_t STUN_HEADER_SIZE = 20;
 static constexpr std::size_t STUN_TRANSACTION_ID_SIZE = 12;
 static constexpr int STUN_DEFAULT_TIMEOUT_MS = 300;
@@ -96,6 +100,7 @@ static constexpr int NET_CTL_INFO_HTTP_PROXY_CONFIG = 19;
 static constexpr int NET_CTL_INFO_HTTP_PROXY_SERVER = 20;
 static constexpr int NET_CTL_INFO_HTTP_PROXY_PORT = 21;
 static constexpr int NET_CTL_INFO_V6_IP_ADDRESS = 1;
+static constexpr int NET_CTL_INFO_V6_LINK_LOCAL = 2;
 static constexpr int NET_CTL_INFO_V6_SECONDARY_DNS = 5;
 static constexpr std::uint32_t NET_CTL_DEVICE_WIRED = 0;
 static constexpr std::uint32_t NET_CTL_LINK_CONNECTED = 1;
@@ -116,6 +121,7 @@ static std::mutex g_callbackLock;
 static CallbackSlot g_callbacks[MAX_CALLBACKS] = {};
 static CallbackSlot g_callbacksV6[MAX_CALLBACKS] = {};
 static CallbackSlot g_callbacksNpToolkit[MAX_CALLBACKS] = {};
+static CallbackSlot g_callbacksForLib[MAX_CALLBACKS] = {};
 
 static int RegisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], NetCtlCallback func, void* arg, int* cid) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
@@ -123,8 +129,11 @@ static int RegisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], NetCtlCall
     std::lock_guard lock(g_callbackLock);
     for (int index = 0; index < MAX_CALLBACKS; ++index) {
         if (!callbacks[index].func) {
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(cid, &index, sizeof(index));
+            errno = savedErrno;
+            if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
             callbacks[index] = {func, arg, 0};
-            *cid = index;
             return 0;
         }
     }
@@ -257,6 +266,7 @@ void WatchHostAddresses(HostAddressCache& cache) {
 #endif
 
 static bool HostHasAddress(int family) {
+    if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) return false;
 #ifdef _WIN32
     auto& cache = AddressCache();
     const int slot = family == AF_INET ? 0 : family == AF_INET6 ? 1 : 2;
@@ -457,6 +467,7 @@ static bool QueryHostIpv4Interface(HostIpv4Interface& found) {
 }
 
 static bool FindHostIpv4Interface(HostIpv4Interface& found) {
+    if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) return false;
 #ifdef _WIN32
     auto& cache = AddressCache();
     std::lock_guard guard(cache.lock);
@@ -471,7 +482,10 @@ static bool FindHostIpv4Interface(HostIpv4Interface& found) {
     if (cache.interfaceFound) found = cache.interfaceValue;
     return cache.interfaceFound;
 #else
-    return QueryHostIpv4Interface(found);
+    const int savedErrno = errno;
+    const bool queried = QueryHostIpv4Interface(found);
+    errno = savedErrno;
+    return queried;
 #endif
 }
 
@@ -480,6 +494,13 @@ extern "C" std::size_t NetCtlHostDnsServers_nid_no_patch(std::uint32_t* servers,
     if (!FindHostIpv4Interface(host)) return 0;
     for (std::size_t index = 0; index < host.dns.size() && index < capacity; ++index) servers[index] = host.dns[index].s_addr;
     return host.dns.size();
+}
+
+extern "C" bool NetCtlHostIpv4Gateway_nid_no_patch(std::uint32_t* gateway) {
+    HostIpv4Interface host;
+    if (!FindHostIpv4Interface(host) || host.gateway.s_addr == 0) return false;
+    *gateway = host.gateway.s_addr;
+    return true;
 }
 
 #ifdef _WIN32
@@ -822,15 +843,135 @@ static NetCtlNatInfo DiscoverNatInfo(in_addr localAddress) {
     return result;
 }
 
-static void WriteInfoWord(NetCtlInfo* info, std::uint32_t value) {
-    std::memcpy(info->opaque, &value, sizeof(value));
+extern "C" bool NetCtlHostIpv4Address_nid_no_patch(std::uint32_t* address, std::uint32_t* netmask, std::uint32_t* mtu) {
+    HostIpv4Interface host;
+    if (!FindHostIpv4Interface(host)) return false;
+    *address = host.address.s_addr;
+    *netmask = host.netmask.s_addr;
+    *mtu = host.mtu;
+    return true;
 }
 
-static void WriteInfoAddress(NetCtlInfo* info, in_addr address) {
+static bool WriteInfoWord(NetCtlInfo* info, std::uint32_t value) {
+    return GuestCopyOut_nid_no_patch(info->opaque, &value, sizeof(value));
+}
+
+static bool WriteInfoAddress(NetCtlInfo* info, in_addr address) {
     const auto* bytes = reinterpret_cast<const std::uint8_t*>(&address.s_addr);
     char text[NET_CTL_IPV4_ADDR_STR_LEN] = {};
     std::snprintf(text, sizeof(text), "%u.%u.%u.%u", static_cast<unsigned>(bytes[0]), static_cast<unsigned>(bytes[1]), static_cast<unsigned>(bytes[2]), static_cast<unsigned>(bytes[3]));
-    std::memcpy(info->opaque, text, sizeof(text));
+    return GuestCopyOut_nid_no_patch(info->opaque, text, sizeof(text));
+}
+
+static constexpr std::size_t NET_CTL_IPV6_ADDR_STR_LEN = 46;
+
+static unsigned Ipv6PrefixBits(const in6_addr& mask) {
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(&mask);
+    unsigned bits = 0;
+    for (unsigned index = 0; index < sizeof(mask); ++index) {
+        for (unsigned bit = 0; bit < 8; ++bit) {
+            if ((bytes[index] >> bit) & 1u) ++bits;
+        }
+    }
+    return bits;
+}
+
+static bool Ipv6IsGlobal(const in6_addr& address) {
+    return !IN6_IS_ADDR_UNSPECIFIED(&address) && !IN6_IS_ADDR_LOOPBACK(&address) && !IN6_IS_ADDR_LINKLOCAL(&address);
+}
+
+struct HostIpv6Address {
+    in6_addr address{};
+    unsigned prefix = 0;
+    bool valid = false;
+};
+
+struct HostIpv6Selection {
+    HostIpv6Address global;
+    HostIpv6Address linkLocalOfGlobal;
+    HostIpv6Address linkLocal;
+};
+
+#ifdef _WIN32
+static HostIpv6Selection QueryHostIpv6Selection() {
+    HostIpv6Selection found;
+    ULONG size = 0;
+    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    if (GetAdaptersAddresses(AF_INET6, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW) return found;
+    std::vector<std::uint8_t> storage(size);
+    auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data());
+    if (GetAdaptersAddresses(AF_INET6, flags, nullptr, adapters, &size) != NO_ERROR) return found;
+    for (auto* adapter = adapters; adapter; adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+        HostIpv6Address adapterGlobal;
+        HostIpv6Address adapterLinkLocal;
+        for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
+            if (!unicast->Address.lpSockaddr || unicast->Address.lpSockaddr->sa_family != AF_INET6) continue;
+            const auto* address = reinterpret_cast<const sockaddr_in6*>(unicast->Address.lpSockaddr);
+            HostIpv6Address candidate;
+            candidate.address = address->sin6_addr;
+            candidate.prefix = unicast->OnLinkPrefixLength;
+            candidate.valid = true;
+            if (Ipv6IsGlobal(address->sin6_addr)) {
+                if (!adapterGlobal.valid) adapterGlobal = candidate;
+            } else if (IN6_IS_ADDR_LINKLOCAL(&address->sin6_addr)) {
+                if (!adapterLinkLocal.valid) adapterLinkLocal = candidate;
+            }
+        }
+        if (adapterGlobal.valid && !found.global.valid) {
+            found.global = adapterGlobal;
+            found.linkLocalOfGlobal = adapterLinkLocal;
+        }
+        if (!found.linkLocal.valid && adapterLinkLocal.valid) found.linkLocal = adapterLinkLocal;
+    }
+    return found;
+}
+#else
+static HostIpv6Address ReadHostIpv6Address(const ifaddrs* item) {
+    HostIpv6Address address;
+    address.address = reinterpret_cast<const sockaddr_in6*>(item->ifa_addr)->sin6_addr;
+    address.prefix = item->ifa_netmask && item->ifa_netmask->sa_family == AF_INET6
+                         ? Ipv6PrefixBits(reinterpret_cast<const sockaddr_in6*>(item->ifa_netmask)->sin6_addr)
+                         : 0;
+    address.valid = true;
+    return address;
+}
+
+static HostIpv6Selection QueryHostIpv6Selection() {
+    HostIpv6Selection found;
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) != 0) return found;
+    const std::unique_ptr<ifaddrs, void (*)(ifaddrs*)> interfaces(list, freeifaddrs);
+    std::string globalInterface;
+    for (auto* item = list; item; item = item->ifa_next) {
+        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_INET6) continue;
+        if (!(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+        if (found.global.valid || !Ipv6IsGlobal(reinterpret_cast<const sockaddr_in6*>(item->ifa_addr)->sin6_addr)) continue;
+        found.global = ReadHostIpv6Address(item);
+        globalInterface = item->ifa_name;
+    }
+    for (auto* item = list; item; item = item->ifa_next) {
+        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_INET6) continue;
+        if (!(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+        if (!IN6_IS_ADDR_LINKLOCAL(&reinterpret_cast<const sockaddr_in6*>(item->ifa_addr)->sin6_addr)) continue;
+        const HostIpv6Address candidate = ReadHostIpv6Address(item);
+        if (!found.linkLocal.valid) found.linkLocal = candidate;
+        if (!found.linkLocalOfGlobal.valid && !globalInterface.empty() && globalInterface == item->ifa_name) {
+            found.linkLocalOfGlobal = candidate;
+        }
+    }
+    return found;
+}
+#endif
+
+static bool WriteInfoV6Address(NetCtlInfoV6* info, const HostIpv6Address& address) {
+    char buffer[NET_CTL_IPV6_ADDR_STR_LEN + 1] = {};
+    inet_ntop(AF_INET6, &address.address, buffer, NET_CTL_IPV6_ADDR_STR_LEN);
+    buffer[NET_CTL_IPV6_ADDR_STR_LEN] = static_cast<char>(static_cast<std::uint8_t>(address.prefix));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info->opaque, buffer, sizeof(buffer));
+    errno = savedErrno;
+    return copied;
 }
 
 extern "C" std::uint64_t NetCtlReadByteCounter_nid_no_patch(const char* path) {
@@ -864,41 +1005,69 @@ static void HostTraffic(std::uint64_t& sent, std::uint64_t& received) {
         received += NetCtlReadByteCounter_nid_no_patch((statistics + "rx_bytes").c_str());
     }
     freeifaddrs(interfaces);
+#elif defined(__APPLE__)
+    ifaddrs* interfaces = nullptr;
+    if (getifaddrs(&interfaces) != 0) throw std::runtime_error("sceNetCtlGetIfStat: the host interface list is unavailable");
+    for (auto* item = interfaces; item; item = item->ifa_next) {
+        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_LINK || !item->ifa_data) continue;
+        if (!(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+        const auto* statistics = static_cast<const struct if_data*>(item->ifa_data);
+        sent += statistics->ifi_obytes;
+        received += statistics->ifi_ibytes;
+    }
+    freeifaddrs(interfaces);
 #else
     throw std::runtime_error("sceNetCtlGetIfStat: host interface byte counters are not implemented on this platform");
 #endif
 }
 
-static int CheckCallbacks(CallbackSlot (&callbacks)[MAX_CALLBACKS]) {
+static int CheckCallbacks(CallbackSlot (&callbacks)[MAX_CALLBACKS], bool includeV6 = false) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
-    if (!HasCallback(callbacks)) return 0;
-    const int event = HostHasAddress(AF_UNSPEC) ? NET_CTL_EVENT_IPOBTAINED : NET_CTL_EVENT_DISCONNECTED;
-    CallbackSlot due[MAX_CALLBACKS];
+    const bool primary = HasCallback(callbacks);
+    const bool ipv6 = includeV6 && HasCallback(g_callbacksV6);
+    if (!primary && !ipv6) return 0;
+    const int primaryEvent = primary ? (HostHasAddress(AF_UNSPEC) ? NET_CTL_EVENT_IPOBTAINED : NET_CTL_EVENT_DISCONNECTED) : 0;
+    const int ipv6Event = ipv6 ? (HostHasAddress(AF_INET6) ? NET_CTL_EVENT_IPOBTAINED : NET_CTL_EVENT_DISCONNECTED) : 0;
+    struct Delivery {
+        CallbackSlot callback;
+        int event;
+    };
+    Delivery due[2 * MAX_CALLBACKS];
     int count = 0;
     {
         std::lock_guard lock(g_callbackLock);
-        for (auto& slot : callbacks) {
-            if (!slot.func || slot.lastEvent == event) continue;
-            slot.lastEvent = event;
-            due[count++] = slot;
-        }
+        const auto collect = [&](CallbackSlot (&slots)[MAX_CALLBACKS], int event) {
+            if (event == 0) return;
+            for (auto& slot : slots) {
+                if (!slot.func || slot.lastEvent == event) continue;
+                slot.lastEvent = event;
+                due[count++] = {slot, event};
+            }
+        };
+        collect(callbacks, primaryEvent);
+        if (includeV6) collect(g_callbacksV6, ipv6Event);
     }
-    for (int index = 0; index < count; ++index) due[index].func(event, due[index].arg);
+    for (int index = 0; index < count; ++index)
+        due[index].callback.func(due[index].event, due[index].callback.arg);
     return 0;
 }
 
 extern "C" {
 
 int APS5_VABI sceNetCtlCheckCallback(void) {
-    return CheckCallbacks(g_callbacks);
+    return CheckCallbacks(g_callbacks, true);
 }
 
 int APS5_VABI sceNetCtlGetIfStat(NetCtlIfStat* stat) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!stat) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (!HostHasAddress(AF_UNSPEC)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
-    *stat = {};
-    HostTraffic(stat->tx_bytes, stat->rx_bytes);
+    NetCtlIfStat localStat{};
+    HostTraffic(localStat.tx_bytes, localStat.rx_bytes);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stat, &localStat, sizeof(localStat));
+    errno = savedErrno;
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -908,50 +1077,69 @@ int APS5_VABI sceNetCtlGetInfo(int code, NetCtlInfo* info) {
     if (code < NET_CTL_INFO_DEVICE || code > NET_CTL_INFO_HTTP_PROXY_PORT) return SCE_NET_CTL_ERROR_INVALID_CODE;
     HostIpv4Interface host;
     if (!FindHostIpv4Interface(host)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
+    bool copied = false;
     switch (code) {
-        case NET_CTL_INFO_DEVICE: WriteInfoWord(info, NET_CTL_DEVICE_WIRED); break;
-        case NET_CTL_INFO_ETHER_ADDR: std::memcpy(info->opaque, NET_CTL_ETHER_ADDR, sizeof(NET_CTL_ETHER_ADDR)); break;
-        case NET_CTL_INFO_MTU: WriteInfoWord(info, host.mtu); break;
-        case NET_CTL_INFO_LINK: WriteInfoWord(info, NET_CTL_LINK_CONNECTED); break;
-        case NET_CTL_INFO_IP_CONFIG: WriteInfoWord(info, NET_CTL_IP_DHCP); break;
-        case NET_CTL_INFO_IP_ADDRESS: WriteInfoAddress(info, host.address); break;
-        case NET_CTL_INFO_NETMASK: WriteInfoAddress(info, host.netmask); break;
-        case NET_CTL_INFO_DEFAULT_ROUTE: WriteInfoAddress(info, host.gateway); break;
-        case NET_CTL_INFO_PRIMARY_DNS: WriteInfoAddress(info, host.dns.size() > 0 ? host.dns[0] : in_addr{}); break;
-        case NET_CTL_INFO_SECONDARY_DNS: WriteInfoAddress(info, host.dns.size() > 1 ? host.dns[1] : in_addr{}); break;
-        case NET_CTL_INFO_HTTP_PROXY_CONFIG: WriteInfoWord(info, NET_CTL_HTTP_PROXY_OFF); break;
+        case NET_CTL_INFO_DEVICE: copied = WriteInfoWord(info, NET_CTL_DEVICE_WIRED); break;
+        case NET_CTL_INFO_ETHER_ADDR: copied = GuestCopyOut_nid_no_patch(info->opaque, NET_CTL_ETHER_ADDR, sizeof(NET_CTL_ETHER_ADDR)); break;
+        case NET_CTL_INFO_MTU: copied = WriteInfoWord(info, host.mtu); break;
+        case NET_CTL_INFO_LINK: copied = WriteInfoWord(info, NET_CTL_LINK_CONNECTED); break;
+        case NET_CTL_INFO_IP_CONFIG: copied = WriteInfoWord(info, NET_CTL_IP_DHCP); break;
+        case NET_CTL_INFO_IP_ADDRESS: copied = WriteInfoAddress(info, host.address); break;
+        case NET_CTL_INFO_NETMASK: copied = WriteInfoAddress(info, host.netmask); break;
+        case NET_CTL_INFO_DEFAULT_ROUTE: copied = WriteInfoAddress(info, host.gateway); break;
+        case NET_CTL_INFO_PRIMARY_DNS: copied = WriteInfoAddress(info, host.dns.size() > 0 ? host.dns[0] : in_addr{}); break;
+        case NET_CTL_INFO_SECONDARY_DNS: copied = WriteInfoAddress(info, host.dns.size() > 1 ? host.dns[1] : in_addr{}); break;
+        case NET_CTL_INFO_HTTP_PROXY_CONFIG: copied = WriteInfoWord(info, NET_CTL_HTTP_PROXY_OFF); break;
         case NET_CTL_INFO_BSSID:
         case NET_CTL_INFO_SSID:
         case NET_CTL_INFO_DHCP_HOSTNAME:
         case NET_CTL_INFO_PPPOE_AUTH_NAME:
-        case NET_CTL_INFO_HTTP_PROXY_SERVER: std::memset(info->opaque, 0, sizeof(info->opaque)); break;
+        case NET_CTL_INFO_HTTP_PROXY_SERVER: {
+            const NetCtlInfo zero{};
+            copied = GuestCopyOut_nid_no_patch(info->opaque, zero.opaque, sizeof(info->opaque));
+            break;
+        }
         case NET_CTL_INFO_WIFI_SECURITY:
         case NET_CTL_INFO_RSSI_DBM:
         case NET_CTL_INFO_RSSI_PERCENTAGE:
         case NET_CTL_INFO_CHANNEL:
-        case NET_CTL_INFO_HTTP_PROXY_PORT: WriteInfoWord(info, 0); break;
+        case NET_CTL_INFO_HTTP_PROXY_PORT: copied = WriteInfoWord(info, 0); break;
         default: throw std::runtime_error("sceNetCtlGetInfo: info code " + std::to_string(code) + " is not implemented");
     }
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!info) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    if (info->size != sizeof(NetCtlNatInfo)) return SCE_NET_CTL_ERROR_INVALID_SIZE;
+    std::uint32_t size = 0;
+    const int savedErrno = errno;
+    const bool copiedSize = GuestCopyIn_nid_no_patch(&size, info, sizeof(size));
+    errno = savedErrno;
+    if (!copiedSize) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (size != sizeof(NetCtlNatInfo)) return SCE_NET_CTL_ERROR_INVALID_SIZE;
     HostIpv4Interface host;
     if (!FindHostIpv4Interface(host)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
     auto& config = GetStunConfig();
     std::uint64_t generation = 0;
     const auto now = std::chrono::steady_clock::now();
+    NetCtlNatInfo cached{};
+    bool hasCached = false;
     {
         std::lock_guard guard(config.lock);
         generation = config.configGeneration;
         if (config.hasCachedResult && config.cachedConfigGeneration == generation &&
             config.cachedLocalAddr == host.address.s_addr && now < config.cachedUntil) {
-            *info = config.cachedResult;
-            return 0;
+            cached = config.cachedResult;
+            hasCached = true;
         }
+    }
+    if (hasCached) {
+        const int copyErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(info, &cached, sizeof(cached));
+        errno = copyErrno;
+        return copied ? 0 : SCE_NET_CTL_ERROR_INVALID_ADDR;
     }
     const NetCtlNatInfo discovered = DiscoverNatInfo(host.address);
     if (discovered.stun_status == NET_CTL_STUN_STATUS_OK) {
@@ -964,31 +1152,35 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
             config.hasCachedResult = true;
         }
     }
-    *info = discovered;
-    return 0;
+    const int copyErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &discovered, sizeof(discovered));
+    errno = copyErrno;
+    return copied ? 0 : SCE_NET_CTL_ERROR_INVALID_ADDR;
 }
 
 int APS5_VABI sceNetCtlGetResult(int event, int* result) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
-    if (!result) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    const int val = 0;
+    if (!result || !GuestCopyOut_nid_no_patch(result, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (event < NET_CTL_EVENT_DISCONNECTED || event > NET_CTL_EVENT_IPOBTAINED) {
         throw std::runtime_error("sceNetCtlGetResult: event type " + std::to_string(event) + " is not implemented");
     }
-    *result = 0;
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetState(int* state) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!state) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    *state = HostHasAddress(AF_UNSPEC) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
+    const int val = HostHasAddress(AF_UNSPEC) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
+    if (!GuestCopyOut_nid_no_patch(state, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetStateV6(int* state) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!state) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    *state = HostHasAddress(AF_INET6) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
+    const int val = HostHasAddress(AF_INET6) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
+    if (!GuestCopyOut_nid_no_patch(state, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -1006,9 +1198,24 @@ int APS5_VABI sceNetCtlRegisterCallbackV6(NetCtlCallback func, void* arg, int* c
 }
 
 int APS5_VABI sceNetCtlGetInfoV6(std::uint32_t code, NetCtlInfoV6* info) {
+    if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!info) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (code < NET_CTL_INFO_V6_IP_ADDRESS || code > NET_CTL_INFO_V6_SECONDARY_DNS) return SCE_NET_CTL_ERROR_INVALID_CODE;
     if (!HostHasAddress(AF_INET6)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
+    if (code == NET_CTL_INFO_V6_IP_ADDRESS || code == NET_CTL_INFO_V6_LINK_LOCAL) {
+        const HostIpv6Selection selection = QueryHostIpv6Selection();
+        HostIpv6Address chosen;
+        if (code == NET_CTL_INFO_V6_IP_ADDRESS) {
+            chosen = selection.global;
+        } else if (selection.linkLocalOfGlobal.valid) {
+            chosen = selection.linkLocalOfGlobal;
+        } else {
+            chosen = selection.linkLocal;
+        }
+        if (!chosen.valid) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
+        if (!WriteInfoV6Address(info, chosen)) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+        return 0;
+    }
     throw std::runtime_error("sceNetCtlGetInfoV6: info code " + std::to_string(code) + " is not implemented");
 }
 
@@ -1032,8 +1239,7 @@ int APS5_VABI sceNetCtlRegisterCallbackIpcInt(NetCtlCallback callback, void* arg
 }
 
 int APS5_VABI sceNetCtlRegisterCallbackForLibIpcInt(NetCtlCallback callback, void* argument, int* callbackId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return RegisterCallback(g_callbacksForLib, callback, argument, callbackId);
 }
 
 int APS5_VABI sceNetCtlUnregisterCallbackForNpToolkit(int callbackId) {
@@ -1045,8 +1251,7 @@ int APS5_VABI sceNetCtlUnregisterCallbackIpcInt(int callbackId) {
 }
 
 int APS5_VABI sceNetCtlUnregisterCallbackForLibIpcInt(int callbackId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return UnregisterCallback(g_callbacksForLib, callbackId);
 }
 
 int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void) {
@@ -1054,8 +1259,7 @@ int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void) {
 }
 
 int APS5_VABI sceNetCtlCheckCallbackForLibIpcInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return CheckCallbacks(g_callbacksForLib);
 }
 
 int APS5_VABI sceNetCtlClearEventIpcInt(int event) {
@@ -1091,11 +1295,15 @@ int APS5_VABI sceNetCtlGetInfoIpcInt(std::uint32_t code, NetCtlInfo* info) {
 }
 
 int APS5_VABI sceNetCtlGetEtherLinkMode(int* mode) {
+    const int val = 0;
+    if (!GuestCopyOut_nid_no_patch(mode, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetWifiType(int* type) {
+    const int val = 0;
+    if (!GuestCopyOut_nid_no_patch(type, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1168,7 +1376,11 @@ int APS5_VABI sceNetCtlGetResultV6(int event_type, int* error_code) {
     if (event_type < NET_CTL_EVENT_DISCONNECTED || event_type > NET_CTL_EVENT_IPOBTAINED) {
         throw std::runtime_error("sceNetCtlGetResultV6: event type " + std::to_string(event_type) + " is not implemented");
     }
-    *error_code = 0;
+    const int val = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(error_code, &val, sizeof(val));
+    errno = savedErrno;
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -1357,5 +1569,106 @@ int APS5_VABI sceNetCtlGetWifiInfoIpcInt(NetCtlWifiInfo* info) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI sceInetStatInit() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceInetStatTerm() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNetConnSwitcherStop() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI libSceNetCtlUnknown_09YMz3Vp5us_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("09YMz3Vp5us", libSceNetCtlUnknown_09YMz3Vp5us_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_1PGApDf96ao_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("1PGApDf96ao", libSceNetCtlUnknown_1PGApDf96ao_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_1mrTXfVGn_plus_g_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("1mrTXfVGn+g", libSceNetCtlUnknown_1mrTXfVGn_plus_g_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_2Ny2lzU3o9w_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("2Ny2lzU3o9w", libSceNetCtlUnknown_2Ny2lzU3o9w_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_3cNKxJXXYYk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3cNKxJXXYYk", libSceNetCtlUnknown_3cNKxJXXYYk_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_AIu_minus_tRC_minus_mSM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("AIu-tRC-mSM", libSceNetCtlUnknown_AIu_minus_tRC_minus_mSM_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_BSERkV_minus_a9e8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("BSERkV-a9e8", libSceNetCtlUnknown_BSERkV_minus_a9e8_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_FwX_plus_Js8qXNA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("FwX+Js8qXNA", libSceNetCtlUnknown_FwX_plus_Js8qXNA_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_I14Npt_minus_awQg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("I14Npt-awQg", libSceNetCtlUnknown_I14Npt_minus_awQg_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_KUdWtCC6w_minus_0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KUdWtCC6w-0", libSceNetCtlUnknown_KUdWtCC6w_minus_0_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_QnQ4RBu546Y_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("QnQ4RBu546Y", libSceNetCtlUnknown_QnQ4RBu546Y_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_e5_minus_Xj0wEzbI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("e5-Xj0wEzbI", libSceNetCtlUnknown_e5_minus_Xj0wEzbI_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_lScJhO3Rnpk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lScJhO3Rnpk", libSceNetCtlUnknown_lScJhO3Rnpk_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_mfWDyuk_minus_M0I_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mfWDyuk-M0I", libSceNetCtlUnknown_mfWDyuk_minus_M0I_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_on7RqSRy8pU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("on7RqSRy8pU", libSceNetCtlUnknown_on7RqSRy8pU_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_sngJX5nUjVM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("sngJX5nUjVM", libSceNetCtlUnknown_sngJX5nUjVM_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_wVXoAlD7Fsg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("wVXoAlD7Fsg", libSceNetCtlUnknown_wVXoAlD7Fsg_nid_no_patch);
 
 }

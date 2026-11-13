@@ -316,6 +316,142 @@ void CheckPrivateCommitTails() {
     Require(VirtualFree(memory, Pages * Page, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS) && VirtualFree(memory, 0, MEM_RELEASE), "cannot release the private commit tail placeholder");
 }
 
+std::set<std::size_t> CollectPages(unsigned char* base, Collection mode) {
+    const auto address = reinterpret_cast<std::uintptr_t>(base);
+    auto cursor = address;
+    const auto end = address + Bytes;
+    std::set<std::size_t> result;
+    while (cursor < end) {
+        std::array<void*, 32> pages{};
+        std::size_t available = pages.size();
+        Require(Mappings::Get().Collect(cursor, end - cursor, pages.data(), &available, true, mode), "resident collection failed");
+        for (std::size_t i = 0; i < available; ++i) result.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - address) / Small);
+        if (available < pages.size()) break;
+        cursor = reinterpret_cast<std::uintptr_t>(pages[available - 1]) + Small;
+    }
+    return result;
+}
+
+void CheckPinnedResidentPageShared() {
+    auto& mappings = Mappings::Get();
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
+    auto* first = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    auto* second = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(section && first && second, "cannot allocate pinned resident test memory");
+    mappings.ForgetSection(section);
+    const auto address = reinterpret_cast<std::uintptr_t>(first);
+    mappings.Map(first, Bytes, section, 0, PAGE_READWRITE, true, true);
+    MEMORY_BASIC_INFORMATION info{};
+    Require(VirtualQuery(first, &info, sizeof(info)) == sizeof(info) && info.Type == MEM_PRIVATE, "the pinned resident test memory is not resident");
+    mappings.Pin(address, 16384);
+    first[5] = 9;
+    mappings.Map(second, Bytes, section, 0, PAGE_READWRITE, true, true);
+    Require(second[5] == 9, "the second mapping does not share the pinned resident page");
+    CollectPages(first, Collection::Fresh);
+    Require(VirtualQuery(first, &info, sizeof(info)) == sizeof(info) && info.Protect == PAGE_READWRITE, "a pinned page was protected once its run became shared");
+    Require(CollectPages(first, Collection::Armed) == Pages(0, 4), "a pinned page was trusted as clean once its run became shared");
+    Require(CollectPages(first, Collection::Armed) == Pages(0, 4), "a pinned page stopped being reported once its run became shared");
+    mappings.Unpin(address, 16384);
+    Require(CollectPages(first, Collection::Armed) == Pages(0, 4), "unpin of a shared page was not invalidated");
+    Require(CollectPages(first, Collection::Armed).empty(), "unpin of a shared page did not restore tracking");
+    mappings.Reset(first, Bytes);
+    mappings.Reset(second, Bytes);
+    mappings.ForgetSection(section);
+    VirtualFree(first, 0, MEM_RELEASE);
+    VirtualFree(second, 0, MEM_RELEASE);
+    CloseHandle(section);
+}
+
+void CheckLargeResidentRunCollects() {
+    constexpr std::size_t Large = 0x40000;
+    auto& mappings = Mappings::Get();
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Large, nullptr);
+    auto* first = static_cast<unsigned char*>(mappings.Reserve(nullptr, Large));
+    Require(section && first, "cannot allocate large resident run test memory");
+    mappings.ForgetSection(section);
+    mappings.Map(first, Large, section, 0, PAGE_READWRITE, true, true);
+    MEMORY_BASIC_INFORMATION info{};
+    Require(VirtualQuery(first + Large - Small, &info, sizeof(info)) == sizeof(info) && info.Type == MEM_PRIVATE, "the large resident run test memory is not resident");
+    const auto address = reinterpret_cast<std::uintptr_t>(first);
+    const auto collect = [&](Collection mode) {
+        std::set<std::size_t> result;
+        auto cursor = address;
+        while (cursor < address + Large) {
+            std::array<void*, 32> pages{};
+            std::size_t available = pages.size();
+            Require(mappings.Collect(cursor, address + Large - cursor, pages.data(), &available, true, mode), "large resident run collection failed");
+            for (std::size_t i = 0; i < available; ++i) result.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - address) / Small);
+            if (available < pages.size()) break;
+            cursor = reinterpret_cast<std::uintptr_t>(pages[available - 1]) + Small;
+        }
+        return result;
+    };
+    collect(Collection::All);
+    static_cast<volatile unsigned char*>(first)[3 * Small] = 1;
+    static_cast<volatile unsigned char*>(first)[Large - Small] = 2;
+    Require(collect(Collection::Fresh).empty(), "a fresh collect of a large resident run reported written pages");
+    Require(collect(Collection::Armed) == std::set<std::size_t>{3, Large / Small - 1}, "a large resident run did not report its written pages");
+    Require(collect(Collection::Armed).empty(), "a large resident run reported its written pages twice");
+    mappings.Reset(first, Large);
+    mappings.ForgetSection(section);
+    VirtualFree(first, 0, MEM_RELEASE);
+    CloseHandle(section);
+}
+
+void CheckForgottenSectionWithResidentRun() {
+    auto& mappings = Mappings::Get();
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
+    auto* first = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(section && first, "cannot allocate forgotten resident section test memory");
+    mappings.ForgetSection(section);
+    mappings.Map(first, Bytes, section, 0, PAGE_READWRITE, true, true);
+    MEMORY_BASIC_INFORMATION info{};
+    Require(VirtualQuery(first, &info, sizeof(info)) == sizeof(info) && info.Type == MEM_PRIVATE, "the forgotten resident section test memory is not resident");
+    first[0] = 7;
+    Require(!mappings.ForgetSection(section), "a section with a live resident run was reported blank");
+    mappings.Reset(first, Bytes);
+    mappings.ForgetSection(section);
+    VirtualFree(first, 0, MEM_RELEASE);
+    CloseHandle(section);
+}
+
+void CheckReplacedResidentRunKeepsTheNewRun(bool partial) {
+    auto& mappings = Mappings::Get();
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
+    auto* first = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    auto* second = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    auto* third = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(section && first && second && third, "cannot allocate replaced resident run test memory");
+    const auto resident = [](unsigned char* address) {
+        MEMORY_BASIC_INFORMATION info{};
+        return VirtualQuery(address, &info, sizeof(info)) == sizeof(info) && info.Type == MEM_PRIVATE;
+    };
+    mappings.ForgetSection(section);
+    mappings.Map(first, Bytes, section, 0, PAGE_READWRITE, true, true);
+    first[0] = 1;
+    mappings.ForgetSection(section);
+    mappings.Map(second, Bytes, section, 0, PAGE_READWRITE, true, true);
+    Require(resident(first) && resident(second), "the replaced resident run test memory is not resident");
+    second[0] = 2;
+    if (partial) {
+        mappings.Reset(first + 16384, 16384);
+    } else {
+        mappings.Reset(first, Bytes);
+    }
+    mappings.Map(third, Bytes, section, 0, PAGE_READWRITE, true, true);
+    Require(third[0] == 2, "a mapping after the replaced run was released did not see the run that replaced it");
+    third[1] = 3;
+    Require(second[1] == 3, "a mapping after the replaced run was released diverged from the run that replaced it");
+    if (partial) mappings.Reset(first, Bytes);
+    mappings.Reset(second, Bytes);
+    mappings.Reset(third, Bytes);
+    mappings.ForgetSection(section);
+    VirtualFree(first, 0, MEM_RELEASE);
+    VirtualFree(second, 0, MEM_RELEASE);
+    VirtualFree(third, 0, MEM_RELEASE);
+    CloseHandle(section);
+}
+
 void CheckForgottenSectionKeepsNoPages() {
     auto& mappings = Mappings::Get();
     HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
@@ -616,6 +752,71 @@ DWORD ProtectionAt(const unsigned char* address) {
     return info.State == MEM_COMMIT ? info.Protect : 0;
 }
 
+void CheckSplitRunReportsRacingStores() {
+    auto& mappings = Mappings::Get();
+    constexpr std::size_t Page = 16384;
+    constexpr std::size_t Span = 64 * Page;
+    constexpr std::size_t Rounds = 2000;
+    constexpr std::size_t Races = 16;
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Span, nullptr);
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Span));
+    Require(section && memory, "cannot allocate split run race test memory");
+    mappings.ForgetSection(section);
+    auto* target = memory + 50 * Page;
+    const auto collect = [&](std::size_t first, std::size_t count, Collection collection) {
+        std::array<void*, 32> pages{};
+        std::size_t available = pages.size();
+        Require(mappings.Collect(reinterpret_cast<std::uintptr_t>(memory + first * Page), count * Page, pages.data(), &available, true, collection), "split run race collection failed");
+        std::set<std::size_t> result;
+        for (std::size_t i = 0; i < available; ++i) result.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - reinterpret_cast<std::uintptr_t>(memory)) / Small);
+        return result;
+    };
+    std::atomic<std::size_t> round{0};
+    std::atomic<std::size_t> finished{0};
+    std::atomic<std::size_t> raced{0};
+    std::atomic<bool> split{false};
+    unsigned char value = 0;
+    std::jthread writer([&](std::stop_token stop) {
+        for (std::size_t seen = 0; !stop.stop_requested();) {
+            const auto current = round.load(std::memory_order_acquire);
+            if (current == seen) {
+                std::this_thread::yield();
+                continue;
+            }
+            seen = current;
+            while (!split.load(std::memory_order_acquire) && !stop.stop_requested()) {
+                MEMORY_BASIC_INFORMATION info{};
+                if (VirtualQuery(target, &info, sizeof(info)) != sizeof(info) || info.State != MEM_COMMIT || info.Protect != PAGE_EXECUTE_READWRITE) continue;
+                static_cast<volatile unsigned char*>(target)[8] = value;
+                ++raced;
+                break;
+            }
+            finished.store(seen, std::memory_order_release);
+        }
+    });
+    for (std::size_t current = 1; current <= Rounds && raced < Races; ++current) {
+        mappings.Map(memory, Span, section, 0, PAGE_READWRITE);
+        for (std::size_t page = 12; page <= 50; page += 2) collect(page, 1, Collection::All);
+        Require(ProtectionAt(target) == PAGE_READONLY && ProtectionAt(target - Page) == PAGE_READWRITE, "collection did not arm every other page of the run that races its split");
+        const unsigned char before = target[8];
+        value = static_cast<unsigned char>(before + 1);
+        split.store(false, std::memory_order_relaxed);
+        round.store(current, std::memory_order_release);
+        mappings.Reset(memory + 10 * Page, Page);
+        split.store(true, std::memory_order_release);
+        while (finished.load(std::memory_order_acquire) != current) std::this_thread::yield();
+        const bool stored = target[8] != before;
+        Require(collect(12, 39, Collection::Armed) == (stored ? std::set<std::size_t>{50 * Page / Small} : std::set<std::size_t>{}), stored ? "a store that raced the split of its run was not reported" : "a split of a run reported a page nobody stored to");
+    }
+    writer.request_stop();
+    writer.join();
+    Require(raced > 0, "no store landed in the writable window of a split, so the race was not exercised");
+    mappings.Reset(memory, Span);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
+
 void CheckSharedRunIsOneView() {
     constexpr std::size_t Gib = std::size_t{1} << 30;
     HANDLE large = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, static_cast<DWORD>(Gib), nullptr);
@@ -676,6 +877,161 @@ void CheckSharedRunIsOneView() {
     VirtualFree(other, 0, MEM_RELEASE);
     CloseHandle(section);
 }
+
+void CheckCommitResetsEveryPageOfARunView() {
+    auto& mappings = Mappings::Get();
+    constexpr std::size_t Page = 16384;
+    constexpr std::size_t Span = 4 * Page;
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Span, nullptr);
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Span));
+    Require(section && memory, "cannot allocate recommitted run test memory");
+    mappings.ForgetSection(section);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    const auto collect = [&](std::size_t page, std::size_t count, Collection collection) {
+        std::array<void*, 32> pages{};
+        std::size_t available = pages.size();
+        Require(mappings.Collect(address + page * Page, count * Page, pages.data(), &available, true, collection), "recommitted run collection failed");
+        std::set<std::size_t> result;
+        for (std::size_t i = 0; i < available; ++i) result.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - address) / Small);
+        return result;
+    };
+    mappings.Map(memory, Span, section, 0, PAGE_READWRITE);
+    Require(MappedViews(memory, Span) == 1, "the recommitted run was not mapped as one view");
+    Require(collect(0, 4, Collection::All) == Pages(0, Span / Small), "the run's first collection did not report its fresh pages");
+    MEMORY_BASIC_INFORMATION armed{};
+    Require(VirtualQuery(memory, &armed, sizeof(armed)) == sizeof(armed) && armed.Protect == PAGE_READONLY && armed.RegionSize == Span, "collection did not arm every page of the run alike");
+    mappings.Commit(memory, Span, PAGE_READWRITE, Page, false);
+    Require(ProtectionAt(memory + 3 * Page) == PAGE_READWRITE, "Commit did not reprotect the whole run");
+    memory[Page + 8] = 0x5a;
+    Require(collect(1, 1, Collection::Armed) == Pages(4, 8), "a store into the second page of a run that Commit reprotected was not collected");
+    Require(ProtectionAt(memory + Page) == PAGE_READONLY, "collection did not arm the second page of the recommitted run again");
+    const auto before = faults.load();
+    memory[Page + Small + 8] = 0x5b;
+    Require(faults == before + 1, "a store into the rearmed second page of the run did not fault");
+    Require(collect(1, 1, Collection::Armed) == Pages(5, 6), "a store into the rearmed second page of the run was not collected once");
+    mappings.Commit(memory, Span, PAGE_READONLY, Page, false);
+    for (std::size_t page = 0; page < 4; ++page) {
+        std::uint32_t protection = 0;
+        Require(mappings.Protection(address + page * Page, &protection) && protection == PAGE_READONLY, ("Commit left page " + std::to_string(page) + " of a run with its old guest protection").c_str());
+    }
+    mappings.Reset(memory, Span);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
+}
+
+std::set<std::size_t> KnownZeroPages(const void* base, std::size_t bytes) {
+    struct Found {
+        std::set<std::size_t> pages;
+        std::uintptr_t base;
+    } found{{}, reinterpret_cast<std::uintptr_t>(base)};
+    Mappings::Get().KnownZero(found.base, bytes, [](void* context, std::uintptr_t begin, std::uintptr_t end) {
+        auto& result = *static_cast<Found*>(context);
+        for (auto at = begin; at < end; at += Small) result.pages.insert((at - result.base) / Small);
+    }, &found);
+    return found.pages;
+}
+
+std::set<std::size_t> PagesBelow(std::size_t count, std::set<std::size_t> without = {}) {
+    std::set<std::size_t> pages;
+    for (std::size_t page = 0; page < count; ++page) {
+        if (!without.contains(page)) pages.insert(page);
+    }
+    return pages;
+}
+
+void CheckKnownZeroPrivate() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(memory != nullptr, "known zero private reservation failed");
+    mappings.Commit(memory, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    const auto pages = Bytes / Small;
+    Require(KnownZeroPages(memory, Bytes) == PagesBelow(pages), "a fresh watched commit is not known zero");
+    Require(KnownZeroPages(memory + 3 * Small, 2 * Small) == std::set<std::size_t>{0, 1}, "a known zero query is not clipped to its range");
+    static_cast<volatile unsigned char*>(memory)[Small] = 1;
+    Require(KnownZeroPages(memory, Bytes) == PagesBelow(pages, {1}), "a written private page stayed known zero");
+    static_cast<volatile unsigned char*>(memory)[5 * Small] = 2;
+    std::array<void*, 32> written{};
+    std::size_t count = written.size();
+    Require(mappings.Collect(address, Bytes, written.data(), &count, true), "known zero private collect failed");
+    Require(KnownZeroPages(memory, Bytes) == PagesBelow(pages, {1, 5}), "a collect that reset the write watch lost a written page");
+    static_cast<volatile unsigned char*>(memory)[7 * Small] = 3;
+    count = written.size();
+    Require(mappings.Collect(address, Bytes, written.data(), &count, true, Collection::Fresh), "known zero fresh collect failed");
+    count = written.size();
+    Require(mappings.Collect(address, Bytes, written.data(), &count, true, Collection::Armed), "known zero armed collect failed");
+    Require(KnownZeroPages(memory, Bytes) == PagesBelow(pages, {1, 5, 7}), "a fresh or armed collect lost a written page");
+    Require(mappings.BeginHostWrite(address + 9 * Small, Small), "known zero host write failed");
+    mappings.EndHostWrite(address + 9 * Small, Small);
+    Require(KnownZeroPages(memory, Bytes) == PagesBelow(pages, {1, 5, 7, 9}), "a host write window stayed known zero");
+    mappings.Reset(memory, Bytes);
+    Require(KnownZeroPages(memory, Bytes).empty(), "a reset range stayed known zero");
+    VirtualFree(memory, 0, MEM_RELEASE);
+    auto* unwatched = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(unwatched != nullptr, "known zero unwatched reservation failed");
+    mappings.Commit(unwatched, Bytes, PAGE_READWRITE, Bytes, false);
+    Require(KnownZeroPages(unwatched, Bytes).empty(), "memory without a write watch is known zero");
+    mappings.Reset(unwatched, Bytes);
+    VirtualFree(unwatched, 0, MEM_RELEASE);
+}
+
+void CheckKnownZeroResident() {
+    constexpr std::size_t Large = 0x40000;
+    auto& mappings = Mappings::Get();
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Large, nullptr);
+    auto* first = static_cast<unsigned char*>(mappings.Reserve(nullptr, Large));
+    Require(section && first, "cannot allocate known zero resident test memory");
+    mappings.ForgetSection(section);
+    mappings.Map(first, Large, section, 0, PAGE_READWRITE, true, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(first);
+    const auto pages = Large / Small;
+    Require(KnownZeroPages(first, Large) == PagesBelow(pages), "a fresh resident run is not known zero");
+    static_cast<volatile unsigned char*>(first)[2 * Small] = 7;
+    std::array<void*, 64> written{};
+    std::size_t count = written.size();
+    Require(mappings.Collect(address, Large, written.data(), &count, true), "known zero resident collect failed");
+    Require(KnownZeroPages(first, Large) == PagesBelow(pages, {2}), "a written resident page stayed known zero");
+    Require(mappings.BeginHostWrite(address + 8 * Small, 4 * Small, false), "known zero host import failed");
+    mappings.EndHostWrite(address + 8 * Small, 4 * Small, false);
+    for (const auto page : KnownZeroPages(first, Large)) Require(page < 8 || page >= 12, "a host import window stayed known zero");
+    mappings.Reset(first, Large);
+    Require(KnownZeroPages(first, Large).empty(), "an evicted resident run stayed known zero");
+    mappings.Map(first, Large, section, 0, PAGE_READWRITE, true, true);
+    Require(!KnownZeroPages(first, Large).contains(2), "a resident page restored with its saved bytes is known zero");
+    Require(static_cast<volatile unsigned char*>(first)[2 * Small] == 7, "a remapped resident run lost its saved bytes");
+    mappings.Reset(first, Large);
+    mappings.ForgetSection(section);
+    VirtualFree(first, 0, MEM_RELEASE);
+    CloseHandle(section);
+}
+
+void CheckKnownZeroFirstReads() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(memory != nullptr, "known zero first-read reservation failed");
+    mappings.Commit(memory, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    static_cast<void>(static_cast<volatile unsigned char*>(memory)[2 * Small]);
+    static_cast<volatile unsigned char*>(memory)[4 * Small] = 0;
+    static_cast<volatile unsigned char*>(memory)[6 * Small] = 7;
+    std::array<void*, 32> written{};
+    std::size_t count = written.size();
+    Require(mappings.Collect(address, Bytes, written.data(), &count, true), "known zero first-read collect failed");
+    std::set<std::size_t> collected;
+    for (std::size_t index = 0; index < count; ++index) collected.insert((static_cast<unsigned char*>(written[index]) - memory) / Small);
+    Require(collected.contains(4), "a zero store into a never-written page was not collected as a write");
+    Require(collected.contains(6), "a real store into a never-written page was not collected as a write");
+    Require(collected.size() <= 3 && !collected.contains(0) && !collected.contains(1) && !collected.contains(3) && !collected.contains(5), "an untouched page was collected as a write");
+    Require(KnownZeroPages(memory, Bytes) == PagesBelow(Bytes / Small, collected), "a collected page stayed known zero");
+    mappings.Reset(memory, Bytes);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
+void CheckKnownZeroShared() {
+    Region region;
+    Require(KnownZeroPages(region.first, Bytes).empty(), "shared memory is known zero");
 }
 
 int main(int argc, char** argv) {
@@ -695,10 +1051,16 @@ int main(int argc, char** argv) {
         CheckFailureAndHoles();
         CheckPrivate();
         CheckConcurrentWrites();
+        CheckSplitRunReportsRacingStores();
         CheckForgottenSectionKeepsNoPages();
         CheckSharedMapQueriesPerMapping();
         CheckSharedRunIsOneView();
         CheckReleasedPrivateAllocation();
+        CheckPinnedResidentPageShared();
+        CheckForgottenSectionWithResidentRun();
+        CheckLargeResidentRunCollects();
+        CheckReplacedResidentRunKeepsTheNewRun(false);
+        CheckReplacedResidentRunKeepsTheNewRun(true);
         CheckComparedWhenShared();
         CheckResidentOnlyComparedWhenShared();
         CheckComparedWhenSharedRemapped();
@@ -706,6 +1068,11 @@ int main(int argc, char** argv) {
         CheckPrivateCommitCarvesPlaceholders();
         CheckPrivateCommitEdgeLayouts();
         CheckPrivateCommitTails();
+        CheckCommitResetsEveryPageOfARunView();
+        CheckKnownZeroPrivate();
+        CheckKnownZeroResident();
+        CheckKnownZeroShared();
+        CheckKnownZeroFirstReads();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

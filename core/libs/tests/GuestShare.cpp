@@ -13,6 +13,17 @@ void Require(bool value) { if (!value) std::abort(); }
 }
 
 int main() {
+    Require(sceShareInitialize(0, 0, 0) == 0);
+    Require(sceShareFeaturePermit(0) == 0);
+    Require(sceShareFeaturePermit(1) == 0);
+    Require(sceShareFeatureProhibit(0) == 0);
+    Require(sceShareFeatureProhibit(1) == 0);
+    Require(sceShareRegisterContentEventCallback(nullptr, nullptr) == 0);
+    Require(sceShareUnregisterContentEventCallback(nullptr) == 0);
+    Require(sceShareSetCaptureSource(0, nullptr) == 0);
+    Require(sceShareSetContentParam(nullptr) == 0);
+    Require(sceShareSetContentParam("test") == 0);
+    Require(sceShareSetScreenshotOverlayImage(nullptr, 0, 0, 0) == 0);
     constexpr std::int32_t notSupported = static_cast<std::int32_t>(0x81960007);
     std::uint8_t param[64]{};
 
@@ -40,6 +51,21 @@ int main() {
     checkExtended(sceShareCaptureScreenshotExtended, 24);
     checkExtended(sceShareCaptureVideoClipExtended, 40);
 
+    ShareScreenshotParamExtended screenshot{};
+    screenshot.size = sizeof(screenshot);
+    reqId = 7;
+    Require(sceShareCaptureScreenshotExtended(reinterpret_cast<const ShareScreenshotParamExtended*>(0x10), &reqId) == invalidParam && reqId == 7);
+    Require(sceShareCaptureScreenshotExtended(&screenshot, reinterpret_cast<std::int32_t*>(0x10)) == invalidParam);
+
+    ShareVideoClipParamExtended clip{};
+    clip.size = sizeof(clip);
+    reqId = 7;
+    Require(sceShareCaptureVideoClipExtended(reinterpret_cast<const ShareVideoClipParamExtended*>(0x10), &reqId) == invalidParam && reqId == 7);
+    Require(sceShareCaptureVideoClipExtended(&clip, reinterpret_cast<std::int32_t*>(0x10)) == invalidParam);
+
+    Require(sceShareCaptureScreenshot(param, reinterpret_cast<std::int32_t*>(0x10)) == invalidParam);
+    Require(sceShareCaptureVideoClip(param, reinterpret_cast<std::int32_t*>(0x10)) == invalidParam);
+
     for (Capture capture : {sceShareCaptureScreenshot, sceShareCaptureVideoClip}) {
         reqId = 7;
         Require(capture(param, &reqId) == notSupported);
@@ -64,16 +90,20 @@ int main() {
     Require(sceShareGetCurrentStatus(0, reinterpret_cast<ShareCurrentStatus*>(status)) == invalidParam);
     Require(status[0] == 0x5a);
     Require(sceShareGetCurrentStatus(1, nullptr) == invalidParam);
+    Require(sceShareGetCurrentStatus(1, reinterpret_cast<ShareCurrentStatus*>(0x10)) == invalidParam);
     std::uint32_t running[2]{0xffffffffu, 0x5a5a5a5au};
     Require(sceShareGetRunningStatus(running) == 0);
     Require(running[0] == 0 && running[1] == 0x5a5a5a5au);
     Require(sceShareGetRunningStatus(nullptr) == invalidParam);
+    Require(sceShareGetRunningStatus(reinterpret_cast<std::uint32_t*>(0x10)) == invalidParam);
     Require(sceShareSetContentParamForApplicationTitle("title") == 0);
     Require(sceShareSetContentParamForApplicationTitle(nullptr) == invalidParam);
+    Require(sceShareSetContentParamForApplicationTitle(reinterpret_cast<const char*>(0x10)) == invalidParam);
     Require(sceShareSetContentParamForApplicationTitle("") == invalidParam);
     std::string title(5119, 'a');
     Require(sceShareSetContentParamForApplicationTitle(title.c_str()) == 0);
     title.push_back('a');
     Require(sceShareSetContentParamForApplicationTitle(title.c_str()) == invalidParam);
+    Require(sceShareTerminate() == 0);
     return 0;
 }

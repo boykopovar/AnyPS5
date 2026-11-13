@@ -461,6 +461,46 @@ void framesFramePointerLeavesThatPushInTheirBody() {
     require(sites[1].Body == stubBody({0x48, 0x01, 0xd0, 0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00, 0x5d, 0xc3}), "the add before pop rbp was not copied ahead of raising rsp");
 }
 
+void skipsOpcodeEncodedRspUses() {
+    const std::vector<std::vector<std::uint8_t>> uses{
+        {0x48, 0x0f, 0xcc, 0x48, 0x0f, 0xcc},
+        {0x0f, 0xcc, 0x0f, 0xcc},
+        {0x4c, 0x0f, 0xcc, 0x4c, 0x0f, 0xcc},
+        {0x54, 0x58},
+        {0x66, 0x54, 0x66, 0x58},
+        {0x40, 0xb4, 0x10},
+        {0x66, 0xbc, 0x00, 0x10},
+        {0x54, 0x5c},
+        {0x48, 0x94, 0x48, 0x94},
+        {0xbc, 0x00, 0x10, 0x00, 0x00},
+        {0x48, 0xbc, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    };
+    for (const auto& use : uses) {
+        auto body = StoreBelowRsp;
+        append(body, use);
+        const auto input = image({framelessLeaf(FramelessPrologue, body, FramelessExit)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+        require(sites.empty() && displacements.empty() && report.Skipped.at("other use of rsp") == 1,
+                "an opcode-encoded rsp use was framed");
+    }
+}
+
+void framesOpcodeEncodedNonStackRegisters() {
+    for (const auto& use : std::vector<std::vector<std::uint8_t>>{
+             {0x49, 0x0f, 0xcc, 0x49, 0x0f, 0xcc}, {0x41, 0x0f, 0xcc, 0x41, 0x0f, 0xcc},
+             {0x49, 0x94, 0x49, 0x94}, {0x41, 0xbc, 0x00, 0x10, 0x00, 0x00}, {0xb4, 0x10}}) {
+        auto body = StoreBelowRsp;
+        append(body, use);
+        const auto input = image({framelessLeaf(FramelessPrologue, body, FramelessExit)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+        require(report.Framed == 1 && sites.size() == 2, "an opcode-encoded non-stack register prevented framing");
+    }
+}
+
 void skipsLeavesThatCopyRsp() {
     std::vector<std::uint8_t> withCmov = StoreBelowRsp;
     append(withCmov, {0x48, 0x0f, 0x45, 0xc4});
@@ -645,6 +685,34 @@ void skipsAllocatingLeavesWithoutAMatchingFree() {
     require(report.Skipped.at("other use of rsp") == 2, "an add of another size before the pops, or more rsp arithmetic in the body, was not reported as another use of rsp");
 }
 
+void skipsLeavesWithoutFramePointerThatPushOrPop() {
+    const std::vector<std::vector<std::uint8_t>> moves{
+        {0x50, 0x48, 0x8b, 0x1c, 0x24, 0x58},
+        {0x9c, 0x48, 0x83, 0x24, 0x24, 0xfe, 0x9d},
+        {0x6a, 0x01, 0x48, 0x8b, 0x44, 0x24, 0x00, 0x58},
+        {0xff, 0x74, 0x24, 0x08, 0x8f, 0x04, 0x24},
+        {0x41, 0x50, 0x41, 0x58},
+        {0x66, 0x50, 0x66, 0x58},
+        {0x0f, 0xa8, 0x0f, 0xa9},
+    };
+    std::vector<std::vector<std::uint8_t>> functions;
+    for (const auto& move : moves) {
+        auto body = StoreBelowRsp;
+        append(body, move);
+        functions.push_back(framelessLeaf(FramelessPrologue, body, FramelessExit));
+    }
+    auto withFramePointer = StoreBelowPushes;
+    append(withFramePointer, {0x52, 0x58});
+    functions.push_back(leaf(withFramePointer));
+    const auto input = image(functions);
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.RedZoneFunctions == functions.size() && report.FramedWithoutFramePointer == 0 && displacements.empty(), "a leaf without a frame pointer that pushes or pops between its prologue and its exits was framed, so its rsp operands after a push were moved past the pushed slot");
+    require(report.Skipped.at("push or pop inside the body") == moves.size(), "a leaf without a frame pointer that pushes or pops between its prologue and its exits was not reported with its reason");
+    require(report.Framed == 1 && sites.size() == 2, "a leaf with a frame pointer, whose rsp operands are refused anyway, was not framed because it pushes and pops");
+}
+
 Image calledThenUncalled(const std::vector<std::uint8_t>& called, const std::vector<std::uint8_t>& uncalled) {
     Image result;
     result.bytes = callTo(0, 0x40);
@@ -787,6 +855,114 @@ void leavesCodeWithoutAFunctionRange() {
     require(sites.empty() && report.Functions == 0, "code without a function range was framed");
 }
 
+void skipsModRmAndVectorRspOperands() {
+    const std::vector<std::vector<std::uint8_t>> uses{
+        {0x48, 0x63, 0x27},
+        {0x48, 0x6b, 0x27, 0x02},
+        {0x48, 0x69, 0x27, 0x34, 0x12, 0x00, 0x00},
+        {0xf3, 0x48, 0x0f, 0x2a, 0xc4},
+        {0xf2, 0x48, 0x0f, 0x2a, 0xc4},
+        {0xf3, 0x48, 0x0f, 0x2c, 0xe0},
+        {0xf2, 0x48, 0x0f, 0x2d, 0x27},
+        {0x0f, 0x50, 0xe0},
+        {0x66, 0x0f, 0x50, 0xe0},
+        {0x40, 0x0f, 0x94, 0xc4},
+        {0xf3, 0x48, 0x0f, 0xae, 0xc4},
+        {0xf3, 0x48, 0x0f, 0xae, 0xdc},
+        {0x66, 0x0f, 0xc4, 0xc4, 0x01},
+        {0x66, 0x0f, 0xc5, 0xe0, 0x01},
+        {0x48, 0x0f, 0xc7, 0xf4},
+        {0x48, 0x0f, 0xc7, 0xfc},
+        {0xf3, 0x0f, 0xc7, 0xfc},
+        {0x66, 0x0f, 0xd7, 0xe0},
+        {0x48, 0x0f, 0x02, 0x27},
+        {0x48, 0x0f, 0x03, 0xc4},
+        {0x0f, 0x00, 0xc4},
+        {0x0f, 0x01, 0xe4},
+        {0x48, 0x0f, 0x38, 0xf0, 0x27},
+        {0x48, 0x0f, 0x38, 0xf1, 0x27},
+        {0xf2, 0x0f, 0x38, 0xf0, 0x27},
+        {0xf2, 0x40, 0x0f, 0x38, 0xf0, 0xc4},
+        {0xf2, 0x48, 0x0f, 0x38, 0xf1, 0xc4},
+        {0x66, 0x48, 0x0f, 0x38, 0xf6, 0xc4},
+        {0xf3, 0x48, 0x0f, 0x38, 0xf6, 0x27},
+        {0x66, 0x0f, 0x3a, 0x14, 0xc4, 0x00},
+        {0x66, 0x0f, 0x3a, 0x15, 0xc4, 0x00},
+        {0x66, 0x48, 0x0f, 0x3a, 0x16, 0xc4, 0x00},
+        {0x66, 0x0f, 0x3a, 0x17, 0xc4, 0x00},
+        {0x66, 0x0f, 0x3a, 0x20, 0xc4, 0x00},
+        {0x66, 0x48, 0x0f, 0x3a, 0x22, 0xc4, 0x00},
+        {0xc5, 0xf9, 0x6e, 0xc4},
+        {0xc4, 0xe1, 0xf9, 0x6e, 0xc4},
+        {0xc5, 0xf9, 0x7e, 0xc4},
+        {0xc4, 0xe1, 0xf9, 0x7e, 0xc4},
+        {0xc4, 0xe1, 0xfb, 0x2a, 0xc4},
+        {0xc4, 0xe1, 0xfb, 0x2c, 0xe0},
+        {0xc5, 0xfc, 0x50, 0xe0},
+        {0xc5, 0xfd, 0xd7, 0xe0},
+        {0xc5, 0xf9, 0xc4, 0xc4, 0x01},
+        {0xc5, 0xf9, 0xc5, 0xe0, 0x01},
+        {0xc4, 0xe3, 0xf9, 0x16, 0xc4, 0x01},
+        {0xc4, 0xe3, 0xf9, 0x22, 0xc4, 0x01},
+        {0xc4, 0xe3, 0x79, 0x17, 0xc4, 0x01},
+        {0x62, 0xf1, 0xfd, 0x08, 0x6e, 0xc4},
+        {0x62, 0xf1, 0xfd, 0x08, 0x7e, 0xc4},
+        {0x62, 0xf3, 0xfd, 0x08, 0x16, 0xc4, 0x01},
+        {0x62, 0xf3, 0xfd, 0x08, 0x22, 0xc4, 0x01},
+        {0x62, 0xf1, 0xff, 0x08, 0x2a, 0xc4},
+        {0x62, 0xf1, 0xff, 0x08, 0x2c, 0xe0},
+        {0x62, 0xf1, 0x7d, 0x08, 0xc4, 0xc4, 0x01},
+        {0x62, 0xf1, 0x7d, 0x08, 0xc5, 0xe0, 0x01},
+        {0x62, 0xf3, 0x7d, 0x08, 0x17, 0xc4, 0x01},
+        {0x8f, 0xe9, 0x58, 0x01, 0xc8},
+        {0x8f, 0xe9, 0x78, 0x01, 0xcc},
+        {0x8f, 0xea, 0x78, 0x10, 0xe0, 0x01, 0x00, 0x00, 0x00},
+    };
+    for (std::size_t index = 0; index < uses.size(); ++index) {
+        auto framelessBody = StoreBelowRsp;
+        append(framelessBody, uses[index]);
+        auto framePointerBody = StoreBelowPushes;
+        append(framePointerBody, uses[index]);
+        const auto input = image({framelessLeaf(FramelessPrologue, framelessBody, FramelessExit), leaf(framePointerBody)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+        require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 2 && report.Framed == 0 && report.Skipped.at("other use of rsp") == 2,
+                "direct rsp operand case " + std::to_string(index) + " was framed");
+    }
+}
+
+void framesModRmAndVectorNonStackOperands() {
+    const std::vector<std::vector<std::uint8_t>> uses{
+        {0x4c, 0x63, 0x27},
+        {0x4c, 0x6b, 0x27, 0x02},
+        {0x0f, 0x2a, 0xc4},
+        {0x0f, 0x2c, 0xe0},
+        {0x0f, 0x94, 0xc4},
+        {0xf3, 0x0f, 0x7e, 0xc4},
+        {0x66, 0x0f, 0xc5, 0xc4, 0x01},
+        {0x66, 0x0f, 0xd7, 0xc4},
+        {0x4c, 0x0f, 0x38, 0xf0, 0x27},
+        {0xf2, 0x0f, 0x38, 0xf0, 0xc4},
+        {0x66, 0x0f, 0x3a, 0x21, 0xc4, 0x00},
+        {0xc4, 0xc1, 0xf9, 0x6e, 0xc4},
+        {0xc5, 0xfa, 0x7e, 0xc4},
+        {0xc4, 0xe3, 0xd9, 0x22, 0xc0, 0x01},
+        {0x62, 0xd1, 0xfd, 0x08, 0x6e, 0xc4},
+        {0x62, 0xf1, 0xfe, 0x08, 0x7e, 0xc4},
+    };
+    for (std::size_t index = 0; index < uses.size(); ++index) {
+        auto body = StoreBelowRsp;
+        append(body, uses[index]);
+        const auto input = image({framelessLeaf(FramelessPrologue, body, FramelessExit)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+        require(report.Framed == 1 && sites.size() == 2 && report.Skipped.empty(),
+                "non-stack register case " + std::to_string(index) + " prevented framing");
+    }
+}
+
 }
 
 int main() {
@@ -802,6 +978,7 @@ int main() {
         framesLeavesThatAllocateBelowTheirPushes();
         framesLeavesThatAllocateWithLeaOrALargeSub();
         skipsAllocatingLeavesWithoutAMatchingFree();
+        skipsLeavesWithoutFramePointerThatPushOrPop();
         stubsOperandsWhoseDisplacementOverflows();
         stubsOperandsAtRspWithTheInstructionsAfterThem();
         stubsVexOperandsAtRsp();
@@ -820,6 +997,8 @@ int main() {
         widensExitsOverVexOperandsAtRsp();
         framesFramePointerLeavesThatPushInTheirBody();
         skipsLeavesThatCopyRsp();
+        skipsOpcodeEncodedRspUses();
+        framesOpcodeEncodedNonStackRegisters();
         framesEachFunctionFromItsOwnFde();
         treatsATailCallPastTheFdeEndAsLeaving();
         framesALeafAfterAJumpWithoutInt3FromItsOwnFde();
@@ -828,6 +1007,8 @@ int main() {
         framesAPointerOnlyFunctionByItsOwnBounds();
         leavesCodeWithoutAFunctionRange();
         tellsPopsWithoutRexFromXop();
+        skipsModRmAndVectorRspOperands();
+        framesModRmAndVectorNonStackOperands();
         std::cout << "red-zone framer tests passed\n";
         return 0;
     } catch (const std::exception& error) {

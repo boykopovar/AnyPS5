@@ -4,8 +4,12 @@
 
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
+#include <utility>
+#include <stdexcept>
 #include <filesystem>
 #include <fstream>
+#include <tuple>
 #include <vector>
 
 static void Put16(std::vector<std::uint8_t>& out, std::uint32_t value) {
@@ -50,6 +54,24 @@ static std::vector<std::uint8_t> PcmFile(std::uint32_t channels, std::uint32_t s
     return file;
 }
 
+static std::vector<std::uint8_t> ExtensibleFile(std::uint32_t formatSize, const std::uint8_t* guid) {
+    const auto pcm = PcmFile(1, 44100, 16, 10, 0xfffe);
+    std::vector<std::uint8_t> format(pcm.begin() + 20, pcm.begin() + 60);
+    std::memcpy(format.data() + 24, guid, 16);
+    format.resize(formatSize);
+    std::vector<std::uint8_t> file;
+    PutTag(file, "RIFF");
+    Put32(file, 0);
+    PutTag(file, "WAVE");
+    PutTag(file, "fmt ");
+    Put32(file, formatSize);
+    file.insert(file.end(), format.begin(), format.end());
+    file.insert(file.end(), pcm.begin() + 60, pcm.end());
+    const auto riffSize = static_cast<std::uint32_t>(file.size() - 8);
+    std::memcpy(file.data() + 4, &riffSize, sizeof(riffSize));
+    return file;
+}
+
 static void TestParsePcm() {
     const auto file = PcmFile(2, 44100, 16, 100);
     Ngs2WaveformInfo info{};
@@ -88,6 +110,129 @@ static void TestParsePcm() {
     }
     const auto noChannels = PcmFile(0, 44100, 16, 10);
     Require(sceNgs2ParseWaveformData(noChannels.data(), noChannels.size(), &info) == SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT);
+}
+
+static void AppendLoops(std::vector<std::uint8_t>& file, std::uint32_t loops, std::uint32_t type, std::uint32_t begin, std::uint32_t lastSample, std::uint32_t plays,
+                        std::uint32_t fraction = 0) {
+    PutTag(file, "smpl");
+    Put32(file, 36 + 24 * loops);
+    for (int i = 0; i < 7; ++i) Put32(file, 0);
+    Put32(file, loops);
+    Put32(file, 0);
+    for (std::uint32_t loop = 0; loop < loops; ++loop) {
+        Put32(file, loop);
+        Put32(file, type);
+        Put32(file, begin);
+        Put32(file, lastSample);
+        Put32(file, fraction);
+        Put32(file, plays);
+    }
+    const auto riffSize = static_cast<std::uint32_t>(file.size() - 8);
+    std::memcpy(file.data() + 4, &riffSize, sizeof(riffSize));
+}
+
+static void RequireBlock(const Ngs2WaveformBlock& block, std::uint64_t offset, std::uint64_t size, std::uint32_t repeats, std::uint32_t samples) {
+    Require(block.data_offset == offset && block.data_size == size && block.num_repeats == repeats && block.num_skip_samples == 0 && block.num_samples == samples);
+}
+
+static void AppendShortSampler(std::vector<std::uint8_t>& file, std::uint32_t size, std::uint32_t loops) {
+    PutTag(file, "smpl");
+    Put32(file, size);
+    for (std::uint32_t offset = 0; offset < size; offset += 4) Put32(file, offset == 28 ? loops : 0);
+    const auto riffSize = static_cast<std::uint32_t>(file.size() - 8);
+    std::memcpy(file.data() + 4, &riffSize, sizeof(riffSize));
+}
+
+static Ngs2WaveformInfo ParseLooped(std::uint32_t loops, std::uint32_t type, std::uint32_t begin, std::uint32_t lastSample, std::uint32_t plays, std::uint32_t fraction = 0) {
+    auto file = PcmFile(1, 44100, 16, 100);
+    AppendLoops(file, loops, type, begin, lastSample, plays, fraction);
+    Ngs2WaveformInfo info{};
+    Require(sceNgs2ParseWaveformData(file.data(), file.size(), &info) == SCE_NGS2_OK);
+    return info;
+}
+
+static void TestParsePcmLoops() {
+    for (const std::uint32_t bits : {16u, 24u}) {
+        const std::uint32_t frame = 2 * bits / 8;
+        auto looped = PcmFile(2, 48000, bits, 100);
+        AppendLoops(looped, 1, 0, 10, 59, 0);
+        Ngs2WaveformInfo info{};
+        Require(sceNgs2ParseWaveformData(looped.data(), looped.size(), &info) == SCE_NGS2_OK);
+        Require(info.num_samples == 100 && info.loop_begin_position == 10 && info.loop_end_position == 60 && info.num_blocks == 3);
+        RequireBlock(info.block[0], 44, 10 * frame, 0, 10);
+        RequireBlock(info.block[1], 44 + 10 * frame, 50 * frame, UINT32_MAX, 50);
+        RequireBlock(info.block[2], 44 + 60 * frame, 40 * frame, 0, 40);
+    }
+
+    for (const auto& info : {ParseLooped(1, 0, 10, 59, 3), ParseLooped(2, 1, 10, 59, 0), ParseLooped(3, 2, 10, 59, 7, 0x80000000u)}) {
+        Require(info.loop_begin_position == 10 && info.loop_end_position == 60 && info.num_blocks == 3);
+        RequireBlock(info.block[0], 44, 20, 0, 10);
+        RequireBlock(info.block[1], 64, 100, UINT32_MAX, 50);
+        RequireBlock(info.block[2], 164, 80, 0, 40);
+    }
+
+    auto info = ParseLooped(1, 0, 0, 99, 3);
+    Require(info.loop_begin_position == 0 && info.loop_end_position == 100 && info.num_blocks == 1);
+    RequireBlock(info.block[0], 44, 200, UINT32_MAX, 100);
+
+    info = ParseLooped(1, 0, 0, 49, 0);
+    Require(info.loop_begin_position == 0 && info.loop_end_position == 50 && info.num_blocks == 2);
+    RequireBlock(info.block[0], 44, 100, UINT32_MAX, 50);
+    RequireBlock(info.block[1], 144, 100, 0, 50);
+
+    info = ParseLooped(1, 0, 30, 99, 0);
+    Require(info.loop_begin_position == 30 && info.loop_end_position == 100 && info.num_blocks == 2);
+    RequireBlock(info.block[0], 44, 60, 0, 30);
+    RequireBlock(info.block[1], 104, 140, UINT32_MAX, 70);
+
+    info = ParseLooped(1, 0, 50, 50, 0);
+    Require(info.loop_begin_position == 50 && info.loop_end_position == 51 && info.num_blocks == 3);
+    RequireBlock(info.block[1], 144, 2, UINT32_MAX, 1);
+    RequireBlock(info.block[2], 146, 98, 0, 49);
+
+    for (const auto [begin, lastSample, end] : {std::tuple{50u, 49u, 50u}, {50u, 10u, 11u}, {20u, 0xffffffffu, 0u}}) {
+        info = ParseLooped(1, 0, begin, lastSample, 0);
+        Require(info.loop_begin_position == begin && info.loop_end_position == end && info.num_blocks == 1);
+        RequireBlock(info.block[0], 44, 200, 0, 100);
+    }
+
+    info = ParseLooped(0, 0, 10, 59, 0);
+    Require(info.num_blocks == 1 && info.loop_begin_position == 0 && info.loop_end_position == 0);
+    RequireBlock(info.block[0], 44, 200, 0, 100);
+
+    auto emptySampler = PcmFile(1, 44100, 16, 100);
+    AppendShortSampler(emptySampler, 36, 0);
+    Require(sceNgs2ParseWaveformData(emptySampler.data(), emptySampler.size(), &info) == SCE_NGS2_OK && info.num_blocks == 1);
+}
+
+static void TestParseUnknownFormats() {
+    const std::uint8_t pcmGuid[16] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71};
+    const std::uint8_t unknownGuid[16] = {0xaa, 0xbb, 0xcc, 0xdd, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc};
+    Ngs2WaveformInfo info{};
+    for (const std::uint32_t tag : {0x0u, 0x2u, 0x11u, 0x55u, 0x165u, 0xffffu}) {
+        const auto wave = PcmFile(1, 44100, 16, 10, tag);
+        Require(sceNgs2ParseWaveformData(wave.data(), wave.size(), &info) == SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT);
+    }
+    for (const std::uint32_t formatSize : {0x10u, 0x18u, 0x26u}) {
+        const auto wave = ExtensibleFile(formatSize, pcmGuid);
+        Require(sceNgs2ParseWaveformData(wave.data(), wave.size(), &info) == SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT);
+    }
+    for (const std::uint32_t formatSize : {0x28u, 0x30u, 0x36u}) {
+        const auto wave = ExtensibleFile(formatSize, unknownGuid);
+        Require(sceNgs2ParseWaveformData(wave.data(), wave.size(), &info) == SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT);
+    }
+    const auto pcm = ExtensibleFile(0x34, pcmGuid);
+    Require(sceNgs2ParseWaveformData(pcm.data(), pcm.size(), &info) == SCE_NGS2_OK && info.format.waveform_type == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && info.num_samples == 10);
+
+    const auto wave = PcmFile(1, 44100, 16, 10, 0x55);
+    const char* const guestPath = "/aps5_ngs2_parse_unknown.wav";
+    const auto path = ResolvePath_nid_no_patch(guestPath);
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(wave.data()), static_cast<std::streamsize>(wave.size()));
+    }
+    Require(sceNgs2ParseWaveformFile(guestPath, 0, &info) == SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT);
+    std::filesystem::remove(path);
 }
 
 static void TestParseFile() {
@@ -138,17 +283,25 @@ static void TestParseFileBank() {
 }
 
 static void TestFrameInfoPcm() {
-    for (std::uint32_t channels = 1; channels <= 8; channels++) {
-        for (const std::uint32_t rate : {1u, 22050u, 48000u, 192000u}) {
-            const Ngs2WaveformFormat format{SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, channels, rate, 0, 0, 0};
-            std::uint32_t frameSize = 0xa1, frameSamples = 0xa2, units = 0xa3, delay = 0xa4;
-            Require(sceNgs2GetWaveformFrameInfo(&format, &frameSize, &frameSamples, &units, &delay) == SCE_NGS2_OK);
-            Require(frameSize == channels * 2 && frameSamples == 1 && units == 1 && delay == 0);
-            const auto file = PcmFile(channels, rate, 16, 10);
-            Ngs2WaveformInfo info{};
-            Require(sceNgs2ParseWaveformData(file.data(), file.size(), &info) == SCE_NGS2_OK);
-            Require(info.audio_frame_size == frameSize && info.num_audio_frame_samples == frameSamples);
-            Require(info.num_audio_unit_per_frame == units && info.num_delay_samples == delay);
+    const std::pair<std::uint32_t, std::uint32_t> types[] = {
+        {SCE_NGS2_WAVEFORM_TYPE_PCM_U8, 1}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2},
+        {SCE_NGS2_WAVEFORM_TYPE_PCM_I24L, 3}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I32L, 4},
+        {SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 4}, {SCE_NGS2_WAVEFORM_TYPE_PCM_F64L, 8},
+    };
+    for (const auto& [type, bytes] : types) {
+        for (std::uint32_t channels = 1; channels <= 8; channels++) {
+            for (const std::uint32_t rate : {1u, 22050u, 48000u, 192000u}) {
+                const Ngs2WaveformFormat format{type, channels, rate, 0, 0, 0};
+                std::uint32_t frameSize = 0xa1, frameSamples = 0xa2, units = 0xa3, delay = 0xa4;
+                Require(sceNgs2GetWaveformFrameInfo(&format, &frameSize, &frameSamples, &units, &delay) == SCE_NGS2_OK);
+                Require(frameSize == channels * bytes && frameSamples == 1 && units == 1 && delay == 0);
+                if (type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L) continue;
+                const auto file = PcmFile(channels, rate, 16, 10);
+                Ngs2WaveformInfo info{};
+                Require(sceNgs2ParseWaveformData(file.data(), file.size(), &info) == SCE_NGS2_OK);
+                Require(info.audio_frame_size == frameSize && info.num_audio_frame_samples == frameSamples);
+                Require(info.num_audio_unit_per_frame == units && info.num_delay_samples == delay);
+            }
         }
     }
     const Ngs2WaveformFormat ignored{SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2, 48000, 0x12345678, 3, 5};
@@ -180,13 +333,43 @@ static void TestFrameInfoErrors() {
         Require(sceNgs2GetWaveformFrameInfo(&format, &values[0], &values[1], &values[2], &values[3]) == SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT);
         Require(untouched());
     }
-    for (const std::uint32_t type : {0u, 0x10u, 0x11u, 0x13u, 0x14u, 0x16u, SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 0x19u, 0x41u, 0xffffffffu}) {
+    for (const std::uint32_t type : {0u, 0x10u, 0x13u, 0x19u, 0x41u, 0xffffffffu}) {
         Require(FrameInfoThrows({type, 2, 48000, 0, 0, 0}));
     }
 }
 
+static std::int32_t APS5_VABI ReadUserWaveform(std::uintptr_t user_data, std::uint32_t offset, void* data, std::size_t size) {
+    const auto& file = *reinterpret_cast<const std::vector<std::uint8_t>*>(user_data);
+    if (offset > file.size() || size > file.size() - offset) return -1;
+    std::memcpy(data, file.data() + offset, size);
+    return static_cast<std::int32_t>(size);
+}
+
+static void TestParseUser() {
+    const auto file = PcmFile(2, 44100, 16, 100);
+    Ngs2WaveformInfo expected{};
+    Ngs2WaveformInfo actual{};
+    Require(sceNgs2ParseWaveformData(file.data(), file.size(), &expected) == SCE_NGS2_OK);
+    Require(sceNgs2ParseWaveformUser(reinterpret_cast<std::uintptr_t>(&ReadUserWaveform), reinterpret_cast<std::uintptr_t>(&file), &actual) == SCE_NGS2_OK);
+    Require(std::memcmp(&expected, &actual, sizeof(expected)) == 0);
+    Require(sceNgs2ParseWaveformUser(0, 0, &actual) == static_cast<int>(0x804A0408u));
+    Require(sceNgs2ParseWaveformUser(reinterpret_cast<std::uintptr_t>(&ReadUserWaveform), reinterpret_cast<std::uintptr_t>(&file), nullptr) ==
+        static_cast<int>(0x804A0053u));
+    auto bad = file;
+    bad[0] = 'X';
+    Require(sceNgs2ParseWaveformUser(reinterpret_cast<std::uintptr_t>(&ReadUserWaveform), reinterpret_cast<std::uintptr_t>(&bad), &actual) ==
+        SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT);
+    auto truncated = file;
+    truncated.resize(16);
+    Require(sceNgs2ParseWaveformUser(reinterpret_cast<std::uintptr_t>(&ReadUserWaveform), reinterpret_cast<std::uintptr_t>(&truncated), &actual) ==
+        static_cast<int>(0x804A0408u));
+}
+
 int main() {
     TestParsePcm();
+    TestParsePcmLoops();
+    TestParseUser();
+    TestParseUnknownFormats();
     TestParseFile();
     TestParseFileBank();
     TestFrameInfoPcm();

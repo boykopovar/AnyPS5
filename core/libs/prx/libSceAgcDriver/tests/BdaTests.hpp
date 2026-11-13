@@ -13,18 +13,25 @@ struct BdaTestAccess {
     std::function<void(std::optional<VkDeviceSize>)> limitMemory;
     std::function<std::uint64_t()> allocationAttempts;
     std::function<void(std::optional<VkDeviceSize>)> limitImports;
+    std::function<void(std::optional<VkDeviceSize>)> limitImportTotal;
 };
 
 void RunBdaResourceTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access);
+void RunHostImportValidityTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access);
 bool RunSparseBufferHoleTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access);
 void RunHeapMirrorUnwatchTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access, bool throughImport);
 void RunSparseHeapMirrorUnwatchTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access);
 void RunSparseHeapMirrorBudgetTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access);
 void RunHeapMirrorRunUnwatchTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access);
-void RunAddressCopyCapTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access, bool remembered);
+void RunAddressCopyCapTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access, bool remembered, int frames);
+void RunHeapMirrorReferenceSizeTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access);
+void RunAddressCopyCapMirrorTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access, int frames);
+void RunUnwatchedMirrorImportTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access, int frames);
 void RunGuestAllocationTests();
 void RunGuestLeaseWaitTests();
 void RunUnmappedGapTests();
+void RunVanishedPageReadTests();
+void RunPageBlockTests();
 void RunColorTargetLayoutTests();
 void RunLiveStackAccessTests();
 

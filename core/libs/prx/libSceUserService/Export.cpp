@@ -1,18 +1,33 @@
+#include <cstdio>
+#include <cerrno>
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <atomic>
 #include <array>
+#include <cerrno>
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <vector>
+#include <shared_mutex>
+#include <memory>
+#include <condition_variable>
+#include <algorithm>
+#include <thread>
 #include "prx/libSceUserService/UserService.hpp"
 
 namespace {
 
 std::atomic<bool> initialized{false};
+bool terminating{};
 std::mutex userMutex;
 
 struct UserEvent {
@@ -46,7 +61,12 @@ int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
  if (setting == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *setting = value;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(setting, &value, sizeof(value));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -54,7 +74,9 @@ void PopulateInitialLoginEvents() {
  std::lock_guard lock(userMutex);
  eventQueue.clear();
  constexpr std::uint32_t EventTypeLogin = 0;
- eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID});
+ if (userConnected[0]) {
+  eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID});
+ }
  for (int i = 1; i < USER_SERVICE_MAX_USERS; ++i) {
   if (userConnected[i]) {
    eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID + i});
@@ -90,37 +112,201 @@ static int ReportKeyboardSetting(int user_id, int32_t* type, int32_t (*value)())
  if (UserIndex(user_id) < 0) {
   return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
- *type = value();
+ const int32_t result = value();
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(type, &result, sizeof(result));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
+}
+bool UserGroupSlotExists(int index) {
+    if (index < 0 || index > 128) {
+        return false;
+    }
+    char path[64];
+    std::snprintf(path, sizeof(path), "/system_data/priv/home/user_list.dat.%d", index);
+    FileStat status{};
+    return sceKernelStat(path, &status) == 0;
+}
+
+struct RegisteredEventCallback {
+ UserServiceEventCallback callback;
+ void* userData;
+ std::mutex mutex;
+ std::condition_variable idle;
+ bool active{true};
+ std::size_t inFlight{};
+};
+
+std::vector<std::shared_ptr<RegisteredEventCallback>> eventCallbacks;
+std::shared_mutex eventCallbacksMutex;
+struct CallbackInvocation {
+ const RegisteredEventCallback* entry;
+ CallbackInvocation* previous;
+};
+thread_local CallbackInvocation* callbacksOnThisThread{};
+
+std::size_t CurrentThreadCallbackDepth(const RegisteredEventCallback* entry) {
+ std::size_t depth{};
+ for (auto* invocation = callbacksOnThisThread; invocation != nullptr; invocation = invocation->previous) {
+  depth += invocation->entry == entry;
+ }
+ return depth;
+}
+
+void DeactivateAndWait(const std::shared_ptr<RegisteredEventCallback>& entry) {
+ std::unique_lock lock(entry->mutex);
+ entry->active = false;
+ const std::size_t currentThreadDepth = CurrentThreadCallbackDepth(entry.get());
+ entry->idle.wait(lock, [&] { return entry->inFlight <= currentThreadDepth; });
+}
+
+
+void RemoveDrainedCallbacks();
+
+void DispatchUserEvent(const std::vector<std::shared_ptr<RegisteredEventCallback>>& callbacks,
+                       const SceUserServiceEvent& event) {
+ for (const auto& entry : callbacks) {
+  UserServiceEventCallback callback;
+  void* userData;
+  {
+   std::lock_guard lock(entry->mutex);
+   if (!entry->active) {
+    continue;
+   }
+   ++entry->inFlight;
+   callback = entry->callback;
+   userData = entry->userData;
+  }
+  CallbackInvocation invocation{entry.get(), callbacksOnThisThread};
+  callbacksOnThisThread = &invocation;
+  try {
+   callback(&event, userData);
+  } catch (...) {
+   callbacksOnThisThread = invocation.previous;
+   {
+    std::lock_guard lock(entry->mutex);
+    --entry->inFlight;
+   }
+   entry->idle.notify_all();
+   RemoveDrainedCallbacks();
+   throw;
+  }
+  callbacksOnThisThread = invocation.previous;
+  {
+   std::lock_guard lock(entry->mutex);
+   --entry->inFlight;
+  }
+  entry->idle.notify_all();
+  RemoveDrainedCallbacks();
+ }
+}
+struct CallbackNotification {
+ std::vector<std::shared_ptr<RegisteredEventCallback>> callbacks;
+ SceUserServiceEvent event;
+};
+
+class EventDispatcher {
+ std::mutex mutex;
+ std::condition_variable changed;
+ std::deque<CallbackNotification> notifications;
+ bool stopping{};
+ std::thread worker;
+public:
+ EventDispatcher() : worker([this] {
+  std::unique_lock lock(mutex);
+  while (true) {
+   changed.wait(lock, [&] { return stopping || !notifications.empty(); });
+   if (stopping) return;
+   auto notification = std::move(notifications.front());
+   notifications.pop_front();
+   lock.unlock();
+   DispatchUserEvent(notification.callbacks, notification.event);
+   lock.lock();
+  }
+ }) {}
+ ~EventDispatcher() {
+  {
+   std::lock_guard lock(mutex);
+   stopping = true;
+  }
+  changed.notify_all();
+  worker.join();
+ }
+ void Enqueue(CallbackNotification notification) {
+  {
+   std::lock_guard lock(mutex);
+   notifications.push_back(std::move(notification));
+  }
+  changed.notify_one();
+ }
+};
+
+void NotifyUserEvent(std::uint32_t eventType, int userId) {
+ std::shared_lock lock(eventCallbacksMutex);
+ if (!initialized.load() || eventCallbacks.empty()) return;
+ static EventDispatcher dispatcher;
+ dispatcher.Enqueue({eventCallbacks, {eventType, userId}});
+}
+
+void RemoveDrainedCallbacks() {
+ std::unique_lock lock(eventCallbacksMutex);
+ std::erase_if(eventCallbacks, [](const auto& entry) {
+  std::lock_guard entryLock(entry->mutex);
+  return !entry->active && entry->inFlight == 0;
+ });
+}
+
+void ClearEventCallbacks() {
+ std::vector<std::shared_ptr<RegisteredEventCallback>> callbacks;
+ {
+  std::unique_lock lock(eventCallbacksMutex);
+  callbacks = eventCallbacks;
+  for (const auto& entry : callbacks) {
+   std::lock_guard entryLock(entry->mutex);
+   entry->active = false;
+  }
+ }
+ for (const auto& entry : callbacks) {
+  DeactivateAndWait(entry);
+ }
+ RemoveDrainedCallbacks();
 }
 }
 
 extern "C" {
 
 void UserServiceSetUserConnected_nid_postfix(int userIndex, bool connected) {
-    if (userIndex <= 0 || userIndex >= USER_SERVICE_MAX_USERS) return;
-    std::lock_guard lock(userMutex);
-    if (userConnected[userIndex] != connected) {
-        userConnected[userIndex] = connected;
-        if (initialized.load()) {
-            constexpr std::uint32_t EventTypeLogin = 0;
-            constexpr std::uint32_t EventTypeLogout = 1;
-            const std::uint32_t eventType = connected ? EventTypeLogin : EventTypeLogout;
-            const int userId = USER_SERVICE_INITIAL_USER_ID + userIndex;
-            bool collapsed = false;
-            for (auto it = eventQueue.begin(); it != eventQueue.end(); ++it) {
-                if (it->userId == userId) {
-                    if (it->eventType != eventType) {
-                        eventQueue.erase(it);
+    if (userIndex < 0 || userIndex >= USER_SERVICE_MAX_USERS) return;
+    bool notify = false;
+    const std::uint32_t eventType = connected ? 0u : 1u;
+    const int userId = USER_SERVICE_INITIAL_USER_ID + userIndex;
+    {
+        std::lock_guard lock(userMutex);
+        if (userConnected[userIndex] != connected) {
+            userConnected[userIndex] = connected;
+            if (initialized.load()) {
+                notify = true;
+                bool collapsed = false;
+                for (auto it = eventQueue.begin(); it != eventQueue.end(); ++it) {
+                    if (it->userId == userId) {
+                        if (it->eventType != eventType) {
+                            eventQueue.erase(it);
+                        }
+                        collapsed = true;
+                        break;
                     }
-                    collapsed = true;
-                    break;
+                }
+                if (!collapsed) {
+                    eventQueue.push_back({eventType, userId});
                 }
             }
-            if (!collapsed) {
-                eventQueue.push_back({eventType, userId});
-            }
         }
+    }
+    if (notify) {
+        NotifyUserEvent(eventType, userId);
     }
 }
 
@@ -129,6 +315,12 @@ int APS5_VABI sceUserServiceGetAccessibilityChatTranscription(int user_id, int32
 }
 
 int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable(std::int32_t userId, std::int32_t* enabled) {
+ if (!IsUserLoggedIn(userId)) {
+  return USER_SERVICE_ERROR_NOT_LOGGED_IN;
+ }
+ if (enabled == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -146,6 +338,12 @@ int APS5_VABI sceUserServiceGetAccessibilityVibration(int user_id, int32_t* vibr
 }
 
 int APS5_VABI sceUserServiceGetAccessibilityZoom(std::int32_t userId, std::int32_t* zoom) {
+ if (!IsUserLoggedIn(userId)) {
+  return USER_SERVICE_ERROR_NOT_LOGGED_IN;
+ }
+ if (zoom == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -166,7 +364,12 @@ int APS5_VABI sceUserServiceGetAgeLevel(int user_id, uint32_t* age_level) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
  constexpr std::uint32_t Unrestricted = 0xFFFFFFFFu;
- *age_level = Unrestricted;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(age_level, &Unrestricted, sizeof(Unrestricted));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -183,19 +386,23 @@ int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event) {
   return USER_SERVICE_ERROR_NO_EVENT;
  }
  const auto item = eventQueue.front();
+ const SceUserServiceEvent output{item.eventType, item.userId};
+ const int savedError = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(event, &output, sizeof(output));
+ errno = savedError;
+ if (!copied) {
+  NotImplemented_nid_no_patch(__func__);
+ }
  eventQueue.pop_front();
- event->event_type = item.eventType;
- event->user_id = item.userId;
  return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets) {
- // System-wide game presets (difficulty, view inversion, subtitles, audio language) of the user's
- // profile. A fresh console has none set: every field is 0, "not specified", and the title falls
- // back to its own defaults. this_size is the caller's.
- const int index = UserIndex(user_id);
- if (presets == nullptr || index < 0) {
+ if (presets == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ if (!IsUserLoggedIn(user_id)) {
+  return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
  presets->difficulty = 0;
  presets->priority = 0;
@@ -212,7 +419,13 @@ int APS5_VABI sceUserServiceGetInitialUser(int* user_id) {
  if (user_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *user_id = USER_SERVICE_INITIAL_USER_ID;
+ const int initialUser = USER_SERVICE_INITIAL_USER_ID;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(user_id, &initialUser, sizeof(initialUser));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -223,13 +436,20 @@ int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_
  if (user_id_list == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
+ UserServiceLoginUserIdList localList{};
  std::lock_guard lock(userMutex);
  for (int i = 0; i < 4; ++i) {
   if (i < USER_SERVICE_MAX_USERS && userConnected[i]) {
-   user_id_list->user_id[i] = USER_SERVICE_INITIAL_USER_ID + i;
+   localList.user_id[i] = USER_SERVICE_INITIAL_USER_ID + i;
   } else {
-   user_id_list->user_id[i] = USER_SERVICE_USER_ID_INVALID;
+   localList.user_id[i] = USER_SERVICE_USER_ID_INVALID;
   }
+ }
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(user_id_list, &localList, sizeof(localList));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
  return USER_SERVICE_OK;
 }
@@ -255,7 +475,13 @@ int APS5_VABI sceUserServiceGetUserNumber(int user_id, int32_t* number) {
  if (number == nullptr || index < 0) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *number = index + 1;
+ const int32_t userNumber = index + 1;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(number, &userNumber, sizeof(userNumber));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -264,7 +490,8 @@ static bool ValidThreadPriority(int priority) {
 }
 
 static int MarkInitialized() {
- if (initialized.exchange(true)) {
+ std::unique_lock lock(eventCallbacksMutex);
+ if (terminating || initialized.exchange(true)) {
   return USER_SERVICE_ERROR_ALREADY_INITIALIZED;
  }
  PopulateInitialLoginEvents();
@@ -273,7 +500,11 @@ static int MarkInitialized() {
 
 int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* params) {
  if (params != nullptr) {
-  if (!ValidThreadPriority(params->priority)) {
+  UserServiceInitParam localParams{};
+  const int savedErrno = errno;
+  const bool copied = GuestCopyIn_nid_no_patch(&localParams, params, sizeof(localParams));
+  errno = savedErrno;
+  if (!copied || !ValidThreadPriority(localParams.priority)) {
    return USER_SERVICE_ERROR_INVALID_ARGUMENT;
   }
  }
@@ -288,27 +519,53 @@ int APS5_VABI sceUserServiceInitialize2(std::int32_t priority, KernelCpumask aff
 }
 
 int APS5_VABI sceUserServiceTerminate(void) {
- if (!initialized.exchange(false)) {
-  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ {
+  std::unique_lock lock(eventCallbacksMutex);
+  if (!initialized.exchange(false)) {
+   return USER_SERVICE_ERROR_NOT_INITIALIZED;
+  }
+  terminating = true;
  }
- std::lock_guard lock(userMutex);
- eventQueue.clear();
+ ClearEventCallbacks();
+ {
+  std::lock_guard lock(userMutex);
+  eventQueue.clear();
+ }
+ {
+  std::unique_lock lock(eventCallbacksMutex);
+  terminating = false;
+ }
  return USER_SERVICE_OK;
 }
 
-// No PSN account exists, so the platform privacy setting reports the feature as not permitted.
 int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t user_id, int32_t* value) {
-    (void)user_id;
-    if (!value) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
-    *value = 0;
-    return 0;
+    if (!IsUserLoggedIn(user_id)) {
+        return USER_SERVICE_ERROR_NOT_LOGGED_IN;
+    }
+    if (value == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const int32_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(value, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetForegroundUser(int* user_id) {
  if (user_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *user_id = USER_SERVICE_INITIAL_USER_ID;
+ const int foregroundUser = USER_SERVICE_INITIAL_USER_ID;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(user_id, &foregroundUser, sizeof(foregroundUser));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -316,13 +573,20 @@ int APS5_VABI sceUserServiceGetRegisteredUserIdList(UserServiceRegisteredUserIdL
  if (user_id_list == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
+ UserServiceRegisteredUserIdList localList{};
  std::lock_guard lock(userMutex);
  for (int i = 0; i < 16; ++i) {
   if (i < USER_SERVICE_MAX_USERS && userConnected[i]) {
-   user_id_list->user_id[i] = USER_SERVICE_INITIAL_USER_ID + i;
+   localList.user_id[i] = USER_SERVICE_INITIAL_USER_ID + i;
   } else {
-   user_id_list->user_id[i] = USER_SERVICE_USER_ID_INVALID;
+   localList.user_id[i] = USER_SERVICE_USER_ID_INVALID;
   }
+ }
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(user_id_list, &localList, sizeof(localList));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
  return USER_SERVICE_OK;
 }
@@ -332,7 +596,13 @@ int APS5_VABI sceUserServiceGetUserColor(int user_id, int* color) {
  if (color == nullptr || index < 0) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *color = index;
+ const int userColor = index;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(color, &userColor, sizeof(userColor));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -349,12 +619,2801 @@ int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int user_id, int32_t*
 }
 
 int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
- const int index = UserIndex(user_id);
- if (account_id == nullptr || index < 0) {
+ if (account_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ if (!IsUserLoggedIn(user_id)) {
+  return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
  *account_id = 0;
  return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceSetGlsCameraContrast(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetParentalDvdRegion(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetChatStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSharePlayFramerateHost(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPasscode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetAppearOfflineSetting(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsAccessTokenUstream(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsBcTags(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpCountryCode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetJapaneseInputType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsBroadcastersComment(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCameraTransparency(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetIsHrtfEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetCurrentUserGroupIndex(std::int32_t* index) {
+    if (index == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const std::int32_t zero = 0;
+    const int savedErrnoZero = errno;
+    const bool copiedZero = GuestCopyOut_nid_no_patch(index, &zero, sizeof(zero));
+    errno = savedErrnoZero;
+    if (!copiedZero) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const int descriptor = sceKernelOpen("/system_data/priv/home/user_list.dat", 0, 0);
+    if (descriptor < 0) {
+        return descriptor;
+    }
+    const std::int64_t seekResult = sceKernelLseek(descriptor, 0x44, 0);
+    if (seekResult != 0x44) {
+        sceKernelClose(descriptor);
+        return static_cast<int>(seekResult);
+    }
+    std::int32_t storedIndex{};
+    const std::int64_t bytesRead = sceKernelRead(descriptor, &storedIndex, sizeof(storedIndex));
+    sceKernelClose(descriptor);
+    if (bytesRead < 0) {
+        return static_cast<int>(bytesRead);
+    }
+    if (bytesRead != sizeof(storedIndex)) {
+        return SCE_KERNEL_ERROR_EIO;
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(index, &storedIndex, sizeof(storedIndex));
+    errno = savedErrno;
+    if (!copied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceGetPbtcThursdayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcFridayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSystemLoggerHashedAccountIdTtl(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetRegisteredHomeUserIdList(std::int32_t* userIds, std::int32_t* count) {
+    if (userIds == nullptr || count == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    UserServiceRegisteredUserIdList registeredUsers{};
+    const int result = sceUserServiceGetRegisteredUserIdList(&registeredUsers);
+    if (result != USER_SERVICE_OK) {
+        return result;
+    }
+    *count = 0;
+    for (std::size_t index = 0; index < sizeof(registeredUsers.user_id) / sizeof(registeredUsers.user_id[0]); ++index) {
+        userIds[index] = registeredUsers.user_id[index];
+        if (userIds[index] != USER_SERVICE_USER_ID_INVALID) {
+            ++*count;
+        }
+    }
+    return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceSetVolumeForGenericUSB(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetControlCenterFunctionControlSettings(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetAudioFocus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetFriendFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCameraTransparency(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetUserStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetTraditionalChineseInputType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHmd2MuteAssign(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetIsCronosEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHoldAudioOutDevice(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHearingAssistWeakenAdjustment(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetDiscPlayerFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSharePlayFramerateHost(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetCaptureStatus2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetLightBarBaseBrightness(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCameraContrast(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcWednesdayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSharePlayResolutionHost(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetParentalBdAge(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetParentalGameAgeLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNotificationSettings2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPsnPasswordForDebug(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcAdditionalTime(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsLfpsSortOrder(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceLogin(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpLoginId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsBroadcastersCommentColor(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetParentalBrowser(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPadSpeakerVolume(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsHintFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetIsFakePremium(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetAccessibilityKeyremapDataAston(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetKeyRepeatSpeed(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetUserGroupName(int groupIndex, const char* name) {
+    if (name == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (!UserGroupSlotExists(groupIndex)) {
+        int nextGroupIndex = 0;
+        while (nextGroupIndex < 128 && UserGroupSlotExists(nextGroupIndex)) {
+            ++nextGroupIndex;
+        }
+        if (groupIndex != nextGroupIndex) {
+            return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+        }
+    }
+    std::string guestName;
+    if (CopyGuestString_nid_no_patch(name, 129, guestName) != 0) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const std::size_t nameSize = guestName.size();
+    char path[64];
+    std::snprintf(path, sizeof(path), "/system_data/priv/home/user_group_name.dat.%d", groupIndex);
+    const int descriptor = sceKernelOpen(path, 0x601, 0x180);
+    if (descriptor < 0) {
+        return descriptor;
+    }
+    const std::int64_t bytesWritten = sceKernelWrite(descriptor, guestName.data(), nameSize);
+    sceKernelClose(descriptor);
+    if (bytesWritten < 0) {
+        return static_cast<int>(bytesWritten);
+    }
+    return bytesWritten == static_cast<std::int64_t>(nameSize) ? USER_SERVICE_OK : SCE_KERNEL_ERROR_EIO;
+}
+
+int APS5_VABI sceUserServiceGetParentalDvdRegion(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCameraDepthLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetParentalContentControl(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVoiceAgentLanguage(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVolumeForController(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsAccessTokenNiconicoLive(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsOverlayPosition(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetAppSortOrder(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCameraBgFilter(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcSaturdayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetAccountRemarks(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGazeCalibData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsAccessTokenNiconicoLive(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHmd2GazeTarget(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpAccountUpgradeFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsMessageFilterLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetImePointerMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetParentalDvd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSparkEqProfile(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcTuesdayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVoiceRecognitionTutorialState(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetFriendFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetEventCalendarType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcSaturdayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSystemLoggerHashedAccountIdParam(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHearingAssistUsePreset(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetUserGroupName(int groupIndex, char* name, std::size_t size) {
+    if (name == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (size < 129) {
+        return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    }
+    if (size != 129) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (!UserGroupSlotExists(groupIndex)) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    std::memset(name, 0, size);
+    char path[64];
+    std::snprintf(path, sizeof(path), "/system_data/priv/home/user_group_name.dat.%d", groupIndex);
+    const int descriptor = sceKernelOpen(path, 0, 0);
+    if (descriptor >= 0) {
+        const std::int64_t bytesRead = sceKernelRead(descriptor, name, 128);
+        sceKernelClose(descriptor);
+        if (bytesRead > 0) {
+            return USER_SERVICE_OK;
+        }
+    }
+    std::snprintf(name, size, "User Group %d", groupIndex + 1);
+    return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceSetAutoLoginEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetIPDLeft(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHintShowFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHmd2CinematicAudioRotation(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetLoginFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcThursdayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcSundayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVoiceRecognitionLastUsedOsk(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsIsFacebookEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetShareStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVoiceAgentEnableFeedback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceIsKratosUser(void) {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUserServiceSetCreatedVersion(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSharePlayFlags(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHearingAssistUsePreset(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPartyChatTranscriptionLanguageType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetA11yControllerADeviceUniqueIds(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetA11yControllerLedBrightness(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetKeyRepeatStartingTime(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsLiveQuality(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetProControllerAlreadyNoticed(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsAccessTokenUstream(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetProControllerUniqueId3(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHrtf(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsTtsFlags(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpAge(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsFloatingMessage(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPlayTogetherFlags(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHmd2HideCameraImage(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsAccessTokenTwitch(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetCaptureStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpSubAccount(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPartyChatTranscriptionFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsIsMuteEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsBcTitle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHmd2Vibration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsLiveQuality2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetIsQuickSignup(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNotificationSettings_2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHomeDirectory(std::uint32_t user_id, char* path, std::size_t size) {
+    if (path == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const int result = std::snprintf(path, size, "/user/home/%08x", user_id);
+    return result >= 0 && static_cast<std::size_t>(result) < size ? USER_SERVICE_OK : USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+}
+
+int APS5_VABI sceUserServiceSetPbtcSundayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetIPDLeft(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetKratosPrimaryUser(int*) {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUserServiceLogout(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpDateOfBirth(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcWednesdayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSparkEqParam(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetEventSortEvent(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsLiveQuality3(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNotificationSettings_1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcMondayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetIsFakePlus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcTuesdayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPartyMuteList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpNpId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSystemLoggerHashedAccountIdClockType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetProControllerBtAddress(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSparkEqIndex(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPsnPasswordForDebug(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetParentalGameWhiteList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCommunityId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceUpdateCronosCountryList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGazeCalibData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpAuthErrorFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHearingAssistUseAudiogramData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetAccessibilityKeyremapEnable(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcFridayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsStreamingMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcFridayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetProControllerUniqueId1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVoiceAgentStatusBitFactory(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetTeamShowAboutTeam(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetEventSortEvent(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsLfpsSortOrder(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHearingAssistMakeVoicesClearer(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVoiceAgentEnableByButton(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSystemLoggerHashedAccountIdClockType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceTerminateForShellCore(void) {
+ return sceUserServiceTerminate();
+}
+
+int APS5_VABI sceUserServiceSetParentalMorpheus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSystemLoggerHashedAccountId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetCaptureStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetAgeVerified(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCameraBgFilter(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsTtsVolume(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCameraSize(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsAnonymousUserId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCameraReflection(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHmuZoom(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsBcTitle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcFridayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetLoginFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHearingAssistAdjustmentLevelLeft(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetFaceRecognitionDeleteCount(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetTriggerEffectStrength(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsIsTwitterEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcSaturdayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHintShowFlag3(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVoiceAgentSessionTimeout(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetParentalContentControl(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCameraEffect(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcTuesdayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPartyMuteListA(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCameraEliminationLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsBroadcastersCommentColor(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetParentalBrowser(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHearingAssistSeparateLR(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceIsUserStorageAccountBound(void) {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUserServiceSetHmd2Brightness(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCameraChromaKeyLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetProControllerUniqueId2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsBroadcastChannel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCameraEdgeLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCameraPosition(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetA11yControllerAName(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcWednesdayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetMonoOutput(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPartyChatTranscriptionVoiceType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNotificationSettings(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetTopMenuTutorialFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetIPDRight(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcSaturdayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetImeLastUnit(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpNpId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetTriggerEffectStrength(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsIsRecievedMessageHidden(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVoiceAgentSessionTimeout(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsLanguageFilter(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHmd2Vibration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceIsLoggedIn(int userId) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ return IsUserLoggedIn(userId) ? 1 : 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcMondayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetAppSortOrder(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetMouseHandType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetIsQuickSignup(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+bool APS5_VABI sceUserServiceIsKratosPrimaryUser(int) {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUserServiceSetVoiceAgentEnableWup(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCameraDepthLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHmuBrightness(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsHintFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceIsLoggedInWithoutLock(int userId) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ return IsUserLoggedIn(userId) ? 1 : 0;
+}
+
+int APS5_VABI sceUserServiceSetShareStatus3(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsTtsVolume(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetMicLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetImeLastUnit(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcThursdayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSaveDataAutoUpload(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetAccessibilityKeyremapDataAston(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVolumeForSidetone(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetProControllerUniqueId2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetFriendCustomListLastFocus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHmd2GazeTarget(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetKeyRepeatSpeed(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetParentalDvd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetImePointerMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVolumeForController(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsBroadcastChannel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSystemLoggerHashedAccountIdParam(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHintShowFlag2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHearingAssistPresetType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNotificationSettings_3(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsAnonymousUserId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetA11yControllerBDeviceUniqueIds(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVoiceAgentEnableWup(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpDateOfBirth(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetKeyboardType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetParentalGame(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHearingAssistSeparateLR(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVoiceAgentTtsVolume(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcMondayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpSubAccount(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetShareStatus2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCamCrop(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVoiceRecognitionLastUsedOsk(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSystemLoggerHashedAccountId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVoiceRecognitionTutorialState(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsLiveQuality5(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHearingAssistUseAudiogramData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetIPDRight(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcPlayTimeLastUpdated(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcTuesdayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNotificationBehavior(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPadProfileDataHuntList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHearingAssistAudiogramData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHintShowFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetTopMenuLimitItem(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcSundayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetParentalBdAge(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSaveDataSort(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHrtf(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetAppearOfflineSetting(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVoiceAgentLanguage(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetIsRemotePlayAllowed(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsStreamingMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetChatStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVoiceAgentStatusBit(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpCountryCode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetParentalGameWhiteList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHmd2ScreenSize(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetTriggerEffectEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetA11yControllerInitialSetupProgress(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVolumeForGenericUSB(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetControlCenterFunctionControlSettings(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsInitSpectating(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsIsMuteEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpLanguageCode2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetFriendCustomListLastFocus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPartyMuteList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetAccessibilityKeyremapData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcFridayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcMondayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetControlCenterStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSparkEqProfile(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsTtsPitch(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsBroadcastService(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetAutoLoginEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcSaturdayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNotificationSettings_1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHmd2MuteAssign(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPasscode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetMousePointerSpeed(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsBroadcastUiLayout(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSharePlayFlags(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetIsFakePlus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetAccountRemarks(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetAccessibilityZoom(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSystemLoggerHashedAccountIdTtl(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSaveDataSort(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPlayTogetherFlags(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHearingAssistAdjustmentLevelRight(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsTtsSpeed(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpEnv(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCameraSize(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetDiscPlayerFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHmd2PlayAreaShape(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsIsCameraHidden(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetUserStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetEventFilterTeamEvent(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPsCloudFeedbackTime(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetUserGroupIndex(int index) {
+    if (index != -1 && (index < 0 || index > 128 || !UserGroupSlotExists(index))) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const int descriptor = sceKernelOpen("/system_data/priv/home/user_list.dat", 2, 0);
+    if (descriptor < 0) {
+        return descriptor;
+    }
+    const std::int32_t storedIndex = index == -1 ? 0x7fffffff : index;
+    const std::int64_t bytesWritten = sceKernelPwrite(descriptor, &storedIndex, sizeof(storedIndex), 0x44);
+    sceKernelClose(descriptor);
+    if (bytesWritten < 0) {
+        return static_cast<int>(bytesWritten);
+    }
+    return bytesWritten == sizeof(storedIndex) ? USER_SERVICE_OK : SCE_KERNEL_ERROR_EIO;
+}
+
+int APS5_VABI sceUserServiceSetPartyMuteListA(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpLanguageCode2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetShareStatus2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetForegroundUser(int userId) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsAccessTokenTwitch(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpOfflineAccountAdult(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGamePresets(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNotificationSettings(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetImeInputType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVolumeForMorpheusSidetone(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsLiveQuality4(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHearingAssistPresetType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHearingAssistWeakenAdjustment(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcWednesdayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceIsGuestUser(std::int32_t userId) {
+    return (static_cast<std::uint32_t>(userId) & 0xe0000000u) == 0x20000000u ? 1 : 0;
+}
+
+int APS5_VABI sceUserServiceGetPadProfileDataHuntList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetAccessibilityKeyremapData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetCaptureStatus2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVoiceAgentTtsSpeed(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcWednesdayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetAgeVerified(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCameraEdgeLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPartyChatTranscriptionLanguageType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVoiceAgentTtsVolume(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcTuesdayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetUserWithHearingAssist(std::int32_t* userId) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpOnlineId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHintShowFlag3(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNotificationSettings_3(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsIsFacebookEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpEnv(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCameraBrightness(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceDestroyUser(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetTopMenuNotificationFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetCreatedVersion(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCameraChromaKeyLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpOfflineAccountId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetShareStatus3(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetControlCenterStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetMicLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetTeamShowAboutTeam(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetEventVsh(SceUserServiceEvent* event) {
+ return sceUserServiceGetEvent(event);
+}
+
+int APS5_VABI sceUserServiceGetA11yControllerBName(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpAge(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPlayingBigAppTitleId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHintShowFlag2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetCaptureStatus3(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSparkEqIndex(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcMondayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetEventSortTitle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpOnlineId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetA11yControllerBName(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSaveDataAutoSync(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetDefaultNewUserGroupName(char* name, std::size_t size) {
+    if (name == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (size < 129) {
+        return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    }
+    int groupIndex = 0;
+    while (groupIndex < 128 && UserGroupSlotExists(groupIndex)) {
+        ++groupIndex;
+    }
+    std::snprintf(name, size, "User Group %d", groupIndex + 1);
+    return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceGetHmd2Brightness(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHoldAudioOutDevice(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVibrationStrength(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceUnregisterEventCallback(UserServiceEventCallback callback, void* userData) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ if (callback == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ std::vector<std::shared_ptr<RegisteredEventCallback>> removed;
+ {
+  std::unique_lock lock(eventCallbacksMutex);
+  if (!initialized.load()) {
+   return USER_SERVICE_ERROR_NOT_INITIALIZED;
+  }
+  for (const auto& entry : eventCallbacks) {
+   if (entry->callback == callback && entry->userData == userData) {
+    std::lock_guard entryLock(entry->mutex);
+    entry->active = false;
+    removed.push_back(entry);
+   }
+  }
+ }
+ for (const auto& entry : removed) {
+  DeactivateAndWait(entry);
+ }
+ RemoveDrainedCallbacks();
+ return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceGetTopMenuNotificationFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcSundayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHearingAssistAudiogramData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSaveDataAutoSync(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcFridayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsTtsSpeed(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPartyChatTranscriptionFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcSaturdayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPartySettingFlags(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetImeInputSettings(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsIsRecDisabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetA11yControllerAName(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetEventFilterTeamEvent(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetA11yControllerBDeviceUniqueIds(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCameraEliminationLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVibrationStrength(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpAccountUpgradeFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetDeletedUserInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSecureHomeDirectory(std::uint32_t user_id, char* path, std::size_t size) {
+    if (path == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const int result = std::snprintf(path, size, "/%s/priv/home/%08x", sceKernelGetFsSandboxRandomWord(), user_id);
+    return result >= 0 && static_cast<std::size_t>(result) < size ? USER_SERVICE_OK : USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+}
+
+int APS5_VABI sceUserServiceGetHearingAssistAdjustmentLevelRight(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPlatformPrivacyWs1Internal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsIsRecDisabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCameraBrightness(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpLanguageCode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcThursdayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGazeActivate(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPlatformPrivacyWs1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVolumeForSidetone(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSaveDataTutorialFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcPlayTime(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsBroadcastService(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetIsFakePremium(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsLiveQuality5(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSaveDataAutoUpload(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetSaveDataTutorialFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsLiveQuality4(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpLanguageCode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcThursdayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetFaceRecognitionDeleteCount(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVoiceAgentEnable(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetEventCalendarType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetProControllerAlreadyNoticed(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsTtsFlags(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsBroadcastersComment(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcTzOffset(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcPlayTime(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVoiceAgentStatusBit(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNotificationSettings2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetEventUiFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsBroadcastUiLayout(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVibrationEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcAdditionalTime(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceIsSharePlayClientUser(std::int32_t userId) {
+    return (static_cast<std::uint32_t>(userId) & 0xf0000000u) == 0x30000000u ? 1 : 0;
+}
+
+int APS5_VABI sceUserServiceGetMonoOutput(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpLoginId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetShareStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsIsRecievedMessageHidden(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsLiveQuality2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHmd2GazeActivate(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCameraPosition(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsMessageFilterLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetUserGroupNameList(int groupIndex, char* nameList, std::size_t size,
+                                                std::int32_t* count) {
+    if (nameList == nullptr || count == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (size < 0x110) {
+        return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    }
+    if (size != 0x110 || groupIndex < -1 || groupIndex > 128 ||
+        (groupIndex >= 0 && !UserGroupSlotExists(groupIndex))) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    char path[64];
+    if (groupIndex < 0) {
+        std::snprintf(path, sizeof(path), "/system_data/priv/home/user_list.dat");
+    } else {
+        std::snprintf(path, sizeof(path), "/system_data/priv/home/user_list.dat.%d", groupIndex);
+    }
+    std::array<std::int32_t, 16> userIds;
+    userIds.fill(USER_SERVICE_USER_ID_INVALID);
+    const int descriptor = sceKernelOpen(path, 0, 0);
+    if (descriptor < 0) {
+        return descriptor;
+    }
+    const std::int64_t bytesRead = sceKernelRead(descriptor, userIds.data(), 0x40);
+    sceKernelClose(descriptor);
+    if (bytesRead < 0) {
+        return static_cast<int>(bytesRead);
+    }
+    *count = 0;
+    for (std::size_t index = 0; index < userIds.size() && userIds[index] != USER_SERVICE_USER_ID_INVALID; ++index) {
+        char userName[USER_SERVICE_MAX_USER_NAME_LENGTH + 1]{};
+        const int result = sceUserServiceGetUserName(userIds[index], userName, sizeof(userName));
+        if (result != USER_SERVICE_OK) {
+            return result;
+        }
+        std::memcpy(nameList + index * sizeof(userName), userName, sizeof(userName));
+        ++*count;
+    }
+    return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceSetVoiceAgentEnableFeedback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGazeActivate(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsIsTwitterEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetTopMenuLimitItem(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNpAuthErrorFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsIsCameraHidden(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetMousePointerSpeed(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetFaceRecognitionRegisterCount(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHmd2PlayAreaShape(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetUserName(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetA11yControllerADeviceUniqueIds(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsFloatingMessage(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceInitializeForShellCore(void*) {
+ return MarkInitialized();
+}
+
+int APS5_VABI sceUserServiceGetGlsBcTags(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetImeInputType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetProControllerUniqueId3(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHmd2GazeActivate(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetCaptureStatus3(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCameraReflection(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetNotificationSettings_2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsLiveQuality(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetFaceRecognitionRegisterCount(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetKeyRepeatStartingTime(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetIsRemotePlayAllowed(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcMondayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsLiveQuality3(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPsCloudFeedbackTime(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVoiceAgentTtsSpeed(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVoiceAgentEnable(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcWednesdayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetTopMenuTutorialFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetIsPersonalizedHrtfEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPadSpeakerVolume(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnableAston(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetHmd2ScreenSize(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsInitSpectating(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetLastLoginOrder(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsTtsPitch(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetMouseHandType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetEventUiFlag(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetImeInputSettings(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetProControllerUniqueId1(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcPlayTimeLastUpdated(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHmuBrightness(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceRegisterEventCallback(UserServiceEventCallback callback, void* userData) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ if (callback == nullptr) {
+  return USER_SERVICE_OK;
+ }
+ std::unique_lock lock(eventCallbacksMutex);
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ for (const auto& entry : eventCallbacks) {
+  std::lock_guard entryLock(entry->mutex);
+  if (entry->active && entry->callback == callback && entry->userData == userData) {
+   return USER_SERVICE_OK;
+  }
+ }
+ auto entry = std::make_shared<RegisteredEventCallback>();
+ entry->callback = callback;
+ entry->userData = userData;
+ eventCallbacks.push_back(std::move(entry));
+ return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceGetParentalMorpheus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcTuesdayDuration(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsOverlayPosition(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetEventSortTitle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHmuZoom(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetVolumeForMorpheusSidetone(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsLanguageFilter(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVibrationEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetSharePlayResolutionHost(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcSundayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNpOfflineAccountAdult(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetTriggerEffectEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHearingAssistAdjustmentLevelLeft(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetLightBarBaseBrightness(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetVoiceAgentStatusBitFactory(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetHearingAssistMakeVoicesClearer(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCommunityId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetGlsCamCrop(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcTzOffset(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetParentalGame(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetPbtcThursdayHoursStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetIsHrtfEnabled(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetParentalGameAgeLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceSetNotificationBehavior(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetUserGroupNum(std::int32_t* count) {
+    if (count == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    int groupCount = 0;
+    while (groupCount < 128 && UserGroupSlotExists(groupCount)) {
+        ++groupCount;
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(count, &groupCount, sizeof(groupCount));
+    errno = savedErrno;
+    if (!copied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceSetPartySettingFlags(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetGlsCameraEffect(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetPbtcSundayHoursEnd(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUserServiceGetIsSpartacusEnabled(std::int32_t, bool* enabled) {
+    if (enabled == nullptr) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    *enabled = true;
+    return USER_SERVICE_OK;
 }
 
 }

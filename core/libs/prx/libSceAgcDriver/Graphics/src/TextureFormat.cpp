@@ -1,9 +1,14 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 
@@ -70,6 +75,7 @@ constexpr FormatEntry kFormatLookup[] = {
     {133, VK_FORMAT_R5G6B5_UNORM_PACK16, 2, false},
     {134, VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, false},
     {136, VK_FORMAT_B4G4R4A4_UNORM_PACK16, 2, false},
+    {141, VK_FORMAT_D24_UNORM_S8_UINT, 4, false},
     {169, VK_FORMAT_BC1_RGBA_UNORM_BLOCK, 8, true},
     {170, VK_FORMAT_BC1_RGBA_SRGB_BLOCK, 8, true},
     {171, VK_FORMAT_BC2_UNORM_BLOCK, 16, true},
@@ -99,13 +105,21 @@ constexpr auto MakeFormatLookupTable() {
 constexpr auto kFormatLookupTable = MakeFormatLookupTable();
 
 std::uint32_t remapGuestFormat(std::uint32_t guestFormat) {
-    return guestFormat == 30 || guestFormat == 34 || guestFormat == 36 || guestFormat == 43 ? 20 : guestFormat;
+    return guestFormat == 30 || guestFormat == 34 || guestFormat == 36 || guestFormat == 37 || guestFormat == 41 || guestFormat == 43 || guestFormat == 44 || guestFormat == 48 ? 20 : guestFormat;
 }
+
+std::atomic<unsigned long long> formatUse[kMaxGuestFormat + 1];
+const bool formatCountersShared = (LibcRunReportSetFormatCounters_nid_no_patch(formatUse, kMaxGuestFormat + 1), true);
 
 const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {
     const auto remapped = remapGuestFormat(guestFormat);
     const auto* entry = remapped <= kMaxGuestFormat ? kFormatLookupTable[remapped] : nullptr;
-    if (entry == nullptr) Require(false, "unsupported guest texture format " + std::to_string(guestFormat));
+    if (entry == nullptr) {
+        LibcRunReportImageFormat_nid_no_patch(guestFormat, nullptr, 1, 5);
+        Require(false, "unsupported guest texture format " + std::to_string(guestFormat));
+    }
+    static const bool reporting = LibcRunReportEnabled_nid_no_patch();
+    if (reporting) formatUse[remapped].fetch_add(1, std::memory_order_relaxed);
     return *entry;
 }
 
@@ -135,9 +149,24 @@ std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatPr
     return formats;
 }
 
+bool SampledDepth24S8(const Context& context) {
+    static AgcDriver::Mutex mutex;
+    static std::map<VkPhysicalDevice, bool> supported;
+    static const bool forcedOff = std::getenv("APS5_NO_D24S8") != nullptr;
+    std::lock_guard lock(mutex);
+    if (const auto found = supported.find(context.physical); found != supported.end()) return found->second;
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, VK_FORMAT_D24_UNORM_S8_UINT, &properties);
+    constexpr auto required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    const bool ok = !forcedOff && (properties.optimalTilingFeatures & required) == required;
+    supported.emplace(context.physical, ok);
+    return ok;
+}
+
 VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat) {
     if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
     const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat);
+    if (format == ShaderRecompiler::IrBufferFormat::Format8_24UNorm && !SampledDepth24S8(context)) return VK_FORMAT_R32_SFLOAT;
     if ((context.srgbDecodeFormats & ShaderRecompiler::SrgbDecodeBit(format)) == 0u) return ResolveTextureFormat(guestFormat);
     return ResolveTextureFormat(static_cast<std::uint32_t>(ShaderRecompiler::SrgbUnormFormat(format)));
 }
@@ -221,9 +250,25 @@ std::uint32_t RepackTextureWord(std::uint32_t word) {
     return ((word >> 21u) & 0x7ffu) | (((word >> 10u) & 0x7ffu) << 11u) | ((word & 0x3ffu) << 22u);
 }
 
+VkFormat Uint16ExportAlias(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R16_UNORM:
+        case VK_FORMAT_R16_SNORM:
+        case VK_FORMAT_R16_SFLOAT: return VK_FORMAT_R16_UINT;
+        case VK_FORMAT_R16G16_UNORM:
+        case VK_FORMAT_R16G16_SNORM:
+        case VK_FORMAT_R16G16_SFLOAT: return VK_FORMAT_R16G16_UINT;
+        case VK_FORMAT_R16G16B16A16_UNORM:
+        case VK_FORMAT_R16G16B16A16_SNORM:
+        case VK_FORMAT_R16G16B16A16_SFLOAT: return VK_FORMAT_R16G16B16A16_UINT;
+        default: return VK_FORMAT_UNDEFINED;
+    }
+}
+
 std::optional<std::uint32_t> FindGuestColorTargetFormat(VkFormat format, std::uint32_t elementBytes) {
     switch (format) {
         case VK_FORMAT_B8G8R8A8_UNORM: format = VK_FORMAT_R8G8B8A8_UNORM; break;
+        case VK_FORMAT_B8G8R8A8_SNORM: format = VK_FORMAT_R8G8B8A8_SNORM; break;
         case VK_FORMAT_B8G8R8A8_SRGB: format = VK_FORMAT_R8G8B8A8_SRGB; break;
         case VK_FORMAT_A2R10G10B10_UNORM_PACK32: format = VK_FORMAT_A2B10G10R10_UNORM_PACK32; break;
         default: break;

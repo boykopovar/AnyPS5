@@ -3,9 +3,13 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/HostFault.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
+#include "prx/libkernel/System/include/UserContext.hpp"
 #include <vector>
 #include <algorithm>
 #include <array>
@@ -27,81 +31,65 @@
 #include <cstdlib>
 #include <system_error>
 #include <pthread.h>
+#ifndef __APPLE__
 #include <ucontext.h>
+#endif
 #include <unistd.h>
+#endif
+#ifdef __linux__
+#include <string_view>
+#include <dlfcn.h>
+#include <link.h>
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 35))
+#define LIBKERNEL_EXCEPTION_FIND_OBJECT 1
+#endif
 #endif
 
 #ifdef _WIN32
 extern "C" void Aps5RedirectedEntryStub();
+extern "C" void Aps5FaultEntryStub();
 extern "C" [[noreturn]] void Aps5RedirectedExit(CONTEXT* context, const void* vectors, void (*restore)(CONTEXT*, EXCEPTION_RECORD*));
 #endif
 
 namespace {
 
-struct GuestMcontext {
-    std::uint64_t onstack;
-    std::uint64_t rdi;
-    std::uint64_t rsi;
-    std::uint64_t rdx;
-    std::uint64_t rcx;
-    std::uint64_t r8;
-    std::uint64_t r9;
-    std::uint64_t rax;
-    std::uint64_t rbx;
-    std::uint64_t rbp;
-    std::uint64_t r10;
-    std::uint64_t r11;
-    std::uint64_t r12;
-    std::uint64_t r13;
-    std::uint64_t r14;
-    std::uint64_t r15;
-    std::uint32_t trapno;
-    std::uint16_t fs;
-    std::uint16_t gs;
-    std::uint64_t addr;
-    std::uint32_t flags;
-    std::uint16_t es;
-    std::uint16_t ds;
-    std::uint64_t err;
-    std::uint64_t rip;
-    std::uint64_t cs;
-    std::uint64_t rflags;
-    std::uint64_t rsp;
-    std::uint64_t ss;
-    std::uint64_t len;
-    std::uint64_t fpformat;
-    std::uint64_t ownedfp;
-    std::uint64_t lbrfrom;
-    std::uint64_t lbrto;
-    std::uint64_t aux1;
-    std::uint64_t aux2;
-    std::uint64_t fpstate[104];
-    std::uint64_t fsbase;
-    std::uint64_t gsbase;
-    std::uint64_t spare[6];
-};
-
-struct alignas(16) GuestUcontext {
-    std::uint32_t sigmask[4];
-    std::int32_t reserved[12];
-    GuestMcontext mcontext;
-    GuestUcontext* link;
-    void* stackPointer;
-    std::uint64_t stackSize;
-    std::int32_t stackFlags;
-    std::int32_t stackAlign;
-    std::int32_t flags;
-    std::int32_t spare[4];
-    std::int32_t tail[3];
-};
-
-static_assert(offsetof(GuestUcontext, mcontext) == 0x40);
-static_assert(offsetof(GuestUcontext, mcontext) + offsetof(GuestMcontext, rsp) == 0xf8);
+using GuestMcontext = UserMcontext;
+using GuestUcontext = UserUcontext;
 
 using GuestExceptionHandler = void (APS5_VABI *)(int, void*);
 
 constexpr std::array<int, 6> AllowedSignals{1, 4, 8, 10, 11, 30};
 constexpr int RaisedSignal = 30;
+constexpr int SignalIllegal = 4;
+constexpr int SignalFloatingPoint = 8;
+constexpr int SignalBus = 10;
+constexpr int SignalSegmentation = 11;
+
+constexpr std::uint32_t TrapPrivilegedInstruction = 1;
+constexpr std::uint32_t TrapArithmetic = 6;
+constexpr std::uint32_t TrapProtection = 9;
+constexpr std::uint32_t TrapPage = 12;
+constexpr std::uint32_t TrapAlignment = 14;
+constexpr std::uint32_t TrapDivide = 18;
+constexpr std::uint32_t TrapSegmentNotPresent = 26;
+constexpr std::uint32_t TrapStack = 27;
+constexpr std::uint32_t TrapSimd = 29;
+
+constexpr std::uint64_t PageProtection = 0x1;
+constexpr std::uint64_t PageWrite = 0x2;
+constexpr std::uint64_t PageUser = 0x4;
+constexpr std::uint64_t PageFetch = 0x10;
+
+struct Trap {
+    std::uint32_t number;
+    std::uint64_t address;
+    std::uint64_t error;
+};
+
+struct Fault {
+    int signum;
+    Trap trap;
+};
 
 std::array<std::atomic<void*>, 32> handlers{};
 static_assert(std::atomic<void*>::is_always_lock_free);
@@ -183,8 +171,15 @@ void LogGuestExceptionContext(int signum, const GuestMcontext& context) {
 #endif
 }
 
-void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucontext) {
+bool FaultSignal(int signum) {
+    return signum == SignalIllegal || signum == SignalFloatingPoint || signum == SignalBus || signum == SignalSegmentation;
+}
+
+void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucontext, const Trap& trap = {}) {
     auto& m = ucontext.mcontext;
+    m.trapno = trap.number;
+    m.addr = trap.address;
+    m.err = trap.error;
     const std::uint32_t mxcsrMask = FpWord(m, MxcsrMaskOffset);
     LogGuestExceptionContext(signum, m);
     handler(signum, &ucontext);
@@ -211,7 +206,7 @@ const bool SaveVectors = [] {
     return __builtin_cpu_supports("avx") != 0;
 }();
 
-void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context) {
+void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context, const Trap& trap = {}) {
     GuestUcontext ucontext{};
     auto& m = ucontext.mcontext;
     m.rdi = context.Rdi;
@@ -237,7 +232,7 @@ void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context) {
     m.len = sizeof(GuestMcontext);
     static_assert(sizeof(context.FltSave) <= sizeof(m.fpstate));
     std::memcpy(m.fpstate, &context.FltSave, sizeof(context.FltSave));
-    CallHandler(handler, signum, ucontext);
+    CallHandler(handler, signum, ucontext, trap);
     context.Rdi = m.rdi;
     context.Rsi = m.rsi;
     context.Rdx = m.rdx;
@@ -290,13 +285,32 @@ bool StackWritable(DWORD64 low, DWORD64 high) {
 struct QueuedDelivery {
     GuestExceptionHandler handler;
     int signum;
+    Pthread thread;
     std::atomic<bool> taken{false};
     std::atomic<bool> waiting{false};
+    std::atomic<bool> posted{false};
+    std::atomic<bool> closed{false};
     std::atomic<int> references{1};
 };
 
 void ReleaseQueued(QueuedDelivery* queued) {
     if (queued != nullptr && queued->references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete queued;
+}
+
+void SettleQueued(QueuedDelivery* queued) {
+    if (queued != nullptr) queued->closed.store(true, std::memory_order_release);
+}
+
+void DeferredWaitingEntry(void* parameter) {
+    auto* queued = static_cast<QueuedDelivery*>(parameter);
+    const auto handler = queued->handler;
+    const int signum = queued->signum;
+    const bool claimed = !queued->closed.load(std::memory_order_acquire) && !queued->thread->_finished.load(std::memory_order_acquire) && !queued->taken.exchange(true, std::memory_order_acq_rel);
+    ReleaseQueued(queued);
+    if (!claimed) return;
+    CONTEXT context{};
+    RtlCaptureContext(&context);
+    Deliver(handler, signum, context);
 }
 
 void CALLBACK WaitingEntry(ULONG_PTR parameter) {
@@ -317,6 +331,19 @@ static_assert(offsetof(Delivery, vectors) == 1248 && offsetof(Delivery, saveVect
 
 bool Exited(HANDLE native) {
     return WaitForSingleObject(native, 0) == WAIT_OBJECT_0;
+}
+
+using NtSuspendThreadFunction = LONG(NTAPI*)(HANDLE, PULONG);
+constexpr LONG ThreadIsTerminating = static_cast<LONG>(0xc000004bu);
+
+LONG SuspendTarget(HANDLE native) {
+    static const auto suspend = [] {
+        const auto found = reinterpret_cast<NtSuspendThreadFunction>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSuspendThread")));
+        if (found == nullptr) throw std::runtime_error("sceKernelRaiseException: ntdll.dll has no NtSuspendThread");
+        return found;
+    }();
+    ULONG previous = 0;
+    return suspend(native, &previous);
 }
 
 bool RestoringContext(DWORD64 rip) {
@@ -519,8 +546,8 @@ constexpr DWORD64 ReturnBreakBits = 0xf0003ull;
 
 struct ReturnBreak {
     std::atomic<DWORD> thread{0};
-    DWORD64 at = 0;
-    QueuedDelivery* queued = nullptr;
+    std::atomic<DWORD64> at{0};
+    std::atomic<QueuedDelivery*> queued{nullptr};
 };
 
 std::atomic<bool>& ReturnBreaksInstalled() {
@@ -576,11 +603,10 @@ bool DisarmedReturnBreak(const EXCEPTION_POINTERS& info) {
     return at == context.Rip && ArmedOnThread(GetCurrentThreadId(), at);
 }
 
-QueuedDelivery* ClaimReturnBreak(ReturnBreak& entry, DWORD thread) {
-    DWORD expected = thread;
-    if (!entry.thread.compare_exchange_strong(expected, ReservedThread, std::memory_order_acq_rel)) return nullptr;
-    auto* queued = entry.queued;
-    entry.thread.store(0, std::memory_order_release);
+QueuedDelivery* ClaimReturnBreak(ReturnBreak& entry, QueuedDelivery* queued) {
+    if (queued == nullptr) return nullptr;
+    auto* expected = queued;
+    if (!entry.queued.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) return nullptr;
     return queued;
 }
 
@@ -594,6 +620,7 @@ QueuedDelivery* ClaimReturnBreak(ReturnBreak& entry, DWORD thread) {
 }
 
 LONG CALLBACK ReturnBreakHandler(EXCEPTION_POINTERS* info) {
+    if (GuestArena::GuestArenaRecoverRead_nid_no_patch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     auto* context = info->ContextRecord;
     if (info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && *UnwindGuard() != nullptr) {
         context->Rsp = (context->Rsp & ~static_cast<DWORD64>(15)) - 8;
@@ -606,8 +633,8 @@ LONG CALLBACK ReturnBreakHandler(EXCEPTION_POINTERS* info) {
     const DWORD self = GetCurrentThreadId();
     QueuedDelivery* queued = nullptr;
     for (auto& entry : ReturnBreaks()) {
-        if (entry.thread.load(std::memory_order_acquire) != self || entry.at != at) continue;
-        queued = ClaimReturnBreak(entry, self);
+        if (entry.thread.load(std::memory_order_acquire) != self || entry.at.load(std::memory_order_acquire) != at) continue;
+        queued = ClaimReturnBreak(entry, entry.queued.load(std::memory_order_acquire));
         if (queued != nullptr) break;
     }
     if (queued == nullptr && !ArmedOnThread(self, at)) return EXCEPTION_CONTINUE_SEARCH;
@@ -650,9 +677,18 @@ bool SetReturnBreak(HANDLE native, DWORD64 at, bool armed) {
 
 struct ReturnArm {
     ReturnBreak* entry = nullptr;
-    DWORD thread = 0;
+    QueuedDelivery* queued = nullptr;
     DWORD64 at = 0;
 };
+
+void RetireReturnBreak(HANDLE native, ReturnArm& arm, bool suspended) {
+    if (auto* queued = ClaimReturnBreak(*arm.entry, arm.queued)) {
+        if (suspended && !Exited(native)) static_cast<void>(SetReturnBreak(native, arm.at, false));
+        ReleaseQueued(queued);
+    }
+    arm.entry->thread.store(0, std::memory_order_release);
+    arm = {};
+}
 
 void ArmReturnBreak(HANDLE native, const CONTEXT& context, QueuedDelivery* queued, ReturnArm& arm, DWORD64& unknown) {
     if (!ReturnBreaksInstalled().load(std::memory_order_acquire) || queued == nullptr) return;
@@ -660,24 +696,23 @@ void ArmReturnBreak(HANDLE native, const CONTEXT& context, QueuedDelivery* queue
     if (!GuestReturn(context, at, unknown)) return;
     if (arm.entry != nullptr && arm.at == at) return;
     if (arm.entry != nullptr) {
-        static_cast<void>(SetReturnBreak(native, arm.at, false));
-        ReleaseQueued(ClaimReturnBreak(*arm.entry, arm.thread));
-        arm = {};
+        RetireReturnBreak(native, arm, true);
     }
     const DWORD thread = GetThreadId(native);
     for (auto& entry : ReturnBreaks()) {
         DWORD expected = 0;
         if (!entry.thread.compare_exchange_strong(expected, ReservedThread, std::memory_order_acq_rel)) continue;
-        entry.at = at;
-        entry.queued = queued;
+        entry.at.store(at, std::memory_order_relaxed);
+        entry.queued.store(queued, std::memory_order_release);
         queued->references.fetch_add(1, std::memory_order_relaxed);
         entry.thread.store(thread, std::memory_order_release);
         NoteArmedBreak(thread, at);
         if (!SetReturnBreak(native, at, true)) {
-            ReleaseQueued(ClaimReturnBreak(entry, thread));
+            ReleaseQueued(ClaimReturnBreak(entry, queued));
+            entry.thread.store(0, std::memory_order_release);
             return;
         }
-        arm = {&entry, thread, at};
+        arm = {&entry, queued, at};
         return;
     }
 }
@@ -685,17 +720,17 @@ void ArmReturnBreak(HANDLE native, const CONTEXT& context, QueuedDelivery* queue
 void DisarmReturnBreak(HANDLE native, ReturnArm& arm) {
     if (arm.entry == nullptr) return;
     const bool suspended = SuspendThread(native) != static_cast<DWORD>(-1);
-    if (suspended && !Exited(native)) static_cast<void>(SetReturnBreak(native, arm.at, false));
-    ReleaseQueued(ClaimReturnBreak(*arm.entry, arm.thread));
+    RetireReturnBreak(native, arm, suspended);
     if (suspended) ResumeThread(native);
-    arm = {};
 }
 
 Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler, int signum, QueuedDelivery*& queued, ReturnArm* arm = nullptr) {
     alignas(16) Delivery delivery{handler, signum, {}, {}, SaveVectors ? 1u : 0u};
     const auto contextDeadline = std::chrono::steady_clock::now() + RetryLimit;
     for (;;) {
-        if (SuspendThread(native) == static_cast<DWORD>(-1)) {
+        const LONG suspended = SuspendTarget(native);
+        if (suspended == ThreadIsTerminating) return Attempt::Exited;
+        if (suspended < 0) {
             if (Exited(native)) return Attempt::Exited;
             throw std::runtime_error("sceKernelRaiseException: cannot suspend the target thread");
         }
@@ -715,7 +750,7 @@ Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler,
             continue;
         }
         if (thread->waitCount.load(std::memory_order_seq_cst) > 0) {
-            if (queued == nullptr) queued = new QueuedDelivery{handler, signum};
+            if (queued == nullptr) queued = new QueuedDelivery{handler, signum, thread};
             const bool accepted = QueueWaitingDelivery(native, queued);
             ResumeThread(native);
             if (!accepted) throw std::runtime_error("sceKernelRaiseException: cannot queue delivery to the waiting thread");
@@ -736,10 +771,16 @@ Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler,
             Redirect(native, delivery);
             return Attempt::Delivered;
         }
-        if (running == CodeKind::Host && queued == nullptr) queued = new QueuedDelivery{handler, signum};
+        bool postAfterResume = false;
+        if (running == CodeKind::Host) {
+            if (queued == nullptr) queued = new QueuedDelivery{handler, signum, thread};
+            postAfterResume = !queued->posted.exchange(true, std::memory_order_acq_rel);
+            if (postAfterResume) queued->references.fetch_add(1, std::memory_order_acq_rel);
+        }
         DWORD64 unknown = 0;
         if (arm != nullptr && running == CodeKind::Host && !restoring) ArmReturnBreak(native, delivery.context, queued, *arm, unknown);
         ResumeThread(native);
+        if (postAfterResume) TimedWait::QueueForDeliveryDrain(GetThreadId(native), &thread->_finished, &DeferredWaitingEntry, queued);
         if (running == CodeKind::Unknown) {
             static_cast<void>(ClassifyImage(image));
             continue;
@@ -803,6 +844,7 @@ private:
                     continue;
                 }
                 DisarmReturnBreak(raise.native, raise.arm);
+                SettleQueued(raise.queued);
                 ReleaseQueued(raise.queued);
                 CloseHandle(raise.native);
             }
@@ -844,6 +886,7 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
         const auto attempt = TryDeliver(thread, native, handler, signum, queued, &arm);
         if (attempt == Attempt::Delivered || attempt == Attempt::Exited) {
             DisarmReturnBreak(native, arm);
+            SettleQueued(queued);
             ReleaseQueued(queued);
             return attempt == Attempt::Delivered;
         }
@@ -851,6 +894,7 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
         if (attempt == Attempt::Restoring && now >= retryDeadline) {
             const bool taken = queued != nullptr && queued->taken.exchange(true, std::memory_order_acq_rel);
             DisarmReturnBreak(native, arm);
+            SettleQueued(queued);
             ReleaseQueued(queued);
             if (taken) return true;
             throw std::runtime_error("sceKernelRaiseException: the target thread stayed inside NtContinue for 1 s");
@@ -859,6 +903,7 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
             HANDLE owned = nullptr;
             if (!DuplicateHandle(GetCurrentProcess(), native, GetCurrentProcess(), &owned, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
                 DisarmReturnBreak(native, arm);
+                SettleQueued(queued);
                 ReleaseQueued(queued);
                 throw std::runtime_error("sceKernelRaiseException: cannot keep the target thread for a later delivery");
             }
@@ -868,10 +913,192 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
         SwitchToThread();
     }
 }
+
+constexpr DWORD FloatMultipleFaults = 0xc00002b4;
+constexpr DWORD FloatMultipleTraps = 0xc00002b5;
+constexpr ULONG_PTR AccessExecute = 8;
+constexpr std::uint32_t MxcsrFlags = 0x3f;
+constexpr int MxcsrMaskShift = 7;
+
+struct PendingFault {
+    GuestExceptionHandler handler;
+    int signum;
+    Trap trap;
+    CONTEXT context;
+};
+
+thread_local PendingFault pendingFault;
+
+bool Committed(ULONG_PTR address) {
+    MEMORY_BASIC_INFORMATION info{};
+    return VirtualQuery(reinterpret_cast<const void*>(address), &info, sizeof(info)) == sizeof(info) && info.State == MEM_COMMIT && (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0;
+}
+
+std::uint32_t FloatingPointTrap(const CONTEXT& context) {
+    const std::uint32_t mxcsr = context.MxCsr;
+    return (mxcsr & MxcsrFlags & ~(mxcsr >> MxcsrMaskShift)) != 0 ? TrapSimd : TrapArithmetic;
+}
+
+bool Classify(const EXCEPTION_RECORD& record, const CONTEXT& context, Fault& fault) {
+    switch (record.ExceptionCode) {
+    case EXCEPTION_ACCESS_VIOLATION: {
+        if (record.NumberParameters < 2) return false;
+        const ULONG_PTR access = record.ExceptionInformation[0];
+        const ULONG_PTR address = record.ExceptionInformation[1];
+        if (address == ~static_cast<ULONG_PTR>(0)) {
+            fault = {SignalBus, {TrapProtection, 0, 0}};
+            return true;
+        }
+        std::uint64_t error = PageUser;
+        if (access == 1) error |= PageWrite;
+        if (access == AccessExecute) error |= PageFetch;
+        if (Committed(address)) error |= PageProtection;
+        fault = {SignalSegmentation, {TrapPage, address, error}};
+        return true;
+    }
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+        fault = {SignalIllegal, {TrapPrivilegedInstruction, 0, 0}};
+        return true;
+    case EXCEPTION_PRIV_INSTRUCTION:
+        fault = {SignalBus, {TrapProtection, 0, 0}};
+        return true;
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:
+    case EXCEPTION_INT_OVERFLOW:
+        fault = {SignalFloatingPoint, {TrapDivide, 0, 0}};
+        return true;
+    case EXCEPTION_DATATYPE_MISALIGNMENT:
+        fault = {SignalBus, {TrapAlignment, 0, 0}};
+        return true;
+    case EXCEPTION_FLT_DENORMAL_OPERAND:
+    case EXCEPTION_FLT_DIVIDE_BY_ZERO:
+    case EXCEPTION_FLT_INEXACT_RESULT:
+    case EXCEPTION_FLT_INVALID_OPERATION:
+    case EXCEPTION_FLT_OVERFLOW:
+    case EXCEPTION_FLT_STACK_CHECK:
+    case EXCEPTION_FLT_UNDERFLOW:
+    case FloatMultipleFaults:
+    case FloatMultipleTraps:
+        fault = {SignalFloatingPoint, {FloatingPointTrap(context), 0, 0}};
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool GuestCode(DWORD64 rip) {
+    if (GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<const void*>(rip), 1)) return true;
+    MEMORY_BASIC_INFORMATION info{};
+    if (VirtualQuery(reinterpret_cast<const void*>(rip), &info, sizeof(info)) != sizeof(info) || info.Type != MEM_IMAGE) return false;
+    const auto* image = static_cast<const unsigned char*>(info.AllocationBase);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(image + dos->e_lfanew);
+    const auto* sections = IMAGE_FIRST_SECTION(nt);
+    const DWORD64 rva = rip - reinterpret_cast<DWORD64>(image);
+    bool relinked = false;
+    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        if (std::memcmp(sections[i].Name, ".elf", 4) != 0) continue;
+        relinked = true;
+        if (rva >= sections[i].VirtualAddress && rva < static_cast<DWORD64>(sections[i].VirtualAddress) + sections[i].Misc.VirtualSize) return true;
+    }
+    return !relinked && info.AllocationBase == GetModuleHandleW(nullptr);
+}
+
+bool DeliverHostFault(void* exceptionPointers) noexcept {
+    auto& info = *static_cast<EXCEPTION_POINTERS*>(exceptionPointers);
+    auto& context = *info.ContextRecord;
+    Fault fault{};
+    if (!Classify(*info.ExceptionRecord, context, fault)) return false;
+    const auto handler = Handler(fault.signum);
+    if (handler == nullptr || !GuestCode(context.Rip)) return false;
+    auto& pending = pendingFault;
+    if (pending.handler != nullptr) return false;
+    pending.handler = handler;
+    pending.signum = fault.signum;
+    pending.trap = fault.trap;
+    std::memcpy(&pending.context, &context, sizeof(CONTEXT));
+    pending.context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
+    context.Rsp = (context.Rsp - RedZone) & ~static_cast<DWORD64>(15);
+    context.Rip = reinterpret_cast<DWORD64>(&Aps5FaultEntryStub);
+    return true;
+}
+
+[[noreturn]] void FaultEntry(const void* vectors) {
+    const PendingFault pending = pendingFault;
+    pendingFault.handler = nullptr;
+    CONTEXT context = pending.context;
+    Deliver(pending.handler, pending.signum, context, pending.trap);
+    Aps5RedirectedExit(&context, SaveVectors ? vectors : nullptr, RtlRestoreContext);
+}
+
+void InstallFaultDelivery() {
+    static const bool installed = [] {
+        LibcSetHostFaultHandler_nid_no_patch(DeliverHostFault);
+        return true;
+    }();
+    (void)installed;
+}
 #else
 constexpr int HostSignal = SIGUSR1;
 constexpr std::size_t FxsaveRegisterBytes = 416;
 
+#ifdef __APPLE__
+using HostFloatState = decltype(std::declval<mcontext_t>()->__fs);
+
+constexpr std::size_t FxsaveImageOffset = offsetof(HostFloatState, __fpu_fcw);
+static_assert(offsetof(HostFloatState, __fpu_mxcsr) - FxsaveImageOffset == 24 && offsetof(HostFloatState, __fpu_xmm0) - FxsaveImageOffset == 160
+    && offsetof(HostFloatState, __fpu_xmm15) + 16 - FxsaveImageOffset == FxsaveRegisterBytes, "the Darwin float state is not an FXSAVE image");
+constexpr std::size_t FxsaveImageBytes = 512;
+
+void FromHost(const mcontext_t& host, GuestMcontext& m) {
+    const auto& g = host->__ss;
+    m.rdi = g.__rdi;
+    m.rsi = g.__rsi;
+    m.rdx = g.__rdx;
+    m.rcx = g.__rcx;
+    m.r8 = g.__r8;
+    m.r9 = g.__r9;
+    m.rax = g.__rax;
+    m.rbx = g.__rbx;
+    m.rbp = g.__rbp;
+    m.r10 = g.__r10;
+    m.r11 = g.__r11;
+    m.r12 = g.__r12;
+    m.r13 = g.__r13;
+    m.r14 = g.__r14;
+    m.r15 = g.__r15;
+    m.rip = g.__rip;
+    m.rsp = g.__rsp;
+    m.rflags = g.__rflags;
+    m.cs = g.__cs & 0xffffu;
+    m.ss = 0;
+    m.len = sizeof(GuestMcontext);
+    static_assert(FxsaveImageBytes <= sizeof(m.fpstate));
+    std::memcpy(m.fpstate, reinterpret_cast<const unsigned char*>(&host->__fs) + FxsaveImageOffset, FxsaveImageBytes);
+}
+
+void ToHost(const GuestMcontext& m, mcontext_t& host) {
+    auto& g = host->__ss;
+    g.__rdi = m.rdi;
+    g.__rsi = m.rsi;
+    g.__rdx = m.rdx;
+    g.__rcx = m.rcx;
+    g.__r8 = m.r8;
+    g.__r9 = m.r9;
+    g.__rax = m.rax;
+    g.__rbx = m.rbx;
+    g.__rbp = m.rbp;
+    g.__r10 = m.r10;
+    g.__r11 = m.r11;
+    g.__r12 = m.r12;
+    g.__r13 = m.r13;
+    g.__r14 = m.r14;
+    g.__r15 = m.r15;
+    g.__rip = m.rip;
+    g.__rsp = m.rsp;
+    g.__rflags = m.rflags;
+    std::memcpy(reinterpret_cast<unsigned char*>(&host->__fs) + FxsaveImageOffset, m.fpstate, FxsaveRegisterBytes);
+}
+#else
 void FromHost(const mcontext_t& host, GuestMcontext& m) {
     const auto* g = host.gregs;
     m.rdi = g[REG_RDI];
@@ -921,6 +1148,7 @@ void ToHost(const GuestMcontext& m, mcontext_t& host) {
     g[REG_EFL] = static_cast<greg_t>(m.rflags);
     if (host.fpregs != nullptr) std::memcpy(host.fpregs, m.fpstate, FxsaveRegisterBytes);
 }
+#endif
 
 void Deliver(int signum, siginfo_t*, void* context) {
     if (TimedWait::DeferDelivery(signum)) return;
@@ -937,6 +1165,122 @@ void Deliver(int signum, siginfo_t*, void* context) {
     CallHandler(handler, RaisedSignal, ucontext);
     ToHost(ucontext.mcontext, host);
 }
+
+#ifdef __linux__
+constexpr std::array<int, 4> FaultSignals{SIGSEGV, SIGBUS, SIGILL, SIGFPE};
+constexpr greg_t VectorDivide = 0;
+constexpr greg_t VectorInvalidOpcode = 6;
+constexpr greg_t VectorSegmentNotPresent = 11;
+constexpr greg_t VectorStack = 12;
+constexpr greg_t VectorProtection = 13;
+constexpr greg_t VectorPage = 14;
+constexpr greg_t VectorFloatingPoint = 16;
+constexpr greg_t VectorAlignment = 17;
+constexpr greg_t VectorSimd = 19;
+constexpr std::string_view GuestModuleSuffix = ".guest.prx";
+
+std::array<struct sigaction, FaultSignals.size()> previousFaultActions{};
+
+bool Classify(int hostSignal, const mcontext_t& host, Fault& fault) {
+    const auto* g = host.gregs;
+    const auto error = static_cast<std::uint64_t>(g[REG_ERR]);
+    switch (g[REG_TRAPNO]) {
+    case VectorDivide:
+        fault = {SignalFloatingPoint, {TrapDivide, 0, 0}};
+        return hostSignal == SIGFPE;
+    case VectorInvalidOpcode:
+        fault = {SignalIllegal, {TrapPrivilegedInstruction, 0, 0}};
+        return hostSignal == SIGILL;
+    case VectorSegmentNotPresent:
+        fault = {SignalBus, {TrapSegmentNotPresent, 0, error}};
+        return true;
+    case VectorStack:
+        fault = {SignalBus, {TrapStack, 0, error}};
+        return true;
+    case VectorProtection:
+        fault = {SignalBus, {TrapProtection, 0, error}};
+        return true;
+    case VectorPage:
+        fault = {hostSignal == SIGBUS ? SignalBus : SignalSegmentation, {TrapPage, static_cast<std::uint64_t>(g[REG_CR2]), error}};
+        return hostSignal == SIGSEGV || hostSignal == SIGBUS;
+    case VectorFloatingPoint:
+        fault = {SignalFloatingPoint, {TrapArithmetic, 0, 0}};
+        return hostSignal == SIGFPE;
+    case VectorAlignment:
+        fault = {SignalBus, {TrapAlignment, 0, error}};
+        return true;
+    case VectorSimd:
+        fault = {SignalFloatingPoint, {TrapSimd, 0, 0}};
+        return hostSignal == SIGFPE;
+    default:
+        return false;
+    }
+}
+
+bool GuestCode(std::uintptr_t rip) {
+    if (GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<const void*>(rip), 1)) return true;
+#ifdef LIBKERNEL_EXCEPTION_FIND_OBJECT
+    dl_find_object object{};
+    if (_dl_find_object(reinterpret_cast<void*>(rip), &object) != 0) return false;
+    const link_map* native = object.dlfo_link_map;
+#else
+    Dl_info symbol{};
+    link_map* native = nullptr;
+    if (!dladdr1(reinterpret_cast<const void*>(rip), &symbol, reinterpret_cast<void**>(&native), RTLD_DL_LINKMAP)) return false;
+#endif
+    if (!native) return false;
+    const std::string_view name = native->l_name ? native->l_name : "";
+    return name.empty() || name.ends_with(GuestModuleSuffix);
+}
+
+void ChainFault(int hostSignal, siginfo_t* info, void* context) {
+    for (std::size_t i = 0; i < FaultSignals.size(); ++i) {
+        if (FaultSignals[i] != hostSignal) continue;
+        const auto& previous = previousFaultActions[i];
+        if ((previous.sa_flags & SA_SIGINFO) != 0 && previous.sa_sigaction != nullptr) {
+            previous.sa_sigaction(hostSignal, info, context);
+            return;
+        }
+        if (previous.sa_handler != SIG_DFL && previous.sa_handler != SIG_IGN && previous.sa_handler != nullptr) {
+            previous.sa_handler(hostSignal);
+            return;
+        }
+        if (info->si_code <= 0 && previous.sa_handler == SIG_IGN) return;
+    }
+    ::signal(hostSignal, SIG_DFL);
+    if (info->si_code <= 0) ::raise(hostSignal);
+}
+
+void DeliverFault(int hostSignal, siginfo_t* info, void* context) {
+    auto& host = static_cast<ucontext_t*>(context)->uc_mcontext;
+    Fault fault{};
+    const bool deliverable = info->si_code > 0 && Classify(hostSignal, host, fault);
+    if (deliverable && fault.trap.number == TrapPage && GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(fault.trap.address)) return;
+    const auto handler = deliverable ? Handler(fault.signum) : nullptr;
+    if (handler == nullptr || !GuestCode(static_cast<std::uintptr_t>(host.gregs[REG_RIP]))) {
+        ChainFault(hostSignal, info, context);
+        return;
+    }
+    GuestUcontext ucontext{};
+    FromHost(host, ucontext.mcontext);
+    CallHandler(handler, fault.signum, ucontext, fault.trap);
+    ToHost(ucontext.mcontext, host);
+}
+
+void InstallFaultDelivery() {
+    static const bool installed = [] {
+        struct sigaction action{};
+        action.sa_sigaction = DeliverFault;
+        action.sa_flags = SA_SIGINFO | SA_NODEFER;
+        sigemptyset(&action.sa_mask);
+        for (std::size_t i = 0; i < FaultSignals.size(); ++i)
+            if (sigaction(FaultSignals[i], &action, &previousFaultActions[i]) != 0)
+                throw std::system_error(errno, std::generic_category(), "sceKernelInstallExceptionHandler: cannot install the host fault handler");
+        return true;
+    }();
+    (void)installed;
+}
+#endif
 
 void InstallDelivery() {
     static const bool installed = [] {
@@ -978,6 +1322,8 @@ bool RaiseOn(Pthread thread) {
     InstallDelivery();
     if (thread == scePthreadSelf()) return Send(thread);
     HostSignalBlock block;
+    const auto live = LockLiveGuestThread(thread);
+    if (!live.owns_lock()) return false;
     std::lock_guard lock(thread->_join_mtx);
     if (thread->_finished.load(std::memory_order_acquire)) return false;
     return Send(thread);
@@ -990,6 +1336,38 @@ bool RaiseOn(Pthread thread) {
 extern "C" [[noreturn]] void Aps5RedirectedEntry(void* delivery) {
     RedirectedEntry(static_cast<Delivery*>(delivery));
 }
+extern "C" [[noreturn]] void Aps5FaultEntry(const void* vectors) {
+    FaultEntry(vectors);
+}
+extern "C" const bool Aps5FaultSavesVectors = SaveVectors;
+static_assert(VectorBytes == 512, "Aps5FaultEntryStub stores ymm0-ymm15 in 512 bytes below the redirected stack pointer");
+asm(".text\n"
+    ".globl Aps5FaultEntryStub\n"
+    "Aps5FaultEntryStub:\n"
+    "    subq $512, %rsp\n"
+    "    cmpb $0, Aps5FaultSavesVectors(%rip)\n"
+    "    je 1f\n"
+    "    vmovdqu %ymm0, 0(%rsp)\n"
+    "    vmovdqu %ymm1, 32(%rsp)\n"
+    "    vmovdqu %ymm2, 64(%rsp)\n"
+    "    vmovdqu %ymm3, 96(%rsp)\n"
+    "    vmovdqu %ymm4, 128(%rsp)\n"
+    "    vmovdqu %ymm5, 160(%rsp)\n"
+    "    vmovdqu %ymm6, 192(%rsp)\n"
+    "    vmovdqu %ymm7, 224(%rsp)\n"
+    "    vmovdqu %ymm8, 256(%rsp)\n"
+    "    vmovdqu %ymm9, 288(%rsp)\n"
+    "    vmovdqu %ymm10, 320(%rsp)\n"
+    "    vmovdqu %ymm11, 352(%rsp)\n"
+    "    vmovdqu %ymm12, 384(%rsp)\n"
+    "    vmovdqu %ymm13, 416(%rsp)\n"
+    "    vmovdqu %ymm14, 448(%rsp)\n"
+    "    vmovdqu %ymm15, 480(%rsp)\n"
+    "1:\n"
+    "    movq %rsp, %rcx\n"
+    "    subq $40, %rsp\n"
+    "    movq $0, (%rsp)\n"
+    "    jmp Aps5FaultEntry\n");
 asm(".text\n"
     ".globl Aps5RedirectedEntryStub\n"
     "Aps5RedirectedEntryStub:\n"
@@ -1060,6 +1438,9 @@ int APS5_VABI sceKernelInstallExceptionHandler(int signum, void* handler) {
  if (!Allowed(signum) || handler == nullptr) return SCE_KERNEL_ERROR_EINVAL;
  void* expected = nullptr;
  if (!handlers[signum].compare_exchange_strong(expected, handler, std::memory_order_acq_rel)) return SCE_KERNEL_ERROR_EAGAIN;
+#if defined(_WIN32) || defined(__linux__)
+ if (FaultSignal(signum)) InstallFaultDelivery();
+#endif
  return 0;
 }
 
@@ -1069,13 +1450,26 @@ int APS5_VABI sceKernelRemoveExceptionHandler(int signum) {
  return 0;
 }
 
+#ifdef _WIN32
+void DeliverPendingException_nid_no_patch(PthreadPrivate* thread) {
+ const int signum = thread->pendingException.exchange(-1, std::memory_order_acq_rel);
+ if (signum <= 0) return;
+ const auto handler = Handler(signum);
+ if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: the handler was removed before the signal was delivered");
+ RaiseOn(thread, handler, signum);
+}
+#endif
+
 int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
  if (signum != RaisedSignal) return SCE_KERNEL_ERROR_EINVAL;
- if (thread == nullptr || thread->_finished.load(std::memory_order_acquire)) return SCE_KERNEL_ERROR_ESRCH;
+ if (thread == nullptr || !GuestThreadIsLive(thread)) return SCE_KERNEL_ERROR_ESRCH;
  const auto handler = Handler(signum);
  if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: no handler installed for the signal");
 #ifdef _WIN32
- if (thread->suspended.load(std::memory_order_acquire)) throw std::runtime_error("sceKernelRaiseException: the target thread is still suspended at creation");
+ if (thread->suspended.load(std::memory_order_acquire)) {
+  int pending = 0;
+  if (thread->pendingException.compare_exchange_strong(pending, signum, std::memory_order_acq_rel) || pending > 0) return 0;
+ }
  return RaiseOn(thread, handler, signum) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 #else
  return RaiseOn(thread) ? 0 : SCE_KERNEL_ERROR_ESRCH;

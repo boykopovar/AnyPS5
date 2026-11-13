@@ -4,6 +4,8 @@
 #include "prx/libc/include/ChildProcesses.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostExecutable.hpp"
+#include "prx/libc/include/HostErrno.hpp"
 #ifdef _WIN32
 #include "prx/libc/include/WindowsDescriptor.hpp"
 #endif
@@ -99,48 +101,11 @@ bool ProgramFound(std::string_view name, bool searchesPath, std::string& found) 
     }
 }
 
-std::string FlattenedExecutableName(const std::string& guest, const char* function) {
-    std::string_view relative(guest);
-    if (!relative.starts_with(ApplicationRoot)) NotImplemented_nid_no_patch((std::string(function) + ": executables outside /app0 (" + guest + ")").c_str());
-    relative.remove_prefix(ApplicationRoot.size());
-    std::string name;
-    while (true) {
-        const std::size_t separator = relative.find('/');
-        const std::string_view component = relative.substr(0, separator);
-        if (component.empty() || component == "." || component == "..") NotImplemented_nid_no_patch((std::string(function) + ": a path with an empty, . or .. component (" + guest + ")").c_str());
-        name += (name.empty() ? "" : ".") + std::string(component);
-        if (separator == std::string_view::npos) return name;
-        relative.remove_prefix(separator + 1);
-    }
-}
-
-std::filesystem::path OwnExecutable() {
-#if defined(_WIN32)
-    std::wstring own(32768, L'\0');
-    const DWORD length = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
-    if (length == 0 || length >= own.size()) throw std::system_error(GetLastError(), std::system_category(), "posix_spawn: GetModuleFileNameW");
-    own.resize(length);
-    return std::filesystem::path(own);
-#elif defined(__APPLE__)
-    std::uint32_t size = 0;
-    _NSGetExecutablePath(nullptr, &size);
-    std::vector<char> executable(size);
-    std::error_code error;
-    if (_NSGetExecutablePath(executable.data(), &size) == 0) return std::filesystem::canonical(executable.data(), error);
-    throw std::runtime_error("posix_spawn: cannot locate the executable");
-#else
-    std::error_code error;
-    const auto own = std::filesystem::read_symlink("/proc/self/exe", error);
-    if (error) throw std::system_error(error, "posix_spawn: cannot read /proc/self/exe");
-    return own;
-#endif
-}
-
 std::filesystem::path ConvertedExecutableTarget(const char* function, const std::string& guest) {
-    const auto own = OwnExecutable();
+    const auto own = HostExecutable::Own("posix_spawn");
     if (guest == MainExecutable) return own;
     std::error_code error;
-    const auto name = std::filesystem::path(reinterpret_cast<const char8_t*>((FlattenedExecutableName(guest, function) + own.extension().string()).c_str()));
+    const auto name = std::filesystem::path(reinterpret_cast<const char8_t*>((HostExecutable::ConvertedName(guest, [function](const std::string& reason) { NotImplemented_nid_no_patch((std::string(function) + ": " + reason).c_str()); }) + own.extension().string()).c_str()));
     const auto target = own.parent_path() / name;
     if (!std::filesystem::is_regular_file(target, error))
         NotImplemented_nid_no_patch((std::string(function) + ": " + guest + " without its converted executable; relink with --executable " + std::string(guest.substr(ApplicationRoot.size()))).c_str());
@@ -170,34 +135,6 @@ int HostOpenFlags(std::int32_t sceFlags) {
 }
 
 #ifdef _WIN32
-std::wstring Utf16(const std::string& text) {
-    if (text.empty()) return {};
-    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (size <= 0) throw std::runtime_error("posix_spawn: argument is not valid UTF-8");
-    std::wstring wide(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), wide.data(), size);
-    return wide;
-}
-
-std::wstring QuotedArgument(const std::wstring& argument) {
-    if (!argument.empty() && argument.find_first_of(L" \t\n\v\"") == std::wstring::npos) return argument;
-    std::wstring quoted = L"\"";
-    for (std::size_t index = 0;; ++index) {
-        std::size_t backslashes = 0;
-        while (index < argument.size() && argument[index] == L'\\') {
-            ++backslashes;
-            ++index;
-        }
-        if (index == argument.size()) {
-            quoted.append(backslashes * 2, L'\\');
-            break;
-        }
-        quoted.append(argument[index] == L'"' ? backslashes * 2 + 1 : backslashes, L'\\');
-        quoted.push_back(argument[index]);
-    }
-    quoted.push_back(L'"');
-    return quoted;
-}
 #endif
 
 std::string HexFlag(std::uint32_t value) {
@@ -218,6 +155,15 @@ std::uint32_t SpawnAttributeFlags(PosixSpawnAttributes* const* attributes) {
 #ifdef _WIN32
 struct ChildStreams {
     HANDLE handles[3] = {INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE};
+    bool modified[3] = {};
+
+    ChildStreams() = default;
+    ChildStreams(const ChildStreams&) = delete;
+    ChildStreams& operator=(const ChildStreams&) = delete;
+    ~ChildStreams() {
+        for (HANDLE handle : handles)
+            if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+    }
 };
 
 HANDLE DuplicateInheritable(HANDLE source) {
@@ -227,14 +173,10 @@ HANDLE DuplicateInheritable(HANDLE source) {
     return handle;
 }
 
-void CloseRedirectedStreams(ChildStreams& streams) {
-    for (HANDLE handle : streams.handles)
-        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-}
-
 void ReplaceChildStream(ChildStreams& streams, int descriptor, HANDLE source) {
     HANDLE previous = streams.handles[descriptor];
     streams.handles[descriptor] = source == INVALID_HANDLE_VALUE ? INVALID_HANDLE_VALUE : DuplicateInheritable(source);
+    streams.modified[descriptor] = true;
     if (previous != INVALID_HANDLE_VALUE) CloseHandle(previous);
 }
 
@@ -248,7 +190,8 @@ int ApplyChildRedirection(ChildStreams& streams, const PosixSpawnFileAction& act
         if (action.newDescriptor > 2)
             NotImplemented_nid_no_patch(("posix_spawn: a child descriptor " + std::to_string(action.newDescriptor) + " beyond the standard streams").c_str());
         {
-            const HANDLE source = WindowsDescriptorHandle_nid_no_patch(action.descriptor);
+            const HANDLE source = action.descriptor < 3 && streams.modified[action.descriptor]
+                ? streams.handles[action.descriptor] : WindowsDescriptorHandle_nid_no_patch(action.descriptor);
             if (source == INVALID_HANDLE_VALUE) return BadDescriptor;
             ReplaceChildStream(streams, action.newDescriptor, source);
         }
@@ -263,7 +206,12 @@ int ApplyChildRedirection(ChildStreams& streams, const PosixSpawnFileAction& act
             const int fd = ::_wopen(native.c_str(), HostOpenFlags(action.openFlags), action.mode);
             if (fd < 0) return errno;
             const HANDLE source = WindowsDescriptorHandle_nid_no_patch(fd);
-            ReplaceChildStream(streams, action.descriptor, source);
+            try {
+                ReplaceChildStream(streams, action.descriptor, source);
+            } catch (...) {
+                ::_close(fd);
+                throw;
+            }
             ::_close(fd);
         } catch (const std::invalid_argument&) {
             return InvalidArgument;
@@ -282,7 +230,7 @@ std::vector<wchar_t> ChildEnvironment(char* const* environment) {
     };
     if (environment != nullptr)
         for (std::size_t index = 0; environment[index] != nullptr; ++index) {
-            const std::wstring entry = Utf16(environment[index]);
+            const std::wstring entry = HostExecutable::Wide(environment[index], "posix_spawn");
             if (missesMarkers(entry))
                 entries.push_back(entry);
         }
@@ -329,15 +277,12 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
         for (const auto& action : (*actions)->actions) {
             if (action.kind != PosixSpawnFileActionKind::Close || (action.descriptor >= 0 && action.descriptor < 3)) redirected = true;
             const int error = ApplyChildRedirection(streams, action);
-            if (error != 0) {
-                CloseRedirectedStreams(streams);
-                return error;
-            }
+            if (error != 0) return error;
         }
     }
     std::wstring command = L"\"" + target.wstring() + L"\"";
     for (std::size_t index = 0; arguments[index] != nullptr; ++index)
-        command += L" " + QuotedArgument(Utf16(arguments[index]));
+        command += L" " + HostExecutable::QuotedArgument(HostExecutable::Wide(arguments[index], "posix_spawn"));
     if (command.size() >= 32767) throw std::runtime_error("posix_spawn: command line is too long");
     auto environmentBlock = ChildEnvironment(environment);
     PROCESS_INFORMATION process{};
@@ -372,16 +317,18 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
     }();
     if (!created) {
         const DWORD error = GetLastError();
-        CloseRedirectedStreams(streams);
         throw std::system_error(error, std::system_category(), "posix_spawn: creating the converted executable");
     }
-    CloseRedirectedStreams(streams);
     CloseHandle(process.hThread);
     RegisterChildProcess_nid_no_patch(process.dwProcessId, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(process.hProcess)));
-    *processId = static_cast<std::int32_t>(process.dwProcessId);
+    if (processId != nullptr) *processId = static_cast<std::int32_t>(process.dwProcessId);
     return 0;
 }
 #else
+int HostSpawnError(int error) {
+    return error == 0 ? 0 : GuestErrnoFromHost_nid_no_patch(error);
+}
+
 int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileActions* const* actions,
     PosixSpawnAttributes* const* attributes, std::int32_t* processId, char* const* arguments, char* const* environment) {
     const auto target = ConvertedExecutableTarget(function, guest);
@@ -391,20 +338,22 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
     if ((flags & ~SpawnFlagsImplemented) != 0)
         NotImplemented_nid_no_patch(("posix_spawn: the attribute flags " + HexFlag(flags)).c_str());
     if (flags != 0) {
-        if (posix_spawnattr_init(&hostAttributes) != 0) return Fault;
+        if (const int error = HostSpawnError(posix_spawnattr_init(&hostAttributes))) return error;
         usedAttributes = &hostAttributes;
-        if ((flags & SpawnFlagResetIds) != 0) posix_spawnattr_setflags(usedAttributes, POSIX_SPAWN_RESETIDS);
+        short hostFlags = 0;
+        if ((flags & SpawnFlagResetIds) != 0) hostFlags |= POSIX_SPAWN_RESETIDS;
         if ((flags & SpawnFlagSetGroup) != 0) {
-            posix_spawnattr_setflags(usedAttributes, POSIX_SPAWN_SETPGROUP);
+            hostFlags |= POSIX_SPAWN_SETPGROUP;
             posix_spawnattr_setpgroup(usedAttributes, (*attributes)->processGroup);
         }
+        posix_spawnattr_setflags(usedAttributes, hostFlags);
     }
     posix_spawn_file_actions_t hostActions;
     posix_spawn_file_actions_t* usedActions = nullptr;
     if (actions != nullptr && !(*actions)->actions.empty()) {
-        if (posix_spawn_file_actions_init(&hostActions) != 0) {
+        if (const int error = HostSpawnError(posix_spawn_file_actions_init(&hostActions))) {
             if (usedAttributes != nullptr) posix_spawnattr_destroy(usedAttributes);
-            return Fault;
+            return error;
         }
         usedActions = &hostActions;
     }
@@ -413,17 +362,17 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
         for (const auto& action : (*actions)->actions) {
             switch (action.kind) {
             case PosixSpawnFileActionKind::Close:
-                result = posix_spawn_file_actions_addclose(usedActions, action.descriptor);
+                result = HostSpawnError(posix_spawn_file_actions_addclose(usedActions, action.descriptor));
                 break;
             case PosixSpawnFileActionKind::Duplicate:
-                result = posix_spawn_file_actions_adddup2(usedActions, action.descriptor, action.newDescriptor);
+                result = HostSpawnError(posix_spawn_file_actions_adddup2(usedActions, action.descriptor, action.newDescriptor));
                 break;
             case PosixSpawnFileActionKind::Open: {
                 std::filesystem::path native;
                 if (const int error = ResolvePathError_nid_no_patch(action.path.c_str(), native)) result = error;
                 else {
                     try {
-                        result = posix_spawn_file_actions_addopen(usedActions, action.descriptor, native.c_str(), HostOpenFlags(action.openFlags), action.mode);
+                        result = HostSpawnError(posix_spawn_file_actions_addopen(usedActions, action.descriptor, native.c_str(), HostOpenFlags(action.openFlags), action.mode));
                     } catch (const std::invalid_argument&) {
                         result = InvalidArgument;
                     }
@@ -441,8 +390,8 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
         if (hostEnvironment == nullptr) hostEnvironment = *_NSGetEnviron();
 #endif
         pid_t childPid = -1;
-        result = posix_spawn(&childPid, target.c_str(), usedActions, usedAttributes, arguments, hostEnvironment);
-        if (result == 0) *processId = static_cast<std::int32_t>(childPid);
+        result = HostSpawnError(posix_spawn(&childPid, target.c_str(), usedActions, usedAttributes, arguments, hostEnvironment));
+        if (result == 0 && processId != nullptr) *processId = static_cast<std::int32_t>(childPid);
     }
     if (usedActions != nullptr) posix_spawn_file_actions_destroy(usedActions);
     if (usedAttributes != nullptr) posix_spawnattr_destroy(usedAttributes);
@@ -588,7 +537,8 @@ int SpawnProgram(const char* function, const char* file, bool searchesPath, Posi
     std::string found;
     if (!ProgramFound(file, searchesPath, found)) return NoSuchFile;
     if (arguments == nullptr) return Fault;
-    return SpawnChild(function, found, actions, attributes, processId, arguments, environment);
+    std::int32_t ignoredProcessId = 0;
+    return SpawnChild(function, found, actions, attributes, processId != nullptr ? processId : &ignoredProcessId, arguments, environment);
 }
 
 int APS5_VABI posix_spawn_nid_postfix(std::int32_t* processId, const char* path, PosixSpawnFileActions* const* actions, PosixSpawnAttributes* const* attributes, char* const* arguments, char* const* environment) {

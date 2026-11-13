@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -7,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
@@ -14,12 +16,15 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <set>
+#include <span>
 #include <system_error>
 #include <thread>
 #include <type_traits>
+#include <zstd.h>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -27,6 +32,10 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
+#ifdef __APPLE__
+#include <pthread.h>
+#include <sys/qos.h>
 #endif
 
 namespace AgcDriver::Graphics {
@@ -38,8 +47,8 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 912, "State changed: update CanonicalPipelineState and the recipe codec");
-static_assert(sizeof(ShaderStages) == 160, "ShaderStages changed: update the recipe codec");
+static_assert(sizeof(State) == 952, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(ShaderStages) == 164, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
 #endif
@@ -47,7 +56,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 12u;
+constexpr std::uint32_t FileFormat = 17u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -177,6 +186,8 @@ void encodeState(Writer& writer, const State& state) {
     writer.U32(static_cast<std::uint32_t>(state.stages.path));
     writer.U32(state.stages.vertexWaveSize);
     writer.U32(state.stages.fragmentWaveSize);
+    writer.U32(state.meshLayerBase);
+    writer.U32(state.meshLayerCount);
     encodeOptional(writer, state.stages.mesh, encodeMesh);
     encodeOptional(writer, state.stages.tessellation, encodeTessellation);
     writer.U32(state.stages.hullWaveSize);
@@ -203,6 +214,7 @@ void encodeState(Writer& writer, const State& state) {
         writer.U32(color.exportIndex);
         writer.Raw(color.componentMapping);
         writer.Raw(color.partialWriteMask);
+        writer.Raw(color.mergeBlend);
     }
     writer.Raws(std::span<const VkPipelineColorBlendAttachmentState>(state.blends));
     for (const auto value : state.blendConstants) writer.Raw(value);
@@ -218,6 +230,7 @@ void encodeState(Writer& writer, const State& state) {
     writer.U32(static_cast<std::uint32_t>(state.conservativeRasterization));
     writer.U32(state.cullMode);
     writer.U32(static_cast<std::uint32_t>(state.polygonMode));
+    writer.U32(std::bit_cast<std::uint32_t>(state.lineWidth));
     writer.U32(static_cast<std::uint32_t>(state.frontFace));
     writer.U32(static_cast<std::uint32_t>(state.provokingVertexMode));
     writer.U32(state.samples);
@@ -241,6 +254,8 @@ void decodeState(Reader& reader, State& state) {
     state.stages.path = static_cast<ShaderPath>(reader.U32());
     state.stages.vertexWaveSize = reader.U32();
     state.stages.fragmentWaveSize = reader.U32();
+    state.meshLayerBase = reader.U32();
+    state.meshLayerCount = reader.U32();
     if (reader.Bool()) decodeMesh(reader, state.stages.mesh.emplace());
     if (reader.Bool()) decodeTessellation(reader, state.stages.tessellation.emplace());
     state.stages.hullWaveSize = reader.U32();
@@ -272,7 +287,8 @@ void decodeState(Reader& reader, State& state) {
         color.format = static_cast<VkFormat>(reader.U32());
         color.exportIndex = reader.U32();
         color.componentMapping = reader.Raw<std::uint8_t>();
-        color.partialWriteMask = reader.Raw<std::uint16_t>();
+        color.partialWriteMask = reader.Raw<std::uint32_t>();
+        color.mergeBlend = reader.Raw<std::uint32_t>();
         state.colors.push_back(color);
     }
     reader.Raws(state.blends, 8u);
@@ -289,6 +305,7 @@ void decodeState(Reader& reader, State& state) {
     state.conservativeRasterization = static_cast<VkConservativeRasterizationModeEXT>(reader.U32());
     state.cullMode = reader.U32();
     state.polygonMode = static_cast<VkPolygonMode>(reader.U32());
+    state.lineWidth = std::bit_cast<float>(reader.U32());
     state.frontFace = static_cast<VkFrontFace>(reader.U32());
     state.provokingVertexMode = static_cast<VkProvokingVertexModeEXT>(reader.U32());
     state.samples = reader.U32();
@@ -530,7 +547,21 @@ struct LoadedModule {
     std::uint64_t payloadOffset = 0;
     std::uint64_t payloadBytes = 0;
     std::uint64_t payloadHash = 0;
+    std::uint32_t moduleBytes = 0;
 };
+
+constexpr std::size_t ModuleHeaderBytes = 24u;
+
+bool expandModule(std::span<const std::byte> payload, std::vector<std::byte>& module) {
+    if (payload.size() < ModuleHeaderBytes) return false;
+    std::uint32_t bytes = 0;
+    std::memcpy(&bytes, payload.data() + 20, sizeof(bytes));
+    const auto frame = payload.subspan(ModuleHeaderBytes);
+    if (ZSTD_getFrameContentSize(frame.data(), frame.size()) != bytes) return false;
+    module.resize(bytes);
+    const auto expanded = ZSTD_decompress(module.data(), module.size(), frame.data(), frame.size());
+    return !ZSTD_isError(expanded) && expanded == bytes;
+}
 
 struct LoadedEntry {
     std::uint32_t kind;
@@ -877,7 +908,7 @@ private:
         path = directory / "pipelines.journal";
         lockPath = directory / "pipelines.journal.lock";
         maxBytes = configured("APS5_PIPELINE_JOURNAL_MAX_MIB", 1024u) << 20u;
-        std::thread([this] { run(); }).detach();
+        Libc::StartHostThread([this] { run(); }).detach();
     }
 
     // Parses the file: with `loaded` set every record is decoded, otherwise only the index (the
@@ -909,7 +940,7 @@ private:
                 const auto payload = std::span<const std::byte>(bytes);
                 if (ShaderRecompiler::HashBytes(payload) != record.payloadHash) break;
                 if (record.kind == ModuleRecord) {
-                    if (payload.size() < 20u) break;
+                    if (payload.size() < ModuleHeaderBytes) break;
                     ShaderRecompiler::PipelineIdentity identity;
                     std::memcpy(&identity.low, payload.data(), sizeof(identity.low));
                     std::memcpy(&identity.high, payload.data() + 8, sizeof(identity.high));
@@ -918,8 +949,9 @@ private:
                     bool decoded = !decode;
                     if (decode && !loaded.indexModules.contains(identity)) {
                         ShaderRecompiler::RecompileResult result;
-                        decoded = ShaderRecompiler::ShaderDiskCache::DecodeResult(payload.subspan(20), result) && result.Identity() == identity;
-                        if (decoded) loaded.modules.emplace(identity, LoadedModule{static_cast<ShaderRecompiler::ShaderStage>(stage), payloadOffset, record.payloadBytes, record.payloadHash});
+                        std::vector<std::byte> module;
+                        decoded = expandModule(payload, module) && ShaderRecompiler::ShaderDiskCache::DecodeResult(module, result) && result.Identity() == identity;
+                        if (decoded) loaded.modules.emplace(identity, LoadedModule{static_cast<ShaderRecompiler::ShaderStage>(stage), payloadOffset, record.payloadBytes, record.payloadHash, static_cast<std::uint32_t>(module.size())});
                         else ++dropped;
                     }
                     if (decoded) loaded.indexModules.insert(identity);
@@ -1140,12 +1172,19 @@ private:
     }
 
     std::vector<std::byte> EncodeModule(const PendingModule& module) {
+        std::vector<std::byte> encoded;
+        ShaderRecompiler::ShaderDiskCache::EncodeResult(*module.result, encoded);
+        if (encoded.size() > std::numeric_limits<std::uint32_t>::max()) return {};
         std::vector<std::byte> payload;
         Writer writer(payload);
         writer.U64(module.identity.low);
         writer.U64(module.identity.high);
         writer.U32(static_cast<std::uint32_t>(module.stage));
-        ShaderRecompiler::ShaderDiskCache::EncodeResult(*module.result, payload);
+        writer.U32(static_cast<std::uint32_t>(encoded.size()));
+        payload.resize(ModuleHeaderBytes + ZSTD_compressBound(encoded.size()));
+        const auto compressed = ZSTD_compress(payload.data() + ModuleHeaderBytes, payload.size() - ModuleHeaderBytes, encoded.data(), encoded.size(), 1);
+        if (ZSTD_isError(compressed)) return {};
+        payload.resize(ModuleHeaderBytes + compressed);
         return payload;
     }
 
@@ -1169,6 +1208,7 @@ private:
         for (const auto& identity : missing) {
             const auto module = std::ranges::find_if(pending.modules, [&](const PendingModule& candidate) { return candidate.identity == identity; });
             missingPayloads.push_back(EncodeModule(*module));
+            if (missingPayloads.back().empty()) return true;
         }
         std::uint64_t batchSize = recordBytes(pending.payload.size());
         for (const auto& payload : missingPayloads) batchSize += recordBytes(payload.size());
@@ -1333,7 +1373,7 @@ public:
         replayCounters().threads.store(threads, std::memory_order_relaxed);
         replayCounters().heldPeak.store(0, std::memory_order_relaxed);
         workers.reserve(threads);
-        for (unsigned index = 0; index < threads; ++index) workers.emplace_back([this] { run(); });
+        for (unsigned index = 0; index < threads; ++index) workers.push_back(Libc::StartHostThread([this] { run(); }));
     }
 
     ~Replay() override {
@@ -1356,12 +1396,32 @@ private:
     void run() {
 #ifdef _WIN32
         if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL)) std::fprintf(stderr, "[pipeline-journal] replay thread priority not lowered (error %lu)\n", GetLastError());
+#elif defined(__APPLE__)
+        if (const int error = pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0); error != 0) std::fprintf(stderr, "[pipeline-journal] replay thread priority not lowered (error %d)\n", error);
 #endif
         std::call_once(loadOnce, [&] {
             try {
                 auto journal = Journal::Instance().Load();
-                const auto limit = configured("APS5_PIPELINE_JOURNAL_ENTRIES", 4096u);
-                if (journal.entries.size() > limit) journal.entries.erase(journal.entries.begin(), journal.entries.end() - static_cast<std::ptrdiff_t>(limit));
+                const auto graphicsLimit = configured("APS5_PIPELINE_JOURNAL_ENTRIES", 4096u);
+                const auto computeLimit = configured("APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES", 1024u);
+                const auto compute = static_cast<std::uint64_t>(std::ranges::count_if(journal.entries, [](const LoadedEntry& entry) { return entry.kind == ComputeRecord; }));
+                const auto graphics = journal.entries.size() - compute;
+                auto graphicsLeft = graphics > graphicsLimit ? graphics - graphicsLimit : 0u;
+                auto computeLeft = compute > computeLimit ? compute - computeLimit : 0u;
+                if (graphicsLeft + computeLeft != 0) {
+                    std::fprintf(stderr, "[pipeline-journal] replaying the newest %llu of %llu graphics and %llu of %llu compute pipelines (APS5_PIPELINE_JOURNAL_ENTRIES, APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES)\n", static_cast<unsigned long long>(graphics - graphicsLeft), static_cast<unsigned long long>(graphics), static_cast<unsigned long long>(compute - computeLeft), static_cast<unsigned long long>(compute));
+                    std::vector<LoadedEntry> kept;
+                    kept.reserve(static_cast<std::size_t>(journal.entries.size() - graphicsLeft - computeLeft));
+                    for (auto& entry : journal.entries) {
+                        auto& left = entry.kind == ComputeRecord ? computeLeft : graphicsLeft;
+                        if (left != 0) {
+                            --left;
+                            continue;
+                        }
+                        kept.push_back(std::move(entry));
+                    }
+                    journal.entries = std::move(kept);
+                }
                 loaded = std::move(journal);
             } catch (const std::exception& error) {
                 std::fprintf(stderr, "[pipeline-journal] cannot load %s: %s\n", Journal::Instance().Path().string().c_str(), error.what());
@@ -1389,10 +1449,12 @@ private:
     }
 
     std::shared_ptr<const ShaderRecompiler::RecompileResult> readModule(const ShaderRecompiler::PipelineIdentity& identity, const LoadedModule& module) const {
-        auto bytes = std::make_shared<std::vector<std::byte>>(static_cast<std::size_t>(module.payloadBytes));
-        if (loaded.file == nullptr || !loaded.file->Read(module.payloadOffset, *bytes) || ShaderRecompiler::HashBytes(*bytes) != module.payloadHash) return nullptr;
+        std::vector<std::byte> payload(static_cast<std::size_t>(module.payloadBytes));
+        if (loaded.file == nullptr || !loaded.file->Read(module.payloadOffset, payload) || ShaderRecompiler::HashBytes(payload) != module.payloadHash) return nullptr;
+        auto bytes = std::make_shared<std::vector<std::byte>>();
+        if (!expandModule(payload, *bytes)) return nullptr;
         auto result = std::make_shared<ShaderRecompiler::RecompileResult>();
-        if (!ShaderRecompiler::ShaderDiskCache::DecodeResult(std::span<const std::byte>(*bytes).subspan(20), *result, bytes) || !(result->Identity() == identity)) return nullptr;
+        if (!ShaderRecompiler::ShaderDiskCache::DecodeResult(*bytes, *result, bytes) || !(result->Identity() == identity)) return nullptr;
         return result;
     }
 
@@ -1421,7 +1483,7 @@ private:
                 counters.rejected.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
-            const Held held(module->second.payloadBytes);
+            const Held held(module->second.moduleBytes);
             const auto result = readModule(module->first, module->second);
             if (result == nullptr) {
                 counters.rejected.fetch_add(1, std::memory_order_relaxed);
@@ -1439,7 +1501,7 @@ private:
                 return;
             }
             modules.push_back(&*module);
-            bytes += module->second.payloadBytes;
+            bytes += module->second.moduleBytes;
         }
         if (modules.empty() || context.descriptorCache == nullptr) {
             counters.rejected.fetch_add(1, std::memory_order_relaxed);
@@ -1491,6 +1553,8 @@ State CanonicalPipelineState(const State& state) {
     canonical.stages.path = state.stages.path;
     canonical.stages.vertexWaveSize = state.stages.vertexWaveSize;
     canonical.stages.fragmentWaveSize = state.stages.fragmentWaveSize;
+    canonical.meshLayerBase = state.meshLayerBase;
+    canonical.meshLayerCount = state.meshLayerCount;
     canonical.stages.mesh = state.stages.mesh;
     canonical.stages.tessellation = state.stages.tessellation;
     canonical.stages.hullWaveSize = state.stages.hullWaveSize;
@@ -1518,6 +1582,7 @@ State CanonicalPipelineState(const State& state) {
         canonicalColor.exportIndex = color.exportIndex;
         canonicalColor.componentMapping = color.componentMapping;
         canonicalColor.partialWriteMask = color.partialWriteMask;
+        canonicalColor.mergeBlend = color.mergeBlend;
         canonical.colors.push_back(canonicalColor);
     }
     canonical.blends = state.blends;
@@ -1534,6 +1599,7 @@ State CanonicalPipelineState(const State& state) {
     canonical.conservativeRasterization = state.conservativeRasterization;
     canonical.cullMode = state.cullMode;
     canonical.polygonMode = state.polygonMode;
+    canonical.lineWidth = state.lineWidth;
     canonical.frontFace = state.frontFace;
     canonical.provokingVertexMode = state.provokingVertexMode;
     canonical.samples = state.samples;

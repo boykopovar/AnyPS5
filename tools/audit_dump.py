@@ -1,4 +1,5 @@
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -10,7 +11,7 @@ import import_audit
 import unwrap_self
 
 DESCRIPTION = """Audit the imports of an extracted title before it is launched. Unwraps the dump's eboot.bin and the modules
-it ships (sce_module/, sce_modules/ and prx/, Unity's Media/Modules/ and Media/Plugins/, and .prx files beside
+it ships (sce_module/, sce_modules/ and prx/, Unity's Media/Modules/ and Media/Plugins/, and module files beside
 eboot.bin) into a work directory, converts them with relinker --registry, and runs tools/import_audit.py on the
 registries with the unwrapped modules as --modules. The dump is only read; the source/ and output/ directories of a
 reused --work directory are emptied first. Exit code: that of import_audit.py, or 2
@@ -18,8 +19,10 @@ when unwrapping or conversion fails."""
 
 STANDARD_DIRECTORIES = ("sce_module", "sce_modules", "prx")
 EXTRA_DIRECTORIES = ("Media/Modules", "Media/Plugins")
-MODULE_SUFFIXES = (".prx", ".sprx")
+MODULE_SUFFIXES = import_audit.MODULE_FILE_SUFFIXES
 ELF_MAGIC = b"\x7fELF"
+MODULE_MAGICS = (ELF_MAGIC, unwrap_self.SELF_MAGIC.to_bytes(4, "little"),
+                 unwrap_self.SELF_MAGIC_KERNEL.to_bytes(4, "little"))
 
 
 def stage(source, destination):
@@ -36,13 +39,24 @@ def stage(source, destination):
 
 
 def modules_of(directory):
-    return sorted(path for path in directory.iterdir() if (path.is_file() or path.is_symlink()) and path.suffix.lower() in MODULE_SUFFIXES)
+    modules = []
+    for path in directory.iterdir():
+        if not (path.is_file() or path.is_symlink()):
+            continue
+        if path.suffix.lower() in MODULE_SUFFIXES:
+            modules.append(path)
+        elif path.is_file():
+            with path.open("rb") as file:
+                if file.read(4) in MODULE_MAGICS:
+                    modules.append(path)
+    return sorted(modules)
 
 
 def prepare(dump, source, log=print):
     stage(dump / "eboot.bin", source / "eboot.elf")
     module_directories = []
     extra = []
+    count = 0
     for relative in STANDARD_DIRECTORIES + EXTRA_DIRECTORIES:
         directory = dump / relative
         if not directory.is_dir():
@@ -52,16 +66,18 @@ def prepare(dump, source, log=print):
             continue
         for module in modules:
             stage(module, source / relative / module.name)
+        count += len(modules)
         module_directories.append(source / relative)
         if relative in EXTRA_DIRECTORIES:
             extra.append(relative)
-    beside = modules_of(dump)
+    beside = [module for module in modules_of(dump) if not module.samefile(dump / "eboot.bin")]
     if beside:
         for module in beside:
             stage(module, source / module.name)
+        count += len(beside)
         module_directories.append(source)
         extra.append(".")
-    log(f"staged eboot.bin and {sum(len(modules_of(directory)) for directory in module_directories)} modules")
+    log(f"staged eboot.bin and {count} modules")
     return module_directories, extra
 
 
@@ -72,7 +88,7 @@ def convert(relinker, source, output, extra, windows):
     for relative in extra:
         command += ["--module-dir", relative]
     command += [str(source / "eboot.elf"), str(output)]
-    return subprocess.run(command, capture_output=True, text=True)
+    return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def comparison_path(path, links=frozenset()):
@@ -102,7 +118,7 @@ def report_overlaps_dump(report, dump):
         return True
     exists = report.exists()
     for path in dump.rglob("*"):
-        if path.is_symlink() and path.is_dir() and destination.is_relative_to(comparison_path(path)):
+        if path.is_dir() and destination.is_relative_to(comparison_path(path)):
             return True
         if exists and path.is_file() and report.samefile(path):
             return True
@@ -121,25 +137,55 @@ def main(argv=None):
     dump = Path(args.dump)
     if not (dump / "eboot.bin").is_file():
         parser.error(f"{dump}: no eboot.bin")
-    relinker = Path(args.relinker).resolve()
-    if not relinker.is_file():
+    if not Path(args.relinker).is_file():
         parser.error(f"{args.relinker}: no such relinker")
+    relinker = Path(args.relinker).resolve()
     dump_path = comparison_path(dump)
+    try:
+        dump_inputs = [dump / "eboot.bin", *modules_of(dump)]
+        dump_directories = []
+        for relative in STANDARD_DIRECTORIES + EXTRA_DIRECTORIES:
+            directory = dump / relative
+            if directory.is_dir():
+                dump_directories.append(directory)
+                dump_inputs.extend((directory, *modules_of(directory)))
+    except (OSError, RuntimeError) as error:
+        parser.error(f"{dump}: cannot enumerate dump inputs before cleanup: {error}")
     if args.json:
         report = Path(args.json)
         try:
             overlaps = report_overlaps_dump(report, dump)
+            relinker_alias = comparison_path(report) == comparison_path(relinker) or (report.exists() and report.samefile(relinker))
         except (OSError, RuntimeError) as error:
             parser.error(f"{report}: cannot check JSON output against the input dump: {error}")
+        if relinker_alias:
+            parser.error(f"{report}: JSON output would overwrite the relinker")
         if overlaps:
             parser.error(f"{report}: JSON output overlaps the input dump")
+        if report.is_dir():
+            parser.error(f"{report}: JSON output is a directory")
+        if not report.resolve().parent.is_dir():
+            parser.error(f"{report.resolve().parent}: no such directory")
     with tempfile.TemporaryDirectory() as temporary:
         work = Path(args.work) if args.work else Path(temporary)
         source, output = work / "source", work / "output"
         for generated in (source, output):
-            generated_path = comparison_path(generated)
+            try:
+                generated_path = comparison_path(generated)
+            except (OSError, RuntimeError) as error:
+                parser.error(f"{generated}: cannot check work directory against the input dump: {error}")
             if dump_path.is_relative_to(generated_path) or generated_path.is_relative_to(dump_path):
                 parser.error(f"{generated}: work directory overlaps the input dump")
+            for input_path in (Path(args.relinker), *(Path(library) for library in args.libs), *dump_inputs):
+                try:
+                    resolved = comparison_path(input_path)
+                except (OSError, RuntimeError) as error:
+                    parser.error(f"{input_path}: cannot check work directory against input: {error}")
+                supplied = Path(os.path.abspath(input_path))
+                generated_spelling = Path(os.path.abspath(generated))
+                if (supplied.is_relative_to(generated_spelling) or resolved.is_relative_to(generated_path)
+                        or input_path in dump_directories and generated_path.is_relative_to(resolved)):
+                    parser.error(f"{generated}: work directory contains input {input_path}")
         for generated in (source, output):
             try:
                 if generated.is_symlink():
@@ -152,13 +198,21 @@ def main(argv=None):
             if generated.exists() or generated.is_symlink():
                 print(f"FAIL: cannot empty {generated}: it still exists", file=sys.stderr)
                 return 2
-        output.mkdir(parents=True, exist_ok=True)
+        try:
+            output.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            print(f"FAIL: cannot create {output}: {error}", file=sys.stderr)
+            return 2
         try:
             module_directories, extra = prepare(dump, source)
         except (unwrap_self.Refused, OSError) as error:
             print(f"FAIL: unwrapping {dump}: {error}", file=sys.stderr)
             return 2
-        result = convert(relinker, source, output / ("app.exe" if args.windows else "app.elf"), extra, args.windows)
+        try:
+            result = convert(relinker, source, output / ("app.exe" if args.windows else "app.elf"), extra, args.windows)
+        except OSError as error:
+            print(f"FAIL: cannot run relinker {relinker}: {error}", file=sys.stderr)
+            return 2
         if result.returncode != 0:
             print(f"FAIL: relinker exited with {result.returncode}", file=sys.stderr)
             print((result.stderr or result.stdout).strip(), file=sys.stderr)

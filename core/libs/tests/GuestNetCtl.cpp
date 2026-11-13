@@ -1,13 +1,16 @@
 #include "prx/libSceNetCtl/include/NetCtl.hpp"
+#include <cerrno>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 #ifdef __APPLE__
@@ -17,6 +20,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -106,10 +110,15 @@ void CheckCallbacks() {
     int v6 = -1;
     Require(sceNetCtlRegisterCallbackV6(RecordV6, &v6Probe, &v6) == 0 && v6 == 0);
 
+    int stateV6 = -1;
+    Require(sceNetCtlGetStateV6(&stateV6) == 0);
+    const int eventV6 = stateV6 == kStateIpObtained ? kEventIpObtained : kEventDisconnected;
+
     int first = -1;
     Require(sceNetCtlRegisterCallback(RecordFirst, &firstProbe, &first) == 0 && first == 0);
     Require(sceNetCtlCheckCallback() == 0);
     Require(g_first.calls == 1 && g_first.event == event && g_first.arg == &firstProbe);
+    Require(g_v6.calls == 1 && g_v6.event == eventV6 && g_v6.arg == &v6Probe);
     Require(sceNetCtlCheckCallback() == 0);
     Require(g_first.calls == 1);
 
@@ -148,7 +157,8 @@ void CheckCallbacks() {
     Require(sceNetCtlRegisterCallback(RecordFirst, &secondProbe, &first) == 0 && first == 0);
     Require(sceNetCtlCheckCallback() == 0);
     Require(g_first.calls == 2 && g_first.event == event && g_first.arg == &secondProbe);
-    Require(g_second.calls == 2 && g_self.calls == 1 && g_v6.calls == 0);
+    Require(g_second.calls == 2 && g_self.calls == 1 && g_v6.calls == 2);
+    Require(g_v6.event == eventV6 && g_v6.arg == &v6Probe);
     Require(sceNetCtlUnregisterCallback(first) == 0);
     Require(sceNetCtlUnregisterCallbackV6(v6) == 0);
 }
@@ -168,8 +178,11 @@ int CurrentEvent() {
 }
 
 void CheckIpcIntGetters() {
+    auto* const unwritable = reinterpret_cast<int*>(0x10);
     Require(sceNetCtlGetStateIpcInt(nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetStateV6IpcInt(nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlGetStateIpcInt(unwritable) == kErrInvalidAddr);
+    Require(sceNetCtlGetStateV6IpcInt(unwritable) == kErrInvalidAddr);
     int state = -1;
     int twin = -2;
     Require(sceNetCtlGetStateIpcInt(&state) == 0 && sceNetCtlGetState(&twin) == 0 && state == twin);
@@ -178,6 +191,7 @@ void CheckIpcIntGetters() {
     Require(sceNetCtlGetStateV6IpcInt(&state) == 0 && sceNetCtlGetStateV6(&twin) == 0 && state == twin);
 
     Require(sceNetCtlGetResultIpcInt(kEventDisconnected, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlGetResultIpcInt(kEventDisconnected, unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetResultV6IpcInt(kEventDisconnected, nullptr) == kErrInvalidAddr);
     for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
         int errorCode = -1;
@@ -230,15 +244,59 @@ void CheckIpcIntCallbacks() {
     Require(sceNetCtlUnregisterCallback(internal) == 0);
     Require(sceNetCtlUnregisterCallbackIpcInt(internal) == idNotFound);
 
+    int stateV6 = -1;
+    Require(sceNetCtlGetStateV6(&stateV6) == 0);
+    const int eventV6 = stateV6 == kStateIpObtained ? kEventIpObtained : kEventDisconnected;
     int internalV6 = -1;
     Require(sceNetCtlRegisterCallbackV6IpcInt(RecordIpcInt, &probe, &internalV6) == 0 && internalV6 == 0);
     int sharedV6 = -1;
     Require(sceNetCtlRegisterCallbackV6(RecordIpcInt, &probe, &sharedV6) == 0 && sharedV6 == 1);
     Require(sceNetCtlCheckCallback() == 0);
-    Require(g_ipcInt.calls == 2);
+    Require(g_ipcInt.calls == 4 && g_ipcInt.event == eventV6 && g_ipcInt.arg == &probe);
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(g_ipcInt.calls == 4 && g_ipcInt.event == eventV6 && g_ipcInt.arg == &probe);
     Require(sceNetCtlUnregisterCallbackV6IpcInt(sharedV6) == 0);
     Require(sceNetCtlUnregisterCallbackV6(internalV6) == 0);
     Require(sceNetCtlUnregisterCallbackV6IpcInt(internalV6) == idNotFound);
+
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(nullptr, nullptr, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(RecordIpcInt, nullptr, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(nullptr, &probe, &internal) == kErrInvalidAddr);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(-1) == invalidId);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(8) == invalidId);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(0) == idNotFound);
+    Require(sceNetCtlCheckCallbackForLibIpcInt() == 0);
+
+    int forLibId = -1;
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(RecordIpcInt, &probe, &forLibId) == 0 && forLibId == 0);
+    const int callsBefore = g_ipcInt.calls;
+    int publicId = -1;
+    Require(sceNetCtlRegisterCallback(RecordIpcInt, &probe, &publicId) == 0);
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(g_ipcInt.calls == callsBefore + 1);
+    int publicV6Id = -1;
+    Require(sceNetCtlRegisterCallbackV6(RecordIpcInt, &probe, &publicV6Id) == 0);
+    Require(sceNetCtlCheckCallbackForNpToolkit() == 0);
+    Require(g_ipcInt.calls == callsBefore + 1);
+    Require(sceNetCtlCheckCallbackForLibIpcInt() == 0);
+    Require(g_ipcInt.calls == callsBefore + 2 && g_ipcInt.event == event && g_ipcInt.arg == &probe);
+    Require(sceNetCtlCheckCallbackForLibIpcInt() == 0);
+    Require(g_ipcInt.calls == callsBefore + 2);
+    Require(sceNetCtlUnregisterCallbackV6(publicV6Id) == 0);
+    Require(sceNetCtlUnregisterCallback(publicId) == 0);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(forLibId) == 0);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(forLibId) == idNotFound);
+
+    int cids[8] = {};
+    for (int i = 0; i < 8; ++i) {
+        Require(sceNetCtlRegisterCallbackForLibIpcInt(RecordIpcInt, &probe, &cids[i]) == 0);
+        Require(cids[i] == i);
+    }
+    int extra = -1;
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(RecordIpcInt, &probe, &extra) == static_cast<int>(0x80412103));
+    for (int i = 0; i < 8; ++i) {
+        Require(sceNetCtlUnregisterCallbackForLibIpcInt(cids[i]) == 0);
+    }
 }
 
 NetCtlInfo Query(int code) {
@@ -368,7 +426,7 @@ StunTxId ReceiveStunBindingRequest(TestSocket serverSocket, sockaddr_in& client)
     return txId;
 }
 
-void SendStunBindingResponse(TestSocket serverSocket, const sockaddr_in& client, const StunTxId& txId, std::uint32_t mappedAddr, std::uint16_t mappedHostPort, bool xorMapped, const sockaddr_in* otherServer = nullptr) {
+void SendStunBindingResponse(TestSocket serverSocket, const sockaddr_in& client, const StunTxId& txId, std::uint32_t mappedAddr, std::uint16_t mappedHostPort, bool xorMapped, const sockaddr_in* otherServer = nullptr, std::uint16_t otherAttr = 0x0005) {
     const std::uint16_t effectivePort = mappedHostPort != 0 ? mappedHostPort : ntohs(client.sin_port);
     const std::uint32_t effectiveAddr = mappedAddr != 0 ? mappedAddr : client.sin_addr.s_addr;
     std::vector<std::uint8_t> response(20, 0);
@@ -379,7 +437,7 @@ void SendStunBindingResponse(TestSocket serverSocket, const sockaddr_in& client,
     std::memcpy(response.data() + 8, txId.data(), txId.size());
     AppendStunAddressAttribute(response, xorMapped ? 0x0020 : 0x0001, effectiveAddr, effectivePort, xorMapped);
     if (otherServer) {
-        AppendStunAddressAttribute(response, 0x0005, otherServer->sin_addr.s_addr, ntohs(otherServer->sin_port), false);
+        AppendStunAddressAttribute(response, otherAttr, otherServer->sin_addr.s_addr, ntohs(otherServer->sin_port), false);
     }
     const auto attrLen = static_cast<std::uint16_t>(response.size() - 20);
     response[2] = static_cast<std::uint8_t>(attrLen >> 8);
@@ -505,6 +563,34 @@ void CheckNatDiscovery(in_addr address) {
     Require(sceNetCtlGetNatInfo(&cachedInfo) == 0);
     Require(cachedInfo.stun_status == 2 && cachedInfo.nat_type == 2 && cachedInfo.mapped_addr == externalIp);
 
+#ifdef _WIN32
+    SYSTEM_INFO systemInfo{};
+    GetSystemInfo(&systemInfo);
+    const std::size_t pageSize = systemInfo.dwPageSize;
+    void* readOnlyPage = VirtualAlloc(nullptr, pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Require(readOnlyPage != nullptr);
+#else
+    const long nativePageSize = sysconf(_SC_PAGESIZE);
+    Require(nativePageSize > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(nativePageSize);
+    void* readOnlyPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(readOnlyPage != MAP_FAILED);
+#endif
+    auto* readOnlyInfo = static_cast<NetCtlNatInfo*>(readOnlyPage);
+    *readOnlyInfo = {sizeof(*readOnlyInfo), 99, 99, 0};
+#ifdef _WIN32
+    DWORD oldProtection = 0;
+    Require(VirtualProtect(readOnlyPage, pageSize, PAGE_READONLY, &oldProtection) != 0);
+#else
+    Require(mprotect(readOnlyPage, pageSize, PROT_READ) == 0);
+#endif
+    Require(sceNetCtlGetNatInfo(readOnlyInfo) == kErrInvalidAddr);
+#ifdef _WIN32
+    Require(VirtualFree(readOnlyPage, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(readOnlyPage, pageSize) == 0);
+#endif
+
     NetCtlSetStunServers_nid_no_patch(&server1Addr, 1, 1000);
     StunTxId type3Tx1{};
     StunTxId type3Tx2{};
@@ -527,6 +613,47 @@ void CheckNatDiscovery(in_addr address) {
     Require(natInfo.stun_status == 2);
     Require(natInfo.nat_type == 3);
     Require(natInfo.mapped_addr == externalIp);
+
+    constexpr std::uint16_t kStunResponseOrigin = 0x802b;
+    constexpr std::uint16_t kStunOtherAddress = 0x802c;
+
+    NetCtlSetStunServers_nid_no_patch(&server1Addr, 1, 1000);
+    StunTxId otherAddressTx1{};
+    StunTxId otherAddressTx2{};
+    bool otherAddressProbed = false;
+    std::thread otherAddressWorker([&] {
+        sockaddr_in firstClient{};
+        otherAddressTx1 = ReceiveStunBindingRequest(server1, firstClient);
+        SendStunBindingResponse(server1, firstClient, otherAddressTx1, externalIp, 54321, false, &server2Addr, kStunOtherAddress);
+        if (WaitReadable(server2, 1500)) {
+            otherAddressProbed = true;
+            sockaddr_in secondClient{};
+            otherAddressTx2 = ReceiveStunBindingRequest(server2, secondClient);
+            SendStunBindingResponse(server2, secondClient, otherAddressTx2, externalIp, 54322, false);
+        }
+    });
+    natInfo = {sizeof(natInfo), 99, 99, 0};
+    Require(sceNetCtlGetNatInfo(&natInfo) == 0);
+    otherAddressWorker.join();
+    Require(otherAddressProbed);
+    RecordUniqueTransactionId(seenIds, otherAddressTx1);
+    RecordUniqueTransactionId(seenIds, otherAddressTx2);
+    Require(natInfo.stun_status == 2);
+    Require(natInfo.nat_type == 3);
+    Require(natInfo.mapped_addr == externalIp);
+
+    NetCtlSetStunServers_nid_no_patch(&server1Addr, 1, 300);
+    StunTxId responseOriginTx{};
+    std::thread responseOriginWorker([&] {
+        sockaddr_in client{};
+        responseOriginTx = ReceiveStunBindingRequest(server1, client);
+        SendStunBindingResponse(server1, client, responseOriginTx, externalIp, 54321, false, &server2Addr, kStunResponseOrigin);
+    });
+    natInfo = {sizeof(natInfo), 99, 99, 0};
+    Require(sceNetCtlGetNatInfo(&natInfo) == 0);
+    responseOriginWorker.join();
+    RecordUniqueTransactionId(seenIds, responseOriginTx);
+    Require(!WaitReadable(server2, 300));
 
     NetCtlSetStunServers_nid_no_patch(nullptr, 0, 0);
     CloseTestSocket(server1);
@@ -598,11 +725,26 @@ int main() {
 #endif
     constexpr int invalidId = static_cast<int>(0x80412105);
     Require(sceNetCtlCheckCallback() == 0);
+    auto* const unwritable = reinterpret_cast<int*>(0x10);
     Require(sceNetCtlGetState(nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlGetState(unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetStateV6(nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlGetStateV6(unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetInfo(0, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetResult(0, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlGetResult(0, unwritable) == kErrInvalidAddr);
+    Require(sceNetCtlGetResult(kEventDisconnected, unwritable) == kErrInvalidAddr);
+    Require(sceNetCtlGetResult(kEventIpObtained, unwritable) == kErrInvalidAddr);
+    Require(sceNetCtlGetEtherLinkMode(unwritable) == kErrInvalidAddr);
+    Require(sceNetCtlGetWifiType(unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetNatInfo(nullptr) == kErrInvalidAddr);
+    errno = 73;
+    Require(sceNetCtlGetNatInfo(reinterpret_cast<NetCtlNatInfo*>(0x10)) == kErrInvalidAddr);
+    Require(errno == 73);
+    Require(sceNetCtlGetIfStat(nullptr) == kErrInvalidAddr);
+    errno = 71;
+    Require(sceNetCtlGetIfStat(reinterpret_cast<NetCtlIfStat*>(0x10)) == kErrInvalidAddr);
+    Require(errno == 71);
     Require(sceNetCtlRegisterCallback(nullptr, nullptr, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlRegisterCallbackV6(nullptr, nullptr, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlUnregisterCallback(-1) == invalidId);
@@ -610,6 +752,9 @@ int main() {
     Require(sceNetCtlRegisterCallbackForNpToolkit(nullptr, nullptr, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlUnregisterCallbackForNpToolkit(-1) == invalidId);
     Require(sceNetCtlCheckCallbackForNpToolkit() == 0);
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(nullptr, nullptr, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(-1) == invalidId);
+    Require(sceNetCtlCheckCallbackForLibIpcInt() == 0);
     CheckCallbacks();
     CheckIpcIntGetters();
     CheckIpcIntCallbacks();
@@ -625,6 +770,9 @@ int main() {
         Require(sceNetCtlGetResult(eventType, &errorCode) == 0 && errorCode == 0);
     }
     Require(sceNetCtlGetResultV6(kEventIpObtained, nullptr) == kErrInvalidAddr);
+    errno = 71;
+    Require(sceNetCtlGetResultV6(kEventIpObtained, reinterpret_cast<int*>(0x10)) == kErrInvalidAddr);
+    Require(errno == 71);
     for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
         int errorCodeV6 = -1;
         Require(sceNetCtlGetResultV6(eventType, &errorCodeV6) == 0 && errorCodeV6 == 0);
@@ -649,6 +797,9 @@ int main() {
     int state = -1;
     Require(sceNetCtlGetState(&state) == 0 && state == kStateIpObtained);
 
+    errno = 71;
+    for (const int code : {1, 2, 12, 14}) Require(sceNetCtlGetInfo(code, reinterpret_cast<NetCtlInfo*>(0x10)) == kErrInvalidAddr);
+    Require(errno == 71);
     Require(QueryWord(1) == 0);
     const auto ether = Query(2);
     const std::uint8_t mac[6] = {0x02, 0x50, 0x53, 0x35, 0x00, 0x01};

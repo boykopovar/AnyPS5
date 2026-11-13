@@ -110,7 +110,7 @@ std::uint32_t ClaimEntry(FontCtxHeader* header, const OpenRequest& request) {
         std::uint32_t firstFree = 0xFFFFFFFFu;
         for (std::uint32_t i = 0; i < header->max_entries; ++i) {
             const auto& entry = entries[i];
-            if ((entry.active != 0 && entry.unique_id == uniqueId) || (request.matchAddress && entry.font_address == address)) {
+            if (entry.active != 0 && (entry.unique_id == uniqueId || (request.matchAddress && entry.font_address == address))) {
                 entryIndex = i;
                 break;
             }
@@ -484,26 +484,27 @@ int APS5_VABI sceFontGetLibrary(FontHandle fontHandle, FontLibrary* pLibrary) {
     if (!pLibrary) return SCE_FONT_ERROR_INVALID_PARAMETER;
     const auto* font = GetNativeFont(fontHandle);
     if (!font || font->magic != HANDLE_MAGIC) {
-        *pLibrary = nullptr;
+        if (!CopyOutGuest(pLibrary, FontLibrary{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
         return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     }
-    *pLibrary = font->library;
+    if (!CopyOutGuest(pLibrary, font->library)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGetFontGlyphsCount(FontHandle fontHandle, std::uint32_t* glyphsCount) {
     const auto* font = GetNativeFont(fontHandle);
     if (!font || font->magic != HANDLE_MAGIC) {
-        if (glyphsCount) *glyphsCount = 0;
+        if (glyphsCount) CopyOutGuest(glyphsCount, std::uint32_t{0});
         return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     }
-    if (!glyphsCount) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    *glyphsCount = 0;
+    if (!glyphsCount || !CopyOutGuest(glyphsCount, std::uint32_t{0})) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    std::uint32_t count = 0;
     const int rc = CallOpenFontObject(fontHandle, [&](const SysDriver& driver, FontObj* obj) {
         if (!driver.glyphs_count) return SCE_FONT_ERROR_FATAL;
-        return driver.glyphs_count(obj, glyphsCount);
+        return driver.glyphs_count(obj, &count);
     });
-    if (rc != SCE_FONT_OK) *glyphsCount = 0;
+    if (rc != SCE_FONT_OK) count = 0;
+    if (!CopyOutGuest(glyphsCount, count)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return rc;
 }
 

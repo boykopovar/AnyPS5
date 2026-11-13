@@ -37,7 +37,7 @@ class OpenPullRequestsTests(unittest.TestCase):
             found = pr_overlap.open_prs("main")
         self.assertEqual(set(found), set(range(1, 202)))
         self.assertEqual(found[201], {
-            "ref": "refs/pr/201", "sha": "sha201", "author": "author201", "depends": {12, 34},
+            "ref": "refs/pr/201", "sha": "sha201", "author": "author201", "title": "", "depends": {12, 34},
         })
         self.assertEqual(found[1]["depends"], set())
 
@@ -46,8 +46,8 @@ class OpenPullRequestsTests(unittest.TestCase):
                 patch.object(pr_overlap, "gh", return_value="[]") as gh:
             self.assertEqual(pr_overlap.open_prs("topic/one&two"), {})
         gh.assert_called_once_with(
-            "api", "--paginate",
-            "repos/owner/project/pulls?state=open&base=topic%2Fone%26two&per_page=100",
+            "api", "--include",
+            "repos/owner/project/pulls?state=open&base=topic%2Fone%26two&per_page=100&page=1",
         )
 
     def test_single_page_preserves_author_head_and_dependencies(self):
@@ -57,7 +57,7 @@ class OpenPullRequestsTests(unittest.TestCase):
                 patch.object(pr_overlap, "gh", return_value=json.dumps(pull_requests)):
             found = pr_overlap.open_prs("main")
         self.assertEqual(found, {
-            7: {"ref": "refs/pr/7", "sha": "head-sha", "author": "contributor", "depends": set()},
+            7: {"ref": "refs/pr/7", "sha": "head-sha", "author": "contributor", "title": "", "depends": set()},
         })
 
     def test_collects_concatenated_json_pages_from_paginated_gh_output(self):
@@ -81,6 +81,23 @@ class OpenPullRequestsTests(unittest.TestCase):
                 patch.object(pr_overlap, "gh", return_value="  \n"):
             with self.assertRaisesRegex(ValueError, "returned no JSON pages"):
                 pr_overlap.open_prs("main")
+
+
+class ClashDiffReadTests(unittest.TestCase):
+    def test_each_side_diff_is_read_once(self):
+        a = {"tree": "ta", "files": {"f.cpp"}, "added": set()}
+        b = {"tree": "tb", "files": {"f.cpp"}, "added": set()}
+        diffs = {"ta": "@@ -1 +1 @@\n-a\n+b\n@@ -5 +5 @@\n-c\n+d\n@@ -9 +9 @@\n-e\n+f\n",
+                 "tb": "@@ -2 +2 @@\n-g\n+h\n"}
+        calls = []
+
+        def fake_git(*args):
+            calls.append(args)
+            return diffs[args[4]]
+
+        with patch.object(pr_overlap, "git", side_effect=fake_git):
+            self.assertEqual(pr_overlap.clashes(a, b, "f.cpp"), [(1, 2)])
+        self.assertEqual(len(calls), 2)
 
 
 class TopInsertTests(unittest.TestCase):
@@ -408,6 +425,66 @@ class MarkdownCellTests(unittest.TestCase):
             "example%60file.cpp#L5",
             result,
         )
+
+
+class ReportSizeCapTests(unittest.TestCase):
+    CAP_UNDER_GITHUB_LIMIT = 60000
+
+    def test_empty_report_stays_empty(self):
+        self.assertEqual(pr_overlap.report({}, "https://example.invalid/blob/base"), "")
+
+    def test_small_report_is_byte_identical_to_the_uncapped_output(self):
+        rows = {2: {"added": set(), "conflicts": {"other.cpp": [(1, 1)]}},
+                3: {"added": set(), "uncompared": {"shared.cpp"}}}
+        report = pr_overlap.report(rows, "https://example.invalid/blob/base")
+        self.assertEqual(report, (
+            f"{pr_overlap.MARKER}\n"
+            "Other open pull requests touch the same code. Merging one will break the other, "
+            "or both implement the same thing. If this one builds on them, list them in **Depends on**.\n"
+            "\n"
+            "| Pull request | Conflicting files (lines on `main`) | Same exports | Same new files |\n"
+            "|---|---|---|---|\n"
+            "| [PR 2](https://example.invalid/pull/2) | `other.cpp` [L1](https://example.invalid/blob/base/other.cpp#L1) |  |  |\n"
+            "\n"
+            "Some comparisons could not be completed because a pull request conflicts with the base branch. "
+            "Review these shared files manually before concluding that there is no overlap.\n"
+            "\n"
+            "| Pull request | Shared files not compared |\n"
+            "|---|---|\n"
+            "| [PR 3](https://example.invalid/pull/3) | `shared.cpp` |\n"
+        ))
+        self.assertLessEqual(len(report), self.CAP_UNDER_GITHUB_LIMIT)
+
+    def test_pathological_report_with_many_overlaps_and_paths_is_capped(self):
+        rows = {
+            number: {
+                "added": {f"new/file{number}_{i}.cpp" for i in range(3)},
+                "conflicts": {f"core/libs/prx/libExample/path_{number}_{i}.cpp": [(1, 1), (10, 20)] for i in range(5)},
+                "exports": {f"sceExample{number}_{i}" for i in range(3)},
+            }
+            for number in range(2, 400)
+        }
+        report = pr_overlap.report(rows, "https://github.com/boykopovar/AnyPS5/blob/deadbeef")
+        self.assertLessEqual(len(report), self.CAP_UNDER_GITHUB_LIMIT)
+        self.assertTrue(report.startswith(pr_overlap.MARKER))
+        match = re.search(r"_Report truncated: (\d+) more lines omitted\._\n\Z", report)
+        self.assertIsNotNone(match)
+        self.assertGreater(int(match.group(1)), 0)
+        lines = report.split("\n")
+        table_rows = [line for line in lines if line.startswith("|")]
+        self.assertTrue(table_rows)
+        self.assertEqual(table_rows[1], "|---|---|---|---|")
+        pipe_counts = {line.count("|") for line in table_rows}
+        self.assertEqual(pipe_counts, {5})
+
+    def test_single_oversized_row_still_yields_a_capped_report(self):
+        rows = {2: {"added": set(),
+                    "conflicts": {f"core/libs/prx/libExample/path_{i}.cpp": [(1, 2)] for i in range(2000)}}}
+        report = pr_overlap.report(rows, "https://github.com/boykopovar/AnyPS5/blob/deadbeef")
+        self.assertLessEqual(len(report), self.CAP_UNDER_GITHUB_LIMIT)
+        self.assertTrue(report.startswith(pr_overlap.MARKER))
+        self.assertRegex(report, r"_Report truncated: \d+ more lines omitted\._\n\Z")
+
 
 class CommentStateTests(unittest.TestCase):
     def setUp(self):
