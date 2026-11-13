@@ -55,7 +55,6 @@ class RunReportSummaryTests(unittest.TestCase):
         report["run"]["exitCode"] = "\x1b[2J"
         report["run"]["seconds"] = "\nInjected line"
         report["system"]["ramGiB"] = True
-        report["coverage"]["shaders"] = True
         report["shaders"]["compiled"] = "\x1b[2J"
         summary = render(report)
         self.assertNotIn("\x1b", summary)
@@ -64,6 +63,16 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("after unknown seconds", summary)
         self.assertIn("unknown GiB RAM", summary)
         self.assertIn("Shaders: unknown compiled", summary)
+
+    def test_malformed_totals_are_unknown(self):
+        report = self.report("stop-none.json")
+        report["coverage"].update(missing=True, unsupported=True)
+        report["missing"]["functions"] = [{"calls": 2}, {"calls": "\x1b[2J"}]
+        report["shaders"]["unsupported"] = [{"count": 3}, {"count": []}]
+        summary = render(report)
+        self.assertIn("Missing functions: unknown calls across 2 functions", summary)
+        self.assertIn("Unsupported shader instructions: unknown occurrences across 2 instructions", summary)
+        self.assertNotIn("\x1b", summary)
 
     def test_rejects_other_report_formats(self):
         with self.assertRaisesRegex(ValueError, "AnyPS5 run report"):

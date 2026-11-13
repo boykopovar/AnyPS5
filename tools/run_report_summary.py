@@ -18,6 +18,13 @@ def count_text(value, noun):
     return f"{number_text(value)} {noun}{'' if value == 1 else 's'}"
 
 
+def total_count(items, key):
+    counts = [item.get(key, 0) for item in items if isinstance(item, dict)]
+    if any(type(count) not in (int, float) for count in counts):
+        return None
+    return sum(counts)
+
+
 def render(report):
     if (not isinstance(report, dict) or report.get("format") != "anyps5-report"
             or type(report.get("version")) is not int or report["version"] != 1):
@@ -78,7 +85,7 @@ def render(report):
 
     if coverage.get("missing"):
         functions = missing.get("functions", [])
-        calls = sum(item.get("calls", 0) for item in functions if isinstance(item, dict))
+        calls = total_count(functions, "calls")
         lines.append(f"Missing functions: {count_text(calls, 'call')} across {count_text(len(functions), 'function')}")
         for item in functions[:5]:
             if isinstance(item, dict):
@@ -95,7 +102,7 @@ def render(report):
         lines.append("Shaders: compilation data was not collected")
     if coverage.get("unsupported"):
         unsupported = shaders.get("unsupported", [])
-        total = sum(item.get("count", 0) for item in unsupported if isinstance(item, dict))
+        total = total_count(unsupported, "count")
         lines.append(f"Unsupported shader instructions: {count_text(total, 'occurrence')} across {count_text(len(unsupported), 'instruction')}")
         for item in unsupported[:5]:
             if isinstance(item, dict):
