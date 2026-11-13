@@ -9,6 +9,7 @@ Entries about one library or component are in [debt](debt/), one file per librar
   - libgcc_s_seh-1.dll
   - libstdc++-6.dll
   - libwinpthread-1.dll
+- With a `libstdc++-6.dll` from another toolchain earlier on `PATH` (such as Git's `mingw64\bin`), a program that finds the three DLLs above only through `PATH` loads that copy and fails with "Entry Point Not Found". With CMake 3.28 or later, ctest puts the build compiler's directory first on `PATH` for the tests this project registers; with older CMake, and for programs run outside ctest, this is not handled.
 
 ### Silent stubs
 
@@ -23,6 +24,7 @@ Throughout the project, every function at every stage either **does exactly what
 
 ### Functional
 
+- `title_run.py --compare` compares no frame percentiles: neither `aps5-summary.jsonl` nor `anyps5-report.json` holds them, so only the average FPS of each is compared. Closes when: a run report or trace summary field carries frame percentiles and `compare_runs` pairs it.
 - Controller haptic PCM that no controller sound card plays (a DualSense over Bluetooth, or any other controller) drives motor rumble from its per-channel RMS (large/small motor, scale 2x, below 0.01 ignored, 80 ms hold); the mapping approximates waveform energy and is not measured against console hardware
 - [Cancellation coverage](ARCHITECTURE.md#thread-cancellation) checks deferred request handling and recovery, not full asynchronous support or console ABI compatibility. Cancellation during file/socket I/O, sleep interruption, cancellation versus exit/detach, condition signal conservation under cancellation, and safe rejection of non-null invalid or reclaimed thread handles remain unverified. No console title or homebrew establishes the cleanup NIDs or buffer layout. Accepted asynchronous mode currently has no diagnostic for its deferred behavior.
 - `--to-intel` guest module trampolines are covered only by a synthetic relinker test; no game title has been verified with them on Linux or Windows.

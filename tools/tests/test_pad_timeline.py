@@ -180,6 +180,22 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(self.run_cli(timeline, output).returncode, 2)
             self.assertEqual(output.read_bytes(), original)
 
+    def test_duplicate_timeline_fields_do_not_replace_a_queued_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            original = b"777 0 100\n"
+            output.write_bytes(original)
+            for text, field in (
+                    ('{"version":1,"events":[],"events":[{"at_ms":0,"hold_ms":100,"buttons":["cross"]}]}', "events"),
+                    ('{"version":1,"events":[{"at_ms":0,"hold_ms":100,"buttons":["cross"],"buttons":["circle"]}]}', "buttons")):
+                with self.subTest(field=field):
+                    timeline.write_text(text, encoding="utf-8")
+                    result = self.run_cli(timeline, output)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn(f"duplicate timeline field '{field}'", result.stderr)
+                    self.assertEqual(output.read_bytes(), original)
+
     def test_input_alias_protection(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

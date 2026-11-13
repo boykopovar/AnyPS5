@@ -1,4 +1,5 @@
 #include "prx/libSceCesCs/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <algorithm>
@@ -484,6 +485,7 @@ int encodeGb(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& length
 
 constexpr uint8_t GB18030_2000_TAG[8] = {'G', 'B', '1', '8', '-', '0', '0', 0};
 constexpr uint8_t GB18030_2005_TAG[8] = {'G', 'B', '1', '8', '-', '0', '5', 0};
+constexpr uint8_t GB18030_2022_TAG[8] = {'G', 'B', '1', '8', '-', '2', '2', 0};
 constexpr uint32_t GB_CELLS = 126 * 190;
 
 struct Gb18030Tables {
@@ -502,6 +504,7 @@ struct Gb18030Range {
 
 constexpr Gb18030Tables GB18030_2000{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, false, 1};
 constexpr Gb18030Tables GB18030_2005{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, true, 3};
+constexpr Gb18030Tables GB18030_2022{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, true, 3};
 constexpr Gb18030Range GB18030_RANGES[6] = {
     {0, false, false, false}, {1, true, false, false}, {2, false, false, false}, {3, true, false, false}, {5, true, true, false}, {7, true, true, true},
 };
@@ -518,6 +521,7 @@ const Gb18030Tables* gb18030Tables(const void* profile) {
     if (profile == nullptr) return nullptr;
     if (hasSheetTag(profile, GB18030_2000_TAG)) return &GB18030_2000;
     if (hasSheetTag(profile, GB18030_2005_TAG)) return &GB18030_2005;
+    if (hasSheetTag(profile, GB18030_2022_TAG)) return &GB18030_2022;
     return nullptr;
 }
 
@@ -2227,6 +2231,31 @@ int APS5_VABI sceCesGbUcsProfileSetSbcs(void* p, const void* sbcs) {
     return setSheetSbcs(p, sbcs, isGb(p), {singleByteProfile(SingleByte::Ascii), singleByteProfile(SingleByte::GbT1988)});
 }
 
+int APS5_VABI sceCesIso2022JpUcsProfileSetSbcs(void* p, const void* sbcs) {
+    const int savedErrno = errno;
+    if (!p || !sbcs || !isIso2022(p)) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_PROFILE;
+    }
+    const std::initializer_list<const uint8_t*> accepted = {
+        singleByteProfile(SingleByte::Ascii),
+        singleByteProfile(SingleByte::JisX0201Roman),
+        singleByteProfile(SingleByte::JisX0201)
+    };
+    if (std::find(accepted.begin(), accepted.end(), static_cast<const uint8_t*>(sbcs)) == accepted.end()) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_PROFILE;
+    }
+    const uint8_t index = sbcProfileIndex(sbcs);
+    if (index == 0) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_PROFILE;
+    }
+    static_cast<uint8_t*>(p)[8] = index;
+    errno = savedErrno;
+    return 0;
+}
+
 void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void* sheet) {
     if (!sheet) return nullptr;
     std::memcpy(sheet, EUC_JP_TAG, sizeof(EUC_JP_TAG));
@@ -2771,6 +2800,17 @@ void* APS5_VABI sceCesUcsProfileInitGb18030_2000(void* sheet) {
 void* APS5_VABI sceCesUcsProfileInitGb18030_2005(void* sheet) {
     if (!sheet) return nullptr;
     initGbSheet(sheet, GB18030_2005_TAG, GB18030_2005.defaultRange, 1);
+    return sheet;
+}
+
+void* APS5_VABI sceCesUcsProfileInitGb18030_2022(void* sheet) {
+    const int savedErrno = errno;
+    if (!sheet) {
+        errno = savedErrno;
+        return nullptr;
+    }
+    initGbSheet(sheet, GB18030_2022_TAG, GB18030_2022.defaultRange, 1);
+    errno = savedErrno;
     return sheet;
 }
 

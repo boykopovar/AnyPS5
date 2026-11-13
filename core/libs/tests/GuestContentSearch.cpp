@@ -98,6 +98,15 @@ int main() {
     Require(count == 0 && updateId == 0);
     count = -1;
     updateId = -1;
+    errno = 71;
+    Require(sceContentSearchSearchContent(nullptr, 0, nullptr, 0, 0, 1,
+        reinterpret_cast<std::int64_t*>(0x10), infos, &updateId) == ErrorInvalidArgument);
+    Require(updateId == -1 && errno == 71);
+    Require(sceContentSearchSearchContent(nullptr, 0, nullptr, 0, 0, 1,
+        &count, infos, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(count == 0 && errno == 71);
+    count = -1;
+    updateId = -1;
     Require(sceContentSearchSearchContent(&columnSet, 1, &orderBy, 1, 0, 93, &count, infos, &updateId) == ErrorLimitTooBig);
     Require(count == -1 && updateId == -1);
     updateId = -1;
@@ -113,6 +122,15 @@ int main() {
     updateId = -1;
     Require(sceContentSearchGetNumOfApplication(nullptr, 0, nullptr, 0, &count, &updateId) == 0);
     Require(count == 0 && updateId == 0);
+    count = -1;
+    updateId = -1;
+    errno = 71;
+    Require(sceContentSearchGetNumOfApplication(nullptr, 0, nullptr, 0,
+        reinterpret_cast<std::int64_t*>(0x10), &updateId) == ErrorInvalidArgument);
+    Require(updateId == -1 && errno == 71);
+    Require(sceContentSearchGetNumOfApplication(nullptr, 0, nullptr, 0,
+        &count, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(count == 0 && errno == 71);
     count = -1;
     updateId = -1;
 

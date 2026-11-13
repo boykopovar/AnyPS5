@@ -442,6 +442,12 @@ void waitUntil(const std::function<bool()>& done, const char* message) {
     }
 }
 
+bool parkedOn(const volatile void* address) {
+    std::array<AgcDriver::AwaitedWait, 8> waits{};
+    const auto count = AgcDriverAwaitedWaits_nid_postfix(waits.data(), waits.size());
+    return std::any_of(waits.begin(), waits.begin() + static_cast<std::ptrdiff_t>(count), [&](const auto& wait) { return wait.address == at(address); });
+}
+
 std::filesystem::path checkCapture(std::uint64_t inFlight) {
     const char* directory = std::getenv("APS5_FRAME_CAPTURE");
     check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
@@ -562,11 +568,7 @@ void testLabelFromLaterSubmission(const std::filesystem::path& tool) {
     sceAgcAcbWriteData(&compute, ComputeMemory, 0, at(layout.label), &Done, 1, 0, 1);
     Packet consumer{layout.secondCommands, static_cast<std::uint32_t>(compute.cursor_up - layout.secondCommands), 0, {}};
     check(sceAgcDriverSubmitAcb(ComputeQueue, &consumer) == 0, "compute submission failed");
-    waitUntil([&] {
-        std::array<AgcDriver::AwaitedWait, 8> waits{};
-        const auto count = AgcDriverAwaitedWaits_nid_postfix(waits.data(), waits.size());
-        return std::any_of(waits.begin(), waits.begin() + static_cast<std::ptrdiff_t>(count), [&](const auto& wait) { return wait.address == at(awaited); });
-    }, "the compute wait never reached the awaited-wait registry");
+    waitUntil([&] { return parkedOn(awaited); }, "the compute wait never reached the awaited-wait registry");
     *layout.source = std::byte{0x77};
     auto graphics = commands(layout.firstCommands);
     writeDone(graphics, awaited);
@@ -601,15 +603,15 @@ void testReleaseDuringDelta(const std::filesystem::path& tool) {
     }, [&](CommandBuffer& buffer) { writeDone(buffer, layout.label); });
     for (std::size_t offset = 0; offset + DataBytes < BulkBytes; offset += 2 * DataBytes) std::memset(bulk.base + offset, 0x6b, DataBytes);
     std::memcpy(target, stored.data(), stored.size());
-    std::atomic<bool> flipping{false};
+    bool held = false;
     std::thread opener([&] {
-        while (!flipping.load()) std::this_thread::yield();
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!(held = parkedOn(gate) && AgcDriverSettledHeld_nid_postfix()) && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
         std::atomic_ref<std::uint32_t>(*gate).store(Done, std::memory_order_release);
     });
-    flipping.store(true);
     flip();
     opener.join();
+    check(held, "the recorder never held the queue parked on its gate while it read the memory delta");
     release(control);
     flip();
     AgcDriverWaitIdle_nid_postfix();

@@ -9,6 +9,18 @@ import tempfile
 from pad_input import BUTTONS, next_sequence
 
 
+def load_timeline(path):
+    def unique_fields(pairs):
+        fields = {}
+        for name, value in pairs:
+            if name in fields:
+                raise ValueError(f"duplicate timeline field {name!r}")
+            fields[name] = value
+        return fields
+
+    return json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_fields)
+
+
 def integer(value, field, minimum, maximum):
     if type(value) is not int or not minimum <= value <= maximum:
         raise ValueError(f"{field} must be an integer between {minimum} and {maximum}")
@@ -103,7 +115,7 @@ def main(argv=None):
             raise ValueError(f"{args.path} is a directory")
         if not args.path.parent.is_dir():
             raise ValueError(f"directory does not exist: {args.path.parent}")
-        document = json.loads(args.timeline.read_text(encoding="utf-8-sig"))
+        document = load_timeline(args.timeline)
         text = compile_timeline(document, next_sequence(args.path), args.repeat, args.gap_ms)
         queue_timeline(args.path, text)
     except (OSError, ValueError, RecursionError) as error:
