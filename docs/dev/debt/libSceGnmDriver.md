@@ -2,11 +2,13 @@
 
 ### Silent stubs
 
+- [sceGnmDriverTraceInProgress](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - returns false: a retail title has no driver trace session in progress, matching the existing Neo provider and shadPS4. Console behavior is unmeasured; this is a retail-only answer, not a host trace state.
 - [sceGnmAreSubmitsAllowed](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - returns 1: submissions are never suspended here, because nothing on the host takes the GPU away from the title. shadPS4 returns 0 only while its submission lock is held.
 - [sceGnmIsUserPaEnabled, sceGnmDriverCaptureInProgress, sceRazorIsLoaded](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - return false: the user performance analysis mode, GPU captures and the Razor GPU profiler belong to development tools and are not present, as shadPS4 also answers for retail firmware. A title only skips its tool hooks on these answers.
 
 ### Unknown function info
 
+- [sceGnmGetOffChipTessellationBufferSize](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - the console's reported size is not measured. The regular provider returns 0x800000, as the Neo provider and shadPS4's PS4 Gnm driver do. Closes when: measured on a PS4
 - [Command buffer writers](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - the packets, register offsets and reserved sizes the `sceGnm` writers emit follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/gnmdriver/gnmdriver.cpp); they are not checked on a console. Submitted buffers run on the AGC executor: PS4 EOP, EOS and SURFACE_SYNC packets are lowered to RELEASE_MEM and ACQUIRE_MEM, constant engine buffers are merged into the draw buffer, type-2 filler packets are dropped, the CP_DMA prefetch of the PS4 SDK is a NOP, and a flip reservation for an interrupt flip throws.
 - [sceGnmLogicalCuIndexToPhysicalCuIndex](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - throws: firmware 13.42 `libSceGnmDriver.sprx` returns `0xffffffff` for a first argument of at most 1 and a second below 9. Any other input returns 0 after passing `"%s failed: %s\n"`, the function name and `invalid value for engine` (first argument above 1) or `invalid value for cuIndex` to an import whose name was not resolved, so that output is not reproduced. Read from disassembly, not measured on a console.
 
