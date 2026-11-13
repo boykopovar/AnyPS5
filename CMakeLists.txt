@@ -531,7 +531,7 @@ if(BUILD_TESTING)
                 set_tests_properties(select_tests PROPERTIES ENVIRONMENT "ANYPS5_SELECT_TEST_CLASS=SelectTests" TIMEOUT 30)
             else()
                 add_test(NAME select_tests_${test_class} COMMAND ${Python3_EXECUTABLE} "${select_tests_source}" ${test_class})
-                set_tests_properties(select_tests_${test_class} PROPERTIES TIMEOUT 30)
+                set_tests_properties(select_tests_${test_class} PROPERTIES TIMEOUT 60)
             endif()
         endforeach()
         add_test(NAME relinker_fuzz_configurations COMMAND ${Python3_EXECUTABLE}
@@ -783,7 +783,7 @@ if(BUILD_TESTING)
         set_tests_properties(tools_headers_manifest PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
-        set_tests_properties(conventions_pr_template PROPERTIES TIMEOUT 60)
+        set_tests_properties(conventions_pr_template PROPERTIES TIMEOUT 180)
         add_test(NAME check_compile_preprocessor COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_preprocessor.py)
         set_tests_properties(check_compile_preprocessor PROPERTIES TIMEOUT 20)

@@ -63,6 +63,8 @@ Titles run natively, so the host CPU needs the extensions of the PS5's Zen 2 CPU
 
 The executable, registry, Windows import diagnostics, icon and desktop entry output files must not refer to the input executable or a bundled module being converted, including through a hard link or symbolic link. These collisions fail before any output is written. An existing output file can be replaced if it is separate from those inputs. An output path that is an existing directory also fails before any output is written.
 
+On Linux and macOS, replacing a regular output file requires write access to its directory. A failed temporary-file creation or replacement reports an error instead of writing over the previous file in place.
+
 ## Options
 
 All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath` defaults to `$ORIGIN/libs`.
