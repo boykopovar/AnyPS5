@@ -310,6 +310,11 @@ void RunTextureFormatTests() {
     Require(FindGuestTextureFormat(VK_FORMAT_D24_UNORM_S8_UINT, 4) == 141u, "format 141 must look up from D24_UNORM_S8_UINT");
     Require(ShaderRecompiler::SampledTextureNumericClass(ShaderRecompiler::IrBufferFormat::Format8_24UNorm) == ShaderRecompiler::IrTextureNumericClass::Float, "format 141 must sample as float");
 
+    Require(ResolveTextureFormat(146) == VK_FORMAT_D32_SFLOAT_S8_UINT, "format 146 must resolve to D32_SFLOAT_S8_UINT");
+    Require(BytesPerElement(146) == 8u, "format 146 must be eight bytes wide");
+    Require(FindGuestTextureFormat(VK_FORMAT_D32_SFLOAT_S8_UINT, 8) == 146u, "format 146 must look up from D32_SFLOAT_S8_UINT");
+    Require(ShaderRecompiler::SampledTextureNumericClass(ShaderRecompiler::IrBufferFormat::FormatX24_8_32Float) == ShaderRecompiler::IrTextureNumericClass::Float, "format 146 must sample as float");
+
     Require(ResolveTextureFormat(77) == VK_FORMAT_R32G32B32A32_SFLOAT, "format 77 must resolve to R32G32B32A32_SFLOAT");
     Require(BytesPerElement(77) == 16u, "format 77 must be sixteen bytes wide");
 

@@ -49,7 +49,7 @@ namespace AgcDriver::Graphics {
         // leaving the other elements of both buffers alone.
         void Dispatch(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, bool thick = false, const DetileWindow& window = {});
         void DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, VkImageView view, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, const DetileWindow& window = {});
-        void DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes, bool depthToFloat = false);
+        void DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes, std::uint32_t mode = 0);
         static VkFormat ImageElementFormat(std::uint32_t elementBytes);
         // Recycles the descriptor sets of the previous batch; call before recording a new command batch.
         void BeginBatch();

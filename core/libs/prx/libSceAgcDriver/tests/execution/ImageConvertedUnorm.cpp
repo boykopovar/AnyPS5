@@ -875,6 +875,27 @@ void CheckDepth24(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     }
 }
 
+void CheckDepth32(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    for (std::uint32_t index = 0; index < LoadWidth; ++index) {
+        const std::uint32_t depth = 0x3f000000u | (LoadTexel(index) & 0x7fffffu);
+        const std::uint32_t stencil = 0xdeada0u | (index & 0xffu);
+        std::memcpy(texels + index * 8u, &depth, 4u);
+        std::memcpy(texels + index * 8u + 4u, &stencil, 4u);
+    }
+    Run(device, LoadXyzw, TextureDescriptor(texels, 146u, SwizzleXYZW, LoadWidth), {}, LoadGroups);
+    for (std::uint32_t index = 0; index < LoadWidth; ++index) {
+        const std::uint32_t depth = 0x3f000000u | (LoadTexel(index) & 0x7fffffu);
+        Require(Output[index * 4u] == depth, "image_load of X24_8_32_FLOAT reads the wrong depth for format 146: " + Hex(Output[index * 4u]) + " for texel " + Hex(depth));
+        Require(Output[index * 4u + 1u] == 0u && Output[index * 4u + 2u] == 0u && Output[index * 4u + 3u] == 0x3f800000u, "image_load of X24_8_32_FLOAT must give G=0 B=0 A=1 for format 146");
+    }
+    Run(device, SampleLz, TextureDescriptor(texels, 146u, SwizzleXYZW, LoadWidth), PointSampler, 1);
+    const auto depth = 0x3f000000u | (LoadTexel(0) & 0x7fffffu);
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        Require(Output[tid * 4u] == depth, "image_sample_lz of X24_8_32_FLOAT reads the wrong depth for format 146");
+        Require(Output[tid * 4u + 1u] == 0u && Output[tid * 4u + 2u] == 0u && Output[tid * 4u + 3u] == 0x3f800000u, "image_sample_lz of X24_8_32_FLOAT must give G=0 B=0 A=1 for format 146");
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -898,6 +919,11 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string(argv[1]) == "--depth24") {
             CheckDepth24(*device, texels);
+            std::cout << "Depth-stencil format tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string(argv[1]) == "--depth32") {
+            CheckDepth32(*device, texels);
             std::cout << "Depth-stencil format tests passed\n";
             return 0;
         }

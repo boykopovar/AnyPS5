@@ -523,7 +523,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         const auto vkFormat = depthCompare && !nativeDepth ? (colorFormat == VK_FORMAT_R32_SFLOAT ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D16_UNORM) : colorFormat;
         const VkImageAspectFlags aspect = depthCompare || nativeDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
         const VkImageAspectFlags barrierAspect = nativeDepth ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT : aspect;
-        const bool depthToFloat = descriptor.format == 141u && colorFormat == VK_FORMAT_R32_SFLOAT;
+        const std::uint32_t repackMode = descriptor.format == 146u ? 2u : (descriptor.format == 141u && colorFormat == VK_FORMAT_R32_SFLOAT ? 1u : 0u);
         if (IsBlockCompressed(descriptor.format)) {
             Require(context.textureCompressionBC, "device does not support BC compressed textures");
         }
@@ -738,13 +738,13 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                     detiler.Dispatch(commands, descriptor.tileMode, elementBytes, tiled->Handle(), packedSlabs.has_value() ? slot.tiledOffset + mip.tiledOffset : geometry.GuestOffset(slot.layer, mip), linear->Handle(), slot.linearOffset + mip.linearOffset, mip, false, slot.layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
                 }
             }
-            if (IsRepackedTextureFormat(descriptor.format) || depthToFloat) {
+            if (IsRepackedTextureFormat(descriptor.format) || repackMode != 0u) {
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
                 for (const auto& slot : uploaded) {
                     for (std::uint32_t level = skip; level < mips.size(); ++level) {
                         if (!geometry.HasLayer(level, slot.layer)) continue;
                         const auto offset = slot.linearOffset + mips[level].linearOffset;
-                        detiler.DispatchRepack(commands, linear->Handle(), offset, linear->Handle(), offset, mips[level].linearSize, depthToFloat);
+                        detiler.DispatchRepack(commands, linear->Handle(), offset, linear->Handle(), offset, mips[level].linearSize, repackMode);
                     }
                 }
             }
