@@ -1,6 +1,8 @@
 #include "prx/libScePlayerInvitationDialog/libScePlayerInvitationDialog.h"
 #include "prx/libSceCommonDialog/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 
+#include <cerrno>
 #include <mutex>
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/LogMacros.hpp"
@@ -38,6 +40,13 @@ std::int32_t APS5_VABI scePlayerInvitationDialogOpen(const ScePlayerInvitationDi
     std::lock_guard lock(g_dialog_mutex);
     APS5_LOG_OUT("param=%p status=%d", static_cast<const void*>(param), status_nid_no_patch());
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    const int savedErrno = errno;
+    ScePlayerInvitationDialogParam localParam{};
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
+        errno = savedErrno;
+        return COMMON_DIALOG_ERROR_ARG_NULL;
+    }
+    errno = savedErrno;
     if (g_dialog_status == PlayerInvitationDialogStatus::None) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     g_dialog_status = PlayerInvitationDialogStatus::Running;
     return 0;
@@ -83,7 +92,12 @@ std::int32_t APS5_VABI scePlayerInvitationDialogGetResult(ScePlayerInvitationDia
     if (g_dialog_status != PlayerInvitationDialogStatus::Finished) return COMMON_DIALOG_ERROR_NOT_FINISHED;
     ScePlayerInvitationDialogResult completed{};
     completed.result = COMMON_DIALOG_RESULT_USER_CANCELED;
-    if (!GuestCopyOut_nid_no_patch(result, &completed, sizeof(completed))) return COMMON_DIALOG_ERROR_ARG_NULL;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(result, &completed, sizeof(completed))) {
+        errno = savedErrno;
+        return COMMON_DIALOG_ERROR_ARG_NULL;
+    }
+    errno = savedErrno;
     return 0;
 }
 

@@ -157,6 +157,37 @@ F64Bits WithExponent(SpirvEmitterState& state, F64Bits bits, std::uint32_t biase
     return {bits.low, Binary(state, spv::OpBitwiseOr, TypeU32(state), mantissa, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), biased, ConstantU32(state, 20u)))};
 }
 
+struct F64Frexp {
+    F64Bits mantissa;
+    std::uint32_t exponent = 0;
+    std::uint32_t passthrough = 0;
+};
+
+F64Frexp FrexpFields(SpirvEmitterState& state, const F64Class& cls) {
+    const auto u32 = TypeU32(state);
+    const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
+    const auto field = ExponentField(state, cls.bits.high);
+    const auto fractionHigh = Binary(state, spv::OpBitwiseAnd, u32, cls.bits.high, constant(0x000fffffu));
+    const auto highSet = Binary(state, spv::OpINotEqual, TypeBool(state), fractionHigh, constant(0u));
+    const auto highMsb = Binary(state, spv::OpIAdd, u32, Glsl(state, u32, GLSLstd450FindUMsb, fractionHigh), constant(32u));
+    const auto msb = Select(state, u32, highSet, highMsb, Glsl(state, u32, GLSLstd450FindUMsb, cls.bits.low));
+    const auto shift = Glsl(state, u32, GLSLstd450UMin, Binary(state, spv::OpISub, u32, constant(52u), msb), constant(52u));
+    const auto lowShift = Glsl(state, u32, GLSLstd450UMin, shift, constant(31u));
+    const auto highShift = Binary(state, spv::OpISub, u32, Glsl(state, u32, GLSLstd450UMax, shift, constant(32u)), constant(32u));
+    const auto carried = Binary(state, spv::OpShiftRightLogical, u32, cls.bits.low, Binary(state, spv::OpISub, u32, constant(32u), lowShift));
+    const auto narrowHigh = Binary(state, spv::OpBitwiseOr, u32, Binary(state, spv::OpShiftLeftLogical, u32, fractionHigh, lowShift), carried);
+    const auto wide = Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), shift, constant(32u));
+    const auto normalizedHigh = Select(state, u32, wide, Binary(state, spv::OpShiftLeftLogical, u32, cls.bits.low, highShift), narrowHigh);
+    const auto normalizedLow = Select(state, u32, wide, constant(0u), Binary(state, spv::OpShiftLeftLogical, u32, cls.bits.low, lowShift));
+    const auto sign = Binary(state, spv::OpBitwiseAnd, u32, cls.bits.high, constant(0x80000000u));
+    const auto denormalHigh = Binary(state, spv::OpBitwiseOr, u32, Binary(state, spv::OpBitwiseOr, u32, sign, constant(0x3fe00000u)), Binary(state, spv::OpBitwiseAnd, u32, normalizedHigh, constant(0x000fffffu)));
+    const auto denormal = Binary(state, spv::OpIEqual, TypeBool(state), field, constant(0u));
+    const auto mantissa = SelectBits(state, denormal, {normalizedLow, denormalHigh}, WithExponent(state, cls.bits, constant(1022u)));
+    const auto exponent = Select(state, u32, denormal, Binary(state, spv::OpISub, u32, msb, constant(1073u)), Binary(state, spv::OpISub, u32, field, constant(1022u)));
+    const auto special = Binary(state, spv::OpIEqual, TypeBool(state), field, constant(0x7ffu));
+    return {mantissa, exponent, Binary(state, spv::OpLogicalOr, TypeBool(state), special, cls.zero)};
+}
+
 std::uint32_t PowerOfTwo(SpirvEmitterState& state, std::uint32_t exponent) {
     const auto biased = Unary(state, spv::OpBitcast, TypeU32(state), Binary(state, spv::OpIAdd, TypeI32(state), exponent, ConstantI32(state, 1023)));
     return ToF64(state, Join(state, {ConstantU32(state, 0u), Binary(state, spv::OpShiftLeftLogical, TypeU32(state), biased, ConstantU32(state, 20u))}));
@@ -974,23 +1005,14 @@ std::uint32_t EmitFPFract64(SpirvEmitterState& state, std::uint32_t arg0) {
 
 std::uint32_t EmitFPFrexpMant64(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto cls = Classify(state, arg0);
-    const auto split = Glsl(state, state.module.Type(spv::OpTypeStruct, TypeF64(state), TypeI32(state)), GLSLstd450FrexpStruct, ToF64(state, arg0));
-    const auto mantissa = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeExtract, TypeF64(state), mantissa, split, 0u);
-    const auto exponentBits = Binary(state, spv::OpBitwiseAnd, TypeU32(state), cls.bits.high, ConstantU32(state, 0x7ff00000u));
-    const auto special = Binary(state, spv::OpIEqual, TypeBool(state), exponentBits, ConstantU32(state, 0x7ff00000u));
+    const auto frexp = FrexpFields(state, cls);
     const auto passthrough = SelectBits(state, cls.nan, Quiet(state, cls.bits), cls.bits);
-    return Join(state, SelectBits(state, special, passthrough, Split(state, FromF64(state, mantissa))));
+    return Join(state, SelectBits(state, frexp.passthrough, passthrough, frexp.mantissa));
 }
 
 std::uint32_t EmitFPFrexpExp64(SpirvEmitterState& state, std::uint32_t arg0) {
-    const auto bits = Split(state, arg0);
-    const auto split = Glsl(state, state.module.Type(spv::OpTypeStruct, TypeF64(state), TypeI32(state)), GLSLstd450FrexpStruct, ToF64(state, arg0));
-    const auto exponent = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeExtract, TypeI32(state), exponent, split, 1u);
-    const auto exponentBits = Binary(state, spv::OpBitwiseAnd, TypeU32(state), bits.high, ConstantU32(state, 0x7ff00000u));
-    const auto special = Binary(state, spv::OpIEqual, TypeBool(state), exponentBits, ConstantU32(state, 0x7ff00000u));
-    return Select(state, TypeU32(state), special, ConstantU32(state, 0u), Unary(state, spv::OpBitcast, TypeU32(state), exponent));
+    const auto frexp = FrexpFields(state, Classify(state, arg0));
+    return Select(state, TypeU32(state), frexp.passthrough, ConstantU32(state, 0u), frexp.exponent);
 }
 
 std::uint32_t EmitFPRcp64(SpirvEmitterState& state, std::uint32_t arg0) {

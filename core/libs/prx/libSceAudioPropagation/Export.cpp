@@ -453,7 +453,7 @@ std::int32_t APS5_VABI sceAudioPropagationPathGetNumPoints(AudioPropagationHandl
     std::lock_guard lock(state.mutex);
     requireObject(state, path, Kind::Path, __func__);
     require(count != nullptr, __func__);
-    *count = state.paths.at(path).data.pointCount;
+    if (!copyGuestOut(count, state.paths.at(path).data.pointCount)) return ErrorNullPointer;
     return 0;
 }
 

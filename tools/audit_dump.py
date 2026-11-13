@@ -21,6 +21,8 @@ STANDARD_DIRECTORIES = ("sce_module", "sce_modules", "prx")
 EXTRA_DIRECTORIES = ("Media/Modules", "Media/Plugins")
 MODULE_SUFFIXES = import_audit.MODULE_FILE_SUFFIXES
 ELF_MAGIC = b"\x7fELF"
+MODULE_MAGICS = (ELF_MAGIC, unwrap_self.SELF_MAGIC.to_bytes(4, "little"),
+                 unwrap_self.SELF_MAGIC_KERNEL.to_bytes(4, "little"))
 
 
 def stage(source, destination):
@@ -37,13 +39,24 @@ def stage(source, destination):
 
 
 def modules_of(directory):
-    return sorted(path for path in directory.iterdir() if (path.is_file() or path.is_symlink()) and path.suffix.lower() in MODULE_SUFFIXES)
+    modules = []
+    for path in directory.iterdir():
+        if not (path.is_file() or path.is_symlink()):
+            continue
+        if path.suffix.lower() in MODULE_SUFFIXES:
+            modules.append(path)
+        elif path.is_file():
+            with path.open("rb") as file:
+                if file.read(4) in MODULE_MAGICS:
+                    modules.append(path)
+    return sorted(modules)
 
 
 def prepare(dump, source, log=print):
     stage(dump / "eboot.bin", source / "eboot.elf")
     module_directories = []
     extra = []
+    count = 0
     for relative in STANDARD_DIRECTORIES + EXTRA_DIRECTORIES:
         directory = dump / relative
         if not directory.is_dir():
@@ -53,16 +66,18 @@ def prepare(dump, source, log=print):
             continue
         for module in modules:
             stage(module, source / relative / module.name)
+        count += len(modules)
         module_directories.append(source / relative)
         if relative in EXTRA_DIRECTORIES:
             extra.append(relative)
-    beside = modules_of(dump)
+    beside = [module for module in modules_of(dump) if not module.samefile(dump / "eboot.bin")]
     if beside:
         for module in beside:
             stage(module, source / module.name)
+        count += len(beside)
         module_directories.append(source)
         extra.append(".")
-    log(f"staged eboot.bin and {sum(len(modules_of(directory)) for directory in module_directories)} modules")
+    log(f"staged eboot.bin and {count} modules")
     return module_directories, extra
 
 
