@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <memory>
 #include <source_location>
 #include "prx/libSceNet/libSceNet.hpp"
@@ -64,7 +65,11 @@ Linger NativeLinger(int socket) {
 #else
     socklen_t size = sizeof(value);
 #endif
+#ifdef __APPLE__
+    Require(::getsockopt(native, SOL_SOCKET, SO_LINGER_SEC, &value, &size) == 0);
+#else
     Require(::getsockopt(native, SOL_SOCKET, SO_LINGER, reinterpret_cast<char*>(&value), &size) == 0);
+#endif
     return {value.l_onoff != 0 ? 1 : 0, static_cast<std::int32_t>(value.l_linger)};
 }
 
@@ -80,8 +85,21 @@ void Stream(int family) {
     const auto native = NativeLinger(socket);
     Require(native.enabled == 1 && native.seconds == 5);
     const Linger longest{1, 65535};
+#ifdef __APPLE__
+    const Linger longestHost{1, 327};
+    Require(sceNetSetsockopt(socket, SolSocket, SoLinger, &longestHost, sizeof(longestHost)) == 0);
+    Require(NetLinger(socket).seconds == 327 && NativeLinger(socket).seconds == 327);
+    bool threw = false;
+    try {
+        sceNetSetsockopt(socket, SolSocket, SoLinger, &longest, sizeof(longest));
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw);
+#else
     Require(sceNetSetsockopt(socket, SolSocket, SoLinger, &longest, sizeof(longest)) == 0);
     Require(NetLinger(socket).seconds == 65535);
+#endif
     const Linger off{0, 0};
     Require(setsockopt_nid_postfix(socket, SolSocket, SoLinger, &off, sizeof(off)) == 0);
     Require(NetLinger(socket).enabled == 0);
