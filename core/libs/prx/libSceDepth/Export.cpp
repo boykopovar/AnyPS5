@@ -6,15 +6,29 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int ErrorInvalidHandle = static_cast<int>(0x80BB0005u);
+constexpr int ResultCameraFactoryCalibrationFailure = static_cast<int>(0x80BBFFFFu);
+
+bool IsOpenHandle(int32_t handle) {
+    (void)handle;
+    return false;
+}
+
+} // namespace
+
 extern "C" {
 
 APS5_DUMMY_FUN
 int APS5_VABI sceDepthCalculateRectificationInformation(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceDepthDisableHeteroMode(void) {
+int APS5_VABI sceDepthDisableHeteroMode(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -24,12 +38,18 @@ int APS5_VABI sceDepthEnableExtendedMode(void) {
     return 0;
 }
 
-int APS5_VABI sceDepthEnableHeteroMode(void) {
+int APS5_VABI sceDepthEnableHeteroMode(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceDepthEnableHeteroModeAndGenerateInformation(void) {
+int APS5_VABI sceDepthEnableHeteroModeAndGenerateInformation(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -45,11 +65,13 @@ int APS5_VABI sceDepthGetImage(void) {
 }
 
 int APS5_VABI sceDepthGetRectificationInformation(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceDepthGetSrParameter(void) {
+int APS5_VABI sceDepthGetSrParameter(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -59,12 +81,18 @@ int APS5_VABI sceDepthHandCandidateTrackerGetResult(void) {
     return 0;
 }
 
-int APS5_VABI sceDepthHasCalibrationData(void) {
+int APS5_VABI sceDepthHasCalibrationData(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceDepthHeadCandidateDetectorGetResults(void) {
+int APS5_VABI sceDepthHeadCandidateDetectorGetResults(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -84,7 +112,10 @@ int APS5_VABI sceDepthInitialize(void) {
     return 0;
 }
 
-int APS5_VABI sceDepthLoadCalibrationData(void) {
+int APS5_VABI sceDepthLoadCalibrationData(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -94,7 +125,10 @@ int APS5_VABI sceDepthQueryMemory(void) {
     return 0;
 }
 
-int APS5_VABI sceDepthSaveInternalBuffers(void) {
+int APS5_VABI sceDepthSaveInternalBuffers(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -109,18 +143,23 @@ int APS5_VABI sceDepthSetCommands(void) {
     return 0;
 }
 
-int APS5_VABI sceDepthSetPostFilterParameter(void) {
+int APS5_VABI sceDepthSetPostFilterParameter(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceDepthSetPreFilterParameter(void) {
+int APS5_VABI sceDepthSetPreFilterParameter(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceDepthSetRectificationInformation(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -134,22 +173,34 @@ int APS5_VABI sceDepthSetRoiset(void) {
     return 0;
 }
 
-int APS5_VABI sceDepthSetSrParameter(void) {
+int APS5_VABI sceDepthSetSrParameter(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceDepthSetSrTnrParameter(void) {
+int APS5_VABI sceDepthSetSrTnrParameter(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceDepthSubmit(void) {
+int APS5_VABI sceDepthSubmit(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceDepthTerminate(void) {
+int APS5_VABI sceDepthTerminate(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -164,7 +215,10 @@ int APS5_VABI sceDepthValidateCurrentCalibrationData(void) {
     return 0;
 }
 
-int APS5_VABI sceDepthWaitAndExecutePostProcess(void) {
+int APS5_VABI sceDepthWaitAndExecutePostProcess(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -187,17 +241,26 @@ int APS5_VABI _sceDepthHeadCandidateTrackerSetInformation() {
     return 0;
 }
 
-int APS5_VABI _sceDepthSetCameraFactoryCalibrationData() {
+int APS5_VABI _sceDepthSetCameraFactoryCalibrationData(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ResultCameraFactoryCalibrationFailure;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _sceDepthSetHeteroAdjustParam() {
+int APS5_VABI _sceDepthSetHeteroAdjustParam(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return -1;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _sceDepthSetHeteroMode() {
+int APS5_VABI _sceDepthSetHeteroMode(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return -1;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -206,7 +269,10 @@ int APS5_VABI _sceDepthSetHeteroMode() {
 
 extern "C" {
 
-int APS5_VABI libSceDepthUnknown_unL9sWu4IIw_nid_no_patch() {
+int APS5_VABI libSceDepthUnknown_unL9sWu4IIw_nid_no_patch(int32_t handle) {
+    if (!IsOpenHandle(handle)) {
+        return ErrorInvalidHandle;
+    }
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("unL9sWu4IIw", libSceDepthUnknown_unL9sWu4IIw_nid_no_patch);

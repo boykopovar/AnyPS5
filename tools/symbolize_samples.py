@@ -140,10 +140,12 @@ class PeModule:
             index += 1 + aux
             if storage not in (IMAGE_SYM_CLASS_EXTERNAL, IMAGE_SYM_CLASS_STATIC) or not 1 <= section <= len(self.sections):
                 continue
-            start, _, _, _, characteristics = self.sections[section - 1]
+            start, section_size, _, _, characteristics = self.sections[section - 1]
             if not characteristics & IMAGE_SCN_CNT_CODE:
                 continue
             if storage == IMAGE_SYM_CLASS_STATIC and (kind >> 4) != 2 and value == 0:
+                continue
+            if value >= section_size:
                 continue
             if name[:4] == b"\0\0\0\0":
                 offset = struct.unpack_from("<I", name, 4)[0]
@@ -350,6 +352,8 @@ def validate_window(later, earlier):
         key = name.lower()
         if key not in later.headers or key not in earlier.headers:
             raise ValueError(f"{name}: matching-window validation needs module records in both captures")
+        if later.headers[key] is False or earlier.headers[key] is False:
+            raise ValueError(f"{name}: multiple sampled modules share this name, so their identities cannot be matched")
         if later.headers[key] != earlier.headers[key]:
             raise ValueError(f"{name}: module identity differs between captures")
     for name in ("stacks", "self_counts", "inclusive", "total"):
