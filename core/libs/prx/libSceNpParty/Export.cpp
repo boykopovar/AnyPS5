@@ -176,10 +176,9 @@ int APS5_VABI sceNpPartyGetState(std::uint16_t* state) {
     if (!state) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     const std::uint16_t value = NP_PARTY_STATE_NOT_IN_PARTY;
     const int savedErrno = errno;
-    if (!GuestCopyOut_nid_no_patch(state, &value, sizeof(value))) {
-        errno = savedErrno;
-        return NP_PARTY_ERROR_INVALID_ARGUMENT;
-    }
+    const bool copied = GuestCopyOut_nid_no_patch(state, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

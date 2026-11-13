@@ -7,6 +7,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include "SceTypes.hpp"
 
 static void Require(bool value) {
@@ -347,6 +353,48 @@ int main() {
     commandBatch = {commands, 0, sizeof(commands)};
     std::memset(commands, 0xCC, sizeof(commands));
     Require(sceAcmBatchJobPriority(nullptr, 0) == BadPointer);
+    errno = 71;
+    Require(sceAcmBatchJobPriority(reinterpret_cast<AcmBatchInfo*>(0x10), 0) == BadPointer);
+    Require(errno == 71);
+    commandBatch = {reinterpret_cast<void*>(0x10), 0, sizeof(commands)};
+    errno = 71;
+    Require(sceAcmBatchJobPriority(&commandBatch, 0) == BadPointer);
+    Require(errno == 71);
+    Require(commandBatch.offset == 0);
+#ifdef _WIN32
+    SYSTEM_INFO acmSysInfo{};
+    GetSystemInfo(&acmSysInfo);
+    const std::size_t acmPageSize = acmSysInfo.dwPageSize;
+    auto* const acmReadOnlyMem = static_cast<std::byte*>(VirtualAlloc(nullptr, acmPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(acmReadOnlyMem != nullptr);
+#else
+    const long acmNativePage = sysconf(_SC_PAGESIZE);
+    Require(acmNativePage > 0);
+    const std::size_t acmPageSize = static_cast<std::size_t>(acmNativePage);
+    auto* const acmReadOnlyMem = static_cast<std::byte*>(mmap(nullptr, acmPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(acmReadOnlyMem != MAP_FAILED);
+#endif
+    auto* const readOnlyBatch = reinterpret_cast<AcmBatchInfo*>(acmReadOnlyMem);
+    readOnlyBatch->buffer = commands;
+    readOnlyBatch->offset = 0;
+    readOnlyBatch->buffer_size = sizeof(commands);
+#ifdef _WIN32
+    DWORD acmOldProtect = 0;
+    Require(VirtualProtect(acmReadOnlyMem, acmPageSize, PAGE_READONLY, &acmOldProtect) != 0);
+#else
+    Require(mprotect(acmReadOnlyMem, acmPageSize, PROT_READ) == 0);
+#endif
+    errno = 71;
+    Require(sceAcmBatchJobPriority(readOnlyBatch, 0) == BadPointer);
+    Require(errno == 71);
+    Require(readOnlyBatch->offset == 0);
+    Require(commands[0] == std::byte{0xCC});
+#ifdef _WIN32
+    VirtualFree(acmReadOnlyMem, 0, MEM_RELEASE);
+#else
+    munmap(acmReadOnlyMem, acmPageSize);
+#endif
+    commandBatch = {commands, 0, sizeof(commands)};
     Require(sceAcmBatchJobPriority(&commandBatch, 4) == BadPointer && commandBatch.offset == 0);
     Require(sceAcmBatchJobPriority(&commandBatch, 0xFFFFFFFFu) == BadPointer && commandBatch.offset == 0);
     Require(sceAcmBatchJobPriority(&commandBatch, 3) == 0 && commandBatch.offset == 8);

@@ -11,7 +11,7 @@ else()
     target_sources(libSceSystemService PRIVATE HostUrlLauncherPosix.cpp)
 endif()
 target_include_directories(libSceSystemService PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
-target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver libSceUsbStorage system_service_host_locale SDL2-static)
+target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver libSceUsbStorage libc system_service_host_locale SDL2-static)
 configure_windows_unwind(libSceSystemService)
 if(APPLE)
     target_link_libraries(libSceSystemService PRIVATE "-framework CoreFoundation")
@@ -162,7 +162,11 @@ if(BUILD_TESTING)
                 "1,-,-,C,es,auto,1"
                 "1,-,-,-,-,auto,1"
                 "1,-,-,lt_LT.UTF-8,-,auto,1"
-                "30,-,-,lt_LT.UTF-8,lt:uk:fr,auto,0")
+                "30,-,-,lt_LT.UTF-8,lt:uk:fr,auto,0"
+                "1,-,-,de_DE.UTF-8,lt:C:fr,auto,1"
+                "1,-,-,de_DE.UTF-8,lt:POSIX:fr,auto,1"
+                "1,-,-,de_DE.UTF-8,lt:C.UTF-8:fr,auto,1"
+                "2,-,-,de_DE.UTF-8,fr:C:de,auto,0")
             string(REPLACE "," ";" languageAutoArguments "${languageAutoCase}")
             add_test(NAME guest_system_service_language_auto_${languageAutoIndex} COMMAND guest_system_service_language_auto_tests ${languageAutoArguments})
             set_tests_properties(guest_system_service_language_auto_${languageAutoIndex} PROPERTIES TIMEOUT 20)
