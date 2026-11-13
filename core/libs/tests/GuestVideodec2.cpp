@@ -190,8 +190,15 @@ void testFailures() {
     config.codecType = 1;
     config.maxFrameWidth = 0;
     checkThrows([&] { sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory); });
+    check(memory.cpuMemorySize != 0 && memory.maxFrameBufferSize == 0, "invalid dimensions keep the work sizes written before the throw");
     config.maxFrameWidth = Width;
+    errno = 71;
+    checkThrows([&] { sceVideodec2QueryDecoderMemoryInfo_nid_postfix(reinterpret_cast<const DecoderConfigInfo*>(0x10), &memory); });
+    checkThrows([&] { sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, reinterpret_cast<DecoderMemoryInfo*>(0x10)); });
+    check(errno == 71, "memory query preserves errno");
+    check(memory.maxFrameBufferSize == 0, "an unreadable config writes nothing");
     check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory) == 0, "memory query failed");
+    check(memory.thisSize == sizeof(DecoderMemoryInfo) && memory.maxFrameBufferSize != 0 && memory.frameBufferAlignment != 0, "memory query fills the sizes");
     errno = 71;
     checkThrows([&] { sceVideodec2CreateDecoder_nid_postfix(reinterpret_cast<const DecoderConfigInfo*>(0x10), &memory, &handle); });
     checkThrows([&] { sceVideodec2CreateDecoder_nid_postfix(&config, reinterpret_cast<const DecoderMemoryInfo*>(0x10), &handle); });

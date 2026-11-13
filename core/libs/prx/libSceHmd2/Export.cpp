@@ -351,13 +351,21 @@ int APS5_VABI sceHmd2ReprojectionSetMirroringOption(const Hmd2::MirroringOption*
 }
 
 int APS5_VABI sceHmd2ReprojectionSetParam(std::uint32_t bufferSetId, std::uint64_t frameId, const Hmd2::ReprojectionParameter* parameter, std::uint64_t reserved) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)bufferSetId;
+    (void)frameId;
+    (void)reserved;
+    if (parameter == nullptr) return Hmd2::VideoOutInvalidAddress;
+    return Hmd2::VideoOutInvalidIndex;
 }
 
 int APS5_VABI sceHmd2ReprojectionSetParamWithBuffer(std::uint32_t bufferSetId, std::uint64_t frameId, const Hmd2::ReprojectionBufferedParameter* parameter, std::uint64_t reserved) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)bufferSetId;
+    (void)frameId;
+    (void)reserved;
+    std::lock_guard lock(reprojectionMutex);
+    if (reprojectionState != nullptr) NotImplemented_nid_no_patch(__func__);
+    if (parameter == nullptr) return Hmd2::ParameterNull;
+    return Hmd2::VideoOutInvalidIndex;
 }
 
 int APS5_VABI sceHmd2ReprojectionSetRenderConfig(std::uint64_t flags, std::uint64_t reserved, std::uint64_t reserved2) {
