@@ -2,7 +2,7 @@
 
 ### Functional
 
-- [scePlayGoGetOptionalChunk, scePlayGoGetSupportedOptionalChunk and scePlayGoRequestOptionalChunk](../../../core/libs/prx/libScePlayGo/Export.cpp) (libScePlayGo) - returning `0x80B2000A` (`SCE_PLAYGO_ERROR_BAD_POINTER`) for unmapped or unreadable optional chunk parameter pointers is a defensive host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+- [scePlayGoGetOptionalChunk, scePlayGoGetSupportedOptionalChunk, scePlayGoRequestOptionalChunk and scePlayGoSetToDoList](../../../core/libs/prx/libScePlayGo/Export.cpp) (libScePlayGo) - returning `0x80B2000A` (`SCE_PLAYGO_ERROR_BAD_POINTER`) for unmapped or unreadable chunk parameter pointers is a defensive host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
 
 ### Unknown function info
 
