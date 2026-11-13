@@ -117,6 +117,7 @@ int RunSelf(const char* program, std::string_view mode, const std::filesystem::p
 }
 
 int main(int argc, char** argv) {
+    for (int iter = 0; iter < 2; ++iter)
     if (argc == 3) {
         std::filesystem::current_path(argv[2]);
         const std::string_view mode = argv[1];
