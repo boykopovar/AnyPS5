@@ -572,6 +572,23 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_number_format_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/NumberFormatBehavior.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/NumberFormatOracle.cpp)
+    target_include_directories(guest_icu_number_format_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_number_format_tests PRIVATE libSceIcu libkernel libc icu_i18n Threads::Threads)
+    configure_windows_unwind(guest_icu_number_format_tests)
+    foreach(mode open format attributes lifetime memory)
+        add_test(NAME guest_icu_number_format_${mode} COMMAND guest_icu_number_format_tests ${mode})
+        set_tests_properties(guest_icu_number_format_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_icu_number_format_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
+    endforeach()
+endif()
+
 set(ICU_RECOVERED_SOURCES
     NumberingSystemBackend.cpp
     DateTimePatternGeneratorBackend.cpp

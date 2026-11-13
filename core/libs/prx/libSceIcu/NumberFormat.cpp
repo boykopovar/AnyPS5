@@ -60,4 +60,16 @@ UNumberFormat* APS5_VABI unum_open_nid_postfix(std::int32_t style, const char16_
     NotImplemented_nid_no_patch(__func__);
 }
 
+std::int32_t APS5_VABI unum_getTextAttribute_nid_postfix(const UNumberFormat*, std::int32_t, char16_t*, std::int32_t, std::int32_t*) {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+void APS5_VABI unum_setAttribute_nid_postfix(UNumberFormat*, std::int32_t, std::int32_t) {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+void APS5_VABI unum_setTextAttribute_nid_postfix(UNumberFormat*, std::int32_t, const char16_t*, std::int32_t, std::int32_t*) {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
