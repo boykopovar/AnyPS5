@@ -423,6 +423,8 @@ public:
         };
         std::array<Stage, 8> stages{};
         bool valid = false;
+        bool tableBound = false;
+        bool faultBound = false;
     };
     mutable PushImage pushImage;
     // Whether RefreshData would record anything for `shader` (the per-word compare; verification).
@@ -800,6 +802,8 @@ private:
         };
         KeptSpan data, flat, map, user;
         std::vector<std::uint32_t> dataInput;
+        std::vector<std::uint32_t> userInput;
+        const void* userProgram = nullptr;
         struct PushRun {
             std::uint32_t index = 0;
             std::uint32_t dword = 0;

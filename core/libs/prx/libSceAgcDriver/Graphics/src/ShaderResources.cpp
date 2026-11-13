@@ -7550,17 +7550,9 @@ void ShaderResources::writeDataRoots(std::span<std::byte, PipelinePushConstantBy
     if (!heapStage) return;
     const bool addressed = rewritten != nullptr && rewritten->addressOffsets;
     const auto& offsets = addressed ? rewritten->heapOffsets : heapOffsets;
-    VkDeviceAddress table = 0;
-    VkDeviceAddress fault = 0;
     const auto binds = [&](ShaderRecompiler::DescriptorRole role) {
         return std::any_of(shaders.begin(), shaders.end(), [&](const CompiledShader& shader) { return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [&](const auto& binding) { return binding.role == role; }); });
     };
-    const bool tableBound = binds(ShaderRecompiler::DescriptorRole::BdaPagetable);
-    const bool faultBound = binds(ShaderRecompiler::DescriptorRole::FaultBuffer);
-    if (bda != nullptr && (tableBound || faultBound)) {
-        if (tableBound) table = bda->TableAddress();
-        if (faultBound) fault = bda->FaultAddress();
-    }
     Require(placements.size() == shaders.size(), "the push layout does not describe the draw's stages");
     std::optional<VkDeviceAddress> gds;
     const auto gdsAddress = [&] {
@@ -7589,6 +7581,8 @@ void ShaderResources::writeDataRoots(std::span<std::byte, PipelinePushConstantBy
             image.count = shaders.size();
             image.placements.assign(placements.begin(), placements.end());
             for (std::size_t index = 0; index < shaders.size() && index < image.programs.size(); ++index) image.programs[index] = shaders[index].program;
+            image.tableBound = binds(ShaderRecompiler::DescriptorRole::BdaPagetable);
+            image.faultBound = binds(ShaderRecompiler::DescriptorRole::FaultBuffer);
             const auto own = [&](std::uint32_t position, std::uint32_t width) {
                 if (position == Abi::NoPushPosition) return;
                 for (auto dword = position; dword < position + width && dword < Abi::PushDataDwords; ++dword) image.mask |= std::uint64_t{1} << dword;
@@ -7608,6 +7602,14 @@ void ShaderResources::writeDataRoots(std::span<std::byte, PipelinePushConstantBy
             }
         }
         if (!image.valid) cached = false;
+    }
+    const bool tableBound = cached ? image.tableBound : binds(ShaderRecompiler::DescriptorRole::BdaPagetable);
+    const bool faultBound = cached ? image.faultBound : binds(ShaderRecompiler::DescriptorRole::FaultBuffer);
+    VkDeviceAddress table = 0;
+    VkDeviceAddress fault = 0;
+    if (bda != nullptr && (tableBound || faultBound)) {
+        if (tableBound) table = bda->TableAddress();
+        if (faultBound) fault = bda->FaultAddress();
     }
     const auto target = cached ? std::span<std::byte, PipelinePushConstantBytes>(image.bytes) : bytes;
     bool rooted = false;
@@ -8263,17 +8265,30 @@ std::pair<std::uint64_t, std::uint64_t> ShaderResources::writeSplitHeapStage(con
         stageState.dataOrigin = shader.heap != nullptr ? shader.heap->dataOrigin : 0u;
         stageState.dataProgram = shader.program;
     }
+    const auto userFront = words.first(userWords);
+    auto& input = stageState.userInput;
+    const bool sameUserInput = current && stageState.userProgram == shader.program && stageState.user.words.size() == userWords &&
+                               input.size() == userWords + userData.size() && std::equal(userFront.begin(), userFront.end(), input.begin()) &&
+                               std::equal(userData.begin(), userData.end(), input.begin() + static_cast<std::ptrdiff_t>(userWords));
     struct UserStorage {};
-    auto& user = HostThreadLocal<std::vector<std::uint32_t>, UserStorage>();
-    user.assign(words.begin(), words.begin() + static_cast<std::ptrdiff_t>(userWords));
-    applyUserData(user);
-    patchHeapSlotWords(shader, stageState, user, current, true);
-    if (verifySlots && !std::equal(user.begin(), user.end(), patched.begin()))
-        throw std::runtime_error("AGC graphics: a GPU-mode stage's user-data block differs from the user words of its full shader data");
+    auto& built = HostThreadLocal<std::vector<std::uint32_t>, UserStorage>();
+    if (!sameUserInput || verifySlots) {
+        built.assign(userFront.begin(), userFront.end());
+        applyUserData(built);
+        patchHeapSlotWords(shader, stageState, built, current, true);
+        if (verifySlots && !std::equal(built.begin(), built.end(), patched.begin()))
+            throw std::runtime_error("AGC graphics: a GPU-mode stage's user-data block differs from the user words of its full shader data");
+        if (verifySlots && sameUserInput && !std::ranges::equal(built, stageState.user.words))
+            throw std::runtime_error("AGC graphics: a GPU-mode stage's user-data block changed although its words, user data and slots did not");
+        input.assign(userFront.begin(), userFront.end());
+        input.insert(input.end(), userData.begin(), userData.end());
+        stageState.userProgram = shader.program;
+    }
+    const auto& user = sameUserInput ? stageState.user.words : built;
     const auto counted = std::min<std::size_t>(userWords, 64u);
     const auto userMask = counted == 64u ? ~std::uint64_t{0} : (std::uint64_t{1} << counted) - 1u;
     const auto pushedUser = stageState.pushedUserWords & userMask;
-    const bool userChanged = !std::ranges::equal(stageState.user.words, user);
+    const bool userChanged = !sameUserInput && !std::ranges::equal(stageState.user.words, user);
     if (userChanged) ++stageState.pushVersion;
     if (userWords <= 64u && pushedUser == userMask) {
         if (stageState.user.words.size() == user.size() && userChanged) NotePushedUserDataKeep();
