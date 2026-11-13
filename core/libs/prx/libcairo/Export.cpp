@@ -192,10 +192,6 @@ int APS5_VABI cairo_scaled_font_status() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_in_fill() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_set_source() {
     NotImplemented_nid_no_patch(__func__);
 }

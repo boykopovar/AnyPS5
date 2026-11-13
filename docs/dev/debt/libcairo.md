@@ -30,6 +30,8 @@
 
 - [Operator state in Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) has no rendering consumer. The default is OVER, and save/restore preserves the stored operator. Native Cairo 1.18.0 is the comparison target; console behavior is unmeasured.
 
+- [`cairo_in_fill`](../../../core/libs/prx/libcairo/InFill.cpp) throws through `NotImplemented_nid_no_patch` for a query whose device coordinates are not finite and, off the edges of a non-empty fill, for a fill rule other than winding and even-odd: Cairo 1.18.0 skips the query's transform while it tracks its matrices as identity, a flag the context does not keep, and reaches `ASSERT_NOT_REACHED` on such a rule. The rest is ported from `cairo-path-in-fill.c`, `cairo-spline.c` and `_cairo_fixed_from_double` of Cairo 1.18.0 and not compared with a native Cairo build: the query becomes 24.8 fixed point unclamped, so it wraps every 16777216 device units, curves are flattened at the default tolerance 0.1, as the catalogue has no `cairo_set_tolerance`, and a curve whose control points coincide with its ends is dropped without moving the current point, unless the query is above, below or left of its bounding box. The PS5 library revision is unmeasured.
+
 ### Functional glyphs
 
 - [Glyph.cpp](../../../core/libs/prx/libcairo/Glyph.cpp) implements `cairo_glyph_free` for null, which Cairo ignores. No export here allocates glyph arrays yet, and `cairo_glyph_allocate` is not in the catalogue, so a non-null array comes from outside this library and still throws through `NotImplemented_nid_no_patch` instead of reaching `free`. Freeing must follow the allocator once `cairo_scaled_font_text_to_glyphs` returns arrays. Unverified on a console.
@@ -82,7 +84,6 @@
 | `cairo_mesh_pattern_begin_patch` | `Ux6XxakVN+8` |
 | `cairo_mesh_pattern_end_patch` | `VBA3H7mYG70` |
 | `cairo_scaled_font_status` | `a5WkqZXnG2w` |
-| `cairo_in_fill` | `akimK5gpdho` |
 | `cairo_set_source` | `bU0QXekwNes` |
 | `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
 | `cairo_pattern_create_mesh` | `bz5MfOeWZw4` |
