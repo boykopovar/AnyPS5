@@ -23,6 +23,13 @@ struct MfsrBlock {
  std::uint64_t bytes;
 };
 
+struct MfsrMemoryParam {
+ std::uint32_t type;
+ std::uint32_t reserved;
+ const MfsrBlock* blocks;
+ std::uint64_t blockCount;
+};
+
 struct MfsrSharedResourcesParam {
  std::uint32_t type;
  std::uint32_t reserved;
@@ -108,6 +115,11 @@ std::int32_t APS5_VABI scePsmlMfsrCreateSharedResources(void** sharedResources, 
 std::int32_t APS5_VABI scePsmlMfsrReleaseSharedResources(void* sharedResources);
 std::int32_t APS5_VABI scePsmlMfsrGetContextBufferRequirement800M3_2(MfsrRequirement* requirement, const MfsrContextParam* param);
 std::int32_t APS5_VABI scePsmlMfsrCreateContext800M3_2(void** context, const MfsrContextParam* param);
+std::int32_t APS5_VABI scePsmlMfsrGetContextBufferRequirement(MfsrRequirement* requirement, const void* param);
+std::int32_t APS5_VABI scePsmlMfsrGetContextBufferRequirement800M3(MfsrRequirement* requirement, const void* param);
+std::int32_t APS5_VABI scePsmlMfsrGetContextBufferRequirementFrom2023July(MfsrRequirement* requirement, const void* param);
+std::int32_t APS5_VABI scePsmlMfsrCreateContext(void** context, const MfsrMemoryParam* param);
+std::int32_t APS5_VABI scePsmlMfsrCreateContextFrom2023July(void** context, const MfsrContextParam* param);
 std::int32_t APS5_VABI scePsmlMfsrReleaseContext(void* context);
 std::int32_t APS5_VABI scePsmlMfsrCreateContext1300(void** context, const void* param);
 std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket1300(void* context, void* commandBuffer, const void* param);

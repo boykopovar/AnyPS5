@@ -2,10 +2,12 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_GUESTMEMORY_HPP
 
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <string>
@@ -44,9 +46,6 @@ bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> b
 // space cannot be queried).
 enum class Compare : std::uint8_t { Equal, Differs, Unmapped };
 Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes);
-// CompareMapped's walk with a copy in place of the compare: the bytes at `address` are copied into
-// `out` (Equal), or Unmapped as CompareMapped answers it (the dispatch-cache validation's masked
-// re-read of a differing run).
 Compare CopyMapped(std::uint64_t address, std::span<std::byte> out);
 void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment = 1);
@@ -78,6 +77,31 @@ void SetFreshCollectHook(FreshCollectHook hook);
 #endif
 bool Watched(std::uint64_t address, std::size_t bytes);
 std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes);
+struct WriteSubscription;
+bool WriteIndexEnabled();
+std::shared_ptr<WriteSubscription> SubscribeWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+std::uint64_t SubscriptionGeneration(const WriteSubscription& subscription);
+std::span<const std::pair<std::uint64_t, std::uint64_t>> SubscriptionSpans(const WriteSubscription& subscription);
+bool SweepSubscription(const WriteSubscription& subscription);
+bool SubscriptionBumpsSince(const WriteSubscription& subscription, std::uint64_t generation, std::vector<std::uint64_t>& blocks, std::vector<std::uint64_t>& lookupBlocks);
+void TrimSubscriptionBumps(WriteSubscription& subscription, std::uint64_t generation);
+std::uint64_t WriteBlockOf(std::uint64_t address);
+void NoteGpuPending(std::uint64_t address, std::size_t bytes);
+void NoteTextureReleased(std::uint64_t address);
+enum class WriteBumpSource : std::uint8_t { Cpu, Driver, Pending, Unwatch, Forget, Release, Import, Count };
+struct WriteIndexStats {
+    std::uint64_t subscriptions = 0;
+    std::uint64_t blocks = 0;
+    std::uint64_t bumps = 0;
+    std::uint64_t lookups = 0;
+    std::uint64_t sweeps = 0;
+    std::uint64_t sweepFailures = 0;
+    std::uint64_t overflows = 0;
+    std::uint64_t lookupNanoseconds = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(WriteBumpSource::Count)> bySource{};
+};
+WriteIndexStats WriteIndexCounted();
+void ResetWriteIndexCounts();
 bool UnchangedSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // UnchangedSince for several ranges under one tracker lock: true only when every one holds.
 struct UnchangedQuery {
@@ -96,6 +120,8 @@ bool UnchangedCommittedSince(std::span<const std::pair<std::uint64_t, std::uint6
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes, std::uint64_t& order);
+void ForgetKnownZero(std::uint64_t address, std::size_t bytes);
+void MaterializeKnownZero(std::uint64_t address, std::size_t bytes);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void(std::span<std::byte>)>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source);
@@ -140,6 +166,7 @@ std::uint64_t UntrackedHint(std::uint64_t address, std::size_t bytes);
 // the stamps collects make (dirty pages), not the MarkWritten stamps of the driver's own GPU label
 // records, which share the title's label blocks. False when the arena is not write-watched.
 bool UnchangedSinceCollected(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
+bool CpuWroteSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 bool UnchangedSinceLastCollect(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Per 64 KiB tracker block of [address, address + bytes) (block 0 holds `address`): `changed[k]`
 // receives whether the block was stamped after generations[k] (UnchangedSince over that block

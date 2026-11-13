@@ -40,6 +40,9 @@ int main() {
     bad = create;
     bad.this_size = 0;
     Require(scePngEncQueryMemorySize(&bad) == invalidSize);
+    PngEncCreateParam widest = create;
+    widest.max_image_width = 1000000;
+    Require(scePngEncQueryMemorySize(&widest) == 24285808);
     std::vector<std::uint64_t> memory((memorySize + 7) / 8);
     void* handle = nullptr;
     Require(scePngEncCreate(nullptr, memory.data(), memorySize, &handle) == invalidAddr);
@@ -52,6 +55,10 @@ int main() {
     Require(scePngEncCreate(&create, memory.data(), memorySize, &handle) == 0 && reinterpret_cast<std::uintptr_t>(handle) % 16 == 0);
 
     Require(scePngEncCreate(&create, memory.data(), 0, nullptr) == invalidSize);
+    Require(scePngEncCreate(&create, nullptr, 0, &handle) == invalidAddr);
+    std::vector<std::uint64_t> untouched(memory.size(), 0xA5A5A5A5A5A5A5A5ull);
+    Require(scePngEncCreate(&create, untouched.data(), memorySize, nullptr) == invalidAddr);
+    Require(std::all_of(untouched.begin(), untouched.end(), [](auto word) { return word == 0xA5A5A5A5A5A5A5A5ull; }));
     std::vector<std::uint8_t> image(pitch * height, 0xEE);
     for (std::uint32_t y = 0; y < height; ++y) {
         for (std::uint32_t x = 0; x < width; ++x) {
@@ -164,6 +171,19 @@ int main() {
     }
     invalid = encode;
     invalid.image_mem_size = pitch * (height - 1) + width * 4;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
+    std::vector<std::uint8_t> wide(68 * height, 0x40);
+    invalid = encode;
+    invalid.image_mem_addr = wide.data();
+    invalid.image_mem_size = static_cast<std::uint32_t>(wide.size());
+    invalid.image_width = 17;
+    invalid.image_pitch = 68;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
+    invalid = encode;
+    invalid.image_height = 0;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
+    invalid = encode;
+    invalid.image_pitch = 16;
     Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
     invalid = encode;
     invalid.png_mem_addr = nullptr;
