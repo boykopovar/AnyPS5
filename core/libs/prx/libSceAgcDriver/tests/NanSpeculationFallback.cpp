@@ -5,6 +5,9 @@
 #include "Translation/ShaderInputInfoBuilder.hpp"
 #include "CacheKey.hpp"
 #include "Recompiler.hpp"
+#include "Optimization/ResourceProgram.hpp"
+#include <spirv/unified1/spirv.hpp>
+#include <array>
 #include <cstdio>
 #include <initializer_list>
 #include <cstdlib>
@@ -21,7 +24,22 @@ struct Shape {
     std::size_t blocks = 0;
     std::uint32_t declines = 0;
     std::uint32_t fastOps = 0;
+    bool flagsMaskedByExec = false;
 };
+
+bool MaskedByExec(const IrValue* value, unsigned depth) {
+    if (value == nullptr || depth == 0u) return false;
+    value = value->Resolve();
+    if (value->Opcode() == IrOpcode::LogicalAnd) {
+        for (std::size_t index = 0; index < value->ArgumentCount(); ++index) {
+            if (value->Argument(index)->Resolve()->Opcode() == IrOpcode::GetExec) return true;
+        }
+    }
+    for (std::size_t index = 0; index < value->ArgumentCount(); ++index) {
+        if (MaskedByExec(value->Argument(index), depth - 1u)) return true;
+    }
+    return false;
+}
 
 Shape Translated(ShaderStageKind stage, std::vector<std::uint32_t> code, std::uint64_t address = 0u) {
     code.push_back(0xbf810000u);
@@ -55,7 +73,10 @@ Shape Translated(ShaderStageKind stage, std::vector<std::uint32_t> code, std::ui
     shape.declines = program.Metadata().nanSpeculationDeclines;
     shape.fastOps = program.Metadata().nanSpeculationFastOps;
     for (const auto& block : program.Blocks()) {
-        for (const auto* inst : block->Instructions()) shape.ballots += inst->Opcode() == IrOpcode::Ballot ? 1u : 0u;
+        for (const auto* inst : block->Instructions()) {
+            shape.ballots += inst->Opcode() == IrOpcode::Ballot ? 1u : 0u;
+            if (inst->Opcode() == IrOpcode::Ballot && MaskedByExec(inst->Argument(0), 6u)) shape.flagsMaskedByExec = true;
+        }
     }
     return shape;
 }
@@ -78,7 +99,9 @@ int main() {
             std::fprintf(stderr, "nan speculation fallback: %s\n", message);
             return 1;
         };
-        if (Translated(ShaderStageKind::Compute, {AddF32}, Failing).fastOps != 1u) return fail("the region was not speculated before the fallback");
+        const auto first = Translated(ShaderStageKind::Compute, {AddF32}, Failing);
+        if (first.fastOps != 1u) return fail("the region was not speculated before the fallback");
+        if (!first.flagsMaskedByExec) return fail("the NaN flag of a lane that is not active reaches the region branch");
         const std::array<std::uint32_t, 2> code{AddF32, 0xbf810000u};
         ShaderRecompiler::RecompileRequest request{
             {ShaderRecompiler::ShaderStage::Compute, Failing, code, 0, {}},
@@ -110,6 +133,24 @@ int main() {
         RecompileCacheKey::Build(request, failingKey);
         RecompileCacheKey::Build(other, otherKey);
         if (failingKey == otherKey) return fail("the cache key does not tell a suppressed program from a speculated one");
+        auto prepared = other;
+        prepared.shader.codeAddress = 0x9abcu;
+        prepared.useCache = true;
+        prepared.target.vulkanVersion = 0x00401000u;
+        prepared.target.spirvVersion = 0x00010300u;
+        prepared.target.subgroupSize = 32;
+        static constexpr std::array<std::uint32_t, 6> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformVote, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
+        prepared.target.supportedCapabilities = capabilities;
+        const auto before = PrepareShader(prepared);
+        if (!PreparedShaderInvocation::TryCreate(prepared, before).has_value()) return fail("a prepared shader did not match its own request");
+        const auto beforeCapture = PreparedShaderInvocation::TryCreate(prepared, before)->Capture(SrtRuntime{});
+        if (beforeCapture == nullptr) return fail("a speculated prepared shader did not capture");
+        if (!SuppressNanSpeculation(prepared.shader.codeAddress)) return fail("the prepared program was already suppressed");
+        if (PreparedShaderInvocation::TryCreate(prepared, before).has_value()) return fail("a shader prepared with speculation still matches after the program was suppressed");
+        const auto after = PrepareShader(prepared);
+        const auto retried = PreparedShaderInvocation::TryCreate(prepared, after);
+        if (!retried.has_value()) return fail("a shader prepared again without speculation does not match its request");
+        if (retried->Materialize(*retried->Capture(SrtRuntime{})) == nullptr) return fail("a shader prepared again without speculation did not materialize");
         std::puts("nan speculation fallback tests passed");
         return 0;
     } catch (const std::exception& error) {

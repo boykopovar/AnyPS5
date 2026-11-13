@@ -1081,6 +1081,11 @@ struct NanSpeculationCounterSite {
 bool SuppressNanSpeculation(std::uint64_t address);
 [[nodiscard]] std::uint32_t NanSpeculationFallbacks();
 
+class NanSpeculationRetry : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 struct RectListShaders {
     RecompileResult control;
     RecompileResult evaluation;

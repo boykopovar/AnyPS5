@@ -443,7 +443,8 @@ IrValue& TranslationContext::invalidOperationF32(std::initializer_list<IrValue*>
 
 void TranslationContext::noteNan(IrValue& condition, IrValue& value, std::uint8_t lanes) {
     ++program.Metadata().nanSpeculationFastOps;
-    nanSeen = nanSeen == nullptr ? &condition : &ir.LogicalOr(*nanSeen, condition);
+    IrValue& active = ir.LogicalAnd(ir.GetExec(), condition);
+    nanSeen = nanSeen == nullptr ? &active : &ir.LogicalOr(*nanSeen, active);
     program.Metadata().nanSpeculationChecks.push_back({&condition, &value, lanes, nanRegion});
 }
 

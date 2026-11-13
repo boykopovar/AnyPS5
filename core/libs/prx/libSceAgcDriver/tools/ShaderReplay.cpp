@@ -203,7 +203,7 @@ bool Replay(const char* path) {
     }
     if (g_prepare || g_materialize) {
         const char* phase = "prepare";
-        try {
+        for (bool retried = false;; retried = true) try {
             const auto handle = ShaderRecompiler::PrepareShader(request.request);
             std::printf("  prepared: %zu SPIR-V words\n", ShaderRecompiler::GetPreparedArtifact(*handle).spirv.size());
             if (g_materialize) {
@@ -220,6 +220,12 @@ bool Replay(const char* path) {
                 return OutputSpirv(path, result->spirv);
             }
             return OutputSpirv(path, ShaderRecompiler::GetPreparedArtifact(*handle).spirv);
+        } catch (const ShaderRecompiler::NanSpeculationRetry& retry) {
+            if (retried) {
+                std::printf("  %s failed after the retry: %s\n", phase, FirstLine(retry.what()).c_str());
+                return false;
+            }
+            std::printf("  %s failed with speculation, preparing again without it\n", phase);
         } catch (const std::exception& error) {
             std::printf("  %s failed: %s\n", phase, FirstLine(error.what()).c_str());
             return false;

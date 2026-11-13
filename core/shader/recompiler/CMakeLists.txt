@@ -273,6 +273,7 @@ function(add_shader_recompiler target runtimeTarget)
             MeshBarycentricLayoutOf
             NanSpeculation
             NanSpeculationCounterSites
+            NanSpeculationRetry
             NativeCachePath_nid_no_patch
             ImageTableAbi::PoisonCode
             ImageTableAbi::PoisonReasonName

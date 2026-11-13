@@ -1425,6 +1425,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(Shade
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
             if (invocation.Request().context.layerRowSamples) throw;
             record(snapshot.prepared->layerRowSamples);
+        } catch (const ShaderRecompiler::NanSpeculationRetry&) {
         }
         invocation = InvocationFor(snapshot, codeOffset, request, false, linking);
     }
