@@ -15046,10 +15046,6 @@ int APS5_VABI _ZN3WTF16addSignalHandlerENS_6SignalEONS_8FunctionIFNS_12SignalAct
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF16codePointCompareENS_10StringViewES0_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -15111,10 +15107,6 @@ int APS5_VABI _ZN3WTF17StringPrintStreamD1Ev() {
 }
 
 int APS5_VABI _ZN3WTF17StringPrintStreamD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF17callOnMainRunLoopEONS_8FunctionIFvvEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -15322,10 +15314,6 @@ int APS5_VABI _ZN3WTF22TextBreakIteratorCache9singletonEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF24AutomaticThreadCondition4waitERNS_4LockE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -15355,10 +15343,6 @@ int APS5_VABI _ZN3WTF24AutomaticThreadConditionD1Ev() {
 }
 
 int APS5_VABI _ZN3WTF24AutomaticThreadConditionD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

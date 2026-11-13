@@ -2,6 +2,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/PalTypes.hpp"
+#include "prx/libSceNKWebKit/src/WtfFunctionAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
@@ -108,6 +109,10 @@ void APS5_VABI _ZN3WTF13StringBuilder16appendCharactersEPKhj(NKWebKit::WtfAbi::S
 void APS5_VABI _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(NKWebKit::WtfAbi::StringBuilder* self, const NKWebKit::WtfAbi::String& string);
 NKWebKit::WtfAbi::ProcessPrivileges APS5_VABI _ZN3WTF13allPrivilegesEv();
 bool APS5_VABI _ZN3WTF13isMainRunLoopEv();
+void APS5_VABI _ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE(NKWebKit::WtfAbi::VoidFunction* function);
+void APS5_VABI _ZN3WTF17callOnMainRunLoopEONS_8FunctionIFvvEEE(NKWebKit::WtfAbi::VoidFunction* function);
+void APS5_VABI _ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE(NKWebKit::WtfAbi::VoidFunction* function);
+void APS5_VABI _ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE(NKWebKit::WtfAbi::VoidFunction* function);
 void* APS5_VABI _ZN3WTF13jsValueMallocEm(std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastCallocEmm(WTF::TryMallocReturnValue* result, std::size_t count, std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastMallocEm(WTF::TryMallocReturnValue* result, std::size_t size);
