@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cerrno>
 #include <cstring>
 #include <initializer_list>
 #include <thread>
@@ -133,6 +134,9 @@ void CheckRequests() {
     Require(sceNpScoreAbortRequest(req + 100) == InvalidId, "sceNpScoreAbortRequest", "an unknown request was taken");
     Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting failed");
     Require(sceNpScorePollAsync(req, nullptr) == PollFinished, "sceNpScorePollAsync", "a null result was not accepted");
+    errno = 71;
+    Require(sceNpScorePollAsync(req, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpScorePollAsync", "unwritable result was accepted");
+    Require(errno == 71, "sceNpScorePollAsync", "errno was altered");
     Require(sceNpScorePollAsync(req, &result) == PollFinished && result == Aborted, "sceNpScoreAbortRequest", "an aborted request did not finish with ABORTED");
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == Aborted, "sceNpScoreRecordScore", "an aborted request did not return ABORTED");
     sceNpScoreDeleteRequest(req);

@@ -297,7 +297,13 @@ int APS5_VABI sceNpScorePollAsync(int reqId, int* result) {
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (!request->second.result) return POLL_RUNNING;
-    if (result) *result = *request->second.result;
+    if (result) {
+        const int localResult = *request->second.result;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return POLL_FINISHED;
 }
 
