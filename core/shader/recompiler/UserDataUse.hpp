@@ -11,6 +11,9 @@ struct BufferBaseWord {
     std::uint32_t buffer;
     std::uint64_t address;
     std::int64_t flatOffset;
+    std::uint64_t bufferAddress = 0;
+    std::uint64_t bufferBytes = 0;
+    bool bufferRangeKnown = false;
 };
 
 struct SrtUserDataUse {

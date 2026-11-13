@@ -84,6 +84,8 @@ struct DispatchVariant {
     std::atomic<std::uint64_t> generation{0};
 };
 
+void TagDrawBufferBases_nid_no_patch(DispatchVariant& variant, std::span<const ShaderRecompiler::BufferBaseWord> bufferBaseWords, bool enabled);
+
 struct DispatchEntry {
     std::vector<std::shared_ptr<DispatchVariant>> variants;
 

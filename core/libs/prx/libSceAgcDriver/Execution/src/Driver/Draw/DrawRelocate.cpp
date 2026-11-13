@@ -402,11 +402,21 @@ std::shared_ptr<DispatchVariant> Driver::cloneVariant(const DispatchVariant& var
 }
 
 void Driver::tagBufferWords(DispatchVariant& variant, std::span<const ShaderRecompiler::BufferBaseWord> bufferBaseWords) {
-    if (!drawRelocationEnabled() || bufferBaseWords.empty() || variant.compiled == nullptr || !variant.dataPositions.empty()) return;
+    TagDrawBufferBases_nid_no_patch(variant, bufferBaseWords, drawRelocationEnabled());
+}
+
+void TagDrawBufferBases_nid_no_patch(DispatchVariant& variant, std::span<const ShaderRecompiler::BufferBaseWord> bufferBaseWords, bool enabled) {
+    if (!enabled || bufferBaseWords.empty() || variant.compiled == nullptr || !variant.dataPositions.empty()) return;
     const auto& compiled = *variant.compiled;
     using Patches = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
     std::vector<std::pair<std::uint32_t, Patches>> tagged;
     for (const auto& base : bufferBaseWords) {
+        if (!base.bufferRangeKnown) continue;
+        const bool capturedBuffer = base.bufferBytes != 0u && std::any_of(variant.runs.begin(), variant.runs.end(), [&](const auto& run) {
+            const auto [begin, end] = run;
+            return begin < end && (begin >= base.bufferAddress ? begin - base.bufferAddress < base.bufferBytes : base.bufferAddress < end);
+        });
+        if (capturedBuffer) continue;
         std::uint32_t position = 0;
         bool located = false;
         for (const auto& [begin, end] : variant.runs) {

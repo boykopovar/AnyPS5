@@ -2168,7 +2168,13 @@ void noteBufferBaseWords(ResourceCapture& capture) {
             if (flatOffset >= 0) single = false;
             flatOffset = read.flatOffset;
         }
-        if (found != 0 && single) capture.bufferBaseWords.push_back({buffer, address, flatOffset});
+        if (found != 0 && single && buffer < capture.snapshot.buffers.size()) {
+            const auto& descriptor = capture.snapshot.buffers[buffer];
+            if (descriptor.dwordCount != 4u) continue;
+            ShaderBufferResource resource;
+            std::copy_n(descriptor.dwords.begin(), resource.fields.size(), resource.fields.begin());
+            capture.bufferBaseWords.push_back({buffer, address, flatOffset, resource.Base48(), resource.GetSize(), true});
+        }
     }
 }
 
