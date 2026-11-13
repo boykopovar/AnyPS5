@@ -500,6 +500,8 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     }
     depth.format = zFormat == 1 ? (stencil ? VK_FORMAT_D16_UNORM_S8_UINT : VK_FORMAT_D16_UNORM) : (stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT);
     depth.htileDepthOnly = (stencilInfo & (1u << 29u)) != 0u;
+    depth.depthPartiallyResident = zFormat != 0 && (read(cx, 0x010) & 0x1000u) != 0;
+    depth.stencilPartiallyResident = stencil && (stencilInfo & 0x1000u) != 0;
     if (const auto htile = find(cx, 0x005); zFormat != 0 && htile != cx.end() && htile->second != 0 && (read(cx, 0x010) & (1u << 29u)) != 0) {
         depth.htileAddress = base(0x005, 0x01e) + static_cast<std::uint64_t>(view & 0x1fffu) * HtileMetadataBytes(depth.extent);
         depth.htileStencil = stencil && !depth.htileDepthOnly;
@@ -512,8 +514,6 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
     zero(cx, 0x000, 0x0000101cu, "depth copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
     const bool depthClear = (read(cx, 0x000) & 1u) != 0;
     const auto view = read(cx, 0x002);
-    zero(cx, 0x010, 0x00001000u, "partially resident depth (DB_Z_INFO)");
-    zero(cx, 0x011, 0x00001000u, "partially resident stencil (DB_STENCIL_INFO)");
     const auto zFormat = read(cx, 0x010) & 3u;
     const bool stencil = (read(cx, 0x011) & 1u) != 0;
     const bool stencilClear = stencil && (read(cx, 0x000) & 2u) != 0;
@@ -1383,7 +1383,7 @@ std::optional<DepthRenderControl> DecodeDepthRenderControl(const QueueState& que
     return DepthRenderControl{address & ~std::uint64_t{65535u}, 1u << ((zInfo->second >> 2u) & 3u), control->second};
 }
 
-ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne) {
+ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne, const std::array<float, 4>& constants) {
     const auto refuse = [&](const char* reason) {
         char text[320];
         std::snprintf(text, sizeof(text), "AGC graphics: blending into a color target with a reversed component order %s (CB_BLEND_CONTROL 0x%08x, component mapping 0x%02x, VkFormat %d)", reason, blendControl, componentMapping, static_cast<int>(format));
@@ -1401,7 +1401,6 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
     const auto any = [&](auto predicate) { return predicate(color[0]) || predicate(color[1]) || predicate(alpha[0]) || predicate(alpha[1]); };
     const auto constant = [](VkBlendFactor factor) { return factor == VK_BLEND_FACTOR_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_CONSTANT_ALPHA || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA; };
     if (any(secondSource)) refuse("with a second-source factor is not implemented, as dual-source blending into a component-swapped color target is unsupported");
-    if (any(constant)) refuse("with a constant blend factor is not implemented");
     if (operation != alphaOperation) refuse("with different color and alpha operations is not implemented");
     if (forceDestinationAlphaOne) {
         for (auto& factor : color) factor = colorFactorWithOpaqueDestination(factor);
@@ -1419,13 +1418,81 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
     for (const auto factor : color) {
         if (factor == VK_BLEND_FACTOR_DST_ALPHA || factor == VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA || factor == VK_BLEND_FACTOR_SRC_ALPHA_SATURATE) refuse("with a factor of the destination alpha in the color equation, which the target keeps in its first channel, is not implemented");
     }
-    const auto routing = routeReversedBlend(color, alpha);
+    const auto guestConstant = [&](std::uint32_t component) { return format == VK_FORMAT_R16G16B16A16_SFLOAT ? constants[component] : std::clamp(constants[component], 0.0f, 1.0f); };
+    const auto fixedValue = [&](VkBlendFactor factor, std::uint32_t component) -> std::optional<float> {
+        switch (factor) {
+            case VK_BLEND_FACTOR_ZERO: return 0.0f;
+            case VK_BLEND_FACTOR_ONE: return 1.0f;
+            case VK_BLEND_FACTOR_CONSTANT_COLOR: return guestConstant(component);
+            case VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR: return 1.0f - guestConstant(component);
+            case VK_BLEND_FACTOR_CONSTANT_ALPHA: return guestConstant(3u);
+            case VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA: return 1.0f - guestConstant(3u);
+            default: return std::nullopt;
+        }
+    };
+    std::array<std::optional<std::array<float, 4>>, 2> fixedValues;
+    auto routedColor = color;
+    auto routedAlpha = alpha;
+    for (std::size_t position = 0; position < 2; ++position) {
+        if (!constant(color[position]) && !constant(alpha[position])) continue;
+        std::array<float, 4> values{};
+        for (std::uint32_t component = 0; component < 4; ++component) {
+            const auto value = fixedValue(component == 0u ? alpha[position] : color[position], (componentMapping >> (2u * component)) & 3u);
+            if (!value) refuse("with a constant blend factor beside a factor of the export or the destination in the same operand is not implemented");
+            values[component] = *value;
+        }
+        fixedValues[position] = values;
+        routedColor[position] = VK_BLEND_FACTOR_ZERO;
+        routedAlpha[position] = VK_BLEND_FACTOR_ZERO;
+    }
+    const auto routing = routeReversedBlend(routedColor, routedAlpha);
     if (!routing) refuse("with factors the host blend cannot form from copies of the export is not implemented");
-    blend.srcColorBlendFactor = routing->factors[0];
-    blend.dstColorBlendFactor = routing->factors[1];
-    blend.srcAlphaBlendFactor = routing->factors[2];
-    blend.dstAlphaBlendFactor = routing->factors[3];
-    return {blend, routing->code};
+    auto factors = routing->factors;
+    ReversedBlend result{blend, routing->code};
+    const auto fixedFactor = [&](const std::array<float, 4>& values, std::uint32_t first, std::uint32_t last, VkBlendFactor same, VkBlendFactor complement) {
+        const auto all = [&](auto predicate) {
+            bool matches = true;
+            for (std::uint32_t component = first; component <= last; ++component) matches = matches && predicate(component);
+            return matches;
+        };
+        if (all([&](std::uint32_t component) { return values[component] == 0.0f; })) return VK_BLEND_FACTOR_ZERO;
+        if (all([&](std::uint32_t component) { return values[component] == 1.0f; })) return VK_BLEND_FACTOR_ONE;
+        const std::uint32_t mask = ((2u << last) - 1u) & ~((1u << first) - 1u);
+        if ((result.constantMask & mask) == 0u) {
+            for (std::uint32_t component = first; component <= last; ++component) result.constants[component] = values[component];
+            result.constantMask |= mask;
+            return same;
+        }
+        if (all([&](std::uint32_t component) { return values[component] == result.constants[component]; })) return same;
+        if (all([&](std::uint32_t component) { return values[component] == 1.0f - result.constants[component]; })) return complement;
+        refuse("with two constant blend factors that one set of host blend constants cannot form is not implemented");
+        return VK_BLEND_FACTOR_ZERO;
+    };
+    for (std::size_t position = 0; position < 2; ++position) {
+        if (!fixedValues[position]) continue;
+        if (routing->code != 0u) refuse("with a constant blend factor and factors the host blend forms through a changed export is not implemented");
+        factors[position] = fixedFactor(*fixedValues[position], 0u, 2u, VK_BLEND_FACTOR_CONSTANT_COLOR, VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR);
+        factors[2u + position] = fixedFactor(*fixedValues[position], 3u, 3u, VK_BLEND_FACTOR_CONSTANT_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA);
+    }
+    result.blend.srcColorBlendFactor = factors[0];
+    result.blend.dstColorBlendFactor = factors[1];
+    result.blend.srcAlphaBlendFactor = factors[2];
+    result.blend.dstAlphaBlendFactor = factors[3];
+    return result;
+}
+
+void ApplyReadOnlyDepthBoundsComparison(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel, bool enabled) {
+    if (!enabled || !state.depthBoundsTest || !state.depth || state.depth->format != VK_FORMAT_D32_SFLOAT_S8_UINT) return;
+    if (state.depthTest || state.depthWrite || state.stencilTest || state.depthBias || state.depthBiasPerFace || state.depthRemap.mode != 0) return;
+    if (state.samples != 1 || state.depth->samples != 1 || state.customSampleLocations || state.sampleLocationGrid) return;
+    if (pixel.posZ || pixel.depthExportEnable) return;
+    if (!std::isfinite(state.minDepthBounds) || !std::isfinite(state.maxDepthBounds) || state.minDepthBounds < 0.0f || state.maxDepthBounds > 1.0f || state.minDepthBounds > state.maxDepthBounds) return;
+    if (!std::isfinite(state.viewport.minDepth) || !std::isfinite(state.viewport.maxDepth) || state.viewport.minDepth < 0.0f || state.viewport.minDepth > 1.0f || state.viewport.maxDepth < 0.0f || state.viewport.maxDepth > 1.0f) return;
+    if (state.depthClamp && (!std::isfinite(state.depthClampMin) || !std::isfinite(state.depthClampMax) || state.depthClampMin > 1.0f || state.depthClampMax < 1.0f)) return;
+    state.depthTest = true;
+    state.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
+    state.viewport.minDepth = 1.0f;
+    state.viewport.maxDepth = 1.0f;
 }
 
 void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
@@ -1799,7 +1866,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (collapsed) result.scissor.extent = {0, 0};
     APS5_LOG_OUT_DEBUG("Scissor offset=(%d,%d) extent=%ux%u", result.scissor.offset.x, result.scissor.offset.y, result.scissor.extent.width, result.scissor.extent.height);
     result.blends.assign(exportCount, VkPipelineColorBlendAttachmentState{});
-    std::array<float, 3> requiredBlendConstants{};
+    std::array<float, 4> requiredBlendConstants{};
     std::uint32_t requiredBlendMask = 0;
     for (auto& color : result.colors) {
         const auto slot = color.slot;
@@ -1817,8 +1884,9 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         const bool reversed = mapping == 0x1bu || mapping == 0x93u;
         if (state.blendEnable) {
             const bool opaqueDestination = (read(cx, 0x31d + slot * 0xfu) & 0x20000u) != 0;
+            for (std::uint32_t i = 0; i < 4; ++i) result.blendConstants[i] = readFloat(cx, 0x105 + i);
             if (reversed) {
-                const auto translated = TranslateReversedBlend(blend, mapping, color.format, opaqueDestination);
+                const auto translated = TranslateReversedBlend(blend, mapping, color.format, opaqueDestination, result.blendConstants);
                 state.srcColorBlendFactor = translated.blend.srcColorBlendFactor;
                 state.dstColorBlendFactor = translated.blend.dstColorBlendFactor;
                 state.colorBlendOp = translated.blend.colorBlendOp;
@@ -1826,6 +1894,12 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 state.dstAlphaBlendFactor = translated.blend.dstAlphaBlendFactor;
                 state.alphaBlendOp = translated.blend.alphaBlendOp;
                 if (translated.shaderCode != 0u) result.reversedBlend = translated.shaderCode;
+                for (std::uint32_t i = 0; i < 4; ++i) {
+                    if ((translated.constantMask & (1u << i)) == 0u || (state.colorWriteMask & (1u << i)) == 0u) continue;
+                    Require((requiredBlendMask & (1u << i)) == 0 || requiredBlendConstants[i] == translated.constants[i], "color targets require conflicting blend constants after component swap");
+                    requiredBlendConstants[i] = translated.constants[i];
+                    requiredBlendMask |= 1u << i;
+                }
             } else {
                 state.srcColorBlendFactor = blendFactor(blend & 0x1fu);
                 state.dstColorBlendFactor = blendFactor((blend >> 8u) & 0x1fu);
@@ -1845,8 +1919,18 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                     state.srcAlphaBlendFactor = alphaFactorWithOpaqueDestination(state.srcAlphaBlendFactor);
                     state.dstAlphaBlendFactor = alphaFactorWithOpaqueDestination(state.dstAlphaBlendFactor);
                 }
+                const auto constantAlpha = [](VkBlendFactor factor) { return factor == VK_BLEND_FACTOR_CONSTANT_ALPHA || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA; };
+                const auto anyConstant = [&](VkBlendFactor factor) { return constantAlpha(factor) || factor == VK_BLEND_FACTOR_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR; };
+                const auto factorsCount = [](VkBlendOp op) { return op != VK_BLEND_OP_MIN && op != VK_BLEND_OP_MAX; };
+                const bool colorReadsAlpha = (state.colorWriteMask & 7u) != 0 && factorsCount(state.colorBlendOp) && (constantAlpha(state.srcColorBlendFactor) || constantAlpha(state.dstColorBlendFactor));
+                const bool alphaReadsAlpha = (state.colorWriteMask & 8u) != 0 && factorsCount(state.alphaBlendOp) && (anyConstant(state.srcAlphaBlendFactor) || anyConstant(state.dstAlphaBlendFactor));
+                if (colorReadsAlpha || alphaReadsAlpha) {
+                    const auto value = result.blendConstants[3];
+                    Require((requiredBlendMask & 8u) == 0 || requiredBlendConstants[3] == value, "color targets require conflicting blend constants after component swap");
+                    requiredBlendConstants[3] = value;
+                    requiredBlendMask |= 8u;
+                }
             }
-            for (std::uint32_t i = 0; i < 4; ++i) result.blendConstants[i] = readFloat(cx, 0x105 + i);
             const auto constantColor = [](VkBlendFactor factor) { return factor == VK_BLEND_FACTOR_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR; };
             if ((mapping == 0xe4u || mapping == 0xc6u) && state.colorBlendOp != VK_BLEND_OP_MIN && state.colorBlendOp != VK_BLEND_OP_MAX && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) {
                 for (std::uint32_t i = 0; i < 3; ++i) {
@@ -1909,8 +1993,10 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             else if (slotExport != 1 && slotExport != 2 && slotExport != 3 && slotExport != 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into an unsigned integer target is unsupported");
         }
         if (state.blendEnable && !reversed && (secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor))) {
-            const auto addition = [](VkBlendOp op) { return op == VK_BLEND_OP_ADD || op == VK_BLEND_OP_SUBTRACT || op == VK_BLEND_OP_REVERSE_SUBTRACT; };
-            Require(addition(state.colorBlendOp) && addition(state.alphaBlendOp), "dual-source blending with a MIN or MAX operation is unsupported");
+            const auto supported = [](VkBlendOp op, VkBlendFactor source, VkBlendFactor destination) {
+                return (op != VK_BLEND_OP_MIN && op != VK_BLEND_OP_MAX) || (source == VK_BLEND_FACTOR_ONE && destination == VK_BLEND_FACTOR_ONE);
+            };
+            Require(supported(state.colorBlendOp, state.srcColorBlendFactor, state.dstColorBlendFactor) && supported(state.alphaBlendOp, state.srcAlphaBlendFactor, state.dstAlphaBlendFactor), "dual-source blending with a MIN or MAX operation whose factors are not ONE is unsupported");
             result.dualSourceBlend = true;
         }
         if (const auto info = read(cx, 0x31c + slot * 0xfu); state.blendEnable && (info & 0x8000u) == 0 && ((info >> 8u) & 7u) <= 1u) {
@@ -1926,7 +2012,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         }
         result.blends[color.exportIndex] = state;
     }
-    for (std::uint32_t i = 0; i < 3; ++i) {
+    for (std::uint32_t i = 0; i < 4; ++i) {
         if ((requiredBlendMask & (1u << i)) != 0) result.blendConstants[i] = requiredBlendConstants[i];
     }
     Require((!result.mergedCoverage && !result.truncatedCoverage) || std::ranges::none_of(result.colors, [](const ColorTarget& color) { return color.partialWriteMask != 0 || color.staged; }), "partial writes of a 4_4_4_4 unorm color target under merged or truncated coverage (a one-sample target under a multisampled rasterizer) are not implemented");

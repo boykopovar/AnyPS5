@@ -26,6 +26,31 @@ constexpr int NullParameter = 115;
 constexpr int Uninitialized = 120;
 constexpr int UnsupportedMethod = 121;
 constexpr int ReadOnlyWrite = 126;
+constexpr int SslLibrary = 20;
+constexpr int SslBioType = 0x207;
+constexpr int SslBioSetSsl = 109;
+constexpr int SslBioGetSsl = 110;
+constexpr int SslBioGetRenegotiates = 126;
+constexpr int SslBioGetClose = 8;
+constexpr int SslBioSetClose = 9;
+constexpr int SslBioInfo = 3;
+
+struct BioSslData {
+    void* ssl;
+    int renegotiates;
+    std::uint64_t renegotiateCount;
+    std::uint64_t byteCount;
+    std::uint64_t renegotiateTimeout;
+    std::int64_t lastTime;
+};
+
+static_assert(sizeof(BioSslData) == 48);
+static_assert(offsetof(BioSslData, ssl) == 0);
+static_assert(offsetof(BioSslData, renegotiates) == 8);
+static_assert(offsetof(BioSslData, renegotiateCount) == 16);
+static_assert(offsetof(BioSslData, byteCount) == 24);
+static_assert(offsetof(BioSslData, renegotiateTimeout) == 32);
+static_assert(offsetof(BioSslData, lastTime) == 40);
 
 int queueError(int library, int reason, int result) {
     LibreSslPutError_nid_no_patch(library, 0xfff, reason, __FILE__, __LINE__);
@@ -64,6 +89,78 @@ int APS5_VABI destroyMemory(Bio* bio) {
         bio->data = nullptr;
     }
     return 1;
+}
+
+BioSslData& sslData(Bio* bio) {
+    if (!bio || !bio->data) throw std::invalid_argument("SSL BIO: missing state");
+    return *static_cast<BioSslData*>(bio->data);
+}
+
+int APS5_VABI readSsl(Bio*, char* destination, int) {
+    if (!destination) return 0;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI writeSsl(Bio*, const char* source, int) {
+    if (!source) return 0;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI putsSsl(Bio* bio, const char* source) {
+    if (!source) throw std::invalid_argument("SSL BIO puts: null string");
+    return writeSsl(bio, source, static_cast<int>(std::strlen(source)));
+}
+
+std::int64_t APS5_VABI controlSsl(Bio* bio, int command, std::int64_t argument, void* pointer) {
+    auto& state = sslData(bio);
+    if (!state.ssl && command != SslBioSetSsl) return 0;
+    switch (command) {
+    case SslBioSetSsl:
+        if (state.ssl || pointer) NotImplemented_nid_no_patch(__func__);
+        bio->shutdown = static_cast<int>(argument);
+        state.ssl = nullptr;
+        throw std::invalid_argument("SSL BIO control: null SSL");
+    case SslBioInfo:
+        return 0;
+    case SslBioGetSsl:
+        if (!pointer) return 0;
+        *static_cast<void**>(pointer) = state.ssl;
+        return 1;
+    case SslBioGetClose:
+        return bio->shutdown;
+    case SslBioSetClose:
+        bio->shutdown = static_cast<int>(argument);
+        return 1;
+    case SslBioGetRenegotiates:
+        return state.renegotiates;
+    default:
+        NotImplemented_nid_no_patch(__func__);
+    }
+}
+
+int APS5_VABI createSsl(Bio* bio) {
+    auto* state = static_cast<BioSslData*>(calloc_nid_postfix(1, sizeof(BioSslData)));
+    if (!state) return queueError(SslLibrary, AllocationFailure, 0);
+    bio->initialized = 0;
+    bio->data = state;
+    bio->flags = 0;
+    return 1;
+}
+
+int APS5_VABI destroySsl(Bio* bio) {
+    if (!bio) return 0;
+    auto& state = sslData(bio);
+    if (state.ssl) NotImplemented_nid_no_patch(__func__);
+    if (bio->shutdown) {
+        bio->initialized = 0;
+        bio->flags = 0;
+    }
+    free_nid_postfix(&state);
+    return 1;
+}
+
+std::int64_t APS5_VABI callbackControlSsl(Bio*, int, LibreSsl::BioInfoCallback) {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI readMemory(Bio* bio, char* destination, int size) {
@@ -183,6 +280,7 @@ std::int64_t APS5_VABI controlMemory(Bio* bio, int command, std::int64_t argumen
 }
 
 const BioMethod MemoryMethod{0x401, "memory buffer", writeMemory, readMemory, putsMemory, getsMemory, controlMemory, createMemory, destroyMemory, nullptr};
+const BioMethod SslMethod{SslBioType, "ssl", writeSsl, readSsl, putsSsl, nullptr, controlSsl, createSsl, destroySsl, callbackControlSsl};
 
 }  // namespace
 
@@ -190,6 +288,10 @@ extern "C" {
 
 const LibreSsl::BioMethod* APS5_VABI BIO_s_mem_nid_postfix() {
     return &MemoryMethod;
+}
+
+const LibreSsl::BioMethod* APS5_VABI BIO_f_ssl_nid_postfix() {
+    return &SslMethod;
 }
 
 LibreSsl::Bio* APS5_VABI BIO_new_nid_postfix(const LibreSsl::BioMethod* method) {

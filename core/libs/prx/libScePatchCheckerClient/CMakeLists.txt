@@ -1,0 +1,15 @@
+add_library(libScePatchCheckerClient SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libScePatchCheckerClient PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libScePatchCheckerClient)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_patch_checker_client_tests ${LIBS_INCLUDE_DIR}/tests/GuestPatchCheckerClient.cpp)
+    target_include_directories(guest_patch_checker_client_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_patch_checker_client_tests PRIVATE libScePatchCheckerClient libc)
+    configure_windows_unwind(guest_patch_checker_client_tests)
+    add_test(NAME guest_patch_checker_client COMMAND guest_patch_checker_client_tests)
+    if(WIN32)
+        set_tests_properties(guest_patch_checker_client PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePatchCheckerClient>")
+    endif()
+endif()
