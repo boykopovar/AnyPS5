@@ -187,7 +187,9 @@ class MainTests(unittest.TestCase):
         def fake(*args):
             if args[:2] == ("api", "graphql"):
                 if any("CLOSED" in arg for arg in args):
-                    return json.dumps({"data": {"repository": {"pullRequests": {"nodes": [{"number": n} for n in closed]}}}})
+                    return json.dumps({"data": {"repository": {"pullRequests": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [{"number": n} for n in closed]}}}})
                 return json.dumps(pages.pop(0))
             if args[:2] == ("issue", "view"):
                 return current
@@ -287,6 +289,31 @@ class MainTests(unittest.TestCase):
             prs = pr_ready.fetch("o/r")
         self.assertEqual([pr["number"] for pr in prs], [1, 2])
         self.assertIn("after=c1", seen[1])
+
+    def test_closed_labels_follow_all_pages_before_cleanup(self):
+        pages = [
+            {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+                                                     "nodes": [{"number": number} for number in range(1, 101)]}}}},
+            {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": False, "endCursor": None},
+                                                     "nodes": [{"number": 101}]}}}},
+        ]
+        seen = []
+
+        def fake(*args):
+            seen.append(args)
+            return json.dumps(pages.pop(0))
+
+        with patch("pr_ready.pr_labels.gh", fake):
+            closed = pr_ready.closed_with_label("o/r")
+        self.assertEqual(closed, list(range(1, 102)))
+        self.assertEqual(len(seen), 2)
+        self.assertIn("after=c1", seen[1])
+
+    def test_closed_label_page_without_next_cursor_fails_closed(self):
+        page = {"data": {"repository": {"pullRequests": {
+            "pageInfo": {"hasNextPage": True, "endCursor": None}, "nodes": [{"number": 5}]}}}}
+        with patch("pr_ready.pr_labels.gh", return_value=json.dumps(page)), self.assertRaisesRegex(ValueError, "no cursor"):
+            pr_ready.closed_with_label("o/r")
 
 
 if __name__ == "__main__":
