@@ -27,7 +27,31 @@ void Require(bool condition, const char* message) {
     }
 }
 
+constexpr std::array<std::uint32_t, 4> bufferSetIds{0, 1, 16, ~0u};
+constexpr std::array<std::uint64_t, 4> frameIds{0, 1, 0x123456789, ~0ull};
+
+void TestParameterSubmissionWithoutSession() {
+    Hmd2::ReprojectionParameter parameter{};
+    const std::array<std::uint8_t, 328> layer{};
+    const Hmd2::ReprojectionBufferedParameter buffered{};
+    for (const std::uint32_t bufferSetId : bufferSetIds) {
+        for (const std::uint64_t frameId : frameIds) {
+            Require(sceHmd2ReprojectionSetParam(bufferSetId, frameId, nullptr, 0) == Hmd2::VideoOutInvalidAddress, "parameter submission with a null parameter without a reprojection session");
+            Require(sceHmd2ReprojectionSetParam(bufferSetId, frameId, &parameter, 0) == Hmd2::VideoOutInvalidIndex, "parameter submission with a zeroed parameter without a reprojection session");
+            Require(sceHmd2ReprojectionSetParam(bufferSetId, frameId, &parameter, 1) == Hmd2::VideoOutInvalidIndex, "parameter submission with a nonzero reserved argument without a reprojection session");
+            Require(sceHmd2ReprojectionSetParamWithBuffer(bufferSetId, frameId, nullptr, 0) == Hmd2::ParameterNull, "buffered parameter submission with a null parameter without a reprojection session");
+            Require(sceHmd2ReprojectionSetParamWithBuffer(bufferSetId, frameId, nullptr, 1) == Hmd2::ParameterNull, "buffered parameter submission with a null parameter and a nonzero reserved argument without a reprojection session");
+            Require(sceHmd2ReprojectionSetParamWithBuffer(bufferSetId, frameId, &buffered, 0) == Hmd2::VideoOutInvalidIndex, "buffered parameter submission without a reprojection session");
+            Require(sceHmd2ReprojectionSetParamWithBuffer(bufferSetId, frameId, &buffered, 1) == Hmd2::VideoOutInvalidIndex, "buffered parameter submission with a nonzero reserved argument without a reprojection session");
+        }
+    }
+    parameter.layers = reinterpret_cast<const Hmd2::ReprojectionLayer*>(layer.data());
+    parameter.layerCount = 1;
+    Require(sceHmd2ReprojectionSetParam(16, 1, &parameter, 0) == Hmd2::VideoOutInvalidIndex, "parameter submission with one layer without a reprojection session");
+}
+
 void TestCallsWithoutReprojectionSession() {
+    TestParameterSubmissionWithoutSession();
     std::array<std::uint8_t, 64> memory;
     memory.fill(0xaa);
     const auto untouched = memory;
@@ -35,7 +59,6 @@ void TestCallsWithoutReprojectionSession() {
     Require(sceHmd2ReprojectionEnableMirroring(nullptr) == Hmd2::ReprojectionNotInitialized, "mirroring with a null parameter without a reprojection session");
     Require(sceHmd2ReprojectionEnableMirroring(&mirroring) == Hmd2::ReprojectionNotInitialized, "mirroring without a reprojection session");
     Require(memory == untouched, "mirroring memory was written without a reprojection session");
-    constexpr std::array<std::uint64_t, 4> frameIds{0, 1, 0x123456789, ~0ull};
     for (const std::uint64_t frameId : frameIds) {
         std::uint64_t time = 0xaaaaaaaaaaaaaaaa;
         Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, nullptr) == Hmd2::ReprojectionNotInitialized, "predicted display time into a null output without a reprojection session");
@@ -325,6 +348,16 @@ bool AnswersNoSession(Call call) {
     }
 }
 
+template <typename Call>
+bool Throws(Call call) {
+    try {
+        call();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
 void TestGatedCallsInsideReprojectionSession() {
     std::array<std::uint8_t, 64> memory;
     memory.fill(0xaa);
@@ -341,6 +374,12 @@ void TestGatedCallsInsideReprojectionSession() {
     Require(sceHmd2ReprojectionSetRenderConfig(2, 0, 0) == Hmd2::ParameterInvalid, "render config with a bit outside the accepted ones inside a reprojection session");
     Require(sceHmd2ReprojectionSetRenderConfig(1, 1, 0) == Hmd2::ParameterInvalid && sceHmd2ReprojectionSetRenderConfig(1, 0, 1) == Hmd2::ParameterInvalid, "render config with one nonzero reserved argument inside a reprojection session");
     Require(sceHmd2ReprojectionSetRenderConfig(~0ull, 0, 0) == Hmd2::ParameterInvalid && sceHmd2ReprojectionSetRenderConfig(3, 0, 0) == Hmd2::ParameterInvalid, "render config with several bits inside a reprojection session");
+    Require(sceHmd2ReprojectionSetParam(0, 0, nullptr, 0) == Hmd2::VideoOutInvalidAddress, "parameter submission with a null parameter inside a reprojection session");
+    const Hmd2::ReprojectionParameter parameter{};
+    Require(sceHmd2ReprojectionSetParam(16, 0, &parameter, 0) == Hmd2::VideoOutInvalidIndex, "parameter submission of buffer set 16 inside a reprojection session");
+    const Hmd2::ReprojectionBufferedParameter buffered{};
+    Require(Throws([&] { sceHmd2ReprojectionSetParamWithBuffer(0, 1, &buffered, 0); }), "buffered parameter submission inside a reprojection session did not throw");
+    Require(Throws([] { sceHmd2ReprojectionSetParamWithBuffer(16, 0, nullptr, 0); }), "buffered parameter submission with a null parameter inside a reprojection session did not throw");
 }
 
 void TestReprojection() {

@@ -1534,10 +1534,15 @@ int APS5_VABI scePthreadGetname(Pthread thread, char* name) {
     if (!thread || !name) return SCE_KERNEL_ERROR_EINVAL;
     auto registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
-    std::lock_guard lock(thread->nameLock);
-    const std::size_t length = std::min<std::size_t>(thread->name.size(), THREAD_NAME_CAPACITY - 1);
-    std::memcpy(name, thread->name.data(), length);
-    name[length] = '\0';
+    char copy[THREAD_NAME_CAPACITY];
+    std::size_t length = 0;
+    {
+        std::lock_guard lock(thread->nameLock);
+        length = std::min<std::size_t>(thread->name.size(), THREAD_NAME_CAPACITY - 1);
+        std::memcpy(copy, thread->name.data(), length);
+    }
+    copy[length] = '\0';
+    if (!GuestCopyOut_nid_no_patch(name, copy, length + 1)) return SCE_KERNEL_ERROR_EFAULT;
     return SCE_OK;
 }
 
@@ -1555,11 +1560,13 @@ int APS5_VABI scePthreadGetthreadid(void) {
 
 int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
     if (!thread || !name) return SCE_KERNEL_ERROR_EINVAL;
-    if (std::strlen(name) >= GUEST_THREAD_NAME_CAPACITY) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, GUEST_THREAD_NAME_CAPACITY, copy))
+        return error == 14 ? SCE_KERNEL_ERROR_EFAULT : error == 63 ? SCE_KERNEL_ERROR_ENAMETOOLONG : SCE_KERNEL_ERROR_ENOMEM;
     auto registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
     std::lock_guard lock(thread->nameLock);
-    thread->name = name;
+    thread->name = std::move(copy);
 #ifdef _WIN32
     SetThreadDescription(static_cast<HANDLE>(thread->nativeHandle), ThreadDescription(thread->name).c_str());
     ApplyJobAffinity(*thread, thread->nativeHandle);
