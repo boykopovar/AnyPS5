@@ -108,6 +108,7 @@ void requireSymlink(const std::filesystem::path& directory, const TValue& data, 
     require(attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT), "Replacement removed the symbolic link");
     require(readFile(target) == expected, "Replacement did not update the symbolic-link target");
     requireStageCleanup(directory);
+    require(DeleteFileW(link.c_str()) != 0, "Cannot remove the symbolic-link fixture");
 }
 
 class ReadOnlyFile {
