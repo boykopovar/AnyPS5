@@ -265,7 +265,7 @@ std::string_view UnsupportedReason(std::uint32_t header) {
     switch (opcode) {
         case 0x11: case 0x12: case 0x13: case 0x15: case 0x16: case 0x20: case 0x22: case 0x26: case 0x27:
         case 0x2a: case 0x2d: case 0x2f: case 0x35: case 0x37: case 0x40: case 0x42: case 0x45: case 0x46: case 0x50:
-        case 0x58: case 0x63: case 0x64: case 0x69: case 0x76: case 0x79: case 0x7a:
+        case 0x58: case 0x5d: case 0x63: case 0x64: case 0x69: case 0x76: case 0x79: case 0x7a:
         case 0x81: case 0x83: case 0x91: case 0x9f: case 0x28: return {};
         case 0x24: case 0x25: case 0x2c: case 0x38:
             if (IndirectDrawsDisabled()) return "graphics draw, shader stages and guest render-target materialization are not implemented";
@@ -471,6 +471,14 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             }
             break;
         }
+        case 0x5d:
+            size(5);
+            require((header & 0xffu) == 0, "unsupported PRIME_UTCL2 header flags");
+            require((packet[1] & ~0x4000000fu) == 0, "unsupported PRIME_UTCL2 control flags");
+            require(queue == 0 || (packet[1] & 0x40000000u) == 0, "graphics PRIME_UTCL2 engine in compute queue");
+            require((packet[2] & 0x3fffu) == 0, "unaligned PRIME_UTCL2 address");
+            require(packet[4] <= 0x3fffu, "unsupported PRIME_UTCL2 page count");
+            break;
         case 0x58: {
             require(packet.size() == 7 || packet.size() == 8, "invalid ACQUIRE_MEM packet size");
             const auto controlMask = packet.size() == 8 ? 0x86287fc3u : 0xfeecfffbu;
@@ -1261,7 +1269,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             GuestMemory::Write(destination, data);
             return;
         }
-        case 0x28: return;
+        case 0x28: case 0x5d: return;
         case 0x50: {
             const std::size_t bytes = DmaBytes(packet);
             if (bytes == 0 || dmaDestination(packet) == DmaDestinationNowhere) return;

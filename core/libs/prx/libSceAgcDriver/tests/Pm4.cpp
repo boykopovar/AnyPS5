@@ -86,7 +86,7 @@ void testCatalog() {
         const auto reason = AgcDriver::Pm4::UnsupportedReason(packet[0]);
         if (!reason.empty()) expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, std::string(reason).c_str());
     }
-    check(values.size() == 56, "reference opcode catalog is incomplete");
+    check(values.size() == 57, "reference opcode catalog is incomplete");
     check(AgcDriver::Pm4::Name(makePacket(0x3a, {0})[0]) == "DRAW_INDEX_MULTI_INST", "opcode 0x3a is not DRAW_INDEX_MULTI_INST");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0xff, {0}), 0); }, "not known");
     check(AgcDriver::Pm4::KnownName(makePacket(0xff, {0})[0]).empty() && AgcDriver::Pm4::Name(makePacket(0xff, {0})[0]) == "UNKNOWN_0xff", "an unknown opcode is named");
@@ -98,6 +98,19 @@ void testCatalog() {
     for (const auto& [id, name] : custom) {
         const auto header = makePacket(0x10, {0}, id << 2)[0];
         check(AgcDriver::Pm4::Name(header) == name && AgcDriver::Pm4::KnownName(header) == name, "custom opcode name mismatch");
+    }
+}
+
+void testPrimeUtcl2() {
+    AgcDriver::QueueState state;
+    state.context[0x318u] = 0x12345678u;
+    state.shader[0x240u] = 0xabcdef01u;
+    state.markers.emplace_back("before prime");
+    for (const auto control : {0u, 15u, 0x40000000u, 0x4000000fu}) {
+        const auto packet = makePacket(0x5d, {control, 0xffffc000u, 0x1122u, 0x3fffu});
+        AgcDriver::Pm4::Validate(packet, 0);
+        AgcDriver::Pm4::Execute(packet, state);
+        check(state.context.at(0x318u) == 0x12345678u && state.shader.at(0x240u) == 0xabcdef01u && state.markers.size() == 1, "translation prefetch changed queue state");
     }
 }
 
@@ -2632,6 +2645,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         testCatalog();
+        testPrimeUtcl2();
         testNopPad();
         testWorkloadNopPayloadsIgnored();
         testRewindPayloadBits();
