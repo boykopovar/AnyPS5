@@ -312,6 +312,7 @@ void Driver::relocateDrawEntry(const QueueState& queue, const DrawAliasKeys& ali
     relocated->stages.resize(programs.size());
     std::vector<DrawUserPatch> current;
     bool complete = true;
+    bool mixedOwners = false;
     drawStageDonorKeys.assign(programs.size(), 0);
     for (std::size_t i = 0; i < programs.size(); ++i) {
         const auto& program = programs[i];
@@ -341,11 +342,20 @@ void Driver::relocateDrawEntry(const QueueState& queue, const DrawAliasKeys& ali
             complete = false;
             continue;
         }
+        const auto recipeOwner = owner->donor != nullptr ? owner->donor : owner;
+        if (!mixedOwners) {
+            if (relocated->donor == nullptr) relocated->donor = recipeOwner;
+            else if (relocated->donor != recipeOwner) {
+                relocated->donor = nullptr;
+                mixedOwners = true;
+            }
+        }
         if (moves.empty()) {
             relocated->stages[i].push_back(variant);
             continue;
         }
         auto copy = cloneVariant(*variant);
+        copy->donor = variant->donor != nullptr ? variant->donor : variant;
         for (const auto& move : moves) {
             const auto delta = AlignedWord(move.to) - AlignedWord(move.from);
             for (std::size_t run = 0; run < copy->runs.size() && run < copy->runBases.size(); ++run) {

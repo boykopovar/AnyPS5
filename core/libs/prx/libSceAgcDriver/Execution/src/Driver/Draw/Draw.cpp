@@ -699,7 +699,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         for (const auto& patch : userPatches) current->programs[patch.program].userData[patch.index] = patch.value;
         decode = std::move(current);
     }
-    tail.patchedStages = std::any_of(stageData.begin(), stageData.end(), [](const StageDataHit& hit) { return hit.compiled != nullptr; });
+    tail.patchedStages = std::any_of(stageData.begin(), stageData.end(), [](const StageDataHit& hit) { return hit.compiled != nullptr; }) || std::any_of(matched.begin(), matched.end(), [](const std::shared_ptr<DispatchVariant>& variant) { return variant != nullptr && variant->dataPatched; });
     tail.relocatedDecode = relocatedDecode;
     std::uint64_t stageDataVerified = 0;
     const auto target = graphics.hasColorTarget ? graphics.color.address : 0;

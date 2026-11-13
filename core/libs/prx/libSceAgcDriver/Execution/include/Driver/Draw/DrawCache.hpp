@@ -167,7 +167,7 @@ struct DrawStageDonor {
     std::weak_ptr<DispatchVariant> variant;
     std::vector<std::uint32_t> userData;
     std::uint64_t ownerKey = 0;
-    std::weak_ptr<const DrawEntry> owner;
+    std::weak_ptr<DrawEntry> owner;
 };
 
 struct DrawDecodeDonor {
