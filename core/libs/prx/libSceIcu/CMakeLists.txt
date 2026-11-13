@@ -540,9 +540,11 @@ if(BUILD_TESTING)
     target_link_libraries(guest_icu_recovered_signatures_tests PRIVATE libSceIcu)
     configure_windows_unwind(guest_icu_recovered_signatures_tests)
     add_test(NAME guest_icu_recovered_signatures COMMAND guest_icu_recovered_signatures_tests)
+    add_test(NAME guest_icu_idna_uts46 COMMAND guest_icu_recovered_signatures_tests --idna-uts46)
+    set_tests_properties(guest_icu_idna_uts46 PROPERTIES TIMEOUT 20)
     set_tests_properties(guest_icu_recovered_signatures PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_icu_recovered_signatures PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_icu_recovered_signatures guest_icu_idna_uts46 PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()

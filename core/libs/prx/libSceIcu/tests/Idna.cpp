@@ -5,9 +5,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <source_location>
 #include <stdexcept>
+#include <string_view>
 #include <type_traits>
 
 namespace UidnaClose {
@@ -301,4 +303,45 @@ void CheckIcuIdna() {
     UidnaNameToASCII::Run();
     UidnaNameToUnicode::Run();
     UidnaOpenUTS46::Run();
+}
+
+void CheckIcuIdnaUts46() {
+    using IcuRecoveredTest::Require;
+    const auto before = NotImplementedCalls_nid_no_patch();
+    for (int iteration = 0; iteration < 2; ++iteration) {
+        std::int32_t status = 0;
+        auto* idna = uidna_openUTS46_nid_postfix(0, &status);
+        Require(idna != nullptr && status == 0, "UTS46 opens an owned handle");
+
+        const auto convert = [&](auto function, const char16_t* name, std::int32_t length,
+                                 std::u16string_view expected) {
+            alignas(4) std::array<std::uint8_t, 24> info;
+            info.fill(0xa5);
+            const std::int16_t infoSize = 16;
+            std::memcpy(info.data() + 4, &infoSize, sizeof(infoSize));
+            std::array<char16_t, 24> output;
+            output.fill(0xa55a);
+            status = 0;
+            const auto count = function(idna, name, length, output.data() + 2, 20,
+                                        reinterpret_cast<UIDNAInfo*>(info.data() + 4), &status);
+            Require(count == static_cast<std::int32_t>(expected.size()), "UTS46 returns the mapped length");
+            Require(status == 0, "UTS46 succeeds for a valid mapped domain");
+            for (std::size_t i = 0; i < output.size(); ++i) {
+                const auto wanted = i >= 2 && i < expected.size() + 2 ? expected[i - 2] :
+                                    i == expected.size() + 2 ? char16_t{} : char16_t{0xa55a};
+                Require(output[i] == wanted, "UTS46 writes the mapped domain and terminator within output guards");
+            }
+            for (std::size_t i = 0; i < info.size(); ++i) {
+                const auto wanted = i == 4 ? std::uint8_t{16} :
+                                    i >= 5 && i < 20 ? std::uint8_t{} : std::uint8_t{0xa5};
+                Require(info[i] == wanted, "UTS46 clears valid-domain info fields without crossing its guards");
+            }
+        };
+
+        convert(uidna_nameToASCII_nid_postfix, u"Bücher.de", 9, u"xn--bcher-kva.de");
+        convert(uidna_nameToUnicode_nid_postfix, u"xn--bcher-kva.de", -1, u"bücher.de");
+        uidna_close_nid_postfix(idna);
+    }
+    uidna_close_nid_postfix(nullptr);
+    Require(NotImplementedCalls_nid_no_patch() == before, "UTS46 lifecycle and conversions are implemented");
 }
