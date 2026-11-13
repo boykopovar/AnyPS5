@@ -57,5 +57,21 @@ int main() {
     __std_atomic_notify_one_direct_nid_postfix(&wide);
     wideWaiter.join();
     Require(__std_atomic_wait_direct_64_nid_postfix(&wide, 5, 0xffffffff) == 1, "a different 64-bit value returns at once");
+
+    const auto wideBefore = std::chrono::steady_clock::now();
+    Require(__std_atomic_wait_direct_64_nid_postfix(&wide, 6, 20) == 1, "a timed out 64-bit wait returns 1");
+    Require(std::chrono::steady_clock::now() - wideBefore >= std::chrono::milliseconds(15), "the 64-bit timeout is honored");
+
+    std::atomic<bool> wideWoken{false};
+    std::thread directWideWaiter([&] {
+        __std_atomic_wait_direct_64_nid_postfix(&wide, 6, 0xffffffff);
+        wideWoken.store(true);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(!wideWoken.load(), "the 64-bit waiter blocks while the value matches");
+    std::atomic_ref<std::uint64_t>(wide).store(7);
+    __std_atomic_notify_all_direct_nid_postfix(&wide);
+    directWideWaiter.join();
+    Require(wideWoken.load(), "notify all wakes the 64-bit waiter");
     return 0;
 }

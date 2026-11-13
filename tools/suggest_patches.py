@@ -2,6 +2,7 @@ import argparse
 import errno
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -69,8 +70,16 @@ def conversion_options(args, patch):
     return command_line(options)
 
 
-def read_catalog(directory, object_pairs_hook=None):
-    data = json.loads(confined(directory, "index.json").read_text(encoding="utf-8"), object_pairs_hook=object_pairs_hook)
+def finite_json_number(value):
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"non-finite JSON number: {value}")
+    return number
+
+
+def read_catalog(directory, object_pairs_hook=None, *, strict_numbers=False):
+    options = {"parse_constant": finite_json_number, "parse_float": finite_json_number} if strict_numbers else {}
+    data = json.loads(confined(directory, "index.json").read_text(encoding="utf-8"), object_pairs_hook=object_pairs_hook, **options)
     if not isinstance(data, dict) or set(data) != {"format", "entries"} or type(data["format"]) is not int or data["format"] != 1 or not isinstance(data["entries"], list):
         raise ValueError("catalog must have format 1 and an entries array")
     return data["entries"]
@@ -78,7 +87,7 @@ def read_catalog(directory, object_pairs_hook=None):
 
 def load_catalog(directory, title, version):
     entries = []
-    for number, entry in enumerate(read_catalog(directory), 1):
+    for number, entry in enumerate(read_catalog(directory, strict_numbers=True), 1):
         if not isinstance(entry, dict) or (entry.get("titleId"), entry.get("contentVersion")) != (title, version):
             continue
         entries.append((number, entry))
@@ -212,10 +221,24 @@ def main(argv=None):
     parser.add_argument("--skip-sce-module", action="store_true", help="skip bundled modules during verification")
     parser.add_argument("--timeout-seconds", type=int, default=120, help="maximum seconds per relinker verification (default: 120)")
     parser.add_argument("--list-verified", action="store_true", help="list every verified catalog entry without choosing one")
+    parser.add_argument("--json", action="store_true", help="emit catalog decisions as JSON")
     args = parser.parse_args(argv)
+    report = {"status": "error", "entries": []}
+
+    def emit(*values, **options):
+        if not args.json:
+            print(*values, **options)
+
+    def finish(code, status, error=None):
+        report["status"] = status
+        if error is not None:
+            report["error"] = str(error)
+        if args.json:
+            print(json.dumps(report, sort_keys=True, allow_nan=False))
+        return code
     prefix = "No verified catalog entries" if args.list_verified else "No recommendation"
     try:
-        metadata = json.loads(args.param_json.read_text(encoding="utf-8"))
+        metadata = json.loads(args.param_json.read_text(encoding="utf-8"), parse_constant=finite_json_number, parse_float=finite_json_number)
         if not isinstance(metadata, dict):
             raise ValueError("param.json must be an object")
         title = metadata.get("titleId")
@@ -237,15 +260,18 @@ def main(argv=None):
         matches = []
         entries = load_catalog(catalog, title, version)
         if not entries:
-            print(f"{prefix}: no catalog entry for {title} {version}.")
-            return 1
+            emit(f"{prefix}: no catalog entry for {title} {version}.")
+            return finish(1, "no_match")
         relinker_errors = False
         for number, entry in entries:
+            record = {"number": number, "patch": entry.get("patch"), "status": "rejected"}
+            report["entries"].append(record)
             label = f"Catalog entry {number} ({entry.get('patch')!r})"
             try:
                 patch, targets, catalog_metadata = validate_entry(catalog, entry)
             except (OSError, ValueError, RecursionError, tomllib.TOMLDecodeError) as error:
-                print(f"{label}: rejected: {error}")
+                record["reason"] = str(error)
+                emit(f"{label}: rejected: {error}")
                 continue
             errors = []
             for name, expected in targets.items():
@@ -257,7 +283,8 @@ def main(argv=None):
                 except (OSError, ValueError) as error:
                     errors.append(f"{name}: {error}")
             if errors:
-                print(f"{label}: rejected: {'; '.join(errors)}")
+                record["reason"] = "; ".join(errors)
+                emit(f"{label}: rejected: {'; '.join(errors)}")
                 continue
             command = [str(resolve_path(args.relinker)), "--verify-patches", str(patch)]
             if args.skip_sce_module:
@@ -273,25 +300,29 @@ def main(argv=None):
                 result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                         timeout=args.timeout_seconds)
             except subprocess.TimeoutExpired:
-                print(f"{label}: rejected: relinker verification exceeded {args.timeout_seconds} seconds")
+                record["reason"] = "verification_timeout"
+                emit(f"{label}: rejected: relinker verification exceeded {args.timeout_seconds} seconds")
                 continue
             summary = VERIFY_SUMMARY.search(result.stdout)
             verified = tuple(map(int, summary.groups())) if summary else None
+            record["verification"] = {"exit_code": result.returncode, "summary": verified,
+                                      "stdout": result.stdout, "stderr": result.stderr}
             if result.returncode:
                 detail = (result.stdout + result.stderr).strip()
                 if result.returncode == 1 and verified and verified[3] > 0:
-                    print(f"{label}: rejected by relinker: {detail}")
+                    emit(f"{label}: rejected by relinker: {detail}")
                     continue
                 if result.returncode == 2:
-                    print(f"{label}: relinker error (exit 2): {detail}")
+                    emit(f"{label}: relinker error (exit 2): {detail}")
                     relinker_errors = True
                     continue
                 raise ValueError(f"{label}: relinker error (exit {result.returncode}): {detail}")
             if not verified:
                 raise ValueError(f"{label}: relinker produced no verification summary")
             if verified[0] == 0 or verified[1] != verified[0] or verified[2] or verified[3]:
-                print(f"{label}: rejected: relinker did not confirm every patch")
+                emit(f"{label}: rejected: relinker did not confirm every patch")
                 continue
+            record.update(status="verified", targets=targets, metadata=catalog_metadata)
             matches.append((number, entry, patch, targets, catalog_metadata))
         id_counts = Counter(catalog_metadata["id"] for _, _, _, _, catalog_metadata in matches if "id" in catalog_metadata)
         if any(count > 1 for count in id_counts.values()):
@@ -300,39 +331,44 @@ def main(argv=None):
                 number, entry, patch, targets, catalog_metadata = match
                 identifier = catalog_metadata.get("id")
                 if identifier is not None and id_counts[identifier] > 1:
-                    print(f"Catalog entry {number} ({entry['patch']!r}): rejected: duplicate verified id {identifier!r}")
+                    next(record for record in report["entries"] if record["number"] == number).update(
+                        status="rejected", reason=f"duplicate verified id {identifier!r}")
+                    emit(f"Catalog entry {number} ({entry['patch']!r}): rejected: duplicate verified id {identifier!r}")
                 else:
                     unique.append(match)
             matches = unique
         if args.list_verified and matches:
-            print(f"Verified catalog entries: {len(matches)}")
-            print("Choose one patch file; listed entries are not combined.")
+            emit(f"Verified catalog entries: {len(matches)}")
+            emit("Choose one patch file; listed entries are not combined.")
             for number, entry, patch, targets, catalog_metadata in matches:
-                print(f"Catalog entry {number}: {patch}")
-                print_metadata(catalog_metadata)
+                emit(f"Catalog entry {number}: {patch}")
+                if not args.json:
+                    print_metadata(catalog_metadata)
                 for name, digest in targets.items():
-                    print(f"  {name} SHA-256 {digest}")
-                print(f"Use these options when converting:\n  {conversion_options(args, patch)}")
-            return 0
+                    emit(f"  {name} SHA-256 {digest}")
+                emit(f"Use these options when converting:\n  {conversion_options(args, patch)}")
+            return finish(0, "verified_list")
         if len(matches) == 1:
             number, entry, patch, targets, catalog_metadata = matches[0]
-            print(f"Recommended: {patch} (catalog entry {number})")
-            print_metadata(catalog_metadata)
+            emit(f"Recommended: {patch} (catalog entry {number})")
+            if not args.json:
+                print_metadata(catalog_metadata)
             for name, digest in targets.items():
-                print(f"  {name} SHA-256 {digest}")
-            print(f"Use these options when converting:\n  {conversion_options(args, patch)}")
-            return 0
+                emit(f"  {name} SHA-256 {digest}")
+            emit(f"Use these options when converting:\n  {conversion_options(args, patch)}")
+            report["recommended_entry"] = number
+            return finish(0, "recommended")
         if len(matches) > 1:
-            print("No recommendation: multiple verified catalog entries match; use --list-verified to see them.")
-            return 1
+            emit("No recommendation: multiple verified catalog entries match; use --list-verified to see them.")
+            return finish(1, "multiple_matches")
         if relinker_errors:
-            print(f"{prefix}: relinker errors occurred; see catalog entries above.", file=sys.stderr)
-            return 2
-        print(f"{prefix}: no catalog entry passed all checks.")
-        return 1
+            emit(f"{prefix}: relinker errors occurred; see catalog entries above.", file=sys.stderr)
+            return finish(2, "error", "relinker errors occurred")
+        emit(f"{prefix}: no catalog entry passed all checks.")
+        return finish(1, "rejected")
     except (OSError, ValueError, RecursionError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
-        print(f"Patch advisor: {error}", file=sys.stderr)
-        return 2
+        emit(f"Patch advisor: {error}", file=sys.stderr)
+        return finish(2, "error", error)
 
 
 if __name__ == "__main__":
