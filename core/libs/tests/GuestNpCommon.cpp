@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -61,6 +62,12 @@ static int testIds() {
     high.reserved[7] = 1;
     std::int32_t order = 5;
     ok &= expect(sceNpCmpNpIdInOrder(&low, &high, nullptr) == INVALID_ARGUMENT, "a null order was accepted");
+    errno = 71;
+    ok &= expect(sceNpCmpNpIdInOrder(&low, &high, reinterpret_cast<std::int32_t*>(0x10)) == INVALID_ARGUMENT, "an unwritable order was accepted");
+    ok &= expect(errno == 71, "errno was altered on unwritable order");
+    alignas(16) std::int32_t orderBuffer[3] = {-99, -99, -99};
+    ok &= expect(sceNpCmpNpIdInOrder(&low, &high, &orderBuffer[1]) == 0, "order comparison failed");
+    ok &= expect(orderBuffer[0] == -99 && orderBuffer[1] == -1 && orderBuffer[2] == -99, "adjacent memory was corrupted");
     ok &= expect(sceNpCmpNpIdInOrder(nullptr, &high, &order) == INVALID_ARGUMENT, "a null first NpId was accepted");
     ok &= expect(sceNpCmpNpIdInOrder(&low, nullptr, &order) == INVALID_ARGUMENT, "a null second NpId was accepted");
     ok &= expect(sceNpCmpNpIdInOrder(nullptr, nullptr, &order) == INVALID_ARGUMENT, "null NpIds were accepted");

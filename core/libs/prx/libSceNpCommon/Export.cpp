@@ -3,6 +3,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -81,7 +82,11 @@ int APS5_VABI sceNpCmpNpIdInOrder(const NpIdFull* npId1, const NpIdFull* npId2, 
     int compare = std::strncmp(npId1->handle.data, npId2->handle.data, ONLINE_ID_MAX_LENGTH);
     if (compare == 0) compare = compareBytes(npId1->opt, npId2->opt, sizeof(npId1->opt));
     if (compare == 0) compare = compareBytes(npId1->reserved, npId2->reserved, sizeof(npId1->reserved));
-    *order = compare < 0 ? -1 : compare > 0 ? 1 : 0;
+    const std::int32_t result = compare < 0 ? -1 : compare > 0 ? 1 : 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(order, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
