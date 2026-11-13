@@ -69,7 +69,7 @@ if(BUILD_TESTING)
     endif()
     configure_windows_unwind(guest_freetype_ot_tests)
     add_custom_target(guest_freetype_ot_libraries DEPENDS
-        libSceFreeTypeOt ${PATCHED_DIR}/libSceFreeTypeOt.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+        libSceFreeTypeOt ${PATCHED_DIR}/libSceFreeTypeOt.prx ${PATCHED_DIR}/libSceFreeType.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
     add_dependencies(guest_freetype_ot_tests guest_freetype_ot_libraries)
     add_test(NAME guest_freetype_ot COMMAND guest_freetype_ot_tests $<TARGET_FILE:libSceFreeTypeOt> raw)
     add_test(NAME guest_freetype_ot_patched COMMAND guest_freetype_ot_tests ${PATCHED_DIR}/libSceFreeTypeOt.prx patched)

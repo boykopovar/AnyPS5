@@ -1,4 +1,8 @@
 import json
+import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -49,6 +53,20 @@ class RunReportSummaryTests(unittest.TestCase):
     def test_rejects_other_report_formats(self):
         with self.assertRaisesRegex(ValueError, "AnyPS5 run report"):
             render({"format": "other", "version": 1})
+
+    def test_cli_writes_utf8_to_redirected_stdout(self):
+        report = self.report("stop-missing-function.json")
+        title = "\u65e5\u672c\u8a9e"
+        report["game"]["name"] = title
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "anyps5-report.json"
+            path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                env=dict(os.environ, PYTHONIOENCODING="cp1251"), capture_output=True, timeout=10,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr.decode("ascii", errors="backslashreplace"))
+        self.assertIn(f"Game: {title} (PPSA12345)", result.stdout.decode("utf-8").splitlines())
 
 
 if __name__ == "__main__":
