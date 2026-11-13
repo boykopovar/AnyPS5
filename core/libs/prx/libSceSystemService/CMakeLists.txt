@@ -3,10 +3,19 @@ if(APPLE)
     target_link_libraries(system_service_host_locale INTERFACE "-framework CoreFoundation")
 endif()
 
-add_library(libSceSystemService SHARED EXCLUDE_FROM_ALL Export.cpp PendingExports.cpp LoadExec.cpp)
-target_include_directories(libSceSystemService PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver libSceUsbStorage system_service_host_locale)
+add_library(libSceSystemService SHARED EXCLUDE_FROM_ALL Export.cpp PendingExports.cpp LoadExec.cpp HostUrlConfirmation.cpp)
+if(WIN32)
+    target_sources(libSceSystemService PRIVATE HostUrlLauncherWindows.cpp)
+    target_link_libraries(libSceSystemService PRIVATE shell32)
+else()
+    target_sources(libSceSystemService PRIVATE HostUrlLauncherPosix.cpp)
+endif()
+target_include_directories(libSceSystemService PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver libSceUsbStorage libc system_service_host_locale SDL2-static)
 configure_windows_unwind(libSceSystemService)
+if(APPLE)
+    target_link_libraries(libSceSystemService PRIVATE "-framework CoreFoundation")
+endif()
 
 if(BUILD_TESTING)
     if(WIN32)
@@ -37,6 +46,10 @@ if(BUILD_TESTING)
             ${loadexecLibraries} ${CMAKE_CXX_COMPILER})
         set_tests_properties(loadexec_arguments PROPERTIES TIMEOUT 30)
         add_asan_test_options(loadexec_arguments verify_asan_link_order=0)
+        set(relinkerTestTemp ${CMAKE_BINARY_DIR}/core/relinker/test-temp)
+        file(MAKE_DIRECTORY ${relinkerTestTemp})
+        set_property(TEST loadexec_arguments APPEND PROPERTY ENVIRONMENT_MODIFICATION
+            "TMPDIR=set:${relinkerTestTemp};TEMP=set:${relinkerTestTemp};TMP=set:${relinkerTestTemp};PYTHONUTF8=set:1")
     endif()
     add_test_executable(guest_system_exit_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemExit.cpp)
     target_include_directories(guest_system_exit_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -97,6 +110,24 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
+    add_test_executable(guest_system_service_open_url_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceOpenUrl.cpp)
+    target_include_directories(guest_system_service_open_url_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_open_url_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_open_url_tests)
+    add_test(NAME guest_system_service_open_url COMMAND guest_system_service_open_url_tests)
+    if(WIN32)
+        set_tests_properties(guest_system_service_open_url PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_system_service_open_url_limits_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceOpenUrlLimits.cpp)
+    target_include_directories(guest_system_service_open_url_limits_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_open_url_limits_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_open_url_limits_tests)
+    add_test(NAME guest_system_service_open_url_limits COMMAND guest_system_service_open_url_limits_tests)
+    if(WIN32)
+        set_tests_properties(guest_system_service_open_url_limits PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_system_service_language_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceLanguage.cpp)
     target_include_directories(guest_system_service_language_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_system_service_language_tests PRIVATE libSceSystemService libc)
@@ -131,7 +162,11 @@ if(BUILD_TESTING)
                 "1,-,-,C,es,auto,1"
                 "1,-,-,-,-,auto,1"
                 "1,-,-,lt_LT.UTF-8,-,auto,1"
-                "30,-,-,lt_LT.UTF-8,lt:uk:fr,auto,0")
+                "30,-,-,lt_LT.UTF-8,lt:uk:fr,auto,0"
+                "1,-,-,de_DE.UTF-8,lt:C:fr,auto,1"
+                "1,-,-,de_DE.UTF-8,lt:POSIX:fr,auto,1"
+                "1,-,-,de_DE.UTF-8,lt:C.UTF-8:fr,auto,1"
+                "2,-,-,de_DE.UTF-8,fr:C:de,auto,0")
             string(REPLACE "," ";" languageAutoArguments "${languageAutoCase}")
             add_test(NAME guest_system_service_language_auto_${languageAutoIndex} COMMAND guest_system_service_language_auto_tests ${languageAutoArguments})
             set_tests_properties(guest_system_service_language_auto_${languageAutoIndex} PROPERTIES TIMEOUT 20)
@@ -145,6 +180,45 @@ if(BUILD_TESTING)
     add_test(NAME guest_system_service_time_zone COMMAND guest_system_service_time_zone_tests)
     if(WIN32)
         set_tests_properties(guest_system_service_time_zone PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(system_service_date_time_locale_tests ${LIBS_INCLUDE_DIR}/tests/SystemServiceDateTimeLocale.cpp)
+    target_include_directories(system_service_date_time_locale_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(system_service_date_time_locale_tests)
+    if(APPLE)
+        target_link_libraries(system_service_date_time_locale_tests PRIVATE "-framework CoreFoundation")
+    endif()
+    add_test(NAME system_service_date_time_locale COMMAND system_service_date_time_locale_tests)
+    set_tests_properties(system_service_date_time_locale PROPERTIES TIMEOUT 20)
+    add_test_executable(guest_system_service_date_time_format_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceDateTimeFormat.cpp)
+    target_include_directories(guest_system_service_date_time_format_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_date_time_format_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_date_time_format_tests)
+    add_test(NAME guest_system_service_date_time_format COMMAND guest_system_service_date_time_format_tests)
+    set_tests_properties(guest_system_service_date_time_format PROPERTIES TIMEOUT 20)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(dateTimeFormatIndex 0)
+        foreach(dateTimeFormatCase IN ITEMS
+                "auto,auto,-,-,-,1,1,2"
+                "AUTO,Auto,C,-,-,1,1,2"
+                "auto,-,-,-,C.UTF-8,1,1,1"
+                "-,auto,-,POSIX,de_DE.UTF-8,1,1,1"
+                "auto,auto,-,-,no_SUCH_locale.nothing,1,1,2"
+                "auto,0,-,-,-,1,0,1"
+                "2,auto,-,-,-,2,1,1"
+                "1,1,-,-,-,1,1,0"
+                "0,0,C,-,-,0,0,0"
+                "-,-,-,-,-,1,1,0"
+                "auto,x,-,-,-,1,throws,1"
+                "x,auto,-,-,-,throws,1,1")
+            string(REPLACE "," ";" dateTimeFormatArguments "${dateTimeFormatCase}")
+            add_test(NAME guest_system_service_date_time_format_host_${dateTimeFormatIndex} COMMAND guest_system_service_date_time_format_tests ${dateTimeFormatArguments})
+            set_tests_properties(guest_system_service_date_time_format_host_${dateTimeFormatIndex} PROPERTIES TIMEOUT 20)
+            math(EXPR dateTimeFormatIndex "${dateTimeFormatIndex} + 1")
+        endforeach()
+    endif()
+    if(WIN32)
+        set_tests_properties(guest_system_service_date_time_format PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_system_service_usb_storage_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceUsbStorage.cpp)
@@ -186,6 +260,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_system_service_activation COMMAND guest_system_service_activation_tests)
     if(WIN32)
         set_tests_properties(guest_system_service_activation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_system_service_free_size_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceFreeSize.cpp)
+    target_include_directories(guest_system_service_free_size_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_free_size_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_free_size_tests)
+    add_test(NAME guest_system_service_free_size COMMAND guest_system_service_free_size_tests)
+    set_tests_properties(guest_system_service_free_size PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_system_service_free_size PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_system_service_ps_button_event_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServicePSButtonEvent.cpp)
