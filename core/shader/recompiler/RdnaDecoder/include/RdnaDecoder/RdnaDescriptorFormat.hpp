@@ -42,6 +42,7 @@ inline constexpr IrBufferFormat FmaskExpansion = IrBufferFormat::Fmask8_S2_F1;
 
 [[nodiscard]] std::optional<FmaskLayout> FmaskLayoutOf(IrBufferFormat format);
 [[nodiscard]] IrTextureNumericClass SampledTextureNumericClass(IrBufferFormat format);
+[[nodiscard]] bool IsConvertedUnormTextureFormat(IrBufferFormat format);
 [[nodiscard]] IrBufferFormat RemapTextureFormat(IrBufferFormat format);
 [[nodiscard]] std::uint32_t ScaledUnormBits(IrBufferFormat format);
 [[nodiscard]] IrBufferFormat RemapStorageTextureFormat(IrBufferFormat format);

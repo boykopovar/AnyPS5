@@ -72,6 +72,10 @@ static void Defaults() {
     glGetIntegerv_nid_postfix(0xffffffff, &untouched);
     Require(untouched == 55);
     Error(0x0500);
+    glGetIntegerv_nid_postfix(0x80c9, nullptr);
+    glGetIntegerv_nid_postfix(0x0b74, nullptr);
+    glGetIntegerv_nid_postfix(0xffffffff, nullptr);
+    Error(0);
 }
 
 static void Buffers() {
@@ -586,6 +590,11 @@ static void Booleans() {
     glGetBooleanv_nid_postfix(0xffffffff, &untouched);
     Require(untouched == 7);
     Error(0x0500);
+    GLboolean flag = 0;
+    glGetBooleanv_nid_postfix(0x0bd0, nullptr);
+    glGetBooleanv_nid_postfix(0xffffffff, nullptr);
+    glGetBooleanv_nid_postfix(0x0bd0, &flag);
+    Require(flag == 1);
 }
 
 static void VertexAttributes() {

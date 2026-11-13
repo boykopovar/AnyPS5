@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cerrno>
 #include <ctime>
+#include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <limits>
@@ -12,9 +13,13 @@
 #include <type_traits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <langinfo.h>
+#include <locale.h>
 #endif
 
 #include "SceTypes.hpp"
@@ -370,6 +375,39 @@ IsoWeek isoWeek(const GuestTm& time) {
 template<typename TChar, typename TFormatChar>
 void formatTime(FormatBuffer<TChar>& buffer, const TFormatChar* format, const GuestTm& time);
 
+struct ConversionFormats {
+    std::string dateTime;
+    std::string date;
+    std::string clock;
+};
+
+const ConversionFormats& cConversionFormats() {
+    static const ConversionFormats formats{"%a %b %e %H:%M:%S %Y", "%m/%d/%y", "%H:%M:%S"};
+    return formats;
+}
+
+const ConversionFormats& hostConversionFormats() {
+    static const ConversionFormats formats = [] {
+        ConversionFormats result = cConversionFormats();
+#ifndef _WIN32
+        locale_t host = newlocale(LC_TIME_MASK, "", static_cast<locale_t>(0));
+        if (host != static_cast<locale_t>(0)) {
+            result.dateTime = nl_langinfo_l(D_T_FMT, host);
+            result.date = nl_langinfo_l(D_FMT, host);
+            result.clock = nl_langinfo_l(T_FMT, host);
+            freelocale(host);
+        }
+#endif
+        return result;
+    }();
+    return formats;
+}
+
+const ConversionFormats& conversionFormats() {
+    const char* requested = std::getenv("ANYPS5_TIME_FORMAT");
+    return requested != nullptr && std::string_view(requested) == "host" ? hostConversionFormats() : cConversionFormats();
+}
+
 template<typename TChar>
 void addZoneOffset(FormatBuffer<TChar>& buffer, const GuestTm& time) {
     std::int64_t east = -timezone_nid_postfix + (time.tm_isdst > 0 ? 3600 : 0);
@@ -389,11 +427,11 @@ bool addConversion(FormatBuffer<TChar>& buffer, TFormatChar conversion, const Gu
     case 'b':
     case 'h': addText(buffer, tableName(time.tm_mon, MONTH_NAMES, MONTH_NAMES, 12)); return true;
     case 'B': addText(buffer, tableName(time.tm_mon, MONTH_FULL_NAMES, MONTH_NAMES, 12)); return true;
-    case 'c': formatTime(buffer, "%a %b %e %H:%M:%S %Y", time); return true;
+    case 'c': formatTime(buffer, conversionFormats().dateTime.c_str(), time); return true;
     case 'C': addNumber(buffer, time.tm_year / 100 + YEAR_BASE / 100, 100, "%02d"); return true;
     case 'd': addNumber(buffer, time.tm_mday, 100, "%02d"); return true;
-    case 'D':
-    case 'x': formatTime(buffer, "%m/%d/%y", time); return true;
+    case 'D': formatTime(buffer, "%m/%d/%y", time); return true;
+    case 'x': formatTime(buffer, conversionFormats().date.c_str(), time); return true;
     case 'e': addNumber(buffer, time.tm_mday, 100, "%2d"); return true;
     case 'F': formatTime(buffer, "%Y-%m-%d", time); return true;
     case 'g': addNumber(buffer, twoDigitYear(isoWeek(time).year), 100, "%02d"); return true;
@@ -409,8 +447,8 @@ bool addConversion(FormatBuffer<TChar>& buffer, TFormatChar conversion, const Gu
     case 'R': formatTime(buffer, "%H:%M", time); return true;
     case 'S': addNumber(buffer, time.tm_sec, 100, "%02d"); return true;
     case 't': addText(buffer, "\t"); return true;
-    case 'T':
-    case 'X': formatTime(buffer, "%H:%M:%S", time); return true;
+    case 'T': formatTime(buffer, "%H:%M:%S", time); return true;
+    case 'X': formatTime(buffer, conversionFormats().clock.c_str(), time); return true;
     case 'u': addNumber(buffer, time.tm_wday == 0 ? 7 : time.tm_wday, 10, "%d"); return true;
     case 'U': addNumber(buffer, weekOfYear(time, 7), 100, "%02d"); return true;
     case 'V': addNumber(buffer, isoWeek(time).week, 100, "%02d"); return true;

@@ -52,6 +52,7 @@ static constexpr char SAVE_DIR[] = "_sd";
 static std::atomic<std::int32_t> g_transaction_counter{1};
 static std::atomic<int> g_initializations{0};
 static std::atomic<float> g_convertProgress{0.0f};
+static std::atomic<float> g_backupProgress{0.0f};
 
 static std::string save_root() {
     return std::string(SAVE_DIR);
@@ -441,6 +442,7 @@ int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
         std::lock_guard lock(g_state_mutex);
         g_events.push_back(event);
     }
+    g_backupProgress = 1.0f;
     DeliverEvent(event);
     return SAVE_DATA_OK;
 }
@@ -877,7 +879,7 @@ static int deleteSave(const SaveDataDelete* del) {
 
 int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) {
     const int rc = deleteSave(del);
-    SAVEDATA_TRACE("delete dir=%s -> 0x%08x", del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("delete dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)", static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -1596,6 +1598,7 @@ int APS5_VABI sceSaveDataTerminate(void) {
         --g_initializations;
         if (g_initializations == 0) {
             g_convertProgress = 0.0f;
+            g_backupProgress = 0.0f;
             stopped = DetachEventDelivery();
         }
     }
@@ -1874,6 +1877,7 @@ int APS5_VABI sceSaveDataClearProgress() {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
+    g_backupProgress = 0.0f;
     return SAVE_DATA_OK;
 }
 
@@ -1977,9 +1981,24 @@ int APS5_VABI sceSaveDataGetMountedSaveDataCount(std::int32_t reserved, std::uin
     return 0;
 }
 
+static int getProgress(float* progress) {
+    if (g_initializations == 0) {
+        return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    }
+    if (progress == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    const float current = g_backupProgress.load();
+    if (!GuestCopyOut_nid_no_patch(progress, &current, sizeof(current))) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    return SAVE_DATA_OK;
+}
+
 int APS5_VABI sceSaveDataGetProgress(float* progress) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const int rc = getProgress(progress);
+    SAVEDATA_TRACE("getProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), rc == SAVE_DATA_OK ? g_backupProgress.load() : 0.0f);
+    return rc;
 }
 
 int APS5_VABI sceSaveDataGetSaveDataCount() {
@@ -2169,19 +2188,21 @@ int APS5_VABI sceSaveDataUmountSys(void) {
     return 0;
 }
 
-static int umountWithBackup(const SaveDataMountPoint* mount_point) {
+static int umountWithBackup(const SaveDataMountPoint* mount_point, std::string* tracePoint) {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (mount_point == nullptr) {
+    SaveDataMountPoint localPoint{};
+    if (!copy_mount_point(mount_point, &localPoint)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    if (tracePoint != nullptr) *tracePoint = localPoint.data;
     SaveDataEvent event{};
     event.type = SAVE_DATA_EVENT_TYPE_UMOUNT_BACKUP;
     event.error_code = SAVE_DATA_OK;
     {
         std::lock_guard lock(g_slots_mutex);
-        const int slot = find_slot_by_mount_point(mount_point->data);
+        const int slot = find_slot_by_mount_point(localPoint.data);
         if (slot == -1) {
             return SAVE_DATA_ERROR_NOT_MOUNTED;
         }
@@ -2208,8 +2229,9 @@ static int umountWithBackup(const SaveDataMountPoint* mount_point) {
 }
 
 int APS5_VABI sceSaveDataUmountWithBackup(const SaveDataMountPoint* mount_point) {
-    const int rc = umountWithBackup(mount_point);
-    SAVEDATA_TRACE("umountWithBackup point=%s -> 0x%08x", mount_point != nullptr ? mount_point->data : "(null)", static_cast<unsigned>(rc));
+    std::string point = "(null)";
+    const int rc = umountWithBackup(mount_point, &point);
+    SAVEDATA_TRACE("umountWithBackup point=%s -> 0x%08x", point.c_str(), static_cast<unsigned>(rc));
     return rc;
 }
 

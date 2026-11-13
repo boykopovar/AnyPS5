@@ -23,7 +23,7 @@ int APS5_VABI __sys_dynlib_get_list_for_libdbg_nid_postfix();
 int APS5_VABI __sys_dynlib_load_prx_nid_postfix();
 int APS5_VABI __sys_dynlib_unload_prx_nid_postfix();
 int APS5_VABI __sys_get_proc_type_info_nid_postfix();
-int APS5_VABI __sys_is_development_mode_nid_postfix();
+std::uint64_t APS5_VABI __sys_is_development_mode_nid_postfix();
 int APS5_VABI __sys_kqueueex_nid_postfix();
 int APS5_VABI __sys_namedobj_create_nid_postfix();
 int APS5_VABI __sys_namedobj_delete_nid_postfix();
@@ -56,7 +56,7 @@ void APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix(Ubsan::CfiCheckFailData
 int APS5_VABI _dup2_nid_postfix(int from, int to);
 int APS5_VABI _execve_nid_postfix(const char* path, char* const* argv, char* const* envp);
 int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* const* envp);
-int APS5_VABI _wait4_nid_postfix();
+int APS5_VABI _wait4_nid_postfix(int pid, int* status, int options, void* usage);
 int APS5_VABI adjtime_nid_postfix(const KernelTimeval* delta, KernelTimeval* oldDelta);
 int APS5_VABI libkernel_sysUnknown_0CV40L3tznI_nid_no_patch();
 std::uint64_t APS5_VABI libkernel_sysUnknown_1WXQlxMpnNA_nid_no_patch();

@@ -43,6 +43,8 @@ bool APS5_VABI WTFWillLogWithLevel(void* channel, std::uint32_t level);
 [[noreturn]] void APS5_VABI _Z20WTFCrashWithInfoImpliPKcS0_immmmm(int line, const char* file, const char* function, int counter, std::uint64_t reason, std::uint64_t misc1, std::uint64_t misc2, std::uint64_t misc3, std::uint64_t misc4);
 [[noreturn]] void APS5_VABI _Z20WTFCrashWithInfoImpliPKcS0_immmmmm(int line, const char* file, const char* function, int counter, std::uint64_t reason, std::uint64_t misc1, std::uint64_t misc2, std::uint64_t misc3, std::uint64_t misc4, std::uint64_t misc5);
 [[noreturn]] void APS5_VABI _Z20WTFCrashWithInfoImpliPKcS0_immmmmmm(int line, const char* file, const char* function, int counter, std::uint64_t reason, std::uint64_t misc1, std::uint64_t misc2, std::uint64_t misc3, std::uint64_t misc4, std::uint64_t misc5, std::uint64_t misc6);
+const NKWebKit::WtfAbi::URL& APS5_VABI _ZN3WTF13aboutBlankURLEv();
+const NKWebKit::WtfAbi::URL& APS5_VABI _ZN3WTF14aboutSrcDocURLEv();
 void APS5_VABI _ZN3JSC16clearArrayMemsetEPdj(double* base, unsigned int count);
 void APS5_VABI _ZN3JSC18enableSuperSamplerEv();
 void APS5_VABI _ZN3JSC18logTotalPhaseTimesEv();

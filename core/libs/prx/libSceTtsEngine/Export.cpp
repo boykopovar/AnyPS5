@@ -4,6 +4,12 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int SCE_TTS_ENGINE_ERROR_NOT_INITIALIZED = static_cast<int>(0x81A10004);
+
+}
+
 extern "C" {
 
 int APS5_VABI sceTtsEngineInitialize(void) {
@@ -12,55 +18,45 @@ int APS5_VABI sceTtsEngineInitialize(void) {
 }
 
 int APS5_VABI sceTtsEngineTerminate(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 APS5_EXPORT("ULO80qzqyLo", sceTtsEngineUnknown00);
 int APS5_VABI sceTtsEngineUnknown00(void) {
-    NotImplemented_nid_no_patch("ULO80qzqyLo");
-    return 0;
+    return SCE_TTS_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 APS5_EXPORT("BGb-DqWHvH8", sceTtsEngineUnknown01);
 int APS5_VABI sceTtsEngineUnknown01(void) {
-    NotImplemented_nid_no_patch("BGb-DqWHvH8");
-    return 0;
+    return SCE_TTS_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceTtsEngineSetText(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_TTS_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceTtsEngineGetAudio(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_TTS_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceTtsEngineClear(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_TTS_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceTtsEngineSetPitch(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_TTS_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceTtsEngineSetSpeed(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_TTS_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceTtsEngineSetVolume(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_TTS_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceTtsEngineSetDepth(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_TTS_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 }
