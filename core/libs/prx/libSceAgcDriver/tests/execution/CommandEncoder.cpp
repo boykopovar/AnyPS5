@@ -21,6 +21,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <vector>
@@ -1066,8 +1067,69 @@ void HandoffPolicyFollowsItsMeasuredCost() {
     RunPattern({"short batches", 2, 1000, 0}, CommandEncoder::Handoff::Adaptive, Draws, counts);
     Require(counts.inlined * 10 >= static_cast<std::uint64_t>(Draws) * 7, "the adaptive hand-off kept " + std::to_string(Draws - counts.inlined) + " of " + std::to_string(Draws) + " draws on the encoder although each batch cost more to wait for than to record");
     Reset();
-    RunPattern({"long batches", 64, 40000, 20000}, CommandEncoder::Handoff::Adaptive, Draws, counts);
-    Require(counts.inlined * 10 <= Draws, "the adaptive hand-off recorded " + std::to_string(counts.inlined) + " of " + std::to_string(Draws) + " draws inline although the encoder overlapped them with the drawing thread's work");
+    RunPattern({"first epoch", 64, 0, 0}, CommandEncoder::Handoff::Adaptive, CommandEncoder::EncodeEpoch - 1, counts);
+    Require(counts.inlined == 0, "the adaptive hand-off recorded " + std::to_string(counts.inlined) + " draws of its first measuring epoch inline");
+}
+
+struct PolicyRun {
+    CommandEncoder::HandoffPolicy policy;
+    CommandEncoder::Measured now;
+    std::uint64_t measured = 0;
+
+    std::uint64_t Windows(std::uint64_t count, std::uint64_t encodeNs, std::uint64_t handoffNs) {
+        std::uint64_t handedOff = 0;
+        for (std::uint64_t window = 0; window < count; ++window) {
+            if (!policy.Next([this] {
+                    ++measured;
+                    return now;
+                }))
+                continue;
+            ++handedOff;
+            now.encodeNs += encodeNs;
+            now.handoffNs += handoffNs;
+        }
+        return handedOff;
+    }
+};
+
+void ExpectHandedOff(std::uint64_t handedOff, std::uint64_t expected, std::string_view what) {
+    Require(handedOff == expected, std::string(what) + ": " + std::to_string(handedOff) + " windows handed off, not " + std::to_string(expected));
+}
+
+void HandoffPolicyDecidesFromTheCostItIsGiven() {
+    constexpr auto Epoch = CommandEncoder::EncodeEpoch;
+    constexpr auto Span = CommandEncoder::InlineSpanMin;
+    {
+        PolicyRun run;
+        ExpectHandedOff(run.Windows(40 * Epoch, 20000, 1000), 40 * Epoch, "an encoder that saves more than its hand-off costs");
+        Require(run.measured == 80, "the policy read its counters " + std::to_string(run.measured) + " times over 40 epochs, not twice per epoch");
+    }
+    {
+        PolicyRun run;
+        ExpectHandedOff(run.Windows(Epoch, 20000, 20000), Epoch, "a hand-off that costs exactly what it saves");
+        ExpectHandedOff(run.Windows(Epoch, 20000, 20000), Epoch, "a second hand-off epoch that costs exactly what it saves");
+    }
+    {
+        PolicyRun run;
+        ExpectHandedOff(run.Windows(Epoch, 1000, 20000), Epoch - 1, "the first epoch of a hand-off that costs more than it saves");
+        std::uint64_t span = Span;
+        for (std::uint32_t strike = 1; strike <= 7; ++strike) {
+            ExpectHandedOff(run.Windows(span - 1, 1000, 20000), 0, "the inline span after strike " + std::to_string(strike));
+            ExpectHandedOff(run.Windows(Epoch, 1000, 20000), Epoch - 1, "the losing epoch after inline span " + std::to_string(strike));
+            span = std::min(CommandEncoder::InlineSpanMax, span * 2);
+        }
+    }
+    {
+        PolicyRun run;
+        ExpectHandedOff(run.Windows(Epoch, 1000, 20000), Epoch - 1, "a losing first epoch");
+        ExpectHandedOff(run.Windows(Span - 1, 1000, 20000), 0, "the first inline span");
+        ExpectHandedOff(run.Windows(Epoch, 1000, 20000), Epoch - 1, "a second losing epoch");
+        ExpectHandedOff(run.Windows(2 * Span - 1, 20000, 1000), 0, "the doubled inline span");
+        ExpectHandedOff(run.Windows(Epoch, 20000, 1000), Epoch, "a winning epoch after two strikes");
+        ExpectHandedOff(run.Windows(Epoch, 1000, 20000), Epoch - 1, "a losing epoch after a win");
+        ExpectHandedOff(run.Windows(Span - 1, 1000, 20000), 0, "the inline span after a win");
+        ExpectHandedOff(run.Windows(1, 1000, 20000), 1, "the window that ends an inline span reset by a win");
+    }
 }
 
 int main(int argc, char** argv) {
@@ -1107,6 +1169,7 @@ int main(int argc, char** argv) {
         WaitsAreAttributedToTheirCallSites();
         SitesAreCountedOnlyWhenProfiled();
         HandoffPolicyFollowsItsMeasuredCost();
+        HandoffPolicyDecidesFromTheCostItIsGiven();
         std::cout << "command encoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {
