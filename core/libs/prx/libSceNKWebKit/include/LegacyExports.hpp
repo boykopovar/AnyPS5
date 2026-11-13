@@ -1,8 +1,12 @@
 #pragma once
 
+#include <cstdint>
 #include "SceTypes.hpp"
 
 #include <cstddef>
+namespace WebCore {
+class DocumentLoader;
+}
 
 extern "C" {
 
@@ -681,7 +685,7 @@ int APS5_VABI _ZN7WebCore11DisplayList8DrawRectD1Ev();
 int APS5_VABI _ZNK7WebCore5Range9firstNodeEv();
 int APS5_VABI _ZN7WebCore11DisplayList22BeginTransparencyLayerD0Ev();
 int APS5_VABI _ZN7WebCore19JSDOMMatrixReadOnly14finishCreationERN3JSC2VME();
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient26shouldUseCredentialStorageEPNS_14DocumentLoaderEm();
+bool APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient26shouldUseCredentialStorageEPNS_14DocumentLoaderEm(void*, WebCore::DocumentLoader*, std::uint64_t);
 int APS5_VABI _ZNK7WebCore12SharedBuffer4sizeEv();
 int APS5_VABI _ZNK7WebCore16HTMLImageElement25hasEditableImageAttributeEv();
 int APS5_VABI libSceNKWebKitLegacyUnknown_HCqK45DPIyk_nid_no_patch();
