@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <dlfcn.h>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <sys/mman.h>
@@ -21,6 +22,16 @@ using Unlink = int (*)(const char*);
 constexpr std::int64_t Page = 0x4000;
 constexpr int ReadWriteCreate = 0xa02;
 
+void RemoveHostObject(const std::string& hostName) {
+#ifdef __APPLE__
+    std::error_code error;
+    const auto directory = std::filesystem::canonical(std::filesystem::temp_directory_path(error), error);
+    ::unlink((directory.string() + hostName).c_str());
+#else
+    ::shm_unlink(hostName.c_str());
+#endif
+}
+
 struct Object {
     std::string name = "/anyps5-concurrent-" + std::to_string(getpid());
     std::string hostName = "/anyps5-shm-";
@@ -31,9 +42,9 @@ struct Object {
             hostName += hex[byte >> 4];
             hostName += hex[byte & 15];
         }
-        ::shm_unlink(hostName.c_str());
+        RemoveHostObject(hostName);
     }
-    ~Object() { ::shm_unlink(hostName.c_str()); }
+    ~Object() { RemoveHostObject(hostName); }
 };
 
 bool Race(int descriptor) {

@@ -1,4 +1,5 @@
 #include "prx/libSceCamera/libSceCamera.hpp"
+#include <cerrno>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -52,11 +53,20 @@ void CheckAudioAfterOpen() {
     for (const char* name : {"sceCameraAudioGetData", "sceCameraAudioGetData2"}) {
         const AudioGetData getData = ResolveAudio(name);
         Require(getData(nullptr) == ErrorParam, "camera audio data must reject a null buffer");
+        Require(getData(reinterpret_cast<void*>(0x10)) == ErrorParam, "camera audio data must reject an inaccessible buffer");
+        errno = 71;
+        Require(getData(reinterpret_cast<void*>(0x10)) == ErrorParam, "inaccessible audio buffer");
+        Require(errno == 71, "errno preserved");
         Require(getData(data.data()) == 0, "camera audio data must answer 0 after the failed open");
     }
     for (const std::uint8_t byte : data) Require(byte == 0xA5, "camera audio data must not be written");
     Require(sceCameraAudioReset() == 0, "camera audio reset must answer 0");
     Require(sceCameraAudioClose() == 0, "camera audio close must answer 0");
+}
+
+void CheckInternalCalls() {
+    Require(sceCameraDeviceOpen() == 0, "the device open call must answer 0");
+    Require(sceCameraSetAttributeInternal() == 0, "the internal attribute call must answer 0");
 }
 
 CameraConfig SizedConfig() {
@@ -238,7 +248,9 @@ void CheckDevice() {
 
 int main() {
     CheckBeforeOpen();
+    CheckInternalCalls();
     Require(sceCameraOpen(0xFF, 0, 0, nullptr) == 1, "the camera must open");
+    CheckInternalCalls();
     CheckGetters();
     CheckAttribute();
     CheckSetters();

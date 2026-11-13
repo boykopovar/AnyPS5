@@ -12,13 +12,13 @@ struct SizeAlign {
 
 extern "C" int APS5_VABI sceAgcFuseShaderHalves_0200(Shader* fusedResult, const Shader* front, const Shader* back, void* scratchMem);
 extern "C" int APS5_VABI sceAgcGetFusedShaderSize_0080(SizeAlign* dst, const Shader* front, const Shader* back);
+extern "C" int APS5_VABI sceAgcGetFusedShaderSize(SizeAlign* dst, const Shader* front, const Shader* back);
 
 #include "SceShaders.hpp"
 
 extern "C" {
 
 int APS5_VABI sceAgcFuseShaderHalves_nid_postfix(Shader* fusedResult, const Shader* front, const Shader* back, void* scratchMem);
-int APS5_VABI sceAgcUpdateInterpolantMapping_0100(ShaderRegister* regs, const Shader* vs, const Shader* ps);
 
 }
 

@@ -1,5 +1,6 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include <crt_externs.h>
+#include <mach-o/dyld.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <pthread.h>
@@ -20,6 +21,7 @@ constexpr std::size_t NeighbourBytes = std::size_t {1} << 20;
 
 std::uintptr_t originalStack = 0;
 std::string originalArgument;
+std::string originalPath;
 bool originalInArena = false;
 mach_vm_address_t neighbour = 0;
 
@@ -67,17 +69,30 @@ bool InArena(std::uintptr_t address) {
 void CheckMainThread(void*) {
     int local = 0;
     Require(pthread_main_np() != 0, "the check runs on the main thread");
+    char path[4096];
+    std::uint32_t pathBytes = sizeof(path);
+    Require(_NSGetExecutablePath(path, &pathBytes) == 0, "the executable path is readable after the move");
+    Require(originalPath == path, "the executable path survived the move");
     const auto address = reinterpret_cast<std::uintptr_t>(&local);
     if (originalInArena) {
         Require(!InArena(address), "the main thread stack is outside the guest arena");
         Require(address != originalStack, "the main thread stack moved");
-        const auto old = reinterpret_cast<const void*>(originalStack & ~(MappingAlignment - 1));
+        const auto kept = originalStack & ~(MappingAlignment - 1);
+        const auto released = reinterpret_cast<const void*>(kept - MappingBytes);
         try {
-            GuestArena::GuestArenaMarkUsed_nid_postfix(old, MappingBytes);
+            GuestArena::GuestArenaMarkUsed_nid_postfix(released, MappingBytes);
         } catch (const std::runtime_error&) {
             Require(false, "a fixed guest mapping fits where the main thread stack was");
         }
-        GuestArena::GuestArenaRelease_nid_postfix(old, MappingBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(released, MappingBytes);
+        bool refused = false;
+        try {
+            GuestArena::GuestArenaMarkUsed_nid_postfix(reinterpret_cast<const void*>(kept), MappingBytes);
+        } catch (const std::runtime_error&) {
+            refused = true;
+        }
+        if (!refused) GuestArena::GuestArenaRelease_nid_postfix(reinterpret_cast<const void*>(kept), MappingBytes);
+        Require(refused, "the process start block stays mapped where dyld points");
     }
     if (neighbour != 0) {
         mach_vm_address_t begin = 0, end = 0;
@@ -100,6 +115,9 @@ int main(int, char** argv) {
     originalStack = reinterpret_cast<std::uintptr_t>(&local);
     originalInArena = InArena(originalStack);
     originalArgument = argv[0];
+    char path[4096];
+    std::uint32_t pathBytes = sizeof(path);
+    if (_NSGetExecutablePath(path, &pathBytes) == 0) originalPath = path;
     if (originalInArena) neighbour = MapStackNeighbour(originalStack);
     Aps5StartGuest_nid_no_patch(Guest, nullptr);
 }
