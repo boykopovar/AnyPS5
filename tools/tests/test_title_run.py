@@ -78,6 +78,14 @@ class TitlesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "NOT-AN-ID is not a title ID"):
             title_run.load_titles(self.write({"NOT-AN-ID": {}}))
 
+    def test_duplicate_titles_and_fields_are_refused(self):
+        path = self.root / "titles.json"
+        for text, name in (('{"PPSA00001": {"relink": ["--registry"]}, "PPSA00001": {"seconds": 45}}', "PPSA00001"),
+                           ('{"PPSA00001": {"seconds": 30, "seconds": 90}}', "seconds")):
+            path.write_text(text, encoding="utf-8")
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, f"titles.json: duplicate field '{name}'"):
+                title_run.load_titles(path)
+
     def test_files_refuse_colons_in_every_path_component(self):
         cases = [{f"{root}/asset.bin:note": {"text": ""}} for root in ("app0", "data", "download0")]
         cases += [
