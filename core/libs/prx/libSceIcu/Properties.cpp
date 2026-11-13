@@ -38,6 +38,10 @@ UProperty Property(std::int32_t which) {
 
 }
 
+bool Icu::PropertyNeedsData(std::int32_t property) {
+    return FromDataFile(uprops_getSource(Property(property)));
+}
+
 extern "C" {
 
 std::int8_t APS5_VABI u_charType_nid_postfix(std::int32_t character) {
@@ -193,13 +197,13 @@ std::int32_t APS5_VABI u_getIntPropertyMaxValue_nid_postfix(std::int32_t propert
 }
 
 std::int8_t APS5_VABI u_hasBinaryProperty_nid_postfix(std::int32_t character, std::int32_t property) {
-    if (property >= UCHAR_BINARY_START && property < UCHAR_BINARY_LIMIT && FromDataFile(uprops_getSource(Property(property))))
+    if (property >= UCHAR_BINARY_START && property < UCHAR_BINARY_LIMIT && Icu::PropertyNeedsData(property))
         NotImplemented_nid_no_patch("u_hasBinaryProperty: property from a data file");
     return u_hasBinaryProperty(character, Property(property));
 }
 
 std::int32_t APS5_VABI u_getIntPropertyValue_nid_postfix(std::int32_t character, std::int32_t property) {
-    if (property >= UCHAR_BINARY_START && property < UCHAR_INT_LIMIT && FromDataFile(uprops_getSource(Property(property))))
+    if (property >= UCHAR_BINARY_START && property < UCHAR_INT_LIMIT && Icu::PropertyNeedsData(property))
         NotImplemented_nid_no_patch("u_getIntPropertyValue: property from a data file");
     return u_getIntPropertyValue(character, Property(property));
 }

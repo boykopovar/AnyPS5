@@ -236,6 +236,7 @@ public:
     std::shared_ptr<VideoOutConfig> GetConfig(int handle);
     bool IsOpen(int handle);
     bool HasConfig(int handle);
+    int GetBusType(int handle);
     bool SupportsHighFrameRate();
     int GetDisplayRefreshRate();
     std::uint32_t GetDisplayResolution();

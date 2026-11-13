@@ -4,6 +4,7 @@
 
 #include "Decoder/Png.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -17,6 +18,7 @@
 namespace {
 
 constexpr int kNoMemory = 1;
+constexpr int kReadError = 10;
 constexpr int kWriteError = 11;
 constexpr int kInvalidSize = 32;
 constexpr int kPngError = 39;
@@ -25,6 +27,11 @@ constexpr std::array<int, 8> kBitsPerPixel{32, 32, 8, 1, 16, 32, 96, 128};
 enum class Format : int { Argb32, Rgb24, A8, A1, Rgb565, Rgb30, Rgb96F, Rgba128F };
 
 using Pixel = std::array<std::uint16_t, 4>;
+
+std::uint32_t ReadBigEndian32(const std::uint8_t* bytes) {
+    return std::uint32_t{bytes[0]} << 24 | std::uint32_t{bytes[1]} << 16 |
+        std::uint32_t{bytes[2]} << 8 | bytes[3];
+}
 
 template <typename T>
 T Load(const unsigned char* data) {
@@ -165,8 +172,7 @@ int WriteChunks(const std::vector<std::uint8_t>& png, CairoWriteFunc write, void
     if (const int status = write(closure, png.data(), 8)) return status;
     for (std::size_t position = 8; position < png.size();) {
         const auto* chunk = png.data() + position;
-        const auto length = std::uint32_t{chunk[0]} << 24 | std::uint32_t{chunk[1]} << 16
-            | std::uint32_t{chunk[2]} << 8 | chunk[3];
+        const auto length = ReadBigEndian32(chunk);
         if (const int status = write(closure, chunk, 8)) return status;
         if (length) {
             if (const int status = write(closure, chunk + 8, length)) return status;
@@ -177,6 +183,108 @@ int WriteChunks(const std::vector<std::uint8_t>& png, CairoWriteFunc write, void
     return 0;
 }
 
+int ReadChunks(CairoReadFunc read, void* closure, std::vector<std::uint8_t>& png) {
+    constexpr std::array<std::uint8_t, 8> signature{0x89, 'P', 'N', 'G', 13, 10, 26, 10};
+    png.resize(signature.size());
+    if (const int status = read(closure, png.data(), png.size())) return status;
+    if (!std::ranges::equal(png, signature)) return kPngError;
+
+    for (bool first = true;; first = false) {
+        std::array<std::uint8_t, 8> chunk{};
+        if (const int status = read(closure, chunk.data(), chunk.size())) return status;
+        const std::uint32_t length = ReadBigEndian32(chunk.data());
+        const char* type = reinterpret_cast<const char*>(chunk.data() + 4);
+        const bool isHeader = std::memcmp(type, "IHDR", 4) == 0;
+        const bool isEnd = std::memcmp(type, "IEND", 4) == 0;
+        if (first != isHeader || (isHeader && length != 13) || (isEnd && length != 0))
+            return kPngError;
+        if (png.size() + std::uint64_t{length} + 12 > std::numeric_limits<int>::max())
+            return kNoMemory;
+
+        const auto start = png.size();
+        png.insert(png.end(), chunk.begin(), chunk.end());
+        for (std::uint32_t remaining = length; remaining != 0;) {
+            const auto count = std::min<std::uint32_t>(remaining, 8192);
+            const auto offset = png.size();
+            png.resize(offset + count);
+            if (const int status = read(closure, png.data() + offset, count)) return status;
+            remaining -= count;
+        }
+        const auto crcOffset = png.size();
+        png.resize(crcOffset + 4);
+        if (const int status = read(closure, png.data() + crcOffset, 4)) return status;
+        if (!Decoder::Png::CheckChunkCrc(std::span(png).subspan(start + 4, length + 4),
+                                         ReadBigEndian32(png.data() + crcOffset)))
+            return kPngError;
+        if (isHeader) {
+            const auto header = Decoder::Png::ParseHeader(png);
+            if (!header) return kPngError;
+            if (header->width > 32767 || header->height > 32767) return kInvalidSize;
+        }
+        if (isEnd) return 0;
+    }
+}
+
+template <typename Sample>
+void WritePixels(CairoSurface* surface, const Sample* pixels, bool alpha) {
+    const int width = cairo_image_surface_get_width(surface);
+    const int height = cairo_image_surface_get_height(surface);
+    const int stride = cairo_image_surface_get_stride(surface);
+    auto* data = cairo_image_surface_get_data(surface);
+    for (int y = 0; y < height; ++y) {
+        auto* row = data + static_cast<std::size_t>(stride) * y;
+        for (int x = 0; x < width; ++x, pixels += 4) {
+            if constexpr (sizeof(Sample) == 1) {
+                const std::uint32_t opacity = alpha ? pixels[3] : 255;
+                const auto channel = [opacity](unsigned value) { return (value * opacity + 127) / 255; };
+                const std::uint32_t pixel = opacity << 24 | channel(pixels[0]) << 16 |
+                    channel(pixels[1]) << 8 | channel(pixels[2]);
+                std::memcpy(row + x * sizeof(pixel), &pixel, sizeof(pixel));
+            } else {
+                const float opacity = alpha ? pixels[3] / 65535.f : 1.f;
+                const std::array pixel{pixels[0] / 65535.f * opacity, pixels[1] / 65535.f * opacity,
+                                       pixels[2] / 65535.f * opacity, opacity};
+                const std::size_t bytes = (alpha ? 4 : 3) * sizeof(float);
+                std::memcpy(row + x * bytes, pixel.data(), bytes);
+            }
+        }
+    }
+}
+
+template <typename Sample>
+CairoSurface* ImageSurface(const Decoder::Png::Header& header, const Sample* pixels) {
+    using enum Decoder::Png::ColorType;
+    const bool alpha = header.hasTransparency || header.colorType == GrayscaleAlpha || header.colorType == Rgba;
+    const auto format = sizeof(Sample) == 1 ? (alpha ? Format::Argb32 : Format::Rgb24)
+                                            : (alpha ? Format::Rgba128F : Format::Rgb96F);
+    auto* surface = cairo_image_surface_create(static_cast<int>(format), header.width, header.height);
+    if (cairo_surface_status(surface) == 0) WritePixels(surface, pixels, alpha);
+    return surface;
+}
+
+}
+
+extern "C" CairoSurface* APS5_VABI cairo_image_surface_create_from_png_stream(CairoReadFunc read, void* closure) {
+    if (!read) NotImplemented_nid_no_patch(__func__);
+    try {
+        std::vector<std::uint8_t> png;
+        if (const int status = ReadChunks(read, closure, png)) return CairoSurfaceError(status);
+        const auto header = Decoder::Png::ParseHeader(png);
+        if (!header) return CairoSurfaceError(kPngError);
+        if (header->bitDepth == 16) {
+            const auto pixels = Decoder::Png::DecodeRgba16(png);
+            if (pixels.empty()) return CairoSurfaceError(kPngError);
+            return ImageSurface(*header, pixels.data());
+        }
+        const auto image = Decoder::Png::Decode(png);
+        if (!image || image->width != header->width || image->height != header->height)
+            return CairoSurfaceError(kPngError);
+        return ImageSurface(*header, image->pixels.data());
+    } catch (const std::bad_alloc&) {
+        return CairoSurfaceError(kNoMemory);
+    } catch (const std::length_error&) {
+        return CairoSurfaceError(kNoMemory);
+    }
 }
 
 extern "C" int APS5_VABI cairo_surface_write_to_png_stream(CairoSurface* surface, CairoWriteFunc write, void* closure) {

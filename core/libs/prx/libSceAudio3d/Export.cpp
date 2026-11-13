@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <cerrno>
 #include <deque>
 #include <iterator>
 #include <map>
@@ -292,6 +293,14 @@ void Report(std::uint32_t port_id, std::uint32_t object_id, int result, const ch
     DispatchReport_nid_no_patch(AUDIO3D_REPORT_TYPE_CALL, port_id, object_id, result, function, argument_types, ReportArgument(arguments)...);
 }
 
+bool CopyOutU32(std::uint32_t* dst, std::uint32_t value) {
+    if (dst == nullptr) return true;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
+
 }
 
 extern "C" {
@@ -380,8 +389,10 @@ int APS5_VABI sceAudio3dPortGetQueueLevel(uint32_t port_id, uint32_t* queue_leve
     if (!PortIsOpen(port_id)) return AUDIO3D_ERROR_INVALID_PORT;
     if (queue_level == nullptr && queue_available == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
     const std::uint32_t level = QueueLevel();
-    if (queue_level != nullptr) *queue_level = level;
-    if (queue_available != nullptr) *queue_available = g_port.queue_depth - level;
+    const std::uint32_t avail = g_port.queue_depth - level;
+    if (!CopyOutU32(queue_level, level) || !CopyOutU32(queue_available, avail)) {
+        return AUDIO3D_ERROR_INVALID_PARAMETER;
+    }
     return 0;
 }
 
@@ -471,20 +482,28 @@ int APS5_VABI sceAudio3dPortSetAttribute(uint32_t port_id, uint32_t attribute_id
 }
 
 int APS5_VABI sceAudio3dObjectReserve(uint32_t port_id, uint32_t* object_id) {
+    uint32_t outId = AUDIO3D_OBJECT_INVALID;
     const int result = [&] {
         std::lock_guard lock(g_mutex);
         if (!PortIsOpen(port_id)) return AUDIO3D_ERROR_INVALID_PORT;
         if (object_id == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
-        *object_id = AUDIO3D_OBJECT_INVALID;
+        const int savedErrno = errno;
+        const bool initialOk = GuestCopyOut_nid_no_patch(object_id, &outId, sizeof(outId));
+        errno = savedErrno;
+        if (!initialOk) return AUDIO3D_ERROR_INVALID_PARAMETER;
         if (g_port.objects.size() >= g_port.max_objects) return AUDIO3D_ERROR_OUT_OF_RESOURCES;
         do {
             ++g_port.next_object_id;
         } while (g_port.next_object_id == 0 || g_port.next_object_id == AUDIO3D_OBJECT_INVALID || g_port.objects.contains(g_port.next_object_id));
         g_port.objects.insert(g_port.next_object_id);
-        *object_id = g_port.next_object_id;
+        outId = g_port.next_object_id;
+        const int savedErrno2 = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(object_id, &outId, sizeof(outId));
+        errno = savedErrno2;
+        if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
         return 0;
     }();
-    Report(port_id, result == 0 ? *object_id : AUDIO3D_OBJECT_INVALID, result, __func__, "H&O", port_id, object_id);
+    Report(port_id, result == 0 ? outId : AUDIO3D_OBJECT_INVALID, result, __func__, "H&O", port_id, object_id);
     return result;
 }
 
@@ -769,8 +788,21 @@ size_t APS5_VABI sceAudio3dGetSpeakerArrayMemorySize(uint32_t num_speakers, uint
 int APS5_VABI sceAudio3dCreateSpeakerArray(AudioOut2SpeakerArrayHandle* handle, const Audio3dSpeakerArrayParameters* parameters) {
     if (!handle || !parameters) return AUDIO3D_ERROR_INVALID_PARAMETER;
     unsigned char extended[0x28] = {};
-    std::memcpy(extended, parameters, sizeof(*parameters));
-    return sceAudioOut2SpeakerArrayCreate(handle, extended, nullptr);
+    const int saved = errno;
+    const bool copiedIn = GuestCopyIn_nid_no_patch(extended, parameters, sizeof(*parameters));
+    errno = saved;
+    if (!copiedIn) return AUDIO3D_ERROR_INVALID_PARAMETER;
+    AudioOut2SpeakerArrayHandle localHandle = nullptr;
+    const int result = sceAudioOut2SpeakerArrayCreate(&localHandle, extended, nullptr);
+    if (result != 0) return result;
+    const int savedOut = errno;
+    const bool copiedOut = GuestCopyOut_nid_no_patch(handle, &localHandle, sizeof(localHandle));
+    errno = savedOut;
+    if (!copiedOut) {
+        sceAudioOut2SpeakerArrayDestroy(localHandle);
+        return AUDIO3D_ERROR_INVALID_PARAMETER;
+    }
+    return 0;
 }
 
 int APS5_VABI sceAudio3dDeleteSpeakerArray(AudioOut2SpeakerArrayHandle handle) {
