@@ -1336,12 +1336,29 @@ struct ComputeRequest {
     }
 };
 
+struct BufferTableRequest : ComputeRequest {
+    std::array<std::uint32_t, 4> table{0x10000000u, 0u, 16u, 0x31016facu};
+    std::array<MemoryRegion, 1> memory;
+
+    explicit BufferTableRequest(bool useCache) : ComputeRequest(useCache), memory{{{0x50000u, std::as_bytes(std::span(table))}}} {
+        code = {0xf4080100u, 0xfa000000u, 0xf4200202u, 0xfa000000u, 0x7e000208u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
+        userData = {0x50000u, 0u, 0u, 0u};
+        request.shader = {ShaderStage::Fragment, 0x60000u, code, 0, {}};
+        request.context.compute.reset();
+        ShaderPixelStageInfo pixel{};
+        pixel.targetOutputMode[0] = 9u;
+        pixel.targetExportMapping.fill(0xe4u);
+        request.context.pixel = pixel;
+        request.context.memory = memory;
+    }
+};
+
 int runLoadingProcess() {
-    ComputeRequest cached(true);
+    BufferTableRequest cached(true);
     const auto loaded = Recompile(cached.request);
     const auto totals = ShaderDiskCache::Totals();
     require(totals.hits == 1 && totals.misses == 0 && totals.loadFailures == 0, "the second process did not load the stored variant (hits " + std::to_string(totals.hits) + ", misses " + std::to_string(totals.misses) + ")");
-    ComputeRequest fresh(false);
+    BufferTableRequest fresh(false);
     const auto compiled = Recompile(fresh.request);
     requireSameResult(compiled, loaded, "loaded against compiled");
     require(!loaded.spirv.empty(), "the loaded SPIR-V is empty");
@@ -1351,7 +1368,7 @@ int runLoadingProcess() {
 }
 
 void verifyAcrossProcesses(const char* self) {
-    ComputeRequest request(true);
+    BufferTableRequest request(true);
     const auto before = ShaderDiskCache::Totals();
     const auto compiled = Recompile(request.request);
     ShaderDiskCache::Flush();
