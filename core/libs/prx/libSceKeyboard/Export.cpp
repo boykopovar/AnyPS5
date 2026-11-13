@@ -78,9 +78,7 @@ int APS5_VABI sceKeyboardGetDeviceInfo(std::int32_t deviceId, KeyboardDeviceInfo
 }
 
 int APS5_VABI sceKeyboardGetHandle(std::int32_t userId, std::int32_t type, std::int32_t index) {
-    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Keyboard::GetHandle(userId, type, index);
 }
 
 int APS5_VABI sceKeyboardMbusInit(void) {

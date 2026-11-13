@@ -152,7 +152,30 @@ struct NetInfoDumpParameter {
     char path[64];
 };
 
-struct NetInterfaceInfo;
+struct NetInterfaceInfo {
+    char name[32];
+    std::uint32_t interfaceId;
+    std::uint32_t reserved24;
+    std::uint32_t address;
+    std::uint32_t broadcast;
+    std::uint32_t destination;
+    std::uint32_t netmask;
+    std::uint32_t reserved38;
+    std::uint32_t reserved3c;
+    std::uint64_t reserved40;
+    std::uint16_t flags;
+    std::uint16_t flags2;
+    std::uint32_t mediaLink;
+    std::uint8_t mac[6];
+    std::uint16_t reserved56;
+    std::uint32_t mtu;
+    std::uint32_t metric;
+    std::uint8_t counters[0x100];
+    std::uint8_t address6[0x60];
+    std::uint8_t reserved1c0[0x20];
+};
+static_assert(sizeof(NetInterfaceInfo) == 0x1e0);
+
 struct NetInterfaceStatistics;
 
 struct NetResolverConnectOption {
@@ -163,10 +186,17 @@ struct NetResolverConnectOption {
 };
 
 struct NetSyncObject {
-    void* mutex;
-    void* condition;
+    PthreadMutex mutex;
+    PthreadCond condition;
     std::uint32_t signals;
     std::uint32_t reserved;
+};
+
+struct NetDhcpOption {
+    const std::uint8_t* value;
+    std::uint8_t code;
+    std::uint8_t length;
+    std::uint8_t declaredLength;
 };
 
 struct NetIpv6Address {
@@ -323,6 +353,7 @@ int APS5_VABI sceNetInetPtonEx(int af, const char* src, void* dst, int);
 int APS5_VABI sceNetIoctl(int socketId, std::uint32_t command, void* argument);
 void* APS5_VABI sceNetMemoryAllocate(std::int32_t size, int flags);
 void APS5_VABI sceNetMemoryFree(void* memory);
+int APS5_VABI libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(const std::uint8_t* options, std::int32_t length, NetDhcpOption* option);
 int APS5_VABI sceNetSetDnsInfoToKernel(const NetDnsInfo* info, std::uint32_t flags);
 int APS5_VABI sceNetSetsockoptEx(int socketId, int level, int option, const void* value, std::uint32_t valueSize);
 int APS5_VABI sceNetSocketInternal(const char* name, int domain, int type, int protocol);

@@ -31,23 +31,18 @@ int main() {
     std::filesystem::create_directories("app0/sce_sys");
     {
         std::ofstream param("app0/sce_sys/param.json", std::ios::binary);
-        param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}}})";
+        param << R"({"titleId":"PPSA00000","applicationCategoryType":7,"localizedParameters":{"en-US":{"titleName":"Example"}}})";
         Require(static_cast<bool>(param), "param.json could not be written");
     }
 
     const auto getAppCategoryType = reinterpret_cast<int (APS5_VABI*)(int, std::uint32_t*)>(&sceKernelGetAppCategoryType);
-    for (const int pid : {getpid_nid_postfix(), 0}) {
-        std::array<std::uint8_t, 0x58> info{};
-        Require(sceKernelGetAppInfo(pid, info.data()) == 0, "sceKernelGetAppInfo failed");
-        std::uint32_t expected = 0;
-        std::memcpy(&expected, info.data() + 0x50, sizeof(expected));
-
-        std::array<std::uint32_t, 2> output{0x5a5a5a5au, 0x5a5a5a5au};
-        Require(getAppCategoryType(pid, output.data()) == 0, "the query failed");
-        Require(output[0] == expected, "the category is not the field at offset 0x50 of the app info record");
-        Require(output[1] == 0x5a5a5a5au, "the query wrote past the category");
-        Require(getAppCategoryType(pid, nullptr) == static_cast<int>(0x80020016), "a null output is not EINVAL");
-    }
+    std::array<std::uint32_t, 2> output{0x5a5a5a5au, 0x5a5a5a5au};
+    Require(getAppCategoryType(getpid_nid_postfix(), output.data()) == 0, "the query failed");
+    Require(output[0] == 7u, "the category is not the applicationCategoryType from param.json");
+    Require(output[1] == 0x5a5a5a5au, "the query wrote past the category");
+    Require(getAppCategoryType(getpid_nid_postfix(), nullptr) == static_cast<int>(0x80020016), "a null output is not EINVAL");
+    Require(getAppCategoryType(getpid_nid_postfix(), reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x8002000e),
+            "an unwritable output is not EFAULT");
 
     std::filesystem::current_path(original);
     std::filesystem::remove_all(directory);
