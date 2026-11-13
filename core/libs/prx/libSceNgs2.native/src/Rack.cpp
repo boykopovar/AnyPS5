@@ -97,6 +97,11 @@ static std::uint32_t RackMaxChannels(std::uint32_t rackId, const RackOptions& op
     return NGS2_MAX_CHANNELS;
 }
 
+static bool CustomMasteringHasModules(std::uint32_t rackId, const Ngs2RackOption* option) {
+    if (rackId != SCE_NGS2_RACK_ID_CUSTOM_MASTERING || PS4_LIBRARY || option->size < sizeof(Ngs2CustomRackOption)) return false;
+    return reinterpret_cast<const Ngs2CustomRackOption*>(option)->num_modules != 0;
+}
+
 static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option, RackOptions& options) {
     const auto size = RackOptionSize(rackId);
     if (option == nullptr) {
@@ -104,7 +109,7 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
         return SCE_NGS2_OK;
     }
     if (option->size != size) {
-        if (rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING && !PS4_LIBRARY) return SCE_NGS2_ERROR_INVALID_OPTION_SIZE;
+        if (CustomMasteringHasModules(rackId, option)) return SCE_NGS2_ERROR_INVALID_OPTION_SIZE;
         throw std::invalid_argument("NGS2: unexpected rack option size " + std::to_string(option->size));
     }
     options = {};

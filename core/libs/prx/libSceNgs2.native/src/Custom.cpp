@@ -92,7 +92,7 @@ static int CheckMasteringModuleState(const Ngs2CustomRackOption& option, const N
         if (info.state_offset != 0) throw std::runtime_error("NGS2: a custom mastering module state offset without a state is not implemented");
         return SCE_NGS2_OK;
     }
-    const bool inside = info.state_offset >= SCE_NGS2_CUSTOM_MASTERING_MIN_STATE_SIZE && info.state_offset + info.state_size <= option.state_size;
+    const bool inside = info.state_offset >= SCE_NGS2_CUSTOM_MASTERING_MIN_STATE_SIZE && info.state_size <= option.state_size && info.state_offset <= option.state_size - info.state_size;
     return inside ? SCE_NGS2_OK : SCE_NGS2_ERROR_INVALID_STATE_OFFSET;
 }
 

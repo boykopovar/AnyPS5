@@ -1424,6 +1424,9 @@ static void TestCustomMasteringCreation() {
     Require(MasteringQuery(ModulesRackOption(2, 172, {{0x18, 16, 160}})) == SCE_NGS2_ERROR_INVALID_STATE_SIZE);
     Require(MasteringQuery(ModulesRackOption(2, 156, {{0x18, 0, 156}})) == SCE_NGS2_ERROR_INVALID_STATE_OFFSET);
     Require(MasteringQuery(ModulesRackOption(2, 16, {{0x1a, 0, 0}})) == SCE_NGS2_OK);
+    Require(MasteringQuery(ModulesRackOption(2, 172, {{0x18, 0xfffffff0u, 156}})) == SCE_NGS2_ERROR_INVALID_STATE_OFFSET);
+    Require(MasteringQuery(ModulesRackOption(2, 172, {{0x18, 17, 156}})) == SCE_NGS2_ERROR_INVALID_STATE_OFFSET);
+    Require(MasteringQuery(ModulesRackOption(2, 172, {{0x18, 16, 156}})) == SCE_NGS2_OK);
 
     auto withOption = TitleRackOption(2);
     for (const std::uint32_t size : {4u, 8u, 16u, 20u}) {
@@ -1452,6 +1455,15 @@ static void TestCustomMasteringCreation() {
     auto shortOption = TitleRackOption(2);
     shortOption.custom_rack_option.rack_option.size = sizeof(Ngs2CustomRackOption);
     Require(MasteringCreate(system, shortOption) == SCE_NGS2_ERROR_INVALID_OPTION_SIZE);
+    auto bareOption = MasteringRackOption(2, 1);
+    bareOption.custom_rack_option.rack_option.size = sizeof(Ngs2CustomRackOption);
+    bool bareInvalid = false;
+    try {
+        MasteringCreate(system, bareOption);
+    } catch (const std::invalid_argument&) {
+        bareInvalid = true;
+    }
+    Require(bareInvalid);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
