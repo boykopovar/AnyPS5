@@ -132,7 +132,13 @@ static int FinishAllocationResults(const AllocationResult* results, std::size_t 
 
 int main() {
     RequireStub(&JSRemoteInspectorDisableAutoStart);
-    RequireStub(&WKAccessibilityEnableEnhancedAccessibility);
+    const auto enableEnhancedAccessibility = reinterpret_cast<void (APS5_VABI*)(bool)>(&WKAccessibilityEnableEnhancedAccessibility);
+    const auto stubsBeforeEnhancedAccessibility = NotImplementedCalls_nid_no_patch();
+    enableEnhancedAccessibility(true);
+    Require(NKWebKit::AccessibilityEnhancedUserInterfaceEnabled());
+    enableEnhancedAccessibility(false);
+    Require(!NKWebKit::AccessibilityEnhancedUserInterfaceEnabled());
+    Require(NotImplementedCalls_nid_no_patch() == stubsBeforeEnhancedAccessibility);
     RequireStub(&WKContextGetApplicationCacheManager);
     RequireStub(&WKContextGetKeyValueStorageManager);
     RequireStub(&WKContextGetResourceCacheManager);
