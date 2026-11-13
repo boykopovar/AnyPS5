@@ -982,6 +982,8 @@ void* APS5_VABI sceLibcMspaceAlignedAlloc_nid_postfix(void* handle, std::size_t 
 void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void* handle, void* pointer, std::size_t alignment, std::size_t size);
 int APS5_VABI sceLibcMspaceMallocStats_nid_postfix(void* handle, MallocManagedSize* stats);
 int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats);
+int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void* handle);
+int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void* handle);
 std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void* pointer);
 void* APS5_VABI sceLibcPafMspaceCreate_nid_postfix(const char* name, void* base, std::size_t size, unsigned flags, const void* options);
 int APS5_VABI sceLibcPafMspaceDestroy_nid_postfix(void* handle);
@@ -1344,6 +1346,11 @@ int APS5_VABI _ZNSt8__sce_v212_Cnd_destroyEPP12pthread_cond_nid_postfix(void** c
 int APS5_VABI _ZNSt8__sce_v29_Cnd_waitEPP12pthread_condPP13pthread_mutex_nid_postfix(void** condition, void** mutex);
 int APS5_VABI _ZNSt8__sce_v211_Cnd_signalEPP12pthread_cond_nid_postfix(void** condition);
 int APS5_VABI _ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(void** condition);
+void APS5_VABI _ZNSt8__sce_v226_Lock_at_thread_exit_mutexEv_nid_postfix();
+void APS5_VABI _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix();
+void APS5_VABI _ZNSt8__sce_v228_Cnd_register_at_thread_exitEPP12pthread_condPP13pthread_mutexPi_nid_postfix(void** condition, void** mutex, int* ready);
+void APS5_VABI _ZNSt8__sce_v230_Cnd_unregister_at_thread_exitEPP13pthread_mutex_nid_postfix(void** mutex);
+void APS5_VABI _ZNSt8__sce_v232_Cnd_do_broadcast_at_thread_exitEv_nid_postfix();
 int APS5_VABI _ZNSt8__sce_v212_Thrd_detachEP7pthread_nid_postfix(void* thread);
 int APS5_VABI _ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(void* thread, int* code);
 void APS5_VABI _ZNSt8__sce_v211_Thrd_yieldEv_nid_postfix();
@@ -1362,6 +1369,8 @@ int APS5_VABI _Smtx_timedlock_exclusive_nid_postfix(void** smtx, const Xtime* ta
 int APS5_VABI _Smtx_timedlock_shared_nid_postfix(void** smtx, const Xtime* target);
 int APS5_VABI _Smtx_unlock_exclusive_nid_postfix(void** smtx);
 int APS5_VABI _Smtx_unlock_shared_nid_postfix(void** smtx);
+void** APS5_VABI __std_acquire_shared_mutex_for_instance_nid_postfix(void* instance);
+void APS5_VABI __std_release_shared_mutex_for_instance_nid_postfix(void* instance);
 void APS5_VABI tzset_nid_postfix(void);
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer);
 int64_t APS5_VABI time_nid_postfix(int64_t* timer);
