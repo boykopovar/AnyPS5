@@ -4,6 +4,9 @@
 #include "prx/libfontconfig/include/Types.hpp"
 
 namespace FreeType { struct GuestFaceRec; }
+struct FcConfig;
+struct FcFontSet;
+struct FcObjectSet;
 
 extern "C" {
 
@@ -12,23 +15,23 @@ FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id)
 FcResult APS5_VABI FcPatternGetInteger(const FcPattern* pattern, const char* object, int id, int* value);
 FcResult APS5_VABI FcPatternGetBool(const FcPattern* pattern, const char* object, int id, FcBool* value);
 FcBool APS5_VABI FcPatternAddBool(FcPattern* pattern, const char* object, FcBool value);
-int APS5_VABI FcFontList();
-int APS5_VABI FcFontSetMatch();
-int APS5_VABI FcConfigSubstitute();
+FcFontSet* APS5_VABI FcFontList(FcConfig* config, FcPattern* pattern, FcObjectSet* objects);
+FcPattern* APS5_VABI FcFontSetMatch(FcConfig* config, FcFontSet** sets, int count, FcPattern* pattern, FcResult* result);
+FcBool APS5_VABI FcConfigSubstitute(FcConfig* config, FcPattern* pattern, int kind);
 FcResult APS5_VABI FcPatternGetMatrix(const FcPattern* pattern, const char* object, int id, FcMatrix** value);
 int APS5_VABI FcInit();
 FcResult APS5_VABI FcPatternGetString(const FcPattern* pattern, const char* object, int id, FcChar8** value);
 int APS5_VABI FcFontRenderPrepare();
 FcBool APS5_VABI FcPatternAddDouble(FcPattern* pattern, const char* object, double value);
 FcPattern* APS5_VABI FcPatternDuplicate(const FcPattern* pattern);
-int APS5_VABI FcFontMatch();
+FcPattern* APS5_VABI FcFontMatch(FcConfig* config, FcPattern* pattern, FcResult* result);
 FcPattern* APS5_VABI FcPatternFilter(FcPattern* pattern, const FcObjectSet* objects);
-int APS5_VABI FcPatternGetFTFace();
+FcResult APS5_VABI FcPatternGetFTFace(const FcPattern* pattern, const char* object, int id, void** face);
 FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second);
 uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSet* second);
 FcBool APS5_VABI FcPatternAddInteger(FcPattern* pattern, const char* object, int value);
 FcBool APS5_VABI FcLangSetAdd(FcLangSet* set, const FcChar8* language);
-int APS5_VABI FcFontSort();
+FcFontSet* APS5_VABI FcFontSort(FcConfig* config, FcPattern* pattern, FcBool trim, FcCharSet** coverage, FcResult* result);
 int APS5_VABI FcCharSetMerge(FcCharSet* target, const FcCharSet* source, int* changed);
 FcResult APS5_VABI FcPatternGetCharSet(const FcPattern* pattern, const char* object, int id, FcCharSet** value);
 void APS5_VABI FcCharSetDestroy(FcCharSet* set);

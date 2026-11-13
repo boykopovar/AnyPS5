@@ -7,6 +7,7 @@
 #include <cmath>
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdarg>
 #include <cstdint>
 #include <condition_variable>
@@ -443,7 +444,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHan
     if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     if (!outPath) return ErrorNullPointer;
     if (index >= MaxPaths) return ErrorInvalidArgument;
-    *outPath = state.sourcePaths.at(source)[index];
+    if (!copyGuestOut(outPath, state.sourcePaths.at(source)[index])) return ErrorNullPointer;
     return 0;
 }
 
@@ -452,7 +453,7 @@ std::int32_t APS5_VABI sceAudioPropagationPathGetNumPoints(AudioPropagationHandl
     std::lock_guard lock(state.mutex);
     requireObject(state, path, Kind::Path, __func__);
     require(count != nullptr, __func__);
-    *count = state.paths.at(path).data.pointCount;
+    if (!copyGuestOut(count, state.paths.at(path).data.pointCount)) return ErrorNullPointer;
     return 0;
 }
 
@@ -594,7 +595,55 @@ int APS5_VABI sceAudioPropagationReportApi(std::uint32_t category, AudioPropagat
 }
 
 int APS5_VABI sceAudioPropagationResetAttributes(Attribute* attributes, std::uint32_t count) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!attributes) return ErrorNullPointer;
+    if (!count) return ErrorInvalidArgument;
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const Attribute& attribute = attributes[index];
+        if (!attribute.value) return ErrorNullPointer;
+        if (attribute.id > 0x10000) {
+            const bool handle = attribute.id == 0x10001 || attribute.id == 0x20000;
+            if (!handle && attribute.id - 0x10002 >= 4) return ErrorInvalidArgument;
+            if (attribute.valueSize != (attribute.id == 0x20000 ? 8 : 16)) return ErrorInvalidArgument;
+            if (handle) {
+                const auto* rooms = reinterpret_cast<const AudioPropagationHandle*>(attribute.value);
+                const std::size_t roomCount = attribute.id == 0x10001 ? 2 : 1;
+                for (std::size_t slot = 0; slot < roomCount; ++slot) {
+                    const auto room = rooms[slot];
+                    if (attribute.id == 0x20000 && room == 0) continue;
+                    const auto found = state.objects.find(room);
+                    if (found == state.objects.end() || found->second.kind != Kind::Room || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
+                }
+            }
+        } else if (attribute.id <= 7) {
+            constexpr std::array<std::size_t, 8> sizes{16, 16, 16, 16, 24, 8, 16, 8};
+            if (attribute.valueSize != sizes[attribute.id]) return ErrorInvalidArgument;
+        } else if (attribute.id == 10) {
+            NotImplemented_nid_no_patch(__func__);
+        } else if (attribute.id != 0x10000 || attribute.valueSize != 16) {
+            return ErrorInvalidArgument;
+        }
+    }
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const Attribute& attribute = attributes[index];
+        auto* value = reinterpret_cast<std::uint32_t*>(const_cast<void*>(attribute.value));
+        switch (attribute.id) {
+            case 0: value[0] = 0; value[1] = 0; value[2] = 0; break;
+            case 1: value[0] = 0; value[1] = 0; value[2] = 0x3f800000; break;
+            case 2: value[0] = 3; value[1] = 0x42c80000; value[2] = 0x3f800000; value[3] = 0x3f800000; break;
+            case 3: value[0] = 0x3f800000; value[1] = 0x41f00000; value[2] = 0x3f333333; value[3] = 0x43870000; break;
+            case 4: std::memset(value, 0, 16); break;
+            case 5: value[0] = 0; break;
+            case 6:
+            case 7: value[0] = 0; value[1] = 0; break;
+            case 0x10001: std::memset(value, 0, 16); break;
+            case 0x10002: value[0] = 0x3f000000; value[1] = 0x3f000000; value[2] = 0x3f000000; break;
+            case 0x10003: value[0] = 0; value[1] = 0; value[2] = 0x3f800000; break;
+            case 0x10004: value[0] = 0; value[1] = 0x3f800000; value[2] = 0; break;
+            default: return ErrorInvalidArgument;
+        }
+    }
     return 0;
 }
 
@@ -626,15 +675,23 @@ int APS5_VABI sceAudioPropagationSystemQueryInfo(AudioPropagationHandle system, 
     std::lock_guard lock(state.mutex);
     if (!liveSystem(state, system) || !info || size != sizeof(SystemInfo)) return ErrorInvalidHandle;
     const auto& configuration = *reinterpret_cast<const SystemState*>(system);
-    info->cpuMemory = configuration.cpuMemory;
-    info->cpuMemorySize = configuration.cpuMemorySize;
-    info->index = configuration.index;
-    info->frameSamples = configuration.frameSamples;
-    info->parameter24 = 1;
-    info->maxSources = configuration.maxSources;
-    info->maxMaterials = configuration.maxMaterials;
-    info->pathCapacityPerSource = configuration.pathCapacityPerSource;
-    info->propagationSpeed = configuration.propagationSpeed;
+    SystemInfo localInfo{};
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo));
+    errno = savedErrno;
+    if (!read) return ErrorInvalidHandle;
+    localInfo.cpuMemory = configuration.cpuMemory;
+    localInfo.cpuMemorySize = configuration.cpuMemorySize;
+    localInfo.index = configuration.index;
+    localInfo.frameSamples = configuration.frameSamples;
+    localInfo.parameter24 = 1;
+    localInfo.maxSources = configuration.maxSources;
+    localInfo.maxMaterials = configuration.maxMaterials;
+    localInfo.pathCapacityPerSource = configuration.pathCapacityPerSource;
+    localInfo.propagationSpeed = configuration.propagationSpeed;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidHandle;
     return 0;
 }
 

@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVisionManager/include/InventoryExports.hpp"
 #include "prx/libSceVisionManager/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <algorithm>
 #include <cstddef>
@@ -11,6 +12,7 @@ namespace {
 
 constexpr int ErrorInvalidArgument = static_cast<int>(0x80e70000);
 constexpr int ErrorUnavailable = static_cast<int>(0x80e70004);
+constexpr int ErrorNotOpen = static_cast<int>(0x80e70025);
 constexpr std::uint64_t LibraryVersion = 0x1020000214072421;
 constexpr std::uint64_t RegisterUserDataVersion = 0x1017000014043000;
 
@@ -143,9 +145,16 @@ int APS5_VABI sceVisionManagerGetStoreCameraImgYPtr() {
 }
 
 int APS5_VABI sceVisionManagerGetWorkingMemorySize(std::uint32_t* first, std::uint32_t* second, std::uint32_t* third) {
-    *first = 0;
-    *second = 0x1600000;
-    *third = 0x4200000;
+    if (first == nullptr || second == nullptr || third == nullptr) return ErrorInvalidArgument;
+    const std::uint32_t valFirst = 0;
+    const std::uint32_t valSecond = 0x1600000;
+    const std::uint32_t valThird = 0x4200000;
+    const int savedErrno = errno;
+    const bool copiedFirst = GuestCopyOut_nid_no_patch(first, &valFirst, sizeof(valFirst));
+    const bool copiedSecond = GuestCopyOut_nid_no_patch(second, &valSecond, sizeof(valSecond));
+    const bool copiedThird = GuestCopyOut_nid_no_patch(third, &valThird, sizeof(valThird));
+    errno = savedErrno;
+    if (!copiedFirst || !copiedSecond || !copiedThird) return ErrorInvalidArgument;
     return 0;
 }
 
@@ -168,23 +177,19 @@ int APS5_VABI sceVisionManagerRegistryClear() {
 }
 
 int APS5_VABI sceVisionManagerRequestCalibrateHmd() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotOpen;
 }
 
 int APS5_VABI sceVisionManagerRequestCalibrateStereoCamera() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotOpen;
 }
 
 int APS5_VABI sceVisionManagerRequestCalibrateTrackingLed() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotOpen;
 }
 
 int APS5_VABI sceVisionManagerRequestClose() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotOpen;
 }
 
 int APS5_VABI sceVisionManagerRequestFindFace() {
@@ -237,8 +242,7 @@ int APS5_VABI sceVisionManagerRequestPadTracking(void* context, const std::int32
 }
 
 int APS5_VABI sceVisionManagerRequestRecogUtility() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotOpen;
 }
 
 int APS5_VABI sceVisionManagerRequestRegisterUserInRegion() {
