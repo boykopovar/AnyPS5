@@ -18,6 +18,8 @@ int main() {
     Require(libkernel_sysUnknown_gJ5gpW45mU0_nid_no_patch() == 0, "gJ5gpW45mU0 returns 0");
     Require(libkernel_sysUnknown_N94a0T4F4_plus_U_nid_no_patch() == 0x8002004eu, "N94a0T4F4+U returns 0x8002004e zero-extended");
     Require(libkernel_sysUnknown_C49jelxiaVE_nid_no_patch() == 0x20018u, "C49jelxiaVE returns 0x20018");
+    Require(libkernel_sysUnknown_C49jelxiaVE_nid_no_patch() == 0x20018u, "a second C49jelxiaVE still returns 0x20018");
+    Require(libkernel_sysUnknown_N94a0T4F4_plus_U_nid_no_patch() == 0x8002004eu, "a second N94a0T4F4+U still returns 0x8002004e");
     Require(libkernel_sysUnknown_FR0odl35yQY_nid_no_patch() == 0, "FR0odl35yQY reads 0 before the flag is set");
     Require(libkernel_sysUnknown_1WXQlxMpnNA_nid_no_patch() == 0, "1WXQlxMpnNA returns 0");
     Require(libkernel_sysUnknown_FR0odl35yQY_nid_no_patch() == 1, "FR0odl35yQY reads 1 after 1WXQlxMpnNA");
