@@ -7,6 +7,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 using NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler;
 
@@ -24,11 +27,27 @@ static CrossOriginAccessControlCheckDisabler Garbage() {
     return object;
 }
 
+template <typename Function>
+static Function Exported(const char* name, Function linked) {
+#ifdef _WIN32
+    auto* symbol = reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("libSceNKWebKit.prx"), name));
+    if (!symbol) {
+        std::fprintf(stderr, "%s is not exported by libSceNKWebKit\n", name);
+        std::abort();
+    }
+    return reinterpret_cast<Function>(symbol);
+#else
+    (void)name;
+    return linked;
+#endif
+}
+#define ExportedFunction(name) Exported(#name, &name)
+
 static void RequireVtable(const CrossOriginAccessControlCheckDisabler& object) {
     Require(object.vptr != nullptr);
-    Require(object.vptr->completeDestructor == &_ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev);
-    Require(object.vptr->deletingDestructor == &_ZN7WebCore37CrossOriginAccessControlCheckDisablerD0Ev);
-    Require(object.vptr->crossOriginAccessControlCheckEnabled == &_ZNK7WebCore37CrossOriginAccessControlCheckDisabler36crossOriginAccessControlCheckEnabledEv);
+    Require(object.vptr->completeDestructor == ExportedFunction(_ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev));
+    Require(object.vptr->deletingDestructor == ExportedFunction(_ZN7WebCore37CrossOriginAccessControlCheckDisablerD0Ev));
+    Require(object.vptr->crossOriginAccessControlCheckEnabled == ExportedFunction(_ZNK7WebCore37CrossOriginAccessControlCheckDisabler36crossOriginAccessControlCheckEnabledEv));
 }
 
 static void TestSingleton() {
