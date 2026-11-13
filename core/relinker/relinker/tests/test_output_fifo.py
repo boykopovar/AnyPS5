@@ -22,11 +22,13 @@ def main():
             return subprocess.run([str(relinker), "--skip-sce-module", *flags, *options,
                                    str(source), str(output)], capture_output=True, text=True, timeout=5)
 
-        control = work / "control"
-        result = convert(control)
-        assert result.returncode == 0, result.stderr
-        expected = control.read_bytes()
+        controls = work / "control"
+        controls.mkdir()
         for name in ("regular", "symlink"):
+            control = controls / name
+            result = convert(control)
+            assert result.returncode == 0, result.stderr
+            expected = control.read_bytes()
             output = work / name
             target = work / (name + "-target") if name == "symlink" else output
             target.write_bytes(b"previous")

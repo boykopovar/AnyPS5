@@ -784,6 +784,82 @@ void InfoWaiters() {
     CHECK(sceUltWaitingQueueResourcePoolDestroy(&pool) == Ok);
 }
 
+void UnreadableNamesAndObjects() {
+    const auto* unreadable = reinterpret_cast<const char*>(0x10);
+    void* const unwritable = reinterpret_cast<void*>(0x10);
+    Object pool{};
+    Object mutex{};
+    Object named{};
+    Object condition{};
+    Object semaphore{};
+    Object rwlock{};
+    alignas(8) std::uint8_t dataPool[512]{};
+    alignas(8) std::uint8_t queue[512]{};
+    alignas(8) std::uint8_t runtime[4096]{};
+    alignas(8) std::uint8_t ulthread[512]{};
+    UltMutexInfo mutexInfo{};
+    UltWaitingQueueResourcePoolInfo poolInfo{};
+    UltQueueDataResourcePoolInfo dataPoolInfo{};
+    UltUlthreadRuntimeInfo runtimeInfo{};
+    UltUlthreadInfo threadInfo{};
+
+    errno = 71;
+    CHECK(sceUltWaitingQueueResourcePoolCreate(&pool, unreadable, 4, 4, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetWaitingQueueResourcePoolInfo(&pool, &poolInfo) == State);
+    CHECK(sceUltWaitingQueueResourcePoolCreate(unwritable, "pool", 4, 4, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetWaitingQueueResourcePoolInfo(unwritable, &poolInfo) == State);
+    CHECK(sceUltWaitingQueueResourcePoolCreate(&pool, "pool", 4, 4, nullptr, nullptr, 0) == Ok);
+
+    CHECK(sceUltMutexCreate(&mutex, unreadable, &pool, nullptr, 0) == Null);
+    CHECK(sceUltMutexCreate(unwritable, "mutex", &pool, nullptr, 0) == Null);
+    CHECK(sceUltGetMutexInfo(unwritable, &mutexInfo, nullptr, 0) == State);
+    CHECK(sceUltMutexCreate(&mutex, "mutex", &pool, nullptr, 0) == Ok);
+    CHECK(sceUltMutexCreate(&named, "a-mutex-name-longer-than-thirty-one-bytes", &pool, nullptr, 0) == Ok);
+    CHECK(sceUltGetMutexInfo(&named, &mutexInfo, nullptr, 0) == Ok);
+    CHECK(std::strcmp(mutexInfo.name, "a-mutex-name-longer-than-thirty") == 0);
+
+    CHECK(sceUltConditionVariableCreate(&condition, unreadable, &mutex, nullptr, 0) == Null);
+    CHECK(sceUltConditionVariableCreate(&condition, "condition", &mutex, nullptr, 0) == Ok);
+
+    CHECK(sceUltSemaphoreCreate(&semaphore, unreadable, 1, &pool, nullptr, 0) == Null);
+    CHECK(sceUltSemaphoreCreate(unwritable, "semaphore", 1, &pool, nullptr, 0) == Null);
+    CHECK(sceUltSemaphoreCreate(&semaphore, "semaphore", 1, &pool, nullptr, 0) == Ok);
+
+    CHECK(sceUltReaderWriterLockCreate(&rwlock, unreadable, &pool, nullptr, 0) == Null);
+    CHECK(sceUltReaderWriterLockCreate(unwritable, "rwlock", &pool, nullptr, 0) == Null);
+    CHECK(sceUltReaderWriterLockCreate(&rwlock, "rwlock", &pool, nullptr, 0) == Ok);
+
+    CHECK(sceUltQueueDataResourcePoolCreate(dataPool, unreadable, 8, 64, 1, &pool, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltQueueDataResourcePoolCreate(unwritable, "data", 8, 64, 1, &pool, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetQueueDataResourcePoolInfo(unwritable, &dataPoolInfo) == State);
+    CHECK(sceUltQueueDataResourcePoolCreate(dataPool, "data", 8, 64, 1, &pool, nullptr, nullptr, 0) == Ok);
+
+    CHECK(sceUltQueueCreate(queue, unreadable, 64, &pool, dataPool, nullptr, 0) == Null);
+    CHECK(sceUltQueueCreate(unwritable, "queue", 64, &pool, dataPool, nullptr, 0) == Null);
+    CHECK(sceUltQueueCreate(queue, "queue", 64, &pool, dataPool, nullptr, 0) == Ok);
+
+    CHECK(sceUltUlthreadRuntimeCreate(runtime, unreadable, 2, 1, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltUlthreadRuntimeCreate(unwritable, "runtime", 2, 1, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetUlthreadRuntimeInfo(unwritable, &runtimeInfo, nullptr, 0, nullptr, 0) == State);
+    CHECK(sceUltUlthreadRuntimeCreate(runtime, "runtime", 2, 1, nullptr, nullptr, 0) == Ok);
+
+    CHECK(sceUltUlthreadCreate(ulthread, unreadable, ExitingEntry, 0, nullptr, 0, runtime, nullptr, 0) == Null);
+    CHECK(sceUltGetUlthreadInfo(ulthread, &threadInfo) == State);
+    CHECK(sceUltUlthreadCreate(unwritable, "ulthread", ExitingEntry, 0, nullptr, 0, runtime, nullptr, 0) == Null);
+    CHECK(sceUltGetUlthreadInfo(unwritable, &threadInfo) == State);
+    CHECK(errno == 71);
+
+    CHECK(sceUltUlthreadRuntimeDestroy(runtime) == Ok);
+    CHECK(sceUltQueueDestroy(queue) == Ok);
+    CHECK(sceUltQueueDataResourcePoolDestroy(dataPool) == Ok);
+    CHECK(sceUltReaderWriterLockDestroy(&rwlock) == Ok);
+    CHECK(sceUltSemaphoreDestroy(&semaphore) == Ok);
+    CHECK(sceUltConditionVariableDestroy(&condition) == Ok);
+    CHECK(sceUltMutexDestroy(&named) == Ok);
+    CHECK(sceUltMutexDestroy(&mutex) == Ok);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(&pool) == Ok);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -804,6 +880,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "get-info") == 0) GetInfoTests();
     else if (std::strcmp(argv[1], "queue-waiters") == 0) QueueWaiters();
     else if (std::strcmp(argv[1], "info-waiters") == 0) InfoWaiters();
+    else if (std::strcmp(argv[1], "guest-pointers") == 0) UnreadableNamesAndObjects();
     else return 2;
     CHECK(sceUltFinalize() == Ok);
     std::puts("ULT sync tests passed");
