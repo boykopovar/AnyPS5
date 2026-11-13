@@ -1,7 +1,9 @@
 #include "FreeTypeFontFixture.hpp"
+#include "FontFixture.hpp"
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_MULTIPLE_MASTERS_H
 #include FT_OUTLINE_H
 #include FT_STROKER_H
 #include FT_TRIGONOMETRY_H
@@ -38,6 +40,14 @@ struct Exports {
     decltype(&FT_Outline_Decompose_nid_postfix) decompose;
     decltype(&FT_Outline_Get_Bitmap_nid_postfix) outlineBitmap;
 };
+
+using SetCoordinates = decltype(&FT_Set_Var_Design_Coordinates_nid_postfix);
+struct VariationExports {
+    SetCoordinates mmBlend;
+    SetCoordinates mmDesign;
+    SetCoordinates varBlend;
+    SetCoordinates varDesign;
+} variations;
 
 struct StrokerExports {
     decltype(&FT_Init_FreeType_nid_postfix) init;
@@ -280,6 +290,31 @@ void Glyphs() {
     Require(forwarded.finish(library) == 0 && FT_Done_FreeType(native) == 0, "release glyph libraries");
 }
 
+void Variations() {
+    const auto fvar = FontFixture::Words({1, 0, 16, 2, 1, 20, 0, 8, 0x7767, 0x6874, 0x0064, 0, 0x0190, 0, 0x0384, 0, 0, 256});
+    const auto gvar = FontFixture::Words({1, 0, 1, 0, 0, 0, 3, 0, 0, 28, 0, 0, 0, 0});
+    const auto bytes = FontFixture::BuildFont(3, {{"fvar", fvar}, {"gvar", gvar}});
+    FreeType::GuestLibrary* library = nullptr;
+    FreeType::GuestFaceRec* face = nullptr;
+    Require(forwarded.init(&library) == 0, "initialize variation library");
+    Require(forwarded.newMemoryFace(library, bytes.data(), bytes.size(), 0, &face) == 0, "open variable face");
+    std::int64_t design = 650 * 65536;
+    std::int64_t blend = 32768;
+    Require(variations.varDesign(face, 1, &design) == 0 && (face->face_flags & FT_FACE_FLAG_VARIATION), "apply design coordinates");
+    Require(variations.varBlend(face, 1, &blend) == 0, "apply blend coordinates");
+    Require(variations.varDesign(face, 0, nullptr) == 0 && !(face->face_flags & FT_FACE_FLAG_VARIATION), "reset design coordinates");
+    FT_Library native = nullptr;
+    FT_Face oracle = nullptr;
+    Require(FT_Init_FreeType(&native) == 0, "initialize native variation library");
+    Require(FT_New_Memory_Face(native, bytes.data(), bytes.size(), 0, &oracle) == 0, "open native variable face");
+    FT_Long nativeDesign = design;
+    Require(variations.mmDesign(face, 1, &design) == FT_Set_MM_Design_Coordinates(oracle, 1, &nativeDesign), "MM design result");
+    FT_Fixed nativeBlend = blend;
+    Require(variations.mmBlend(face, 1, &blend) == FT_Set_MM_Blend_Coordinates(oracle, 1, &nativeBlend), "MM blend result");
+    Require(FT_Done_Face(oracle) == 0 && FT_Done_FreeType(native) == 0, "release native variation face and library");
+    Require(forwarded.doneFace(face) == 0 && forwarded.finish(library) == 0, "release variation face and library");
+}
+
 using Events = std::vector<std::array<std::int64_t, 7>>;
 
 int Add(void* user, int kind, GuestVector first, GuestVector second = {}, GuestVector third = {}) {
@@ -453,6 +488,12 @@ int main(int argc, char** argv) {
 #endif
     Require(ot.outlineBitmap(nullptr, nullptr, nullptr) == FT_Outline_Get_Bitmap(nullptr, nullptr, nullptr),
             "outline bitmap without library");
+    Resolve(variations.mmBlend, library, patched, "zetC8Tp1S8w", "sceFreeTypeOtSetMMBlendCoordinates_nid_no_patch");
+    Resolve(variations.mmDesign, library, patched, "DAmwG6U7YIc", "sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch");
+    Resolve(variations.varBlend, library, patched, "ihIHD8BTNxI", "sceFreeTypeOtSetVarBlendCoordinates_nid_no_patch");
+    Resolve(variations.varDesign, library, patched, "yCEJIsjIOO8", "sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch");
+    for (auto setter : {variations.mmBlend, variations.mmDesign, variations.varBlend, variations.varDesign})
+        Require(setter(nullptr, 0, nullptr) == FT_Err_Invalid_Face_Handle, "reject missing variation face");
 #ifdef _WIN32
     const bool forwards = patched;
     void* dependency = GetModuleHandleA("libSceFreeType.prx");
@@ -486,6 +527,7 @@ int main(int argc, char** argv) {
         Libraries();
         Reallocations();
         Glyphs();
+        Variations();
     }
     Resolve(ot.sin, library, patched, "L1uHkWTazkI", "FT_Sin_nid_postfix");
     Resolve(ot.tan, library, patched, "dojyaLKzKN0", "FT_Tan_nid_postfix");
