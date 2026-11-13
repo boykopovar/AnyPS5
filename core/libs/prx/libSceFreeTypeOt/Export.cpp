@@ -225,12 +225,6 @@ int APS5_VABI sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch() {
 }
 APS5_EXPORT("DAmwG6U7YIc", sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtSetRenderer_nid_no_patch(FreeType::GuestLibrary* library, void* renderer, std::uint32_t count,
-                                                   const FreeType::GuestParameter* parameters) {
-    return FT_Set_Renderer_nid_postfix(library, renderer, count, parameters);
-}
-APS5_EXPORT("Yu9oXRVmTTo", sceFreeTypeOtSetRenderer_nid_no_patch);
-
 int APS5_VABI sceFreeTypeOtSetVarBlendCoordinates_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

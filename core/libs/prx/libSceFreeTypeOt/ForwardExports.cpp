@@ -421,6 +421,12 @@ int APS5_VABI FT_Stroker_CubicToForward_nid_no_patch(void* stroker, const FreeTy
 }
 APS5_EXPORT("6+yXRlVrjbc", FT_Stroker_CubicToForward_nid_no_patch);
 
+int APS5_VABI sceFreeTypeOtSetRenderer_nid_no_patch(FreeType::GuestLibrary* library, void* renderer, std::uint32_t count,
+                                                   const FreeType::GuestParameter* parameters) {
+    return FT_Set_Renderer_nid_postfix(library, renderer, count, parameters);
+}
+APS5_EXPORT("Yu9oXRVmTTo", sceFreeTypeOtSetRenderer_nid_no_patch);
+
 }
 
 #endif
