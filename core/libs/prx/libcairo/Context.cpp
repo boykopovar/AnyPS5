@@ -245,6 +245,10 @@ void AppendLine(ContextStorage* state, double x, double y) {
 
 } // namespace
 
+int CairoContextStatus(CairoContext* context) {
+    return context ? State(context)->status : kNullPointer;
+}
+
 extern "C" {
 
 CairoContext* APS5_VABI cairo_create(CairoSurface* target) {
@@ -568,6 +572,8 @@ void APS5_VABI cairo_new_path(CairoContext* context) {
     if (!state) return;
     if (state->path) state->path->clear();
     state->hasCurrent = false;
+    state->currentX = state->currentY = 0;
+    state->startX = state->startY = 0;
 }
 
 void APS5_VABI cairo_new_sub_path(CairoContext* context) {
@@ -599,11 +605,18 @@ void APS5_VABI cairo_curve_to(CairoContext* context, double x1, double y1,
     DevicePoint(state, x1, y1);
     DevicePoint(state, x2, y2);
     DevicePoint(state, x3, y3);
-    if (!state->hasCurrent && !AppendMove(state, x1, y1)) return;
-    if (state->currentX == x1 && state->currentY == y1 &&
-        x1 == x2 && y1 == y2 && x2 == x3 && y2 == y3) {
+    if (state->currentX == x3 && state->currentY == y3 &&
+        x1 == x3 && y1 == y3 && x2 == x3 && y2 == y3) {
         AppendLine(state, x3, y3);
         return;
+    }
+    if (!state->hasCurrent && !AppendMove(state, x1, y1)) return;
+    if (state->path && state->path->size() >= 2 && state->path->back().type == 1) {
+        const auto& previous = state->path->back();
+        const auto& earlier = (*state->path)[state->path->size() - 2];
+        const int endpoint = earlier.type == 2 ? 4 : 0;
+        if (earlier.points[endpoint] == previous.points[0] && earlier.points[endpoint + 1] == previous.points[1])
+            state->path->pop_back();
     }
     PathEntry command{};
     command.type = 2;

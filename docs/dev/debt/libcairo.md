@@ -34,6 +34,8 @@
 
 - [Glyph.cpp](../../../core/libs/prx/libcairo/Glyph.cpp) implements `cairo_glyph_free` for null, which Cairo ignores. No export here allocates glyph arrays yet, and `cairo_glyph_allocate` is not in the catalogue, so a non-null array comes from outside this library and still throws through `NotImplemented_nid_no_patch` instead of reaching `free`. Freeing must follow the allocator once `cairo_scaled_font_text_to_glyphs` returns arrays. Unverified on a console.
 
+- [Arcs](../../../core/libs/prx/libcairo/Arc.cpp) port Cairo 1.18.0 `cairo-arc.c`: angles are normalized as `cairo_arc` and `cairo_arc_negative` do, arcs over pi are split, the segment count comes from the CTM major axis at the default 0.1 tolerance, since the catalogue has no `cairo_set_tolerance`, and a radius of zero or less adds the centre twice. `cairo_curve_to` now follows `_cairo_path_fixed_curve_to`: a curve that does not move from the last point becomes a line, also when that point is the one before `cairo_new_sub_path` or the origin after `cairo_new_path`, and a preceding degenerate line is dropped, which the start of an arc produces. Rotated and non-dyadic scaled CTMs can differ from Cairo in the last bits, and the PS5 library revision is unmeasured.
+
 ### Callable exports
 
 - [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - The remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
@@ -45,7 +47,6 @@
 | `cairo_set_font_options` | `-aqFIBn0h78` |
 | `cairo_font_face_set_user_data` | `1GGpdjyZslI` |
 | `cairo_stroke_extents` | `1K5ly63m6fo` |
-| `cairo_arc_negative` | `2w5H3b3yPqw` |
 | `cairo_ft_scaled_font_lock_face` | `4gDTaBZH8lo` |
 | `cairo_glyph_path` | `54HrgUIQHOk` |
 | `cairo_set_source_rgb` | `6DvK+OdIPW4` |
@@ -74,7 +75,6 @@
 | `cairo_mesh_pattern_set_corner_color_rgba` | `P+Hm5enx01Y` |
 | `cairo_clip` | `PkGZZi1G2Gw` |
 | `cairo_pattern_create_for_surface` | `Q6xyruheFCE` |
-| `cairo_arc` | `R0TePTSHd2k` |
 | `cairo_stroke_preserve` | `RzM4ZhlKzPg` |
 | `cairo_ft_scaled_font_unlock_face` | `SJMLSxaYvWU` |
 | `cairo_mesh_pattern_move_to` | `T0JOV6EajrA` |
