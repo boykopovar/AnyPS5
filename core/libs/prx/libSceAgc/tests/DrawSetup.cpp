@@ -70,7 +70,8 @@ void testDrawIndirect() {
     Storage storage;
     const auto* packet = sceAgcDcbDrawIndirect(&storage.buffer, 0x40, 0);
     expectPacket(storage, packet, storage.words.data(), std::array<std::uint32_t, 5>{0xc0032400u, 0x40, 0x280, 0x280, 2}, sceAgcDcbDrawIndirectGetSize(), "DRAW_INDIRECT packet mismatch");
-    expectFailure(storage, [&] { sceAgcDcbDrawIndirect(&storage.buffer, 2, 0); }, "a misaligned indirect argument offset was accepted");
+    const auto* unaligned = sceAgcDcbDrawIndirect(&storage.buffer, 2, 0);
+    check(unaligned == packet + 5 && unaligned[1] == 2, "an unaligned indirect argument offset was not encoded as the console does");
 }
 
 }
