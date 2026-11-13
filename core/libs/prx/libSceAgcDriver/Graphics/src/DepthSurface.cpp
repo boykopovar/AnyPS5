@@ -4,11 +4,14 @@
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/PrimedSharedMutex.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuardSpans.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -226,6 +229,40 @@ std::atomic<bool>& anyDepthGuard() {
     return any;
 }
 
+std::atomic<std::uint64_t>& depthGuardGeneration() {
+    static std::atomic<std::uint64_t> generation{0};
+    return generation;
+}
+
+void publishDepthGuards(bool changed) {
+    if (changed) depthGuardGeneration().fetch_add(1, std::memory_order_release);
+    anyDepthGuard().store(!depthGuards().empty(), std::memory_order_release);
+}
+
+bool mayOverlapDepthGuard(std::uint64_t address, std::uint64_t bytes) {
+    if (RuntimeSwitches::Set(RuntimeSwitch::NoGuardSpans)) return true;
+    struct SpansStorage {};
+    auto& spans = HostThreadLocal<GuardSpans, SpansStorage>();
+    if (spans.Generation() != depthGuardGeneration().load(std::memory_order_acquire)) {
+        std::shared_lock lock(depthGuardMutex());
+        spans.Fill(depthGuardGeneration().load(std::memory_order_relaxed), depthGuards());
+        NoteGuardSpans(GuardSpanEvent::Refill);
+    }
+    if (spans.Overlaps(address, bytes)) {
+        NoteGuardSpans(GuardSpanEvent::Overlap);
+        return true;
+    }
+    NoteGuardSpans(GuardSpanEvent::Clear);
+    if (!VerifyGuardSpans()) return false;
+    std::shared_lock lock(depthGuardMutex());
+    const bool overlapped = std::ranges::any_of(depthGuards(), [&](const auto& range) { return address < range.address + range.bytes && range.address < address + bytes; });
+    const auto generation = depthGuardGeneration().load(std::memory_order_relaxed);
+    if (overlapped && generation != spans.Generation()) spans.Fill(generation, depthGuards());
+    if (overlapped && !spans.Overlaps(address, bytes)) ReportGuardSpanMiss("depth", address, bytes);
+    else NoteGuardSpans(GuardSpanEvent::Verified);
+    return overlapped;
+}
+
 std::atomic<std::uint32_t>& pendingOverwriteProofs() {
     static std::atomic<std::uint32_t> count{0u};
     return count;
@@ -242,6 +279,7 @@ struct DepthSamplingState {
     std::optional<MultisampleColorAlias> depthAlias;
     bool unevenPlanes = false;
     std::optional<std::uint8_t> overwriteStencil;
+    std::optional<MultisampleColorAlias> stencilAlias;
 
     void Refuse(const char* reason) {
         if (refusal.empty()) refusal = reason;
@@ -257,11 +295,22 @@ std::optional<MultisampleColorAlias> soleDepthAlias(const GuestMemory::Unchanged
     return aliases.front();
 }
 
+bool sameAliasValue(const MultisampleColorAlias& recorded, const MultisampleColorAlias& current) {
+    return recorded.value.has_value() == current.value.has_value() && (!recorded.value || std::memcmp(&*recorded.value, &*current.value, sizeof(VkClearColorValue)) == 0);
+}
+
+bool unchangedAlias(const MultisampleColorAlias& recorded, const GuestMemory::UnchangedQuery& plane) {
+    const auto aliases = MultisampleColorTargetsOver(plane.address, plane.bytes);
+    if (aliases.size() != 1u) return false;
+    const auto& current = aliases.front();
+    return current.active == recorded.active && current.contents == recorded.contents && current.newest == recorded.newest && current.fills == recorded.fills && sameAliasValue(recorded, current);
+}
+
 bool sameDepthAlias(const MultisampleColorAlias& recorded, const GuestMemory::UnchangedQuery& plane) {
     const auto aliases = MultisampleColorTargetsOver(plane.address, plane.bytes);
     if (aliases.size() != 1u) return false;
     const auto& current = aliases.front();
-    const auto sameValue = recorded.value.has_value() == current.value.has_value() && (!recorded.value || std::memcmp(&*recorded.value, &*current.value, sizeof(VkClearColorValue)) == 0);
+    const auto sameValue = sameAliasValue(recorded, current);
     const bool refilled = recorded.newest == MultisampleColorContent::Clear && current.newest == MultisampleColorContent::Fill && current.fills > recorded.fills && current.fills - recorded.fills == current.sameRun && current.filledBytes >= current.bytes;
     return current.active == recorded.active && current.contents == recorded.contents && (current.newest == recorded.newest || refilled) && (current.fills == recorded.fills || refilled) && sameValue;
 }
@@ -444,7 +493,10 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
             return refuse(index == 2u ? stencilAliasRefusal : depthAliasRefusal);
         }
         if (depthValue) state.aliasDepth = *depthValue;
-        else state.aliasStencil = *stencilValue;
+        else {
+            state.aliasStencil = *stencilValue;
+            state.stencilAlias = *alias;
+        }
     }
     const auto& htile = state.initial[1];
     for (auto& range : state.initial) {
@@ -745,6 +797,7 @@ public:
             const bool stencilRange = index == 2u || (index == 1u && uniform);
             if (!kept) reportAlias(*alias, range, stencilRange ? "stencil plane" : index == 1u ? "HTILE" : "depth");
             Require(kept, stencilRange ? stencilAliasRefusal : depthAliasRefusal);
+            if (index == 2u && stencilClearGeneration != 0u) sampling.stencilAlias = *alias;
             if (stencilValue) stencilPlaneAliased = true;
         }
         if (stencilClearGeneration != 0u) {
@@ -1037,7 +1090,7 @@ public:
         {
             std::unique_lock guardLock(depthGuardMutex());
             for (const auto& range : sampling.initial) depthGuards().push_back({context.device, range.address, range.bytes, active, {{range.address, range.bytes, 0u}}, hostWritten, hostEverWritten});
-            anyDepthGuard().store(true, std::memory_order_release);
+            publishDepthGuards(true);
         }
         InstallResidentImageReadGuard_nid_no_patch();
         samplingActive = true;
@@ -2587,10 +2640,14 @@ void DepthSurface::PublishToGuest() {
             live[index] = found->live;
         }
     }
-    for (const auto& parts : live) {
-        for (const auto& part : parts) {
+    const auto supersedes = [&] {
+        return std::array{sampling.depthAlias && unchangedAlias(*sampling.depthAlias, sampling.initial[0]), false, sampling.stencilAlias && unchangedAlias(*sampling.stencilAlias, sampling.initial[2])};
+    };
+    const auto superseded = supersedes();
+    for (std::size_t index = 0u; index < live.size(); ++index) {
+        for (const auto& part : live[index]) {
             Require(GuestMemory::Accessible(reinterpret_cast<const void*>(part.address), part.bytes, true) && GuestMemory::Watched(part.address, part.bytes), "native multisample depth publication requires watched accessible guest memory");
-            Require(!MultisampleColorTargetOver(part.address, part.bytes), "native multisample depth publication over a resident colour target is not implemented");
+            Require(superseded[index] || !MultisampleColorTargetOver(part.address, part.bytes), "native multisample depth publication over a resident colour target is not implemented");
             const std::pair<std::uint64_t, std::uint64_t> range{part.address, part.address + part.bytes};
             Require(!StorageTexture::AnyPendingUnitsOverlap(std::span(&range, 1u)), "native multisample depth publication over pending storage image writes is not implemented");
         }
@@ -2658,6 +2715,7 @@ void DepthSurface::PublishToGuest() {
     for (const auto& range : observed) Require(GuestMemory::UnchangedSinceCollected(range.address, range.bytes, range.generation), "guest writes raced native multisample depth publication");
     Require(GuestMemory::UnchangedSinceAll(observed), "guest writes raced native multisample depth publication");
     Require(active->load(std::memory_order_acquire) && !clearPending && clearGeneration == 0u && stencilClearGeneration == 0u && pendingClear == 0u, "native multisample depth ownership changed during publication");
+    Require(supersedes() == superseded, "native multisample depth publication over a resident colour target is not implemented");
     publicationFailed = true;
     if (const auto hook = depthPublicationHook.load(std::memory_order_acquire)) hook(DepthPublicationStage::BeforeCommit);
     auto seen = observed.begin();
@@ -2681,6 +2739,8 @@ void DepthSurface::PublishToGuest() {
     }
     hostWritten->store(false, std::memory_order_release);
     publication.clear();
+    if (superseded[0]) RetireMultisampleColorTarget(sampling.depthAlias->active);
+    if (superseded[2]) RetireMultisampleColorTarget(sampling.stencilAlias->active);
 }
 
 void publishWrittenDepth(std::span<const std::shared_ptr<std::atomic<bool>>> written) {
@@ -2739,6 +2799,7 @@ bool RoutesToNativeDepthOwner(const DepthTarget& target) {
     if (target.samples != 1u) return true;
     if (target.htileAddress == 0 || !anyDepthGuard().load(std::memory_order_acquire)) return false;
     const auto bytes = static_cast<std::uint64_t>(HtileMetadataBytes(target.extent));
+    if (!mayOverlapDepthGuard(target.htileAddress, bytes)) return false;
     std::shared_lock lock(depthGuardMutex());
     return std::ranges::any_of(depthGuards(), [&](const auto& range) { return range.active->load(std::memory_order_acquire) && target.htileAddress < range.address + range.bytes && range.address < target.htileAddress + bytes; });
 }
@@ -3151,6 +3212,7 @@ void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t 
     if (bytes != 0u && pendingOverwriteProofs().load(std::memory_order_acquire) != 0u && allowPublication && !HoldsMultisampleTargetsLock()) proveOverwrittenPlanes(address, bytes);
     if (bytes == 0u || !anyDepthGuard().load(std::memory_order_acquire)) return;
     Require(address <= std::numeric_limits<std::uint64_t>::max() - bytes, "native depth read range overflows");
+    if (!mayOverlapDepthGuard(address, bytes)) return;
     const auto overlaps = [&](const DepthGuard& range) { return address < range.address + range.bytes && range.address < address + bytes; };
     if (htileClear.has_value() && htileClear->second <= std::numeric_limits<std::uint64_t>::max() - htileClear->first && htileClear->first <= address && bytes <= htileClear->second && address - htileClear->first <= htileClear->second - bytes) {
         std::lock_guard lock(surfacesMutex());
@@ -3185,8 +3247,8 @@ void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t 
     for (const auto& range : depthGuards()) {
         if (overlaps(range) && !range.hostEverWritten->load(std::memory_order_acquire)) range.active->store(false, std::memory_order_release);
     }
-    std::erase_if(depthGuards(), [](const auto& range) { return !range.active->load(std::memory_order_acquire); });
-    anyDepthGuard().store(!depthGuards().empty(), std::memory_order_release);
+    const auto removed = std::erase_if(depthGuards(), [](const auto& range) { return !range.active->load(std::memory_order_acquire); });
+    publishDepthGuards(removed != 0);
 }
 
 void AppendHostWrittenDepthRanges(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
@@ -3252,8 +3314,8 @@ void RetireUnmappedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes)
     for (const auto& range : depthGuards()) {
         if (std::ranges::all_of(depthGuards(), [&](const auto& part) { return part.active != range.active || part.live.empty(); })) range.active->store(false, std::memory_order_release);
     }
-    std::erase_if(depthGuards(), [](const auto& range) { return !range.active->load(std::memory_order_acquire); });
-    anyDepthGuard().store(!depthGuards().empty(), std::memory_order_release);
+    const auto removed = std::erase_if(depthGuards(), [](const auto& range) { return !range.active->load(std::memory_order_acquire); });
+    publishDepthGuards(removed != 0);
 }
 
 bool SampleLocationsCompatibleDepth(const Context& context, VkFormat format, std::uint32_t samples) {
@@ -3292,12 +3354,22 @@ float HostDepthBiasConstant(const Context& context, VkFormat format, float const
     return constant * 256.0f;
 }
 
+namespace {
+
+bool resident(std::uint64_t address, std::uint64_t bytes) {
+    return GuestMemory::DescribeCommitted(address, static_cast<std::size_t>(bytes)).whole;
+}
+
+}
+
 VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested) {
     return DepthSurfaceViewWithStencilWriteIntent(context, target, depthWritten, stencilTested, true);
 }
 
 VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested, bool stencilWritten, std::optional<std::uint8_t> overwrittenStencil) {
     const auto planeBytes = [&](std::uint32_t bytesPerTexel) { return target.samples == 1u ? DepthSliceBytes(target.extent, bytesPerTexel) : MultisampledDepthBytes_nid_no_patch(target.extent, bytesPerTexel, target.samples); };
+    if (target.depthPartiallyResident) Require(resident(target.address, planeBytes(target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT ? 2u : 4u)) && (target.htileAddress == 0u || resident(target.htileAddress, HtileMetadataBytes(target.extent))), "partially resident depth (DB_Z_INFO) with pages that are not mapped is unsupported");
+    if (target.stencilPartiallyResident) Require(resident(target.stencilAddress, planeBytes(1u)), "partially resident stencil (DB_STENCIL_INFO) with pages that are not mapped is unsupported");
     ClaimMultisampleTargetMemory(target.address, planeBytes(target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT ? 2u : 4u));
     if (target.stencilAddress != 0u) ClaimMultisampleTargetMemory(target.stencilAddress, planeBytes(1u));
     if (target.htileAddress != 0u) ClaimMultisampleTargetMemory(target.htileAddress, HtileMetadataBytes(target.extent));
@@ -3351,7 +3423,7 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
         if (target.samples != 1u && fresh.sampleable && fresh.sampling.refusal.empty()) {
             std::unique_lock guardLock(depthGuardMutex());
             for (const auto& range : fresh.sampling.initial) depthGuards().push_back({context.device, range.address, range.bytes, fresh.active, {{range.address, range.bytes, 0u}}, fresh.hostWritten, fresh.hostEverWritten});
-            anyDepthGuard().store(true, std::memory_order_release);
+            publishDepthGuards(true);
             InstallResidentImageReadGuard_nid_no_patch();
             fresh.samplingActive = true;
         }
@@ -3800,8 +3872,8 @@ void ClearDepthSurfaces(VkDevice device) {
         std::erase_if(depthToStoragePasses(), [&](const auto& pass) { return pass->Device() == device; });
     }
     std::unique_lock guardLock(depthGuardMutex());
-    std::erase_if(depthGuards(), [&](const auto& range) { return range.device == device; });
-    anyDepthGuard().store(!depthGuards().empty(), std::memory_order_release);
+    const auto removed = std::erase_if(depthGuards(), [&](const auto& range) { return range.device == device; });
+    publishDepthGuards(removed != 0);
     UpdateResidentImageUnmapObserver_nid_no_patch();
 }
 

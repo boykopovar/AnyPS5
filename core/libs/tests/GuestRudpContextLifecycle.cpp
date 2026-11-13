@@ -50,7 +50,9 @@ static void CheckOptions(int context) {
             for (auto byte : buffer) Require(byte == 0xa5);
         }
         Require(sceRudpSetOption(context, option, nullptr, sizeof(result)) == invalidArgument);
+        Require(sceRudpSetOption(context, option, reinterpret_cast<const void*>(0x10), sizeof(result)) == invalidArgument);
         Require(sceRudpGetOption(context, option, nullptr, sizeof(result)) == invalidArgument);
+        Require(sceRudpGetOption(context, option, reinterpret_cast<void*>(0x10), sizeof(result)) == invalidArgument);
         Require(sceRudpGetOption(context, option, &result, sizeof(result)) == 0);
         Require(result == 0xffffffffu);
     }

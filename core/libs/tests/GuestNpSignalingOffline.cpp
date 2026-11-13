@@ -1,5 +1,6 @@
 #include "prx/libSceNpSignaling/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -107,6 +108,13 @@ int main() {
     Require(sceNpSignalingCreateContext(&latin, nullptr, nullptr, &context) == InvalidArgument, "sceNpSignalingCreateContext", "an online ID with a byte outside ASCII was taken");
     Require(context == -7, "sceNpSignalingCreateContext", "a refused call wrote the context id");
 
+    errno = 71;
+    Require(sceNpSignalingCreateContext(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)), nullptr, nullptr, &context) == InvalidArgument, "sceNpSignalingCreateContext", "an unreadable SignalingNpId was taken");
+    Require(errno == 71 && context == -7, "sceNpSignalingCreateContext", "errno was modified or a refused call wrote the id on an unreadable SignalingNpId");
+    errno = 71;
+    Require(sceNpSignalingCreateContext(&owner, nullptr, nullptr, reinterpret_cast<int*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument, "sceNpSignalingCreateContext", "an unwritable output was taken");
+    Require(errno == 71 && context == -7, "sceNpSignalingCreateContext", "errno was modified by a refused call with an unwritable output");
+
     Require(sceNpSignalingCreateContext(&owner, nullptr, nullptr, &context) == 0 && context == 1, "sceNpSignalingCreateContext", "the first context is not id 1");
     Require(sceNpSignalingActivateConnection(context, &upper, &connection) == SignedOut, "sceNpSignalingActivateConnection", "an online ID with upper-case letters and digits was refused");
     int created = 0;
@@ -186,6 +194,9 @@ int main() {
     NpSignalingAccountPlatformPair noPlatform{0x1234, 0, 0};
     Require(sceNpSignalingActivateConnectionA(context, nullptr, &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "a null peer was taken");
     Require(sceNpSignalingActivateConnectionA(context, &account, nullptr) == InvalidArgument, "sceNpSignalingActivateConnectionA", "a null output was taken");
+    errno = 71;
+    Require(sceNpSignalingActivateConnectionA(context, reinterpret_cast<const NpSignalingAccountPlatformPair*>(0x10), &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "unreadable peerAddr was taken");
+    Require(errno == 71, "sceNpSignalingActivateConnectionA", "errno was not preserved");
     Require(sceNpSignalingActivateConnectionA(99, &noAccount, &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "account id 0 was not refused before the context");
     Require(sceNpSignalingActivateConnectionA(99, &noPlatform, &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "platform 0 was not refused before the context");
     Require(sceNpSignalingActivateConnectionA(99, &account, &connection) == CtxNotFound, "sceNpSignalingActivateConnectionA", "an unknown context was taken");
@@ -213,6 +224,11 @@ int main() {
     Require(sceNpSignalingSetContextOption(context, 1, 0) == 0, "sceNpSignalingSetContextOption", "clearing the flag failed");
     Require(sceNpSignalingGetContextOption(context, 1, &option) == 0 && option == 0, "sceNpSignalingGetContextOption", "the cleared flag does not read 0");
     Require(sceNpSignalingSetContextOption(context, 1, 1) == 0, "sceNpSignalingSetContextOption", "setting the flag failed");
+
+    option = -7;
+    errno = 71;
+    Require(sceNpSignalingGetContextOption(context, 1, reinterpret_cast<int*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument, "sceNpSignalingGetContextOption", "an unwritable output was taken");
+    Require(errno == 71 && option == -7, "sceNpSignalingGetContextOption", "errno was modified by a refused call with an unwritable output");
 
     Require(sceNpSignalingCancelPeerNetInfo(99, 1) == CtxNotFound, "sceNpSignalingCancelPeerNetInfo", "an unknown context was taken");
     Require(sceNpSignalingCancelPeerNetInfo(context, 1) == ReqNotFound, "sceNpSignalingCancelPeerNetInfo", "a request that was never made was found");

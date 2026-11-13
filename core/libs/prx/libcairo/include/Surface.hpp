@@ -7,6 +7,7 @@ struct CairoUserDataKey {
     int unused;
 };
 using CairoDestroyFunc = void (APS5_VABI *)(void*);
+using CairoWriteFunc = int (APS5_VABI *)(void*, const unsigned char*, unsigned int);
 
 // Internal C++ accessor for the immutable, shared Cairo error surfaces.
 CairoSurface* CairoSurfaceError(int status);
@@ -43,5 +44,6 @@ void APS5_VABI cairo_surface_set_device_scale(CairoSurface* surface, double x_sc
 int APS5_VABI cairo_surface_set_user_data(CairoSurface* surface, const CairoUserDataKey* key,
                                           void* data, CairoDestroyFunc destroy);
 int APS5_VABI cairo_surface_status(CairoSurface* surface);
+int APS5_VABI cairo_surface_write_to_png_stream(CairoSurface* surface, CairoWriteFunc write, void* closure);
 
 }
