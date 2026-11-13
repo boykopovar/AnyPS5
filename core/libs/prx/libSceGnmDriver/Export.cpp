@@ -533,10 +533,6 @@ bool APS5_VABI sceGnmDriverCaptureInProgress() {
     return false;
 }
 
-bool APS5_VABI sceGnmDriverTraceInProgress_nid_disambig1() {
-    return false;
-}
-
 int APS5_VABI sceGnmCreateWorkloadStream_nid_disambig1(std::uint64_t name, std::uint32_t* stream) {
     if (name == 0 || !stream) return 3;
     *stream = 1;
@@ -552,10 +548,6 @@ int APS5_VABI sceGnmBeginWorkload_nid_disambig1(std::uint32_t stream, std::uint6
 int APS5_VABI sceGnmEndWorkload_nid_disambig1(std::uint64_t workload) {
     if (workload == 0) return 2;
     return ((workload >> 56) & 0xff) > 0xf ? 2 : 0;
-}
-
-int APS5_VABI sceGnmGetOffChipTessellationBufferSize_nid_disambig1() {
-    return 0x800000;
 }
 
 int APS5_VABI sceGnmDriverTriggerCapture() {

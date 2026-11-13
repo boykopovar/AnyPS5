@@ -4,7 +4,7 @@
 
 - [sceGnmDriverTraceInProgress](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - returns false: a retail title has no driver trace session in progress, matching the existing Neo provider and shadPS4. Console behavior is unmeasured; this is a retail-only answer, not a host trace state.
 - [sceGnmAreSubmitsAllowed](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - returns 1: submissions are never suspended here, because nothing on the host takes the GPU away from the title. shadPS4 returns 0 only while its submission lock is held.
-- [sceGnmIsUserPaEnabled, sceGnmDriverCaptureInProgress, sceGnmDriverTraceInProgress, sceRazorIsLoaded](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - return false: the user performance analysis mode, GPU captures, driver traces and the Razor GPU profiler belong to development tools and are not present, as shadPS4 also answers for retail firmware. A title only skips its tool hooks on these answers.
+- [sceGnmIsUserPaEnabled, sceGnmDriverCaptureInProgress, sceRazorIsLoaded](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - return false: the user performance analysis mode, GPU captures, driver traces and the Razor GPU profiler belong to development tools and are not present, as shadPS4 also answers for retail firmware. A title only skips its tool hooks on these answers.
 
 ### Unknown function info
 

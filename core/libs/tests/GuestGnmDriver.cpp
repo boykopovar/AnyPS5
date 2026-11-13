@@ -85,8 +85,6 @@ void TestWriters() {
 }
 
 void TestWorkloads() {
-    check(!sceGnmDriverTraceInProgress_nid_disambig1(), "a driver trace is reported in progress");
-    check(sceGnmGetOffChipTessellationBufferSize_nid_disambig1() == 0x800000, "the off-chip tessellation buffer is not 8 MiB");
 
     const char name[] = "workloads";
     const auto nameAddress = reinterpret_cast<std::uint64_t>(name);
