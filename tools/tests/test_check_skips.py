@@ -355,6 +355,9 @@ class CheckSkipsTests(unittest.TestCase):
             f'<skipped/><system-out>[probe] skipped, flaky\nskipped, {reason}</system-out>',
             f'<skipped/><system-out>skipped, {reason}\n[probe] skipped, flaky</system-out>',
             f'<skipped message="{reason}"/><system-err>[probe] skipped, flaky</system-err>',
+            f'<skipped/><system-out>skipped, {reason}\n[probe] unexpected failure detail</system-out>',
+            f'<skipped/><system-out>[probe] unexpected failure detail\nskipped, {reason}</system-out>',
+            f'<skipped message="{reason}"/><system-err>[probe] unexpected failure detail</system-err>',
         )
         with tempfile.TemporaryDirectory() as directory:
             junit = Path(directory) / "junit.xml"
