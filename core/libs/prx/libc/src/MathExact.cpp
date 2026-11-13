@@ -352,7 +352,7 @@ short VersionedExp(TFloat* value, TFloat y, short scale, TScale scaleBits) {
         TFloat ratio = (even + odd) / (even - odd);
         ratio += ratio;
         result = ExpProduct(y, ratio);
-        --whole;
+        whole = static_cast<int>(static_cast<unsigned>(whole) - 1u);
     }
     *value = result;
     const short code = scaleBits(value, static_cast<std::int64_t>(static_cast<short>(whole)) + scale);

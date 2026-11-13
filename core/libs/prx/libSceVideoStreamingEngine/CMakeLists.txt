@@ -1,0 +1,15 @@
+add_library(libSceVideoStreamingEngine SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVideoStreamingEngine PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVideoStreamingEngine)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_video_streaming_engine_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoStreamingEngine.cpp)
+    target_include_directories(guest_video_streaming_engine_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_streaming_engine_tests PRIVATE libSceVideoStreamingEngine libc)
+    configure_windows_unwind(guest_video_streaming_engine_tests)
+    add_test(NAME guest_video_streaming_engine COMMAND guest_video_streaming_engine_tests)
+    if(WIN32)
+        set_tests_properties(guest_video_streaming_engine PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoStreamingEngine>")
+    endif()
+endif()
