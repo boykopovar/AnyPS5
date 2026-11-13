@@ -304,6 +304,7 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
     const auto mount = CopyMountPoint(mountPoint);
     if (!mount) return SCE_APP_CONTENT_ERROR_PARAMETER;
     if (!IsDownloadMountPoint(*mount)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
+    const int savedErrno = errno;
     std::uint64_t quotaKb = 0;
     if (std::strncmp(mount->data, DOWNLOAD_MOUNT_POINT, sizeof(mount->data)) == 0) {
         const std::uint64_t quotaMiB = GetAppDownloadDataSizeMiB_nid_postfix();
@@ -315,7 +316,6 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
         quotaKb = download2QuotaBytes.load() / 1024u;
     }
     const auto writeOut = [&](std::size_t value) {
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(availableSpaceKb, &value, sizeof(value));
         errno = savedErrno;
         return copied;
