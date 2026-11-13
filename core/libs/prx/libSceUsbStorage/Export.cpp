@@ -400,17 +400,30 @@ std::int32_t APS5_VABI sceUsbStorageGetDeviceInfo(std::uint32_t device, UsbStora
     return 0;
 }
 
+static bool CopyOut(void* destination, const void* source, std::size_t bytes) {
+    const int saved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = saved;
+    return ok;
+}
+
 std::int32_t APS5_VABI sceUsbStorageGetDeviceList(std::uint32_t* devices, std::int32_t* count) {
     if (devices == nullptr || count == nullptr) {
         return UsbStorage::InvalidArgument;
     }
     auto& service = State();
     std::lock_guard lock(service.mutex);
-    std::int32_t listed = 0;
+    std::vector<std::uint32_t> listedDevices;
     for (std::size_t slot = 0; slot < service.devices.size(); ++slot) {
-        if (service.devices[slot]) devices[listed++] = static_cast<std::uint32_t>(slot);
+        if (service.devices[slot]) listedDevices.push_back(static_cast<std::uint32_t>(slot));
     }
-    *count = listed;
+    if (!listedDevices.empty() && !CopyOut(devices, listedDevices.data(), listedDevices.size() * sizeof(std::uint32_t))) {
+        return UsbStorage::InvalidArgument;
+    }
+    const auto listed = static_cast<std::int32_t>(listedDevices.size());
+    if (!CopyOut(count, &listed, sizeof(listed))) {
+        return UsbStorage::InvalidArgument;
+    }
     return 0;
 }
 
@@ -493,10 +506,13 @@ std::int32_t APS5_VABI sceUsbStorageGetdentsOpen(std::uint32_t device, std::int3
     }
     if (error) throw std::runtime_error("sceUsbStorageGetdentsOpen: listing the device failed: " + error.message());
     if (service.nextDescriptor == std::numeric_limits<std::int32_t>::max()) throw std::runtime_error("sceUsbStorageGetdentsOpen: the descriptor numbers are exhausted");
-    const auto descriptor = service.nextDescriptor++;
+    const auto descriptor = service.nextDescriptor;
+    const auto size = GetdentsBufferSize;
+    if (!CopyOut(fd, &descriptor, sizeof(descriptor)) || !CopyOut(bufferSize, &size, sizeof(size))) {
+        return UsbStorage::InvalidArgument;
+    }
+    ++service.nextDescriptor;
     service.scans.emplace(descriptor, std::move(scan));
-    *fd = descriptor;
-    *bufferSize = GetdentsBufferSize;
     return 0;
 }
 
@@ -508,8 +524,8 @@ std::int32_t APS5_VABI sceUsbStorageGetdentsRead(std::int32_t fd, void* buffer, 
     std::lock_guard lock(service.mutex);
     const auto found = service.scans.find(fd);
     if (found == service.scans.end()) {
-        *bytesRead = 0;
-        return UsbStorage::NotSupported;
+        const std::uint64_t zero = 0;
+        return CopyOut(bytesRead, &zero, sizeof(zero)) ? UsbStorage::NotSupported : UsbStorage::InvalidArgument;
     }
     auto& scan = found->second;
     auto* const output = static_cast<std::uint8_t*>(buffer);
@@ -518,23 +534,27 @@ std::int32_t APS5_VABI sceUsbStorageGetdentsRead(std::int32_t fd, void* buffer, 
         const auto& entry = scan.entries[scan.next];
         const auto length = static_cast<std::uint16_t>((DirentHeaderSize + entry.name.size() + 1 + 7) & ~std::size_t{7});
         if (length > bufferSize - written) break;
-        auto* const record = output + written;
+        std::vector<std::uint8_t> record(length, 0);
         const auto fileNumber = static_cast<std::uint32_t>(scan.next + 1);
         const auto type = entry.directory ? DirectoryType : RegularType;
         const auto nameLength = static_cast<std::uint8_t>(entry.name.size());
-        std::memset(record, 0, length);
-        std::memcpy(record, &fileNumber, sizeof(fileNumber));
-        std::memcpy(record + 4, &length, sizeof(length));
-        std::memcpy(record + 6, &type, sizeof(type));
-        std::memcpy(record + 7, &nameLength, sizeof(nameLength));
-        std::memcpy(record + DirentHeaderSize, entry.name.data(), entry.name.size());
+        std::memcpy(record.data(), &fileNumber, sizeof(fileNumber));
+        std::memcpy(record.data() + 4, &length, sizeof(length));
+        std::memcpy(record.data() + 6, &type, sizeof(type));
+        std::memcpy(record.data() + 7, &nameLength, sizeof(nameLength));
+        std::memcpy(record.data() + DirentHeaderSize, entry.name.data(), entry.name.size());
+        if (!CopyOut(output + written, record.data(), length)) {
+            return UsbStorage::InvalidArgument;
+        }
         written += length;
         ++scan.next;
     }
     if (written == 0 && scan.next < scan.entries.size()) {
         throw std::runtime_error("sceUsbStorageGetdentsRead: a buffer smaller than the next entry is not implemented");
     }
-    *bytesRead = written;
+    if (!CopyOut(bytesRead, &written, sizeof(written))) {
+        return UsbStorage::InvalidArgument;
+    }
     return 0;
 }
 
