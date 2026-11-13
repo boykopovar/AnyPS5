@@ -40,6 +40,7 @@ RULES = {
 }
 
 CPP = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp"}
+ASSEMBLY = {".S", ".s", ".asm"}
 IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico", ".tga", ".dds"}
 NOTES = {".md", ".markdown", ".rst", ".log", ".patch", ".diff"}
 AGENT_FILES = {
@@ -59,14 +60,22 @@ DEBT_LABEL_TRAILER = re.compile(r"\bLabels:[ \t]*([^\n]*?)\.?[ \t]*$", re.M)
 
 CONVENTIONAL = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: \S")
 STRINGS = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+DIRECTIVE = re.compile(r"^[\s\ufeff]*#\s*(?:(?:if|ifdef|ifndef|elif|elifdef|elifndef|else|endif|define|undef|include|include_next|import|error|warning|pragma|line|ident|sccs|assert|unassert)\b|$)")
 ALLOWED_COMMENT = re.compile(r"^\s*(#\s*endif\b|}\s*;?\s*//\s*(end\s+)?namespace\b)")
+LICENSE_MARKER = re.compile(
+    r"SPDX-License-Identifier"
+    r"|Copyright\s*(?:\([cC]\)|©|\d{4})"
+    r"|Permission is hereby granted"
+    r"|Permission to use,? copy,? modify"
+    r"|Redistribution and use in source and binary forms",
+    re.I)
 CMAKE_TOKEN = re.compile(r'\[(=*)\[.*?\]\1\]|"(?:\\.|[^"\\])*"|(?P<comment>#\[(?P<level>=*)\[.*?\](?P=level)\]|#[^\n]*)|\\.', re.S)
 EXPORT = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 NID_SOURCES = r"APS5_EXPORT|APS5_VABI|_nid_postfix|ASM_FUNCTION"
 STUB_BODY = re.compile(r"^(?:\(void\)\s*\w+\s*;|static_cast<void>\(\s*\w+\s*\)\s*;)*"
                        r"(?:return\s*\(?\s*(?:-?(?:0x[0-9a-fA-F]+|\d+)[uUlL]*|nullptr|true|false|\w*_OK)?\s*\)?\s*;)?$")
-SYSTEM_DEPENDENCY = re.compile(r"\b(find_package\s*\((?!\s*(Python3|Threads|Git)\b)|pkg_check_modules\b|pkg_search_module\b|find_(library|path|program|file)\b)", re.I)
+SYSTEM_DEPENDENCY = re.compile(r"\b(find_package\s*\((?!\s*(Python3|Threads|Git|LLVM)\b)|pkg_check_modules\b|pkg_search_module\b|find_(library|path|program|file)\b)", re.I)
 TITLE = re.compile(r"\b(PPSA|CUSA)\d{5}\b")
 EXTENSION = re.compile(r"__attribute__|__declspec|#\s*pragma\s+(?!once\b)")
 INTEGER = r"(0[xX][0-9a-fA-F']+|0[bB][01']+|[0-9][0-9']*)[uUlLzZ]*"
@@ -77,7 +86,9 @@ LINKAGE = re.compile(r'\bextern\s*""\s*$')
 ALIGNMENT_LIMIT = 8192
 LINK = re.compile(r"\[[^\]]+\]\((<[^<>\r\n]*>|(?!<)[^)\s]+)")
 FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*\r?$|^ {0,3}(?:```|~~~).*\Z", re.S | re.M)
-INLINE = re.compile(r"`[^`\n]*`")
+BACKSLASH_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")
+BACKTICKS = re.compile(r"`+")
+INLINE = re.compile(BACKSLASH_ESCAPE.pattern + r"|`+")
 SECTION = re.compile(r"^###(?!#)\s*(.+?)\s*$", re.M)
 KEY = re.compile(r"^( *)([A-Za-z0-9_-]+|'[^']*'|\"[^\"]*\"):(?:\s+(.*?))?\s*$")
 
@@ -192,7 +203,7 @@ class Check:
             constants, starts = None, None
             for number, text in lines:
                 bare = masked[number - 1]
-                if ("//" in bare or "/*" in bare) and not ALLOWED_COMMENT.match(bare):
+                if ("//" in bare or "/*" in bare) and not ALLOWED_COMMENT.match(bare) and not license_run(source, expanded, number - 1):
                     self.report("comment", path, number)
                 if EXTENSION.search(bare):
                     self.report("extension", path, number, EXTENSION.search(bare).group(0))
@@ -294,6 +305,24 @@ class Check:
             for number, _ in lines:
                 bare = masked[number - 1]
                 if ("//" in bare or "/*" in bare) and not ALLOWED_COMMENT.match(bare):
+                    self.report("comment", path, number)
+
+    def assembly(self):
+        if any(is_debt(path) for path in self.status):
+            return
+        for path, lines in self.files(lambda p: p.suffix in ASSEMBLY):
+            preprocessed = PurePosixPath(path).suffix == ".S"
+            source = self.show(path).split("\n")
+            expanded = cpp_text("\n".join(source)).split("\n")
+            masked = cpp_text("\n".join(source), preserve_comments=True).split("\n")
+            directives = set()
+            for number, text in enumerate(masked, 1):
+                if preprocessed and (DIRECTIVE.match(text) or (number - 1 in directives and masked[number - 2].rstrip().endswith("\\"))):
+                    directives.add(number)
+            for number, _ in lines:
+                bare = masked[number - 1]
+                comment = "//" in bare or "/*" in bare or ("#" in bare and number not in directives)
+                if comment and not (preprocessed and ALLOWED_COMMENT.match(bare)) and not license_run(source, expanded, number - 1):
                     self.report("comment", path, number)
 
     def submodules(self):
@@ -463,12 +492,38 @@ def fenced_lines(text):
     return inside
 
 
+def link_syntax(text):
+    def blank(value):
+        return re.sub(r"[^\r\n]", " ", value)
+
+    text = FENCE.sub(lambda match: blank(match[0]), text)
+    parts = []
+    cursor = 0
+    while match := INLINE.search(text, cursor):
+        parts.append(text[cursor:match.start()])
+        token = match[0]
+        end = match.end()
+        if token.startswith("\\"):
+            parts.append("\0" * len(token))
+        else:
+            close = next((tick for tick in BACKTICKS.finditer(text, end) if tick[0] == token), None)
+            if close:
+                end = close.end()
+                parts.append(blank(text[match.start():end]))
+            else:
+                parts.append(token)
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 def links(path, text):
     result = []
-    text = INLINE.sub("code", FENCE.sub("", text))
-    for target in LINK.findall(text):
+    for match in LINK.finditer(link_syntax(text)):
+        target = text[match.start(1):match.end(1)]
         if target.startswith("<"):
             target = target[1:-1]
+        target = BACKSLASH_ESCAPE.sub(r"\1", target)
         if not target or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:|//|#", target):
             continue
         target = target.split("#", 1)[0].split("?", 1)[0]
@@ -689,6 +744,17 @@ def cpp_text(text, preserve_comments=False):
     return CPP_TOKEN.sub(lambda match: cpp_mask(match, preserve_comments), text)
 
 
+def license_run(source, expanded, index):
+    if expanded[index].strip():
+        return False
+    start = end = index
+    while start > 0 and not expanded[start - 1].strip() and source[start - 1].strip():
+        start -= 1
+    while end + 1 < len(expanded) and not expanded[end + 1].strip() and source[end + 1].strip():
+        end += 1
+    return bool(LICENSE_MARKER.search("\n".join(source[start:end + 1])))
+
+
 def cpp_pieces(text):
     end = 0
     for match in CPP_TOKEN.finditer(text):
@@ -866,6 +932,7 @@ if __name__ == "__main__":
     check.code()
     check.build()
     check.shaders()
+    check.assembly()
     check.repository()
     check.docs()
     check.debt_entries()

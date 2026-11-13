@@ -297,10 +297,11 @@ alignas(256) std::array<std::uint32_t, 65538> VertexSlots{};
 alignas(256) std::array<std::uint32_t, 60000> InstanceSlots{};
 alignas(256) std::array<std::uint32_t, 8> BufferTable{};
 alignas(256) constexpr std::array<std::uint16_t, 4> Indices{2, 0, 1, 0};
+alignas(256) constexpr std::array<std::uint16_t, 4> QuadIndices{0, 1, 2, 2};
 
-std::array<std::uint32_t, 4> SlotDescriptor(const void* data, std::uint32_t records) {
+std::array<std::uint32_t, 4> SlotDescriptor(const void* data, std::uint32_t records, std::uint32_t outOfBoundsSelect = 0u) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), records, 0x01014facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), records, 0x01014facu | (outOfBoundsSelect << 28u)};
 }
 
 std::array<std::uint32_t, 4> OutputDescriptor() {
@@ -383,7 +384,7 @@ public:
         return state;
     }
 
-    void Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool compactRestart = false) {
+    void Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool compactRestart = false, bool quadList = false) {
         const auto vertexPush = static_cast<std::uint32_t>(vertex.pushConstants.size());
         ShaderRecompiler::ShaderPixelStageInfo pixelInfo{};
         pixelInfo.wave32 = true;
@@ -401,7 +402,9 @@ public:
             state.primitiveRestart = true;
             AgcDriver::Graphics::Draw(context, state, draw, shaders);
         } else {
-            device->Draw(State(), draw, shaders);
+            auto state = State();
+            state.quadList = quadList;
+            device->Draw(state, draw, shaders);
         }
         device->WaitIdle();
     }
@@ -546,6 +549,25 @@ std::string Run(Fixture& fixture) {
         fixture.Place(baseVertex, bufferIndices, startInstance);
         fixture.Draw(vertex, draw);
         failures += fixture.Check("direct indexed draw, s16 1000, s17 40", bufferIndices, baseVertex, startInstance, true);
+    }
+    {
+        constexpr std::uint32_t baseVertex = 1000;
+        constexpr std::uint32_t startInstance = 40;
+        const std::string what = "direct indexed quad-list draw, s16 1000, s17 40, vertex descriptor of exactly the fetched records";
+        const auto wholeSlots = SlotDescriptor(VertexSlots.data(), static_cast<std::uint32_t>(VertexSlots.size()));
+        const auto exactSlots = SlotDescriptor(VertexSlots.data(), baseVertex + Vertices, 3u);
+        std::copy(exactSlots.begin(), exactSlots.end(), BufferTable.begin());
+        const auto userData = fixture.UserData(baseVertex, startInstance);
+        const auto vertex = fixture.Vertex(VertexCode, userData);
+        const auto draw = FoldedDraw(vertex, userData, {reinterpret_cast<std::uintptr_t>(QuadIndices.data()), static_cast<std::uint32_t>(QuadIndices.size()), 2, Instances, 0, true, 0, 0});
+        fixture.Place(baseVertex, autoIndices, startInstance);
+        try {
+            fixture.Draw(vertex, draw, false, true);
+            failures += fixture.Check(what, autoIndices, baseVertex, startInstance, true);
+        } catch (const std::exception& error) {
+            failures += what + ": rejected: " + error.what() + "\n";
+        }
+        std::copy(wholeSlots.begin(), wholeSlots.end(), BufferTable.begin());
     }
 
     const auto staleUserData = fixture.UserData(0x51u, 0x62u);

@@ -14,6 +14,7 @@ extern "C" {
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -137,6 +138,7 @@ struct Resampler {
 };
 
 struct Instance {
+    std::uint32_t context = 0;
     std::uint32_t codec = 0;
     std::uint64_t flags = 0;
     void* decoder = nullptr;
@@ -735,8 +737,13 @@ SidebandAt9CodecInfo At9CodecInfo(const Instance& instance) {
 void WriteRunSideband(const JobHeader& job, const Instance& instance, std::int32_t result, std::size_t consumed, std::size_t produced, std::uint32_t frames, const SidebandFormat& format) {
     auto* sideband = static_cast<std::uint8_t*>(job.sideband);
     std::size_t offset = 0;
+    bool stopped = false;
     const auto write = [&](const void* value, std::size_t size) {
-        if (!sideband || offset + size > job.sidebandSize) return;
+        if (stopped || !sideband) return;
+        if (offset + size > job.sidebandSize) {
+            stopped = true;
+            return;
+        }
         std::memcpy(sideband + offset, value, size);
         offset += size;
     };
@@ -1939,7 +1946,15 @@ extern "C" {
 int APS5_VABI sceAjmInitialize(int64_t reserved, uint32_t* context) {
     (void)reserved;
     if (!context) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    *context = g_nextContext.fetch_add(1, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(g_lock);
+    const uint32_t id = g_nextContext.fetch_add(1, std::memory_order_relaxed);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(context, &id, sizeof(id));
+    errno = savedErrno;
+    if (!copied) {
+        g_nextContext.fetch_sub(1, std::memory_order_relaxed);
+        return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     return 0;
 }
 
@@ -1975,9 +1990,10 @@ int APS5_VABI sceAjmMemoryUnregister(uint32_t context, void* ptr) {
 }
 
 int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t flags, uint32_t* instance) {
-    (void)context;
+    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     if (!instance) return SCE_AJM_ERROR_INVALID_PARAMETER;
     auto created = std::make_unique<Instance>();
+    created->context = context;
     created->codec = codec;
     created->flags = flags;
     if (codec == CODEC_MP3) {
@@ -1998,10 +2014,13 @@ int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t fl
 }
 
 int APS5_VABI sceAjmInstanceDestroy(uint32_t context, uint32_t instance) {
-    (void)context;
+    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     AJM_TRACE("[ajm] instance %u destroy\n", instance);
     std::lock_guard lock(g_lock);
-    return g_instances.erase(instance) ? 0 : SCE_AJM_ERROR_INVALID_INSTANCE;
+    const auto found = g_instances.find(instance);
+    if (found == g_instances.end() || found->second->context != context) return SCE_AJM_ERROR_INVALID_INSTANCE;
+    g_instances.erase(found);
+    return 0;
 }
 
 int APS5_VABI sceAjmDecAt9ParseConfigData(const void* config_data, AjmDecAt9ConfigDataInfo* config_info) {
@@ -2253,7 +2272,7 @@ void* APS5_VABI sceAjmBatchJobInlineBuffer(void* position, const void* data_inpu
     std::memcpy(at, words, sizeof(words));
     at += sizeof(words);
     if (data_input_size) std::memcpy(at, data_input, data_input_size);
-    *batch_address = at;
+    if (batch_address) *batch_address = at;
     return at + size;
 }
 

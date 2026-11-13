@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -29,6 +30,9 @@ static constexpr int SCE_NP_WEBAPI_ERROR_SERVICE_PUSH_EVENT_FILTER_NOT_FOUND = s
 static constexpr int SCE_NP_WEBAPI_ERROR_SERVICE_PUSH_EVENT_CALLBACK_NOT_FOUND = static_cast<int>(0x8055290F);
 static constexpr int SCE_NP_WEBAPI_ERROR_SIGNED_IN_USER_NOT_FOUND = static_cast<int>(0x80552910);
 static constexpr int SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_MAX = static_cast<int>(0x8055291A);
+static constexpr int SCE_NP_WEBAPI_ERROR_EXTD_PUSH_EVENT_FILTER_NOT_FOUND = static_cast<int>(0x8055291C);
+static constexpr int SCE_NP_WEBAPI_ERROR_EXTD_PUSH_EVENT_CALLBACK_NOT_FOUND = static_cast<int>(0x8055291D);
+static constexpr int SCE_NP_ERROR_USER_NOT_FOUND = static_cast<int>(0x80960105);
 
 static constexpr int SCE_HTTP_ERROR_INVALID_ID = static_cast<int>(0x80431100);
 static constexpr int SCE_HTTP_ERROR_PARSE_HTTP_INVALID_RESPONSE = static_cast<int>(0x80432060);
@@ -106,12 +110,33 @@ std::uint32_t compiledSdkVersion() {
     return version;
 }
 
+int createUserContext(int libCtxId, LibraryContext& library, int userId) {
+    for (const auto& [id, user] : library.userContexts) {
+        if (user.userId == userId) return SCE_NP_WEBAPI_ERROR_USER_CONTEXT_ALREADY_EXIST;
+    }
+    lastUserContext = lastUserContext % 0xffff + 1;
+    const int titleUserCtxId = (libCtxId << 16) | lastUserContext;
+    library.userContexts.emplace(titleUserCtxId, UserContext{userId, {}, {}, {}});
+    return titleUserCtxId;
+}
+
 UserContextLookup findUserContext(int titleUserCtxId) {
     const auto library = contexts.find(titleUserCtxId >> 16);
     if (library == contexts.end()) return {SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND, nullptr, nullptr};
     const auto user = library->second.userContexts.find(titleUserCtxId);
     if (user == library->second.userContexts.end()) return {SCE_NP_WEBAPI_ERROR_USER_CONTEXT_NOT_FOUND, &library->second, nullptr};
     return {0, &library->second, &user->second};
+}
+
+int registerServicePushEventCallback(int titleUserCtxId, void* callback) {
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findUserContext(titleUserCtxId);
+    if (lookup.error != 0) return lookup.error;
+    if (compiledSdkVersion() >= SDK_VERSION_2_50) return SCE_NP_WEBAPI_ERROR_SERVICE_PUSH_EVENT_FILTER_NOT_FOUND;
+    if (!callback) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    const auto callbackId = nextObject();
+    lookup.user->servicePushEventCallbacks.insert(callbackId);
+    return callbackId;
 }
 
 RequestLookup findRequest(std::int64_t requestId) {
@@ -182,14 +207,20 @@ int APS5_VABI sceNpWebApiCreateContext(int libCtxId, const void* onlineId) {
     std::lock_guard lock(contextsMutex);
     const auto context = contexts.find(libCtxId);
     if (context == contexts.end()) return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
-    auto& userContexts = context->second.userContexts;
-    for (const auto& [id, user] : userContexts) {
-        if (user.userId == USER_SERVICE_INITIAL_USER_ID) return SCE_NP_WEBAPI_ERROR_USER_CONTEXT_ALREADY_EXIST;
-    }
-    lastUserContext = lastUserContext % 0xffff + 1;
-    const int titleUserCtxId = (libCtxId << 16) | lastUserContext;
-    userContexts.emplace(titleUserCtxId, UserContext{USER_SERVICE_INITIAL_USER_ID, {}, {}, {}});
-    return titleUserCtxId;
+    return createUserContext(libCtxId, context->second, USER_SERVICE_INITIAL_USER_ID);
+}
+
+int APS5_VABI sceNpWebApiCreateContextA(int libCtxId, int userId) {
+    if (userId < 0) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto context = contexts.find(libCtxId);
+    if (context == contexts.end()) return SCE_NP_WEBAPI_ERROR_INVALID_LIB_CONTEXT_ID;
+    if (userId != USER_SERVICE_INITIAL_USER_ID) return SCE_NP_ERROR_USER_NOT_FOUND;
+    return createUserContext(libCtxId, context->second, userId);
+}
+
+int APS5_VABI sceNpWebApiCreateExtdPushEventFilter(int libCtxId, int handleId, const char* npServiceName, std::uint32_t npServiceLabel, const void* filterParam, std::size_t filterParamNum) {
+    return sceNpWebApiCreateServicePushEventFilter(libCtxId, handleId, npServiceName, npServiceLabel, filterParam, filterParamNum);
 }
 
 int APS5_VABI sceNpWebApiCreateHandle(int libCtxId) {
@@ -236,6 +267,13 @@ int APS5_VABI sceNpWebApiDeleteContext(int titleUserCtxId) {
     if (lookup.error != 0) return lookup.error;
     lookup.library->userContexts.erase(titleUserCtxId);
     return 0;
+}
+
+int APS5_VABI sceNpWebApiDeleteExtdPushEventFilter(int libCtxId, int filterId) {
+    (void)filterId;
+    std::lock_guard lock(contextsMutex);
+    if (!contexts.contains(libCtxId)) return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
+    return SCE_NP_WEBAPI_ERROR_EXTD_PUSH_EVENT_FILTER_NOT_FOUND;
 }
 
 int APS5_VABI sceNpWebApiDeleteHandle(int libCtxId, int handleId) {
@@ -285,7 +323,23 @@ int APS5_VABI sceNpWebApiGetHttpResponseHeaderValueLength(std::int64_t requestId
 }
 
 int APS5_VABI sceNpWebApiGetHttpStatusCode(std::int64_t requestId, int* statusCode) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!statusCode) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findRequest(requestId);
+    if (lookup.error != 0) return lookup.error;
+    return SCE_HTTP_ERROR_PARSE_HTTP_INVALID_RESPONSE;
+}
+
+int APS5_VABI sceNpWebApiGetMemoryPoolStats(int libCtxId, NpWebApiMemoryPoolStats* stats) {
+    if (!stats) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto context = contexts.find(libCtxId);
+    if (context == contexts.end()) return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
+    const NpWebApiMemoryPoolStats localStats{context->second.poolSize, 0, 0};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -309,6 +363,16 @@ int APS5_VABI sceNpWebApiReadData(std::int64_t requestId, void* data, std::size_
     return SCE_HTTP_ERROR_INVALID_ID;
 }
 
+int APS5_VABI sceNpWebApiRegisterExtdPushEventCallbackA(int titleUserCtxId, int filterId, const void* callback, void* userArg) {
+    (void)filterId;
+    (void)callback;
+    (void)userArg;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findUserContext(titleUserCtxId);
+    if (lookup.error != 0) return lookup.error;
+    return SCE_NP_WEBAPI_ERROR_EXTD_PUSH_EVENT_FILTER_NOT_FOUND;
+}
+
 int APS5_VABI sceNpWebApiRegisterPushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg) {
     (void)userArg;
     if (!callback && compiledSdkVersion() >= SDK_VERSION_1_00) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
@@ -325,14 +389,7 @@ int APS5_VABI sceNpWebApiRegisterServicePushEventCallback(int titleUserCtxId, in
     (void)filterId;
     (void)userArg;
     if (!callback && compiledSdkVersion() >= SDK_VERSION_1_00) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
-    std::lock_guard lock(contextsMutex);
-    const auto lookup = findUserContext(titleUserCtxId);
-    if (lookup.error != 0) return lookup.error;
-    if (compiledSdkVersion() >= SDK_VERSION_2_50) return SCE_NP_WEBAPI_ERROR_SERVICE_PUSH_EVENT_FILTER_NOT_FOUND;
-    if (!callback) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
-    const auto callbackId = nextObject();
-    lookup.user->servicePushEventCallbacks.insert(callbackId);
-    return callbackId;
+    return registerServicePushEventCallback(titleUserCtxId, callback);
 }
 
 int APS5_VABI sceNpWebApiSendRequest(std::int64_t requestId, const void* data, std::size_t dataSize) {
@@ -344,6 +401,14 @@ int APS5_VABI sceNpWebApiSendRequest(std::int64_t requestId, const void* data, s
 int APS5_VABI sceNpWebApiTerminate(int libCtxId) {
     std::lock_guard lock(contextsMutex);
     return contexts.erase(libCtxId) != 0 ? 0 : SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
+}
+
+int APS5_VABI sceNpWebApiUnregisterExtdPushEventCallback(int titleUserCtxId, int callbackId) {
+    (void)callbackId;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findUserContext(titleUserCtxId);
+    if (lookup.error != 0) return lookup.error;
+    return SCE_NP_WEBAPI_ERROR_EXTD_PUSH_EVENT_CALLBACK_NOT_FOUND;
 }
 
 int APS5_VABI sceNpWebApiUnregisterPushEventCallback(int titleUserCtxId, int callbackId) {
@@ -358,11 +423,6 @@ int APS5_VABI sceNpWebApiUnregisterServicePushEventCallback(int titleUserCtxId, 
     const auto lookup = findUserContext(titleUserCtxId);
     if (lookup.error != 0) return lookup.error;
     return lookup.user->servicePushEventCallbacks.erase(callbackId) != 0 ? 0 : SCE_NP_WEBAPI_ERROR_SERVICE_PUSH_EVENT_CALLBACK_NOT_FOUND;
-}
-
-int APS5_VABI sceNpWebApiUtilityParseNpId() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceNpWebApiAbortHandle(int libCtxId, int handleId) {
@@ -410,7 +470,11 @@ int APS5_VABI sceNpWebApiClearAllUnusedConnection() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceNpWebApiClearUnusedConnection() {
+int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* target, bool keep) {
+    if (!target) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findUserContext(titleUserCtxId);
+    if (lookup.error != 0) return lookup.error;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -421,7 +485,11 @@ int APS5_VABI sceNpWebApiCreateMultipartRequest(int titleUserCtxId, const char* 
     return createRequest(titleUserCtxId, true, requestId);
 }
 
-int APS5_VABI sceNpWebApiGetConnectionStats() {
+int APS5_VABI sceNpWebApiGetConnectionStats(int titleUserCtxId, const void* target, void* result) {
+    if (!target || !result) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findUserContext(titleUserCtxId);
+    if (lookup.error != 0) return lookup.error;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -433,7 +501,12 @@ int APS5_VABI sceNpWebApiInitializeForPresence(int libHttpCtxId, std::size_t poo
     return sceNpWebApiInitialize(libHttpCtxId, poolSize);
 }
 
-int APS5_VABI sceNpWebApiIntCreateCtxIndExtdPushEventFilter() {
+int APS5_VABI sceNpWebApiIntCreateCtxIndExtdPushEventFilter(int libCtxId, int handleId, const void* filterParam, std::size_t filterParamNum) {
+    if (!filterParam || filterParamNum == 0) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto context = contexts.find(libCtxId);
+    if (context == contexts.end()) return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
+    if (!context->second.handles.contains(handleId)) return SCE_NP_WEBAPI_ERROR_HANDLE_NOT_FOUND;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -449,8 +522,15 @@ int APS5_VABI sceNpWebApiIntCreateRequest(int titleUserCtxId, const char* apiGro
     return createRequest(titleUserCtxId, false, requestId);
 }
 
-int APS5_VABI sceNpWebApiIntCreateServicePushEventFilter() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApiIntCreateServicePushEventFilter(int libCtxId, int handleId, const char* npServiceName, std::uint32_t npServiceLabel, const void* filterParam, std::size_t filterParamNum) {
+    (void)npServiceLabel;
+    if (!filterParam || filterParamNum == 0) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto context = contexts.find(libCtxId);
+    if (context == contexts.end()) return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
+    if (!context->second.handles.contains(handleId)) return SCE_NP_WEBAPI_ERROR_HANDLE_NOT_FOUND;
+    if (!npServiceName) NotImplemented_nid_no_patch(__func__);
+    return SCE_NP_WEBAPI_ERROR_SIGNED_IN_USER_NOT_FOUND;
 }
 
 int APS5_VABI sceNpWebApiIntInitialize(const NpWebApiIntInitializeArgs* args) {
@@ -458,16 +538,28 @@ int APS5_VABI sceNpWebApiIntInitialize(const NpWebApiIntInitializeArgs* args) {
     return sceNpWebApiInitialize(static_cast<int>(args->libHttpCtxId), args->poolSize);
 }
 
-int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallback() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg) {
+    (void)filterId;
+    (void)userArg;
+    if (!callback) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    return registerServicePushEventCallback(titleUserCtxId, callback);
 }
 
-int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallbackA() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallbackA(int titleUserCtxId, int filterId, void* callback, void* userArg) {
+    (void)filterId;
+    (void)userArg;
+    if (!callback) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    return registerServicePushEventCallback(titleUserCtxId, callback);
 }
 
-int APS5_VABI sceNpWebApiRegisterExtdPushEventCallback() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApiRegisterExtdPushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg) {
+    (void)filterId;
+    (void)userArg;
+    if (!callback) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findUserContext(titleUserCtxId);
+    if (lookup.error != 0) return lookup.error;
+    return SCE_NP_WEBAPI_ERROR_EXTD_PUSH_EVENT_FILTER_NOT_FOUND;
 }
 
 int APS5_VABI sceNpWebApiRegisterNotificationCallback(int titleUserCtxId, void* callback, void* userArg) {

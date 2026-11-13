@@ -142,6 +142,33 @@ class ExportGapTests(unittest.TestCase):
     def test_postfix_name_provides_hashed_base_nid(self):
         self.assertTrue(provides("sceExampleBase_nid_postfix", nid_of("sceExampleBase")))
 
+    def test_declarations_do_not_hide_missing_exports(self):
+        nid = nid_of("sceExampleMissing")
+        for source in (
+            "int APS5_VABI sceExampleMissing_nid_postfix(void);\n",
+            "#define DECLARE(NAME) int APS5_VABI NAME(void);\nDECLARE(sceExampleMissing_nid_postfix)\n",
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(provides_with(source, nid))
+
+    def test_multiline_definition_counts_as_provided(self):
+        source = "int APS5_VABI\nsceExamplePresent_nid_postfix(\n    int value)\n{ return value; }\n"
+        self.assertTrue(provides_with(source, nid_of("sceExamplePresent")))
+
+    def test_shared_sources_confirm_local_declarations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, prx, _ = tree(directory)
+            library = write_module(prx, MODULE, {
+                "CMakeLists.txt": "include(${CMAKE_CURRENT_SOURCE_DIR}/../libExample.native/Shared.cmake)\n",
+                "Api.hpp": "int APS5_VABI Present(void);\nint APS5_VABI Missing(void);\n",
+            })
+            write_module(prx, "libExample.native", {
+                "Export.cpp": "int APS5_VABI Present(void) { return 0; }\nint APS5_VABI SiblingOnly(void) { return 0; }\n",
+            })
+            provided = export_gap.collect_provided(library)
+            self.assertEqual(set(provided), {nid_of("Present")})
+            self.assertIn("libExample.native", provided[nid_of("Present")])
+
     def test_disambig_postfix_provides_hashed_base_nid(self):
         self.assertTrue(provides("alias_nid_disambig12_nid_postfix", nid_of("alias")))
 
@@ -225,6 +252,21 @@ class ExportGapTests(unittest.TestCase):
             self.assertEqual(out.read_text(encoding="utf-8"), "")
             self.assertIn("already provided", report)
             self.assertIn("EXAMPLE_MACRO", report)
+
+    def test_multiline_macro_invocation_counts_as_provided(self):
+        nid = nid_of("sceExampleMultiline")
+        source = ("#define EXAMPLE_MACRO(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+                  "EXAMPLE_MACRO(\n"
+                  "    sceExampleMultiline\n"
+                  ")\n")
+        self.assertTrue(provides_with(source, nid))
+
+    def test_macro_call_in_uninvoked_directive_is_not_provided(self):
+        nid = nid_of("sceExampleOnlyInDefinition")
+        source = ("#define EXAMPLE_MACRO(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+                  "#define UNUSED_WRAPPER(NAME) \\\n"
+                  "    EXAMPLE_MACRO(sceExampleOnlyInDefinition)\n")
+        self.assertFalse(provides_with(source, nid))
 
     def test_explicit_export_binding_counts_as_provided(self):
         nid = nid_names.compute_nid("sceExampleExplicit")
