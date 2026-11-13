@@ -704,7 +704,7 @@ int main(int argc, char** argv) {
     constexpr int invalidId = static_cast<int>(0x80431100);
     const auto flushCaches = [](int id, int expected) {
         Require(sceHttpAuthCacheFlush(id) == expected);
-        Require(sceHttpCookieFlush(id) == expected);
+        Require(sceHttpCookieFlush(id) == (expected == beforeInit ? invalidId : expected));
     };
     flushCaches(0, beforeInit);
     flushCaches(-1, beforeInit);
@@ -860,6 +860,10 @@ int main(int argc, char** argv) {
     Require(sslError == 0 && sslDetail == 0);
     Require(sceHttpsGetSslError(1, nullptr, &sslDetail) == invalidValue);
     Require(sceHttpsGetSslError(1, &sslError, nullptr) == invalidValue);
+    errno = 71;
+    Require(sceHttpsGetSslError(1, reinterpret_cast<int*>(0x10), &sslDetail) == invalidValue);
+    Require(sceHttpsGetSslError(1, &sslError, reinterpret_cast<std::uint32_t*>(0x10)) == invalidValue);
+    Require(errno == 71);
 
     constexpr int parseInvalidResponse = static_cast<int>(0x80432060);
     constexpr int parseInvalidValue = static_cast<int>(0x804321FE);
@@ -892,6 +896,23 @@ int main(int argc, char** argv) {
     Require(parse(nullptr, 17) == parseInvalidResponse);
     Require(sceHttpParseStatusLine(response, 17, nullptr, &minor, &code, &phrase, &phraseLength) == parseInvalidValue);
     Require(sceHttpParseStatusLine(response, 17, &major, &minor, &code, &phrase, nullptr) == parseInvalidValue);
+    errno = 71;
+    major = -1;
+    minor = -1;
+    Require(sceHttpParseStatusLine(reinterpret_cast<const char*>(0x10), 17, &major, &minor, &code, &phrase, &phraseLength) == parseInvalidResponse);
+    Require(major == 0 && minor == 0);
+    auto* const badInt = reinterpret_cast<std::int32_t*>(0x10);
+    Require(sceHttpParseStatusLine(response, 17, badInt, &minor, &code, &phrase, &phraseLength) == parseInvalidValue);
+    code = -1;
+    Require(sceHttpParseStatusLine(response, 17, &major, &minor, badInt, &phrase, &phraseLength) == parseInvalidValue);
+    Require(major == 1 && minor == 1);
+    phrase = nullptr;
+    Require(sceHttpParseStatusLine(response, 17, &major, &minor, &code, reinterpret_cast<const char**>(0x10), &phraseLength) == parseInvalidValue);
+    Require(sceHttpParseStatusLine(response, 17, &major, &minor, &code, &phrase, reinterpret_cast<std::size_t*>(0x10)) == parseInvalidValue);
+    Require(code == 200 && phrase == response + 12);
+    Require(errno == 71);
+    phrase = nullptr;
+    phraseLength = 0;
     major = -1;
     minor = -1;
     Require(parse("HTTX/1.1 200 OK\n", 16) == parseInvalidResponse);
