@@ -12,6 +12,8 @@
 #include <stdexcept>
 #include <string>
 
+extern "C" char* suboptarg_nid_postfix;
+
 static void Require(bool condition) {
     if (!condition) {
         std::fputs("Guest string check failed\n", stderr);
@@ -773,6 +775,7 @@ int main() {
     char* value = nullptr;
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr && cursor == options + 3);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 2 && std::strcmp(value, "1024") == 0);
+    Require(suboptarg_nid_postfix != nullptr && std::strcmp(suboptarg_nid_postfix, "size") == 0);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 3 && std::strcmp(value, "test") == 0);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 1 && value == nullptr && *cursor == '\0');
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && value == nullptr && *cursor == '\0');
@@ -784,7 +787,9 @@ int main() {
     cursor = unmatched;
     value = nullptr;
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && std::strcmp(value, "val") == 0 && std::strcmp(cursor, "ro") == 0);
+    Require(suboptarg_nid_postfix != nullptr && std::strcmp(suboptarg_nid_postfix, "unknown") == 0);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr && *cursor == '\0');
+    Require(suboptarg_nid_postfix != nullptr && std::strcmp(suboptarg_nid_postfix, "ro") == 0);
     char leadingEqual[] = "=val,ro";
     cursor = leadingEqual;
     value = nullptr;
@@ -796,12 +801,15 @@ int main() {
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 1 && value == nullptr && *cursor == '\0');
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && value == nullptr);
-    Require(getsubopt_nid_postfix(nullptr, tokens, &value) == -1);
+    suboptarg_nid_postfix = options;
+    Require(getsubopt_nid_postfix(nullptr, tokens, &value) == -1 && suboptarg_nid_postfix == nullptr);
     char* nullCursor = nullptr;
-    Require(getsubopt_nid_postfix(&nullCursor, tokens, &value) == -1);
+    suboptarg_nid_postfix = options;
+    Require(getsubopt_nid_postfix(&nullCursor, tokens, &value) == -1 && suboptarg_nid_postfix == nullptr);
     char emptyStr[] = "";
     cursor = emptyStr;
-    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && cursor == emptyStr);
+    suboptarg_nid_postfix = options;
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && cursor == emptyStr && suboptarg_nid_postfix == nullptr);
     CheckSecureCopySizeLimits();
     CheckSecureStringSizeLimits();
     CheckConstraintHandlerCalls();

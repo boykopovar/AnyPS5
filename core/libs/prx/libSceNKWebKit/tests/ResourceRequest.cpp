@@ -28,7 +28,7 @@ static URL MakeURL(StringImpl* impl, unsigned bits) {
 }
 
 static void TestURL() {
-    ResourceRequestBase request{};
+    ResourceRequestBase request = ResourceRequestBase();
     request.resourceRequestUpdated = true;
     Require(_ZNK7WebCore19ResourceRequestBase6isNullEv(&request));
     Require(_ZNK7WebCore19ResourceRequestBase7isEmptyEv(&request));
@@ -63,7 +63,7 @@ static void TestURL() {
 }
 
 static void TestFirstParty() {
-    ResourceRequestBase request{};
+    ResourceRequestBase request = ResourceRequestBase();
     request.resourceRequestUpdated = true;
     auto first = Make("http://a/");
     auto same = Make("http://a/");
@@ -88,7 +88,7 @@ static void TestFirstParty() {
 }
 
 static void TestMethod() {
-    ResourceRequestBase request{};
+    ResourceRequestBase request = ResourceRequestBase();
     request.resourceRequestUpdated = true;
     auto get = Make("GET");
     auto post = Make("POST");
@@ -114,7 +114,7 @@ static void TestMethod() {
 }
 
 static void TestScalars() {
-    ResourceRequestBase request{};
+    ResourceRequestBase request = ResourceRequestBase();
     request.resourceRequestUpdated = true;
     request.timeoutInterval = 12.5;
     Require(_ZNK7WebCore19ResourceRequestBase15timeoutIntervalEv(&request) == 12.5);
