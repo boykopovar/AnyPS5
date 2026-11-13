@@ -1208,6 +1208,39 @@ void converterWideStoreIslandAcrossInt64Max() {
     require(Bytes(high.Bytes.begin() + 0x205, high.Bytes.begin() + 0x207) == Bytes{0xEB, 0x0D}, "The short jump to an island across 2^63 has the wrong displacement");
 }
 
+void converterAddressSizeJumpTableTargets() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes dispatch = {0x48, 0x63, 0x04, 0x81, 0x48, 0x01, 0xC8, 0xFF, 0xE0, 0x48, 0x83, 0xC1, 0x01, 0xC5, 0xFC, 0x11, 0x07, 0x48, 0x83, 0xC2, 0x01, 0xC3};
+    for (const bool addressSize32 : {false, true}) {
+        for (const std::uint8_t segment : {0x00, 0x64, 0x65}) {
+            for (const std::uint64_t table : {0x3000ull, 0x80001010ull}) {
+                Bytes first;
+                first.reserve(9);
+                if (segment != 0) first.push_back(segment);
+                if (addressSize32) first.push_back(0x67);
+                first.insert(first.end(), {0x48, 0x8D, 0x0D, 0, 0, 0, 0});
+                write<std::uint32_t>(first, first.size() - 4, static_cast<std::uint32_t>(table - (0x1000 + first.size())));
+                Bytes file(0x400, 0xCC);
+                std::copy(first.begin(), first.end(), file.begin() + 0x200);
+                std::copy(dispatch.begin(), dispatch.end(), file.begin() + static_cast<std::ptrdiff_t>(0x200 + first.size()));
+                write<std::uint32_t>(file, 0x300, static_cast<std::uint32_t>(0x1000 + first.size() + 9 - table));
+                write<std::uint32_t>(file, 0x304, static_cast<std::uint32_t>(0x1000 + first.size() + 17 - table));
+                const auto size = first.size() + dispatch.size();
+                const auto result = converter->Convert(file, {{1, 5, 0x200, 0x1000, 0, size, size, 16}, {1, 4, 0x300, table, 0, 8, 8, 16}});
+                const bool reachableTable = addressSize32 || table == 0x3000;
+                const auto expectedOffset = 0x200 + first.size() + (reachableTable ? 9 : 13);
+                require(result.Trampolines.size() == 1 && result.Trampolines[0].Offset == expectedOffset && result.Trampolines[0].Length == 8,
+                        "A jump table's address size did not protect the instruction after a 256-bit store");
+                if (reachableTable) {
+                    const auto target = 0x200 + first.size() + 17;
+                    require(std::equal(file.begin() + static_cast<std::ptrdiff_t>(target), file.begin() + static_cast<std::ptrdiff_t>(target + 4), result.Bytes.begin() + static_cast<std::ptrdiff_t>(target)),
+                            "Conversion overwrote a jump-table destination");
+                }
+            }
+        }
+    }
+}
+
 void converterJumpTableTargets() {
     const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
     const Bytes leaTable = {0x48, 0x8D, 0x0D, 0xF9, 0x1F, 0x00, 0x00};
@@ -1243,6 +1276,29 @@ void converterJumpTableTargets() {
     require(placedAt(convert(leaTable, {{0x300, table(0x3000, {0x1010})}, {0x380, table(0x3000, {0x1018})}}, {code, data, {0x61000000, 4, 0x380, 0x3000, 0, 0x10, 0x10, 16}}), 0x214), "A jump table was read from a segment that is not loaded");
     require(placedAt(convert(leaTable, {{0x300, table(0x3000, {0x1010, 0x1018})}, {0x3A0, store}}, {code, data, {2, 5, 0x3A0, 0x2000, 0, 4, 4, 16}}), 0x210), "A segment that is not loaded was converted");
     requireFailure([&] { (void)convert(leaTable, {{0x300, table(0x3000, {0x1010, 0x1018})}}, {code, {1, 4, 0x300, 0x3000, 0, 0x1000, 0x1000, 16}}); }, "A jump table was read from a segment that exceeds the file");
+}
+
+void converterAvxShortSites() {
+    const auto avx = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Avx);
+    const auto convert = [](const std::unique_ptr<Codegen::IAmd64OnlyConverter>& converter, const Bytes& text) {
+        Bytes file(0x300 + text.size(), 0xCC);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        return converter->Convert(file, {segmentHeader(text.size())});
+    };
+    const Bytes count = {0xF3, 0x0F, 0xBC, 0xC1, 0x72, 0x10, 0x90, 0xC3};
+    const auto branched = convert(avx, count);
+    require(branched.Trampolines.size() == 1 && branched.KeptCount == 0 && branched.Reports.size() == 1 && branched.Reports[0].InstructionName == "TZCNT", "A 4-byte TZCNT before a conditional branch was not lowered");
+    require(branched.Trampolines[0].Offset == 0x200 && branched.Trampolines[0].Length == 6, "A 4-byte TZCNT did not take the following conditional branch into its stub");
+    const Bytes movbe = {0x0F, 0x38, 0xF0, 0x07, 0xC3};
+    const auto returned = convert(avx, movbe);
+    require(returned.Trampolines.size() == 1 && returned.Reports.size() == 1 && returned.Reports[0].InstructionName == "MOVBE" && returned.Trampolines[0].Length == 5, "A 4-byte MOVBE before a return was not lowered with the return");
+    const auto rosetta = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    require(convert(rosetta, count).Reports.empty() && convert(rosetta, movbe).Reports.empty(), "The Rosetta target lowered TZCNT or MOVBE");
+    const Bytes rosettaOnly = {0xC5, 0xFC, 0x11, 0x07, 0x0F, 0xC7, 0xF8, 0x0F, 0xAE, 0x37, 0xC3};
+    require(convert(avx, rosettaOnly).Reports.empty(), "The AVX target applied a Rosetta workaround to a 256-bit store, RDSEED or XSAVEOPT");
+    const Bytes rdpid = {0xF3, 0x0F, 0xC7, 0xF9, 0x48, 0x83, 0xC1, 0x01, 0xC3};
+    const auto processor = convert(avx, rdpid);
+    require(processor.Reports.size() == 1 && processor.Reports[0].InstructionName == "RDPID", "The AVX target did not lower RDPID");
 }
 
 void converterRosetta() {
@@ -2514,6 +2570,7 @@ int main() {
         rosettaSubstitutions();
         xsaveoptExecution();
         converterRosetta();
+        converterAvxShortSites();
         rosettaScalarCompares();
         converterRosettaScalarCompare();
         rosettaLegacyScalarCompares();
@@ -2524,6 +2581,7 @@ int main() {
         rdpidExecution();
         rdseedExecution();
         clwbExecution();
+        converterAddressSizeJumpTableTargets();
         wideStoreSplit();
         converterWideStoreWindows();
         converterWideStoreIslandAcrossInt64Max();

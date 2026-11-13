@@ -85,6 +85,12 @@ void ElfReader::ValidateMagic() const {
     if (magic == 0x1d3d154f || magic == 0xeef51454) {
         throw RelinkerException("The input is a SELF container, not an ELF");
     }
+    if (magic == 0x4849467f) {
+        throw RelinkerException("The input is a PS5 package (FIH), not an ELF; use an extracted, decrypted ELF executable");
+    }
+    if (magic == 0x544e437f) {
+        throw RelinkerException("The input is a package container (CNT), not an ELF; use an extracted, decrypted ELF executable");
+    }
 
     if (_fileBuffer[0] != 0x7f || _fileBuffer[1] != 'E' ||
         _fileBuffer[2] != 'L' || _fileBuffer[3] != 'F') {
