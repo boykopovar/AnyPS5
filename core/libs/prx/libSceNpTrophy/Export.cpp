@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -207,9 +208,13 @@ int APS5_VABI sceNpTrophyCreateContext(int* context, int userId, std::uint32_t s
     for (const auto& [id, existing] : g_contexts) {
         if (existing.userId == userId && existing.serviceLabel == serviceLabel) return NP_TROPHY_ERROR_CONTEXT_ALREADY_EXISTS;
     }
-    const int id = g_nextContext++;
+    const int id = g_nextContext;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(context, &id, sizeof(id));
+    errno = savedErrno;
+    if (!copied) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    ++g_nextContext;
     g_contexts[id] = Context{userId, serviceLabel};
-    *context = id;
     return 0;
 }
 

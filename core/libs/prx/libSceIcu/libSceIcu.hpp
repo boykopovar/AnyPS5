@@ -19,6 +19,7 @@
 #include "LocaleMap.hpp"
 #include "Unescape.hpp"
 #include "Properties.hpp"
+#include "Script.hpp"
 #include "CaseMapping.hpp"
 #include "Bidi.hpp"
 #include "CharsetDetection.hpp"
@@ -37,3 +38,4 @@
 
 #include "ConverterHelpers.hpp"
 #include "RecoveredSignatures.hpp"
+#include "Copy.hpp"

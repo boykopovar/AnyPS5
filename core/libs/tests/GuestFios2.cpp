@@ -258,6 +258,18 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE((stat.statFlags & SCE_FIOS_STAT_DIRECTORY) != 0);
     REQUIRE(sceFiosStatSync(nullptr, (directory + "/missing").c_str(), &stat) == SCE_FIOS_ERROR_BAD_PATH);
     REQUIRE(sceFiosStatSync(nullptr, file.c_str(), nullptr) == SCE_FIOS_ERROR_BAD_PTR);
+
+    SceFiosStat asyncStat{};
+    std::memset(&asyncStat, 0xaa, sizeof(asyncStat));
+    const SceFiosOp statOp = sceFiosStat(nullptr, file.c_str(), &asyncStat);
+    REQUIRE(sceFiosOpGetError(statOp) == SCE_FIOS_OK && asyncStat.fileSize == 10 && (asyncStat.statFlags & SCE_FIOS_STAT_DIRECTORY) == 0);
+    REQUIRE(sceFiosOpSyncWait(statOp) == 0);
+    const SceFiosOp directoryStat = sceFiosStat(nullptr, directory.c_str(), &asyncStat);
+    REQUIRE(sceFiosOpGetError(directoryStat) == SCE_FIOS_OK && (asyncStat.statFlags & SCE_FIOS_STAT_DIRECTORY) != 0);
+    REQUIRE(sceFiosOpSyncWait(directoryStat) == 0);
+    const SceFiosOp missingStat = sceFiosStat(nullptr, (directory + "/missing").c_str(), &asyncStat);
+    REQUIRE(sceFiosOpGetError(missingStat) == SCE_FIOS_ERROR_BAD_PATH);
+    REQUIRE(sceFiosOpSyncWait(missingStat) == SCE_FIOS_ERROR_BAD_PATH);
 }
 
 static void CheckPathCompare() {
