@@ -330,7 +330,15 @@ void Memory() {
     };
     refuses([&] { unum_open_nid_postfix(1, nullptr, -1, reinterpret_cast<char*>(data), nullptr, status); });
     refuses([&] { unum_open_nid_postfix(0, badText, 4, "en_US", nullptr, status); });
-    refuses([&] { unum_open_nid_postfix(0, u"0.0.0", -1, "en_US", reinterpret_cast<UParseError*>(data), status); });
+    std::int32_t parseStatus = 0;
+    Oracle::Parse parseRecord;
+    std::memset(&parseRecord, 0xa5, sizeof(parseRecord));
+    auto* parseNative = Oracle::Open(0, u"0.0.0", -1, "en_US", &parseRecord, &parseStatus);
+    *status = 0;
+    auto* parseGuest = unum_open_nid_postfix(0, u"0.0.0", -1, "en_US", reinterpret_cast<UParseError*>(data), status);
+    Require(bool(parseGuest) == bool(parseNative) && *status == parseStatus, "decimal parse record remains unused even for invalid pattern");
+    if (parseGuest) unum_close_nid_postfix(parseGuest);
+    if (parseNative) Oracle::Close(parseNative);
     refuses([&] { unum_clone_nid_postfix(handle, badStatus); });
     refuses([&] { unum_formatDouble_nid_postfix(handle, 1, output, 16, nullptr, badStatus); });
     refuses([&] { unum_formatDouble_nid_postfix(handle, 1, badText, 16, nullptr, status); });
