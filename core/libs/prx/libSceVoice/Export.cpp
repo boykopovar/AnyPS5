@@ -28,6 +28,7 @@ constexpr auto PortWithoutDevice = static_cast<std::int32_t>(0x804e0803u);
 constexpr auto InvalidPort = static_cast<std::int32_t>(0x804e0804u);
 constexpr auto InvalidArgument = static_cast<std::int32_t>(0x804e0805u);
 constexpr auto PortNotFound = static_cast<std::int32_t>(0x804e0807u);
+constexpr auto NeverStarted = static_cast<std::int32_t>(0x804e080au);
 constexpr auto MemorySizeVersion = static_cast<std::int32_t>(0x804e080fu);
 constexpr std::int32_t ThreadPriorityHighest = 256;
 constexpr std::int32_t ThreadPriorityLowest = 767;
@@ -47,6 +48,7 @@ struct Voice {
     std::mutex mutex;
     bool initialized = false;
     bool started = false;
+    bool everStarted = false;
     std::int32_t appType = 0;
     bool mutedAll = false;
     std::deque<std::uint32_t> freePorts;
@@ -134,6 +136,7 @@ int APS5_VABI sceVoiceStart(const VoiceStartParam* param) {
     const std::uint32_t memorySize = voice.appType == 0x10000000 || voice.appType == 0x20000000 ? 0x40000 : 0xc0000;
     if (param->mem_size != memorySize) return static_cast<std::int32_t>(0x804e0806u);
     voice.started = true;
+    voice.everStarted = true;
     return 0;
 }
 
@@ -152,6 +155,7 @@ int APS5_VABI sceVoiceEnd_nid_postfix(void) {
     voice.ports.clear();
     voice.connections.clear();
     voice.started = false;
+    voice.everStarted = false;
     voice.appType = 0;
     voice.mutedAll = false;
     voice.initialized = false;
@@ -236,8 +240,8 @@ int APS5_VABI sceVoiceDisconnectIPortFromOPort(uint32_t input_port_id, uint32_t 
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
     RequirePort(voice, input_port_id, __func__);
-    RequirePort(voice, output_port_id, __func__);
-    if (voice.connections.erase({input_port_id, output_port_id}) == 0) Fail(__func__, "ports are not connected");
+    if (output_port_id > 127) Fail(__func__, "the result for a second port id above 127 is unknown");
+    if (!voice.ports.contains(output_port_id) || voice.connections.erase({input_port_id, output_port_id}) == 0) return PortNotFound;
     return 0;
 }
 
@@ -282,8 +286,13 @@ int APS5_VABI sceVoiceGetPortInfo(uint32_t port_id, VoicePortInfo* info) {
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
     if (!voice.initialized) return VoiceErrorNotInitialized;
-    if (info == nullptr) APS5_INVALID_ARG_EX;
+    if (port_id > 127) return InvalidPort;
+    if (info == nullptr) return InvalidArgument;
     const auto& port = RequirePort(voice, port_id, __func__);
+    if (!voice.everStarted) {
+        std::memset(info, 0, sizeof(*info));
+        return NeverStarted;
+    }
     info->port_type = port.type;
     info->state = PortStateReady;
     info->byte_count = 0;
@@ -320,24 +329,33 @@ int APS5_VABI sceVoiceGetPortAttr(std::uint32_t portId, std::int32_t attr, void*
     if (found == voice.ports.end()) return InvalidPort;
     const auto requiredType = attr == 1003 ? PortOutDevice : PortInDevice;
     if (found->second.type != requiredType) return InvalidArgument;
+    if (attr == 1001) {
+        *static_cast<std::uint8_t*>(value) = 0;
+        return 0;
+    }
     Fail(__func__, "device attribute backend is not implemented");
 }
 
 int APS5_VABI sceVoiceReadFromOPort(uint32_t output_port_id, void* data, uint32_t* size) {
-    if (data == nullptr || size == nullptr) APS5_INVALID_ARG_EX;
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
+    if (!voice.initialized) return NotInitialized;
+    if (output_port_id > 127) return InvalidPort;
+    if (data == nullptr || size == nullptr) return InvalidArgument;
     if (IsInput(RequirePort(voice, output_port_id, __func__).type)) Fail(__func__, "port is not an output port");
     *size = 0;
     return 0;
 }
 
 int APS5_VABI sceVoiceWriteToIPort(uint32_t input_port_id, const void* data, uint32_t* size, int16_t frame_gaps) {
-    (void)input_port_id;
-    (void)data;
-    (void)size;
     (void)frame_gaps;
-    NotImplemented_nid_no_patch(__func__);
+    auto& voice = State();
+    std::lock_guard lock(voice.mutex);
+    if (!voice.initialized) return NotInitialized;
+    if (input_port_id > 127) return InvalidPort;
+    if (data == nullptr || size == nullptr) return InvalidArgument;
+    if (!IsInput(RequirePort(voice, input_port_id, __func__).type)) Fail(__func__, "port is not an input port");
+    *size = 0;
     return 0;
 }
 

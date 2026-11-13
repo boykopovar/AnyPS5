@@ -208,6 +208,14 @@ int APS5_VABI sceUltReaderWriterLockUnlockWrite(void* rwlock) {
     return ULT_OK;
 }
 
+int APS5_VABI _sceUltReaderWriterLockOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltReaderWriterLockOptParamInitialize(optParam, buildVersion);
+}
+
+int APS5_VABI _sceUltReaderWriterLockCreate(void* rwlock, const char* name, void* waitingQueueResourcePool, const UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltReaderWriterLockCreate(rwlock, name, waitingQueueResourcePool, optParam, buildVersion);
+}
+
 int APS5_VABI sceUltGetReaderWriterLockInfo(void* object, UltReaderWriterLockInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity) {
     if (object == nullptr || info == nullptr) return ULT_ERROR_NULL;
     if (waitingThreads == nullptr && capacity != 0) return ULT_ERROR_NULL;
@@ -216,20 +224,23 @@ int APS5_VABI sceUltGetReaderWriterLockInfo(void* object, UltReaderWriterLockInf
     std::lock_guard<std::mutex> lock(state->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
     for (std::uint32_t index = 0; index < capacity; ++index) {
-        if (waitingThreads[index].size != sizeof(UltWaitingThreadInfo)) return ULT_ERROR_INVALID;
+        std::uint64_t recordSize = 0;
+        if (!GuestCopyIn_nid_no_patch(&recordSize, &waitingThreads[index].size, sizeof(recordSize))) return ULT_ERROR_NULL;
+        if (recordSize != sizeof(UltWaitingThreadInfo)) return ULT_ERROR_INVALID;
     }
     if (capacity != 0 && state->_waiters != 0) NotImplemented_nid_no_patch(__func__);
     if (state->_writing && state->_ownerIdentity.type != 1) NotImplemented_nid_no_patch(__func__);
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltReaderWriterLockInfo);
-    info->object = object;
-    std::memcpy(info->name, state->_name, sizeof(info->name));
-    info->waitingQueuePool = state->_waitingPool;
-    info->readers = state->_readers;
-    info->waitingThreads = state->_waiters;
-    info->lockType = state->_writing ? 2 : (state->_readers > 0 ? 1 : 0);
-    info->owner = state->_ownerIdentity.thread;
-    info->ownerType = state->_ownerIdentity.type;
+    UltReaderWriterLockInfo localInfo{};
+    localInfo.size = sizeof(UltReaderWriterLockInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
+    localInfo.waitingQueuePool = state->_waitingPool;
+    localInfo.readers = state->_readers;
+    localInfo.waitingThreads = state->_waiters;
+    localInfo.lockType = state->_writing ? 2 : (state->_readers > 0 ? 1 : 0);
+    localInfo.owner = state->_ownerIdentity.thread;
+    localInfo.ownerType = state->_ownerIdentity.type;
+    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 

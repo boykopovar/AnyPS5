@@ -1,0 +1,18 @@
+target_sources(jxr_lookup_native PRIVATE src/NativeRows.c)
+target_sources(libSceJxr PRIVATE src/Rows.cpp)
+
+if(BUILD_TESTING)
+    add_library(jxr_rows_reference STATIC ${LIBS_INCLUDE_DIR}/tests/GuestJxrRowsReference.c)
+    configure_jxr_native(jxr_rows_reference)
+    target_link_libraries(jxr_rows_reference PRIVATE jxr)
+    add_test_executable(guest_jxr_rows_tests ${LIBS_INCLUDE_DIR}/tests/GuestJxrRows.cpp)
+    target_include_directories(guest_jxr_rows_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_jxr_rows_tests PRIVATE libSceJxr libc libkernel jxr_rows_reference)
+    configure_windows_unwind(guest_jxr_rows_tests)
+    add_test(NAME guest_jxr_rows COMMAND guest_jxr_rows_tests)
+    set_tests_properties(guest_jxr_rows PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_jxr_rows PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJxr>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()

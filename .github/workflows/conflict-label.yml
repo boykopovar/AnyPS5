@@ -11,11 +11,12 @@ permissions: {}
 
 concurrency:
   group: conflict-label
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   label:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       pull-requests: write
     steps:

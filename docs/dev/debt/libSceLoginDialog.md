@@ -1,5 +1,10 @@
 # libSceLoginDialog technical debt
 
+### Functional
+
+- [sceLoginDialogOpen](../../../core/libs/prx/libSceLoginDialog/Export.cpp) - returning `0x81340003` (`LOGIN_DIALOG_ERROR_INVALID_ARGUMENT`) for an unmapped or unreadable parameter pointer is a host-safety fallback with console fault behavior unmeasured.
+- [sceLoginDialogGetResult](../../../core/libs/prx/libSceLoginDialog/Export.cpp) - returning `0x81340003` for an unwritable result pointer is a host-safety fallback with console behavior unmeasured.
+
 ### Silent stubs
 
 - [libSceLoginDialog](../../../core/libs/prx/libSceLoginDialog/Export.cpp) - the login dialog runs the common-dialog state machine but shows nothing and reports the user as having cancelled
