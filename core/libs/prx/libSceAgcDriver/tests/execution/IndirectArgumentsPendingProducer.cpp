@@ -1,4 +1,5 @@
 #include "VulkanTestDevice.hpp"
+#include "../IndirectProducerGate.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -157,92 +158,7 @@ ShaderRecompiler::RecompileResult Recompile(AgcDriver::VulkanDevice& device, Slo
     return ShaderRecompiler::Recompile(request);
 }
 
-class ProducerSubmissionGate {
-public:
-    explicit ProducerSubmissionGate(AgcDriver::VulkanDevice& device) : device(device) {
-#ifdef _WIN32
-        constexpr const char* libraryName = "vulkan-1.dll";
-#elif defined(__APPLE__)
-        constexpr const char* libraryName = "libvulkan.1.dylib";
-#else
-        constexpr const char* libraryName = "libvulkan.so.1";
-#endif
-        library.reset(SDL_LoadObject(libraryName));
-        Require(library != nullptr, "cannot load Vulkan for the producer submission gate");
-        resolve = reinterpret_cast<PFN_vkGetDeviceProcAddr>(SDL_LoadFunction(library.get(), "vkGetDeviceProcAddr"));
-        Require(resolve != nullptr, "cannot resolve vkGetDeviceProcAddr for the producer submission gate");
-        const auto createSemaphore = function<PFN_vkCreateSemaphore>("vkCreateSemaphore");
-        destroySemaphore = function<PFN_vkDestroySemaphore>("vkDestroySemaphore");
-        signalSemaphore = reinterpret_cast<PFN_vkSignalSemaphore>(resolve(device.Device(), "vkSignalSemaphoreKHR"));
-        if (signalSemaphore == nullptr) signalSemaphore = function<PFN_vkSignalSemaphore>("vkSignalSemaphore");
-        VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
-        type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-        VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
-        Require(createSemaphore(device.Device(), &info, nullptr, &semaphore) == VK_SUCCESS, "cannot create the producer submission gate");
-    }
-
-    ~ProducerSubmissionGate() {
-        if (worker.joinable()) {
-            worker.request_stop();
-            worker.join();
-        }
-        Release();
-        try {
-            device.WaitIdle();
-        } catch (...) {
-        }
-        destroySemaphore(device.Device(), semaphore, nullptr);
-    }
-
-    void Arm(AgcDriver::Graphics::Recorder& recorder) {
-        recorder.Commands();
-        recorder.HoldNextSubmit(semaphore, 1);
-    }
-
-    void ReleaseAfterSubmission(AgcDriver::Graphics::Recorder& recorder, std::uint64_t serial) {
-        worker = std::jthread([this, &recorder, serial](std::stop_token stop) {
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-            while (!stop.stop_requested() && recorder.NewestSubmitted() < serial && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::microseconds(100));
-            producerSubmitted = recorder.NewestSubmitted() >= serial;
-            Release();
-            if (!producerSubmitted && !stop.stop_requested()) std::fprintf(stderr, "pending producer gate: watchdog expired with producer batch %llu unsubmitted (vkSignalSemaphore %d)\n", static_cast<unsigned long long>(serial), static_cast<int>(releaseResult));
-        });
-    }
-
-    void Finish() {
-        worker.join();
-        Require(releaseResult == VK_SUCCESS, "cannot release the producer submission gate");
-        Require(producerSubmitted, "the CPU argument read did not submit the later leased producer before waiting for its earlier argument label");
-        device.WaitIdle();
-    }
-
-private:
-    template <typename TFunction>
-    TFunction function(const char* name) const {
-        const auto function = reinterpret_cast<TFunction>(resolve(device.Device(), name));
-        Require(function != nullptr, std::string("cannot resolve ") + name + " for the producer submission gate");
-        return function;
-    }
-
-    void Release() {
-        if (signaled.exchange(true)) return;
-        VkSemaphoreSignalInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
-        info.semaphore = semaphore;
-        info.value = 1;
-        releaseResult = signalSemaphore(device.Device(), &info);
-    }
-
-    AgcDriver::VulkanDevice& device;
-    std::unique_ptr<void, decltype(&SDL_UnloadObject)> library{nullptr, &SDL_UnloadObject};
-    PFN_vkGetDeviceProcAddr resolve = nullptr;
-    PFN_vkDestroySemaphore destroySemaphore = nullptr;
-    PFN_vkSignalSemaphore signalSemaphore = nullptr;
-    VkSemaphore semaphore = VK_NULL_HANDLE;
-    std::jthread worker;
-    std::atomic<bool> signaled{false};
-    bool producerSubmitted = false;
-    VkResult releaseResult = VK_NOT_READY;
-};
+using AgcDriver::Test::ProducerSubmissionGate;
 
 void RunArgumentLabel(Slot& slot) {
     AgcDriverShutdown_nid_postfix();
