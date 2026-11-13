@@ -109,11 +109,6 @@ int APS5_VABI OCSP_cert_to_id_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI OCSP_resp_find_status_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 const char* APS5_VABI OpenSSL_version_nid_postfix(int type) {
     switch (type) {
     case 0: return "LibreSSL 4.0.0";
@@ -162,11 +157,6 @@ int APS5_VABI SSL_CTX_add0_chain_cert_nid_postfix(void) {
 }
 
 int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_STORE_CTX_init_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

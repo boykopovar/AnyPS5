@@ -49,7 +49,7 @@ class DocsTests(unittest.TestCase):
     def test_usage_says_where_the_report_goes_and_that_a_killed_run_has_none(self):
         text = USAGE.read_text(encoding="utf-8")
         self.assertIn("reports/<run id>/anyps5-report.json", text)
-        self.assertRegex(text, r"A run that is killed, crashes or aborts writes no report")
+        self.assertRegex(text, r"A run that is killed or crashes writes no report")
 
     def test_privacy_is_described_as_a_filter(self):
         text = USAGE.read_text(encoding="utf-8")
