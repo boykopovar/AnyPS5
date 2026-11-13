@@ -30,6 +30,7 @@ namespace {
 constexpr int SCE_SYSMODULE_ERROR_INVALID_VALUE = static_cast<int>(0x805A1000);
 constexpr int SCE_SYSMODULE_ERROR_UNLOADED = static_cast<int>(0x805A1001);
 constexpr int kRtldNow = 2;
+constexpr std::uint32_t kMeasuredInternalUnloadedModuleId = 0x800000c4u;
 
 const char* findModuleName(const std::uint32_t id) {
     const auto it = kModuleTable.find(id);
@@ -343,6 +344,9 @@ int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (id == kMeasuredInternalUnloadedModuleId) {
+            return SCE_SYSMODULE_ERROR_UNLOADED;
+        }
         if (isMeasuredRejectedInternalId(id) || id == 0x00ffffffu) {
             return SCE_SYSMODULE_ERROR_INVALID_VALUE;
         }
