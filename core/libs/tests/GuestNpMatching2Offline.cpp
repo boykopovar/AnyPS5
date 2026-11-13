@@ -127,6 +127,8 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     Require(getUserInfoList(99, zeroed, nullptr, &requestId) == ContextNotFound, "sceNpMatching2GetUserInfoList", "an unknown context did not return CONTEXT_NOT_FOUND");
     Require(getUserInfoList(contextA, zeroed, nullptr, &requestId) == InvalidContext, "sceNpMatching2GetUserInfoList", "an A context did not return 0x80550C3B");
     Require(getUserInfoList(context, zeroed, nullptr, &requestId) == InvalidServerId, "sceNpMatching2GetUserInfoList", "server id 0 did not return INVALID_SERVER_ID");
+    errno = 71;
+    Require(getUserInfoList(context, reinterpret_cast<const void*>(0x10), nullptr, &requestId) == InvalidArgument && errno == 71, "sceNpMatching2GetUserInfoList", "an unreadable request did not return INVALID_ARGUMENT with errno preserved");
     for (const RequestFn request : {setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo, leaveRoom}) {
         Require(request(context, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "room id 0 did not return INVALID_ROOM_ID");
         Require(request(99, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "the room id was not checked before the context");
