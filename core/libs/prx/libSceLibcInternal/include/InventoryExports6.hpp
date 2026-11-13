@@ -4,7 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI _ZSt8_XLgammaf_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEED1Ev_nid_postfix();
 int APS5_VABI _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix();
 int APS5_VABI _ZNSt13basic_istreamIwSt11char_traitsIwEED0Ev_nid_postfix();
@@ -15,7 +14,6 @@ int APS5_VABI _ZNSt6locale6globalERKS__nid_postfix();
 int APS5_VABI _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1EPKcm_nid_postfix();
 int APS5_VABI _ZNSt8messagesIcEC2Em_nid_postfix();
 int APS5_VABI _ZNSt7collateIcEC1Em_nid_postfix();
-int APS5_VABI signalcontext_nid_postfix();
 int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEED2Ev_nid_postfix();
 int APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1ERKSt8_Locinfom_nid_postfix();
 int APS5_VABI _ZTv0_n24_NSiD0Ev_nid_postfix();

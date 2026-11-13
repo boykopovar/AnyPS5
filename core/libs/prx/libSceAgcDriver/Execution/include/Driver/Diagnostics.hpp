@@ -7,6 +7,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace AgcDriver::DriverDetail {
 
@@ -24,6 +25,11 @@ bool SkipRefusedDraws();
 
 void ReportRefusedDraw(const RefusedDraw& refused);
 std::optional<std::size_t> RefusedShaderCount();
+
+bool SkipRefusedDispatches();
+void ReportRefusedDispatch(std::uint64_t address, std::string_view reason);
+bool RefusedDispatch(std::uint64_t address);
+std::size_t MaxComputeSpirvWords();
 
 void require(bool condition, const char* reason);
 

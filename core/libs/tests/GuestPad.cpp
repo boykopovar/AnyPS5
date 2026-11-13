@@ -1,4 +1,5 @@
 #include "prx/libScePad/include/Pad.hpp"
+#include <cerrno>
 #include "prx/libScePad/include/PadInputTypes.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/InputCommandFile.hpp"
@@ -22,6 +23,19 @@
 #include <utility>
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static void CheckTrackerLightBar(int handle) {
+    std::uint32_t sequence = 0;
+    PadOutputState snapshot;
+    PadFetchOutput_nid_postfix(&sequence, &snapshot);
+    const PadLightBarParam color{0x12, 0x34, 0x56};
+    Require(scePadSetLightBarForTracker(handle + 1, &color) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBarForTracker(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(!PadFetchOutput_nid_postfix(&sequence, &snapshot));
+    Require(scePadSetLightBarForTracker(handle, &color) == PAD_OK);
+    Require(PadFetchOutput_nid_postfix(&sequence, &snapshot));
+    Require(snapshot.lightBarValid && snapshot.lightBar[0] == 0x12 && snapshot.lightBar[1] == 0x34 && snapshot.lightBar[2] == 0x56);
+}
 
 static void CheckGetInfoGuestOutput() {
     Require(scePadGetInfo_nid_postfix(nullptr) == PAD_ERROR_INVALID_ARG);
@@ -570,6 +584,9 @@ static void CheckSpecialPort(int user, int handle) {
     Require(scePadDeviceClassGetExtendedInformation(special, &extended) == PAD_OK);
     Require(extended.deviceClass == -1 && extended.reserved[0] == 0);
     Require(scePadDeviceClassGetExtendedInformation(handle, &extended) == PAD_OK);
+    errno = 71;
+    Require(scePadDeviceClassGetExtendedInformation(handle, reinterpret_cast<PadDeviceClassExtendedInformation*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(extended.deviceClass == 0);
     std::int32_t specialType = -1;
     Require(scePadGetControllerType(special, &specialType) == PAD_OK);
@@ -1583,6 +1600,7 @@ int main() {
     CheckVibrationForce(user, handle);
     CheckTriggerEffect(user, handle);
     CheckControllerType(handle);
+    CheckTrackerLightBar(handle);
     CheckControllerQueries(handle);
     CheckInjectedState(commandPath);
     CheckInjectedQueueTimes(commandPath);

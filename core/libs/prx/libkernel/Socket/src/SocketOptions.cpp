@@ -30,6 +30,7 @@ constexpr int GuestBroadcast = 0x20;
 constexpr int GuestLinger = 0x80;
 constexpr int GuestOobInline = 0x100;
 constexpr int GuestAcceptFilter = 0x1000;
+constexpr std::uint32_t GuestAcceptFilterArgumentSize = 256;
 constexpr int GuestNoSigpipe = 0x800;
 constexpr int GuestSendBuffer = 0x1001;
 constexpr int GuestReceiveBuffer = 0x1002;
@@ -83,6 +84,9 @@ constexpr int ErrorNoBuffers = 55;
 constexpr int MaximumReservation = 5592405;
 constexpr int MaximumBuffer = 524288;
 constexpr int MaximumLinger = 65535;
+#ifdef __APPLE__
+constexpr int LongestHostLinger = 327;
+#endif
 constexpr std::int64_t LongestTimeout = 0x7fffffffffffffffLL;
 
 struct GuestLingerValue {
@@ -170,12 +174,19 @@ int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t s
 
 }
 
+int SendBufferSize(SocketOptionState& state, int family, int type) {
+    EnsureBuffers(state, family, type);
+    return state.sendBuffer;
+}
+
 int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, const void* value, std::uint32_t length) {
     const auto handle = static_cast<NativeHandle>(native);
     if (option == GuestAcceptFilter) {
         bool listening = false;
         if (type != 2 && !NativeListening(native, listening)) return HostError();
         if (!listening) return ErrorInvalid;
+        if (!value) return 0;
+        if (length < GuestAcceptFilterArgumentSize) return ErrorInvalid;
         NotImplemented_nid_no_patch("setsockopt: SO_ACCEPTFILTER on a listening socket");
     }
     if (option == GuestLinger) {
@@ -192,7 +203,12 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
         request.l_onoff = guest.enabled != 0 ? 1 : 0;
         request.l_linger = guest.seconds;
 #endif
+#ifdef __APPLE__
+        if (guest.seconds > LongestHostLinger) NotImplemented_nid_no_patch("setsockopt: SO_LINGER above 327 seconds on macOS");
+        if (::setsockopt(handle, SOL_SOCKET, SO_LINGER_SEC, &request, sizeof(request))) return HostError();
+#else
         if (::setsockopt(handle, SOL_SOCKET, SO_LINGER, reinterpret_cast<NativeOptionValue>(&request), sizeof(request))) return HostError();
+#endif
         return 0;
     }
     if (option == GuestSendTimeout || option == GuestReceiveTimeout) {
@@ -290,13 +306,16 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
     if (option == GuestAcceptFilter) {
         bool listening = false;
         if (type != 2 && !NativeListening(native, listening)) return HostError();
-        if (!listening) return ErrorInvalid;
-        NotImplemented_nid_no_patch("getsockopt: SO_ACCEPTFILTER on a listening socket");
+        return ErrorInvalid;
     }
     if (option == GuestLinger) {
         linger current{};
         socklen_t size = sizeof(current);
+#ifdef __APPLE__
+        if (::getsockopt(handle, SOL_SOCKET, SO_LINGER_SEC, &current, &size)) return HostError();
+#else
         if (::getsockopt(handle, SOL_SOCKET, SO_LINGER, reinterpret_cast<NativeOptionOutput>(&current), &size)) return HostError();
+#endif
         const GuestLingerValue guest{current.l_onoff != 0 ? GuestLinger : 0, static_cast<std::int32_t>(current.l_linger)};
         return Copy(value, length, &guest, sizeof(guest));
     }

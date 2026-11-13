@@ -73,6 +73,7 @@ public:
     explicit KeyboardMouse(InputConfiguration configuration);
     void Replace(InputConfiguration next);
     InputRequests HandleEvent(const SDL_Event& event, Clock::time_point now);
+    InputRequests PadChordRequests(std::uint32_t buttons);
     bool Advance(Clock::time_point now);
     void SetMouseMode(bool enabled);
     void SetMouseTouchpad(bool enabled);
@@ -115,6 +116,7 @@ private:
     int viewportHeight = 0;
     std::optional<PadTouchPoint> mouseTouch;
     std::optional<PadTouchPoint> touchAt(int x, int y) const;
+    std::uint32_t padButtons = 0;
 };
 
 std::uint8_t StickByte(double deflection);
