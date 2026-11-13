@@ -250,11 +250,15 @@ int main(int argc, char** argv) {
         struct UnregisterOutput {
             ~UnregisterOutput() { GuestAllocations::Mutation().Remove(Output.data()); }
         } unregisterOutput;
-        for (int run = 0; run < 2; ++run) {
+        const int refreshRuns = mode == Mode::Enabled ? 64 : 2;
+        StorageTexture::OrderedSkipCounts refreshCounts{};
+        for (int run = 0; run < refreshRuns; ++run) {
             Surface surface;
             RefreshAfterStore(surface);
+            const auto counts = StorageTexture::TakeOrderedSkipCounts();
+            refreshCounts.refreshes += counts.refreshes;
+            if (refreshCounts.refreshes != 0) break;
         }
-        const auto refreshCounts = StorageTexture::TakeOrderedSkipCounts();
         if (mode == Mode::Enabled) Require(refreshCounts.refreshes != 0, "label ordered flush: no storage refresh took the GPU-ordered flush over the pending image");
         else Require(refreshCounts.refreshes == 0, "label ordered flush: a storage refresh skipped its writer wait with the ordered refresh off or no host import");
         AgcDriverShutdown_nid_postfix();

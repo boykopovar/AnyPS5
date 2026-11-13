@@ -304,6 +304,7 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bitPattern, ui
 int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int mode);
 int APS5_VABI shm_unlink_nid_postfix(const char* path);
 int APS5_VABI pipe_nid_postfix(int* descriptors);
+int APS5_VABI pipe2_nid_postfix(int* descriptors, int flags);
 int APS5_VABI chmod_nid_postfix(const char* path, int mode);
 int APS5_VABI chflags_nid_postfix(const char* path, std::uint64_t flags);
 int APS5_VABI fchflags_nid_postfix(int d, std::uint64_t flags);
