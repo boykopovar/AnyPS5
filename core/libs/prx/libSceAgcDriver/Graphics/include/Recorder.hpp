@@ -820,6 +820,7 @@ private:
     void endSamples(Batch& batch);
     void foldSamples(Batch& batch, VkDeviceAddress target);
     bool segmentMode() const;
+    bool encodesSegmentQueries() const;
     bool segmentSlotReady(const Batch& batch) const;
     void takeSegmentPool(Batch& batch);
     void beginSegment(Batch& batch);
@@ -969,6 +970,7 @@ private:
     std::unique_ptr<Batch> open;
     VkCommandPool encoderPool = VK_NULL_HANDLE;
     std::unique_ptr<CommandEncoder> encoder;
+    const DeviceFunctions* encodedQueries = nullptr;
     void quiesce(std::source_location where = std::source_location::current()) {
         if (encoder == nullptr) return;
         encoder->Quiesce(where);

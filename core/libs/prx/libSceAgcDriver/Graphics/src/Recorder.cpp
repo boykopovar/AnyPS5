@@ -1346,6 +1346,7 @@ struct Recorder::ProgressWatcher {
 
 Recorder::Recorder(const Context& context, bool timelineSemaphores, DeviceFunctions* encodedFunctions, std::uint32_t queueFamily) : context(context), id(nextRecorderId.fetch_add(1)) {
     if (encodedFunctions != nullptr && CommandEncoder::Enabled()) encoder = CommandEncoder::Attach(context.device, *encodedFunctions);
+    if (encoder != nullptr) encodedQueries = encodedFunctions;
     if (encoder != nullptr) {
         VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -2833,17 +2834,29 @@ void Recorder::takeSegmentPool(Batch& batch) {
     function(cmdResetQueryPool, "vkCmdResetQueryPool")(batch.commands.Get(BatchCommands::Use::Quiesced), batch.segments, 0, SegmentSlots);
 }
 
+bool Recorder::encodesSegmentQueries() const {
+    return encodedQueries != nullptr && encodedQueries->cmdBeginQuery != nullptr && encodedQueries->cmdEndQuery != nullptr && !RuntimeSwitches::Set(RuntimeSwitch::QuiescedSegments);
+}
+
 void Recorder::beginSegment(Batch& batch) {
-    quiesce();
+    const bool encoded = encodesSegmentQueries();
+    if (!encoded) quiesce();
     Require(batch.segments != VK_NULL_HANDLE && batch.segmentNext < SegmentSlots, "an occlusion segment begins without a reset query slot");
     batch.segmentSlot = batch.segmentNext++;
-    function(cmdBeginQuery, "vkCmdBeginQuery")(batch.commands.Get(BatchCommands::Use::Quiesced), batch.segments, batch.segmentSlot, context.occlusionQueryPrecise ? VK_QUERY_CONTROL_PRECISE_BIT : 0u);
+    const auto flags = context.occlusionQueryPrecise ? VK_QUERY_CONTROL_PRECISE_BIT : 0u;
+    if (encoded) encodedQueries->cmdBeginQuery(batch.commands.Get(BatchCommands::Use::Interposed), batch.segments, batch.segmentSlot, flags);
+    else function(cmdBeginQuery, "vkCmdBeginQuery")(batch.commands.Get(BatchCommands::Use::Quiesced), batch.segments, batch.segmentSlot, flags);
     batch.segmentActive = true;
 }
 
 void Recorder::endSegment(Batch& batch, std::source_location where) {
-    quiesce(where);
-    function(cmdEndQuery, "vkCmdEndQuery")(batch.commands.Get(BatchCommands::Use::Quiesced), batch.segments, batch.segmentSlot);
+    if (encodesSegmentQueries()) {
+        const EncodingWindow window(*this, where);
+        encodedQueries->cmdEndQuery(batch.commands.Get(BatchCommands::Use::Interposed), batch.segments, batch.segmentSlot);
+    } else {
+        quiesce(where);
+        function(cmdEndQuery, "vkCmdEndQuery")(batch.commands.Get(BatchCommands::Use::Quiesced), batch.segments, batch.segmentSlot);
+    }
     batch.segmentActive = false;
     pendingSamples.push_back({batch.segmentPool, batch.segments, batch.segmentSlot});
     segmentsClosed.fetch_add(1, std::memory_order_relaxed);

@@ -11642,6 +11642,16 @@ public:
         recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{});
     }
 
+    void DrawEncodedSampled(Recorder& recorder, const Context& encoded) const {
+        const auto start = recorder.StartDrawPass(PassKey, false, false, PassAccess{});
+        Require(start.continued, "an encoded sampled draw did not continue the open cover pass");
+        const Recorder::EncodingWindow window(recorder);
+        encoded.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(start.commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        recorder.NoteSampledDraw(start.commands);
+        encoded.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(start.commands, 3, 1, 0, 0);
+        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{});
+    }
+
     static constexpr std::uint64_t Samples = 64;
 
 private:
@@ -12067,6 +12077,100 @@ void encoderPassEndSiteTests(const Device& device) {
     }
     Require(caller, "the wait at a pass end was not attributed to the caller of Commands(): " + seen);
     std::cout << "Command encoder pass-end site tests passed\n";
+}
+
+struct SegmentRun {
+    std::uint64_t counted = 0;
+    std::uint64_t segmentBeginWaits = 0;
+    std::uint64_t committerWaits = 0;
+    std::uint64_t records = 0;
+    double committerMicros = 0;
+};
+
+std::uint64_t encoderWaits(const Recorder& recorder) {
+    std::uint64_t waits = 0;
+    for (const auto& site : recorder.EncoderWaitsBySite()) waits += site.waits;
+    return waits;
+}
+
+SegmentRun encodedSegmentRun(const Device& device, bool quiesced) {
+    auto context = device.GetContext();
+    DeviceFunctions table;
+    FillDeviceFunctions(context, table);
+    const char* configured = std::getenv("APS5_PROFILE_ENCODER");
+    const std::string saved = configured != nullptr ? configured : "";
+    Require(setProfileEncoder("1"), "cannot set APS5_PROFILE_ENCODER");
+    Recorder recorder(context, false, &table, context.queueFamily);
+    setProfileEncoder(configured != nullptr ? saved.c_str() : nullptr);
+    context.functions = &table;
+    const bool adaptive = RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder);
+    const bool segments = RuntimeSwitches::Set(RuntimeSwitch::QuiescedSegments);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, true);
+    RuntimeSwitches::Assign(RuntimeSwitch::QuiescedSegments, quiesced);
+    struct Restore {
+        bool adaptive;
+        bool segments;
+        ~Restore() {
+            CommandEncoder::SetDelayForTesting({});
+            RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, adaptive);
+            RuntimeSwitches::Assign(RuntimeSwitch::QuiescedSegments, segments);
+        }
+    } restore{adaptive, segments};
+    CoverPass cover(context);
+    recorder.CountSamples();
+    const auto base = recorder.SamplesTotal();
+    const auto closedBefore = Recorder::SampleDumpCounts().segments;
+    cover.Draw(recorder);
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(5)); });
+    constexpr std::size_t encodedDraws = 6;
+    const auto waitsBefore = encoderWaits(recorder);
+    const auto recordsBefore = recorder.EncoderCounts().commands;
+    const auto started = std::chrono::steady_clock::now();
+    for (std::size_t i = 0; i < encodedDraws; ++i) {
+        recorder.EndPassSamples();
+        cover.DrawEncodedSampled(recorder, context);
+    }
+    const auto committed = std::chrono::steady_clock::now();
+    const auto waitsAfter = encoderWaits(recorder);
+    const auto recordsAfter = recorder.EncoderCounts().commands;
+    CommandEncoder::SetDelayForTesting({});
+    recorder.Submit();
+    recorder.Sync();
+    SegmentRun run;
+    run.committerWaits = waitsAfter - waitsBefore;
+    run.records = recordsAfter - recordsBefore;
+    run.committerMicros = std::chrono::duration<double, std::micro>(committed - started).count() / encodedDraws;
+    run.counted = recorder.SamplesTotal() - base;
+    Require(Recorder::SampleDumpCounts().segments - closedBefore >= encodedDraws, "the encoded sampled draws did not each close an occlusion segment");
+    for (const auto& site : recorder.EncoderWaitsBySite()) {
+        if (CommandEncoder::Describe(site.site).find("beginSegment") != std::string::npos) run.segmentBeginWaits += site.waits;
+    }
+    if (context.occlusionQueryPrecise) Require(run.counted == (encodedDraws + 1) * CoverPass::Samples, "occlusion segments around encoded draws counted " + std::to_string(run.counted) + " samples, not the " + std::to_string((encodedDraws + 1) * CoverPass::Samples) + " of their draws");
+    Require(run.counted != 0, "occlusion segments around encoded draws counted no samples");
+    return run;
+}
+
+void encoderSegmentQueryTests(const Device& device) {
+    if (!CommandEncoder::Enabled() || !device.Graphics() || !device.GetContext().bufferDeviceAddress) {
+        std::cout << "no command encoder, graphics queue or buffer device addresses: encoded occlusion segments not tested\n";
+        return;
+    }
+    {
+        auto context = device.GetContext();
+        DeviceFunctions table;
+        FillDeviceFunctions(context, table);
+        Recorder probe(context, false, &table, context.queueFamily);
+        if (!probe.Encodes()) return;
+    }
+    const auto encoded = encodedSegmentRun(device, false);
+    Require(encoded.segmentBeginWaits == 0, "an occlusion segment begun inside an encoding window waited for the encoder " + std::to_string(encoded.segmentBeginWaits) + " times");
+    Require(encoded.committerWaits == 0, "sampled draws whose occlusion segments are encoder records waited for the encoder " + std::to_string(encoded.committerWaits) + " times");
+    const auto quiesced = encodedSegmentRun(device, true);
+    Require(encoded.records == quiesced.records + 12, "six encoded sampled draws recorded " + std::to_string(encoded.records) + " encoder records with their occlusion queries and " + std::to_string(quiesced.records) + " without, not two more per draw");
+    Require(quiesced.committerWaits >= 6, "APS5_QUIESCED_SEGMENTS sampled draws waited for the encoder only " + std::to_string(quiesced.committerWaits) + " times");
+    Require(quiesced.segmentBeginWaits != 0, "APS5_QUIESCED_SEGMENTS did not make an occlusion segment's begin wait for the encoder");
+    Require(encoded.counted == quiesced.counted, "encoded occlusion segments counted " + std::to_string(encoded.counted) + " samples, quiesced ones " + std::to_string(quiesced.counted));
+    std::cout << "Command encoder occlusion segment tests passed (begin waits: encoded " << encoded.segmentBeginWaits << ", quiesced " << quiesced.segmentBeginWaits << "; all waits: encoded " << encoded.committerWaits << ", quiesced " << quiesced.committerWaits << "; committer us/draw with a 5 ms encoder: encoded " << encoded.committerMicros << ", quiesced " << quiesced.committerMicros << ")\n";
 }
 
 void uncountedPassTests(const Device& device) {
@@ -16646,6 +16750,7 @@ int main(int argc, char** argv) {
         gpu.lock();
         encoderFailureFollowsTheBatchTests(device, recorder, gpu);
         encoderPassEndSiteTests(device);
+        encoderSegmentQueryTests(device);
         encoderRuntimeSwitchTests(device, recorder);
         encoderSlotFallbackTests(device);
         recorder.Activate();

@@ -395,6 +395,8 @@ void install(DeviceFunctions& table) {
     APS5_PLAIN(cmdDrawIndexed);
     APS5_PLAIN(cmdDrawIndirect);
     APS5_PLAIN(cmdDrawIndexedIndirect);
+    APS5_PLAIN(cmdBeginQuery);
+    APS5_PLAIN(cmdEndQuery);
     APS5_DIRECT(cmdCopyBufferToImage);
     APS5_DIRECT(cmdCopyImageToBuffer);
     APS5_DIRECT(cmdClearColorImage);
