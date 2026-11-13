@@ -87,11 +87,6 @@ int APS5_VABI _ZNSt7collateIcEC1Em_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI signalcontext_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEED2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
