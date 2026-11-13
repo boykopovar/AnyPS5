@@ -348,9 +348,7 @@ int APS5_VABI WKIconDatabaseCopyIconDataForPageURL();
 int APS5_VABI WKIconDatabaseCopyIconURLForPageURL();
 int APS5_VABI WKImageCreateCairoSurface();
 int APS5_VABI WKImageCreateFromCairoSurface();
-int APS5_VABI WKImeEventGetInputLanguage();
-int APS5_VABI WKImeEventMake();
-int APS5_VABI WKImeEventRelease();
+
 int APS5_VABI WKInspectorShowMainResourceForFrame();
 int APS5_VABI WKKeyValueStorageManagerDeleteAllEntries();
 int APS5_VABI WKKeyValueStorageManagerDeleteEntriesForOrigin();

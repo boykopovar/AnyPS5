@@ -156,6 +156,76 @@ void APS5_VABI WKInspectorAttach(const void* inspectorRef);
 void APS5_VABI WKInspectorClose(const void* inspectorRef);
 void APS5_VABI WKInspectorConnect(const void* inspectorRef);
 void APS5_VABI WKInspectorDetach(const void* inspectorRef);
+enum WKInputLanguage : int {
+    InputLanguageUndefined = -1,
+
+    INPUT_LANGUAGE_DANISH,
+    INPUT_LANGUAGE_GERMAN,
+    INPUT_LANGUAGE_ENGLISH_US,
+    INPUT_LANGUAGE_SPANISH,
+    INPUT_LANGUAGE_FRENCH,
+    INPUT_LANGUAGE_ITALIAN,
+    INPUT_LANGUAGE_DUTCH,
+    INPUT_LANGUAGE_NORWEGIAN,
+    INPUT_LANGUAGE_POLISH,
+    INPUT_LANGUAGE_PORTUGUESE_PT,
+    INPUT_LANGUAGE_RUSSIAN,
+    INPUT_LANGUAGE_FINNISH,
+    INPUT_LANGUAGE_SWEDISH,
+    INPUT_LANGUAGE_JAPANESE,
+    INPUT_LANGUAGE_KOREAN,
+    INPUT_LANGUAGE_SIMPLIFIED_CHINESE,
+    INPUT_LANGUAGE_TRADITIONAL_CHINESE,
+    INPUT_LANGUAGE_PORTUGUESE_BR,
+    INPUT_LANGUAGE_ENGLISH_GB,
+    INPUT_LANGUAGE_TURKISH,
+    INPUT_LANGUAGE_SPANISH_LATIN_AMERICA,
+    INPUT_LANGUAGE_ARABIC,
+    INPUT_LANGUAGE_CANADIAN_FRENCH,
+    INPUT_LANGUAGE_THAI,
+    INPUT_LANGUAGE_CZECH,
+    INPUT_LANGUAGE_GREEK,
+    INPUT_LANGUAGE_INDONESIAN,
+    INPUT_LANGUAGE_VIETNAMESE,
+    INPUT_LANGUAGE_ROMANIAN,
+    INPUT_LANGUAGE_HUNGARIAN,
+    INPUT_LANGUAGE_UKRAINIAN,
+
+    InputLanguageCount,
+};
+
+enum WKImeEventType : int {
+    Open,
+    ChangeSize,
+    PressClose,
+    PressEnter,
+    UpdatePreedit,
+    ConfirmPreedit,
+    InsertText,
+    Backspace,
+    DeleteAllBeforeCaret,
+    DeleteAll,
+    CaretMoveLeft,
+    CaretMoveRight,
+    CaretMoveUp,
+    CaretMoveDown,
+    StartSelection,
+    EndSelection,
+    SendSelectionWord,
+    MoveDialog,
+    GetInputText,
+    SetValueToFocusedNode,
+};
+
+struct WKImeEvent {
+    WKImeEventType imeEventType;
+    const char* compositionString;
+    int keyCode;
+    int caretIndex;
+};
+WKInputLanguage APS5_VABI WKImeEventGetInputLanguage(const char* languageCode);
+WKImeEvent* APS5_VABI WKImeEventMake(WKImeEventType imeEventType, const char* compositionString, int keyCode);
+void APS5_VABI WKImeEventRelease(WKImeEvent* imeEvent);
 std::uint32_t APS5_VABI WKInspectorGetTypeID();
 void APS5_VABI WKInspectorHide(const void* inspectorRef);
 bool APS5_VABI WKInspectorIsAttached(const void* inspectorRef);
