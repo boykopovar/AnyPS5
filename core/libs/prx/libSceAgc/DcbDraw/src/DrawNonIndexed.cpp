@@ -10,9 +10,8 @@
 extern "C" {
 
 std::uint32_t* APS5_VABI sceAgcDcbDrawIndirect(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint64_t modifier) {
-    Agc::Command::Require((dataOffsetInBytes & 3u) == 0, __func__, "misaligned indirect argument offset");
-    const auto offsets = Agc::Command::DrawPatchOffsets(modifier, __func__);
-    return Agc::Command::Emit(buf, 0x24u, {dataOffsetInBytes, static_cast<std::uint32_t>(offsets), static_cast<std::uint32_t>(offsets >> 32u), Agc::Command::DrawInitiator(modifier, false, __func__)}, __func__);
+    const auto offsets = Agc::Command::DrawPatchOffsets(modifier);
+    return Agc::Command::Emit(buf, 0x24u, {dataOffsetInBytes, static_cast<std::uint32_t>(offsets), static_cast<std::uint32_t>(offsets >> 32u), Agc::Command::DrawInitiator(modifier, false)}, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcDcbDrawIndirectGetSize() {
@@ -28,8 +27,8 @@ std::uint32_t* APS5_VABI sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, std::uin
     } else {
         Agc::Command::Require(address == 0, __func__, "count address supplied for a direct draw count");
     }
-    const auto offsets = Agc::Command::DrawPatchOffsets(modifier, __func__);
-    const auto initiator = Agc::Command::DrawInitiator(modifier, false, __func__);
+    const auto offsets = Agc::Command::DrawPatchOffsets(modifier);
+    const auto initiator = Agc::Command::DrawInitiator(modifier, false);
     const auto low = static_cast<std::uint32_t>(modifier);
     const auto control = Agc::Command::DrawIndexLocation(modifier) | ((low & 0x10u) << 23u) | (countIndirect << 30u) | ((low & 8u) << 28u);
     auto* packet = Agc::Command::Allocate(buf, 16, __func__);

@@ -85,20 +85,15 @@ agcbuild_DcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console enc
 agcbuild_DcbDmaData_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDmaData_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDmaData_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndexAuto_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirectMulti_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirectMulti_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirectMulti_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndexIndirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndexIndirect_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndexIndirect_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbDrawIndexIndirect_a	diff	modifier bit 1 adds fields to the second and third words that are not decoded
+agcbuild_DcbDrawIndexIndirect_b	diff	modifier bit 1 adds fields to the second and third words that are not decoded
 agcbuild_DcbDrawIndexMultiInstanced_a	diff	the packet differs from the console's; not yet analysed
 agcbuild_DcbDrawIndirectMulti_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndirectMulti_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndirectMulti_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndirect_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbGetLodStats_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbGetLodStats_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbGetLodStats_c	throw	AnyPS5 throws for arguments the console encodes

@@ -74,8 +74,10 @@ int main() {
     Reject([&]{AgcDriver::Pm4::Validate(maxOffsetCount,0);});
     auto* saved=buffer.cursor_up;
     Reject([&]{sceAgcDcbDrawIndex(&buffer,3,nullptr,0);});
-    Reject([&]{sceAgcDcbDrawIndex(&buffer,3,indices.data(),1ull<<40);});
     Require(buffer.cursor_up==saved);
+    auto* high=sceAgcDcbDrawIndex(&buffer,3,indices.data(),1ull<<40);
+    Require(high==saved&&buffer.cursor_up==saved+6&&high[5]==0);
+    buffer.cursor_up=saved;
     buffer.cursor_down=buffer.cursor_up+5;
     Reject([&]{sceAgcDcbDrawIndex(&buffer,3,indices.data(),0);});
     Require(buffer.cursor_up==saved);
