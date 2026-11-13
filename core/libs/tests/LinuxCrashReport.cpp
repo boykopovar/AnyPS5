@@ -170,6 +170,8 @@ void Scenario(const std::string& name) {
         failStackInstall = name == "stack-failure";
         failStackQuery = name == "stack-query-failure";
         Load();
+        failStackInstall = 0;
+        failStackQuery = 0;
         struct sigaction action{};
         Check(sigaction(SIGILL, nullptr, &action) == 0 && action.sa_handler == SimpleHandler, "failed setup changed saved handler\n");
         raise(SIGILL);
