@@ -2596,6 +2596,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
             writers->erase(std::remove(writers->begin(), writers->end(), resources), writers->end());
             resources->WriteBackBuffers();
         });
+        recorder.OnDiscard([resources, writers] { writers->erase(std::remove(writers->begin(), writers->end(), resources), writers->end()); });
         writers->push_back(resources);
         GuestMemory::BreakProofs();
     } else if (completion) {
