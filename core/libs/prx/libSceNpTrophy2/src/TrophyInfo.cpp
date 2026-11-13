@@ -77,15 +77,23 @@ int APS5_VABI sceNpTrophy2GetTrophyInfo(int context, int handle, int trophy_id, 
     (void)handle;
     const auto owner = NpTrophy2::FindContext(context);
     const auto* package = owner ? NpTrophy2::Package(owner->serviceLabel) : nullptr;
+    NpTrophy2Details localDetails{};
+    NpTrophy2Data localData{};
     if (package == nullptr) {
-        if (details != nullptr) fillPlaceholderDetails(trophy_id, details);
-        if (data != nullptr) fillPlaceholderData(context, trophy_id, data);
-        return SCE_NP_TROPHY2_OK;
+        if (details != nullptr) fillPlaceholderDetails(trophy_id, &localDetails);
+        if (data != nullptr) fillPlaceholderData(context, trophy_id, &localData);
+    } else {
+        const auto trophy = package->trophies.find(trophy_id);
+        if (trophy == package->trophies.end()) return SCE_NP_TROPHY2_ERROR_INVALID_TROPHY_ID;
+        if (details != nullptr) fillDetails(trophy->second, &localDetails);
+        if (data != nullptr) fillData(*owner, trophy->second, &localData);
     }
-    const auto trophy = package->trophies.find(trophy_id);
-    if (trophy == package->trophies.end()) return SCE_NP_TROPHY2_ERROR_INVALID_TROPHY_ID;
-    if (details != nullptr) fillDetails(trophy->second, details);
-    if (data != nullptr) fillData(*owner, trophy->second, data);
+    if (details != nullptr && !GuestCopyOut_nid_no_patch(details, &localDetails, sizeof(localDetails))) {
+        APS5_INVALID_ARG_EX;
+    }
+    if (data != nullptr && !GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
+        APS5_INVALID_ARG_EX;
+    }
     return SCE_NP_TROPHY2_OK;
 }
 
@@ -96,19 +104,35 @@ int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t o
     (void)handle;
     const auto owner = NpTrophy2::FindContext(context);
     const auto* package = owner ? NpTrophy2::Package(owner->serviceLabel) : nullptr;
+    uint32_t written = 0;
+    NpTrophy2Details localDetails{};
+    NpTrophy2Data localData{};
+    const auto copyOut = [&] {
+        return (details_array == nullptr || GuestCopyOut_nid_no_patch(&details_array[written], &localDetails, sizeof(localDetails))) &&
+               (data_array == nullptr || GuestCopyOut_nid_no_patch(&data_array[written], &localData, sizeof(localData)));
+    };
     if (package == nullptr) {
-        const uint32_t out_count = (offset == 0 && limit != 0 ? 1u : 0u);
-        *count = out_count;
-        if (out_count != 0 && details_array != nullptr) fillPlaceholderDetails(NP_TROPHY2_TROPHY_ID_DEFAULT, details_array);
-        if (out_count != 0 && data_array != nullptr) fillPlaceholderData(context, NP_TROPHY2_TROPHY_ID_DEFAULT, data_array);
-        return SCE_NP_TROPHY2_OK;
+        if (offset == 0 && limit != 0) {
+            if (details_array != nullptr) fillPlaceholderDetails(NP_TROPHY2_TROPHY_ID_DEFAULT, &localDetails);
+            if (data_array != nullptr) fillPlaceholderData(context, NP_TROPHY2_TROPHY_ID_DEFAULT, &localData);
+            if (!copyOut()) {
+                APS5_INVALID_ARG_EX;
+            }
+            written = 1;
+        }
+    } else {
+        auto trophy = package->trophies.begin();
+        std::advance(trophy, std::min<std::size_t>(offset, package->trophies.size()));
+        for (; trophy != package->trophies.end() && written < limit; ++trophy, ++written) {
+            if (details_array != nullptr) fillDetails(trophy->second, &localDetails);
+            if (data_array != nullptr) fillData(*owner, trophy->second, &localData);
+            if (!copyOut()) {
+                APS5_INVALID_ARG_EX;
+            }
+        }
     }
-    *count = 0;
-    auto trophy = package->trophies.begin();
-    std::advance(trophy, std::min<std::size_t>(offset, package->trophies.size()));
-    for (; trophy != package->trophies.end() && *count < limit; ++trophy, ++*count) {
-        if (details_array != nullptr) fillDetails(trophy->second, &details_array[*count]);
-        if (data_array != nullptr) fillData(*owner, trophy->second, &data_array[*count]);
+    if (!GuestCopyOut_nid_no_patch(count, &written, sizeof(written))) {
+        APS5_INVALID_ARG_EX;
     }
     return SCE_NP_TROPHY2_OK;
 }
