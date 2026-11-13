@@ -3654,8 +3654,7 @@ int APS5_VABI sceNetShowNetstatForBuffer(char* buffer, std::int32_t bufferSize, 
 }
 
 int APS5_VABI sceNetShowNetstatEx(std::uint32_t flags) {
-    (void)flags;
-    return 0;
+    return (flags & 0x10000) != 0 ? fail(NET_EINVAL) : 0;
 }
 
 int APS5_VABI sceNetShowNetstatExForBuffer(char* buffer, std::int32_t bufferSize, std::int32_t poolId, std::uint32_t flags) {
