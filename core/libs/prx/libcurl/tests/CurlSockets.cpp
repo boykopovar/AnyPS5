@@ -18,12 +18,14 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <set>
 #include <source_location>
 #include <string>
@@ -62,7 +64,7 @@ static const std::string Body("A\0B\xff\r\n", 6);
 
 class Server {
 public:
-    explicit Server(bool keepAlive = false, bool ipv6 = false) {
+    explicit Server(bool keepAlive = false, bool ipv6 = false, bool holdResponse = false) : releaseResponse(!holdResponse) {
         listener = ::socket(ipv6 ? AF_INET6 : AF_INET, SOCK_STREAM, IPPROTO_TCP);
         Require(listener != CURL_SOCKET_BAD);
         sockaddr_storage address{};
@@ -101,6 +103,10 @@ public:
                 if (received <= 0) { NativeClose(peer); return; }
                 request.append(bytes, static_cast<std::size_t>(received));
             }
+            {
+                std::unique_lock lock(mutex);
+                cv.wait(lock, [this] { return releaseResponse; });
+            }
             const auto response = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(Body.size()) +
                 (keepAlive ? "\r\nConnection: keep-alive\r\n\r\n" : "\r\nConnection: close\r\n\r\n") + Body;
             std::size_t sent = 0;
@@ -119,6 +125,7 @@ public:
         });
     }
     ~Server() {
+        ReleaseResponse();
 #ifdef _WIN32
         ::shutdown(listener, SD_BOTH);
 #else
@@ -126,6 +133,13 @@ public:
 #endif
         NativeClose(listener);
         worker.join();
+    }
+    void ReleaseResponse() {
+        {
+            std::lock_guard lock(mutex);
+            releaseResponse = true;
+        }
+        cv.notify_all();
     }
     std::string Url(const std::string& host = "127.0.0.1") const {
         return "http://" + host + ":" + std::to_string(port) + "/socket-test";
@@ -135,6 +149,9 @@ public:
 private:
     curl_socket_t listener = CURL_SOCKET_BAD;
     std::uint16_t port = 0;
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool releaseResponse = true;
     std::thread worker;
     std::atomic<bool> completed{false};
 };
@@ -261,7 +278,7 @@ static void Done(CURLM* multi, CURL* easy) {
 
 static void SocketTransfer(bool callbacks) {
     const auto before = Descriptors();
-    Server server(callbacks);
+    Server server(callbacks, false, true);
     State state;
     state.multi = curl_multi_init_nid_postfix();
     Require(state.multi != nullptr);
@@ -274,6 +291,7 @@ static void SocketTransfer(bool callbacks) {
     Require(curl_multi_add_handle_nid_postfix(state.multi, easy) == CURLM_OK);
     int running = -1;
     Require(curl_multi_socket_action_nid_postfix(state.multi, -1, 0, &running) == CURLM_OK);
+    server.ReleaseResponse();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (running) {
         Require(std::chrono::steady_clock::now() < deadline);
@@ -317,7 +335,7 @@ static bool IsSet(const guest_fd_set& set, int descriptor) {
 
 static void FdsetTransfer() {
     const auto before = Descriptors();
-    Server server;
+    Server server(false, false, true);
     State state;
     auto* easy = Easy(server.Url("localhost"), state, false);
     auto* multi = curl_multi_init_nid_postfix();
@@ -333,6 +351,7 @@ static void FdsetTransfer() {
         if (maximum >= 0) {
             for (int descriptor = 0; descriptor <= maximum; ++descriptor)
                 if (IsSet(read, descriptor) || IsSet(write, descriptor)) Require(Describes(descriptor));
+            server.ReleaseResponse();
             KernelTimeval timeout{0, 20000};
             Require(select_nid_postfix(maximum + 1, &read, &write, &except, &timeout) >= 0);
             ++sets;
