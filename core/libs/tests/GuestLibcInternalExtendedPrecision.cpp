@@ -74,8 +74,9 @@ void CheckFloatSetw() {
             Require(Same(p[0], x) && p[1] == 7.0f, "setw stores a zero in one word");
             continue;
         }
-        Require(p[0] + p[1] == x, "setw splits a float into two exact words");
-        Require(p[2] == 0.0f && p[3] == 7.0f, "setw ends a split float with one zero");
+        const int used = Words(p, 4);
+        Require(used >= 1 && used <= 2 && Total(p, used) == x, "setw splits a float into at most two exact words");
+        Require(p[used] == 0.0f && p[used + 1] == 7.0f, "setw ends a split float with one zero");
         Require(SignificantBits(p[0]) <= 12, "the leading word keeps half the significand");
         Require(Same(_FXp_getw_nid_postfix(p, 4), x), "a split float reads back unchanged");
     }
@@ -179,6 +180,12 @@ void CheckFloatMulh() {
     _FXp_setw_nid_postfix(p, 4, std::numeric_limits<float>::max());
     _FXp_mulh_nid_postfix(p, 4, 4.0f);
     Require(std::isinf(p[0]), "an overflowing product becomes infinity");
+    _FXp_setw_nid_postfix(p, 4, 0x1.8p-140f);
+    _FXp_mulh_nid_postfix(p, 4, 0x1p-8f);
+    Require(p[0] == 0x1.8p-148f && p[1] == 0.0f, "a subnormal product keeps its exact bits");
+    _FXp_setw_nid_postfix(p, 4, 0x1.8p-140f);
+    _FXp_mulh_nid_postfix(p, 4, 0x1p-10f);
+    Require(p[0] == 0.0f, "bits below the smallest subnormal are dropped");
 }
 
 void CheckFloatMulx() {
@@ -276,7 +283,10 @@ void CheckFloatInvx() {
     Require(std::isnan(p[0]), "the reciprocal of a value that is not a number stays one");
     float single[1] = {4.0f};
     _FXp_invx_nid_postfix(single, 1, scratch);
-    Require(single[0] == 0.25f, "invx of one word is the float reciprocal");
+    Require(single[0] == 0.25f, "invx of one word keeps an exact reciprocal");
+    single[0] = 3.0f;
+    _FXp_invx_nid_postfix(single, 1, scratch);
+    Require(single[0] == 0x1.554p-2f, "invx of one word keeps the leading twelve bits of the reciprocal");
 }
 
 void CheckFloatSqrtx() {
@@ -392,7 +402,9 @@ void CheckLongDouble() {
         if (x == 0.0L) continue;
         long double p[5] = {9, 9, 9, 9, 9};
         Require(_LXp_setw_nid_postfix(p, 5, x) == p, "_LXp_setw returns its array");
-        Require(p[0] + p[1] == x && p[2] == 0.0L && p[3] == 9.0L, "_LXp_setw splits a long double into two words");
+        const int used = Words(p, 5);
+        Require(used >= 1 && used <= 2 && Total(p, used) == x && p[used] == 0.0L && p[used + 1] == 9.0L,
+                "_LXp_setw splits a long double into at most two words and one zero");
         Require(SignificantBits(p[0]) <= 32, "the leading long double word keeps half the significand");
         Require(Same(_LXp_getw_nid_postfix(p, 5), x), "_LXp_getw reads a split value back");
 
@@ -435,6 +447,13 @@ void CheckLongDouble() {
     Require(_LXp_mulx_nid_postfix(a, 4, b, 4, scratch) == a, "_LXp_mulx returns its first array");
     Require(_LXp_getw_nid_postfix(a, 4) == 15.0L, "_LXp_mulx rounds the product to long double on read");
     Require(a[0] == 15.0L && a[1] == 0x1p-67L && a[2] == 0x1p-140L, "_LXp_mulx keeps the cross terms in the low words");
+
+    long double borrow[5] = {};
+    _LXp_setw_nid_postfix(borrow, 5, 1.0L);
+    _LXp_addh_nid_postfix(borrow, 5, -0x1p-100L);
+    Require(borrow[0] == 0xffffffffp-32L && borrow[1] == 0xffffffffp-64L && borrow[2] == 0xffffffffp-96L && borrow[3] == 0xfp-100L &&
+                borrow[4] == 0.0L,
+            "_LXp_addh borrows across words and keeps them all of one sign");
 
     long double special[3] = {};
     _LXp_setw_nid_postfix(special, 3, std::numeric_limits<long double>::infinity());
