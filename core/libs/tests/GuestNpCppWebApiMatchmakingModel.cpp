@@ -16,8 +16,6 @@ void Require(bool value, std::source_location at = std::source_location::current
     }
 }
 
-// Every byte holds its own offset, so an accessor that reads offset N returns N.
-// A wrong offset, a wrong width or a hard-coded answer all show up immediately.
 constexpr std::size_t kModelSize = 0x90;
 
 struct Storage {
