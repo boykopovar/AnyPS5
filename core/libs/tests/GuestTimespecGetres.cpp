@@ -125,12 +125,26 @@ static void Integration() {
     Require(timespec_getres_nid_postfix(nullptr, 1) == nullResult);
 }
 
+static void Unregistered() {
+    RegisterClockGetres_nid_no_patch(nullptr);
+    KernelTimespec res{-1, -1};
+    Require(timespec_getres_nid_postfix(&res, 1) == 1);
+    Require(res.tv_sec == 0);
+    Require(res.tv_nsec > 0 && res.tv_nsec < 1000000000);
+    Require(timespec_getres_nid_postfix(nullptr, 1) == 1);
+    Require(timespec_getres_nid_postfix(&res, 0) == 0);
+    Require(timespec_getres_nid_postfix(&res, 2) == 0);
+    Require(timespec_getres_nid_postfix(&res, -1) == 0);
+    Require(timespec_getres_nid_postfix(&res, 4096) == 0);
+}
+
 int main(int argc, char** argv) {
     Require(argc == 2);
     if (std::strcmp(argv[1], "unsupported") == 0) Unsupported();
     else if (std::strcmp(argv[1], "forwarding") == 0) Forwarding();
     else if (std::strcmp(argv[1], "errors") == 0) Errors();
     else if (std::strcmp(argv[1], "integration") == 0) Integration();
+    else if (std::strcmp(argv[1], "unregistered") == 0) Unregistered();
     else Require(false);
     RegisterClockGetres_nid_no_patch(&sceKernelClockGetres);
     std::puts("timespec_getres bases, delegation, errors and kernel integration passed");

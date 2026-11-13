@@ -563,8 +563,24 @@ void RegisterClockGetres_nid_no_patch(ClockGetresFn_nid_no_patch fn) {
 int APS5_VABI timespec_getres_nid_postfix(KernelTimespec* result, int base) {
     if (base != 1) return 0;
     const auto clockGetres = registeredClockGetres.load(std::memory_order_acquire);
-    if (clockGetres == nullptr) NotImplemented_nid_no_patch(__func__);
-    return clockGetres(0, result) == 0 ? 1 : 0;
+    if (clockGetres != nullptr) {
+        return clockGetres(0, result) == 0 ? 1 : 0;
+    }
+#ifdef _WIN32
+    if (result != nullptr) {
+        result->tv_sec = 0;
+        result->tv_nsec = 100;
+    }
+    return 1;
+#else
+    timespec host{};
+    if (clock_getres(CLOCK_REALTIME, &host) != 0) return 0;
+    if (result != nullptr) {
+        result->tv_sec = host.tv_sec;
+        result->tv_nsec = host.tv_nsec;
+    }
+    return 1;
+#endif
 }
 
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer) {
