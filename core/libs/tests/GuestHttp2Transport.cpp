@@ -1601,6 +1601,31 @@ void AsyncBlockingWait(int ssl) {
     server.Join();
 }
 
+void AsyncOverallDeadline(int ssl) {
+    std::fprintf(stderr, "HTTP2 async overall deadline scenario\n");
+    Server server(Mode::StallResponse);
+    Client client(ssl);
+    client.Create(server.Url());
+    Require(sceHttp2SetTimeOut(client.request, 500000) == 0, "async overall deadline option");
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "async overall deadline submission");
+    server.WaitStage(2);
+    uint32_t timeout = 1000000;
+    Http2AsyncResult waited{};
+    waited.req_id = -1;
+    const auto started = std::chrono::steady_clock::now();
+    Require(sceHttp2WaitAsync(client.request, &waited, &timeout, nullptr) == static_cast<int>(0x817b1079), "async overall deadline publishes no completion");
+    Require(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(800), "async overall deadline kept the waiter until its timeout");
+    Require(waited.req_id == -1, "async overall deadline leaves the result untouched");
+    server.Release();
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "async overall deadline completion after the response");
+    Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async overall deadline result");
+    queue.ExpectEvent();
+    server.Join();
+    Require(server.Negotiated(), "async overall deadline h2 ALPN");
+}
+
 void AsyncDelete(int ssl, bool waiter) {
     std::fprintf(stderr, "HTTP2 async delete scenario waiter %d\n", waiter ? 1 : 0);
     Server server(Mode::StallHeaders);
@@ -2287,6 +2312,7 @@ int main(int argc, char** argv) {
         AsyncWithoutQueue(ssl);
         AsyncOptionalArguments(ssl);
         AsyncBlockingWait(ssl);
+        AsyncOverallDeadline(ssl);
         AsyncDelete(ssl, false);
         AsyncDelete(ssl, true);
         AsyncTwoWaiters(ssl);

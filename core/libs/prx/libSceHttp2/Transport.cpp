@@ -377,9 +377,10 @@ struct Request::State {
     std::exception_ptr failure;
     std::exception_ptr callbackFailure;
     Clock::time_point totalDeadline;
+    bool ignoresTotalTimeout = false;
 
-    State(int id, int version, int context, std::shared_ptr<Capacity> capacity, Settings options, std::string verb, std::string target)
-        : id(id), url(Parse(target)), version(version == 3 && !url.secure ? 2 : version), sslContext(context), capacity(std::move(capacity)), settings(std::move(options)), method(std::move(verb)) {
+    State(int id, int version, int context, std::shared_ptr<Capacity> capacity, Settings options, std::string verb, std::string target, bool ignoresOverallTimeout)
+        : id(id), url(Parse(target)), version(version == 3 && !url.secure ? 2 : version), sslContext(context), capacity(std::move(capacity)), settings(std::move(options)), method(std::move(verb)), ignoresTotalTimeout(ignoresOverallTimeout) {
         Require(!method.empty() && nghttp2_check_method(reinterpret_cast<const std::uint8_t*>(method.data()), method.size()),
             "sceHttp2CreateRequestWithURL: invalid method");
         Require(version >= 1 && version <= 3, "sceHttp2: unsupported version");
@@ -407,7 +408,7 @@ struct Request::State {
         return phase < totalDeadline ? Limit{phase, code} : Total();
     }
 
-    Limit Total() const { return {totalDeadline, TimedOut}; }
+    Limit Total() const { return {ignoresTotalTimeout ? Clock::time_point::max() : totalDeadline, TimedOut}; }
 
     int SendTimeoutCode() const { return url.secure ? 0 : SendTimedOut; }
 
@@ -1056,8 +1057,8 @@ struct Request::State {
     }
 };
 
-Request::Request(int id, int version, int context, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url)
-    : state(std::make_unique<State>(id, version, context, std::move(capacity), std::move(settings), std::move(method), std::move(url))) {}
+Request::Request(int id, int version, int context, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url, bool ignoresTotalTimeout)
+    : state(std::make_unique<State>(id, version, context, std::move(capacity), std::move(settings), std::move(method), std::move(url), ignoresTotalTimeout)) {}
 Request::~Request() = default;
 
 int Request::Send(const void* data, std::size_t size) {
@@ -1261,8 +1262,8 @@ std::shared_ptr<Capacity> CreateCapacity_nid_no_patch(int maximum) {
     return std::make_shared<Capacity>(maximum);
 }
 
-std::shared_ptr<Request> CreateRequest_nid_no_patch(int id, int version, int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url) {
-    return std::make_shared<Request>(id, version, sslContext, std::move(capacity), std::move(settings), std::move(method), std::move(url));
+std::shared_ptr<Request> CreateRequest_nid_no_patch(int id, int version, int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url, bool ignoresTotalTimeout) {
+    return std::make_shared<Request>(id, version, sslContext, std::move(capacity), std::move(settings), std::move(method), std::move(url), ignoresTotalTimeout);
 }
 
 }

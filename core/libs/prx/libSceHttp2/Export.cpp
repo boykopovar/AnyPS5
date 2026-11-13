@@ -196,12 +196,12 @@ static bool IsConnectionHeader(const char* name) {
     return true;
 }
 
-static std::shared_ptr<Http2::Request> Transport(int id, bool create, std::shared_ptr<Http2AsyncState>* async = nullptr) {
+static std::shared_ptr<Http2::Request> Transport(int id, bool create, std::shared_ptr<Http2AsyncState>* async = nullptr, bool ignoresTotalTimeout = false) {
     std::lock_guard lock(g_handlesMutex);
     auto* handle = FindHandle(id, Http2Kind::Request);
     if (!handle) return nullptr;
     if (create && !handle->transport) {
-        handle->transport = Http2::CreateRequest_nid_no_patch(id, handle->version, handle->sslContext, handle->capacity, handle->settings, handle->method, handle->url);
+        handle->transport = Http2::CreateRequest_nid_no_patch(id, handle->version, handle->sslContext, handle->capacity, handle->settings, handle->method, handle->url, ignoresTotalTimeout);
     }
     if (!handle->transport) NotImplemented_nid_no_patch("sceHttp2: request has not been sent");
     if (async) *async = handle->async;
@@ -362,7 +362,7 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
         CompleteAsync(state, __func__, req_id, async ? &*async : nullptr, 0, ERROR_NETWORK, {});
         return 0;
     }
-    const auto request = Transport(req_id, true, &state);
+    const auto request = Transport(req_id, true, &state, true);
     if (!request) return ERROR_INVALID_ID;
     std::vector<std::uint8_t> body;
     if (size) body.assign(static_cast<const std::uint8_t*>(post_data), static_cast<const std::uint8_t*>(post_data) + size);
