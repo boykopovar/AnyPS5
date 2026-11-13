@@ -455,6 +455,19 @@ class PreparationTests(unittest.TestCase):
         self.assertFalse((work / "data/media/clip.mp4").exists())
         self.assertEqual(title_run.stage_files({"app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}, work, None), ["quake/pak0.pak"])
 
+    def test_a_non_ascii_title_name_is_reported_as_utf8(self):
+        package(self.root / "games/PPSA00001", "PPSA00001", name="テスト")
+        out = self.root / "out"
+        build = self.root / "build"
+        build.mkdir()
+        done = subprocess.run([sys.executable, str(Path(title_run.__file__)), "--games", str(self.root / "games"), "--out", str(out),
+                               "--build", str(build), "--runs", "1", "PPSA00001"],
+                              capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"}, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+        stdout = done.stdout.decode("utf-8")
+        self.assertIn("| テスト | PPSA00001 |", stdout)
+        self.assertIn(f"written to {out.resolve()}", stdout)
+
 
 def wait_until(condition, seconds=10):
     deadline = time.monotonic() + seconds
