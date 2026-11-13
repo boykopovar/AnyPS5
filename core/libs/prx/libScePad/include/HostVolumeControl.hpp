@@ -16,5 +16,6 @@ extern "C" bool HostVolumeFocus_nid_no_patch(bool focused, HostVolume* after);
 extern "C" void HostVolumeConfigure_nid_no_patch(const char* initialVolume, const char* muteOnFocusLoss);
 extern "C" void HostVolumeConfigureFromEnvironment_nid_no_patch();
 extern "C" std::uint32_t HostVolumeGain_nid_no_patch();
+extern "C" bool HostVolumeFocused_nid_no_patch();
 
 #endif

@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/Surface.hpp"
+#include "PngSurface.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <atomic>
@@ -12,11 +13,13 @@ namespace {
 
 constexpr int kSuccess = 0;
 constexpr int kNullPointer = 7;
+constexpr int kReadError = 10;
 constexpr int kInvalidContent = 15;
 constexpr int kInvalidFormat = 16;
 constexpr int kInvalidStride = 24;
 constexpr int kInvalidSize = 32;
 constexpr int kNoMemory = 1;
+constexpr int kPngError = 39;
 constexpr int kColor = 0x1000;
 constexpr int kAlpha = 0x2000;
 constexpr int kColorAlpha = 0x3000;
@@ -127,12 +130,16 @@ CairoSurfaceState* NewSurface() {
 CairoSurface* ErrorSurface(int status) {
     static CairoSurfaceState noMemory{kNoMemory};
     static CairoSurfaceState nullPointer{kNullPointer};
+    static CairoSurfaceState readError{kReadError};
+    static CairoSurfaceState pngError{kPngError};
     static CairoSurfaceState invalidContent{kInvalidContent};
     static CairoSurfaceState invalidFormat{kInvalidFormat};
     static CairoSurfaceState invalidStride{kInvalidStride};
     static CairoSurfaceState invalidSize{kInvalidSize};
     switch (status) {
     case kNullPointer: return Handle(&nullPointer);
+    case kReadError: return Handle(&readError);
+    case kPngError: return Handle(&pngError);
     case kInvalidContent: return Handle(&invalidContent);
     case kInvalidFormat: return Handle(&invalidFormat);
     case kInvalidStride: return Handle(&invalidStride);
@@ -332,13 +339,22 @@ CairoSurface* APS5_VABI cairo_surface_create_for_rectangle(CairoSurface* target,
 
     result->isImage = false;
     result->content = State(target)->content;
-    result->parent = cairo_surface_reference(target);
-    result->originX = x;
-    result->originY = y;
-    result->extentWidth = width;
-    result->extentHeight = height;
-    result->scaleX = State(target)->scaleX;
-    result->scaleY = State(target)->scaleY;
+    const auto& source = *State(target);
+    const double scaledX = x * source.scaleX;
+    const double scaledY = y * source.scaleY;
+    const double left = std::ceil(scaledX);
+    const double top = std::ceil(scaledY);
+    result->extentWidth = std::floor(scaledX + width * source.scaleX) - left;
+    result->extentHeight = std::floor(scaledY + height * source.scaleY) - top;
+    if (result->extentWidth < 0 || result->extentHeight < 0) {
+        result->extentWidth = 0;
+        result->extentHeight = 0;
+    }
+    result->originX = left + source.originX;
+    result->originY = top + source.originY;
+    result->parent = cairo_surface_reference(source.parent ? source.parent : target);
+    result->scaleX = State(result->parent)->scaleX;
+    result->scaleY = State(result->parent)->scaleY;
     return Handle(result);
 }
 
@@ -346,4 +362,11 @@ CairoSurface* APS5_VABI cairo_surface_create_for_rectangle(CairoSurface* target,
 
 CairoSurface* CairoSurfaceError(int status) {
     return ErrorSurface(status);
+}
+
+CairoPngView CairoPngSource_nid_no_patch(CairoSurface* surface) {
+    const auto& view = *State(surface);
+    const auto& image = view.parent ? *State(view.parent) : view;
+    return {image.data, image.format, image.width, image.height, image.stride,
+            view.originX, view.originY, view.extentWidth, view.extentHeight, !view.isImage};
 }

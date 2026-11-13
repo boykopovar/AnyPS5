@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <bit>
 #include <cstddef>
@@ -362,12 +363,32 @@ int APS5_VABI BN_mul_nid_postfix(Bignum* r, const Bignum* a, const Bignum* b, Bi
     return Store(r, product, x.neg != y.neg);
 }
 
+int APS5_VABI BN_print_nid_postfix(LibreSsl::Bio* bio, const Bignum* a) {
+    static constexpr char digits[] = "0123456789ABCDEF";
+    Checked(a, __func__);
+    if (a->neg && LibreSslBioWrite_nid_no_patch(bio, "-", 1) != 1) return 0;
+    if (a->top == 0 && LibreSslBioWrite_nid_no_patch(bio, "0", 1) != 1) return 0;
+    bool started = false;
+    for (int i = a->top - 1; i >= 0; i--) {
+        for (int shift = 60; shift >= 0; shift -= 4) {
+            const int digit = static_cast<int>(a->d[i] >> shift) & 15;
+            if (!started && digit == 0) continue;
+            if (LibreSslBioWrite_nid_no_patch(bio, &digits[digit], 1) != 1) return 0;
+            started = true;
+        }
+    }
+    return 1;
+}
+
 Bignum* APS5_VABI BN_mod_inverse_nid_postfix(Bignum* r, const Bignum* a, const Bignum* n, BignumContext*) {
     const Int value = Load(Checked(a, __func__));
     const Int modulus = Load(Checked(n, __func__));
     if (modulus.mag.empty()) return nullptr;
     Mag inverse;
-    if (!InverseMod(value, modulus.mag, inverse)) return nullptr;
+    if (!InverseMod(value, modulus.mag, inverse)) {
+        LibreSslPutError_nid_no_patch(3, 0xfff, 108);
+        return nullptr;
+    }
     Bignum* target = r ? r : NewBignum();
     if (!target) return nullptr;
     if (!Store(target, inverse, false)) {

@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 using namespace SceJson2;
 
@@ -30,6 +31,10 @@ int main() {
     Prefix(value, 1);
     Require(value.payload == 0xa5a5a5a5a5a5a501ULL, "Boolean construction must write only its one-byte payload");
     _ZN3sce4Json5ValueD1Ev(&value);
+    _ZN3sce4Json5ValueC1Eb(&value, false);
+    Prefix(value, 1);
+    Require(value.payload == 0xa5a5a5a5a5a5a500ULL, "False boolean construction must write only its one-byte payload");
+    _ZN3sce4Json5ValueD1Ev(&value);
     _ZN3sce4Json5ValueC1El(&value, -73);
     Prefix(value, 2);
     Require(std::bit_cast<std::int64_t>(value.payload) == -73 &&
@@ -46,10 +51,13 @@ int main() {
     Prefix(copy, 2);
     Require(copy.payload == value.payload && _ZNK3sce4Json5Value10getIntegerEv(&copy) != _ZNK3sce4Json5Value10getIntegerEv(&value),
             "A scalar copy must own independent inline storage");
-    _ZN3sce4Json5Value3setEl(&copy, 19);
-    Require(std::bit_cast<std::int64_t>(value.payload) == -73 && copy.payload == 19, "Assignment must not alias a scalar source");
+    for (const std::int64_t extreme : {std::numeric_limits<std::int64_t>::min(), std::int64_t{19}, std::numeric_limits<std::int64_t>::max()}) {
+        _ZN3sce4Json5Value3setEl(&copy, extreme);
+        Require(std::bit_cast<std::int64_t>(value.payload) == -73 && std::bit_cast<std::int64_t>(copy.payload) == extreme,
+                "Assignment must preserve all signed 64-bit integer bits without aliasing source");
+    }
     _ZN3sce4Json5Value5clearEv(&copy);
-    Require(copy.type == 0 && copy.payload == 19 && copy.reserved == 0xa5a5a5a5U,
+    Require(copy.type == 0 && std::bit_cast<std::int64_t>(copy.payload) == std::numeric_limits<std::int64_t>::max() && copy.reserved == 0xa5a5a5a5U,
             "Clear must reset type while preserving inactive scalar bytes");
     _ZN3sce4Json5ValueD1Ev(&copy);
     _ZN3sce4Json5ValueD1Ev(&value);
@@ -63,6 +71,11 @@ int main() {
         Prefix(value, 4);
         Require(value.payload == bits && _ZNK3sce4Json5Value7getRealEv(&value) == reinterpret_cast<const double*>(&value.payload),
                 "Real construction must preserve inline payload bits and reference identity");
+        std::memset(&copy, 0xa5, sizeof(copy));
+        _ZN3sce4Json5ValueC1ERKS1_(&copy, &value);
+        Prefix(copy, 4);
+        Require(copy.payload == bits, "Real copy construction must preserve inline IEEE-754 payload bits");
+        _ZN3sce4Json5ValueD1Ev(&copy);
         Require(_ZNK3sce4Json5Value7getTypeEv(&value) == value.type, "The getter must read the inline type");
         _ZN3sce4Json5ValueD1Ev(&value);
     }
