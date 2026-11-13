@@ -145,8 +145,19 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
     require(!error, "cannot remove the shader cache test directory: " + error.message());
 }
 
+std::string getEnvironment(const char* name) {
+    const char* value = std::getenv(name);
+    return value != nullptr ? value : "";
+}
+
+std::string hex(std::uint64_t value) {
+    char text[17];
+    std::snprintf(text, sizeof(text), "%016llx", static_cast<unsigned long long>(value));
+    return text;
+}
+
 bool sameBinding(const DescriptorBinding& left, const DescriptorBinding& right) {
-    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.bufferExtent == right.bufferExtent && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerCoordinatesIgnored == right.samplerCoordinatesIgnored && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
+    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageAtomic64 == right.imageAtomic64 && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.bufferExtent == right.bufferExtent && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerCoordinatesIgnored == right.samplerCoordinatesIgnored && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
 }
 
 bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<DescriptorBinding>& right) {
@@ -241,6 +252,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.imageDepthCompare = {false, true, false};
     binding.imageWritten = {false, true, true};
     binding.imageAtomic = {false, true, false};
+    binding.imageAtomic64 = {false, seed % 2 == 1};
     binding.imageShapes = {DescriptorImageShape::Image2D, DescriptorImageShape::Image3D};
     binding.bufferAtomic = {true};
     binding.bufferWritten = {false, false, true, true, false};
@@ -2772,6 +2784,688 @@ void verifyDefaultDirectory(const char* self) {
     require(std::filesystem::equivalent(directory.parent_path(), std::filesystem::absolute(self).parent_path(), error) && !error, "the default cache directory is not beside the executable");
 }
 
+std::vector<std::byte> specializedIdentity() {
+    return std::vector<std::byte>(ShaderDiskCache::ArtifactIdentityBytes, std::byte{0x5a});
+}
+
+std::vector<std::uint64_t> specializedPlanIdentity() {
+    return {17u, 0x31016facu, 4u, 0x7fffffffu, 8u};
+}
+
+DescriptorBindingPlan sampleBindingPlan() {
+    DescriptorBindingPlan plan;
+    plan.storageData = true;
+    plan.runtimeState = {0x01020304u, 0u};
+    plan.specialization = {{PipelineSpecialization::BufferBase, 0x31016facu}, {PipelineSpecialization::UnnormalizedBaseLevelBase, 1u}};
+    plan.imageMetadata = {{2u, 7u, RuntimeAbi::ResourceMetadata{1u, 2u, 3u, 4u, {5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u}}}};
+    PreparedDescriptorBinding buffers;
+    buffers.descriptor.kind = DescriptorKind::StorageBuffer;
+    buffers.descriptor.role = DescriptorRole::GuestBuffers;
+    buffers.descriptor.descriptorSet = 0;
+    buffers.descriptor.binding = 4;
+    buffers.descriptor.count = 3;
+    buffers.descriptor.readOnly = true;
+    buffers.descriptor.imageShape = DescriptorImageShape::Image1D;
+    buffers.descriptor.bufferAtomic = {true, false, false};
+    buffers.descriptor.bufferWritten = {true, true, false};
+    buffers.descriptor.bufferRead = {false, false, true};
+    buffers.resources = {0u, 1u, 2u};
+    buffers.identityImageSwizzle = {true, false, true};
+    buffers.samplerFilterElements = {1u, 2u};
+    buffers.inactive = {false, true, false};
+    buffers.tableSamplerMasks = {3u, 5u};
+    buffers.writtenBuffers = 2;
+    buffers.readOnlyBuffers = 1;
+    plan.bindings.push_back(buffers);
+    PreparedDescriptorBinding samplers;
+    samplers.descriptor.kind = DescriptorKind::Sampler;
+    samplers.descriptor.role = DescriptorRole::GuestSamplers;
+    samplers.descriptor.descriptorSet = RuntimeAbi::FragmentDescriptorSet;
+    samplers.descriptor.binding = 29;
+    samplers.descriptor.count = 2;
+    samplers.descriptor.samplerDepthCompare = {true, false};
+    samplers.descriptor.samplerUnnormalized = {false, true};
+    samplers.descriptor.samplerIntegerBorder = {true, true};
+    samplers.resources = {3u, 4u};
+    samplers.identityImageSwizzle = {false, false};
+    plan.bindings.push_back(samplers);
+    PreparedDescriptorBinding images;
+    images.descriptor.kind = DescriptorKind::SampledImage;
+    images.descriptor.role = DescriptorRole::GuestImages;
+    images.descriptor.binding = 30;
+    images.descriptor.count = 2;
+    images.descriptor.imageShape = DescriptorImageShape::Image2D;
+    images.descriptor.imageWritten = {true, false};
+    images.descriptor.imageDepthCompare = {false, false};
+    images.descriptor.imageAtomic = {false, true};
+    images.descriptor.imageAtomic64 = {false, false};
+    images.descriptor.imageShapes = {DescriptorImageShape::Image2D, DescriptorImageShape::Image3D};
+    images.descriptor.imageUnnormalized = {false, false};
+    images.descriptor.imageUnnormalizedBaseLevel = {true, false};
+    images.descriptor.imageSamplers = {3u, 0u};
+    images.resources = {5u, 6u};
+    images.identityImageSwizzle = {true, false};
+    plan.bindings.push_back(images);
+    return plan;
+}
+
+ShaderDiskCache::SpecializedModule sampleSpecializedModule() {
+    ShaderDiskCache::SpecializedModule module;
+    module.spirv = SharedSpirv(std::vector<std::uint32_t>{0x07230203u, 0x00010000u, 8u, 0u, 0u, 3u, 0u, 0u});
+    module.bindings = {4u, 29u, 30u};
+    module.pushData = true;
+    module.specialization = {{512u, 4u}, {516u, 0x3f800000u}, {517u, 0u}};
+    return module;
+}
+
+void requireSameBindingPlan(const DescriptorBindingPlan& left, const DescriptorBindingPlan& right, const char* what) {
+    const std::string prefix = std::string(what) + ": ";
+    require(left.storageData == right.storageData, prefix + "storage data flag differs");
+    require(left.runtimeState == right.runtimeState, prefix + "runtime state differs");
+    require(left.specialization == right.specialization, prefix + "specialization constants differ");
+    require(left.imageMetadata.size() == right.imageMetadata.size(), prefix + "image metadata count differs");
+    for (std::size_t index = 0; index < left.imageMetadata.size(); ++index) {
+        const auto& a = left.imageMetadata[index];
+        const auto& b = right.imageMetadata[index];
+        require(a.resource == b.resource && a.offset == b.offset && a.metadata.binding == b.metadata.binding && a.metadata.firstElement == b.metadata.firstElement && a.metadata.elementCount == b.metadata.elementCount && a.metadata.flags == b.metadata.flags && a.metadata.descriptor == b.metadata.descriptor, prefix + "image metadata differs");
+    }
+    require(left.bindings.size() == right.bindings.size(), prefix + "prepared binding count differs");
+    for (std::size_t index = 0; index < left.bindings.size(); ++index) {
+        const auto& a = left.bindings[index];
+        const auto& b = right.bindings[index];
+        require(sameBinding(a.descriptor, b.descriptor), prefix + "prepared descriptor differs");
+        require(a.resources == b.resources, prefix + "prepared resources differ");
+        require(a.identityImageSwizzle == b.identityImageSwizzle, prefix + "identity swizzle flags differ");
+        require(a.samplerFilterElements == b.samplerFilterElements, prefix + "sampler filter elements differ");
+        require(a.inactive == b.inactive, prefix + "inactive flags differ");
+        require(a.tableSamplerMasks == b.tableSamplerMasks, prefix + "table sampler masks differ");
+        require(a.writtenBuffers == b.writtenBuffers && a.readOnlyBuffers == b.readOnlyBuffers, prefix + "buffer element counts differ");
+    }
+}
+
+void verifySpecializedCodec() {
+    const auto module = sampleSpecializedModule();
+    std::vector<std::byte> bytes;
+    require(ShaderDiskCache::EncodeSpecialized(module, bytes), "the specialized module does not encode");
+    ShaderDiskCache::SpecializedModule decoded;
+    require(ShaderDiskCache::DecodeSpecialized(bytes, decoded), "the specialized module does not decode");
+    require(decoded.spirv == module.spirv && decoded.bindings == module.bindings && decoded.pushData == module.pushData && decoded.specialization == module.specialization, "the specialized module round trip differs");
+    bytes.resize(bytes.size() / 2u);
+    ShaderDiskCache::SpecializedModule truncated;
+    require(!ShaderDiskCache::DecodeSpecialized(bytes, truncated), "a truncated specialized module decoded");
+    bytes.push_back(std::byte{0x11});
+    require(!ShaderDiskCache::DecodeSpecialized(bytes, truncated), "a specialized module with trailing bytes decoded");
+    ShaderDiskCache::SpecializedModule invalid;
+    invalid.spirv = SharedSpirv(std::vector<std::uint32_t>{0xdeadbeefu, 0u, 0u, 0u, 0u});
+    bytes.clear();
+    require(ShaderDiskCache::EncodeSpecialized(invalid, bytes) && !ShaderDiskCache::DecodeSpecialized(bytes, truncated), "a module that is not SPIR-V decoded");
+    const auto plan = sampleBindingPlan();
+    std::vector<std::byte> planBytes;
+    require(ShaderDiskCache::EncodeBindingPlan(plan, planBytes), "the binding plan does not encode");
+    DescriptorBindingPlan decodedPlan;
+    require(ShaderDiskCache::DecodeBindingPlan(planBytes, decodedPlan), "the binding plan does not decode");
+    requireSameBindingPlan(plan, decodedPlan, "binding plan round trip");
+    planBytes.resize(planBytes.size() / 2u);
+    require(!ShaderDiskCache::DecodeBindingPlan(planBytes, decodedPlan), "a truncated binding plan decoded");
+    planBytes.push_back(std::byte{0x11});
+    require(!ShaderDiskCache::DecodeBindingPlan(planBytes, decodedPlan), "a binding plan with trailing bytes decoded");
+    std::cout << "specialized module and binding plan codec round trips passed\n";
+}
+
+void verifySpecializedKey() {
+    const auto identity = specializedIdentity();
+    const auto planIdentity = specializedPlanIdentity();
+    const std::vector<std::uint32_t> moduleKey{3u, 4u, 5u};
+    const std::vector<std::uint32_t> classes{0u, 2u};
+    const std::vector<PipelineSpecializationConstant> constants{{7u, 11u}, {9u, 13u}};
+    const auto specializedKey = [&](std::vector<std::byte> artifactIdentity, std::vector<std::uint64_t> snapshot, std::vector<std::uint32_t> module, std::vector<std::uint32_t> numeric, std::vector<PipelineSpecializationConstant> values, bool registrationDefaults) {
+        std::vector<std::byte> key;
+        ShaderDiskCache::BuildSpecializedKey(artifactIdentity, snapshot, module, numeric, values, registrationDefaults, key);
+        return key;
+    };
+    const auto key = specializedKey(identity, planIdentity, moduleKey, classes, constants, false);
+    require(specializedKey(identity, planIdentity, moduleKey, classes, constants, false) == key, "the specialized key is not deterministic");
+    auto otherIdentity = identity;
+    otherIdentity[0] ^= std::byte{0x01};
+    require(specializedKey(otherIdentity, planIdentity, moduleKey, classes, constants, false) != key, "the specialized key ignores the base artifact");
+    auto otherSnapshot = planIdentity;
+    otherSnapshot.back() += 1u;
+    require(specializedKey(identity, otherSnapshot, moduleKey, classes, constants, false) != key, "the specialized key ignores the captured descriptors");
+    auto otherModule = moduleKey;
+    otherModule.front() += 1u;
+    require(specializedKey(identity, planIdentity, otherModule, classes, constants, false) != key, "the specialized key ignores the per-request module words");
+    auto otherClasses = classes;
+    otherClasses.back() = 1u;
+    require(specializedKey(identity, planIdentity, moduleKey, otherClasses, constants, false) != key, "the specialized key ignores the vertex input classes");
+    auto otherConstants = constants;
+    otherConstants.back().value += 1u;
+    require(specializedKey(identity, planIdentity, moduleKey, classes, otherConstants, false) != key, "the specialized key ignores a specialization constant");
+    require(specializedKey(identity, planIdentity, moduleKey, classes, constants, true) != key, "the specialized key ignores the registration defaults");
+    require(specializedKey(identity, planIdentity, moduleKey, classes, {}, false) != key, "the specialized key ignores the number of specialization constants");
+    std::vector<std::byte> planKey;
+    ShaderDiskCache::BuildBindingPlanKey(identity, planIdentity, planKey);
+    std::vector<std::byte> same;
+    ShaderDiskCache::BuildBindingPlanKey(identity, planIdentity, same);
+    require(planKey == same, "the binding plan key is not deterministic");
+    require(planKey != key && ShaderDiskCache::EntryName(planKey) != ShaderDiskCache::EntryName(key), "the binding plan and the specialized module share an entry");
+    auto otherPlanSnapshot = planIdentity;
+    otherPlanSnapshot.front() += 1u;
+    std::vector<std::byte> changed;
+    ShaderDiskCache::BuildBindingPlanKey(identity, otherPlanSnapshot, changed);
+    require(changed != planKey, "the binding plan key ignores the captured descriptors");
+    require(changed != key, "a changed captured descriptor left the specialized module key alone");
+    std::vector<std::byte> baseKey{std::byte{0x10}, std::byte{0x20}, std::byte{0x30}};
+    std::vector<std::byte> digest;
+    ShaderDiskCache::BuildArtifactIdentity(baseKey, digest);
+    require(digest.size() == ShaderDiskCache::ArtifactIdentityBytes, "the artifact identity is not the digest of the base key");
+    baseKey.back() ^= std::byte{0x01};
+    std::vector<std::byte> otherDigest;
+    ShaderDiskCache::BuildArtifactIdentity(baseKey, otherDigest);
+    require(otherDigest != digest, "the artifact identity ignores the base key");
+    bool threw = false;
+    try {
+        std::vector<std::byte> refused;
+        ShaderDiskCache::BuildBindingPlanKey({}, planIdentity, refused);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    require(threw, "a specialized entry key was built without a base artifact identity");
+}
+
+void verifySpecializedEntryDamage() {
+    const auto identity = specializedIdentity();
+    const auto planIdentity = specializedPlanIdentity();
+    const std::vector<std::uint32_t> moduleKey{3u};
+    const std::vector<std::uint32_t> classes{0u};
+    const std::vector<PipelineSpecializationConstant> constants{{7u, 11u}};
+    std::vector<std::byte> key;
+    ShaderDiskCache::BuildSpecializedKey(identity, planIdentity, moduleKey, classes, constants, false, key);
+    const auto module = sampleSpecializedModule();
+    const auto file = ShaderDiskCache::EncodeSpecializedEntry(key, module);
+    ShaderDiskCache::SpecializedModule decoded;
+    require(ShaderDiskCache::DecodeSpecializedEntry(file, key, decoded) == ShaderDiskCache::LoadStatus::Loaded, "the specialized module entry does not round trip");
+    require(decoded.spirv == module.spirv && decoded.bindings == module.bindings, "the specialized module entry lost its payload");
+    auto otherConstants = constants;
+    otherConstants.front().value += 1u;
+    std::vector<std::byte> otherKey;
+    ShaderDiskCache::BuildSpecializedKey(identity, planIdentity, moduleKey, classes, otherConstants, false, otherKey);
+    require(ShaderDiskCache::DecodeSpecializedEntry(file, otherKey, decoded) == ShaderDiskCache::LoadStatus::KeyMismatch, "a specialized entry was accepted for another specialization constant");
+    std::vector<std::byte> otherPlanIdentityKey;
+    auto otherSnapshot = planIdentity;
+    otherSnapshot[1] ^= 0xffu;
+    ShaderDiskCache::BuildSpecializedKey(identity, otherSnapshot, moduleKey, classes, constants, false, otherPlanIdentityKey);
+    require(ShaderDiskCache::DecodeSpecializedEntry(file, otherPlanIdentityKey, decoded) == ShaderDiskCache::LoadStatus::KeyMismatch, "a specialized entry was accepted for another captured descriptor");
+    auto otherBaseKey = identity;
+    otherBaseKey[7] ^= std::byte{0x80};
+    std::vector<std::byte> otherArtifactKey;
+    ShaderDiskCache::BuildSpecializedKey(otherBaseKey, planIdentity, moduleKey, classes, constants, false, otherArtifactKey);
+    require(ShaderDiskCache::DecodeSpecializedEntry(file, otherArtifactKey, decoded) == ShaderDiskCache::LoadStatus::KeyMismatch, "a specialized entry was accepted for another base artifact under the same specialization inputs");
+    require(ShaderDiskCache::DecodeSpecializedEntry(file, key, decoded) == ShaderDiskCache::LoadStatus::Loaded, "the specialized module entry no longer decodes under its own key");
+    for (std::size_t offset = 0; offset < file.size(); offset += std::max<std::size_t>(1u, file.size() / 8u)) {
+        auto damaged = file;
+        damaged[offset] ^= std::byte{0x40};
+        const auto status = ShaderDiskCache::DecodeSpecializedEntry(damaged, key, decoded);
+        require(status == ShaderDiskCache::LoadStatus::Rejected, "a damaged specialized entry at offset " + std::to_string(offset) + " was accepted");
+    }
+    auto shortened = file;
+    shortened.resize(shortened.size() - 4u);
+    require(ShaderDiskCache::DecodeSpecializedEntry(shortened, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a truncated specialized entry was accepted");
+    std::vector<std::byte> planKey;
+    ShaderDiskCache::BuildBindingPlanKey(identity, planIdentity, planKey);
+    std::vector<std::byte> otherBasePlanKey;
+    ShaderDiskCache::BuildBindingPlanKey(otherBaseKey, planIdentity, otherBasePlanKey);
+    const auto plan = sampleBindingPlan();
+    const auto planFile = ShaderDiskCache::EncodeBindingPlanEntry(planKey, plan);
+    DescriptorBindingPlan decodedPlan;
+    require(ShaderDiskCache::DecodeBindingPlanEntry(planFile, planKey, decodedPlan) == ShaderDiskCache::LoadStatus::Loaded, "the binding plan entry does not round trip");
+    requireSameBindingPlan(plan, decodedPlan, "binding plan entry");
+    require(ShaderDiskCache::DecodeBindingPlanEntry(planFile, key, decodedPlan) == ShaderDiskCache::LoadStatus::KeyMismatch, "a binding plan entry was accepted for another key");
+    require(ShaderDiskCache::DecodeBindingPlanEntry(planFile, otherBasePlanKey, decodedPlan) == ShaderDiskCache::LoadStatus::KeyMismatch, "a binding plan entry was accepted for another base artifact under the same captured descriptors");
+    for (std::size_t offset = 0; offset < planFile.size(); offset += std::max<std::size_t>(1u, planFile.size() / 8u)) {
+        auto damaged = planFile;
+        damaged[offset] ^= std::byte{0x40};
+        const auto status = ShaderDiskCache::DecodeBindingPlanEntry(damaged, planKey, decodedPlan);
+        require(status == ShaderDiskCache::LoadStatus::Rejected, "a damaged binding plan entry at offset " + std::to_string(offset) + " was accepted");
+    }
+    auto shortenedPlan = planFile;
+    shortenedPlan.resize(shortenedPlan.size() - 4u);
+    require(ShaderDiskCache::DecodeBindingPlanEntry(shortenedPlan, planKey, decodedPlan) == ShaderDiskCache::LoadStatus::Rejected, "a truncated binding plan entry was accepted");
+    auto inconsistent = plan;
+    inconsistent.bindings[2].identityImageSwizzle = {true};
+    std::vector<std::byte> inconsistentBytes;
+    require(ShaderDiskCache::EncodeBindingPlan(inconsistent, inconsistentBytes) && !ShaderDiskCache::DecodeBindingPlan(inconsistentBytes, decodedPlan), "a binding plan with an identity swizzle flag per element it does not describe decoded");
+    auto outOfRange = plan;
+    outOfRange.bindings.front().resources = {RuntimeAbi::BufferCapacity + 1u, 1u, 2u};
+    inconsistentBytes.clear();
+    require(ShaderDiskCache::EncodeBindingPlan(outOfRange, inconsistentBytes) && !ShaderDiskCache::DecodeBindingPlan(inconsistentBytes, decodedPlan), "a binding plan naming a buffer the artifact cannot declare decoded");
+}
+
+std::vector<std::byte> specializedOutput(PlanFixture& fixture) {
+    auto request = fixture.Request(true);
+    request.target.float64DenormPreserve = true;
+    const auto handle = PrepareShader(request);
+    RequestMemoryView view(request.context.memory);
+    const auto capture = CaptureResources(request, view.MakeRuntime(request.context.userData, request.shader.codeAddress), *handle);
+    const auto result = MaterializeShader(request, *capture, *handle);
+    std::vector<std::byte> bytes;
+    appendWords(bytes, GetPreparedArtifact(*handle).spirv.Words());
+    ShaderDiskCache::EncodeResult(*result, bytes);
+    appendSnapshot(bytes, *capture);
+    return bytes;
+}
+
+std::filesystem::path specializedOutputPath(std::size_t index) {
+    return std::filesystem::path(getEnvironment("ANYPS5_SHADER_CACHE_DIR")) / "outputs" / ("fixture-" + std::to_string(index) + ".bin");
+}
+
+std::vector<std::filesystem::path> entryPaths(const std::filesystem::path& directory, std::uint32_t kind) {
+    constexpr std::size_t headerBytes = 48;
+    constexpr std::size_t kindOffset = headerBytes + 4u + 4u + 8u;
+    std::vector<std::filesystem::path> paths;
+    std::error_code error;
+    const std::filesystem::directory_iterator end;
+    for (auto it = std::filesystem::directory_iterator(directory, error); !error && it != end; it.increment(error)) {
+        if (it->path().extension() != ".bin") continue;
+        std::vector<std::byte> file;
+        if (!ReadWholeFile(it->path(), file) || file.size() < kindOffset + sizeof(std::uint32_t)) continue;
+        std::uint32_t stored = 0;
+        std::memcpy(&stored, file.data() + kindOffset, sizeof(stored));
+        if (stored == kind) paths.push_back(it->path());
+    }
+    return paths;
+}
+
+constexpr std::uint32_t SpecializedKind = 0x4c454353u;
+constexpr std::uint32_t BindingPlanKind = 0x504c4142u;
+
+void requireStoredEntry(const std::filesystem::path& path, bool specialized) {
+    std::vector<std::byte> file;
+    require(ReadWholeFile(path, file), "cannot read " + path.string());
+    constexpr std::size_t headerBytes = 48;
+    std::uint64_t keyBytes = 0;
+    std::memcpy(&keyBytes, file.data() + 16, sizeof(keyBytes));
+    require(keyBytes + headerBytes <= file.size(), "the rebuilt entry stores a key that does not fit");
+    const std::span<const std::byte> key(file.data() + headerBytes, static_cast<std::size_t>(keyBytes));
+    if (specialized) {
+        ShaderDiskCache::SpecializedModule module;
+        require(ShaderDiskCache::DecodeSpecializedEntry(file, key, module) == ShaderDiskCache::LoadStatus::Loaded, "the rebuilt specialized module entry was not stored again: " + path.string());
+    } else {
+        DescriptorBindingPlan plan;
+        require(ShaderDiskCache::DecodeBindingPlanEntry(file, key, plan) == ShaderDiskCache::LoadStatus::Loaded, "the rebuilt binding plan entry was not stored again: " + path.string());
+    }
+}
+
+int runSpecializedLoadingProcess(std::string_view mode) {
+    if (mode == "--load-specialized-off") setEnvironment("APS5_NO_SPECIALIZED_DISK_CACHE", "1");
+    const auto outputsDirectory = specializedOutputPath(0).parent_path();
+    const auto moduleEntries = entryPaths(ShaderDiskCache::EntryDirectory(), SpecializedKind).size();
+    const auto planEntries = entryPaths(ShaderDiskCache::EntryDirectory(), BindingPlanKind).size();
+    auto fixtures = planFixtures();
+    const bool artifactChanged = mode == "--load-specialized-artifact-changed";
+    if (artifactChanged) fixtures.front().code.insert(fixtures.front().code.end() - 1, 0xbf800000u);
+    std::vector<std::vector<std::byte>> outputs;
+    for (auto& fixture : fixtures) outputs.push_back(specializedOutput(fixture));
+    ShaderDiskCache::Flush();
+    const auto totals = ShaderDiskCache::Totals();
+    const auto count = fixtures.size();
+    const auto counts = " (specialized hits " + std::to_string(totals.specializedHits) + ", misses " + std::to_string(totals.specializedMisses) + ", writes " + std::to_string(totals.specializedWrites) + ", load failures " + std::to_string(totals.specializedLoadFailures) + ", evictions " + std::to_string(totals.specializedEvictions) + "; binding plan hits " + std::to_string(totals.bindingPlanHits) + ", misses " + std::to_string(totals.bindingPlanMisses) + ", writes " + std::to_string(totals.bindingPlanWrites) + ", load failures " + std::to_string(totals.bindingPlanLoadFailures) + ")";
+    if (mode == "--store-specialized") {
+        require(totals.specializedMisses > 0u && totals.specializedWrites > 0u && totals.bindingPlanMisses > 0u && totals.bindingPlanWrites > 0u, "the first process did not build and store its specialized modules and binding plans" + counts);
+    } else if (mode == "--load-specialized") {
+        require(totals.specializedHits > 0u && totals.specializedMisses == 0u && totals.specializedLoadFailures == 0u && totals.specializedWrites == 0u, "the second process rebuilt or wrote a specialized module" + counts);
+        require(totals.bindingPlanHits > 0u && totals.bindingPlanMisses == 0u && totals.bindingPlanLoadFailures == 0u && totals.bindingPlanWrites == 0u, "the second process rebuilt or wrote a binding plan" + counts);
+    } else if (mode == "--load-specialized-off") {
+        require(!ShaderDiskCache::SpecializedEnabled(), "APS5_NO_SPECIALIZED_DISK_CACHE=1 did not disable the specialized disk cache");
+        require(totals.specializedHits == 0u && totals.specializedMisses == 0u && totals.specializedWrites == 0u && totals.bindingPlanHits == 0u && totals.bindingPlanMisses == 0u && totals.bindingPlanWrites == 0u, "APS5_NO_SPECIALIZED_DISK_CACHE=1 used the specialized disk cache" + counts);
+    } else if (artifactChanged) {
+        require(totals.specializedMisses == 1u && totals.specializedWrites == 1u && totals.specializedHits == count - 1u, "a base artifact that changed reused its specialized module" + counts);
+        require(totals.bindingPlanMisses == 1u && totals.bindingPlanWrites == 1u && totals.bindingPlanHits == count - 1u, "a base artifact that changed reused its binding plan" + counts);
+        require(moduleEntries == count && entryPaths(ShaderDiskCache::EntryDirectory(), SpecializedKind).size() == count + 1u, "a base artifact that changed did not store its specialized module beside the entry of the artifact it came from" + counts);
+        require(planEntries == count && entryPaths(ShaderDiskCache::EntryDirectory(), BindingPlanKind).size() == count + 1u, "a base artifact that changed did not store its binding plan beside the entry of the artifact it came from" + counts);
+    } else {
+        require(totals.specializedLoadFailures == 1u && totals.specializedWrites == 1u && totals.specializedHits > 0u, "the damaged specialized module was not rejected, rebuilt and stored again" + counts);
+        require(totals.bindingPlanLoadFailures == 1u && totals.bindingPlanWrites == 1u && totals.bindingPlanHits > 0u, "the damaged binding plan was not rejected, rebuilt and stored again" + counts);
+    }
+    for (std::size_t index = 0; index < fixtures.size(); ++index) {
+        const auto path = outputsDirectory / ("fixture-" + std::to_string(index) + ".bin");
+        if (mode == "--store-specialized") {
+            std::filesystem::create_directories(path.parent_path());
+            require(WriteFileAtomically(path, outputs[index]), "cannot write the first process's specialized output");
+            continue;
+        }
+        std::vector<std::byte> expected;
+        require(ReadWholeFile(path, expected), "cannot read the first process's output for " + fixtures[index].name);
+        if (artifactChanged && index == 0) continue;
+        require(outputs[index] == expected, fixtures[index].name + ": the SPIR-V, bindings, push constants or snapshot differ from the first process");
+    }
+    if (mode == "--load-specialized") std::cout << "second process loaded " << totals.specializedHits << " specialized modules and " << totals.bindingPlanHits << " binding plans from the disk\n";
+    else if (mode == "--load-specialized-off") std::cout << "APS5_NO_SPECIALIZED_DISK_CACHE=1 built every module with the same output\n";
+    else if (artifactChanged) std::cout << "a changed base artifact missed its specialized module and binding plan and rebuilt both, the other " << (count - 1u) << " still hit\n";
+    else if (mode != "--store-specialized") std::cout << "a damaged specialized module and binding plan were rejected, rebuilt and stored again with the same output\n";
+    return 0;
+}
+
+void verifySpecializedAcrossProcesses(const char* self) {
+    const auto own = ShaderCacheDirectory();
+    const auto directory = own / "specialized";
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+    setEnvironment("ANYPS5_SHADER_CACHE_DIR", directory.string());
+    const auto run = [&](const char* mode) {
+        const std::string command = "\"" + std::string(self) + "\" " + mode;
+        require(std::system(command.c_str()) == 0, std::string("the process ") + mode + " failed");
+    };
+    run("--store-specialized");
+    const auto modules = entryPaths(directory / hex(ShaderDiskCache::SourceVersion()), SpecializedKind);
+    const auto plans = entryPaths(directory / hex(ShaderDiskCache::SourceVersion()), BindingPlanKind);
+    require(!modules.empty() && !plans.empty(), "no specialized module or binding plan entry was written");
+    std::uintmax_t bytes = 0;
+    for (const auto& path : modules) bytes += std::filesystem::file_size(path);
+    std::cout << modules.size() << " specialized module entries, " << bytes / modules.size() << " bytes per entry on average\n";
+    run("--load-specialized");
+    run("--load-specialized-artifact-changed");
+    run("--load-specialized-off");
+    for (const auto& [path, specialized] : {std::pair{modules.front(), true}, std::pair{plans.front(), false}}) {
+        std::vector<std::byte> entry;
+        require(ReadWholeFile(path, entry), "cannot read a stored entry");
+        entry[entry.size() / 2] ^= std::byte{0x20};
+        require(WriteFileAtomically(path, entry), "cannot damage a stored entry");
+    }
+    run("--load-specialized-corrupt");
+    requireStoredEntry(modules.front(), true);
+    requireStoredEntry(plans.front(), false);
+    setEnvironment("ANYPS5_SHADER_CACHE_DIR", own.string());
+}
+
+std::vector<std::byte> boundedModuleKey(std::size_t index) {
+    std::vector<std::byte> identity(ShaderDiskCache::ArtifactIdentityBytes, std::byte{0x5a});
+    const std::vector<std::uint64_t> planIdentity{0x31016facu + index};
+    const std::vector<std::uint32_t> moduleKey{static_cast<std::uint32_t>(index)};
+    const std::vector<std::uint32_t> classes{0u};
+    const std::vector<PipelineSpecializationConstant> constants{{7u, static_cast<std::uint32_t>(index)}};
+    std::vector<std::byte> key;
+    ShaderDiskCache::BuildSpecializedKey(identity, planIdentity, moduleKey, classes, constants, false, key);
+    return key;
+}
+
+int runSpecializedBoundsProcess(std::string_view mode) {
+    if (mode == "--specialized-cap-entries") setEnvironment("APS5_SPECIALIZED_DISK_CACHE_ENTRIES", "3");
+    if (mode == "--specialized-cap-bytes") setEnvironment("APS5_SPECIALIZED_DISK_CACHE_MAX_MIB", "1");
+    if (mode == "--specialized-cap-invalid") setEnvironment("APS5_SPECIALIZED_DISK_CACHE_ENTRIES", "three");
+    if (mode == "--specialized-cap-off") setEnvironment("APS5_SPECIALIZED_DISK_CACHE_ENTRIES", "0");
+    const auto stored = [&](std::size_t index) { return ShaderDiskCache::EntryDirectory() / ShaderDiskCache::SpecializedEntryName(boundedModuleKey(index)); };
+    const auto onDisk = [&](std::size_t index) { return std::filesystem::exists(stored(index)); };
+    const auto module = std::make_shared<const ShaderDiskCache::SpecializedModule>(sampleSpecializedModule());
+    const auto counters = [&](const char* stage) {
+        const auto totals = ShaderDiskCache::Totals();
+        std::string state;
+        for (std::size_t index = 0; index < 5u; ++index) state += onDisk(index) ? std::to_string(index) : "-";
+        return stage + std::string(" (on disk ") + state + ", hits " + std::to_string(totals.specializedHits) + ", misses " + std::to_string(totals.specializedMisses) + ", writes " + std::to_string(totals.specializedWrites) + ", evictions " + std::to_string(totals.specializedEvictions) + ")";
+    };
+    const auto loaded = [&](std::size_t index) {
+        ShaderDiskCache::SpecializedModule decoded;
+        if (!ShaderDiskCache::LoadSpecialized(boundedModuleKey(index), decoded)) return false;
+        require(decoded.spirv == module->spirv && decoded.bindings == module->bindings && decoded.pushData == module->pushData, "a loaded specialized module differs from the stored one");
+        return true;
+    };
+    if (mode == "--specialized-cap-off") {
+        require(!ShaderDiskCache::SpecializedEnabled(), "APS5_SPECIALIZED_DISK_CACHE_ENTRIES=0 did not turn the specialized disk cache off");
+        ShaderDiskCache::StoreSpecialized(boundedModuleKey(0), module);
+        ShaderDiskCache::Flush();
+        require(!onDisk(0) && !loaded(0), "APS5_SPECIALIZED_DISK_CACHE_ENTRIES=0 kept a specialized module" + counters("after storing with a zero bound"));
+        std::cout << "APS5_SPECIALIZED_DISK_CACHE_ENTRIES=0 kept no specialized module\n";
+        return 0;
+    }
+    if (mode == "--specialized-cap-invalid") {
+        require(ShaderDiskCache::SpecializedEnabled(), "a bound that is not a decimal number turned the specialized disk cache off");
+        for (std::size_t index = 0; index < 5u; ++index) ShaderDiskCache::StoreSpecialized(boundedModuleKey(index), module);
+        ShaderDiskCache::Flush();
+        for (std::size_t index = 0; index < 5u; ++index) require(onDisk(index) && loaded(index), "a bound that is not a decimal number did not fall back to the default" + counters("after storing five modules"));
+        std::cout << "a bound that is not a decimal number was reported and the default kept all " << 5 << " modules\n";
+        return 0;
+    }
+    if (mode == "--specialized-cap-bytes") {
+        auto large = sampleSpecializedModule();
+        std::vector<std::uint32_t> words(0x28000u, 0u);
+        words[0] = 0x07230203u;
+        large.spirv = SharedSpirv(words);
+        const auto big = std::make_shared<const ShaderDiskCache::SpecializedModule>(large);
+        ShaderDiskCache::StoreSpecialized(boundedModuleKey(0), big);
+        ShaderDiskCache::StoreSpecialized(boundedModuleKey(1), big);
+        ShaderDiskCache::Flush();
+        require(onDisk(1) && !onDisk(0), "APS5_SPECIALIZED_DISK_CACHE_MAX_MIB=1 did not keep only the newest module" + counters("after storing two modules over the byte bound"));
+        require(ShaderDiskCache::Totals().specializedEvictions == 1u, "the byte bound did not count its eviction" + counters("after storing two modules over the byte bound"));
+        ShaderDiskCache::SpecializedModule decoded;
+        require(!ShaderDiskCache::LoadSpecialized(boundedModuleKey(0), decoded), "a module evicted for its size loads");
+        require(ShaderDiskCache::LoadSpecialized(boundedModuleKey(1), decoded) && decoded.spirv.Words().size() == words.size(), "the module kept under the byte bound does not load whole");
+        std::cout << "APS5_SPECIALIZED_DISK_CACHE_MAX_MIB=1 kept one 640 KiB module and evicted the other\n";
+        return 0;
+    }
+    require(mode == "--specialized-cap-entries", "unknown specialized bounds mode");
+    for (std::size_t index = 0; index < 5u; ++index) ShaderDiskCache::StoreSpecialized(boundedModuleKey(index), module);
+    ShaderDiskCache::Flush();
+    require(onDisk(2) && onDisk(3) && onDisk(4) && !onDisk(0) && !onDisk(1), "APS5_SPECIALIZED_DISK_CACHE_ENTRIES=3 did not keep the three newest modules" + counters("after five stores"));
+    require(ShaderDiskCache::Totals().specializedEvictions == 2u, "the entry bound did not count its evictions" + counters("after five stores"));
+    require(loaded(2), "a module inside the bound does not load" + counters("after loading the oldest kept module"));
+    require(!loaded(0), "a module outside the bound loads" + counters("after loading the oldest kept module"));
+    const auto before = ShaderDiskCache::Totals();
+    require(before.specializedHits == 1u && before.specializedMisses == 1u, "the kept module was not a hit and the evicted one a miss" + counters("after loading the oldest kept module"));
+    ShaderDiskCache::StoreSpecialized(boundedModuleKey(0), module);
+    ShaderDiskCache::Flush();
+    require(onDisk(0) && onDisk(2) && onDisk(4) && !onDisk(3), "the rebuilt module did not take the place of the least recently used one" + counters("after rebuilding the evicted module"));
+    require(ShaderDiskCache::Totals().specializedEvictions == 3u && ShaderDiskCache::Totals().specializedWrites == 6u, "the rebuilt module was not stored once and one eviction not counted" + counters("after rebuilding the evicted module"));
+    require(loaded(2) && loaded(4) && loaded(0), "a module inside the bound does not load after an eviction" + counters("after loading every module inside the bound"));
+    std::cout << "APS5_SPECIALIZED_DISK_CACHE_ENTRIES=3 kept three modules, evicted the rest and rebuilt an evicted one\n";
+    return 0;
+}
+
+void verifySpecializedBoundsAcrossProcesses(const char* self) {
+    const auto own = ShaderCacheDirectory();
+    const auto root = own / "specialized-bounds";
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    const auto run = [&](const char* mode) {
+        setEnvironment("ANYPS5_SHADER_CACHE_DIR", (root / mode).string());
+        const std::string command = "\"" + std::string(self) + "\" " + mode;
+        require(std::system(command.c_str()) == 0, std::string("the process ") + mode + " failed");
+    };
+    for (const auto* mode : {"--specialized-cap-entries", "--specialized-cap-bytes", "--specialized-cap-invalid", "--specialized-cap-off"}) run(mode);
+    setEnvironment("ANYPS5_SHADER_CACHE_DIR", own.string());
+}
+
+struct Float16ConvertRequest {
+    std::array<std::uint32_t, 4> code{0x7e021500u, 0xe0700000u, 0x80000100u, 0xbf810000u};
+    std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
+    std::vector<std::uint32_t> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityFloat16};
+    std::array<std::string_view, 1> extensions{"SPV_KHR_storage_buffer_storage_class"};
+    RecompileRequest request{};
+
+    Float16ConvertRequest(bool roundingModeRte, bool useCache) {
+        if (roundingModeRte) capabilities.insert(capabilities.end(), {spv::CapabilityRoundingModeRTE, spv::CapabilityDenormPreserve});
+        request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00403000u;
+        request.target.spirvVersion = 0x00010600u;
+        request.target.subgroupSize = 64;
+        request.target.bdaAbiVersion = 1;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+        request.target.maxWorkgroupInvocations = 1024;
+        request.target.maxWorkgroupSharedMemoryBytes = 49152;
+        request.layout = {0, 0, 0, 128};
+        request.useCache = useCache;
+    }
+};
+
+bool roundsFloat16ToNearestEven(std::span<const std::uint32_t> words) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        require(count != 0 && cursor + count <= words.size(), "truncated SPIR-V instruction");
+        if ((words[cursor] & 0xffffu) == spv::OpExecutionMode && count == 4 && words[cursor + 2] == spv::ExecutionModeRoundingModeRTE && words[cursor + 3] == 16u) return true;
+        cursor += count;
+    }
+    return false;
+}
+
+int runUncachedSpecializedProcess() {
+    require(ShaderDiskCache::SpecializedEnabled(), "the specialized disk cache is off, so this process cannot show that a compile without a cache key skips it");
+    const auto directory = ShaderDiskCache::EntryDirectory();
+    const auto storedEntries = [&] { return entryPaths(directory, SpecializedKind).size() + entryPaths(directory, BindingPlanKind).size(); };
+    const auto counts = [&] {
+        const auto totals = ShaderDiskCache::Totals();
+        return " (specialized hits " + std::to_string(totals.specializedHits) + ", misses " + std::to_string(totals.specializedMisses) + ", writes " + std::to_string(totals.specializedWrites) + "; binding plan hits " + std::to_string(totals.bindingPlanHits) + ", misses " + std::to_string(totals.bindingPlanMisses) + ", writes " + std::to_string(totals.bindingPlanWrites) + "; " + std::to_string(storedEntries()) + " specialized entries on disk)";
+    };
+    Float16ConvertRequest nearestEven(true, false);
+    const auto native = Recompile(nearestEven.request);
+    ShaderDiskCache::Flush();
+    require(roundsFloat16ToNearestEven(native.spirv.Words()), "a device with RoundingModeRTE for 16-bit floats did not get native f16 conversion");
+    Float16ConvertRequest withoutRte(false, false);
+    const auto emulated = Recompile(withoutRte.request);
+    require(!roundsFloat16ToNearestEven(emulated.spirv.Words()), "Recompile(request) with useCache=false for a device without RoundingModeRTE was served the module compiled for a device with it" + counts());
+    RequestMemoryView view(withoutRte.request.context.memory);
+    const auto capture = CaptureResources(withoutRte.request, view.MakeRuntime(withoutRte.request.context.userData, withoutRte.request.shader.codeAddress));
+    const auto captured = Recompile(withoutRte.request, *capture);
+    require(!roundsFloat16ToNearestEven(captured->spirv.Words()), "Recompile(request, capture) with useCache=false for a device without RoundingModeRTE was served the module compiled for a device with it" + counts());
+    ShaderDiskCache::Flush();
+    const auto uncached = ShaderDiskCache::Totals();
+    require(uncached.specializedHits == 0u && uncached.specializedMisses == 0u && uncached.specializedWrites == 0u && uncached.bindingPlanHits == 0u && uncached.bindingPlanMisses == 0u && uncached.bindingPlanWrites == 0u && storedEntries() == 0u, "a compile with useCache=false read or wrote the specialized disk cache" + counts());
+    Float16ConvertRequest cached(false, true);
+    const auto keyed = Recompile(cached.request);
+    ShaderDiskCache::Flush();
+    require(!roundsFloat16ToNearestEven(keyed.spirv.Words()), "a cached compile for a device without RoundingModeRTE got native f16 conversion" + counts());
+    const auto stored = ShaderDiskCache::Totals();
+    require(stored.specializedWrites > 0u && stored.bindingPlanWrites > 0u && storedEntries() > 0u, "a compile with a cache key did not store its specialized module and binding plan, so the compiles without one show nothing" + counts());
+    std::cout << "compiles with useCache=false for devices with and without RoundingModeRTE kept their own modules and left the specialized disk cache alone; a cached compile stored " << storedEntries() << " specialized entries\n";
+    return 0;
+}
+
+void verifyUncachedSpecializedAcrossProcesses(const char* self) {
+    const auto own = ShaderCacheDirectory();
+    const auto directory = own / "uncached-specialized";
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+    setEnvironment("ANYPS5_SHADER_CACHE_DIR", directory.string());
+    const std::string command = "\"" + std::string(self) + "\" --uncached-specialized";
+    require(std::system(command.c_str()) == 0, "the process --uncached-specialized failed");
+    setEnvironment("ANYPS5_SHADER_CACHE_DIR", own.string());
+}
+
+std::string planInputCounts() {
+    const auto totals = ShaderDiskCache::Totals();
+    return " (artifact hits " + std::to_string(totals.hits) + ", misses " + std::to_string(totals.misses) + "; binding plan hits " + std::to_string(totals.bindingPlanHits) + ", misses " + std::to_string(totals.bindingPlanMisses) + ", writes " + std::to_string(totals.bindingPlanWrites) + "; specialized hits " + std::to_string(totals.specializedHits) + ", misses " + std::to_string(totals.specializedMisses) + ", writes " + std::to_string(totals.specializedWrites) + ")";
+}
+
+int runSubstituteProcess(std::string_view mode) {
+    require(ShaderDiskCache::SpecializedEnabled(), "the specialized disk cache is off, so this process cannot show which binding plan a buffer substitute selects");
+    ComputeRequest request(true);
+    const auto bound = request.userData;
+    const std::array<std::uint32_t, 4> other{bound[0], bound[1], bound[2], 0x31004688u};
+    const std::array<std::uint32_t, 4> absent{0u, 0u, 0u, 0u};
+    const auto compile = [&](const std::array<std::uint32_t, 4>& descriptor) {
+        request.userData = descriptor;
+        return Recompile(request.request);
+    };
+    if (mode == "--store-substitute") {
+        const auto first = compile(bound);
+        const auto null = compile(absent);
+        ShaderDiskCache::Flush();
+        const auto totals = ShaderDiskCache::Totals();
+        require(null.variantId == first.variantId && null.spirv.data() == first.spirv.data(), "a null V# did not specialize with the substitute learned from its bound slot" + planInputCounts());
+        require(totals.bindingPlanHits == 0u && totals.bindingPlanWrites > 0u && totals.specializedWrites > 0u, "the first process did not build and store the binding plan and specialized module of the bound slot" + planInputCounts());
+        std::cout << "first process stored the binding plan of a bound slot and reused it for a null V# through the learned substitute\n";
+        return 0;
+    }
+    if (mode == "--load-substitute-unknown") {
+        const auto null = compile(absent);
+        const auto unknown = ShaderDiskCache::Totals();
+        require(unknown.hits > 0u && unknown.misses == 0u, "the second process did not load the base artifact the first process stored" + planInputCounts());
+        require(unknown.bindingPlanHits == 0u && unknown.bindingPlanMisses == 1u, "a null V# with no substitute learned was served the binding plan stored for a learned substitute" + planInputCounts());
+        require(unknown.specializedHits == 0u && unknown.specializedMisses == 1u, "a null V# with no substitute learned was served the specialized module stored for a learned substitute" + planInputCounts());
+        const auto first = compile(bound);
+        const auto loaded = ShaderDiskCache::Totals();
+        require(first.variantId == null.variantId, "the bound slot and the null V# did not share the base artifact");
+        require(loaded.bindingPlanHits == 1u && loaded.bindingPlanMisses == 1u && loaded.specializedHits == 1u && loaded.specializedMisses == 1u, "the bound slot did not load the binding plan and specialized module the first process stored under the same base artifact" + planInputCounts());
+        std::cout << "a null V# with no substitute learned missed the binding plan stored with one, and the bound slot then loaded it\n";
+        return 0;
+    }
+    require(mode == "--load-substitute-changed", "unknown substitute mode");
+    const auto first = compile(other);
+    const auto learned = ShaderDiskCache::Totals();
+    require(learned.hits > 0u && learned.misses == 0u, "the third process did not load the base artifact the first process stored" + planInputCounts());
+    require(learned.bindingPlanHits == 0u && learned.bindingPlanMisses == 1u, "a slot bound with another format was served the binding plan stored for the first process's format" + planInputCounts());
+    const auto null = compile(absent);
+    const auto substituted = ShaderDiskCache::Totals();
+    require(null.variantId == first.variantId && null.spirv.data() == first.spirv.data(), "a null V# did not specialize with the substitute this process learned" + planInputCounts());
+    require(substituted.bindingPlanHits == 0u && substituted.specializedHits == 0u, "a null V# whose slot learned another substitute was served the binding plan or specialized module stored with the first process's substitute" + planInputCounts());
+    const auto restored = compile(bound);
+    const auto loaded = ShaderDiskCache::Totals();
+    require(restored.variantId == first.variantId, "the first process's descriptor did not share the base artifact");
+    require(loaded.bindingPlanHits == 1u && loaded.specializedHits == 1u, "the first process's descriptor did not load its stored binding plan and specialized module under the same base artifact" + planInputCounts());
+    std::cout << "a null V# after another substitute was learned missed the binding plan stored with the first one, and the first descriptor still loaded it\n";
+    return 0;
+}
+
+std::shared_ptr<const RecompileResult> materializeWithMinLod(PlanFixture& fixture, bool minLod) {
+    auto request = fixture.Request(true);
+    std::vector<std::uint32_t> capabilities(request.target.supportedCapabilities.begin(), request.target.supportedCapabilities.end());
+    capabilities.push_back(spv::CapabilityMinLod);
+    request.target.supportedCapabilities = capabilities;
+    request.target.shaderImageMinLod = minLod;
+    const auto handle = PrepareShader(request);
+    RequestMemoryView view(request.context.memory);
+    const auto capture = CaptureResources(request, view.MakeRuntime(request.context.userData, request.shader.codeAddress), *handle);
+    return MaterializeShader(request, *capture, *handle);
+}
+
+bool sameModule(const RecompileResult& left, const RecompileResult& right) {
+    return std::ranges::equal(left.spirv.Words(), right.spirv.Words());
+}
+
+int runMinLodProcess(std::string_view mode) {
+    require(ShaderDiskCache::SpecializedEnabled(), "the specialized disk cache is off, so this process cannot show which binding plan shaderImageMinLod selects");
+    auto fixtures = planFixtures();
+    const auto found = std::ranges::find(fixtures, "guarded image", &PlanFixture::name);
+    require(found != fixtures.end(), "the guarded image fixture is missing");
+    const auto plain = materializeWithMinLod(*found, false);
+    if (mode == "--store-min-lod") {
+        ShaderDiskCache::Flush();
+        const auto totals = ShaderDiskCache::Totals();
+        require(totals.bindingPlanWrites > 0u && totals.specializedWrites > 0u, "the first process did not store the binding plan and specialized module built without the minimum LOD clamp" + planInputCounts());
+        std::cout << "first process stored a binding plan and specialized module built without the minimum LOD clamp\n";
+        return 0;
+    }
+    require(mode == "--load-min-lod", "unknown minimum LOD mode");
+    const auto loaded = ShaderDiskCache::Totals();
+    require(loaded.misses == 0u && loaded.bindingPlanHits == 1u && loaded.bindingPlanMisses == 0u && loaded.specializedHits == 1u && loaded.specializedMisses == 0u, "the second process did not load the binding plan and specialized module stored without the minimum LOD clamp" + planInputCounts());
+    const auto clamped = materializeWithMinLod(*found, true);
+    const auto changed = ShaderDiskCache::Totals();
+    require(!sameModule(*plain, *clamped), "shaderImageMinLod left the module unchanged, so the fixture shows nothing");
+    require(changed.bindingPlanHits == loaded.bindingPlanHits && changed.bindingPlanMisses == 1u, "a request with shaderImageMinLod was served the binding plan stored without it" + planInputCounts());
+    require(changed.specializedHits == loaded.specializedHits && changed.specializedMisses == 1u, "a request with shaderImageMinLod was served the specialized module stored without it" + planInputCounts());
+    require(changed.misses == 1u, "shaderImageMinLod did not select another base artifact" + planInputCounts());
+    std::cout << "a request with shaderImageMinLod missed the binding plan and specialized module stored without it and rebuilt both\n";
+    return 0;
+}
+
+void verifyPlanInputsAcrossProcesses(const char* self) {
+    const auto own = ShaderCacheDirectory();
+    std::error_code error;
+    const auto run = [&](const char* directory, const char* mode) {
+        setEnvironment("ANYPS5_SHADER_CACHE_DIR", (own / directory).string());
+        const std::string command = "\"" + std::string(self) + "\" " + mode;
+        require(std::system(command.c_str()) == 0, std::string("the process ") + mode + " failed");
+    };
+    std::filesystem::remove_all(own / "plan-substitute", error);
+    std::filesystem::remove_all(own / "plan-min-lod", error);
+    for (const auto* mode : {"--store-substitute", "--load-substitute-unknown", "--load-substitute-changed"}) run("plan-substitute", mode);
+    for (const auto* mode : {"--store-min-lod", "--load-min-lod"}) run("plan-min-lod", mode);
+    setEnvironment("ANYPS5_SHADER_CACHE_DIR", own.string());
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -2823,6 +3517,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--load-prebuilt") return runPrebuiltLoadingProcess();
         if (argc == 2 && std::string_view(argv[1]) == "--no-failure-memo") return runWithoutFailureMemo();
         if (argc == 2 && std::string_view(argv[1]).starts_with("--load-plan")) return runPlanLoadingProcess(argv[1]);
+        if (argc == 2 && (std::string_view(argv[1]) == "--store-specialized" || std::string_view(argv[1]).starts_with("--load-specialized"))) return runSpecializedLoadingProcess(argv[1]);
+        if (argc == 2 && std::string_view(argv[1]).starts_with("--specialized-cap-")) return runSpecializedBoundsProcess(argv[1]);
+        if (argc == 2 && std::string_view(argv[1]) == "--uncached-specialized") return runUncachedSpecializedProcess();
+        if (argc == 2 && (std::string_view(argv[1]) == "--store-substitute" || std::string_view(argv[1]).starts_with("--load-substitute-"))) return runSubstituteProcess(argv[1]);
+        if (argc == 2 && (std::string_view(argv[1]) == "--store-min-lod" || std::string_view(argv[1]) == "--load-min-lod")) return runMinLodProcess(argv[1]);
         const auto directory = std::filesystem::temp_directory_path() / ("aps5-shader-disk-cache-test-" + std::to_string(std::random_device{}()));
         std::filesystem::remove_all(directory);
         verifyDefaultDirectory(argv[0]);
@@ -2841,11 +3540,18 @@ int main(int argc, char** argv) {
         verifyPlanRoundTrip();
         verifyPlanKey();
         verifySharedPlans();
+        verifySpecializedCodec();
+        verifySpecializedKey();
+        verifySpecializedEntryDamage();
         verifyStore();
         verifyPersist();
         verifyAcrossProcesses(argv[0]);
         verifyPrebuiltAcrossProcesses(argv[0], directory);
         verifyPlanAcrossProcesses(argv[0]);
+        verifySpecializedAcrossProcesses(argv[0]);
+        verifySpecializedBoundsAcrossProcesses(argv[0]);
+        verifyUncachedSpecializedAcrossProcesses(argv[0]);
+        verifyPlanInputsAcrossProcesses(argv[0]);
         verifyEmissionFailureMemo();
         verifyFailureMemoSwitch(argv[0]);
         verifyInvocationIsolation();
