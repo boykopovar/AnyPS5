@@ -58,7 +58,7 @@ def parse_report(kind, text):
             raise ValueError("GPU timing ranges were dropped in a settled A/B phase; timing statistics are incomplete")
         programs_text, classes_text = text.split("by program:", 1)[-1].split("; by class:", 1)
         programs, classes = {}, {}
-        for key, ms in re.findall(r" (?<!draw )(0x[0-9a-f]+) x\d+ ([\d.]+)ms", programs_text):
+        for key, ms in re.findall(r" (?<!draw )(?<!drawset )(0x[0-9a-f]+) x\d+ ([\d.]+)ms", programs_text):
             programs[key] = programs.get(key, 0.0) + finite(float(ms))
         for name, ms in re.findall(r" ([a-z][a-z-]*) x\d+ ([\d.]+)ms [\d.]+MiB \(per present", classes_text):
             classes[name] = classes.get(name, 0.0) + finite(float(ms))

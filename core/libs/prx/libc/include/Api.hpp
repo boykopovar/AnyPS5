@@ -982,6 +982,8 @@ void* APS5_VABI sceLibcMspaceAlignedAlloc_nid_postfix(void* handle, std::size_t 
 void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void* handle, void* pointer, std::size_t alignment, std::size_t size);
 int APS5_VABI sceLibcMspaceMallocStats_nid_postfix(void* handle, MallocManagedSize* stats);
 int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats);
+int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void* handle);
+int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void* handle);
 std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void* pointer);
 void* APS5_VABI sceLibcPafMspaceCreate_nid_postfix(const char* name, void* base, std::size_t size, unsigned flags, const void* options);
 int APS5_VABI sceLibcPafMspaceDestroy_nid_postfix(void* handle);

@@ -1201,13 +1201,14 @@ int APS5_VABI sceUltGetSemaphoreInfo(void* object, UltSemaphoreInfo* info, UltWa
     std::lock_guard stateLock(state->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
     if (capacity != 0 && state->_waiters != 0) NotImplemented_nid_no_patch(__func__);
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltSemaphoreInfo);
-    info->object = object;
-    std::memcpy(info->name, state->_name, sizeof(info->name));
-    info->waitingQueuePool = state->_waitingPool;
-    info->resources = static_cast<std::uint32_t>(state->_resources);
-    info->waitingThreads = state->_waiters;
+    UltSemaphoreInfo localInfo{};
+    localInfo.size = sizeof(UltSemaphoreInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
+    localInfo.waitingQueuePool = state->_waitingPool;
+    localInfo.resources = static_cast<std::uint32_t>(state->_resources);
+    localInfo.waitingThreads = state->_waiters;
+    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
