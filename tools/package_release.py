@@ -124,6 +124,12 @@ def package(platform, build, output, version):
     if "libfontconfig.prx" in expected:
         licenses.append((ROOT / "3rdparty/fontconfig/COPYING", "libs/licenses/fontconfig.txt"))
         licenses.append((ROOT / "core/libs/prx/libfontconfig/Unicode-LICENSE.txt", "libs/licenses/fontconfig-unicode.txt"))
+    if "libSceAddressSanitizer.prx" in expected:
+        licenses.extend((ROOT / source, destination) for source, destination in (
+            ("3rdparty/compiler-rt/LICENSE.TXT", "libs/licenses/compiler-rt.txt"),
+            ("3rdparty/compiler-rt/lib/asan_anyps5/NOTICE", "libs/licenses/compiler-rt-anyps5-notice.txt"),
+            ("3rdparty/compiler-rt/lib/asan_anyps5/LICENSE.GPL-2.0", "libs/licenses/compiler-rt-anyps5-gpl2.txt"),
+        ))
     if platform == "windows":
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
