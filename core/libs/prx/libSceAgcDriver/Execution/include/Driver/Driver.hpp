@@ -84,6 +84,7 @@ public:
     bool WaitIdleUnlessTitleWaitsFor(std::chrono::milliseconds timeout);
     bool WaitSettledFor(std::chrono::milliseconds timeout);
     void ReleaseSettled();
+    bool SettledHeld();
     bool Settled();
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
@@ -238,6 +239,7 @@ private:
     static std::uint32_t drawUserWord(const DrawProgram& program, std::int32_t sgpr);
     DrawVerdict draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected);
     DrawVerdict finishDraw(DrawTail& tail, PerformanceTimer& timing);
+    void restartFinishedDraw(DrawTail& tail);
     void addDriverPhases(DispatchClass which, const std::array<double, DriverPhaseCount>& ms, bool hit, bool validated);
     static PendingDispatchPhases& pendingDispatchPhases();
     static std::chrono::steady_clock::time_point& packetStartedAt();

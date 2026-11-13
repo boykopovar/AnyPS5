@@ -765,11 +765,6 @@ int APS5_VABI _ZN6webrtc4rtcp14CompoundPacketD1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc4rtcp4Nack5ParseERKNS0_12CommonHeaderE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -818,11 +813,6 @@ int APS5_VABI libwebrtcUnknown35(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("qli1Cjz9UIo", libwebrtcUnknown36);
 int APS5_VABI libwebrtcUnknown36(void) {
     NotImplemented_nid_no_patch("qli1Cjz9UIo");
@@ -835,21 +825,6 @@ int APS5_VABI libwebrtcUnknown37(void) {
 }
 
 void APS5_VABI _ZN6webrtc12AudioEncoder45OnReceivedUplinkRecoverablePacketLossFractionEf_nid_postfix(void*, float) {}
-
-int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI _ZN6webrtc14SdpAudioFormataSERKS0__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);

@@ -1,3 +1,4 @@
+#include "PortabilitySubset.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
@@ -645,8 +646,9 @@ public:
             const std::array<VkDeviceQueueCreateInfo, 2> queueInfos{queue, settle};
             device.queueCreateInfoCount = settleFamily != noSettleFamily && settleFamily != family ? 2 : 1;
             device.pQueueCreateInfos = queueInfos.data();
-            device.enabledExtensionCount = static_cast<std::uint32_t>(extensionsEnabled.size());
-            device.ppEnabledExtensionNames = extensionsEnabled.data();
+            AgcDriver::Tests::PortabilitySubset subset;
+            subset.Enable(context.physical, function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties"),
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), extensionsEnabled, device);
             device.pEnabledFeatures = &enabled;
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
             context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
@@ -824,10 +826,7 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &push;
     Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &release.layout), "ordering pipeline layout");
-    VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    moduleInfo.codeSize = sizeof(BUFFER_UPDATE_SPV);
-    moduleInfo.pCode = BUFFER_UPDATE_SPV;
-    Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &release.module), "ordering shader module");
+    release.module = CreateShaderModule(context, BUFFER_UPDATE_SPV, sizeof(BUFFER_UPDATE_SPV), "ordering shader module");
     VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, release.module, "main", nullptr};
     pipelineInfo.layout = release.layout;
@@ -1102,10 +1101,7 @@ void copiedWriteBackTests(const Device& device, Recorder& recorder) {
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &push;
     Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &release.layout), "copied write-back pipeline layout");
-    VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    moduleInfo.codeSize = sizeof(BUFFER_UPDATE_SPV);
-    moduleInfo.pCode = BUFFER_UPDATE_SPV;
-    Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &release.module), "copied write-back shader module");
+    release.module = CreateShaderModule(context, BUFFER_UPDATE_SPV, sizeof(BUFFER_UPDATE_SPV), "copied write-back shader module");
     VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, release.module, "main", nullptr};
     pipelineInfo.layout = release.layout;
@@ -1268,7 +1264,13 @@ void pendingWriteSnapshotTests(const Device& device, Recorder& recorder) {
     Recorder::WriteRanges expected;
     const auto check = [&] {
         const auto snapshot = Recorder::PendingWriteSnapshot();
-        Require(snapshot != nullptr && *snapshot == expectedWriteUnion(expected), "pending write snapshot differs from the full union");
+        const auto merged = expectedWriteUnion(expected);
+        Require(snapshot != nullptr && *snapshot == merged, "pending write snapshot differs from the full union");
+        if (!std::all_of(merged.begin(), merged.end(), [](const auto& range) { return range.second > range.first; })) return;
+        for (const auto& [begin, end] : merged) {
+            Require(Recorder::SnapshotWriteOverlaps(begin, 1), "the access hook missed the first byte of a published range: " + std::to_string(begin) + ".." + std::to_string(end));
+            Require(Recorder::SnapshotWriteOverlaps(end - 1, 1), "the access hook missed the last byte of a published range: " + std::to_string(begin) + ".." + std::to_string(end));
+        }
     };
     const auto note = [&](std::uint64_t address, std::size_t bytes) {
         const auto previous = Recorder::PendingWriteSnapshot();
@@ -1325,10 +1327,16 @@ void pendingWriteSnapshotTests(const Device& device, Recorder& recorder) {
         std::atomic<bool> invalid{false};
         std::atomic<unsigned> ready{0};
         std::atomic<std::uint64_t> reads{0};
+        std::atomic<std::uint64_t> publishedAddress{0};
+        std::array<std::atomic<std::uint64_t>, 2> observed{};
         std::array<std::jthread, 2> readers;
-        for (auto& reader : readers) reader = std::jthread([&](std::stop_token stop) {
+        for (std::size_t index = 0; index < readers.size(); ++index) readers[index] = std::jthread([&, index](std::stop_token stop) {
+            if (!Recorder::SnapshotWriteOverlaps(0x90000, 16)) invalid.store(true, std::memory_order_relaxed);
             ready.fetch_add(1, std::memory_order_release);
             while (!stop.stop_requested()) {
+                const auto address = publishedAddress.load(std::memory_order_acquire);
+                if (address != 0 && !Recorder::SnapshotWriteOverlaps(address, 32)) invalid.store(true, std::memory_order_relaxed);
+                observed[index].store(address, std::memory_order_release);
                 const auto snapshot = Recorder::PendingWriteSnapshot();
                 if (snapshot == nullptr || !Recorder::SnapshotOverlaps(snapshot.get(), 0x90000, 16)) invalid.store(true, std::memory_order_relaxed);
                 if (snapshot != nullptr) {
@@ -1341,12 +1349,21 @@ void pendingWriteSnapshotTests(const Device& device, Recorder& recorder) {
             }
         });
         while (ready.load(std::memory_order_acquire) != readers.size()) std::this_thread::yield();
-        for (std::uint64_t i = 0; i < 256; ++i) note(0x91000 + i * 128, 32);
+        for (std::uint64_t i = 0; i < 256; ++i) {
+            const auto address = 0x91000 + i * 128;
+            note(address, 32);
+            publishedAddress.store(address, std::memory_order_release);
+        }
+        const auto last = publishedAddress.load(std::memory_order_acquire);
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while ((observed[0].load(std::memory_order_acquire) != last || observed[1].load(std::memory_order_acquire) != last) && std::chrono::steady_clock::now() < until) std::this_thread::yield();
+        Require(observed[0].load(std::memory_order_acquire) == last && observed[1].load(std::memory_order_acquire) == last, "snapshot readers did not observe the last published write");
         for (auto& reader : readers) reader.request_stop();
         for (auto& reader : readers) reader.join();
         Require(reads.load() != 0 && !invalid.load(), "concurrent snapshot readers observed an invalid or incomplete union");
     }
     recorder.Sync();
+    Require(!Recorder::SnapshotWriteOverlaps(0x90000, 16), "the access hook retained completed writes");
     expected.clear();
     note(UINT64_MAX - 3, 8);
     note(0x50000, 16);
@@ -6426,6 +6443,10 @@ bool idlePublishDmaBufWaitTests(const Device& device, Recorder& recorder) {
     std::memset(words, 0x11, bytes);
     const auto address = reinterpret_cast<std::uint64_t>(words);
     const auto* import = HostImportFor(context, address, bytes);
+    if (import != nullptr && !import->dmaBuf) {
+        std::cout << "skipped, the device imports shared memory through host pointers, so the direct memory has no dma-buf import\n";
+        return false;
+    }
     Require(import != nullptr && import->dmaBuf, "the direct memory did not use a dma-buf import");
     Require(!import->unwatched && Watched(address, bytes), "the dma-buf import did not stay watched");
     recorder.Sync();
@@ -13096,10 +13117,7 @@ public:
         pipelineLayoutInfo.pushConstantRangeCount = 1;
         pipelineLayoutInfo.pPushConstantRanges = &push;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
-        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = code.size_bytes();
-        moduleInfo.pCode = code.data();
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule");
+        module = CreateShaderModule(context, code.data(), code.size_bytes(), "vkCreateShaderModule");
         VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "main", nullptr};
         pipelineInfo.layout = pipelineLayout;
@@ -16017,7 +16035,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pending-key-refresh-only") {
             if (!pendingKeyRefreshTests(device, recorder)) {
-                std::cout << "skipped, refreshes over a pending key store are not testable here\n";
+                std::cout << "skipped, the device imports no watched host memory for refreshes over a pending key store\n";
                 return 77;
             }
             std::cout << "Refreshes over a pending DCC key store passed\n";
