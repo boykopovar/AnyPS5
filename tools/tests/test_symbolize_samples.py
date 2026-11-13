@@ -299,6 +299,20 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertIn(missing.name, errors.getvalue())
         self.assertEqual(module.read_bytes(), original)
 
+    def test_top_must_be_positive(self):
+        samples = self.root / "worker.collapsed.txt"
+        samples.write_text("main;libSceAgcDriver.prx+0x1011 1\n", encoding="utf-8")
+        for value in ("0", "-1"):
+            for flags in ((), ("--json",)):
+                with self.subTest(top=value, flags=flags):
+                    errors = io.StringIO()
+                    output = io.StringIO()
+                    with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+                        symbolize_samples.main([str(samples), "--libs", str(self.libs), "--top", value, *flags])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("--top must be positive", errors.getvalue())
+                    self.assertEqual(output.getvalue(), "")
+
     def test_distinct_output_preserves_sample_captures(self):
         record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
         later, earlier, output = (self.root / name for name in ("later.txt", "earlier.txt", "named.txt"))
