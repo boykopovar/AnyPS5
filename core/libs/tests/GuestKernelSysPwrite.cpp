@@ -161,6 +161,7 @@ int main(int argc, char** argv) {
     Require(seek(copy, 0x3fff, SEEK_SET) == 0x3fff);
     Require(write(copy, "ab", 2) == 1 && write(copy, "x", 1) == 0);
     Require(seek(copy, 0, SEEK_END) == 0x4000);
+    Require(seek(copy, 0, SEEK_END) == 0x4000);
     Require(close(copy) == 0);
     const int ordinary = open(path.c_str(), SCE_KERNEL_O_RDWR, 0);
     Require(ordinary >= 0 && duplicateTo(ordinary, shared) == shared);
