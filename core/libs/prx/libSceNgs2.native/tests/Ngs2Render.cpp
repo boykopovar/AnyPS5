@@ -161,6 +161,18 @@ static void TestPcmBlockEnd() {
     Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
     Require(state.num_decoded_samples == Grain && state.decoded_data_size == Grain * 2 && state.user_data == 0x55);
     Require(state.waveform_data == pcm.data() + Grain);
+#ifdef APS5_NGS2_PS4_LIBRARY
+    {
+        struct GuardedVoiceState {
+            std::uint64_t before;
+            Ngs2VoiceState state;
+            std::uint64_t after;
+        } common{UINT64_MAX, {UINT32_MAX, -1}, UINT64_MAX};
+        Require(sceNgs2VoiceGetState(sampler, &common.state, sizeof(common.state)) == SCE_NGS2_OK);
+        Require(common.state.state_flags == state.voice_state.state_flags && common.state.error_code == state.voice_state.error_code);
+        Require(common.before == UINT64_MAX && common.after == UINT64_MAX);
+    }
+#endif
 
     out = RenderI16(system);
     for (std::uint32_t i = 0; i < Grain; i++) Require(out[i] == (Grain + i - 3 < pcm.size() ? TowardZero(pcm[Grain + i - 3]) : 0));
@@ -1663,6 +1675,69 @@ static void TestMasteringGain() {
     auto reset = RenderI16(loudSystem);
     for (std::int16_t sample : reset) Require(sample == 24575);
     Require(sceNgs2SystemDestroy(loudSystem, nullptr) == SCE_NGS2_OK);
+}
+
+static int ControlMasteringEffect(uintptr_t voice, std::uint32_t id, std::uint16_t size, std::uint32_t enable, std::uint32_t value) {
+    std::array<std::uint32_t, 6> bytes{};
+    auto& param = reinterpret_cast<Ngs2MasteringVoiceEffectParam&>(bytes);
+    param = {{size, 0, id}, enable, value};
+    return sceNgs2VoiceControl(voice, &param.header);
+}
+
+static bool EffectNotImplemented(uintptr_t voice, std::uint32_t id, std::uint32_t enable, std::uint32_t value) {
+    try {
+        ControlMasteringEffect(voice, id, 16, enable, value);
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()).find("is not implemented") != std::string::npos;
+    }
+    return false;
+}
+
+static std::vector<float> RenderMasteringEffects(bool withParams) {
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 6);
+    const std::vector<std::int16_t> pcm(Grain * 2, 16384);
+    const auto source = Sampler(system, pcm, 0);
+    const std::vector<float> levels(6, 1.0f);
+    Control(source, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, 6, levels.data()});
+    Control(source, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
+    Patch(source, master);
+    Event(source, SCE_NGS2_VOICE_EVENT_PLAY);
+    if (withParams) {
+        Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER, 16, 1, 1) == SCE_NGS2_OK);
+        Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LFE, 16, 0, 40) == SCE_NGS2_OK);
+        Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, 16, 1, 0x7fc00000) == SCE_NGS2_OK);
+    }
+    std::vector<float> out(Grain * 6, -1.0f);
+    const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 6};
+    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    return out;
+}
+
+static void TestMasteringEffectParams() {
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 6);
+    const std::uint32_t effects[] = {SCE_NGS2_MASTERING_VOICE_PARAM_LFE, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER};
+    for (const auto id : effects) {
+        Require(ControlMasteringEffect(master, id, 8, 0, 0) == SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE);
+        Require(ControlMasteringEffect(master, id, 16, 0, 0) == SCE_NGS2_OK);
+        Require(ControlMasteringEffect(master, id, 24, 0, 0) == SCE_NGS2_OK);
+    }
+    for (const std::uint32_t mode : {0u, 1u, 2u}) {
+        Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER, 16, mode, 1) == SCE_NGS2_OK);
+    }
+    for (const std::uint32_t mode : {3u, 0xffffffffu}) {
+        Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER, 16, mode, 0) == SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE);
+    }
+    for (const std::uint32_t enable : {1u, 2u, 0xffffffffu}) {
+        Require(EffectNotImplemented(master, SCE_NGS2_MASTERING_VOICE_PARAM_LFE, enable, 40));
+        Require(EffectNotImplemented(master, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, enable, 0x3f800000));
+    }
+    Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, 16, 1, 0x7fc00000) == SCE_NGS2_OK);
+    Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, 16, 0, 0x3f800000) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    Require(RenderMasteringEffects(true) == RenderMasteringEffects(false));
 }
 
 static void TestMasteringGainClampedLikePs5() {
@@ -3585,6 +3660,7 @@ int main() {
     TestMutedPatchCycleRenders();
 
     TestMasteringGain();
+    if (!Ps4Library) TestMasteringEffectParams();
     TestMatrixLevelClamp();
 
     if (!Ps4Library) TestPortVolumeClampedLikePs5();

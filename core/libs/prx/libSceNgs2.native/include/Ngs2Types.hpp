@@ -117,8 +117,11 @@ static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER = 0x20000006
 static constexpr std::uint32_t SCE_NGS2_REVERB_VOICE_PARAM_SETUP = 0x20010000;
 static constexpr std::uint32_t SCE_NGS2_REVERB_VOICE_PARAM_I3DL2 = 0x20010001;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_SETUP = 0x30000000;
+static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_LFE = 0x30000002;
+static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER = 0x30000003;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_GAIN = 0x30000004;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT = 0x30000005;
+static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER = 0x30000006;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_SAMPLER_VOICE_PARAM_SETUP = 0x40010000;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS = 0x40010001;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_SAMPLER_VOICE_PARAM_EXIT_LOOP = 0x40010004;
@@ -772,6 +775,13 @@ struct Ngs2MasteringVoiceGainParam {
     float lfe_level;
 };
 static_assert(sizeof(Ngs2MasteringVoiceGainParam) == 16);
+
+struct Ngs2MasteringVoiceEffectParam {
+    Ngs2VoiceParamHeader header;
+    std::uint32_t enable_flag;
+    std::uint32_t value;
+};
+static_assert(sizeof(Ngs2MasteringVoiceEffectParam) == 16);
 
 struct Ngs2MasteringVoiceOutputParam {
     Ngs2VoiceParamHeader header;
