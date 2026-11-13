@@ -839,5 +839,31 @@ int main() {
     TestInternalServicePushEventFilter();
     TestMultipartSendOnPlainRequest();
     TestConnectionChecks();
+    {
+        errno = 71;
+        Require(sceNpWebApiIntInitialize(reinterpret_cast<const NpWebApiIntInitializeArgs*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument && errno == 71,
+                "unreadable IntInitialize args must return InvalidArgument without changing errno");
+        const int libCtx = sceNpWebApiInitialize(1, 4096);
+        Require(libCtx > 0, "libCtx created");
+        const int userCtx = sceNpWebApiCreateContext(libCtx, "user");
+        Require(userCtx > 0, "userCtx created");
+        std::int64_t reqId = 0;
+        errno = 71;
+        Require(sceNpWebApiCreateRequest(userCtx, "sdk", "/v1/test", 0,
+                                         reinterpret_cast<const NpWebApiContentParameter*>(static_cast<std::uintptr_t>(0x10)),
+                                         &reqId) == InvalidArgument && errno == 71,
+                "unreadable contentParameter must fail");
+        errno = 71;
+        Require(sceNpWebApiCreateRequest(userCtx, "sdk", "/v1/test", 0, nullptr,
+                                         reinterpret_cast<std::int64_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument && errno == 71,
+                "unwritable requestId must fail");
+        errno = 71;
+        Require(sceNpWebApiIntCreateRequest(userCtx, "sdk", "/v1/test", 0, nullptr,
+                                            reinterpret_cast<const NpWebApiIntCreateRequestExtraArgs*>(static_cast<std::uintptr_t>(0x10)),
+                                            &reqId) == InvalidArgument && errno == 71,
+                "unreadable internalArgs must fail");
+        Require(sceNpWebApiDeleteContext(userCtx) == 0, "delete userCtx");
+        Require(sceNpWebApiTerminate(libCtx) == 0, "terminate libCtx");
+    }
     return 0;
 }
