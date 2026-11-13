@@ -93,7 +93,11 @@ int APS5_VABI sceNpRemotePlaySessionSignalingInitialize(const SessionSignalingIn
     if (!copied) {
         return ErrorInvalidArgument;
     }
-    const SessionSignalingInitParam copy{localParam.userId, localParam.poolSize, localParam.affinityMask, localParam.threadPriority,
+    const SessionSignalingInitParam copy{
+        localParam.userId,
+        localParam.poolSize,
+        localParam.affinityMask,
+        localParam.threadPriority,
         localParam.stackSize};
     return sceNpSessionSignalingInitializeWithPort(&copy, RemotePlayPort, RemotePlayPortFlag);
 }
