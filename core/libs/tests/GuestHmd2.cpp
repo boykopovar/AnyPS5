@@ -27,7 +27,31 @@ void Require(bool condition, const char* message) {
     }
 }
 
+constexpr std::array<std::uint32_t, 4> bufferSetIds{0, 1, 16, ~0u};
+constexpr std::array<std::uint64_t, 4> frameIds{0, 1, 0x123456789, ~0ull};
+
+void TestParameterSubmissionWithoutSession() {
+    Hmd2::ReprojectionParameter parameter{};
+    const std::array<std::uint8_t, 328> layer{};
+    const Hmd2::ReprojectionBufferedParameter buffered{};
+    for (const std::uint32_t bufferSetId : bufferSetIds) {
+        for (const std::uint64_t frameId : frameIds) {
+            Require(sceHmd2ReprojectionSetParam(bufferSetId, frameId, nullptr, 0) == Hmd2::VideoOutInvalidAddress, "parameter submission with a null parameter without a reprojection session");
+            Require(sceHmd2ReprojectionSetParam(bufferSetId, frameId, &parameter, 0) == Hmd2::VideoOutInvalidIndex, "parameter submission with a zeroed parameter without a reprojection session");
+            Require(sceHmd2ReprojectionSetParam(bufferSetId, frameId, &parameter, 1) == Hmd2::VideoOutInvalidIndex, "parameter submission with a nonzero reserved argument without a reprojection session");
+            Require(sceHmd2ReprojectionSetParamWithBuffer(bufferSetId, frameId, nullptr, 0) == Hmd2::ParameterNull, "buffered parameter submission with a null parameter without a reprojection session");
+            Require(sceHmd2ReprojectionSetParamWithBuffer(bufferSetId, frameId, nullptr, 1) == Hmd2::ParameterNull, "buffered parameter submission with a null parameter and a nonzero reserved argument without a reprojection session");
+            Require(sceHmd2ReprojectionSetParamWithBuffer(bufferSetId, frameId, &buffered, 0) == Hmd2::VideoOutInvalidIndex, "buffered parameter submission without a reprojection session");
+            Require(sceHmd2ReprojectionSetParamWithBuffer(bufferSetId, frameId, &buffered, 1) == Hmd2::VideoOutInvalidIndex, "buffered parameter submission with a nonzero reserved argument without a reprojection session");
+        }
+    }
+    parameter.layers = reinterpret_cast<const Hmd2::ReprojectionLayer*>(layer.data());
+    parameter.layerCount = 1;
+    Require(sceHmd2ReprojectionSetParam(16, 1, &parameter, 0) == Hmd2::VideoOutInvalidIndex, "parameter submission with one layer without a reprojection session");
+}
+
 void TestCallsWithoutReprojectionSession() {
+    TestParameterSubmissionWithoutSession();
     std::array<std::uint8_t, 64> memory;
     memory.fill(0xaa);
     const auto untouched = memory;
@@ -35,7 +59,6 @@ void TestCallsWithoutReprojectionSession() {
     Require(sceHmd2ReprojectionEnableMirroring(nullptr) == Hmd2::ReprojectionNotInitialized, "mirroring with a null parameter without a reprojection session");
     Require(sceHmd2ReprojectionEnableMirroring(&mirroring) == Hmd2::ReprojectionNotInitialized, "mirroring without a reprojection session");
     Require(memory == untouched, "mirroring memory was written without a reprojection session");
-    constexpr std::array<std::uint64_t, 4> frameIds{0, 1, 0x123456789, ~0ull};
     for (const std::uint64_t frameId : frameIds) {
         std::uint64_t time = 0xaaaaaaaaaaaaaaaa;
         Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, nullptr) == Hmd2::ReprojectionNotInitialized, "predicted display time into a null output without a reprojection session");
@@ -81,6 +104,16 @@ void TestNamedCallsBeforeInitialize() {
     Require(sceHmd2InternalLedDetectorOpen() == 0 && sceHmd2InternalLedDetectorClose() == 0, "LED detector open and close before initialization");
     Require(sceHmd2InternalTrackingStart() == -1 && sceHmd2InternalTrackingStop() == -1, "tracking start and stop before initialization");
     Require(sceHmd2InternalLedDetectorStart() == -1 && sceHmd2InternalLedDetectorStop() == -1, "LED detector start and stop before initialization");
+    Require(sceHmd2InternalRegisterVibrationCallback() == 0 && sceHmd2InternalUnregisterVibrationCallback() == 0, "vibration callback register and unregister before initialization");
+    Require(sceHmd2InternalPowerEventInitialize() == 0, "power event initialization before initialization");
+    Require(sceHmd2InternalDfuOpen() == 0 && sceHmd2InternalDfuClose() == 0, "DFU open and close before initialization");
+    Require(sceHmd2InternalCrashReportOpen() == 0 && sceHmd2InternalCrashReportClose() == 0, "crash report open and close before initialization");
+    Require(sceHmd2InternalRelocalizerOpen() == 0 && sceHmd2InternalRelocalizerClose() == 0, "relocalizer open and close before initialization");
+    Require(sceHmd2InternalImageOpen() == 0 && sceHmd2InternalImageClose() == 0, "image open and close before initialization");
+    Require(sceHmd2InternalGenDataOpen() == 0 && sceHmd2InternalGenDataClose() == 0, "generated data open and close before initialization");
+    Require(sceHmd2InternalSlamTraceOpen() == 0 && sceHmd2InternalSlamTraceClose() == 0, "SLAM trace open and close before initialization");
+    Require(sceHmd2InternalGazeOpen() == 0 && sceHmd2InternalGazeClose() == 0, "gaze open and close before initialization");
+    Require(sceHmd2InternalGazeStart() == 0 && sceHmd2InternalGazeStop() == 0, "gaze start and stop before initialization");
 }
 
 void TestBeforeInitialize() {
@@ -315,6 +348,16 @@ bool AnswersNoSession(Call call) {
     }
 }
 
+template <typename Call>
+bool Throws(Call call) {
+    try {
+        call();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
 void TestGatedCallsInsideReprojectionSession() {
     std::array<std::uint8_t, 64> memory;
     memory.fill(0xaa);
@@ -331,6 +374,12 @@ void TestGatedCallsInsideReprojectionSession() {
     Require(sceHmd2ReprojectionSetRenderConfig(2, 0, 0) == Hmd2::ParameterInvalid, "render config with a bit outside the accepted ones inside a reprojection session");
     Require(sceHmd2ReprojectionSetRenderConfig(1, 1, 0) == Hmd2::ParameterInvalid && sceHmd2ReprojectionSetRenderConfig(1, 0, 1) == Hmd2::ParameterInvalid, "render config with one nonzero reserved argument inside a reprojection session");
     Require(sceHmd2ReprojectionSetRenderConfig(~0ull, 0, 0) == Hmd2::ParameterInvalid && sceHmd2ReprojectionSetRenderConfig(3, 0, 0) == Hmd2::ParameterInvalid, "render config with several bits inside a reprojection session");
+    Require(sceHmd2ReprojectionSetParam(0, 0, nullptr, 0) == Hmd2::VideoOutInvalidAddress, "parameter submission with a null parameter inside a reprojection session");
+    const Hmd2::ReprojectionParameter parameter{};
+    Require(sceHmd2ReprojectionSetParam(16, 0, &parameter, 0) == Hmd2::VideoOutInvalidIndex, "parameter submission of buffer set 16 inside a reprojection session");
+    const Hmd2::ReprojectionBufferedParameter buffered{};
+    Require(Throws([&] { sceHmd2ReprojectionSetParamWithBuffer(0, 1, &buffered, 0); }), "buffered parameter submission inside a reprojection session did not throw");
+    Require(Throws([] { sceHmd2ReprojectionSetParamWithBuffer(16, 0, nullptr, 0); }), "buffered parameter submission with a null parameter inside a reprojection session did not throw");
 }
 
 void TestReprojection() {
@@ -358,6 +407,9 @@ void TestReprojection() {
     std::uint8_t display[64]{};
     Hmd2::ReprojectionInitializeParameter initParam{};
     Require(sceHmd2ReprojectionInitialize(nullptr, nullptr) == Hmd2::ParameterNull, "initialization without a param");
+    errno = 71;
+    Require(sceHmd2ReprojectionInitialize(reinterpret_cast<const Hmd2::ReprojectionInitializeParameter*>(0x10), nullptr) == Hmd2::ParameterNull, "initialization with unmapped param");
+    Require(errno == 71, "errno preserved");
     Require(sceHmd2ReprojectionInitialize(&initParam, nullptr) == Hmd2::ParameterNull, "initialization without buffers");
     initParam.workMemory = work;
     Require(sceHmd2ReprojectionInitialize(&initParam, nullptr) == Hmd2::ParameterNull, "initialization without a display memory");
@@ -438,11 +490,27 @@ void TestReprojection() {
             "the re-initialized state carries the default timing");
 }
 
+void TestNamedErrorAnswersBeforeInitialize() {
+    Require(sceHmd2InternalSetVolume() == Hmd2::Error0004 && sceHmd2InternalResetViewPosition() == Hmd2::Error0004, "volume and view position before initialization");
+    Require(sceHmd2InternalClearTrackerFts() == Hmd2::Error0004 && sceHmd2InternalSetSlamCommand() == Hmd2::Error0004, "tracker FTS and SLAM command before initialization");
+    Require(sceHmd2InternalDfuStart() == Hmd2::Error0004, "DFU start before initialization");
+    Require(sceHmd2InternalDecryptData() == Hmd2::ParameterNull && sceHmd2InternalGetMirroringMode() == Hmd2::ParameterNull, "decrypt and mirroring mode before initialization");
+    Require(sceHmd2InternalRelocalizerSetResultData() == Hmd2::ParameterNull && sceHmd2InternalGetFlipInfo() == Hmd2::ParameterNull, "relocalizer result data and flip info before initialization");
+    Require(sceHmd2InternalSetPositionResetIcon() == Hmd2::ParameterInvalid && sceHmd2InternalSetPowerOff() == Hmd2::ParameterInvalid, "position reset icon and power off before initialization");
+    Require(sceHmd2InternalSetBudgetMode() == Hmd2::ParameterInvalid && sceHmd2InternalSetForceIcon() == Hmd2::ParameterInvalid, "budget mode and force icon before initialization");
+    Require(sceHmd2InternalBindDeviceWithUserId() == Hmd2::ParameterInvalid, "device bind by user id before initialization");
+    Require(sceHmd2InternalRelocalizerStart() == -1 && sceHmd2InternalRelocalizerStop() == -1, "relocalizer start and stop before initialization");
+    Require(sceHmd2InternalImageStart() == -1 && sceHmd2InternalImageStop() == -1, "image start and stop before initialization");
+    Require(sceHmd2InternalGenDataStart() == -1 && sceHmd2InternalGenDataStop() == -1, "generated data start and stop before initialization");
+    Require(sceHmd2InternalSlamTraceStart() == -1 && sceHmd2InternalSlamTraceStop() == -1, "SLAM trace start and stop before initialization");
+}
+
 int main() {
     SizeQueriesReturnTheConsoleSizes();
     InstallProcessParameters();
     TestBeforeInitialize();
     TestNamedCallsBeforeInitialize();
+    TestNamedErrorAnswersBeforeInitialize();
     TestWithoutHeadset();
     TestReprojection();
     Require(sceHmd2GazeActivateGazeTracking(0) == 0, "gaze activation before initialization");

@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace NKWebKit {
@@ -204,6 +205,13 @@ public:
     std::uint32_t mediaType = 0;
 };
 
+class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+public:
+    Retained<BundleNodeHandle> document;
+    Retained<BundleFrame> documentFrame;
+    Retained<BundleFrame> htmlIFrameElementContentFrame;
+};
+
 class Download final : public ObjectOf<ObjectType::Download> {
 public:
     Retained<Object> request;
@@ -245,7 +253,7 @@ public:
     void Allow() {
         state = State::Allowed;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(true);
         }
     }
@@ -253,7 +261,7 @@ public:
     void Deny() {
         state = State::Denied;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(false);
         }
     }
@@ -273,7 +281,7 @@ public:
     void Allow() {
         state = State::Allowed;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(true);
         }
     }
@@ -281,7 +289,7 @@ public:
     void Deny() {
         state = State::Denied;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(false);
         }
     }

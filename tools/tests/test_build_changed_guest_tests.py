@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -146,6 +147,12 @@ class OwnerResolution(unittest.TestCase):
             ["C:/b/tests/guest_np_common_tests.exe", "build"], {"guest_np_common_tests": "guest_np_common_tests"})
         self.assertEqual(owner, "guest_np_common_tests")
 
+    def test_cmake_wrapper_without_marker_resolves_an_extensionless_path(self):
+        owner = build_changed_guest_tests.test_owner(
+            ["/usr/bin/cmake", "-DPATCHER=/build/patcher", "-P", "wrapper.cmake", "/build/host_tests", "write"],
+            {"patcher": "patcher", "host_tests": "host_tests"})
+        self.assertEqual(owner, "host_tests")
+
     def test_argumentless_registration_resolves(self):
         owner = build_changed_guest_tests.test_owner(
             ["C:/b/tests/guest_pad_tests.exe"], {"guest_pad_tests": "guest_pad_tests"})
@@ -251,7 +258,7 @@ class Main(unittest.TestCase):
             code = self.main(build, ["core/libs/include/Changed.hpp"])
         self.assertEqual(code, 0)
         self.assertEqual(selections, ["0,0,0,1,2,3,4\n"])
-        self.assertIn(["avplayer_http_patched_modules_tests"], builds)
+        self.assertTrue(any("avplayer_http_patched_modules_tests" in batch for batch in builds))
 
     def test_a_header_change_also_runs_the_public_header_tests(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
@@ -342,6 +349,7 @@ class Main(unittest.TestCase):
         self.assertEqual(seen_indices, list(range(2, len(tests) + 1)))
         self.assertEqual(len([cmd for cmd in calls if "-I" in cmd]), 1)
 
+    @unittest.skipUnless(shutil.which("ctest"), "CTest is required to run the selected tests")
     def test_ctest_index_file_runs_every_resolved_test(self):
         build = Path(self.temporary.name) / "ctest-build"
         build.mkdir()
@@ -360,6 +368,37 @@ class Main(unittest.TestCase):
             build_changed_guest_tests.run(build, ["python_target"], build_changed_guest_tests.target_artifact_names(target))
         self.assertEqual(sorted(path.name for path in build.glob("ran-*")), sorted(f"ran-{index}" for index in range(11)))
         self.assertFalse((build / "unrelated").exists())
+
+    def test_changed_host_fixture_runs_its_cases_and_propagates_failure(self):
+        host = self.target("host_tests", source="core/libs/tests/Host.cpp")
+        python = Path(sys.executable).as_posix()
+        host["artifacts"] = [{"path": python}]
+        build = self.fixture([host])
+        real_run = subprocess.run
+        builds = []
+
+        def execute(cmd, **kwargs):
+            if cmd[0] == "cmake":
+                builds.append(cmd[cmd.index("--target") + 1:])
+                return run_result()
+            return real_run(cmd, **{**kwargs, "capture_output": True})
+
+        for failing in (False, True):
+            with self.subTest(failing=failing):
+                body = 'add_test("unrelated" "cmake" "-E" "touch" "unrelated")\n'
+                for index in range(2):
+                    marker = f"ran-host-{index}"
+                    (build / marker).unlink(missing_ok=True)
+                    status = int(failing and index == 1)
+                    code = f"open('{marker}', 'w').close(); raise SystemExit({status})"
+                    body += f'add_test("host [{index}].+" "{python}" "-c" "{code}")\n'
+                (build / "CTestTestfile.cmake").write_text(body)
+                with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+                    result = self.main(build, ["core/libs/tests/Host.cpp"])
+                self.assertEqual(result, int(failing))
+                self.assertTrue(all((build / f"ran-host-{index}").exists() for index in range(2)))
+                self.assertFalse((build / "unrelated").exists())
+        self.assertEqual(builds, [["libs"], ["host_tests"], ["libs"], ["host_tests"]])
 
     def test_a_production_only_change_still_builds_libs_and_runs_nothing(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])

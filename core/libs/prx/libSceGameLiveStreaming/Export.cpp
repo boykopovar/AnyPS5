@@ -1,4 +1,5 @@
 #include "prx/libSceGameLiveStreaming/include/Api.hpp"
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
@@ -30,14 +31,32 @@ static bool ValidFeedbackType(int type) {
 }
 
 static bool ValidString(const char* text, std::size_t maxLength) {
-    return text != nullptr && std::memchr(text, 0, maxLength + 1) != nullptr;
+    std::string value;
+    const int savedErrno = errno;
+    const int result = CopyGuestString_nid_no_patch(text, maxLength + 1, value);
+    errno = savedErrno;
+    return result == 0;
 }
 
-static bool AllZero(const std::uint8_t* bytes, std::size_t size) {
-    for (std::size_t i = 0; i < size; i++) {
-        if (bytes[i] != 0) return false;
+template<class T>
+static bool ReservedZero(const T* entry) {
+    std::array<std::uint8_t, sizeof(T::reserved)> bytes{};
+    const auto* reserved = reinterpret_cast<const std::uint8_t*>(entry) + offsetof(T, reserved);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(bytes.data(), reserved, bytes.size());
+    errno = savedErrno;
+    if (!copied) return false;
+    for (const auto byte : bytes) {
+        if (byte != 0) return false;
     }
     return true;
+}
+
+static int WriteGuestOutput(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied ? 0 : ErrorInvalidArgument;
 }
 
 static_assert(sizeof(GameLiveStreamingStatus2) == 72);
@@ -63,17 +82,17 @@ int APS5_VABI sceGameLiveStreamingGetCurrentStatus2(GameLiveStreamingStatus2* st
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (status == nullptr) return ErrorInvalidArgument;
-    std::memset(status, 0, sizeof(*status));
-    status->userId = USER_SERVICE_USER_ID_INVALID;
-    return 0;
+    GameLiveStreamingStatus2 result{};
+    result.userId = USER_SERVICE_USER_ID_INVALID;
+    return WriteGuestOutput(status, &result, sizeof(result));
 }
 
 int APS5_VABI sceGameLiveStreamingGetProgramInfo(GameLiveStreamingProgramInfo* info) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (info == nullptr) return ErrorInvalidArgument;
-    std::memset(info, 0, ProgramInfoSize);
-    return 0;
+    const std::array<std::uint8_t, ProgramInfoSize> result{};
+    return WriteGuestOutput(info, result.data(), result.size());
 }
 
 int APS5_VABI sceGameLiveStreamingScreenInitialize(void) {
@@ -83,8 +102,8 @@ int APS5_VABI sceGameLiveStreamingScreenInitialize(void) {
 
 int APS5_VABI sceGameLiveStreamingScreenInitializeSeparateModeParameter(void* parameter) {
     if (parameter == nullptr) return ErrorInvalidArgument;
-    std::memset(parameter, 0, 0x44);
-    return 0;
+    const std::array<std::uint8_t, 0x44> result{};
+    return WriteGuestOutput(parameter, result.data(), result.size());
 }
 
 int APS5_VABI sceGameLiveStreamingScreenTerminate(void) {
@@ -128,8 +147,8 @@ int APS5_VABI sceGameLiveStreamingGetCurrentStatus(GameLiveStreamingStatus* stat
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (status == nullptr) return ErrorInvalidArgument;
-    std::memset(status, 0, sizeof(*status));
-    return 0;
+    const GameLiveStreamingStatus result{};
+    return WriteGuestOutput(status, &result, sizeof(result));
 }
 
 int APS5_VABI sceGameLiveStreamingEnableSocialFeedback(bool enable) {
@@ -180,7 +199,7 @@ int APS5_VABI sceGameLiveStreamingSetSpoilerTag(size_t count, const GameLiveStre
     if (!g_initialized) return ErrorNotInitialized;
     if (tags == nullptr || count > MaxSpoilerTags) return ErrorInvalidArgument;
     for (size_t i = 0; i < count; i++) {
-        if (!AllZero(tags[i].reserved, sizeof(tags[i].reserved))) return ErrorInvalidArgument;
+        if (!ReservedZero(tags + i)) return ErrorInvalidArgument;
     }
     return 0;
 }
@@ -196,7 +215,7 @@ int APS5_VABI sceGameLiveStreamingSetPresetSocialFeedbackCommands(size_t count, 
     if (!g_initialized) return ErrorNotInitialized;
     if (commands == nullptr || count > MaxPresetCommands) return ErrorInvalidArgument;
     for (size_t i = 0; i < count; i++) {
-        if (!AllZero(commands[i].reserved, sizeof(commands[i].reserved))) return ErrorInvalidArgument;
+        if (!ReservedZero(commands + i)) return ErrorInvalidArgument;
     }
     return 0;
 }
@@ -231,7 +250,7 @@ int APS5_VABI sceGameLiveStreamingPostSocialMessage(const char* message) {
 int APS5_VABI sceGameLiveStreamingSetCameraFrameSetting(const GameLiveStreamingCameraFrameSetting* setting) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    if (setting == nullptr || !AllZero(setting->reserved, sizeof(setting->reserved))) return ErrorInvalidArgument;
+    if (setting == nullptr || !ReservedZero(setting)) return ErrorInvalidArgument;
     return 0;
 }
 

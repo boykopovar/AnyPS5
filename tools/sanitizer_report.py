@@ -12,7 +12,7 @@ SANITIZERS = ("address", "undefined", "thread")
 REPORT_LINES = (
     re.compile(r"SUMMARY: \w+Sanitizer: .*"),
     re.compile(r"(?:ERROR|WARNING): \w+Sanitizer: .*"),
-    re.compile(r"(?:\S+ )?runtime error: .*"),
+    re.compile(r"^.*runtime error: .*", re.MULTILINE),
 )
 REPORT_LENGTH = 200
 

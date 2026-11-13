@@ -1,5 +1,9 @@
 # libSceAcm technical debt
 
+### Functional
+
+- [sceAcmBatchJobPriority](../../../core/libs/prx/libSceAcm/Export.cpp) (libSceAcm) - returning `0x81940006` (`SCE_ACM_ERROR_BAD_POINTER`) when the `batch` pointer or its buffer is unwritable or unreadable via `GuestCopyIn_nid_no_patch` or `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving caller errno; console hardware fault behavior on unmapped memory is unmeasured.
+
 ### Silent stubs
 
 - [libSceAcm](../../../core/libs/prx/libSceAcm/Export.cpp) batches execute as silent no-ops, and do not execute encoded panner, FFT, reverb and priority commands (the priority job layout and checks are read from `libSceAcm.sprx`, firmware 13.40, not measured on a console).
