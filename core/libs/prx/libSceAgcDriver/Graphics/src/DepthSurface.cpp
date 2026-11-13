@@ -3470,7 +3470,10 @@ RetiredDepth DiscardDepthSurfacesForReplay(VkDevice device) {
         std::erase_if(htileMasks(), [&](const HtileMaskWrite& write) { return write.device == device; });
     }
     for (const auto& surface : surfaces()) {
-        if (surface->context.device != device || surface->retired) continue;
+        if (surface->context.device != device) continue;
+        surface->active->store(false, std::memory_order_release);
+        surface->hostWritten->store(false, std::memory_order_release);
+        if (surface->retired) continue;
         if (surface->target.htileAddress != 0u) {
             const auto begin = surface->target.htileAddress;
             const auto bytes = HtileMetadataBytes(surface->target.extent);
@@ -3479,8 +3482,6 @@ RetiredDepth DiscardDepthSurfacesForReplay(VkDevice device) {
             forgetHtileReads(begin, bytes);
             std::erase_if(clearedHtiles(), [&](const auto& cleared) { return cleared.first < end && begin < cleared.first + cleared.second; });
         }
-        surface->active->store(false, std::memory_order_release);
-        surface->hostWritten->store(false, std::memory_order_release);
         retired.planes += surface->AnyStale() || surface->stencilStale;
         ++retired.surfaces;
         retire(*surface);

@@ -609,7 +609,6 @@ ResetResult resetMemory(const FrameCaptureReader& reader, const Skipped& skipped
     ResetResult result;
     result.rangeBytes = plan.rangeBytes;
     exclusive([&] {
-        if (nativeDepth != nullptr) result.retired = AgcDriver::DiscardNativeDepthForReplay_nid_no_patch();
         const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         struct Omission {
             explicit Omission(bool omit) : omit(omit) { if (omit) AgcDriverOmitGpuOwnersForTest_nid_no_patch(true); }
@@ -635,6 +634,12 @@ ResetResult resetMemory(const FrameCaptureReader& reader, const Skipped& skipped
             static_cast<void>(changedSince(range.address, range.bytes, previous, changed));
             candidates[index] = candidateRuns(range, changed, owned[index]);
             retire(candidates[index]);
+        }
+        if (nativeDepth != nullptr && fault != ResetFault::KeepOwners && fault != ResetFault::OmitOwners) {
+            const auto retired = AgcDriver::DiscardNativeDepthForReplay_nid_no_patch();
+            result.retired.depthOwners += retired.depthOwners;
+            result.retired.depthSurfaces += retired.depthSurfaces;
+            result.retired.depthPlanes += retired.depthPlanes;
         }
         for (const auto* range : plan.ranges) {
             AgcDriverFlushGuestMemory_nid_no_patch(range->address, static_cast<std::size_t>(range->bytes), &failure);
