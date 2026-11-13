@@ -100,5 +100,6 @@ int main(int argc, char** argv) {
     });
     worker.join();
     Require(other == 0 && isMain() == 1 && sceOther == 0 && sceIsMain() == 1 && *error() == 71);
+    Require(isMain() == 1 && sceIsMain() == 1);
     return 0;
 }
