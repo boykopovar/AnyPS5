@@ -3451,6 +3451,9 @@ static void CheckLongDoubleErf() {
     Require(RaisesOnly(erfl_nid_postfix, 10.0L, FE_INEXACT, one, 0x3fff));
     Require(RaisesOnly(erfcl_nid_postfix, -10.0L, FE_INEXACT, one, 0x4000));
     Require(RaisesOnly(erfcl_nid_postfix, 200.0L, FE_UNDERFLOW, 0, 0));
+    std::feclearexcept(FE_ALL_EXCEPT);
+    const long double tinyResult = erfl_nid_postfix(0x1p-16380L);
+    Require(ExtendedBits(tinyResult, 0x906eba8214db688eull, 0x0003) && std::fetestexcept(FE_UNDERFLOW) == 0);
     Require(ExtendedBitsAt53Bits(erfl_nid_postfix, 0x8000000000000000ull, 0x3ffe, 0x853f7ae0c76e9000ull, 0x3ffe));
     Require(ExtendedBitsAt53Bits(erfl_nid_postfix, 0xc000000000000000ull, 0x4000, 0xfffe8dc39ec65000ull, 0x3ffe));
     Require(ExtendedBitsAt53Bits(erfl_nid_postfix, 0x8000000000000000ull, 0x3fff, 0xd7bb3d3a08445800ull, 0x3ffe));
