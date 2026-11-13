@@ -2334,6 +2334,23 @@ std::shared_ptr<const RecompileResult> RecompileImpl(const RecompileRequest& req
 }
 
 template <typename Impl>
+auto withNanSpeculationFallback(const RecompileRequest& request, Impl&& impl) -> decltype(impl()) {
+    if (!NanSpeculation().enabled || NanSpeculationSuppressed(request.shader.codeAddress)) return impl();
+    try {
+        return impl();
+    } catch (const ConvertedSampleRequired&) {
+        throw;
+    } catch (const std::bad_alloc&) {
+        throw;
+    } catch (const std::exception& error) {
+        if (!SuppressNanSpeculation(request.shader.codeAddress)) throw;
+        const std::string_view reason(error.what());
+        std::fprintf(stderr, "[recompile] nan speculation failed for 0x%llx (%u programs fell back): %.200s; recompiling without it\n", static_cast<unsigned long long>(request.shader.codeAddress), NanSpeculationFallbacks(), std::string(reason.substr(0u, reason.find('\n'))).c_str());
+        return impl();
+    }
+}
+
+template <typename Impl>
 auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltype(impl()) {
     try {
         return impl();
@@ -2389,7 +2406,13 @@ void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
 
 }
 
+static std::shared_ptr<const ResourceCapture> captureResources(const RecompileRequest& request, const SrtRuntime& runtime);
+
 std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& request, const SrtRuntime& runtime) {
+    return withNanSpeculationFallback(request, [&] { return captureResources(request, runtime); });
+}
+
+static std::shared_ptr<const ResourceCapture> captureResources(const RecompileRequest& request, const SrtRuntime& runtime) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     // Validates the stage inputs once per request, as GetResourcePlan and Recompile(request) do.
@@ -2566,12 +2589,12 @@ std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& 
 }
 
 RecompileResult Recompile(const RecompileRequest& request) {
-    return recompileReporting(request, [&] { return RecompileImpl(request); });
+    return recompileReporting(request, [&] { return withNanSpeculationFallback(request, [&] { return RecompileImpl(request); }); });
 }
 
 std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit) {
     if (memoHit != nullptr) *memoHit = false;
-    return recompileReporting(request, [&] { return RecompileImpl(request, capture, memoHit); });
+    return recompileReporting(request, [&] { return withNanSpeculationFallback(request, [&] { return RecompileImpl(request, capture, memoHit); }); });
 }
 
 void SetResultMemoBudget(std::uint64_t bytes) {

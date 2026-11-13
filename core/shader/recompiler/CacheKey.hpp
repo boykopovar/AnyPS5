@@ -89,6 +89,7 @@ public:
 
 private:
     static void appendInterface(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
+        if (NanSpeculationSuppressed(request.shader.codeAddress)) append(key, 0x6e616e73757070ull);
         append(key, request.context.waveSize);
         append(key, request.context.userDataBaseRegister);
         append(key, request.context.userData.size());

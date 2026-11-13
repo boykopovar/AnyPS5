@@ -1077,6 +1077,9 @@ struct NanSpeculationCounterSite {
 };
 [[nodiscard]] std::uint32_t NanSpeculationCounterSlot(std::uint64_t address, std::uint32_t stage);
 [[nodiscard]] std::vector<NanSpeculationCounterSite> NanSpeculationCounterSites();
+[[nodiscard]] bool NanSpeculationSuppressed(std::uint64_t address);
+bool SuppressNanSpeculation(std::uint64_t address);
+[[nodiscard]] std::uint32_t NanSpeculationFallbacks();
 
 struct RectListShaders {
     RecompileResult control;

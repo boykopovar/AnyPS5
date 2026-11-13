@@ -761,7 +761,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     };
     const auto regionsOf = [&](const BasicBlock& source) {
         std::vector<SpeculationRegion> regions;
-        if (!speculation.enabled || UsesTessellationLanes(options.stage) || ((speculation.stageMask >> static_cast<std::uint32_t>(options.stage)) & 1u) == 0u || source.terminator.loopHeader || relativeBlocks.contains(source.id)) return regions;
+        if (!speculation.enabled || NanSpeculationSuppressed(options.shaderHash) || UsesTessellationLanes(options.stage) || ((speculation.stageMask >> static_cast<std::uint32_t>(options.stage)) & 1u) == 0u || source.terminator.loopHeader || relativeBlocks.contains(source.id)) return regions;
         std::uint32_t index = source.instructionBegin;
         while (index < source.instructionEnd) {
             if (!pureVector(decoded.instructions[index])) {

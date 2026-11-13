@@ -186,6 +186,38 @@ std::vector<NanSpeculationCounterSite>& CounterSites() {
 
 }
 
+namespace {
+
+std::atomic<std::uint32_t>& SuppressedCount() {
+    static std::atomic<std::uint32_t> count{0u};
+    return count;
+}
+
+std::vector<std::uint64_t>& SuppressedAddresses() {
+    static std::vector<std::uint64_t> addresses;
+    return addresses;
+}
+
+}
+
+bool NanSpeculationSuppressed(std::uint64_t address) {
+    if (SuppressedCount().load(std::memory_order_acquire) == 0u) return false;
+    const std::lock_guard lock(CounterMutex());
+    return std::ranges::find(SuppressedAddresses(), address) != SuppressedAddresses().end();
+}
+
+bool SuppressNanSpeculation(std::uint64_t address) {
+    const std::lock_guard lock(CounterMutex());
+    if (std::ranges::find(SuppressedAddresses(), address) != SuppressedAddresses().end()) return false;
+    SuppressedAddresses().push_back(address);
+    SuppressedCount().fetch_add(1u, std::memory_order_release);
+    return true;
+}
+
+std::uint32_t NanSpeculationFallbacks() {
+    return SuppressedCount().load(std::memory_order_acquire);
+}
+
 std::uint32_t NanSpeculationCounterSlot(std::uint64_t address, std::uint32_t stage) {
     const std::lock_guard lock(CounterMutex());
     auto& sites = CounterSites();
