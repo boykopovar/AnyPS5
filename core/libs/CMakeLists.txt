@@ -333,7 +333,8 @@ endif()
 
 include(prx/libSceFreeType/BuildInfo.cmake)
 
-add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
+include(${CMAKE_SOURCE_DIR}/cmake/PatchedRuntimeTargets.cmake)
+add_patched_runtime_targets(libs ${PATCHED_OUTPUTS})
 include(prx/libSceLibreSsl/ErrorQueue.cmake)
 include(prx/libSceLibreSsl/MemoryBio.cmake)
 include(prx/libSceLibreSsl/Cmac.cmake)
