@@ -24,6 +24,7 @@ int main() {
         signal[i] = static_cast<std::int16_t>(value <= 32767 ? value : static_cast<int>(value) - 65536);
     }
     WebRtcVad_Free_nid_postfix(nullptr);
+    WebRtcVad_Free_nid_postfix(nullptr);
     Require(WebRtcVad_Init_nid_postfix(nullptr) == -1);
     for (int mode : {-1, 0, 1, 2, 3, 4})
         Require(WebRtcVad_set_mode_nid_postfix(nullptr, mode) == -1);
