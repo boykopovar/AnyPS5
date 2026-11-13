@@ -125,7 +125,7 @@ int APS5_VABI FT_Get_Glyph_nid_postfix(GuestGlyphSlotRec* slot, GuestGlyphRec** 
     native.bitmap_left = slot->bitmap_left;
     native.bitmap_top = slot->bitmap_top;
     if (native.format == FT_GLYPH_FORMAT_BITMAP) {
-        const auto* face = FaceOf(slot);
+        const auto* face = FaceOfSlot_nid_no_patch(slot);
         if (!face || slot != &face->slot || slot->library != face->library) NotImplemented_nid_no_patch(__func__);
         const auto host = face->host->glyph;
         if (slot->bitmap.buffer != host->bitmap.buffer) NotImplemented_nid_no_patch(__func__);

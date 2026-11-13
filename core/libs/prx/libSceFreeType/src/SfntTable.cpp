@@ -12,7 +12,7 @@ using namespace FreeType;
 extern "C" {
 
 void* APS5_VABI FT_Get_Sfnt_Table_nid_postfix(GuestFaceRec* face, std::int32_t tag) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     if (owner && sizeof(FT_Long) != 8) {
         throw std::runtime_error("FT_Get_Sfnt_Table: the LP64 table layouts need a 64-bit host FT_Long, which is not implemented");
     }

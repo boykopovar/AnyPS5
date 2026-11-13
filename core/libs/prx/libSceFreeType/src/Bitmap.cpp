@@ -40,13 +40,13 @@ void SyncBitmap(GuestBitmap& guest, const FT_Bitmap& bitmap) {
 
 namespace FreeType {
 
-void RegisterBitmap_nid_no_patch(GuestFace& face) {
+extern "C" void RegisterBitmap_nid_no_patch(GuestFace& face) {
     auto& owners = Owners();
     std::lock_guard lock(owners.mutex);
     owners.bitmaps.insert_or_assign(&face.slot.bitmap, face.host->glyph ? &face.host->glyph->bitmap : nullptr);
 }
 
-void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap) {
+extern "C" void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap) {
     auto& owners = Owners();
     std::lock_guard lock(owners.mutex);
     owners.bitmaps.erase(bitmap);
@@ -113,7 +113,7 @@ int APS5_VABI FT_Bitmap_Embolden_nid_postfix(GuestLibrary* library, GuestBitmap*
 }
 
 int APS5_VABI FT_GlyphSlot_Own_Bitmap_nid_postfix(GuestGlyphSlotRec* slot) {
-    GuestFace* owner = FaceOf(slot);
+    GuestFace* owner = FaceOfSlot_nid_no_patch(slot);
     const FT_Error error = FT_GlyphSlot_Own_Bitmap(owner ? owner->host->glyph : nullptr);
     if (owner) SyncSlot(*owner);
     return error;

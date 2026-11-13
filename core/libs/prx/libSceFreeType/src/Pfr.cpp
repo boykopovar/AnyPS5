@@ -8,7 +8,7 @@ extern "C" {
 
 int FreeTypePfrAdvance_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t index, std::int64_t* advance) {
     if (!face) return FT_Err_Invalid_Argument;
-    const auto* owner = FreeType::FaceOf(face);
+    const auto* owner = FreeType::FaceOf_nid_no_patch(face);
     const FT_Face host = owner ? owner->host : nullptr;
     if (!host || !advance) return FT_Get_PFR_Advance(host, index, nullptr);
     FT_Pos value = 0;
@@ -20,7 +20,7 @@ int FreeTypePfrAdvance_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t 
 
 int FreeTypePfrKerning_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t left, std::uint32_t right, FreeType::GuestVector* vector) {
     if (!face) return FT_Err_Invalid_Argument;
-    const auto* owner = FreeType::FaceOf(face);
+    const auto* owner = FreeType::FaceOf_nid_no_patch(face);
     const FT_Face host = owner ? owner->host : nullptr;
     if (!host || !vector) return FT_Get_PFR_Kerning(host, left, right, nullptr);
     FT_Vector value{};
@@ -31,7 +31,7 @@ int FreeTypePfrKerning_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t 
 
 int FreeTypePfrMetrics_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t* outline, std::uint32_t* metrics, std::int64_t* xScale, std::int64_t* yScale) {
     if (!face) return FT_Err_Invalid_Argument;
-    const auto* owner = FreeType::FaceOf(face);
+    const auto* owner = FreeType::FaceOf_nid_no_patch(face);
     const FT_Face host = owner ? owner->host : nullptr;
     if (!host) return FT_Get_PFR_Metrics(nullptr, nullptr, nullptr, nullptr, nullptr);
     FT_UInt hostOutline = 0, hostMetrics = 0;

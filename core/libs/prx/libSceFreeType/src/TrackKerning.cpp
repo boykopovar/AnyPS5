@@ -12,7 +12,7 @@ using namespace FreeType;
 extern "C" {
 
 int APS5_VABI FT_Get_Track_Kerning_nid_postfix(GuestFaceRec* face, std::int64_t pointSize, std::int32_t degree, std::int64_t* kerning) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     if (!owner || !kerning) return FT_Get_Track_Kerning(owner ? owner->host : nullptr, 0, degree, nullptr);
     if (pointSize < std::numeric_limits<FT_Fixed>::min() || pointSize > std::numeric_limits<FT_Fixed>::max()) {
         throw std::runtime_error("FT_Get_Track_Kerning: a point size outside the host FT_Fixed range is not implemented");

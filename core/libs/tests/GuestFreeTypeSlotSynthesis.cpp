@@ -35,7 +35,7 @@ struct SlotPair {
         Require(FT_New_Memory_Face(nativeLibrary, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &oracle) == 0);
         Require(FT_Set_Pixel_Sizes(guest.host, 18, 18) == 0 && FT_Set_Pixel_Sizes(oracle, 18, 18) == 0);
         Require(FT_Load_Glyph(guest.host, 1, FT_LOAD_DEFAULT) == 0 && FT_Load_Glyph(oracle, 1, FT_LOAD_DEFAULT) == 0);
-        SyncFace(guest);
+        SyncFace_nid_no_patch(guest);
     }
 
     ~SlotPair() {
@@ -67,7 +67,7 @@ static void EmboldenBitmapGlyph(GuestLibrary& library, FT_Library nativeLibrary)
     FT_Face oracle = nullptr;
     Require(FT_New_Memory_Face(library.host, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &guest.host) == 0);
     Require(FT_New_Memory_Face(nativeLibrary, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &oracle) == 0);
-    SyncFace(guest);
+    SyncFace_nid_no_patch(guest);
     const std::uint32_t glyph = FT_Get_Char_Index(oracle, 65);
     Require(glyph != 0);
     Require(FT_Load_Glyph_nid_postfix(&guest.rec, glyph, FT_LOAD_DEFAULT) == FT_Load_Glyph(oracle, glyph, FT_LOAD_DEFAULT));

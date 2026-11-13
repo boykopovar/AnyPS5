@@ -15,7 +15,7 @@ using namespace FreeType;
 extern "C" {
 
 std::int64_t APS5_VABI FT_Get_PS_Font_Value_nid_postfix(GuestFaceRec* face, std::int32_t key, std::uint32_t index, void* value, std::int64_t valueLength) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     if (owner && sizeof(FT_Long) != 8) {
         throw std::runtime_error("FT_Get_PS_Font_Value: the LP64 value layouts need a 64-bit host FT_Long, which is not implemented");
     }
