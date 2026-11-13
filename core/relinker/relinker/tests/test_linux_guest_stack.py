@@ -82,6 +82,26 @@ def main():
                 assert headers[0] == (GNU_STACK, 6, 0, 0, 0, 0, 0, 16), headers
             else:
                 assert headers == stack_headers(original), (flags, headers)
+        case = Path(directory) / 'duplicate'
+        modules = case / 'sce_module'
+        modules.mkdir(parents=True)
+        duplicate_module = fixture(6)
+        struct.pack_into('<H', duplicate_module, 56, 4)
+        struct.pack_into('<IIQQQQQQ', duplicate_module, 64 + 3 * 56, GNU_STACK, 7, 0, 0, 0, 0, 0x20000, 16)
+        (modules / 'provider.prx').write_bytes(duplicate_module)
+        source = case / 'input.elf'
+        source.write_bytes(main_fixture())
+        for mode in ([], ['--windows'], ['--macos']):
+            result = subprocess.run([str(relinker), *mode, str(source), str(case / 'output.elf')],
+                                    capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, (mode, result.returncode, result.stdout, result.stderr)
+            assert (case / 'output.elf').exists(), (mode, 'output not written for guest module with two GNU_STACK segments')
+            guest_prx = case / 'app0' / 'sce_module' / 'provider.prx.guest.prx'
+            if not mode:
+                assert guest_prx.exists(), (mode, 'guest module not written for two GNU_STACK segments')
+                guest_headers = stack_headers(guest_prx.read_bytes())
+                assert len(guest_headers) == 1, guest_headers
+                assert guest_headers[0] == (GNU_STACK, 7, 0, 0, 0, 0, 0x20000, 16), guest_headers[0]
     print('Linux guest stack conversion tests passed')
     if not native:
         print('Native dlopen execution skipped: Linux x86-64 required')

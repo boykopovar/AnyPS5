@@ -2,10 +2,12 @@
 #include "prx/libSceVideodec2/include/PictureMetadata.hpp"
 #include "prx/libSceVdecsw/include/Api.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -33,6 +35,40 @@ static_assert(sizeof(SceVideodec2::Vp9PictureInfo) == 0x58 && offsetof(SceVideod
 static_assert(sizeof(OutputInfo) == 0x38 && offsetof(OutputInfo, isLastFrame) == 9 && offsetof(OutputInfo, pictureCount) == 0xb && offsetof(OutputInfo, isDiscardedFrame) == 0x1c);
 static_assert(sizeof(AvcPictureInfo) == 0x78 && offsetof(AvcPictureInfo, picWidthInMbsMinus1) == 0x2c && offsetof(AvcPictureInfo, frameCropBottomOffset) == 0x44);
 static_assert(sizeof(HevcPictureInfo) == 0xb8 && offsetof(HevcPictureInfo, picWidthInLumaSamples) == 0x28 && offsetof(HevcPictureInfo, sarWidth) == 0x42 && offsetof(HevcPictureInfo, picStruct) == 0x50 && offsetof(HevcPictureInfo, conformanceWindowFlag) == 0x5c && offsetof(HevcPictureInfo, idrPictureFlag) == 0x93 && offsetof(HevcPictureInfo, generalProfileIdc) == 0x97 && offsetof(HevcPictureInfo, generalLevelIdc) == 0x9b && offsetof(HevcPictureInfo, frameCroppingFlag) == 0xa5 && offsetof(HevcPictureInfo, frameCropBottomOffset) == 0xb4);
+
+bool copyIn(void* dst, const void* src, std::size_t size) {
+    const int saved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = saved;
+    return ok;
+}
+
+bool copyOut(void* dst, const void* src, std::size_t size) {
+    const int saved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = saved;
+    return ok;
+}
+
+std::uint64_t readSize(const void* info, const char* message) {
+    std::uint64_t size = 0;
+    if (!copyIn(&size, info, sizeof(size))) throw std::runtime_error(message);
+    return size;
+}
+
+OutputInfo readOutputInfo(const OutputInfo* output, const char* message) {
+    OutputInfo local{};
+    if (!copyIn(&local, output, offsetof(OutputInfo, frameBufferSize))) throw std::runtime_error(message);
+    return local;
+}
+
+void writeInfo(void* info, std::uint64_t size, const void* source, std::size_t sourceSize, const char* message) {
+    const auto bytes = std::min<std::uint64_t>(size, sourceSize) - sizeof(std::uint64_t);
+    if (bytes == 0) return;
+    if (!copyOut(static_cast<std::uint8_t*>(info) + sizeof(std::uint64_t), static_cast<const std::uint8_t*>(source) + sizeof(std::uint64_t), bytes)) {
+        throw std::runtime_error(message);
+    }
+}
 
 struct PendingInput {
     SceVideodec2::InputData input;
@@ -67,12 +103,20 @@ struct Decoder {
 
 std::mutex decodersMutex;
 std::map<std::uint64_t, std::shared_ptr<Decoder>> decoders;
+std::map<const void*, std::uint64_t> frameOwners;
 
 std::shared_ptr<Decoder> findDecoder(std::uint64_t handle) {
     std::lock_guard lock(decodersMutex);
     const auto found = decoders.find(handle);
     if (found == decoders.end()) throw std::runtime_error("Vdecsw: invalid decoder handle");
     return found->second;
+}
+
+std::shared_ptr<Decoder> frameOwner(const void* frameBuffer) {
+    std::lock_guard lock(decodersMutex);
+    const auto owner = frameOwners.find(frameBuffer);
+    if (owner == frameOwners.end()) return nullptr;
+    return decoders.at(owner->second);
 }
 
 PictureInfo pictureInfo(std::uint64_t handle, const SceVideodec2::OutputInfo& output) {
@@ -138,22 +182,19 @@ SceVideodec2::Vp9PictureInfo vp9PictureInfo(std::uint64_t handle, const SceVideo
 
 template <typename TInfo>
 int deliveredPictureInfo(const OutputInfo* output, TInfo* info) {
-    if (output == nullptr || info == nullptr || info->thisSize < sizeof(std::uint64_t)) throw std::runtime_error("Vdecsw: invalid argument pointer");
-    if (output->pictureCount > 1) throw std::runtime_error("Vdecsw: second field picture info is not implemented");
-    if (output->pictureCount == 0) return 0;
-    std::vector<std::shared_ptr<Decoder>> all;
-    {
-        std::lock_guard lock(decodersMutex);
-        for (const auto& [handle, decoder] : decoders) all.push_back(decoder);
-    }
-    for (const auto& decoder : all) {
+    if (output == nullptr || info == nullptr) throw std::runtime_error("Vdecsw: invalid argument pointer");
+    const auto size = readSize(info, "Vdecsw: invalid argument pointer");
+    if (size < sizeof(std::uint64_t)) throw std::runtime_error("Vdecsw: invalid argument pointer");
+    const auto localOutput = readOutputInfo(output, "Vdecsw: invalid argument pointer");
+    if (localOutput.pictureCount > 1) throw std::runtime_error("Vdecsw: second field picture info is not implemented");
+    if (localOutput.pictureCount == 0) return 0;
+    if (const auto decoder = frameOwner(localOutput.frameBuffer)) {
         std::lock_guard lock(decoder->mutex);
-        const auto found = decoder->delivered.find(output->frameBuffer);
-        if (found == decoder->delivered.end()) continue;
+        const auto found = decoder->delivered.find(localOutput.frameBuffer);
+        if (found == decoder->delivered.end()) throw std::runtime_error("Vdecsw: picture info requested for a frame buffer no decoder returned");
         const auto* source = std::get_if<TInfo>(&found->second);
         if (source == nullptr) throw std::runtime_error("Vdecsw: picture info requested for another codec");
-        const auto bytes = std::min<std::uint64_t>(info->thisSize, sizeof(TInfo)) - sizeof(std::uint64_t);
-        std::memcpy(reinterpret_cast<std::uint8_t*>(info) + sizeof(std::uint64_t), reinterpret_cast<const std::uint8_t*>(source) + sizeof(std::uint64_t), bytes);
+        writeInfo(info, size, source, sizeof(TInfo), "Vdecsw: invalid argument pointer");
         return 0;
     }
     throw std::runtime_error("Vdecsw: picture info requested for a frame buffer no decoder returned");
@@ -168,7 +209,13 @@ void advance(std::uint64_t handle, Decoder& decoder) {
             const auto* au = static_cast<const void*>(decoder.inputs.front().input.auData);
             auto input = decoder.inputs.front().input;
             input.auData = decoder.inputs.front().data.data();
-            sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output);
+            try {
+                sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output);
+            } catch (...) {
+                decoder.inputs.pop_front();
+                decoder.consumed.push_back({au, 0u});
+                throw;
+            }
 
             decoder.inputs.pop_front();
             decoder.consumed.push_back({au, output.isValid ? 1u : 0u});
@@ -207,13 +254,22 @@ int APS5_VABI sceVdecswQueryDecoderMemoryInfo(const void* config, SceVideodec2::
 }
 
 int APS5_VABI sceVdecswCreateDecoder(const void* config, const SceVideodec2::DecoderMemoryInfo* memory, std::uint64_t* handle) {
-    if (handle == nullptr || memory == nullptr || memory->thisSize < sizeof(SceVideodec2::DecoderMemoryInfo) || memory->maxFrameBufferSize == 0) throw std::runtime_error("Vdecsw: invalid decoder creation arguments");
-    const auto result = sceVideodec2CreateDecoder_nid_postfix(static_cast<const SceVideodec2::DecoderConfigInfo*>(config), memory, handle);
+    SceVideodec2::DecoderMemoryInfo localMemory{};
+    if (handle == nullptr || memory == nullptr || !copyIn(&localMemory, memory, sizeof(localMemory)) ||
+        localMemory.thisSize < sizeof(SceVideodec2::DecoderMemoryInfo) || localMemory.maxFrameBufferSize == 0) {
+        throw std::runtime_error("Vdecsw: invalid decoder creation arguments");
+    }
+    std::uint64_t localHandle = 0;
+    const auto result = sceVideodec2CreateDecoder_nid_postfix(static_cast<const SceVideodec2::DecoderConfigInfo*>(config), &localMemory, &localHandle);
     if (result != 0) return result;
+    if (!copyOut(handle, &localHandle, sizeof(localHandle))) {
+        sceVideodec2DeleteDecoder_nid_postfix(localHandle);
+        throw std::runtime_error("Vdecsw: invalid decoder creation arguments");
+    }
     auto decoder = std::make_shared<Decoder>();
-    decoder->frameBytes = memory->maxFrameBufferSize;
+    decoder->frameBytes = localMemory.maxFrameBufferSize;
     std::lock_guard lock(decodersMutex);
-    decoders.emplace(*handle, std::move(decoder));
+    decoders.emplace(localHandle, std::move(decoder));
     return 0;
 }
 
@@ -221,32 +277,39 @@ int APS5_VABI sceVdecswDeleteDecoder(std::uint64_t handle) {
     {
         std::lock_guard lock(decodersMutex);
         if (decoders.erase(handle) == 0) throw std::runtime_error("Vdecsw: invalid decoder handle");
+        std::erase_if(frameOwners, [handle](const auto& owner) { return owner.second == handle; });
     }
     return sceVideodec2DeleteDecoder_nid_postfix(handle);
 }
 
 int APS5_VABI sceVdecswSetDecodeInput(std::uint64_t handle, const SceVideodec2::InputData* input) {
-    if (input == nullptr || input->thisSize < sizeof(SceVideodec2::InputData)) throw std::runtime_error("Vdecsw: invalid decode input");
+    SceVideodec2::InputData localInput{};
+    if (input == nullptr || !copyIn(&localInput, input, sizeof(localInput)) || localInput.thisSize < sizeof(SceVideodec2::InputData)) throw std::runtime_error("Vdecsw: invalid decode input");
     const auto decoder = findDecoder(handle);
     std::lock_guard lock(decoder->mutex);
     if (decoder->finalized) throw std::runtime_error("Vdecsw: decode input after the sequence was finalized");
-    if (input->auData == nullptr || input->auSize == 0) throw std::runtime_error("Vdecsw: empty access unit");
-    decoder->inputs.push_back({*input, std::vector<std::uint8_t>(input->auData, input->auData + input->auSize)});
+    if (localInput.auData == nullptr || localInput.auSize == 0) throw std::runtime_error("Vdecsw: empty access unit");
+    if (localInput.auSize > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Vdecsw: access unit too large");
+    std::vector<std::uint8_t> auData(localInput.auSize);
+    if (!copyIn(auData.data(), localInput.auData, auData.size())) throw std::runtime_error("Vdecsw: invalid decode input");
+    decoder->inputs.push_back({localInput, std::move(auData)});
     advance(handle, *decoder);
     return 0;
 }
 
 int APS5_VABI sceVdecswTrySyncDecodeInput(std::uint64_t handle, InputResult* result) {
-    if (result == nullptr || result->thisSize < sizeof(InputResult)) throw std::runtime_error("Vdecsw: invalid decode input result");
+    if (result == nullptr) throw std::runtime_error("Vdecsw: invalid decode input result");
+    InputResult local{readSize(result, "Vdecsw: invalid decode input result"), nullptr, 0, 0};
+    if (local.thisSize < sizeof(InputResult)) throw std::runtime_error("Vdecsw: invalid decode input result");
     const auto decoder = findDecoder(handle);
     std::lock_guard lock(decoder->mutex);
     advance(handle, *decoder);
-    result->decodedAu = nullptr;
-    result->outputFrameCount = 0;
-    result->reserved = 0;
     if (!decoder->consumed.empty()) {
-        result->decodedAu = decoder->consumed.front().au;
-        result->outputFrameCount = decoder->consumed.front().frames;
+        local.decodedAu = decoder->consumed.front().au;
+        local.outputFrameCount = decoder->consumed.front().frames;
+    }
+    if (!copyOut(result, &local, sizeof(local))) throw std::runtime_error("Vdecsw: invalid decode input result");
+    if (!decoder->consumed.empty()) {
         decoder->consumed.pop_front();
         return 0;
     }
@@ -262,15 +325,19 @@ int APS5_VABI sceVdecswSyncDecodeInput(std::uint64_t handle, InputResult* result
 }
 
 int APS5_VABI sceVdecswSetDecodeOutput(std::uint64_t handle, const FrameBuffer* frame) {
-    if (frame == nullptr || frame->thisSize < sizeof(FrameBuffer) || frame->frameBuffer == nullptr) throw std::runtime_error("Vdecsw: invalid decode output");
+    FrameBuffer localFrame{};
+    if (frame == nullptr || !copyIn(&localFrame, frame, sizeof(localFrame)) || localFrame.thisSize < sizeof(FrameBuffer) || localFrame.frameBuffer == nullptr) throw std::runtime_error("Vdecsw: invalid decode output");
     const auto decoder = findDecoder(handle);
     std::lock_guard lock(decoder->mutex);
-    decoder->outputs.push_back(*frame);
+    decoder->outputs.push_back(localFrame);
     return 0;
 }
 
 int APS5_VABI sceVdecswTrySyncDecodeOutput(std::uint64_t handle, OutputInfo* output) {
-    if (output == nullptr || output->thisSize < sizeof(OutputInfo)) throw std::runtime_error("Vdecsw: invalid decode output info");
+    if (output == nullptr) throw std::runtime_error("Vdecsw: invalid decode output info");
+    OutputInfo local{};
+    local.thisSize = readSize(output, "Vdecsw: invalid decode output info");
+    if (local.thisSize < sizeof(OutputInfo)) throw std::runtime_error("Vdecsw: invalid decode output info");
     const auto decoder = findDecoder(handle);
     std::lock_guard lock(decoder->mutex);
     advance(handle, *decoder);
@@ -278,32 +345,36 @@ int APS5_VABI sceVdecswTrySyncDecodeOutput(std::uint64_t handle, OutputInfo* out
     const bool ended = decoder->finalized && decoder->drained;
     if (decoder->pictures.size() < (ended ? 1u : 2u)) {
         if (!ended) return VdecswErrorOutputPending;
-        std::memset(reinterpret_cast<std::uint8_t*>(output) + sizeof(output->thisSize), 0, sizeof(OutputInfo) - sizeof(output->thisSize));
-        output->isLastFrame = true;
+        local.isLastFrame = true;
+        if (!copyOut(output, &local, sizeof(local))) throw std::runtime_error("Vdecsw: invalid decode output info");
         decoder->outputs.pop_front();
         return 0;
     }
     const auto target = decoder->outputs.front();
+    const auto& queued = decoder->pictures.front();
+    if (target.frameBufferSize < queued.output.frameBufferSize) throw std::runtime_error("Vdecsw: output buffer is smaller than the decoded picture");
+    if (!copyOut(target.frameBuffer, queued.pixels.data(), queued.output.frameBufferSize)) throw std::runtime_error("Vdecsw: invalid decode output");
+    local.isValid = true;
+    local.isLastFrame = ended && decoder->pictures.size() == 1;
+    local.isErrorFrame = queued.output.isErrorFrame;
+    local.pictureCount = queued.output.pictureCount;
+    local.codecType = queued.output.codecType;
+    local.frameWidth = queued.output.frameWidth;
+    local.framePitch = queued.output.framePitch;
+    local.frameHeight = queued.output.frameHeight;
+    local.isDiscardedFrame = false;
+    local.frameBuffer = target.frameBuffer;
+    local.frameBufferSize = queued.output.frameBufferSize;
+    local.frameFormat = queued.output.frameFormat;
+    local.framePitchInBytes = queued.output.framePitchInBytes;
+    if (!copyOut(output, &local, sizeof(local))) throw std::runtime_error("Vdecsw: invalid decode output info");
     auto picture = std::move(decoder->pictures.front());
     decoder->pictures.pop_front();
-    if (target.frameBufferSize < picture.output.frameBufferSize) throw std::runtime_error("Vdecsw: output buffer is smaller than the decoded picture");
-    std::memcpy(target.frameBuffer, picture.pixels.data(), picture.output.frameBufferSize);
     decoder->outputs.pop_front();
-    output->isValid = true;
-    output->isLastFrame = ended && decoder->pictures.empty();
-    output->isErrorFrame = picture.output.isErrorFrame;
-    output->pictureCount = picture.output.pictureCount;
-    output->codecType = picture.output.codecType;
-    output->frameWidth = picture.output.frameWidth;
-    output->framePitch = picture.output.framePitch;
-    output->frameHeight = picture.output.frameHeight;
-    output->isDiscardedFrame = false;
-    output->frameBuffer = target.frameBuffer;
-    output->frameBufferSize = picture.output.frameBufferSize;
-    output->frameFormat = picture.output.frameFormat;
-    output->framePitchInBytes = picture.output.framePitchInBytes;
     if (picture.output.codecType == CodecVp9) decoder->deliveredVp9[target.frameBuffer] = vp9PictureInfo(handle, picture.output);
     else decoder->delivered[target.frameBuffer] = picture.info;
+    std::lock_guard owners(decodersMutex);
+    if (decoders.contains(handle)) frameOwners[target.frameBuffer] = handle;
     return 0;
 }
 
@@ -317,29 +388,24 @@ int APS5_VABI sceVdecswSyncDecodeOutput(std::uint64_t handle, OutputInfo* output
 
 int APS5_VABI sceVdecswGetPictureInfo(const OutputInfo* output, void* first, void* second) {
     static_cast<void>(second);
-    if (output == nullptr || (output->thisSize | 8u) != sizeof(OutputInfo)) throw std::runtime_error("Vdecsw: invalid output info");
-    if (output->pictureCount == 0) return 0;
-    if (output->pictureCount > 1) throw std::runtime_error("Vdecsw: second field picture info is not implemented");
+    if (output == nullptr) throw std::runtime_error("Vdecsw: invalid output info");
+    const auto localOutput = readOutputInfo(output, "Vdecsw: invalid output info");
+    if ((localOutput.thisSize | 8u) != sizeof(OutputInfo)) throw std::runtime_error("Vdecsw: invalid output info");
+    if (localOutput.pictureCount == 0) return 0;
+    if (localOutput.pictureCount > 1) throw std::runtime_error("Vdecsw: second field picture info is not implemented");
     if (first == nullptr) return 0;
-    std::uint64_t size;
-    std::memcpy(&size, first, sizeof(size));
+    const auto size = readSize(first, "Vdecsw: invalid picture info");
     if (size < sizeof(size)) throw std::runtime_error("Vdecsw: picture info is smaller than its size field");
     const auto copy = [first, size](const auto& source) {
-        const auto bytes = std::min<std::uint64_t>(size, sizeof(source)) - sizeof(size);
-        std::memcpy(static_cast<std::uint8_t*>(first) + sizeof(size), reinterpret_cast<const std::uint8_t*>(&source) + sizeof(size), bytes);
+        writeInfo(first, size, &source, sizeof(source), "Vdecsw: invalid picture info");
     };
-    std::vector<std::shared_ptr<Decoder>> all;
-    {
-        std::lock_guard lock(decodersMutex);
-        for (const auto& [handle, decoder] : decoders) all.push_back(decoder);
-    }
-    for (const auto& decoder : all) {
+    if (const auto decoder = frameOwner(localOutput.frameBuffer)) {
         std::lock_guard lock(decoder->mutex);
-        if (const auto found = decoder->delivered.find(output->frameBuffer); found != decoder->delivered.end()) {
+        if (const auto found = decoder->delivered.find(localOutput.frameBuffer); found != decoder->delivered.end()) {
             std::visit(copy, found->second);
             return 0;
         }
-        if (const auto found = decoder->deliveredVp9.find(output->frameBuffer); found != decoder->deliveredVp9.end()) {
+        if (const auto found = decoder->deliveredVp9.find(localOutput.frameBuffer); found != decoder->deliveredVp9.end()) {
             copy(found->second);
             return 0;
         }
@@ -357,20 +423,17 @@ int APS5_VABI sceVdecswGetHevcPictureInfo(const OutputInfo* output, HevcPictureI
 }
 
 int APS5_VABI sceVdecswGetVp9PictureInfo(const OutputInfo* output, SceVideodec2::Vp9PictureInfo* picture) {
-    if (output == nullptr || picture == nullptr || picture->thisSize < sizeof(std::uint64_t)) throw std::runtime_error("Vdecsw: invalid argument pointer");
-    if (output->pictureCount > 1) throw std::runtime_error("Vdecsw: more than one VP9 picture info is not implemented");
-    if (output->pictureCount == 0) return 0;
-    std::vector<std::shared_ptr<Decoder>> all;
-    {
-        std::lock_guard lock(decodersMutex);
-        for (const auto& [handle, decoder] : decoders) all.push_back(decoder);
-    }
-    for (const auto& decoder : all) {
+    if (output == nullptr || picture == nullptr) throw std::runtime_error("Vdecsw: invalid argument pointer");
+    const auto size = readSize(picture, "Vdecsw: invalid argument pointer");
+    if (size < sizeof(std::uint64_t)) throw std::runtime_error("Vdecsw: invalid argument pointer");
+    const auto localOutput = readOutputInfo(output, "Vdecsw: invalid argument pointer");
+    if (localOutput.pictureCount > 1) throw std::runtime_error("Vdecsw: more than one VP9 picture info is not implemented");
+    if (localOutput.pictureCount == 0) return 0;
+    if (const auto decoder = frameOwner(localOutput.frameBuffer)) {
         std::lock_guard lock(decoder->mutex);
-        const auto found = decoder->deliveredVp9.find(output->frameBuffer);
-        if (found == decoder->deliveredVp9.end()) continue;
-        const auto bytes = std::min<std::uint64_t>(picture->thisSize, sizeof(SceVideodec2::Vp9PictureInfo)) - sizeof(std::uint64_t);
-        std::memcpy(reinterpret_cast<std::uint8_t*>(picture) + sizeof(std::uint64_t), reinterpret_cast<const std::uint8_t*>(&found->second) + sizeof(std::uint64_t), bytes);
+        const auto found = decoder->deliveredVp9.find(localOutput.frameBuffer);
+        if (found == decoder->deliveredVp9.end()) throw std::runtime_error("Vdecsw: VP9 picture info requested for a frame buffer no decoder returned");
+        writeInfo(picture, size, &found->second, sizeof(found->second), "Vdecsw: invalid argument pointer");
         return 0;
     }
     throw std::runtime_error("Vdecsw: VP9 picture info requested for a frame buffer no decoder returned");
@@ -395,6 +458,10 @@ int APS5_VABI sceVdecswResetDecoder(std::uint64_t handle) {
     decoder->deliveredVp9.clear();
     decoder->finalized = false;
     decoder->drained = false;
+    {
+        std::lock_guard owners(decodersMutex);
+        std::erase_if(frameOwners, [handle](const auto& owner) { return owner.second == handle; });
+    }
     return sceVideodec2Reset_nid_postfix(handle);
 }
 

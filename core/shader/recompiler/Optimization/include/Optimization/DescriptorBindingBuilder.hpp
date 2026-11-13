@@ -31,6 +31,7 @@ struct BufferSubstitute {
     std::uint32_t word1 = 0;
     std::uint32_t word3 = 0;
     std::uint32_t misalignment = 0;
+    std::uint32_t tail = 0;
     bool known = false;
 
     bool operator==(const BufferSubstitute&) const = default;

@@ -12,9 +12,18 @@
 namespace {
 
 bool failAllocation = false;
+std::size_t allocations = 0;
+std::size_t releases = 0;
 
-void* APS5_VABI Allocate(std::size_t size) { return failAllocation ? nullptr : std::malloc(size); }
-void APS5_VABI Free(void* ptr) { std::free(ptr); }
+void* APS5_VABI Allocate(std::size_t size) {
+    void* pointer = failAllocation ? nullptr : std::malloc(size);
+    if (pointer) ++allocations;
+    return pointer;
+}
+void APS5_VABI Free(void* ptr) {
+    if (ptr) ++releases;
+    std::free(ptr);
+}
 void* APS5_VABI Reallocate(void* ptr, std::size_t size) { return std::realloc(ptr, size); }
 void* APS5_VABI Calloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
 void* APS5_VABI Align(std::size_t, std::size_t size) { return std::malloc(size); }
@@ -186,10 +195,12 @@ bool ExpectOrderS(const char* name, const std::vector<int>& keys, const std::vec
 int constraintCalls = 0;
 int constraintError = 0;
 const char* constraintMessage = nullptr;
+void* constraintPointer = nullptr;
 
-void APS5_VABI CountConstraint(const char* message, void*, int error) {
+void APS5_VABI CountConstraint(const char* message, void* pointer, int error) {
     ++constraintCalls;
     constraintMessage = message;
+    constraintPointer = pointer;
     constraintError = error;
 }
 
@@ -197,7 +208,7 @@ bool ExpectConstraint(const char* name, void* base, std::size_t count, std::size
     int direction = 1;
     const int calls = constraintCalls;
     const int result = qsort_s_nid_postfix(base, count, size, comparator ? CompareKeysWithDirection : nullptr, &direction);
-    if (result != 22 || constraintCalls != calls + 1 || constraintError != 22 || !constraintMessage || std::strcmp(constraintMessage, name) != 0) {
+    if (result != 22 || constraintCalls != calls + 1 || constraintError != 22 || constraintPointer || !constraintMessage || std::strcmp(constraintMessage, name) != 0) {
         std::fprintf(stderr, "qsort_s did not report \"%s\" through the installed handler (result %d, calls %d)\n", name, result, constraintCalls - calls);
         return false;
     }
@@ -208,10 +219,31 @@ bool ExpectQsortSConstraints() {
     void* previous = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(CountConstraint));
     Element element{};
     constexpr std::size_t huge = (static_cast<std::size_t>(-1) >> 1) + 1;
-    bool correct = ExpectConstraint("qsort_s : n > RSIZE_MAX", &element, huge, sizeof(Element), true);
-    correct &= ExpectConstraint("qsort_s : es > RSIZE_MAX", &element, 1, huge, true);
-    correct &= ExpectConstraint("qsort_s : a == NULL", nullptr, 2, sizeof(Element), true);
-    correct &= ExpectConstraint("qsort_s : cmp == NULL", &element, 2, sizeof(Element), false);
+    constexpr std::size_t aboveLimit = std::size_t{1} << 61;
+    bool correct = ExpectConstraint("qsort_s: bad argument", &element, huge, sizeof(Element), true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, 1, huge, true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, aboveLimit, sizeof(Element), true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, 1, aboveLimit, true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, 0, aboveLimit, true);
+    correct &= ExpectConstraint("qsort_s: bad argument", nullptr, 2, sizeof(Element), true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, 2, sizeof(Element), false);
+    int direction = 1;
+    const int calls = constraintCalls;
+    bool zeroSizeThrew = false;
+    try {
+        qsort_s_nid_postfix(&element, aboveLimit - 1, 0, CompareKeysWithDirection, &direction);
+    } catch (const std::invalid_argument&) {
+        zeroSizeThrew = true;
+    }
+    if (!zeroSizeThrew) {
+        std::fprintf(stderr, "qsort_s accepted a zero element size for SIZE_MAX >> 3 elements\n");
+        correct = false;
+    }
+    correct &= qsort_s_nid_postfix(&element, 1, aboveLimit - 1, CompareKeysWithDirection, &direction) == 0;
+    if (constraintCalls != calls) {
+        std::fprintf(stderr, "qsort_s reported a count or size of SIZE_MAX >> 3\n");
+        correct = false;
+    }
     if (set_constraint_handler_s_nid_postfix(previous) != reinterpret_cast<void*>(CountConstraint)) {
         std::fprintf(stderr, "set_constraint_handler_s did not return the installed handler\n");
         correct = false;
@@ -353,6 +385,134 @@ bool CheckMergesort() {
     return correct;
 }
 
+std::vector<int> mergesortCalls;
+
+int APS5_VABI RecordKeys(const void* left, const void* right) {
+    const auto* first = static_cast<const Element*>(left);
+    const auto* second = static_cast<const Element*>(right);
+    mergesortCalls.push_back(first->tag * 100 + second->tag);
+    return (first->key > second->key) - (first->key < second->key);
+}
+
+bool CheckMergesortComparisons() {
+    InitializeHeap();
+    struct Case {
+        std::vector<int> keys;
+        std::vector<int> calls;
+    };
+    const std::vector<Case> cases = {
+        {{3, 1, 2, 5, 4}, {1, 2, 102, 3, 304, 4}},
+        {{9, 4, 7, 1, 8, 2, 6, 3, 5, 0, 9, 4, 7, 1, 8, 2, 6, 3, 5, 0, 11},
+         {1617, 1618, 1718, 1619, 1819, 1719, 1620, 1, 203, 405, 607, 809, 1011, 1213, 1415, 102, 304, 506, 708, 910, 1112, 1314, 1419, 103, 102, 2, 507, 704,
+          406, 911, 1108, 810, 1315, 1512, 1214, 305, 501, 107, 106, 206, 204, 4, 913, 1311, 1115, 1112, 812, 1210, 1014, 309, 313, 513, 515, 715, 711, 111,
+          1106, 608, 612, 212, 1204, 414, 1400, 10, 919, 1903, 317, 1713, 1705, 1715, 1707, 1701, 118, 1811, 1808, 1806, 616, 1602, 220, 2012, 2004, 2014, 2000,
+          2010}},
+        {{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 0, 30, 29, 28, 27},
+         {2223, 2224, 2324, 2225, 2325, 2425, 1, 203, 405, 607, 809, 1011, 1213, 1415, 1617, 1819, 2021, 102, 304, 506, 708, 910, 1112, 1314, 1516, 1718,
+          1920, 2125, 20, 21, 25, 125, 2502, 2503, 2504, 2505, 2506, 2507, 2508, 2510, 2514, 2519}},
+        {{40, 41, 42, 43, 44, 45, 46, 47, 0, 1, 2, 3, 4, 5, 6, 7, 48, 49, 50, 51, 52, 53, 54, 55, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17},
+         {3031, 3132, 3233, 1, 203, 405, 607, 809, 1011, 1213, 1415, 1617, 1819, 2021, 2223, 2425, 2627, 2829, 102, 304, 506, 708, 910, 1112, 1314, 1516, 1718,
+          1920, 2122, 2324, 2526, 2728, 2930, 8, 9, 10, 11, 12, 13, 14, 15, 17, 16, 116, 1602, 1604, 1607, 824, 2409, 2411, 2415, 2407, 2403, 2401, 2400, 25, 26,
+          28, 32, 33}},
+    };
+    bool correct = true;
+    for (const auto& sample : cases) {
+        std::vector<Element> elements;
+        for (std::size_t index = 0; index < sample.keys.size(); ++index) elements.push_back({sample.keys[index], static_cast<int>(index)});
+        mergesortCalls.clear();
+        correct &= mergesort_nid_postfix(elements.data(), elements.size(), sizeof(Element), RecordKeys) == 0;
+        if (mergesortCalls != sample.calls) {
+            std::fprintf(stderr, "mergesort of %zu elements made %zu comparisons in a different order than FreeBSD's merge.c (%zu expected)\n",
+                sample.keys.size(), mergesortCalls.size(), sample.calls.size());
+            correct = false;
+        }
+        for (std::size_t index = 1; index < elements.size(); ++index) {
+            correct &= elements[index - 1].key < elements[index].key ||
+                (elements[index - 1].key == elements[index].key && elements[index - 1].tag < elements[index].tag);
+        }
+    }
+    return correct;
+}
+
+bool CheckMergesortUnalignedElements() {
+    InitializeHeap();
+    constexpr std::size_t Size = 12;
+    constexpr std::size_t Count = 1000;
+    std::vector<unsigned char> storage(Count * Size + 8);
+    unsigned char* const base = storage.data() + 4;
+    for (std::size_t index = 0; index < Count; ++index) {
+        const Element element{static_cast<int>((index / 50) % 2 ? Count - index : (index * 7919) % 13), static_cast<int>(index)};
+        std::memcpy(base + index * Size, &element, sizeof(element));
+        std::memset(base + index * Size + sizeof(element), static_cast<int>(index & 0xff), Size - sizeof(element));
+    }
+    bool correct = mergesort_nid_postfix(base, Count, Size, CompareKeys) == 0;
+    Element previous{};
+    for (std::size_t index = 0; index < Count; ++index) {
+        Element element;
+        std::memcpy(&element, base + index * Size, sizeof(element));
+        correct &= base[index * Size + sizeof(element)] == static_cast<unsigned char>(element.tag & 0xff);
+        if (index != 0) correct &= previous.key < element.key || (previous.key == element.key && previous.tag < element.tag);
+        previous = element;
+    }
+    if (!correct) std::fprintf(stderr, "mergesort of unaligned 12-byte elements failed\n");
+    return correct;
+}
+
+std::vector<int> adversaryValues;
+int adversaryGas = 0;
+int adversarySolid = 0;
+int adversaryCandidate = 0;
+std::size_t adversaryComparisons = 0;
+
+int APS5_VABI CompareAdversary(const void* left, const void* right) {
+    ++adversaryComparisons;
+    const int first = *static_cast<const int*>(left);
+    const int second = *static_cast<const int*>(right);
+    if (adversaryValues[first] == adversaryGas && adversaryValues[second] == adversaryGas)
+        adversaryValues[first == adversaryCandidate ? first : second] = adversarySolid++;
+    if (adversaryValues[first] == adversaryGas) adversaryCandidate = first;
+    else if (adversaryValues[second] == adversaryGas) adversaryCandidate = second;
+    return (adversaryValues[first] > adversaryValues[second]) - (adversaryValues[first] < adversaryValues[second]);
+}
+
+int APS5_VABI CompareAdversaryS(const void* left, const void* right, void*) {
+    return CompareAdversary(left, right);
+}
+
+bool ExpectAdversaryFallsBackToHeapSort(bool withContext) {
+    constexpr int Count = 4096;
+    constexpr std::size_t Budget = 6 * Count * 12;
+    std::vector<int> elements(Count);
+    for (int index = 0; index < Count; ++index) elements[index] = index;
+    adversaryValues.assign(Count, Count);
+    adversaryGas = Count;
+    adversarySolid = 0;
+    adversaryCandidate = 0;
+    adversaryComparisons = 0;
+    if (withContext) {
+        if (qsort_s_nid_postfix(elements.data(), elements.size(), sizeof(int), CompareAdversaryS, nullptr) != 0) return false;
+    } else qsort_nid_postfix(elements.data(), elements.size(), sizeof(int), CompareAdversary);
+    const char* const name = withContext ? "qsort_s" : "qsort";
+    std::vector<bool> seen(Count);
+    for (int index = 0; index < Count; ++index) {
+        const int element = elements[index];
+        if (element < 0 || element >= Count || seen[element]) {
+            std::fprintf(stderr, "%s of an adversarial input lost or duplicated element %d\n", name, element);
+            return false;
+        }
+        seen[element] = true;
+        if (index > 0 && adversaryValues[elements[index - 1]] > adversaryValues[element]) {
+            std::fprintf(stderr, "%s of an adversarial input is not sorted at %d\n", name, index);
+            return false;
+        }
+    }
+    if (adversaryComparisons > Budget) {
+        std::fprintf(stderr, "%s of %d adversarial elements made %zu comparisons, more than %zu: no heap sort fallback\n", name, Count, adversaryComparisons, Budget);
+        return false;
+    }
+    return true;
+}
+
 std::uintptr_t heapsortBase = 0;
 std::uintptr_t heapsortLimit = 0;
 std::size_t heapsortStride = 0;
@@ -373,6 +533,7 @@ int APS5_VABI RecordingCompareKeys(const void* left, const void* right) {
 }
 
 bool CheckHeapsort() {
+    InitializeHeap();
     bool correct = true;
     for (const std::size_t count : {0, 1, 2, 3, 7, 16, 33, 1000}) {
         std::vector<Element> elements;
@@ -447,8 +608,105 @@ bool CheckHeapsort() {
     correct &= heapsort_nid_postfix(nullptr, 0, 4, CompareKeys) == 0;
     correct &= heapsort_nid_postfix(nullptr, 1, 4, CompareKeys) == 0;
     correct &= heapsort_nid_postfix(nullptr, 1, 0, CompareKeys) == 0;
+    Element pair[2] = {{2, 0}, {1, 1}};
+    failAllocation = true;
+    correct &= heapsort_nid_postfix(pair, 2, sizeof(Element), CompareKeys) == -1 && pair[0].key == 2;
+    failAllocation = false;
     if (!correct) std::fprintf(stderr, "heapsort failed\n");
     return correct;
+}
+
+std::vector<int> heapsortCalls;
+
+int APS5_VABI RecordHeapsortCalls(const void* left, const void* right) {
+    const auto identify = [](const void* candidate) {
+        const auto address = reinterpret_cast<std::uintptr_t>(candidate);
+        const bool inArray = address >= heapsortBase && address < heapsortLimit;
+        return static_cast<const Element*>(candidate)->tag + (inArray ? 0 : 100);
+    };
+    heapsortCalls.push_back(identify(left) * 1000 + identify(right));
+    return CompareKeys(left, right);
+}
+
+bool CheckHeapsortComparisons() {
+    InitializeHeap();
+    struct Case {
+        std::vector<int> keys;
+        std::vector<int> calls;
+        std::vector<int> order;
+    };
+    const std::vector<Case> cases = {
+        {{3, 1, 2, 5, 4}, {3004, 3001, 3002, 3000, 1004, 4000, 4002, 100001, 100004, 2, 101000, 102001}, {1, 2, 0, 4, 3}},
+        {{1, 1, 1, 1, 1}, {3004, 3001, 1002, 1000, 1002, 104003, 104001, 1002, 103001, 102001}, {1, 2, 3, 4, 0}},
+        {{9, 4, 7, 1, 8, 2, 6, 3, 5, 0, 9, 4, 7, 1, 8, 2},
+         {15007, 13014, 14006, 11012, 12005, 9010, 10004, 7008, 8003, 12014, 14002, 13006, 6002, 8010, 10001, 9004, 4001, 10014, 10000, 10014, 8004, 9001,
+          115001, 4014, 8001, 7003, 106007, 106008, 106004, 6014, 12002, 11005, 113011, 6012, 11002, 105002, 6002, 11005, 113011, 6011, 8001, 7003, 115007,
+          8011, 7001, 109001, 1011, 7009, 103015, 7011, 13005, 103005, 7005, 15009, 103015, 15005, 3009, 113003, 113015, 13005, 109005, 13009, 103013,
+          109013},
+         {9, 13, 3, 5, 15, 7, 11, 1, 8, 6, 2, 12, 14, 4, 10, 0}},
+        {{1, 3, 2}, {1002, 1000, 102000}, {0, 2, 1}},
+    };
+    bool correct = true;
+    for (const auto& sample : cases) {
+        std::vector<Element> elements;
+        for (std::size_t index = 0; index < sample.keys.size(); ++index) elements.push_back({sample.keys[index], static_cast<int>(index)});
+        heapsortBase = reinterpret_cast<std::uintptr_t>(elements.data());
+        heapsortLimit = heapsortBase + elements.size() * sizeof(Element);
+        heapsortCalls.clear();
+        correct &= heapsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), RecordHeapsortCalls) == 0;
+        if (heapsortCalls != sample.calls) {
+            std::fprintf(stderr, "heapsort of %zu elements made %zu comparisons in a different order than FreeBSD's heapsort.c (%zu expected)\n",
+                sample.keys.size(), heapsortCalls.size(), sample.calls.size());
+            correct = false;
+        }
+        for (std::size_t index = 0; index < elements.size(); ++index) correct &= elements[index].tag == sample.order[index];
+    }
+    return correct;
+}
+
+struct ComparisonFailure {};
+std::size_t mergeComparisons = 0;
+std::size_t mergeFailureAt = 0;
+
+int APS5_VABI ThrowingCompare(const void* left, const void* right) {
+    if (++mergeComparisons == mergeFailureAt) throw ComparisonFailure{};
+    return CompareKeys(left, right);
+}
+
+bool CheckMergesortCleanup() {
+    std::array<Element, 17> original{};
+    for (std::size_t index = 0; index < original.size(); ++index) original[index] = {static_cast<int>((index * 7) % 5), static_cast<int>(index)};
+    auto elements = original;
+    mergeComparisons = 0;
+    if (mergesort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare) != 0) return false;
+    const auto total = mergeComparisons;
+    for (std::size_t failure = 1; failure <= total; ++failure) {
+        elements = original;
+        mergeComparisons = 0;
+        mergeFailureAt = failure;
+        const auto allocated = allocations;
+        const auto released = releases;
+        bool caught = false;
+        try {
+            mergesort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare);
+        } catch (const ComparisonFailure&) {
+            caught = true;
+        }
+        if (!caught || mergeComparisons != failure || allocations != allocated + 1 || releases != released + 1) {
+            std::fprintf(stderr, "mergesort cleanup failed at comparison %zu: caught=%d allocations=%zu releases=%zu\n",
+                failure, caught, allocations - allocated, releases - released);
+            return false;
+        }
+    }
+    mergeFailureAt = 0;
+    elements = original;
+    if (mergesort_nid_postfix(elements.data(), elements.size(), sizeof(Element), CompareKeys) != 0 || allocations != releases) return false;
+    for (std::size_t index = 1; index < elements.size(); ++index) {
+        const auto& previous = elements[index - 1];
+        const auto& current = elements[index];
+        if (previous.key > current.key || (previous.key == current.key && previous.tag > current.tag)) return false;
+    }
+    return true;
 }
 }
 
@@ -474,12 +732,18 @@ int main() {
     std::vector<int> manyKeys;
     for (int index = 0; index < 1000; ++index) manyKeys.push_back((index * 37 + 11) % 7);
     correct &= ExpectOrderHash("nested partitions", manyKeys, 0xefee58d9u);
+    correct &= ExpectAdversaryFallsBackToHeapSort(false);
+    correct &= ExpectAdversaryFallsBackToHeapSort(true);
     correct &= ExpectConsoleEdges();
     correct &= ExpectShortArraysUntouched();
     for (const std::size_t size : {1, 3, 8, 24})
         for (const std::size_t count : {0, 1, 2, 6, 7, 8, 40, 41, 1000})
             correct &= ExpectSorted(size, count);
     correct &= CheckMergesort();
+    correct &= CheckMergesortComparisons();
+    correct &= CheckMergesortUnalignedElements();
+    correct &= CheckMergesortCleanup();
     correct &= CheckHeapsort();
+    correct &= CheckHeapsortComparisons();
     return correct ? 0 : 1;
 }

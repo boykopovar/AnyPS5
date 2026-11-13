@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import performance_compare
 
 UNBLOCKS = re.compile(r'Unblocks:[ \t]*([^\r\n]*(?:\r?\n[ \t]*[-*][ \t]+(?!\[[ xX]\])[^\r\n]*)*)')
+CHECKLIST_UNBLOCKS = re.compile(r"^[ \t]*-[ \t]*\[[ xX]\][ \t]*Unblocks:[ \t]*([^\r\n]*(?:\r?\n[ \t]*[-*][ \t]+(?!\[[ xX]\])[^\r\n]*)*)", re.M)
 TITLE_ID = re.compile(r"(?<![A-Za-z0-9])[A-Z]{4}\d{5}(?!\d)")
 NONE = re.compile(r"[-*_ \t\r\n]*none\b", re.I)
 PERF = re.compile(r"perf(\(|!?:)")
@@ -28,8 +29,18 @@ COMMENT = (f"{MARKER}\nThis pull request is labeled `perf`, so it needs the summ
            "Please paste both `aps5-summary.jsonl` lines, attach the two traces and add the output of `tools/trace_digest.py`.")
 
 
-def gh(*args):
-    return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+def gh(*args, attempts=3, delay=0.5):
+    for attempt in range(attempts):
+        try:
+            result = subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8")
+        except FileNotFoundError as error:
+            raise ValueError("GitHub CLI 'gh' is required on PATH") from error
+        if result.returncode == 0:
+            return result.stdout
+        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake"))
+        if attempt + 1 == attempts or not transient:
+            raise subprocess.CalledProcessError(result.returncode, ["gh", *args], output=result.stdout, stderr=result.stderr)
+        time.sleep(delay * (2 ** attempt))
 
 
 def repository():
@@ -41,7 +52,9 @@ def strip_comments(body):
 
 
 def title_ids(body):
-    match = UNBLOCKS.search(strip_comments(body))
+    body = strip_comments(body)
+    checklist = CHECKLIST_UNBLOCKS.search(body)
+    match = checklist if checklist and checklist.group(1).strip() else UNBLOCKS.search(body)
     return set(TITLE_ID.findall(match.group(1))) if match and not NONE.match(match.group(1)) else set()
 
 
@@ -139,7 +152,7 @@ def process(repo, pr, dry_run, comment=True):
                 args += ["--remove-label", ",".join(sorted(remove))]
             gh(*args)
         if post:
-            gh("api", "-X", "POST", f"repos/{repo}/issues/{pr['number']}/comments", "-f", f"body={COMMENT}")
+            gh("api", "-X", "POST", f"repos/{repo}/issues/{pr['number']}/comments", "-f", f"body={COMMENT}", attempts=1)
     return add, remove, post
 
 
