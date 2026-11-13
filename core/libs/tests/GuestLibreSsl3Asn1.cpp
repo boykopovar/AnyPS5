@@ -57,6 +57,7 @@ static Asn1String* NewInteger(int length, int type, std::int64_t flags) {
 static void TestIntegerFree() {
     ASN1_INTEGER_free_nid_postfix(nullptr);
     ASN1_INTEGER_free_nid_postfix(NewInteger(4, 2, 0));
+    ASN1_INTEGER_free_nid_postfix(NewInteger(4, 2, 0x001));
     ASN1_INTEGER_free_nid_postfix(NewInteger(16, 0x102, 0));
     ASN1_INTEGER_free_nid_postfix(NewInteger(0, 2, 0));
     ASN1_INTEGER_free_nid_postfix(NewInteger(4, 6, 0));
@@ -67,10 +68,17 @@ static void TestIntegerFree() {
     Require(data[0] == 0x5A && data[3] == 0x5A);
     free_nid_postfix(data);
 
+    Asn1String* borrowedNegative = NewInteger(4, 2, 0x010);
+    unsigned char* const negativeData = borrowedNegative->data;
+    borrowedNegative->length = -1;
+    ASN1_INTEGER_free_nid_postfix(borrowedNegative);
+    Require(negativeData[0] == 0x5A && negativeData[3] == 0x5A);
+    free_nid_postfix(negativeData);
+
     Asn1String* negative = NewInteger(4, 2, 0);
     negative->length = -1;
     RequireThrows([&] { ASN1_INTEGER_free_nid_postfix(negative); });
-    Require(negative->data != nullptr && negative->data[0] == 0x5A);
+    Require(negative->data != nullptr && negative->data[0] == 0x5A && negative->data[3] == 0x5A);
     negative->length = 4;
     ASN1_INTEGER_free_nid_postfix(negative);
 

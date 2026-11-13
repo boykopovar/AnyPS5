@@ -166,6 +166,46 @@ void CheckHighPow2() {
     Require(ft_highpow2_nid_postfix(0x80000001u) == 0x80000000u && ft_highpow2_nid_postfix(0xFFFFFFFFu) == 0x80000000u, "ft_highpow2 keeps bit 31");
 }
 
+void CheckSynthesizeVerticalMetrics() {
+    FreeType::GuestGlyphMetrics metrics{100, 200, 10, 50, 80, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&metrics, 0);
+    Require(metrics.width == 100 && metrics.height == 200 && metrics.horiBearingX == 10 && metrics.horiBearingY == 50 && metrics.horiAdvance == 80,
+        "ft_synthesize_vertical_metrics keeps the horizontal metrics");
+    Require(metrics.vertBearingX == -30 && metrics.vertBearingY == 15 && metrics.vertAdvance == 180,
+        "ft_synthesize_vertical_metrics synthesizes vertical metrics from a zero advance");
+    FreeType::GuestGlyphMetrics negative{0, 200, 0, -30, 0, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&negative, 0);
+    Require(negative.vertBearingX == 0 && negative.vertBearingY == 20 && negative.vertAdvance == 240,
+        "ft_synthesize_vertical_metrics keeps the height for a negative horiBearingY");
+    FreeType::GuestGlyphMetrics clamped{0, -100, 0, -30, 0, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&clamped, 0);
+    Require(clamped.vertBearingX == 0 && clamped.vertBearingY == -3 && clamped.vertAdvance == -36,
+        "ft_synthesize_vertical_metrics clamps the height to a negative horiBearingY");
+    FreeType::GuestGlyphMetrics sized{0, 200, 4, 0, 81, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&sized, 0);
+    Require(sized.vertBearingX == -36 && sized.vertBearingY == 20 && sized.vertAdvance == 240,
+        "ft_synthesize_vertical_metrics halves an odd horiAdvance toward zero with a zero horiBearingY");
+    FreeType::GuestGlyphMetrics explicitAdvance{100, 200, 10, 50, 80, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&explicitAdvance, 300);
+    Require(explicitAdvance.vertBearingX == -30 && explicitAdvance.vertBearingY == 75 && explicitAdvance.vertAdvance == 300,
+        "ft_synthesize_vertical_metrics keeps a non-zero advance");
+    ft_synthesize_vertical_metrics_nid_postfix(nullptr, 0);
+    ft_synthesize_vertical_metrics_nid_postfix(nullptr, 300);
+}
+
+void CheckServiceListLookup() {
+    int dataA = 1;
+    int dataB = 2;
+    const GuestServiceDesc descriptors[]{{"a", &dataA}, {"b", &dataB}, {nullptr, nullptr}};
+    Require(ft_service_list_lookup_nid_postfix(descriptors, "a") == &dataA, "ft_service_list_lookup returns the first descriptor data");
+    Require(ft_service_list_lookup_nid_postfix(descriptors, "b") == &dataB, "ft_service_list_lookup returns the matching descriptor data");
+    Require(ft_service_list_lookup_nid_postfix(descriptors, "c") == nullptr, "ft_service_list_lookup returns null for a missing id");
+    Require(ft_service_list_lookup_nid_postfix(descriptors, "") == nullptr, "ft_service_list_lookup returns null for an empty id");
+    Require(ft_service_list_lookup_nid_postfix(nullptr, "b") == nullptr, "ft_service_list_lookup returns null for a null array");
+    Require(ft_service_list_lookup_nid_postfix(descriptors, nullptr) == nullptr, "ft_service_list_lookup returns null for a null id");
+    Require(ft_service_list_lookup_nid_postfix(nullptr, nullptr) == nullptr, "ft_service_list_lookup returns null for null inputs");
+}
+
 }  // namespace
 
 int main() {
@@ -199,6 +239,8 @@ int main() {
     CheckSqrtFixed();
     CheckSqrt32();
     CheckHighPow2();
+    CheckSynthesizeVerticalMetrics();
+    CheckServiceListLookup();
 
     std::puts("Guest FreeType corner tests passed");
     return 0;

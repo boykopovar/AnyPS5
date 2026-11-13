@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -191,6 +192,11 @@ void testFailures() {
     checkThrows([&] { sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory); });
     config.maxFrameWidth = Width;
     check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory) == 0, "memory query failed");
+    errno = 71;
+    checkThrows([&] { sceVideodec2CreateDecoder_nid_postfix(reinterpret_cast<const DecoderConfigInfo*>(0x10), &memory, &handle); });
+    checkThrows([&] { sceVideodec2CreateDecoder_nid_postfix(&config, reinterpret_cast<const DecoderMemoryInfo*>(0x10), &handle); });
+    checkThrows([&] { sceVideodec2CreateDecoder_nid_postfix(&config, &memory, reinterpret_cast<std::uint64_t*>(0x10)); });
+    check(errno == 71, "preserves errno");
     check(sceVideodec2CreateDecoder_nid_postfix(&config, &memory, &handle) == 0, "decoder creation failed");
     std::vector<std::uint8_t> storage;
     const auto buffer = AlignedFrameStorage(storage, memory.maxFrameBufferSize, memory.frameBufferAlignment);
@@ -1128,6 +1134,9 @@ void testParameterSetsBound() {
 void testComputeQueues() {
     SceVideodec2::ComputeMemoryInfo memory{sizeof(SceVideodec2::ComputeMemoryInfo), 0, nullptr};
     check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(nullptr) == static_cast<int>(0x811D0102u), "a null compute memory info must be refused");
+    errno = 71;
+    check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(reinterpret_cast<SceVideodec2::ComputeMemoryInfo*>(0x10)) == static_cast<int>(0x811D0102u), "an unmapped compute memory info must be refused");
+    check(errno == 71, "errno mutated on unmapped compute memory info refusal");
     SceVideodec2::ComputeMemoryInfo shortInfo{0x10, 0x5a5a5a5a5a5a5a5aull, nullptr};
     check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(&shortInfo) == static_cast<int>(0x811D0101u) && shortInfo.cpuGpuMemorySize == 0x5a5a5a5a5a5a5a5aull, "a 16-byte compute memory info must be refused");
     SceVideodec2::ComputeMemoryInfo highInfo{0xcccccccc00000018ull, 0x5a5a5a5a5a5a5a5aull, nullptr};
@@ -1140,6 +1149,11 @@ void testComputeQueues() {
     checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(nullptr, &memory, &first); });
     checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, nullptr, &first); });
     checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, nullptr); });
+    errno = 71;
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(reinterpret_cast<const SceVideodec2::ComputeConfigInfo*>(0x10), &memory, &first); });
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, reinterpret_cast<const SceVideodec2::ComputeMemoryInfo*>(0x10), &first); });
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, reinterpret_cast<std::uint64_t*>(0x10)); });
+    check(errno == 71, "preserves errno");
     check(first == 0, "a rejected allocation wrote a queue");
     check(sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, &first) == 0 && first != 0, "the first compute queue was not allocated");
     check(sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, &second) == 0 && second != 0 && second != first, "a second compute queue repeats the first");
