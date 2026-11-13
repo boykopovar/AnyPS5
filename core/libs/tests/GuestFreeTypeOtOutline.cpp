@@ -25,6 +25,7 @@ struct Api {
     decltype(&FT_Outline_Done_Internal_nid_postfix) doneOutline;
     decltype(&FT_New_Memory_nid_postfix) newMemory;
     decltype(&FT_Done_Memory_nid_postfix) doneMemory;
+    void (APS5_VABI *transform)(const GuestOutline*, const FreeType::GuestMatrix*);
 };
 
 struct Recorder {
@@ -194,6 +195,18 @@ void HostMemory(const Api& api) {
     api.doneMemory(memory);
 }
 
+void Transform(const Api& api) {
+    GuestVector points[2]{{0x10000, 0x20000}, {-0x10000, 0x30000}};
+    unsigned char tags[2]{1, 1};
+    std::uint16_t contours[1]{1};
+    GuestOutline outline{1, 2, points, tags, contours, 0};
+    const FreeType::GuestMatrix matrix{0x20000, 0x10000, -0x10000, 0x20000};
+
+    api.transform(&outline, &matrix);
+    Require(points[0].x == 0x40000 && points[0].y == 0x30000, "the matching outline-transform export updates the first point");
+    Require(points[1].x == 0x10000 && points[1].y == 0x70000, "the matching outline-transform export updates every point");
+}
+
 template <typename T>
 void Resolve(T& target, void* module, const char* symbol) {
 #ifdef _WIN32
@@ -228,11 +241,13 @@ int main(int count, char** arguments) {
     Resolve(api.doneOutline, ot, patched ? "umIqupy8UU0" : "FT_Outline_Done_Internal_nid_postfix");
     Resolve(api.newMemory, ot, patched ? "tCMhTh7h8D4" : "FT_New_Memory_nid_postfix");
     Resolve(api.doneMemory, ot, patched ? "UTumVjeIQtg" : "FT_Done_Memory_nid_postfix");
+    Resolve(api.transform, ot, patched ? "0Lv6K1d47jg" : "sceFreeTypeOtOutlineTransform_nid_no_patch");
     NullArguments(api);
     Allocation(api);
     Failures(api);
     Ownership(api);
     HostMemory(api);
+    Transform(api);
     std::puts("FreeType Ot outline: all checks passed");
     return 0;
 }

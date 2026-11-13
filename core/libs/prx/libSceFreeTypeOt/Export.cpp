@@ -199,8 +199,8 @@ int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch(FreeType::GuestLibrary*
 }
 APS5_EXPORT("4RRjK-Wd1lU", sceFreeTypeOtOutlineGetBitmap_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtOutlineTransform_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI sceFreeTypeOtOutlineTransform_nid_no_patch(const FreeType::GuestOutline* outline, const FreeType::GuestMatrix* matrix) {
+    FT_Outline_Transform_nid_postfix(outline, matrix);
 }
 APS5_EXPORT("0Lv6K1d47jg", sceFreeTypeOtOutlineTransform_nid_no_patch);
 
