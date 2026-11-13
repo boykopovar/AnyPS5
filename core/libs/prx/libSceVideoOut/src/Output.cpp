@@ -3,6 +3,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
