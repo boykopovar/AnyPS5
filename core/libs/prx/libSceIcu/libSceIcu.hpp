@@ -42,3 +42,5 @@
 #include "Copy.hpp"
 #include "BreakIterator.hpp"
 #include "Data.hpp"
+
+#include "ResourceBundle.hpp"

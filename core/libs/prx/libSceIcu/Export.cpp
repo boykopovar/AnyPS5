@@ -227,17 +227,8 @@ int APS5_VABI unorm2_getNFKDInstance() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_getByKey() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI ures_getStringByKey() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI ures_open() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI utext_openConstUnicodeString() {
     NotImplemented_nid_no_patch(__func__);

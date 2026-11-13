@@ -27,7 +27,6 @@ struct UNumberingSystem;
 struct UParseError;
 struct UPluralRules;
 struct URelativeDateTimeFormatter;
-struct UResourceBundle;
 struct USet;
 struct UStringSearch;
 struct UText;
@@ -196,7 +195,6 @@ void APS5_VABI ureldatefmt_close_nid_postfix(URelativeDateTimeFormatter* reldate
 std::int32_t APS5_VABI ureldatefmt_format_nid_postfix(const URelativeDateTimeFormatter* formatter, double offset, std::int32_t unit, char16_t* result, std::int32_t resultCapacity, std::int32_t* status);
 URelativeDateTimeFormatter* APS5_VABI ureldatefmt_open_nid_postfix(const char* locale, UNumberFormat* formatter, std::int32_t width, std::int32_t context, std::int32_t* status);
 
-void APS5_VABI ures_close(UResourceBundle* resB);
 
 UStringSearch* APS5_VABI usearch_open_nid_postfix(const char16_t* pattern, std::int32_t patternLength, const char16_t* text, std::int32_t textLength, const char* locale, UBreakIterator* breakIterator, std::int32_t* status);
 
