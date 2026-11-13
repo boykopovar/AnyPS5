@@ -1,5 +1,7 @@
 #include "prx/libSceNpTrophy/include/Api.hpp"
+#include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cerrno>
 #include <cstdio>
@@ -123,6 +125,9 @@ int main() {
 
     int context = 0, handle = 0, missing = 0, platinum = 0;
     Require(sceNpTrophyCreateContext(nullptr, 1, 0, 0) == InvalidArgument, "null context");
+    errno = 71;
+    Require(sceNpTrophyCreateContext(reinterpret_cast<int*>(0x10), 1, 0, 0) == InvalidArgument, "unwritable context");
+    Require(errno == 71, "errno preserved");
     Require(sceNpTrophyCreateContext(&context, 1, 0, 1) == InvalidArgument, "context options");
     Require(sceNpTrophyCreateContext(&context, 1, 0, 0) == 0, "create the context");
     Require(sceNpTrophyCreateContext(&missing, 1, 0, 0) == ContextAlreadyExists, "second context for the same user and label");
@@ -166,6 +171,8 @@ int main() {
     size = sizeof(icon);
     Require(sceNpTrophyGetTrophyIcon(context, handle, 1, icon, &size) == TrophyNotUnlocked, "icon of a locked trophy");
     Require(sceNpTrophyUnlockTrophy(context, handle, 2, &platinum) == InvalidTrophyId, "unlock a trophy past the count");
+    errno = 71;
+    Require(sceNpTrophyUnlockTrophy(context, handle, 1, reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "an unwritable platinum id was taken");
     Require(sceNpTrophyUnlockTrophy(context, handle, 1, &platinum) == 0 && platinum == -1, "unlock trophy 1");
     Require(sceNpTrophyUnlockTrophy(context, handle, 1, &platinum) == AlreadyUnlocked, "unlock trophy 1 twice");
     Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && flags[0] == 2u, "trophy 1 unlocked");
@@ -207,10 +214,21 @@ int main() {
     Require(sceNpTrophyCreateContext(&missing, 1, 1, 0) == 0, "context for a label without a package");
     Require(sceNpTrophyRegisterContext(missing, handle, 0) == TitleConfNotInstalled, "register without a trophy package");
     Require(sceNpTrophyCreateHandle(nullptr) == InvalidArgument, "null handle creation");
+    errno = 71;
+    Require(sceNpTrophyCreateHandle(reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "unwritable handle creation");
     Require(sceNpTrophyCreateContext(nullptr, 1, 0, 0) == InvalidArgument, "null context creation");
     Require(sceNpTrophyGetGameIcon(context, handle, icon, nullptr) == InvalidArgument, "null game icon size pointer");
     Require(sceNpTrophyGetGroupIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null group icon size pointer");
     Require(sceNpTrophyGetTrophyIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null trophy icon size pointer");
+    errno = 71;
+    Require(sceNpTrophyGetGameInfo(context, handle, reinterpret_cast<GameDetails*>(0x10), nullptr) == InvalidArgument, "unmapped game details refused");
+    Require(errno == 71, "errno preserved across unmapped game details");
+    errno = 71;
+    Require(sceNpTrophyGetGroupInfo(context, handle, 0, reinterpret_cast<GroupDetails*>(0x10), nullptr) == InvalidArgument, "unmapped group details refused");
+    Require(errno == 71, "errno preserved across unmapped group details");
+    errno = 71;
+    Require(sceNpTrophyGetTrophyInfo(context, handle, 0, reinterpret_cast<TrophyDetails*>(0x10), nullptr) == InvalidArgument, "unmapped trophy details refused");
+    Require(errno == 71, "errno preserved across unmapped trophy details");
     Require(sceNpTrophyGetGameInfo(context, handle, nullptr, nullptr) == InvalidArgument, "null game info pointers");
     Require(sceNpTrophyGetGroupInfo(context, handle, 0, nullptr, nullptr) == InvalidArgument, "null group info pointers");
     Require(sceNpTrophyGetTrophyInfo(context, handle, 0, nullptr, nullptr) == InvalidArgument, "null trophy info pointers");

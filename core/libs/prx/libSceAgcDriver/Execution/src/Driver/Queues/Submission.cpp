@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/Submission.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
@@ -232,15 +233,19 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
             cursor += count;
             continue;
         }
-        if (opcode == 0x22u && count == 5) guarded.emplace_back(cursor + count + Pm4::ConditionalWords(std::span(guest + cursor, count)), submission.commands.size());
-        submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
-        cursor += count;
         if (opcode == 0x59u) {
+            require(count == 2, "a REWIND packet must be two dwords");
             require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
+            submission.commands.push_back(header);
+            submission.commands.push_back(std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(guest + cursor + 1)).load(std::memory_order_acquire));
+            cursor += count;
             submission.rewindTail = guest + cursor;
             submission.rewindWords = words - cursor;
             return true;
         }
+        if (opcode == 0x22u && count == 5) guarded.emplace_back(cursor + count + Pm4::ConditionalWords(std::span(guest + cursor, count)), submission.commands.size());
+        submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
+        cursor += count;
     }
     reach(words, words);
     require(guarded.empty(), "conditional execution range exceeds its command buffer");
@@ -804,7 +809,7 @@ void Driver::enqueue(Submission submission) {
     for (const auto dword : submission.labelWrites) ++worker.unfinishedWrites[dword];
     worker.pending.push_back(std::move(submission));
     worker.queued.fetch_add(1, std::memory_order_acq_rel);
-    if (!worker.thread.joinable()) worker.thread = std::thread([this, queue] {
+    if (!worker.thread.joinable()) worker.thread = Libc::StartHostThread([this, queue] {
         char role[32];
         std::snprintf(role, sizeof(role), "queue 0x%x worker", queue);
         try {
