@@ -27,6 +27,7 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <stdexcept>
 #include <utility>
@@ -35,6 +36,7 @@ namespace {
 
 using NKWebKit::WebCoreAbi::HistoryItem;
 using NKWebKit::WebCoreAbi::HistoryItemVectorStorage;
+using NKWebKit::WebCoreAbi::CachedPage;
 using NKWebKit::WebCoreAbi::historyItemChangedHook;
 using NKWebKit::WtfAbi::String;
 using WebCore::IntPoint;
@@ -134,8 +136,9 @@ bool APS5_VABI _ZNK7WebCore11HistoryItem11hasChildrenEv(const HistoryItem* self)
 }
 
 bool APS5_VABI _ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(const HistoryItem* self) {
-    if (!Checked(self).cachedPage) return false;
-    NotImplemented_nid_no_patch(__func__);
+    const auto* cachedPage = static_cast<const CachedPage*>(Checked(self).cachedPage);
+    if (!cachedPage) return false;
+    return _ZN3WTF13MonotonicTime3nowEv().m_value > cachedPage->expirationTime;
 }
 
 void* APS5_VABI _ZN7WebCore11HistoryItem8formDataEv(HistoryItem* self) {

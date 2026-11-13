@@ -513,10 +513,6 @@ int APS5_VABI _ZThn16_N9Inspector21InspectorConsoleAgent13clearMessagesERN3WTF6S
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF9BitVector10filterSlowERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector21CSSFrontendDispatcher15styleSheetAddedEN3WTF6RefPtrINS_8Protocol3CSS19CSSStyleSheetHeaderENS1_13DumbPtrTraitsIS5_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1650,10 +1646,6 @@ int APS5_VABI _ZN3WTF29cryptographicallyRandomNumberEv() {
 }
 
 int APS5_VABI _ZN3WTF31integerToSixCharacterHashStringEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
