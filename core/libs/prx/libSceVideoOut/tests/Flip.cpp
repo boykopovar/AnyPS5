@@ -696,6 +696,8 @@ void testControls() {
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 1); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0x100000000ull, 0); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 0x100000000ull); });
+    check(sceVideoOutVrrPegToFixedRate(-1, 0, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "VRR peg on handle -1 was not refused");
+    check(sceVideoOutVrrUnpegFromFixedRate(-1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "VRR unpeg on handle -1 was not refused");
     sceVideoOutClose(handle);
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 0); });
     expectFailure([&] { sceVideoOutVrrUnpegFromFixedRate(handle); });

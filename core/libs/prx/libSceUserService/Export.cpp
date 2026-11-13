@@ -933,17 +933,18 @@ int APS5_VABI sceUserServiceSetUserGroupName(int groupIndex, const char* name) {
             return USER_SERVICE_ERROR_INVALID_ARGUMENT;
         }
     }
-    const std::size_t nameSize = std::strlen(name);
-    if (nameSize > 128) {
+    std::string guestName;
+    if (CopyGuestString_nid_no_patch(name, 129, guestName) != 0) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
+    const std::size_t nameSize = guestName.size();
     char path[64];
     std::snprintf(path, sizeof(path), "/system_data/priv/home/user_group_name.dat.%d", groupIndex);
     const int descriptor = sceKernelOpen(path, 0x601, 0x180);
     if (descriptor < 0) {
         return descriptor;
     }
-    const std::int64_t bytesWritten = sceKernelWrite(descriptor, name, nameSize);
+    const std::int64_t bytesWritten = sceKernelWrite(descriptor, guestName.data(), nameSize);
     sceKernelClose(descriptor);
     if (bytesWritten < 0) {
         return static_cast<int>(bytesWritten);
