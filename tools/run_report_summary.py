@@ -3,6 +3,12 @@ import json
 import sys
 from pathlib import Path
 
+OS_NAMES = {"linux": "Linux", "windows": "Windows", "macos": "macOS"}
+
+
+def os_text(value):
+    return OS_NAMES[value] if isinstance(value, str) and value in OS_NAMES else text(value).capitalize()
+
 
 def text(value):
     if not isinstance(value, str) or not value:
@@ -56,7 +62,7 @@ def render(report):
 
     gpu = system.get("gpu")
     gpu_name = gpu.get("name") if isinstance(gpu, dict) else None
-    system_summary = [text(system.get("os")).capitalize(), text(system.get("osVersion"))]
+    system_summary = [os_text(system.get("os")), text(system.get("osVersion"))]
     if system.get("cpu"):
         system_summary.append(text(system["cpu"]))
     if system.get("ramGiB") is not None:

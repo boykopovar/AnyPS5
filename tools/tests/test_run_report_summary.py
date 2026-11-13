@@ -39,6 +39,13 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("libSceNpTrophy::sceNpTrophyCreateContext (1 call)", summary)
         self.assertIn("This summary uses only the fields present in the local run report; it does not upload data.", summary)
 
+    def test_summary_names_each_operating_system(self):
+        report = self.report("stop-none.json")
+        for value, name in (("linux", "Linux"), ("windows", "Windows"), ("macos", "macOS")):
+            with self.subTest(value=value):
+                report["system"]["os"] = value
+                self.assertIn(f"System: {name}, ", render(report))
+
     def test_summary_marks_uncollected_sections(self):
         report = self.report("stop-missing-function.json")
         report["coverage"]["milestones"] = False
