@@ -4,7 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix();
 int APS5_VABI _ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix();
 int APS5_VABI _ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix();
 int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_timeES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix();

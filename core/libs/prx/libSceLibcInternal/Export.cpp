@@ -23,11 +23,6 @@ extern "C" const char* __progname_nid_postfix;
 
 extern "C" {
 
-int APS5_VABI _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
