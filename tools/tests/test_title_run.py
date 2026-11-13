@@ -561,7 +561,8 @@ class SessionTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
     def test_exit_code_follows_a_junctioned_interpreter(self):
-        target = Path(sys.executable).parent
+        interpreter = Path(getattr(sys, "_base_executable", sys.executable))
+        target = interpreter.parent
         directory = Path(tempfile.mkdtemp(prefix="title-run-junction-"))
         link = directory / "python"
         session = None
@@ -570,7 +571,7 @@ class SessionTests(unittest.TestCase):
             if made.returncode != 0:
                 self.skipTest("cannot create a junction: " + made.stderr.strip())
             child = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])"
-            session = title_run.Session([str(link / Path(sys.executable).name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
+            session = title_run.Session([str(link / interpreter.name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
             self.assertTrue(wait_until(lambda: not session.alive()))
             self.assertEqual(session.exit_code(), 7)
         finally:
