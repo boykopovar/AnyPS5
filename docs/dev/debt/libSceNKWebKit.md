@@ -1546,8 +1546,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF24AutomaticThreadConditionC2Ev` | `AiOIdr8qlv8` |
 | `_ZN3WTF24AutomaticThreadConditionD1Ev` | `eW8DnRSDucM` |
 | `_ZN3WTF24AutomaticThreadConditionD2Ev` | `qjebiZKT83w` |
-| `_ZN3WTF24currentTextBreakLocaleIDEv` | `xr2263Do-NU` |
-| `_ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE` | `uTDkdY+Gquc` |
 | `_ZN3WTF25activateSignalHandlersForENS_6SignalE` | `Pyu7Zyt6XUE` |
 | `_ZN3WTF26getAndResetAccumulatedLogsEv` | `bD3nxh6Om44` |
 | `_ZN3WTF30numCodeUnitsInGraphemeClustersENS_10StringViewEj` | `3PZOiy2oZ9w` |
