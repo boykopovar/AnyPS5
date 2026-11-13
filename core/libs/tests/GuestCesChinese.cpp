@@ -235,22 +235,40 @@ static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByt
     const std::uint32_t units = revision2005 ? 6 : 4;
     std::uint8_t text[16] = {};
     Require(sceCesUtf8StrToMbcsStr(context, Bytes(utf8Text), utf8Size, &consumed, text, sizeof(text), &produced) == 0 && consumed == utf8Size && produced == gbSize);
-    Require(std::memcmp(text, gbText, gbSize) == 0);
+    Require(std::memcmp(text, gbText, gbSize) == 0 && text[gbSize] == 0);
     std::uint8_t backUtf8[16] = {};
     Require(sceCesMbcsStrToUtf8Str(context, text, gbSize, &consumed, backUtf8, sizeof(backUtf8), &produced) == 0 && consumed == gbSize && produced == utf8Size);
-    Require(std::memcmp(backUtf8, utf8Text, utf8Size) == 0);
+    Require(std::memcmp(backUtf8, utf8Text, utf8Size) == 0 && backUtf8[utf8Size] == 0);
     std::uint16_t backUtf16[8] = {};
     Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, backUtf16, 8, &produced) == 0 && consumed == gbSize && produced == units);
-    Require(backUtf16[0] == 'A' && backUtf16[1] == 0x4E2D && backUtf16[2] == 0x80 && backUtf16[units - 1] == 0xFE10);
+    Require(backUtf16[0] == 'A' && backUtf16[1] == 0x4E2D && backUtf16[2] == 0x80 && backUtf16[units - 1] == 0xFE10 && backUtf16[units] == 0);
     if (revision2005) Require(backUtf16[3] == 0xD840 && backUtf16[4] == 0xDC00);
-    std::uint16_t shortUtf16[8] = {};
-    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, shortUtf16, units - 2, &produced) == dstBufferEnd);
+    std::uint16_t shortUtf16[6] = {0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF};
+    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, shortUtf16, 4, &produced) == dstBufferEnd && consumed == 7 && produced == 3);
+    Require(shortUtf16[0] == 'A' && shortUtf16[1] == 0x4E2D && shortUtf16[2] == 0x80 && shortUtf16[3] == 0 && shortUtf16[4] == 0xBEEF && shortUtf16[5] == 0xBEEF);
+    if (revision2005) {
+        Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, shortUtf16, 5, &produced) == dstBufferEnd && consumed == 7 && produced == 3);
+        Require(shortUtf16[3] == 0 && shortUtf16[4] == 0xBEEF && shortUtf16[5] == 0xBEEF);
+    } else {
+        Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, shortUtf16, 5, &produced) == 0 && consumed == gbSize && produced == units);
+        Require(shortUtf16[3] == 0xFE10 && shortUtf16[4] == 0 && shortUtf16[5] == 0xBEEF);
+    }
+    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, shortUtf16, units - 2, &produced) == dstBufferEnd && consumed == (revision2005 ? 7u : 1u) && produced == (revision2005 ? 3u : 1u));
+    Require(shortUtf16[produced] == 0 && shortUtf16[5] == 0xBEEF);
     Require(sceCesMbcsStrGetUtf16Len(context, text, gbSize, &consumed, &produced) == 0 && consumed == gbSize && produced == units);
     std::uint8_t again[16] = {};
     Require(sceCesUtf16StrToMbcsStr(context, backUtf16, units, &consumed, again, sizeof(again), &produced) == 0 && consumed == units && produced == gbSize);
-    Require(std::memcmp(again, gbText, gbSize) == 0);
-    std::uint16_t ucs2Text[8] = {};
-    if (revision2005) Require(sceCesMbcsStrToUcs2Str(context, text, gbSize, &consumed, ucs2Text, 8, &produced) == unassignedCode);
+    Require(std::memcmp(again, gbText, gbSize) == 0 && again[gbSize] == 0);
+    std::uint16_t ucs2Text[8] = {0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF};
+    if (revision2005) {
+        Require(sceCesMbcsStrToUcs2Str(context, text, gbSize, &consumed, ucs2Text, 8, &produced) == unassignedCode && consumed == 7 && produced == 3);
+        Require(ucs2Text[0] == 'A' && ucs2Text[1] == 0x4E2D && ucs2Text[2] == 0x80 && ucs2Text[3] == 0 && ucs2Text[4] == 0xBEEF);
+        Require(sceCesMbcsStrGetUcs2Len(context, text, gbSize, &consumed, &produced) == unassignedCode && consumed == 7 && produced == 3);
+    } else {
+        Require(sceCesMbcsStrToUcs2Str(context, text, gbSize, &consumed, ucs2Text, 8, &produced) == 0 && consumed == gbSize && produced == units);
+        Require(ucs2Text[0] == 'A' && ucs2Text[1] == 0x4E2D && ucs2Text[2] == 0x80 && ucs2Text[3] == 0xFE10 && ucs2Text[4] == 0 && ucs2Text[5] == 0xBEEF);
+        Require(sceCesMbcsStrGetUcs2Len(context, text, gbSize, &consumed, &produced) == 0 && consumed == gbSize && produced == units);
+    }
     Require(sceCesUtf8StrToMbcsStr(context, Bytes("\xC2\x80"), 2, &consumed, text, 3, &produced) == dstBufferEnd);
 }
 
@@ -321,6 +339,34 @@ int main() {
     std::uint32_t zhongBe = 0;
     std::memcpy(&zhongBe, "\x00\x00\x4E\x2D", 4);
     Require(sceCesUtf32beToGb(&zhongBe, gbk, mbcs, sizeof(mbcs), &produced) == 0 && std::memcmp(mbcs, "\xD6\xD0", 2) == 0);
+
+    std::uint16_t zhongUtf16 = 0;
+    Require(sceCesEucCnToUtf16(euc, Bytes("\xD6\xD0"), 2, &consumed, &zhongUtf16, 1, &produced) == 0 && consumed == 2 && produced == 1 && zhongUtf16 == 0x4E2D);
+    Require(sceCesEucCnToUtf16le(euc, Bytes("\xD6\xD0"), 2, &consumed, &zhongUtf16, 1, &produced) == 0 && std::memcmp(&zhongUtf16, "\x2D\x4E", 2) == 0);
+    Require(sceCesEucCnToUtf16le(euc, Bytes("\xD6\xD0"), 2, &consumed, &zhongUtf16, 0, &produced) == dstBufferEnd);
+    std::uint32_t zhongUtf32 = 0;
+    Require(sceCesEucCnToUtf32be(euc, Bytes("\xD6\xD0"), 2, &consumed, &zhongUtf32) == 0 && consumed == 2 && std::memcmp(&zhongUtf32, "\x00\x00\x4E\x2D", 4) == 0);
+    Require(sceCesEucCnToUtf32le(euc, Bytes("\xD6\xD0"), 2, &consumed, &zhongUtf32) == 0 && std::memcmp(&zhongUtf32, "\x2D\x4E\x00\x00", 4) == 0);
+    Require(sceCesEucCnToUtf32le(euc, Bytes("\xAA\xA1"), 2, &consumed, &zhongUtf32) == unassignedCode);
+    const std::uint16_t zhongNative = 0x4E2D;
+    std::uint16_t zhongUtf16Be = 0;
+    std::memcpy(&zhongUtf16Be, "\x4E\x2D", 2);
+    std::memset(mbcs, 0, sizeof(mbcs));
+    Require(sceCesUtf16ToEucCn(&zhongNative, 1, &consumed, euc, mbcs, sizeof(mbcs), &produced) == 0 && consumed == 1 && produced == 2 && std::memcmp(mbcs, "\xD6\xD0", 2) == 0);
+    std::memset(mbcs, 0, sizeof(mbcs));
+    Require(sceCesUtf16leToEucCn(&zhongNative, 1, &consumed, euc, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\xD6\xD0", 2) == 0);
+    std::memset(mbcs, 0, sizeof(mbcs));
+    Require(sceCesUtf16beToEucCn(&zhongUtf16Be, 1, &consumed, euc, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\xD6\xD0", 2) == 0);
+    Require(sceCesUtf16ToEucCn(&zhongNative, 1, &consumed, gbk, mbcs, sizeof(mbcs), &produced) == invalidParameter);
+    std::memset(mbcs, 0, sizeof(mbcs));
+    Require(sceCesUtf32ToEucCn(0x4E2D, euc, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\xD6\xD0", 2) == 0);
+    Require(sceCesUtf32ToEucCn(0x4E2D, euc, mbcs, 1, &produced) == dstBufferEnd);
+    std::memset(mbcs, 0, sizeof(mbcs));
+    Require(sceCesUtf32beToEucCn(&zhongBe, euc, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\xD6\xD0", 2) == 0);
+    std::uint32_t zhongLe32 = 0;
+    std::memcpy(&zhongLe32, "\x2D\x4E\x00\x00", 4);
+    std::memset(mbcs, 0, sizeof(mbcs));
+    Require(sceCesUtf32leToEucCn(&zhongLe32, euc, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\xD6\xD0", 2) == 0);
 
     int gbkCount = 0;
     int eucCount = 0;

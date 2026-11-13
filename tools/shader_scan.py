@@ -153,6 +153,8 @@ TABLE_KEYS = ("vop3encodedvop1", "vop3p", "vop3", "vopc", "vop2", "vop1", "vintr
 TABLE_ENCODING = {"vop3encodedvop1": "VOP3:VOP1", "image": "MIMG"}
 BLOCK = re.compile(r"^(?![\s}#])(?:[\w:<>&*,]+[ \t]+)*?(\w+)\s*(?:\[\]\s*=|\()", re.M)
 PAIR = re.compile(r"(?:\{\s*|case\s+)0x([0-9a-fA-F]+)u?\s*(?:,|:\s*return)\s*RdnaOpcode::(\w+)")
+CASE_RUN = re.compile(r"((?:\bcase\s+0x[0-9a-fA-F]+u?\s*:\s*)+)return\s+RdnaOpcode::(\w+)")
+CASE_NUMBER = re.compile(r"0x([0-9a-fA-F]+)u?")
 REQUIRED_TABLES = ("SOP1", "SOP2", "SOPC", "SOPK", "SOPP", "VOP1", "VOP2", "VOPC", "VOP3", "VOP3:VOP1", "VOP3P",
                    "SMEM", "MUBUF", "MTBUF", "FLAT", "DS", "MIMG")
 
@@ -180,6 +182,9 @@ def scan_decoder(files):
             table = next((k for k in TABLE_KEYS if key.startswith(k)), None)
             if table:
                 entries = d.tables.setdefault(TABLE_ENCODING.get(table, table.upper()), {})
+                for m in CASE_RUN.finditer(block):
+                    for number in CASE_NUMBER.finditer(m.group(1)):
+                        entries[int(number.group(1), 16)] = m.group(2)
                 for m in PAIR.finditer(block):
                     entries[int(m.group(1), 16)] = m.group(2)
             else:
@@ -254,9 +259,9 @@ def translator_cases(files):
     return names
 
 
-def measure_forms(files, isa):
-    decoder = scan_decoder(files)
-    translated = translator_cases(files)
+def measure_forms(files, isa, decoder=None, translated=None):
+    decoder = scan_decoder(files) if decoder is None else decoder
+    translated = translator_cases(files) if translated is None else translated
     groups, untranslated = {}, set()
     for name, encoding, form, opcode in isa:
         group = groups.setdefault((encoding, form), {"encoding": encoding, "form": form, "total": 0, "decoded": 0, "translated": 0, "missing": [], "untranslated": []})
@@ -343,21 +348,27 @@ def read_tree(root):
     return dict(sorted(files.items()))
 
 
-def measure(root, isa):
-    files = read_tree(root)
-    forms, untranslated = measure_forms(files, isa)
+def measure_profile(files, isa, decoder=None, translated=None):
+    forms, untranslated = measure_forms(files, isa, decoder, translated)
     plain = [f for f in forms if f["form"] in ("base", "vop3")]
     dpp = [f for f in forms if f["form"] in ("dpp16", "dpp8")]
     total = lambda rows, key: sum(r[key] for r in rows)
-    throws = unsupported_throws(files)
     return {
-        "isa": "AMD RDNA 2",
         "instructions": {"total": total(plain, "total"), "decoded": total(plain, "decoded"), "translated": total(plain, "translated")},
         "dpp": {"total": total(dpp, "total"), "decoded": total(dpp, "decoded")},
-        "unsupported_throws": len(throws),
-        "throw_areas": throw_areas(throws),
-        "throw_sites": throws,
-        "formats": image_formats(files),
         "forms": forms,
         "untranslated": untranslated,
     }
+
+
+def measure(root, isa, profiles=None):
+    files = read_tree(root)
+    decoder, translated = scan_decoder(files), translator_cases(files)
+    result = measure_profile(files, isa, decoder, translated)
+    throws = unsupported_throws(files)
+    result.update({"isa": "AMD RDNA 2", "unsupported_throws": len(throws), "throw_areas": throw_areas(throws),
+                   "throw_sites": throws, "formats": image_formats(files)})
+    if profiles:
+        result["profiles"] = {key: {"isa": label, **measure_profile(files, forms, decoder, translated)}
+                              for key, (label, forms) in profiles.items()}
+    return result

@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import re
 import sys
@@ -26,7 +27,9 @@ KEYS = {"VOP3:VOP1": "Vop3EncodedVop1", "MIMG": "Image", "VOP3P": "Vop3p"}
 ENTRIES = {"SOP1": {3: "SMovB32"}, "VOP2": {0: "VFirstF32", 3: "VAddF32", 5: "VMacF32", 0x3F: "VLastF32", 0x40: "VPastF32"}, "VOP1": {5: "VCvtF32I32"},
            "VOP3:VOP1": {0: "VMovB32", 2: "VCvtF32I32"}, "VOPC": {0xC0: "VCmpEqF32", 0x100: "VCmpNew"}}
 
-ISA_XML = """<Spec><ISA><Instructions>
+ISA_XML = """<Spec><Document><Copyright>Copyright (c) 2026 Advanced Micro Devices, Inc.</Copyright>
+<License>MIT</License><ReleaseDate>2026-02-20</ReleaseDate></Document>
+<ISA><Architecture><ArchitectureName>AMD RDNA 2</ArchitectureName></Architecture><Instructions>
 <Instruction><InstructionName>S_MOV_B32</InstructionName><InstructionEncodings>
   <InstructionEncoding><EncodingName>ENC_SOP1</EncodingName><Opcode Radix="10">3</Opcode></InstructionEncoding>
 </InstructionEncodings></Instruction>
@@ -65,8 +68,12 @@ ISA = [
 
 def table_source(encoding):
     key = KEYS.get(encoding, encoding.capitalize())
-    cases = "".join(f"        case 0x{number:02x}: return RdnaOpcode::{name};\n"
-                    for number, name in ENTRIES.get(encoding, {0: "Placeholder" + key}).items())
+    cases = ""
+    for number, name in ENTRIES.get(encoding, {0: "Placeholder" + key}).items():
+        numbers = number if isinstance(number, tuple) else (number,)
+        for member in numbers[:-1]:
+            cases += f"        case 0x{member:02x}:\n"
+        cases += f"        case 0x{numbers[-1]:02x}: return RdnaOpcode::{name};\n"
     return f"RdnaOpcode lookup{key}Opcode(uint32_t op)\n{{\n    switch (op)\n    {{\n{cases}    }}\n}}\n\n"
 
 
@@ -142,7 +149,7 @@ class IsaTests(unittest.TestCase):
             xml = Path(directory) / "isa.xml"
             xml.write_text(ISA_XML, encoding="utf-8")
             table = Path(directory) / "forms.txt"
-            table.write_text("# header\n", encoding="utf-8")
+            table.write_text(progress.ISA_FORMS.read_text(encoding="utf-8"), encoding="utf-8")
             old = progress.ISA_FORMS
             progress.ISA_FORMS = table
             try:
@@ -150,7 +157,77 @@ class IsaTests(unittest.TestCase):
             finally:
                 progress.ISA_FORMS = old
             self.assertEqual(shader_scan.load_isa_forms(table), shader_scan.parse_isa_xml(ISA_XML))
-            self.assertTrue(table.read_text(encoding="utf-8").startswith("# header\n"))
+            regenerated = table.read_text(encoding="utf-8")
+            self.assertIn(hashlib.sha256(xml.read_bytes()).hexdigest(), regenerated)
+            self.assertIn("release 2026-02-20", regenerated)
+            self.assertIn("Permission is hereby granted", regenerated)
+
+    def test_wrong_architecture_and_missing_metadata_preserve_the_inventory(self):
+        variants = [ISA_XML.replace("AMD RDNA 2", "AMD RDNA 1"), ISA_XML.replace("<License>MIT</License>", ""),
+                    ISA_XML.replace("<ReleaseDate>2026-02-20</ReleaseDate>", ""), "<Spec>"]
+        with tempfile.TemporaryDirectory() as directory:
+            xml, table = Path(directory) / "isa.xml", Path(directory) / "forms.txt"
+            table.write_bytes(progress.ISA_FORMS.read_bytes())
+            before = table.read_bytes()
+            for text in variants:
+                with self.subTest(text=text[:70]), patch.object(progress, "ISA_FORMS", table):
+                    xml.write_text(text, encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        progress.regenerate_isa_forms(xml)
+                    self.assertEqual(table.read_bytes(), before)
+
+
+class Gfx1013ProfileTests(unittest.TestCase):
+    def test_pinned_inventory_covers_missing_and_supported_target_forms(self):
+        forms = progress.isa_profiles.load_gfx1013_forms()
+        rows = set(forms)
+        self.assertEqual(len(forms), len(rows))
+        self.assertIn(("S_STORE_DWORD", "SMEM", "base", 0x10), rows)
+        self.assertIn(("S_BUFFER_ATOMIC_CMPSWAP_X2", "SMEM", "base", 0x61), rows)
+        self.assertIn(("DS_ADD_SRC2_U64", "DS", "base", 0xc0), rows)
+        self.assertIn(("DS_MIN_SRC2_F32", "DS", "base", 0x92), rows)
+        self.assertIn(("S_SETREG_IMM32_B32", "SOPK", "base", 0x15), rows)
+        self.assertIn(("V_MADMK_F32", "VOP2", "base", 0x20), rows)
+        self.assertIn(("V_FMAMK_F32", "VOP2", "base", 0x2c), rows)
+        self.assertIn(("IMAGE_BVH_INTERSECT_RAY", "MIMG", "base", 230), rows)
+        self.assertIn(("V_MAC_LEGACY_F32", "VOP2", "base", 6), rows)
+        self.assertIn(("V_MAD_LEGACY_F32", "VOP3", "base", 0x140), rows)
+        for excluded in ("BUFFER_ATOMIC_CSUB", "GLOBAL_LOAD_DWORD_ADDTID", "V_DOT2_F32_F16", "V_FMAC_LEGACY_F32"):
+            self.assertNotIn(excluded, {name for name, _, _, _ in forms})
+        self.assertEqual(sum(form in ("base", "vop3") for _, _, form, _ in forms), 1560)
+
+    def test_canonical_literal_forms_collapse_operand_positions(self):
+        import xml.etree.ElementTree as ET
+        xml = """<Spec><ISA><Instructions><Instruction><InstructionName>V_FMAMK_F32</InstructionName>
+        <InstructionEncodings><InstructionEncoding><EncodingName>VOP2_INST_LITERAL</EncodingName><Opcode>44</Opcode></InstructionEncoding>
+        <InstructionEncoding><EncodingName>VOP2_INST_LITERAL</EncodingName><Opcode>44</Opcode></InstructionEncoding>
+        </InstructionEncodings></Instruction></Instructions></ISA></Spec>"""
+        self.assertEqual(progress.isa_profiles.canonical_xml_forms(ET.fromstring(xml)), {("V_FMAMK_F32", "VOP2", "base", 44)})
+
+    def test_conflicting_meanings_cannot_share_a_physical_opcode(self):
+        with self.assertRaisesRegex(ValueError, "duplicate ISA encoding"):
+            progress.isa_profiles.validate_forms([("V_MAC_LEGACY_F32", "VOP2", "vop3", 0x106),
+                                                 ("V_FMAC_LEGACY_F32", "VOP3", "base", 0x106)])
+
+    def test_profile_generation_validates_architecture_and_source_hash(self):
+        rdna1 = ISA_XML.replace("AMD RDNA 2", "AMD RDNA 1")
+        with self.assertRaisesRegex(ValueError, "expected AMD RDNA 1"):
+            progress.isa_profiles.generate_gfx1013_forms(ISA_XML, ISA_XML)
+        with self.assertRaisesRegex(ValueError, "hash differs"):
+            progress.isa_profiles.generate_gfx1013_forms(rdna1, ISA_XML)
+        hashes = {key: hashlib.sha256(text.encode("utf-8")).hexdigest() for key, text in (("rdna1", rdna1), ("rdna2", ISA_XML))}
+        with patch.dict(progress.isa_profiles.ISA_HASHES, hashes):
+            generated = progress.isa_profiles.generate_gfx1013_forms(rdna1, ISA_XML)
+        self.assertIn(("V_ADD_F32", "VOP2", "base", 3), generated)
+        self.assertIn(("S_ATOMIC_ADD", "SMEM", "base", 0x82), generated)
+
+    def test_profiles_keep_reference_counts_separate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            write_tree(directory)
+            reference = shader_scan.measure(directory, ISA)
+            result = shader_scan.measure(directory, ISA, {"gfx1013": ("LLVM gfx1013 reference", [("S_NEW", "SOP1", "base", 9)])})
+        self.assertEqual(result["instructions"], reference["instructions"])
+        self.assertEqual(result["profiles"]["gfx1013"]["instructions"], {"total": 1, "decoded": 0, "translated": 0})
 
 
 class ScanTests(unittest.TestCase):
@@ -173,6 +250,18 @@ class ScanTests(unittest.TestCase):
                                    ("VOP2", "dpp16"): (1, 1, 0), ("VOP2", "dpp8"): (1, 0, 0),
                                    ("VOP1", "base"): (1, 1, 1), ("VOP1", "vop3"): (2, 2, 1), ("VOP1", "dpp16"): (1, 0, 0),
                                    ("VOPC", "vop3"): (2, 1, 1), ("EXP", "base"): (1, 1, 1)})
+
+    def test_case_fallthrough_maps_every_label_to_the_result(self):
+        isa = ISA + [("S_CB_SYS", "SOPP", "base", 0x17), ("S_CB_USER", "SOPP", "base", 0x18),
+                     ("S_CB_OR", "SOPP", "base", 0x19), ("S_CB_AND", "SOPP", "base", 0x1A),
+                     ("S_END_SAVED", "SOPP", "base", 0x1B), ("S_END_ORDERED", "SOPP", "base", 0x1E)]
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(ENTRIES, {"SOPP": {(0x17, 0x18, 0x19, 0x1A): "SCbranchCdbg", (0x1B, 0x1E): "SEndpgm"}}):
+                write_tree(directory)
+            result = shader_scan.measure(directory, isa)
+        sopp = next(f for f in result["forms"] if f["encoding"] == "SOPP")
+        self.assertEqual((sopp["total"], sopp["decoded"], sopp["missing"]),
+                         (6, 6, []))
 
     def test_unsupported_throws_skip_comments_rethrows_other_messages_and_tests(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -212,6 +301,39 @@ class ReportTests(unittest.TestCase):
                         {"encoding": "VOP2", "form": "vop3", "total": 3, "decoded": 2, "translated": 0, "missing": ["V_X"], "untranslated": ["V_A", "V_B"]},
                         {"encoding": "VOP2", "form": "dpp16", "total": 2, "decoded": 1, "translated": 0, "missing": ["V_Y"], "untranslated": ["V_Z"]}]}
     GROUP = {"percent": 100.0, "groups": [], "done": 0, "total": 0, "extra": []}
+
+    def test_gfx1013_reports_badges_and_missing_names_separately(self):
+        profile = {key: self.SOURCE[key] for key in ("instructions", "dpp", "forms", "untranslated")}
+        source = {**self.SOURCE, "profiles": {"gfx1013": {"isa": "LLVM gfx1013 reference", **profile}}}
+        with tempfile.TemporaryDirectory() as directory:
+            progress.write_site(Path(directory), dict(self.GROUP), dict(self.GROUP), source)
+            html = (Path(directory) / "progress.html").read_text(encoding="utf-8")
+            badge = (Path(directory) / "badge-shaders-gfx1013.svg").read_text(encoding="utf-8")
+            data = json.loads((Path(directory) / "progress.json").read_text(encoding="utf-8"))
+        self.assertIn("gfx1013 reference shader coverage", html)
+        self.assertIn("RDNA2 reference: counted from the code", html)
+        self.assertIn("not a complete console ISA", html)
+        self.assertIn("S_NEW", html)
+        self.assertIn("gfx1013 reference", badge)
+        self.assertIn("3/5", badge)
+        self.assertEqual(data["shader_source"]["profiles"]["gfx1013"]["instructions"], self.SOURCE["instructions"])
+
+    def test_unavailable_profile_does_not_leave_a_stale_badge(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / "badge-shaders-gfx1013.svg").write_text("old count", encoding="utf-8")
+            progress.write_site(output, dict(self.GROUP), dict(self.GROUP))
+            self.assertIn("unavailable", (output / "badge-shaders-gfx1013.svg").read_text(encoding="utf-8"))
+
+    def test_profile_comparisons_show_introduction_and_skip_unchanged_counts(self):
+        before = {"libraries": self.GROUP, "shaders": self.GROUP}
+        profile = {"instructions": self.SOURCE["instructions"], "dpp": self.SOURCE["dpp"]}
+        after = {**before, "shader_source": {"profiles": {"gfx1013": profile}}}
+        self.assertIn("Not measured | 3/5 (60.0%)", progress.report(before, after))
+        self.assertNotIn("gfx1013 reference", progress.report(after, after))
+        invalid = {**before, "shader_source": {"profiles": {"gfx1013": {**profile, "dpp": {"total": 1, "decoded": 2}}}}}
+        with self.assertRaisesRegex(ValueError, "count exceeds"):
+            progress.validate_snapshot(invalid)
 
     def test_badge_shows_decoded_over_total_and_says_what_it_measures(self):
         svg = progress.shader_source_badge(self.SOURCE)
@@ -254,6 +376,25 @@ class ReportTests(unittest.TestCase):
         ])
         self.assertEqual(data["throws"], (3, [("Translation", 2), ("Recompiler", 1)]))
         self.assertEqual(data["formats"], [("Sampled", 6, 10), ("Typed buffer", 5, 10), ("Vulkan host format", 4, 10)])
+
+    def test_still_needed_drops_empty_lists_and_says_when_none_is_left(self):
+        def without(*kinds):
+            return {**self.SOURCE, "forms": [{**f, **{k: [] for k in kinds}} for f in self.SOURCE["forms"]]}
+
+        partial = without("missing")
+        self.assertEqual(progress.still_needed(partial)["lists"],
+                         [("Decoded, no translator case (3)", [("VOP2 vop3", ["V_A", "V_B"]), ("VOP2 dpp16", ["V_Z"])])])
+        done = without("missing", "untranslated")
+        self.assertEqual(progress.still_needed(done)["lists"], [("Every instruction form is decoded and translated", [])])
+        for source in (partial, done):
+            svg = progress.render(dict(self.GROUP), dict(self.GROUP), source)
+            html = progress.summary(dict(self.GROUP), dict(self.GROUP), source)
+            for output in (svg, html):
+                self.assertNotIn("not decoded (0)", output)
+                self.assertNotIn(">none<", output)
+                self.assertNotIn("None.", output)
+        self.assertIn("<h4>Every instruction form is decoded and translated</h4>", html)
+        self.assertIn(">Every instruction form is decoded and translated</text>", svg)
 
     def panel(self, svg):
         rows = re.findall(r'<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="14" fill="(#[0-9a-f]{6})"/>', svg)
