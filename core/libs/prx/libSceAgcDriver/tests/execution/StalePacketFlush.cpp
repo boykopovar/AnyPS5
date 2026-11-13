@@ -138,8 +138,8 @@ int main(int argc, char** argv) {
     std::shared_ptr<AgcDriver::VulkanDevice> device;
     std::exception_ptr failure;
     try {
-        Require(argc == 2, "stale packet flush: expected a test mode");
-        const std::string mode = argv[1];
+        Require(argc == 1 || argc == 2, "stale packet flush: expected at most one test mode");
+        const std::string mode = argc == 2 ? argv[1] : "stale-cap";
         Require(mode == "stale-cap" || mode == "stale-deadline" || mode == "current-cap" || mode == "queued-overdue", "stale packet flush: unknown mode");
         device = OpenVulkanTestDevice();
         if (device == nullptr) return VulkanTestSkipped;
