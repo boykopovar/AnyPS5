@@ -41,6 +41,16 @@ void TestWideCase() {
     const std::uint16_t* end = text.data() + text.size();
     Require(_ZNKSt5ctypeIwE10do_tolowerEPwPKw_nid_postfix(nullptr, text.data(), end) == end, "wide tolower range end");
     Require(text == std::array<std::uint16_t, 5> {u'a', u'b', u'3', 0x4e2d, u'z'}, "wide tolower range");
+
+    Require(_ZNKSt5ctypeIwE10do_toupperEw_nid_postfix(nullptr, u'g') == u'G', "wide toupper g");
+    Require(_ZNKSt5ctypeIwE10do_toupperEw_nid_postfix(nullptr, u'Q') == u'Q', "wide toupper Q");
+    Require(_ZNKSt5ctypeIwE10do_toupperEw_nid_postfix(nullptr, u'-') == u'-', "wide toupper -");
+    Require(_ZNKSt5ctypeIwE10do_toupperEw_nid_postfix(nullptr, 0x4e2d) == 0x4e2d, "wide toupper cjk");
+    Require(_ZNKSt5ctypeIwE10do_toupperEw_nid_postfix(nullptr, 0xffff) == 0xffff, "wide toupper weof");
+
+    Require(_ZNKSt5ctypeIwE10do_toupperEPwPKw_nid_postfix(nullptr, text.data(), end) == end, "wide toupper range end");
+    Require(text == std::array<std::uint16_t, 5> {u'A', u'B', u'3', 0x4e2d, u'Z'}, "wide toupper range");
+    Require(_ZNKSt5ctypeIwE10do_toupperEPwPKw_nid_postfix(nullptr, text.data(), text.data()) == text.data(), "wide toupper empty range");
 }
 
 void TestWidenNarrow() {
