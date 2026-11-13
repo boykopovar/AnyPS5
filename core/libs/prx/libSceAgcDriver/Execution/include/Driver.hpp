@@ -33,6 +33,7 @@ struct RetiredOwners {
 };
 
 void PreflightNativeDepthForReplay_nid_no_patch(std::span<const NativeDepthSnapshot> snapshots);
+void InvalidateNativeDepthMetadataForReplay_nid_no_patch(std::uint64_t address, std::size_t bytes);
 RetiredOwners DiscardNativeDepthForReplay_nid_no_patch();
 void RestoreNativeDepthForReplay_nid_no_patch(std::span<const NativeDepthSnapshot> snapshots);
 

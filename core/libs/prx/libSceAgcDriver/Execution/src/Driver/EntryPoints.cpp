@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include <algorithm>
@@ -20,6 +21,10 @@ namespace AgcDriver {
 
 void PreflightNativeDepthForReplay_nid_no_patch(std::span<const NativeDepthSnapshot> snapshots) {
     DriverDetail::Driver::Get().PreflightNativeDepthForReplay(snapshots);
+}
+
+void InvalidateNativeDepthMetadataForReplay_nid_no_patch(std::uint64_t address, std::size_t bytes) {
+    Graphics::InvalidateDepthMetadataForReplay(address, bytes);
 }
 
 RetiredOwners DiscardNativeDepthForReplay_nid_no_patch() {
