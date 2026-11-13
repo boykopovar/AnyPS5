@@ -1,3 +1,7 @@
+// Derived from Source/WebCore/platform/network/NetworkStorageSession.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WebCore/loader/ResourceLoadObserver.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WebCore/platform/mediacapabilities/MediaEngineConfigurationFactory.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WebCore/page/PerformanceLogging.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2016-2018 Apple Inc.  All rights reserved.
  *
