@@ -381,6 +381,11 @@ void MovedForwardedWordReachesStageDataHit(bool libraries) {
     const auto restartedCounters = draw(&OffsetTable[2]);
     AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(nullptr);
     Require(!RestartArmed.load(), mode + ": the capture check did not run for the relocated draw");
+    if (RestartChecked.load()) {
+        const auto skipped = restartedCounters.restartPatchSkipped - counters.restartPatchSkipped;
+        const auto expected = std::getenv("APS5_VERIFY_DRAW_RECIPE") != nullptr ? 1u : 0u;
+        Require(skipped == expected, mode + ": the finisher restart re-patched a decode that the recipe verification had already replaced, or skipped a patch it needed (" + std::to_string(skipped) + " skips, expected " + std::to_string(expected) + ")");
+    }
     std::printf("%s: relocated hit whose data changed before its capture check (checked on the %s): %llu hits, %llu inserts\n", mode.c_str(), RestartChecked.load() ? "draw finisher" : "queue worker", static_cast<unsigned long long>(restartedCounters.hits - counters.hits), static_cast<unsigned long long>(restartedCounters.inserts - counters.inserts));
     const auto restarted = pixels({64, 255, 255, 64});
     Require(restarted.empty(), mode + ": a relocated hit recaptured after its data changed did not draw with its own user word: " + restarted);
