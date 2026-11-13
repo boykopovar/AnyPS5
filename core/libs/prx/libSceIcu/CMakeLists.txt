@@ -587,6 +587,17 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         endif()
     endforeach()
+    add_test_executable(guest_icu_calendar_state_nid_tests NO_RUNTIME_DLL_STAGING ${CMAKE_CURRENT_SOURCE_DIR}/tests/CalendarNid.cpp)
+    target_include_directories(guest_icu_calendar_state_nid_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_calendar_state_nid_tests PRIVATE ${CMAKE_DL_LIBS})
+    configure_host_test_executable(guest_icu_calendar_state_nid_tests)
+    add_dependencies(guest_icu_calendar_state_nid_tests guest_icu_date_pattern_nid_assets)
+    add_test(NAME guest_icu_calendar_state_nid COMMAND guest_icu_calendar_state_nid_tests ${icu_pattern_patched_dir}/libSceIcu.prx)
+    set_tests_properties(guest_icu_calendar_state_nid PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_calendar_state_nid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${icu_pattern_patched_dir}")
+    endif()
 endif()
 
 set(ICU_RECOVERED_SOURCES
