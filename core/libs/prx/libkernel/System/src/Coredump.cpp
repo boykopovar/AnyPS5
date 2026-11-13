@@ -1,9 +1,11 @@
 #include "prx/libkernel/include/Api.hpp"
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include "SceTypes.hpp"
@@ -51,7 +53,8 @@ int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_
 
 int APS5_VABI sceCoredumpAttachUserFile(std::uint32_t userValue, const char* path) {
     if (!path || !validUserFileFlags(userValue)) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
-    if (static_cast<std::int32_t>(std::strlen(path)) < 0) return 0;
+    std::string guestPath;
+    if (CopyGuestPath_nid_no_patch(path, guestPath) != 0) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
     return SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER;
 }
 
@@ -76,8 +79,35 @@ void APS5_VABI sceCoredumpDebugTextOut(const char* str, int len) {
     if (len < 0 || (str == nullptr && len != 0))
         throw std::runtime_error(std::string(__func__) + ": null text or negative length");
     if (len == 0) return;
-    const int shown = str[len - 1] == '\n' ? len - 1 : len;
-    std::fprintf(stderr, "[coredump] %.*s\n", shown, str);
+    const auto address = reinterpret_cast<std::uintptr_t>(str);
+    const auto lastOffset = static_cast<std::size_t>(len - 1);
+    if (address > std::numeric_limits<std::uintptr_t>::max() - lastOffset)
+        throw std::runtime_error(std::string(__func__) + ": unreadable text");
+    char last{};
+    if (!GuestCopyIn_nid_no_patch(&last, reinterpret_cast<const void*>(address + lastOffset), 1))
+        throw std::runtime_error(std::string(__func__) + ": unreadable text");
+    const auto shown = last == '\n' ? lastOffset : static_cast<std::size_t>(len);
+    std::string guestText;
+    std::array<char, 256> part{};
+    for (std::size_t offset = 0; offset < shown;) {
+        const auto remaining = shown - offset;
+        const auto count = remaining < part.size() ? remaining : part.size();
+        const auto* source = reinterpret_cast<const void*>(address + offset);
+        if (GuestCopyIn_nid_no_patch(part.data(), source, count)) {
+            const auto* end = static_cast<const char*>(std::memchr(part.data(), 0, count));
+            guestText.append(part.data(), end ? static_cast<std::size_t>(end - part.data()) : count);
+            if (end) break;
+            offset += count;
+            continue;
+        }
+        char byte{};
+        if (!GuestCopyIn_nid_no_patch(&byte, source, 1))
+            throw std::runtime_error(std::string(__func__) + ": unreadable text");
+        if (byte == 0) break;
+        guestText.push_back(byte);
+        ++offset;
+    }
+    std::fprintf(stderr, "[coredump] %s\n", guestText.c_str());
 }
 
 int64_t APS5_VABI sceCoredumpWriteUserData(const void* data, size_t size) {

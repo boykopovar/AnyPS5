@@ -423,7 +423,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     }
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
-        const bool convertedSample = !info.images[index].srgbDecodeCompatible && index < info.runtimeImageModes.size() && std::ranges::any_of(info.runtimeImageModes.at(index), [](const ImageResource& mode) { return mode.conversionFormat == IrBufferFormat::Format11_11_10UNorm; });
+        const bool convertedSample = !info.images[index].srgbDecodeCompatible && index < info.runtimeImageModes.size() && std::ranges::any_of(info.runtimeImageModes.at(index), [](const ImageResource& mode) { return IsConvertedUnormTextureFormat(mode.conversionFormat); });
         if (info.images[index].volumeGather) {
             if (info.images[index].depthCompare || convertedSample) fail("a 3D gather of a compared or converted image is not implemented");
             compareStates[index] = ResourceMaterializer::VolumeGatherState(info, snapshot, index);

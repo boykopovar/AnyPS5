@@ -29,7 +29,6 @@ int APS5_VABI sceSystemLogger2SetEventAsyncEx() {
 }
 
 int APS5_VABI sceSystemLogger2Terminate() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
