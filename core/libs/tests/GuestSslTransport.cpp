@@ -19,10 +19,12 @@
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/ssl.h>
+#include <mbedtls/ssl_cache.h>
 #include <mbedtls/x509_crt.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -42,6 +44,7 @@ constexpr int ErrorUnknownCa = static_cast<int>(0x8095f00c);
 constexpr int ErrorNotAfterCheck = static_cast<int>(0x8095f00d);
 constexpr int ErrorNotBeforeCheck = static_cast<int>(0x8095f00e);
 constexpr int ErrorFatalAlert = static_cast<int>(0x8095f010);
+constexpr int ErrorBusy = static_cast<int>(0x8095f012);
 constexpr int ErrorWantPollIn = static_cast<int>(0x8095f013);
 constexpr int ErrorWantPollOut = static_cast<int>(0x8095f014);
 constexpr int ErrorCallbackCheck = static_cast<int>(0x8095f0fd);
@@ -94,6 +97,8 @@ struct CallbackRecord {
     int calls = 0;
     void* leaf = nullptr;
     std::string commonName;
+    int reuseConnection = 0;
+    int reuseResult = 0;
 };
 
 int APS5_VABI RecordingCallback(int id, unsigned int error, void** certificates, int count, void* argument) {
@@ -102,6 +107,7 @@ int APS5_VABI RecordingCallback(int id, unsigned int error, void** certificates,
     record.error = error;
     record.count = count;
     ++record.calls;
+    if (record.reuseConnection) record.reuseResult = sceSslReuseConnection(record.reuseConnection, 1000);
     if (count > 0 && certificates && certificates[0]) {
         record.leaf = certificates[0];
         void* name = sceSslGetSubjectName(record.context, record.leaf);
@@ -131,8 +137,21 @@ struct Server {
     mbedtls_pk_context expiredKey;
     mbedtls_pk_context futureKey;
     mbedtls_ssl_config configs[3];
+    mbedtls_ssl_cache_context cache;
+    std::atomic<int> resumed{0};
     std::uint16_t port = 0;
     std::string failure;
+
+    static int CacheGet(void* data, const unsigned char* id, std::size_t length, mbedtls_ssl_session* session) {
+        auto& server = *static_cast<Server*>(data);
+        const int result = mbedtls_ssl_cache_get(&server.cache, id, length, session);
+        if (result == 0) ++server.resumed;
+        return result;
+    }
+
+    static int CacheSet(void* data, const unsigned char* id, std::size_t length, const mbedtls_ssl_session* session) {
+        return mbedtls_ssl_cache_set(&static_cast<Server*>(data)->cache, id, length, session);
+    }
 
     Server() {
         mbedtls_net_init(&listener);
@@ -146,6 +165,7 @@ struct Server {
         mbedtls_pk_init(&expiredKey);
         mbedtls_pk_init(&futureKey);
         for (auto& config : configs) mbedtls_ssl_config_init(&config);
+        mbedtls_ssl_cache_init(&cache);
         Require(mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, nullptr, 0) == 0, "seed server random generator");
         Require(mbedtls_x509_crt_parse(&certificate, reinterpret_cast<const unsigned char*>(ServerPem), sizeof(ServerPem)) == 0,
             "parse server certificate");
@@ -172,6 +192,7 @@ struct Server {
             mbedtls_ssl_conf_authmode(&config, MBEDTLS_SSL_VERIFY_REQUIRED);
             mbedtls_ssl_conf_ca_chain(&config, &authority, nullptr);
             Require(mbedtls_ssl_conf_alpn_protocols(&config, ServerProtocols) == 0, "set server protocols");
+            mbedtls_ssl_conf_session_cache(&config, this, CacheGet, CacheSet);
         }
         Require(mbedtls_net_bind(&listener, "127.0.0.1", "0", MBEDTLS_NET_PROTO_TCP) == 0, "bind loopback listener");
         sockaddr_in address{};
@@ -186,6 +207,7 @@ struct Server {
 
     ~Server() {
         for (auto& config : configs) mbedtls_ssl_config_free(&config);
+        mbedtls_ssl_cache_free(&cache);
         mbedtls_pk_free(&futureKey);
         mbedtls_pk_free(&expiredKey);
         mbedtls_pk_free(&key);
@@ -366,6 +388,7 @@ int main(int argc, char** argv) {
         server.Serve(Serve::Close, true, Leaf::Future);
         server.Serve(Serve::Close, true, Leaf::Future);
         if (sockets.net) server.Serve(Serve::Exchange);
+        for (int index = 0; index < 3; ++index) server.Serve(Serve::Exchange);
         for (int index = 0; index < ParallelConnections; ++index) server.Serve(Serve::Exchange);
     });
 
@@ -383,7 +406,8 @@ int main(int argc, char** argv) {
         && sceSslConnect(untrusted) == ErrorInvalidId && sceSslRead(untrusted, scratch.data(), 1, 0) == ErrorInvalidId
         && sceSslWrite(untrusted, scratch.data(), 1, 0) == ErrorInvalidId && sceSslSetAlpn(untrusted, "h2") == ErrorInvalidId
         && sceSslEnableVerifyOption(untrusted, CnCheck) == ErrorInvalidId && sceSslDisableVerifyOption(untrusted, CnCheck) == ErrorInvalidId
-        && sceSslSetMinSslVersion(untrusted, VersionTls12) == ErrorInvalidId && sceSslSetVerifyCallback(untrusted, nullptr, nullptr) == ErrorInvalidId,
+        && sceSslSetMinSslVersion(untrusted, VersionTls12) == ErrorInvalidId && sceSslSetVerifyCallback(untrusted, nullptr, nullptr) == ErrorInvalidId
+        && sceSslReuseConnection(untrusted, untrustedSocket) == ErrorInvalidId,
         "a deleted connection did not report an invalid id");
 
     const int unverifiedSocket = sockets.Open(server.port);
@@ -422,6 +446,8 @@ int main(int argc, char** argv) {
     const int closed = sceSslCreateConnection(context, 1000, "localhost");
     Require(sceSslConnect(closed) == ErrorNetBadDescriptor, "a handshake over a closed descriptor did not report the bad descriptor");
     Require(sceSslClose(closed) == 0, "close a connection that never connected");
+    Require(sceSslReuseConnection(closed, 1000) == 0, "a connection without a handshake was not reused");
+    Require(sceSslConnect(closed) == ErrorNetBadDescriptor, "a reused connection over a closed descriptor did not report it");
     Require(sceSslDeleteConnection(closed) == 0, "delete connection over a closed descriptor");
 
     const int mismatchSocket = sockets.Open(server.port);
@@ -429,6 +455,7 @@ int main(int argc, char** argv) {
     Require(sceSslConnect(mismatch) == ErrorCnCheck, "a certificate for another host passed the host name check");
     Require(sceSslConnect(mismatch) == ErrorCnCheck, "a second connect did not repeat the host name result");
     Require(Throws([&] { sceSslRead(mismatch, root.data(), 1, 0); }), "a failed verification left the connection usable");
+    Require(sceSslReuseConnection(mismatch, mismatchSocket) == 0, "a connection that failed verification was not reused");
     Require(sceSslDeleteConnection(mismatch) == 0 && sockets.Close(mismatchSocket) == 0, "release the mismatched connection");
 
     const int lenientSocket = sockets.Open(server.port);
@@ -580,6 +607,42 @@ int main(int argc, char** argv) {
         Require(sceSslRead(timed, buffer.data(), buffer.size(), 0) == 0, "close notify did not end the timed stream");
         Require(sceSslDeleteConnection(timed) == 0 && sockets.Close(timedSocket) == 0, "release the timed connection");
     }
+
+    CallbackRecord resuming{context, 0};
+    const auto exchange = [&](int id) {
+        return sceSslWrite(id, request, 4, 0) == 4 && sceSslRead(id, buffer.data(), buffer.size(), 0) == 4
+            && std::memcmp(buffer.data(), "pong", 4) == 0 && sceSslRead(id, buffer.data(), buffer.size(), 0) == 0;
+    };
+    const int firstSocket = sockets.Open(server.port);
+    const int reused = sceSslCreateConnection(context, firstSocket, "localhost");
+    Require(sceSslReuseConnection(reused, firstSocket) == 0, "a connection was not reused before its first handshake");
+    Require(sceSslSetAlpn(reused, "http/1.1") == 0 && sceSslSetVerifyCallback(reused, RecordingCallback, &resuming) == 0,
+        "configure the connection to reuse");
+    resuming.reuseConnection = reused;
+    Require(sceSslConnect(reused) == 0 && resuming.calls == 1, "the full handshake of the connection to reuse");
+    Require(resuming.reuseResult == ErrorBusy, "a reuse from inside the verify callback did not report the busy connection");
+    resuming.reuseConnection = 0;
+    Require(exchange(reused), "exchange over the first socket");
+    const int resumedBefore = server.resumed;
+    const int secondSocket = sockets.Open(server.port);
+    Require(sceSslReuseConnection(reused, secondSocket) == 0, "reuse the session on a second socket");
+    Require(sceSslGetAlpnSelected(reused) == nullptr, "the old handshake's protocol was reported after the reuse");
+    Require(sceSslReuseConnection(reused, secondSocket) == 0, "a second reuse before the handshake failed");
+    Require(sceSslConnect(reused) == 0 && server.resumed == resumedBefore, "a second reuse without a handshake in between kept the saved session");
+    Require(exchange(reused), "exchange over the second socket");
+    const int thirdSocket = sockets.Open(server.port);
+    Require(sceSslReuseConnection(reused, thirdSocket) == 0, "reuse the session on a third socket");
+    Require(sceSslConnect(reused) == 0 && server.resumed == resumedBefore + 1, "the server did not resume the saved session");
+    Require(resuming.calls == 3 && resuming.error == 0 && resuming.count == 1 && resuming.commonName == "commonName=localhost",
+        "the verify callback did not see the resumed session's peer chain");
+    selected = sceSslGetAlpnSelected(reused);
+    Require(selected && std::strcmp(selected, "http/1.1") == 0, "the resumed handshake did not negotiate the protocol");
+    Require(exchange(reused), "exchange over the resumed session");
+    Require(sceSslDeleteConnection(reused) == 0 && sockets.Close(firstSocket) == 0 && sockets.Close(secondSocket) == 0
+        && sockets.Close(thirdSocket) == 0, "release the reused connection and its sockets");
+    Require(sceSslReuseConnection(reused, thirdSocket) == ErrorInvalidId && sceSslReuseConnection(0, thirdSocket) == ErrorInvalidId,
+        "a deleted connection or id 0 was reused");
+    Require(InUse(context) == loaded, "the saved session's pool memory was not returned");
 
     std::array<std::thread, ParallelConnections> clients;
     for (auto& client : clients) {

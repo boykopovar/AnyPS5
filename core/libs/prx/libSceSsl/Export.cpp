@@ -53,6 +53,7 @@ constexpr int ErrorUnknownCa = static_cast<int>(0x8095f00c);
 constexpr int ErrorNotAfterCheck = static_cast<int>(0x8095f00d);
 constexpr int ErrorNotBeforeCheck = static_cast<int>(0x8095f00e);
 constexpr int ErrorFatalAlert = static_cast<int>(0x8095f010);
+constexpr int ErrorBusy = static_cast<int>(0x8095f012);
 constexpr int ErrorWantPollIn = static_cast<int>(0x8095f013);
 constexpr int ErrorWantPollOut = static_cast<int>(0x8095f014);
 constexpr int ErrorSocketClosed = static_cast<int>(0x8095170d);
@@ -522,6 +523,16 @@ struct Session {
     }
 };
 
+struct SavedSession {
+    std::shared_ptr<Context> context;
+    mbedtls_ssl_session data;
+    explicit SavedSession(std::shared_ptr<Context> owner) : context(std::move(owner)) { mbedtls_ssl_session_init(&data); }
+    ~SavedSession() {
+        PoolScope scope(context->pool);
+        mbedtls_ssl_session_free(&data);
+    }
+};
+
 constexpr int SslVersionSsl30 = 2;
 constexpr int SslVersionTls12 = 5;
 
@@ -536,6 +547,8 @@ struct SslConnection {
     std::string alpn;
     std::shared_ptr<Session> session;
     bool systemRoots = false;
+    std::shared_ptr<SavedSession> resume;
+    bool resumeOffered = false;
 };
 
 struct Runtime {
@@ -951,6 +964,9 @@ int Establish(const char* function, int sslConnectionId, std::shared_ptr<Session
             PoolScope scope(context->pool);
             session = std::make_shared<Session>(connection->context, std::move(context), std::move(owner), native);
             session->Configure(connection->host, connection->alpn, connection->verifyOptions, connection->systemRoots ? SystemRoots() : nullptr);
+            if (connection->resume)
+                CheckBackend(mbedtls_ssl_set_session(&session->ssl, &connection->resume->data), "SSL session resumption setup failed");
+            connection->resumeOffered = true;
             connection->session = session;
         } else {
             session = connection->session;
@@ -1424,7 +1440,35 @@ int APS5_VABI sceSslRecv(int sslConnectionId, void* buf, std::size_t fulllen) {
 }
 
 int APS5_VABI sceSslReuseConnection(int sslConnectionId, int sockId) {
-    NotImplemented_nid_no_patch(__func__);
+    std::shared_ptr<Session> session;
+    std::shared_ptr<SavedSession> saved;
+    {
+        std::lock_guard lock(State().mutex);
+        const auto* connection = FindConnection(sslConnectionId);
+        if (!connection) return ErrorInvalidId;
+        session = connection->session;
+        if (session) saved = std::make_shared<SavedSession>(State().contexts.at(connection->context));
+    }
+    std::unique_lock<std::mutex> sessionLock;
+    if (session) {
+        sessionLock = std::unique_lock(session->mutex, std::try_to_lock);
+        if (!sessionLock.owns_lock() || session->verifying) return ErrorBusy;
+        if (session->handshaken) {
+            PoolScope scope(session->context->pool);
+            CheckBackend(mbedtls_ssl_get_session(&session->ssl, &saved->data), "sceSslReuseConnection: the session could not be saved");
+        } else {
+            saved.reset();
+        }
+    }
+    std::lock_guard lock(State().mutex);
+    auto* connection = FindConnection(sslConnectionId);
+    if (!connection) return ErrorInvalidId;
+    if (connection->session != session) return ErrorBusy;
+    if (saved) connection->resume = std::move(saved);
+    else if (!connection->resumeOffered) connection->resume.reset();
+    connection->resumeOffered = false;
+    connection->session.reset();
+    connection->socket = sockId;
     return 0;
 }
 
