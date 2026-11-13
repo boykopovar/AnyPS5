@@ -47,8 +47,6 @@
 | `cairo_set_font_options` | `-aqFIBn0h78` |
 | `cairo_font_face_set_user_data` | `1GGpdjyZslI` |
 | `cairo_stroke_extents` | `1K5ly63m6fo` |
-| `cairo_image_surface_create_from_png_stream` | `4dvdsqyLM8c` |
-| `cairo_arc_negative` | `2w5H3b3yPqw` |
 | `cairo_ft_scaled_font_lock_face` | `4gDTaBZH8lo` |
 | `cairo_glyph_path` | `54HrgUIQHOk` |
 | `cairo_set_source_rgb` | `6DvK+OdIPW4` |
