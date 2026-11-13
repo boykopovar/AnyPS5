@@ -481,24 +481,13 @@ int main(int argc, char** argv) {
     if (!library) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(library != nullptr, "load requested library");
-#ifdef _WIN32
     Resolve(ot.outlineBitmap, library, patched, "4RRjK-Wd1lU", "sceFreeTypeOtOutlineGetBitmap_nid_no_patch");
-#else
-    Resolve(ot.outlineBitmap, library, patched, "4RRjK-Wd1lU", "FT_Outline_Get_Bitmap_nid_postfix");
-#endif
     Require(ot.outlineBitmap(nullptr, nullptr, nullptr) == FT_Outline_Get_Bitmap(nullptr, nullptr, nullptr),
             "outline bitmap without library");
-#ifdef _WIN32
     Resolve(variations.mmBlend, library, patched, "zetC8Tp1S8w", "sceFreeTypeOtSetMMBlendCoordinates_nid_no_patch");
     Resolve(variations.mmDesign, library, patched, "DAmwG6U7YIc", "sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch");
     Resolve(variations.varBlend, library, patched, "ihIHD8BTNxI", "sceFreeTypeOtSetVarBlendCoordinates_nid_no_patch");
     Resolve(variations.varDesign, library, patched, "yCEJIsjIOO8", "sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch");
-#else
-    Resolve(variations.mmBlend, library, patched, "zetC8Tp1S8w", "FT_Set_MM_Blend_Coordinates_nid_postfix");
-    Resolve(variations.mmDesign, library, patched, "DAmwG6U7YIc", "FT_Set_MM_Design_Coordinates_nid_postfix");
-    Resolve(variations.varBlend, library, patched, "ihIHD8BTNxI", "FT_Set_Var_Blend_Coordinates_nid_postfix");
-    Resolve(variations.varDesign, library, patched, "yCEJIsjIOO8", "FT_Set_Var_Design_Coordinates_nid_postfix");
-#endif
     for (auto setter : {variations.mmBlend, variations.mmDesign, variations.varBlend, variations.varDesign})
         Require(setter(nullptr, 0, nullptr) == FT_Err_Invalid_Face_Handle, "reject missing variation face");
 #ifdef _WIN32
