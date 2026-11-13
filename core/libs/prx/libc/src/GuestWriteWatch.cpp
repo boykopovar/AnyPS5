@@ -649,6 +649,10 @@ public:
         return true;
     }
 
+    void SetReadTrapBypass(bool (*bypass)()) {
+        _bypass.store(bypass, std::memory_order_release);
+    }
+
     bool TrapReads(std::uintptr_t begin, std::uintptr_t end) {
         if (!_available || end <= begin || _resolver.load(std::memory_order_acquire) == nullptr) return false;
         const auto first = pageStart(begin);
@@ -664,6 +668,20 @@ public:
         forEachPage(first, last, [](std::uintptr_t, std::uint8_t& state) { state |= ReadTrapped; });
         _trapping.store(true, std::memory_order_release);
         return true;
+    }
+
+    void ReadTraps(std::uintptr_t begin, std::uintptr_t end, void (*trapped)(void*, std::uintptr_t, std::uintptr_t), void* context) {
+        if (!_available || end <= begin || !_trapping.load(std::memory_order_acquire)) return;
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
+        {
+            const Lock lock(_lock);
+            forEachPage(pageStart(begin), pageEnd(end), [&](std::uintptr_t page, std::uint8_t& state) {
+                if ((state & ReadTrapped) == 0) return;
+                if (!runs.empty() && runs.back().second == page) runs.back().second = page + _page;
+                else runs.emplace_back(page, page + _page);
+            });
+        }
+        for (const auto& [runBegin, runEnd] : runs) trapped(context, runBegin, runEnd);
     }
 
     void ReleaseReads(std::uintptr_t begin, std::uintptr_t end) {
@@ -840,7 +858,8 @@ private:
             auto* state = pageState(page);
             if (state == nullptr) return false;
             if ((*state & ReadTrapped) == 0) return retryUntrapped(page, *state, write);
-            if (resolvingCovers(page, page + _page, Owner::Self) || pthread_equal(pthread_self(), _resolverThread) || (!trapCovers(page, page + _page) && !resolvingCovers(page, page + _page, Owner::Any))) {
+            const auto bypass = _bypass.load(std::memory_order_acquire);
+            if (resolvingCovers(page, page + _page, Owner::Self) || pthread_equal(pthread_self(), _resolverThread) || (bypass != nullptr && bypass()) || (!trapCovers(page, page + _page) && !resolvingCovers(page, page + _page, Owner::Any))) {
                 *state = static_cast<std::uint8_t>(*state & ~ReadTrapped);
                 ++_untrapGeneration;
                 return ::mprotect(reinterpret_cast<void*>(page), _page, untrappedProtection(*state)) == 0;
@@ -1117,6 +1136,7 @@ private:
     std::uint64_t _untrapGeneration = 0;
     std::atomic<bool> _trapping{false};
     std::atomic<void (*)(std::uintptr_t, std::uintptr_t)> _resolver{nullptr};
+    std::atomic<bool (*)()> _bypass{nullptr};
     std::once_flag _resolverStarted;
     std::atomic<bool> _resolverRunning{false};
     pthread_t _resolverThread{};
@@ -1307,6 +1327,14 @@ bool GuestWriteWatchSetReadTrapResolver_nid_postfix(void (*resolve)(std::uintptr
 #endif
 }
 
+void GuestWriteWatchSetReadTrapBypass_nid_postfix(bool (*bypass)()) {
+#if defined(__APPLE__)
+    Watch::Get().SetReadTrapBypass(bypass);
+#else
+    static_cast<void>(bypass);
+#endif
+}
+
 bool GuestWriteWatchTrapReads_nid_postfix(std::uintptr_t address, std::size_t bytes) {
 #if defined(__APPLE__)
     return bytes != 0 && address + bytes > address && Watch::Get().TrapReads(address, address + bytes);
@@ -1314,6 +1342,17 @@ bool GuestWriteWatchTrapReads_nid_postfix(std::uintptr_t address, std::size_t by
     static_cast<void>(address);
     static_cast<void>(bytes);
     return false;
+#endif
+}
+
+void GuestWriteWatchReadTraps_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*trapped)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
+#if defined(__APPLE__)
+    if (bytes != 0 && address + bytes > address) Watch::Get().ReadTraps(address, address + bytes, trapped, context);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    static_cast<void>(trapped);
+    static_cast<void>(context);
 #endif
 }
 
