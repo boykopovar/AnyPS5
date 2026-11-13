@@ -204,10 +204,6 @@ int APS5_VABI tls_connect_socket_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_CTX_set_quic_method_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_process_quic_post_handshake_nid_postfix(void* ssl) {
     (void)ssl;
     return 1;

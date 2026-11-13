@@ -316,6 +316,7 @@ std::uint64_t APS5_VABI SSL_CIPHER_get_id_nid_postfix(const LibreSsl3Cipher* cip
 int APS5_VABI SSL_CTX_add1_chain_cert_nid_postfix();
 int APS5_VABI SSL_CTX_set0_chain_nid_postfix();
 std::int64_t APS5_VABI SSL_CTX_set_timeout_nid_postfix(LibreSsl3SslCtx* context, std::int64_t timeout);
+int APS5_VABI SSL_CTX_set_quic_method_nid_postfix(LibreSsl3SslCtx* context, const void* quicMethod);
 std::int64_t APS5_VABI SSL_SESSION_get_timeout_nid_postfix(const void* session);
 std::int64_t APS5_VABI SSL_SESSION_set_time_nid_postfix(void* session, std::int64_t time);
 std::uint64_t APS5_VABI SSL_SESSION_get_master_key_nid_postfix(const void* session, unsigned char* out, std::uint64_t outLength);
@@ -401,7 +402,6 @@ Asn1String* APS5_VABI ASN1_TIME_new_nid_postfix();
 int APS5_VABI X509_set_issuer_name_nid_postfix();
 int APS5_VABI X509_add_ext_nid_postfix();
 int APS5_VABI tls_connect_socket_nid_postfix();
-int APS5_VABI SSL_CTX_set_quic_method_nid_postfix();
 Asn1String* APS5_VABI X509_gmtime_adj_nid_postfix(Asn1String* time, std::int64_t adjustment);
 int APS5_VABI SSL_process_quic_post_handshake_nid_postfix(void* ssl);
 void APS5_VABI EC_POINT_clear_free_nid_postfix(EcPoint* point);

@@ -149,6 +149,14 @@ std::int64_t APS5_VABI SSL_CTX_set_timeout_nid_postfix(LibreSsl3SslCtx* context,
     return previous;
 }
 
+int APS5_VABI SSL_CTX_set_quic_method_nid_postfix(LibreSsl3SslCtx* context, const void* quicMethod) {
+    if (!context || !context->method)
+        throw std::invalid_argument("SSL_CTX_set_quic_method requires a context with a method");
+    if (static_cast<const LibreSsl3SslMethod*>(context->method)->dtls) return 0;
+    context->quicMethod = quicMethod;
+    return 1;
+}
+
 std::size_t APS5_VABI SSL_get_client_random_nid_postfix(const LibreSsl3Ssl* ssl, unsigned char* out, std::size_t maxOut) {
     constexpr std::size_t randomSize = sizeof(LibreSsl3Ssl3State::clientRandom);
     if (!out) return randomSize;

@@ -281,6 +281,46 @@ void CheckContextTimeout() {
     Require(SSL_CTX_set_timeout_nid_postfix(nullptr, 300) == 0, "null context");
 }
 
+void CheckContextQuicMethod() {
+    const LibreSsl3SslMethod tls{0, 0, 0x0303, 0x0301, 0x0304};
+    const LibreSsl3SslMethod dtls{1, 0, 0xfefd, 0x0302, 0x0303};
+    const int firstMethod = 1;
+    const int secondMethod = 2;
+    Guarded<LibreSsl3SslCtx> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    guarded.object.method = &tls;
+    guarded.object.quicMethod = nullptr;
+    auto expected = Bytes(guarded);
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, &firstMethod) == 1, "TLS context accepts a QUIC method");
+    Require(guarded.object.quicMethod == &firstMethod, "QUIC method stored");
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, &secondMethod) == 1, "QUIC method replaced");
+    Require(guarded.object.quicMethod == &secondMethod, "replacement stored");
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, nullptr) == 1, "QUIC method cleared");
+    Require(Same(guarded, expected), "QUIC method changed another field");
+    guarded.object.method = &dtls;
+    guarded.object.quicMethod = &firstMethod;
+    expected = Bytes(guarded);
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, &secondMethod) == 0, "DTLS context refuses a QUIC method");
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, nullptr) == 0, "DTLS context refuses a clear");
+    Require(Same(guarded, expected), "DTLS refusal changed the context");
+    guarded.object.method = nullptr;
+    expected = Bytes(guarded);
+    bool thrown = false;
+    try {
+        SSL_CTX_set_quic_method_nid_postfix(&guarded.object, &firstMethod);
+    } catch (const std::invalid_argument&) {
+        thrown = true;
+    }
+    Require(thrown && Same(guarded, expected), "context without a method throws without changes");
+    thrown = false;
+    try {
+        SSL_CTX_set_quic_method_nid_postfix(nullptr, &firstMethod);
+    } catch (const std::invalid_argument&) {
+        thrown = true;
+    }
+    Require(thrown, "null context throws");
+}
+
 void CheckClientRandom() {
     LibreSsl3Ssl3State state;
     std::array<unsigned char, sizeof(state)> stateBytes;
@@ -423,6 +463,7 @@ int main() {
     CheckVersionBounds();
     CheckClientRandom();
     CheckContextTimeout();
+    CheckContextQuicMethod();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
     CheckTlsMethod();
     CheckX509Version();
