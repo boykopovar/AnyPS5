@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <cstddef>
 #include "prx/libc/include/General.hpp"
 #include <cstdint>
@@ -291,7 +292,11 @@ int APS5_VABI scePadGetControllerBusType(int handle, int* busType) {
  if (busType == nullptr) return PAD_ERROR_INVALID_ARG;
  const int device = DeviceOf(handle);
  if (device != PAD_OK) return device;
- *busType = PAD_CONNECT_TYPE_BLUETOOTH;
+ const int type = PAD_CONNECT_TYPE_BLUETOOTH;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(busType, &type, sizeof(type));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 
@@ -300,7 +305,11 @@ int APS5_VABI scePadGetJackState(int handle, int* state) {
  if (state == nullptr) return PAD_ERROR_INVALID_ARG;
  const int device = DeviceOf(handle);
  if (device != PAD_OK) return device;
- *state = 0;
+ const int jackState = 0;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(state, &jackState, sizeof(jackState));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 
@@ -314,8 +323,13 @@ int APS5_VABI scePadGetContainerIdInformation(int handle, PadContainerIdInformat
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
  const int device = DeviceOf(handle);
  if (device != PAD_OK) return device;
- info->size = 0;
- info->id[0] = '\0';
+ PadContainerIdInformation localInfo{};
+ localInfo.size = 0;
+ localInfo.id[0] = '\0';
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, offsetof(PadContainerIdInformation, id) + 1);
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 
@@ -1082,8 +1096,7 @@ int APS5_VABI scePadResetLightBarAllByPortType(std::uint32_t portType) {
 }
 
 int APS5_VABI scePadSetLightBarForTracker(std::int32_t handle, const PadLightBarParam* color) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return scePadSetLightBar(handle, color);
 }
 
 int APS5_VABI scePadReadForTracker(std::int32_t handle, PadTrackerData* data, std::int32_t count) {

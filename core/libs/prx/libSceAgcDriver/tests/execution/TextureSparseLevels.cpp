@@ -371,6 +371,10 @@ int main() {
             std::puts("skipped, the device has no BC texture compression, VK_EXT_image_view_min_lod or shaderResourceMinLod");
             return VulkanTestSkipped;
         }
+        if (!TargetHasCapability(device->Target(), spv::CapabilityMinLod)) {
+            std::puts("skipped, the device has no shaderResourceMinLod");
+            return VulkanTestSkipped;
+        }
         if (!SparseBc1(context)) {
             std::puts("skipped, the device has no sparse residency for 2D BC1 images (sparseResidencyImage2D and vkGetPhysicalDeviceSparseImageFormatProperties), so textures keep every level");
             return VulkanTestSkipped;

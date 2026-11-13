@@ -65,3 +65,45 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePngEnc>")
     endif()
 endif()
+
+if(BUILD_TESTING)
+    set(PNG_ENC_WRITES_MODULE_DIR ${CMAKE_CURRENT_BINARY_DIR}/writes-modules)
+    add_custom_command(
+        OUTPUT ${PNG_ENC_WRITES_MODULE_DIR}/libScePngEnc.prx
+               ${PNG_ENC_WRITES_MODULE_DIR}/libc.prx
+               ${PNG_ENC_WRITES_MODULE_DIR}/libkernel.prx
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${PNG_ENC_WRITES_MODULE_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libScePngEnc> ${PNG_ENC_WRITES_MODULE_DIR}/libScePngEnc.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libc> ${PNG_ENC_WRITES_MODULE_DIR}/libc.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libkernel> ${PNG_ENC_WRITES_MODULE_DIR}/libkernel.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libc ${PNG_ENC_WRITES_MODULE_DIR}/libc.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libkernel --preserve-export-list ${LIBC_EXPORT_LIST} ${PNG_ENC_WRITES_MODULE_DIR}/libkernel.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libScePngEnc --preserve-export-list ${LIBC_EXPORT_LIST} ${PNG_ENC_WRITES_MODULE_DIR}/libScePngEnc.prx
+        DEPENDS libScePngEnc libc libkernel nid_patcher ${LIBC_EXPORT_LIST}
+        VERBATIM
+    )
+    add_custom_target(png_enc_writes_modules DEPENDS ${PNG_ENC_WRITES_MODULE_DIR}/libScePngEnc.prx)
+    add_test_executable(guest_png_enc_writes_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestPngEncWrites.cpp)
+    target_include_directories(guest_png_enc_writes_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_png_enc_writes_tests PRIVATE ${CMAKE_DL_LIBS})
+    if(WIN32)
+        target_link_libraries(guest_png_enc_writes_tests PRIVATE libc)
+    endif()
+    configure_windows_unwind(guest_png_enc_writes_tests)
+    add_dependencies(guest_png_enc_writes_tests png_enc_writes_modules)
+    add_test(NAME guest_png_enc_writes COMMAND guest_png_enc_writes_tests $<TARGET_FILE:libScePngEnc> raw)
+    add_test(NAME guest_png_enc_writes_nid COMMAND guest_png_enc_writes_tests ${PNG_ENC_WRITES_MODULE_DIR}/libScePngEnc.prx nid)
+    set_tests_properties(guest_png_enc_writes guest_png_enc_writes_nid PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set(PNG_ENC_WRITES_PATH PATH)
+    elseif(APPLE)
+        set(PNG_ENC_WRITES_PATH DYLD_LIBRARY_PATH)
+    else()
+        set(PNG_ENC_WRITES_PATH LD_LIBRARY_PATH)
+    endif()
+    set_tests_properties(guest_png_enc_writes PROPERTIES ENVIRONMENT_MODIFICATION
+        "${PNG_ENC_WRITES_PATH}=path_list_prepend:$<TARGET_FILE_DIR:libScePngEnc>")
+    set_tests_properties(guest_png_enc_writes_nid PROPERTIES ENVIRONMENT_MODIFICATION
+        "${PNG_ENC_WRITES_PATH}=path_list_prepend:${PNG_ENC_WRITES_MODULE_DIR}")
+
+endif()
