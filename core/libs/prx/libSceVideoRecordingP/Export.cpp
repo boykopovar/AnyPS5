@@ -51,23 +51,23 @@ bool IsVideoFormat(std::uint32_t format) {
  }
 }
 
-std::uint8_t Limited(double value, double scale) {
-    const long rounded = std::lround(value * scale);
+std::uint8_t Limited(double value) {
+    const long rounded = std::lround(value);
     return static_cast<std::uint8_t>(std::clamp(rounded, 16L, 240L));
 }
 
-std::uint8_t Luma(double red, double green, double blue) {
-    return Limited(16.0 / 219.0 + 0.2126 * red + 0.7152 * green + 0.0722 * blue, 219.0);
+double Luma(double red, double green, double blue) {
+    return 16.0 + 219.0 * (0.2126 * red + 0.7152 * green + 0.0722 * blue);
 }
 
-std::uint8_t BlueDifference(double red, double green, double blue) {
+double BlueDifference(double red, double green, double blue) {
     const double luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-    return Limited(128.0 / 224.0 + (blue - luma) / 1.8556, 224.0);
+    return 128.0 + 224.0 * (blue - luma) / 1.8556;
 }
 
-std::uint8_t RedDifference(double red, double green, double blue) {
+double RedDifference(double red, double green, double blue) {
     const double luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-    return Limited(128.0 / 224.0 + (red - luma) / 1.5748, 224.0);
+    return 128.0 + 224.0 * (red - luma) / 1.5748;
 }
 
 int CheckParam(const VideoRecordingParam* param) {
@@ -123,46 +123,53 @@ int APS5_VABI sceVideoRecordingCopyBGRAtoNV12(void* dst, const void* src, uint32
     if ((width & 1u) != 0 || (height & 1u) != 0) return ErrorInvalidArgument;
     const std::uint64_t pixels = static_cast<std::uint64_t>(width) * height;
     if (pixels > std::numeric_limits<std::size_t>::max() / 4) return ErrorInvalidArgument;
-    const std::size_t sourceBytes = static_cast<std::size_t>(pixels) * 4;
-    const std::size_t outputBytes = static_cast<std::size_t>(pixels) + static_cast<std::size_t>(pixels / 2);
-    std::vector<std::uint8_t> input(sourceBytes);
-    std::vector<std::uint8_t> output(outputBytes);
-    const int savedErrno = errno;
-    const bool read = GuestCopyIn_nid_no_patch(input.data(), src, sourceBytes);
-    errno = savedErrno;
-    if (!read) return ErrorInvalidArgument;
-    for (std::uint32_t row = 0; row < height; ++row) {
-        for (std::uint32_t column = 0; column < width; ++column) {
-            const std::size_t offset = (static_cast<std::size_t>(row) * width + column) * 4;
-            const double blue = input[offset] / 255.0;
-            const double green = input[offset + 1] / 255.0;
-            const double red = input[offset + 2] / 255.0;
-            output[static_cast<std::size_t>(row) * width + column] = Luma(red, green, blue);
-        }
-    }
+    const std::size_t rowBytes = static_cast<std::size_t>(width) * 4;
     const std::size_t chromaBase = static_cast<std::size_t>(pixels);
-    for (std::uint32_t row = 0; row < height; row += 2) {
+    std::vector<std::uint8_t> evenRow(rowBytes);
+    std::vector<std::uint8_t> oddRow(rowBytes);
+    std::vector<std::uint8_t> lumaRow(width);
+    std::vector<std::uint8_t> chromaRow(width);
+    auto* const destination = static_cast<std::uint8_t*>(dst);
+    const auto* const source = static_cast<const std::uint8_t*>(src);
+    const int savedErrno = errno;
+    for (std::uint32_t row = 0; row < height; ++row) {
+        std::vector<std::uint8_t>& input = (row & 1u) == 0 ? evenRow : oddRow;
+        if (!GuestCopyIn_nid_no_patch(input.data(), source + static_cast<std::size_t>(row) * rowBytes, rowBytes)) {
+            errno = savedErrno;
+            return ErrorInvalidArgument;
+        }
+        for (std::uint32_t column = 0; column < width; ++column) {
+            const std::size_t offset = static_cast<std::size_t>(column) * 4;
+            lumaRow[column] = Limited(Luma(input[offset + 2] / 255.0, input[offset + 1] / 255.0, input[offset] / 255.0));
+        }
+        if (!GuestCopyOut_nid_no_patch(destination + static_cast<std::size_t>(row) * width, lumaRow.data(), width)) {
+            errno = savedErrno;
+            return ErrorInvalidArgument;
+        }
+        if ((row & 1u) == 0) continue;
         for (std::uint32_t column = 0; column < width; column += 2) {
             double blueDifference = 0.0;
             double redDifference = 0.0;
-            for (std::uint32_t dy = 0; dy < 2; ++dy) {
+            for (const auto* plane : {&evenRow, &oddRow}) {
                 for (std::uint32_t dx = 0; dx < 2; ++dx) {
-                    const std::size_t offset = (static_cast<std::size_t>(row + dy) * width + column + dx) * 4;
-                    const double blue = input[offset] / 255.0;
-                    const double green = input[offset + 1] / 255.0;
-                    const double red = input[offset + 2] / 255.0;
+                    const std::size_t offset = static_cast<std::size_t>(column + dx) * 4;
+                    const double blue = (*plane)[offset] / 255.0;
+                    const double green = (*plane)[offset + 1] / 255.0;
+                    const double red = (*plane)[offset + 2] / 255.0;
                     blueDifference += BlueDifference(red, green, blue);
                     redDifference += RedDifference(red, green, blue);
                 }
             }
-            const std::size_t offset = chromaBase + static_cast<std::size_t>(row / 2) * width + column;
-            output[offset] = static_cast<std::uint8_t>(std::lround(blueDifference / 4.0));
-            output[offset + 1] = static_cast<std::uint8_t>(std::lround(redDifference / 4.0));
+            chromaRow[column] = Limited(blueDifference / 4.0);
+            chromaRow[column + 1] = Limited(redDifference / 4.0);
+        }
+        if (!GuestCopyOut_nid_no_patch(destination + chromaBase + static_cast<std::size_t>(row / 2) * width, chromaRow.data(), width)) {
+            errno = savedErrno;
+            return ErrorInvalidArgument;
         }
     }
-    const bool written = GuestCopyOut_nid_no_patch(dst, output.data(), output.size());
     errno = savedErrno;
-    return written ? 0 : ErrorInvalidArgument;
+    return 0;
 }
 
 int APS5_VABI sceVideoRecordingGetInfo(std::int32_t info, void*, std::size_t) {
