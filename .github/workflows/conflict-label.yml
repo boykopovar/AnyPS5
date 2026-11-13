@@ -4,18 +4,15 @@ on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
-  pull_request_target:
-    types: [synchronize, reopened]
 
 permissions: {}
 
 concurrency:
-  group: conflict-label-${{ github.event.pull_request.number || 'sweep' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+  group: conflict-label
+  cancel-in-progress: false
 
 jobs:
   label:
-    if: github.event_name != 'pull_request_target'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -25,27 +22,3 @@ jobs:
         with:
           dirtyLabel: needs rebase
           repoToken: ${{ secrets.GITHUB_TOKEN }}
-
-  pr:
-    if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      pull-requests: write
-    steps:
-      - env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          for attempt in $(seq 1 20); do
-            state=$(gh api "repos/$GH_REPO/pulls/$PR" --jq '"\(.mergeable) \(any(.labels[]; .name == "needs rebase"))"')
-            read -r mergeable labeled <<< "$state"
-            [ "$mergeable" != null ] && break
-            sleep 15
-          done
-          if [ "$mergeable" = true ] && [ "$labeled" = true ]; then
-            gh api -X DELETE "repos/$GH_REPO/issues/$PR/labels/needs%20rebase" --silent
-          elif [ "$mergeable" = false ] && [ "$labeled" = false ]; then
-            gh api "repos/$GH_REPO/issues/$PR/labels" -f 'labels[]=needs rebase' --silent
-          fi
