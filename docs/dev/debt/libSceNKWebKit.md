@@ -47,6 +47,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [WTF language exports](../../../core/libs/prx/libSceNKWebKit/src/WtfLanguage.cpp) call language change observers in registration order; the console iterates a `HashMap` keyed by context in hash-table order. The 16-byte `Vector<String>` layout and the rest of the behavior follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Language.cpp) and have no console verification. Null and `-1` contexts and null observers throw instead of reproducing undefined behavior. Closes when: compared with a console module.
 
+- [Inspector::ScriptCallFrame](../../../core/libs/prx/libSceNKWebKit/src/InspectorScriptCallFrame.cpp), [ScriptCallStack](../../../core/libs/prx/libSceNKWebKit/src/InspectorScriptCallStack.cpp) and [AsyncStackTrace](../../../core/libs/prx/libSceNKWebKit/src/InspectorAsyncStackTrace.cpp) exports have no console verification; their 40-, 40- and 32-byte layouts follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/tree/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/JavaScriptCore/inspector). The `ScriptCallFrame` field getters and `ScriptCallStack::size` already implemented in [FieldGetters.cpp](../../../core/libs/prx/libSceNKWebKit/src/FieldGetters.cpp) now use the pinned frame layout: `sourceID` at offset 24, `lineNumber` at 28 and `columnNumber` at 32; `JSC::SourceID` is a `uint32_t` and the frame is 40 bytes. An out-of-range `ScriptCallStack::at`, a reference count that would wrap, a removal from a parent with no children, a frame vector with frames but no buffer, and null objects throw where the console reads out of bounds or wraps. `buildInspectorObject` and `buildInspectorArray` still throw: they need `JSON` values. Closes when: compared with a console module and `JSON` values exist.
 - [Inspector::FrontendRouter](../../../core/libs/prx/libSceNKWebKit/src/InspectorFrontendRouter.cpp) and [AgentRegistry](../../../core/libs/prx/libSceNKWebKit/src/InspectorAgentRegistry.cpp) exports have no console verification. They call guest `FrontendChannel` and `InspectorAgentBase` vtables with the slots from the [PS5 11.x WebKit headers](https://github.com/neonmodder123/PS5-WebKit-11.x/tree/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/JavaScriptCore/inspector) (destructor pair first, then declaration order), and use the 40- and 16-byte layouts and the `Vector` growth and clear rules of that source. The refcount is a relaxed atomic in the same 4 bytes; the pinned `RefCounted` is not. A null channel or agent throws before any callback; one that connects or disconnects during dispatch iterates the vector as the console does, which is undefined when it reallocates. Closes when: compared with a console module.
 
 - [WTF::Logger exports](../../../core/libs/prx/libSceNKWebKit/src/WtfLogger.cpp) have no console ABI or behavior verification. They follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Logger.cpp). A null `self`, a null method name or an oversized string throws instead of reproducing the upstream crash. Closes when: compared with a console module.
@@ -161,7 +162,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5950 of the 8703 inventory declarations listed below throw through NotImplemented_nid_no_patch; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5927 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -4332,13 +4333,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector14InspectorAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE` | `mhviITFdt+M` |
 | `_ZN9Inspector14InspectorAgentD0Ev` | `XEzAnNpXVaw` |
 | `_ZN9Inspector14InspectorAgentD2Ev` | `evOComLiuD4` |
-| `_ZN9Inspector15AsyncStackTrace18didCancelAsyncCallEv` | `91bSJvzfgEA` |
-| `_ZN9Inspector15AsyncStackTrace20didDispatchAsyncCallEv` | `67P8MiTuxKc` |
-| `_ZN9Inspector15AsyncStackTrace21willDispatchAsyncCallEm` | `sy62mPCxbTs` |
-| `_ZN9Inspector15AsyncStackTrace6removeEv` | `tmeC+p2Gbr0` |
-| `_ZN9Inspector15AsyncStackTrace8truncateEm` | `kkTcZskp1i4` |
-| `_ZN9Inspector15AsyncStackTraceD1Ev` | `6Z+fdt4pe2s` |
-| `_ZN9Inspector15AsyncStackTraceD2Ev` | `IaYzxLnoJWE` |
 | `_ZN9Inspector15InspectorTarget17setResumeCallbackEON3WTF8FunctionIFvvEEE` | `mpk5RNj6HKg` |
 | `_ZN9Inspector15InspectorTarget5pauseEv` | `JGYMjGdyi+E` |
 | `_ZN9Inspector15InspectorTarget6resumeEv` | `XiMnw9g4tsI` |
@@ -4381,16 +4375,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector15ScriptArgumentsC2EPN3JSC14JSGlobalObjectEON3WTF6VectorINS1_6StrongINS1_7UnknownELNS1_30ShouldStrongDestructorGrabLockE0EEELm0ENS4_15CrashOnOverflowELm16ENS4_10FastMallocEEE` | `AvV0x-vhNR4` |
 | `_ZN9Inspector15ScriptArgumentsD1Ev` | `cALfJh14EPs` |
 | `_ZN9Inspector15ScriptArgumentsD2Ev` | `Y9SIVGvL-80` |
-| `_ZN9Inspector15ScriptCallFrameC1ERKS0_` | `eMu9G7-Gub4` |
-| `_ZN9Inspector15ScriptCallFrameC2ERKS0_` | `7dFxmg4wSRM` |
-| `_ZN9Inspector15ScriptCallFrameD1Ev` | `Er4YajbBg2k` |
-| `_ZN9Inspector15ScriptCallFrameD2Ev` | `sJYcP569Utk` |
-| `_ZN9Inspector15ScriptCallFrameaSERKS0_` | `IwOCxQwCP9o` |
-| `_ZN9Inspector15ScriptCallStack6createEv` | `iXu7XuFfBhU` |
-| `_ZN9Inspector15ScriptCallStackC1Ev` | `6gMiKfIw270` |
-| `_ZN9Inspector15ScriptCallStackC2Ev` | `6z6RTJBjblE` |
-| `_ZN9Inspector15ScriptCallStackD1Ev` | `xeHNDZ8Sk3E` |
-| `_ZN9Inspector15ScriptCallStackD2Ev` | `WYtEjQIlrDY` |
 | `_ZN9Inspector16toInspectorValueEPN3JSC14JSGlobalObjectENS0_7JSValueE` | `4T4GgJjNBHA` |
 | `_ZN9Inspector17BackendDispatcher12CallbackBase11sendFailureERKN3WTF6StringE` | `uEN6W+91atQ` |
 | `_ZN9Inspector17BackendDispatcher12CallbackBase7disableEv` | `GvHRNpJ7Qts` |
@@ -5721,8 +5705,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK9Inspector14InjectedScript14wrapJSONStringERKN3WTF6StringES4_b` | `mCR32lk338U` |
 | `_ZNK9Inspector14InjectedScript9wrapTableEN3JSC7JSValueES2_` | `5G4TSqmhiF4` |
 | `_ZNK9Inspector15AsyncStackTrace20buildInspectorObjectEv` | `XS8CSiOlDVI` |
-| `_ZNK9Inspector15AsyncStackTrace8isLockedEv` | `zXiD0GC9Vh8` |
-| `_ZNK9Inspector15AsyncStackTrace9isPendingEv` | `YPyYVEu-17g` |
 | `_ZNK9Inspector15InspectorTarget8isPausedEv` | `KrfpsXXdW-w` |
 | `_ZNK9Inspector15RemoteInspector16listingForTargetERKNS_24RemoteControllableTargetE` | `w+T7oawE1mg` |
 | `_ZNK9Inspector15RemoteInspector21hasActiveDebugSessionEv` | `P0V8cbW+Z-E` |
@@ -5736,11 +5718,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK9Inspector15ScriptArguments7isEqualERKS0_` | `oHFYzEYKvhw` |
 | `_ZNK9Inspector15ScriptCallFrame20buildInspectorObjectEv` | `k0+WgfI1FWM` |
 | `_ZNK9Inspector15ScriptCallFrame7isEqualERKS0_` | `osFy-sM72sI` |
-| `_ZNK9Inspector15ScriptCallFrame8isNativeEv` | `uyWPJAXD42g` |
 | `_ZNK9Inspector15ScriptCallStack19buildInspectorArrayEv` | `7SpuXhuQ4xs` |
-| `_ZNK9Inspector15ScriptCallStack23firstNonNativeCallFrameEv` | `jYo1kdU3L-E` |
-| `_ZNK9Inspector15ScriptCallStack2atEm` | `vJDHUZsipug` |
-| `_ZNK9Inspector15ScriptCallStack7isEqualEPS0_` | `i6Bx31ccE6g` |
 | `_ZNK9Inspector17BackendDispatcher12CallbackBase8isActiveEv` | `5nd7FB7MQhE` |
 | `_ZNK9Inspector17BackendDispatcher17hasProtocolErrorsEv` | `ODo1XDHSsx0` |
 | `_ZNK9Inspector17BackendDispatcher8isActiveEv` | `dSs0x+rJyoI` |
