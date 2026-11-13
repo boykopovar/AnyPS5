@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libSceNKWebKit/include/SecurityPolicyExports.hpp"
 #include "prx/libSceNKWebKit/include/CredentialBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/HTTPHeaderFieldExports.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
@@ -6,7 +7,10 @@
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
 #include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"
+#include "prx/libSceNKWebKit/include/FieldGettersExports.hpp"
 #include "prx/libSceNKWebKit/include/FieldSettersExports.hpp"
+#include "prx/libSceNKWebKit/include/InspectorFrontendRouterExports.hpp"
+#include "prx/libSceNKWebKit/include/InspectorExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
 #include "prx/libSceNKWebKit/include/NoOpExports.hpp"
@@ -15,6 +19,7 @@
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
 #include "prx/libSceNKWebKit/include/SecurityOriginExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/include/ColorSpaceExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreParsersExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitConfigExports.hpp"
@@ -36,3 +41,5 @@
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
+#include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"
+#include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
