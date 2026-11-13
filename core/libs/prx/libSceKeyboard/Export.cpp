@@ -100,9 +100,8 @@ int APS5_VABI sceKeyboardSetProcessPrivilege(std::uint8_t privilege) {
     return 0;
 }
 
-int APS5_VABI sceDbgKeyboardClose() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceDbgKeyboardClose(int32_t handle) {
+    return sceKeyboardClose(handle);
 }
 
 int APS5_VABI sceDbgKeyboardGetKey2Char() {
@@ -110,14 +109,12 @@ int APS5_VABI sceDbgKeyboardGetKey2Char() {
     return 0;
 }
 
-int APS5_VABI sceDbgKeyboardInit() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceDbgKeyboardInit(void) {
+    return sceKeyboardInit();
 }
 
-int APS5_VABI sceDbgKeyboardOpen() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceDbgKeyboardOpen(int userId, int32_t type, int32_t index, const void* param) {
+    return sceKeyboardOpen(userId, type, index, param);
 }
 
 int APS5_VABI sceDbgKeyboardRead() {
