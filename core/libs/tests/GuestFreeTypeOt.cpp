@@ -33,6 +33,7 @@ struct Exports {
     decltype(&FT_Sin_nid_postfix) sin;
     decltype(&FT_Tan_nid_postfix) tan;
     decltype(&FT_Vector_Unit_nid_postfix) vectorUnit;
+    decltype(&FT_Glyph_Get_CBox_nid_postfix) glyphGetCBox;
     decltype(&FT_Outline_Get_Orientation_nid_postfix) orientation;
     decltype(&FT_Outline_Copy_nid_postfix) copy;
     decltype(&FT_Outline_Decompose_nid_postfix) decompose;
@@ -253,6 +254,14 @@ void Glyphs() {
     FreeType::GuestGlyphRec* glyph = nullptr;
     FT_Glyph nativeGlyph = nullptr;
     Require(forwarded.getGlyph(face->glyph, &glyph) == 0 && glyph && FT_Get_Glyph(oracle->glyph, &nativeGlyph) == 0, "get glyph");
+    for (const std::uint32_t mode : {FT_GLYPH_BBOX_UNSCALED, FT_GLYPH_BBOX_SUBPIXELS, FT_GLYPH_BBOX_GRIDFIT, FT_GLYPH_BBOX_TRUNCATE, FT_GLYPH_BBOX_PIXELS}) {
+        FreeType::GuestBBox actual{};
+        FT_BBox expected{};
+        ot.glyphGetCBox(glyph, mode, &actual);
+        FT_Glyph_Get_CBox(nativeGlyph, mode, &expected);
+        Require(actual.xMin == expected.xMin && actual.yMin == expected.yMin && actual.xMax == expected.xMax && actual.yMax == expected.yMax,
+                "FT_Glyph_Get_CBox");
+    }
     FreeType::GuestGlyphRec* copy = glyph;
     FT_Glyph nativeCopy = nativeGlyph;
     Require(forwarded.copyGlyph(nullptr, &copy) == FT_Glyph_Copy(nullptr, &nativeCopy) && copy == glyph, "copy null glyph");
@@ -447,6 +456,7 @@ int main(int argc, char** argv) {
 #endif
     Require(library != nullptr, "load requested library");
     Resolve(ot.outlineBitmap, library, patched, "4RRjK-Wd1lU", "sceFreeTypeOtOutlineGetBitmap_nid_no_patch");
+    Resolve(ot.glyphGetCBox, library, patched, "avLzN0tTxLI", "sceFreeTypeOtGlyphGetCBox_nid_no_patch");
     Require(ot.outlineBitmap(nullptr, nullptr, nullptr) == FT_Outline_Get_Bitmap(nullptr, nullptr, nullptr),
             "outline bitmap without library");
 #ifdef _WIN32
