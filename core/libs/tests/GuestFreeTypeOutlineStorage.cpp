@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 using namespace FreeType;
 
@@ -33,6 +34,7 @@ static void Compare(GuestLibrary& library, FT_Library native, std::uint32_t poin
     }
     for (std::int32_t index = 0; nativeError == 0 && index < contours; ++index) Require(guest.contours[index] == 0);
     Require(FT_Outline_Done_nid_postfix(&library, &guest) == FT_Outline_Done(native, &expected));
+    Require(FT_Outline_Done_nid_postfix(&library, &guest) == FT_Outline_Done(native, &expected));
     Require(guest.n_points == 0 && guest.n_contours == 0 && guest.flags == 0);
     Require(!guest.points && !guest.tags && !guest.contours);
 }
@@ -42,7 +44,9 @@ int main() {
     FT_Library native = nullptr;
     Require(FT_Init_FreeType(&library.host) == 0 && FT_Init_FreeType(&native) == 0);
     for (const std::uint32_t points : {0u, 1u, 7u, 65535u, 65536u, 0xFFFFFFFFu}) {
-        for (const std::int32_t contours : {-1, 0, 1, 3, 7, 8, 65535}) Compare(library, native, points, contours);
+        for (const std::int32_t contours : {std::numeric_limits<std::int32_t>::min(), -2, -1, 0, 1, 3, 7, 8, 65535}) {
+            Compare(library, native, points, contours);
+        }
     }
     GuestOutline outline{};
     Require(FT_Outline_New_nid_postfix(nullptr, 3, 1, &outline) == FT_Err_Invalid_Library_Handle);

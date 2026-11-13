@@ -2,6 +2,17 @@ target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/Bio.cpp ${CM
 target_link_libraries(libSceLibreSsl PRIVATE libc libSceNet)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_libressl_pem_read_bio_x509_aux_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslPemReadBioX509Aux.cpp)
+    target_include_directories(guest_libressl_pem_read_bio_x509_aux_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_pem_read_bio_x509_aux_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_pem_read_bio_x509_aux_tests)
+    add_test(NAME guest_libressl_pem_read_bio_x509_aux COMMAND guest_libressl_pem_read_bio_x509_aux_tests)
+    set_tests_properties(guest_libressl_pem_read_bio_x509_aux PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_pem_read_bio_x509_aux PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
     add_test_executable(guest_libressl_bio_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslBio.cpp)
     target_include_directories(guest_libressl_bio_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl_bio_tests PRIVATE libSceLibreSsl libc)
@@ -32,4 +43,19 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl_bio_patched PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:${PATCHED_DIR}")
     endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_file_bio_gets_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslFileBioGets.cpp)
+    target_include_directories(guest_libressl_file_bio_gets_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_file_bio_gets_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_file_bio_gets_tests)
+    foreach(case leading_nul interior_nul ordinary truncated capacity_one capacity_two eof empty nonpositive read_error null_arguments)
+        add_test(NAME guest_libressl_file_bio_gets_${case} COMMAND guest_libressl_file_bio_gets_tests ${case})
+        set_tests_properties(guest_libressl_file_bio_gets_${case} PROPERTIES TIMEOUT 30)
+        if(WIN32)
+            set_tests_properties(guest_libressl_file_bio_gets_${case} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+        endif()
+    endforeach()
 endif()

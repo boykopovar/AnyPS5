@@ -42,6 +42,16 @@ bool Recomputable(IrOpcode opcode) {
         case IrOpcode::FPAbs32:
         case IrOpcode::FPNeg32:
         case IrOpcode::FPSaturate32:
+        case IrOpcode::IAdd16x2:
+        case IrOpcode::ISub16x2:
+        case IrOpcode::IMul16x2:
+        case IrOpcode::ShiftLeftLogical16x2:
+        case IrOpcode::ShiftRightLogical16x2:
+        case IrOpcode::ShiftRightArithmetic16x2:
+        case IrOpcode::SMin16x2:
+        case IrOpcode::SMax16x2:
+        case IrOpcode::UMin16x2:
+        case IrOpcode::UMax16x2:
         case IrOpcode::BitFieldInsert:
         case IrOpcode::BitFieldUExtract:
         case IrOpcode::BitFieldSExtract:
