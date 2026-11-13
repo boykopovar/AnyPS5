@@ -44,6 +44,19 @@
 
 #include <stdexcept>
 
+namespace {
+
+constexpr int ReleaseSlot = 1;
+
+void ReleaseReference(void* object) {
+    if (!object) return;
+    using Release = int (APS5_VABI*)(const void*);
+    const auto* vtable = *static_cast<const void* const* const*>(object);
+    reinterpret_cast<Release>(const_cast<void*>(vtable[ReleaseSlot]))(object);
+}
+
+}
+
 extern "C" {
 
 void APS5_VABI _ZN6webrtc10AudioState6ConfigC1Ev_nid_postfix(WebRtcAudioStateConfig* config) {
@@ -53,6 +66,15 @@ void APS5_VABI _ZN6webrtc10AudioState6ConfigC1Ev_nid_postfix(WebRtcAudioStateCon
     config->audioProcessing = nullptr;
     config->audioDeviceModule = nullptr;
     config->asyncAudioProcessingFactory = nullptr;
+}
+
+void APS5_VABI _ZN6webrtc10AudioState6ConfigD1Ev_nid_postfix(WebRtcAudioStateConfig* config) {
+    if (!config)
+        throw std::invalid_argument("AudioState::Config destructor requires a config");
+    ReleaseReference(config->asyncAudioProcessingFactory);
+    ReleaseReference(config->audioDeviceModule);
+    ReleaseReference(config->audioProcessing);
+    ReleaseReference(config->audioMixer);
 }
 
 }
