@@ -114,6 +114,10 @@ int main() {
         }
         close(udmabuf);
         const auto limit = UdmabufLimitBytes();
+        if (limit >= 2 * ChunkBytes) {
+            std::printf("skipped, udmabuf size_limit_mb is at least %llu: one list of both runs fits under it\n", static_cast<unsigned long long>((2 * ChunkBytes) >> 20u));
+            return 77;
+        }
         auto device = OpenVulkanTestDevice();
         if (!device) return 77;
 
@@ -135,7 +139,6 @@ int main() {
         }
 
         // Two 64 MiB segments = 128 MiB total, above a default 64 MiB udmabuf limit.
-        Require(2 * ChunkBytes > limit, "scattered import: run this where the udmabuf limit is below two chunks");
         mappingBytes = 2 * ChunkBytes;
         const std::uint64_t fileBytes = 3 * ChunkBytes;
         backing = memfd_create("anyps5-scattered-runs", MFD_CLOEXEC | MFD_ALLOW_SEALING);

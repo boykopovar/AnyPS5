@@ -5,10 +5,12 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cerrno>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cerrno>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -262,11 +264,15 @@ int APS5_VABI sceUltMutexOptParamInitialize(UltMutexOptParam* optParam, std::uin
     if ((reinterpret_cast<std::uintptr_t>(optParam) & 7u) != 0) {
         return ULT_ERROR_ALIGNMENT;
     }
-    std::memset(optParam, 0, sizeof(*optParam));
-    optParam->header[0] = 0x6C696275;
-    optParam->header[1] = 0x6C746D61;
-    optParam->header[2] = 0x67696300;
-    optParam->buildVersion = buildVersion;
+    UltMutexOptParam local{};
+    local.header[0] = 0x6C696275;
+    local.header[1] = 0x6C746D61;
+    local.header[2] = 0x67696300;
+    local.buildVersion = buildVersion;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(optParam, &local, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -403,6 +409,9 @@ int APS5_VABI sceUltMutexTryLock(void* mutex) {
         return ULT_ERROR_STATE;
     }
     if (state->_owner == self) {
+        if (state->_attribute == 0) {
+            return ULT_ERROR_STATE;
+        }
         ++state->_lockCount;
         return ULT_OK;
     }
@@ -848,11 +857,12 @@ int APS5_VABI sceUltSemaphoreDestroy(void* semaphore) {
 }
 
 int APS5_VABI sceUltUlthreadRuntimeOptParamInitialize(UltUlthreadRuntimeOptParam* optParam, std::uint32_t buildVersion) {
-    (void)buildVersion;
     if (optParam == nullptr) {
         return ULT_ERROR_NULL;
     }
+    const std::uint32_t defaults[] = {0x6C696275, 0x6C746D61, 0x67696300, buildVersion, 0x4000, 0, 0x1FFF, 0, 0x2BC, 4};
     std::memset(optParam, 0, sizeof(*optParam));
+    std::memcpy(optParam->bytes, defaults, sizeof(defaults));
     return ULT_OK;
 }
 
@@ -865,10 +875,14 @@ std::uint64_t APS5_VABI sceUltUlthreadRuntimeGetWorkAreaSize(std::uint32_t maxNu
 }
 
 int APS5_VABI sceUltUlthreadRuntimeCreate(void* runtime, const char* name, std::uint32_t maxNumUlthread, std::uint32_t numWorkerThread, void* workArea, const void* optParam, std::uint32_t buildVersion) {
-    (void)optParam;
     (void)buildVersion;
     if (runtime == nullptr) {
         return ULT_ERROR_NULL;
+    }
+    if (optParam != nullptr) {
+        std::uint32_t header[3];
+        std::memcpy(header, optParam, sizeof(header));
+        if (header[0] != 0x6C696275 || header[1] != 0x6C746D61 || header[2] != 0x67696300) return ULT_ERROR_INVALID;
     }
     std::memset(runtime, 0, 4096);
     UltRuntimeState state{maxNumUlthread, numWorkerThread, workArea};
@@ -1104,15 +1118,19 @@ int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThr
     }
     if (capacity != 0 && state->_waiters != 0) NotImplemented_nid_no_patch(__func__);
     if (state->_lockCount != 0 && (state->_attribute != 0 || state->_lockCount > 1 || state->_ownerIdentity.type != 1)) NotImplemented_nid_no_patch(__func__);
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltMutexInfo);
-    info->object = object;
-    std::memcpy(info->name, state->_name, sizeof(info->name));
-    info->waitingQueuePool = state->_waitingPool;
-    info->owner = state->_ownerIdentity.thread;
-    info->ownerType = state->_ownerIdentity.type;
-    info->attributes = state->_attribute;
-    info->waitingThreads = state->_waiters;
+    UltMutexInfo localInfo{};
+    localInfo.size = sizeof(UltMutexInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
+    localInfo.waitingQueuePool = state->_waitingPool;
+    localInfo.owner = state->_ownerIdentity.thread;
+    localInfo.ownerType = state->_ownerIdentity.type;
+    localInfo.attributes = state->_attribute;
+    localInfo.waitingThreads = state->_waiters;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -1183,13 +1201,14 @@ int APS5_VABI sceUltGetSemaphoreInfo(void* object, UltSemaphoreInfo* info, UltWa
     std::lock_guard stateLock(state->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
     if (capacity != 0 && state->_waiters != 0) NotImplemented_nid_no_patch(__func__);
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltSemaphoreInfo);
-    info->object = object;
-    std::memcpy(info->name, state->_name, sizeof(info->name));
-    info->waitingQueuePool = state->_waitingPool;
-    info->resources = static_cast<std::uint32_t>(state->_resources);
-    info->waitingThreads = state->_waiters;
+    UltSemaphoreInfo localInfo{};
+    localInfo.size = sizeof(UltSemaphoreInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
+    localInfo.waitingQueuePool = state->_waitingPool;
+    localInfo.resources = static_cast<std::uint32_t>(state->_resources);
+    localInfo.waitingThreads = state->_waiters;
+    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -1202,12 +1221,16 @@ int APS5_VABI sceUltGetUlthreadInfo(void* object, UltUlthreadInfo* info) {
         if (it == gUlthreads.end()) return ULT_ERROR_STATE;
         state = it->second;
     }
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltUlthreadInfo);
-    info->object = object;
-    std::memcpy(info->name, state->_name, sizeof(info->name));
-    info->runtime = state->_runtime;
-    info->contextAttribute = state->_contextAttribute;
+    UltUlthreadInfo localInfo{};
+    localInfo.size = sizeof(UltUlthreadInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
+    localInfo.runtime = state->_runtime;
+    localInfo.contextAttribute = state->_contextAttribute;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -1220,12 +1243,12 @@ int APS5_VABI sceUltGetUlthreadRuntimeInfo(void* runtime, UltUlthreadRuntimeInfo
     const auto it = gRuntimes.find(runtime);
     if (it == gRuntimes.end()) return ULT_ERROR_STATE;
     const auto& state = it->second;
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltUlthreadRuntimeInfo);
-    info->object = runtime;
-    std::memcpy(info->name, state._name, sizeof(info->name));
-    info->maxUlthreads = state._maxNumUlthread;
-    info->workerThreads = state._numWorkerThread;
+    UltUlthreadRuntimeInfo localInfo{};
+    localInfo.size = sizeof(UltUlthreadRuntimeInfo);
+    localInfo.object = runtime;
+    std::memcpy(localInfo.name, state._name, sizeof(localInfo.name));
+    localInfo.maxUlthreads = state._maxNumUlthread;
+    localInfo.workerThreads = state._numWorkerThread;
     std::uint32_t count = 0;
     for (const auto& [obj, ulthread] : gUlthreads) {
         if (ulthread->_runtime == runtime && !ulthread->_exited.load(std::memory_order_acquire)) {
@@ -1235,7 +1258,11 @@ int APS5_VABI sceUltGetUlthreadRuntimeInfo(void* runtime, UltUlthreadRuntimeInfo
             ++count;
         }
     }
-    info->activeUlthreads = count;
+    localInfo.activeUlthreads = count;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 

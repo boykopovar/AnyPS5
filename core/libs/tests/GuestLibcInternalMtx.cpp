@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
@@ -68,5 +69,25 @@ int main() {
 
     PthreadMutex untouched = nullptr;
     Require(_Mtxdst_nid_postfix(&untouched) == 0, "destroying a zeroed mutex succeeds");
+
+    constexpr int Plain = 0x01;
+    constexpr int Recursive = 0x100;
+    constexpr int Busy = 3;
+    PthreadMutex overridden = nullptr;
+    Require(_ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix(reinterpret_cast<void**>(&overridden), Plain | Recursive, "Override") == 0, "a named override init succeeds");
+    Require(overridden != nullptr, "a named override init stores a mutex");
+    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&overridden)) == 0, "the override mutex locks");
+    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&overridden)) == 0, "a recursive override mutex locks again");
+    Require(OnOtherThread(TryLock, &overridden) != 0, "another thread cannot take a held override mutex");
+    Require(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&overridden)) == 0, "the override mutex unlocks once");
+    Require(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&overridden)) == 0, "the override mutex unlocks twice");
+    Require(_ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&overridden)) == 0, "the override mutex is destroyed");
+
+    PthreadMutex plainOverride = nullptr;
+    Require(_ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix(reinterpret_cast<void**>(&plainOverride), Plain, nullptr) == 0, "an override init without a name succeeds");
+    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&plainOverride)) == 0, "the plain override mutex locks");
+    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&plainOverride)) == Busy, "a plain override mutex refuses a second lock");
+    Require(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&plainOverride)) == 0, "the plain override mutex unlocks");
+    Require(_ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&plainOverride)) == 0, "the plain override mutex is destroyed");
     return 0;
 }

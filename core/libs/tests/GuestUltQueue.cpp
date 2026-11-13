@@ -85,6 +85,8 @@ static void Validation() {
     CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(0, 0) == 64);
     CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(3, 2) == 320);
     CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(0, 0x08000000u) == 0x100000040ull);
+    CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(0x80000000u, 0) == 0x40ull);
+    CHECK(sceUltQueueDataResourcePoolGetWorkAreaSize(0x80000000u, 1, 0) == 0x80000060ull);
     bool overflow = false;
     try { sceUltQueueDataResourcePoolGetWorkAreaSize(1, UINT64_MAX, 1); }
     catch (const std::out_of_range&) { overflow = true; }

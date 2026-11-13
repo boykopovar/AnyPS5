@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -275,6 +276,59 @@ static void SocketNameFaults() {
     for (const int descriptor : {unconnected, accepted, client, listener}) Require(close_nid_postfix(descriptor) == 0);
 }
 
+static void BlockedReceiveEndsAtShutRead() {
+    enum Call { Receive, ReceiveFrom, ReceiveMessage, Read, ThroughDuplicate, WithTimeout, Calls };
+    for (int call = Receive; call < Calls; ++call) {
+        const int listener = socket_nid_postfix(2, 1, 0);
+        Require(listener >= 0);
+        std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+        Require(bind_nid_postfix(listener, address.data(), address.size()) == 0 && listen_nid_postfix(listener, 4) == 0);
+        std::uint32_t size = address.size();
+        Require(getsockname_nid_postfix(listener, address.data(), &size) == 0);
+        const int client = socket_nid_postfix(2, 1, 0);
+        Require(client >= 0 && connect_nid_postfix(client, address.data(), address.size()) == 0);
+        const int accepted = accept_nid_postfix(listener, nullptr, nullptr);
+        Require(accepted >= 0);
+        const int watched = call == ThroughDuplicate ? dup_nid_postfix(accepted) : accepted;
+        Require(watched >= 0);
+        if (call == WithTimeout) {
+            const KernelTimeval timeout{3, 0};
+            Require(setsockopt_nid_postfix(accepted, 0xffff, 0x1006, &timeout, sizeof(timeout)) == 0);
+        }
+        char buffer[8];
+        std::array<std::uint8_t, 16> sender{};
+        std::uint32_t senderSize = sender.size();
+        KernelIovec vector{buffer, sizeof(buffer)};
+        GuestMsghdr message{sender.data(), static_cast<std::uint32_t>(sender.size()), &vector, 1, nullptr, 0, -1};
+        std::atomic<bool> entered{false};
+        std::atomic<bool> returned{false};
+        std::int64_t received = -2;
+        std::chrono::steady_clock::duration waited{};
+        std::thread receiver([&] {
+            const auto start = std::chrono::steady_clock::now();
+            entered = true;
+            if (call == ReceiveFrom) received = recvfrom_nid_postfix(watched, buffer, sizeof(buffer), 0, sender.data(), &senderSize);
+            else if (call == ReceiveMessage) received = recvmsg_nid_postfix(watched, &message, 0);
+            else if (call == Read) received = read_nid_postfix(watched, buffer, sizeof(buffer));
+            else received = recv_nid_postfix(watched, buffer, sizeof(buffer), 0);
+            waited = std::chrono::steady_clock::now() - start;
+            returned = true;
+        });
+        while (!entered) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Require(!returned);
+        Require(shutdown_nid_postfix(accepted, 0) == 0);
+        for (int poll = 0; poll < 100 && !returned; ++poll) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        if (!returned) Require(shutdown_nid_postfix(client, 2) == 0);
+        receiver.join();
+        Require(received == 0 && waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(2));
+        if (call == ReceiveFrom) Require(senderSize == 0);
+        if (call == ReceiveMessage) Require(message.nameLength == 0 && message.flags == 0);
+        if (call == ThroughDuplicate) Require(close_nid_postfix(watched) == 0);
+        for (const int descriptor : {client, accepted, listener}) Require(close_nid_postfix(descriptor) == 0);
+    }
+}
+
 int main() {
     StreamReceiveReportsNoSender();
     SocketNameFaults();
@@ -282,6 +336,7 @@ int main() {
     AcceptedSocketsFollowListenerBlocking();
     WaitAllReceivesTheWholeRequest();
     ReceiveAnsweredWithoutTheHost();
+    BlockedReceiveEndsAtShutRead();
     UnboundSocketNameIsZero();
     const int listener = socket_nid_postfix(2, 1, 6);
     Require(listener >= 0);

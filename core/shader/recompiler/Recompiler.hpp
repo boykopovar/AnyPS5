@@ -7,13 +7,16 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <span>
 #include <ranges>
+#include <stdexcept>
 #include <functional>
 #include <utility>
 #include <string_view>
@@ -64,6 +67,8 @@ struct ShaderComputeStageInfo {
     std::uint32_t threadIdComponentCount;
     std::array<std::uint32_t, 3> partialThreads;
     std::uint32_t scratchDwords = 0;
+    std::uint32_t granulatedVgprCount = 0;
+    std::uint32_t sharedVgprBlocks = 0;
 
     [[nodiscard]] bool PartialGroups() const {
         return partialThreads != std::array<std::uint32_t, 3>{};
@@ -185,8 +190,13 @@ struct TargetBlend {
 
 struct TargetMerge {
     std::uint8_t target = 0;
-    std::uint16_t mask = 0;
+    std::uint32_t mask = 0;
     std::uint8_t samples = 1;
+    ColorExportPacking packing = ColorExportPacking::None;
+    std::uint32_t blendControl = 0;
+    bool layered = false;
+    std::uint32_t firstSlice = 0;
+    std::uint32_t lastSlice = 0;
     std::array<std::uint32_t, 8> descriptor{};
     bool depthStencilWrites = false;
     bool depthStencilTests = false;
@@ -297,6 +307,13 @@ struct GuestContext {
     bool layerRowSamples = false;
 };
 
+struct SharedVectorRegisters {
+    std::uint32_t base = 0;
+    std::uint32_t count = 0;
+};
+
+[[nodiscard]] SharedVectorRegisters GuestSharedVectorRegisters(const GuestContext& context);
+
 struct MeshTargetLimits {
     std::array<std::uint32_t, 3> maxWorkgroupSize;
     std::uint32_t maxWorkgroupInvocations;
@@ -362,6 +379,8 @@ struct SpirvTarget {
     bool meshWindowBuffer = false;
     bool hostInterpolationFirst = false;
     bool shaderImageMinLod = false;
+    bool float16WidenNans = false;
+    bool float16NarrowNans = false;
 };
 
 struct BindingLayout {
@@ -531,6 +550,136 @@ enum class DescriptorRole {
     ImageStorageTable
 };
 
+class ElementFlags {
+public:
+    class reference {
+    public:
+        reference(ElementFlags& flags, std::size_t index) : flags(flags), index(index) {}
+        operator bool() const { return static_cast<const ElementFlags&>(flags)[index]; }
+        reference& operator=(bool flag) {
+            flags.set(index, flag);
+            return *this;
+        }
+        reference& operator=(const reference& other) { return *this = static_cast<bool>(other); }
+        void flip() { flags.set(index, !static_cast<bool>(*this)); }
+
+    private:
+        ElementFlags& flags;
+        std::size_t index;
+    };
+
+    class const_iterator {
+    public:
+        using iterator_category = std::forward_iterator_tag;
+        using value_type = bool;
+        using difference_type = std::ptrdiff_t;
+        using pointer = void;
+        using reference = bool;
+        const_iterator() = default;
+        const_iterator(const ElementFlags* flags, std::size_t index) : flags(flags), index(index) {}
+        bool operator*() const { return (*flags)[index]; }
+        const_iterator& operator++() {
+            ++index;
+            return *this;
+        }
+        const_iterator operator++(int) {
+            auto previous = *this;
+            ++index;
+            return previous;
+        }
+        bool operator==(const const_iterator& other) const { return index == other.index; }
+        bool operator!=(const const_iterator& other) const { return index != other.index; }
+
+    private:
+        const ElementFlags* flags = nullptr;
+        std::size_t index = 0;
+    };
+
+    ElementFlags() = default;
+    ElementFlags(std::initializer_list<bool> flags) {
+        for (const bool flag : flags) push_back(flag);
+    }
+    std::size_t size() const { return count; }
+    bool empty() const { return count == 0; }
+    bool operator[](std::size_t index) const { return count <= InlineFlags ? ((bits >> index) & 1u) != 0 : spill[index]; }
+    reference operator[](std::size_t index) { return {*this, index}; }
+    bool back() const { return (*this)[count - 1]; }
+    reference back() { return {*this, count - 1}; }
+    bool at(std::size_t index) const {
+        if (index >= count) throw std::out_of_range("ElementFlags::at");
+        return (*this)[index];
+    }
+    void push_back(bool flag) {
+        if (count < InlineFlags) {
+            if (flag) bits |= std::uint64_t{1} << count;
+            ++count;
+            return;
+        }
+        if (count == InlineFlags) {
+            for (std::size_t index = 0; index < InlineFlags; ++index) spill.push_back(((bits >> index) & 1u) != 0);
+        }
+        spill.push_back(flag);
+        ++count;
+    }
+    void clear() {
+        bits = 0;
+        count = 0;
+        spill.clear();
+    }
+    void assign(std::size_t size, bool flag) {
+        clear();
+        for (std::size_t index = 0; index < size; ++index) push_back(flag);
+    }
+    void resize(std::size_t size, bool flag = false) {
+        if (size < count) {
+            ElementFlags kept;
+            for (std::size_t index = 0; index < size; ++index) kept.push_back((*this)[index]);
+            *this = std::move(kept);
+            return;
+        }
+        while (count < size) push_back(flag);
+    }
+    const_iterator begin() const { return {this, 0}; }
+    const_iterator end() const { return {this, count}; }
+    bool operator==(const ElementFlags& other) const {
+        if (count != other.count) return false;
+        for (std::size_t index = 0; index < count; ++index) {
+            if ((*this)[index] != other[index]) return false;
+        }
+        return true;
+    }
+    bool operator==(const std::vector<bool>& other) const {
+        if (count != other.size()) return false;
+        for (std::size_t index = 0; index < count; ++index) {
+            if ((*this)[index] != other[index]) return false;
+        }
+        return true;
+    }
+    template<typename TVisit>
+    void ForEachSet(TVisit&& visit) const {
+        if (count <= InlineFlags) {
+            for (auto rest = bits; rest != 0; rest &= rest - 1) visit(static_cast<std::size_t>(std::countr_zero(rest)));
+            return;
+        }
+        for (auto it = std::find(spill.begin(), spill.end(), true); it != spill.end(); it = std::find(it + 1, spill.end(), true)) visit(static_cast<std::size_t>(it - spill.begin()));
+    }
+
+private:
+    void set(std::size_t index, bool flag) {
+        if (count > InlineFlags) {
+            spill[index] = flag;
+            return;
+        }
+        const auto bit = std::uint64_t{1} << index;
+        bits = flag ? bits | bit : bits & ~bit;
+    }
+
+    static constexpr std::size_t InlineFlags = 64;
+    std::uint64_t bits = 0;
+    std::size_t count = 0;
+    std::vector<bool> spill;
+};
+
 struct DescriptorBinding {
     DescriptorKind kind;
     DescriptorRole role;
@@ -540,30 +689,30 @@ struct DescriptorBinding {
     std::vector<std::uint32_t> guestDescriptor;
     bool readOnly = false;
     std::optional<DescriptorImageShape> imageShape;
-    std::vector<bool> samplerDepthCompare;
+    ElementFlags samplerDepthCompare;
     // Guest image elements the shader stores to (or updates atomically); the others are only read.
-    std::vector<bool> imageWritten;
-    std::vector<bool> imageDepthCompare;
-    std::vector<bool> imageAtomic;
-    std::vector<bool> imageAtomic64;
+    ElementFlags imageWritten;
+    ElementFlags imageDepthCompare;
+    ElementFlags imageAtomic;
+    ElementFlags imageAtomic64;
     std::vector<DescriptorImageShape> imageShapes;
     // Guest buffer elements the shader updates atomically (one entry per element of a GuestBuffers
     // binding, empty otherwise). An atomic on a host-imported range is a serialized PCIe round trip
     // (~0.4-0.5 us each on NVIDIA), so a driver may keep these elements in device-local memory.
-    std::vector<bool> bufferAtomic;
+    ElementFlags bufferAtomic;
     // Guest buffer elements the shader may store to through this V# (any store or atomic in the
     // program, whatever its offset), one entry per element of a GuestBuffers binding, empty
     // otherwise. A false entry is proved: every access of that element is a load. A driver may then
     // skip the write-back and the pending-write note for the element; an element beyond the vector
     // (a producer that does not fill it) must be treated as written.
-    std::vector<bool> bufferWritten;
-    std::vector<bool> samplerUnnormalized;
-    std::vector<bool> samplerIntegerBorder;
-    std::vector<bool> samplerCoordinatesIgnored;
-    std::vector<bool> imageUnnormalized;
-    std::vector<bool> imageUnnormalizedBaseLevel;
+    ElementFlags bufferWritten;
+    ElementFlags samplerUnnormalized;
+    ElementFlags samplerIntegerBorder;
+    ElementFlags samplerCoordinatesIgnored;
+    ElementFlags imageUnnormalized;
+    ElementFlags imageUnnormalizedBaseLevel;
     std::vector<std::uint64_t> imageSamplers;
-    std::vector<bool> bufferRead;
+    ElementFlags bufferRead;
     std::vector<std::uint32_t> bufferExtent;
 };
 

@@ -27,6 +27,7 @@ ISA_FORMS = Path(__file__).resolve().parent / "rdna2_isa_forms.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
+ASM_DEFINITION = re.compile(rf'\b(?:{"|".join(sorted(tokenizer.ASM_FUNCTION_MACROS))})\s*\(\s*"(\w+)"\s*\)')
 STUB = "NotImplemented_nid_no_patch"
 CALL = re.compile(r"\b(\w+)\s*\(")
 KEYWORDS = r"return|else|do|throw|co_return|co_await|co_yield|and|or|not|xor|bitand|bitor|compl"
@@ -85,6 +86,8 @@ OPCODE_VARIANTS = {
 }
 REPORT_ROWS = 100
 PANEL_WIDTH, GAP, MAP_HEIGHT, HEADER = 495, 10, 280, 30
+LIBRARY_TIERS = ("Large system libraries", "Medium system libraries", "Small system libraries")
+GRID_COLUMNS, GRID_ROW = 12, 28
 DONE_COLOR, TODO_COLOR, BORDER, TEXT = "#2ea043", "#6e7681", "#0d1117", "#ffffff"
 
 
@@ -169,11 +172,31 @@ def inert_wrappers(text):
         names |= found
 
 
+def shared_source_owners(path):
+    cmake = path / "CMakeLists.txt"
+    texts = [(CMAKE_SHARED, cmake.read_text(encoding="utf-8", errors="ignore"))] if cmake.is_file() else []
+    texts += [(SOURCE_SHARED, source.read_text(encoding="utf-8", errors="ignore")) for source in sorted(path.glob("*.cpp"))]
+    owners = [m[1] for pattern, content in texts for m in pattern.finditer(content)]
+    return list(dict.fromkeys(owner for owner in owners if owner != path.name and (path.parent / owner).is_dir()))
+
+
 def scan_library(path):
     done, todo, inert, live = set(), set(), set(), set()
-    texts = [code(source.read_text(encoding="utf-8", errors="ignore")) for source in path.rglob("*.cpp")
-             if "tests" not in source.relative_to(path).parts]
+    sources = [source.read_text(encoding="utf-8", errors="ignore") for source in path.rglob("*.cpp")
+               if "tests" not in source.relative_to(path).parts]
+    texts = [code(source) for source in sources]
     exported = {match.group(1) for text in texts for match in EXPORT.finditer(text)}
+    for source in sources:
+        definitions = {match.start(): match.group(1) for match in ASM_DEFINITION.finditer(source)}
+        if not definitions:
+            continue
+        for token in CPP_TOKEN.finditer(source):
+            if token.group("code") is None or token.start() not in definitions:
+                continue
+            name = definitions[token.start()]
+            if not name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) or name in exported:
+                done.add(name)
+                live.add(name)
     for text in texts:
         calls = stub_calls(text)
         wrappers = inert_wrappers(text)
@@ -193,11 +216,7 @@ def scan_library(path):
     group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
              "done_names": sorted(done), "todo_names": sorted(todo), "inert_names": sorted(inert)}
     if not (done or todo):
-        cmake = path / "CMakeLists.txt"
-        texts = [(CMAKE_SHARED, cmake.read_text(encoding="utf-8", errors="ignore"))] if cmake.is_file() else []
-        texts += [(SOURCE_SHARED, source.read_text(encoding="utf-8", errors="ignore")) for source in sorted(path.glob("*.cpp"))]
-        owners = [m[1] for pattern, content in texts for m in pattern.finditer(content)]
-        owners = [o for o in owners if o != path.name and (path.parent / o).is_dir()]
+        owners = shared_source_owners(path)
         if owners:
             group["shared_sources"] = owners[0]
     return group
@@ -236,7 +255,10 @@ def collect_shaders():
     isa = {}
     for line in ISA.read_text(encoding="utf-8", errors="ignore").splitlines():
         if line and not line.startswith("#"):
-            name, encoding = line.split()
+            parts = line.split()
+            if len(parts) != 2:
+                raise ValueError(f"tools/rdna_isa.txt: expected 'name encoding' per line, got: {line}")
+            name, encoding = parts
             isa[name] = encoding
     by_camel = {camel(name): name for name in isa}
     enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S).group(1)
@@ -324,23 +346,72 @@ def text(x, y, value, size):
             f'stroke="{BORDER}" stroke-width="3" paint-order="stroke">{escape(value)}</text>')
 
 
-def treemap(title, data, left):
-    groups = sorted((g for g in data["groups"] if g["done"] + g["todo"]), key=lambda g: -(g["done"] + g["todo"]))
-    parts = [text(left + 4, 21, f'{title}: {data["percent"]}% ({data["done"]}/{data["total"]})', 16)]
-    for group, (x, y, w, h) in zip(groups, squarify([g["done"] + g["todo"] for g in groups], left, HEADER, PANEL_WIDTH, MAP_HEIGHT)):
-        total = group["done"] + group["todo"]
-        shared = [g["name"] for g in data["groups"] if g.get("shared_sources") == group["name"]]
-        suffix = "; shared by " + ", ".join(shared) if shared else ""
-        parts.append(f'<g><title>{escape(group["name"])}: {group["done"]}/{total} ({100 * group["done"] / total:.0f}%){escape(suffix)}</title>')
-        for i, cell in enumerate(cells(total, x + 1, y + 1, w - 2, h - 2)):
-            parts.append(rect(*cell, DONE_COLOR if i < group["done"] else TODO_COLOR))
-        parts.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="none" stroke="{BORDER}" stroke-width="2"/>')
-        label_length = int((w - 10) / 7)
-        label = group["label"][:label_length] if label_length > 0 else ""
-        if (label == group["label"] or len(label) >= 3) and h > 22:
-            parts.append(text(x + 5, y + 16, label, 12))
-        parts.append("</g>")
+def tile_label(group, w, h):
+    label_length = int((w - 10) / 7)
+    label = group["label"][:label_length] if label_length > 0 else ""
+    return label if (label == group["label"] or len(label) >= 3) and h > 22 else ""
+
+
+def map_groups(data):
+    return sorted((g for g in data["groups"] if g["done"] + g["todo"]), key=lambda g: -(g["done"] + g["todo"]))
+
+
+def labelled_tier(groups):
+    shown = list(groups)
+    while len(shown) > 1:
+        rects = squarify([g["done"] + g["todo"] for g in shown], 0, HEADER, PANEL_WIDTH, MAP_HEIGHT)
+        if all(tile_label(g, w, h) for g, (x, y, w, h) in zip(shown, rects)):
+            break
+        shown.pop()
+    return shown
+
+
+def library_tiers(libraries):
+    rest, tiers = map_groups(libraries), []
+    empty = [g for g in libraries["groups"] if not g["done"] + g["todo"]]
+    while rest and len(tiers) < len(LIBRARY_TIERS) - 1:
+        tier = labelled_tier(rest)
+        tiers.append(summarize(tier + empty))
+        rest = rest[len(tier):]
+    if rest:
+        tiers.append(summarize(rest + empty))
+    return tiers
+
+
+def heading(title, data, x, y):
+    return text(x + 4, y + 21, f'{title}: {data["percent"]}% ({data["done"]}/{data["total"]})', 16)
+
+
+def tile(group, data, x, y, w, h):
+    total = group["done"] + group["todo"]
+    shared = [g["name"] for g in data["groups"] if g.get("shared_sources") == group["name"]]
+    suffix = "; shared by " + ", ".join(shared) if shared else ""
+    parts = [f'<g><title>{escape(group["name"])}: {group["done"]}/{total} ({100 * group["done"] / total:.0f}%){escape(suffix)}</title>']
+    for i, cell in enumerate(cells(total, x + 1, y + 1, w - 2, h - 2)):
+        parts.append(rect(*cell, DONE_COLOR if i < group["done"] else TODO_COLOR))
+    parts.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="none" stroke="{BORDER}" stroke-width="2"/>')
+    label = tile_label(group, w, h)
+    if label:
+        parts.append(text(x + 5, y + 16, label, 12))
+    parts.append("</g>")
     return parts
+
+
+def treemap(title, data, left, top=0):
+    groups = map_groups(data)
+    parts = [heading(title, data, left, top)]
+    for group, (x, y, w, h) in zip(groups, squarify([g["done"] + g["todo"] for g in groups], left, top + HEADER, PANEL_WIDTH, MAP_HEIGHT)):
+        parts += tile(group, data, x, y, w, h)
+    return parts
+
+
+def tile_grid(title, data, top):
+    groups = sorted(map_groups(data), key=lambda g: (g["label"].lower(), g["name"]))
+    width = (2 * PANEL_WIDTH + GAP) / GRID_COLUMNS
+    parts = [heading(title, data, 0, top)]
+    for index, group in enumerate(groups):
+        parts += tile(group, data, index % GRID_COLUMNS * width, top + HEADER + index // GRID_COLUMNS * GRID_ROW, width, GRID_ROW)
+    return parts, HEADER + -(-len(groups) // GRID_COLUMNS) * GRID_ROW
 
 
 def shader_forms_panel(source):
@@ -369,11 +440,11 @@ def still_needed(source):
     def groups(kind, selected):
         return [(form_label(f), f[kind]) for f in forms if f[kind] and f["form"] in selected]
 
-    lists = [
+    lists = [(heading, found) for heading, found in (
         (f'Instruction forms not decoded ({sum(len(f["missing"]) for f in forms if f["form"] in plain)})', groups("missing", plain)),
         (f'DPP forms not decoded ({sum(len(f["missing"]) for f in forms if f["form"] in dpp)})', groups("missing", dpp)),
         (f'Decoded, no translator case ({sum(len(f["untranslated"]) for f in forms)})', groups("untranslated", plain + dpp)),
-    ]
+    ) if found] or [("Every instruction form is decoded and translated", [])]
     formats = source["formats"]
     return {
         "lists": lists,
@@ -397,13 +468,13 @@ def bar_row(x, y, label, count, of, color, caption=None):
             plain_text(x + COLUMN_WIDTH - 4, y + 11, caption or str(count), anchor="end")]
 
 
-def still_needed_svg(source, top):
+def still_needed_svg(source, top, left_top):
     data = still_needed(source)
     right = PANEL_WIDTH + GAP
     total, areas = data["throws"]
-    parts = [text(4, top + 21, f"Unsupported-throw sites by area ({total})", 16),
+    parts = [text(4, left_top + 21, f"Unsupported-throw sites by area ({total})", 16),
              text(right + 4, top + 21, "Instruction forms still needed", 16)]
-    y = top + HEADER
+    y = left_top + HEADER
     for name, count in areas:
         parts += bar_row(0, y, name, count, total, THROW_COLOR)
         y += ROW
@@ -418,7 +489,7 @@ def still_needed_svg(source, top):
     for heading, groups in data["lists"]:
         parts.append(plain_text(right + 4, y + 11, heading, 13))
         y += ROW
-        for label, names in groups or [("none", [])]:
+        for label, names in groups:
             rows = textwrap.wrap(", ".join(names), NAMES_WIDTH) or [""]
             parts.append(plain_text(right + 12, y + 11, label, 11))
             for row in rows:
@@ -428,19 +499,28 @@ def still_needed_svg(source, top):
         y += 8
     y = max(left_end, y) + 6
     parts.append(plain_text(4, y + 10, "Still needed (counted from the code, not from playing games)", 11))
-    return parts, y + 20 - top
+    return parts, y + 20
 
 
 def render(libraries, shaders, shader_source=None):
-    width, height = 2 * PANEL_WIDTH + GAP, HEADER + MAP_HEIGHT
-    body = treemap("System libraries*", libraries, 0)
+    width, row = 2 * PANEL_WIDTH + GAP, HEADER + MAP_HEIGHT
+    tiers = library_tiers(libraries)
+    body = [heading("System libraries*", libraries, 0, 0)]
+    top = HEADER
+    for index, (title, data) in enumerate(zip(LIBRARY_TIERS[:2], tiers[:2])):
+        body += treemap(title, data, index * (PANEL_WIDTH + GAP), top)
+    top += row if tiers[:2] else 0
+    if len(tiers) > 2:
+        grid, height = tile_grid(LIBRARY_TIERS[2], tiers[2], top + 10)
+        body += grid
+        top += height + 10
     if shader_source:
-        body += treemap("Shader forms decoded", shader_forms_panel(shader_source), PANEL_WIDTH + GAP)
-        panel, extra = still_needed_svg(shader_source, height)
+        body += treemap("Shader forms decoded", shader_forms_panel(shader_source), 0, top)
+        panel, height = still_needed_svg(shader_source, top, top + row)
         body += panel
-        height += extra
     else:
-        body += treemap("GPU shader instructions", shaders, PANEL_WIDTH + GAP)
+        body += treemap("GPU shader instructions", shaders, 0, top)
+        height = top + row
     return "\n".join([f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">',
                       rect(0, 0, width, height, BORDER, 0), *body, "</svg>"])
 
@@ -502,7 +582,8 @@ def still_needed_html(source):
     right = ["<h3>Instruction forms still needed</h3>"]
     for heading, groups in data["lists"]:
         right.append(f"<h4>{escape(heading)}</h4>")
-        right.append("<table>" + "".join(f"<tr><td>{escape(label)}</td><td class='names'><code>{escape(', '.join(names))}</code></td></tr>" for label, names in groups) + "</table>" if groups else "<p>None.</p>")
+        if groups:
+            right.append("<table>" + "".join(f"<tr><td>{escape(label)}</td><td class='names'><code>{escape(', '.join(names))}</code></td></tr>" for label, names in groups) + "</table>")
     return "\n".join(["<h2>Still needed</h2>", '<div class="cols">', "<div>", *left, "</div>", "<div>", *right, "</div>", "</div>"])
 
 
@@ -544,7 +625,28 @@ def shader_page(shader_source, shaders, extra):
             f"Decoded opcodes not present in AMD's public list are not counted: {extra}.</p>"]
 
 
-def summary(libraries, shaders, shader_source=None):
+def open_pr_progress_section(estimate):
+    if not estimate:
+        return []
+    generated = escape(estimate["generated_at"])
+    if not estimate["available"]:
+        return ["<h2>Potential library progress with open PRs</h2>",
+                f'<p>Estimate unavailable as of <time>{generated}</time>: {escape(estimate["reason"])}. '
+                "The current progress above is unchanged.</p>"]
+    baseline, potential = estimate["baseline"], estimate["potential"]
+    prs = estimate["pull_requests"]
+    reasons = estimate.get("excluded_reasons", {})
+    reason_text = ", ".join(f"{count} {escape(reason.replace('_', ' '))}" for reason, count in sorted(reasons.items()))
+    excluded = f'; {prs["excluded"]} excluded' + (f" ({reason_text})" if reason_text else "")
+    return ["<h2>Potential library progress with open PRs</h2>",
+            f'<p>Current: {baseline["percent"]}% ({baseline["done"]}/{baseline["total"]}); '
+            f'combined open PR estimate: <strong>{potential["percent"]}% '
+            f'({potential["done"]}/{potential["total"]})</strong>. '
+            f'{prs["included"]} of {prs["open"]} open PRs included{excluded}. '
+            f'Generated <time>{generated}</time>. This is a source-count estimate, not a compatibility measure.</p>']
+
+
+def summary(libraries, shaders, shader_source=None, open_pr_progress=None):
     extra = ", ".join(f"<code>{escape(o)}</code>" for o in shaders["extra"])
     return "\n".join([
         '<!DOCTYPE html>',
@@ -555,7 +657,8 @@ def summary(libraries, shaders, shader_source=None):
         '</head><body>',
         "<h1>Progress</h1>",
         '<img src="progress.svg" alt="progress">',
-        f'<p>Generated by <a href="{SOURCE}/tools/progress.py">tools/progress.py</a> on every push to <code>main</code>. '
+        f'<p>Generated by <a href="{SOURCE}/tools/progress.py">tools/progress.py</a> after relevant pushes to <code>main</code>, '
+        "daily, and when the Pages workflow is run manually. "
         'Raw numbers: <a href="progress.json">progress.json</a>.</p>',
         table("System libraries", "Library", libraries),
         "<p>A function is implemented when it no longer calls <code>NotImplemented_nid_no_patch</code>; "
@@ -564,6 +667,7 @@ def summary(libraries, shaders, shader_source=None):
         "not every function exported by the PS5 firmware. Shared-source libraries are counted only at their source library. "
         "Libraries with no exports only provide an empty module for titles that load them. "
         f'<a href="{SOURCE}/docs/dev/PROGRESS.md">Counting rules</a>.</p>',
+        *open_pr_progress_section(open_pr_progress),
         *shader_page(shader_source, shaders, extra),
         '<p><a href="history.html">Progress history</a> (one point per day).</p>',
         "</body></html>",
@@ -698,21 +802,62 @@ def require_distinct_reports(output):
                 raise ValueError(f"{paths[index].name} and {paths[other].name} in {output} are the same file")
 
 
-def site_data(libraries, shaders, shader_source):
+def site_data(libraries, shaders, shader_source, open_pr_progress=None):
     data = {"libraries": libraries, "shaders": shaders}
     if shader_source:
         data["shader_source"] = {key: value for key, value in shader_source.items() if key != "untranslated"}
+    if open_pr_progress:
+        data["open_pr_progress"] = open_pr_progress
     return data
 
 
-def write_site(output, libraries, shaders, shader_source=None):
+def write_site(output, libraries, shaders, shader_source=None, open_pr_progress=None):
     output.mkdir(parents=True, exist_ok=True)
     require_distinct_reports(output)
-    (output / "progress.json").write_text(json.dumps(site_data(libraries, shaders, shader_source), indent=2), encoding="utf-8")
+    (output / "progress.json").write_text(json.dumps(site_data(libraries, shaders, shader_source, open_pr_progress), indent=2), encoding="utf-8")
     (output / "badge-libraries.svg").write_text(badge("libraries*", libraries), encoding="utf-8")
     (output / "badge-shaders.svg").write_text(shader_source_badge(shader_source) if shader_source else badge("shaders", shaders), encoding="utf-8")
     (output / "progress.svg").write_text(render(libraries, shaders, shader_source), encoding="utf-8")
-    (output / "progress.html").write_text(summary(libraries, shaders, shader_source), encoding="utf-8")
+    (output / "progress.html").write_text(summary(libraries, shaders, shader_source, open_pr_progress), encoding="utf-8")
+
+
+def validate_open_pr_progress(estimate):
+    if not isinstance(estimate, dict) or type(estimate.get("available")) is not bool:
+        raise ValueError("open_pr_progress must be an object with a boolean available field")
+    if not isinstance(estimate.get("generated_at"), str):
+        raise ValueError("open_pr_progress.generated_at must be a string")
+    if not estimate["available"]:
+        if not isinstance(estimate.get("reason"), str):
+            raise ValueError("unavailable open_pr_progress must include a reason")
+        return
+    for name in ("baseline", "potential"):
+        data = estimate.get(name)
+        if not isinstance(data, dict):
+            raise ValueError(f"open_pr_progress.{name} must be an object")
+        for field in ("done", "total"):
+            if type(data.get(field)) is not int or data[field] < 0:
+                raise ValueError(f"open_pr_progress.{name}.{field} must be a non-negative integer")
+        if data["done"] > data["total"]:
+            raise ValueError(f"open_pr_progress.{name}.done must not exceed total")
+        if isinstance(data.get("percent"), bool) or not isinstance(data.get("percent"), (int, float)) or not 0 <= data["percent"] <= 100:
+            raise ValueError(f"open_pr_progress.{name}.percent must be between 0 and 100")
+        expected = round(100 * data["done"] / data["total"], 2) if data["total"] else 0
+        if data["percent"] != expected:
+            raise ValueError(f"open_pr_progress.{name}.percent does not match its counts")
+    prs = estimate.get("pull_requests")
+    if not isinstance(prs, dict):
+        raise ValueError("open_pr_progress.pull_requests must be an object")
+    for field in ("open", "included", "excluded"):
+        if type(prs.get(field)) is not int or prs[field] < 0:
+            raise ValueError(f"open_pr_progress.pull_requests.{field} must be a non-negative integer")
+    if prs["included"] + prs["excluded"] != prs["open"]:
+        raise ValueError("open_pr_progress included and excluded counts must match the open count")
+    reasons = estimate.get("excluded_reasons", {})
+    if not isinstance(reasons, dict) or any(not isinstance(key, str) or type(value) is not int or value < 0
+                                            for key, value in reasons.items()):
+        raise ValueError("open_pr_progress.excluded_reasons must map strings to non-negative integers")
+    if sum(reasons.values()) != prs["excluded"]:
+        raise ValueError("open_pr_progress excluded reason counts must match the excluded count")
 
 
 def validate_snapshot(snapshot):
@@ -772,6 +917,8 @@ def main(argv=None):
                         help="limit library counts to these core/libs/prx directories; repeat to include several. Shader counts stay complete")
     parser.add_argument("--require-shader-source", action="store_true",
                         help="fail when the shader source scan cannot read the recompiler, instead of leaving its numbers out (the Pages workflow uses this)")
+    parser.add_argument("--open-pr-estimate", type=Path,
+                        help="include a JSON estimate from tools/progress_prs.py in progress.json and progress.html")
     parser.add_argument("--regenerate-isa-forms", type=Path, metavar="XML",
                         help="rewrite tools/rdna2_isa_forms.txt from AMD's amdgpu_isa_rdna2.xml (machine-readable ISA, MIT) and exit")
     parser.add_argument("--json", action="store_true",
@@ -802,6 +949,13 @@ def main(argv=None):
         if args.root:
             PRX = args.root / "core" / "libs" / "prx"
             OPCODES = args.root / previous[1].relative_to(ROOT)
+        open_pr_progress = None
+        if args.open_pr_estimate:
+            try:
+                open_pr_progress = json.loads(args.open_pr_estimate.read_text(encoding="utf-8-sig"))
+                validate_open_pr_progress(open_pr_progress)
+            except (OSError, ValueError, RecursionError) as error:
+                parser.error(f"{args.open_pr_estimate}: {error}")
         try:
             libraries, shaders = collect_libraries(), collect_shaders()
         except FileNotFoundError as error:
@@ -819,13 +973,13 @@ def main(argv=None):
             parser.error(str(error))
         if args.output:
             try:
-                write_site(args.output, libraries, shaders, shader_source)
+                write_site(args.output, libraries, shaders, shader_source, open_pr_progress)
             except ValueError as error:
                 parser.error(str(error))
             except OSError as error:
                 parser.error(f"{args.output}: {error.strerror or error}")
         if args.json:
-            print(json.dumps(site_data(libraries, shaders, shader_source), indent=2))
+            print(json.dumps(site_data(libraries, shaders, shader_source, open_pr_progress), indent=2))
         else:
             print(f'libraries {libraries["done"]}/{libraries["total"]} ({libraries["percent"]}%)')
             print(f'shader opcode names declared {shaders["done"]}/{shaders["total"]} ({shaders["percent"]}%)')
