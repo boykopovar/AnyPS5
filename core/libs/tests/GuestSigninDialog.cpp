@@ -25,6 +25,7 @@ int main() {
     std::int32_t result[8]{0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a};
 
     Require(sceSigninDialogTerminate() == kErrNotInitialized);
+    Require(sceSigninDialogTerminate() == kErrNotInitialized);
     Require(sceSigninDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceSigninDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrNotInitialized);
     Require(sceSigninDialogOpen(&param) == kErrNotInitialized);
@@ -81,6 +82,7 @@ int main() {
     Require(sceSigninDialogClose() == 0);
     Require(sceSigninDialogTerminate() == 0);
     Require(sceSigninDialogTerminate() == kErrNotInitialized);
+    Require(sceSigninDialogTerminate() == kErrNotInitialized);
     Require(sceSigninDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceSigninDialogOpen(&param) == kErrNotInitialized);
     Require(sceSigninDialogClose() == kErrNotInitialized);
@@ -100,6 +102,7 @@ int main() {
     Require(result[2] == 0);
     Require(result[3] == 0);
     Require(sceSigninDialogTerminate() == 0);
+    Require(sceSigninDialogTerminate() == kErrNotInitialized);
     Require(sceSigninDialogTerminate() == kErrNotInitialized);
     Require(sceSigninDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceSigninDialogClose() == kErrNotInitialized);
