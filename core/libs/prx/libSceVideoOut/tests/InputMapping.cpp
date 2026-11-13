@@ -568,6 +568,7 @@ bool sameBinding(const Pad::InputBinding& left, const Pad::InputBinding& right) 
 }
 
 bool sameConfiguration(const Pad::InputConfiguration& left, const Pad::InputConfiguration& right) {
+    if (left.controllerButtons != right.controllerButtons) return false;
     if (left.bindings.size() != right.bindings.size()) return false;
     for (std::size_t index = 0; index < left.bindings.size(); ++index) {
         if (!sameBinding(left.bindings[index], right.bindings[index])) return false;
@@ -658,6 +659,25 @@ void padChordParse() {
     require(rejects("ToggleFullscreen = PAD:\n"), "an empty pad chord is rejected");
 }
 
+void controllerButtonOverrides() {
+    auto configuration = defaultConfiguration();
+    const auto originalBindings = configuration.bindings.size();
+    const auto& buttons = configuration.controllerButtons;
+    std::string message;
+    require(!buttons[SDL_CONTROLLER_BUTTON_A], "a missing override keeps the controller default");
+    require(applyText(configuration, "sdlbutton: A = circle\nSDLButton:b = None\nSDLButton:paddle1 = R2\n", message), "SDL buttons accept PlayStation button names or None");
+    require(buttons[SDL_CONTROLLER_BUTTON_A] == Pad::PadButton::Circle, "the SDL name and destination are case-insensitive");
+    require(buttons[SDL_CONTROLLER_BUTTON_B] == Pad::PadButton::None, "None disables an SDL button");
+    require(buttons[SDL_CONTROLLER_BUTTON_PADDLE1] == Pad::PadButton::R2, "extra SDL buttons can be assigned");
+    require(configuration.bindings.size() == originalBindings, "controller overrides keep keyboard and mouse bindings");
+    require(applyText(configuration, "SDLButton:a = Cross\n", message), "a title profile can replace an SDL button override");
+    require(buttons[SDL_CONTROLLER_BUTTON_A] == Pad::PadButton::Cross && buttons[SDL_CONTROLLER_BUTTON_B] == Pad::PadButton::None, "a profile keeps other overrides");
+    require(rejects("SDLButton:a = Cross\nSDLButton:A = Circle\n"), "duplicate SDL buttons in one file are rejected");
+    require(rejects("SDLButton:leftx = Cross\n"), "controller axes are not SDL buttons");
+    require(rejects("SDLButton:a = ToggleFullscreen\n"), "controller remaps must target a guest button");
+    require(rejects("SDLButton:a = Cross+Circle\n"), "an SDL button remaps to one destination");
+}
+
 }
 
 int main() try {
@@ -699,6 +719,7 @@ int main() try {
     reloadInputMappingAction();
     reloadErrorNamesLine();
     padChordParse();
+    controllerButtonOverrides();
     std::filesystem::remove_all(root);
     std::cout << "input mapping tests passed\n";
     return 0;

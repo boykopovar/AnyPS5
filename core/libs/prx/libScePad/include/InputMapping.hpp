@@ -7,11 +7,13 @@
 #include <istream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
-#include "SDL_scancode.h"
+#include "SDL_gamecontroller.h"
 #include "SDL_mouse.h"
+#include "SDL_scancode.h"
 
 #include "PadInputTypes.hpp"
 
@@ -42,6 +44,7 @@ struct InputSettings {
 struct InputConfiguration {
     std::vector<InputBinding> bindings;
     InputSettings settings;
+    std::array<std::optional<PadButton>, SDL_CONTROLLER_BUTTON_MAX> controllerButtons{};
 };
 
 inline constexpr std::array InputMapping{

@@ -1,10 +1,10 @@
 # Controller, keyboard and mouse input
 
-AnyPS5 accepts SDL-mapped game controllers as well as its built-in keyboard and mouse bindings. Up to 4 controllers are supported simultaneously. The first connected controller is assigned to Player 1 and composed with keyboard and mouse input; additional controllers are sequentially assigned to Players 2, 3, and 4 (matching `libSceUserService` users). Xbox-style controllers and PlayStation controllers recognized by SDL use the standard PS button layout; sticks and analog triggers are passed through, and controllers can be connected or disconnected dynamically while the game is running. AnyPS5 uses its built-in keyboard and mouse bindings when no configuration file is present. To change selected keyboard and mouse bindings, create `anyps5-input.ini` beside the generated game executable. Set `ANYPS5_INPUT_CONFIG` to use a file at another path. Both the game directory and that path may contain any characters, such as `ü` or `日本`. With `ANYPS5_PAD_PORT0_STATE=controller`, keyboard and mouse input reaches the game only while a controller is bound to Player 1; see [Controller connection and user 0](USAGE.md#controller-connection-and-user-0).
+AnyPS5 accepts SDL-mapped game controllers as well as its built-in keyboard and mouse bindings. Up to 4 controllers are supported simultaneously. The first connected controller is assigned to Player 1 and composed with keyboard and mouse input; additional controllers are sequentially assigned to Players 2, 3, and 4 (matching `libSceUserService` users). Xbox-style controllers and PlayStation controllers recognized by SDL use the standard PS button layout; sticks and analog triggers are passed through, and controllers can be connected or disconnected dynamically while the game is running. AnyPS5 uses its built-in input bindings when no configuration file is present. To change input bindings, create `anyps5-input.ini` beside the generated game executable. Set `ANYPS5_INPUT_CONFIG` to use a file at another path. Both the game directory and that path may contain any characters, such as `ü` or `日本`. With `ANYPS5_PAD_PORT0_STATE=controller`, keyboard and mouse input reaches the game only while a controller is bound to Player 1; see [Controller connection and user 0](USAGE.md#controller-connection-and-user-0).
 
 For an Xbox-layout controller, A/B/X/Y map to Cross/Circle/Square/Triangle, LB/RB map to L1/R1, and LT/RT map to analog L2/R2. Start maps to Options. D-pad and stick-click buttons are supported. On a PlayStation controller, touchpad clicks and the positions of up to two fingers on the touchpad are forwarded. On other controllers, View (Back) presses the touchpad at its center.
 
-Each non-empty line has the form `Action = Type:Value`. Action names are case-insensitive. A `#` or `;` starts a comment. The first line for an action replaces its built-in bindings; later lines for the same action add alternate inputs. Duplicate entries for the same action are ignored. Actions omitted from the file keep their built-in bindings. UTF-8 files with or without a byte-order mark are supported.
+Keyboard, mouse, wheel and hotkey bindings use the form `Action = Type:Value`. Action names are case-insensitive. A `#` or `;` starts a comment. The first line for an action replaces its built-in bindings; later lines for the same action add alternate inputs. Duplicate entries for the same action are ignored. Actions omitted from the file keep their built-in bindings. UTF-8 files with or without a byte-order mark are supported.
 
 Supported input sources are:
 
@@ -17,9 +17,21 @@ While a title has a mouse open (`sceMouseOpen`) and the window is focused, AnyPS
 
 The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeDown`, `VolumeUp` and `ToggleMute`) never reach the game's pad when bound to a key or mouse button. A `PAD:` chord is the one exception: its buttons still reach the title. A key bound to a hotkey and to another action triggers both, as for every other action; the built-in keys of the actions above share none.
 
-Game-controller bindings are enabled automatically and are not affected by keyboard or mouse overrides in this file.
+Game-controller bindings are enabled automatically. Keyboard and mouse overrides apply independently of [controller button remapping](#controller-button-remapping).
 
 Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` accept only keyboard keys.
+
+### Controller button remapping
+
+Use `SDLButton:button = Button` to assign an SDL controller button to a PlayStation button. For example, this swaps Cross and Circle, then disables the Back button.
+
+```ini
+SDLButton:a = Circle
+SDLButton:b = Cross
+SDLButton:back = None
+```
+
+Each SDL button can appear once per file. An omitted button keeps its default or its shared-file assignment. These overrides apply to all controller slots. SDL button names are case-insensitive and include `a`, `b`, `x`, `y`, `back`, `start`, `leftshoulder`, `rightshoulder`, `leftstick`, `rightstick`, `dpup`, `dpdown`, `dpleft`, `dpright`, `guide`, `misc1`, `paddle1` through `paddle4`, and `touchpad`, depending on the device. The destination accepts the same button names as `PAD:` chords or `None`. Mapping a button to `L2` or `R2` produces a full trigger press. Sticks and physical analog triggers keep their usual behavior. `PAD:` hotkeys follow the resulting PlayStation button assignments.
 
 ### Reloading the mapping
 
@@ -139,7 +151,7 @@ While the `Shake` input is held (X by default), the controller reports its accel
 
 ## Per-game profiles
 
-A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. The profile has the same format and overrides only what it lists: an action it names replaces the bindings from the shared file, a setting it names replaces the shared value, and everything else stays. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
+A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
 
 For example, a profile that gives one title a lower mouse sensitivity and Cross on F:
 
@@ -175,6 +187,8 @@ An invalid line stops the game when video output starts, with an error that name
 ## Web configurator
 
 The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse and wheel overrides in the browser. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
+
+Add `SDLButton:` lines by hand after exporting from the browser. Importing a file with these lines reports an error and leaves the editor's current configuration in place.
 
 From the repository root, with Node.js 22 or later:
 
