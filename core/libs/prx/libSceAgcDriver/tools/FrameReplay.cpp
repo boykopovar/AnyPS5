@@ -43,6 +43,9 @@
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #include <sys/mman.h>
 #include <unistd.h>
+#elif defined(__APPLE__)
+#include "prx/libc/include/specifics/macos/HostMapping.hpp"
+#include <unistd.h>
 #endif
 
 namespace {
@@ -165,7 +168,7 @@ bool committedWritable(std::uint64_t address, std::uint64_t bytes) {
         at = reinterpret_cast<std::uintptr_t>(info.BaseAddress) + info.RegionSize;
     }
     return true;
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__)
     auto cursor = address;
     HostMapping::Walk(address, address + bytes, "frame replay", [&](const HostMapping::Mapping& mapping) {
         if (mapping.start > cursor || !mapping.readable || !mapping.writable) return;
@@ -182,7 +185,7 @@ bool committedWritable(std::uint64_t address, std::uint64_t bytes) {
 void commit(const FrameMemoryChunk& chunk) {
     auto* const pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address));
     const auto bytes = static_cast<std::size_t>(chunk.bytes);
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
     const auto begin = chunk.address & ~(page - 1);
     const auto end = (chunk.address + chunk.bytes + page - 1) & ~(page - 1);
@@ -234,7 +237,7 @@ void mapHostRanges(const FrameCaptureReader& reader, Skipped& skipped) {
         if ((chunk->access & FrameRangeAccess::Gpu) != 0) throw std::runtime_error("frame replay: cannot map the GPU-visible host range at " + std::to_string(chunk->address));
         skipped.Add(*chunk);
     }
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__)
     const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
     std::sort(host.begin(), host.end(), [](const auto* left, const auto* right) { return left->address < right->address; });
     std::vector<std::pair<std::uint64_t, std::uint64_t>> envelopes;
@@ -246,11 +249,15 @@ void mapHostRanges(const FrameCaptureReader& reader, Skipped& skipped) {
     }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> refused;
     for (const auto& [begin, end] : envelopes) {
+#ifdef __APPLE__
+        if (HostMapping::PlaceNoReplace(begin, end - begin)) continue;
+#else
         auto* const wanted = reinterpret_cast<void*>(static_cast<std::uintptr_t>(begin));
         const auto bytes = static_cast<std::size_t>(end - begin);
         void* const placed = mmap(wanted, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
         if (placed == wanted) continue;
         if (placed != MAP_FAILED) munmap(placed, bytes);
+#endif
         refused.emplace_back(begin, end);
     }
     for (const auto* chunk : host) {

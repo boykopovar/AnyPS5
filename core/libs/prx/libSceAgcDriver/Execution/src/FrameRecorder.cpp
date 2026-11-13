@@ -31,6 +31,8 @@ extern char** environ;
 #ifdef __linux__
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #include <sys/uio.h>
+#elif defined(__APPLE__)
+#include "prx/libc/include/specifics/macos/HostMapping.hpp"
 #endif
 
 namespace AgcDriver {
@@ -95,7 +97,7 @@ std::uint64_t flipValue(std::int64_t value) {
     return static_cast<std::uint64_t>(value);
 }
 
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
 std::uint32_t windowsProtection(const HostMapping::Mapping& mapping) {
     if (mapping.executable) return mapping.writable ? 0x40u : mapping.readable ? 0x20u : 0x10u;
     if (mapping.writable) return 0x04u;
@@ -103,6 +105,9 @@ std::uint32_t windowsProtection(const HostMapping::Mapping& mapping) {
 }
 
 bool pageReadable(std::uint64_t address) {
+#ifdef __APPLE__
+    return HostMapping::Readable(address, "frame capture");
+#else
     char byte = 0;
     iovec local{&byte, 1};
     iovec remote{reinterpret_cast<void*>(static_cast<std::uintptr_t>(address)), 1};
@@ -110,6 +115,7 @@ bool pageReadable(std::uint64_t address) {
     if (read == 1) return true;
     if (read < 0 && errno == EFAULT) return false;
     throw std::runtime_error(std::string("frame capture: cannot probe a file mapping with process_vm_readv: ") + (read < 0 ? std::strerror(errno) : "nothing was read"));
+#endif
 }
 
 std::uint64_t fileBackedEnd(const HostMapping::Mapping& mapping) {
@@ -703,7 +709,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
         }
     }
     return result;
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__)
     std::uintptr_t base = 0;
     std::size_t size = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &size);
@@ -743,7 +749,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
     }
     return result;
 #else
-    throw std::runtime_error("frame capture: guest memory capture is implemented on Windows and Linux only");
+    throw std::runtime_error("frame capture: guest memory capture is implemented on Windows, Linux and macOS only");
 #endif
 }
 
