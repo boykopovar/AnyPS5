@@ -11,6 +11,7 @@
 #endif
 
 #include "prx/libSceHttp/include/Client.hpp"
+#include "prx/libSceHttp/src/ClientParsing.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
@@ -44,12 +45,6 @@ constexpr std::array<std::string_view, 12> HttpMonths{"Jan", "Feb", "Mar", "Apr"
 
 std::string Lower(std::string text) {
     for (char& byte : text) if (byte >= 'A' && byte <= 'Z') byte += 'a' - 'A';
-    return text;
-}
-
-std::string_view Trim(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
     return text;
 }
 
@@ -144,10 +139,8 @@ std::pair<std::string, std::string> Field(const std::string& text) {
     const auto colon = text.find(':');
     if (colon == std::string::npos || colon == 0) throw HttpFailure("invalid HTTP field");
     auto name = Lower(text.substr(0, colon));
-    constexpr std::string_view punctuation = "!#$%&'*+-.^_`|~";
     for (const unsigned char byte : name)
-        if (!(byte >= 'a' && byte <= 'z') && !(byte >= '0' && byte <= '9') && punctuation.find(byte) == std::string_view::npos)
-            throw HttpFailure("invalid HTTP field name");
+        if (!IsToken(byte)) throw HttpFailure("invalid HTTP field name");
     std::string value(Trim(std::string_view(text).substr(colon + 1)));
     for (const unsigned char byte : value)
         if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP field value");
@@ -487,7 +480,9 @@ struct HttpClientState : Aps5HttpClient {
                 if (Lower(headers.at("transfer-encoding")) != "chunked") NotImplemented_nid_no_patch("HTTP client HTTP transfer coding");
                 for (;;) {
                     const auto chunk = connection.Line();
-                    const auto count = Number(Trim(std::string_view(chunk).substr(0, chunk.find(';'))), 16);
+                    const auto parsedSize = ChunkSize(chunk);
+                    if (!parsedSize) throw HttpFailure("invalid HTTP chunk size");
+                    const auto count = *parsedSize;
                     if (count == 0) {
                         for (;;) {
                             const auto field = connection.Line();

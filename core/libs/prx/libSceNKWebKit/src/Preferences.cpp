@@ -22,6 +22,7 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"AcceleratedDrawingEnabled", {true, FeatureKind::Internal}},
         {u"AccentColorEnabled", {false, FeatureKind::Testable}},
         {u"AccessHandleEnabled", {false, FeatureKind::Testable}},
+        {u"AccessibilityObjectModelEnabled", {false, FeatureKind::Testable}},
         {u"AggressiveTileRetentionEnabled", {false, FeatureKind::Boolean}},
         {u"AllowContentSecurityPolicySourceStarToMatchAnyProtocol", {false, FeatureKind::Boolean}},
         {u"AllowCrossOriginSubresourcesToAskForCredentials", {false, FeatureKind::Boolean}},
@@ -38,7 +39,9 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"AllowsPictureInPictureMediaPlayback", {false, FeatureKind::Boolean}},
         {u"AnimatedImageAsyncDecodingEnabled", {true, FeatureKind::Boolean}},
         {u"AppBadgeEnabled", {false, FeatureKind::Internal}},
+        {u"ApplicationChromeModeEnabled", {false, FeatureKind::Boolean}},
         {u"AppleMailPaginationQuirkEnabled", {false, FeatureKind::Boolean}},
+                {u"AriaReflectionEnabled", {false, FeatureKind::Testable}},
         {u"AriaReflectionForElementReferencesEnabled", {true, FeatureKind::Testable}},
         {u"AspectRatioEnabled", {true, FeatureKind::Testable}},
         {u"AspectRatioOfImgFromWidthAndHeightEnabled", {true, FeatureKind::Testable}},
@@ -209,6 +212,8 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"IsFirstPartyWebsiteDataRemovalDisabled", {false, FeatureKind::Boolean}},
         {u"IsFirstPartyWebsiteDataRemovalLiveOnTestingEnabled", {false, FeatureKind::Boolean}},
         {u"IsFirstPartyWebsiteDataRemovalReproTestingEnabled", {false, FeatureKind::Boolean}},
+        {u"IsITPDatabaseEnabled", {false, FeatureKind::Boolean}},
+        {u"IsNSURLSessionWebSocketEnabled", {false, FeatureKind::Boolean}},
         {u"IsLoggedInAPIEnabled", {false, FeatureKind::Testable}},
         {u"IsSameSiteStrictEnforcementEnabled", {false, FeatureKind::Internal}},
         {u"IsThirdPartyCookieBlockingDisabled", {false, FeatureKind::Boolean}},
@@ -396,6 +401,7 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"UseGiantTiles", {false, FeatureKind::Boolean}},
         {u"UseImageDocumentForSubframePDF", {false, FeatureKind::Boolean}},
         {u"UseLegacyBackgroundSizeShorthandBehavior", {false, FeatureKind::Boolean}},
+        {u"UseLegacyTextAlignPositionedElementBehavior", {false, FeatureKind::Boolean}},
         {u"UsePreHTML5ParserQuirks", {false, FeatureKind::Boolean}},
         {u"UserActivationAPIEnabled", {true, FeatureKind::Testable}},
         {u"UserGesturePromisePropagationEnabled", {true, FeatureKind::Internal}},
@@ -2263,6 +2269,50 @@ void APS5_VABI WKPreferencesSetMediaPlayable(const void* preferencesRef, bool en
 
 bool APS5_VABI WKPreferencesGetMediaPlayable(const void* preferencesRef) {
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"MediaPlayable");
+}
+
+bool APS5_VABI WKPreferencesGetAccessibilityObjectModelEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"AccessibilityObjectModelEnabled");
+}
+
+void APS5_VABI WKPreferencesSetAccessibilityObjectModelEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"AccessibilityObjectModelEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetAriaReflectionEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"AriaReflectionEnabled");
+}
+
+void APS5_VABI WKPreferencesSetAriaReflectionEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"AriaReflectionEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetIsITPDatabaseEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"IsITPDatabaseEnabled");
+}
+
+void APS5_VABI WKPreferencesSetIsITPDatabaseEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"IsITPDatabaseEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetIsNSURLSessionWebSocketEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"IsNSURLSessionWebSocketEnabled");
+}
+
+void APS5_VABI WKPreferencesSetIsNSURLSessionWebSocketEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"IsNSURLSessionWebSocketEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesUseLegacyTextAlignPositionedElementBehavior(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"UseLegacyTextAlignPositionedElementBehavior");
+}
+
+void APS5_VABI WKPreferencesSetUseLegacyTextAlignPositionedElementBehavior(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"UseLegacyTextAlignPositionedElementBehavior", enabled);
+}
+
+void APS5_VABI WKPreferencesSetApplicationChromeModeEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"ApplicationChromeModeEnabled", enabled);
 }
 
 }

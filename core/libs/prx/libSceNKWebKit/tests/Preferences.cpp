@@ -53,6 +53,11 @@ struct BooleanCase {
 };
 
 const BooleanCase booleanCases[]{
+    {"AccessibilityObjectModelEnabled", WKPreferencesSetAccessibilityObjectModelEnabled, WKPreferencesGetAccessibilityObjectModelEnabled, false},
+    {"AriaReflectionEnabled", WKPreferencesSetAriaReflectionEnabled, WKPreferencesGetAriaReflectionEnabled, false},
+    {"IsITPDatabaseEnabled", WKPreferencesSetIsITPDatabaseEnabled, WKPreferencesGetIsITPDatabaseEnabled, false},
+    {"IsNSURLSessionWebSocketEnabled", WKPreferencesSetIsNSURLSessionWebSocketEnabled, WKPreferencesGetIsNSURLSessionWebSocketEnabled, false},
+    {"UseLegacyTextAlignPositionedElementBehavior", WKPreferencesSetUseLegacyTextAlignPositionedElementBehavior, WKPreferencesUseLegacyTextAlignPositionedElementBehavior, false},
     {"AVFoundationEnabled", WKPreferencesSetAVFoundationEnabled, WKPreferencesGetAVFoundationEnabled, false},
     {"AcceleratedCompositingEnabled", WKPreferencesSetAcceleratedCompositingEnabled, WKPreferencesGetAcceleratedCompositingEnabled, true},
     {"AcceleratedDrawingEnabled", WKPreferencesSetAcceleratedDrawingEnabled, WKPreferencesGetAcceleratedDrawingEnabled, true},
@@ -505,6 +510,8 @@ void Features() {
     WKPreferencesSetStorageAccessAPIEnabled(preferences.Get(), false);
     WKPreferencesSetHighlightAPIEnabled(preferences.Get(), false);
     WKPreferencesSetAcceleratedDrawingEnabled(preferences.Get(), false);
+    WKPreferencesSetApplicationChromeModeEnabled(preferences.Get(), true);
+    RequireThrows<std::invalid_argument>([&] { WKPreferencesSetApplicationChromeModeEnabled(nullptr, true); });
     WKPreferencesSetCompositingBordersVisible(preferences.Get(), true);
     WKPreferencesSetFullScreenEnabled(preferences.Get(), true);
     WKPreferencesSetDefaultFontSize(preferences.Get(), 23);

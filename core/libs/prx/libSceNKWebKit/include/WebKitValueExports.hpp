@@ -356,5 +356,14 @@ void APS5_VABI WKContextDisableProcessTermination(const void* contextRef);
 void APS5_VABI WKContextEnableProcessTermination(const void* contextRef);
 void APS5_VABI WKContextAddVisitedLink(const void* contextRef, const void* visitedURLRef);
 void APS5_VABI WKContextClearVisitedLinks(const void* contextRef);
+void APS5_VABI WKContextSetAlwaysUsesComplexTextCodePath(const void* contextRef, bool alwaysUseComplexText);
+void APS5_VABI WKContextSetMemoryCacheDisabled(const void* contextRef, bool disabled);
+void APS5_VABI WKContextSetHTTPPipeliningEnabled(const void* contextRef, bool enabled);
+void APS5_VABI WKContextSetShouldUseFontSmoothing(const void* contextRef, bool useFontSmoothing);
+bool APS5_VABI WKContextJavaScriptConfigurationFileEnabled(const void* contextRef);
+void APS5_VABI WKContextSetJavaScriptConfigurationFileEnabled(const void* contextRef, bool enable);
+void APS5_VABI WKContextSetJavaScriptGarbageCollectorTimerEnabled(const void* contextRef, bool enable);
+void APS5_VABI WKContextGarbageCollectJavaScriptObjects(const void* contextRef);
+void APS5_VABI WKContextSetStorageAccessAPIEnabled(const void* contextRef, bool enable);
 
 }
