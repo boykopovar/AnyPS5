@@ -3292,7 +3292,7 @@ Recorder::UploadSlice Recorder::DrawUpload(std::size_t bytes) {
     const VkDeviceSize alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 16);
     auto offset = (drawUploadUsed + alignment - 1) & ~(alignment - 1);
     if (drawUpload == nullptr || offset + bytes > drawUpload->Bytes().size()) {
-        drawUpload = std::make_shared<Buffer>(context, std::max(DrawUploadChunk, bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        drawUpload = std::make_shared<Buffer>(context, std::max(DrawUploadChunk, bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, context.SnapshotProperties());
         offset = 0;
     }
     drawUploadUsed = offset + bytes;
@@ -3393,25 +3393,35 @@ bool Recorder::refreshDrawSnapshot(DrawSnapshot& entry, std::uint64_t address, s
     differing.clear();
     spans.clear();
     const bool sole = entry.buffer.use_count() == 1;
+    const bool deviceLocal = (entry.buffer->Properties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
+    const bool shadowed = deviceLocal && entry.shadow.size() == bytes;
+    std::byte* const compared = shadowed ? entry.shadow.data() : held.data();
     GuestMemory::ChangedBlocks(address, bytes, generations, changed);
     for (std::size_t k = 0; k < count; ++k) {
         if (changed[k] == GuestMemory::BlockUnchanged) continue;
         const auto from = std::max(address, aligned + k * block);
         const auto to = std::min(end, aligned + (k + 1) * block);
         const auto offset = static_cast<std::size_t>(from - address);
-        spans.push_back({held.data() + offset, reinterpret_cast<const void*>(from), static_cast<std::size_t>(to - from)});
+        spans.push_back({compared + offset, reinterpret_cast<const void*>(from), static_cast<std::size_t>(to - from)});
     }
     equal.assign(spans.size(), 0);
-    CompareSpans(spans, equal);
+    if (!deviceLocal || shadowed) CompareSpans(spans, equal);
     for (std::size_t k = 0; k < spans.size(); ++k) {
         if (equal[k] != 0) continue;
-        const auto offset = static_cast<std::size_t>(static_cast<const std::byte*>(spans[k].first) - held.data());
+        const auto offset = static_cast<std::size_t>(static_cast<const std::byte*>(spans[k].first) - compared);
         const auto length = spans[k].bytes;
         if (!sole) return false;
         if (!differing.empty() && differing.back().first + differing.back().second == offset) differing.back().second += length;
         else differing.emplace_back(offset, length);
     }
-    for (const auto& [offset, length] : differing) std::memcpy(held.data() + offset, reinterpret_cast<const void*>(address + offset), length);
+    for (const auto& [offset, length] : differing) {
+        std::memcpy(held.data() + offset, reinterpret_cast<const void*>(address + offset), length);
+        if (shadowed) std::memcpy(entry.shadow.data() + offset, reinterpret_cast<const void*>(address + offset), length);
+    }
+    if (deviceLocal && !shadowed) {
+        entry.shadow.resize(bytes);
+        std::memcpy(entry.shadow.data(), reinterpret_cast<const void*>(address), bytes);
+    }
     return true;
 }
 
@@ -3442,7 +3452,12 @@ void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::u
     const DrawSnapshotKey key{address, use, bytes};
     pool.recency.push_back(key);
     try {
-        drawSnapshots.emplace(key, DrawSnapshot{generation, registryGeneration, std::prev(pool.recency.end()), std::move(buffer), derived});
+        std::vector<std::byte> shadow;
+        if (storage && (buffer->Properties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 && GuestMemory::UnchangedSince(address, bytes, generation)) {
+            shadow.resize(bytes);
+            std::memcpy(shadow.data(), reinterpret_cast<const void*>(address), bytes);
+        }
+        drawSnapshots.emplace(key, DrawSnapshot{generation, registryGeneration, std::prev(pool.recency.end()), std::move(buffer), derived, std::move(shadow)});
     } catch (...) {
         pool.recency.pop_back();
         throw;
