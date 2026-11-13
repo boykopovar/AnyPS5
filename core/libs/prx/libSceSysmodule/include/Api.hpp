@@ -16,7 +16,7 @@ int APS5_VABI sceSysmoduleUnloadModuleInternalWithArg(std::uint32_t id, int argc
 int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id);
 int APS5_VABI sceSysmoduleIsCalledFromSysModule();
 int APS5_VABI sceSysmoduleIsCameraPreloaded();
-int APS5_VABI sceSysmoduleLoadModuleByNameInternal(std::uint8_t* fname, std::uint64_t a1, std::uint64_t a2, std::uint64_t a3, std::uint64_t a4, std::uint64_t a5);
+KernelModule APS5_VABI sceSysmoduleLoadModuleByNameInternal(const char* fname, std::size_t args, const void* argp, std::uint32_t flags, int* res);
 int APS5_VABI sceSysmoduleMapLibcForLibkernel();
 int APS5_VABI sceSysmodulePreloadModuleForLibkernel();
 int APS5_VABI sceSysmoduleUnloadModuleByNameInternal();

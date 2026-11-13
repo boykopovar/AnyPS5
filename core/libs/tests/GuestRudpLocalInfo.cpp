@@ -81,6 +81,28 @@ int main() {
         }
     }
 
+    {
+        constexpr int invalidArgument = static_cast<int>(0x80770004u);
+        Require(sceRudpGetLocalInfo(context, reinterpret_cast<int*>(0x10), nullptr, nullptr, nullptr, nullptr) == invalidArgument);
+        Require(sceRudpGetLocalInfo(context, nullptr, nullptr, nullptr, reinterpret_cast<std::uint16_t*>(0x10), nullptr) == invalidArgument);
+        Require(sceRudpGetLocalInfo(context, nullptr, nullptr, nullptr, nullptr, reinterpret_cast<std::uint8_t*>(0x10)) == invalidArgument);
+
+        std::array<std::uint8_t, 0x20> untouched{};
+        untouched.fill(0x5a);
+        Require(sceRudpGetLocalInfo(context, nullptr, untouched.data(), reinterpret_cast<std::uint32_t*>(0x10), nullptr, nullptr) == invalidArgument);
+        for (const auto byte : untouched) {
+            Require(byte == 0x5a);
+        }
+
+        std::uint32_t length = 0x20;
+        Require(sceRudpGetLocalInfo(context, nullptr, reinterpret_cast<void*>(0x10), &length, nullptr, nullptr) == invalidArgument);
+        Require(length == 0x20);
+
+        int writtenSocket = -1;
+        Require(sceRudpGetLocalInfo(context, &writtenSocket, nullptr, nullptr, reinterpret_cast<std::uint16_t*>(0x10), nullptr) == invalidArgument);
+        Require(writtenSocket == socket);
+    }
+
     const std::array<std::uint8_t, 28> any6{28, 28};
     const int socket6 = sceNetSocket("rudp-local6", 28, 2, 0);
     Require(socket6 >= 0);
