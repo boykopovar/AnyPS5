@@ -21,11 +21,13 @@
 #include <cstdlib>
 #include <list>
 #include <mutex>
+#include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -382,6 +384,285 @@ void appendKey(std::vector<std::byte>& key, const TValue& value) {
     key.insert(key.end(), bytes.begin(), bytes.end());
 }
 
+bool FallbackDepth16(const Context& context, const State& state) {
+    return state.depth.has_value() && state.depth->format == VK_FORMAT_D16_UNORM_S8_UINT && HostDepthFormat(context, state.depth->format) != VK_FORMAT_D16_UNORM_S8_UINT;
+}
+
+bool QuantizesDepth16(const Context& context, const State& state) {
+    return FallbackDepth16(context, state) && (state.depthTest || state.depthWrite);
+}
+
+std::uint32_t QuantizeDepth16Step(float value) {
+    if (!(value > 0.0f)) return 0u;
+    if (value >= 1.0f) return 65535u;
+    return static_cast<std::uint32_t>(std::rint(value * 65535.0f));
+}
+
+std::pair<float, float> HostDepthBounds(const Context& context, const State& state) {
+    if (!FallbackDepth16(context, state)) return {state.minDepthBounds, state.maxDepthBounds};
+    const std::uint32_t minStep = QuantizeDepth16Step(state.minDepthBounds);
+    const std::uint32_t maxStep = QuantizeDepth16Step(state.maxDepthBounds);
+    if (minStep > maxStep) {
+        return {static_cast<float>(minStep) * (1.0f / 65535.0f), static_cast<float>(maxStep) * (1.0f / 65535.0f)};
+    }
+    const float minBound = minStep == 0u ? 0.0f : (static_cast<float>(minStep) - 0.25f) * (1.0f / 65535.0f);
+    const float maxBound = maxStep == 65535u ? 1.0f : (static_cast<float>(maxStep) + 0.25f) * (1.0f / 65535.0f);
+    return {minBound, maxBound};
+}
+
+std::vector<std::uint32_t> QuantizeFragmentDepth16(const CompiledShader& shader) {
+    const auto words = shader.program->spirv.Words();
+    Require(words.size() >= 5 && words[0] == spv::MagicNumber && words[3] != 0, "invalid fragment SPIR-V header");
+    std::uint32_t glslStd450Id = 0;
+    std::uint32_t entryPointId = 0;
+    bool earlyFragmentTests = false;
+    bool depthReplacing = false;
+    std::uint32_t fragDepthVar = 0;
+    std::uint32_t fragCoordVar = 0;
+    std::uint32_t f32Type = 0;
+    std::uint32_t u32Type = 0;
+    std::uint32_t v4f32Type = 0;
+    std::uint32_t ptrInputV4F32 = 0;
+    std::uint32_t ptrInputF32 = 0;
+    std::uint32_t ptrOutputF32 = 0;
+    std::uint32_t constU32_2 = 0;
+    std::uint32_t const0 = 0;
+    std::uint32_t const1 = 0;
+    std::uint32_t const65535 = 0;
+    std::uint32_t constInv65535 = 0;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        Require(count != 0 && count <= words.size() - cursor, "truncated fragment SPIR-V instruction");
+        const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+        if (op == spv::OpFunction) break;
+        if (op == spv::OpExtInstImport && count == 6 && words[cursor + 2] == 0x4c534c47u && words[cursor + 3] == 0x6474732eu && words[cursor + 4] == 0x3035342eu && words[cursor + 5] == 0u) glslStd450Id = words[cursor + 1];
+        else if (op == spv::OpEntryPoint && count >= 3 && words[cursor + 1] == spv::ExecutionModelFragment) entryPointId = words[cursor + 2];
+        else if (op == spv::OpExecutionMode && count >= 3) {
+            if (words[cursor + 2] == spv::ExecutionModeEarlyFragmentTests) earlyFragmentTests = true;
+            else if (words[cursor + 2] == spv::ExecutionModeDepthReplacing) depthReplacing = true;
+        } else if (op == spv::OpDecorate && count == 4 && words[cursor + 2] == spv::DecorationBuiltIn) {
+            if (words[cursor + 3] == spv::BuiltInFragDepth) fragDepthVar = words[cursor + 1];
+            else if (words[cursor + 3] == spv::BuiltInFragCoord) fragCoordVar = words[cursor + 1];
+        } else if (op == spv::OpTypeFloat && count == 3 && words[cursor + 2] == 32u) f32Type = words[cursor + 1];
+        else if (op == spv::OpTypeInt && count == 4 && words[cursor + 2] == 32u && words[cursor + 3] == 0u) u32Type = words[cursor + 1];
+        else if (op == spv::OpTypeVector && count == 4 && f32Type != 0 && words[cursor + 2] == f32Type && words[cursor + 3] == 4u) v4f32Type = words[cursor + 1];
+        else if (op == spv::OpTypePointer && count == 4) {
+            if (words[cursor + 2] == spv::StorageClassInput && v4f32Type != 0 && words[cursor + 3] == v4f32Type) ptrInputV4F32 = words[cursor + 1];
+            else if (words[cursor + 2] == spv::StorageClassInput && f32Type != 0 && words[cursor + 3] == f32Type) ptrInputF32 = words[cursor + 1];
+            else if (words[cursor + 2] == spv::StorageClassOutput && f32Type != 0 && words[cursor + 3] == f32Type) ptrOutputF32 = words[cursor + 1];
+        } else if (op == spv::OpConstant && count == 4) {
+            if (u32Type != 0 && words[cursor + 1] == u32Type && words[cursor + 3] == 2u) constU32_2 = words[cursor + 2];
+            else if (f32Type != 0 && words[cursor + 1] == f32Type) {
+                if (words[cursor + 3] == 0x00000000u) const0 = words[cursor + 2];
+                else if (words[cursor + 3] == 0x3f800000u) const1 = words[cursor + 2];
+                else if (words[cursor + 3] == 0x477fff00u) const65535 = words[cursor + 2];
+                else if (words[cursor + 3] == 0x37800080u) constInv65535 = words[cursor + 2];
+            }
+        }
+        cursor += count;
+    }
+    Require(entryPointId != 0, "fragment SPIR-V has no entry point");
+    Require(!earlyFragmentTests || !ShadersWriteMemory(std::span(&shader, 1)), "early fragment tests with memory writes on a 16-bit depth target with stencil that the device stores in another depth format are not implemented");
+    std::uint32_t nextId = words[3];
+    const bool needGlslStd450 = glslStd450Id == 0;
+    if (needGlslStd450) glslStd450Id = nextId++;
+    const bool needF32Type = f32Type == 0;
+    if (needF32Type) f32Type = nextId++;
+    const bool needFragCoord = fragDepthVar == 0;
+    bool needU32Type = false;
+    bool needV4F32Type = false;
+    bool needPtrInputV4F32 = false;
+    bool needPtrInputF32 = false;
+    bool needPtrOutputF32 = false;
+    bool needConstU32_2 = false;
+    bool createFragCoordVar = false;
+    bool createFragDepthVar = false;
+    if (needFragCoord) {
+        if (u32Type == 0) {
+            u32Type = nextId++;
+            needU32Type = true;
+        }
+        if (v4f32Type == 0) {
+            v4f32Type = nextId++;
+            needV4F32Type = true;
+        }
+        if (ptrInputV4F32 == 0) {
+            ptrInputV4F32 = nextId++;
+            needPtrInputV4F32 = true;
+        }
+        if (ptrInputF32 == 0) {
+            ptrInputF32 = nextId++;
+            needPtrInputF32 = true;
+        }
+        if (ptrOutputF32 == 0) {
+            ptrOutputF32 = nextId++;
+            needPtrOutputF32 = true;
+        }
+        if (constU32_2 == 0) {
+            constU32_2 = nextId++;
+            needConstU32_2 = true;
+        }
+        if (fragCoordVar == 0) {
+            fragCoordVar = nextId++;
+            createFragCoordVar = true;
+        }
+        fragDepthVar = nextId++;
+        createFragDepthVar = true;
+    }
+    const bool needConst0 = const0 == 0;
+    if (needConst0) const0 = nextId++;
+    const bool needConst1 = const1 == 0;
+    if (needConst1) const1 = nextId++;
+    const bool needConst65535 = const65535 == 0;
+    if (needConst65535) const65535 = nextId++;
+    const bool needConstInv65535 = constInv65535 == 0;
+    if (needConstInv65535) constInv65535 = nextId++;
+    const auto isPostAnnotation = [](spv::Op op) {
+        switch (op) {
+        case spv::OpCapability:
+        case spv::OpExtension:
+        case spv::OpExtInstImport:
+        case spv::OpMemoryModel:
+        case spv::OpEntryPoint:
+        case spv::OpExecutionMode:
+        case spv::OpExecutionModeId:
+        case spv::OpString:
+        case spv::OpSourceExtension:
+        case spv::OpSource:
+        case spv::OpSourceContinued:
+        case spv::OpName:
+        case spv::OpMemberName:
+        case spv::OpModuleProcessed:
+        case spv::OpDecorate:
+        case spv::OpMemberDecorate:
+        case spv::OpDecorationGroup:
+        case spv::OpGroupDecorate:
+        case spv::OpGroupMemberDecorate:
+        case spv::OpDecorateId:
+        case spv::OpDecorateString:
+            return false;
+        default:
+            return true;
+        }
+    };
+    std::vector<std::uint32_t> out;
+    out.reserve(words.size() + 64);
+    out.insert(out.end(), words.begin(), words.begin() + 5);
+    std::size_t copied = 5;
+    const auto flushTo = [&](std::size_t limit) {
+        if (copied < limit) {
+            out.insert(out.end(), words.begin() + static_cast<std::ptrdiff_t>(copied), words.begin() + static_cast<std::ptrdiff_t>(limit));
+            copied = limit;
+        }
+    };
+    const auto emitQuantizedStore = [&](std::uint32_t valueId, std::span<const std::uint32_t> storeTail) {
+        const auto clamped = nextId++;
+        const auto scaled = nextId++;
+        const auto rounded = nextId++;
+        const auto quantized = nextId++;
+        out.insert(out.end(), {
+            (8u << 16u) | static_cast<std::uint32_t>(spv::OpExtInst), f32Type, clamped, glslStd450Id, static_cast<std::uint32_t>(GLSLstd450FClamp), valueId, const0, const1,
+            (5u << 16u) | static_cast<std::uint32_t>(spv::OpFMul), f32Type, scaled, clamped, const65535,
+            (6u << 16u) | static_cast<std::uint32_t>(spv::OpExtInst), f32Type, rounded, glslStd450Id, static_cast<std::uint32_t>(GLSLstd450RoundEven), scaled,
+            (5u << 16u) | static_cast<std::uint32_t>(spv::OpFMul), f32Type, quantized, rounded, constInv65535,
+            ((3u + static_cast<std::uint32_t>(storeTail.size())) << 16u) | static_cast<std::uint32_t>(spv::OpStore), fragDepthVar, quantized
+        });
+        out.insert(out.end(), storeTail.begin(), storeTail.end());
+    };
+    bool emittedDecorations = !createFragCoordVar && !createFragDepthVar;
+    bool emittedDeclarations = false;
+    bool inEntryFunction = false;
+    bool waitingForEntryInsert = false;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        Require(count != 0 && count <= words.size() - cursor, "truncated fragment SPIR-V instruction");
+        const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+        if (op == spv::OpMemoryModel && needGlslStd450) {
+            flushTo(cursor);
+            out.insert(out.end(), {(6u << 16u) | static_cast<std::uint32_t>(spv::OpExtInstImport), glslStd450Id, 0x4c534c47u, 0x6474732eu, 0x3035342eu, 0u});
+        }
+        if (!emittedDecorations && isPostAnnotation(op)) {
+            flushTo(cursor);
+            emittedDecorations = true;
+            if (createFragCoordVar) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpDecorate), fragCoordVar, static_cast<std::uint32_t>(spv::DecorationBuiltIn), static_cast<std::uint32_t>(spv::BuiltInFragCoord)});
+            if (createFragDepthVar) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpDecorate), fragDepthVar, static_cast<std::uint32_t>(spv::DecorationBuiltIn), static_cast<std::uint32_t>(spv::BuiltInFragDepth)});
+        }
+        if (!emittedDeclarations && op == spv::OpFunction) {
+            flushTo(cursor);
+            emittedDeclarations = true;
+            if (needF32Type) out.insert(out.end(), {(3u << 16u) | static_cast<std::uint32_t>(spv::OpTypeFloat), f32Type, 32u});
+            if (needU32Type) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpTypeInt), u32Type, 32u, 0u});
+            if (needV4F32Type) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpTypeVector), v4f32Type, f32Type, 4u});
+            if (needPtrInputV4F32) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpTypePointer), ptrInputV4F32, static_cast<std::uint32_t>(spv::StorageClassInput), v4f32Type});
+            if (needPtrInputF32) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpTypePointer), ptrInputF32, static_cast<std::uint32_t>(spv::StorageClassInput), f32Type});
+            if (needPtrOutputF32) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpTypePointer), ptrOutputF32, static_cast<std::uint32_t>(spv::StorageClassOutput), f32Type});
+            if (needConstU32_2) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpConstant), u32Type, constU32_2, 2u});
+            if (needConst0) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpConstant), f32Type, const0, 0x00000000u});
+            if (needConst1) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpConstant), f32Type, const1, 0x3f800000u});
+            if (needConst65535) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpConstant), f32Type, const65535, 0x477fff00u});
+            if (needConstInv65535) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpConstant), f32Type, constInv65535, 0x37800080u});
+            if (createFragCoordVar) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpVariable), ptrInputV4F32, fragCoordVar, static_cast<std::uint32_t>(spv::StorageClassInput)});
+            if (createFragDepthVar) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpVariable), ptrOutputF32, fragDepthVar, static_cast<std::uint32_t>(spv::StorageClassOutput)});
+        }
+        if (op == spv::OpEntryPoint) {
+            if (needFragCoord) {
+                const auto entrySpan = words.subspan(cursor, count);
+                const bool addCoord = createFragCoordVar || std::find(entrySpan.begin() + 5, entrySpan.end(), fragCoordVar) == entrySpan.end();
+                const bool addDepth = createFragDepthVar || std::find(entrySpan.begin() + 5, entrySpan.end(), fragDepthVar) == entrySpan.end();
+                const std::uint32_t extra = (addCoord ? 1u : 0u) + (addDepth ? 1u : 0u);
+                flushTo(cursor);
+                out.push_back(((count + extra) << 16u) | static_cast<std::uint32_t>(spv::OpEntryPoint));
+                out.insert(out.end(), words.begin() + static_cast<std::ptrdiff_t>(cursor + 1), words.begin() + static_cast<std::ptrdiff_t>(cursor + count));
+                if (addCoord) out.push_back(fragCoordVar);
+                if (addDepth) out.push_back(fragDepthVar);
+                copied = cursor + count;
+            }
+            if (!depthReplacing) {
+                flushTo(cursor + count);
+                out.insert(out.end(), {(3u << 16u) | static_cast<std::uint32_t>(spv::OpExecutionMode), entryPointId, static_cast<std::uint32_t>(spv::ExecutionModeDepthReplacing)});
+            }
+            cursor += count;
+            continue;
+        }
+        if (op == spv::OpExecutionMode && count >= 3 && (words[cursor + 2] == spv::ExecutionModeEarlyFragmentTests || words[cursor + 2] == spv::ExecutionModeDepthLess || words[cursor + 2] == spv::ExecutionModeDepthGreater)) {
+            flushTo(cursor);
+            copied = cursor + count;
+            cursor += count;
+            continue;
+        }
+        if (needFragCoord) {
+            if (op == spv::OpFunction && count >= 3 && words[cursor + 2] == entryPointId) inEntryFunction = true;
+            else if (op == spv::OpFunctionEnd) {
+                inEntryFunction = false;
+                waitingForEntryInsert = false;
+            } else if (inEntryFunction && op == spv::OpLabel) {
+                inEntryFunction = false;
+                waitingForEntryInsert = true;
+            } else if (waitingForEntryInsert && op != spv::OpVariable && op != spv::OpLine && op != spv::OpNoLine) {
+                flushTo(cursor);
+                const auto zPtr = nextId++;
+                const auto zValue = nextId++;
+                out.insert(out.end(), {
+                    (5u << 16u) | static_cast<std::uint32_t>(spv::OpAccessChain), ptrInputF32, zPtr, fragCoordVar, constU32_2,
+                    (4u << 16u) | static_cast<std::uint32_t>(spv::OpLoad), f32Type, zValue, zPtr
+                });
+                emitQuantizedStore(zValue, {});
+                break;
+            }
+        } else if (op == spv::OpStore && count >= 3 && words[cursor + 1] == fragDepthVar) {
+            flushTo(cursor);
+            emitQuantizedStore(words[cursor + 2], words.subspan(cursor + 3, count - 3));
+            copied = cursor + count;
+            cursor += count;
+            continue;
+        }
+        cursor += count;
+    }
+    flushTo(words.size());
+    out[3] = nextId;
+    return out;
+}
+
 bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders) {
     using Stage = ShaderRecompiler::ShaderStage;
     if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || (state.stages.tessellation && !context.tessellationPipelineCache) || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; }) || UsesMeshWindow(shaders) || FragmentInterlock(shaders)) return false;
@@ -466,7 +747,11 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(keys.renderPass, color.partialWriteMask != 0u);
     }
     appendKey(keys.renderPass, state.depth.has_value());
-    if (state.depth) appendKey(keys.renderPass, state.depth->format);
+    if (state.depth) {
+        appendKey(keys.renderPass, state.depth->format);
+        appendKey(keys.renderPass, HostDepthFormat(context, state.depth->format));
+    }
+    appendKey(keys.fragmentShader, QuantizesDepth16(context, state));
     appendKey(keys.fragmentShader, HostSampleMask(state));
     appendKey(keys.fragmentOutput, HostSampleMask(state));
     for (auto* key : {&keys.fragmentShader, &keys.fragmentOutput}) {
@@ -557,10 +842,11 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         std::vector<PipelineSpecialization> specializations;
         specializations.reserve(shaders.size());
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT meshSubgroup{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT, nullptr, 32u};
+        const bool quantizeDepth16 = QuantizesDepth16(context, state);
         for (std::uint32_t i = 0; i < shaders.size(); ++i) {
             const auto& shader = *shaders[i].program;
-            const auto demoted = barycentricPatches && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? DemoteVertexLayerOutput(shader.spirv.Words()) : std::vector<std::uint32_t>{};
-            const auto words = demoted.empty() ? shader.spirv.Words() : std::span<const std::uint32_t>(demoted);
+            const auto patched = barycentricPatches && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? DemoteVertexLayerOutput(shader.spirv.Words()) : quantizeDepth16 && shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment ? QuantizeFragmentDepth16(shaders[i]) : std::vector<std::uint32_t>{};
+            const auto words = patched.empty() ? shader.spirv.Words() : std::span<const std::uint32_t>(patched);
             _modules[i] = CreateShaderModule(context, words.data(), words.size() * sizeof(std::uint32_t), "vkCreateShaderModule graphics");
             const auto stage = VulkanStage(shaders[i].stage);
             stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -998,15 +1284,17 @@ void Pipeline::Continue(VkCommandBuffer commands, const State& state, const Stat
     }
     if (depthBias) context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, HostDepthBiasConstant(context, state.depth->format, state.depthBiasConstant), state.depthBiasClamp, state.depthBiasSlope);
     if (!depthBounds) return;
-    context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, state.minDepthBounds, state.maxDepthBounds);
+    const auto [minDepthBounds, maxDepthBounds] = HostDepthBounds(context, state);
+    context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, minDepthBounds, maxDepthBounds);
 }
 
 void Pipeline::setLibraryState(VkCommandBuffer commands, const State& state) const {
     const bool depth = state.depth.has_value();
+    const auto [minDepthBounds, maxDepthBounds] = depthBounds ? HostDepthBounds(context, state) : std::pair{0.0f, 1.0f};
     context.Resolved(&DeviceFunctions::cmdSetCullMode, "vkCmdSetCullModeEXT")(commands, state.cullMode);
     context.Resolved(&DeviceFunctions::cmdSetFrontFace, "vkCmdSetFrontFaceEXT")(commands, state.frontFace);
     context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, depthBias ? HostDepthBiasConstant(context, state.depth->format, state.depthBiasConstant) : 0.0f, depthBias ? state.depthBiasClamp : 0.0f, depthBias ? state.depthBiasSlope : 0.0f);
-    context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, depthBounds ? state.minDepthBounds : 0.0f, depthBounds ? state.maxDepthBounds : 1.0f);
+    context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, minDepthBounds, maxDepthBounds);
     context.Resolved(&DeviceFunctions::cmdSetDepthTestEnable, "vkCmdSetDepthTestEnableEXT")(commands, depth && state.depthTest);
     context.Resolved(&DeviceFunctions::cmdSetDepthWriteEnable, "vkCmdSetDepthWriteEnableEXT")(commands, depth && state.depthWrite);
     context.Resolved(&DeviceFunctions::cmdSetDepthCompareOp, "vkCmdSetDepthCompareOpEXT")(commands, depth ? state.depthCompare : VK_COMPARE_OP_ALWAYS);
@@ -1041,7 +1329,10 @@ void Pipeline::ContinueBackFaces(VkCommandBuffer commands, const State& state, c
     context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
     context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
     context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, HostDepthBiasConstant(context, state.depth->format, state.backDepthBiasConstant), state.depthBiasClamp, state.backDepthBiasSlope);
-    if (depthBounds) context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, state.minDepthBounds, state.maxDepthBounds);
+    if (depthBounds) {
+        const auto [minDepthBounds, maxDepthBounds] = HostDepthBounds(context, state);
+        context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, minDepthBounds, maxDepthBounds);
+    }
 }
 
 void Pipeline::PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const {
@@ -1144,6 +1435,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     append(key, state.depth.has_value());
     if (state.depth) {
         append(key, state.depth->format);
+        append(key, HostDepthFormat(context, state.depth->format));
         append(key, state.depth->samples);
         append(key, state.depthTest);
         append(key, state.depthWrite);
