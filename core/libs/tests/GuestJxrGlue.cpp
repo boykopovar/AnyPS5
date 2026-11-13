@@ -2,6 +2,7 @@
 #include "prx/libSceJxr/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceJxr/src/EncoderMetadata.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -188,6 +189,104 @@ void TestAlignedAllocation() {
     });
 }
 
+void TestXmpMetadata() {
+    constexpr char format[] = "<dc:format>image/vnd.ms-photo</dc:format>";
+    constexpr std::size_t extra = 1 + sizeof("<dc:format>") - 1 + sizeof("</dc:format>") - 1 + sizeof(format) - 1;
+    struct EncoderStorage { Jxr::ImageEncodeMetadataPrefix prefix; std::array<std::byte, 32> guard; };
+    EncoderStorage storage;
+    std::memset(&storage, 0xa5, sizeof(storage));
+    auto& encoder = storage.prefix;
+    encoder.headerDone = 0;
+    encoder.xmpMetadata = nullptr;
+    encoder.xmpMetadataByteCount = 0;
+    encoder.width = 0x12345678;
+    encoder.height = 0x87654321;
+    encoder.currentLine = 17;
+    encoder.pixelFormat[3] = std::byte{0xa5};
+    const auto setMetadata = [&storage](Jxr::ImageEncodeMetadataPrefix* value, const std::uint8_t* bytes, std::uint32_t size) {
+        EncoderStorage expected;
+        std::memcpy(&expected, &storage, sizeof(storage));
+        const auto result = PKImageEncode_SetXMPMetadata_WMP_nid_postfix(reinterpret_cast<tagPKImageEncode*>(value), bytes, size);
+        expected.prefix.xmpMetadata = value->xmpMetadata;
+        expected.prefix.xmpMetadataByteCount = value->xmpMetadataByteCount;
+        Require(std::memcmp(&expected, &storage, sizeof(storage)) == 0);
+        return result;
+    };
+    auto* previous = static_cast<std::uint8_t*>(std::malloc(4));
+    std::memcpy(previous, "old!", 4);
+    encoder.xmpMetadata = previous;
+    encoder.xmpMetadataByteCount = 4;
+    const char replaced[] = "prefix<dc:format>old</dc:format>tail!";
+    const char replacedExpected[] = "prefix<dc:format>image/vnd.ms-photo</dc:format>tail!";
+    const auto freesBeforeReplace = frees;
+    Require(setMetadata(&encoder, reinterpret_cast<const std::uint8_t*>(replaced), sizeof(replaced) - 1) == 0);
+    Require(frees == freesBeforeReplace + 1 && lastFreed == previous);
+    Require(encoder.xmpMetadata != nullptr);
+    Require(encoder.xmpMetadataByteCount == sizeof(replacedExpected) - 1);
+    Require(std::memcmp(encoder.xmpMetadata, replacedExpected, sizeof(replacedExpected) - 1) == 0);
+    Require(lastSize == sizeof(replaced) - 1 + extra);
+    Require(encoder.width == 0x12345678 && encoder.height == 0x87654321 && encoder.currentLine == 17);
+    Require(encoder.pixelFormat[3] == std::byte{0xa5});
+
+    const char multiple[] = "<dc:format>first</dc:format>|<dc:format>second</dc:format>";
+    const char multipleExpected[] = "<dc:format>image/vnd.ms-photo</dc:format>|<dc:format>second</dc:format>";
+    Require(setMetadata(&encoder, reinterpret_cast<const std::uint8_t*>(multiple), sizeof(multiple) - 1) == 0);
+    Require(encoder.xmpMetadataByteCount == sizeof(multipleExpected) - 1);
+    Require(std::memcmp(encoder.xmpMetadata, multipleExpected, sizeof(multipleExpected) - 1) == 0);
+
+    const char longer[] = "before<dc:format>this original format text is considerably longer than the replacement value</dc:format>after";
+    const char longerExpected[] = "before<dc:format>image/vnd.ms-photo</dc:format>after";
+    Require(setMetadata(&encoder, reinterpret_cast<const std::uint8_t*>(longer), sizeof(longer) - 1) == 0);
+    Require(encoder.xmpMetadataByteCount == sizeof(longerExpected) - 1);
+    Require(std::memcmp(encoder.xmpMetadata, longerExpected, sizeof(longerExpected) - 1) == 0);
+    Require(setMetadata(&encoder, nullptr, 0) == 0);
+    Require(encoder.xmpMetadata != nullptr && encoder.xmpMetadataByteCount == 0 && lastSize == extra);
+
+    const char unchanged[] = "<xmp>no format</xmp>";
+    Require(setMetadata(&encoder, reinterpret_cast<const std::uint8_t*>(unchanged), sizeof(unchanged) - 1) == 0);
+    Require(encoder.xmpMetadataByteCount == sizeof(unchanged) - 1);
+    Require(std::memcmp(encoder.xmpMetadata, unchanged, sizeof(unchanged) - 1) == 0);
+
+    const std::uint8_t embeddedNull[] = {'a', 'b', 'c', 0, 'd', 'e', 'f'};
+    Require(setMetadata(&encoder, embeddedNull, sizeof(embeddedNull)) == 0);
+    Require(encoder.xmpMetadataByteCount == 3);
+    Require(std::memcmp(encoder.xmpMetadata, embeddedNull, sizeof(embeddedNull)) == 0);
+    Require(encoder.xmpMetadata[sizeof(embeddedNull)] == 0);
+
+    for (const char* malformed : {"<dc:format>missing", "<dc:format>nested<dc:format></dc:format>"}) {
+        Require(setMetadata(&encoder, reinterpret_cast<const std::uint8_t*>(malformed), std::strlen(malformed)) == -1);
+        Require(encoder.xmpMetadata == nullptr && encoder.xmpMetadataByteCount == 0);
+    }
+
+    auto* guarded = static_cast<std::uint8_t*>(std::malloc(3));
+    encoder.xmpMetadata = guarded;
+    encoder.xmpMetadataByteCount = 3;
+    encoder.headerDone = 1;
+    const int freesBeforeGuard = frees;
+    const auto allocationBeforeGuard = lastCalloc;
+    Require(setMetadata(&encoder, reinterpret_cast<const std::uint8_t*>(unchanged), sizeof(unchanged) - 1) == -109);
+    Require(encoder.xmpMetadata == guarded && encoder.xmpMetadataByteCount == 0);
+    Require(frees == freesBeforeGuard && lastCalloc == allocationBeforeGuard);
+    encoder.headerDone = 0;
+
+    failCalloc = true;
+    const auto freesBeforeFailure = frees;
+    Require(setMetadata(&encoder, reinterpret_cast<const std::uint8_t*>(unchanged), sizeof(unchanged) - 1) == -101);
+    Require(encoder.xmpMetadata == nullptr && encoder.xmpMetadataByteCount == 0);
+    Require(frees == freesBeforeFailure + 1 && lastFreed == guarded);
+    Require(setMetadata(&encoder, nullptr, 1) == -101);
+    auto* replacedOnOverflow = static_cast<std::uint8_t*>(std::malloc(1));
+    encoder.xmpMetadata = replacedOnOverflow;
+    encoder.xmpMetadataByteCount = 1;
+    Require(setMetadata(&encoder, reinterpret_cast<const std::uint8_t*>(unchanged), UINT32_MAX) == -101);
+    Require(lastSize == extra - 1);
+    Require(encoder.xmpMetadata == nullptr && encoder.xmpMetadataByteCount == 0 && lastFreed == replacedOnOverflow);
+    failCalloc = false;
+    RequireThrows([&encoder, &setMetadata] { setMetadata(&encoder, nullptr, 1); });
+    Require(encoder.xmpMetadata == nullptr && encoder.xmpMetadataByteCount == 0);
+    RequireThrows([] { PKImageEncode_SetXMPMetadata_WMP_nid_postfix(nullptr, nullptr, 0); });
+}
+
 }
 
 int main() {
@@ -195,6 +294,7 @@ int main() {
     TestPixelFormatHash();
     TestImageIids();
     TestAlignedAllocation();
+    TestXmpMetadata();
     Require(IDPEmpty_nid_postfix(nullptr) == 0);
     int codec = 0;
     Require(IDPEmpty_nid_postfix(&codec) == 0 && codec == 0);

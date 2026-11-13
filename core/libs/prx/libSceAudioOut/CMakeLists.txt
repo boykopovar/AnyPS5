@@ -44,6 +44,13 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(audio_out_output_device_tests tests/OutputDevice.cpp)
+    target_include_directories(audio_out_output_device_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out_output_device_tests PRIVATE libc)
+    configure_windows_unwind(audio_out_output_device_tests)
+    add_test(NAME audio_out_output_device COMMAND audio_out_output_device_tests)
+    set_tests_properties(audio_out_output_device PROPERTIES TIMEOUT 5)
+
     add_test_executable(audio_out_host_gain_tests tests/HostGain.cpp)
     target_include_directories(audio_out_host_gain_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(audio_out_host_gain_tests PRIVATE libc)

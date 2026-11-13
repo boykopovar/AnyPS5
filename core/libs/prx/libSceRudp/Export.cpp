@@ -220,7 +220,7 @@ int APS5_VABI sceRudpGetStatus(void* status, std::size_t size) {
     unsigned char report[RUDP_STATUS_SIZE] = {};
     const auto contexts = static_cast<uint32_t>(g_ctx.size());
     std::memcpy(report + RUDP_STATUS_CURRENT_CONTEXTS, &contexts, sizeof(contexts));
-    std::memcpy(status, report, size);
+    if (!GuestCopyOut_nid_no_patch(status, report, size)) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -305,9 +305,10 @@ int APS5_VABI sceRudpCreateContext(GuestRudpEventHandler handler, void* arg, int
     if (ctxId == nullptr) {
         return RUDP_ERROR_INVALID_ARGUMENT;
     }
-    const int id = g_next_ctx++;
+    const int id = g_next_ctx;
+    if (!GuestCopyOut_nid_no_patch(ctxId, &id, sizeof(id))) return RUDP_ERROR_INVALID_ARGUMENT;
+    ++g_next_ctx;
     g_ctx.emplace(id, RudpContext{});
-    *ctxId = id;
     return 0;
 }
 
@@ -394,7 +395,7 @@ int APS5_VABI sceRudpGetOption(int ctxId, int option, void* value, uint32_t len)
         NotImplemented_nid_no_patch(__func__);
     }
     if (value == nullptr || len != sizeof(entry->second)) return RUDP_ERROR_INVALID_ARGUMENT;
-    std::memcpy(value, &entry->second, sizeof(entry->second));
+    if (!GuestCopyOut_nid_no_patch(value, &entry->second, sizeof(entry->second))) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -541,7 +542,8 @@ int APS5_VABI sceRudpGetMaxSegmentSize(uint16_t* size) {
     if (size == nullptr) {
         return RUDP_ERROR_INVALID_ARGUMENT;
     }
-    *size = RUDP_MAX_SEGMENT_SIZE;
+    const uint16_t maxSegmentSize = RUDP_MAX_SEGMENT_SIZE;
+    if (!GuestCopyOut_nid_no_patch(size, &maxSegmentSize, sizeof(maxSegmentSize))) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -809,7 +811,8 @@ int APS5_VABI sceRudpGetContextBufferStatus(int ctxId, void* status, std::size_t
     if (!valid_ctx(ctxId)) {
         return RUDP_ERROR_INVALID_CONTEXT_ID;
     }
-    std::memset(status, 0, size);
+    const unsigned char zeros[RUDP_CONTEXT_BUFFER_STATUS_SIZE] = {};
+    if (!GuestCopyOut_nid_no_patch(status, zeros, size)) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

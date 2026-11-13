@@ -284,4 +284,52 @@ __int128 APS5_VABI __modti3_nid_postfix(__int128 dividend, __int128 divisor) {
     return SonyModti3(dividend, divisor);
 }
 
+namespace {
+
+struct CrtSetupTable {
+    std::uint64_t size;
+    std::uintptr_t unknown;
+    std::uintptr_t primary[8];
+    std::uintptr_t extended[4];
+    std::uintptr_t trailing[10];
+};
+
+std::uintptr_t g_crtPrimarySlots[8] {};
+std::uintptr_t g_crtExtendedSlots[4] {};
+std::uintptr_t g_crtTrailingSlots[10] {};
+
+bool SlotGroupIsUniform(const std::uintptr_t* slots, std::size_t count) {
+    std::size_t filled = 0;
+    for (std::size_t index = 0; index < count; ++index) filled += slots[index] == 0 ? 0 : 1;
+    return filled == 0 || filled == count;
+}
+
+void CopySlots(const std::uintptr_t* source, std::uintptr_t* destination, std::size_t count) {
+    for (std::size_t index = 0; index < count; ++index) destination[index] = source[index];
+}
+
+}
+
+int APS5_VABI _new_setup_nid_postfix(const void* table) {
+    constexpr std::uint64_t primaryTableBytes = 0x50;
+    constexpr std::uint64_t extendedTableBytes = 0x70;
+    constexpr std::uint64_t trailingTableBytes = 0xc0;
+    if (table == nullptr) return 0;
+    const auto* setup = static_cast<const CrtSetupTable*>(table);
+    if (setup->size < primaryTableBytes) return 1;
+    if (!SlotGroupIsUniform(setup->primary, 8)) return 1;
+    const bool primaryPresent = setup->primary[0] != 0;
+    if (primaryPresent) CopySlots(setup->primary, g_crtPrimarySlots, 8);
+    if (setup->size < extendedTableBytes) return 0;
+    if (primaryPresent) {
+        for (std::size_t index = 0; index < 4; ++index) {
+            if (setup->extended[index] != 0) g_crtExtendedSlots[index] = setup->extended[index];
+        }
+    }
+    if (setup->size < trailingTableBytes) return 0;
+    if (!SlotGroupIsUniform(setup->trailing, 10)) return 1;
+    if (setup->trailing[0] != 0) CopySlots(setup->trailing, g_crtTrailingSlots, 10);
+    return 0;
+}
+
 }
