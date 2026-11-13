@@ -1,6 +1,9 @@
 # libSceHttp technical debt
 
-Sony guest HTTP requests still do not reach the network. The separate `Aps5HttpClient_*_nid_postfix` host client does not implement the Sony request, context, callback, authentication or cookie APIs described below.
+### Functional
+
+- [sceHttpGetCookie](../../../core/libs/prx/libSceHttp/src/Cookies.cpp), [sceHttpParseResponseHeader](../../../core/libs/prx/libSceHttp/Export.cpp), [URI functions](../../../core/libs/prx/libSceHttp/src/Uri.cpp) and [Aps5HttpClient_Read](../../../core/libs/prx/libSceHttp/src/Client.cpp) still read or write guest buffers in place, so an unmapped buffer crashes the host instead of returning `ERROR_INVALID_VALUE`. `sceHttpParseResponseHeader` returns pointers into the guest header, so its input cannot be copied without changing its result; `sceHttpGetCookie` needs a stored cookie, which the tests cannot create offline. The Uri and Client functions overlap open pull requests.
+- [sceHttpGetLastErrno](../../../core/libs/prx/libSceHttp/Export.cpp) still writes its errno output in place; open pull requests #9834, #11134 and #18515 rewrite its body, so it is left to them.
 
 ### Silent stubs
 
