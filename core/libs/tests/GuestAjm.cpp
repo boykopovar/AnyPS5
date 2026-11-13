@@ -952,6 +952,7 @@ void TestBatchJobRunSplitChecks() {
     AjmBatchInfo info{};
     Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
     const AjmBuffer buffer{storage.data(), 16};
+    const AjmBuffer five[5]{buffer, buffer, buffer, buffer, buffer};
     std::int64_t result = -1;
     const std::size_t wrapped = (std::size_t{1} << 32) + 1;
     Require(sceAjmBatchJobRunSplit(nullptr, 0, 0, &buffer, 1, &buffer, 1, &result, sizeof(result)) == invalidParameter);
@@ -968,7 +969,7 @@ void TestBatchJobRunSplitChecks() {
     };
     Require(refusedFor(wrapped, 1) && refusedFor(1, wrapped) && refusedFor(300, 0) && refusedFor(15, 0));
     Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, 1, &result, sizeof(result)) == 0 && info.offset == 64);
-    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 5, &buffer, 5, &result, sizeof(result)) == 0 && info.offset == storage.size());
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, five, 5, five, 5, &result, sizeof(result)) == 0 && info.offset == storage.size());
     Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 0, nullptr, 0, &result, sizeof(result)) == jobCreation && info.offset == storage.size() + 0x20);
     Require(sceAjmBatchJobClearContext(&info, 0, &result) == outOfResources && info.offset == storage.size() + 0x20);
 }
@@ -2252,6 +2253,22 @@ void TestInlineBufferLayout(InlineBuffer inlineBuffer) {
     Require(BatchWord(batch, 24) == 0xCDCDCDC7 && BatchWord(batch, 28) == 0 && address == batch.data() + 32);
 }
 
+void TestInlineBufferRejectsOversize(InlineBuffer inlineBuffer) {
+    std::vector<std::uint8_t> batch(64, 0xCD);
+    const auto before = batch;
+    const void* address = nullptr;
+    for (const std::size_t size : {std::size_t{0x100000008}, std::numeric_limits<std::size_t>::max() - 3}) {
+        bool thrown = false;
+        try {
+            inlineBuffer(batch.data(), batch.data(), size, &address);
+        } catch (const std::invalid_argument&) {
+            thrown = true;
+        }
+        Require(thrown);
+        Require(batch == before && address == nullptr);
+    }
+}
+
 void TestConsoleInlineBuffer(std::uint32_t context, const char* ajmiLibrary) {
 #ifdef _WIN32
     const char* nativeLibrary = "libSceAjm.native.prx";
@@ -2260,7 +2277,9 @@ void TestConsoleInlineBuffer(std::uint32_t context, const char* ajmiLibrary) {
 #endif
     const InlineBuffer inlineBuffer = reinterpret_cast<InlineBuffer>(ResolveExport(nativeLibrary, "sceAjmBatchJobInlineBuffer"));
     TestInlineBufferLayout(inlineBuffer);
-    TestInlineBufferLayout(reinterpret_cast<InlineBuffer>(ResolveExport(ajmiLibrary, "sceAjmBatchJobInlineBuffer_nid_disambig1")));
+    const auto ajmiInlineBuffer = reinterpret_cast<InlineBuffer>(ResolveExport(ajmiLibrary, "sceAjmBatchJobInlineBuffer_nid_disambig1"));
+    TestInlineBufferLayout(ajmiInlineBuffer);
+    TestInlineBufferRejectsOversize(ajmiInlineBuffer);
     const void* address = nullptr;
 
     std::vector<std::uint8_t> stream(1024, 0);

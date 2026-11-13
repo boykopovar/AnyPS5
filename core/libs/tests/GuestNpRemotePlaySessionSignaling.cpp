@@ -1,5 +1,6 @@
 #include "prx/libSceNpRemotePlaySessionSignaling/libSceNpRemotePlaySessionSignaling.hpp"
 #include "prx/libSceNpSessionSignaling/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -35,6 +36,10 @@ void CheckBeforeInitialize() {
         "GetConnectionStatus before Initialize");
     Require(status == static_cast<std::int32_t>(Stale), "GetConnectionStatus: a failed call writes nothing");
     Require(sceNpRemotePlaySessionSignalingInitialize(nullptr) == InvalidArgument, "Initialize: null parameter");
+    errno = 71;
+    Require(sceNpRemotePlaySessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(0x10)) == InvalidArgument,
+        "Initialize: unmapped parameter");
+    Require(errno == 71, "Initialize: preserves errno");
 }
 
 void CheckInitialized() {
@@ -49,6 +54,10 @@ void CheckInitialized() {
     Require(sceNpSessionSignalingInitialize(&param) == AlreadyInitialized, "the session signaling library is initialized");
 
     SessionSignalingMemoryInfo memory{Stale, Stale, Stale};
+    errno = 71;
+    Require(sceNpRemotePlaySessionSignalingGetMemoryInfo(reinterpret_cast<SessionSignalingMemoryInfo*>(0x10)) == InvalidArgument,
+        "GetMemoryInfo: unmapped pointer");
+    Require(errno == 71, "GetMemoryInfo: preserves errno");
     Require(sceNpRemotePlaySessionSignalingGetMemoryInfo(&memory) == 0, "GetMemoryInfo");
     Require(memory.poolSize == 0x40000 && memory.usedSize == 0 && memory.peakUsedSize == 0, "GetMemoryInfo: values");
 
@@ -56,11 +65,19 @@ void CheckInitialized() {
     Require(sceNpRemotePlaySessionSignalingGetLocalNetInfo(1, &net) == Unavailable, "GetLocalNetInfo: library result");
     Require(net.localAddress == Stale && net.mappedAddress == Stale && net.mappedPort == Stale,
         "GetLocalNetInfo: a failed call writes nothing");
+    errno = 71;
+    Require(sceNpRemotePlaySessionSignalingGetLocalNetInfo(1, reinterpret_cast<NpRemotePlaySessionSignalingLocalNetInfo*>(0x10)) == Unavailable,
+        "GetLocalNetInfo: unmapped pointer");
+    Require(errno == 71, "GetLocalNetInfo: preserves errno");
 
     std::int32_t status = static_cast<std::int32_t>(Stale);
     Require(sceNpRemotePlaySessionSignalingGetConnectionStatus(999, 2, &status, nullptr, nullptr) == ContextNotFound,
         "GetConnectionStatus: unknown context");
     Require(status == static_cast<std::int32_t>(Stale), "GetConnectionStatus: a failed call writes nothing");
+    errno = 71;
+    Require(sceNpRemotePlaySessionSignalingGetConnectionStatus(999, 2, reinterpret_cast<std::int32_t*>(0x10), nullptr, nullptr) == ContextNotFound,
+        "GetConnectionStatus: unmapped pointer");
+    Require(errno == 71, "GetConnectionStatus: preserves errno");
 
     std::uint32_t property = Stale;
     Require(sceNpRemotePlaySessionSignalingGetCustomProperty(999, &property) == ContextNotFound, "GetCustomProperty");

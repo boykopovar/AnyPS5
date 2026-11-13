@@ -3,6 +3,7 @@
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdarg>
 #include <cstdint>
@@ -246,6 +247,9 @@ int main() {
     Require(systemInfo.maxMaterials == options.maxMaterials && systemInfo.pathCapacityPerSource == 6 && systemInfo.propagationSpeed == options.propagationSpeed, "system query info capacities");
     Require(systemInfo.reserved44 == 0xdeadbeef, "system query info overwrote reserved output");
     Require(sceAudioPropagationSystemQueryInfo(system, &systemInfo, sizeof(systemInfo) - 1) == AudioPropagation::ErrorInvalidHandle, "system query info accepted wrong size");
+    errno = 71;
+    Require(sceAudioPropagationSystemQueryInfo(system, reinterpret_cast<AudioPropagation::SystemInfo*>(0x10), sizeof(systemInfo)) == AudioPropagation::ErrorInvalidHandle, "system query info accepted unmapped output");
+    Require(errno == 71, "system query info preserved errno");
     Require(sceAudioPropagationSystemQueryInfo(system, nullptr, sizeof(systemInfo)) == AudioPropagation::ErrorInvalidHandle, "system query info accepted null output");
     Require(sceAudioPropagationSystemUnlock(system) == AudioPropagation::ErrorInvalidArgument, "unbalanced system unlock was accepted");
     Require(sceAudioPropagationSystemLock(system) == 0, "system lock failed");
@@ -371,8 +375,14 @@ int main() {
     Require(sceAudioPropagationSourceGetAudioPath(source, AudioPropagation::MaxPaths, &repeated) == AudioPropagation::ErrorInvalidArgument, "out of range path slot");
     Require(repeated == path, "rejected path lookup changed the output");
     Require(sceAudioPropagationSourceGetAudioPath(source, 0, nullptr) == AudioPropagation::ErrorNullPointer, "null path output");
+    errno = 71;
+    Require(sceAudioPropagationSourceGetAudioPath(source, 0, reinterpret_cast<AudioPropagationHandle*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable path output");
+    Require(errno == 71, "errno preserved on unwritable path output");
     Require(sceAudioPropagationSourceGetAudioPath(0, 0, nullptr) == AudioPropagation::ErrorInvalidHandle, "path lookup handle precedence");
     Require(sceAudioPropagationPathGetNumPoints(path, &count) == 0 && count == 0, "initial path has points");
+    errno = 71;
+    Require(sceAudioPropagationPathGetNumPoints(path, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable path points output");
+    Require(errno == 71, "errno preserved on unwritable path points output");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(source, &count); }, "source used as a path");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(path, nullptr); }, "null point-count output");
     AudioPropagation::AudioPath configured{};

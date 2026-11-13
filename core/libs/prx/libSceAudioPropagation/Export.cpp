@@ -7,6 +7,7 @@
 #include <cmath>
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdarg>
 #include <cstdint>
 #include <condition_variable>
@@ -443,7 +444,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHan
     if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     if (!outPath) return ErrorNullPointer;
     if (index >= MaxPaths) return ErrorInvalidArgument;
-    *outPath = state.sourcePaths.at(source)[index];
+    if (!copyGuestOut(outPath, state.sourcePaths.at(source)[index])) return ErrorNullPointer;
     return 0;
 }
 
@@ -452,7 +453,7 @@ std::int32_t APS5_VABI sceAudioPropagationPathGetNumPoints(AudioPropagationHandl
     std::lock_guard lock(state.mutex);
     requireObject(state, path, Kind::Path, __func__);
     require(count != nullptr, __func__);
-    *count = state.paths.at(path).data.pointCount;
+    if (!copyGuestOut(count, state.paths.at(path).data.pointCount)) return ErrorNullPointer;
     return 0;
 }
 
@@ -674,15 +675,23 @@ int APS5_VABI sceAudioPropagationSystemQueryInfo(AudioPropagationHandle system, 
     std::lock_guard lock(state.mutex);
     if (!liveSystem(state, system) || !info || size != sizeof(SystemInfo)) return ErrorInvalidHandle;
     const auto& configuration = *reinterpret_cast<const SystemState*>(system);
-    info->cpuMemory = configuration.cpuMemory;
-    info->cpuMemorySize = configuration.cpuMemorySize;
-    info->index = configuration.index;
-    info->frameSamples = configuration.frameSamples;
-    info->parameter24 = 1;
-    info->maxSources = configuration.maxSources;
-    info->maxMaterials = configuration.maxMaterials;
-    info->pathCapacityPerSource = configuration.pathCapacityPerSource;
-    info->propagationSpeed = configuration.propagationSpeed;
+    SystemInfo localInfo{};
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo));
+    errno = savedErrno;
+    if (!read) return ErrorInvalidHandle;
+    localInfo.cpuMemory = configuration.cpuMemory;
+    localInfo.cpuMemorySize = configuration.cpuMemorySize;
+    localInfo.index = configuration.index;
+    localInfo.frameSamples = configuration.frameSamples;
+    localInfo.parameter24 = 1;
+    localInfo.maxSources = configuration.maxSources;
+    localInfo.maxMaterials = configuration.maxMaterials;
+    localInfo.pathCapacityPerSource = configuration.pathCapacityPerSource;
+    localInfo.propagationSpeed = configuration.propagationSpeed;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidHandle;
     return 0;
 }
 
