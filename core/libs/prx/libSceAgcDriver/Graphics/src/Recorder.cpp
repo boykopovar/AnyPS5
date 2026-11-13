@@ -4259,6 +4259,10 @@ void Recorder::HoldNextSubmit(VkSemaphore semaphore, std::uint64_t value) {
     submitHoldValue = value;
 }
 
+bool Recorder::SubmitHeld() const {
+    return submitHold != VK_NULL_HANDLE || (heldSerial != 0 && unsignaled(heldSerial));
+}
+
 void Recorder::FailNextSubmitsForTest(unsigned count) {
     injectedSubmitFailures.store(count, std::memory_order_relaxed);
 }
@@ -4356,6 +4360,7 @@ void Recorder::Submit() {
     if (batch->guestWork) LibcRunReportMilestone_nid_no_patch(2);
     batch->submitted = true;
     batch->serial = ++submissions;
+    if (hold != VK_NULL_HANDLE) heldSerial = batch->serial;
     batch->submittedAt = std::chrono::steady_clock::now();
     CaptureTrace::Log("submit-confirmed batch=%llu tokens=%s", static_cast<unsigned long long>(batch->serial), tokensStr.c_str());
     if (DrawProfiled()) {
