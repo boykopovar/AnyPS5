@@ -4,10 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI u_tolower();
-int APS5_VABI u_totitle();
-int APS5_VABI u_toupper();
-int APS5_VABI ublock_getCode();
 int APS5_VABI ubrk_close();
 int APS5_VABI ubrk_countAvailable();
 int APS5_VABI ubrk_current();
@@ -44,7 +40,7 @@ int APS5_VABI udata_setFileAccess();
 int APS5_VABI uloc_addLikelySubtags();
 std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 int APS5_VABI uloc_countAvailable();
-int APS5_VABI uloc_forLanguageTag();
+std::int32_t APS5_VABI uloc_forLanguageTag(const char* langtag, char* localeID, std::int32_t capacity, std::int32_t* parsedLength, std::int32_t* status);
 int APS5_VABI uloc_getAvailable();
 std::int32_t APS5_VABI uloc_getBaseName(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 int APS5_VABI uloc_getCharacterOrientation();
@@ -58,22 +54,11 @@ int APS5_VABI uloc_minimizeSubtags();
 int APS5_VABI uloc_setKeywordValue();
 int APS5_VABI uloc_toLanguageTag();
 int APS5_VABI uloc_toUnicodeLocaleType();
-int APS5_VABI unorm2_composePair();
-int APS5_VABI unorm2_getNFCInstance();
-int APS5_VABI unorm2_getNFDInstance();
 int APS5_VABI unorm2_getNFKCInstance();
 int APS5_VABI unorm2_getNFKDInstance();
-int APS5_VABI unorm2_getRawDecomposition();
-int APS5_VABI unorm2_isNormalized();
-int APS5_VABI unorm2_normalize();
-int APS5_VABI ures_close();
 int APS5_VABI ures_getByKey();
 int APS5_VABI ures_getStringByKey();
 int APS5_VABI ures_open();
-int APS5_VABI uscript_getScript();
-int APS5_VABI uscript_getShortName();
-int APS5_VABI uscript_hasScript();
-int APS5_VABI utext_close();
 int APS5_VABI utext_openConstUnicodeString();
 int APS5_VABI utext_openUChars();
 int APS5_VABI utext_setup();

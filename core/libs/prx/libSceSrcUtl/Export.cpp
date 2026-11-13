@@ -32,8 +32,14 @@ bool IsRate(const std::uint32_t (&rates)[N], std::uint32_t rate) {
 }
 
 bool HandleIsInitialized(const void* handle) {
+    if (handle == nullptr) return false;
     std::uint64_t magic = 0;
-    std::memcpy(&magic, static_cast<const std::byte*>(handle) + SRC_UTILITY_MAGIC_OFFSET, sizeof(magic));
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&magic, static_cast<const std::byte*>(handle) + SRC_UTILITY_MAGIC_OFFSET, sizeof(magic))) {
+        errno = savedErrno;
+        return false;
+    }
+    errno = savedErrno;
     return magic == SRC_UTILITY_MAGIC;
 }
 
@@ -106,7 +112,12 @@ int APS5_VABI sceSrcUtilityResample() {
 
 int APS5_VABI sceSrcUtilitySetPriority(void* handle, std::uint32_t priority) {
     if (handle == nullptr || !HandleIsInitialized(handle)) return SRC_UTILITY_ERROR_INVALID_HANDLE;
-    std::memcpy(static_cast<std::byte*>(handle) + SRC_UTILITY_PRIORITY_OFFSET, &priority, sizeof(priority));
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(static_cast<std::byte*>(handle) + SRC_UTILITY_PRIORITY_OFFSET, &priority, sizeof(priority))) {
+        errno = savedErrno;
+        return SRC_UTILITY_ERROR_INVALID_HANDLE;
+    }
+    errno = savedErrno;
     return 0;
 }
 int APS5_VABI sceSrcUtilityTerminateEx() {
