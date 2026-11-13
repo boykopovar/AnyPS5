@@ -1008,7 +1008,6 @@ int APS5_VABI _ZNK7WebCore19ProtectionSpaceBase5realmEv();
 int APS5_VABI _ZN7WebCore9FrameView13setNodeToDrawEPNS_4NodeE();
 int APS5_VABI WKBundleSetAllowFileAccessFromFileURLs();
 int APS5_VABI _ZN7WebCore8Settings38setShowRepaintCounterInspectorOverrideEN3WTF8OptionalIbEE();
-int APS5_VABI _ZN7WebCore20UserGestureIndicator21processingUserGestureEv();
 int APS5_VABI _ZNK7WebCore24MatrixTransformOperation5cloneEv();
 int APS5_VABI _ZN7WebCore25previousParagraphPositionERKNS_15VisiblePositionEi();
 int APS5_VABI libSceNKWebKitLegacyUnknown_QT9ArotZAcs_nid_no_patch();
