@@ -323,9 +323,15 @@ class Main(unittest.TestCase):
         ])
         listing = json.dumps({"tests": [
             {"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]},
-            {"name": "nid_buffer_validation", "command": ["C:/b/tests/nid_buffer_validation_tests.exe"]},
+            {"name": "nid_buffer_validation", "command": []},
             {"name": "nid_gnu_hash", "command": ["C:/python.exe", "test_gnu_hash.py"]},
         ]})
+        testfile = build / "core" / "libs" / "CTestTestfile.cmake"
+        testfile.parent.mkdir(parents=True)
+        testfile.write_text('add_test("guest_pad" "C:/b/tests/guest_pad_tests.exe")\n'
+                            'add_test("nid_buffer_validation" "C:/b/tests/nid_buffer_validation_tests.exe")\n'
+                            'set_tests_properties("nid_buffer_validation" PROPERTIES TIMEOUT "10")\n'
+                            'add_test("nid_gnu_hash" "C:/python.exe" "test_gnu_hash.py")\n', encoding="utf-8")
         commands = []
         def execute(cmd, **_):
             commands.append(list(cmd))
@@ -337,6 +343,15 @@ class Main(unittest.TestCase):
         ran = [index for index, cmd in enumerate(commands) if "-I" in cmd]
         builds = [index for index, cmd in enumerate(commands) if "--target" in cmd and "nid_buffer_validation_tests" in cmd]
         self.assertTrue(ran and builds and max(builds) < min(ran))
+
+    def test_registered_commands_come_from_every_testfile_without_a_built_executable(self):
+        build = Path(self.temporary.name) / "tree"
+        (build / "sub").mkdir(parents=True)
+        (build / "CTestTestfile.cmake").write_text('add_test("a b" "/x/a_tests" "arg \\"q\\"")\n', encoding="utf-8")
+        (build / "sub" / "CTestTestfile.cmake").write_text(
+            '  add_test([=[nid_one]=] "/x/nid_one_tests")\nset_tests_properties("nid_one" PROPERTIES TIMEOUT "5")\n', encoding="utf-8")
+        self.assertEqual(build_changed_guest_tests.registered_test_commands(build), {
+            "a b": ["/x/a_tests", 'arg "q"'], "nid_one": ["/x/nid_one_tests"]})
 
     def test_a_change_outside_nid_does_not_run_the_nid_script_tests(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])

@@ -65,9 +65,40 @@ def script_test_indices(build_dir, patterns):
     return sorted(indices)
 
 
+TESTFILE_ADD_TEST = re.compile(r'^\s*add_test\(\s*(?:"((?:[^"\\]|\\.)*)"|\[=\[(.*?)\]=\])\s*(.*)\)\s*$')
+TESTFILE_ARGUMENT = re.compile(r'"((?:[^"\\]|\\.)*)"|\[=\[(.*?)\]=\]|(\S+)')
+
+
+def registered_test_commands(build_dir):
+    commands = {}
+    for root, _, files in os.walk(build_dir):
+        if "CTestTestfile.cmake" not in files:
+            continue
+        for line in (Path(root) / "CTestTestfile.cmake").read_text(encoding="utf-8", errors="replace").splitlines():
+            match = TESTFILE_ADD_TEST.match(line)
+            if match:
+                name = match.group(1) if match.group(1) is not None else match.group(2)
+                commands[re.sub(r"\\(.)", r"\1", name)] = [
+                    re.sub(r"\\(.)", r"\1", next(part for part in argument if part))
+                    for argument in TESTFILE_ARGUMENT.findall(match.group(3))]
+    return commands
+
+
 def script_test_owners(build_dir, targets_by_name, patterns):
-    resolutions = ctest_resolutions(build_dir, targets_by_name)
-    return sorted({owner for name, (owner, _) in resolutions.items() if any(pattern.match(name) for pattern in patterns)}, key=str.casefold)
+    listing = subprocess.run(
+        ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
+        capture_output=True, text=True, check=True)
+    registered = registered_test_commands(build_dir)
+    owners = set()
+    for test in json.loads(listing.stdout).get("tests", []):
+        if not any(pattern.match(test["name"]) for pattern in patterns):
+            continue
+        for command in ([str(part) for part in test.get("command", [])], registered.get(test["name"], [])):
+            owner = test_owner(command, targets_by_name)
+            if owner is not None:
+                owners.add(owner)
+                break
+    return sorted(owners, key=str.casefold)
 
 
 def guest_test_targets(source_root, targets, changed_paths=None):
