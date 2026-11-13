@@ -2858,7 +2858,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const auto commands = start.commands;
     if (!continued) {
         recorder->PrepareSampleSlot();
-        PerformanceTrace::Count(PerformanceTrace::RenderPassScope);
+        PerformanceTrace::Amount(PerformanceTrace::RenderPassScope, 1);
     }
     if (capture) captureInputs(context, *recorder, commands, resources, drawBindings, record.targets.empty() || record.targets.front() == nullptr ? 0 : record.targets.front()->Descriptor().baseAddress);
     // The draw's [gputime] class range: from its first barrier to the pass's trailing barrier (a
@@ -3921,6 +3921,8 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         }
         imageBarrier(context, commands, binding.target->Image(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
         context.Resolved(&DeviceFunctions::cmdCopyBufferToImage, "vkCmdCopyBufferToImage")(commands, linear, binding.target->Image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        PerformanceTrace::Amount("Graphics.Copy", 1);
+        PerformanceTrace::Amount("Graphics.Copy.bytes", binding.original.size());
         imageBarrier(context, commands, binding.target->Image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
     }
     std::vector<std::shared_ptr<void>> reorderKept;
@@ -4001,6 +4003,8 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         reuse.size = VK_WHOLE_SIZE;
         context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &reuse, 0, nullptr);
         context.Resolved(&DeviceFunctions::cmdCopyImageToBuffer, "vkCmdCopyImageToBuffer")(commands, binding.target->Image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, linear, 1, &copy);
+        PerformanceTrace::Amount("Graphics.Copy", 1);
+        PerformanceTrace::Amount("Graphics.Copy.bytes", binding.original.size());
         if (binding.gpuTiling) {
             memoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
             if (dumpLimit > 0) {
