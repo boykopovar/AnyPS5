@@ -59,6 +59,7 @@ constexpr std::uint32_t kAgcDriverModuleId = 0x80000080;
 constexpr std::uint32_t kNgs2InternalModuleId = 0x80000090;
 constexpr std::uint32_t kAgcModuleId = 0x80000094;
 constexpr std::uint32_t kHdrScopesInternalModuleId = 0x800000bd;
+constexpr std::uint32_t kMeasuredInternalUnloadedModuleId = 0x800000c4u;
 
 #ifdef __linux__
 struct Mapping {
@@ -119,6 +120,7 @@ void CheckUnwindInfo() {
         threw = true;
     }
     Require(threw);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, nullptr); }));
 }
 #endif
 
@@ -318,6 +320,7 @@ int main() {
     }
 
     Require(sceSysmoduleIsLoadedInternal(0x00ffffffu) == kInvalidValue);
+    Require(sceSysmoduleIsLoadedInternal(kMeasuredInternalUnloadedModuleId) == kModuleUnloaded);
     Require(sceSysmoduleIsLoadedInternal(kFiberModuleId) == kModuleUnloaded);
     Require(sceSysmoduleIsLoaded(kFiberModuleId) == kModuleUnloaded);
     Require(sceSysmoduleLoadModuleInternal(kFiberModuleId) == 0);
@@ -475,4 +478,20 @@ int main() {
     Require(sceSysmoduleUnloadModule(kAudioPropagationModuleId) == 0);
     Require(sceSysmoduleIsLoaded(kAudioPropagationModuleId) == kModuleUnloaded);
     Require(sceSysmoduleGetModuleHandleInternal(kAudioPropagationModuleId, &audioPropagationHandle) == kModuleUnloaded);
+
+    constexpr int kKernelEinval = static_cast<int>(0x80020016);
+    int moduleResult = -1;
+    Require(sceSysmoduleLoadModuleByNameInternal(nullptr, 0, nullptr, 0, &moduleResult) == kKernelEinval);
+    Require(moduleResult == -1);
+    KernelModule byName = sceSysmoduleLoadModuleByNameInternal("libSceFiber", 0, nullptr, 0, &moduleResult);
+    Require(byName > 0);
+    Require(moduleResult == 0);
+    void* byNameSymbol = nullptr;
+    Require(sceKernelDlsym(byName, "sceFiberOptParamInitialize", &byNameSymbol) == 0);
+    Require(byNameSymbol != nullptr);
+    moduleResult = -1;
+    Require(sceSysmoduleLoadModuleByNameInternal("libSceFiber", 0, nullptr, 0, &moduleResult) > 0);
+    moduleResult = -1;
+    Require(sceSysmoduleLoadModuleByNameInternal("libSceNoSuchModule", 0, nullptr, 0, &moduleResult) < 0);
+    Require(sceKernelStopUnloadModule(byName, 0, nullptr, 0, nullptr, nullptr) == 0);
 }

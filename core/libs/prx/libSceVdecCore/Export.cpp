@@ -5,6 +5,7 @@
 #include "prx/libSceVdecCore/include/Decoder.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <condition_variable>
 #include <cstdint>
 #include <cstddef>
@@ -85,6 +86,7 @@ struct Decoder {
     std::int64_t lastDts = VdecCorePtsInvalid;
     std::uint64_t lastUserData = 0;
     std::mutex mutex;
+    std::mutex outputMutex;
     std::condition_variable inputReady;
     std::condition_variable outputReady;
     std::deque<Command> commands;
@@ -303,21 +305,49 @@ int APS5_VABI sceVdecCoreAnalyzeStream() {
     return 0;
 }
 
+static bool CopyGuestIn(void* dst, const void* src, std::size_t size) {
+    const int saved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = saved;
+    return ok;
+}
+
+static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
+    const int saved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = saved;
+    return ok;
+}
+
 int APS5_VABI sceVdecCoreCreateDecoder(const VdecCoreConfigInfo* config, const VdecCoreMemoryInfo*, void*, void** decoder) {
     if (config == nullptr || decoder == nullptr) return VdecCoreErrorInvalidArgument;
-    if (config->decoderType > MaxDecoderType) return VdecCoreErrorInvalidArgument;
-    if (config->codecType > MaxCodecType) return VdecCoreErrorInvalidCodecType;
+    VdecCoreConfigInfo localConfig{};
+    if (!CopyGuestIn(&localConfig, config, sizeof(localConfig))) return VdecCoreErrorInvalidArgument;
+    if (localConfig.decoderType > MaxDecoderType) return VdecCoreErrorInvalidArgument;
+    if (localConfig.codecType > MaxCodecType) return VdecCoreErrorInvalidCodecType;
     auto created = std::make_unique<Decoder>();
-    created->codecType = config->codecType;
-    created->geometry = FrameGeometry(*config);
+    created->codecType = localConfig.codecType;
+    created->geometry = FrameGeometry(localConfig);
     OpenCodec(*created);
     created->decodedFrame = av_frame_alloc();
     created->worker = std::jthread(RunWorker, created.get());
     void* handle = created.get();
-    auto& state = State();
-    std::lock_guard lock(state.mutex);
-    state.live.emplace(handle, std::move(created));
-    *decoder = handle;
+    {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        state.live.emplace(handle, std::move(created));
+    }
+    if (!CopyGuestOut(decoder, &handle, sizeof(handle))) {
+        std::unique_ptr<Decoder> removed;
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        const auto found = state.live.find(handle);
+        if (found != state.live.end()) {
+            removed = std::move(found->second);
+            state.live.erase(found);
+        }
+        return VdecCoreErrorInvalidArgument;
+    }
     return 0;
 }
 
@@ -348,6 +378,7 @@ int APS5_VABI sceVdecCoreFlushDecodeOutput(void* decoder, std::uint32_t* count, 
 int APS5_VABI sceVdecCoreGetDecodeOutput(void* decoder, VdecCoreFrameBuffer* frameBuffer, std::uint32_t, VdecCoreOutputInfo* output, void*) {
     if (decoder == nullptr || output == nullptr) return VdecCoreErrorInvalidArgument;
     auto& target = Lookup(decoder, __func__);
+    std::lock_guard outputLock(target.outputMutex);
     AVFrame* frame = nullptr;
     {
         std::lock_guard lock(target.mutex);
@@ -469,13 +500,22 @@ int APS5_VABI sceVdecCoreInitializeComputeResource() {
 
 int APS5_VABI sceVdecCoreMapMemoryBlock(void* decoder, const VdecCoreMemoryBlock* blocks, std::uint32_t count) {
     if (decoder == nullptr) return VdecCoreErrorInvalidArgument;
+    constexpr std::uint32_t MaxMappedBlocks = 4096;
+    if (blocks != nullptr && count > MaxMappedBlocks) return VdecCoreErrorInvalidArgument;
+    std::vector<VdecCoreMemoryBlock> localBlocks;
+    if (blocks != nullptr && count > 0) {
+        for (std::uint32_t i = 0; i < count; ++i) {
+            VdecCoreMemoryBlock block{};
+            if (!CopyGuestIn(&block, blocks + i, sizeof(block))) return VdecCoreErrorInvalidArgument;
+            localBlocks.push_back(block);
+        }
+    }
     auto& state = State();
     std::lock_guard lock(state.mutex);
     auto& target = *Find(state, decoder, __func__)->second;
-    if (blocks == nullptr || count == 0) return 0;
+    if (localBlocks.empty()) return 0;
     std::lock_guard decoderLock(target.mutex);
-    for (std::uint32_t index = 0; index < count; ++index) {
-        const VdecCoreMemoryBlock block = blocks[index];
+    for (const VdecCoreMemoryBlock& block : localBlocks) {
         target.mappedBlocks.push_back(block);
         auto* base = static_cast<std::uint8_t*>(block.address);
         const std::uint32_t slotSize = target.geometry.frameBufferSize;
@@ -488,33 +528,67 @@ int APS5_VABI sceVdecCoreMapMemoryBlock(void* decoder, const VdecCoreMemoryBlock
 
 int APS5_VABI sceVdecCoreQueryComputeResourceInfo(VdecCoreComputeResourceInfo* info) {
     if (info == nullptr) return VdecCoreErrorInvalidArgument;
-    info->memoryType = 0;
-    info->size = ComputeSize;
-    info->alignment = ComputeAlignment;
-    info->reserved = 0;
+    VdecCoreComputeResourceInfo localInfo{};
+    localInfo.memoryType = 0;
+    localInfo.size = ComputeSize;
+    localInfo.alignment = ComputeAlignment;
+    localInfo.reserved = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return VdecCoreErrorInvalidArgument;
     return 0;
 }
 
 int APS5_VABI sceVdecCoreQueryFrameBufferInfo(const VdecCoreConfigInfo* config, VdecCoreFrameBufferInfo* info) {
     if (info == nullptr || config == nullptr) return VdecCoreErrorInvalidArgument;
-    if (config->codecType > MaxCodecType) return VdecCoreErrorInvalidCodecType;
-    if (config->maxDpbFrameCount < -1 || config->maxDpbFrameCount > MaxDpbFrameCount) return VdecCoreErrorInvalidArgument;
-    const Geometry geometry = FrameGeometry(*config);
-    info->frameBufferSize = geometry.frameBufferSize;
-    info->frameBufferAlignment = FrameBufferAlignment;
-    info->minFrameBufferCount = geometry.dpb + 1;
-    info->horizontalAlignment = geometry.horizontalAlign;
-    info->frameWidth = geometry.width;
-    info->frameHeight = geometry.height;
+    VdecCoreConfigInfo localConfig{};
+    const int savedErrno = errno;
+    const bool readConfig = GuestCopyIn_nid_no_patch(&localConfig, config, sizeof(localConfig));
+    errno = savedErrno;
+    if (!readConfig) return VdecCoreErrorInvalidArgument;
+    if (localConfig.codecType > MaxCodecType) return VdecCoreErrorInvalidCodecType;
+    if (localConfig.maxDpbFrameCount < -1 || localConfig.maxDpbFrameCount > MaxDpbFrameCount) return VdecCoreErrorInvalidArgument;
+    const Geometry geometry = FrameGeometry(localConfig);
+    VdecCoreFrameBufferInfo localInfo{};
+    localInfo.frameBufferSize = geometry.frameBufferSize;
+    localInfo.frameBufferAlignment = FrameBufferAlignment;
+    localInfo.minFrameBufferCount = geometry.dpb + 1;
+    localInfo.horizontalAlignment = geometry.horizontalAlign;
+    localInfo.frameWidth = geometry.width;
+    localInfo.frameHeight = geometry.height;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return VdecCoreErrorInvalidArgument;
     return 0;
 }
 
 int APS5_VABI sceVdecCoreQueryInstanceSize(const VdecCoreConfigInfo* config, std::uint64_t* instanceSize, std::uint64_t* computeSize, std::uint64_t* reservedSize) {
     if (config == nullptr) return VdecCoreErrorInvalidArgument;
-    if (config->codecType > MaxCodecType) return VdecCoreErrorInvalidCodecType;
-    if (instanceSize != nullptr) *instanceSize = InstanceSize;
-    if (computeSize != nullptr) *computeSize = ComputeSize;
-    if (reservedSize != nullptr) *reservedSize = 0;
+    VdecCoreConfigInfo localConfig{};
+    const int savedErrno = errno;
+    const bool readConfig = GuestCopyIn_nid_no_patch(&localConfig, config, sizeof(localConfig));
+    errno = savedErrno;
+    if (!readConfig) return VdecCoreErrorInvalidArgument;
+    if (localConfig.codecType > MaxCodecType) return VdecCoreErrorInvalidCodecType;
+    if (instanceSize != nullptr) {
+        const std::uint64_t value = InstanceSize;
+        const bool copied = GuestCopyOut_nid_no_patch(instanceSize, &value, sizeof(value));
+        errno = savedErrno;
+        if (!copied) return VdecCoreErrorInvalidArgument;
+    }
+    if (computeSize != nullptr) {
+        const std::uint64_t value = ComputeSize;
+        const bool copied = GuestCopyOut_nid_no_patch(computeSize, &value, sizeof(value));
+        errno = savedErrno;
+        if (!copied) return VdecCoreErrorInvalidArgument;
+    }
+    if (reservedSize != nullptr) {
+        const std::uint64_t value = 0;
+        const bool copied = GuestCopyOut_nid_no_patch(reservedSize, &value, sizeof(value));
+        errno = savedErrno;
+        if (!copied) return VdecCoreErrorInvalidArgument;
+    }
     return 0;
 }
 
@@ -526,30 +600,35 @@ int APS5_VABI sceVdecCoreResetDecoder(void* decoder, void*) {
 
 int APS5_VABI sceVdecCoreSetDecodeInput(void* decoder, const VdecCoreInputData* input, void*, std::uint32_t* status) {
     if (decoder == nullptr || input == nullptr) return VdecCoreErrorInvalidArgument;
+    VdecCoreInputData localInput{};
+    if (!CopyGuestIn(&localInput, input, sizeof(localInput))) return VdecCoreErrorInvalidArgument;
     auto& target = Lookup(decoder, __func__);
     if (status != nullptr) {
-        status[0] = 1;
-        status[1] = 1;
+        const std::uint32_t ready[2]{1, 1};
+        if (!CopyGuestOut(status, ready, sizeof(ready))) return VdecCoreErrorInvalidArgument;
     }
-    const std::int32_t length = VdecCoreAccessUnitLength_nid_no_patch(input->auSize);
-    if (input->auData == nullptr || length < 0) return VdecCoreErrorInvalidArgument;
-    const std::int64_t pts = input->pts == VdecCorePtsInvalid ? AV_NOPTS_VALUE : input->pts;
-    const std::int64_t dts = input->dts == VdecCorePtsInvalid ? AV_NOPTS_VALUE : input->dts;
+    const std::int32_t length = VdecCoreAccessUnitLength_nid_no_patch(localInput.auSize);
+    if (localInput.auData == nullptr || length < 0) return VdecCoreErrorInvalidArgument;
+    const std::int64_t pts = localInput.pts == VdecCorePtsInvalid ? AV_NOPTS_VALUE : localInput.pts;
+    const std::int64_t dts = localInput.dts == VdecCorePtsInvalid ? AV_NOPTS_VALUE : localInput.dts;
     AVPacket* packet = av_packet_alloc();
     if (packet == nullptr) return VdecCoreErrorFatal;
     if (av_new_packet(packet, length) < 0) {
         av_packet_free(&packet);
         return VdecCoreErrorFatal;
     }
-    std::memcpy(packet->data, input->auData, static_cast<std::size_t>(length));
+    if (length > 0 && !CopyGuestIn(packet->data, localInput.auData, static_cast<std::size_t>(length))) {
+        av_packet_free(&packet);
+        return VdecCoreErrorInvalidArgument;
+    }
     packet->pts = pts;
     packet->dts = dts;
-    packet->opaque = reinterpret_cast<void*>(static_cast<std::uintptr_t>(input->userData));
+    packet->opaque = reinterpret_cast<void*>(static_cast<std::uintptr_t>(localInput.userData));
     {
         std::lock_guard lock(target.mutex);
-        target.lastPts = input->pts;
-        target.lastDts = input->dts;
-        target.lastUserData = input->userData;
+        target.lastPts = localInput.pts;
+        target.lastDts = localInput.dts;
+        target.lastUserData = localInput.userData;
         target.commands.push_back({Command::Type::Packet, packet, nullptr});
         target.busy = true;
     }

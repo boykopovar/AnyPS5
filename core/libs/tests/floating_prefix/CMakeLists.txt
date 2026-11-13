@@ -1,4 +1,5 @@
-add_test_executable(guest_floating_prefix_tests ${LIBS_INCLUDE_DIR}/tests/GuestFloatingPrefix.cpp
+add_test_executable(guest_floating_prefix_tests NO_RUNTIME_DLL_STAGING
+    ${LIBS_INCLUDE_DIR}/tests/GuestFloatingPrefix.cpp
     ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp)
 target_include_directories(guest_floating_prefix_tests PRIVATE ${LIBS_INCLUDE_DIR} ${LIBS_INCLUDE_DIR}/nid/include)
 target_link_libraries(guest_floating_prefix_tests PRIVATE ${CMAKE_DL_LIBS})

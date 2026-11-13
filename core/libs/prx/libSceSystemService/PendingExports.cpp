@@ -3,10 +3,20 @@
 #include "prx/libc/include/General.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <cstring>
+#include <filesystem>
 #include <stdexcept>
 
 namespace {
+
+std::filesystem::space_info HostSpace() {
+    std::error_code error;
+    const std::filesystem::path directory = std::filesystem::current_path(error);
+    if (error) return {};
+    const std::filesystem::space_info space = std::filesystem::space(directory, error);
+    return error ? std::filesystem::space_info{} : space;
+}
 
 constexpr int SystemServiceUnavailable = static_cast<int>(0x80A10002);
 constexpr int SystemServiceInvalidArgument = static_cast<int>(0x80A10003);
@@ -822,12 +832,13 @@ int APS5_VABI sceShellCoreUtilGetEffectiveTotalSizeOfUserPartition(std::uint64_t
 }
 
 std::uint64_t APS5_VABI sceShellCoreUtilGetFreeSizeOfAvContentsTmp() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return HostSpace().available;
 }
 
 int APS5_VABI sceShellCoreUtilGetFreeSizeOfUserPartition(std::uint64_t* freeSize, std::uint64_t* totalSize) {
-    NotImplemented_nid_no_patch(__func__);
+    const std::filesystem::space_info space = HostSpace();
+    if (freeSize != nullptr) *freeSize = space.available;
+    if (totalSize != nullptr) *totalSize = space.capacity;
     return 0;
 }
 
@@ -1726,14 +1737,20 @@ int APS5_VABI sceSystemServiceGetMainAppTitleId() {
 
 int APS5_VABI sceSystemServiceGetPSButtonEvent(const SystemServiceEvent* event, SystemServicePSButtonEvent* buttonEvent) {
     if (event == nullptr || buttonEvent == nullptr) return SystemServiceInvalidArgument;
-    const auto* bytes = reinterpret_cast<const std::uint8_t*>(event);
+    std::uint8_t bytes[20]{};
+    const int savedErrno = errno;
+    const bool copiedInput = GuestCopyIn_nid_no_patch(bytes, event, sizeof(bytes));
+    errno = savedErrno;
+    if (!copiedInput) return SystemServiceInvalidArgument;
     SystemServicePSButtonEvent result{};
     std::memcpy(&result.eventType, bytes, sizeof(result.eventType));
     if (result.eventType < FirstPSButtonEventType || result.eventType > LastPSButtonEventType) return SystemServiceInvalidArgument;
     std::memcpy(&result.dataAt0, bytes + 4, sizeof(result.dataAt0));
     std::memcpy(&result.dataAt8, bytes + 12, sizeof(result.dataAt8));
-    *buttonEvent = result;
-    return 0;
+    const int copyErrno = errno;
+    const bool copiedOutput = GuestCopyOut_nid_no_patch(buttonEvent, &result, sizeof(result));
+    errno = copyErrno;
+    return copiedOutput ? 0 : SystemServiceInvalidArgument;
 }
 
 int APS5_VABI sceSystemServiceGetParentSocket() {

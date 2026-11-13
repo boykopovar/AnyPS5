@@ -41,8 +41,10 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstdint>
+#include <cstring>
 #include <stdexcept>
 
 namespace {
@@ -53,9 +55,33 @@ WebRtcVideoFrameBuilder& Checked(WebRtcVideoFrameBuilder* builder, const char* f
     return *builder;
 }
 
+using BufferRelease = int(APS5_VABI*)(const void*);
+
+constexpr std::size_t ReleaseSlot = 1;
+
+void ReleaseVideoFrameBuffer(void* buffer) {
+    if (!buffer)
+        return;
+    const void* const* vtable;
+    if (!GuestCopyIn_nid_no_patch(&vtable, buffer, sizeof(vtable)) || !vtable || !vtable[ReleaseSlot])
+        throw std::invalid_argument("VideoFrame::Builder destructor requires a buffer virtual function");
+    reinterpret_cast<BufferRelease>(const_cast<void*>(vtable[ReleaseSlot]))(buffer);
+}
+
 }
 
 extern "C" {
+
+void APS5_VABI _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(WebRtcVideoFrameBuilder* builder) {
+    std::memset(&Checked(builder, "VideoFrame::Builder constructor requires a builder"), 0, sizeof(WebRtcVideoFrameBuilder));
+}
+
+void APS5_VABI _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(WebRtcVideoFrameBuilder* builder) {
+    const WebRtcVideoFrameBuilder& checked = Checked(builder, "VideoFrame::Builder destructor requires a builder");
+    if (checked.packetInfos)
+        NotImplemented_nid_no_patch("VideoFrame::Builder destructor with packet infos: releasing the guest packet info vector");
+    ReleaseVideoFrameBuffer(checked.videoFrameBuffer);
+}
 
 WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder16set_timestamp_msEl_nid_postfix(WebRtcVideoFrameBuilder* builder, std::int64_t timestampMs) {
     Checked(builder, "VideoFrame::Builder::set_timestamp_ms requires a builder").timestampUs =
@@ -76,6 +102,12 @@ WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder15set_ntp_time_
 WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(WebRtcVideoFrameBuilder* builder, std::uint16_t id) {
     Checked(builder, "VideoFrame::Builder::set_id requires a builder").id = id;
     return builder;
+}
+
+std::int64_t APS5_VABI _ZNK6webrtc10VideoFrame14render_time_msEv_nid_postfix(const WebRtcVideoFrame* frame) {
+    if (!frame)
+        throw std::invalid_argument("VideoFrame::render_time_ms requires a frame");
+    return frame->timestampUs / 1000;
 }
 
 }

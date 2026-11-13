@@ -14,6 +14,7 @@
 #include "SceTypes.hpp"
 #include <future>
 #include <regex>
+#include <system_error>
 
 #ifdef _LIBCPP_VERSION
 struct GuestExceptionPointer {
@@ -114,7 +115,7 @@ extern "C" {
 
 int APS5_VABI std_execute_once_nid_postfix(int* flag, int (APS5_VABI *func)(void*, void*, void**), void* arg);
 void APS5_VABI LibcHeapGetTraceInfo_nid_postfix(LibcHeapInfo* info);
-int APS5_VABI _ZSt14_Atomic_assertPKcS0__nid_postfix();
+[[noreturn]] void APS5_VABI _ZSt14_Atomic_assertPKcS0__nid_postfix(const char* expression, const char* function);
 void APS5_VABI libc___cxa_finalize(void* dsoHandle);
 char* APS5_VABI strndup_nid_postfix(const char* source, std::size_t limit);
 char* APS5_VABI strdup_nid_postfix(const char* source);
@@ -158,6 +159,8 @@ void* APS5_VABI __cxa_demangle_nid_postfix(const char* mangled, char* buf, std::
 int APS5_VABI __cxa_thread_atexit_impl_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dso);
 int APS5_VABI __cxa_thread_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dso);
 int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(void (APS5_VABI *destructor)(void*), void* object, void* moduleId);
+const std::error_category* APS5_VABI _ZSt17iostream_categoryv_nid_postfix();
+const std::error_category* APS5_VABI IostreamCategory_nid_no_patch();
 int APS5_VABI _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix( int* flag, int (APS5_VABI *callback)(void*, void*, void**), void* arg );
 void APS5_VABI _Atomic_store_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int);
 void APS5_VABI _Atomic_store_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int);
@@ -244,6 +247,7 @@ int APS5_VABI _ZNSt8__sce_v210filesystem10_Close_dirEPv_nid_postfix(void* handle
 bool APS5_VABI _ZNSt8__sce_v210filesystem12_Current_getERA260_c_nid_postfix(char* target);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcNS_10error_codeE_nid_postfix(const char* message, LibcException::ErrorCode code);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathENS_10error_codeE_nid_postfix(const char* message, const GuestLocale::String* path, LibcException::ErrorCode code);
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathES5_NS_10error_codeE_nid_postfix(const char* message, const GuestLocale::String* path1, const GuestLocale::String* path2, LibcException::ErrorCode code);
 int APS5_VABI _ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsEPi_nid_postfix(const char* path, int* perms, int* error);
 int APS5_VABI _ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsE_nid_postfix(const char* path, int* perms);
 std::uint64_t APS5_VABI _ZNSt8__sce_v210filesystem10_File_sizeEPKcPi_nid_postfix(const char* path, int* error);
@@ -286,9 +290,15 @@ int APS5_VABI fsetpos_nid_postfix(FileStream* stream, const std::int64_t* positi
 void APS5_VABI rewind_nid_postfix(FileStream* stream);
 int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream);
 int APS5_VABI fflush_nid_postfix(FileStream* stream);
+int APS5_VABI malloc_stats_nid_postfix(void* stats);
+void* APS5_VABI _sceLibcGetMallocParam_nid_postfix();
 int APS5_VABI malloc_stats_fast_nid_postfix(void* stats);
+void APS5_VABI malloc_initialize_nid_postfix();
+void APS5_VABI malloc_finalize_nid_postfix();
+int APS5_VABI _malloc_fini_nid_postfix();
 size_t APS5_VABI malloc_usable_size_nid_postfix(void* pointer);
 void* APS5_VABI malloc_nid_postfix(size_t size);
+void APS5_VABI __std_free_crt_nid_postfix(void* ptr);
 void APS5_VABI free_nid_postfix(void* ptr);
 void* APS5_VABI realloc_nid_postfix(void* ptr, size_t newSize);
 void* APS5_VABI reallocf_nid_postfix(void* ptr, size_t newSize);
@@ -375,6 +385,24 @@ __complex__ float APS5_VABI __divsc3_nid_postfix(float a, float b, float c, floa
 __complex__ double APS5_VABI __divdc3_nid_postfix(double a, double b, double c, double d);
 __complex__ long double APS5_VABI __divxc3_nid_postfix(long double a, long double b, long double c, long double d);
 long double APS5_VABI __powixf2_nid_postfix(long double base, int exponent);
+double APS5_VABI creal_nid_postfix(__complex__ double z);
+float APS5_VABI crealf_nid_postfix(__complex__ float z);
+long double APS5_VABI creall_nid_postfix(__complex__ long double z);
+double APS5_VABI cimag_nid_postfix(__complex__ double z);
+float APS5_VABI cimagf_nid_postfix(__complex__ float z);
+long double APS5_VABI cimagl_nid_postfix(__complex__ long double z);
+__complex__ double APS5_VABI conj_nid_postfix(__complex__ double z);
+__complex__ float APS5_VABI conjf_nid_postfix(__complex__ float z);
+__complex__ long double APS5_VABI conjl_nid_postfix(__complex__ long double z);
+__complex__ double APS5_VABI cproj_nid_postfix(__complex__ double z);
+__complex__ float APS5_VABI cprojf_nid_postfix(__complex__ float z);
+__complex__ long double APS5_VABI cprojl_nid_postfix(__complex__ long double z);
+double APS5_VABI carg_nid_postfix(__complex__ double z);
+float APS5_VABI cargf_nid_postfix(__complex__ float z);
+long double APS5_VABI cargl_nid_postfix(__complex__ long double z);
+double APS5_VABI cabs_nid_postfix(__complex__ double z);
+float APS5_VABI cabsf_nid_postfix(__complex__ float z);
+long double APS5_VABI cabsl_nid_postfix(__complex__ long double z);
 int APS5_VABI fegetround_nid_postfix();
 int APS5_VABI fesetround_nid_postfix(int rounding);
 int APS5_VABI fetestexcept_nid_postfix(int exceptions);
@@ -954,6 +982,8 @@ void* APS5_VABI sceLibcMspaceAlignedAlloc_nid_postfix(void* handle, std::size_t 
 void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void* handle, void* pointer, std::size_t alignment, std::size_t size);
 int APS5_VABI sceLibcMspaceMallocStats_nid_postfix(void* handle, MallocManagedSize* stats);
 int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats);
+int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void* handle);
+int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void* handle);
 std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void* pointer);
 void* APS5_VABI sceLibcPafMspaceCreate_nid_postfix(const char* name, void* base, std::size_t size, unsigned flags, const void* options);
 int APS5_VABI sceLibcPafMspaceDestroy_nid_postfix(void* handle);
@@ -973,6 +1003,8 @@ std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t* destination, const char
 std::size_t APS5_VABI mbrlen_nid_postfix(const char* source, std::size_t count, void* state);
 int APS5_VABI mbtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count);
 std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value, void*);
+std::size_t APS5_VABI _Mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state);
+std::size_t APS5_VABI _Wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state);
 int APS5_VABI mblen_nid_postfix(const char* source, std::size_t count);
 int APS5_VABI wctomb_nid_postfix(char* destination, std::uint16_t value);
 std::size_t APS5_VABI c32rtomb_nid_postfix(char* destination, std::uint32_t value, void*);
@@ -1097,6 +1129,7 @@ int APS5_VABI fileno_unlocked_nid_postfix(FileStream* stream);
 int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, std::size_t size);
 void APS5_VABI setbuf_nid_postfix(FileStream* stream, char* buffer);
 const char* APS5_VABI setlocale_nid_postfix(int, const char* locale);
+int APS5_VABI _new_setup_nid_postfix(const void* table);
 GuestNewHandler APS5_VABI _ZSt15set_new_handlerPFvvE_nid_postfix(GuestNewHandler handler);
 GuestNewHandler APS5_VABI _ZSt15get_new_handlerv_nid_postfix();
 void* APS5_VABI _Znwm_nid_postfix(std::size_t size);
@@ -1275,6 +1308,15 @@ int APS5_VABI _Cnd_signal_nid_postfix(void** handle);
 void APS5_VABI _Cnd_register_at_thread_exit_nid_postfix(void* condition, void* mutex, int* ready);
 void APS5_VABI _Cnd_unregister_at_thread_exit_nid_postfix(void* mutex);
 void APS5_VABI _Cnd_do_broadcast_at_thread_exit_nid_postfix() noexcept;
+int APS5_VABI _Thrd_start_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument);
+int APS5_VABI _Thrd_start_with_name_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name);
+int APS5_VABI _Thrd_start_with_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, void* attribute);
+int APS5_VABI _Thrd_start_with_name_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name, void* attribute);
+int APS5_VABI _Thrd_create_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument);
+[[noreturn]] void APS5_VABI _Thrd_abort_nid_postfix(const char* message);
+int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_nameEPP7pthreadPFPvS3_ES3_PKc_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name);
+int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_attrEPP7pthreadPFPvS3_ES3_PP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, void* attribute);
+int APS5_VABI _ZNSt8__sce_v226_Thrd_start_with_name_attrEPP7pthreadPFPvS3_ES3_PKcPP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name, void* attribute);
 void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad);
 void APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(GuestPad* pad);
 void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(GuestPad* pad);
@@ -1304,6 +1346,11 @@ int APS5_VABI _ZNSt8__sce_v212_Cnd_destroyEPP12pthread_cond_nid_postfix(void** c
 int APS5_VABI _ZNSt8__sce_v29_Cnd_waitEPP12pthread_condPP13pthread_mutex_nid_postfix(void** condition, void** mutex);
 int APS5_VABI _ZNSt8__sce_v211_Cnd_signalEPP12pthread_cond_nid_postfix(void** condition);
 int APS5_VABI _ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(void** condition);
+void APS5_VABI _ZNSt8__sce_v226_Lock_at_thread_exit_mutexEv_nid_postfix();
+void APS5_VABI _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix();
+void APS5_VABI _ZNSt8__sce_v228_Cnd_register_at_thread_exitEPP12pthread_condPP13pthread_mutexPi_nid_postfix(void** condition, void** mutex, int* ready);
+void APS5_VABI _ZNSt8__sce_v230_Cnd_unregister_at_thread_exitEPP13pthread_mutex_nid_postfix(void** mutex);
+void APS5_VABI _ZNSt8__sce_v232_Cnd_do_broadcast_at_thread_exitEv_nid_postfix();
 int APS5_VABI _ZNSt8__sce_v212_Thrd_detachEP7pthread_nid_postfix(void* thread);
 int APS5_VABI _ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(void* thread, int* code);
 void APS5_VABI _ZNSt8__sce_v211_Thrd_yieldEv_nid_postfix();
@@ -1322,10 +1369,13 @@ int APS5_VABI _Smtx_timedlock_exclusive_nid_postfix(void** smtx, const Xtime* ta
 int APS5_VABI _Smtx_timedlock_shared_nid_postfix(void** smtx, const Xtime* target);
 int APS5_VABI _Smtx_unlock_exclusive_nid_postfix(void** smtx);
 int APS5_VABI _Smtx_unlock_shared_nid_postfix(void** smtx);
+void** APS5_VABI __std_acquire_shared_mutex_for_instance_nid_postfix(void* instance);
+void APS5_VABI __std_release_shared_mutex_for_instance_nid_postfix(void* instance);
 void APS5_VABI tzset_nid_postfix(void);
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer);
 int64_t APS5_VABI time_nid_postfix(int64_t* timer);
 int64_t APS5_VABI _Xtime_get_ticks_nid_postfix();
+int APS5_VABI timespec_get_nid_postfix(KernelTimespec* ts, int base);
 double APS5_VABI libc_difftime_nid_postfix(int64_t time1, int64_t time0);
 double APS5_VABI difftime_nid_postfix(int64_t time1, int64_t time0);
 GuestTm* APS5_VABI libc_gmtime_nid_postfix(const int64_t* timer);
@@ -1563,6 +1613,8 @@ void APS5_VABI _ZNSt12system_errorD0Ev_nid_postfix(LibcException::ExceptionObjec
 const char* APS5_VABI _ZNKSt12system_error4whatEv_nid_postfix(const LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt12system_errorC1ERKS__nid_postfix(LibcException::SystemErrorObject* self, const LibcException::SystemErrorObject* source);
 void APS5_VABI _ZNSt12system_errorC2ERKS__nid_postfix(LibcException::SystemErrorObject* self, const LibcException::SystemErrorObject* source);
+void APS5_VABI _ZNSt12system_errorC2ESt10error_codePKc_nid_postfix(LibcException::SystemErrorObject* self, LibcException::ErrorCode code, const char* message);
+void APS5_VABI LibcExceptionConstructSystemError_nid_no_patch(LibcException::SystemErrorObject* self, LibcException::ErrorCode code, const char* message);
 LibcException::SystemErrorObject* APS5_VABI _ZNSt12system_erroraSERKS__nid_postfix(LibcException::SystemErrorObject* self, const LibcException::SystemErrorObject* source);
 void APS5_VABI _ZNSt11regex_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt11regex_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self);
@@ -1590,6 +1642,7 @@ _Unwind_Ptr APS5_VABI _Unwind_GetLanguageSpecificData_nid_postfix(_Unwind_Contex
 _Unwind_Ptr APS5_VABI _Unwind_GetRegionStart_nid_postfix(_Unwind_Context* context);
 _Unwind_Ptr APS5_VABI _Unwind_GetDataRelBase_nid_postfix(_Unwind_Context* context);
 _Unwind_Ptr APS5_VABI _Unwind_GetTextRelBase_nid_postfix(_Unwind_Context* context);
+_Unwind_Ptr APS5_VABI _Unwind_FindEnclosingFunction_nid_postfix(void* pc);
 _Unwind_Reason_Code APS5_VABI _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception* exception, _Unwind_Stop_Fn stop, void* argument);
 _Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn trace, void* argument);
 int APS5_VABI dl_iterate_phdr_nid_postfix(int (*callback)(dl_phdr_info*, std::size_t, void*), void* data);
@@ -1603,6 +1656,7 @@ void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
 [[noreturn]] void APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(int code);
 [[noreturn]] void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcSt10error_code_nid_postfix(const char* message, LibcException::ErrorCode code);
 [[noreturn]] void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathESt10error_code_nid_postfix(const char* message, const GuestLocale::String* path, LibcException::ErrorCode code);
+[[noreturn]] void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathES4_St10error_code_nid_postfix(const char* message, const GuestLocale::String* path1, const GuestLocale::String* path2, LibcException::ErrorCode code);
 [[noreturn]] void APS5_VABI _Thrd_exit_nid_postfix(int code);
 [[noreturn]] void APS5_VABI _ZSt17rethrow_exceptionNSt15__exception_ptr13exception_ptrE_nid_postfix(GuestExceptionPointerArgument exception);
 [[noreturn]] void APS5_VABI _ZSt19_Throw_future_errorRKSt10error_code_nid_postfix(const LibcException::ErrorCode* code);
@@ -1626,6 +1680,7 @@ void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
 [[noreturn]] void APS5_VABI _ZSt18_Xinvalid_argumentPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZSt15_Xruntime_errorPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZSt13_Xrange_errorPKc_nid_postfix(const char* message);
+[[noreturn]] void APS5_VABI LibcThrowOverflowError_nid_no_patch(const char* message);
 [[noreturn]] void APS5_VABI _ZSt19_Xbad_function_callv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZSt19_Throw_bad_weak_ptrv_nid_postfix();
@@ -1714,9 +1769,14 @@ void APS5_VABI _ZNSt8__sce_v27_MP_RemEPyy_nid_postfix(std::uint64_t* u, std::uin
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v28ios_base6_ThrowERKNS0_7failureE_nid_postfix(const LibcException::SystemErrorObject* failure);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(int code);
 std::int64_t APS5_VABI _ZNSt8__sce_v216_Xtime_get_ticksEv_nid_postfix();
+int APS5_VABI __std_atomic_wait_direct_32_nid_postfix(const void* storage, std::uint32_t expected, std::uint64_t milliseconds);
+int APS5_VABI __std_atomic_wait_direct_64_nid_postfix(const void* storage, std::uint64_t expected, std::uint64_t milliseconds);
+void APS5_VABI __std_atomic_notify_one_direct_nid_postfix(const void* storage);
+void APS5_VABI __std_atomic_notify_all_direct_nid_postfix(const void* storage);
 const char* APS5_VABI _ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(int value);
 void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(GuestLocale::SceV2Locinfo* self, const char* localeName);
 void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_dtorEPS0__nid_postfix(GuestLocale::SceV2Locinfo* self);
+const char* APS5_VABI _ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(int value);
 int APS5_VABI feupdateenv_nid_postfix(const GuestFloatingPointEnvironment* environment);
 int APS5_VABI feholdexcept_nid_postfix(GuestFloatingPointEnvironment* environment);
 extern const GuestFloatingPointEnvironment __fe_dfl_env_nid_postfix;

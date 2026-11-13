@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceAgc/Patch/include/Rewind.hpp"
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -595,7 +596,6 @@ void testCopies() {
     alignas(8) std::array<std::uint64_t, 1> stamp{};
     execute(state, makePacket(0x40, {0x110509, 0, 0, low(stamp.data()), high(stamp.data())}));
     check(stamp[0] != 0, "GPU timestamp COPY_DATA to DST_SEL 5 memory failed");
-    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x305, 1, 0, 0, 0}), 0); }, "GDS or performance-counter destination");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x605, 1, 0, 0, 0}), 0); }, "invalid COPY_DATA destination");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0xf05, 1, 0, 0, 0}), 0); }, "invalid COPY_DATA destination");
     check(!AgcDriver::Pm4::ResolveStore(makePacket(0x40, {0x305, 1, 0, low(destination.data()), high(destination.data())}), state, 64).has_value(), "GDS COPY_DATA resolved as memory store");
@@ -604,6 +604,22 @@ void testCopies() {
     check(AgcDriver::Pm4::DecodeStores(makePacket(0x40, {0x305, 1, 0, low(destination.data()), high(destination.data())})).empty(), "GDS COPY_DATA decoded as memory store");
     check(AgcDriver::Pm4::DecodeStores(makePacket(0x40, {0x405, 1, 0, low(destination.data()), high(destination.data())})).empty(), "performance-counter COPY_DATA decoded as memory store");
     check(AgcDriver::Pm4::DecodeStores(makePacket(0x40, {0x605, 1, 0, low(destination.data()), high(destination.data())})).empty(), "invalid destination COPY_DATA decoded as memory store");
+    const auto copyToGds = makePacket(0x40, {0x305, 0x89abcdef, 0, 0x20, 0});
+    check(!AgcDriver::Pm4::ResolveStore(copyToGds, state, 64).has_value(), "COPY_DATA to GDS resolved as a memory store");
+    execute(state, copyToGds);
+    destination = {};
+    const auto copyFromGds = makePacket(0x40, {0x203, 0x20, 0, low(destination.data()), high(destination.data())});
+    const auto copyFromGdsStore = AgcDriver::Pm4::ResolveStore(copyFromGds, state, 64);
+    check(copyFromGdsStore.has_value() && copyFromGdsStore->Bytes().size() == 4, "COPY_DATA from GDS did not resolve its source bytes");
+    execute(state, copyFromGds);
+    check(destination[0] == 0x89abcdef, "COPY_DATA GDS round trip failed");
+    alignas(8) std::array<std::uint32_t, 2> gdsWords{0x11223344, 0x55667788};
+    execute(state, makePacket(0x40, {0x10301, low(gdsWords.data()), high(gdsWords.data()), 0x20, 0}));
+    destination = {};
+    execute(state, makePacket(0x40, {0x10203, 0x20, 0, low(destination.data()), high(destination.data())}));
+    check(destination[0] == 0x11223344 && destination[1] == 0x55667788, "64-bit COPY_DATA GDS round trip failed");
+    expectFailure([&] { execute(state, makePacket(0x40, {0x10301, low(gdsWords.data()), high(gdsWords.data()), 0xfffc, 0})); }, "exceeds the GDS");
+    expectFailure([&] { execute(state, makePacket(0x40, {0x10203, 0xfffc, 0, low(destination.data()), high(destination.data())})); }, "exceeds the GDS");
     alignas(8) std::array<std::uint32_t, 2> clearValues{0x55, 0x3f800000};
     execute(state, makePacket(0x40, {0x10001, low(clearValues.data()), high(clearValues.data()), 0xa00a, 0}));
     check(state.context.at(0x0a) == 0x55 && state.context.at(0x0b) == 0x3f800000, "COPY_DATA to two context registers failed");
@@ -2122,6 +2138,39 @@ void testRewindTailTrace() {
     check(busy <= 150.0, "the queue worker's busy share counts nested REWIND tails more than once");
 }
 
+void testRewindControlCopy() {
+    constexpr std::size_t Gates = 8;
+    alignas(8) static std::uint32_t done = 0;
+    static std::vector<std::uint32_t> words;
+    words.clear();
+    for (std::size_t index = 0; index < Gates; ++index) {
+        const auto rewind = makePacket(0x59, {0});
+        words.insert(words.end(), rewind.begin(), rewind.end());
+    }
+    const auto last = writeWord(done, 1);
+    words.insert(words.end(), last.begin(), last.end());
+    submitWords(words);
+    std::thread writer([&] {
+        for (std::size_t index = 0; index < Gates; ++index) sceAgcRewindPatchSetRewindState(&words[index * 2], 1);
+    });
+    writer.join();
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(done).load() == 1, "the tail behind the last REWIND did not run");
+}
+
+void testRewindSize() {
+    alignas(8) static std::uint32_t done = 0;
+    for (const auto& rewind : {makePacket(0x59, {0x80000000u, 0}), makePacket(0x59, {0x80000000u, 0, 0})}) {
+        auto words = rewind;
+        const auto last = writeWord(done, 1);
+        words.insert(words.end(), last.begin(), last.end());
+        Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+        expectFailure([&] { sceAgcDriverSubmitDcb(&packet); }, "a REWIND packet must be two dwords");
+    }
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(done).load() == 0, "a rejected REWIND submission executed");
+}
+
 struct RenderingGateState {
     std::mutex mutex;
     std::condition_variable changed;
@@ -2512,6 +2561,42 @@ void testWaitRegMemMisalignedBehindBusyPipeline() {
     }
 }
 
+void testPredicatedIndirectBufferKeepsBusyPipeline() {
+    alignas(8) static std::uint32_t other = 0;
+    alignas(8) static std::uint32_t target = 0;
+    static std::uint32_t done = 0;
+    const auto otherAddr = reinterpret_cast<std::uintptr_t>(&other);
+    const auto targetAddr = reinterpret_cast<std::uintptr_t>(&target);
+    std::atomic_ref<std::uint32_t>(target).store(0);
+    std::atomic_ref<std::uint32_t>(done).store(0);
+    std::atomic<bool> hold{true};
+    std::atomic<bool> started{false};
+    AgcDriver::DriverDetail::DrawPipeline::Queue0().Enqueue([&] {
+        started.store(true);
+        while (hold.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }, { {otherAddr, otherAddr + 4} });
+    while (!started.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    static std::vector<std::uint32_t> child;
+    child = joinPackets({makePacket(0x3c, {0x13, static_cast<std::uint32_t>(targetAddr), static_cast<std::uint32_t>(targetAddr >> 32u), 42, 0xffffffffu, 0}), writeWord(done, 1)});
+    const auto indirectDrainsBefore = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(0x3f);
+    const auto waitDrainsBefore = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(0x3c);
+    alignas(16) static std::uint64_t flag[2] = {1, 0};
+    const auto call = makePacket(0x3f, {low(child.data()), high(child.data()), static_cast<std::uint32_t>(child.size())}, 1);
+    auto words = joinPackets({makePacket(0x20, {0x31100, low(&flag[0]), high(&flag[0])}), call, makePacket(0x20, {0, 0, 0})});
+    submitWords(words, 0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(0x3c) == waitDrainsBefore && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool reachedChild = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(0x3c) != waitDrainsBefore;
+    const auto indirectDrains = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(0x3f) - indirectDrainsBefore;
+    std::atomic_ref<std::uint32_t>(target).store(42);
+    hold.store(false);
+    AgcDriverWaitIdle_nid_postfix();
+    waitDrawPipelineIdle();
+    check(reachedChild, "the predicated indirect buffer's unsatisfied WAIT_REG_MEM behind a busy draw pipeline was not reached");
+    check(indirectDrains == 0, "a predicated INDIRECT_BUFFER whose predicate is clear of the draw pipeline drained it");
+    check(std::atomic_ref<std::uint32_t>(done).load() == 1, "the predicated indirect buffer behind a busy draw pipeline did not run");
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "failure") {
@@ -2527,7 +2612,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}, {"rewind-copy", testRewindControlCopy}, {"rewind-size", testRewindSize}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
@@ -2594,6 +2679,7 @@ int main(int argc, char** argv) {
         testWaitRegMemPipelineDrain();
         testWaitRegMem64ZeroHighMaskDrain();
         testWaitRegMemMisalignedBehindBusyPipeline();
+        testPredicatedIndirectBufferKeepsBusyPipeline();
         LibcRunShutdown_nid_postfix();
         std::puts("PM4 catalog, registers, state, memory, conditional execution and submission tests passed");
         return 0;

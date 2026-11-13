@@ -38,3 +38,15 @@ static_assert(offsetof(WebRtcVideoFrameBuilder, maxCompositionDelayInFrames) == 
 static_assert(offsetof(WebRtcVideoFrameBuilder, updateRect) == 160);
 static_assert(offsetof(WebRtcVideoFrameBuilder, hasUpdateRect) == 176);
 static_assert(offsetof(WebRtcVideoFrameBuilder, packetInfos) == 184);
+
+struct WebRtcVideoFrame {
+    std::uint16_t id;
+    void* videoFrameBuffer;
+    std::uint32_t timestampRtp;
+    std::int64_t ntpTimeMs;
+    std::int64_t timestampUs;
+};
+
+static_assert(offsetof(WebRtcVideoFrame, timestampRtp) == 16);
+static_assert(offsetof(WebRtcVideoFrame, ntpTimeMs) == 24);
+static_assert(offsetof(WebRtcVideoFrame, timestampUs) == 32);

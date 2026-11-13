@@ -24,10 +24,12 @@ static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 static constexpr int ERROR_NOT_FOUND = static_cast<int>(0x817B1025);
 static constexpr int ERROR_INVALID_VALUE = static_cast<int>(0x817B11FE);
 static constexpr int ERROR_HTTP_INVALID_VALUE = static_cast<int>(0x804311FE);
+static constexpr int SSL_ERROR_INVALID_ID = static_cast<int>(0x8095F006);
 static constexpr int ERROR_NETWORK = static_cast<int>(0x80431063);
 static constexpr int ERROR_NOT_CONNECTED = static_cast<int>(0x817B1065);
 static constexpr int ERROR_UNSUPPORTED_SCHEME = static_cast<int>(0x817B1061);
 static constexpr std::uint32_t WEBSOCKET_MIN_PERIOD = 1000000;
+static constexpr int ERROR_HTTP2_ASYNC_NOT_SUPPORTED = static_cast<int>(0x80436063);
 
 static std::mutex g_completionsMutex;
 static std::unordered_map<int, std::deque<Http2AsyncResult>> g_completions;
@@ -260,6 +262,7 @@ int APS5_VABI sceHttp2GetStatusCode(int req_id, int* status_code) {
 int APS5_VABI sceHttp2Init(int libnet_mem_id, int libssl_ctx_id, size_t pool_size, int max_concurrent_request) {
     if (max_concurrent_request == 0) return ERROR_INVALID_VALUE;
     if (max_concurrent_request < 0) NotImplemented_nid_no_patch(__func__);
+    if (libssl_ctx_id == 0) return SSL_ERROR_INVALID_ID;
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(g_handlesMutex);
     Http2Handle handle{Http2Kind::Context, 0, pool_size};
@@ -275,8 +278,7 @@ int APS5_VABI sceHttp2ReadData(int req_id, void* data, size_t size) {
 }
 
 int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* kqueue_option, void* option) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ERROR_HTTP2_ASYNC_NOT_SUPPORTED;
 }
 
 int APS5_VABI sceHttp2SendRequest(int req_id, const void* post_data, size_t size) {
@@ -303,8 +305,10 @@ int APS5_VABI sceHttp2SetAutoRedirect(int id, int enable) {
 }
 
 int APS5_VABI sceHttp2SetConnectionWaitTimeOut(int id, uint32_t usec) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Update(id, __func__, [&](auto& settings) {
+        if (!usec) NotImplemented_nid_no_patch("sceHttp2SetConnectionWaitTimeOut");
+        settings.connectionWaitTimeout = usec;
+    });
 }
 
 int APS5_VABI sceHttp2SetConnectTimeOut(int id, uint32_t usec) {
@@ -392,7 +396,12 @@ int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
 
 int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* timeout, void* option) {
     (void)timeout;
-    if (result == nullptr || option != nullptr) NotImplemented_nid_no_patch(__func__);
+    if (result == nullptr) return ERROR_NULL_POINTER;
+    if (option != nullptr) return ERROR_INVALID_VALUE;
+    {
+        std::lock_guard lock(g_handlesMutex);
+        if (FindHandle(req_id, Http2Kind::Request) == nullptr) return ERROR_INVALID_ID;
+    }
     if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) {
         std::lock_guard lock(g_completionsMutex);
         const auto pending = g_completions.find(req_id);
@@ -403,11 +412,10 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
         }
     }
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceHttp2AbortRequest(int req_id) {
-    const auto request = Transport(req_id, false);
+    const auto request = Transport(req_id, !IsWebSocket(req_id));
     if (!request) return ERROR_INVALID_ID;
     request->Cancel();
     return 0;
@@ -418,10 +426,12 @@ int APS5_VABI sceHttp2GetMemoryPoolStats(int lib_http2_ctx_id, Http2MemoryPoolSt
     std::lock_guard lock(g_handlesMutex);
     const auto* context = FindHandle(lib_http2_ctx_id, Http2Kind::Context);
     if (!context) {
-        std::memset(stats, 0, sizeof(*stats));
+        Http2MemoryPoolStats zero{};
+        if (!GuestCopyOut_nid_no_patch(stats, &zero, sizeof(zero))) return ERROR_NULL_POINTER;
         return ERROR_INVALID_ID;
     }
-    *stats = {context->poolSize, 0, 0, 0};
+    Http2MemoryPoolStats localStats{context->poolSize, 0, 0, 0};
+    if (!GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats))) return ERROR_NULL_POINTER;
     return 0;
 }
 
@@ -615,10 +625,21 @@ int APS5_VABI sceHttp2SetPreSendCallback(int id, void* cb_func, void* user_arg) 
     }, true);
 }
 
-int APS5_VABI sceHttp2Unknown_001_nid_no_patch() {
+int APS5_VABI _Z5dummyv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("AS45QoYHjc4", sceHttp2Unknown_001_nid_no_patch);
 
+}
+
+extern "C" void Http2SetConnectHook_nid_no_patch(Http2::ConnectHook hook) {
+    Http2::ConnectHookSlot().store(hook, std::memory_order_release);
+}
+
+extern "C" void Http2SetPollHook_nid_no_patch(Http2::PollHook hook) {
+    Http2::PollHookSlot().store(hook, std::memory_order_release);
+}
+
+extern "C" void Http2SetWriteHook_nid_no_patch(Http2::WriteHook hook) {
+    Http2::WriteHookSlot().store(hook, std::memory_order_release);
 }
