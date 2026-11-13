@@ -7,10 +7,12 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
+#include "prx/libSceAgcDriver/Execution/include/NativeDepthCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -52,6 +54,13 @@ struct DriverTestAccess {
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         if (driver.device == nullptr) driver.device = std::make_shared<VulkanDevice>();
     }
+    static std::shared_ptr<VulkanDevice> Device() { return Driver::Get().device.Load(); }
+};
+}
+
+namespace AgcDriver {
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
 };
 }
 
@@ -658,7 +667,7 @@ void appendRegister(std::vector<std::uint32_t>& commands, std::uint32_t opcode, 
     commands.insert(commands.end(), {0xc0010000u | (opcode << 8u), offset, value});
 }
 
-void appendDepthDraw(std::vector<std::uint32_t>& commands, const std::uint32_t* vertex, const std::uint32_t* pixel, const float* color, std::uint64_t depth, std::uint64_t htile, bool depthCopy, std::uint32_t copySample = 0, std::uint32_t samplesLog2 = DepthSamplesLog2) {
+void appendDepthDraw(std::vector<std::uint32_t>& commands, const std::uint32_t* vertex, const std::uint32_t* pixel, const float* color, std::uint64_t depth, std::uint64_t htile, bool depthCopy, std::uint32_t copySample = 0, std::uint32_t samplesLog2 = DepthSamplesLog2, std::uint32_t depthSwizzle = 24u) {
     const auto colorAddress = at(color);
     const bool multisampled = samplesLog2 != 0u;
     const auto locations = depthCopy || !multisampled ? 0u : StandardLocations4x;
@@ -685,7 +694,7 @@ void appendDepthDraw(std::vector<std::uint32_t>& commands, const std::uint32_t* 
         {0x318, static_cast<std::uint32_t>(colorAddress >> 8u)}, {0x390, static_cast<std::uint32_t>(colorAddress >> 40u)}, {0x292, depthCopy ? 2u : 3u},
         {0x000, depthCopy ? (copySample == 0 ? 0x84u : 4u | (copySample << 8u)) : 0u}, {0x002, 0}, {0x007, ((DepthHeight - 1u) << 16u) | (DepthWidth - 1u)},
         {0x008, 0}, {0x009, std::bit_cast<std::uint32_t>(1.0f)}, {0x00a, 0}, {0x00b, 0},
-        {0x010, 3u | (samplesLog2 << 2u) | (24u << 4u) | (1u << 20u) | (1u << 29u)}, {0x011, 1u << 29u}, {0x2af, 1u << 18u},
+        {0x010, 3u | (samplesLog2 << 2u) | (depthSwizzle << 4u) | (1u << 20u) | (1u << 29u)}, {0x011, 1u << 29u}, {0x2af, 1u << 18u},
         {0x012, static_cast<std::uint32_t>(depth >> 8u)}, {0x014, static_cast<std::uint32_t>(depth >> 8u)},
         {0x01a, static_cast<std::uint32_t>(depth >> 40u)}, {0x01c, static_cast<std::uint32_t>(depth >> 40u)},
         {0x005, static_cast<std::uint32_t>(htile >> 8u)}, {0x01e, static_cast<std::uint32_t>(htile >> 40u)},
@@ -718,6 +727,105 @@ std::vector<std::uint64_t> passValues(const std::string& report, const std::stri
     for (auto found = report.find(key); found != std::string::npos; found = report.find(key, found + 1)) values.push_back(std::strtoull(report.c_str() + found + key.size(), nullptr, 10));
     return values;
 }
+
+void testNativeDepthPasses(const std::filesystem::path& tool, std::size_t repeats) {
+    constexpr float Initial = 0.75f;
+    constexpr float Mutated = DrawnDepth;
+    constexpr std::size_t Copies = 2u;
+    constexpr std::size_t Bytes = Copies * CopyTexels * sizeof(float);
+    const char* directory = std::getenv("APS5_FRAME_CAPTURE");
+    check(directory != nullptr && *directory != '\0', "native repeated capture directory is missing");
+    const std::filesystem::path capture(directory);
+    const auto layout = allocate();
+    const auto planes = allocate();
+    std::memset(planes.base, 0, BlockBytes);
+    auto* const before = reinterpret_cast<float*>(layout.source);
+    auto* const after = before + CopyTexels;
+    auto* const scratch = after + CopyTexels;
+    std::fill(before, scratch + CopyTexels, Untouched);
+    auto* const shaders = layout.secondCommands;
+    const auto* const vertex = registerShader(reinterpret_cast<std::byte*>(shaders), DepthVertexCode, 2);
+    const auto* const pixel = registerShader(reinterpret_cast<std::byte*>(shaders) + 1024u, DepthPixelCode, 1);
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+    AgcDriver::DriverDetail::DriverTestAccess::OpenDevice();
+    const auto device = AgcDriver::DriverDetail::DriverTestAccess::Device();
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    const AgcDriver::Graphics::DepthTarget native{at(planes.base), 0u, {DepthWidth, DepthHeight}, VK_FORMAT_D32_SFLOAT, Initial, 0u};
+    static_cast<void>(AgcDriver::Graphics::DepthSurfaceView(context, native, false, false));
+    std::vector<std::uint32_t> window;
+    appendDepthDraw(window, vertex, pixel, before, native.address, 0u, true, 0u, 0u, 0u);
+    appendDepthDraw(window, vertex, pixel, scratch, native.address, 0u, false, 0u, 0u, 0u);
+    appendDepthDraw(window, vertex, pixel, after, native.address, 0u, true, 0u, 0u, 0u);
+    check(window.size() * sizeof(std::uint32_t) <= CommandBytes, "native repeated window exceeds its command buffer");
+    std::copy(window.begin(), window.end(), layout.firstCommands);
+    flip();
+    Packet packet{layout.firstCommands, static_cast<std::uint32_t>(window.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "native read-before-mutate window was not submitted");
+    AgcDriverWaitIdle_nid_postfix();
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriver::GuestMemory::FlushGpuWrites(at(before), Bytes);
+    std::size_t sampled = 0u;
+    std::size_t changed = 0u;
+    for (std::size_t index = 0u; index < CopyTexels; ++index) {
+        check(before[index] == Initial || before[index] == Untouched, "native window did not first sample the independently known captured depth");
+        check(after[index] == Initial || after[index] == Mutated || after[index] == Untouched, "native window produced an unexpected post-mutation depth");
+        sampled += before[index] == Initial;
+        changed += before[index] == Initial && after[index] == Mutated;
+    }
+    check(sampled != 0u && changed != 0u, "native window did not observe captured depth and then mutate its sampled pixels");
+    std::vector<std::byte> expected(Bytes);
+    std::memcpy(expected.data(), before, Bytes);
+    const auto nativeSnapshots = AgcDriver::ReadNativeDepthCapture(capture / AgcDriver::NativeDepthCaptureName);
+    check(nativeSnapshots.size() == 1u && nativeSnapshots.front().target.address == native.address && nativeSnapshots.front().target.format == VK_FORMAT_D32_SFLOAT && nativeSnapshots.front().target.depthSwizzle == 0u && nativeSnapshots.front().target.samples == 1u && nativeSnapshots.front().depth.size() == CopyTexels * sizeof(float), "native recorder did not capture the single GPU-only depth plane");
+    for (std::size_t offset = 0u; offset < nativeSnapshots.front().depth.size(); offset += sizeof(float)) {
+        float value = 0.0f;
+        std::memcpy(&value, nativeSnapshots.front().depth.data() + offset, sizeof(value));
+        check(value == Initial, "native file was not captured before the recorded window mutated the plane");
+    }
+    const FrameCaptureReader reader(capture);
+    const auto guestDepth = snapshotOf(reader, native.address, CopyTexels * sizeof(float));
+    check(std::all_of(guestDepth.begin(), guestDepth.end(), [](std::byte value) { return value == std::byte{0}; }), "the native initial plane also exists in the guest snapshot, so native restoration is not required");
+    const auto start = std::ranges::find_if(reader.Calls(), [](const auto& call) { return call.kind == FrameCallKind::FrameStart; });
+    check(start != reader.Calls().end() && std::any_of(start + 1, reader.Calls().end(), [](const auto& call) { return call.kind == FrameCallKind::Submit; }), "native capture has no actual recorded window submission");
+    std::printf("native window captured A=%.2f before FrameStart, sampled %zu texels, then changed %zu observed texels to B=%.2f\n", Initial, sampled, changed, Mutated);
+    AgcDriverShutdown_nid_postfix();
+    std::vector<std::size_t> prefixes{1u, repeats};
+    for (std::size_t prefix = 2u; prefix < repeats; ++prefix) prefixes.push_back(prefix);
+    for (const auto passes : prefixes) {
+        const auto suffix = std::to_string(passes);
+        const auto dump = capture / ("native depth prefix " + suffix + ".bin");
+        const auto result = capture / ("native depth prefix " + suffix + ".json");
+        const auto log = capture / ("native depth prefix " + suffix + ".log");
+        std::filesystem::remove(dump);
+        auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --verify-reset --repeat " + suffix + " --dump " + std::to_string(at(before)) + ":" + std::to_string(Bytes) + ":\"" + dump.string() + "\" > \"" + result.string() + "\" 2> \"" + log.string() + "\"";
+#ifdef _WIN32
+        command = "\"" + command + "\"";
+#endif
+        const auto status = std::system(command.c_str());
+        const auto errors = readFile(log);
+        if (!errors.empty()) std::fwrite(errors.data(), 1u, errors.size(), stderr);
+        check(status == 0, "native depth CLI repeat " + suffix + " failed: " + std::string(reinterpret_cast<const char*>(errors.data()), errors.size()));
+        const auto actual = readFile(dump);
+        check(actual.size() == expected.size(), "native depth CLI prefix dumped the wrong number of observed bytes");
+        for (std::size_t index = 0u; index < Copies * CopyTexels; ++index) {
+            std::uint32_t want = 0u;
+            std::uint32_t found = 0u;
+            std::memcpy(&want, expected.data() + index * sizeof(float), sizeof(want));
+            std::memcpy(&found, actual.data() + index * sizeof(float), sizeof(found));
+            check(found == want, "native depth CLI repeat " + suffix + " " + (index < CopyTexels ? "read before mutation" : "read after mutation") + " at texel " + std::to_string(index % CopyTexels) + " returned " + std::to_string(std::bit_cast<float>(found)) + ", expected " + std::to_string(std::bit_cast<float>(want)));
+        }
+        const auto reportBytes = readFile(result);
+        const std::string report(reinterpret_cast<const char*>(reportBytes.data()), reportBytes.size());
+        const auto frames = passValues(report, "p50");
+        check(frames.size() == passes + 1u, "native depth CLI did not report every requested replay window");
+        std::printf("native CLI prefix %zu: all %zu before/after depth values match captured A and mutated B exactly\n", passes, Copies * CopyTexels);
+    }
+}
+
+void testNativeDepthRepeat2(const std::filesystem::path& tool) { testNativeDepthPasses(tool, 2u); }
+void testNativeDepthRepeat3(const std::filesystem::path& tool) { testNativeDepthPasses(tool, 3u); }
 
 void testSingleSampleDepthPasses(const std::filesystem::path& tool) {
     const char* directory = std::getenv("APS5_FRAME_CAPTURE");
@@ -1382,9 +1490,9 @@ int main(int argc, char** argv) {
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
         {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"allocation_ranges", testRegisteredRangeBoundaries}};
     const std::map<std::string, void (*)(const std::filesystem::path&)> restored{
-        {"rewind_chained", testChainedRewindGates}, {"rewind_page_start", testRewindControlAtPageStart}, {"rewind_zero_control", testZeroRewindControlRewritten}, {"rewind_in_order", testEarlyReleaseRestoredInOrder}, {"rewind_kept_words", testRewindControlsKeptAnywhere}, {"multisample_depth", testMultisampleDepthPasses}, {"single_sample_depth", testSingleSampleDepthPasses}};
+        {"rewind_chained", testChainedRewindGates}, {"rewind_page_start", testRewindControlAtPageStart}, {"rewind_zero_control", testZeroRewindControlRewritten}, {"rewind_in_order", testEarlyReleaseRestoredInOrder}, {"rewind_kept_words", testRewindControlsKeptAnywhere}, {"multisample_depth", testMultisampleDepthPasses}, {"single_sample_depth", testSingleSampleDepthPasses}, {"native_depth_repeat2", testNativeDepthRepeat2}, {"native_depth_repeat3", testNativeDepthRepeat3}};
     if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || rewound.contains(mode) || restored.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_chained|rewind_page_start|rewind_zero_control|rewind_in_order|rewind_kept_words|multisample_depth|single_sample_depth|allocation_ranges]\n");
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_chained|rewind_page_start|rewind_zero_control|rewind_in_order|rewind_kept_words|multisample_depth|single_sample_depth|native_depth_repeat2|native_depth_repeat3|allocation_ranges]\n");
         return 2;
     }
     int status = 0;
