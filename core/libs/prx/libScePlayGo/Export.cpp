@@ -158,6 +158,8 @@ static UnlistedChunkAnswer UnlistedChunks() {
     return answer;
 }
 
+constexpr uint16_t NoPlayGoFilesChunkBound = 1000;
+
 static bool IsKnownChunk(uint16_t id) {
     const auto& chunks = Chunks();
     if (chunks.ids.contains(id)) return true;
@@ -169,7 +171,7 @@ static bool IsKnownChunk(uint16_t id) {
     }
     if (chunks.scenario)
         throw std::runtime_error("scePlayGo: sce_sys/playgo-chunk.dat is missing and sce_sys/playgo-scenario.json lists no chunks, so chunk ID " + std::to_string(id) + " outside the listed ids 0 to " + std::to_string(PLAYGO_SCENARIO_CHUNK_COUNT - 1) + " cannot be checked; set APS5_PLAYGO_UNLISTED_CHUNKS=installed or =absent to answer for this dump");
-    throw std::runtime_error("scePlayGo: sce_sys/playgo-chunk.dat and sce_sys/playgo-scenario.json are missing, so chunk ID " + std::to_string(id) + " cannot be checked; set APS5_PLAYGO_UNLISTED_CHUNKS=installed, =absent, or a comma-separated list of chunk ids to answer for this dump");
+    return id < NoPlayGoFilesChunkBound;
 }
 
 static int ValidateChunks(const uint16_t* chunk_ids, uint32_t number_of_entries) {
@@ -343,8 +345,13 @@ int APS5_VABI scePlayGoSetToDoList(int handle, const PlayGoToDo* todo_list, uint
     if (!todo_list) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (number_of_entries == 0) return SCE_PLAYGO_ERROR_BAD_SIZE;
     for (uint32_t index = 0; index < number_of_entries; ++index) {
-        if (!IsKnownChunk(todo_list[index].chunk_id)) return SCE_PLAYGO_ERROR_BAD_CHUNK_ID;
-        const int8_t locus = todo_list[index].locus;
+        PlayGoToDo entry{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&entry, &todo_list[index], sizeof(entry));
+        errno = savedErrno;
+        if (!copied) return SCE_PLAYGO_ERROR_BAD_POINTER;
+        if (!IsKnownChunk(entry.chunk_id)) return SCE_PLAYGO_ERROR_BAD_CHUNK_ID;
+        const int8_t locus = entry.locus;
         if (locus != PLAYGO_LOCUS_NOT_DOWNLOADED && locus != PLAYGO_LOCUS_LOCAL_SLOW && locus != PLAYGO_LOCUS_LOCAL_FAST) return SCE_PLAYGO_ERROR_BAD_LOCUS;
     }
     return 0;

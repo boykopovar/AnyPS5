@@ -1142,6 +1142,10 @@ GuestLocaleFacade* APS5_VABI _ZNSt6locale7classicEv_nid_postfix() {
     return &g_classicLocaleFacade;
 }
 
+const GuestLocale::CollateVtable* GuestWideCollateVtable_nid_no_patch() {
+    return &g_wideCollateVtable;
+}
+
 std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
     if (facet != nullptr && *facet == nullptr) {
         if (locale == nullptr || *locale == nullptr || (*locale)->name == nullptr || std::strcmp((*locale)->name, "C") != 0) throw std::invalid_argument("collate::_Getcat: only the C locale is supported");
