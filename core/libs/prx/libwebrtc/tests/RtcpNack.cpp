@@ -2,6 +2,7 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -111,6 +112,79 @@ void TestParsing() {
     Destroy(nack);
 }
 
+using BlockLengthFunction = std::size_t (APS5_VABI*)(const WebRtcRtcpNack*);
+using CreateFunction = bool (APS5_VABI*)(const WebRtcRtcpNack*, std::uint8_t*, std::size_t*, std::size_t, void*, void (APS5_VABI*)(void*, const std::uint8_t*, std::size_t));
+using DeleteFunction = void (APS5_VABI*)(WebRtcRtcpNack*);
+
+void* const* Slots(const WebRtcRtcpNack& nack) {
+    return static_cast<void* const*>(nack.vtable);
+}
+
+std::vector<std::vector<std::uint8_t>> sentPackets;
+
+void APS5_VABI Collect(void* function, const std::uint8_t* data, std::size_t size) {
+    Require(function == &sentPackets);
+    sentPackets.emplace_back(data, data + size);
+}
+
+void TestLifecycleAndCreate() {
+    WebRtcRtcpNack nack;
+    std::memset(&nack, 0xa5, sizeof(nack));
+    _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(&nack);
+    Require(nack.vtable != nullptr && nack.senderSsrc == 0 && nack.mediaSsrc == 0);
+    Require(!nack.packed.begin && !nack.packed.end && !nack.packed.capacityEnd && !nack.packetIds.begin && !nack.packetIds.end && !nack.packetIds.capacityEnd);
+    Require(reinterpret_cast<BlockLengthFunction>(Slots(nack)[2])(&nack) == 12);
+    std::uint8_t empty[16] {};
+    std::size_t index = 0;
+    Require(reinterpret_cast<CreateFunction>(Slots(nack)[3])(&nack, empty, &index, sizeof(empty), nullptr, nullptr) && index == 0);
+    _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(&nack);
+
+    _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(&nack);
+    Require(Parse(nack, {0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,0,1,0,0,0,9,0x80,0x01,0xff,0xff,0,2}));
+    Require(reinterpret_cast<BlockLengthFunction>(Slots(nack)[2])(&nack) == 24);
+    std::vector<std::uint8_t> packet(64);
+    index = 0;
+    Require(reinterpret_cast<CreateFunction>(Slots(nack)[3])(&nack, packet.data(), &index, packet.size(), nullptr, nullptr));
+    const std::vector<std::uint8_t> whole {0x81,205,0,5, 0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0, 0,1,0,0, 0,9,0x80,0x01, 0xff,0xff,0,2};
+    Require(index == whole.size() && std::equal(whole.begin(), whole.end(), packet.begin()));
+
+    sentPackets.clear();
+    index = 0;
+    std::vector<std::uint8_t> small(16);
+    Require(reinterpret_cast<CreateFunction>(Slots(nack)[3])(&nack, small.data(), &index, small.size(), &sentPackets, &Collect));
+    Require(sentPackets.size() == 2 && index == 16);
+    for (std::size_t item = 0; item < 3; ++item) {
+        const std::vector<std::uint8_t>& fragment = item < 2 ? sentPackets[item] : std::vector<std::uint8_t>(small.begin(), small.end());
+        const std::vector<std::uint8_t> expected {0x81,205,0,3, 0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0, whole[12 + 4 * item], whole[13 + 4 * item], whole[14 + 4 * item], whole[15 + 4 * item]};
+        Require(fragment == expected);
+    }
+    index = 0;
+    std::vector<std::uint8_t> tiny(15);
+    Require(!reinterpret_cast<CreateFunction>(Slots(nack)[3])(&nack, tiny.data(), &index, tiny.size(), &sentPackets, &Collect) && index == 0);
+    index = 4;
+    bool threw = false;
+    try {
+        reinterpret_cast<CreateFunction>(Slots(nack)[3])(&nack, small.data(), &index, small.size(), nullptr, nullptr);
+    } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(&nack);
+    Require(!nack.packed.begin && !nack.packetIds.begin);
+
+    auto* owned = static_cast<WebRtcRtcpNack*>(_Znwm_nid_postfix(sizeof(WebRtcRtcpNack)));
+    _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(owned);
+    Require(Parse(*owned, {0,0,0,1,0,0,0,2,0,5,0,3}));
+    reinterpret_cast<DeleteFunction>(Slots(*owned)[1])(owned);
+
+    for (int which = 0; which < 2; ++which) {
+        threw = false;
+        try {
+            if (which == 0) _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(nullptr);
+            else _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(nullptr);
+        } catch (const std::invalid_argument&) { threw = true; }
+        Require(threw);
+    }
+}
+
 void TestNulls() {
     WebRtcRtcpNack nack {};
     WebRtcRtcpCommonHeader header {205,1,0,12,nullptr};
@@ -135,6 +209,7 @@ int main(int argc, char**) {
         if (argc == 1) {
             TestParsing();
             TestNulls();
+            TestLifecycleAndCreate();
         }
         Require(allocations.empty());
     } catch (const std::exception& error) {

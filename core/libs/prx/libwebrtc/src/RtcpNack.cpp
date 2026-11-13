@@ -89,9 +89,98 @@ void Append(WebRtcNackVector<std::uint16_t>& vector, std::uint16_t value) {
     *vector.end++ = value;
 }
 
+constexpr std::size_t HeaderLength = 4;
+constexpr std::size_t CommonFeedbackLength = 8;
+constexpr std::size_t NackItemLength = 4;
+constexpr std::uint8_t FeedbackMessageType = 1;
+constexpr std::uint8_t PacketType = 205;
+
+using PacketReady = void (APS5_VABI*)(void* function, const std::uint8_t* data, std::size_t size);
+
+void WriteBigEndian(std::uint8_t* bytes, std::uint32_t value, std::size_t size) {
+    for (std::size_t index = 0; index < size; ++index)
+        bytes[index] = static_cast<std::uint8_t>(value >> (8 * (size - 1 - index)));
+}
+
+std::size_t PackedCount(const WebRtcRtcpNack* nack) {
+    return nack->packed.begin ? static_cast<std::size_t>(nack->packed.end - nack->packed.begin) : 0;
+}
+
+std::size_t APS5_VABI NackBlockLength_nid_no_patch(const WebRtcRtcpNack* nack) {
+    return HeaderLength + CommonFeedbackLength + PackedCount(nack) * NackItemLength;
+}
+
+bool APS5_VABI NackCreate_nid_no_patch(const WebRtcRtcpNack* nack, std::uint8_t* packet, std::size_t* index, std::size_t maxLength, void* function, PacketReady call) {
+    const std::size_t count = PackedCount(nack);
+    for (std::size_t nackIndex = 0; nackIndex < count;) {
+        const std::size_t bytesLeft = maxLength - *index;
+        if (bytesLeft < HeaderLength + CommonFeedbackLength + NackItemLength) {
+            if (*index == 0)
+                return false;
+            if (!call)
+                throw std::invalid_argument("Nack::Create needs a callback to send a full buffer");
+            call(function, packet, *index);
+            *index = 0;
+            continue;
+        }
+        const std::size_t fields = std::min((bytesLeft - HeaderLength - CommonFeedbackLength) / NackItemLength, count - nackIndex);
+        const std::size_t words = (CommonFeedbackLength + fields * NackItemLength) / 4;
+        packet[*index] = static_cast<std::uint8_t>((2 << 6) | FeedbackMessageType);
+        packet[*index + 1] = PacketType;
+        WriteBigEndian(packet + *index + 2, static_cast<std::uint32_t>(words), 2);
+        *index += HeaderLength;
+        WriteBigEndian(packet + *index, nack->senderSsrc, 4);
+        WriteBigEndian(packet + *index + 4, nack->mediaSsrc, 4);
+        *index += CommonFeedbackLength;
+        for (const std::size_t end = nackIndex + fields; nackIndex < end; ++nackIndex) {
+            WriteBigEndian(packet + *index, nack->packed.begin[nackIndex].firstPid, 2);
+            WriteBigEndian(packet + *index + 2, nack->packed.begin[nackIndex].bitmask, 2);
+            *index += NackItemLength;
+        }
+    }
+    return true;
+}
+
+void APS5_VABI DeleteNack_nid_no_patch(WebRtcRtcpNack* nack) {
+    _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(nack);
+    _ZdlPv_nid_postfix(nack);
+}
+
+void* const Vtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN6webrtc4rtcp4NackD1Ev_nid_postfix),
+    reinterpret_cast<void*>(&DeleteNack_nid_no_patch),
+    reinterpret_cast<void*>(&NackBlockLength_nid_no_patch),
+    reinterpret_cast<void*>(&NackCreate_nid_no_patch),
+};
+
+template<typename TValue>
+void Release(WebRtcNackVector<TValue>& vector) {
+    if (vector.begin)
+        _ZdlPv_nid_postfix(vector.begin);
+    vector = {};
+}
+
 }
 
 extern "C" {
+
+void APS5_VABI _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(WebRtcRtcpNack* nack) {
+    if (!nack)
+        throw std::invalid_argument("Nack constructor requires a packet object");
+    nack->vtable = Vtable + 2;
+    nack->senderSsrc = 0;
+    nack->mediaSsrc = 0;
+    nack->packed = {};
+    nack->packetIds = {};
+}
+
+void APS5_VABI _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(WebRtcRtcpNack* nack) {
+    if (!nack)
+        throw std::invalid_argument("Nack destructor requires a packet object");
+    Release(nack->packetIds);
+    Release(nack->packed);
+}
 
 bool APS5_VABI _ZN6webrtc4rtcp4Nack5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRtcRtcpNack* nack, const WebRtcRtcpCommonHeader* packet) {
     if (!nack || !packet)
