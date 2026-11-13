@@ -500,10 +500,15 @@ int APS5_VABI sceVdecCoreInitializeComputeResource() {
 
 int APS5_VABI sceVdecCoreMapMemoryBlock(void* decoder, const VdecCoreMemoryBlock* blocks, std::uint32_t count) {
     if (decoder == nullptr) return VdecCoreErrorInvalidArgument;
+    constexpr std::uint32_t MaxMappedBlocks = 4096;
+    if (blocks != nullptr && count > MaxMappedBlocks) return VdecCoreErrorInvalidArgument;
     std::vector<VdecCoreMemoryBlock> localBlocks;
     if (blocks != nullptr && count > 0) {
-        localBlocks.resize(count);
-        if (!CopyGuestIn(localBlocks.data(), blocks, static_cast<std::size_t>(count) * sizeof(VdecCoreMemoryBlock))) return VdecCoreErrorInvalidArgument;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            VdecCoreMemoryBlock block{};
+            if (!CopyGuestIn(&block, blocks + i, sizeof(block))) return VdecCoreErrorInvalidArgument;
+            localBlocks.push_back(block);
+        }
     }
     auto& state = State();
     std::lock_guard lock(state.mutex);

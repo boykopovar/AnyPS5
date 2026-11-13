@@ -581,6 +581,10 @@ int main() {
                                           1) == InvalidArgument &&
                     errno == 71,
                 "unreadable memory block must fail without changing errno");
+        VdecCoreMemoryBlock dummyBlock{};
+        errno = 71;
+        Require(sceVdecCoreMapMemoryBlock(decoder, &dummyBlock, 0xFFFFFFFFu) == InvalidArgument && errno == 71,
+                "oversized memory block count must fail without allocating");
         errno = 71;
         Require(sceVdecCoreSetDecodeInput(decoder,
                                           reinterpret_cast<const VdecCoreInputData*>(static_cast<std::uintptr_t>(0x10)),
