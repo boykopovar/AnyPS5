@@ -19,6 +19,8 @@ for source, prefix in (("locales", ""), ("curr", "curr/"), ("zone", "zone/"), ("
     if source != "misc":
         assert prefix + "res_index.res" in packaged, source
     print(source, len(expected), "complete source resources")
-for name in ("brkitr/root.res", "nfc.nrm", "nfkc.nrm", "uts46.nrm", "uemoji.icu", "ulayout.icu"):
+normalization = {path.name for path in (args.source / "data/in").glob("*.nrm")} - {"nfc.nrm"}
+assert normalization <= packaged, sorted(normalization - packaged)
+for name in ("brkitr/root.res", "uemoji.icu", "ulayout.icu"):
     assert name in packaged, name
 print(len(packaged), "generated package entries match the manifest")
