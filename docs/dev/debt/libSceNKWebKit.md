@@ -154,6 +154,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [DiagnosticLoggingKeys::resourceLoadStatisticsTelemetryKey](../../../core/libs/prx/libSceNKWebKit/src/DiagnosticLoggingKeys.cpp) (libSceNKWebKit) - not compared with a console module: the device's WebKit revision is unverified. This 3.20 key, absent from the 11.x source, returns `resourceLoadStatisticsTelemetry` as [DiagnosticLoggingKeys.cpp](https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/WebCore/page/DiagnosticLoggingKeys.cpp#L862-L865) of August 2020 does, in a new 8-bit string like the other keys. Closes when: compared with a console module.
 
 - [HistoryItem changed hook](../../../core/libs/prx/libSceNKWebKit/src/HistoryItem.cpp) (libSceNKWebKit) - in firmware 13.42 (read from disassembly, not run) `setURLString`, `setOriginalURLString`, `setReferrer`, `setTitle`, `setAlternateTitle` and `setShouldRestoreScrollPosition` end by tail-jumping through the function pointer in data export `TL1XjYe1xLo` with the item as argument, behind a control-flow-integrity check that traps unless the pointer is one of three jump-table entries. The setters call the internal `historyItemChangedHook` pointer, which defaults to a no-op like the console's; the console's installed handler, the internal code that installs it and the check are not modelled.
+- [WebCore::TrackPrivateBase](../../../core/libs/prx/libSceNKWebKit/src/TrackPrivateBase.cpp) (libSceNKWebKit) - not compared with a console module: the base constructor stores a vtable of this library and a reference count of 1 at offset 8, and leaves offsets 12 to 15 to the subclass; this assumes the release layout without logging fields, which the bare `ret` of the 11.00 base destructor supports. The vtable lists the exported virtuals in declaration order, with no type info; a subclass constructor overwrites it. `id`, `label`, `language` and `startTimeVariance` return the default values of [TrackPrivateBase.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/TrackPrivateBase.h#L53-L61). The complete and deleting destructors and `willBeRemoved` still throw. Closes when: compared with a console module.
 
 ### Known export names; ABI prototypes unverified
 
@@ -2661,7 +2662,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore16ThreadGlobalDataD1Ev` | `Er2rl6X-19s` |
 | `_ZN7WebCore16ThreadGlobalDataD2Ev` | `uCDdgFMfEb0` |
 | `_ZN7WebCore16TrackPrivateBase13willBeRemovedEv` | `bRuD-8BJ4nI` |
-| `_ZN7WebCore16TrackPrivateBaseC2Ev` | `kU02TR5VIpU` |
 | `_ZN7WebCore16TrackPrivateBaseD0Ev` | `s1DS0Vvz-18` |
 | `_ZN7WebCore16TrackPrivateBaseD1Ev` | `tXwdR3KKGTY` |
 | `_ZN7WebCore16UserGestureToken60setMaximumIntervalForUserGestureForwardingForFetchForTestingEN3WTF7SecondsE` | `8hZJK-1l7VY` |
@@ -5289,10 +5289,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK7WebCore16HTMLVideoElement11videoHeightEv` | `clr3IhTz4SM` |
 | `_ZNK7WebCore16JSXMLHttpRequest7wrappedEv` | `kQEacF2vg-k` |
 | `_ZNK7WebCore16JSXMLHttpRequest8responseERN3JSC14JSGlobalObjectE` | `8oQrlcWx0fg` |
-| `_ZNK7WebCore16TrackPrivateBase17startTimeVarianceEv` | `AYaZ5CHXzNA` |
-| `_ZNK7WebCore16TrackPrivateBase2idEv` | `DaYfJlkP-0k` |
-| `_ZNK7WebCore16TrackPrivateBase5labelEv` | `W+KOtirSb7U` |
-| `_ZNK7WebCore16TrackPrivateBase8languageEv` | `K+XKFHF4O0w` |
 | `_ZNK7WebCore16URLDecomposition4hashEv` | `djfNyVDLFz4` |
 | `_ZNK7WebCore16URLDecomposition4hostEv` | `yM6UFAsJJr4` |
 | `_ZNK7WebCore16URLDecomposition4portEv` | `gnsIZjIH-Mw` |
