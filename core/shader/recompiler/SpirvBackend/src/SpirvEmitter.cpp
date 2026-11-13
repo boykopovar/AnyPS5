@@ -331,8 +331,11 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.waveLdsScope = WaveLdsScope(program, workgroup, state.laneCount);
     if (const char* guard = std::getenv("APS5_LOOP_GUARD")) state.loopGuardLimit = static_cast<std::uint32_t>(std::strtoul(guard, nullptr, 0));
     // Stopped invocations would leave the wave LDS barriers incomplete.
-    state.bdaStopsInvocations = state.waveLdsScope == 0 && !state.spannedWave && BdaInvocationsMayStop(program) && program.Resources().stage != IrShaderStage::Mesh;
+    state.bdaStopsInvocations = state.waveLdsScope == 0 && BdaInvocationsMayStop(program) && program.Resources().stage != IrShaderStage::Mesh;
     state.meshWindowBuffer = target.meshWindowBuffer && program.Resources().stage == IrShaderStage::Mesh && program.Metadata().vectorWindowSize != 0u && state.laneCount * MeshWindowInvocations(state) * program.Metadata().vectorWindowSize <= MeshWindowSlotDwords;
+    const bool waveOperations = state.laneCount != 1u || state.requirements.subgroupBallot || state.requirements.subgroupShuffle;
+    const bool faults = program.Info().usesDma || program.Info().usesFaultBuffer;
+    state.bdaFaultMasksWrites = state.bdaStopsInvocations && faults && (waveOperations || state.spannedWave) && program.Resources().stage != IrShaderStage::Pixel;
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);
