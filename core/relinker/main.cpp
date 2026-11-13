@@ -27,6 +27,12 @@
 
 #include "RelinkerRevision.hpp"
 
+#if defined(_WIN32) && defined(__MINGW32__)
+extern "C" {
+int _dowildcard = 0;
+}
+#endif
+
 namespace {
 
 struct ConvertedExecutable {
@@ -63,8 +69,10 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     options.FrameRedZone = args.frameRedZone;
     options.SkipSyscallCheck = args.skipSyscallCheck;
     options.TrapSdkSyscallStubs = args.trapSdkSyscallStubs;
+    options.FunctionSymbolRoots = args.functionSymbolRoots;
     options.UnusedFilterLevel = args.unusedFilterLevel;
     options.LazyBinding = args.lazyBinding;
+    options.OmitUnavailableDependencies = args.omitUnavailableDependencies;
     options.RunPath = args.runPath;
     options.WindowsGui = args.windowsGui;
     options.TraceImports = args.traceImports;
@@ -128,11 +136,12 @@ bool SameOutputFile(const std::filesystem::path& first, const std::filesystem::p
 }
 
 bool SameOutputDestination(const std::filesystem::path& first, const std::filesystem::path& second,
-                           std::filesystem::path& firstPath, std::filesystem::path& secondPath) {
+                           std::filesystem::path& firstPath, std::filesystem::path& secondPath, const bool probeAliases) {
     if (firstPath.empty()) firstPath = std::filesystem::weakly_canonical(first);
     if (secondPath.empty()) secondPath = std::filesystem::weakly_canonical(second);
     if (firstPath == secondPath) return true;
     if (std::filesystem::exists(first) && std::filesystem::exists(second)) return SameOutputFile(first, second);
+    if (!probeAliases) return false;
 #ifdef _WIN32
     const auto firstName = firstPath.filename().native();
     const auto secondName = secondPath.filename().native();
@@ -283,7 +292,14 @@ int Run(const int argc, char* argv[]) {
             throw Domain::RelinkerException("Executable output would overwrite the input executable");
         if (Io::NativePath(args.outputPath).filename().empty() || std::filesystem::is_directory(Io::NativePath(args.outputPath)))
             throw Domain::RelinkerException("Executable output is a directory: " + args.outputPath);
-        const std::string absPath = Io::Utf8Path(std::filesystem::absolute(Io::NativePath(args.outputPath)));
+        const auto requestedOutput = Io::NativePath(args.outputPath);
+#ifdef _WIN32
+        const auto& nativeOutput = requestedOutput.native();
+        const bool extendedOutput = nativeOutput.starts_with(L"\\\\?\\") || nativeOutput.starts_with(L"\\\\.\\");
+#else
+        const bool extendedOutput = false;
+#endif
+        const std::string absPath = Io::Utf8Path(extendedOutput ? requestedOutput : std::filesystem::absolute(requestedOutput));
 
         struct ExtraExecutable {
             std::string Argument;
@@ -367,14 +383,16 @@ int Run(const int argc, char* argv[]) {
             for (const auto& artifact : guestArtifacts)
                 if (SameOutputFile(artifact.SourcePath, path))
                     throw Domain::RelinkerException(std::string(kind) + " output would overwrite an input module: " + Io::Utf8Path(path));
+            if (!args.noPatches && std::filesystem::is_regular_file(patchFile) && SameOutputFile(patchFile, path))
+                throw Domain::RelinkerException(std::string(kind) + " output would overwrite the patch file: " + Io::Utf8Path(path));
         };
         for (std::size_t index = 1; index < executables.size(); ++index) checkOutputInputs(Io::NativePath(executables[index].OutputPath), "Executable");
         if (desktopEntry) {
             checkOutputInputs(desktopEntry->IconPath, "Icon");
             checkOutputInputs(desktopEntry->EntryPath, "Desktop entry");
         }
-        if (args.windowsDiagnostics)
-            checkOutputInputs(std::filesystem::absolute("windows-diagnostics-imports.txt"), "Windows import diagnostics");
+        const auto windowsDiagnosticsPath = Io::NativePath(absPath).parent_path() / "windows-diagnostics-imports.txt";
+        if (args.windowsDiagnostics) checkOutputInputs(windowsDiagnosticsPath, "Windows import diagnostics");
 
         std::vector<std::filesystem::path> registryPaths;
         std::vector<std::filesystem::path> neededPaths;
@@ -396,11 +414,7 @@ int Run(const int argc, char* argv[]) {
         }
 
         checkOutputInputs(Io::NativePath(absPath), "Executable");
-        if (!manifestPath.empty()) {
-            checkOutputInputs(manifestPath, "Patch manifest");
-            if (std::filesystem::exists(manifestPath) && std::filesystem::exists(patchFile) && std::filesystem::equivalent(manifestPath, patchFile))
-                throw Domain::RelinkerException("Patch manifest output would overwrite the patch file: " + Io::Utf8Path(manifestPath));
-        }
+        if (!manifestPath.empty()) checkOutputInputs(manifestPath, "Patch manifest");
         for (const auto& artifact : guestArtifacts) checkOutputInputs(artifact.Path, "Guest module");
 
         std::vector<std::filesystem::path> outputPaths;
@@ -413,18 +427,29 @@ int Run(const int argc, char* argv[]) {
             outputPaths.push_back(desktopEntry->IconPath);
             outputPaths.push_back(desktopEntry->EntryPath);
         }
-        if (args.windowsDiagnostics) outputPaths.push_back(std::filesystem::absolute("windows-diagnostics-imports.txt"));
+        if (args.windowsDiagnostics) outputPaths.push_back(windowsDiagnosticsPath);
         std::vector<std::filesystem::path> canonicalOutputPaths(outputPaths.size());
         for (std::size_t index = 0; index < outputPaths.size(); ++index) {
             for (std::size_t previous = 0; previous < index; ++previous) {
                 const auto& first = outputPaths[index];
                 const auto& second = outputPaths[previous];
-                if (SameOutputDestination(first, second, canonicalOutputPaths[index], canonicalOutputPaths[previous]))
+                if (SameOutputDestination(first, second, canonicalOutputPaths[index], canonicalOutputPaths[previous], !args.dryRun))
                     throw Domain::RelinkerException("Output paths collide: " + Io::Utf8Path(first) + " and " + Io::Utf8Path(second));
             }
         }
 
-        if (args.windowsDiagnostics) fileWriter.Write("windows-diagnostics-imports.txt", executables.front().Diagnostics);
+        if (args.dryRun) {
+            progress.Finish();
+            std::cout << "\nDry run complete\n"
+                      << "Converted executables: " << executables.size() << '\n'
+                      << "Converted modules: " << guestArtifacts.size() << '\n'
+                      << "External prx references: " << executables.front().Result.RegistryEntries.size() << '\n';
+            for (const auto& path : outputPaths) std::cout << "Would write: " << Io::Utf8Path(path) << '\n';
+            std::cout << "No output files were written. Destination write access and aliases of absent files were not checked.\n";
+            return 0;
+        }
+
+        if (args.windowsDiagnostics) fileWriter.Write(Io::Utf8Path(windowsDiagnosticsPath), executables.front().Diagnostics);
         const auto outputCount = guestArtifacts.size() + executables.size();
         progress.Report({Domain::ProgressStage::Write, absPath, 0, outputCount});
         std::size_t written = 0;

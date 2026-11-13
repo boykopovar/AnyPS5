@@ -1,0 +1,15 @@
+add_library(libSceShellUIUtil SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceShellUIUtil PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceShellUIUtil)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_shell_ui_util_tests ${LIBS_INCLUDE_DIR}/tests/GuestShellUIUtil.cpp)
+    target_include_directories(guest_shell_ui_util_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_shell_ui_util_tests PRIVATE libSceShellUIUtil libc)
+    configure_windows_unwind(guest_shell_ui_util_tests)
+    add_test(NAME guest_shell_ui_util COMMAND guest_shell_ui_util_tests)
+    if(WIN32)
+        set_tests_properties(guest_shell_ui_util PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceShellUIUtil>")
+    endif()
+endif()

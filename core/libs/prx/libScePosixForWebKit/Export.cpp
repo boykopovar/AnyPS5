@@ -13,11 +13,12 @@
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace {
 
 constexpr int ThreadNameInvalid = 22;
-constexpr int ThreadNameTooLong = 63;
 constexpr std::size_t ThreadNameCapacity = 32;
 
 constexpr int FnmNomatch = 1;
@@ -243,10 +244,6 @@ int APS5_VABI getenv_np() {
 }
 
 APS5_EXPORT("dt8ermYp-Wc", scePosixForWebKit_gethostbyname_r);
-int APS5_VABI scePosixForWebKit_gethostbyname_r() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI mmap_np() {
     NotImplemented_nid_no_patch(__func__);
@@ -276,9 +273,10 @@ int APS5_VABI scePosixForWebKit_sysinfo() {
 
 int APS5_VABI pthread_setname_np_nid_postfix(Pthread thread, const char* name) {
     if (thread == nullptr || name == nullptr) return ThreadNameInvalid;
-    if (std::strlen(name) >= ThreadNameCapacity) return ThreadNameTooLong;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, ThreadNameCapacity, copy)) return error;
     std::lock_guard lock(thread->nameLock);
-    thread->name = name;
+    thread->name = std::move(copy);
     return 0;
 }
 

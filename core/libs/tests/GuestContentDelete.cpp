@@ -1,5 +1,6 @@
 #include "prx/libSceContentDelete/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -26,18 +27,29 @@ std::string LogicErrorMessage(TAction action) {
 int main() {
     Require(sceContentDeleteTerminate() == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteInitialize(nullptr) == static_cast<int>(0x809D5001u));
+    errno = 71;
+    Require(sceContentDeleteInitialize(reinterpret_cast<const ContentDeleteInitParam*>(0x10)) == static_cast<int>(0x809D5001u));
+    Require(errno == 71);
     Require(sceContentDeleteById(1) == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("/user/av_contents/photo/a.png") == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(nullptr, 0) == static_cast<int>(0x809D5002u));
+    std::int64_t validIds[1] = {1};
+    Require(sceContentDeleteByIdListForSf(validIds, 1) == static_cast<int>(0x809D5002u));
 
     ContentDeleteInitParam param{};
-    param.heap_size = 0x10000;
-    Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5001u));
+    for (const std::uint32_t badHeap : {0u, 0x1000u, 0x3fffu, 0x4001u, 0x10000u}) {
+        param.heap_size = badHeap;
+        Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5001u));
+    }
     param.heap_size = 0x4000;
     Require(sceContentDeleteInitialize(&param) == 0);
     Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5003u));
     Require(sceContentDeleteInitialize(nullptr) == static_cast<int>(0x809D5001u));
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5001u));
+    errno = 71;
+    Require(sceContentDeleteByPath(reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x809D5001u));
+    Require(errno == 71);
 
     Require(LogicErrorMessage([] { sceContentDeleteByPath(nullptr); }) == "invalid argument");
 
@@ -47,5 +59,10 @@ int main() {
     Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("/user/av_contents/photo/a.png") == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(nullptr, 0) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(validIds, 1) == static_cast<int>(0x809D5002u));
+
+    Require(sceContentDeleteInitialize(&param) == 0);
+    Require(sceContentDeleteTerminate() == 0);
     return 0;
 }
