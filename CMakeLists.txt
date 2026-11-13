@@ -312,6 +312,10 @@ if(BUILD_TESTING)
         set_tests_properties(progress_history_output PROPERTIES TIMEOUT 20)
         add_test(NAME progress_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress.py)
+        add_test(NAME progress_open_pr_page COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_open_pr_page.py)
+        add_test(NAME progress_prs COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_prs.py)
         add_test(NAME shader_scan COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_shader_scan.py)
         add_test(NAME progress_report_inputs COMMAND ${Python3_EXECUTABLE}
