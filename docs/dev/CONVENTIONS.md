@@ -26,6 +26,8 @@ The write watch can leave guest pages read-only between collections: every watch
 - Ordinary CPU stores from host C++ code need no bracket: the write watch records them (through a fault where the page is protected).
 - A GPU import of guest memory uses `HostImportAccess`, not `HostWrite`.
 - Third-party code that writes guest memory on its own (driver threads, library worker threads) can't be bracketed. List it in that library's debt file.
+
+`python3 tools/guest_pointer_audit.py [library ...]` lists exported functions that read or write a guest pointer parameter directly (`->`, `[]`, `*`, or a raw `mem*`, `str*` or `std::copy` call) instead of through `GuestCopyIn_nid_no_patch`, `GuestCopyOut_nid_no_patch` or the `CopyGuest*` helpers in [General.hpp](../../core/libs/prx/libc/include/General.hpp), which report unmapped or unwritable memory instead of faulting. The error such an export returns is decided per function; `--json` prints the findings for scripts. It is a report, not a gate: it always exits 0, and it sees only accesses in the export's own body, so a pointer passed to a helper or copied to a local is not followed and an empty report does not prove a library safe.
 ### Host-only test executables
 
 A host-only test executable (one that links no guest library) whose sources inherit the `-fno-asynchronous-unwind-tables` policy of `core/libs/CMakeLists.txt`, and that is built for MinGW, must call `configure_host_test_executable(<target>)` (root `CMakeLists.txt`) after `add_test_executable`. On MinGW only, it adds `-fasynchronous-unwind-tables` to the executable's compile options and `-static -static-libgcc -static-libstdc++` to its link options, and nothing else.
