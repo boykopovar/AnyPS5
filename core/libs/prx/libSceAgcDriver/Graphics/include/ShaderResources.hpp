@@ -255,7 +255,8 @@ public:
         std::vector<Snapshot> snapshots;
         bool addressOffsets = false;
         std::array<std::uint64_t, 3u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
-        std::vector<VkDeviceAddressRangeEXT> addressOverrides;
+        std::vector<std::pair<std::size_t, VkDeviceAddressRangeEXT>> addressOverrides;
+        const VkDeviceAddressRangeEXT* AddressOverride(std::size_t allocation) const;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> movedReads;
         ~DrawBindings();
     };
@@ -407,7 +408,7 @@ public:
     }
     void PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten) const;
     void writePushedData(std::span<std::byte, PipelinePushConstantBytes> bytes, const CompiledShader& shader, ShaderRecompiler::RuntimeAbi::PushedPlacement placement) const;
-    void writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDeviceAddressRangeEXT>* overrides, VkDeviceAddress empty) const;
+    void writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const DrawBindings* overrides, VkDeviceAddress empty) const;
     void writeDataRoots(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten, bool cached) const;
     struct PushImage {
         std::array<std::byte, PipelinePushConstantBytes> bytes{};
@@ -799,6 +800,15 @@ private:
         };
         KeptSpan data, flat, map, user;
         std::vector<std::uint32_t> dataInput;
+        struct PushRun {
+            std::uint32_t index = 0;
+            std::uint32_t dword = 0;
+            std::uint32_t count = 0;
+            bool user = false;
+        };
+        std::uint32_t pushRunUserWords = 0;
+        std::vector<PushRun> splitPushRuns;
+        std::vector<PushRun> wholePushRuns;
         std::span<const std::uint32_t> Slots(std::uint32_t kind) const {
             for (const auto& range : kindRanges) {
                 if (range.kind == kind) return std::span<const std::uint32_t>(imageSlots).subspan(range.first, range.count);
@@ -851,13 +861,14 @@ private:
     bool addressedBuffers = false;
     std::vector<VkDeviceAddressRangeEXT> resolvedAddresses;
     std::array<std::vector<std::uint32_t>, ShaderRecompiler::RuntimeAbi::StageCount> addressedElements;
+    std::vector<std::uint8_t> addressedAllocations;
     VkDeviceAddress emptyAddress = 0;
     VkDeviceAddress resolvedGds = 0;
     std::size_t gdsAllocation = std::numeric_limits<std::size_t>::max();
     std::array<std::uint64_t, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMaps{};
     std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMapSet{};
     void writeHeapTableMap(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader, std::size_t stageIndex);
-    void bufferRanges(std::uint32_t dataStage, const std::vector<VkDeviceAddressRangeEXT>* overrides, std::vector<VkDeviceAddressRangeEXT>& ranges) const;
+    VkDeviceAddressRangeEXT bufferRange(std::uint32_t index, const DrawBindings* overrides) const;
     VkDeviceAddressRangeEXT bufferAddress(const Allocation& allocation) const;
     void resolveBufferAddresses();
     struct FaultDescriptor {

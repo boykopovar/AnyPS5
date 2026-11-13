@@ -7268,23 +7268,34 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
 void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord, std::span<const std::pair<std::size_t, VkDeviceAddressRangeEXT>> inPlace) const {
     if (!heapStage) writeRewrittenSets(result, selected, faultRecord);
     if (addressedBuffers) {
-        std::vector<VkDeviceAddressRangeEXT> overrides(allocations.size(), VkDeviceAddressRangeEXT{0, 0});
-        bool overridden = false;
+        auto& overrides = result.addressOverrides;
+        overrides.clear();
+        overrides.reserve(selected.size() + inPlace.size());
         for (std::size_t index = 0; index < selected.size(); ++index) {
             const auto& snapshot = result.snapshots[index];
-            overrides[selected[index]] = {snapshot.buffer->DeviceAddress() + snapshot.offset, snapshot.bytes};
+            overrides.push_back({selected[index], {snapshot.buffer->DeviceAddress() + snapshot.offset, snapshot.bytes}});
         }
-        for (const auto& [index, range] : inPlace) overrides[index] = range;
-        for (const auto& binding : bindings) {
-            if (!binding.addressed) continue;
-            for (const auto allocation : binding.allocations) overridden = overridden || overrides[allocation].address != 0;
+        for (const auto& [index, range] : inPlace) overrides.push_back({index, range});
+        bool overridden = false;
+        for (const auto& [index, range] : overrides) {
+            if (index >= addressedAllocations.size() || !addressedAllocations[index]) continue;
+            const auto* last = result.AddressOverride(index);
+            overridden = overridden || last->address != 0;
         }
         if (overridden) {
             result.heapOffsets = heapOffsets;
             result.addressOffsets = true;
-            result.addressOverrides = std::move(overrides);
+        } else {
+            overrides.clear();
         }
     }
+}
+
+const VkDeviceAddressRangeEXT* ShaderResources::DrawBindings::AddressOverride(std::size_t allocation) const {
+    for (auto entry = addressOverrides.rbegin(); entry != addressOverrides.rend(); ++entry) {
+        if (entry->first == allocation) return &entry->second;
+    }
+    return nullptr;
 }
 
 void ShaderResources::writeRewrittenSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord) const {
@@ -7499,36 +7510,34 @@ void ShaderResources::resolveBufferAddresses() {
     }
 }
 
-void ShaderResources::bufferRanges(std::uint32_t dataStage, const std::vector<VkDeviceAddressRangeEXT>* overrides, std::vector<VkDeviceAddressRangeEXT>& ranges) const {
+VkDeviceAddressRangeEXT ShaderResources::bufferRange(std::uint32_t index, const DrawBindings* overrides) const {
     static const bool verify = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
-    if (dataStage >= addressedElements.size()) return;
-    for (const auto index : addressedElements[dataStage]) {
-        const auto& allocation = allocations[index];
-        const bool overridden = overrides != nullptr && (*overrides)[index].address != 0;
-        const bool owned = !overridden && !allocation.guest && allocation.buffer != nullptr && allocation.role != ShaderRecompiler::DescriptorRole::GuestBuffers && allocation.role != ShaderRecompiler::DescriptorRole::BdaPagetable && allocation.role != ShaderRecompiler::DescriptorRole::FaultBuffer;
-        const bool resolved = !overridden && index < resolvedAddresses.size() && resolvedAddresses[index].address != 0;
-        VkDeviceAddress address = 0;
-        VkDeviceSize range = 0;
-        if (owned) {
-            address = allocation.buffer->DeviceAddress();
-            range = allocation.size;
-        } else if (resolved) {
-            address = resolvedAddresses[index].address;
-            range = resolvedAddresses[index].size;
-            if (verify) {
-                const auto fresh = bufferAddress(allocation);
-                if (fresh.address != address || fresh.size != range) throw std::runtime_error("AGC graphics: a GPU heap buffer address resolved when the draw's resources were built changed");
-            }
-        } else if (overridden) {
-            address = (*overrides)[index].address;
-            range = (*overrides)[index].size;
-        } else {
+    const auto& allocation = allocations[index];
+    const auto* override = overrides != nullptr ? overrides->AddressOverride(index) : nullptr;
+    const bool overridden = override != nullptr && override->address != 0;
+    const bool owned = !overridden && !allocation.guest && allocation.buffer != nullptr && allocation.role != ShaderRecompiler::DescriptorRole::GuestBuffers && allocation.role != ShaderRecompiler::DescriptorRole::BdaPagetable && allocation.role != ShaderRecompiler::DescriptorRole::FaultBuffer;
+    const bool resolved = !overridden && index < resolvedAddresses.size() && resolvedAddresses[index].address != 0;
+    VkDeviceAddress address = 0;
+    VkDeviceSize range = 0;
+    if (owned) {
+        address = allocation.buffer->DeviceAddress();
+        range = allocation.size;
+    } else if (resolved) {
+        address = resolvedAddresses[index].address;
+        range = resolvedAddresses[index].size;
+        if (verify) {
             const auto fresh = bufferAddress(allocation);
-            address = fresh.address;
-            range = fresh.size;
+            if (fresh.address != address || fresh.size != range) throw std::runtime_error("AGC graphics: a GPU heap buffer address resolved when the draw's resources were built changed");
         }
-        ranges.push_back({address, std::min<VkDeviceSize>(range, context.limits.maxStorageBufferRange)});
+    } else if (overridden) {
+        address = override->address;
+        range = override->size;
+    } else {
+        const auto fresh = bufferAddress(allocation);
+        address = fresh.address;
+        range = fresh.size;
     }
+    return {address, std::min<VkDeviceSize>(range, context.limits.maxStorageBufferRange)};
 }
 
 std::pair<VkBuffer, VkDeviceSize> ShaderResources::shaderDataLocation(const CompiledShader& shader, const DrawBindings* rewritten) const {
@@ -7559,9 +7568,9 @@ void ShaderResources::writeDataRoots(std::span<std::byte, PipelinePushConstantBy
         if (gds) return *gds;
         gds = VkDeviceAddress{0};
         if (gdsAllocation == std::numeric_limits<std::size_t>::max()) return *gds;
-        const auto* overrides = rewritten != nullptr && rewritten->addressOffsets ? &rewritten->addressOverrides : nullptr;
-        const bool overridden = overrides != nullptr && (*overrides)[gdsAllocation].address != 0;
-        gds = overridden ? (*overrides)[gdsAllocation].address : resolvedGds;
+        const auto* override = rewritten != nullptr && rewritten->addressOffsets ? rewritten->AddressOverride(gdsAllocation) : nullptr;
+        const bool overridden = override != nullptr && override->address != 0;
+        gds = overridden ? override->address : resolvedGds;
         Require(*gds != 0, "the GDS buffer has no device address");
         static const bool verify = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
         if (verify && !overridden && bufferAddress(allocations[gdsAllocation]).address != *gds) throw std::runtime_error("AGC graphics: the GDS address resolved when the draw's resources were built changed");
@@ -7637,7 +7646,7 @@ void ShaderResources::writeDataRoots(std::span<std::byte, PipelinePushConstantBy
         putAddress(Abi::RootItem::TableMap, addresses[3]);
         writePushedData(target, shader, placement.pushed);
         const bool live = shader.program->pushedBufferCount != 0u;
-        if (live) writePushedBuffers(target, stage, placement, addressed ? &rewritten->addressOverrides : nullptr, data);
+        if (live) writePushedBuffers(target, stage, placement, addressed ? rewritten : nullptr, data);
         if (cached) image.stages[index].live = live;
     }
     if (cached) {
@@ -7677,7 +7686,7 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
     }
 }
 
-void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDeviceAddressRangeEXT>* overrides, VkDeviceAddress empty) const {
+void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const DrawBindings* overrides, VkDeviceAddress empty) const {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     const auto uniformAlignment = UniformConstantBuffersEnabled() ? context.limits.minUniformBufferOffsetAlignment : VkDeviceSize{1};
     const auto clampedSize = [](const VkDeviceAddressRangeEXT& range) {
@@ -7692,37 +7701,32 @@ void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConsta
         const auto address = size != 0u && range.address != 0u ? range.address : empty;
         return record(address, address == empty ? 0u : size);
     };
-    struct RangeStorage {};
-    auto& ranges = HostThreadLocal<std::vector<VkDeviceAddressRangeEXT>, RangeStorage>();
-    ranges.clear();
-    bufferRanges(static_cast<std::uint32_t>(stage), overrides, ranges);
-    Require(ranges.size() == placement.pushedBuffers, "a stage's buffer addresses do not match its push layout's buffer count");
+    static const std::vector<std::uint32_t> none;
+    const auto& elements = stage < addressedElements.size() ? addressedElements[stage] : none;
+    Require(elements.size() == placement.pushedBuffers, "a stage's buffer addresses do not match its push layout's buffer count");
     heapPushedStages.store(heapPushedStages.load(std::memory_order_relaxed) + 1u, std::memory_order_relaxed);
     Require(empty != 0u, "a stage with pushed buffers has no shader data to stand in for an empty buffer");
-    struct RecordStorage {};
-    auto& records = HostThreadLocal<std::vector<std::uint32_t>, RecordStorage>();
-    records.resize(ranges.size() * Abi::OverflowRecordWords);
-    for (std::size_t index = 0; index < ranges.size(); ++index) {
-        const auto words = encode(ranges[index]);
-        std::copy(words.begin(), words.end(), records.begin() + static_cast<std::ptrdiff_t>(index * Abi::OverflowRecordWords));
-    }
     const auto put = [&](std::uint32_t position, std::span<const std::uint32_t> words) {
         Require(position != Abi::NoPushPosition && (position + words.size()) * sizeof(std::uint32_t) <= bytes.size(), "a stage's pushed buffer words lie outside the push data");
         std::memcpy(bytes.data() + position * sizeof(std::uint32_t), words.data(), words.size_bytes());
     };
     bool overflowed = false;
-    for (std::size_t index = 0; index < ranges.size(); ++index) {
+    for (std::size_t index = 0; index < elements.size(); ++index) {
         const auto root = index < Abi::PushedBufferLimit ? placement.bufferRoots[index] : Abi::NoPushPosition;
         if (root == Abi::NoPushPosition) {
             overflowed = true;
             continue;
         }
-        put(root, std::span<const std::uint32_t>(records).subspan(index * Abi::OverflowRecordWords, Abi::PushedBufferWords));
+        const auto words = encode(bufferRange(elements[index], overrides));
+        put(root, std::span<const std::uint32_t>(words).first(Abi::PushedBufferWords));
     }
     if (!overflowed) return;
     heapOverflowStages.fetch_add(1, std::memory_order_relaxed);
-    const auto span = BindlessHeap::For(context).Allocate(ranges.size() * Abi::OverflowRecordWords);
-    std::copy(records.begin(), records.end(), span.words.begin());
+    const auto span = BindlessHeap::For(context).Allocate(elements.size() * Abi::OverflowRecordWords);
+    for (std::size_t index = 0; index < elements.size(); ++index) {
+        const auto words = encode(bufferRange(elements[index], overrides));
+        std::copy(words.begin(), words.end(), span.words.begin() + static_cast<std::ptrdiff_t>(index * Abi::OverflowRecordWords));
+    }
     const std::array<std::uint32_t, 2> address{static_cast<std::uint32_t>(span.address), static_cast<std::uint32_t>(span.address >> 32u)};
     put(placement.bufferOverflow, address);
 }
@@ -7734,6 +7738,15 @@ void ShaderResources::writePushedData(std::span<std::byte, PipelinePushConstantB
     const auto& words = stageState.data.words;
     Require(stageState.pushedUserWords == 0u || placement.count >= stageState.pushedPlaced, "a stage's shader data was kept for user data its pipeline does not push");
     Require(placement.count <= program.pushedData.size() && (placement.base + placement.count) * sizeof(std::uint32_t) <= bytes.size(), "a stage's pushed shader data does not fit");
+    if (placement.count == stageState.pushedPlaced && (stageState.userWords == 0u || stageState.userWords == stageState.pushRunUserWords)) {
+        const auto& runs = stageState.userWords == 0u ? stageState.wholePushRuns : stageState.splitPushRuns;
+        for (const auto& run : runs) {
+            const auto& source = run.user ? stageState.user.words : words;
+            Require(run.dword + run.count <= source.size(), "a pushed shader-data dword lies outside the stage's shader data");
+            std::memcpy(bytes.data() + (placement.base + run.index) * sizeof(std::uint32_t), source.data() + run.dword, run.count * sizeof(std::uint32_t));
+        }
+        return;
+    }
     for (std::uint32_t index = 0; index < placement.count; ++index) {
         const auto dword = program.pushedData[index];
         const bool user = dword < stageState.userWords;
@@ -7948,6 +7961,9 @@ void ShaderResources::layOutHeapStages(std::span<const CompiledShader> shaders) 
         state.pushedUserWords = 0;
         state.pushedPlaced = 0;
         state.splitUser = false;
+        state.pushRunUserWords = 0;
+        state.splitPushRuns.clear();
+        state.wholePushRuns.clear();
         if (placements.empty() || !shader.program->dataAddressPush) continue;
         const auto& program = *shader.program;
         state.splitUser = splits(shader) && placements[shaderIndex].Item(Abi::RootItem::UserData) != Abi::NoPushPosition;
@@ -7958,12 +7974,33 @@ void ShaderResources::layOutHeapStages(std::span<const CompiledShader> shaders) 
             if (dword < userWords && dword < 64u) state.pushedUserWords |= std::uint64_t{1} << dword;
         }
         state.pushedPlaced = static_cast<std::uint32_t>(placed);
+        state.pushRunUserWords = static_cast<std::uint32_t>(userWords);
+        const auto runsOf = [&](std::vector<HeapStageState::PushRun>& runs, std::size_t split) {
+            for (std::size_t item = 0; item < placed; ++item) {
+                const auto dword = program.pushedData[item];
+                const bool user = dword < split;
+                if (!runs.empty()) {
+                    auto& run = runs.back();
+                    if (run.user == user && run.index + run.count == item && run.dword + run.count == dword) {
+                        ++run.count;
+                        continue;
+                    }
+                }
+                runs.push_back({static_cast<std::uint32_t>(item), dword, 1u, user});
+            }
+        };
+        runsOf(state.splitPushRuns, userWords);
+        runsOf(state.wholePushRuns, 0u);
     }
     for (auto& elements : addressedElements) elements.clear();
+    addressedAllocations.assign(allocations.size(), 0);
     for (const auto& binding : bindings) {
         if (!binding.addressed) continue;
         Require(binding.dataStage < addressedElements.size(), "an addressed buffer binding names no data stage");
-        for (const auto index : binding.allocations) addressedElements[binding.dataStage].push_back(static_cast<std::uint32_t>(index));
+        for (const auto index : binding.allocations) {
+            addressedElements[binding.dataStage].push_back(static_cast<std::uint32_t>(index));
+            addressedAllocations[index] = 1;
+        }
     }
 }
 
