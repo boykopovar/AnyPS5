@@ -1,5 +1,6 @@
 #include "prx/libSceLibcInternal/include/MutexObject.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
 #include <atomic>
@@ -130,7 +131,7 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "terminate") == 0) {
         Object object{};
         Construct(object, _ZNSt6_MutexC1Ev_nid_postfix);
-        std::set_terminate([] {
+        _ZSt13set_terminatePFvvE_nid_postfix([] {
             std::puts("mutex object destructor terminated");
             std::fflush(stdout);
             std::_Exit(0);

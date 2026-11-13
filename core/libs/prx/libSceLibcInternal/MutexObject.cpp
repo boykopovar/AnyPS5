@@ -39,10 +39,14 @@ void Construct_nid_no_patch(void* self) {
 }
 
 void DestroyStorage_nid_no_patch(void* self, PthreadMutex* storage) noexcept {
-    _Mtxdst_nid_postfix(storage);
-    storage = ReadObject_nid_no_patch(self);
-    if (storage != nullptr)
-        _ZdlPv_nid_postfix(storage);
+    try {
+        _Mtxdst_nid_postfix(storage);
+        storage = ReadObject_nid_no_patch(self);
+        if (storage != nullptr)
+            _ZdlPv_nid_postfix(storage);
+    } catch (...) {
+        _ZSt9terminatev_nid_postfix();
+    }
 }
 
 void Destroy_nid_no_patch(void* self) {
