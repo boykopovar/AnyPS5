@@ -9106,6 +9106,7 @@ void dccMipWriteBackTests(const Device& device, Recorder& recorder) {
     const auto pattern = [](std::size_t i) { return static_cast<std::uint8_t>(i * 131u + 7u); };
     constexpr std::array<std::uint8_t, 4> red{255, 0, 0, 255};
     std::string failures;
+    std::weak_ptr<StorageTexture> previous;
     for (const auto& test : cases) {
         GuestTextureResource resource{};
         resource.width = 512;
@@ -9162,8 +9163,15 @@ void dccMipWriteBackTests(const Device& device, Recorder& recorder) {
         context.detiler = &detiler;
         resource.baseAddress = address;
         resource.dccAddress = test.dcc ? address + keysOffset : 0;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!previous.expired()) {
+            Require(std::chrono::steady_clock::now() < deadline, std::string(test.name) + ": the previous case's image is still live over the reused memory, so this image would store whole");
+            recorder.Reap();
+            std::this_thread::yield();
+        }
         {
             auto image = StorageTexture::Create(context, detiler, resource, 0);
+            previous = image;
             if (test.dcc) Require(image->UploadedKeys() == DccKeys::Uncompressed, std::string(test.name) + ": the image did not take its keys as uncompressed");
             auto single = resource;
             single.mipCount = 1;
