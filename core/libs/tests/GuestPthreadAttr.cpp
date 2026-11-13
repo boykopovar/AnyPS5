@@ -431,9 +431,20 @@ static void CheckGetprioOfTheCallingThread() {
     Require(scePthreadSetprio(self, CREATION_PRIORITY) == SCE_OK);
     Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == CREATION_PRIORITY);
     Require(scePthreadGetprio(self, nullptr) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadGetprio(nullptr, &priority) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadGetprio(nullptr, &priority) == SCE_KERNEL_ERROR_ESRCH);
     Require(scePthreadSetprio(self, original) == SCE_OK);
     Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == original);
+}
+
+static void CheckGetprioOfEndedThreads() {
+    constexpr int UNTOUCHED = -77;
+    int priority = UNTOUCHED;
+    Pthread finished = nullptr;
+    Require(scePthreadCreate(&finished, nullptr, Finish, nullptr, nullptr) == SCE_OK);
+    Require(ReportedEnded(finished));
+    Require(scePthreadGetprio(finished, &priority) == SCE_KERNEL_ERROR_ESRCH && priority == UNTOUCHED);
+    Require(scePthreadJoin(finished, nullptr) == SCE_OK);
+    Require(scePthreadGetprio(finished, &priority) == SCE_KERNEL_ERROR_ESRCH && priority == UNTOUCHED);
 }
 
 static void CheckSetStackSizeOnUnsetAttributes() {
@@ -528,6 +539,7 @@ static void CheckBadPointers() {
 int main() {
     CheckBadPointers();
     CheckGetprioOfTheCallingThread();
+    CheckGetprioOfEndedThreads();
     CheckStackSizeLimit();
     CheckGuardSize();
     CheckSoloSched();
