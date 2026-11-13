@@ -99,6 +99,7 @@
 
 - [Reported firmware 13.42 parser masks](../../../core/libs/prx/libSceLibreSsl3/src/TlsProtocols.cpp) come from a [contributor's disassembly](https://github.com/boykopovar/AnyPS5/pull/15045#pullrequestreview-5736573950) of `libSceLibreSsl3.sprx` (SHA-256 `ee2c529c87fe21b7ef1e5f13d10c47ee90944f52a1f848fe0995e031817c2c3a`), not independent execution here. The report identifies default/aggregate/negation-base mask `0x18` and explicit TLS 1.0/1.1/1.2/1.3 bits `2`/`4`/`8`/`16`, matching this implementation. Other firmware revisions, complete grammar and real TLS configuration use remain unverified.
 
+- [EVP_PKEY_CTX_new_id](../../../core/libs/prx/libSceLibreSsl3/src/PkeyContext.cpp) (libSceLibreSsl3) - not verified on the console. It follows `evp_pkey_ctx_new` in LibreSSL 4.0.0 [pmeth_lib.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/pmeth_lib.c#L86-L166) and shares the context allocation and initialisation with `EVP_PKEY_CTX_new`: RSA and RSA-PSS create a keyless native context, -1 returns null without an error, and a type outside LibreSSL's method table returns null with `EVP_R_UNSUPPORTED_ALGORITHM`. The engine is ignored, as in LibreSSL. The nine other types in that table (CMAC, DH, DSA, EC, Ed25519, HKDF, HMAC, TLS1-PRF and X25519) throw because no native method exists for them.
 - [EVP_PKEY_size, EVP_PKEY_security_bits and EVP_PKEY_cmp](../../../core/libs/prx/libSceLibreSsl3/src/PkeyQueries.cpp) have no console ABI or behavior verification. Dispatch follows [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/p_lib.c) using the existing 32-byte key and the LP64 method slots in that revision's `evp_local.h`: public comparison at 56, size at 96, security bits at 112 and parameter comparison at 160. Tests use caller-owned keys and callbacks; real key-constructor and algorithm-method interoperability remains unverified. Null comparison operands, undefined upstream, throw; null size/security queries and missing callbacks keep upstream's distinct results. Malformed method pointers remain unverified. Closes when: layouts and complete key lifetimes are measured on a console.
 - [OBJ_find_sigid_algs](../../../core/libs/prx/libSceLibreSsl3/src/SignatureAlgorithms.cpp) - console identifiers/mappings and certificate interoperability are unverified. The shared parent registry reserves IDs from 956 for custom objects, so the 18 higher-ID mappings in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/objects) are unavailable: those inputs return no match without changing outputs, before or after object creation/cleanup. The remaining 33 mappings, including zero-digest identifiers, use built-in IDs below that boundary. A match does not establish availability of the named algorithms. Closes when: a compatible modern object registry and firmware mappings are verified.
 
@@ -107,7 +108,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 65 still-unimplemented callable exports: 61 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 64 still-unimplemented callable exports: 60 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -129,7 +130,6 @@
 | `X509_check_akid` | `C7eFtWPfLdk` |
 | `SSL_CTX_set_default_verify_paths` | `DZ6fywqpaik` |
 | `d2i_SSL_SESSION` | `IiG4HLr+cOw` |
-| `EVP_PKEY_CTX_new_id` | `J5ZLHxWkT6k` |
 | `RSAPublicKey_dup` | `JSqFTYGaWhU` |
 | `SSL_CTX_add1_chain_cert` | `L897DuAuXKk` |
 | `X509_print` | `LA1MlgDx80o` |
