@@ -12,6 +12,8 @@
 
 - [PNG stream writing](../../../core/libs/prx/libcairo/Png.cpp) follows Cairo 1.18.0 image formats, subsurface clipping and callback status propagation. The shared encoder buffers the PNG before delivering chunks. Compression and callback chunk sizes can differ from native Cairo, and the encoder's size limit is reported as `CAIRO_STATUS_NO_MEMORY`. Null pointers, unreadable pixels and nonfinite subsurface coordinates have unverified behavior and throw. PS5 behavior remains unmeasured.
 
+- [PNG stream reading](../../../core/libs/prx/libcairo/Png.cpp) uses the shared PNG decoder to create Cairo image surfaces with premultiplied alpha and floating-point formats for 16-bit PNGs. The adapter buffers input through IEND, checks CRCs and reports read errors from the callback. The decoder's malformed-image behavior and callback read sizes can differ from libpng. Original PNG MIME data is unavailable because MIME-data access is not implemented. A null callback throws, and the console version and behavior remain unmeasured.
+
 ### Functional font options
 
 - [FontOptions.cpp](../../../core/libs/prx/libcairo/FontOptions.cpp) implements eight font-option lifecycle, antialias and hint-setting helpers with Cairo-compatible owned state and a protected nil object. Tested on Windows and Linux sanitizers.
@@ -44,7 +46,6 @@
 | `cairo_font_face_set_user_data` | `1GGpdjyZslI` |
 | `cairo_stroke_extents` | `1K5ly63m6fo` |
 | `cairo_arc_negative` | `2w5H3b3yPqw` |
-| `cairo_image_surface_create_from_png_stream` | `4dvdsqyLM8c` |
 | `cairo_ft_scaled_font_lock_face` | `4gDTaBZH8lo` |
 | `cairo_glyph_path` | `54HrgUIQHOk` |
 | `cairo_set_source_rgb` | `6DvK+OdIPW4` |
