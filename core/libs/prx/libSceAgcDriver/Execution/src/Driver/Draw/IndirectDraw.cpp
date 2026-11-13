@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -62,6 +63,7 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
         const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
         const auto extent = stride == 0 ? static_cast<std::uint64_t>(attribute.resource.fields[2]) : static_cast<std::uint64_t>(attribute.resource.fields[2]) * stride;
         if (extent > vertexCap) fail(Path::VertexRange);
+        if (stride != 0 && Graphics::VertexBufferOutOfBoundsSelect(attribute) >= 2u && !Graphics::VertexFetchOutOfRange(attribute)) fail(Path::VertexFetchRange);
     }
     if (traceIndirect) {
         const auto location = [](std::uint32_t value, std::int32_t sgpr) { char text[24]; if (value == 0x280u) std::snprintf(text, sizeof(text), "none"); else std::snprintf(text, sizeof(text), "0x%x(s%d)", value, sgpr); return std::string(text); };

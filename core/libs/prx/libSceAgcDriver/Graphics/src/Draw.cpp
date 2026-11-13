@@ -739,7 +739,7 @@ constexpr std::array<const char*, PhaseCount> DrawPhaseNames{"validate", "vertex
 enum SyncReason : std::size_t { SyncNone, SyncNotResident, SyncNoRecorder, SyncDisabled, SyncCopiedWrites, SyncLease, SyncCount };
 constexpr std::array<const char*, SyncCount> SyncReasonNames{"none", "non-resident target", "no recorder", "disabled", "copied writes", "lease"};
 constexpr std::size_t IndirectPathCount = static_cast<std::size_t>(IndirectDrawPath::Count);
-constexpr std::array<const char*, IndirectPathCount> IndirectDrawPathNames{"gpu-side", "patched SGPR not folded", "fetch offset unknown", "non-vertex path", "GE_INDX_OFFSET", "draw index", "vertex range too large", "feature gap", "pending image results", "pending label or copied write", "not imported", "disabled", "index range not fully readable", "index limit unknown"};
+constexpr std::array<const char*, IndirectPathCount> IndirectDrawPathNames{"gpu-side", "patched SGPR not folded", "fetch offset unknown", "non-vertex path", "GE_INDX_OFFSET", "draw index", "vertex range too large", "feature gap", "pending image results", "pending label or copied write", "not imported", "disabled", "index range not fully readable", "index limit unknown", "vertex fetch range unknown"};
 
 // What became of one draw, for the totals.
 struct DrawOutcome {
@@ -1938,9 +1938,13 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto& attribute = attributes[i];
         const auto described = std::find_if(layout.attributes.begin(), layout.attributes.end(), [&](const auto& entry) { return entry.location == attribute.location; });
         Require(described != layout.attributes.end(), "vertex attribute missing from its input layout");
+        if (VertexFetchOutOfRange(attribute)) {
+            zeroed[i] = zeroVertexBuffer(context, ZeroVertexFormat(attribute).bytes);
+            continue;
+        }
         const auto narrow = DecodeVertexFormat(attribute);
         const std::size_t widened = described->format == narrow.format ? 0u : VertexReadBytes(attribute, described->format) - narrow.bytes;
-        if (NullVertexDescriptor(attribute) || VertexFetchOutOfRange(attribute)) {
+        if (NullVertexDescriptor(attribute)) {
             zeroed[i] = zeroVertexBuffer(context, narrow.bytes + widened);
             continue;
         }
@@ -1954,7 +1958,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         fetchOf[i] = fetches.size();
         fetches.push_back({address, address + bytes, stride, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
         const auto recordBytes = static_cast<std::uint64_t>(fields[2]) * stride;
-        fetchValid.push_back(args == nullptr && stride != 0 ? static_cast<std::size_t>(std::min(recordBytes, static_cast<std::uint64_t>(bytes))) : bytes);
+        fetchValid.push_back(args == nullptr && stride != 0 && VertexBufferOutOfBoundsSelect(attribute) <= 1u ? static_cast<std::size_t>(std::min(recordBytes, static_cast<std::uint64_t>(bytes))) : bytes);
     }
     const auto soloFetches = SoloZeroPaddedFetchIndices(fetches, fetchValid);
     std::vector<bool> isSolo(fetches.size(), false);
@@ -4242,6 +4246,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     auto* recorder = Recorder::Active();
     if (state.quadList || StripPatches(state, shaders) || !RecordDraws() || recorder == nullptr || DumpTargetLimit() != 0) return miss(DrawRecipeMiss::NotRecordable);
     if (recipe.hasDepth != state.depth.has_value()) return miss(DrawRecipeMiss::TargetGone);
+    if (!ZeroVertexLayoutMatches(recipe.vertexInput, shaders.front().program->vertexAttributes)) return miss(DrawRecipeMiss::Proof);
     const std::size_t expectedViews = state.colors.size() + (recipe.hasDepth ? 1u : 0u);
     Require(recipe.targets.size() == state.colors.size() && recipe.targetViews.size() == expectedViews, "draw recipe targets do not match the state");
     const auto plan = planDraw(context, state, draw, shaders, &recipe, outcome, timer);

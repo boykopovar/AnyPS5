@@ -10,6 +10,8 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "VulkanTestDevice.hpp"
+#include "../IndirectProducerGate.hpp"
+#include "Recompiler.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -32,6 +34,18 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace AgcDriver {
+struct VulkanDeviceTestAccess {
+    static Graphics::Recorder* RecorderOf(const VulkanDevice& device) { return device.graphicsContext().recorder; }
+};
+}
+
+namespace AgcDriver::DriverDetail {
+struct DriverTestAccess {
+    static std::shared_ptr<VulkanDevice> GetDevice() { return Driver::Get().device.Load(); }
+};
+}
 
 namespace {
 
@@ -70,6 +84,8 @@ alignas(256) constexpr std::array<std::uint32_t, 40> VertexCode{
     0xf80008cfu, 0x04030201u,
     0xbf810000u, 0xbf810000u,
 };
+
+alignas(256) constexpr std::array<std::uint32_t, 7> ArgumentWriterCode{0x7e000202u, 0x7e020203u, 0x7e040204u, 0x7e060280u, 0xdc7c8000u, 0x00000003u, 0xbf810000u};
 
 alignas(256) constexpr std::array<std::uint32_t, 11> PixelRead{0x7e1a0280u, 0xdc308000u, 0x0c02000du, 0xbf8c3f70u, 0x7e10030cu, 0x7e120280u, 0x7e140280u, 0x7e160280u, 0xf800180fu, 0x0b0a0908u, 0xbf810000u};
 
@@ -265,7 +281,7 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
 
 using RegisterWrites = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
 
-void SubmitDrawWith(std::uint64_t vertex, const RegisterWrites& userConfig, const RegisterWrites& vertexRegisters, const GuestBlock& data, const GuestBlock& target) {
+void SubmitDrawWith(std::uint64_t vertex, const RegisterWrites& userConfig, const RegisterWrites& vertexRegisters, const GuestBlock& data, const GuestBlock& target, std::uint64_t indirect = 0, std::uint64_t count = 0, std::uint64_t indices = 0) {
     const auto color = target.At(0);
     const auto pixel = reinterpret_cast<std::uintptr_t>(PixelRead.data());
     const auto pointer = data.At(0);
@@ -301,7 +317,18 @@ void SubmitDrawWith(std::uint64_t vertex, const RegisterWrites& userConfig, cons
     for (const auto& [offset, value] : std::initializer_list<std::pair<std::uint32_t, std::uint32_t>>{{0x00b, 8u << 1u}, {0x00c, 0}, {0x00d, 0}}) Append(commands, 0x76, {offset, value});
     Append(commands, 0x76, {0x008, static_cast<std::uint32_t>(pixel >> 8u), static_cast<std::uint32_t>(pixel >> 40u)});
     Append(commands, 0x76, {0x00e, static_cast<std::uint32_t>(pointer), static_cast<std::uint32_t>(pointer >> 32u)});
-    Append(commands, 0x2d, {3, 2});
+    if (indirect != 0) {
+        if (indices != 0) {
+            Append(commands, 0x2a, {0u});
+            Append(commands, 0x26, {static_cast<std::uint32_t>(indices), static_cast<std::uint32_t>(indices >> 32u)});
+            Append(commands, 0x13, {3u});
+        }
+        Append(commands, 0x11, {1u, static_cast<std::uint32_t>(indirect), static_cast<std::uint32_t>(indirect >> 32u)});
+        if (count != 0) Append(commands, 0x2c, {0u, 0x280u, 0x280u, 0x40000280u, 3u, static_cast<std::uint32_t>(count), static_cast<std::uint32_t>(count >> 32u), 16u, 2u});
+        else Append(commands, indices == 0 ? 0x24u : 0x25u, {0u, 0x280u, 0x280u, indices == 0 ? 2u : 0u});
+    } else {
+        Append(commands, 0x2d, {3, 2});
+    }
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "draw recapture: the draw submission failed");
     AgcDriverWaitIdle_nid_postfix();
@@ -415,6 +442,146 @@ std::string WrittenSlots(const FetchOutput& words) {
     return text.empty() ? std::string(" nothing") : text;
 }
 
+using FlushFunction = void (*)(std::uint64_t, std::size_t);
+std::atomic<FlushFunction> ArgumentOriginalFlush{nullptr};
+std::atomic<AgcDriver::Graphics::Recorder*> ArgumentRecorder{nullptr};
+std::atomic<std::uint64_t> ObservedArgumentAddress{0};
+std::atomic<bool> ArgumentReadSeen{false};
+std::atomic<bool> ArgumentReadPending{false};
+std::atomic<bool> ProducerReadSeen{false};
+std::atomic<AgcDriver::Test::ProducerSubmissionGate*> ObservedArgumentGate{nullptr};
+
+void ObserveArgumentRead(std::uint64_t address, std::size_t bytes) {
+    if (address == ObservedArgumentAddress.load() && bytes == 16) ArgumentReadSeen.store(true);
+    if (!ProducerReadSeen.load()) {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        const auto* recorder = ArgumentRecorder.load();
+        const auto* gate = ObservedArgumentGate.load();
+        const bool pending = recorder != nullptr && gate != nullptr && !gate->Released() && (recorder->PendingLeaseSerial(address, bytes) != 0 || recorder->PendingWriteOverlaps(address, bytes));
+        if (pending && !ProducerReadSeen.exchange(true)) {
+            ArgumentReadPending.store(true);
+            std::printf("consumer read encountered held GPU producer (argument read: %u)\n", address == ObservedArgumentAddress.load() && bytes == 16 ? 1u : 0u);
+        }
+    }
+    ArgumentOriginalFlush.load()(address, bytes);
+}
+
+class ArgumentReadObserver {
+public:
+    ArgumentReadObserver(AgcDriver::Graphics::Recorder& recorder, std::uint64_t address, AgcDriver::Test::ProducerSubmissionGate& gate) : original(AgcDriver::GuestMemory::CurrentFlushHook()) {
+        Require(original != nullptr, "the driver has no flush hook to observe");
+        ArgumentOriginalFlush.store(original);
+        ArgumentRecorder.store(&recorder);
+        ObservedArgumentAddress.store(address);
+        ArgumentReadSeen.store(false);
+        ArgumentReadPending.store(false);
+        ProducerReadSeen.store(false);
+        ObservedArgumentGate.store(&gate);
+        AgcDriver::GuestMemory::SetFlushHook(&ObserveArgumentRead);
+    }
+    ~ArgumentReadObserver() { AgcDriver::GuestMemory::SetFlushHook(original); }
+    void Check() const {
+        Require(ProducerReadSeen.load() && ArgumentReadPending.load(), "the consumer did not encounter the held pending GPU producer");
+        std::printf("indirect consumer ordered the held producer; CPU argument read observed: %u\n", ArgumentReadSeen.load() ? 1u : 0u);
+    }
+private:
+    FlushFunction original;
+};
+
+ShaderRecompiler::RecompileResult ArgumentWriter(AgcDriver::VulkanDevice& device, std::uint64_t address) {
+    const std::array<std::uint32_t, 5> user{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 3u, 1u, 0u};
+    const auto codeAddress = reinterpret_cast<std::uintptr_t>(ArgumentWriterCode.data());
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{codeAddress, std::as_bytes(std::span(ArgumentWriterCode))}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{1, 1, 1}, 0, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderRecompiler::ShaderStage::Compute, codeAddress, ArgumentWriterCode, 0, {}},
+        {32, 0, user, compute, std::nullopt, std::nullopt, memory},
+        device.ComputeTarget(32), {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    return ShaderRecompiler::Recompile(request);
+}
+
+void IndirectRangeUsesStoredVertices(const GuestBlock& fetch, const GuestBlock& output, const GuestBlock& data, const GuestBlock& target, bool produced = false, bool counted = false, bool instanced = false, bool indexed = false) {
+    GuestBlock records;
+    const std::array<std::uint32_t, 5> arguments{3u, instanced ? 3u : 1u, 0u, 0u, 0u};
+    const std::array<std::uint16_t, 4> indices{0u, 1u, 2u, 0u};
+    std::memcpy(records.Bytes(0x200), indices.data(), sizeof(indices));
+    if (produced) SubmitFetchDraw(fetch, output, data, target);
+    for (const auto select : {2u, 3u}) {
+        const std::uint32_t first = select == 2u || instanced ? 0u : 20u;
+        const std::uint32_t firstInstance = instanced ? 8u : 0u;
+        auto descriptor = SlotDescriptor(fetch.At(CurrentSlotsOffset));
+        descriptor[2] = select == 2u ? 1u : 4u;
+        descriptor[3] = (descriptor[3] & 0x0fffffffu) | (select << 28u);
+        WriteFetchDescriptor(fetch, 0, descriptor);
+        if (instanced) {
+            auto instanceDescriptor = SlotDescriptor(fetch.At(InstanceSlotsOffset));
+            instanceDescriptor[2] = descriptor[2];
+            instanceDescriptor[3] = descriptor[3];
+            WriteFetchDescriptor(fetch, 1, instanceDescriptor);
+            const std::array<std::uint32_t, 3> slots{0u, 8u, 16u};
+            std::memcpy(fetch.Bytes(InstanceSlotsOffset + firstInstance * 4u), slots.data(), sizeof(slots));
+        }
+        ClearFetchOutput(output);
+        const auto stored = OutputDescriptor(output.At(0));
+        const auto buffers = fetch.At(FetchBufferTableOffset);
+        const auto attributes = fetch.At(FetchAttribTableOffset);
+        const std::array<std::uint32_t, 10> user{stored[0], stored[1], stored[2], stored[3], static_cast<std::uint32_t>(buffers), static_cast<std::uint32_t>(buffers >> 32u), static_cast<std::uint32_t>(attributes), static_cast<std::uint32_t>(attributes >> 32u), first, firstInstance};
+        RegisterWrites registers{{0x8b, static_cast<std::uint32_t>(user.size()) << 1u}};
+        for (std::uint32_t word = 0; word < user.size(); ++word) registers.emplace_back(0x8cu + word, user[word]);
+        std::shared_ptr<AgcDriver::VulkanDevice> device;
+        std::unique_ptr<AgcDriver::Test::ProducerSubmissionGate> gate;
+        std::unique_ptr<ArgumentReadObserver> observer;
+        if (produced) {
+            std::memset(records.Bytes(0), 0, sizeof(arguments));
+            device = AgcDriver::DriverDetail::DriverTestAccess::GetDevice();
+            Require(device != nullptr, "the driver has no device for the argument producer");
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            auto* recorder = AgcDriver::VulkanDeviceTestAccess::RecorderOf(*device);
+            Require(recorder != nullptr, "the argument producer has no recorder");
+            const auto producer = ArgumentWriter(*device, records.At(0));
+            const auto code = reinterpret_cast<std::uintptr_t>(ArgumentWriterCode.data());
+            const auto prepared = device->PrepareDispatch(producer, {}, 1, code);
+            gate = std::make_unique<AgcDriver::Test::ProducerSubmissionGate>(*device);
+            gate->Arm(*recorder);
+            const auto serial = recorder->OpenSerial();
+            device->Dispatch(producer, 1, 1, 1, {}, code, prepared);
+            Require(recorder->Recording() && recorder->Submissions() < serial, "the GPU argument producer retired before the consumer began");
+            Require(recorder->PendingLeaseSerial(records.At(0), 12) != 0 || recorder->PendingWriteOverlaps(records.At(0), 12), "the GPU argument producer has no tracked pending write");
+            observer = std::make_unique<ArgumentReadObserver>(*recorder, records.At(0), *gate);
+            gate->ReleaseAfterSubmission(*recorder, serial, &ProducerReadSeen);
+            std::puts("GPU argument producer pending and gated before indirect PM4 submission");
+        } else {
+            if (counted) {
+                const std::array<std::uint32_t, 12> values{0u, 0u, 0u, 0u, 3u, 1u, 0u, 0u, 4u, 1u, 0u, 0u};
+                const std::uint32_t count = 2;
+                std::memcpy(records.Bytes(0), values.data(), sizeof(values));
+                std::memcpy(records.Bytes(0x100), &count, sizeof(count));
+            } else {
+                std::memcpy(records.Bytes(0), arguments.data(), sizeof(arguments));
+            }
+        }
+        SubmitDrawWith(reinterpret_cast<std::uintptr_t>(FetchVertexCode.data()), {{0x242, 4}, {0x24a, 0}}, registers, data, target, records.At(0), counted ? records.At(0x100) : 0, indexed ? records.At(0x200) : 0);
+        const auto actual = ReadFetchOutput(output);
+        FetchOutput expected;
+        expected.fill(Unwritten);
+        for (std::uint32_t instance = 0; instance < (instanced ? 3u : 1u); ++instance) {
+            for (std::uint32_t vertex = 0; vertex < 3u; ++vertex) {
+                auto* entry = expected.data() + (first + vertex + instance * 8u) * 4u;
+                entry[0] = vertex;
+                entry[1] = instance;
+                entry[2] = first + vertex;
+                entry[3] = firstInstance + instance;
+            }
+        }
+        std::printf("indirect select %u records %u first %u: wrote%s\n", select, descriptor[2], first, WrittenSlots(actual).c_str());
+        Expect(actual == expected, "an indirect fetch outside NUM_RECORDS did not use stored vertex values");
+        if (gate) gate->Finish();
+        if (observer) observer->Check();
+    }
+}
+
 void FetchOffsetIsFoldedOnceOnRecapture(const GuestBlock& fetch, const GuestBlock& output, const GuestBlock& data, const GuestBlock& target) {
     FetchBlock = &fetch;
     AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(&ChangeFetchBufferBeforeCheck);
@@ -444,7 +611,7 @@ void FetchOffsetIsFoldedOnceOnRecapture(const GuestBlock& fetch, const GuestBloc
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         {
             const auto device = OpenVulkanTestDevice();
@@ -467,6 +634,12 @@ int main() {
         const float one = 1.0f;
         std::memcpy(data.Bytes(0), &one, sizeof(one));
         PrepareFetchTables(fetch);
+        if (argc == 2 && (std::string(argv[1]) == "indirect-range" || std::string(argv[1]) == "indirect-range-producer" || std::string(argv[1]) == "indirect-range-count" || std::string(argv[1]) == "indirect-range-instance" || std::string(argv[1]) == "indirect-range-indexed")) {
+            IndirectRangeUsesStoredVertices(fetch, output, data, target, std::string(argv[1]) == "indirect-range-producer", std::string(argv[1]) == "indirect-range-count", std::string(argv[1]) == "indirect-range-instance", std::string(argv[1]) == "indirect-range-indexed");
+            AgcDriverShutdown_nid_postfix();
+            return 0;
+        }
+
         TableBlock = &vertices;
         CodeBlock = &code;
         AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(&ChangeTableBeforeCheck);
