@@ -247,6 +247,27 @@ void Validation(int file, int readOnly) {
     Require(aio_fsync_nid_postfix(ODsync, &sync) == -1 && Error() == Einval);
 }
 
+void ErrorOfUnreadable() {
+    constexpr int Sentinel = 12345;
+    *__error_nid_postfix() = Sentinel;
+    Require(aio_error_nid_postfix(nullptr) == -1 && Error() == Sentinel);
+    Require(aio_error_nid_postfix(reinterpret_cast<const GuestAiocb*>(std::uintptr_t{0x10})) == -1 && Error() == Sentinel);
+
+    const std::size_t page = PageSize();
+    char* memory = Pages(page * 3);
+    char* hidden = memory + page;
+    Protect(hidden, page, false);
+    Require(aio_error_nid_postfix(reinterpret_cast<const GuestAiocb*>(hidden)) == -1 && Error() == Sentinel);
+
+    const std::int64_t failed = -1;
+    std::memcpy(hidden - sizeof(failed), &failed, sizeof(failed));
+    Require(aio_error_nid_postfix(reinterpret_cast<const GuestAiocb*>(hidden - offsetof(GuestAiocb, error))) == -1 && Error() == Sentinel);
+
+    const std::int64_t recorded = Ebadf;
+    std::memcpy(hidden + page, &recorded, sizeof(recorded));
+    Require(aio_error_nid_postfix(reinterpret_cast<const GuestAiocb*>(hidden + page - offsetof(GuestAiocb, error))) == Ebadf && Error() == Sentinel);
+}
+
 void ReadAndWrite(int file) {
     char text[] = "asynchronous";
     auto write = Request(file, text, 12, 4);
@@ -424,6 +445,7 @@ int main() {
     const int readOnly = open_nid_postfix(path.c_str(), ORdonly, 0);
     Require(file >= 0 && readOnly >= 0);
     Validation(file, readOnly);
+    ErrorOfUnreadable();
     ReadAndWrite(file);
     Cancel(file);
     SyncOrder(file);
