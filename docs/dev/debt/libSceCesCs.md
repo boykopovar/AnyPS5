@@ -3,6 +3,7 @@
 ### Functional
 
 - [JISCS conversions](../../../core/libs/prx/libSceCesCs/Export.cpp) safely write output destination pointers using guest copy operations, preserving caller errno across destination write faults.
+- [Guest output error codes](../../../core/libs/prx/libSceCesCs/Export.cpp) (libSceCesCs) - the exports that now copy their outputs through the guest helpers return `CES_ERROR_INVALID_DST_BUFFER` (`CES_ERROR_INVALID_SRC_BUFFER` for an unreadable source, `CES_ERROR_INVALID_PARAMETER` for an unwritable context or level pointer) and the sheet initialisers return null when the guest pointer is unwritable; these are host-safety fallbacks, and which error the console returns, or whether it faults, on unmapped memory is unmeasured.
 - [Converter helpers](../../../core/libs/prx/libSceCesCs/Export.cpp) still touch guest memory in place: the MBCS and ISO-2022 converters (`mbcsToUtf8`, `profiledToUcs2`, `utf32ToProfiled`, `sbcToUtf16`) write their output buffers directly, the input decoders (`decodeEucJp`, `decodeScalarUtf8`) read the caller's source bytes directly, and `contextProfile`/`setContextReplacementEntry` read and write the caller's context. Exports that reach them through these helpers (for example `sceCesEucKrToUtf8`, `sceCesBig5ToUtf8`, `sceCesSJisToUcs2`) still crash the host on an unmapped buffer instead of returning an error; `tools/guest_pointer_audit.py` does not see these accesses because they are not on the export's own parameters.
 
 ### Silent stubs
