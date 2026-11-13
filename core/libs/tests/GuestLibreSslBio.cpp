@@ -1075,18 +1075,18 @@ void TestPemReadX509FileWrapper() {
             "empty PEM file frees only the borrowed BIO and keeps the stream open");
     RequireError(0x09fff06c);
 
-    constexpr char beginLine[] = "-----BEGIN CERTIFICATE-----\n";
-    Require(fwrite_nid_postfix(beginLine, 1, sizeof(beginLine) - 1, &stream) == sizeof(beginLine) - 1,
-            "write a BEGIN line to the borrowed PEM file");
-    Require(fflush_nid_postfix(&stream) == 0, "flush the BEGIN line before reading it back");
-    Require(fseek_nid_postfix(&stream, 0, SEEK_SET) == 0, "rewind the BEGIN line file");
+    constexpr char record[] = "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n";
+    Require(fwrite_nid_postfix(record, 1, sizeof(record) - 1, &stream) == sizeof(record) - 1,
+            "write a certificate record to the borrowed PEM file");
+    Require(fflush_nid_postfix(&stream) == 0, "flush the certificate record before reading it back");
+    Require(fseek_nid_postfix(&stream, 0, SEEK_SET) == 0, "rewind the certificate record file");
     bool conversionThrew = false;
     try {
         static_cast<void>(PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr));
     } catch (const std::runtime_error&) {
         conversionThrew = true;
     }
-    Require(conversionThrew, "a BEGIN line reaches the unsupported conversion and propagates");
+    Require(conversionThrew, "a certificate record reaches the unsupported conversion and propagates");
     Require(allocations == 0 && stream.IsOpen() && output == sentinel,
             "reader exception frees only the borrowed BIO and preserves stream and output");
     Require(ERR_get_error_nid_postfix() == 0, "the unsupported conversion queues no OpenSSL errors");
