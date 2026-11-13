@@ -1,4 +1,5 @@
 #include "prx/libSceSystemService/LanguageLocale.hpp"
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -289,6 +290,24 @@ void RequireHostResolution() {
     Require(Resolve({"garbage!", "ja_JP"}, notices) == Japanese && notices.empty(), "malformed entry is skipped");
 }
 
+void RequirePosixLanguageFallback() {
+    using namespace SystemServiceLocale;
+    const auto require = [](const std::string& preference, int language, std::size_t noticeCount) {
+        std::vector<std::string> notices;
+        Require(Resolve(Posix({{"LANG", "de_DE.UTF-8"}, {"LANGUAGE", preference}}), notices) == language && notices.size() == noticeCount, preference);
+    };
+    for (const std::string marker : {"C", "POSIX", "C.UTF-8"}) {
+        require("lt:" + marker + ":fr", EnglishUs, 1);
+        require("lt:" + marker, EnglishUs, 1);
+        require("fr:" + marker + ":de", French, 0);
+        require("::lt::" + marker + "::fr:", EnglishUs, 1);
+        require(marker + ":fr", EnglishUs, 1);
+    }
+    for (const char* preference : {"lt:c:fr", "lt:c.UTF-8:fr", "lt:C@latin:fr", "lt:POSIX.UTF-8:fr", "lt::fr"}) {
+        require(preference, French, 0);
+    }
+}
+
 }
 
 int main() {
@@ -304,4 +323,5 @@ int main() {
     RequireFallbackRules();
     RequirePosixSource();
     RequireHostResolution();
+    RequirePosixLanguageFallback();
 }

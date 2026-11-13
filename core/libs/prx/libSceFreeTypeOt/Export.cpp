@@ -1,4 +1,5 @@
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -129,10 +130,9 @@ int APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch() {
 }
 APS5_EXPORT("avLzN0tTxLI", sceFreeTypeOtGlyphGetCBox_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_0rKmI1ZbMAc_nid_no_patch() {
+int APS5_VABI FT_Glyph_Stroke_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("0rKmI1ZbMAc", sceFreeTypeOtUnknown_0rKmI1ZbMAc_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtGlyphStrokeBorder_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -174,10 +174,9 @@ int APS5_VABI sceFreeTypeOtUnknown_4LY5pyZ5IQk_nid_no_patch() {
 }
 APS5_EXPORT("4LY5pyZ5IQk", sceFreeTypeOtUnknown_4LY5pyZ5IQk_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_WIvTHYs7ZQQ_nid_no_patch() {
+int APS5_VABI FT_New_GlyphSlot_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("WIvTHYs7ZQQ", sceFreeTypeOtUnknown_WIvTHYs7ZQQ_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtNewLibrary_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -269,15 +268,17 @@ int APS5_VABI sceFreeTypeOtRemoveModule_nid_no_patch() {
 }
 APS5_EXPORT("5ipBcLYVc2k", sceFreeTypeOtRemoveModule_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_8A0cAU4yBVY_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI FT_Render_Glyph_Internal_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestGlyphSlotRec* slot, std::int32_t renderMode) {
+    if (!library || !slot || !slot->face || slot->library != library) NotImplemented_nid_no_patch(__func__);
+    bool owned = false;
+    for (const auto& face : library->faces) owned = owned || &face->slot == slot;
+    if (!owned) NotImplemented_nid_no_patch(__func__);
+    return FT_Render_Glyph_nid_postfix(slot, renderMode);
 }
-APS5_EXPORT("8A0cAU4yBVY", sceFreeTypeOtUnknown_8A0cAU4yBVY_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_uK7vGxAQVxM_nid_no_patch() {
+int APS5_VABI FT_Set_Debug_Hook_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("uK7vGxAQVxM", sceFreeTypeOtUnknown_uK7vGxAQVxM_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtSetMMBlendCoordinates_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -289,10 +290,10 @@ int APS5_VABI sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch() {
 }
 APS5_EXPORT("DAmwG6U7YIc", sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_Yu9oXRVmTTo_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtSetRenderer_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Yu9oXRVmTTo", sceFreeTypeOtUnknown_Yu9oXRVmTTo_nid_no_patch);
+APS5_EXPORT("Yu9oXRVmTTo", sceFreeTypeOtSetRenderer_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtSetVarBlendCoordinates_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -304,20 +305,10 @@ int APS5_VABI sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch() {
 }
 APS5_EXPORT("yCEJIsjIOO8", sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtStrokerExport_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI FT_Stroker_ExportForward_nid_no_patch(void* stroker, FreeType::GuestOutline* outline) {
+    FT_Stroker_Export_nid_postfix(stroker, outline);
 }
-APS5_EXPORT("2rcvKZfm5rI", sceFreeTypeOtStrokerExport_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtStrokerExportBorder_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("7cIS2cFG3PE", sceFreeTypeOtStrokerExportBorder_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtStrokerParseOutline_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("RvFx7dv9ThU", sceFreeTypeOtStrokerParseOutline_nid_no_patch);
+APS5_EXPORT("2rcvKZfm5rI", FT_Stroker_ExportForward_nid_no_patch);
 
 int APS5_VABI FT_Trace_Get_Count_nid_no_patch() {
     return 0;

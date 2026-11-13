@@ -248,6 +248,7 @@ HexPrefix CheckHexPrefix(const char* field, unsigned long width, bool floating) 
 
 bool DecimalOutOfRange(const std::string& field) {
     if (field.find_first_of("xX") != std::string::npos) return false;
+    if (field.find_first_of("eE") == std::string::npos && field.size() < static_cast<std::size_t>(std::numeric_limits<long double>::max_exponent10)) return false;
     errno = 0;
     const long double value = std::strtold(field.c_str(), nullptr);
     return errno == ERANGE && (std::isinf(value) || value == 0.0L);
@@ -385,7 +386,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
                     std::memcpy(target, &value, sizeof(value));
                 } else throw std::invalid_argument("Invalid scan count length");
             }
-            if (!secure) converted = true;
+            converted = true;
             continue;
         }
         if (IsWideScan(length, conversion)) {
@@ -662,8 +663,10 @@ int APS5_VABI fprintf_nid_postfix(FileStream* stream, const char* format, ...) {
 }
 
 int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
+    std::string quadHead;
+    format = CutAtQuadScanDirective(format, quadHead);
 #ifndef _WIN32
-    if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
+    if (HasNarrowCharacterScan(format)) {
         std::va_list args;
         va_start(args, format);
         const int result = ScanGuestStream(stream, format, [&] { return va_arg(args, void*); }, [] { return 0u; }, false);
@@ -1015,8 +1018,10 @@ int APS5_VABI puts_nid_postfix(const char* s) {
 extern FileStream* __stdinp_nid_postfix;
 
 int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
+    std::string quadHead;
+    format = CutAtQuadScanDirective(format, quadHead);
 #ifndef _WIN32
-    if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
+    if (HasNarrowCharacterScan(format)) {
         LibcDetail::FormatArguments arguments(args);
         return ScanGuestStream(stream, format, [&] { return arguments.Next<void*>(); }, [] { return 0u; }, false);
     }
