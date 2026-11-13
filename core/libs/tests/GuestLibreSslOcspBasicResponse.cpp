@@ -1,5 +1,7 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -132,6 +134,144 @@ static void Build(Guest& guest, std::int32_t count) {
     Store(guest.stack, 24, guest.decoyEntries.data());
 }
 
+static int allocationCalls;
+static int reallocationCalls;
+static int freeCalls;
+static int failAllocationAt;
+static int failReallocationAt;
+static bool failReallocation;
+
+static void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
+    if (++allocationCalls == failAllocationAt) return nullptr;
+    return std::malloc(size);
+}
+
+static void APS5_VABI Free_nid_no_patch(void* pointer) {
+    if (pointer) ++freeCalls;
+    std::free(pointer);
+}
+
+static void* APS5_VABI Calloc_nid_no_patch(std::size_t count, std::size_t size) { return std::calloc(count, size); }
+
+static void* APS5_VABI Reallocate_nid_no_patch(void* pointer, std::size_t size) {
+    if (++reallocationCalls == failReallocationAt || failReallocation) return nullptr;
+    return std::realloc(pointer, size);
+}
+
+static void* APS5_VABI Align_nid_no_patch(std::size_t, std::size_t) { std::abort(); }
+static void* APS5_VABI Realign_nid_no_patch(void*, std::size_t, std::size_t) { std::abort(); }
+static int APS5_VABI PosixAlign_nid_no_patch(void**, std::size_t, std::size_t) { std::abort(); }
+
+static void RegisterAllocator() {
+    std::array<void*, 10> api{
+        reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch), reinterpret_cast<void*>(Calloc_nid_no_patch),
+        reinterpret_cast<void*>(Reallocate_nid_no_patch), reinterpret_cast<void*>(Align_nid_no_patch), reinterpret_cast<void*>(Realign_nid_no_patch),
+        reinterpret_cast<void*>(PosixAlign_nid_no_patch)};
+    ApplicationHeapRegister_nid_no_patch(api.data());
+}
+
+static void AddCertificates() {
+    LibreSslOcspBasicResponse response{};
+    response.tbsResponseData = reinterpret_cast<LibreSslOcspResponseData*>(0x1111);
+    response.signatureAlgorithm = reinterpret_cast<void*>(0x2222);
+    response.signature = reinterpret_cast<Asn1String*>(0x3333);
+    std::array<LibreSslX509, 4> certificates{};
+    for (auto& certificate : certificates) certificate.references = 7;
+    for (auto& certificate : certificates) Require(OCSP_basic_add1_cert_nid_postfix(&response, &certificate) == 1, "a certificate is added");
+    Require(response.tbsResponseData == reinterpret_cast<LibreSslOcspResponseData*>(0x1111) && response.signatureAlgorithm == reinterpret_cast<void*>(0x2222)
+        && response.signature == reinterpret_cast<Asn1String*>(0x3333), "the response's other fields are unchanged");
+    Require(response.certs && response.certs->num == 4 && response.certs->numAlloc == 8 && response.certs->sorted == 0
+        && response.certs->comp == nullptr, "the stack follows LibreSSL's four-slot allocation and doubling rule");
+    for (std::size_t index = 0; index < certificates.size(); ++index) {
+        Require(response.certs->data[index] == reinterpret_cast<char*>(&certificates[index]), "certificates are appended in order");
+        Require(certificates[index].references == 8, "each pushed certificate gains one reference");
+    }
+    free_nid_postfix(response.certs->data);
+    free_nid_postfix(response.certs);
+}
+
+static void AllocationFailures() {
+    LibreSslX509 certificate{};
+    certificate.references = 9;
+    LibreSslOcspBasicResponse response{};
+    failAllocationAt = allocationCalls + 1;
+    Require(OCSP_basic_add1_cert_nid_postfix(&response, &certificate) == 0 && !response.certs && certificate.references == 9,
+        "a failed stack allocation leaves the response and reference count unchanged");
+    failAllocationAt = 0;
+    failReallocationAt = reallocationCalls + 1;
+    const int beforeFrees = freeCalls;
+    Require(OCSP_basic_add1_cert_nid_postfix(&response, &certificate) == 0 && !response.certs && certificate.references == 9,
+        "a failed element-array allocation leaves the response and reference count unchanged");
+    Require(freeCalls == beforeFrees + 1, "the failed element-array allocation frees the partial stack");
+    failReallocationAt = 0;
+
+    LibreSslOcspBasicResponse nullCertResponse{};
+    failAllocationAt = allocationCalls + 1;
+    Require(OCSP_basic_add1_cert_nid_postfix(&nullCertResponse, nullptr) == 0 && !nullCertResponse.certs,
+        "a failed stack allocation returns before a null certificate is dereferenced");
+    failAllocationAt = 0;
+    nullCertResponse = {};
+    failReallocation = true;
+    Require(OCSP_basic_add1_cert_nid_postfix(&nullCertResponse, nullptr) == 0 && !nullCertResponse.certs,
+        "a failed element-array allocation returns before a null certificate is dereferenced");
+    failReallocation = false;
+
+    Require(OCSP_basic_add1_cert_nid_postfix(&response, &certificate) == 1, "the stack is created before a later push failure");
+    response.certs->num = 3;
+    response.certs->data[1] = reinterpret_cast<char*>(&certificate);
+    response.certs->data[2] = reinterpret_cast<char*>(&certificate);
+    auto* const stack = response.certs;
+    auto* const elements = stack->data;
+    const int beforeReferences = certificate.references;
+    failReallocation = true;
+    Require(OCSP_basic_add1_cert_nid_postfix(&response, &certificate) == 0, "a failed stack growth fails the push");
+    Require(OCSP_basic_add1_cert_nid_postfix(&response, nullptr) == 0, "a failed stack growth returns before a null certificate is dereferenced");
+    failReallocation = false;
+    Require(response.certs == stack && stack->data == elements && stack->num == 3 && stack->numAlloc == 4
+        && stack->data[0] == reinterpret_cast<char*>(&certificate) && stack->data[1] == reinterpret_cast<char*>(&certificate)
+        && stack->data[2] == reinterpret_cast<char*>(&certificate) && certificate.references == beforeReferences,
+        "failed growth preserves the response stack and does not add a reference");
+    free_nid_postfix(stack->data);
+    free_nid_postfix(stack);
+
+    LibreSslOcspBasicResponse pushedNull{};
+    bool threw = false;
+    try {
+        OCSP_basic_add1_cert_nid_postfix(&pushedNull, nullptr);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw && pushedNull.certs && pushedNull.certs->num == 1 && pushedNull.certs->data[0] == nullptr,
+        "after a successful null push, the source's certificate dereference throws with the append preserved");
+    free_nid_postfix(pushedNull.certs->data);
+    free_nid_postfix(pushedNull.certs);
+
+    std::array<char*, 4> malformedElements{};
+    LibreSslStack malformedStack{std::numeric_limits<std::int32_t>::max(), malformedElements.data(), 0, 4, nullptr};
+    LibreSslOcspBasicResponse malformedResponse{};
+    malformedResponse.certs = &malformedStack;
+    bool malformedThrew = false;
+    try {
+        OCSP_basic_add1_cert_nid_postfix(&malformedResponse, &certificate);
+    } catch (const std::exception&) {
+        malformedThrew = true;
+    }
+    Require(malformedThrew && malformedStack.num == std::numeric_limits<std::int32_t>::max() && certificate.references == beforeReferences,
+        "the signed-overflow stack state throws before modifying the certificate");
+
+    std::array<char*, 1> largeElements{};
+    LibreSslStack largeStack{std::numeric_limits<std::int32_t>::max() - 1, largeElements.data(), 0,
+        std::numeric_limits<std::int32_t>::max(), nullptr};
+    LibreSslOcspBasicResponse largeResponse{};
+    largeResponse.certs = &largeStack;
+    failReallocation = true;
+    Require(OCSP_basic_add1_cert_nid_postfix(&largeResponse, &certificate) == 0, "a failed huge stack growth returns zero before the signed capacity update");
+    failReallocation = false;
+    Require(largeStack.data == largeElements.data() && largeStack.num == std::numeric_limits<std::int32_t>::max() - 1
+        && largeStack.numAlloc == std::numeric_limits<std::int32_t>::max() && certificate.references == beforeReferences,
+        "a failed huge growth preserves its pointer, count, capacity and certificate reference");
+}
+
 static int Count(Guest& guest) {
     return OCSP_resp_count_nid_postfix(guest.basic.data());
 }
@@ -141,6 +281,9 @@ static void* Get(Guest& guest, std::int32_t index) {
 }
 
 int main() {
+    RegisterAllocator();
+    AddCertificates();
+    AllocationFailures();
     Require(OCSP_resp_count_nid_postfix(nullptr) == -1, "a null basic response counts -1");
     for (const auto index : Indices)
         Require(OCSP_resp_get0_nid_postfix(nullptr, index) == nullptr, "a null basic response has no entries");
