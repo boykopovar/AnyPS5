@@ -1091,6 +1091,15 @@ int main(int argc, char** argv) {
         Require(sceRtcGetDosTime(&outOfRangeDosDate, reinterpret_cast<uint32_t*>(0x10)) == invalidPointer);
         Require(sceRtcGetDosTime(reinterpret_cast<const RtcDateTime*>(0x10), &queryDosTime) == invalidPointer);
         Require(sceRtcSetDosTime(reinterpret_cast<RtcDateTime*>(0x10), 0) == invalidPointer);
+        errno = 71;
+        RtcTick parsedTick{999};
+        Require(sceRtcParseRFC3339(&parsedTick, reinterpret_cast<const char*>(0x10)) == invalidPointer && parsedTick.tick == 999);
+        Require(sceRtcParseRFC3339(reinterpret_cast<RtcTick*>(0x10), "2024-02-29T12:34:56Z") == invalidPointer);
+        Require(sceRtcParseDateTime(&parsedTick, reinterpret_cast<const char*>(0x10)) == invalidPointer && parsedTick.tick == 999);
+        Require(sceRtcParseDateTime(reinterpret_cast<RtcTick*>(0x10), "Thu, 29 Feb 2024 12:34:56 +0000") == invalidPointer);
+        Require(sceRtcGetTick(&validDate, reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+        Require(sceRtcSetTime_t(reinterpret_cast<RtcDateTime*>(0x10), 0) == invalidPointer);
+        Require(errno == 71);
     }
     for (const std::uint64_t value : {maxTick + 1, std::uint64_t{1} << 63, std::numeric_limits<std::uint64_t>::max()}) {
         const RtcTick outOfRange{value};
