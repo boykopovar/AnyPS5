@@ -221,6 +221,7 @@ private:
     std::uint32_t depth = 0;
 };
 GpuMutexType& GpuMutex();
+std::function<bool()> YieldToGpuMutexWaiters(std::function<bool()> stop);
 // Called on the thread that just gave up its outermost hold, right after the mutex was released:
 // work the hold deferred to run without it (the recorder's release of the objects completed batches
 // kept). One hook, set once; it must not take GpuMutex itself.

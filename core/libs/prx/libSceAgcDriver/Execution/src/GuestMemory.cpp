@@ -3313,6 +3313,10 @@ GpuMutexType& GpuMutex() {
 #endif
 }
 
+std::function<bool()> YieldToGpuMutexWaiters(std::function<bool()> stop) {
+    return stop;
+}
+
 void TagGpuLockThread(std::uint32_t queue) {
     LockStats().tag = queue;
 }
