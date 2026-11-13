@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <atomic>
@@ -226,6 +227,9 @@ void Device() {
     const int speed = sceUsbdGetDeviceSpeed(device);
     Require(speed >= 1 && speed <= 4, "the device speed is not low, full, high or super speed");
     std::printf("device speed %d\n", speed);
+    errno = 71;
+    Require(sceUsbdGetConfiguration(handle, reinterpret_cast<std::int32_t*>(0x10)) == invalidArgument, "unwritable configuration rejected");
+    Require(errno == 71, "errno preserved");
     std::int32_t configuration = -1;
     Require(sceUsbdGetConfiguration(handle, &configuration) == 0 && configuration == activeValue, "configuration differs from the active config descriptor");
     std::uint8_t text[256] = {};
@@ -426,6 +430,9 @@ void CheckTransferFillers() {
     for (int packet = 0; packet < 3; ++packet) Require(transfer->isoPacketDescriptors[packet].length == 16, "iso packet length not set");
     Require(sceUsbdGetIsoPacketBuffer(transfer, 0) == data && sceUsbdGetIsoPacketBuffer(transfer, 1) == data + 16 && sceUsbdGetIsoPacketBuffer(transfer, 2) == data + 32, "iso packet buffers do not follow the packet lengths");
     Require(sceUsbdGetIsoPacketBuffer(transfer, 3) == nullptr, "a packet past the last one has a buffer");
+    sceUsbdSetIsoPacketLengths(transfer, 17);
+    Require(sceUsbdGetIsoPacketBuffer(transfer, 2) == nullptr, "a packet that runs past the transfer buffer has a buffer");
+    sceUsbdSetIsoPacketLengths(transfer, 16);
     std::uint8_t control[12] = {};
     sceUsbdFillControlSetup(control, 0x80, 6, 0x0100, 0x0409, 4);
     Require(control[0] == 0x80 && control[1] == 6 && control[2] == 0x00 && control[3] == 0x01 && control[4] == 0x09 && control[5] == 0x04 && control[6] == 4 && control[7] == 0, "control setup not packed little-endian");
@@ -437,6 +444,23 @@ void CheckTransferFillers() {
     Require(Throws([] { sceUsbdFillBulkTransfer(nullptr, nullptr, 0, nullptr, 0, nullptr, nullptr, 0); }), "filling a null bulk transfer did not throw");
     Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0, 0, 0, 0, 0); }), "filling a null control setup did not throw");
     Require(Throws([] { sceUsbdGetIsoPacketBuffer(nullptr, 0); }), "the packet buffer of a null transfer did not throw");
+    auto* bulk = sceUsbdAllocTransfer(0);
+    Require(bulk != nullptr, "transfer allocation failed");
+    sceUsbdFillBulkTransfer(bulk, &device, 0x02, nullptr, 16, &MarkDone, &user, 0);
+    Require(sceUsbdSubmitTransfer(bulk) == invalidArgument, "a submit with a null buffer and a length was accepted");
+    sceUsbdFillBulkTransfer(bulk, &device, 0x02, data, -1, &MarkDone, &user, 0);
+    Require(sceUsbdSubmitTransfer(bulk) == invalidArgument, "a submit with a negative length was accepted");
+    sceUsbdFreeTransfer(bulk);
+    Require(Throws([&] { sceUsbdFillIsoTransfer(transfer, &device, 0x83, data, 64, 4, &MarkDone, &user, 0); }), "an iso fill beyond the allocated packets did not throw");
+    auto* small = sceUsbdAllocTransfer(1);
+    Require(small != nullptr, "transfer allocation failed");
+    Require(Throws([&] { sceUsbdFillIsoTransfer(small, &device, 0x83, data, 64, 2, &MarkDone, &user, 0); }), "an iso fill beyond a one packet transfer did not throw");
+    sceUsbdFillIsoTransfer(small, &device, 0x83, data, 16, 1, &MarkDone, &user, 0);
+    small->numIsoPackets = 2;
+    Require(sceUsbdGetIsoPacketBuffer(small, 0) == nullptr, "the packet buffer of a count above the allocation was returned");
+    Require(sceUsbdSubmitTransfer(small) == invalidArgument, "a submit above the allocated packet count was accepted");
+    Require(Throws([&] { sceUsbdSetIsoPacketLengths(small, 8); }), "setting iso packet lengths above the allocated packet count did not throw");
+    sceUsbdFreeTransfer(small);
     sceUsbdFreeTransfer(transfer);
 }
 
@@ -559,7 +583,16 @@ int main(int argc, char** argv) {
     Require(setupBuffer[4] == 0x09 && setupBuffer[5] == 0x04, "index not filled little-endian");
     Require(setupBuffer[6] == 18 && setupBuffer[7] == 0, "length not filled little-endian");
     if (argc == 2 && std::strcmp(argv[1], "device") == 0) Device();
+    errno = 71;
+    Require(sceUsbdGetDeviceList(reinterpret_cast<void***>(0x10)) == invalidArgument, "unwritable device list accepted");
+    Require(sceUsbdHandleEventsTimeout(reinterpret_cast<const UsbdTimeval*>(0x10)) == invalidArgument, "unreadable timeout accepted");
+    Require(sceUsbdHandleEventsLocked(reinterpret_cast<UsbdTimeval*>(0x10)) == invalidArgument, "unreadable locked timeout accepted");
+    Require(sceUsbdWaitForEvent(reinterpret_cast<UsbdTimeval*>(0x10)) == invalidArgument, "unreadable wait timeout accepted");
+    Require(sceUsbdBulkTransfer(&foreign, 0x81, buffer, 8, reinterpret_cast<std::int32_t*>(0x10), 100) == invalidArgument, "unwritable bulk transferred accepted");
+    Require(sceUsbdInterruptTransfer(&foreign, 0x81, buffer, 8, reinterpret_cast<std::int32_t*>(0x10), 100) == invalidArgument, "unwritable interrupt transferred accepted");
+    Require(errno == 71, "guest-copy failure modified errno");
     sceUsbdExit();
+    Require(sceUsbdGetDeviceList(reinterpret_cast<void***>(0x10)) == invalidArgument && errno == 71, "unwritable empty device list accepted");
     Require(sceUsbdOpenDeviceWithVidPid(0, 0) == nullptr, "a device was opened after the library exited");
 
     std::puts("USBD tests passed");

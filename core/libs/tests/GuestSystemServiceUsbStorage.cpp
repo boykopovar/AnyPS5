@@ -53,6 +53,9 @@ void TestNoDevice() {
     Require(sceSystemServiceUsbStorageGetDeviceList(nullptr, &count) == UsbStorage::InvalidArgument, "the alias refuses a null device list");
     UsbStorageDeviceInfo info{};
     Require(sceSystemServiceUsbStorageGetDeviceInfo(0, &info) == UsbStorage::DeviceNotFound, "the alias finds no device info");
+    char shellMountPoint[UsbStorage::MountPointSize]{};
+    Require(sceUsbStorageGetMountPointOfShellCore(0, nullptr) == UsbStorage::InvalidArgument, "get shell mount point null buffer");
+    Require(sceUsbStorageGetMountPointOfShellCore(0, shellMountPoint) == UsbStorage::DeviceNotFound, "get shell mount point no device");
     std::uint8_t exists = 1;
     Require(sceSystemServiceUsbStorageIsExist(0, "/mnt/usb0", &exists) == true && exists == 0, "the alias reports no device");
     char mountPoint[UsbStorage::MountPointSize];
@@ -96,6 +99,10 @@ void TestDevice() {
     std::uint64_t mountId = 1;
     Require(sceSystemServiceUsbStorageRequestMap(0, "/", 0, 0, mountPoint, &mountId) == 0, "map the device through the alias");
     Require(std::string_view(mountPoint) == "/mnt/usb0" && mountId == 0, "the alias returns the mount point");
+    char shellMountPoint[UsbStorage::MountPointSize]{};
+    Require(sceUsbStorageGetMountPointOfShellCore(0, nullptr) == UsbStorage::InvalidArgument, "get shell mount point null buffer with device");
+    Require(sceUsbStorageGetMountPointOfShellCore(0, shellMountPoint) == 0, "get shell mount point device 0");
+    Require(std::string_view(shellMountPoint) == "/mnt/usb0", "get shell mount point value");
     Require(sceSystemServiceUsbStorageRequestUnmap(0, "/mnt/usb0") == 0, "unmap the device through the alias");
     std::int32_t fd = -1;
     std::uint64_t bufferSize = 0;

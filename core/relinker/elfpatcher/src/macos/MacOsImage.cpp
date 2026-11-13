@@ -1,4 +1,5 @@
 #include <elfpatcher/macos/MacOsImage.hpp>
+#include <elfpatcher/macos/MacOsCodeSignature.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
@@ -47,6 +48,7 @@ constexpr std::uint32_t LcRpath = 0x8000001c;
 constexpr std::uint32_t LcDyldInfoOnly = 0x80000022;
 constexpr std::uint32_t LcMain = 0x80000028;
 constexpr std::uint32_t LcBuildVersion = 0x32;
+constexpr std::uint32_t LcCodeSignature = 0x1d;
 
 constexpr std::uint32_t VmProtRead = 1;
 constexpr std::uint32_t VmProtWrite = 2;
@@ -289,11 +291,11 @@ struct TlsScan {
     std::vector<GsTrap> GsTraps;
 };
 
-TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const Windows::WindowsLoadImage& image, const std::function<void(std::string_view)>& message) {
+TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const Windows::WindowsLoadImage& image, const std::function<void(std::string_view)>& message, const bool functionSymbolRoots) {
     TlsScan scan;
     const Codegen::X64InstructionDecoder decoder;
     std::set<Domain::VirtualAddress> entryRoots;
-    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, {}, &entryRoots, message);
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, {}, &entryRoots, message, functionSymbolRoots);
     for (const auto& header : headers) {
         if (header.Type == 7) {
             if (scan.Tls != nullptr) throw Domain::RelinkerException("Multiple ELF TLS segments");
@@ -301,7 +303,7 @@ TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domai
         }
         if (header.Type != 1 || (header.Flags & 1) == 0) continue;
         std::uint64_t decodedEnd = 0;
-        for (auto instruction = instructions.lower_bound(header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
+        for (auto instruction = std::lower_bound(instructions.begin(), instructions.end(), header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
             const auto offset = *instruction - header.MappedAddress;
             const auto* bytes = source.data() + header.Offset + offset;
             const auto info = decoder.DecodeInstruction(bytes, header.FileSize - offset);
@@ -457,7 +459,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     auto& image = *input.Image;
     const auto& headers = *input.Headers;
     const auto imageBase = image.GetImageBase();
-    const auto tls = ScanTls(*input.Source, headers, image, input.Message);
+    const auto tls = ScanTls(*input.Source, headers, image, input.Message, input.FunctionSymbolRoots);
     const bool hasTls = tls.Tls != nullptr && (tls.Tls->MemorySize != 0 || !tls.Accesses.empty());
     if (!hasTls && !tls.Accesses.empty()) throw Domain::RelinkerException("Guest TLS access without a non-empty PT_TLS");
     if (!hasTls && !input.TlsModuleSlots.empty()) throw Domain::RelinkerException("Guest TLS module relocation without a non-empty PT_TLS");
@@ -516,7 +518,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     const auto metaSize = MetaHeaders + headers.size() * 56;
     std::vector<std::uint8_t> meta(metaSize, 0);
     Io::WriteU64(meta, 0, MetaVersion);
-    const auto firstLoad = std::find_if(headers.begin(), headers.end(), [](const auto& header) { return header.Type == 1; });
+    const auto firstLoad = std::find_if(headers.begin(), headers.end(), [](const auto& header) { return header.Type == 1 && header.MemorySize != 0; });
     if (firstLoad == headers.end()) throw Domain::RelinkerException("No PT_LOAD segments found");
     Io::WriteU64(meta, MetaLoadBias, imageBase + image.GetRva(firstLoad->MappedAddress) - firstLoad->MappedAddress);
     input.Rebases.push_back(metaRva + MetaLoadBias);
@@ -898,6 +900,12 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         AppendPathCommand(commands, LcRpath, path);
         ++commandCount;
     }
+    const auto codeSignatureCommand = commands.size();
+    Io::AppendU32(commands, LcCodeSignature);
+    Io::AppendU32(commands, 16);
+    Io::AppendU32(commands, 0);
+    Io::AppendU32(commands, 0);
+    ++commandCount;
 
     std::vector<std::uint8_t> file;
     constexpr std::size_t HeaderSize = 32;
@@ -949,9 +957,12 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     file.insert(file.end(), exports.begin(), exports.end());
     const auto stringOffset = file.size();
     file.insert(file.end(), 8, 0);
-    const auto linkeditSize = file.size() - linkeditOffset;
+    PadTo(file, 16);
+    const auto codeSignatureOffset = file.size();
+    const auto codeSignatureSize = CodeSignatureSize(codeSignatureOffset, input.Identifier);
+    const auto linkeditSize = codeSignatureOffset + codeSignatureSize - linkeditOffset;
     const auto imageEnd = segments.back().Rva + AlignUp(segments.back().MemorySize, PageSize);
-    if (file.size() > std::numeric_limits<std::uint32_t>::max())
+    if (codeSignatureOffset + codeSignatureSize > std::numeric_limits<std::uint32_t>::max())
         throw Domain::RelinkerException("Mach-O output exceeds 4 GiB");
     if (imageBase + imageEnd + AlignUp(linkeditSize, PageSize) > UserAddressEnd)
         throw Domain::RelinkerException("Mach-O image ends outside the macOS user address space");
@@ -986,6 +997,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     Io::WriteU32(commands, symtabCommand + 16, static_cast<std::uint32_t>(stringOffset));
     Io::WriteU32(commands, symtabCommand + 20, 8);
     if (input.Executable) Io::WriteU64(commands, mainCommand + 8, stubOffset);
+    Io::WriteU32(commands, codeSignatureCommand + 8, static_cast<std::uint32_t>(codeSignatureOffset));
+    Io::WriteU32(commands, codeSignatureCommand + 12, static_cast<std::uint32_t>(codeSignatureSize));
 
     std::uint64_t hash = 0xcbf29ce484222325ull;
     for (const auto byte : file) hash = (hash ^ byte) * 0x100000001b3ull;
@@ -1002,6 +1015,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     const bool weakDefinitions = std::any_of(input.Exports.begin(), input.Exports.end(), [](const auto& entry) { return (entry.Flags & ExportWeakDefinition) != 0; });
     Io::WriteU32(file, 24, MhNoUndefs | MhDyldLink | MhTwoLevel | (weakDefinitions ? MhWeakDefines : 0));
     std::copy(commands.begin(), commands.end(), file.begin() + HeaderSize);
+    AppendCodeSignature(file, input.Identifier, 0, LoadRva, input.Executable);
+    if (file.size() != codeSignatureOffset + codeSignatureSize) throw Domain::RelinkerException("Mach-O code signature does not fill its __LINKEDIT space");
     return file;
 }
 

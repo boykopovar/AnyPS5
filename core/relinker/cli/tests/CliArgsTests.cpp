@@ -118,6 +118,11 @@ void rpath() {
     require(args.runPath == "/custom/libs", "--rpath value was not captured");
 }
 
+void omitUnavailableDependencies() {
+    require(!parse({"input.elf", "output.elf"}).omitUnavailableDependencies, "dependencies were left out by default");
+    require(parse({"--omit-unavailable-dependencies", "input.elf", "output.elf"}).omitUnavailableDependencies, "--omit-unavailable-dependencies was ignored");
+}
+
 void rpathConsumesNextTokenVerbatim() {
     const auto args = parse({"--rpath", "--windows", "input.elf", "output.elf"});
     require(args.runPath == "--windows", "--rpath did not consume the following token as its value");
@@ -331,6 +336,10 @@ void targetSelection() {
     const std::string rosettaConflict = "--to-rosetta conflicts with --windows";
     expectThrows({"--windows", "--to-rosetta", "input.elf", "output.elf"}, rosettaConflict);
     expectThrows({"--to-rosetta", "--windows", "input.elf", "output.elf"}, rosettaConflict);
+    const auto avx = parse({"--macos", "--to-avx", "input.elf", "output.elf"});
+    require(avx.toMacos && avx.toAvx && avx.toIntel && !avx.toRosetta, "--to-avx did not imply --to-intel on macOS");
+    expectThrows({"--to-avx", "input.elf", "output.elf"}, "--to-avx requires --macos");
+    expectThrows({"--windows", "--to-avx", "input.elf", "output.elf"}, "--to-avx requires --macos");
 }
 
 void patchOptions() {
@@ -395,6 +404,7 @@ int main() {
         singleDashIsPositional();
         optionTerminator();
         rpath();
+        omitUnavailableDependencies();
         rpathConsumesNextTokenVerbatim();
         rpathWithoutValue();
         excludeSceModule();

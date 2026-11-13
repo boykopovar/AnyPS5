@@ -203,6 +203,13 @@ void TestMemoryReads() {
     stream.pos = 1;
     Require(Throws([&] { api.ExtractFrame(&stream, 3, nullptr); }), "null memory frame pointer is unsupported");
     Require(stream.pos == 1 && !stream.cursor && !stream.limit, "null memory frame pointer enters no frame");
+    stream = MemoryStream(nullptr, 8);
+    Require(api.EnterFrame(&stream, 4) == 0 && !stream.cursor && stream.limit == At(4) && stream.pos == 4, "null base frame at position 0");
+    Require(Throws([&] { api.GetUShort(&stream); }), "null base frame read is unsupported");
+    api.ExitFrame(&stream);
+    Require(Throws([&] { api.EnterFrame(&stream, 2); }), "null base frame past position 0 is unsupported");
+    Require(stream.pos == 4 && !stream.cursor && !stream.limit, "null base frame past position 0 enters no frame");
+    Require(Throws([&] { api.ExtractFrame(&stream, 0, &frame); }) && frame == nullptr, "null base extraction past position 0 is unsupported");
 }
 
 void TestFrameGetters() {
@@ -315,7 +322,8 @@ void TestDeviceStream() {
     device.releases.clear();
     stream.pos = 6;
     Require(api.EnterFrame(&stream, 4) == InvalidStreamOperation, "short frame read fails");
-    Require(device.releases.size() == 1 && !stream.base && !stream.cursor && stream.limit == At(4) && stream.pos == 8, "short frame read releases the block");
+    Require(device.releases.size() == 1 && !stream.base && !stream.cursor && !stream.limit && stream.pos == 8, "short frame read releases the block");
+    Require(api.GetULong(&stream) == 0 && !stream.cursor && !stream.limit, "getter after a short frame read reads nothing");
     stream.memory = nullptr;
     device.calls.clear();
     Require(api.EnterFrame(&stream, 0) == 0 && !stream.base && !stream.cursor && !stream.limit, "empty device frame allocates nothing");

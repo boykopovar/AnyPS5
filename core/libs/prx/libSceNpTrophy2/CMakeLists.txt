@@ -21,7 +21,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_nptrophy2_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_nptrophy2_tests PRIVATE libSceNpTrophy2 libc)
     configure_windows_unwind(guest_nptrophy2_tests)
-    add_test(NAME guest_nptrophy2 COMMAND guest_nptrophy2_tests)
+    add_test(NAME guest_nptrophy2 COMMAND guest_nptrophy2_tests $<TARGET_FILE:libSceNpTrophy2>)
     if(WIN32)
         set_tests_properties(guest_nptrophy2 PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpTrophy2>")

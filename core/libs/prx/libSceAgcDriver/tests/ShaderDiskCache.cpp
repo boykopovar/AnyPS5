@@ -1,4 +1,5 @@
 #include "ShaderDiskCache.hpp"
+#include "ImageTableAbi.hpp"
 #include "CacheKey.hpp"
 #include "ShaderCachePack.hpp"
 #include "VertexInputSpecialization.hpp"
@@ -248,7 +249,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.samplerCoordinatesIgnored = {false, seed % 2 == 0, true};
     binding.imageUnnormalized = {true, false, seed % 2 == 0};
     binding.imageUnnormalizedBaseLevel = {false, true, seed % 3 == 0};
-    binding.imageSamplers = {0x5u, 0u, 0x80000000u};
+    binding.imageSamplers = {0x5u, 0u, 0x8000000080000000u};
     binding.bufferRead = {true, false, false, true, true, false};
     binding.bufferExtent = {32, 0, 16, 4096, 8, 0};
     return binding;
@@ -475,6 +476,40 @@ void verifyResultRoundTrip() {
     bytes.clear();
     ShaderDiskCache::EncodeResult(incompatible, bytes);
     require(!ShaderDiskCache::DecodeResult(bytes, decoded), "an incompatible runtime ABI result decodes");
+}
+
+void verifyElementFlags() {
+    ElementFlags flags;
+    std::vector<bool> expected;
+    for (std::size_t index = 0; index < 70; ++index) {
+        flags.push_back(index % 3 == 0);
+        expected.push_back(index % 3 == 0);
+        require(flags == expected, "element flags differ from a vector after " + std::to_string(index + 1) + " entries");
+    }
+    const auto copy = flags;
+    require(copy == flags && copy.size() == 70 && copy.at(69) && !copy.at(68), "a copy of spilled element flags differs");
+    require(std::count(flags.begin(), flags.end(), true) == 24, "spilled element flags do not iterate");
+    auto writable = flags;
+    writable[69] = false;
+    writable.back().flip();
+    writable[0] = writable[1];
+    require(writable.size() == 70 && writable.back() && !writable[0] && writable[3], "a write through a spilled flag was lost");
+    writable.resize(3);
+    require(writable == std::vector<bool>{false, false, false}, "shrinking spilled element flags kept the wrong entries");
+    writable.resize(5, true);
+    writable[1] = true;
+    writable.back().flip();
+    require(writable == std::vector<bool>{false, true, false, true, false}, "a write through an inline flag was lost");
+    auto result = sampleResult();
+    result.bindings[1].bufferWritten = flags;
+    std::vector<std::byte> bytes;
+    ShaderDiskCache::EncodeResult(result, bytes);
+    RecompileResult decoded;
+    require(ShaderDiskCache::DecodeResult(bytes, decoded) && decoded.bindings[1].bufferWritten == expected, "spilled element flags do not round trip");
+    flags.assign(3, true);
+    require(flags == std::vector<bool>{true, true, true}, "assigned element flags kept spilled entries");
+    flags.clear();
+    require(flags.empty() && flags == ElementFlags{}, "cleared element flags are not empty");
 }
 
 void verifyEntryRoundTrip() {
@@ -806,6 +841,29 @@ void verifyMeshBarycentricRequestSerialization() {
     }
 }
 
+void verifyHashBytes() {
+    constexpr std::array<std::array<std::uint64_t, 3>, 8> expected{{
+        {0u, 0x840bc8c130ceedb6ull, 0x7e0452fcbd09083dull},
+        {1u, 0x2bb08a6e94d5ffabull, 0xe3641007415d06d1ull},
+        {7u, 0xd0ec3c76aa3e2e44ull, 0x345f41799c18a2b1ull},
+        {8u, 0xa0c4caa4a9025c5aull, 0xa3829d1fdbcf4aebull},
+        {9u, 0x5976a0604c948110ull, 0xeaeed8d5500a97a2ull},
+        {15u, 0x55bbcd3fcf37abd7ull, 0x420b82b607b1d4f9ull},
+        {16u, 0x731681f2dbac64e8ull, 0x4a9c1f25580b95a4ull},
+        {17u, 0x31a156cfac950b79ull, 0xac0b4579d052a463ull},
+    }};
+    std::array<std::byte, 17> bytes{};
+    for (std::size_t index = 0; index < bytes.size(); ++index) bytes[index] = static_cast<std::byte>(index);
+    for (const auto& sample : expected) {
+        const auto input = std::span<const std::byte>(bytes).first(sample[0]);
+        const auto hashes = ShaderRecompiler::ShaderDiskCache::PackKeyHash(input);
+        require(hashes == std::array{sample[1], sample[2]}, "paired cache hashes changed");
+        require(ShaderRecompiler::HashBytes(input, 0x5eed0001ull) == sample[1] && ShaderRecompiler::HashBytes(input, 0x5eed0002ull) == sample[2], "scalar cache hashes changed");
+    }
+    require(ShaderRecompiler::HashBytes({}) == 0u, "empty cache checksum changed");
+    require(ShaderRecompiler::ShaderDiskCache::EntryName(bytes) == "31a156cfac950b79ac0b4579d052a463.bin", "cache entry name changed");
+}
+
 void verifyKeySensitivity() {
     SampleRequest base;
     const auto key = base.Key();
@@ -1018,7 +1076,15 @@ int runLargeFileWrite() {
         std::cerr.flush();
         std::_Exit(1);
     }
-    require(result.get(), "cannot write a cache file of more than 2 GiB");
+    if (!result.get()) {
+        std::error_code spaceError;
+        const auto after = std::filesystem::space(directory, spaceError);
+        if (!spaceError && after.available < size) {
+            std::cout << "skipped, the disk filled up while the file was written: " << after.available << " bytes free afterwards, " << space.available << " before\n";
+            return 77;
+        }
+        require(false, "cannot write a cache file of more than 2 GiB (" + std::to_string(space.available) + " bytes free before, " + (spaceError ? spaceError.message() : std::to_string(after.available) + " bytes free after") + ")");
+    }
     require(std::filesystem::file_size(path) == size, "the cache file of more than 2 GiB has the wrong size");
     {
         std::ifstream file(path, std::ios::binary);
@@ -1757,6 +1823,7 @@ struct PlanFixture {
     ShaderStage stage = ShaderStage::Compute;
     std::uint64_t codeAddress = 0;
     std::uint32_t waveSize = 64;
+    bool groupId = false;
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> userData;
     std::vector<std::pair<std::uint64_t, std::vector<std::uint32_t>>> regions;
@@ -1773,7 +1840,7 @@ struct PlanFixture {
         request.context.waveSize = waveSize;
         request.context.userDataBaseRegister = 0;
         request.context.userData = userData;
-        if (stage == ShaderStage::Compute) request.context.compute = ShaderComputeStageInfo{{waveSize, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        if (stage == ShaderStage::Compute) request.context.compute = ShaderComputeStageInfo{{waveSize, 1u, 1u}, 0u, {groupId, false, false}, false, 1u};
         request.context.pixel = pixel;
         request.context.memory = memory;
         request.target.vulkanVersion = 0x00401000u;
@@ -1872,6 +1939,31 @@ std::vector<PlanFixture> planFixtures() {
     place(palette, 0x10u, imageWords(PlanTextureAddress));
     place(palette, 0x18u, imageWords(PlanTextureAddress + 0x100u));
     add("pointer image table", 64, {0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7e200500u, 0x8f108210u, 0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c0900u, 0x24000040u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, palette}, {PlanMaterialAddress, {0u, 1u, 0u, 1u, 0u, 0u, 0u, 0u}}});
+
+    std::vector<std::uint32_t> nestedSrt(16u, 0u);
+    place(nestedSrt, 0u, bufferWords(PlanTableAddress, 16u, 4u));
+    place(nestedSrt, 4u, bufferWords(PlanMaterialAddress, 0u, 32u));
+    place(nestedSrt, 8u, bufferWords(PlanOutputAddress, 0u, 4096u));
+    std::vector<std::uint32_t> parents(16u, 0u);
+    place(parents, 2u, {static_cast<std::uint32_t>(PlanPointerAddress), static_cast<std::uint32_t>(PlanPointerAddress >> 32u)});
+    place(parents, 6u, {static_cast<std::uint32_t>(PlanPointerAddress + 256u), static_cast<std::uint32_t>(PlanPointerAddress >> 32u)});
+    std::vector<std::uint32_t> nestedBuffers(128u, 0u);
+    place(nestedBuffers, 40u, bufferWords(PlanPayloadAddress, 64u, 1u));
+    place(nestedBuffers, 104u, bufferWords(PlanPayloadAddress + 64u, 64u, 1u));
+    std::vector<std::uint32_t> nestedImages(32u, 0u);
+    place(nestedImages, 0u, imageWords(PlanTextureAddress));
+    place(nestedImages, 8u, imageWords(PlanTextureAddress + 256u));
+    place(nestedImages, 16u, imageWords(PlanTextureAddress + 256u));
+    place(nestedImages, 24u, imageWords(PlanTextureAddress + 512u));
+    std::vector<std::uint32_t> nestedCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108302u, 0xf4200444u, 0x20000000u, 0xf4200504u, 0x20000004u, 0x8f128411u, 0x8f148514u,
+    0xf4240b02u, 0x24000008u, 0xf4080616u, 0xfa0000a0u, 0xf42c090cu, 0x28000000u,
+    0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+    0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,};
+    nestedCode.insert(nestedCode.begin() + 13u, 0x87118311u);
+    nestedCode.insert(nestedCode.begin() + 15u, 0x87148114u);
+    add("nested pointer image table", 64u, std::move(nestedCode), srtPointer, {{PlanSrtAddress, nestedSrt}, {PlanTableAddress, parents}, {PlanPointerAddress, nestedBuffers}, {PlanPayloadAddress, nestedImages}, {PlanMaterialAddress, {0u, 0u, 0u, 1u, 1u, 0u, 1u, 1u}}});
+    fixtures.back().groupId = true;
 
     PlanFixture fragment;
     fragment.name = "fragment parameters";
@@ -1982,7 +2074,7 @@ IrResourcePlan handBuiltPlan() {
     DescriptorSource table;
     table.dwordCount = 8u;
     table.dwords[0] = &readConst(3);
-    table.tableColumn = TableColumn{2u, 32u, 16u, 4u, 8u, 0xffu, false, true, {KeyDomain{3u, 4u, 16u, false}, KeyDomain{2u, 8u, 4u, true}}, false};
+    table.tableColumn = TableColumn{2u, 32u, 16u, 4u, 8u, 0xffu, false, true, false, {KeyDomain{3u, 4u, 16u, false}, KeyDomain{2u, 8u, 4u, true}}, false};
     table.tableColumn->selected = true;
     table.tableColumn->selection = 2u;
     table.tableColumn->pointerHops = {PointerHop{0u, 0x10u}, PointerHop{8u, 0x20u}};
@@ -2135,6 +2227,31 @@ void mutateWords(std::vector<std::uint32_t>& words, std::mt19937& random) {
     }
 }
 
+void verifyNestedResolutionReuse(const IrResourcePlan& plan, const ResourceSnapshot& snapshot) {
+    auto info = plan.info;
+    ResourceMaterializer::PrepareImageModes(info);
+    constexpr std::uint64_t MemoKey = 0x6e6573746564u;
+    const auto first = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, MemoKey);
+    const auto same = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, MemoKey);
+    if (std::getenv("APS5_NO_TABLE_RESOLUTION_REUSE") == nullptr) require(first == same, "nested table resolution: an unchanged snapshot was not shared");
+    auto changed = snapshot;
+    auto codes = changed.tables.nested.at(0).codes.Copy();
+    require(!codes.empty(), "nested table resolution: the child fixture is empty");
+    codes[0] = ImageTableAbi::PoisonCode(ImageTableAbi::OutsideDomainPoison);
+    changed.tables.nested[0].codes = SharedValues<std::uint32_t>(std::move(codes));
+    const auto child = ResourceMaterializer::ResolveImageTablesShared(info, changed, MemoKey);
+    const auto freshChild = ResourceMaterializer::ResolveImageTables(info, changed);
+    require(child->map == freshChild.map && child->map != first->map, "nested table resolution: changing only a child reused the old map");
+    changed = snapshot;
+    auto pointers = changed.tables.tables.at(0).pointers.Copy();
+    require(!pointers.empty(), "nested table resolution: the pointer fixture is empty");
+    pointers[0] += 0x120u;
+    changed.tables.tables[0].pointers = SharedValues<std::uint64_t>(std::move(pointers));
+    const auto pointer = ResourceMaterializer::ResolveImageTablesShared(info, changed, MemoKey);
+    const auto freshPointer = ResourceMaterializer::ResolveImageTables(info, changed);
+    require(pointer->map == freshPointer.map && pointer->map != first->map, "nested table resolution: changing only a pointer reused the old map");
+}
+
 std::size_t verifyRoundTripRuntimes(const IrResourcePlan& plan, const IrResourcePlan& decoded, const PlanFixture& fixture, std::uint32_t seed, const std::string& what) {
     std::mt19937 random(seed);
     std::size_t succeeded = 0;
@@ -2153,6 +2270,7 @@ std::size_t verifyRoundTripRuntimes(const IrResourcePlan& plan, const IrResource
         const auto original = materializePlan(plan, runtime);
         const auto loaded = materializePlan(decoded, runtime);
         require(sameMaterialization(original, loaded), what + ": runtime " + std::to_string(run) + " materialized differently from the decoded plan (" + original.error + " / " + loaded.error + ")");
+        if (run == 0u && original.ok && !original.snapshot.tables.nested.empty()) verifyNestedResolutionReuse(plan, original.snapshot);
         if (original.ok) ++succeeded;
     }
     return succeeded;
@@ -2214,6 +2332,41 @@ void verifyPlanPayloadDamage(const IrResourcePlan& plan, const std::string& what
     require(rejected != 0u, what + ": no damaged plan was rejected");
 }
 
+void verifyArgumentDeltaBounds() {
+    const auto encodeSecond = [](bool linked) {
+        IrResourcePlan plan;
+        plan.valueStorage.Reserve(2);
+        auto& first = *plan.valueStorage.Create(IrOpcode::Void, IrType::U32, 0u);
+        auto& second = *plan.valueStorage.Create(IrOpcode::Void, IrType::U32, 1u);
+        second.AddArgument(linked ? &first : nullptr);
+        return encodedPlan(plan);
+    };
+    const auto linked = encodeSecond(true);
+    const auto unlinked = encodeSecond(false);
+    require(linked.size() == unlinked.size(), "the linked and unlinked argument plans differ in size");
+    std::size_t offset = linked.size();
+    for (std::size_t index = 0; index < linked.size(); ++index) {
+        if (linked[index] == unlinked[index]) continue;
+        require(offset == linked.size() && linked[index] == std::byte{2} && unlinked[index] == std::byte{0}, "the argument code of the second record is not where the plan layout puts it");
+        offset = index;
+    }
+    require(offset != linked.size(), "the linked and unlinked argument plans encode the same bytes");
+    IrResourcePlan decoded;
+    require(ShaderDiskCache::DecodePlan(linked, decoded), "the two-value plan with one argument does not decode");
+    const auto withCode = [&](const std::vector<std::byte>& code) {
+        auto bytes = std::vector<std::byte>(linked.begin(), linked.begin() + static_cast<std::ptrdiff_t>(offset));
+        bytes.insert(bytes.end(), code.begin(), code.end());
+        bytes.insert(bytes.end(), linked.begin() + static_cast<std::ptrdiff_t>(offset) + 1, linked.end());
+        return bytes;
+    };
+    IrResourcePlan rejected;
+    std::vector<std::byte> maximal(9, std::byte{0xff});
+    maximal.push_back(std::byte{0x01});
+    require(!ShaderDiskCache::DecodePlan(withCode(maximal), rejected), "an argument code of 2^64-1 (delta INT64_MAX) from the second record decodes");
+    require(!ShaderDiskCache::DecodePlan(withCode({std::byte{4}}), rejected), "an argument before the first record decodes");
+    require(!ShaderDiskCache::DecodePlan(withCode({std::byte{3}}), rejected), "an argument past the last record decodes");
+}
+
 void verifyMalformedPlans() {
     const auto rejects = [](const std::string& what, const std::function<void(IrResourcePlan&)>& damage) {
         auto plan = handBuiltPlan();
@@ -2234,6 +2387,9 @@ void verifyMalformedPlans() {
     rejects("a uniform fill of five words", [](IrResourcePlan& plan) { plan.uniformFill.fill.words = 5u; });
     rejects("an image table heap past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->heapSource = 4u; });
     rejects("an image table key past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->keyDomains[1].source = 4u; });
+    rejects("a buffer table with eight dwords", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->buffer = true; });
+    rejects("an image table cycle", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->heapSource = 1u; });
+    rejects("an image table parent that is not a buffer", [](IrResourcePlan& plan) { plan.descriptorSources[2].tableColumn = *plan.descriptorSources[1].tableColumn; });
     rejects("an image table selection past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->selection = 4u; });
     auto foreign = handBuiltPlan();
     IrValue stray(IrOpcode::Void, IrType::U32, 99u);
@@ -2246,6 +2402,7 @@ void verifyMalformedPlans() {
     unblocked.srtReads[0].value = &phi;
     bytes.clear();
     require(!ShaderDiskCache::EncodePlan(unblocked, bytes), "a phi without predecessor blocks was encoded");
+    verifyArgumentDeltaBounds();
 }
 
 void verifySharedPlans() {
@@ -2288,6 +2445,12 @@ void verifyPlanRoundTrip() {
     require(phi.IsPhi() && phi.PhiBlockCount() == 2u && phi.PhiBlock(0)->Id() == 3u && phi.PhiBlock(1)->Id() == 7u && phi.Argument(1)->ImmediateU32() == 0u, "the decoded phi lost its blocks or operands");
     require(handDecoded.uniformFill.values[0] == handDecoded.uniformFill.values[1] && handDecoded.uniformFill.values[0] != nullptr && handDecoded.uniformFill.values[2] == nullptr, "the decoded uniform fill lost its shared or null values");
     require(samePlan(handBuilt, handDecoded), "the decoded hand-built plan differs from the plan in a field or a value");
+    auto bufferTable = handBuiltPlan();
+    bufferTable.descriptorSources[1].tableColumn->buffer = true;
+    bufferTable.descriptorSources[1].tableColumn->dwordCount = 4u;
+    const auto bufferBytes = encodedPlan(bufferTable);
+    IrResourcePlan bufferDecoded;
+    require(bufferBytes != handBytes && ShaderDiskCache::DecodePlan(bufferBytes, bufferDecoded) && samePlan(bufferTable, bufferDecoded), "the nested buffer column changed in a disk-cache round trip");
     PlanFixture handFixture;
     handFixture.userData = {static_cast<std::uint32_t>(PlanSrtAddress), static_cast<std::uint32_t>(PlanSrtAddress >> 32u), 0u, 0u};
     std::vector<std::uint32_t> handSrt(16, 0u);
@@ -2667,9 +2830,11 @@ int main(int argc, char** argv) {
         setPathEnvironment("ANYPS5_SHADER_CACHE_DIR", directory);
         verifyAtomicReplacement(directory);
         verifyResultRoundTrip();
+        verifyElementFlags();
         verifyEntryRoundTrip();
         verifyPrebuiltPack(directory / "packs");
         verifyArtifactStorageIsolation();
+        verifyHashBytes();
         verifyKeySensitivity();
         verifyMeshBarycentricRequestSerialization();
         verifyFloatModeSerialization();

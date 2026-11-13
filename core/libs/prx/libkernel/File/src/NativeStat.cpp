@@ -17,6 +17,18 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 constexpr unsigned short SymbolicLinkMode = 0120777;
+constexpr LONG DeletePendingStatus = static_cast<LONG>(0xC0000056u);
+using LastNtStatusFunction = LONG(NTAPI*)();
+static const auto lastNtStatus = reinterpret_cast<LastNtStatusFunction>(
+    reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetLastNtStatus")));
+static int OpenFailure() {
+    const DWORD error = GetLastError();
+    if (error == ERROR_ACCESS_DENIED && lastNtStatus != nullptr && lastNtStatus() == DeletePendingStatus) {
+        errno = ENOENT;
+        return -1;
+    }
+    return File::WindowsFileTime::Failure(error);
+}
 struct NativeStat : __stat64 {
     FILE_BASIC_INFO times{};
     BY_HANDLE_FILE_INFORMATION identity{};
@@ -60,7 +72,7 @@ static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     }
     const auto handle = CreateFileW(prepared.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
+    if (handle == INVALID_HANDLE_VALUE) return OpenFailure();
     const int result = ReadHandleInfo(handle, st);
     CloseHandle(handle);
     return result;
@@ -83,7 +95,7 @@ static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
     const bool link = File::WindowsSymbolicLink::Read(prepared, target, "lstat") || File::WindowsSymbolicLink::ReadJunction(prepared, target, "lstat");
     const auto handle = CreateFileW(prepared.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
+    if (handle == INVALID_HANDLE_VALUE) return OpenFailure();
     const int result = ReadHandleInfo(handle, st);
     CloseHandle(handle);
     if (result != 0) return result;
@@ -163,8 +175,6 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
     sb->st_dev = static_cast<std::uint32_t>(st.st_dev);
     sb->st_ino = static_cast<std::uint32_t>(st.st_ino);
     sb->st_nlink = static_cast<std::uint16_t>(st.st_nlink);
-    sb->st_uid = 0;
-    sb->st_gid = 0;
     sb->st_rdev = static_cast<std::uint32_t>(st.st_rdev);
     sb->st_blksize = 512;
     sb->st_blocks = (sb->st_size + 511LL) / 512LL;
@@ -191,8 +201,6 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
     sb->st_dev = static_cast<std::uint32_t>(st.st_dev);
     sb->st_ino = static_cast<std::uint32_t>(st.st_ino);
     sb->st_nlink = static_cast<std::uint16_t>(st.st_nlink);
-    sb->st_uid = st.st_uid;
-    sb->st_gid = st.st_gid;
     sb->st_rdev = static_cast<std::uint32_t>(st.st_rdev);
     sb->st_blksize = static_cast<std::uint32_t>(st.st_blksize);
     sb->st_blocks = static_cast<std::int64_t>(st.st_blocks);
