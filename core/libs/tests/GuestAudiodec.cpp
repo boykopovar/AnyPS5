@@ -1,6 +1,7 @@
 #include "prx/libSceAudiodec/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -538,5 +539,34 @@ int main() {
     TestMp3();
     TestAt9();
     TestDecodeCheckOrder();
+    {
+        auto* badCtrl = reinterpret_cast<AudiodecCtrl*>(static_cast<std::uintptr_t>(0x10));
+        errno = 71;
+        Require(sceAudiodecCreateDecoder(badCtrl, 2) == errorInvalidCtrlPointer);
+        Require(errno == 71);
+        const std::int32_t copyHandle = sceAudiodecCreateDecoder(&ctrl, 2);
+        Require(copyHandle > 0);
+        errno = 71;
+        Require(sceAudiodecDecode(copyHandle, badCtrl) == errorInvalidCtrlPointer);
+        Require(errno == 71);
+        std::vector<std::uint8_t> pcmOut(4608);
+        AudiodecPcmItem goodPcmItem{sizeof(AudiodecPcmItem), pcmOut.data(), static_cast<std::uint32_t>(pcmOut.size())};
+        AudiodecCtrl badAuCtrl = ctrl;
+        AudiodecAuInfo badAuInfo{sizeof(AudiodecAuInfo), reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10)), sizeof(MP3_MONO)};
+        badAuCtrl.pAuInfo = &badAuInfo;
+        badAuCtrl.pPcmItem = &goodPcmItem;
+        errno = 71;
+        Require(sceAudiodecDecode(copyHandle, &badAuCtrl) == errorInvalidAuPointer);
+        Require(errno == 71);
+        AudiodecCtrl badPcmCtrl = ctrl;
+        AudiodecAuInfo goodAuInfo{sizeof(AudiodecAuInfo), const_cast<std::uint8_t*>(MP3_MONO), sizeof(MP3_MONO)};
+        AudiodecPcmItem badPcmItem{sizeof(AudiodecPcmItem), reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10)), 4608};
+        badPcmCtrl.pAuInfo = &goodAuInfo;
+        badPcmCtrl.pPcmItem = &badPcmItem;
+        errno = 71;
+        Require(sceAudiodecDecode(copyHandle, &badPcmCtrl) == static_cast<std::int32_t>(0x807F000E));
+        Require(errno == 71);
+        Require(sceAudiodecDeleteDecoder(copyHandle) == 0);
+    }
     for (std::uint32_t type = 1; type <= 3; ++type) Require(sceAudiodecTermLibrary(type) == 0);
 }

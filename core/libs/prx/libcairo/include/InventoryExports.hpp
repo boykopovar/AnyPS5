@@ -60,7 +60,6 @@ int APS5_VABI cairo_set_font_options();
 int APS5_VABI cairo_font_face_set_user_data();
 int APS5_VABI cairo_stroke_extents();
 int APS5_VABI cairo_arc_negative();
-int APS5_VABI cairo_image_surface_create_from_png_stream();
 int APS5_VABI cairo_ft_scaled_font_lock_face();
 int APS5_VABI cairo_glyph_path();
 int APS5_VABI cairo_set_source_rgb();
