@@ -1,3 +1,56 @@
+// Derived from Source/WebCore/platform/MIMETypeRegistry.cpp@e12a212a531aeddc11259e8515671cf5188e038d
+// Derived from Source/WebCore/platform/playstation/MIMETypeRegistryPlayStation.cpp@e12a212a531aeddc11259e8515671cf5188e038d
+/*
+ * Copyright (C) 2006-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2008, 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ * Copyright (C) 2018 Sony Interactive Entertainment Inc.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -69,6 +122,47 @@ bool StartsWithIgnoringASCIICase(const NKWebKit::WtfAbi::StringImpl* impl, std::
     return true;
 }
 
+bool StartsWithLettersIgnoringASCIICase(const NKWebKit::WtfAbi::StringImpl* impl, std::string_view lowercaseLetters) {
+    unsigned length = impl ? impl->length : 0;
+    if (length < lowercaseLetters.length()) return false;
+    for (unsigned i = 0; i < lowercaseLetters.length(); ++i) {
+        if ((GetChar(impl, i) | 0x20) != static_cast<char16_t>(lowercaseLetters[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool EqualLettersIgnoringASCIICase(const NKWebKit::WtfAbi::StringImpl* impl, std::string_view lowercaseLetters) {
+    unsigned length = impl ? impl->length : 0;
+    return length == lowercaseLetters.length() && StartsWithLettersIgnoringASCIICase(impl, lowercaseLetters);
+}
+
+char16_t ToASCIILower(char16_t c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char16_t>(c | 0x20) : c;
+}
+
+bool LiteralLessThanASCIICaseFolding(std::string_view lowercaseLiteral, const NKWebKit::WtfAbi::StringImpl* impl) {
+    unsigned length = impl ? impl->length : 0;
+    for (unsigned i = 0; i < length; ++i) {
+        if (i >= lowercaseLiteral.length()) return true;
+        char16_t c = ToASCIILower(GetChar(impl, i));
+        char16_t literal = static_cast<char16_t>(lowercaseLiteral[i]);
+        if (c != literal) return literal < c;
+    }
+    return false;
+}
+
+bool EqualIgnoringASCIICase(std::string_view a, std::string_view b) {
+    if (a.length() != b.length()) return false;
+    for (std::size_t i = 0; i < a.length(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool EndsWithIgnoringASCIICase(const NKWebKit::WtfAbi::StringImpl* impl, std::string_view suffix) {
     if (!impl) return suffix.empty();
     if (impl->length < suffix.length()) return false;
@@ -83,11 +177,11 @@ bool EndsWithIgnoringASCIICase(const NKWebKit::WtfAbi::StringImpl* impl, std::st
     return true;
 }
 
-std::string ToString(const NKWebKit::WtfAbi::StringImpl* impl) {
-    if (!impl) return {};
+std::string ToString(const NKWebKit::WtfAbi::StringImpl* impl, unsigned start = 0) {
+    if (!impl || start >= impl->length) return {};
     std::string res;
-    res.reserve(impl->length);
-    for (unsigned i = 0; i < impl->length; ++i) {
+    res.reserve(impl->length - start);
+    for (unsigned i = start; i < impl->length; ++i) {
         char16_t c = GetChar(impl, i);
         res.push_back(c < 128 ? static_cast<char>(c) : '?');
     }
@@ -358,12 +452,12 @@ bool IsXMLMIMEType(const NKWebKit::WtfAbi::StringImpl* impl) {
     return true;
 }
 
-struct PlatformMediaTypeEntry {
+struct TypeExtensionPair {
     const char* type;
     const char* extension;
 };
 
-static const PlatformMediaTypeEntry kPlatformMediaTypes[] = {
+static const TypeExtensionPair kPlatformMediaTypes[] = {
     { "image/bmp", "bmp" },
     { "text/css", "css" },
     { "image/gif", "gif" },
@@ -403,18 +497,88 @@ const char* PreferredExtensionForMIMEType(const NKWebKit::WtfAbi::StringImpl* im
 
 const char* MimeTypeForExtension(std::string_view ext) {
     for (const auto& entry : kPlatformMediaTypes) {
-        if (ext.length() == std::strlen(entry.extension)) {
-            bool match = true;
-            for (std::size_t i = 0; i < ext.length(); ++i) {
-                if (std::tolower(static_cast<unsigned char>(ext[i])) != std::tolower(static_cast<unsigned char>(entry.extension[i]))) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) return entry.type;
-        }
+        if (EqualIgnoringASCIICase(ext, entry.extension)) return entry.type;
     }
     return "";
+}
+
+static const TypeExtensionPair kCommonMediaTypes[] = {
+    { "application/ogg", "ogx" },
+    { "audio/ogg", "ogg" },
+    { "audio/ogg", "oga" },
+    { "video/ogg", "ogv" },
+    { "application/annodex", "anx" },
+    { "audio/annodex", "axa" },
+    { "video/annodex", "axv" },
+    { "audio/speex", "spx" },
+    { "video/webm", "webm" },
+    { "audio/webm", "webm" },
+    { "audio/mpeg", "m1a" },
+    { "audio/mpeg", "m2a" },
+    { "audio/mpeg", "m1s" },
+    { "audio/mpeg", "mpa" },
+    { "video/mpeg", "mpg" },
+    { "video/mpeg", "m15" },
+    { "video/mpeg", "m1s" },
+    { "video/mpeg", "m1v" },
+    { "video/mpeg", "m75" },
+    { "video/mpeg", "mpa" },
+    { "video/mpeg", "mpeg" },
+    { "video/mpeg", "mpm" },
+    { "video/mpeg", "mpv" },
+    { "application/vnd.apple.mpegurl", "m3u8" },
+    { "application/mpegurl", "m3u8" },
+    { "application/x-mpegurl", "m3u8" },
+    { "audio/mpegurl", "m3url" },
+    { "audio/x-mpegurl", "m3url" },
+    { "audio/mpegurl", "m3u" },
+    { "audio/x-mpegurl", "m3u" },
+    { "video/x-m4v", "m4v" },
+    { "audio/x-m4a", "m4a" },
+    { "audio/x-m4b", "m4b" },
+    { "audio/x-m4p", "m4p" },
+    { "audio/mp4", "m4a" },
+    { "audio/mp3", "mp3" },
+    { "audio/x-mp3", "mp3" },
+    { "audio/x-mpeg", "mp3" },
+    { "video/x-mpeg2", "mp2" },
+    { "video/mpeg2", "vob" },
+    { "video/mpeg2", "mod" },
+    { "video/m2ts", "m2ts" },
+    { "video/x-m2ts", "m2t" },
+    { "video/x-m2ts", "ts" },
+    { "audio/3gpp", "3gpp" },
+    { "audio/3gpp2", "3g2" },
+    { "application/x-mpeg", "amc" },
+    { "audio/aac", "aac" },
+    { "audio/aac", "adts" },
+    { "audio/x-aac", "m4r" },
+    { "audio/x-caf", "caf" },
+    { "audio/x-gsm", "gsm" },
+    { "audio/x-wav", "wav" },
+    { "audio/vnd.wave", "wav" }
+};
+
+const char* MediaMIMETypeForExtension(std::string_view ext) {
+    const char* systemType = MimeTypeForExtension(ext);
+    if (systemType[0] != '\0') return systemType;
+    for (const auto& entry : kCommonMediaTypes) {
+        if (EqualIgnoringASCIICase(ext, entry.extension)) return entry.type;
+    }
+    return "";
+}
+
+constexpr std::string_view kSystemPreviewMIMETypes[] = {
+    "model/usd",
+    "model/vnd.pixar.usd",
+    "model/vnd.reality",
+    "model/vnd.usdz+zip"
+};
+
+bool IsSystemPreviewMIMEType(const NKWebKit::WtfAbi::StringImpl* impl) {
+    auto it = std::lower_bound(std::begin(kSystemPreviewMIMETypes), std::end(kSystemPreviewMIMETypes), impl,
+        [](std::string_view literal, const NKWebKit::WtfAbi::StringImpl* key) { return LiteralLessThanASCIICaseFolding(literal, key); });
+    return it != std::end(kSystemPreviewMIMETypes) && EqualLettersIgnoringASCIICase(impl, *it);
 }
 
 }  // namespace
@@ -707,6 +871,36 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry33preferredImage
 bool APS5_VABI _ZN7WebCore16MIMETypeRegistry34isSupportedImageVideoOrSVGMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& mimeType) {
     if (!mimeType.impl) return false;
     return IsSupportedImageMIMEType(mimeType.impl) || EqualIgnoringASCIICase(mimeType.impl, "image/svg+xml");
+}
+
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry15mimeTypeForPathERKN3WTF6StringE(const NKWebKit::WtfAbi::String& path) {
+    const NKWebKit::WtfAbi::StringImpl* impl = path.impl;
+    for (unsigned i = impl ? impl->length : 0; i > 0; --i) {
+        if (GetChar(impl, i - 1) == '.') {
+            const char* type = MimeTypeForExtension(ToString(impl, i));
+            if (type[0] != '\0') return MakeString(type);
+            break;
+        }
+    }
+    return _ZN7WebCore15defaultMIMETypeEv();
+}
+
+bool APS5_VABI _ZN7WebCore16MIMETypeRegistry20isJavaAppletMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& mimeType) {
+    return StartsWithLettersIgnoringASCIICase(mimeType.impl, "application/x-java-applet")
+        || StartsWithLettersIgnoringASCIICase(mimeType.impl, "application/x-java-bean")
+        || StartsWithLettersIgnoringASCIICase(mimeType.impl, "application/x-java-vm");
+}
+
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry20mimeTypeForExtensionERKN3WTF6StringE(const NKWebKit::WtfAbi::String& extension) {
+    return MakeString(MimeTypeForExtension(ToString(extension.impl)));
+}
+
+bool APS5_VABI _ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& mimeType) {
+    return IsSystemPreviewMIMEType(mimeType.impl);
+}
+
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry25mediaMIMETypeForExtensionERKN3WTF6StringE(const NKWebKit::WtfAbi::String& extension) {
+    return MakeString(MediaMIMETypeForExtension(ToString(extension.impl)));
 }
 
 }
