@@ -6,7 +6,7 @@ AnyPS5 relinks PS5 executables into native Linux or Windows programs that run ag
 - An export you cannot implement calls `NotImplemented_nid_no_patch(__func__)`; never return a made-up success.
 - Implement the function for every input. Never special-case a value, ID or path seen in one title's trace; if the general behaviour is unknown, throw and record it in `docs/dev/debt/<library>.md`.
 - New third-party code is a submodule at `3rdparty/<name>`: add its `.gitmodules` entry (`git submodule add <url> 3rdparty/<name>`) and build it from source with CMake. Never `find_package` or copy sources in.
-- Known gaps go in `docs/dev/debt/<library>.md`; notes, reports and logs go in the pull request. Add no other files.
+- Known gaps go in `docs/dev/debt/<library>.md`, added, changed or removed through a fragment in `docs/dev/debt/changes/` ([format](docs/dev/TechnicalDebt.md#fragments)); notes, reports and logs go in the pull request. Add no other files.
 - Commit subjects and PR titles are Conventional Commits.
 - PR body: copy [the template](.github/pull_request_template.md), keep every line, tick every box, and fill `What`, `Tested`, `Depends on` (#N or none), `Fixes` (Fixes #N or none), `Unblocks` (title ID and discussion, or none), `GPUs tested` (AGC, shader recompiler, VideoOut; otherwise n/a) and `AI-assisted` (yes or no).
 - Before starting a function run `python3 tools/pr_overlap.py --names <function>`; before pushing run `python3 tools/check_conventions.py --base origin/main`; before opening run `python3 tools/pr_overlap.py --branch <branch>`.
