@@ -13,7 +13,7 @@ configure_windows_unwind(libSceFreeTypeOt)
 
 target_sources(libSceFreeTypeOt PRIVATE ForwardExports.cpp)
 if(APPLE)
-    target_link_libraries(libSceFreeTypeOt PRIVATE "-Wl,-needed_library,$<TARGET_FILE:libSceFreeType>")
+    target_link_options(libSceFreeTypeOt PRIVATE "LINKER:-needed_library,$<TARGET_FILE:libSceFreeType>")
     add_dependencies(libSceFreeTypeOt libSceFreeType)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(libSceFreeTypeOt PRIVATE "-Wl,--no-as-needed" libSceFreeType "-Wl,--as-needed")

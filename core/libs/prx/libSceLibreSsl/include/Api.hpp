@@ -821,7 +821,7 @@ int APS5_VABI SSL_CTX_check_private_key_nid_postfix(const LibreSslCtx* ctx);
 std::int64_t APS5_VABI SSL_CTX_ctrl_nid_postfix(LibreSslCtx* ctx, int cmd, std::int64_t larg, void* parg);
 int APS5_VABI SSL_CTX_free_nid_postfix(void);
 void* APS5_VABI SSL_CTX_get_cert_store_nid_postfix(LibreSslCtx* ctx);
-int APS5_VABI SSL_CTX_get_ex_data_nid_postfix(void);
+void* APS5_VABI SSL_CTX_get_ex_data_nid_postfix(const LibreSslCtx* ctx, int index);
 int APS5_VABI SSL_CTX_get_ex_new_index_nid_postfix(std::int64_t argl, void* argp, LibreSslExNew newFunction, LibreSslExDup dupFunction, LibreSslExFree freeFunction);
 int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(LibreSslCtx* ctx);
 int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(LibreSslCtx* ctx, const char* file, const char* path);
