@@ -604,6 +604,9 @@ private:
         const StorageTexture* source = nullptr;
         bool depth = false;
         bool valid = false;
+        std::uint64_t committedGeneration = 0;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> committed;
+        bool committedProved = false;
     };
     bool keepsTemplateRecords() const;
     void captureValidation();
