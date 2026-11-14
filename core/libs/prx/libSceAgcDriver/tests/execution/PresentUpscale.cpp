@@ -132,6 +132,12 @@ std::vector<Candidate> candidates(PFN_vkGetInstanceProcAddr resolve) {
     application.apiVersion = VK_API_VERSION_1_2;
     VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     info.pApplicationInfo = &application;
+#ifdef __APPLE__
+    const char* portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+    info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    info.enabledExtensionCount = 1;
+    info.ppEnabledExtensionNames = &portability;
+#endif
     VkInstance instance = VK_NULL_HANDLE;
     Require(create(&info, nullptr, &instance) == VK_SUCCESS, "vkCreateInstance failed");
     const auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(resolve(instance, "vkDestroyInstance"));
@@ -251,6 +257,8 @@ int main() {
     try {
 #ifdef _WIN32
         void* library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+        void* library = SDL_LoadObject("libvulkan.1.dylib");
 #else
         void* library = SDL_LoadObject("libvulkan.so.1");
 #endif
