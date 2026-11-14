@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -353,6 +354,104 @@ constexpr std::array<std::uint32_t, 16> FrexpInputs{
     0x40200000u, 0xc0600000u, 0x478000c0u, 0xc78000c0u,
     0x3f923456u, 0xbf923456u, 0x409abcdeu, 0xc09abcdeu,
 };
+constexpr std::array<std::uint32_t, 32> SpecialInputs{
+    0x00000000u, 0x80000000u, 0x00000001u, 0x80000001u, 0x007fffffu, 0x807fffffu, 0x00400000u, 0x80400000u,
+    0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+    0x4b000001u, 0xcb7fffffu, 0x3effffffu, 0xbeffffffu, 0x3f000000u, 0xbf000000u, 0x3fc00000u, 0xc0200000u,
+    0x00800000u, 0x80800000u, 0x33800000u, 0xb3800001u, 0x4effffffu, 0xceffffffu, 0x3f7fffffu, 0xbf7fffffu,
+};
+constexpr std::array<ShaderRecompiler::ShaderFloatMode, 2> SpecialModes{{{0xf0u, false, false, false}, {0x00u, false, false, false}}};
+constexpr std::uint32_t SpecialResults[2][7][32] = {
+    {
+        {
+            0x00000000u, 0x00000000u, 0x00000001u, 0x3f7fffffu, 0x007fffffu, 0x3f7fffffu, 0x00400000u, 0x3f7fffffu,
+            0xffc00000u, 0xffc00000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x00000000u, 0x00000000u,
+            0x00000000u, 0x00000000u, 0x3effffffu, 0x3f000000u, 0x3f000000u, 0x3f000000u, 0x3f000000u, 0x3f000000u,
+            0x00800000u, 0x3f7fffffu, 0x33800000u, 0x3f7fffffu, 0x00000000u, 0x00000000u, 0x3f7fffffu, 0x33800000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x3f800000u, 0xc0000000u,
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x4effffffu, 0xceffffffu, 0x00000000u, 0x80000000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0x3f800000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x3f800000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0x40000000u, 0xc0000000u,
+            0x3f800000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0x4effffffu, 0xceffffffu, 0x3f800000u, 0x80000000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x40000000u, 0xc0000000u,
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x4effffffu, 0xceffffffu, 0x3f800000u, 0xbf800000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0xbf800000u, 0x00000000u, 0xbf800000u, 0x00000000u, 0xbf800000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x00000000u, 0xbf800000u, 0x00000000u, 0xbf800000u, 0x3f800000u, 0xc0400000u,
+            0x00000000u, 0xbf800000u, 0x00000000u, 0xbf800000u, 0x4effffffu, 0xceffffffu, 0x00000000u, 0xbf800000u,
+        },
+        {
+            0x00000000u, 0x00000000u, 0xffffff6cu, 0xffffff6cu, 0xffffff82u, 0xffffff82u, 0xffffff82u, 0xffffff82u,
+            0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000080u, 0x00000080u,
+            0x00000018u, 0x00000018u, 0xffffffffu, 0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000002u,
+            0xffffff83u, 0xffffff83u, 0xffffffe9u, 0xffffffe9u, 0x0000001fu, 0x0000001fu, 0x00000000u, 0x00000000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x3f000000u, 0xbf000000u, 0x3f7ffffeu, 0xbf7ffffeu, 0x3f000000u, 0xbf000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x3f7fffffu, 0xbf7fffffu,
+            0x3f000001u, 0xbf7fffffu, 0x3f7fffffu, 0xbf7fffffu, 0x3f000000u, 0xbf000000u, 0x3f400000u, 0xbf200000u,
+            0x3f000000u, 0xbf000000u, 0x3f000000u, 0xbf000001u, 0x3f7fffffu, 0xbf7fffffu, 0x3f7fffffu, 0xbf7fffffu,
+        },
+    },
+    {
+        {
+            0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+            0xffc00000u, 0xffc00000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x00000000u, 0x00000000u,
+            0x00000000u, 0x00000000u, 0x3effffffu, 0x3f000000u, 0x3f000000u, 0x3f000000u, 0x3f000000u, 0x3f000000u,
+            0x00800000u, 0x3f7fffffu, 0x33800000u, 0x3f7fffffu, 0x00000000u, 0x00000000u, 0x3f7fffffu, 0x33800000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x3f800000u, 0xc0000000u,
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x4effffffu, 0xceffffffu, 0x00000000u, 0x80000000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x3f800000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0x40000000u, 0xc0000000u,
+            0x3f800000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0x4effffffu, 0xceffffffu, 0x3f800000u, 0x80000000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x40000000u, 0xc0000000u,
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x4effffffu, 0xceffffffu, 0x3f800000u, 0xbf800000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x00000000u, 0xbf800000u, 0x00000000u, 0xbf800000u, 0x3f800000u, 0xc0400000u,
+            0x00000000u, 0xbf800000u, 0x00000000u, 0xbf800000u, 0x4effffffu, 0xceffffffu, 0x00000000u, 0xbf800000u,
+        },
+        {
+            0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+            0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000080u, 0x00000080u,
+            0x00000018u, 0x00000018u, 0xffffffffu, 0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000002u,
+            0xffffff83u, 0xffffff83u, 0xffffffe9u, 0xffffffe9u, 0x0000001fu, 0x0000001fu, 0x00000000u, 0x00000000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x3f7fffffu, 0xbf7fffffu,
+            0x3f000001u, 0xbf7fffffu, 0x3f7fffffu, 0xbf7fffffu, 0x3f000000u, 0xbf000000u, 0x3f400000u, 0xbf200000u,
+            0x3f000000u, 0xbf000000u, 0x3f000000u, 0xbf000001u, 0x3f7fffffu, 0xbf7fffffu, 0x3f7fffffu, 0xbf7fffffu,
+        },
+    },
+};
+
 alignas(256) std::array<std::uint32_t, Threads> F32Input{};
 alignas(256) std::array<std::uint32_t, Threads * F32Results> F32Output{};
 
@@ -378,9 +477,9 @@ std::uint32_t F32ResultBits(std::uint32_t bits, std::uint32_t opcode) {
     return ExactFloatBits(integer, false) | sign;
 }
 
-void RunF32Destinations(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t waveSize) {
+void RunF32Destinations(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t waveSize, const std::uint32_t* measured = nullptr, std::optional<ShaderRecompiler::ShaderFloatMode> floatMode = std::nullopt) {
     for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
-        F32Input[lane] = opcode >= 0x3fu ? FrexpInputs[lane % FrexpInputs.size()] : RoundingInputs[lane % RoundingInputs.size()];
+        F32Input[lane] = measured != nullptr ? SpecialInputs[lane % SpecialInputs.size()] : opcode >= 0x3fu ? FrexpInputs[lane % FrexpInputs.size()] : RoundingInputs[lane % RoundingInputs.size()];
     }
     F32Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> words{
@@ -413,6 +512,7 @@ void RunF32Destinations(AgcDriver::VulkanDevice& device, std::uint32_t opcode, s
         device.Target(), {0, 0, 0, 128}
     };
     request.useCache = false;
+    request.context.floatMode = floatMode;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -420,7 +520,7 @@ void RunF32Destinations(AgcDriver::VulkanDevice& device, std::uint32_t opcode, s
     for (std::uint32_t destination = 0u; destination < 6u; ++destination) {
         for (std::uint32_t unused = 0u; unused < 3u; ++unused, ++index) {
             for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
-                const auto bits = F32ResultBits(F32Input[lane], opcode);
+                const auto bits = measured != nullptr ? measured[lane % SpecialInputs.size()] : F32ResultBits(F32Input[lane], opcode);
                 const auto expected = InsertResult(bits, destination, unused);
                 const auto actual = F32Output[lane * F32Results + index];
                 Require(actual == expected, "sdwa f32 opcode " + Hex(opcode) + " wave" + std::to_string(waveSize) +
@@ -442,6 +542,10 @@ int main(int argc, char** argv) {
             Require(std::string(argv[2]) == "wave32" || std::string(argv[2]) == "wave64", "expected wave32 or wave64");
             for (const auto opcode : {0x20u, 0x21u, 0x22u, 0x23u, 0x24u, 0x3fu, 0x40u}) {
                 RunF32Destinations(*device, opcode, std::string(argv[2]) == "wave64" ? 64u : 32u);
+            }
+            constexpr std::array<std::uint32_t, 7> opcodes{0x20u, 0x21u, 0x22u, 0x23u, 0x24u, 0x3fu, 0x40u};
+            for (std::uint32_t mode = 0u; mode < SpecialModes.size(); ++mode) {
+                for (std::uint32_t op = 0u; op < opcodes.size(); ++op) RunF32Destinations(*device, opcodes[op], std::string(argv[2]) == "wave64" ? 64u : 32u, SpecialResults[mode][op], SpecialModes[mode]);
             }
             return 0;
         }
