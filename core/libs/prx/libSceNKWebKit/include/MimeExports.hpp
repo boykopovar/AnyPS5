@@ -4,6 +4,8 @@
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/MimeAbi.hpp"
 
+#include <string_view>
+
 extern "C" {
 
 bool APS5_VABI _ZN7WebCore20LegacySchemeRegistry15isBuiltinSchemeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& scheme);
@@ -45,3 +47,9 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry33preferredImage
 bool APS5_VABI _ZN7WebCore16MIMETypeRegistry34isSupportedImageVideoOrSVGMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& mimeType);
 
 }
+
+namespace NKWebKit {
+
+bool IsURLSchemeRegisteredAsNoAccess(std::u16string_view scheme);
+
+}  // namespace NKWebKit

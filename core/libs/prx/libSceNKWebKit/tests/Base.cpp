@@ -67,6 +67,246 @@ static void TestTypeIDs() {
     Require(WKContextGetTypeID() == 85);
 }
 
+static void CheckOriginString(const void* string, const char* expected) {
+    Require(WKStringIsEqualToUTF8CString(string, expected));
+    WKRelease(string);
+}
+
+static void TestSecurityOrigin() {
+    struct Case {
+        const char* protocol;
+        const char* host;
+        int port;
+        unsigned expectedPort;
+        const char* text;
+        const char* dbId;
+    };
+    for (const Case& value : {
+        Case{"http", "example.com", 8080, 8080, "http://example.com:8080", "http_example.com_8080"},
+        Case{"http", "host_name", 0, 0, "http://host_name", "http_host_name_0"},
+        Case{"http", "example.com", 80, 80, "http://example.com:80", "http_example.com_80"},
+        Case{"https", "example.com", 443, 443, "https://example.com:443", "https_example.com_443"},
+        Case{"ftp", "example.com", 21, 21, "ftp://example.com:21", "ftp_example.com_21"},
+        Case{"ws", "example.com", 80, 80, "ws://example.com:80", "ws_example.com_80"},
+        Case{"wss", "example.com", 443, 443, "wss://example.com:443", "wss_example.com_443"},
+        Case{"https", "example.com", 80, 80, "https://example.com:80", "https_example.com_80"},
+        Case{"http", "example.com", 443, 443, "http://example.com:443", "http_example.com_443"},
+        Case{"HTTP", "example.com", 80, 80, "HTTP://example.com:80", "HTTP_example.com_80"},
+        Case{"https", "EXAMPLE", 65536, 0, "https://EXAMPLE", "https_EXAMPLE_0"},
+        Case{"custom", "host", -1, 65535, "custom://host:65535", "custom_host_65535"},
+        Case{"custom", "host", -65536, 0, "custom://host:0", "custom_host_0"},
+        Case{"file", "host", 42, 42, "file://", "file__0"},
+        Case{"FILE", "host", 0, 0, "FILE://host", "file__0"},
+        Case{"", "", 0, 0, "", "__0"},
+        Case{"http", "a b%_c", 0, 0, "http://a b%_c", "http_a%20b%25_c_0"},
+        Case{"http", "[::1]", 8080, 8080, "http://[::1]:8080", "http_[%3A%3A1]_8080"},
+        Case{"http", "a/b:c", 0, 0, "http://a/b:c", "http_a%2Fb%3Ac_0"}
+    }) {
+        const auto* protocol = WKStringCreateWithUTF8CString(value.protocol);
+        const auto* host = WKStringCreateWithUTF8CString(value.host);
+        const auto* origin = WKSecurityOriginCreate(protocol, host, value.port);
+        WKRelease(protocol);
+        WKRelease(host);
+        Require(WKGetTypeID(origin) == WKSecurityOriginGetTypeID());
+        Require(WKSecurityOriginGetPort(origin) == value.expectedPort);
+        CheckOriginString(WKSecurityOriginCopyProtocol(origin), value.protocol);
+        CheckOriginString(WKSecurityOriginCopyHost(origin), value.host);
+        CheckOriginString(WKSecurityOriginCopyToString(origin), value.text);
+        CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(origin), value.dbId);
+        WKRelease(origin);
+    }
+    auto nullString = NKWebKit::Make<NKWebKit::String>();
+    const auto* origin = WKSecurityOriginCreate(nullString.Get(), nullString.Get(), 0);
+    for (const auto* copy : {WKSecurityOriginCopyProtocol(origin), WKSecurityOriginCopyHost(origin), WKSecurityOriginCopyToString(origin)}) {
+        Require(NKWebKit::Cast<NKWebKit::String>(copy, __func__)->null);
+        WKRelease(copy);
+    }
+    WKRelease(origin);
+
+    for (const char* dbId : {"http_example.com_8080", "http_example.com_0", "file__0", "https_foo.org_8443"}) {
+        const auto* idStr = WKStringCreateWithUTF8CString(dbId);
+        const auto* fromDb = WKSecurityOriginCreateFromDatabaseIdentifier(idStr);
+        WKRelease(idStr);
+        Require(fromDb != nullptr);
+        Require(WKGetTypeID(fromDb) == WKSecurityOriginGetTypeID());
+        CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(fromDb), dbId);
+        WKRelease(fromDb);
+    }
+
+    struct DbCase {
+        const char* input;
+        const char* host;
+        unsigned port;
+        const char* dbId;
+        const char* text;
+    };
+    for (const DbCase& db : {
+        DbCase{"http_h_80abc", "h", 0, "http_h_0", "http://h"},
+        DbCase{"http_h_8080abc", "h", 8080, "http_h_8080", "http://h:8080"},
+        DbCase{"http_h_8080_9", "h_8080", 9, "http_h_8080_9", "http://h_8080:9"},
+        DbCase{"http_h_ 8080", "h", 8080, "http_h_8080", "http://h:8080"},
+        DbCase{"http_h_\t+8080", "h", 8080, "http_h_8080", "http://h:8080"},
+        DbCase{"http_h_0", "h", 0, "http_h_0", "http://h"},
+        DbCase{"http_h_", "h", 0, "http_h_0", "http://h"},
+        DbCase{"http__0", "", 0, "http__0", "http://"},
+        DbCase{"https_h_443", "h", 0, "https_h_0", "https://h"},
+        DbCase{"http_a%20b_80", "a%20b", 0, "http_a%2520b_0", "http://a%20b"},
+        DbCase{"http_A b_5", "A b", 5, "http_A%20b_5", "http://A b:5"},
+        DbCase{"http_h_65535", "h", 65535, "http_h_65535", "http://h:65535"},
+        DbCase{"http_[::1]_8080", "[::1]", 8080, "http_[%3A%3A1]_8080", "http://[::1]:8080"},
+        DbCase{"FILE_h_9", "h", 9, "file__0", "FILE://h:9"}
+    }) {
+        const auto* idStr = WKStringCreateWithUTF8CString(db.input);
+        const auto* fromDb = WKSecurityOriginCreateFromDatabaseIdentifier(idStr);
+        WKRelease(idStr);
+        Require(fromDb != nullptr);
+        Require(WKSecurityOriginGetPort(fromDb) == db.port);
+        CheckOriginString(WKSecurityOriginCopyHost(fromDb), db.host);
+        CheckOriginString(WKSecurityOriginCopyToString(fromDb), db.text);
+        CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(fromDb), db.dbId);
+        WKRelease(fromDb);
+    }
+
+    for (const char* invalidDbId : {"", "invalid", "http_onlyone", "http_host_abc", "http_host_99999", "http_host_65536",
+                                    "http_host_-1", "http_host_ ", "http_host_+", "http_host_99999999999999999999"}) {
+        const auto* idStr = WKStringCreateWithUTF8CString(invalidDbId);
+        const auto* fromDb = WKSecurityOriginCreateFromDatabaseIdentifier(idStr);
+        WKRelease(idStr);
+        Require(fromDb == nullptr);
+    }
+    const auto* nullDb = WKSecurityOriginCreateFromDatabaseIdentifier(nullString.Get());
+    Require(nullDb == nullptr);
+
+    struct StringCase {
+        const char* input;
+        const char* expectedProtocol;
+        const char* expectedHost;
+        unsigned expectedPort;
+        const char* expectedString;
+        const char* expectedDbId;
+    };
+    for (const StringCase& sc : {
+        StringCase{"http://example.com:8080/path", "http", "example.com", 8080, "http://example.com:8080", "http_example.com_8080"},
+        StringCase{"https://example.com/", "https", "example.com", 0, "https://example.com", "https_example.com_0"},
+        StringCase{"http://user:pass@example.com:9000", "http", "example.com", 9000, "http://example.com:9000", "http_example.com_9000"},
+        StringCase{"http://a@b@example.com", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://example.com:80/", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://example.com:00080", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"https://example.com:443", "https", "example.com", 0, "https://example.com", "https_example.com_0"},
+        StringCase{"ftp://example.com:21", "ftp", "example.com", 0, "ftp://example.com", "ftp_example.com_0"},
+        StringCase{"ws://example.com:80", "ws", "example.com", 0, "ws://example.com", "ws_example.com_0"},
+        StringCase{"wss://example.com:443", "wss", "example.com", 0, "wss://example.com", "wss_example.com_0"},
+        StringCase{"http://example.com:443", "http", "example.com", 443, "http://example.com:443", "http_example.com_443"},
+        StringCase{"HTTP://EXAMPLE.com:80", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://example.com:0/", "http", "example.com", 0, "http://example.com:0", "http_example.com_0"},
+        StringCase{"http://example.com:/p", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://example.com?x=1", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://example.com#frag", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://example.com:81?x=1", "http", "example.com", 81, "http://example.com:81", "http_example.com_81"},
+        StringCase{"http://example.com./p", "http", "example.com.", 0, "http://example.com.", "http_example.com._0"},
+        StringCase{"http://example.1a/", "http", "example.1a", 0, "http://example.1a", "http_example.1a_0"},
+        StringCase{"http://example.0xfg/", "http", "example.0xfg", 0, "http://example.0xfg", "http_example.0xfg_0"},
+        StringCase{"http://example.0xg/", "http", "example.0xg", 0, "http://example.0xg", "http_example.0xg_0"},
+        StringCase{"http://example.0x1z/", "http", "example.0x1z", 0, "http://example.0x1z", "http_example.0x1z_0"},
+        StringCase{"http://under_score.example/", "http", "under_score.example", 0, "http://under_score.example", "http_under_score.example_0"},
+        StringCase{"http:/example.com", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http:example.com", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http:////example.com", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http:" "\x5C\x5C" "example.com" "\x5C" "path", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://evil.example" "\x5C" "@good.example", "http", "evil.example", 0, "http://evil.example", "http_evil.example_0"},
+        StringCase{"https:///path", "https", "path", 0, "https://path", "https_path_0"},
+        StringCase{"  http://example.com  ", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"ht\ttp://exa\nmple.com", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"file:///home/user/test.html", "file", "", 0, "file://", "file__0"},
+        StringCase{"file://localhost/etc/hosts", "file", "", 0, "file://", "file__0"},
+        StringCase{"file://localhost", "file", "", 0, "file://", "file__0"},
+        StringCase{"file://server/share", "file", "server", 0, "file://", "file__0"},
+        StringCase{"FILE://SERVER/share", "file", "server", 0, "file://", "file__0"},
+        StringCase{"file:/x", "file", "", 0, "file://", "file__0"},
+        StringCase{"file:x", "file", "", 0, "file://", "file__0"},
+        StringCase{"file://C:/x", "file", "", 0, "file://", "file__0"},
+        StringCase{"file://c|/x", "file", "", 0, "file://", "file__0"},
+        StringCase{"", "", "", 0, "", "__0"},
+        StringCase{"   ", "", "", 0, "", "__0"},
+        StringCase{"invalid-string", "", "", 0, "", "__0"},
+        StringCase{"example.com:80", "", "", 0, "", "__0"},
+        StringCase{"://host", "", "", 0, "", "__0"},
+        StringCase{"1http://host", "", "", 0, "", "__0"},
+        StringCase{"ht tp://host", "", "", 0, "", "__0"},
+        StringCase{"custom://host", "", "", 0, "", "__0"},
+        StringCase{"custom://host:0", "", "", 0, "", "__0"},
+        StringCase{"mailto:someone@example.com", "", "", 0, "", "__0"},
+        StringCase{"data:text/plain,x", "", "", 0, "", "__0"},
+        StringCase{"javascript:alert(1)", "", "", 0, "", "__0"},
+        StringCase{"about:blank", "", "", 0, "", "__0"},
+        StringCase{"http://", "", "", 0, "", "__0"},
+        StringCase{"ftp://", "", "", 0, "", "__0"},
+        StringCase{"ws://", "", "", 0, "", "__0"},
+        StringCase{"wss://", "", "", 0, "", "__0"},
+        StringCase{"HTTP://", "", "", 0, "", "__0"},
+        StringCase{"ws://:80", "", "", 0, "", "__0"},
+        StringCase{"http://user@:80", "", "", 0, "", "__0"},
+        StringCase{"http://@", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:99999", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:65536", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:abc", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:80abc", "", "", 0, "", "__0"},
+        StringCase{"http://a:b:c", "", "", 0, "", "__0"},
+        StringCase{"http://exa mple.com", "", "", 0, "", "__0"},
+        StringCase{"http://a<b.example", "", "", 0, "", "__0"},
+        StringCase{"http://a^b.example", "", "", 0, "", "__0"},
+        StringCase{"http://a|b.example", "", "", 0, "", "__0"},
+        StringCase{"file://user@server/x", "", "", 0, "", "__0"},
+        StringCase{"file://server:80/x", "", "", 0, "", "__0"},
+        StringCase{"file://server:/x", "", "", 0, "", "__0"},
+        StringCase{"file://a<b/x", "", "", 0, "", "__0"}
+    }) {
+        const auto* inStr = WKStringCreateWithUTF8CString(sc.input);
+        const auto* fromStr = WKSecurityOriginCreateFromString(inStr);
+        WKRelease(inStr);
+        Require(fromStr != nullptr);
+        Require(WKGetTypeID(fromStr) == WKSecurityOriginGetTypeID());
+        Require(WKSecurityOriginGetPort(fromStr) == sc.expectedPort);
+        CheckOriginString(WKSecurityOriginCopyProtocol(fromStr), sc.expectedProtocol);
+        CheckOriginString(WKSecurityOriginCopyHost(fromStr), sc.expectedHost);
+        CheckOriginString(WKSecurityOriginCopyToString(fromStr), sc.expectedString);
+        CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(fromStr), sc.expectedDbId);
+        WKRelease(fromStr);
+    }
+    const auto noAccessScheme = _ZN3WTF10StringImpl6createEPKDsj(u"http", 4);
+    const auto* httpInStr = WKStringCreateWithUTF8CString("http://example.com");
+    const auto* beforeRegistration = WKSecurityOriginCreateFromString(httpInStr);
+    WKRelease(httpInStr);
+    CheckOriginString(WKSecurityOriginCopyToString(beforeRegistration), "http://example.com");
+    WKRelease(beforeRegistration);
+    _ZN7WebCore20LegacySchemeRegistry27registerURLSchemeAsNoAccessERKN3WTF6StringE(noAccessScheme);
+    for (const char* input : {"http://example.com", "HTTP://example.com:8080/path", "http://[::1]/"}) {
+        const auto* inStr = WKStringCreateWithUTF8CString(input);
+        const auto* noAccess = WKSecurityOriginCreateFromString(inStr);
+        WKRelease(inStr);
+        CheckOriginString(WKSecurityOriginCopyProtocol(noAccess), "");
+        CheckOriginString(WKSecurityOriginCopyHost(noAccess), "");
+        CheckOriginString(WKSecurityOriginCopyToString(noAccess), "");
+        CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(noAccess), "__0");
+        WKRelease(noAccess);
+    }
+    for (const char* input : {"https://example.com", "ws://example.com", "ftp://example.com"}) {
+        const auto* inStr = WKStringCreateWithUTF8CString(input);
+        const auto* stillValid = WKSecurityOriginCreateFromString(inStr);
+        WKRelease(inStr);
+        CheckOriginString(WKSecurityOriginCopyToString(stillValid), input);
+        WKRelease(stillValid);
+    }
+    const auto* fromNull = WKSecurityOriginCreateFromString(nullString.Get());
+    Require(fromNull != nullptr);
+    Require(WKSecurityOriginGetPort(fromNull) == 0);
+    CheckOriginString(WKSecurityOriginCopyProtocol(fromNull), "");
+    CheckOriginString(WKSecurityOriginCopyHost(fromNull), "");
+    CheckOriginString(WKSecurityOriginCopyToString(fromNull), "");
+    CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(fromNull), "__0");
+    WKRelease(fromNull);
+}
+
 static void TestRetainRelease() {
     auto* s = WKStringCreateWithUTF8CString("hello");
     Require(WKGetTypeID(s) == WKStringGetTypeID());
@@ -2632,6 +2872,7 @@ int main() {
         return 1;
     }
 
+    TestSecurityOrigin();
     TestInspector();
     TestContext();
     TestSessionState();
