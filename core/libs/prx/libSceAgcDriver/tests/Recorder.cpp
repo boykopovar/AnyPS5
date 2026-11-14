@@ -6661,6 +6661,109 @@ bool untrackedForgetTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool untrackedRefreshProofTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: untracked refresh proof not tested\n";
+        return false;
+    }
+    constexpr std::uint32_t side = 256;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    constexpr std::size_t blockBytes = 65536;
+    const auto allocate = [](std::size_t bytes) -> void* {
+#ifdef _WIN32
+        return VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+        return std::aligned_alloc(65536, bytes);
+#endif
+    };
+    auto* block = static_cast<std::uint8_t*>(allocate(surfaceBytes));
+    Require(block != nullptr, "cannot allocate the untracked refresh proof block");
+    std::memset(block, 0x55, surfaceBytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, surfaceBytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), surfaceBytes);
+        }
+    } unregister{base, block};
+    if (HostImportFor(base, address, surfaceBytes) == nullptr) {
+        std::cout << "host import of the surface refused: untracked refresh proof not tested\n";
+        return false;
+    }
+    if (AgcDriver::GuestMemory::Watched(address, surfaceBytes)) {
+        std::cout << "the surface is write-watched: untracked refresh proof not tested\n";
+        return false;
+    }
+    TextureDetiler detiler(base);
+    struct Drain {
+        Recorder& recorder;
+        ~Drain() { recorder.Sync(); }
+    } drain{recorder};
+    auto context = base;
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "the test surface has an unexpected size");
+    const auto proved = [] { return StorageTexture::RefreshesProved(); };
+    {
+        auto image = StorageTexture::Create(context, detiler, resource, 0);
+        const auto refresh = [&] {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            return image->Refresh();
+        };
+        const auto settle = [&] {
+            refresh();
+            refresh();
+        };
+        const auto expectProved = [&](const char* what) {
+            const auto before = proved();
+            Require(refresh(), what);
+            Require(proved() == before + 1, what);
+        };
+        const auto expectRefused = [&](const char* what) {
+            const auto before = proved();
+            refresh();
+            Require(proved() == before, what);
+        };
+        settle();
+        expectProved("an unchanged surface outside the write watch was not proved current");
+        expectProved("a proved surface outside the write watch was not proved again");
+        const std::size_t changed[] = {0, blockBytes + 17, 2 * blockBytes + blockBytes / 2, surfaceBytes - 1};
+        for (const auto at : changed) {
+            const auto what = "a changed byte at offset " + std::to_string(at);
+            block[at] ^= 0xffu;
+            expectRefused((what + " was proved current").c_str());
+            settle();
+            expectProved((what + " stopped the next refresh from proving the new bytes").c_str());
+        }
+        const auto original = block[100];
+        block[100] = original;
+        expectProved("a store of the bytes already there was not proved current");
+    }
+    std::cout << "untracked refresh proof: ok\n";
+    return true;
+}
+
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -15959,6 +16062,9 @@ int main(int argc, char** argv) {
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
         Recorder recorder(device.GetContext());
         recorder.Activate();
+        if (argc == 2 && std::string_view(argv[1]) == "--untracked-refresh-proof-only") {
+            return untrackedRefreshProofTests(device, recorder) ? 0 : 77;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--command-reuse-only") {
             if (device.GetContext().hostImportAlignment == 0) return 77;
             const auto before = Recorder::StoreCounts().stores;

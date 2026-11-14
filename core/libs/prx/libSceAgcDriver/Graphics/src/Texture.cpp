@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/General.hpp"
@@ -2852,6 +2853,22 @@ bool StorageTexture::otherPendingOverlaps() const {
 }
 
 bool StorageTexture::refreshProved() {
+    if (refreshProof.untracked) {
+        if (RuntimeSwitches::Set(RuntimeSwitch::NoUntrackedRefreshProof) || generation != 0 || descriptor.dccAddress != 0 || uploadedKeys != refreshProof.keys || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
+        if (!keptAtUnwatch.empty() || std::any_of(savedTicket.begin(), savedTicket.end(), [](std::uint64_t ticket) { return ticket != 0; })) return false;
+        constexpr std::uint64_t blockBytes = 65536;
+        const auto begin = descriptor.baseAddress;
+        const auto end = begin + guestBytes;
+        std::vector<std::uint8_t> blocks(static_cast<std::size_t>((end - 1) / blockBytes - begin / blockBytes + 1), GuestMemory::BlockWritten);
+        if (!compareUntracked(begin, static_cast<std::size_t>(guestBytes), blocks, true)) return false;
+        if (std::any_of(blocks.begin(), blocks.end(), [](std::uint8_t block) { return block != GuestMemory::BlockUnchanged; })) return false;
+        const auto serial = PendingSerial();
+        if (serial != refreshProof.pendingSerial) {
+            if (otherPendingOverlaps()) return false;
+            refreshProof.pendingSerial = serial;
+        }
+        return true;
+    }
     if (refreshProof.generation == 0) return false;
     if (generation != refreshProof.generation || uploadedKeys != refreshProof.keys || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
     const auto bytes = static_cast<std::size_t>(guestBytes);
@@ -2876,6 +2893,12 @@ bool StorageTexture::refreshProved() {
 
 void StorageTexture::takeRefreshProof(bool aliased) {
     refreshProof = {};
+    if (!aliased && generation == 0 && descriptor.dccAddress == 0 && !RuntimeSwitches::Set(RuntimeSwitch::NoUntrackedRefreshProof) && GuestMemory::GpuMutex().HeldByThisThread() && !original.empty()) {
+        const auto serial = PendingSerial();
+        if (otherPendingOverlaps()) return;
+        refreshProof = {0, serial, 0, uploadedKeys, true};
+        return;
+    }
     if (aliased || generation == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) return;
     if (descriptor.dccAddress != 0 && (keyProof.generation == 0 || keyProof.keys != uploadedKeys)) return;
     const auto serial = PendingSerial();

@@ -48,6 +48,8 @@ if(BUILD_TESTING)
         set_tests_properties(agc_recorder_device_selection agc_gpu_timing_key agc_gpu_timing_complete agc_gpu_timing_incomplete PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_untracked_refresh_proof COMMAND agc_driver_recorder_tests --untracked-refresh-proof-only)
+    set_tests_properties(agc_untracked_refresh_proof PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME agc_command_memory_reuse COMMAND agc_driver_recorder_tests --command-reuse-only)
     set_tests_properties(agc_command_memory_reuse PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
