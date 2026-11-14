@@ -20,6 +20,7 @@ struct EcGroup {
 
     const NamedCurve curve;
     mbedtls_ecp_group group;
+    std::int32_t asn1Flag = 0;
 };
 
 struct EcPoint {

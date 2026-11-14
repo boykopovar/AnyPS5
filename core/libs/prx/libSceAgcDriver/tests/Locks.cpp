@@ -33,8 +33,8 @@ void MutexCounts(int threads, int iterations, int holdSpins) {
             for (int i = 0; i < iterations; ++i) {
                 std::lock_guard lock(mutex);
                 const auto seen = counter;
-                for (volatile int spin = 0; spin < holdSpins; spin = spin + 1) {
-                }
+                volatile int spin = 0;
+                while (spin < holdSpins) spin = spin + 1;
                 counter = seen + 1;
             }
         });
