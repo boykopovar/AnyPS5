@@ -250,6 +250,7 @@ int main() {
     errno = 71;
     Require(sceAudioPropagationSystemQueryInfo(system, reinterpret_cast<AudioPropagation::SystemInfo*>(0x10), sizeof(systemInfo)) == AudioPropagation::ErrorInvalidHandle, "system query info accepted unmapped output");
     Require(errno == 71, "system query info preserved errno");
+    Require(sceAudioPropagationRoomCreate(system, reinterpret_cast<AudioPropagationHandle*>(0x10)) == AudioPropagation::ErrorNullPointer, "room create accepted unmapped output");
     Require(sceAudioPropagationSystemQueryInfo(system, nullptr, sizeof(systemInfo)) == AudioPropagation::ErrorInvalidHandle, "system query info accepted null output");
     Require(sceAudioPropagationSystemUnlock(system) == AudioPropagation::ErrorInvalidArgument, "unbalanced system unlock was accepted");
     Require(sceAudioPropagationSystemLock(system) == 0, "system lock failed");
@@ -366,6 +367,9 @@ int main() {
 
     std::uint32_t count = 7;
     Require(sceAudioPropagationSourceGetAudioPathCount(source, &count) == 0 && count == AudioPropagation::MaxPaths, "source path pool size");
+    errno = 71;
+    Require(sceAudioPropagationSourceGetAudioPathCount(source, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable count output");
+    Require(errno == 71, "errno preserved on unwritable count output");
     AudioPropagationHandle path = 0;
     Require(sceAudioPropagationSourceGetAudioPath(source, 0, &path) == 0 && path != 0, "path lookup immediately after source creation");
     AudioPropagationHandle repeated = 0;
@@ -425,6 +429,7 @@ int main() {
     Require(sceAudioPropagationSystemGetRays(system, rays, &count) == 0 && count == 0, "system requested rays");
     count = 7;
     Require(sceAudioPropagationSourceGetRays(source, rays, &count) == 0 && count == 0, "source requested rays");
+    Require(sceAudioPropagationSourceGetRays(source, rays, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable source ray count");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceGetRays(source, rays, nullptr); }, "rays without count");
     Require(sceAudioPropagationSystemSetRays(system, rays, 0) == 0, "empty ray results failed");
     RequireThrows<std::runtime_error>([&] { sceAudioPropagationSystemSetRays(system, rays, 1); }, "unrequested ray results");

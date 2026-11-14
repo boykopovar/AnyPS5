@@ -1,3 +1,4 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceIcu/include/InventoryExports.hpp"
 
 #include <algorithm>
@@ -144,12 +145,9 @@ std::int32_t Write(std::string_view value, char* destination, std::int32_t capac
 }
 
 std::int32_t Component(const char* locale, char* result, std::int32_t capacity,
-                       std::int32_t* status, int which) {
+                       std::int32_t* status, int which, const char* nullLocale) {
     if (!status || *status > 0) return 0;
-    if (!locale) {
-        *status = kIllegalArgument;
-        return 0;
-    }
+    if (!locale) NotImplemented_nid_no_patch(nullLocale);
     Parts parts = Parse(locale);
     const std::string& value = which == 0 ? parts.language : which == 1 ? parts.country : parts.script;
     return Write(value, result, capacity, status, true);
@@ -161,26 +159,26 @@ extern "C" {
 
 std::int32_t APS5_VABI uloc_getLanguage(const char* locale, char* result,
                                        std::int32_t capacity, std::int32_t* status) {
-    return Component(locale, result, capacity, status, 0);
+    return Component(locale, result, capacity, status, 0,
+                     "uloc_getLanguage with a null locale, which names the default locale");
 }
 
 std::int32_t APS5_VABI uloc_getCountry(const char* locale, char* result,
                                       std::int32_t capacity, std::int32_t* status) {
-    return Component(locale, result, capacity, status, 1);
+    return Component(locale, result, capacity, status, 1,
+                     "uloc_getCountry with a null locale, which names the default locale");
 }
 
 std::int32_t APS5_VABI uloc_getScript(const char* locale, char* result,
                                      std::int32_t capacity, std::int32_t* status) {
-    return Component(locale, result, capacity, status, 2);
+    return Component(locale, result, capacity, status, 2,
+                     "uloc_getScript with a null locale, which names the default locale");
 }
 
 std::int32_t APS5_VABI uloc_getBaseName(const char* locale, char* result,
                                        std::int32_t capacity, std::int32_t* status) {
     if (!status || *status > 0) return 0;
-    if (!locale) {
-        *status = kIllegalArgument;
-        return 0;
-    }
+    if (!locale) NotImplemented_nid_no_patch("uloc_getBaseName with a null locale, which names the default locale");
     return Write(BaseName(Parse(locale)), result, capacity, status, false);
 }
 
@@ -220,10 +218,7 @@ std::int32_t APS5_VABI uloc_getKeywordValue(const char* locale, const char* keyw
 std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result,
                                         std::int32_t capacity, std::int32_t* status) {
     if (!status || *status > 0) return 0;
-    if (!locale) {
-        *status = kIllegalArgument;
-        return 0;
-    }
+    if (!locale) NotImplemented_nid_no_patch("uloc_canonicalize with a null locale, which names the default locale");
     Parts parts = Parse(locale);
     parts.encoding.clear();
     std::string canonical = parts.language == "x-private" ? "@x=private" : BaseName(parts);

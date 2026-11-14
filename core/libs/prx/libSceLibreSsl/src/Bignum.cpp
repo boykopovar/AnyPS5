@@ -238,6 +238,18 @@ void FreeBignum(Bignum* bn) {
     }
 }
 
+template <typename TAction>
+bool FillBignum(Bignum* target, bool owned, TAction action) {
+    try {
+        return action();
+    } catch (...) {
+        if (owned) {
+            try { FreeBignum(target); } catch (...) {}
+        }
+        throw;
+    }
+}
+
 int HexValue(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -286,13 +298,16 @@ Bignum* APS5_VABI BN_bin2bn_nid_postfix(const unsigned char* s, int len, Bignum*
     if (len > 0 && !s) throw std::invalid_argument(std::string(__func__) + ": null input");
     Bignum* target = ret ? ret : NewBignum();
     if (!target) return nullptr;
-    Mag m((static_cast<std::size_t>(len) + 7) / 8, 0);
-    for (int i = 0; i < len; i++) {
-        const std::size_t bit = static_cast<std::size_t>(len - 1 - i);
-        m[bit / 8] |= static_cast<std::uint64_t>(s[i]) << (bit % 8 * 8);
-    }
-    Trim(m);
-    if (!Store(target, m, false)) {
+    const bool stored = FillBignum(target, ret == nullptr, [&] {
+        Mag m((static_cast<std::size_t>(len) + 7) / 8, 0);
+        for (int i = 0; i < len; i++) {
+            const std::size_t bit = static_cast<std::size_t>(len - 1 - i);
+            m[bit / 8] |= static_cast<std::uint64_t>(s[i]) << (bit % 8 * 8);
+        }
+        Trim(m);
+        return Store(target, m, false);
+    });
+    if (!stored) {
         if (!ret) FreeBignum(target);
         return nullptr;
     }
@@ -329,10 +344,11 @@ int APS5_VABI BN_hex2bn_nid_postfix(Bignum** a, const char* str) {
         m[nibble / 16] |= static_cast<std::uint64_t>(HexValue(digits[i])) << (nibble % 16 * 4);
     }
     Trim(m);
-    Bignum* target = *a ? *a : NewBignum();
+    const bool owned = *a == nullptr;
+    Bignum* target = owned ? NewBignum() : *a;
     if (!target) return 0;
-    if (!Store(target, m, negative)) {
-        if (!*a) FreeBignum(target);
+    if (!FillBignum(target, owned, [&] { return Store(target, m, negative); })) {
+        if (owned) FreeBignum(target);
         return 0;
     }
     target->neg = negative ? 1 : 0;
@@ -391,7 +407,7 @@ Bignum* APS5_VABI BN_mod_inverse_nid_postfix(Bignum* r, const Bignum* a, const B
     }
     Bignum* target = r ? r : NewBignum();
     if (!target) return nullptr;
-    if (!Store(target, inverse, false)) {
+    if (!FillBignum(target, r == nullptr, [&] { return Store(target, inverse, false); })) {
         if (!r) FreeBignum(target);
         return nullptr;
     }

@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -93,6 +94,9 @@ void VerifyLoggedInUser(int userId) {
     UserServiceGamePresets presets{};
     presets.difficulty = 0x5a;
     Require(sceUserServiceGetGamePresets(userId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetGamePresets(userId, reinterpret_cast<UserServiceGamePresets*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceGetGamePresets(userId, &presets) == USER_SERVICE_OK);
     Require(presets.difficulty == 0);
 
@@ -129,6 +133,10 @@ int main() {
     int homeCount = -1;
     Require(sceUserServiceGetRegisteredHomeUserIdList(nullptr, &homeCount) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetRegisteredHomeUserIdList(homeIds, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetRegisteredHomeUserIdList(reinterpret_cast<std::int32_t*>(0x10), &homeCount) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetRegisteredHomeUserIdList(homeIds, reinterpret_cast<std::int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     std::memset(homeIds, 0x7B, sizeof(homeIds));
     Require(sceUserServiceGetRegisteredHomeUserIdList(homeIds, &homeCount) == USER_SERVICE_OK);
     Require(homeCount == 1 && homeIds[0] == USER_SERVICE_INITIAL_USER_ID);
@@ -422,6 +430,14 @@ int main() {
         Require(registered.user_id[i] == USER_SERVICE_USER_ID_INVALID);
     }
     VerifyLoggedInUser(USER_SERVICE_INITIAL_USER_ID);
+
+    bool spartacus = false;
+    Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, &spartacus) == USER_SERVICE_OK);
+    Require(spartacus);
+    Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<bool*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
 
     return 0;
 }

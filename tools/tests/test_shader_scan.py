@@ -1,5 +1,7 @@
+import contextlib
 import importlib.util
 import hashlib
+import io
 import json
 import re
 import sys
@@ -152,10 +154,13 @@ class IsaTests(unittest.TestCase):
             table.write_text(progress.ISA_FORMS.read_text(encoding="utf-8"), encoding="utf-8")
             old = progress.ISA_FORMS
             progress.ISA_FORMS = table
+            out = io.StringIO()
             try:
-                self.assertEqual(progress.regenerate_isa_forms(xml), 0)
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(progress.regenerate_isa_forms(xml), 0)
             finally:
                 progress.ISA_FORMS = old
+            self.assertIn(f"{table}: ", out.getvalue())
             self.assertEqual(shader_scan.load_isa_forms(table), shader_scan.parse_isa_xml(ISA_XML))
             regenerated = table.read_text(encoding="utf-8")
             self.assertIn(hashlib.sha256(xml.read_bytes()).hexdigest(), regenerated)
