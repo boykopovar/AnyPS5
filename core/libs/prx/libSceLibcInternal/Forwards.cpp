@@ -1,8 +1,17 @@
 #include <cstdint>
 #include <cstddef>
+#include <cstdarg>
 #include "SceTypes.hpp"
 #include "prx/libSceLibcInternal/include/Forwards.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+
+#ifdef _WIN32
+#define APS5_VA_BEGIN(last) __builtin_sysv_va_list args; __builtin_sysv_va_start(args, last)
+#define APS5_VA_END() __builtin_sysv_va_end(args)
+#else
+#define APS5_VA_BEGIN(last) std::va_list args; va_start(args, last)
+#define APS5_VA_END() va_end(args)
+#endif
 
 extern "C" {
 
@@ -470,8 +479,8 @@ void APS5_VABI _init_env_nid_disambig1_nid_postfix(void) {
     _init_env_nid_postfix();
 }
 
-[[noreturn]] void APS5_VABI abort_nid_disambig1_nid_postfix(std::uint64_t a0, std::uint64_t a1, std::uint64_t a2, std::uint64_t a3, std::uint64_t a4, std::uint64_t a5) {
-    abort_nid_postfix(a0, a1, a2, a3, a4, a5);
+[[noreturn]] void APS5_VABI abort_nid_disambig1_nid_postfix(void) {
+    abort_nid_postfix(0, 0, 0, 0, 0, 0);
 }
 
 double APS5_VABI acos_nid_disambig1_nid_postfix(double x) {
@@ -648,8 +657,11 @@ int APS5_VABI fopen_s_nid_disambig1_nid_postfix(FileStream** result, const char*
 
 
 
-int APS5_VABI fprintf_nid_disambig1_nid_postfix(FileStream* stream, const char* format, std::uint64_t v0, std::uint64_t v1) {
-    return fprintf_nid_postfix(stream, format, v0, v1);
+int APS5_VABI fprintf_nid_disambig1_nid_postfix(FileStream* stream, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vfprintf_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
 }
 
 int APS5_VABI fputc_nid_disambig1_nid_postfix(int value, FileStream* stream) {
@@ -678,8 +690,11 @@ long double APS5_VABI frexpl_nid_disambig1_nid_postfix(long double x, int* expon
     return frexpl_nid_postfix(x, exponent);
 }
 
-int APS5_VABI fscanf_nid_disambig1_nid_postfix(FileStream* stream, const char* format, std::uint64_t v0, std::uint64_t v1) {
-    return fscanf_nid_postfix(stream, format, v0, v1);
+int APS5_VABI fscanf_nid_disambig1_nid_postfix(FileStream* stream, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vfscanf_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
 }
 
 int APS5_VABI fseek_nid_disambig1_nid_postfix(FileStream* stream, std::int64_t offset, int origin) {
@@ -882,8 +897,11 @@ float APS5_VABI powf_nid_disambig1_nid_postfix(float base, float exp) {
     return powf_nid_postfix(base, exp);
 }
 
-int APS5_VABI printf_nid_disambig1_nid_postfix(const char* format, std::uint64_t v0, std::uint64_t v1) {
-    return printf_nid_postfix(format, v0, v1);
+int APS5_VABI printf_nid_disambig1_nid_postfix(const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vprintf_nid_postfix(format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
 }
 
 int APS5_VABI putchar_nid_disambig1_nid_postfix(int value) {
@@ -1018,20 +1036,32 @@ float APS5_VABI sinhf_nid_disambig1_nid_postfix(float x) {
     return sinhf_nid_postfix(x);
 }
 
-int APS5_VABI snprintf_nid_disambig1_nid_postfix(char* buffer, size_t size, const char* format, std::uint64_t v0, std::uint64_t v1) {
-    return snprintf_nid_postfix(buffer, size, format, v0, v1);
+int APS5_VABI snprintf_nid_disambig1_nid_postfix(char* buffer, size_t size, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vsnprintf_nid_postfix(buffer, size, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
 }
 
-int APS5_VABI snprintf_s_nid_disambig1_nid_postfix(char* buffer, size_t size, const char* format, std::uint64_t v0, std::uint64_t v1) {
-    return snprintf_s_nid_postfix(buffer, size, format, v0, v1);
+int APS5_VABI snprintf_s_nid_disambig1_nid_postfix(char* buffer, size_t size, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vsnprintf_s_nid_postfix(buffer, size, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
 }
 
-int APS5_VABI sprintf_nid_disambig1_nid_postfix(char* buffer, const char* format, std::uint64_t v0, std::uint64_t v1) {
-    return sprintf_nid_postfix(buffer, format, v0, v1);
+int APS5_VABI sprintf_nid_disambig1_nid_postfix(char* buffer, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vsprintf_nid_postfix(buffer, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
 }
 
-int APS5_VABI sprintf_s_nid_disambig1_nid_postfix(char* buffer, size_t size, const char* format, std::uint64_t v0, std::uint64_t v1) {
-    return sprintf_s_nid_postfix(buffer, size, format, v0, v1);
+int APS5_VABI sprintf_s_nid_disambig1_nid_postfix(char* buffer, size_t size, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vsprintf_s_nid_postfix(buffer, size, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
 }
 
 
@@ -1040,12 +1070,18 @@ void APS5_VABI srand_nid_disambig1_nid_postfix(unsigned int seed) {
     srand_nid_postfix(seed);
 }
 
-int APS5_VABI sscanf_nid_disambig1_nid_postfix(const char* input, const char* format, std::uint64_t v0, std::uint64_t v1) {
-    return sscanf_nid_postfix(input, format, v0, v1);
+int APS5_VABI sscanf_nid_disambig1_nid_postfix(const char* input, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vsscanf_nid_postfix(input, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
 }
 
-int APS5_VABI sscanf_s_nid_disambig1_nid_postfix(const char* buffer, const char* format, std::uint64_t v0, std::uint64_t v1) {
-    return sscanf_s_nid_postfix(buffer, format, v0, v1);
+int APS5_VABI sscanf_s_nid_disambig1_nid_postfix(const char* buffer, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vsscanf_s_nid_postfix(buffer, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
 }
 
 int APS5_VABI strcasecmp_nid_disambig1_nid_postfix(const char* s1, const char* s2) {
@@ -1176,8 +1212,11 @@ unsigned long long APS5_VABI strtoull_nid_disambig1_nid_postfix(const char* str,
     return strtoull_nid_postfix(str, endptr, base);
 }
 
-int APS5_VABI swprintf_nid_disambig1_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, std::uint64_t v0, std::uint64_t v1) {
-    return swprintf_nid_postfix(buffer, size, format, v0, v1);
+int APS5_VABI swprintf_nid_disambig1_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vswprintf_nid_postfix(buffer, size, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
 }
 
 double APS5_VABI tan_nid_disambig1_nid_postfix(double x) {
