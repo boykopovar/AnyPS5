@@ -578,6 +578,36 @@ class SymbolizeSamplesTests(unittest.TestCase):
         written = sorted(out.read_text(encoding="utf-8").splitlines())
         self.assertEqual(written, ["ntdll.dll+0x1;libSceAgcDriver.prx!AgcDriver_long_function_name 3", "ntdll.dll+0x1;libSceAgcDriver.prx!short 3"])
 
+    def test_since_writes_empty_output_when_no_samples_were_added(self):
+        earlier = self.root / "worker-early.collapsed.txt"
+        later = self.root / "worker-late.collapsed.txt"
+        for capture in (earlier, later):
+            capture.write_text("libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+        output = self.root / "window.collapsed.txt"
+        output.write_text("old!sample 99\n", encoding="utf-8")
+
+        lines, errors = self.run_main(later, "--since", earlier, "--libs", self.libs, "--out", output)
+
+        self.assertEqual(lines, ["0 samples"])
+        self.assertEqual(errors, "")
+        self.assertEqual(output.read_bytes(), b"")
+
+    def test_since_protects_a_referenced_module_when_no_samples_were_added(self):
+        module = self.libs / "module"
+        module.write_bytes(b"referenced input")
+        earlier = self.root / "worker-early.collapsed.txt"
+        later = self.root / "worker-late.collapsed.txt"
+        for capture in (earlier, later):
+            capture.write_text("module+0x1011 4\n", encoding="utf-8")
+
+        result = subprocess.run([sys.executable, symbolize_samples.__file__, str(later),
+                                 "--since", str(earlier), "--libs", str(self.libs), "--out", str(module)],
+                                capture_output=True, text=True)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("symbolized output must be separate from module inputs", result.stderr)
+        self.assertEqual(module.read_bytes(), b"referenced input")
+
     def run_main(self, *arguments):
         printed = io.StringIO()
         errors = io.StringIO()
