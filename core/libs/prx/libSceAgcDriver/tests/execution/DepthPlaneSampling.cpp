@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -23,10 +24,13 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <deque>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -72,7 +76,25 @@ constexpr std::size_t SmallCubeOffset = 0x180000;
 constexpr std::size_t LargeCubeOffset = 0x200000;
 constexpr std::size_t GuestDepthBitsOffset = 0x480000;
 constexpr std::size_t FrameCopiesOffset = 0x520000;
+constexpr std::size_t ReusedArrayOffset = 0x680000;
 constexpr std::size_t ReloadOffset = 0x700000;
+constexpr std::uint32_t TableLanes = 64;
+constexpr std::uint32_t TableTextures = 1500;
+constexpr std::uint32_t TableStride = 32;
+constexpr std::size_t TableSurfaceBytes = 256;
+constexpr std::uint32_t Format8888UNorm = 56;
+constexpr std::size_t TableSrtOffset = 4096;
+constexpr std::size_t TableInputOffset = 8192;
+constexpr std::size_t TableOutputOffset = 12288;
+constexpr std::size_t TableHeapOffset = 65536;
+constexpr std::size_t TableDepthOffset = 0x20000;
+constexpr std::size_t TableBlockBytes = 0x40000;
+constexpr std::size_t TableSurfaceBlockBytes = (std::size_t{TableTextures} * TableSurfaceBytes + 65535u) & ~std::size_t{65535};
+constexpr std::array<std::uint32_t, 25> TableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u,
+    0x34080082u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xbf8cc07fu,
+    0xe0301000u, 0x80030504u, 0xf09c0f08u, 0x00450000u, 0xbf8c3f70u, 0x4a000105u,
+    0xe0701000u, 0x80070004u, 0xbf810000u, 0u, 0u};
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -103,36 +125,36 @@ alignas(256) std::array<std::byte, 320 * 320 * 4> Pixels{};
 
 class GuestBlock {
 public:
-    GuestBlock() {
+    explicit GuestBlock(std::size_t size = BlockBytes, bool gpu = true) : bytes(size) {
 #ifdef _WIN32
-        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
-        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
 #else
         constexpr std::uintptr_t alignment = 65536;
-        void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, bytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (mapped != MAP_FAILED) {
             const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
             const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
             if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
+            if (aligned + bytes != begin + bytes + alignment) munmap(reinterpret_cast<void*>(aligned + bytes), begin + alignment - aligned);
             block = reinterpret_cast<std::uint8_t*>(aligned);
-            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
         }
 #endif
         Require(block != nullptr, "depth plane sampling: cannot allocate the guest block");
-        std::memset(block, 0, BlockBytes);
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
-        AgcDriver::GuestMemory::CollectWritesUncached(reinterpret_cast<std::uintptr_t>(block), BlockBytes);
+        std::memset(block, 0, bytes);
+        GuestAllocations::Mutation().Add(block, bytes, true, true, gpu);
+        AgcDriver::GuestMemory::CollectWritesUncached(reinterpret_cast<std::uintptr_t>(block), bytes);
     }
 
     ~GuestBlock() {
         GuestAllocations::Mutation().Remove(block);
 #ifdef _WIN32
-        GuestArena::GuestArenaReset_nid_postfix(block, BlockBytes);
-        GuestArena::GuestArenaRelease_nid_postfix(block, BlockBytes);
+        GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+        GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
 #else
-        munmap(block, BlockBytes);
-        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
+        munmap(block, bytes);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, bytes);
 #endif
     }
 
@@ -142,6 +164,7 @@ public:
     std::uint8_t* At(std::size_t offset) { return block + offset; }
 
 private:
+    std::size_t bytes = 0;
     std::uint8_t* block = nullptr;
 };
 
@@ -239,7 +262,7 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     device.WaitIdle();
 }
 
-void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
+ShaderRecompiler::RecompileResult CompileLoad(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
     const auto& code = shaderImage2D ? Load2D : shape.type == TypeCube ? LoadCube : shape.type == Type2DArray ? LoadArray : Load2D;
     std::vector<std::uint32_t> userData(16, 0u);
     const auto out = std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(output.data())), static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(output.data()) >> 32u) & 0xffffu), static_cast<std::uint32_t>(output.size_bytes()), 0x31016facu};
@@ -257,10 +280,19 @@ void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& sh
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    return ShaderRecompiler::Recompile(request);
+}
+
+void DispatchLoad(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& result, const Shape& shape, std::span<std::uint32_t> output, bool shaderImage2D = false) {
+    const auto& code = shaderImage2D ? Load2D : shape.type == TypeCube ? LoadCube : shape.type == Type2DArray ? LoadArray : Load2D;
     std::fill(output.begin(), output.end(), 0xdeadbeefu);
-    const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+}
+
+void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
+    const auto result = CompileLoad(device, texels, shape, slice, output, shaderImage2D, row);
+    DispatchLoad(device, result, shape, output, shaderImage2D);
 }
 
 void Expect(std::span<const std::uint32_t> output, std::uint32_t expected, const std::string& what) {
@@ -287,6 +319,110 @@ void ArrayCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std
         Load(device, base, shape, slice, output);
         Expect(output, Bits(expected[slice]), "D32 2D array slice " + std::to_string(slice));
     }
+}
+
+void ReusedArrayCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    auto* base = block.At(ReusedArrayOffset);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth);
+    FillSlice(base + SliceBytes, SliceBytes, Bits(0.5f), 4u);
+    FillSlice(base + 2u * SliceBytes, SliceBytes, Bits(0.75f), 4u);
+    const Shape shape{Format32Float, 128, 128, Type2DArray, 2, Swizzle64KbZX};
+    const auto first = CompileLoad(device, base, shape, 0, output);
+    const auto second = CompileLoad(device, base, shape, 1, output);
+    const auto before = AgcDriver::Graphics::SharedResourceCache().Size();
+    DispatchLoad(device, first, shape, output);
+    Expect(output, Bits(DrawnDepth), "reused D32 array slice 0");
+    if (std::getenv("APS5_NO_PER_USE_TEXTURE_TEMPLATES") == nullptr) Require(AgcDriver::Graphics::SharedResourceCache().Size() > before, "a dispatch over a depth plane copy did not enter the resource cache");
+    DispatchLoad(device, second, shape, output);
+    Expect(output, Bits(0.5f), "reused D32 array slice 1");
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, 0.625f);
+    DispatchLoad(device, first, shape, output);
+    Expect(output, Bits(0.625f), "reused D32 array slice 0 after the surface was drawn again");
+    FillSlice(base + SliceBytes, SliceBytes, Bits(0.875f), 4u);
+    DispatchLoad(device, second, shape, output);
+    Expect(output, Bits(0.875f), "reused D32 array slice 1 after its guest memory changed");
+    DispatchLoad(device, first, shape, output);
+    Expect(output, Bits(0.625f), "reused D32 array slice 0 dispatched again unchanged");
+}
+
+ShaderRecompiler::RecompileResult CompileTable(AgcDriver::VulkanDevice& device, GuestBlock& block) {
+    const auto base = reinterpret_cast<std::uint64_t>(block.At(0));
+    const auto srt = reinterpret_cast<std::uint64_t>(block.At(TableSrtOffset));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srt), static_cast<std::uint32_t>(srt >> 32u)};
+    const std::span<const std::uint32_t> code(reinterpret_cast<const std::uint32_t*>(block.At(0)), TableCode.size());
+    const std::array<ShaderRecompiler::MemoryRegion, 3> memory{{
+        {base, std::as_bytes(code)},
+        {srt, std::as_bytes(std::span<const std::uint32_t>(reinterpret_cast<const std::uint32_t*>(block.At(TableSrtOffset)), 64))},
+        {reinterpret_cast<std::uint64_t>(block.At(TableHeapOffset)), std::as_bytes(std::span<const std::uint32_t>(reinterpret_cast<const std::uint32_t*>(block.At(TableHeapOffset)), static_cast<std::size_t>(TableTextures) * TableStride / 4u))},
+    }};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{TableLanes, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, base, code, 0, {}},
+        {TableLanes, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    return ShaderRecompiler::Recompile(request);
+}
+
+void TableOverBoundCase(AgcDriver::VulkanDevice& device) {
+    auto& block = *new GuestBlock(TableBlockBytes, true);
+    auto& surfaces = *new GuestBlock(TableSurfaceBlockBytes, false);
+    std::memcpy(block.At(0), TableCode.data(), sizeof(TableCode));
+    auto* depth = block.At(TableDepthOffset);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(depth), {256, 128}, VK_FORMAT_D16_UNORM, DrawnD16Depth);
+    const auto plane = TextureDescriptor(depth, {Format16Uint, 256, 128, Type2D, 0, Swizzle64KbS});
+    std::memcpy(block.At(TableHeapOffset), plane.data(), sizeof(plane));
+    for (std::uint32_t texture = 1; texture < TableTextures; ++texture) {
+        const auto offset = static_cast<std::size_t>(texture) * TableSurfaceBytes;
+        std::memset(surfaces.At(offset), static_cast<int>(texture & 0xffu), TableSurfaceBytes);
+        const auto surface = reinterpret_cast<std::uint64_t>(surfaces.At(offset));
+        const std::array<std::uint32_t, 8> words{static_cast<std::uint32_t>(surface >> 8u), static_cast<std::uint32_t>((surface >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (3u << 30u), 1u | (7u << 14u), 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
+        std::memcpy(block.At(TableHeapOffset + static_cast<std::size_t>(texture) * TableStride), words.data(), sizeof(words));
+    }
+    auto* srt = reinterpret_cast<std::uint32_t*>(block.At(TableSrtOffset));
+    const auto heap = BufferDescriptor(block.At(TableHeapOffset), TableStride, TableTextures);
+    const auto input = BufferDescriptor(block.At(TableInputOffset), 0u, TableLanes * 4u);
+    const auto output = BufferDescriptor(block.At(TableOutputOffset), 0u, TableLanes * 4u);
+    std::copy(heap.begin(), heap.end(), srt);
+    std::copy(input.begin(), input.end(), srt + 8);
+    std::copy(output.begin(), output.end(), srt + 12);
+    AgcDriver::GuestMemory::CollectWritesUncached(reinterpret_cast<std::uintptr_t>(block.At(0)), TableHeapOffset + std::size_t{TableTextures} * TableStride);
+    AgcDriver::GuestMemory::CollectWritesUncached(reinterpret_cast<std::uintptr_t>(surfaces.At(0)), TableSurfaceBlockBytes);
+    const auto result = CompileTable(device, block);
+    const auto table = std::find_if(result.bindings.begin(), result.bindings.end(), [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTable; });
+    Require(table != result.bindings.end() && table->count == TableTextures, "table over the bound: the program does not bind an image table of " + std::to_string(TableTextures) + " textures");
+    using AgcDriver::Graphics::ShaderResources;
+    const bool templates = std::getenv("APS5_NO_PER_USE_TEXTURE_TEMPLATES") == nullptr;
+    const bool partial = std::getenv("APS5_NO_PER_USE_PARTIAL_WALK") == nullptr;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &result, 0};
+    std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto resources = std::make_shared<ShaderResources>(context, shader);
+    const auto& sampled = resources->SampledTextures();
+    const auto perUse = std::count_if(sampled.begin(), sampled.end(), [](const auto& texture) { return texture != nullptr && texture->RefreshedPerUse(); });
+    Require(sampled.size() == TableTextures && perUse == 1, "table over the bound: the build holds " + std::to_string(sampled.size()) + " textures, " + std::to_string(perUse) + " of them refreshed per use, instead of " + std::to_string(TableTextures) + " with one");
+    if (!templates) {
+        Require(!resources->Reusable(), "table over the bound: APS5_NO_PER_USE_TEXTURE_TEMPLATES kept a build over a per-use texture reusable");
+        return;
+    }
+    Require(resources->Reusable(), "table over the bound: a build over a per-use texture whose " + std::to_string(TableTextures) + " entries all have records is not reusable");
+    const auto prove = [&](const char* what) {
+        ShaderResources::ProofReport report;
+        Require(resources->Revalidate(shader, &report), std::string("table over the bound: the cached build was not proved current ") + what);
+        return report;
+    };
+    const auto path = [](ShaderResources::ProofPath value) { return value == ShaderResources::ProofPath::Fast ? std::string("the fast proof") : value == ShaderResources::ProofPath::OwnRefreshed ? std::string("the own refresh") : std::string("the full walk"); };
+    const auto expected = partial ? ShaderResources::ProofPath::Fast : ShaderResources::ProofPath::Full;
+    static_cast<void>(prove("after the build"));
+    auto report = prove("with its memory unchanged");
+    Require(report.path == expected, "table over the bound: a hit with its memory unchanged took " + path(report.path) + " instead of " + path(expected));
+    gpu.unlock();
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(depth), {256, 128}, VK_FORMAT_D16_UNORM, 0.6f);
+    gpu.lock();
+    report = prove("after its depth plane was drawn again");
+    Require(report.path == expected, "table over the bound: a hit after its depth plane was drawn again took " + path(report.path) + " instead of " + path(expected));
 }
 
 // A cube over six square D32 slices: face 0 from the live surface, faces 1-5 from guest memory.
@@ -505,6 +641,10 @@ int main(int argc, char** argv) {
         ArrayCase(*device, block, output);
         present();
         CubeCase(*device, block, output);
+        present();
+        ReusedArrayCase(*device, block, output);
+        present();
+        TableOverBoundCase(*device);
         present();
         IntegerCase(*device, block, output);
         present();
