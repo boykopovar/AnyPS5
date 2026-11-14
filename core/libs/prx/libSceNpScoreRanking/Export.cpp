@@ -297,7 +297,13 @@ int APS5_VABI sceNpScorePollAsync(int reqId, int* result) {
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (!request->second.result) return POLL_RUNNING;
-    if (result) *result = *request->second.result;
+    if (result) {
+        const int value = *request->second.result;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return POLL_FINISHED;
 }
 
@@ -565,7 +571,13 @@ int APS5_VABI sceNpScoreWaitAsync(int reqId, int* result) {
         const auto request = requests.find(reqId);
         return request != requests.end() && request->second.result;
     });
-    if (result) *result = *requests.at(reqId).result;
+    if (result) {
+        const int value = *requests.at(reqId).result;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return 0;
 }
 
