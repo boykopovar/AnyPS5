@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -307,6 +308,12 @@ static int testClock() {
     bool ok = expect(sceNpGetSystemClockUsec(&usec) == 0, "the clock was not read");
     sceKernelClockGettime(4, &after);
     ok &= expect(sceNpGetSystemClockUsec(nullptr) == INVALID_ARGUMENT, "a null destination was not rejected");
+    errno = 71;
+    ok &= expect(sceNpGetSystemClockUsec(reinterpret_cast<std::int64_t*>(0x10)) == INVALID_ARGUMENT, "an unwritable destination was not rejected");
+    ok &= expect(errno == 71, "errno was altered on unwritable destination");
+    alignas(16) std::int64_t clockBuffer[3] = {-1, -1, -1};
+    ok &= expect(sceNpGetSystemClockUsec(&clockBuffer[1]) == 0, "a valid destination buffer write failed");
+    ok &= expect(clockBuffer[0] == -1 && clockBuffer[1] >= 0 && clockBuffer[2] == -1, "adjacent memory was corrupted");
     std::int64_t later = -1;
     ok &= expect(sceNpGetSystemClockUsec(&later) == 0 && later >= usec && usec >= 0, "the clock went backwards");
 
