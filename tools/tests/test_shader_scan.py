@@ -146,6 +146,22 @@ class IsaTests(unittest.TestCase):
         self.assertEqual(len(forms), len(set(forms)))
         self.assertEqual({form for _, _, form, _ in forms}, set(shader_scan.FORMS))
 
+    def test_table_skips_blank_lines_indented_comments_and_a_bom(self):
+        with tempfile.TemporaryDirectory() as directory:
+            table = Path(directory) / "forms.txt"
+            table.write_bytes(b"\xef\xbb\xbf# header\n\n   \n  # indented\nS_MOV_B32 SOP1 base 0\n\tV_ADD_F32 VOP2 base 3  \n")
+            self.assertEqual(shader_scan.load_isa_forms(table), [("S_MOV_B32", "SOP1", "base", 0), ("V_ADD_F32", "VOP2", "base", 3)])
+
+    def test_table_line_with_the_wrong_fields_is_a_scan_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            table = Path(directory) / "forms.txt"
+            for line in ("S_MOV_B32 SOP1 base", "S_MOV_B32 SOP1 base 0 extra", "S_MOV_B32 SOP1 base zero"):
+                with self.subTest(line):
+                    table.write_text(f"# header\n{line}\n", encoding="utf-8")
+                    with self.assertRaises(shader_scan.ScanError) as raised:
+                        shader_scan.load_isa_forms(table)
+                    self.assertIn(f"{table}:2: ", str(raised.exception))
+
     def test_regenerating_the_table_from_xml_round_trips(self):
         with tempfile.TemporaryDirectory() as directory:
             xml = Path(directory) / "isa.xml"

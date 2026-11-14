@@ -141,10 +141,13 @@ def parse_isa_xml(xml):
 
 def load_isa_forms(path):
     forms = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
-        if line and not line.startswith("#"):
-            name, encoding, form, opcode = line.split()
-            forms.append((name, encoding, form, int(opcode)))
+    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").splitlines(), 1):
+        if line.strip() and not line.lstrip().startswith("#"):
+            try:
+                name, encoding, form, opcode = line.split()
+                forms.append((name, encoding, form, int(opcode)))
+            except ValueError:
+                raise ScanError(f"{path}:{number}: expected 'name encoding form opcode', got: {line}") from None
     return forms
 
 
