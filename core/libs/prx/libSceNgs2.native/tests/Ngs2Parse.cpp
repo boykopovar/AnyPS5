@@ -2,6 +2,7 @@
 
 #include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
@@ -365,6 +366,37 @@ static void TestParseUser() {
         static_cast<int>(0x804A0408u));
 }
 
+static void TestCalcWaveformBlockGuestErrors() {
+    const Ngs2WaveformFormat format{SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2, 48000, 0, 0, 0};
+    Ngs2WaveformBlock block{};
+    errno = 0x5566;
+    Require(sceNgs2CalcWaveformBlock(&format, 0, 0, reinterpret_cast<Ngs2WaveformBlock*>(0x10)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    Require(errno == 0x5566);
+    errno = 0x5566;
+    Require(sceNgs2CalcWaveformBlock(reinterpret_cast<const Ngs2WaveformFormat*>(0x10), 0, 0, &block) == SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT);
+    Require(errno == 0x5566);
+}
+
+static void TestFrameInfoGuestErrors() {
+    const Ngs2WaveformFormat format{SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2, 48000, 0, 0, 0};
+    std::uint32_t a = 0, b = 0, c = 0, d = 0;
+    errno = 0x5566;
+    Require(sceNgs2GetWaveformFrameInfo(reinterpret_cast<const Ngs2WaveformFormat*>(0x10), &a, &b, &c, &d) == SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT);
+    Require(errno == 0x5566);
+    errno = 0x5566;
+    Require(sceNgs2GetWaveformFrameInfo(&format, reinterpret_cast<uint32_t*>(0x10), &b, &c, &d) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    Require(errno == 0x5566);
+    errno = 0x5566;
+    Require(sceNgs2GetWaveformFrameInfo(&format, &a, reinterpret_cast<uint32_t*>(0x10), &c, &d) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    Require(errno == 0x5566);
+    errno = 0x5566;
+    Require(sceNgs2GetWaveformFrameInfo(&format, &a, &b, reinterpret_cast<uint32_t*>(0x10), &d) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    Require(errno == 0x5566);
+    errno = 0x5566;
+    Require(sceNgs2GetWaveformFrameInfo(&format, &a, &b, &c, reinterpret_cast<uint32_t*>(0x10)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    Require(errno == 0x5566);
+}
+
 int main() {
     TestParsePcm();
     TestParsePcmLoops();
@@ -374,5 +406,7 @@ int main() {
     TestParseFileBank();
     TestFrameInfoPcm();
     TestFrameInfoErrors();
+    TestCalcWaveformBlockGuestErrors();
+    TestFrameInfoGuestErrors();
     return 0;
 }
