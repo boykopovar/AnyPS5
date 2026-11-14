@@ -55,6 +55,7 @@ struct TableCall {
     std::uint32_t constantPointerLowProgramCounter = 0;
     std::uint32_t constantPointerHighProgramCounter = 0;
     bool descriptorInUserData = false;
+    std::optional<std::uint32_t> nestedDescriptorOffset;
 };
 
 struct TableCallee {

@@ -1,0 +1,15 @@
+add_library(libSceDepth2 SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceDepth2 PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceDepth2)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_depth2_tests ${LIBS_INCLUDE_DIR}/tests/GuestDepth2.cpp)
+    target_include_directories(guest_depth2_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_depth2_tests PRIVATE libSceDepth2 libc)
+    configure_windows_unwind(guest_depth2_tests)
+    add_test(NAME guest_depth2 COMMAND guest_depth2_tests)
+    if(WIN32)
+        set_tests_properties(guest_depth2 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceDepth2>")
+    endif()
+endif()

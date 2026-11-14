@@ -51,7 +51,7 @@ void MemoryAccounting::Record(VkDevice device, VkDeviceMemory memory, const VkMe
 }
 
 VkResult MemoryAccounting::Allocate(const Context& context, const VkMemoryAllocateInfo& allocation, const char* category, VkDeviceMemory* memory) {
-    const auto result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, memory);
+    const auto result = context.Resolved(&DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, memory);
     if (result == VK_SUCCESS) Record(context.device, *memory, allocation, context.memory, category);
     return result;
 }
@@ -71,7 +71,7 @@ void MemoryAccounting::Free(PFN_vkFreeMemory freeMemory, VkDevice device, VkDevi
 }
 
 void MemoryAccounting::Free(const Context& context, VkDeviceMemory memory) {
-    Free(context.Function<PFN_vkFreeMemory>("vkFreeMemory"), context.device, memory);
+    Free(context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory"), context.device, memory);
 }
 
 void MemoryAccounting::Use(VkDevice device, VkDeviceMemory memory, const char* category) noexcept {
@@ -150,7 +150,7 @@ MemoryAccounting::Snapshot MemoryAccounting::Read(VkDevice device) {
     return result;
 }
 
-void MemoryAccounting::Report(const Context& context, const VkPhysicalDeviceMemoryBudgetPropertiesEXT& reported, std::uint64_t sampledBytes, std::uint64_t storageBytes, std::uint64_t storageBudget) noexcept {
+void MemoryAccounting::Report(const Context& context, const VkPhysicalDeviceMemoryBudgetPropertiesEXT& reported, const StorageTextureBudgetSnapshot& storage) noexcept {
     if (!Enabled()) return;
     try {
         auto& state = accounting();
@@ -172,7 +172,6 @@ void MemoryAccounting::Report(const Context& context, const VkPhysicalDeviceMemo
             totals[allocation.heap][0] += allocation.bytes;
             totals[allocation.heap][1] += allocation.retained;
         }
-        std::optional<std::uint32_t> storageHeap;
         for (std::uint32_t heap = 0; heap < context.memory.memoryHeapCount && heap < VK_MAX_MEMORY_HEAPS; ++heap) {
             const auto allocated = totals[heap][0];
             const auto retained = totals[heap][1];
@@ -181,20 +180,14 @@ void MemoryAccounting::Report(const Context& context, const VkPhysicalDeviceMemo
                 static_cast<unsigned long long>(reported.heapBudget[heap]), static_cast<unsigned long long>(usage), static_cast<unsigned long long>(allocated),
                 static_cast<unsigned long long>(allocated - retained), static_cast<unsigned long long>(retained), static_cast<unsigned long long>(usage - std::min(usage, allocated)),
                 static_cast<unsigned long long>(allocated - std::min(usage, allocated)), snapshot.complete ? 1u : 0u);
-            if ((context.memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0 && (!storageHeap || context.memory.memoryHeaps[heap].size > context.memory.memoryHeaps[*storageHeap].size)) storageHeap = heap;
         }
         for (const auto& [key, bytes] : categories) {
             std::fprintf(stderr, "[gpu-memory] heap=%u category=\"%s\" active=%llu retained=%llu\n", key.first, key.second.c_str(), static_cast<unsigned long long>(bytes[0]), static_cast<unsigned long long>(bytes[1]));
         }
-        if (storageHeap && reported.heapBudget[*storageHeap] != 0) {
-            const auto budget = reported.heapBudget[*storageHeap];
-            const auto usage = reported.heapUsage[*storageHeap];
-            const auto reserved = usage - std::min<std::uint64_t>(usage, sampledBytes + storageBytes) + sampledBytes + budget / 8u;
-            const auto available = budget > reserved ? budget - reserved : 0u;
-            const auto cap = StorageTextureCeiling(context.memory, &reported);
-            std::fprintf(stderr, "[gpu-memory] storage heap=%u sampled_live=%llu storage_cached=%llu reserved=%llu available=%llu cap=%llu selected=%llu\n", *storageHeap,
-                static_cast<unsigned long long>(sampledBytes), static_cast<unsigned long long>(storageBytes), static_cast<unsigned long long>(reserved),
-                static_cast<unsigned long long>(available), static_cast<unsigned long long>(cap), static_cast<unsigned long long>(storageBudget));
+        if (storage.heap) {
+            std::fprintf(stderr, "[gpu-memory] storage heap=%u sampled_live=%llu storage_cached=%llu reserved=%llu available=%llu cap=%llu selected=%llu\n", *storage.heap,
+                static_cast<unsigned long long>(storage.sampledBytes), static_cast<unsigned long long>(storage.storageBytes), static_cast<unsigned long long>(storage.reserved),
+                static_cast<unsigned long long>(storage.available), static_cast<unsigned long long>(storage.ceiling), static_cast<unsigned long long>(storage.selectedBudget));
         }
     } catch (...) {
         accounting().complete = false;
