@@ -41,10 +41,15 @@ LibreSslUiMethod* APS5_VABI UI_create_method_nid_postfix(char* name) {
     auto* method = static_cast<LibreSslUiMethod*>(malloc_nid_postfix(sizeof(LibreSslUiMethod)));
     if (!method) return nullptr;
     std::memset(method, 0, sizeof(LibreSslUiMethod));
-    if (name) {
-        const std::size_t size = std::strlen(name) + 1;
-        method->name = static_cast<char*>(malloc_nid_postfix(size));
-        if (method->name) std::memcpy(method->name, name, size);
+    try {
+        if (name) {
+            const std::size_t size = std::strlen(name) + 1;
+            method->name = static_cast<char*>(malloc_nid_postfix(size));
+            if (method->name) std::memcpy(method->name, name, size);
+        }
+    } catch (...) {
+        try { free_nid_postfix(method); } catch (...) {}
+        throw;
     }
     return method;
 }

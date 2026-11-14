@@ -1,13 +1,16 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
+#include <unordered_map>
 
 static int APS5_VABI Open(void*) { return 1; }
 static int APS5_VABI Close(void*) { return 2; }
@@ -20,14 +23,85 @@ static void Require(bool condition, std::source_location location = std::source_
     std::abort();
 }
 
+struct UiAllocationFailure { unsigned ordinal; };
+struct UiReleaseFailure {};
+static std::unordered_map<void*, std::size_t> uiLive;
+static bool recordUiAllocation = false;
+static unsigned uiAllocationCalls = 0;
+static unsigned uiReleaseCalls = 0;
+static unsigned uiNullAt = 0;
+static unsigned uiThrowAt = 0;
+static bool uiReleaseThrows = false;
+static std::array<void*, 2> uiAllocated {};
+static std::array<void*, 2> uiReleased {};
+static std::array<std::size_t, 2> uiAllocationSizes {};
+
+static void* APS5_VABI UiAllocate(std::size_t size) {
+    unsigned ordinal = 0;
+    if (recordUiAllocation) {
+        ordinal = ++uiAllocationCalls;
+        Require(ordinal <= uiAllocated.size());
+        if (ordinal == uiThrowAt) throw UiAllocationFailure{ordinal};
+        if (ordinal == uiNullAt) return nullptr;
+    }
+    void* pointer = std::malloc(size ? size : 1);
+    if (!pointer) return nullptr;
+    Require(uiLive.emplace(pointer, size).second);
+    if (ordinal) {
+        uiAllocated[ordinal - 1] = pointer;
+        uiAllocationSizes[ordinal - 1] = size;
+    }
+    return pointer;
+}
+
+static void APS5_VABI UiRelease(void* pointer) {
+    if (!pointer) return;
+    Require(uiLive.erase(pointer) == 1);
+    if (recordUiAllocation) {
+        Require(uiReleaseCalls < uiReleased.size());
+        uiReleased[uiReleaseCalls++] = pointer;
+    }
+    std::free(pointer);
+    if (recordUiAllocation && uiReleaseThrows) throw UiReleaseFailure{};
+}
+
+static void* APS5_VABI UiCalloc(std::size_t count, std::size_t size) {
+    void* pointer = UiAllocate(count * size);
+    if (pointer) std::memset(pointer, 0, count * size);
+    return pointer;
+}
+
+static void* APS5_VABI UiReallocate(void* pointer, std::size_t size) {
+    if (!pointer) return UiAllocate(size);
+    const auto found = uiLive.find(pointer);
+    Require(found != uiLive.end());
+    if (!size) { UiRelease(pointer); return nullptr; }
+    void* grown = std::realloc(pointer, size);
+    if (!grown) return nullptr;
+    uiLive.erase(found);
+    Require(uiLive.emplace(grown, size).second);
+    return grown;
+}
+
+static void* APS5_VABI UiAlign(std::size_t, std::size_t size) { return UiAllocate(size); }
+static void* APS5_VABI UiRealign(void* pointer, std::size_t size, std::size_t) { return UiReallocate(pointer, size); }
+static int APS5_VABI UiPosixAlign(void** pointer, std::size_t, std::size_t size) {
+    *pointer = UiAllocate(size);
+    return *pointer ? 0 : 12;
+}
+
 template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
     try { action(); } catch (const std::exception&) { return; }
     Require(false, location);
 }
 
 static void InitializeHeap() {
-    void* const api[10] {};
-    ApplicationHeapRegister_nid_no_patch(api);
+    const std::array<void*, 10> api {
+        reinterpret_cast<void*>(UiAllocate), reinterpret_cast<void*>(UiRelease),
+        reinterpret_cast<void*>(UiCalloc), reinterpret_cast<void*>(UiReallocate),
+        reinterpret_cast<void*>(UiAlign), reinterpret_cast<void*>(UiRealign),
+        reinterpret_cast<void*>(UiPosixAlign), nullptr, nullptr, nullptr};
+    ApplicationHeapRegister_nid_no_patch(api.data());
 }
 
 static void TestCreate() {
@@ -199,6 +273,64 @@ static void TestSetResult() {
     Require(ERR_peek_error_nid_postfix() == 0);
 }
 
+static void ResetUiAllocation() {
+    Require(uiLive.empty());
+    uiAllocationCalls = uiReleaseCalls = uiNullAt = uiThrowAt = 0;
+    uiReleaseThrows = false;
+    uiAllocated = uiReleased = {};
+    uiAllocationSizes = {};
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(6, 0xfff, 65);
+    recordUiAllocation = true;
+}
+
+static void CheckUiAllocationError() {
+    Require(ERR_get_error_nid_postfix() == ((6ull << 24) | (0xfffull << 12) | 65));
+    Require(ERR_get_error_nid_postfix() == 0);
+    recordUiAllocation = false;
+}
+
+static void TestAllocationFailures() {
+    char name[] = "ordinary method name";
+    for (const unsigned ordinal : {1u, 2u}) {
+        ResetUiAllocation();
+        uiNullAt = ordinal;
+        auto* method = UI_create_method_nid_postfix(name);
+        Require(uiAllocationCalls == ordinal);
+        if (ordinal == 1) Require(method == nullptr && uiLive.empty() && uiReleaseCalls == 0);
+        else {
+            Require(method == uiAllocated[0] && method->name == nullptr && uiLive.size() == 1);
+            Require(uiAllocationSizes[0] == sizeof(LibreSslUiMethod));
+            UI_destroy_method_nid_postfix(method);
+            Require(uiReleaseCalls == 1 && uiReleased[0] == method && uiLive.empty());
+        }
+        CheckUiAllocationError();
+    }
+    for (const unsigned ordinal : {1u, 2u}) {
+        for (const bool cleanupThrows : {false, true}) {
+            ResetUiAllocation();
+            uiThrowAt = ordinal;
+            uiReleaseThrows = cleanupThrows;
+            bool caught = false;
+            try { UI_create_method_nid_postfix(name); }
+            catch (const UiAllocationFailure& failure) { caught = failure.ordinal == ordinal; }
+            uiReleaseThrows = false;
+            Require(caught && uiAllocationCalls == ordinal && uiLive.empty());
+            Require(uiReleaseCalls == (ordinal == 1 ? 0u : 1u));
+            if (ordinal == 2) Require(uiReleased[0] == uiAllocated[0] && uiAllocationSizes[0] == sizeof(LibreSslUiMethod));
+            CheckUiAllocationError();
+        }
+    }
+    ResetUiAllocation();
+    auto* method = UI_create_method_nid_postfix(name);
+    Require(method != nullptr && method == uiAllocated[0] && method->name == uiAllocated[1]);
+    Require(uiAllocationSizes[0] == sizeof(LibreSslUiMethod) && uiAllocationSizes[1] == sizeof(name));
+    Require(std::strcmp(method->name, name) == 0);
+    UI_destroy_method_nid_postfix(method);
+    Require(uiReleaseCalls == 2 && uiReleased[0] == uiAllocated[1] && uiReleased[1] == uiAllocated[0] && uiLive.empty());
+    CheckUiAllocationError();
+}
+
 int main() {
     InitializeHeap();
     TestCreate();
@@ -212,5 +344,7 @@ int main() {
     TestSetCloser();
     TestGetCloser();
     TestSetResult();
+    TestAllocationFailures();
+    Require(uiLive.empty());
     std::puts("libSceLibreSsl UI method tests passed");
 }
