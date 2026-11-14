@@ -60,6 +60,7 @@ public:
     void BeginHelperFunction();
     void EndHelperFunction();
     [[nodiscard]] bool InHelperFunction() const { return inHelperFunction; }
+    void InlineFunctions();
     [[nodiscard]] SpirvDeferredPhi AddDeferredPhi(std::uint32_t type, std::uint32_t result, std::size_t incomingCount);
     void PatchDeferredPhi(SpirvDeferredPhi phi, std::size_t incoming, std::uint32_t value, std::uint32_t parent);
 
@@ -272,6 +273,7 @@ private:
     BlockBallots ballots;
     BlockBallots helperBallots;
     bool inHelperFunction = false;
+    bool inlineFunctions = false;
 };
 
 }
