@@ -579,6 +579,8 @@ private:
     // APS5_BLOCK_WRITEBACK_EACH=1 stores the touched units only).
     void writeBack(std::uint64_t address, std::size_t bytes);
     void writeBackLayers(const std::vector<bool>& layers);
+    void noteGpuWrite(std::uint32_t first, std::uint32_t count);
+    void keepGuestNewer(const std::vector<bool>& layers, std::vector<std::pair<std::uint64_t, std::uint64_t>>& stores, std::vector<bool>& skippedLayer);
     void releaseReadTraps(bool sharingPages);
     void storeTrappedOverlaps(const char* reason);
     bool unchangedSinceBaseline(std::uint64_t from, std::uint64_t to) const;
@@ -817,6 +819,9 @@ private:
     std::uint64_t trackedLayerBytes = 0;
     std::vector<std::uint64_t> layerGeneration;
     std::vector<std::uint64_t> layerPendingSince;
+    std::vector<std::uint64_t> gpuWrittenAt;
+    std::vector<std::byte> pendingSnapshot;
+    std::vector<bool> pendingSnapshotHeld;
     std::vector<std::uint64_t> completionKept;
     UnitFlags layerPending;
     std::vector<bool> layerBehind;

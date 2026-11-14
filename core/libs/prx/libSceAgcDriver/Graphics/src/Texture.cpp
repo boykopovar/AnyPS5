@@ -134,6 +134,7 @@ thread_local const char* uploadReason = "first";
 // (DiscardPendingInside) and units an alias's own results superseded (markLayersPending); relaxed,
 // reported only.
 std::atomic<std::uint64_t> singlePassMoves{0}, slabRetiles{0}, paddingSeedCopies{0}, linearImportRetiles{0};
+std::atomic<std::uint64_t> guestNewerWriteBacks{0}, guestNewerExactBytes{0}, guestNewerPageBytes{0};
 std::atomic<std::uint64_t> partialUploads{0}, partialUploadBytes{0}, partialWriteBacks{0}, partialWriteBackBytes{0}, emptyWriteBacks{0}, coalescedWriteBacks{0}, unitsDropped{0}, unitsSuperseded{0}, clearHandOvers{0}, creationHandOvers{0}, handedOverSuperseded{0};
 // FlushPending listings skipped because no pending unit of the image lay inside the range, images
 // whose selected pending units were dropped because their memory is no longer registered (see
@@ -4514,6 +4515,103 @@ std::uint64_t StorageTexture::OccasionalLabelStores() {
     return occasionalLabelStores.load(std::memory_order_relaxed);
 }
 
+void StorageTexture::noteGpuWrite(std::uint32_t first, std::uint32_t count) {
+    if (gpuWrittenAt.size() != trackedLayers) {
+        gpuWrittenAt.assign(trackedLayers, 0);
+        pendingSnapshotHeld.assign(trackedLayers, false);
+    }
+    const auto last = std::min<std::uint32_t>(first + count, trackedLayers);
+    bool starts = false;
+    for (auto layer = first; layer < last; ++layer) starts = starts || !layerPending[layer];
+    const bool snapshot = starts && guestBytes <= GenerationBaselineBytes && GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) && guestBytesSettled();
+    if (snapshot && pendingSnapshot.size() != guestBytes) pendingSnapshot.assign(static_cast<std::size_t>(guestBytes), std::byte{0});
+    const auto stamp = GuestMemory::WriteWatched() ? GuestMemory::TrackerGeneration() : 0u;
+    for (auto layer = first; layer < last; ++layer) {
+        const auto begin = layerBegin(layer);
+        const auto bytes = static_cast<std::size_t>(layerBytes(layer));
+        gpuWrittenAt[layer] = stamp;
+        if (layerPending[layer]) continue;
+        pendingSnapshotHeld[layer] = false;
+        if (!snapshot) continue;
+        GuestMemory::ReadCommittedUnsynced(begin, std::span<std::byte>(pendingSnapshot).subspan(static_cast<std::size_t>(begin - descriptor.baseAddress), bytes));
+        pendingSnapshotHeld[layer] = true;
+    }
+}
+
+void StorageTexture::keepGuestNewer(const std::vector<bool>& layers, std::vector<std::pair<std::uint64_t, std::uint64_t>>& stores, std::vector<bool>& skippedLayer) {
+    static const bool disabled = std::getenv("APS5_NO_GUEST_NEWER_KEEP") != nullptr;
+    if (disabled || stores.empty() || gpuWrittenAt.size() != trackedLayers) return;
+    const std::uint64_t unit = blockUnits ? trackedLayerBytes : 16u;
+    const auto base = descriptor.baseAddress;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> guarded;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    std::vector<std::byte> now;
+    std::uint64_t exact = 0, paged = 0;
+    const auto guard = [&](std::uint64_t from, std::uint64_t to) {
+        from = base + (from - base) / unit * unit;
+        to = std::min(base + guestBytes, base + (to - base + unit - 1) / unit * unit);
+        if (!guarded.empty() && guarded.back().second >= from) guarded.back().second = std::max(guarded.back().second, to);
+        else guarded.emplace_back(from, to);
+    };
+    for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+        if (!layers[layer] || gpuWrittenAt[layer] == 0) continue;
+        GuestMemory::CollectWrittenBlocks(layerBegin(layer), static_cast<std::size_t>(layerBytes(layer)), gpuWrittenAt[layer], written);
+        const bool held = !blockUnits && pendingSnapshotHeld[layer] && pendingSnapshot.size() == guestBytes;
+        for (const auto& [begin, end] : written) {
+            if (!held) {
+                guard(begin, end);
+                paged += end - begin;
+                continue;
+            }
+            now.resize(static_cast<std::size_t>(end - begin));
+            GuestMemory::ReadCommittedUnsynced(begin, now);
+            const auto* before = pendingSnapshot.data() + (begin - base);
+            for (auto at = begin; at < end;) {
+                const auto stop = std::min(end, base + ((at - base) / 16u + 1u) * 16u);
+                if (std::memcmp(now.data() + (at - begin), before + (at - begin), static_cast<std::size_t>(stop - at)) != 0) {
+                    guard(at, stop);
+                    exact += stop - at;
+                }
+                at = stop;
+            }
+        }
+    }
+    if (guarded.empty()) return;
+    std::sort(guarded.begin(), guarded.end());
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
+    for (const auto& range : guarded) {
+        if (!merged.empty() && merged.back().second >= range.first) merged.back().second = std::max(merged.back().second, range.second);
+        else merged.push_back(range);
+    }
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> kept;
+    std::uint64_t removed = 0;
+    std::uint64_t firstKept = 0;
+    std::size_t next = 0;
+    for (const auto& [from, to] : stores) {
+        auto at = from;
+        while (next < merged.size() && merged[next].second <= at) ++next;
+        for (auto index = next; index < merged.size() && merged[index].first < to && at < to; ++index) {
+            const auto cutFrom = std::max(at, merged[index].first);
+            const auto cutTo = std::min(to, merged[index].second);
+            if (cutFrom >= cutTo) continue;
+            if (at < cutFrom) kept.emplace_back(at, cutFrom);
+            if (removed == 0) firstKept = cutFrom;
+            removed += cutTo - cutFrom;
+            for (auto layer = static_cast<std::uint32_t>((cutFrom - base) / trackedLayerBytes); layer < trackedLayers && layerBegin(layer) < cutTo; ++layer) skippedLayer[layer] = true;
+            at = cutTo;
+        }
+        if (at < to) kept.emplace_back(at, to);
+    }
+    if (removed == 0) return;
+    stores = std::move(kept);
+    const auto count = guestNewerWriteBacks.fetch_add(1, std::memory_order_relaxed) + 1;
+    guestNewerExactBytes.fetch_add(exact, std::memory_order_relaxed);
+    guestNewerPageBytes.fetch_add(paged, std::memory_order_relaxed);
+    if (count <= 8u || count % 1024u == 0u) {
+        std::fprintf(stderr, "[gpu] storage image 0x%llx+0x%llx (%s): the write-back leaves %llu bytes to the guest, written after the image's last GPU write (%s, first at +0x%llx); %llu such write-backs so far, %llu bytes found byte by byte against the pending snapshot and %llu by whole pages\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(guestBytes), flushReason != nullptr ? flushReason : "unnamed", static_cast<unsigned long long>(removed), exact != 0 && paged == 0 ? "byte by byte against the snapshot" : exact == 0 ? "by whole pages, no snapshot" : "partly by pages", static_cast<unsigned long long>(firstKept - base), static_cast<unsigned long long>(count), static_cast<unsigned long long>(guestNewerExactBytes.load(std::memory_order_relaxed)), static_cast<unsigned long long>(guestNewerPageBytes.load(std::memory_order_relaxed)));
+    }
+}
+
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
     if (count != 0) GuestMemory::ForgetKnownZero(layerBegin(first), static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first)));
     {
@@ -4522,6 +4620,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
         if (records.byAddress.size() >= 65536u) records.byAddress.clear();
         records.byAddress[descriptor.baseAddress] = {descriptor.width, descriptor.height, descriptor.tileMode, descriptor.dimension, descriptor.format, ++records.serial};
     }
+    noteGpuWrite(first, count);
     GuestMemory::NoteGpuPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     ++writes;
@@ -4630,7 +4729,11 @@ void StorageTexture::reconcilePending() {
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     const bool any = anyLayerPending();
-    if (!any) forgetDrawn();
+    if (!any) {
+        forgetDrawn();
+        pendingSnapshot = {};
+        std::fill(pendingSnapshotHeld.begin(), pendingSnapshotHeld.end(), false);
+    }
     if (any == dirty) return;
     dirty = any;
     if (any) pending.textures.push_back(this);
@@ -7247,6 +7350,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> spans;
     if (drawn.rect) spans = drawnSpans(drawn, keep);
+    keepGuestNewer(layers, drawn.rect ? spans : keep, skippedLayer);
     const auto& stores = drawn.rect ? spans : keep;
     const auto stampBegin = drawn.rect && !stores.empty() ? stores.front().first : firstStored;
     const auto stampEnd = drawn.rect && !stores.empty() ? stores.back().second : lastStored;
