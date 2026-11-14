@@ -12,7 +12,7 @@ if(BUILD_TESTING)
     add_test(NAME agc_driver_dcc_keys_rewrite_after_epoch_proof_committer COMMAND agc_driver_dcc_keys_first_write_tests --rewrite-after-epoch-proof)
     set_tests_properties(agc_driver_dcc_keys_rewrite_after_epoch_proof_committer PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_HOST_IMPORT=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-    foreach(gate IN ITEMS "committer|on" "finisher|on|APS5_DRAW_PIPELINE=1" "inline|off|APS5_PIPELINED_DRAWS=0" "finisher_inline|off|APS5_DRAW_PIPELINE=1;APS5_PIPELINED_DRAWS=0" "locked_prepare|off|APS5_LOCKED_DRAW_PREPARE=1" "switched_off|off|APS5_NO_EPOCH_PROOFS=1" "finisher_switched_off|off|APS5_DRAW_PIPELINE=1;APS5_NO_EPOCH_PROOFS=1")
+    foreach(gate IN ITEMS "committer|on" "finisher|on|APS5_DRAW_PIPELINE=1" "inline|off|APS5_PIPELINED_DRAWS=0" "finisher_inline|off|APS5_DRAW_PIPELINE=1;APS5_PIPELINED_DRAWS=0" "locked_prepare|off|APS5_LOCKED_DRAW_PREPARE=1" "switched_off|off|APS5_NO_EPOCH_PROOFS=1" "finisher_switched_off|off|APS5_DRAW_PIPELINE=1;APS5_NO_EPOCH_PROOFS=1" "draw_drain|off|APS5_DRAW_DRAIN=1" "drain_all|off|APS5_DRAIN_ALL=1" "no_wordwise_capture|off|APS5_NO_WORDWISE_CAPTURE=1")
         string(REPLACE "|" ";" fields "${gate}")
         list(GET fields 0 name)
         list(GET fields 1 expected)
