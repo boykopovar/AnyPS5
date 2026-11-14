@@ -19,9 +19,6 @@ agcbuild_AcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console enc
 agcbuild_AcbDmaData_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbDmaData_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbDmaData_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbEventWrite_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbEventWrite_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbEventWrite_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbInitializeDefaultHardwareState_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbInitializeDefaultHardwareState_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbInitializeDefaultHardwareState_c	throw	AnyPS5 throws for arguments the console encodes
