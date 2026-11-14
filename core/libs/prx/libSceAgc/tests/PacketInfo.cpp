@@ -69,7 +69,7 @@ void testDataPacketPayloadAddress() {
     check(sceAgcGetDataPacketPayloadAddress(&addr, packet.data(), 0) == 0, "type 0 query succeeded");
     check(addr == packet.data() + 1, "type 0 payload address points to word 1 when mask nonzero");
 
-    std::array<std::uint32_t, 2> zeroMaskPacket{0xcfff0000u, 0x11111111u};
+    std::array<std::uint32_t, 2> zeroMaskPacket{0xffff0000u, 0x11111111u};
     addr = packet.data();
     check(sceAgcGetDataPacketPayloadAddress(&addr, zeroMaskPacket.data(), 0) == 0, "zero mask query succeeded");
     check(addr == nullptr, "zero mask type 0 payload address is null");
@@ -90,7 +90,7 @@ void testDataPacketPayloadRange() {
     check(sceAgcGetDataPacketPayloadRange(&range, packet.data(), 0) == 0, "type 0 payload range query succeeded");
     check(range.base == packet.data() + 1 && range.size == (((packet[0] >> 14u) & 0xfffcu) + sizeof(std::uint32_t)), "type 0 payload range populated");
 
-    std::array<std::uint32_t, 2> zeroMaskPacket{0xcfff0000u, 0x11111111u};
+    std::array<std::uint32_t, 2> zeroMaskPacket{0xffff0000u, 0x11111111u};
     range = {packet.data(), 128};
     check(sceAgcGetDataPacketPayloadRange(&range, zeroMaskPacket.data(), 0) == 0, "zero mask payload range query succeeded");
     check(range.base == nullptr && range.size == 0, "zero mask payload range empty");
