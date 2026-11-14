@@ -3,6 +3,7 @@
 #include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include <cstdint>
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <initializer_list>
@@ -70,6 +71,29 @@ constexpr int ValidationNotEnabled = static_cast<int>(0x80D13FFFu);
 constexpr std::uint32_t OpNop = 0x10;
 constexpr std::uint32_t NeoDrawFlags = 0xe0000000u;
 constexpr std::uint32_t AutoIndex = 2;
+constexpr std::uint32_t DmaIndex = 0x80;
+constexpr std::uint32_t UseOpaque = 0x40;
+constexpr int TcaUnits = 2;
+constexpr std::uint32_t TcaUnitMap = 0x10;
+std::atomic<bool> NextFlipOption = false;
+
+constexpr int SubmitInvalid = static_cast<int>(0x80D11000u);
+constexpr int FlipCommandTooSmall = static_cast<int>(0x80D11001u);
+constexpr int GpuUnavailable = static_cast<int>(0x80D110FFu);
+constexpr int ComputeQueueInvalid = static_cast<int>(0x80D17000u);
+constexpr int ComputeQueueUnavailable = static_cast<int>(0x80D170FFu);
+constexpr std::uint32_t FlipCommandWords = 0x100;
+constexpr std::uint32_t MaxCommandBufferBytes = 0x3ffffd;
+
+bool ValidSubmit(std::uint32_t count, void** dcbAddresses, const std::uint32_t* dcbSizes, void** ccbAddresses, const std::uint32_t* ccbSizes) {
+    if (count == 0) return true;
+    if (!dcbAddresses || !dcbSizes || (ccbSizes && !ccbAddresses)) return false;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (dcbSizes[i] == 0 || dcbSizes[i] >= MaxCommandBufferBytes) return false;
+        if (ccbSizes && ccbSizes[i] >= MaxCommandBufferBytes) return false;
+    }
+    return true;
+}
 
 constexpr std::uint32_t Header(std::uint32_t opcode, std::uint32_t bodyWords, bool compute = false, bool predicated = false) {
     return 0xc0000000u | ((bodyWords - 1) << 16) | (opcode << 8) | (compute ? 2u : 0u) | (predicated ? 1u : 0u);
@@ -168,13 +192,11 @@ int APS5_VABI sceGnmDebugReset(void) {
     return Failure;
 }
 
-int APS5_VABI sceGnmDestroyWorkloadStream(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmDestroyWorkloadStream(std::uint32_t stream) {
+    return stream - 1 >= 0xf ? 1 : 0;
 }
 
-int APS5_VABI sceGnmDingDongForWorkload(std::uint32_t vqueueId, std::uint32_t nextOffsetDw, std::uint64_t workloadId) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmDingDongForWorkload(std::uint32_t, std::uint32_t, std::uint64_t) {
     return 0;
 }
 
@@ -271,8 +293,18 @@ int APS5_VABI sceGnmDrawIndexIndirectMulti(std::uint32_t* cmdbuf, std::uint32_t 
     return 0;
 }
 
-int APS5_VABI sceGnmDrawIndexMultiInstanced(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmDrawIndexMultiInstanced(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t indexCount, std::uint32_t instanceCount, std::uint64_t indexAddress, std::uint64_t objectIdAddress, std::uint32_t flags) {
+    if (!cmdbuf || size != 13 || indexAddress == 0 || (indexAddress & 1) != 0 || objectIdAddress == 0 || (objectIdAddress & 0xff) != 0) return CommandFailed;
+    cmdbuf[0] = Header(0x3a, 8, false, flags & 1);
+    cmdbuf[1] = instanceCount;
+    cmdbuf[2] = static_cast<std::uint32_t>(objectIdAddress);
+    cmdbuf[3] = static_cast<std::uint32_t>(objectIdAddress >> 32);
+    cmdbuf[4] = indexCount;
+    cmdbuf[5] = static_cast<std::uint32_t>(indexAddress);
+    cmdbuf[6] = static_cast<std::uint32_t>(indexAddress >> 32);
+    cmdbuf[7] = indexCount;
+    cmdbuf[8] = (flags & NeoDrawFlags) | DmaIndex;
+    Nop(cmdbuf + 9, 3);
     return 0;
 }
 
@@ -358,8 +390,12 @@ int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalSize(void) {
     return 0x100;
 }
 
-int APS5_VABI sceGnmDrawOpaqueAuto(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmDrawOpaqueAuto(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t flags) {
+    if (!cmdbuf || size != 7 || (flags & 0x1ffffffeu) != 0) return CommandFailed;
+    cmdbuf[0] = Header(0x2d, 2, false, flags & 1);
+    cmdbuf[1] = 0x10;
+    cmdbuf[2] = (flags & NeoDrawFlags) | AutoIndex | UseOpaque;
+    Nop(cmdbuf + 3, 3);
     return 0;
 }
 
@@ -408,13 +444,13 @@ int APS5_VABI sceGnmGetCoredumpAddress(void) {
     return 0;
 }
 
-int APS5_VABI sceGnmGetCoredumpMode(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmGetCoredumpMode(std::uint32_t* mode) {
+    if (!mode) return 1;
+    *mode = 0;
     return 0;
 }
 
 int APS5_VABI sceGnmGetCoredumpProtectionFaultTimestamp(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -423,7 +459,6 @@ int APS5_VABI sceGnmGetDbgGcHandle(void) {
 }
 
 int APS5_VABI sceGnmGetGpuBlockStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -432,18 +467,15 @@ int APS5_VABI sceGnmGetGpuCoreClockFrequency(void) {
 }
 
 int APS5_VABI sceGnmGetGpuInfoStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmGetLastWaitedAddress(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmGetNumTcaUnits(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return TcaUnits;
 }
 
 int APS5_VABI sceGnmGetOffChipTessellationBufferSize(void) {
@@ -459,7 +491,6 @@ int APS5_VABI sceGnmGetPhysicalCounterFromVirtualized(void) {
 }
 
 int APS5_VABI sceGnmGetProtectionFaultTimeStamp(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -488,24 +519,16 @@ int APS5_VABI sceGnmGetResourceUserData(void) {
 }
 
 int APS5_VABI sceGnmGetShaderProgramBaseAddress(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmGetShaderStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceGnmGpuPaDebugEnter(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI sceGnmGpuPaDebugEnter(void) {}
 
-int APS5_VABI sceGnmGpuPaDebugLeave(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI sceGnmGpuPaDebugLeave(void) {}
 
 int APS5_VABI sceGnmInsertDingDongMarker(std::uint32_t* cmdbuf, std::uint32_t size) {
     if (!cmdbuf || size != 4) return CommandFailed;
@@ -517,23 +540,24 @@ int APS5_VABI sceGnmInsertDingDongMarker(std::uint32_t* cmdbuf, std::uint32_t si
 }
 
 int APS5_VABI sceGnmInsertThreadTraceMarker(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmIsCoredumpValid(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceGnmLogicalTcaUnitToPhysical(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmLogicalTcaUnitToPhysical(std::uint32_t unit) {
+    return static_cast<int>((TcaUnitMap >> ((unit * 4) & 31)) & 0xf);
 }
 
-int APS5_VABI sceGnmMapComputeQueueWithPriority(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmMapComputeQueueWithPriority(std::uint32_t pipeId, std::uint32_t queueId, std::uint64_t ringBase, std::uint32_t ringSizeDw, std::uint64_t readPointer, std::uint32_t priority) {
+    if (pipeId > 6) return ComputeQueueInvalid;
+    if (queueId > 7) return ComputeQueueInvalid + 1;
+    if ((ringSizeDw & (ringSizeDw - 1)) != 0) return ComputeQueueInvalid + 2;
+    if ((ringBase & 0xff) != 0) return ComputeQueueInvalid + 3;
+    if ((readPointer & 3) != 0 || priority > 1) return ComputeQueueInvalid + 4;
+    return ComputeQueueUnavailable;
 }
 
 int APS5_VABI sceGnmPaDisableFlipCallbacks(void) {
@@ -560,10 +584,7 @@ int APS5_VABI sceGnmRegisterGdsResource(void) {
     return Failure;
 }
 
-int APS5_VABI sceGnmRegisterGnmLiveCallbackConfig(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI sceGnmRegisterGnmLiveCallbackConfig(void) {}
 
 int APS5_VABI sceGnmRegisterOwner(void* handle, const char* name) {
     return Failure;
@@ -577,9 +598,8 @@ int APS5_VABI sceGnmRegisterResource(void) {
     return Failure;
 }
 
-int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload(std::uint64_t, std::uint32_t*, std::uint32_t size, std::uint32_t, std::uint32_t, std::uint32_t, std::int64_t) {
+    return size < FlipCommandWords ? FlipCommandTooSmall : GpuUnavailable;
 }
 
 int APS5_VABI sceGnmResetVgtControl(std::uint32_t* cmdbuf, std::uint32_t size) {
@@ -715,24 +735,20 @@ int APS5_VABI sceGnmSetVgtControl(std::uint32_t* cmdbuf, std::uint32_t size, std
     return 0;
 }
 
-int APS5_VABI sceGnmSetWaveLimitMultiplier(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSetWaveLimitMultiplier(std::uint32_t, std::uint32_t) {
+    return 1;
 }
 
-int APS5_VABI sceGnmSetWaveLimitMultipliers(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSetWaveLimitMultipliers(std::uint32_t, const std::uint8_t*) {
+    return 1;
 }
 
-int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload(std::uint64_t, std::uint32_t count, void** dcbAddresses, const std::uint32_t* dcbSizes, void** ccbAddresses, const std::uint32_t* ccbSizes, std::uint32_t, std::uint32_t, std::uint32_t, std::int64_t) {
+    return ValidSubmit(count, dcbAddresses, dcbSizes, ccbAddresses, ccbSizes) ? GpuUnavailable : SubmitInvalid;
 }
 
-int APS5_VABI sceGnmSubmitCommandBuffersForWorkload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSubmitCommandBuffersForWorkload(std::uint64_t, std::uint32_t count, void** dcbAddresses, const std::uint32_t* dcbSizes, void** ccbAddresses, const std::uint32_t* ccbSizes) {
+    return ValidSubmit(count, dcbAddresses, dcbSizes, ccbAddresses, ccbSizes) ? GpuUnavailable : SubmitInvalid;
 }
 
 int APS5_VABI sceGnmUnregisterAllResourcesForOwner(void) {
@@ -914,7 +930,8 @@ int APS5_VABI libSceGnmDriverForNeoModeUnknown_QWuQed5Mus4_nid_no_patch() {
 APS5_EXPORT("QWuQed5Mus4", libSceGnmDriverForNeoModeUnknown_QWuQed5Mus4_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_R3TYO7Tdv5o_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    NextFlipOption.store(true);
+    return 0;
 }
 APS5_EXPORT("R3TYO7Tdv5o", libSceGnmDriverForNeoModeUnknown_R3TYO7Tdv5o_nid_no_patch);
 
@@ -934,12 +951,13 @@ int APS5_VABI libSceGnmDriverForNeoModeUnknown_gQNwGezNDgE_nid_no_patch() {
 APS5_EXPORT("gQNwGezNDgE", libSceGnmDriverForNeoModeUnknown_gQNwGezNDgE_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_sKhoi2ectC0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return NextFlipOption.load() ? 1 : 0;
 }
 APS5_EXPORT("sKhoi2ectC0", libSceGnmDriverForNeoModeUnknown_sKhoi2ectC0_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_ut57TBmRQN0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    NextFlipOption.store(false);
+    return 0;
 }
 APS5_EXPORT("ut57TBmRQN0", libSceGnmDriverForNeoModeUnknown_ut57TBmRQN0_nid_no_patch);
 

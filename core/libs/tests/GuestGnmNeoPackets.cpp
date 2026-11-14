@@ -49,6 +49,19 @@ void CheckDirectDraws() {
     Require(sceGnmDrawIndexOffset(Fresh(), 9, 4, 12, 0x40000001u) == 0);
     RequireWords({0xc0033501u, 12, 4, 12, 0x40000000u, 0xc0021000u, 0, U, U});
     RequireRefused(sceGnmDrawIndexOffset(Fresh(), 10, 4, 12, 0));
+
+    Require(sceGnmDrawOpaqueAuto(Fresh(), 7, 0xe0000001u) == 0);
+    RequireWords({0xc0012d01u, 0x10, 0xe0000042u, 0xc0021000u, 0, U, U});
+    RequireRefused(sceGnmDrawOpaqueAuto(Fresh(), 7, 2));
+    RequireRefused(sceGnmDrawOpaqueAuto(Fresh(), 6, 0));
+
+    Require(sceGnmDrawIndexMultiInstanced(Fresh(), 13, 36, 5, 0x1234567890ull, 0xab00001200ull, 0x20000001u) == 0);
+    RequireWords({0xc0073a01u, 5, 0x1200, 0xab, 36, 0x34567890u, 0x12, 36, 0x20000080u, 0xc0021000u, 0, U, U});
+    RequireRefused(sceGnmDrawIndexMultiInstanced(Fresh(), 12, 36, 5, 0x1000, 0x1000, 0));
+    RequireRefused(sceGnmDrawIndexMultiInstanced(Fresh(), 13, 36, 5, 0x1001, 0x1000, 0));
+    RequireRefused(sceGnmDrawIndexMultiInstanced(Fresh(), 13, 36, 5, 0, 0x1000, 0));
+    RequireRefused(sceGnmDrawIndexMultiInstanced(Fresh(), 13, 36, 5, 0x1000, 0x1010, 0));
+    RequireRefused(sceGnmDrawIndexMultiInstanced(Fresh(), 13, 36, 5, 0x1000, 0, 0));
 }
 
 void CheckDispatches() {
