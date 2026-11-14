@@ -120,6 +120,13 @@ class MainErrorTests(unittest.TestCase):
         self.assertIn("error:", stderr)
         self.assertNotIn("Traceback", stderr)
 
+    def test_invalid_snapshot_is_a_parser_error_with_exit_code_2(self):
+        code, stdout, stderr = self.run_main(json.dumps(snapshot()), json.dumps(snapshot(library_percent=101)))
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("error:", stderr)
+        self.assertIn("percent", stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
