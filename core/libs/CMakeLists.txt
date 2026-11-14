@@ -1704,6 +1704,17 @@ include(prx/libSceFreeType/CurveBounds.cmake)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/src/FileWrapper.cpp)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_relinker_rela_addend_signed_tests tests/GuestRelinkerRelaAddendSigned.cpp)
+    target_include_directories(guest_relinker_rela_addend_signed_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_relinker_rela_addend_signed_tests PRIVATE libc)
+    configure_windows_unwind(guest_relinker_rela_addend_signed_tests)
+    add_test(NAME guest_relinker_rela_addend_signed COMMAND guest_relinker_rela_addend_signed_tests)
+    set_tests_properties(guest_relinker_rela_addend_signed PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_relinker_rela_addend_signed PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_webrtc_file_wrapper_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestWebrtcFileWrapper.cpp)
     target_include_directories(guest_webrtc_file_wrapper_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_webrtc_file_wrapper_tests PRIVATE libwebrtc libc)
