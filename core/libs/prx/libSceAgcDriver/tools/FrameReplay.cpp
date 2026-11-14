@@ -3,12 +3,14 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
+#include "prx/libSceAgcDriver/Execution/include/NativeDepthCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -23,6 +25,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <future>
 #include <limits>
 #include <map>
@@ -30,10 +33,12 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 #ifdef _WIN32
@@ -62,12 +67,16 @@ struct Dump {
     std::filesystem::path path;
 };
 
+enum class ResetFault { None, KeepOwners, WrongByte, OmitOwners, Remap };
+
 struct Options {
     std::filesystem::path directory;
     std::vector<Dump> dumps;
     std::filesystem::path frames;
     bool pace = true;
     bool strict = false;
+    bool verifyReset = false;
+    ResetFault resetFault = ResetFault::None;
     std::chrono::milliseconds paceTimeout{10000};
     std::chrono::milliseconds releaseAfter{3};
     std::chrono::milliseconds drainTimeout{10000};
@@ -279,6 +288,18 @@ void restoreSnapshot(const FrameCaptureReader& reader, const Skipped& skipped) {
     }
 }
 
+#ifdef __linux__
+void requireWatch(const FrameMemoryChunk& chunk) {
+    const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
+    const auto first = chunk.address & ~(page - 1);
+    const auto last = (chunk.address + chunk.bytes + page - 1) & ~(page - 1);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(first)), static_cast<std::size_t>(last - first));
+    if (GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(static_cast<std::uintptr_t>(first), static_cast<std::size_t>(last - first))) return;
+    const char* reason = GuestWriteWatch::GuestWriteWatchUnavailableReason_nid_postfix();
+    throw std::runtime_error("frame replay: the guest write watch does not cover the captured range at " + std::to_string(chunk.address) + " of " + std::to_string(chunk.bytes) + " bytes: " + (*reason != '\0' ? reason : "registration did not take effect"));
+}
+#endif
+
 Skipped restoreMemory(const FrameCaptureReader& reader) {
     if (reader.Version() < 2) throw std::runtime_error("frame replay: calls format 1 does not record whether GPU writes had landed before each memory delta was read; record the capture again");
     std::uintptr_t base = 0;
@@ -297,8 +318,14 @@ Skipped restoreMemory(const FrameCaptureReader& reader) {
             if (chunk.kind != FrameMemoryKind::Range || chunk.rangeKind == FrameRangeKind::Host) continue;
             const bool gpu = (chunk.access & FrameRangeAccess::Gpu) != 0;
             if (owned[index]) {
-                if (!gpu) skipped.Add(chunk);
-                else std::memset(reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address)), 0, static_cast<std::size_t>(chunk.bytes));
+                if (!gpu) {
+                    skipped.Add(chunk);
+                } else {
+                    std::memset(reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address)), 0, static_cast<std::size_t>(chunk.bytes));
+#ifdef __linux__
+                    if (chunk.rangeKind == FrameRangeKind::Watched) requireWatch(chunk);
+#endif
+                }
                 continue;
             }
             auto* const pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address));
@@ -311,6 +338,9 @@ Skipped restoreMemory(const FrameCaptureReader& reader) {
                 continue;
             }
             commit(chunk);
+#ifdef __linux__
+            if (chunk.rangeKind == FrameRangeKind::Watched) requireWatch(chunk);
+#endif
             mutation.Add(pointer, bytes, (chunk.access & FrameRangeAccess::Readable) != 0, (chunk.access & FrameRangeAccess::Writable) != 0, gpu);
         }
     }
@@ -318,12 +348,345 @@ Skipped restoreMemory(const FrameCaptureReader& reader) {
     return skipped;
 }
 
-void resetMemory(const FrameCaptureReader& reader, const Skipped& skipped) {
-    AgcDriverWaitIdle_nid_postfix();
-    for (const auto& chunk : reader.Chunks()) {
-        if (chunk.kind == FrameMemoryKind::Range && !skipped.Overlaps(chunk)) std::memset(reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address)), 0, static_cast<std::size_t>(chunk.bytes));
+using Runs = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
+
+constexpr std::uint64_t ResetPage = 4096;
+constexpr std::uint64_t ResetWindow = 1024 * ResetPage;
+
+struct Staged {
+    const FrameMemoryChunk* piece = nullptr;
+    std::vector<std::byte> bytes;
+};
+
+void desiredBytes(const FrameCaptureReader& reader, std::span<const FrameMemoryChunk* const> snapshot, std::uint64_t begin, std::uint64_t end, std::vector<std::byte>& desired, Staged& staged) {
+    desired.assign(static_cast<std::size_t>(end - begin), std::byte{0});
+    auto chunk = std::partition_point(snapshot.begin(), snapshot.end(), [&](const auto* piece) { return piece->address + piece->bytes <= begin; });
+    for (; chunk != snapshot.end() && (*chunk)->address < end; ++chunk) {
+        const auto& piece = **chunk;
+        if (piece.address >= begin && piece.address + piece.bytes <= end) {
+            reader.Read(piece, std::span(desired.data() + (piece.address - begin), static_cast<std::size_t>(piece.bytes)));
+            continue;
+        }
+        const auto first = std::max(piece.address, begin);
+        const auto last = std::min(piece.address + piece.bytes, end);
+        if (staged.piece != &piece) {
+            staged.piece = nullptr;
+            staged.bytes.resize(static_cast<std::size_t>(piece.bytes));
+            reader.Read(piece, staged.bytes);
+            staged.piece = &piece;
+        }
+        std::memcpy(desired.data() + (first - begin), staged.bytes.data() + (first - piece.address), static_cast<std::size_t>(last - first));
     }
-    restoreSnapshot(reader, skipped);
+}
+
+void rethrowDriverFailure(const std::exception_ptr& failure) {
+    if (failure) std::rethrow_exception(failure);
+}
+
+Runs candidateRuns(const FrameMemoryChunk& range, const Runs& changed, const Runs& owned) {
+    const auto rangeEnd = range.address + range.bytes;
+    Runs spans;
+    const auto add = [&](std::uint64_t begin, std::uint64_t end) {
+        begin = std::max(begin & ~(ResetPage - 1), range.address);
+        end = std::min((end + ResetPage - 1) & ~(ResetPage - 1), rangeEnd);
+        if (begin < end) spans.emplace_back(begin, end);
+    };
+    for (const auto& [begin, end] : changed) add(begin, end);
+    for (const auto& [address, bytes] : owned) add(address, address + bytes);
+    std::sort(spans.begin(), spans.end());
+    Runs merged;
+    for (const auto& span : spans) {
+        if (!merged.empty() && span.first <= merged.back().second) merged.back().second = std::max(merged.back().second, span.second);
+        else merged.push_back(span);
+    }
+    return merged;
+}
+
+Runs subtractRuns(const Runs& from, const Runs& taken) {
+    Runs left;
+    auto next = taken.begin();
+    for (auto [begin, end] : from) {
+        while (next != taken.end() && next->second <= begin) ++next;
+        for (auto cut = next; cut != taken.end() && cut->first < end; ++cut) {
+            if (cut->first > begin) left.emplace_back(begin, cut->first);
+            begin = std::max(begin, cut->second);
+        }
+        if (begin < end) left.emplace_back(begin, end);
+    }
+    return left;
+}
+
+std::uint64_t runBytes(const Runs& runs) {
+    std::uint64_t bytes = 0;
+    for (const auto& [begin, end] : runs) bytes += end - begin;
+    return bytes;
+}
+
+struct Differing {
+    Runs runs;
+    std::uint64_t ownedBytes = 0;
+};
+
+Differing restoreDiffering(const FrameCaptureReader& reader, std::span<const FrameMemoryChunk* const> snapshot, const Runs& candidates, const Runs& owned, std::vector<std::byte>& desired, Staged& staged) {
+    Differing differing;
+    auto& runs = differing.runs;
+    for (const auto& [first, last] : candidates) {
+        for (auto window = first; window < last; window += ResetWindow) {
+            const auto windowEnd = std::min(window + ResetWindow, last);
+            desiredBytes(reader, snapshot, window, windowEnd, desired, staged);
+            for (auto address = window; address < windowEnd;) {
+                const auto end = std::min((address & ~(ResetPage - 1)) + ResetPage, windowEnd);
+                auto* const actual = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(address));
+                const auto* const wanted = desired.data() + (address - window);
+                if (std::memcmp(actual, wanted, static_cast<std::size_t>(end - address)) != 0) {
+                    std::memcpy(actual, wanted, static_cast<std::size_t>(end - address));
+                    if (!runs.empty() && runs.back().second == address) runs.back().second = end;
+                    else runs.emplace_back(address, end);
+                    if (std::any_of(owned.begin(), owned.end(), [&](const auto& held) { return held.first < end && address < held.first + held.second; })) differing.ownedBytes += end - address;
+                }
+                address = end;
+            }
+        }
+    }
+    return differing;
+}
+
+template <class Work>
+std::size_t parallelPieces(std::size_t count, Work work) {
+    const auto width = std::clamp<std::size_t>(std::thread::hardware_concurrency(), 1, std::max<std::size_t>(1, count));
+    std::atomic<std::size_t> claimed{width};
+    std::atomic<std::size_t> busy{0};
+    std::vector<std::future<void>> workers;
+    for (std::size_t worker = 0; worker < width; ++worker) {
+        workers.push_back(std::async(std::launch::async, [&, worker] {
+            std::vector<std::byte> desired;
+            Staged staged;
+            std::size_t done = 0;
+            for (auto index = worker; index < count; index = claimed++, ++done) work(index, desired, staged);
+            if (done != 0) busy.fetch_add(1, std::memory_order_relaxed);
+        }));
+    }
+    for (auto& worker : workers) worker.get();
+    return busy.load(std::memory_order_relaxed);
+}
+
+constexpr std::uint64_t ResetPiece = 16 * ResetWindow;
+
+struct Piece {
+    std::size_t range = 0;
+    Runs runs;
+};
+
+std::vector<Piece> splitRuns(std::span<const Runs> ranges) {
+    std::vector<Piece> pieces;
+    for (std::size_t index = 0; index < ranges.size(); ++index) {
+        pieces.push_back({index, {}});
+        std::uint64_t filled = 0;
+        for (auto [begin, end] : ranges[index]) {
+            while (begin < end) {
+                if (filled >= ResetPiece) {
+                    pieces.push_back({index, {}});
+                    filled = 0;
+                }
+                auto stop = (begin + (ResetPiece - filled)) & ~(ResetPage - 1);
+                if (stop <= begin) stop = (begin & ~(ResetPage - 1)) + ResetPage;
+                stop = std::min(stop, end);
+                pieces.back().runs.emplace_back(begin, stop);
+                filled += stop - begin;
+                begin = stop;
+            }
+        }
+    }
+    std::erase_if(pieces, [](const Piece& piece) { return piece.runs.empty(); });
+    return pieces;
+}
+
+struct ResetResult {
+    std::uint64_t rewritten = 0;
+    std::uint64_t rewrittenOwned = 0;
+    std::uint64_t compared = 0;
+    std::uint64_t flushed = 0;
+    std::uint64_t rangeBytes = 0;
+    std::size_t workers = 0;
+    double verifySeconds = 0.0;
+    AgcDriver::RetiredOwners retired;
+};
+
+struct ResetPlan {
+    std::vector<const FrameMemoryChunk*> ranges;
+    std::vector<const FrameMemoryChunk*> snapshot;
+    std::uint64_t rangeBytes = 0;
+};
+
+ResetPlan planReset(const FrameCaptureReader& reader, const Skipped& skipped) {
+    ResetPlan plan;
+    for (const auto& chunk : reader.Chunks()) {
+        if (skipped.Overlaps(chunk)) continue;
+        if (chunk.kind == FrameMemoryKind::Range) {
+            plan.ranges.push_back(&chunk);
+            plan.rangeBytes += chunk.bytes;
+        } else if (chunk.kind == FrameMemoryKind::Snapshot) {
+            plan.snapshot.push_back(&chunk);
+        }
+    }
+    std::sort(plan.snapshot.begin(), plan.snapshot.end(), [](const auto* left, const auto* right) { return left->address < right->address; });
+    return plan;
+}
+
+template <class Body>
+void exclusive(Body&& body) {
+    struct Inside {
+        std::remove_reference_t<Body>* body;
+        std::exception_ptr failure;
+    } inside{&body, nullptr};
+    std::exception_ptr failure;
+    AgcDriverGuestMemoryTransaction_nid_no_patch([](void* context) {
+        auto& state = *static_cast<Inside*>(context);
+        try {
+            (*state.body)();
+        } catch (...) {
+            state.failure = std::current_exception();
+        }
+    }, &inside, &failure);
+    rethrowDriverFailure(inside.failure);
+    rethrowDriverFailure(failure);
+}
+
+std::uint64_t changedSince(std::uint64_t address, std::uint64_t bytes, std::uint64_t since, Runs& changed) {
+    std::uint64_t generation = 0;
+    std::exception_ptr failure;
+    AgcDriverGuestMemoryChangedSince_nid_no_patch(address, static_cast<std::size_t>(bytes), since, changed, &generation, &failure);
+    rethrowDriverFailure(failure);
+    return generation;
+}
+
+std::uint64_t watchBaseline(const FrameCaptureReader& reader, const Skipped& skipped) {
+    std::uint64_t generation = 0;
+    Runs changed;
+    for (const auto* range : planReset(reader, skipped).ranges) generation = changedSince(range->address, range->bytes, std::numeric_limits<std::uint64_t>::max(), changed);
+    return generation;
+}
+
+void verifyReset(const FrameCaptureReader& reader, const ResetPlan& plan, std::span<const Runs> retired) {
+    std::exception_ptr failure;
+    const auto survivors = [&](std::uint64_t begin, std::uint64_t bytes, bool gpuOnly) {
+        std::size_t owners = 0;
+        AgcDriverResidentOwnersOver_nid_no_patch(begin, static_cast<std::size_t>(bytes), gpuOnly, &owners, &failure);
+        rethrowDriverFailure(failure);
+        return owners;
+    };
+    for (std::size_t index = 0; index < plan.ranges.size(); ++index) {
+        const auto& range = *plan.ranges[index];
+        if (const auto owners = survivors(range.address, range.bytes, true); owners != 0) throw std::runtime_error("frame replay: " + std::to_string(owners) + " GPU owners with results only on the GPU over the captured range at " + std::to_string(range.address) + " of " + std::to_string(range.bytes) + " bytes survived the reset");
+        for (const auto& [begin, end] : retired[index]) {
+            if (const auto owners = survivors(begin, end - begin, false); owners != 0) throw std::runtime_error("frame replay: " + std::to_string(owners) + " GPU owners over the restored memory at " + std::to_string(begin) + " of " + std::to_string(end - begin) + " bytes survived the reset");
+        }
+    }
+    std::atomic<std::uint64_t> wrong{0};
+    std::vector<Runs> whole(plan.ranges.size());
+    for (std::size_t index = 0; index < plan.ranges.size(); ++index) whole[index] = {{plan.ranges[index]->address, plan.ranges[index]->address + plan.ranges[index]->bytes}};
+    const auto pieces = splitRuns(whole);
+    parallelPieces(pieces.size(), [&](std::size_t index, std::vector<std::byte>& desired, Staged& staged) {
+        for (const auto& [first, last] : pieces[index].runs) {
+            for (auto window = first; window < last; window += ResetWindow) {
+                const auto end = std::min(window + ResetWindow, last);
+                desiredBytes(reader, plan.snapshot, window, end, desired, staged);
+                const auto* actual = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(window));
+                std::uint64_t offset = 0;
+                while (offset < end - window && actual[offset] == desired[offset]) ++offset;
+                if (offset == end - window) continue;
+                std::uint64_t expected = 0;
+                wrong.compare_exchange_strong(expected, window + offset);
+                return;
+            }
+        }
+    });
+    if (wrong.load() != 0) throw std::runtime_error("frame replay: guest memory at " + std::to_string(wrong.load()) + " differs from the captured contents after the reset");
+}
+
+ResetResult resetMemory(const FrameCaptureReader& reader, const Skipped& skipped, std::uint64_t& since, ResetFault fault, bool verify, const std::vector<AgcDriver::NativeDepthSnapshot>* nativeDepth = nullptr) {
+    const auto plan = planReset(reader, skipped);
+    ResetResult result;
+    result.rangeBytes = plan.rangeBytes;
+    exclusive([&] {
+        if (nativeDepth != nullptr) AgcDriver::PreflightNativeDepthForReplay_nid_no_patch(*nativeDepth);
+        const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+        struct Omission {
+            explicit Omission(bool omit) : omit(omit) { if (omit) AgcDriverOmitGpuOwnersForTest_nid_no_patch(true); }
+            ~Omission() { if (omit) AgcDriverOmitGpuOwnersForTest_nid_no_patch(false); }
+            bool omit;
+        } omission(fault == ResetFault::OmitOwners);
+        std::exception_ptr failure;
+        const auto previous = since;
+        std::vector<Runs> owned(plan.ranges.size());
+        std::vector<Runs> candidates(plan.ranges.size());
+        Runs changed;
+        const auto retire = [&](const Runs& runs) {
+            if (fault == ResetFault::KeepOwners) return;
+            for (const auto& [begin, end] : runs) {
+                AgcDriverRetireGpuOwners_nid_no_patch(begin, static_cast<std::size_t>(end - begin), &result.retired, &failure);
+                rethrowDriverFailure(failure);
+            }
+        };
+        for (std::size_t index = 0; index < plan.ranges.size(); ++index) {
+            const auto& range = *plan.ranges[index];
+            AgcDriverGpuOwnedRanges_nid_no_patch(range.address, static_cast<std::size_t>(range.bytes), owned[index], &failure);
+            rethrowDriverFailure(failure);
+            static_cast<void>(changedSince(range.address, range.bytes, previous, changed));
+            candidates[index] = candidateRuns(range, changed, owned[index]);
+            retire(candidates[index]);
+        }
+        if (nativeDepth != nullptr && fault != ResetFault::KeepOwners && fault != ResetFault::OmitOwners) {
+            const auto retired = AgcDriver::DiscardNativeDepthForReplay_nid_no_patch();
+            result.retired.depthOwners += retired.depthOwners;
+            result.retired.depthSurfaces += retired.depthSurfaces;
+            result.retired.depthPlanes += retired.depthPlanes;
+        }
+        for (const auto* range : plan.ranges) {
+            AgcDriverFlushGuestMemory_nid_no_patch(range->address, static_cast<std::size_t>(range->bytes), &failure);
+            rethrowDriverFailure(failure);
+        }
+        for (std::size_t index = 0; index < plan.ranges.size(); ++index) {
+            const auto& range = *plan.ranges[index];
+            since = std::max(since, changedSince(range.address, range.bytes, previous, changed));
+            auto widened = candidateRuns(range, changed, owned[index]);
+            const auto flushed = subtractRuns(widened, candidates[index]);
+            retire(flushed);
+            result.flushed += runBytes(flushed);
+            candidates[index] = std::move(widened);
+            result.compared += runBytes(candidates[index]);
+        }
+        const auto pieces = splitRuns(candidates);
+        std::vector<Differing> runs(pieces.size());
+        result.workers = parallelPieces(pieces.size(), [&](std::size_t index, std::vector<std::byte>& desired, Staged& staged) { runs[index] = restoreDiffering(reader, plan.snapshot, pieces[index].runs, owned[pieces[index].range], desired, staged); });
+        Runs replaced;
+        for (const auto& part : runs) {
+            for (const auto& run : part.runs) {
+                if (!replaced.empty() && replaced.back().second == run.first) replaced.back().second = run.second;
+                else replaced.push_back(run);
+            }
+            result.rewritten += runBytes(part.runs);
+            result.rewrittenOwned += part.ownedBytes;
+        }
+        std::sort(replaced.begin(), replaced.end());
+        if (fault == ResetFault::WrongByte && !plan.ranges.empty()) {
+            auto* const first = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(plan.ranges.front()->address));
+            *first = ~*first;
+        }
+        if (fault == ResetFault::Remap) std::thread([] { GuestAllocations::Mutation mutation; }).join();
+        for (const auto& [begin, end] : replaced) since = std::max(since, changedSince(begin, end - begin, std::numeric_limits<std::uint64_t>::max(), changed));
+        if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != mapping) throw std::runtime_error("frame replay: guest memory was mapped or unmapped during the reset, which the reset excludes");
+        if (verify) {
+            const auto verifyStart = Clock::now();
+            verifyReset(reader, plan, candidates);
+            result.verifySeconds = std::chrono::duration<double>(Clock::now() - verifyStart).count();
+        }
+        if (nativeDepth != nullptr) {
+            for (const auto* range : plan.ranges) AgcDriver::InvalidateNativeDepthMetadataForReplay_nid_no_patch(range->address, static_cast<std::size_t>(range->bytes));
+            AgcDriver::RestoreNativeDepthForReplay_nid_no_patch(*nativeDepth);
+        }
+    });
+    return result;
 }
 
 std::pair<std::uint64_t, std::uint64_t> progress() {
@@ -346,6 +709,8 @@ struct Replay {
     std::atomic<std::uint64_t> failedRegistrations{0};
     std::atomic<std::uint64_t> submits{0};
     std::atomic<std::uint64_t> deltaBytes{0};
+    std::atomic<std::uint64_t> keptWords{0};
+    std::vector<std::byte> restoreBuffer;
     std::atomic<std::uint64_t> parkRestores{0};
     std::atomic<std::int64_t> paceWaitedNs{0};
     std::atomic<bool> stalled{false};
@@ -574,6 +939,32 @@ struct Replay {
         }
     }
 
+    static bool rewindHeader(std::uint32_t word) {
+        return (word & 0xc000ff00u) == 0xc0005900u;
+    }
+
+    static void findRewindControls(std::span<const std::byte> bytes, std::size_t first, std::vector<std::size_t>& offsets) {
+        constexpr std::size_t Block = 16;
+        const auto headers = (bytes.size() - first) / sizeof(std::uint32_t) - 1;
+        const auto* const data = bytes.data() + first;
+        std::size_t index = 0;
+        for (; index + Block <= headers; index += Block) {
+            std::array<std::uint32_t, Block> words;
+            std::memcpy(words.data(), data + index * sizeof(std::uint32_t), sizeof(words));
+            std::uint32_t hits = 0;
+            for (const auto word : words) hits += rewindHeader(word);
+            if (hits == 0) continue;
+            for (std::size_t word = 0; word < Block; ++word) {
+                if (rewindHeader(words[word])) offsets.push_back(first + (index + word + 1) * sizeof(std::uint32_t));
+            }
+        }
+        for (; index < headers; ++index) {
+            std::uint32_t word = 0;
+            std::memcpy(&word, data + index * sizeof(std::uint32_t), sizeof(word));
+            if (rewindHeader(word)) offsets.push_back(first + (index + 1) * sizeof(std::uint32_t));
+        }
+    }
+
     std::vector<StagedWord> restoreGroup(std::uint64_t group, bool again, const std::vector<AgcDriver::AwaitedWait>& held = {}) {
         std::vector<StagedWord> staged;
         const auto found = groups.find(group);
@@ -584,33 +975,56 @@ struct Replay {
         for (std::size_t slot = 0; slot < count; ++slot) {
             if (rewindWait(awaited[slot])) parked.push_back(awaited[slot].address);
         }
+        std::ranges::sort(parked);
         std::vector<std::pair<std::uint32_t*, std::uint32_t>> controls;
+        std::vector<std::pair<std::uint32_t*, std::uint32_t>> releases;
+        std::vector<std::size_t> candidates;
         for (const auto* chunk : found->second) {
             if (skipped.Overlaps(*chunk)) continue;
-            auto bytes = reader.Read(*chunk);
+            const auto size = static_cast<std::size_t>(chunk->bytes);
+            if (restoreBuffer.size() < size) restoreBuffer.resize(size);
+            const std::span bytes(restoreBuffer.data(), size);
+            reader.Read(*chunk, bytes);
             auto* const target = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk->address));
-            AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
-            for (auto at = static_cast<std::size_t>((4 - chunk->address % 4) % 4); at + 4 <= bytes.size(); at += 4) {
-                std::uint32_t value = 0;
-                std::memcpy(&value, bytes.data() + at, sizeof(value));
-                if ((value & AgcDriver::Pm4::RewindValid) == 0) continue;
-                std::uint32_t header = 0;
-                if (at >= 4) std::memcpy(&header, bytes.data() + at - 4, sizeof(header));
-                const bool rewind = (header >> 30u) == 3u && ((header >> 8u) & 0xffu) == 0x59u;
-                if (!rewind && std::find(parked.begin(), parked.end(), chunk->address + at) == parked.end()) continue;
-                if (!again) controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
-                std::memcpy(bytes.data() + at, target + at, sizeof(value));
+            AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, size);
+            const auto first = static_cast<std::size_t>((4 - chunk->address % 4) % 4);
+            candidates.clear();
+            if (first + sizeof(std::uint32_t) <= size) {
+                candidates.push_back(first);
+                findRewindControls(bytes, first, candidates);
+                const auto scanned = candidates.size();
+                const auto pastChunk = std::ranges::lower_bound(parked, chunk->address + size - sizeof(std::uint32_t) + 1);
+                for (auto address = std::ranges::lower_bound(parked, chunk->address + first); address != pastChunk; ++address) {
+                    if ((*address - chunk->address - first) % sizeof(std::uint32_t) == 0) candidates.push_back(static_cast<std::size_t>(*address - chunk->address));
+                }
+                if (candidates.size() != scanned) {
+                    std::ranges::sort(candidates);
+                    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+                }
             }
             for (const auto& wait : held) {
-                if (wait.address < chunk->address || wait.address + wait.bytes > chunk->address + bytes.size()) continue;
+                if (wait.address < chunk->address || wait.address + wait.bytes > chunk->address + size) continue;
                 const auto offset = static_cast<std::size_t>(wait.address - chunk->address);
                 staged.push_back({wait.address, {bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.begin() + static_cast<std::ptrdiff_t>(offset + wait.bytes)}});
                 std::memcpy(bytes.data() + offset, target + offset, wait.bytes);
             }
-            std::memcpy(target, bytes.data(), bytes.size());
+            std::size_t from = 0;
+            for (const auto at : candidates) {
+                const auto address = chunk->address + at;
+                if (std::ranges::any_of(held, [&](const auto& wait) { return address < wait.address + wait.bytes && wait.address < address + sizeof(std::uint32_t); })) continue;
+                std::uint32_t value = 0;
+                std::memcpy(&value, bytes.data() + at, sizeof(value));
+                if (again && (value & AgcDriver::Pm4::RewindValid) == 0) continue;
+                if (!again) (std::ranges::binary_search(parked, address) ? releases : controls).emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
+                std::memcpy(target + from, bytes.data() + from, at - from);
+                from = at + sizeof(std::uint32_t);
+                ++keptWords;
+            }
+            std::memcpy(target + from, bytes.data() + from, size - from);
             deltaBytes += chunk->bytes;
         }
         for (const auto& [control, value] : controls) std::atomic_ref<std::uint32_t>(*control).store(value, std::memory_order_release);
+        for (const auto& [control, value] : releases) std::atomic_ref<std::uint32_t>(*control).store(value, std::memory_order_release);
         return staged;
     }
 
@@ -845,6 +1259,9 @@ int usage() {
                          "  --release-after-ms  milliseconds without a completion before awaited dwords are released (3)\n"
                          "  --no-synthesize     releases a wait only with a value the capture recorded, never with its reference value\n"
                          "  --strict            fails on a pacing timeout or a failed registration inside the captured frames\n"
+                         "  --verify-reset      with --repeat, fails when, at the end of a reset, guest memory over any captured range\n"
+                         "                      differs from the captured contents or a resident GPU owner survived over the memory\n"
+                         "                      it compared or holds results only on the GPU\n"
                          "  --repeat <n>        replays the frames n times in this process, restoring the snapshot before each pass;\n"
                          "                      with n > 1 the frame times come from passes 2 to n, after the first warmed the caches\n"
                          "  --cold-pipelines    starts with an empty Vulkan pipeline cache instead of the title's pipeline cache file\n"
@@ -1207,6 +1624,15 @@ struct Pass {
     double seconds = 0.0;
     std::uint64_t paceTimeouts = 0;
     std::uint64_t synthesized = 0;
+    std::uint64_t rewrittenBytes = 0;
+    std::uint64_t rewrittenOwnedBytes = 0;
+    std::uint64_t comparedBytes = 0;
+    std::uint64_t flushedBytes = 0;
+    std::uint64_t rangeBytes = 0;
+    double resetSeconds = 0.0;
+    double verifySeconds = 0.0;
+    std::size_t resetWorkers = 0;
+    AgcDriver::RetiredOwners retired;
 };
 
 double percentile(std::vector<double> values, double fraction) {
@@ -1223,6 +1649,12 @@ int run(const Options& options) {
 #endif
     if (reader.Truncated()) std::fprintf(stderr, "[frame-replay] the capture is truncated; replaying the complete records\n");
     auto skipped = restoreMemory(reader);
+    auto resetSince = options.repeat > 1 ? watchBaseline(reader, skipped) : 0;
+    const auto nativeDepthPath = options.directory / AgcDriver::NativeDepthCaptureName;
+    const bool hasNativeDepth = std::filesystem::exists(nativeDepthPath);
+    const auto nativeDepth = AgcDriver::ReadNativeDepthCapture(nativeDepthPath);
+    const auto nativeDepthSurfaces = nativeDepth.size();
+    if (!nativeDepth.empty()) exclusive([&] { AgcDriver::RestoreNativeDepthForReplay_nid_no_patch(nativeDepth); });
     const auto loaded = Clock::now();
     Replay replay{options, reader};
     replay.skipped = std::move(skipped);
@@ -1241,8 +1673,12 @@ int run(const Options& options) {
     for (const auto& [handle, output] : replay.outputs) initialOutputs.insert(handle);
     std::vector<Pass> passes;
     for (std::size_t pass = 0; pass < options.repeat && (pass == 0 || replay.unfinished == 0); ++pass) {
+        ResetResult reset;
+        double resetSeconds = 0.0;
         if (pass > 0) {
-            resetMemory(reader, replay.skipped);
+            const auto resetStart = Clock::now();
+            reset = resetMemory(reader, replay.skipped, resetSince, options.resetFault, options.verifyReset, hasNativeDepth ? &nativeDepth : nullptr);
+            resetSeconds = std::chrono::duration<double>(Clock::now() - resetStart).count() - reset.verifySeconds;
             replay.pass = pass;
             replay.recording = false;
             for (auto output = replay.outputs.begin(); output != replay.outputs.end();) {
@@ -1263,7 +1699,7 @@ int run(const Options& options) {
                 if (call->kind == FrameCallKind::ReserveEopFlip) replay.execute(*call);
             }
         }
-        Pass measured{replay.frames.Times().size(), 0, 0.0, replay.paceTimeouts.load(), replay.syntheticReleases.load()};
+        Pass measured{replay.frames.Times().size(), 0, 0.0, replay.paceTimeouts.load(), replay.syntheticReleases.load(), reset.rewritten, reset.rewrittenOwned, reset.compared, reset.flushed, reset.rangeBytes, resetSeconds, reset.verifySeconds, reset.workers, reset.retired};
         replay.recording = true;
         replay.startedAt = Clock::now();
         if (frameStart != calls.end()) replay.runWindow(std::span(calls).subspan(static_cast<std::size_t>(frameStart - calls.begin()) + 1));
@@ -1294,9 +1730,10 @@ int run(const Options& options) {
         const auto& measured = passes[index];
         std::vector<double> passMs;
         for (auto frame = measured.firstFrame + 1; frame < measured.firstFrame + measured.frames; ++frame) passMs.push_back(std::chrono::duration<double, std::milli>(ready[frame] - ready[frame - 1]).count());
-        char entry[192];
-        std::snprintf(entry, sizeof(entry), "%s{\"replay_s\":%.3f,\"frames\":%zu,\"p50\":%.3f,\"pace_timeouts\":%llu,\"synthesized\":%llu}", passList.empty() ? "" : ",", measured.seconds, measured.frames,
-                      percentile(passMs, 0.5), static_cast<unsigned long long>(measured.paceTimeouts), static_cast<unsigned long long>(measured.synthesized));
+        char entry[640];
+        std::snprintf(entry, sizeof(entry), "%s{\"replay_s\":%.3f,\"frames\":%zu,\"p50\":%.3f,\"pace_timeouts\":%llu,\"synthesized\":%llu,\"rewritten_bytes\":%llu,\"rewritten_owned_bytes\":%llu,\"compared_bytes\":%llu,\"flushed_bytes\":%llu,\"range_bytes\":%llu,\"reset_ms\":%.1f,\"verify_ms\":%.1f,\"reset_workers\":%zu,\"retired_color\":%llu,\"retired_depth_owners\":%llu,\"retired_depth_surfaces\":%llu,\"discarded_depth_planes\":%llu}", passList.empty() ? "" : ",", measured.seconds, measured.frames,
+                      percentile(passMs, 0.5), static_cast<unsigned long long>(measured.paceTimeouts), static_cast<unsigned long long>(measured.synthesized), static_cast<unsigned long long>(measured.rewrittenBytes), static_cast<unsigned long long>(measured.rewrittenOwnedBytes), static_cast<unsigned long long>(measured.comparedBytes), static_cast<unsigned long long>(measured.flushedBytes), static_cast<unsigned long long>(measured.rangeBytes), measured.resetSeconds * 1000.0, measured.verifySeconds * 1000.0, measured.resetWorkers,
+                      static_cast<unsigned long long>(measured.retired.color), static_cast<unsigned long long>(measured.retired.depthOwners), static_cast<unsigned long long>(measured.retired.depthSurfaces), static_cast<unsigned long long>(measured.retired.depthPlanes));
         passList += entry;
         if (index < firstMeasured) continue;
         for (const auto value : passMs) frameList += (frameList.empty() ? "" : ",") + std::to_string(static_cast<long long>(value));
@@ -1305,14 +1742,14 @@ int run(const Options& options) {
         frames += measured.frames;
     }
     const auto slowest = frameMs.empty() ? 0.0 : *std::max_element(frameMs.begin(), frameMs.end());
-    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"park_restores\":%llu,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
+    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"kept_words\":%llu,\"park_restores\":%llu,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"native_depth_surfaces\":%llu,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
                 frames, seconds, seconds > 0 ? static_cast<double>(frames) / seconds : 0.0, percentile(frameMs, 0.5), percentile(frameMs, 0.9), slowest, frameList.c_str(), passList.c_str(),
                 static_cast<unsigned long long>(replay.keptReservations.load()),
-                static_cast<unsigned long long>(replay.submits.load()), static_cast<double>(replay.deltaBytes.load()) / (1024.0 * 1024.0), static_cast<unsigned long long>(replay.parkRestores.load()), static_cast<unsigned long long>(replay.paceTimeouts.load()),
+                static_cast<unsigned long long>(replay.submits.load()), static_cast<double>(replay.deltaBytes.load()) / (1024.0 * 1024.0), static_cast<unsigned long long>(replay.keptWords.load()), static_cast<unsigned long long>(replay.parkRestores.load()), static_cast<unsigned long long>(replay.paceTimeouts.load()),
                 replay.paceWaitedSeconds(), static_cast<unsigned long long>(replay.staleRegistrations.load()), static_cast<unsigned long long>(replay.failedRegistrations.load()),
                 static_cast<double>(replay.skipped.bytes) / (1024.0 * 1024.0), replay.threads, static_cast<unsigned long long>(replay.earlyReleases.load()), static_cast<unsigned long long>(replay.lateReleases.load()),
                 static_cast<unsigned long long>(replay.syntheticReleases.load()),
-                static_cast<unsigned long long>(replay.unfinished), check.compared, check.identical, check.maxDifference, std::chrono::duration<double>(loaded - loadStart).count(), journalSeconds);
+                static_cast<unsigned long long>(replay.unfinished), check.compared, check.identical, check.maxDifference, static_cast<unsigned long long>(nativeDepthSurfaces), std::chrono::duration<double>(loaded - loadStart).count(), journalSeconds);
     std::fflush(stdout);
     return replay.unfinished == 0 ? 0 : 3;
 }
@@ -1332,6 +1769,7 @@ void configureEnvironment(const Options& options) {
 
 int main(int argc, char** argv) {
     Options options;
+    if (const char* fault = std::getenv("APS5_REPLAY_RESET_FAULT_FOR_TEST"); fault != nullptr) options.resetFault = std::string_view(fault) == "owners" ? ResetFault::KeepOwners : std::string_view(fault) == "bytes" ? ResetFault::WrongByte : std::string_view(fault) == "omit" ? ResetFault::OmitOwners : std::string_view(fault) == "remap" ? ResetFault::Remap : ResetFault::None;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
         if (argument == "--no-pace") options.pace = false;
@@ -1340,6 +1778,7 @@ int main(int argc, char** argv) {
         else if (argument == "--pace-timeout-ms" && index + 1 < argc) options.paceTimeout = std::chrono::milliseconds(std::strtoll(argv[++index], nullptr, 10));
         else if (argument == "--release-after-ms" && index + 1 < argc) options.releaseAfter = std::chrono::milliseconds(std::strtoll(argv[++index], nullptr, 10));
         else if (argument == "--strict") options.strict = true;
+        else if (argument == "--verify-reset") options.verifyReset = true;
         else if (argument == "--repeat" && index + 1 < argc) options.repeat = std::max<std::size_t>(1, std::strtoull(argv[++index], nullptr, 10));
         else if (argument == "--shaders") options.shaders = true;
         else if (argument == "--shader-code" && index + 1 < argc) {

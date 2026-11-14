@@ -427,6 +427,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Pm4.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/SubmissionCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameCapture.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/NativeDepthCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameRecorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatFlushProbe.cpp
@@ -1018,7 +1019,7 @@ add_executable(agc_frame_replay EXCLUDE_FROM_ALL
         tools/FrameReplay.cpp
         Execution/src/FrameCapture.cpp
 )
-target_include_directories(agc_frame_replay PRIVATE ${LIBS_INCLUDE_DIR})
+target_include_directories(agc_frame_replay PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
 target_link_libraries(agc_frame_replay PRIVATE libSceAgcDriver libkernel libc libzstd_static)
 if(WIN32)
     target_link_options(agc_frame_replay PRIVATE LINKER:--image-base=0x500000000000)

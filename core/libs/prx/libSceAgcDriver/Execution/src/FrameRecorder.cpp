@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/State/include/Configuration.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
+#include "prx/libSceAgcDriver/Execution/include/NativeDepthCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
@@ -571,6 +572,12 @@ void FrameRecorder::start() {
     allocationsGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     ranges = committedRanges();
     writer = std::make_unique<FrameCaptureWriter>(directory);
+    {
+        const auto nativeDepth = driver.CaptureNativeDepth();
+        nativeDepthSurfaces = nativeDepth.size();
+        nativeDepthBytes = ValidateNativeDepthSnapshots(nativeDepth);
+        WriteNativeDepthCapture(directory / NativeDepthCaptureName, nativeDepth);
+    }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
     for (auto& range : ranges) {
         if (range.kind == FrameRangeKind::Watched || range.kind == FrameRangeKind::Unwatched) range.since = GuestMemory::CollectWrittenBlocks(range.address, static_cast<std::size_t>(range.bytes), std::numeric_limits<std::uint64_t>::max(), written);
@@ -648,6 +655,7 @@ std::string FrameRecorder::header() const {
     text += ",\"start_boundary\":" + std::to_string(startBoundary) + ",\"frames\":" + std::to_string(recordedFrames);
     text += ",\"calls\":" + std::to_string(recordedCalls) + ",\"prologue_calls\":" + std::to_string(prologue.size());
     text += ",\"ranges\":" + std::to_string(ranges.size()) + ",\"late_ranges\":" + std::to_string(lateRanges) + ",\"snapshot_bytes\":" + std::to_string(snapshotBytes) + ",\"unreadable_bytes\":" + std::to_string(unreadableBytes) + ",\"host_only_sample_bytes\":" + std::to_string(hostOnlySampleBytes);
+    text += ",\"native_depth_surfaces\":" + std::to_string(nativeDepthSurfaces) + ",\"native_depth_bytes\":" + std::to_string(nativeDepthBytes);
     text += ",\"memory_groups\":" + std::to_string(deltaGroups) + ",\"delta_bytes\":" + std::to_string(deltaBytes);
     text += ",\"capture_seconds\":" + std::to_string(std::chrono::duration<double>(std::chrono::steady_clock::now() - startedAt).count());
     text += ",\"env\":{";

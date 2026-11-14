@@ -12,6 +12,8 @@
 #include <utility>
 #include <vector>
 
+namespace AgcDriver { struct NativeDepthSnapshot; }
+
 namespace AgcDriver::Graphics {
 
 class Texture;
@@ -43,13 +45,26 @@ std::uint64_t DepthTransferPassCount();
 std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32_t bytesPerTexel, std::uint32_t samples);
 void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt, bool allowPublication = true);
 void AppendHostWrittenDepthRanges(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
+void AppendStaleDepthPlanes(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
 enum class DepthPublicationStage { ReadCaptured, GuestCopied, BeforeCommit, PlaneCommitted, StencilPlaneRead };
 void SetDepthPublicationHookForTest(void (*hook)(DepthPublicationStage));
 bool HasResidentDepthGuards_nid_no_patch();
 bool ResidentDepthGuardOverlaps_nid_no_patch(std::uint64_t address, std::size_t bytes);
 void RetireUnmappedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+struct RetiredDepth {
+    std::size_t owners = 0;
+    std::size_t surfaces = 0;
+    std::size_t planes = 0;
+};
+void InvalidateDepthMetadataForReplay(std::uint64_t address, std::size_t bytes);
+RetiredDepth RetireReplacedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+RetiredDepth DiscardDepthSurfacesForReplay(VkDevice device);
+std::size_t ResidentDepthOwnersOver(std::uint64_t address, std::size_t bytes, bool gpuOnly);
 void RequireNoNativeDepthFeedback_nid_no_patch(const Context& context, const DepthTarget& target, std::span<const std::shared_ptr<Texture>> sampled);
 void ClearDepthSurfaces(VkDevice device);
+std::vector<NativeDepthSnapshot> CaptureNativeDepthSurfaces(VkDevice device);
+void PreflightNativeDepthSurfaces(const Context& context, std::span<const NativeDepthSnapshot> snapshots);
+void RestoreNativeDepthSurfaces(const Context& context, std::span<const NativeDepthSnapshot> snapshots);
 void RetireDepthSurfaces(VkDevice device, std::uint64_t address, std::uint64_t bytes);
 struct WrittenStorageExtent {
     std::uint64_t address;

@@ -2123,6 +2123,69 @@ std::uint64_t WriteGeneration() {
     return Tracker().generation.load(std::memory_order_acquire);
 }
 
+std::atomic<bool> changedSinceWalkFailureForTest{false};
+
+void SetChangedSinceWalkFailureForTest(bool fail) {
+    changedSinceWalkFailureForTest.store(fail, std::memory_order_release);
+}
+
+std::uint64_t ChangedSince(std::uint64_t address, std::size_t bytes, std::uint64_t since, std::vector<std::pair<std::uint64_t, std::uint64_t>>& changed) {
+    changed.clear();
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return 0;
+    const auto end = address + bytes;
+    const auto append = [&](std::uint64_t begin, std::uint64_t stop) {
+        if (!changed.empty() && changed.back().second == begin) changed.back().second = stop;
+        else changed.emplace_back(begin, stop);
+    };
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched) {
+        append(address, end);
+        return 0;
+    }
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> covered;
+    for (auto begin = address; begin < end;) {
+        const auto stop = std::min<std::uint64_t>(end, (begin & ~std::uint64_t{WriteBlockBytes - 1}) + WriteBlockBytes);
+        if (tracker.covers(begin, static_cast<std::size_t>(stop - begin))) {
+            if (!covered.empty() && covered.back().second == begin) covered.back().second = stop;
+            else covered.emplace_back(begin, stop);
+        }
+        begin = stop;
+    }
+    std::vector<bool> walked(covered.size(), true);
+    const bool cutForTest = changedSinceWalkFailureForTest.load(std::memory_order_acquire);
+    for (std::size_t index = 0; index < covered.size(); ++index) {
+        const auto first = covered[index].first & ~std::uint64_t{WritePageBytes - 1};
+        const auto stop = (covered[index].second + WritePageBytes - 1) & ~std::uint64_t{WritePageBytes - 1};
+        if (!cutForTest) {
+            walked[index] = walkWrites(tracker, first, stop, StampKind::Cpu);
+            continue;
+        }
+        const auto cut = first + (((stop - first) / 2) & ~std::uint64_t{WritePageBytes - 1});
+        if (cut > first) walkWrites(tracker, first, cut, StampKind::Cpu);
+#ifdef _WIN32
+        noteRefusedWalk(tracker, cut, stop);
+#endif
+        walked[index] = false;
+    }
+    const auto newest = [&](std::uint64_t begin) {
+        const auto block = tracker.blockOf(begin);
+        auto stamp = std::max(tracker.stampOf(block), tracker.cpuStampOf(block));
+        if (!tracker.unstampedStores.empty()) stamp = std::max(stamp, tracker.unstampedStores[(begin / WriteBlockBytes) % WriteTracker::UnstampedSlots]);
+        return stamp;
+    };
+    auto next = covered.begin();
+    for (auto begin = address; begin < end;) {
+        const auto stop = std::min<std::uint64_t>(end, (begin & ~std::uint64_t{WriteBlockBytes - 1}) + WriteBlockBytes);
+        while (next != covered.end() && next->second <= begin) ++next;
+        const bool inside = next != covered.end() && next->first <= begin;
+        if (!inside || !walked[static_cast<std::size_t>(next - covered.begin())] || newest(begin) > since) append(begin, stop);
+        begin = stop;
+    }
+    return tracker.generation.load(std::memory_order_relaxed);
+}
+
 std::uint64_t CollectWrittenBlocks(std::uint64_t address, std::size_t bytes, std::uint64_t since, std::vector<std::pair<std::uint64_t, std::uint64_t>>& written) {
     written.clear();
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return 0;

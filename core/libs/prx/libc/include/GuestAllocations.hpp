@@ -90,6 +90,7 @@ void GuestAllocationsInvalidate_nid_postfix(std::uintptr_t address, std::size_t 
 void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)(std::uintptr_t address, std::size_t bytes));
 void GuestAllocationsSetGpuMapObserver_nid_postfix(void (*callback)(const Mapped& ranges, std::uint64_t generation));
 void GuestAllocationsSetUnmapObserver_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes));
+bool GuestAllocationsUnmapObservedForTest_nid_postfix();
 void GuestAllocationsNoteGpuMapping_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
 }
 

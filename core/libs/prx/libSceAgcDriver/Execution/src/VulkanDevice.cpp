@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Execution/include/NativeDepthCapture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float16ConversionProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FloatFlushProbe.hpp"
@@ -2957,6 +2958,30 @@ void VulkanDevice::WaitIdle() {
     check(state->DeviceFunction<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(state->device), "vkDeviceWaitIdle");
     Graphics::CheckPixelFunctionLds(graphicsContext());
     APS5_LOG_CHARS_OUT_DEBUG("VulkanDevice::WaitIdle complete");
+}
+
+std::vector<NativeDepthSnapshot> VulkanDevice::CaptureNativeDepth() {
+    std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
+    WaitIdle();
+    return Graphics::CaptureNativeDepthSurfaces(state->device);
+}
+
+void VulkanDevice::RestoreNativeDepth(std::span<const NativeDepthSnapshot> snapshots) {
+    std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
+    WaitIdle();
+    Graphics::RestoreNativeDepthSurfaces(graphicsContext(), snapshots);
+}
+
+void VulkanDevice::PreflightNativeDepthWhileIdle(std::span<const NativeDepthSnapshot> snapshots) const {
+    require(GuestMemory::GpuMutex().HeldByThisThread(), "native replay preflight requires the guest memory transaction lock");
+    Graphics::PreflightNativeDepthSurfaces(graphicsContext(), snapshots);
+}
+
+void VulkanDevice::RestoreNativeDepthWhileIdle(std::span<const NativeDepthSnapshot> snapshots) {
+    require(GuestMemory::GpuMutex().HeldByThisThread(), "native replay restoration requires the guest memory transaction lock");
+    Graphics::RestoreNativeDepthSurfaces(graphicsContext(), snapshots);
 }
 
 namespace {

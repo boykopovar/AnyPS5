@@ -956,6 +956,18 @@ std::atomic<std::uint64_t>& guardedGeneration() {
     return generation;
 }
 
+std::atomic<bool>& omitOwnersForTest() {
+    static std::atomic<bool> omit{false};
+    return omit;
+}
+
+std::atomic<std::uint64_t>& inventoryWalks() {
+    static std::atomic<std::uint64_t> walks{0};
+    return walks;
+}
+
+std::size_t retireTargetsOver(std::uint64_t address, std::size_t bytes);
+
 std::atomic<std::uint64_t>& guardSpansGeneration() {
     static std::atomic<std::uint64_t> generation{0};
     return generation;
@@ -1023,26 +1035,58 @@ void forgetSingleClears(std::uintptr_t address, std::size_t bytes) {
     anySingleClears().store(!singleClears().empty(), std::memory_order_release);
 }
 
-void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
+RetiredGpuOwners retireGuarded(std::uintptr_t address, std::size_t bytes, bool replaced) {
+    RetiredGpuOwners owners;
     forgetSingleClears(address, bytes);
-    RetireUnmappedDepth_nid_no_patch(address, bytes);
-    std::unique_lock lock(guardedMutex());
-    bool metadataChanged = false;
-    const auto invalidated = std::erase_if(guarded(), [&](const auto& range) {
-        if (range.metadataValid && address < range.address + range.bytes && range.address < address + bytes) {
-            range.metadataValid->store(false, std::memory_order_release);
-            metadataChanged = true;
-        }
-        if (range.address < address || range.address - address > bytes || range.bytes > bytes - (range.address - address)) return false;
-        if (!range.metadataValid) range.active->store(false, std::memory_order_release);
-        return true;
-    });
-    const auto stale = std::erase_if(guarded(), [](const auto& range) { return !range.active->load(std::memory_order_acquire); });
-    if (metadataChanged || invalidated != 0 || stale != 0) {
-        guardedGeneration().fetch_add(1, std::memory_order_release);
-        moveGuardSpans();
+    if (replaced && omitOwnersForTest().load(std::memory_order_acquire)) return owners;
+    if (replaced) {
+        owners.color = retireTargetsOver(address, bytes);
+        const auto depth = RetireReplacedDepth_nid_no_patch(address, bytes);
+        owners.depthOwners = depth.owners;
+        owners.depthSurfaces = depth.surfaces;
+        owners.depthPlanes = depth.planes;
+    } else {
+        RetireUnmappedDepth_nid_no_patch(address, bytes);
     }
-    anyGuarded().store(!guarded().empty(), std::memory_order_release);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> retired;
+    {
+        std::unique_lock lock(guardedMutex());
+        bool metadataChanged = false;
+        const auto invalidated = std::erase_if(guarded(), [&](const auto& range) {
+            const bool overlaps = address < range.address + range.bytes && range.address < address + bytes;
+            if (range.metadataValid && overlaps) {
+                range.metadataValid->store(false, std::memory_order_release);
+                metadataChanged = true;
+            }
+            if (replaced && overlaps) {
+                range.active->store(false, std::memory_order_release);
+                if (!range.metadataValid) retired.emplace_back(range.address, range.address + range.bytes);
+                return true;
+            }
+            if (range.address < address || range.address - address > bytes || range.bytes > bytes - (range.address - address)) return false;
+            if (!range.metadataValid) range.active->store(false, std::memory_order_release);
+            return true;
+        });
+        const auto stale = std::erase_if(guarded(), [&](const auto& range) {
+            if (range.active->load(std::memory_order_acquire)) return false;
+            if (!range.metadataValid) retired.emplace_back(range.address, range.address + range.bytes);
+            return true;
+        });
+        if (metadataChanged || invalidated != 0 || stale != 0) {
+            guardedGeneration().fetch_add(1, std::memory_order_release);
+            moveGuardSpans();
+        }
+        anyGuarded().store(!guarded().empty(), std::memory_order_release);
+    }
+    if (retired.empty()) return owners;
+    std::lock_guard lock(singleClearsMutex());
+    std::erase_if(singleClears(), [&](const RecordedSingleClear& clear) { return std::ranges::any_of(retired, [&](const auto& span) { return clear.surface >= span.first && clear.surface < span.second; }); });
+    anySingleClears().store(!singleClears().empty(), std::memory_order_release);
+    return owners;
+}
+
+void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
+    static_cast<void>(retireGuarded(address, bytes, false));
 }
 
 void claimOverlapping(std::uint64_t address, std::uint64_t bytes, const TargetUse* claimant) {
@@ -1103,6 +1147,35 @@ std::vector<std::shared_ptr<MultisampleTarget>>& targets() {
 
 void discardRetiredTargets() {
     std::erase_if(targets(), [](const auto& target) { return !target->active->load(std::memory_order_acquire); });
+}
+
+template<class Visit>
+void visitFootprint(const MultisampleTarget& owner, Visit visit) {
+    const auto& target = owner.target;
+    visit(target.address, guardedColorBytes(target));
+    if (target.eqaaFragments != 0) visit(target.fmaskAddress, fmaskBytes(target));
+    if (target.dccAddress != 0) visit(target.dccAddress, MultisampledDccBytes(target));
+    if (owner.cmask.Address() != 0) visit(owner.cmask.Address(), owner.cmask.Bytes());
+    if (target.samples == 8u && target.fmaskAddress != 0u && owner.cmask.Address() != 0u) visit(target.fmaskAddress, DescribeSurface(fmaskResource(target)).guestBytes);
+    if (owner.htileAddress != 0u) visit(owner.htileAddress, owner.htileBytes);
+}
+
+bool footprintOverlaps(const MultisampleTarget& owner, std::uint64_t address, std::size_t bytes) {
+    bool overlaps = false;
+    visitFootprint(owner, [&](std::uint64_t begin, std::uint64_t length) { overlaps = overlaps || (begin < address + bytes && address < begin + length); });
+    return overlaps;
+}
+
+std::size_t retireTargetsOver(std::uint64_t address, std::size_t bytes) {
+    TargetsLock lock;
+    inventoryWalks().fetch_add(1, std::memory_order_relaxed);
+    std::size_t retired = 0;
+    for (const auto& target : targets()) {
+        if (!target->active->load(std::memory_order_acquire) || !footprintOverlaps(*target, address, bytes)) continue;
+        target->active->store(false, std::memory_order_release);
+        ++retired;
+    }
+    return retired;
 }
 
 bool holdHostOnly(const MultisampleTarget& target) {
@@ -1257,6 +1330,16 @@ void UpdateResidentImageUnmapObserver_nid_no_patch() {
     static std::mutex mutex;
     std::lock_guard lock(mutex);
     GuestAllocations::GuestAllocationsSetUnmapObserver_nid_postfix(anyGuarded().load(std::memory_order_acquire) || anySingleClears().load(std::memory_order_acquire) || HasResidentDepthGuards_nid_no_patch() || DepthPlanesStale() ? &retireUnmapped : nullptr);
+}
+
+void RetireResidentImagesOver_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    static_cast<void>(RetireGpuOwnersOver(address, bytes));
+}
+
+RetiredGpuOwners RetireGpuOwnersOver(std::uint64_t address, std::size_t bytes) {
+    const auto owners = retireGuarded(static_cast<std::uintptr_t>(address), bytes, true);
+    UpdateResidentImageUnmapObserver_nid_no_patch();
+    return owners;
 }
 
 std::optional<DccKeys> MultisampledCmaskKeys(std::uint8_t code) {
@@ -1971,6 +2054,52 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::u
     }
     std::ranges::sort(ranges);
     return ranges;
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> GpuOwnedRanges(std::uint64_t address, std::size_t bytes) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    if (bytes == 0) return ranges;
+    if (!omitOwnersForTest().load(std::memory_order_acquire)) {
+        {
+            TargetsLock lock;
+            inventoryWalks().fetch_add(1, std::memory_order_relaxed);
+            for (const auto& target : targets()) {
+                if (!target->active->load(std::memory_order_acquire) || !target->use->hostOnly.load(std::memory_order_acquire)) continue;
+                visitFootprint(*target, [&](std::uint64_t begin, std::uint64_t length) {
+                    if (begin < address + bytes && address < begin + length) ranges.emplace_back(begin, length);
+                });
+            }
+        }
+        AppendHostWrittenDepthRanges(address, bytes, ranges);
+    }
+    AppendStaleDepthPlanes(address, bytes, ranges);
+    StorageTexture::AppendPendingRanges(address, bytes, ranges);
+    std::erase_if(ranges, [&](const auto& range) { return range.first >= address + bytes || range.first + range.second <= address; });
+    std::ranges::sort(ranges);
+    return ranges;
+}
+
+std::size_t ResidentOwnersOver(std::uint64_t address, std::size_t bytes, bool gpuOnly) {
+    if (bytes == 0) return 0;
+    std::size_t owners = 0;
+    {
+        TargetsLock lock;
+        owners += static_cast<std::size_t>(std::ranges::count_if(targets(), [&](const auto& target) {
+            return target->active->load(std::memory_order_acquire) && (!gpuOnly || target->use->hostOnly.load(std::memory_order_acquire)) && footprintOverlaps(*target, address, bytes);
+        }));
+    }
+    owners += ResidentDepthOwnersOver(address, bytes, gpuOnly);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> pending;
+    StorageTexture::AppendPendingRanges(address, bytes, pending);
+    return owners + pending.size();
+}
+
+void OmitGpuOwnersForTest(bool omit) {
+    omitOwnersForTest().store(omit, std::memory_order_release);
+}
+
+std::uint64_t GpuOwnerInventoryWalksForTest() {
+    return inventoryWalks().load(std::memory_order_relaxed);
 }
 
 std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t address, std::size_t bytes) {
