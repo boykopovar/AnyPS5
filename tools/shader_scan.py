@@ -289,7 +289,7 @@ def measure_forms(files, isa, decoder=None, translated=None):
 
 UNSUPPORTED = re.compile(r"unsupported|not (?:yet )?(?:implemented|supported)|unimplemented", re.I)
 UNSUPPORTED_TYPES = re.compile(r"^throw\s+(?:\w+::)*(?:UnsupportedInstructionError|\w*Unsupported\w*)\b")
-THROW = re.compile(r"""\bthrow\b(?:[^;"']|"(?:\\.|[^"\\\n])*"|(?<=[0-9A-Fa-f])'(?=[0-9A-Fa-f])(?!.')|'(?:\\.|[^'\\\n])*')*;""")
+THROW = re.compile(r"""\bthrow\b(?:(?<![\w.'])\.?[0-9](?:[eEpP][+-]|'\w|[\w.])*|[^;"']|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')*;""")
 
 
 def unsupported_throws(files):

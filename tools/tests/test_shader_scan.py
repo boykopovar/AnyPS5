@@ -295,6 +295,16 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(results[1][0]["instructions"], results[0][0]["instructions"])
         self.assertEqual(results[1], results[0])
 
+    def test_unsupported_throws_read_digit_separators_in_every_numeric_form(self):
+        forms = ("0xA'B", "0xA'B'C", "0Xdead'beefULL", "0b1'0'1", "0'17", "1'0e+5", "0x1'0p-1'0", "1'000.5'5f", "x1 + 2'0", "L'a' + 1'0'0")
+        with tempfile.TemporaryDirectory() as directory:
+            write_tree(directory)
+            lower = Path(directory) / "core/shader/recompiler/Ir/Lower.cpp"
+            lower.write_text(lower.read_text(encoding="utf-8") + "".join(
+                f'void g{index}() {{ throw UnsupportedInstructionError("unsupported", {form}, \';\'); }}\n' for index, form in enumerate(forms)), encoding="utf-8")
+            sites = shader_scan.unsupported_throws(shader_scan.read_tree(directory))
+            self.assertEqual([s["line"] for s in sites if s["file"] == "Ir/Lower.cpp"], [1, 6, 7, *range(8, 8 + len(forms))])
+
     def test_a_missing_opcode_table_stops_the_scan_naming_it(self):
         with tempfile.TemporaryDirectory() as directory:
             write_tree(directory, tables=[e for e in shader_scan.REQUIRED_TABLES if e != "SOP1"])
