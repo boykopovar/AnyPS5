@@ -33,9 +33,20 @@ void TestSingleCharacterSetMatchesTheDocumentedRanges() {
     }
 }
 
+void TestByteStringSemantics() {
+    Require(uprv_isInvariantString_nid_postfix("", -1) != 0, "NUL-terminated empty string is invariant");
+    Require(uprv_isInvariantString_nid_postfix("Hello 42", -1) != 0, "plain ASCII text is invariant");
+    Require(uprv_isInvariantString_nid_postfix("Hi!", -1) == 0, "a NUL-terminated string with '!' is variant");
+    Require(uprv_isInvariantString_nid_postfix("ab\xE9", -1) == 0, "a byte above 127 makes the string variant");
+    Require(uprv_isInvariantString_nid_postfix("ab\0cd!", -1) != 0, "a NUL-terminated string stops at the first NUL");
+    Require(uprv_isInvariantString_nid_postfix("ab\0cd!", 6) == 0, "a length-limited string checks past a NUL and finds '!'");
+    Require(uprv_isInvariantString_nid_postfix("abc", 0) != 0, "a zero length checks nothing");
+}
+
 }
 
 int main() {
     TestSingleCharacterSetMatchesTheDocumentedRanges();
+    TestByteStringSemantics();
     return 0;
 }
