@@ -395,6 +395,7 @@ class Check:
         for path, lines in self.files(lambda p: is_debt(p.as_posix())):
             entry_lines = {start + offset for start, entry in debt_entries(self.show(path)).items() for offset in range(len(entry.split("\n")))}
             for number, text in lines:
+                text = text.removesuffix("\r")
                 if long_debt_entry(text):
                     self.report("debt-length", path, number, f"{len(text)} characters")
                 for label in debt_labels(text) if number in entry_lines else []:
