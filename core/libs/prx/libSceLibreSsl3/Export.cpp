@@ -39,11 +39,6 @@ int APS5_VABI EVP_CIPHER_CTX_set_flags_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI OBJ_txt2obj_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;

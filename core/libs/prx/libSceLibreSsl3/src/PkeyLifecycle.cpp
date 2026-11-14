@@ -177,6 +177,7 @@ namespace {
 constexpr int EvpLibrary = 6;
 constexpr int AnyFunction = 0xfff;
 constexpr int MallocFailure = 65;
+constexpr int Asn1OctetString = 4;
 constexpr int DifferentKeyTypes = 101;
 constexpr int MissingParameters = 103;
 constexpr int EcType = 408;
@@ -239,6 +240,27 @@ int APS5_VABI EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(LibreSsl3EvpPke
     }
     if (!destinationKey) return 0;
     return EC_KEY_set_group_nid_postfix(destinationKey, sourceKey->group);
+}
+
+LibreSsl3EvpPkey* APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(int type, void*, const unsigned char* key, int keyLength) {
+    if (type != LibreSsl3PkeyHmac) return nullptr;
+    if ((!key && keyLength > 0) || (keyLength < -1)) return nullptr;
+    auto* octets = static_cast<Asn1String*>(calloc_nid_postfix(1, sizeof(Asn1String)));
+    if (!octets) return nullptr;
+    octets->type = Asn1OctetString;
+    if (!ASN1_STRING_set_nid_postfix(octets, key, keyLength)) {
+        ASN1_OCTET_STRING_free_nid_postfix(octets);
+        return nullptr;
+    }
+    auto* macKey = EVP_PKEY_new_nid_disambig1_nid_postfix();
+    if (!macKey) {
+        ASN1_OCTET_STRING_free_nid_postfix(octets);
+        return nullptr;
+    }
+    macKey->type = LibreSsl3PkeyHmac;
+    macKey->key = octets;
+    macKey->method = FindNativePkeyAsn1Method_nid_no_patch(LibreSsl3PkeyHmac);
+    return macKey;
 }
 
 }

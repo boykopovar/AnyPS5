@@ -543,6 +543,8 @@ constexpr int Sha256Type = 672;
 constexpr int Sha384Type = 673;
 constexpr int Sha512Type = 674;
 
+constexpr int MaxDigestSize = 64;
+
 void QueueEvpError(int reason) {
     LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, reason);
 }
@@ -1205,6 +1207,54 @@ const LibreSsl3PkeyAsn1Method RsaPssAsn1Method {
     nullptr,
 };
 
+int APS5_VABI HmacCompare_nid_no_patch(const LibreSsl3EvpPkey* first, const LibreSsl3EvpPkey* second) {
+    return ASN1_OCTET_STRING_cmp_nid_postfix(static_cast<const Asn1String*>(first->key), static_cast<const Asn1String*>(second->key)) == 0;
+}
+
+int APS5_VABI HmacSize_nid_no_patch(const LibreSsl3EvpPkey*) {
+    return MaxDigestSize;
+}
+
+void APS5_VABI HmacFree_nid_no_patch(LibreSsl3EvpPkey* key) {
+    ASN1_OCTET_STRING_free_nid_postfix(static_cast<Asn1String*>(key->key));
+}
+
+const LibreSsl3PkeyAsn1Method HmacAsn1Method {
+    &HmacAsn1Method,
+    LibreSsl3PkeyHmac,
+    0,
+    "HMAC",
+    "OpenSSL HMAC method",
+    nullptr,
+    nullptr,
+    &HmacCompare_nid_no_patch,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    &HmacSize_nid_no_patch,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    &HmacFree_nid_no_patch,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+};
+
 int DigestInitialize(LibreSsl3::DigestContext* context, const DigestMethod* type) {
     context->flags &= ~DigestCleanedFlag;
 
@@ -1362,11 +1412,12 @@ const LibreSsl3PkeyMethod* FindNativePkeyMethod_nid_no_patch(std::int32_t keyTyp
 const LibreSsl3PkeyAsn1Method* FindNativePkeyAsn1Method_nid_no_patch(std::int32_t keyType) {
     if (keyType == LibreSsl3PkeyRsa) return &RsaAsn1Method;
     if (keyType == LibreSsl3PkeyRsaPss) return &RsaPssAsn1Method;
+    if (keyType == LibreSsl3PkeyHmac) return &HmacAsn1Method;
     return nullptr;
 }
 
 bool IsNativePkeyMethod_nid_no_patch(const void* method) {
-    return method == &RsaAsn1Method || method == &RsaPssAsn1Method;
+    return method == &RsaAsn1Method || method == &RsaPssAsn1Method || method == &HmacAsn1Method;
 }
 
 extern "C" {
