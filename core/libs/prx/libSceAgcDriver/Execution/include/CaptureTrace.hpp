@@ -2,6 +2,7 @@
 #include "prx/libc/include/HostThread.hpp"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -71,6 +72,10 @@ public:
         return enabled;
     }
 
+    static void Stop() {
+        if (auto* trace = current.load(std::memory_order_acquire)) trace->stop();
+    }
+
     template<typename... TArgs>
     static void Log(const char* format, TArgs... args) {
         if (!Enabled()) return;
@@ -100,8 +105,12 @@ private:
     friend struct CaptureTraceTestAccess;
 
     static CaptureTrace& instance() {
-        static CaptureTrace trace;
-        return trace;
+        static auto* const trace = [] {
+            static CaptureTrace value;
+            current.store(&value, std::memory_order_release);
+            return &value;
+        }();
+        return *trace;
     }
 
     CaptureTrace() {
@@ -117,12 +126,18 @@ private:
     }
 
     ~CaptureTrace() {
-        {
-            std::lock_guard lock(mutex);
-            stopping = true;
-        }
-        changed.notify_one();
-        if (worker.joinable()) worker.join();
+        stop();
+    }
+
+    void stop() {
+        std::call_once(stopped, [this] {
+            {
+                std::lock_guard lock(mutex);
+                stopping = true;
+            }
+            changed.notify_one();
+            if (worker.joinable()) worker.join();
+        });
     }
 
     void append(std::string line) {
@@ -195,6 +210,8 @@ private:
         }
     }
 
+    inline static std::atomic<CaptureTrace*> current{nullptr};
+    std::once_flag stopped;
     std::ofstream output;
     std::mutex mutex;
     std::condition_variable changed;

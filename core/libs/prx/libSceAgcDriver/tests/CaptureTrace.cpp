@@ -20,6 +20,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace AgcDriver {
 
@@ -99,6 +102,50 @@ void ExplicitWrites() {
           "the configured trace path did not receive the capture record");
     std::remove(configured);
 }
+
+void StopUnused() {
+    const char* configured = RequiredPathVariable();
+    AgcDriver::CaptureTrace::Stop();
+    Check(!FileExists(configured), "stopping an unused trace must not create its file or worker");
+}
+
+void StopDrains() {
+    const char* configured = RequiredPathVariable();
+    AgcDriver::CaptureTrace::Log("stop-record before");
+    std::vector<std::thread> callers;
+    for (unsigned i = 0; i < 4; ++i) callers.emplace_back([] { AgcDriver::CaptureTrace::Stop(); });
+    for (auto& caller : callers) caller.join();
+    const auto contents = ReadFile(configured);
+    Check(contents.find("stop-record before\n") != std::string::npos, "stopping lost a queued record");
+    Check(contents.find("capture-trace-summary dropped=0\n") != std::string::npos, "stopping did not write its summary");
+    AgcDriver::CaptureTrace::Log("stop-record after");
+    AgcDriver::CaptureTrace::Stop();
+    Check(ReadFile(configured) == contents, "a repeated stop or a late record changed the completed trace");
+}
+
+#ifdef _WIN32
+void DllShutdown(const char* modulePath) {
+    const char* configured = RequiredPathVariable();
+    HMODULE module = LoadLibraryA(modulePath);
+    Check(module != nullptr, "the capture trace DLL could not be loaded");
+    const auto record = reinterpret_cast<void (*)()>(GetProcAddress(module, "CaptureTraceRecord"));
+    const auto stop = reinterpret_cast<void (*)()>(GetProcAddress(module, "CaptureTraceStop"));
+    Check(record != nullptr && stop != nullptr, "the capture trace DLL is missing its test entry points");
+    record();
+    stop();
+    stop();
+    Check(FreeLibrary(module) != 0, "the stopped capture trace DLL could not be unloaded");
+    std::istringstream lines(ReadFile(configured));
+    std::string line;
+    for (unsigned i = 0; i < 32; ++i) {
+        Check(static_cast<bool>(std::getline(lines, line)) && line.ends_with(" unload-record item=" + std::to_string(i)),
+              "DLL shutdown lost or reordered a queued record");
+    }
+    Check(static_cast<bool>(std::getline(lines, line)) && line.ends_with(" capture-trace-summary dropped=0"),
+          "DLL shutdown lost its summary");
+    Check(!std::getline(lines, line), "DLL shutdown wrote extra records or a second summary");
+}
+#endif
 
 void DefaultWrites() {
     RemoveEnvironmentVariable("APS5_CAPTURE_TRACE_PATH");
@@ -446,12 +493,17 @@ void AgcDriver::CaptureTraceTestAccess::QueueDrop(bool shutdownOnly, bool cumula
 
 int main(int argc, char** argv) {
     try {
-        if (argc != 2) throw std::runtime_error("expected exactly one test mode argument");
+        if (argc < 2) throw std::runtime_error("expected a test mode argument");
         const std::string mode = argv[1];
         if (mode == "path-default") PathDefault();
         else if (mode == "path-empty") PathEmpty();
         else if (mode == "path-explicit") PathExplicit();
         else if (mode == "explicit-writes") ExplicitWrites();
+        else if (mode == "stop-unused") StopUnused();
+        else if (mode == "stop-drains") StopDrains();
+#ifdef _WIN32
+        else if (mode == "dll-shutdown" && argc == 3) DllShutdown(argv[2]);
+#endif
         else if (mode == "default-writes") DefaultWrites();
         else if (mode == "open-failure") OpenFailure();
         else if (mode == "best-effort-overflow") BestEffortOverflow();

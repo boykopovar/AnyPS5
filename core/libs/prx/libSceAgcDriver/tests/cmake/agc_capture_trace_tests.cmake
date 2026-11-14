@@ -4,6 +4,13 @@ if(BUILD_TESTING)
     target_link_libraries(agc_capture_trace_tests PRIVATE libc)
     configure_windows_unwind(agc_capture_trace_tests)
     set(agcCaptureTraceDirectory ${CMAKE_CURRENT_BINARY_DIR}/capture_trace_tests)
+    foreach(mode stop-unused stop-drains)
+        string(REPLACE "-" "_" testMode "${mode}")
+        file(MAKE_DIRECTORY "${agcCaptureTraceDirectory}/${mode}")
+        add_test(NAME agc_capture_trace_${testMode} COMMAND agc_capture_trace_tests ${mode})
+        set_tests_properties(agc_capture_trace_${testMode} PROPERTIES TIMEOUT 15
+                ENVIRONMENT "APS5_CAPTURE_TRACE=1;APS5_CAPTURE_TRACE_PATH=${agcCaptureTraceDirectory}/${mode}/trace.log")
+    endforeach()
     file(MAKE_DIRECTORY "${agcCaptureTraceDirectory}/default")
     file(MAKE_DIRECTORY "${agcCaptureTraceDirectory}/explicit")
     file(MAKE_DIRECTORY "${agcCaptureTraceDirectory}/failure")
@@ -49,11 +56,22 @@ if(BUILD_TESTING)
     add_test(NAME agc_capture_trace_disabled COMMAND agc_capture_trace_tests disabled)
     set_tests_properties(agc_capture_trace_disabled PROPERTIES WORKING_DIRECTORY "${agcCaptureTraceDirectory}/disabled")
     if(WIN32)
+        add_library(agc_capture_trace_unload_fixture SHARED tests/CaptureTraceUnload.cpp)
+        set_target_properties(agc_capture_trace_unload_fixture PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+        target_include_directories(agc_capture_trace_unload_fixture PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(agc_capture_trace_unload_fixture PRIVATE libc)
+        configure_windows_unwind(agc_capture_trace_unload_fixture)
+        add_dependencies(agc_capture_trace_tests agc_capture_trace_unload_fixture)
+        file(MAKE_DIRECTORY "${agcCaptureTraceDirectory}/dll-shutdown")
+        add_test(NAME agc_capture_trace_dll_shutdown COMMAND agc_capture_trace_tests dll-shutdown $<TARGET_FILE:agc_capture_trace_unload_fixture>)
+        set_tests_properties(agc_capture_trace_dll_shutdown PROPERTIES TIMEOUT 15
+                ENVIRONMENT "APS5_CAPTURE_TRACE=1;APS5_CAPTURE_TRACE_PATH=${agcCaptureTraceDirectory}/dll-shutdown/trace.log")
         set_tests_properties(agc_capture_trace_path_default agc_capture_trace_path_empty
                 agc_capture_trace_path_explicit agc_capture_trace_explicit_writes
                 agc_capture_trace_prefix_matching agc_capture_trace_prefix_writes
                 agc_capture_trace_default_writes agc_capture_trace_open_failure agc_capture_trace_best_effort_overflow agc_capture_trace_format_overflow agc_capture_trace_queue_drop agc_capture_trace_queue_drop_shutdown agc_capture_trace_queue_drop_cumulative
-                agc_capture_trace_disabled PROPERTIES ENVIRONMENT_MODIFICATION
+                agc_capture_trace_disabled agc_capture_trace_stop_unused agc_capture_trace_stop_drains
+                agc_capture_trace_dll_shutdown PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
