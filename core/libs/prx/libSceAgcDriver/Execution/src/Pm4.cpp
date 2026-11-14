@@ -88,6 +88,12 @@ void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(reason);
 }
 
+constexpr std::uint32_t GcnPrepareFlipMarker = 0x68750777u;
+constexpr std::uint32_t GcnPrepareFlipLabelMarker = 0x68750778u;
+constexpr std::size_t GcnFlipReservationWords = 64;
+constexpr std::uint32_t GcnReleaseEventControl = 0xf3fu;
+constexpr std::uint32_t GcnVolatileTextureCacheAction = 0x10000u;
+
 std::uint64_t address(std::uint32_t low, std::uint32_t high) {
     return low | (static_cast<std::uint64_t>(high) << 32u);
 }
@@ -327,7 +333,11 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         require((header & 3u) == 0, "unsupported NOP header flags");
         switch ((header >> 2u) & 0x3fu) {
             case 0:
-                require((packet[1] & 0xffff0000u) != 0x68750000u, "typed user-data and legacy flip markers are not implemented");
+                if ((packet[1] & 0xffff0000u) == 0x68750000u) {
+                    require(ShaderRecompiler::GcnGuestShaders(), "typed user-data and legacy flip markers are not implemented");
+                    require(packet.size() != GcnFlipReservationWords, "a GCN flip reservation in a command buffer is not implemented");
+                    require(packet[1] != GcnPrepareFlipMarker && packet[1] != GcnPrepareFlipLabelMarker, "legacy flip markers are not implemented");
+                }
                 break;
             case 0x09: size(2); break;
             case 0x06: size(4); require(packet[3] == 0, "unsupported rendering wait mode"); break;
@@ -353,6 +363,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     const bool registerWrite = opcode == 0x69 || opcode == 0x76 || opcode == 0x79 || opcode == 0x7a || (opcode == 0x37 && ((packet[1] >> 8u) & 0xfu) == 0);
     auto allowedFlags = opcode == 0x11 || opcode == 0x15 || opcode == 0x16 ? 2u : registerWrite ? 6u : opcode == 0x3c || opcode == 0x93 ? 2u : 0u;
     if (opcode != 0x20 && opcode != 0x22) allowedFlags |= 1u;
+    if (queue != 0 && ShaderRecompiler::GcnGuestShaders()) allowedFlags |= 2u;
     if ((flags & ~allowedFlags) != 0) throw std::runtime_error("PM4 header flags 0x" + ToHex(flags) + " are not implemented");
     switch (opcode) {
         case 0x11:
@@ -490,7 +501,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         }
         case 0x58: {
             require(packet.size() == 7 || packet.size() == 8, "invalid ACQUIRE_MEM packet size");
-            const auto controlMask = packet.size() == 8 ? 0x86287fc3u : 0xfeecfffbu;
+            const auto controlMask = packet.size() == 8 ? 0x86287fc3u : 0xfeecfffbu | (ShaderRecompiler::GcnGuestShaders() ? GcnVolatileTextureCacheAction : 0u);
             require((packet[1] & ~controlMask) == 0, "unsupported ACQUIRE_MEM control flags");
             require(queue == 0 || (packet[1] & 0x06287fc3u) == 0, "graphics cache operation in compute queue");
             require(packet[3] <= 0xffu && packet[5] <= 0xffu, "invalid ACQUIRE_MEM range high bits");
@@ -544,7 +555,12 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             break;
         }
         case 0x49: {
-            size(8);
+            require(packet.size() == 8 || (packet.size() == 7 && ShaderRecompiler::GcnGuestShaders()), "invalid packet size");
+            if (packet.size() == 7) {
+                require((packet[1] & ~GcnReleaseEventControl) == 0, "GCN RELEASE_MEM event control bits beyond the event type and index are not implemented");
+                const auto interruptSelect = (packet[2] >> 24u) & 7u;
+                require(interruptSelect == 0 || interruptSelect == 3, "an interrupting GCN RELEASE_MEM has no interrupt context dword");
+            }
             const auto dataSelect = packet[2] >> 29u;
             require(dataSelect != 4 || ShaderRecompiler::GcnGuestShaders(), "RELEASE_MEM of the 64-bit system counter (DATA_SEL 4) is not implemented");
             require(dataSelect <= 5, "reserved RELEASE_MEM DATA_SEL");

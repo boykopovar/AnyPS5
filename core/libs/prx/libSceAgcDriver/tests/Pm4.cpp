@@ -1353,6 +1353,50 @@ void testGcnReleaseMemSystemCounter() {
     check(stores.size() == 1 && stores[0].value == AgcDriver::Pm4::PacketStore::Value::RunTime && stores[0].bytes == 8, "a GCN DATA_SEL 4 RELEASE_MEM did not decode as an 8-byte run-time store");
 }
 
+void testGcnCalledBufferPacketForms() {
+    alignas(8) static std::uint32_t target = 0;
+    const auto marker = [](std::uint32_t value) { return makePacket(0x10, {value, 0, 0, 0, 0}); };
+    const auto release = [](std::uint32_t flags, std::uint32_t event = 0x0000062fu, std::uint32_t interrupt = 3u) { return makePacket(0x49, {event, (1u << 29u) | (interrupt << 24u), low(&target), high(&target), 0x150, 0}, flags); };
+    const auto acquire = [](std::uint32_t control) { return makePacket(0x58, {control, 0, 0, 0, 0, 10}); };
+    expectFailure([&] { AgcDriver::Pm4::Validate(marker(0x68754000u), 0x20); }, "typed user-data and legacy flip markers are not implemented");
+    expectFailure([&] { AgcDriver::Pm4::Validate(release(0), 0x20); }, "invalid packet size");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x49, {0x0000062f, 1u << 29u, low(&target), high(&target), 1, 0, 0}, 2u), 0x20); }, "PM4 header flags 0x2 are not implemented");
+    expectFailure([&] { AgcDriver::Pm4::Validate(acquire(0x00c58000u), 0x20); }, "unsupported ACQUIRE_MEM control flags");
+    struct GcnGuest {
+        GcnGuest() { ShaderRecompiler::SetGcnGuestShaders(true); }
+        ~GcnGuest() { ShaderRecompiler::SetGcnGuestShaders(false); }
+    } gcn;
+    for (const auto queue : {0u, 0x20u}) AgcDriver::Pm4::Validate(marker(0x68754000u), queue);
+    for (const auto flip : {0x68750777u, 0x68750778u}) expectFailure([&] { AgcDriver::Pm4::Validate(marker(flip), 0x20); }, "legacy flip markers are not implemented");
+    std::vector<std::uint32_t> reservation(64, 0);
+    reservation[0] = 0xc03e1000u;
+    reservation[1] = 0x68754000u;
+    expectFailure([&] { AgcDriver::Pm4::Validate(reservation, 0x20); }, "a GCN flip reservation in a command buffer is not implemented");
+    AgcDriver::Pm4::Validate(release(0), 0);
+    AgcDriver::Pm4::Validate(release(2u), 0x20);
+    AgcDriver::Pm4::Validate(makePacket(0x49, {0x0000062f, 1u << 29u, low(&target), high(&target), 1, 0, 0}, 2u), 0x20);
+    expectFailure([&] { AgcDriver::Pm4::Validate(release(2u), 0); }, "PM4 header flags 0x2 are not implemented");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x49, {0x0000062f, 1u << 29u, low(&target), high(&target), 1}), 0x20); }, "invalid packet size");
+    expectFailure([&] { AgcDriver::Pm4::Validate(release(2u, 0x0002062fu), 0x20); }, "GCN RELEASE_MEM event control bits beyond the event type and index are not implemented");
+    for (const auto interrupt : {1u, 2u}) expectFailure([&] { AgcDriver::Pm4::Validate(release(2u, 0x0000062fu, interrupt), 0x20); }, "an interrupting GCN RELEASE_MEM has no interrupt context dword");
+    AgcDriver::Pm4::Validate(release(2u, 0x0000062fu, 0), 0x20);
+    for (const auto queue : {0u, 0x20u}) AgcDriver::Pm4::Validate(acquire(0x00c58000u), queue);
+    expectFailure([&] { AgcDriver::Pm4::Validate(acquire(0x00020000u), 0x20); }, "unsupported ACQUIRE_MEM control flags");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x58, {0x00010000u, 0, 0, 0, 0, 10, 0}), 0x20); }, "unsupported ACQUIRE_MEM control flags");
+    AgcDriver::QueueState state;
+    target = 0;
+    execute(state, release(0));
+    check(target == 0x150, "a 7-dword GCN RELEASE_MEM did not write its data");
+    const auto label = AgcDriver::Pm4::DecodeLabelWrite(release(0));
+    check(label.has_value() && label->address == reinterpret_cast<std::uintptr_t>(&target) && label->Bytes().size() == 4, "a 7-dword GCN RELEASE_MEM did not resolve as a 4-byte label");
+    target = 0;
+    const auto called = joinPackets({marker(0x68754000u), acquire(0x00c58000u), release(2u)});
+    auto words = indirectBuffer(called);
+    submitWords(words, 0x20);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(target).load() == 0x150, "a called buffer with the GCN packet forms did not run on a compute queue");
+}
+
 void testMemSemaphore() {
     alignas(8) static std::uint64_t semaphore = 0;
     alignas(8) static std::uint32_t marker = 0;
@@ -2728,6 +2772,7 @@ int main(int argc, char** argv) {
         testEventWrite();
         testReleaseMemDataSelects();
         testGcnReleaseMemSystemCounter();
+        testGcnCalledBufferPacketForms();
         testAcquireMem();
         testConditionalWrite();
         testConditionalWriteSubmission();
