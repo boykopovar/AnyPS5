@@ -639,9 +639,15 @@ DrawPipeline::Watch DrawPipeline::WatchWrites() {
 }
 
 bool DrawPipeline::WrittenSince(const Watch& watch, const std::vector<Range>& reads) {
-    const auto overlaps = [&reads](const std::vector<Range>& writes) {
-        return std::any_of(reads.begin(), reads.end(), [&writes](const Range& read) {
-            return std::any_of(writes.begin(), writes.end(), [&read](const Range& write) { return read.first < write.second && write.first < read.second; });
+    Range hull{~std::uint64_t{0}, 0};
+    for (const auto& read : reads) {
+        hull.first = std::min(hull.first, read.first);
+        hull.second = std::max(hull.second, read.second);
+    }
+    const auto overlaps = [&reads, &hull](const std::vector<Range>& writes) {
+        return std::any_of(writes.begin(), writes.end(), [&](const Range& write) {
+            if (!(hull.first < write.second && write.first < hull.second)) return false;
+            return std::any_of(reads.begin(), reads.end(), [&write](const Range& read) { return read.first < write.second && write.first < read.second; });
         });
     };
     if (DrawFinisher::Overlap() && DrawFinisher::Get().PendingOverlapsAny(reads)) return true;
@@ -659,7 +665,14 @@ bool DrawPipeline::Busy() const {
 bool DrawPipeline::OverlapsAny(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     if (DrawFinisher::Overlap() && DrawFinisher::Get().PendingOverlapsAny(ranges)) return true;
     std::lock_guard lock(mutex);
+    if (queuedWrites.empty() || ranges.empty()) return false;
+    std::pair<std::uint64_t, std::uint64_t> hull{~std::uint64_t{0}, 0};
+    for (const auto& [address, end] : ranges) {
+        hull.first = std::min(hull.first, address);
+        hull.second = std::max(hull.second, end);
+    }
     for (const auto& [range, count] : queuedWrites) {
+        if (!(hull.first < range.second && range.first < hull.second)) continue;
         for (const auto& [address, end] : ranges) {
             if (address < range.second && range.first < end) return true;
         }
