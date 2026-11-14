@@ -171,6 +171,41 @@ void CheckAssyError(std::int32_t expected) {
     for (const auto byte : data) Require(byte == 0x5a, "a refused assembly error query wrote its output");
 }
 
+void CheckInternalQueries() {
+    std::uint32_t puVersion = 0;
+    std::uint8_t depth = 0;
+    std::uint8_t debugTextMode = 0;
+    char serialNumber[32]{};
+    std::uint8_t socialScreenMode = 0;
+    std::uint64_t dfuStatus = 0;
+    HmdEyeDistances distances{};
+    std::uint32_t crashReportSize = 0;
+
+    Require(sceHmdInternalGetPUVersion(nullptr) == Hmd::ParameterNull, "null puVersion");
+    Require(sceHmdInternalGetPUVersion(&puVersion) == Hmd::NotInitialized, "puVersion before initialize");
+
+    Require(sceHmdInternalGetVirtualDisplayDepth(nullptr) == Hmd::ParameterNull, "null depth");
+    Require(sceHmdInternalGetVirtualDisplayDepth(&depth) == Hmd::NotInitialized, "depth before initialize");
+
+    Require(sceHmdInternalGetDebugTextMode(nullptr) == Hmd::ParameterNull, "null debugTextMode");
+    Require(sceHmdInternalGetDebugTextMode(&debugTextMode) == Hmd::NotInitialized, "debugTextMode before initialize");
+
+    Require(sceHmdInternalGetPUSerialNumber(nullptr) == Hmd::ParameterNull, "null serialNumber");
+    Require(sceHmdInternalGetPUSerialNumber(serialNumber) == Hmd::NotInitialized, "serialNumber before initialize");
+
+    Require(sceHmdInternalGetDebugSocialScreenMode(nullptr) == Hmd::ParameterNull, "null socialScreenMode");
+    Require(sceHmdInternalGetDebugSocialScreenMode(&socialScreenMode) == Hmd::NotInitialized, "socialScreenMode before initialize");
+
+    Require(sceHmdInternalDfuGetStatus(nullptr) == Hmd::ParameterNull, "null dfuStatus");
+    Require(sceHmdInternalDfuGetStatus(&dfuStatus) == Hmd::NotInitialized, "dfuStatus before initialize");
+
+    Require(sceHmdInternalGetIPD(nullptr) == Hmd::ParameterNull, "null distances");
+    Require(sceHmdInternalGetIPD(&distances) == Hmd::NotInitialized, "distances before initialize");
+
+    Require(sceHmdInternalCrashReportReadDataSize(nullptr) == Hmd::ParameterNull, "null crashReportSize");
+    Require(sceHmdInternalCrashReportReadDataSize(&crashReportSize) == Hmd::NotInitialized, "crashReportSize before initialize");
+}
+
 }
 
 int main() {
@@ -183,6 +218,7 @@ int main() {
     CheckDisconnected();
     CheckBufferQueries();
     CheckUnnamedConstants();
+    CheckInternalQueries();
     Require(sceHmdTerminate() == Hmd::NotInitialized, "terminate before initialize");
     Require(sceHmdOpen(1, 0, 0, nullptr) == Hmd::NotInitialized, "open before initialize");
     Require(sceHmdClose(0) == Hmd::NotInitialized, "close before initialize");
