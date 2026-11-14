@@ -19,10 +19,12 @@ std::uint32_t RegisterListSize(std::uint32_t numRegs, const char* function) {
 extern "C" {
 
 std::uint32_t* APS5_VABI sceAgcCbSetUcRegisterRangeDirect(CommandBuffer* buf, std::uint32_t offset, const std::uint32_t* values, std::uint32_t numValues) {
+    if (numValues == 0) return Agc::Command::Emit(buf, 0x79u, {offset & 0xffffu}, __func__);
     return Agc::Command::WriteRegisterRange(buf, 0x79u, offset, values, numValues, __func__);
 }
 
 std::uint32_t* APS5_VABI sceAgcCbSetShRegisterRangeDirect(CommandBuffer* buf, std::uint32_t offset, const std::uint32_t* values, std::uint32_t numValues) {
+    if (numValues == 0) return Agc::Command::Emit(buf, 0x76u, {offset & 0xffffu}, __func__);
     return Agc::Command::WriteRegisterRange(buf, 0x76u, offset, values, numValues, __func__);
 }
 

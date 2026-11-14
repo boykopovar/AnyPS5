@@ -59,8 +59,6 @@ agcbuild_CbMemSemaphore_c	diff	the operation argument changes the control word; 
 agcbuild_CbReleaseMem_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbReleaseMem_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbReleaseMem_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_CbSetShRegisterRangeDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_CbSetUcRegisterRangeDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbAcquireMem_a	throw	the ACQUIRE_MEM encoding; #18479
 agcbuild_DcbAcquireMem_b	diff	the ACQUIRE_MEM encoding; #18479
 agcbuild_DcbAcquireMem_c	throw	the ACQUIRE_MEM encoding; #18479
@@ -118,10 +116,6 @@ agcbuild_DcbResetQueue_b	diff	the packet differs from the console's; not yet ana
 agcbuild_DcbSetBaseIndirectArgs_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetBaseIndirectArgs_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetBaseIndirectArgs_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCfRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCfRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCxRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCxRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetCxRegistersIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetCxRegistersIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetCxRegistersIndirect_c	throw	AnyPS5 throws for arguments the console encodes
@@ -138,13 +132,9 @@ agcbuild_DcbSetIndexSize_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetPredication_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetPredication_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetPredication_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetShRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetShRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetShRegistersIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetShRegistersIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetShRegistersIndirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetUcRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetUcRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetUcRegistersIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetUcRegistersIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetUcRegistersIndirect_c	throw	AnyPS5 throws for arguments the console encodes
