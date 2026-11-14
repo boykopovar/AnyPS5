@@ -492,8 +492,10 @@ template<typename Value> GuestLocale::OutputIterator PutFormattedFloating(GuestL
     return PutFloating(out, stream, fill, digits.c_str(), static_cast<std::size_t>(count));
 }
 
-GuestLocale::OutputIterator APS5_VABI NumPutBool(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, bool value) {
-    if ((stream->flags & IosBoolAlpha) == 0) return reinterpret_cast<const GuestLocale::NumPutVtable*>(self->vtable)->putLong(self, out, stream, fill, value ? 1 : 0);
+GuestLocale::OutputIterator APS5_VABI NumPutLong(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::int64_t value);
+
+GuestLocale::OutputIterator APS5_VABI NumPutBool(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, bool value) {
+    if ((stream->flags & IosBoolAlpha) == 0) return NumPutLong(nullptr, out, stream, fill, value ? 1 : 0);
     const GuestLocale::Facet* punct = StreamNumpunct(stream);
     return PutField(out, stream, fill, TakeString(value ? Punctuation(punct).truename : Punctuation(punct).falsename, punct), 0);
 }
@@ -620,6 +622,230 @@ extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const Gue
         }
     }
     return out;
+}
+
+namespace {
+
+void PutWideCharacter(GuestLocale::OutputIterator& out, std::uint16_t character) {
+    GuestLocale::Streambuf* buffer = out.buffer;
+    if (buffer == nullptr) {
+        out.failed = true;
+        return;
+    }
+    char* next = *buffer->putNext;
+    if (next != nullptr && static_cast<std::int32_t>(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(*buffer->putEnd) - reinterpret_cast<std::uintptr_t>(next))) >= static_cast<std::int32_t>(GuestWideCharacterSize)) {
+        *buffer->putNext = next + GuestWideCharacterSize;
+        std::memcpy(next, &character, GuestWideCharacterSize);
+        return;
+    }
+    if (buffer->vtable->overflow(buffer, character) == -1) out.failed = true;
+}
+
+std::u16string WidenCharacters(const char* text, std::size_t count) {
+    std::u16string result;
+    result.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) result.push_back(static_cast<char16_t>(static_cast<unsigned char>(text[index])));
+    return result;
+}
+
+const GuestLocale::Facet* StreamWideNumpunct(const GuestLocale::IosBase* stream) {
+    if (const GuestLocale::Facet* facet = FindFacet(stream, _ZNSt8numpunctIwE2idE_nid_postfix)) return facet;
+    static GuestLocale::Facet* const fallback = [] {
+        GuestLocale::Facet* created = nullptr;
+        _ZNSt8numpunctIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&created, nullptr);
+        return created;
+    }();
+    return fallback;
+}
+
+const GuestLocale::WideNumpunctFacet* AsWideNumpunct(const GuestLocale::Facet* facet) {
+    return reinterpret_cast<const GuestLocale::WideNumpunctFacet*>(facet);
+}
+
+const GuestLocale::WideNumpunctVtable& WidePunctuation(const GuestLocale::Facet* facet) {
+    return *reinterpret_cast<const GuestLocale::WideNumpunctVtable*>(facet->vtable);
+}
+
+std::string TakeGrouping(GuestLocale::String* (APS5_VABI* method)(GuestLocale::String*, const GuestLocale::WideNumpunctFacet*), const GuestLocale::Facet* facet) {
+    GuestLocale::String value{};
+    method(&value, AsWideNumpunct(facet));
+    const bool onHeap = value.capacity > GuestLocale::StringInlineCapacity;
+    std::string text(onHeap ? value.pointer : value.buffer, value.size);
+    if (onHeap) GuestStringStorage::Deallocate(value.pointer, value.capacity + 1);
+    return text;
+}
+
+std::u16string TakeWideName(GuestLocale::String* (APS5_VABI* method)(GuestLocale::String*, const GuestLocale::WideNumpunctFacet*), const GuestLocale::Facet* facet) {
+    GuestLocale::String value{};
+    method(&value, AsWideNumpunct(facet));
+    const bool onHeap = value.capacity > GuestWideInlineCapacity;
+    const char* data = onHeap ? value.pointer : value.buffer;
+    std::u16string text;
+    text.reserve(value.size);
+    for (std::uint64_t index = 0; index < value.size; ++index) {
+        std::uint16_t character = 0;
+        std::memcpy(&character, data + index * GuestWideCharacterSize, GuestWideCharacterSize);
+        text.push_back(static_cast<char16_t>(character));
+    }
+    if (onHeap) GuestStringStorage::Deallocate(value.pointer, (value.capacity + 1) * GuestWideCharacterSize);
+    return text;
+}
+
+void InsertWideSeparators(std::u16string& text, const std::string& grouping, std::uint16_t separator, std::size_t offset, std::size_t prefix) {
+    const char* group = grouping.c_str();
+    while (static_cast<signed char>(*group) != CHAR_MAX && static_cast<signed char>(*group) > 0 && static_cast<std::size_t>(*group) < offset - prefix) {
+        offset -= static_cast<std::size_t>(*group);
+        text.insert(offset, 1, static_cast<char16_t>(separator));
+        if (static_cast<signed char>(group[1]) > 0) ++group;
+    }
+}
+
+GuestLocale::OutputIterator PutWideField(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const std::u16string& text, std::size_t prefix) {
+    const std::int32_t width = stream->width;
+    std::size_t fillCount = width <= 0 || static_cast<std::size_t>(width) <= text.size() ? 0 : static_cast<std::size_t>(width) - text.size();
+    const std::int32_t adjust = stream->flags & IosAdjustField;
+    if (adjust != IosLeft && adjust != IosInternal) {
+        for (; fillCount != 0; --fillCount) PutWideCharacter(out, fill);
+    }
+    for (std::size_t index = 0; index < prefix; ++index) PutWideCharacter(out, text[index]);
+    if (adjust == IosInternal) {
+        for (; fillCount != 0; --fillCount) PutWideCharacter(out, fill);
+    }
+    for (std::size_t index = prefix; index < text.size(); ++index) PutWideCharacter(out, text[index]);
+    stream->width = 0;
+    for (; fillCount != 0; --fillCount) PutWideCharacter(out, fill);
+    return out;
+}
+
+GuestLocale::OutputIterator PutWideInteger(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const char* digits, std::size_t count) {
+    std::size_t prefix = SignPrefix(digits, count);
+    if ((stream->flags & IosBaseField) == IosHex && HexPrefix(digits, prefix, count)) prefix += 2;
+    std::u16string text = WidenCharacters(digits, count);
+    const GuestLocale::Facet* punct = StreamWideNumpunct(stream);
+    const std::string grouping = TakeGrouping(WidePunctuation(punct).grouping, punct);
+    if (static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0) InsertWideSeparators(text, grouping, WidePunctuation(punct).thousandsSep(AsWideNumpunct(punct)), count, prefix);
+    return PutWideField(out, stream, fill, text, prefix);
+}
+
+GuestLocale::OutputIterator PutWideFloating(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const char* digits, std::size_t count) {
+    const std::size_t sign = SignPrefix(digits, count);
+    const std::size_t prefix = sign != 0 ? sign : HexPrefix(digits, 0, count) ? 2 : 0;
+    const bool hex = (stream->flags & IosHexFloat) == IosHexFloat;
+    const std::size_t exponent = std::strcspn(digits, hex ? "pP" : "eE");
+    const std::size_t pointOffset = std::strcspn(digits, ".");
+    std::u16string text = WidenCharacters(digits, count);
+    const GuestLocale::Facet* punct = StreamWideNumpunct(stream);
+    const std::string grouping = TakeGrouping(WidePunctuation(punct).grouping, punct);
+    const std::uint16_t separator = WidePunctuation(punct).thousandsSep(AsWideNumpunct(punct));
+    std::size_t offset = exponent;
+    if (pointOffset != count) {
+        offset = pointOffset;
+        text[pointOffset] = static_cast<char16_t>(WidePunctuation(punct).decimalPoint(AsWideNumpunct(punct)));
+    }
+    const char lead = digits[prefix];
+    if (lead != 'I' && lead != 'N' && lead != 'i' && lead != 'n') InsertWideSeparators(text, grouping, separator, offset, prefix);
+    return PutWideField(out, stream, fill, text, prefix);
+}
+
+template<typename Value> GuestLocale::OutputIterator PutWideFormattedInteger(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const char* qualifier, char decimal, Value value) {
+    const std::int32_t flags = stream->flags;
+    const std::int32_t base = flags & IosBaseField;
+    const char conversion = base == IosOct ? 'o' : base != IosHex ? decimal : (flags & IosUppercase) != 0 ? 'X' : 'x';
+    const std::string format = std::string("%") + ((flags & IosShowPos) != 0 ? "+" : "") + ((flags & IosShowBase) != 0 ? "#" : "") + qualifier + conversion;
+    char digits[64];
+    const int count = snprintf_nid_postfix(digits, sizeof(digits), format.c_str(), value);
+    return PutWideInteger(out, stream, fill, digits, static_cast<std::size_t>(count));
+}
+
+template<typename Value> GuestLocale::OutputIterator PutWideFormattedFloating(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const char* qualifier, Value value) {
+    const std::int32_t flags = stream->flags;
+    const std::int32_t field = flags & IosHexFloat;
+    const std::int32_t precision = field == IosHexFloat ? 6 : stream->precision;
+    std::int64_t size = precision;
+    if (field == IosFixed && std::fabs(value) > Value(1e10)) {
+        int exponent = 0;
+        std::frexp(value, &exponent);
+        size += static_cast<std::int64_t>(std::abs(exponent)) * 30103 / 100000;
+    }
+    size += 50;
+    const char conversion = field == IosFixed ? 'f' : field == IosHexFloat ? 'a' : field == IosScientific ? 'e' : 'g';
+    const bool upper = (flags & IosUppercase) != 0 && field != IosFixed;
+    const std::string format = std::string("%") + ((flags & IosShowPos) != 0 ? "+" : "") + ((flags & IosShowPoint) != 0 ? "#" : "") + (field != IosHexFloat ? ".*" : "") + qualifier + static_cast<char>(upper ? conversion - 'a' + 'A' : conversion);
+    if (size <= 0) throw std::invalid_argument("num_put::do_put: the precision leaves no room for the converted value");
+    std::string digits(static_cast<std::size_t>(size), '\0');
+    const int count = snprintf_nid_postfix(digits.data(), digits.size(), format.c_str(), precision, value);
+    if (count < 0 || count >= size) throw std::invalid_argument("num_put::do_put: the precision leaves no room for the converted value");
+    return PutWideFloating(out, stream, fill, digits.c_str(), static_cast<std::size_t>(count));
+}
+
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutBool_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, bool value) {
+    return NumPutBool(nullptr, out, stream, fill, value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::int64_t value) {
+    return NumPutLong(nullptr, out, stream, fill, value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutUnsignedLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::uint64_t value) {
+    return NumPutUnsignedLong(nullptr, out, stream, fill, value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutLongLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::int64_t value) {
+    return NumPutLongLong(nullptr, out, stream, fill, value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutUnsignedLongLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::uint64_t value) {
+    return NumPutUnsignedLongLong(nullptr, out, stream, fill, value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutDouble_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, double value) {
+    return NumPutDouble(nullptr, out, stream, fill, value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutLongDouble_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, long double value) {
+    return NumPutLongDouble(nullptr, out, stream, fill, value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutPointer_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const void* value) {
+    return NumPutPointer(nullptr, out, stream, fill, value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutWideBool_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, bool value) {
+    if ((stream->flags & IosBoolAlpha) == 0) return PutWideFormattedInteger(out, stream, fill, "l", 'd', static_cast<long>(value ? 1 : 0));
+    const GuestLocale::Facet* punct = StreamWideNumpunct(stream);
+    return PutWideField(out, stream, fill, TakeWideName(value ? WidePunctuation(punct).truename : WidePunctuation(punct).falsename, punct), 0);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutWideLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::int64_t value) {
+    return PutWideFormattedInteger(out, stream, fill, "l", 'd', value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutWideUnsignedLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::uint64_t value) {
+    return PutWideFormattedInteger(out, stream, fill, "l", 'u', value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutWideLongLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::int64_t value) {
+    return PutWideFormattedInteger(out, stream, fill, "ll", 'd', value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutWideUnsignedLongLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::uint64_t value) {
+    return PutWideFormattedInteger(out, stream, fill, "ll", 'u', value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutWideDouble_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, double value) {
+    return PutWideFormattedFloating(out, stream, fill, "", value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutWideLongDouble_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, long double value) {
+    return PutWideFormattedFloating(out, stream, fill, "L", value);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutWidePointer_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const void* value) {
+    char digits[64];
+    const int count = snprintf_nid_postfix(digits, sizeof(digits), "%p", value);
+    return PutWideInteger(out, stream, fill, digits, static_cast<std::size_t>(count));
 }
 
 void* GuestLocale::AllocateStringStorage(std::size_t bytes) {
