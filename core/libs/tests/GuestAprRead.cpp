@@ -225,6 +225,7 @@ void TestQueries() {
     constexpr int GuestEinval = 22;
     constexpr int GuestEnoent = 2;
     constexpr int GuestEfault = 14;
+    constexpr int GuestEnotsup = 45;
     const char* names[] = {"generated.bin", "missing.bin"};
     std::array<std::uint32_t, 2> ids{0, 0};
     std::array<std::uint64_t, 2> sizes{1, 1};
@@ -242,6 +243,16 @@ void TestQueries() {
     FileStat stat{};
     Require(sceKernelAprGetFileStat(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file stat");
     Require(sceKernelAprGetFileStat(id, &stat) == 0 && stat.st_size == static_cast<std::int64_t>(FileBytes), "APR reported a wrong file stat size");
+    for (const std::uint32_t badId : {0xFFFFFFFFu, 0x7FFFFFFFu}) {
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileSize(badId, &size) == -1 && *__error_nid_postfix() == GuestEnotsup, "APR accepted an unknown file id for the size");
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileSize(badId, nullptr) == -1 && *__error_nid_postfix() == GuestEnotsup, "APR did not fail an unknown file id first for the size");
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileStat(badId, &stat) == -1 && *__error_nid_postfix() == GuestEnotsup, "APR accepted an unknown file id for the stat");
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileStat(badId, nullptr) == -1 && *__error_nid_postfix() == GuestEnotsup, "APR did not fail an unknown file id first for the stat");
+    }
     for (const bool readable : {true, false}) {
 #ifdef _WIN32
         void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, readable ? PAGE_READONLY : PAGE_NOACCESS);
