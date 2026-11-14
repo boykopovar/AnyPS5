@@ -404,14 +404,13 @@ int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* 
  if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
- presets->difficulty = 0;
- presets->priority = 0;
- presets->invert_vertical_view_for_1st_person_view = 0;
- presets->invert_horizontal_view_for_1st_person_view = 0;
- presets->invert_vertical_view_for_3rd_person_view = 0;
- presets->invert_horizontal_view_for_3rd_person_view = 0;
- presets->display_sub_titles = 0;
- presets->audio_language = 0;
+ UserServiceGamePresets localPresets{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(presets, &localPresets, sizeof(localPresets));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -625,7 +624,13 @@ int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
  if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
- *account_id = 0;
+ const uint64_t localId = 0;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(account_id, &localId, sizeof(localId));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -756,13 +761,21 @@ int APS5_VABI sceUserServiceGetRegisteredHomeUserIdList(std::int32_t* userIds, s
     if (result != USER_SERVICE_OK) {
         return result;
     }
-    *count = 0;
+    std::int32_t localCount = 0;
+    std::int32_t localIds[sizeof(registeredUsers.user_id) / sizeof(registeredUsers.user_id[0])]{};
     for (std::size_t index = 0; index < sizeof(registeredUsers.user_id) / sizeof(registeredUsers.user_id[0]); ++index) {
-        userIds[index] = registeredUsers.user_id[index];
-        if (userIds[index] != USER_SERVICE_USER_ID_INVALID) {
-            ++*count;
+        localIds[index] = registeredUsers.user_id[index];
+        if (localIds[index] != USER_SERVICE_USER_ID_INVALID) {
+            ++localCount;
         }
     }
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(count, &localCount, sizeof(localCount)) ||
+        !GuestCopyOut_nid_no_patch(userIds, localIds, sizeof(localIds))) {
+        errno = savedErrno;
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    errno = savedErrno;
     return USER_SERVICE_OK;
 }
 
@@ -3412,7 +3425,11 @@ int APS5_VABI sceUserServiceGetPbtcSundayHoursEnd(void) {
 
 int APS5_VABI sceUserServiceGetIsSpartacusEnabled(std::int32_t, bool* enabled) {
     if (enabled == nullptr) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
-    *enabled = true;
+    const bool value = true;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(enabled, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     return USER_SERVICE_OK;
 }
 

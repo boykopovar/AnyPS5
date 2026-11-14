@@ -110,15 +110,27 @@ int APS5_VABI sceVrTrackerGpuWait(const VrTrackerGpuWaitParam* param) {
 }
 int APS5_VABI sceVrTrackerInit(const VrTrackerInitParam* param) {
     if (g_initialized.load()) return AlreadyInitialized;
-    if (param && param->size == sizeof(VrTrackerInitParam)) NotImplemented_nid_no_patch(__func__);
-    const auto* init = reinterpret_cast<const InitParam*>(param);
-    if (!init || init->size != sizeof(InitParam) || !init->direct_memory_garlic ||
-        init->direct_memory_garlic_alignment != MemoryAlignment || init->direct_memory_garlic_size != GarlicSize ||
-        !init->direct_memory_onion || init->direct_memory_onion_alignment != MemoryAlignment ||
-        init->direct_memory_onion_size != OnionSize(init->calibration_settings) || !init->work_memory ||
-        init->work_memory_alignment != MemoryAlignment || init->work_memory_size != WorkSize ||
-        init->gpu_pipe_id >= ComputePipes || init->gpu_queue_id >= QueuesPerPipe ||
-        !ValidCalibration(init->calibration_settings)) {
+    if (!param) return ArgumentInvalid;
+    std::uint32_t size = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&size, &param->size, sizeof(size))) {
+        errno = savedErrno;
+        return ArgumentInvalid;
+    }
+    if (size == sizeof(VrTrackerInitParam)) NotImplemented_nid_no_patch(__func__);
+    InitParam init{};
+    if (!GuestCopyIn_nid_no_patch(&init, param, sizeof(init))) {
+        errno = savedErrno;
+        return ArgumentInvalid;
+    }
+    errno = savedErrno;
+    if (init.size != sizeof(InitParam) || !init.direct_memory_garlic ||
+        init.direct_memory_garlic_alignment != MemoryAlignment || init.direct_memory_garlic_size != GarlicSize ||
+        !init.direct_memory_onion || init.direct_memory_onion_alignment != MemoryAlignment ||
+        init.direct_memory_onion_size != OnionSize(init.calibration_settings) || !init.work_memory ||
+        init.work_memory_alignment != MemoryAlignment || init.work_memory_size != WorkSize ||
+        init.gpu_pipe_id >= ComputePipes || init.gpu_queue_id >= QueuesPerPipe ||
+        !ValidCalibration(init.calibration_settings)) {
         return ArgumentInvalid;
     }
     bool expected = false;

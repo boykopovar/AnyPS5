@@ -25,6 +25,12 @@ void Check(bool value, int line) {
 
 extern "C" int* APS5_VABI __error_nid_postfix() { return &guestError; }
 
+extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    if (destination == nullptr) return false;
+    std::memcpy(destination, source, bytes);
+    return true;
+}
+
 extern "C" int APS5_VABI _fstatfs_nid_postfix(int descriptor, KernelStatfs* output) {
     Require(descriptor == 42);
     ++calls;
