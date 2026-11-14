@@ -1108,6 +1108,16 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_fill_completion_labels_cpu_overlap agc_driver_fill_completion_labels_cpu_disjoint agc_driver_fill_completion_labels_submitted agc_driver_fill_completion_labels_inline agc_driver_fill_completion_labels_chain agc_driver_fill_completion_labels_late PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_cpu_store_settle_wait_idle COMMAND agc_driver_cpu_store_settle_tests)
+    add_test(NAME agc_driver_cpu_store_settle_untracked_reads COMMAND agc_driver_cpu_store_settle_tests)
+    set_tests_properties(agc_driver_cpu_store_settle agc_driver_cpu_store_settle_wait_idle agc_driver_cpu_store_settle_untracked_reads PROPERTIES
+        ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_OPPORTUNISTIC_REAP=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_property(TEST agc_driver_cpu_store_settle_wait_idle APPEND PROPERTY ENVIRONMENT "APS5_CPU_FILL_WAIT_IDLE=1")
+    set_property(TEST agc_driver_cpu_store_settle_untracked_reads APPEND PROPERTY ENVIRONMENT "APS5_COPY_READ_TRACKING=0")
+    if(WIN32)
+        set_tests_properties(agc_driver_cpu_store_settle agc_driver_cpu_store_settle_wait_idle agc_driver_cpu_store_settle_untracked_reads PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 if(BUILD_TESTING)

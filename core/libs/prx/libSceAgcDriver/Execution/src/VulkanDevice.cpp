@@ -2968,6 +2968,30 @@ bool OpportunisticReap() {
 
 }
 
+VulkanDevice::CpuStoreSettle VulkanDevice::SettleForCpuStore(std::uint64_t address, std::size_t bytes) {
+    static const bool drain = std::getenv("APS5_CPU_FILL_WAIT_IDLE") != nullptr;
+    if (drain || !state->recorder || bytes == 0) {
+        WaitIdle();
+        return CpuStoreSettle::Drain;
+    }
+    auto& recorder = *state->recorder;
+    if (OpportunisticReap()) recorder.Reap();
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{address, address + bytes}}};
+    if (Graphics::StorageTexture::AnyPendingOverlaps(range) || Graphics::AnyShadowedOverlaps(range) || recorder.PendingLabelIn(address, bytes) || (Graphics::Recorder::ReadTracking() ? recorder.PendingReadOverlaps(address, bytes) : !recorder.Idle())) {
+        WaitIdle();
+        return CpuStoreSettle::Drain;
+    }
+    const bool writers = recorder.PendingWriteOverlaps(address, bytes);
+    if (!writers && completionStoresOver(address, bytes)) {
+        WaitIdle();
+        return CpuStoreSettle::Drain;
+    }
+    if (!writers) return CpuStoreSettle::None;
+    Graphics::Recorder::CountSync(4);
+    recorder.SyncThrough(address, bytes);
+    return CpuStoreSettle::Writers;
+}
+
 void VulkanDevice::StoreIdleResults(bool reapFirst, const std::function<bool()>& stop) {
     if (!Graphics::StorageTexture::AnyPending()) return;
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
