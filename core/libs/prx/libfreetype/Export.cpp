@@ -45,11 +45,6 @@ void APS5_VABI FT_Set_Default_Properties_nid_postfix(FreeType::GuestLibrary* lib
 
 extern "C" {
 
-int APS5_VABI freetypeLegacyBitmapBlend_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("C3-qsnriefE", freetypeLegacyBitmapBlend_nid_no_patch);
-
 int APS5_VABI freetypeLegacyFtcManagerNew_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
