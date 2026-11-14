@@ -2,6 +2,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "ImageTableAbi.hpp"
+#include "BufferTableAbi.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/DescriptorBindingBuilder.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
@@ -11,8 +14,10 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <map>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -299,10 +304,614 @@ void DisabledDescriptors(AgcDriver::VulkanDevice& device) {
     }
 }
 
+alignas(256) static constexpr std::array<std::uint32_t, 18> CounterLoopCode{
+    0x34020082u, 0x7e060280u, 0xbe880380u, 0x8f098408u,
+    0xf4280300u, 0x12000000u, 0xbf8c0000u, 0xe0301000u,
+    0x80030201u, 0xbf8c0000u, 0x4a060702u, 0x80088108u,
+    0xbf0a8308u, 0xbf85fff5u, 0xe0701000u, 0x80010301u,
+    0xbf8c3f70u, 0xbf810000u,
+};
+
+alignas(256) static constexpr std::array<std::uint32_t, 22> WaterfallCode{
+    0x34020082u, 0x2c080083u, 0x7e060280u, 0xbe880380u,
+    0xd7600009u, 0x00001104u, 0x8f0a8409u, 0xf4280300u,
+    0x14000000u, 0xbf8c0000u, 0xe0301000u, 0x80030201u,
+    0xbf8c0000u, 0x7d840809u, 0x02060503u, 0x80088808u,
+    0xbf0aa008u, 0xbf85fff2u, 0xe0701000u, 0x80010301u,
+    0xbf8c3f70u, 0xbf810000u,
+};
+
+alignas(256) std::array<std::uint32_t, Lanes> DynamicInputA{};
+alignas(256) std::array<std::uint32_t, Lanes> DynamicInputB{};
+alignas(256) std::array<std::uint32_t, Lanes> DynamicInputC{};
+alignas(256) std::array<std::uint32_t, Lanes> DynamicInputD{};
+alignas(256) std::array<std::uint32_t, 16> DynamicTable{};
+const std::array<ShaderRecompiler::MemoryRegion, 1> DynamicMemory{{{reinterpret_cast<std::uintptr_t>(DynamicTable.data()), std::as_bytes(std::span(DynamicTable))}}};
+
+std::size_t CountMainSpanCalls(std::span<const std::uint32_t> words);
+bool HasSpirvCapability(std::span<const std::uint32_t> words, spv::Capability cap);
+bool HasSpirvOp(std::span<const std::uint32_t> words, spv::Op targetOp);
+bool HasSpirvConstant(std::span<const std::uint32_t> words, std::uint32_t value);
+
+void DynamicDescriptorTable(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        DynamicInputA[lane] = 0x10000000u + (lane * 11u + 3u);
+        DynamicInputB[lane] = 0x20000000u + (lane * 17u + 7u);
+        DynamicInputC[lane] = 0x30000000u + (lane * 23u + 13u);
+        DynamicInputD[lane] = 0x40000000u + (lane * 29u + 19u);
+    }
+    GuestAllocations::Mutation().Add(DynamicTable.data(), sizeof(DynamicTable), true, false, true);
+    GuestAllocations::Mutation().Add(DynamicInputA.data(), sizeof(DynamicInputA), true, false, true);
+    GuestAllocations::Mutation().Add(DynamicInputB.data(), sizeof(DynamicInputB), true, false, true);
+    GuestAllocations::Mutation().Add(DynamicInputC.data(), sizeof(DynamicInputC), true, false, true);
+    GuestAllocations::Mutation().Add(DynamicInputD.data(), sizeof(DynamicInputD), true, false, true);
+
+    const auto setTableDescriptors = [](const void* row2Ptr, std::uint32_t row2Bytes) {
+        const auto d0 = BufferDescriptor(DynamicInputA.data(), sizeof(DynamicInputA));
+        auto d1 = BufferDescriptor(DynamicInputB.data(), 64u);
+        d1[1] |= 4u << 16u;
+        const auto d2 = BufferDescriptor(row2Ptr, row2Bytes);
+        const std::array<std::uint32_t, 4> d3{0u, 0u, 0u, 0x31016facu};
+        std::copy(d0.begin(), d0.end(), DynamicTable.begin());
+        std::copy(d1.begin(), d1.end(), DynamicTable.begin() + 4);
+        std::copy(d2.begin(), d2.end(), DynamicTable.begin() + 8);
+        std::copy(d3.begin(), d3.end(), DynamicTable.begin() + 12);
+    };
+    setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC));
+
+    std::array<std::uint32_t, 8> userData{};
+    const auto tableDesc = BufferDescriptor(DynamicTable.data(), sizeof(DynamicTable));
+    const auto outputDesc = BufferDescriptor(Output.data(), sizeof(Output));
+    std::copy(tableDesc.begin(), tableDesc.end(), userData.begin());
+    std::copy(outputDesc.begin(), outputDesc.end(), userData.begin() + 4);
+
+    const bool tableOptIn = std::any_of(device.ComputeTarget(Lanes).supportedCapabilities.begin(), device.ComputeTarget(Lanes).supportedCapabilities.end(), [](std::uint32_t cap) {
+        return cap == static_cast<std::uint32_t>(spv::CapabilityStorageBufferArrayNonUniformIndexing);
+    });
+
+    const auto dispatchAndVerify = [&](std::span<const std::uint32_t> code, const std::array<std::uint32_t, Lanes>& expected, const std::string& caseName) {
+        Output.fill(Fill);
+        auto request = Request(userData, device.ComputeTarget(Lanes), DynamicMemory);
+        request.useCache = false;
+        request.shader.code = code;
+        request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
+        const auto result = ShaderRecompiler::Recompile(request);
+        device.Dispatch(result, 1, 1, 1);
+        device.WaitIdle();
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+            Require(Output[lane] == expected[lane], "dynamic buffer table, " + caseName + ", lane " + std::to_string(lane) + " is " + Hex(Output[lane]) + ", expected " + Hex(expected[lane]));
+        }
+    };
+
+    std::array<std::uint32_t, Lanes> expectedCounter{};
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        const std::uint32_t bVal = (lane * 4u + 4u <= 64u) ? DynamicInputB[lane] : 0u;
+        expectedCounter[lane] = DynamicInputA[lane] + bVal + DynamicInputC[lane];
+    }
+    dispatchAndVerify(CounterLoopCode, expectedCounter, "counter loop phi");
+
+    setTableDescriptors(DynamicInputD.data(), sizeof(DynamicInputD));
+    std::array<std::uint32_t, Lanes> expectedSnapshot{};
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        const std::uint32_t bVal = (lane * 4u + 4u <= 64u) ? DynamicInputB[lane] : 0u;
+        expectedSnapshot[lane] = DynamicInputA[lane] + bVal + DynamicInputD[lane];
+    }
+    dispatchAndVerify(CounterLoopCode, expectedSnapshot, "counter loop snapshot change");
+    setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC));
+
+    setTableDescriptors(reinterpret_cast<const std::uint8_t*>(DynamicInputC.data()) + 2u, sizeof(DynamicInputC) - 2u);
+    std::array<std::uint32_t, Lanes> expectedMisaligned{};
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        const std::uint32_t bVal = (lane * 4u + 4u <= 64u) ? DynamicInputB[lane] : 0u;
+        std::uint32_t cVal = 0;
+        if (lane * 4u + 4u <= sizeof(DynamicInputC) - 2u) {
+            std::memcpy(&cVal, reinterpret_cast<const std::uint8_t*>(DynamicInputC.data()) + 2u + lane * 4u, sizeof(cVal));
+        }
+        expectedMisaligned[lane] = DynamicInputA[lane] + bVal + cVal;
+    }
+    dispatchAndVerify(CounterLoopCode, expectedMisaligned, "misaligned dynamic row");
+    setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC));
+
+    setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC) + 64u);
+    dispatchAndVerify(CounterLoopCode, expectedCounter, "partial mapping dynamic row counter loop");
+    setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC));
+
+    std::array<std::uint32_t, Lanes> expectedWaterfall{};
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        const std::uint32_t row = lane >> 3u;
+        if (row == 0u) expectedWaterfall[lane] = DynamicInputA[lane];
+        else if (row == 1u) expectedWaterfall[lane] = DynamicInputB[lane];
+        else if (row == 2u) expectedWaterfall[lane] = DynamicInputC[lane];
+        else expectedWaterfall[lane] = 0u;
+    }
+    dispatchAndVerify(WaterfallCode, expectedWaterfall, "waterfall readlane phi");
+
+    setTableDescriptors(reinterpret_cast<const std::uint8_t*>(DynamicInputC.data()) + 2u, sizeof(DynamicInputC) - 2u);
+    std::array<std::uint32_t, Lanes> expectedWaterfallMisaligned{};
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        const std::uint32_t row = lane >> 3u;
+        if (row == 0u) expectedWaterfallMisaligned[lane] = DynamicInputA[lane];
+        else if (row == 1u) expectedWaterfallMisaligned[lane] = DynamicInputB[lane];
+        else if (row == 2u) {
+            std::uint32_t val = 0;
+            const auto offset = lane * 4u;
+            if (offset + 4u <= sizeof(DynamicInputC) - 2u) {
+                std::memcpy(&val, reinterpret_cast<const std::uint8_t*>(DynamicInputC.data()) + 2u + offset, sizeof(val));
+            }
+            expectedWaterfallMisaligned[lane] = val;
+        } else {
+            expectedWaterfallMisaligned[lane] = 0u;
+        }
+    }
+    dispatchAndVerify(WaterfallCode, expectedWaterfallMisaligned, "misaligned dynamic row waterfall");
+    setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC));
+
+    alignas(256) auto relativeCounter = CounterLoopCode;
+    alignas(256) auto relativeWaterfall = WaterfallCode;
+    relativeCounter[7] |= 2u;
+    relativeWaterfall[10] |= 2u;
+    const auto readRelative = [](const auto& input, std::uint32_t lane, std::uint32_t bytes) {
+        const auto offset = lane * 4u + 2u;
+        std::uint32_t value = 0u;
+        if (offset <= bytes && sizeof(value) <= bytes - offset) std::memcpy(&value, reinterpret_cast<const std::uint8_t*>(input.data()) + offset, sizeof(value));
+        return value;
+    };
+    std::array<std::uint32_t, Lanes> expectedRelativeCounter{};
+    std::array<std::uint32_t, Lanes> expectedRelativeWaterfall{};
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        const auto a = readRelative(DynamicInputA, lane, sizeof(DynamicInputA));
+        const auto b = readRelative(DynamicInputB, lane, 64u);
+        const auto c = readRelative(DynamicInputC, lane, sizeof(DynamicInputC));
+        expectedRelativeCounter[lane] = a + b + c;
+        const auto row = lane >> 3u;
+        expectedRelativeWaterfall[lane] = row == 0u ? a : row == 1u ? b : row == 2u ? c : 0u;
+    }
+    dispatchAndVerify(relativeCounter, expectedRelativeCounter, "unaligned relative counter address");
+    dispatchAndVerify(relativeWaterfall, expectedRelativeWaterfall, "unaligned relative waterfall address");
+
+    setTableDescriptors(DynamicInputC.data(), (1u << 27u) + 4u);
+    std::array<std::uint32_t, Lanes> expectedOversized{};
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        const std::uint32_t row = lane >> 3u;
+        if (row == 0u) expectedOversized[lane] = DynamicInputA[lane];
+        else if (row == 1u) expectedOversized[lane] = DynamicInputB[lane];
+        else if (row == 2u) expectedOversized[lane] = DynamicInputC[lane];
+        else expectedOversized[lane] = 0u;
+    }
+    dispatchAndVerify(WaterfallCode, expectedOversized, "oversized row BDA fallback reading data");
+    setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC));
+
+    setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC) + 64u);
+    dispatchAndVerify(WaterfallCode, expectedWaterfall, "partial mapping dynamic row waterfall");
+    setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC));
+
+    auto rejectedWord3 = BufferDescriptor(DynamicInputC.data(), sizeof(DynamicInputC));
+    rejectedWord3[3] |= 1u << 30u;
+    std::copy(rejectedWord3.begin(), rejectedWord3.end(), DynamicTable.begin() + 8);
+    if (tableOptIn) {
+        auto req = Request(userData, device.ComputeTarget(Lanes), DynamicMemory);
+        req.useCache = false;
+        req.shader.code = WaterfallCode;
+        req.shader.codeAddress = reinterpret_cast<std::uintptr_t>(WaterfallCode.data());
+        const auto handle = ShaderRecompiler::PrepareShader(req);
+        ShaderRecompiler::SrtRuntime runtime{};
+        runtime.userData = userData;
+        runtime.readMemory = [](void*, std::uint64_t addr, std::uint32_t* value) {
+            std::memcpy(value, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), sizeof(*value));
+            return true;
+        };
+        const auto capture = ShaderRecompiler::CaptureResources(req, runtime, *handle);
+        const auto materialized = ShaderRecompiler::MaterializeShader(req, *capture, *handle);
+        Require(materialized != nullptr, "dynamic buffer table: invalid type row materialized");
+        const auto plan = ShaderRecompiler::GetResourcePlan(req);
+        if (tableOptIn) {
+            const auto resolved = ShaderRecompiler::ResourceMaterializer::ResolveImageTables(plan->info, capture->snapshot);
+            Require(resolved.bufferRecordOffsets.size() >= 3u, "dynamic buffer table: buffer record offsets contain invalid row");
+            const auto rejectedRowOffset = resolved.bufferRecordOffsets[2];
+            const auto rejectedFlags = resolved.map[rejectedRowOffset + ShaderRecompiler::BufferTableAbi::BufferRecordFlags];
+            Require((rejectedFlags & ShaderRecompiler::ImageTableAbi::PoisonFlag) != 0u, "dynamic buffer table: invalid type row flagged with PoisonFlag");
+            const auto poisonIndex = rejectedFlags & ~ShaderRecompiler::ImageTableAbi::PoisonFlag;
+            Require(poisonIndex < materialized->imageTablePoison.size(), "dynamic buffer table: poison index in bounds");
+            Require(materialized->imageTablePoison[poisonIndex].reason == static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::NotBuffer), "dynamic buffer table: invalid type row has NotBuffer poison reason");
+        }
+    }
+    setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC));
+
+    auto structuralRequest = Request(userData, device.ComputeTarget(Lanes), DynamicMemory);
+    structuralRequest.useCache = false;
+    structuralRequest.shader.code = CounterLoopCode;
+    structuralRequest.shader.codeAddress = reinterpret_cast<std::uintptr_t>(CounterLoopCode.data());
+    const auto plan = ShaderRecompiler::GetResourcePlan(structuralRequest);
+    Require(plan != nullptr, "dynamic buffer table: plan is null");
+    const auto dynamicLoad = std::find_if(plan->memoryInfo.begin(), plan->memoryInfo.end(), [](const auto& memory) {
+        return memory.kind == ShaderRecompiler::ResourceKind::Buffer;
+    });
+    Require(dynamicLoad != plan->memoryInfo.end(), "dynamic buffer table: dynamic buffer load was not found in plan");
+
+    const auto compiled = ShaderRecompiler::Recompile(structuralRequest);
+    if (tableOptIn) {
+        Require(!dynamicLoad->gpuDescriptor, "dynamic buffer table: dynamic V# descriptor table load lowered to BDA span instead of table-backed buffer");
+        Require(std::any_of(plan->info.buffers.begin(), plan->info.buffers.end(), [](const auto& b) { return b.table != ShaderRecompiler::NoTable; }), "dynamic buffer table: buffer table assigned");
+        Require(HasSpirvOp(compiled.spirv.Words(), spv::OpArrayLength), "dynamic buffer table: direct array length present");
+        Require(HasSpirvConstant(compiled.spirv.Words(), ShaderRecompiler::BufferTableAbi::BdaFallbackFlag), "dynamic buffer table: BdaFallbackFlag constant present in SPIR-V");
+    } else {
+        Require(dynamicLoad->gpuDescriptor, "dynamic buffer table: fallback to BDA when opt-in disabled");
+    }
+    Require(CountMainSpanCalls(compiled.spirv.Words()) > 0u, "dynamic buffer table: BDA fallback path present in SPIR-V");
+
+    GuestAllocations::Mutation().Remove(DynamicTable.data());
+    GuestAllocations::Mutation().Remove(DynamicInputA.data());
+    GuestAllocations::Mutation().Remove(DynamicInputB.data());
+    GuestAllocations::Mutation().Remove(DynamicInputC.data());
+    GuestAllocations::Mutation().Remove(DynamicInputD.data());
 }
 
-int main() {
+std::size_t CountMainSpanCalls(std::span<const std::uint32_t> words) {
+    std::map<std::uint32_t, std::string> names;
+    std::string function;
+    std::size_t spanCalls = 0;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto length = words[cursor] >> 16u;
+        if (length == 0 || length > words.size() - cursor) break;
+        const auto op = words[cursor] & 0xffffu;
+        if (op == spv::OpName) names[words[cursor + 1]] = reinterpret_cast<const char*>(&words[cursor + 2]);
+        if (op == spv::OpFunction) function = names[words[cursor + 2]];
+        if (op == spv::OpFunctionCall && function == "main") {
+            const auto& callee = names[words[cursor + 3]];
+            if (callee.starts_with("read_bda_span")) ++spanCalls;
+        }
+        cursor += length;
+    }
+    return spanCalls;
+}
+
+bool HasSpirvCapability(std::span<const std::uint32_t> words, spv::Capability cap) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto length = words[cursor] >> 16u;
+        if (length == 0 || length > words.size() - cursor) break;
+        const auto op = words[cursor] & 0xffffu;
+        if (op == spv::OpCapability && words[cursor + 1] == static_cast<std::uint32_t>(cap)) return true;
+        cursor += length;
+    }
+    return false;
+}
+
+bool HasSpirvOp(std::span<const std::uint32_t> words, spv::Op targetOp) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto length = words[cursor] >> 16u;
+        if (length == 0 || length > words.size() - cursor) break;
+        const auto op = words[cursor] & 0xffffu;
+        if (op == static_cast<std::uint32_t>(targetOp)) return true;
+        cursor += length;
+    }
+    return false;
+}
+
+bool HasSpirvConstant(std::span<const std::uint32_t> words, std::uint32_t value) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto length = words[cursor] >> 16u;
+        if (length == 0 || length > words.size() - cursor) break;
+        const auto op = words[cursor] & 0xffffu;
+        if (op == spv::OpConstant && length >= 4 && words[cursor + 3] == value) return true;
+        cursor += length;
+    }
+    return false;
+}
+
+ShaderRecompiler::SpirvTarget SyntheticTarget(bool bufferIndexing) {
+    static const std::vector<std::uint32_t> baseCapabilities = {
+        spv::CapabilityShader,
+        spv::CapabilityInt64,
+        spv::CapabilityPhysicalStorageBufferAddresses,
+        spv::CapabilityGroupNonUniform,
+        spv::CapabilityGroupNonUniformBallot,
+        spv::CapabilityGroupNonUniformShuffle,
+        spv::CapabilityGroupNonUniformArithmetic,
+        spv::CapabilityShaderNonUniform,
+        spv::CapabilitySampledImageArrayNonUniformIndexing,
+        spv::CapabilityStorageBuffer8BitAccess,
+    };
+    static const std::vector<std::uint32_t> indexedCapabilities = {
+        spv::CapabilityShader,
+        spv::CapabilityInt64,
+        spv::CapabilityPhysicalStorageBufferAddresses,
+        spv::CapabilityGroupNonUniform,
+        spv::CapabilityGroupNonUniformBallot,
+        spv::CapabilityGroupNonUniformShuffle,
+        spv::CapabilityGroupNonUniformArithmetic,
+        spv::CapabilityShaderNonUniform,
+        spv::CapabilitySampledImageArrayNonUniformIndexing,
+        spv::CapabilityStorageBufferArrayNonUniformIndexing,
+        spv::CapabilityStorageBufferArrayDynamicIndexing,
+        spv::CapabilityStorageBuffer8BitAccess,
+    };
+    static const std::vector<std::string_view> extensions = {
+        "SPV_KHR_physical_storage_buffer",
+        "SPV_EXT_descriptor_indexing",
+        "SPV_KHR_8bit_storage",
+    };
+    ShaderRecompiler::SpirvTarget target{};
+    target.vulkanVersion = 0x00401000u;
+    target.spirvVersion = 0x00010300u;
+    target.subgroupSize = Lanes;
+    target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
+    target.supportedCapabilities = bufferIndexing ? indexedCapabilities : baseCapabilities;
+    target.supportedExtensions = extensions;
+    target.fragmentShaderBarycentricEnabled = false;
+    return target;
+}
+
+void RunCodegenOnly() {
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        DynamicInputA[lane] = 0x10000000u + (lane * 11u + 3u);
+        DynamicInputB[lane] = 0x20000000u + (lane * 17u + 7u);
+        DynamicInputC[lane] = 0x30000000u + (lane * 23u + 13u);
+        DynamicInputD[lane] = 0x40000000u + (lane * 29u + 19u);
+    }
+    GuestAllocations::Mutation().Add(DynamicTable.data(), sizeof(DynamicTable), true, false, true);
+    GuestAllocations::Mutation().Add(DynamicInputA.data(), sizeof(DynamicInputA), true, false, true);
+    GuestAllocations::Mutation().Add(DynamicInputB.data(), sizeof(DynamicInputB), true, false, true);
+    GuestAllocations::Mutation().Add(DynamicInputC.data(), sizeof(DynamicInputC), true, false, true);
+    GuestAllocations::Mutation().Add(DynamicInputD.data(), sizeof(DynamicInputD), true, false, true);
+
+    const auto setTableDescriptors = [](const void* row2Ptr, std::uint32_t row2Bytes) {
+        const auto d0 = BufferDescriptor(DynamicInputA.data(), sizeof(DynamicInputA));
+        auto d1 = BufferDescriptor(DynamicInputB.data(), 64u);
+        d1[1] |= 4u << 16u;
+        const auto d2 = BufferDescriptor(row2Ptr, row2Bytes);
+        const std::array<std::uint32_t, 4> d3{0u, 0u, 0u, 0x31016facu};
+        std::copy(d0.begin(), d0.end(), DynamicTable.begin());
+        std::copy(d1.begin(), d1.end(), DynamicTable.begin() + 4);
+        std::copy(d2.begin(), d2.end(), DynamicTable.begin() + 8);
+        std::copy(d3.begin(), d3.end(), DynamicTable.begin() + 12);
+    };
+    setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC));
+
+    std::array<std::uint32_t, 8> userData{};
+    const auto tableDesc = BufferDescriptor(DynamicTable.data(), sizeof(DynamicTable));
+    const auto outputDesc = BufferDescriptor(Output.data(), sizeof(Output));
+    std::copy(tableDesc.begin(), tableDesc.end(), userData.begin());
+    std::copy(outputDesc.begin(), outputDesc.end(), userData.begin() + 4);
+
+    {
+        auto req = Request(userData, SyntheticTarget(true), DynamicMemory);
+        req.useCache = false;
+        req.shader.code = CounterLoopCode;
+        req.shader.codeAddress = reinterpret_cast<std::uintptr_t>(CounterLoopCode.data());
+        const auto plan = ShaderRecompiler::GetResourcePlan(req);
+        Require(plan != nullptr, "codegen: CounterLoopCode plan is null");
+        const auto dynamicLoad = std::find_if(plan->memoryInfo.begin(), plan->memoryInfo.end(), [](const auto& memory) {
+            return memory.kind == ShaderRecompiler::ResourceKind::Buffer;
+        });
+        Require(dynamicLoad != plan->memoryInfo.end(), "codegen: dynamic load not found in plan");
+        Require(!dynamicLoad->gpuDescriptor, "codegen: dynamic load has gpuDescriptor true when indexing supported");
+        Require(std::any_of(plan->info.buffers.begin(), plan->info.buffers.end(), [](const auto& b) { return b.table != ShaderRecompiler::NoTable; }), "codegen: buffer table not assigned");
+        const auto recompiled = ShaderRecompiler::Recompile(req);
+        Require(HasSpirvOp(recompiled.spirv.Words(), spv::OpArrayLength), "codegen: direct table access array length check present");
+        Require(CountMainSpanCalls(recompiled.spirv.Words()) > 0u, "codegen: BDA fallback path present in CounterLoopCode");
+        Require(HasSpirvConstant(recompiled.spirv.Words(), ShaderRecompiler::BufferTableAbi::BdaFallbackFlag), "codegen: BdaFallbackFlag present in SPIR-V");
+    }
+
+    {
+        auto req = Request(userData, SyntheticTarget(true), DynamicMemory);
+        req.useCache = false;
+        req.shader.code = CounterLoopCode;
+        req.shader.codeAddress = reinterpret_cast<std::uintptr_t>(CounterLoopCode.data());
+        req.context.compute = ShaderRecompiler::ShaderComputeStageInfo{{Lanes * 2u, 1u, 1u}, 0u, {false, false, false}, false, 1};
+        const auto plan = ShaderRecompiler::GetResourcePlan(req);
+        Require(plan != nullptr, "codegen multi-wave: CounterLoopCode plan is null");
+        const auto dynamicLoad = std::find_if(plan->memoryInfo.begin(), plan->memoryInfo.end(), [](const auto& memory) {
+            return memory.kind == ShaderRecompiler::ResourceKind::Buffer;
+        });
+        Require(dynamicLoad != plan->memoryInfo.end(), "codegen multi-wave: dynamic load not found in plan");
+        Require(!dynamicLoad->gpuDescriptor, "codegen multi-wave: dynamic load lowered to BDA span");
+        Require(std::any_of(plan->info.buffers.begin(), plan->info.buffers.end(), [](const auto& b) { return b.table != ShaderRecompiler::NoTable; }), "codegen multi-wave: buffer table not assigned");
+        const auto recompiled = ShaderRecompiler::Recompile(req);
+        Require(HasSpirvCapability(recompiled.spirv.Words(), spv::CapabilityStorageBufferArrayNonUniformIndexing), "codegen multi-wave: storage buffer array indexing capability present");
+        Require(HasSpirvOp(recompiled.spirv.Words(), spv::OpArrayLength), "codegen multi-wave: direct array length present");
+        Require(CountMainSpanCalls(recompiled.spirv.Words()) > 0u, "codegen multi-wave: BDA fallback path present in CounterLoopCode");
+        Require(HasSpirvConstant(recompiled.spirv.Words(), ShaderRecompiler::BufferTableAbi::BdaFallbackFlag), "codegen multi-wave: BdaFallbackFlag present in SPIR-V");
+    }
+
+    {
+        auto req = Request(userData, SyntheticTarget(true), DynamicMemory);
+        req.useCache = false;
+        req.shader.code = WaterfallCode;
+        req.shader.codeAddress = reinterpret_cast<std::uintptr_t>(WaterfallCode.data());
+        const auto plan = ShaderRecompiler::GetResourcePlan(req);
+        Require(plan != nullptr, "codegen: WaterfallCode plan is null");
+        const auto dynamicLoad = std::find_if(plan->memoryInfo.begin(), plan->memoryInfo.end(), [](const auto& memory) {
+            return memory.kind == ShaderRecompiler::ResourceKind::Buffer;
+        });
+        Require(dynamicLoad != plan->memoryInfo.end(), "codegen: waterfall dynamic load not found in plan");
+        Require(!dynamicLoad->gpuDescriptor, "codegen: waterfall dynamic load has gpuDescriptor true when indexing supported");
+        Require(std::any_of(plan->info.buffers.begin(), plan->info.buffers.end(), [](const auto& b) { return b.table != ShaderRecompiler::NoTable; }), "codegen: waterfall buffer table not assigned");
+        const auto recompiled = ShaderRecompiler::Recompile(req);
+        Require(HasSpirvOp(recompiled.spirv.Words(), spv::OpArrayLength), "codegen: waterfall direct array length present");
+        Require(CountMainSpanCalls(recompiled.spirv.Words()) > 0u, "codegen: waterfall BDA fallback path present");
+    }
+
+    {
+        auto req = Request(userData, SyntheticTarget(false), DynamicMemory);
+        req.useCache = false;
+        req.shader.code = CounterLoopCode;
+        req.shader.codeAddress = reinterpret_cast<std::uintptr_t>(CounterLoopCode.data());
+        const auto plan = ShaderRecompiler::GetResourcePlan(req);
+        Require(plan != nullptr, "codegen: fallback plan is null");
+        const auto dynamicLoad = std::find_if(plan->memoryInfo.begin(), plan->memoryInfo.end(), [](const auto& memory) {
+            return memory.kind == ShaderRecompiler::ResourceKind::Buffer;
+        });
+        Require(dynamicLoad != plan->memoryInfo.end(), "codegen: fallback dynamic load not found");
+        Require(dynamicLoad->gpuDescriptor, "codegen: dynamic load should fall back to BDA without indexing capability");
+        const auto recompiled = ShaderRecompiler::Recompile(req);
+        Require(CountMainSpanCalls(recompiled.spirv.Words()) > 0u, "codegen: read_bda_span expected when falling back to BDA");
+    }
+
+    {
+        setTableDescriptors(reinterpret_cast<const std::uint8_t*>(DynamicInputC.data()) + 2u, sizeof(DynamicInputC) - 2u);
+        auto req = Request(userData, SyntheticTarget(true), DynamicMemory);
+        req.useCache = false;
+        req.shader.code = CounterLoopCode;
+        req.shader.codeAddress = reinterpret_cast<std::uintptr_t>(CounterLoopCode.data());
+        const auto plan = ShaderRecompiler::GetResourcePlan(req);
+        Require(plan != nullptr, "codegen: misaligned plan is null");
+        const auto recompiled = ShaderRecompiler::Recompile(req);
+        Require(CountMainSpanCalls(recompiled.spirv.Words()) > 0u, "codegen: misaligned dynamic row has BDA fallback");
+        const auto handle = ShaderRecompiler::PrepareShader(req);
+        ShaderRecompiler::SrtRuntime runtime{};
+        runtime.userData = userData;
+        runtime.readMemory = [](void*, std::uint64_t addr, std::uint32_t* value) {
+            std::memcpy(value, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), sizeof(*value));
+            return true;
+        };
+        const auto capture = ShaderRecompiler::CaptureResources(req, runtime, *handle);
+        const auto resolved = ShaderRecompiler::ResourceMaterializer::ResolveImageTables(plan->info, capture->snapshot);
+        Require(resolved.bufferRecordOffsets.size() >= 3u, "codegen: misaligned row present in record offsets");
+        const auto misalignedFlags = resolved.map[resolved.bufferRecordOffsets[2] + ShaderRecompiler::BufferTableAbi::BufferRecordFlags];
+        Require((misalignedFlags & ShaderRecompiler::BufferTableAbi::BdaFallbackFlag) != 0u, "codegen: misaligned dynamic row has BdaFallbackFlag set");
+        setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC));
+    }
+
+    {
+        setTableDescriptors(DynamicInputC.data(), static_cast<std::uint32_t>(ShaderRecompiler::BufferTableAbi::MaxDirectBufferBytes));
+        auto req = Request(userData, SyntheticTarget(true), DynamicMemory);
+        req.useCache = false;
+        req.shader.code = WaterfallCode;
+        req.shader.codeAddress = reinterpret_cast<std::uintptr_t>(WaterfallCode.data());
+        const auto handle = ShaderRecompiler::PrepareShader(req);
+        ShaderRecompiler::SrtRuntime runtime{};
+        runtime.userData = userData;
+        runtime.readMemory = [](void*, std::uint64_t addr, std::uint32_t* value) {
+            std::memcpy(value, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), sizeof(*value));
+            return true;
+        };
+        const auto capture = ShaderRecompiler::CaptureResources(req, runtime, *handle);
+        const auto materialized = ShaderRecompiler::MaterializeShader(req, *capture, *handle);
+        Require(materialized != nullptr, "codegen: boundary 128MB buffer row materialized");
+        const auto bufferBinding = std::find_if(materialized->bindings.begin(), materialized->bindings.end(), [](const auto& b) {
+            return b.kind == ShaderRecompiler::DescriptorKind::StorageBuffer && b.role == ShaderRecompiler::DescriptorRole::GuestBuffers;
+        });
+        Require(bufferBinding != materialized->bindings.end(), "codegen: storage buffer binding found");
+        Require(bufferBinding->count == bufferBinding->firstTableBuffer + ShaderRecompiler::BufferTableAbi::MaxBufferElements && bufferBinding->guestDescriptor.size() == bufferBinding->count * 4u, "codegen: direct table binding retains its padded descriptor capacity");
+
+        const auto plan = ShaderRecompiler::GetResourcePlan(req);
+        const auto resolved = ShaderRecompiler::ResourceMaterializer::ResolveImageTables(plan->info, capture->snapshot);
+        Require(!resolved.bufferRecordOffsets.empty(), "codegen: buffer record offsets present in resolved tables");
+        const auto directRowOffset = resolved.bufferRecordOffsets.back();
+        const auto directFlags = resolved.map[directRowOffset + ShaderRecompiler::BufferTableAbi::BufferRecordFlags];
+        Require((directFlags & ShaderRecompiler::BufferTableAbi::BdaFallbackFlag) == 0u, "codegen: 128MB row without fallback flag");
+
+        setTableDescriptors(DynamicInputC.data(), static_cast<std::uint32_t>(ShaderRecompiler::BufferTableAbi::MaxDirectBufferBytes) + 4u);
+        const auto captureOversized = ShaderRecompiler::CaptureResources(req, runtime, *handle);
+        const auto materializedOversized = ShaderRecompiler::MaterializeShader(req, *captureOversized, *handle);
+        Require(materializedOversized != nullptr, "codegen: oversized buffer row materialized without throwing");
+        const auto bufferBindingOversized = std::find_if(materializedOversized->bindings.begin(), materializedOversized->bindings.end(), [](const auto& b) {
+            return b.kind == ShaderRecompiler::DescriptorKind::StorageBuffer && b.role == ShaderRecompiler::DescriptorRole::GuestBuffers;
+        });
+        Require(bufferBindingOversized != materializedOversized->bindings.end(), "codegen: storage buffer binding found for oversized");
+        Require(bufferBindingOversized->count == bufferBinding->count && bufferBindingOversized->guestDescriptor.size() == bufferBinding->guestDescriptor.size(), "codegen: fallback row retains the fixed descriptor layout");
+
+        const auto resolvedOversized = ShaderRecompiler::ResourceMaterializer::ResolveImageTables(plan->info, captureOversized->snapshot);
+        const auto oversizedRowOffset = resolvedOversized.bufferRecordOffsets.back();
+        const auto oversizedFlags = resolvedOversized.map[oversizedRowOffset + ShaderRecompiler::BufferTableAbi::BufferRecordFlags];
+        Require((oversizedFlags & ShaderRecompiler::BufferTableAbi::BdaFallbackFlag) != 0u, "codegen: oversized row has BdaFallbackFlag set");
+
+        setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC));
+    }
+
+    {
+        alignas(256) std::array<std::uint32_t, 68 * 4> bigTable{};
+        for (std::uint32_t i = 0; i < 68; ++i) {
+            const auto desc = BufferDescriptor(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10000000u + i * 0x1000u)), 256u);
+            std::copy(desc.begin(), desc.end(), bigTable.begin() + i * 4);
+        }
+        std::array<std::uint32_t, 8> bigUserData{};
+        const auto bigTableDesc = BufferDescriptor(bigTable.data(), sizeof(bigTable));
+        const auto outputDesc = BufferDescriptor(Output.data(), sizeof(Output));
+        std::copy(bigTableDesc.begin(), bigTableDesc.end(), bigUserData.begin());
+        std::copy(outputDesc.begin(), outputDesc.end(), bigUserData.begin() + 4);
+
+        const std::array<ShaderRecompiler::MemoryRegion, 1> bigMemory{{{reinterpret_cast<std::uintptr_t>(bigTable.data()), std::as_bytes(std::span(bigTable))}}};
+        auto req = Request(bigUserData, SyntheticTarget(true), bigMemory);
+        req.useCache = false;
+        req.shader.code = WaterfallCode;
+        req.shader.codeAddress = reinterpret_cast<std::uintptr_t>(WaterfallCode.data());
+        const auto handle = ShaderRecompiler::PrepareShader(req);
+        ShaderRecompiler::SrtRuntime runtime{};
+        runtime.userData = bigUserData;
+        runtime.readMemory = [](void*, std::uint64_t addr, std::uint32_t* value) {
+            std::memcpy(value, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), sizeof(*value));
+            return true;
+        };
+        const auto capture = ShaderRecompiler::CaptureResources(req, runtime, *handle);
+        const auto materialized = ShaderRecompiler::MaterializeShader(req, *capture, *handle);
+        Require(materialized != nullptr, "codegen: big table materialized");
+        const auto plan = ShaderRecompiler::GetResourcePlan(req);
+        const auto resolved = ShaderRecompiler::ResourceMaterializer::ResolveImageTables(plan->info, capture->snapshot);
+        Require(resolved.bufferElements.size() == ShaderRecompiler::BufferTableAbi::MaxBufferElements, "codegen: direct buffer elements bounded by MaxBufferElements");
+        for (std::size_t i = ShaderRecompiler::BufferTableAbi::MaxBufferElements; i < resolved.bufferRecordOffsets.size(); ++i) {
+            const auto offset = resolved.bufferRecordOffsets[i];
+            const auto flags = resolved.map[offset + ShaderRecompiler::BufferTableAbi::BufferRecordFlags];
+            Require((flags & ShaderRecompiler::BufferTableAbi::BdaFallbackFlag) != 0u, "codegen: capacity overflow row has BdaFallbackFlag set");
+        }
+        for (const auto offset : resolved.bufferRecordOffsets) {
+            Require(offset + ShaderRecompiler::BufferTableAbi::BufferRecordWords <= resolved.map.size(), "codegen: buffer record offset in bounds");
+        }
+    }
+
+    {
+        auto rejectedDesc = BufferDescriptor(DynamicInputC.data(), sizeof(DynamicInputC));
+        rejectedDesc[3] |= 1u << 30u;
+        std::copy(rejectedDesc.begin(), rejectedDesc.end(), DynamicTable.begin() + 8);
+        auto req = Request(userData, SyntheticTarget(true), DynamicMemory);
+        req.useCache = false;
+        req.shader.code = WaterfallCode;
+        req.shader.codeAddress = reinterpret_cast<std::uintptr_t>(WaterfallCode.data());
+        const auto handle = ShaderRecompiler::PrepareShader(req);
+        ShaderRecompiler::SrtRuntime runtime{};
+        runtime.userData = userData;
+        runtime.readMemory = [](void*, std::uint64_t addr, std::uint32_t* value) {
+            std::memcpy(value, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), sizeof(*value));
+            return true;
+        };
+        const auto capture = ShaderRecompiler::CaptureResources(req, runtime, *handle);
+        const auto materialized = ShaderRecompiler::MaterializeShader(req, *capture, *handle);
+        Require(materialized != nullptr, "codegen: invalid type row materialized");
+        const auto plan = ShaderRecompiler::GetResourcePlan(req);
+        const auto resolved = ShaderRecompiler::ResourceMaterializer::ResolveImageTables(plan->info, capture->snapshot);
+        Require(resolved.bufferRecordOffsets.size() >= 3u, "codegen: buffer record offsets contain invalid row");
+        const auto rejectedRowOffset = resolved.bufferRecordOffsets[2];
+        const auto rejectedFlags = resolved.map[rejectedRowOffset + ShaderRecompiler::BufferTableAbi::BufferRecordFlags];
+        Require((rejectedFlags & ShaderRecompiler::ImageTableAbi::PoisonFlag) != 0u, "codegen: invalid type row flagged with PoisonFlag");
+        const auto poisonIndex = rejectedFlags & ~ShaderRecompiler::ImageTableAbi::PoisonFlag;
+        Require(poisonIndex < materialized->imageTablePoison.size(), "codegen: poison index in bounds");
+        Require(materialized->imageTablePoison[poisonIndex].reason == static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::NotBuffer), "codegen: invalid type row has NotBuffer poison reason");
+        const auto recompiled = ShaderRecompiler::Recompile(req);
+        constexpr std::uint32_t notBufferPoison = ShaderRecompiler::ImageTableAbi::PoisonFlag | static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::NotBuffer);
+        const auto words = recompiled.spirv.Words();
+        Require(std::ranges::find(words, notBufferPoison) != words.end(), "codegen: SPIR-V contains table descriptor validation rejection logic");
+        setTableDescriptors(DynamicInputC.data(), sizeof(DynamicInputC));
+    }
+
+    GuestAllocations::Mutation().Remove(DynamicTable.data());
+    GuestAllocations::Mutation().Remove(DynamicInputA.data());
+    GuestAllocations::Mutation().Remove(DynamicInputB.data());
+    GuestAllocations::Mutation().Remove(DynamicInputC.data());
+    GuestAllocations::Mutation().Remove(DynamicInputD.data());
+}
+
+}
+
+int main(int argc, char** argv) {
     try {
+        for (int i = 1; i < argc; ++i) {
+            if (std::string_view(argv[i]) == "--codegen-only") {
+                RunCodegenOnly();
+                std::puts("buffer descriptor codegen tests passed");
+                return 0;
+            }
+        }
+        RunCodegenOnly();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         for (std::uint32_t index = 0; index < InputBytes; ++index) Input[index] = static_cast<std::uint8_t>(index * 41u + 3u + (index >> 3u));
@@ -312,6 +921,7 @@ int main() {
         Run(*device, true, true);
         ScalarReads(*device);
         DisabledDescriptors(*device);
+        DynamicDescriptorTable(*device);
         std::puts("buffer descriptor runtime tests passed");
         return 0;
     } catch (const std::exception& error) {

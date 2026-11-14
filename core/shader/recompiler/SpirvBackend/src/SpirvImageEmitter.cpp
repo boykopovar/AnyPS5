@@ -2063,6 +2063,8 @@ ScalarBufferDword EmitScalarBufferDword(SpirvEmitterState& state, std::uint32_t 
     return dword;
 }
 
+}
+
 std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index) {
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.tableMapVariable, ConstantU32(state, 0u), index);
@@ -2075,12 +2077,7 @@ std::uint32_t TableMapAt(SpirvEmitterState& state, std::uint32_t base, std::uint
     return LoadTableMap(state, offset == 0u ? base : Binary(state, spv::OpIAdd, TypeU32(state), base, ConstantU32(state, offset)));
 }
 
-struct TableWord {
-    std::uint32_t code = 0;
-    std::uint32_t addressLow = 0;
-    std::uint32_t addressHigh = 0;
-    std::uint32_t poisoned = 0;
-};
+namespace {
 
 TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, std::uint32_t offset, std::uint32_t header, bool dynamicHeader = false) {
     const auto u32 = TypeU32(state);
@@ -2190,6 +2187,8 @@ TableWord LookupTablePointer(SpirvEmitterState& state, std::uint32_t pointerLow,
     return word;
 }
 
+}
+
 TableWord EmitTableWord(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t source, std::uint32_t table, std::size_t argument) {
     auto& state = ctx.state;
     const IrValue* handle = inst.Argument(argument)->Resolve();
@@ -2218,6 +2217,8 @@ void EmitTableFault(SpirvValueEmitContext& ctx, const IrValue& inst, const Table
         RecordBdaFaultWords(state, word.addressLow, word.addressHigh, Binary(state, spv::OpBitwiseAnd, TypeU32(state), poison, ConstantU32(state, ~ImageTableAbi::PoisonFlag)), ConstantU32(state, inst.Flags<MemoryFlags>().pc), BdaAbi::FaultReason::ImageTable);
     });
 }
+
+namespace {
 
 std::uint32_t ZeroResult(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;

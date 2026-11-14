@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -716,6 +717,7 @@ struct DescriptorBinding {
     std::vector<std::uint64_t> imageSamplers;
     ElementFlags bufferRead;
     std::vector<std::uint32_t> bufferExtent;
+    std::uint32_t firstTableBuffer = std::numeric_limits<std::uint32_t>::max();
 };
 
 struct ImageTableEntryPoison {
@@ -948,6 +950,7 @@ struct ShaderInvocation {
     std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>> imageTableReadRanges;
     std::uint64_t imageTableShader = 0;
     std::uint32_t imageTableFaults = 0;
+    std::vector<std::uint32_t> imageTableBufferRecordOffsets;
 };
 
 // What a Vulkan pipeline built from a result depends on besides the fixed-function state and the

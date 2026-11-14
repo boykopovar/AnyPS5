@@ -98,7 +98,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     IrBindingLayout next;
     next.userDataRegisters = collectUserData(program);
     next.memoryOffsetDword = static_cast<std::uint32_t>(next.userDataRegisters.size());
-    next.memoryOffsetCount = static_cast<std::uint32_t>(info.buffers.size());
+    next.memoryOffsetCount = static_cast<std::uint32_t>(std::count_if(info.buffers.begin(), info.buffers.end(), [](const auto& b) { return b.table == NoTable; }));
     next.dispatchThreadLimit = info.dispatchThreadLimit;
     if (info.buffers.size() > RuntimeAbi::BufferCapacity || info.images.size() > RuntimeAbi::ImageCapacity || info.samplers.size() > RuntimeAbi::SamplerHeapCapacity) fail("shader binding layout exceeds runtime metadata capacity");
     if (std::ranges::any_of(next.userDataRegisters, [](auto reg) { return reg >= RuntimeAbi::UserDataCapacity; })) fail("shader user data exceeds runtime ABI capacity");
@@ -121,11 +121,14 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         next.stencilReferenceDword = offset;
     }
 
-    if (!info.buffers.empty()) {
-        std::vector<std::uint32_t> resources(info.buffers.size());
-        for (std::uint32_t i = 0; i < resources.size(); i++) {
-            resources[i] = i;
+    const bool bufferTables = std::ranges::any_of(info.buffers, [](const BufferResource& buffer) { return buffer.table != NoTable; });
+    std::vector<std::uint32_t> resources;
+    for (std::uint32_t i = 0; i < info.buffers.size(); i++) {
+        if (info.buffers[i].table == NoTable) {
+            resources.push_back(i);
         }
+    }
+    if (!resources.empty() || bufferTables) {
         addBinding(next, DescriptorBindingKind::Buffers, std::move(resources));
     }
 
@@ -169,7 +172,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     if (info.usesDma) {
         addBinding(next, DescriptorBindingKind::BdaPagetable);
     }
-    if (info.usesDma || info.usesFaultBuffer) {
+    if (info.usesDma || info.usesFaultBuffer || bufferTables) {
         addBinding(next, DescriptorBindingKind::FaultBuffer);
     }
 
@@ -181,7 +184,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     if (samplerTables) {
         addBinding(next, DescriptorBindingKind::SamplerTable);
     }
-    if (imageTables || samplerTables) {
+    if (imageTables || samplerTables || bufferTables) {
         addBinding(next, DescriptorBindingKind::ImageTableMap);
     }
     if (imageTables) {

@@ -146,7 +146,7 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
 }
 
 bool sameBinding(const DescriptorBinding& left, const DescriptorBinding& right) {
-    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.bufferExtent == right.bufferExtent && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerCoordinatesIgnored == right.samplerCoordinatesIgnored && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
+    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.bufferExtent == right.bufferExtent && left.firstTableBuffer == right.firstTableBuffer && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerCoordinatesIgnored == right.samplerCoordinatesIgnored && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
 }
 
 bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<DescriptorBinding>& right) {
@@ -197,7 +197,7 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(left.workgroupMemoryDwords == right.workgroupMemoryDwords, prefix + "workgroup memory stride differs");
     require(left.poisonedSrtReads == right.poisonedSrtReads, prefix + "poisoned SRT read counts differ");
     require(left.shaderDataUserWords == right.shaderDataUserWords, prefix + "shader-data user words differ");
-    require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
+    require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size() && left.imageTableBufferRecordOffsets == right.imageTableBufferRecordOffsets, prefix + "image table invocation data differs");
     require(left.imageTableReadRanges == right.imageTableReadRanges, prefix + "image table read ranges differ");
     require(left.userDataRegisterReads == right.userDataRegisterReads, prefix + "user data register read mask differs");
     for (std::size_t i = 0; i < left.imageTablePoison.size(); ++i) {
@@ -252,6 +252,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.imageSamplers = {0x5u, 0u, 0x8000000080000000u};
     binding.bufferRead = {true, false, false, true, true, false};
     binding.bufferExtent = {32, 0, 16, 4096, 8, 0};
+    binding.firstTableBuffer = 11u + seed;
     return binding;
 }
 
@@ -305,6 +306,7 @@ RecompileResult sampleResult() {
     result.imageTableReadRanges = {{{0x1000u, 32u}, {0x1040u, 32u}}, {}, {{0x5000000000ull, 16u}}};
     result.imageTableShader = 0x80003aa700ull;
     result.imageTableFaults = 3u;
+    result.imageTableBufferRecordOffsets = {0x10u, 0x40u, 0x120u};
     result.userDataRegisterReads = (std::uint64_t{1} << 63u) | (std::uint64_t{1} << 32u) | 0x25u;
     return result;
 }
@@ -334,6 +336,7 @@ CompiledVariant sampleVariant() {
     buffer.descriptorFormatted = true;
     buffer.formattedReadMask = 5u;
     buffer.typedAlignment = 2u;
+    buffer.table = 2u;
     info.info.buffers = {buffer, BufferResource{}};
     ImageResource image{};
     image.source = 5;
@@ -454,6 +457,23 @@ void verifyResultRoundTrip() {
     require(ShaderDiskCache::DecodeResult(bytes, decoded), "an encoded result does not decode");
     requireSameResult(result, decoded, "result round trip");
     require(decoded.variantId == 0 && !decoded.cacheHit, "the per-process fields were stored");
+    require(decoded.bindings[0].firstTableBuffer == 12u && decoded.bindings[1].firstTableBuffer == 13u, "decoded firstTableBuffer values differ");
+    require(decoded.imageTableBufferRecordOffsets == std::vector<std::uint32_t>{0x10u, 0x40u, 0x120u}, "decoded imageTableBufferRecordOffsets differ");
+    const auto directory = std::filesystem::temp_directory_path() / ("aps5-result-roundtrip-" + std::to_string(std::random_device{}()));
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    require(!error, "cannot create temporary result directory: " + error.message());
+    const auto diskPath = directory / "result.bin";
+    require(WriteFileAtomically(diskPath, bytes), "cannot store result to disk");
+    std::vector<std::byte> diskBytes;
+    require(ReadWholeFile(diskPath, diskBytes), "cannot read result from disk");
+    RecompileResult diskDecoded;
+    require(ShaderDiskCache::DecodeResult(diskBytes, diskDecoded), "a stored disk result does not decode");
+    requireSameResult(result, diskDecoded, "disk result round trip");
+    require(diskDecoded.bindings[0].firstTableBuffer == 12u && diskDecoded.bindings[1].firstTableBuffer == 13u, "disk decoded firstTableBuffer values differ");
+    require(diskDecoded.imageTableBufferRecordOffsets == std::vector<std::uint32_t>{0x10u, 0x40u, 0x120u}, "disk decoded imageTableBufferRecordOffsets differ");
+    std::filesystem::remove_all(directory, error);
+    require(!error, "cannot remove temporary result directory: " + error.message());
     auto memoized = result;
     memoized.drawKeyMemo.words.store(std::make_shared<const std::vector<std::uint32_t>>(std::vector<std::uint32_t>{1u, 2u, 3u}));
     std::vector<std::byte> memoizedBytes;
@@ -824,6 +844,8 @@ void verifyArtifactStorageIsolation() {
     variant.artifact = result;
     const auto before = ShaderDiskCache::EncodeEntry(key, variant);
     result.bindings[0].guestDescriptor[0] ^= 0x10000u;
+    result.bindings[0].firstTableBuffer ^= 0x1u;
+    result.imageTableBufferRecordOffsets.push_back(0x200u);
     result.pushConstants[0] ^= std::byte{0xff};
     result.vertexAttributes[0].resource.fields[0] ^= 0x10000u;
     variant.artifact = result;
@@ -1201,6 +1223,7 @@ void verifyStore() {
     require(std::filesystem::exists(path), "no entry file at " + path.string());
     require(ShaderDiskCache::Load(key, loaded), "a stored entry does not load");
     requireSameVariant(*variant, loaded, "store round trip");
+    require(loaded.info.info.buffers[0].table == 2u, "decoded buffer.table mismatch");
     require(ShaderDiskCache::Totals().hits == before.hits + 1, "the load was not counted as a hit");
 
     std::vector<std::byte> file;
@@ -2104,6 +2127,7 @@ IrResourcePlan handBuiltPlan() {
     plan.srtPlanComplete = true;
     plan.resourceTrackingComplete = true;
     plan.info.buffers = {BufferResource{}, BufferResource{2u, 0x40u, 0x100u, 0u, true, true, true, true, true, 0x7u, true, 4u}};
+    plan.info.buffers[1].table = 0u;
     ImageResource image{};
     image.source = 1u;
     image.resourceClass = ImageResourceClass::Sampled;
