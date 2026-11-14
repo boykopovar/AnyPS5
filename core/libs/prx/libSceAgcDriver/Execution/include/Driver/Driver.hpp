@@ -79,6 +79,8 @@ public:
     std::uint64_t FlipSubmissions() const;
     std::uint64_t RewindTailFlips() const;
     std::vector<AwaitedWait> AwaitedWaits();
+    void TrackRewindTails();
+    bool RewindTailsUnread();
     void WaitForPipelineJournal();
     bool WaitIdleFor(std::chrono::milliseconds timeout);
     bool WaitIdleUnlessTitleWaitsFor(std::chrono::milliseconds timeout);
@@ -442,6 +444,10 @@ private:
         std::atomic<std::uint64_t> shape{0};
     };
     std::array<AwaitedSlot, SubmissionQueueEnd - 0x20 + 1> awaitedSlots{};
+    std::atomic<bool> tracksTails{false};
+    std::mutex tailsMutex;
+    std::vector<std::pair<std::uint32_t, const std::uint32_t*>> unreadTails;
+    void noteTailRead(const std::uint32_t* read, std::uint32_t queue, const std::uint32_t* next);
     static bool stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited);
     void noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet);
     std::atomic<bool> captureHold{false};

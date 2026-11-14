@@ -169,6 +169,18 @@ extern "C" std::size_t AgcDriverAwaitedWaits_nid_postfix(AgcDriver::AwaitedWait*
     return count;
 }
 
+extern "C" void AgcDriverTrackRewindTails_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().TrackRewindTails();
+}
+
+extern "C" bool AgcDriverRewindTailsUnread_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().RewindTailsUnread();
+}
+
+extern "C" void AgcDriverCheckFailure_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().CheckFailure();
+}
+
 extern "C" void AgcDriverWaitForPipelineJournal_nid_postfix() {
     AgcDriver::DriverDetail::Driver::Get().WaitForPipelineJournal();
 }
