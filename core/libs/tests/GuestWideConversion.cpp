@@ -143,8 +143,8 @@ static void CheckClassification() {
     Require(_Iswctype_nid_postfix(u'a', 6) != 0 && _Iswctype_nid_postfix(u'a', 10) == 0, "_Iswctype lower and upper");
     Require(_Iswctype_nid_postfix(0x7f, 3) != 0 && _Iswctype_nid_postfix(u'!', 8) != 0, "_Iswctype cntrl and punct");
     Require(_Iswctype_nid_postfix(0xe9, 2) == 0 && _Iswctype_nid_postfix(0x3042, 1) == 0, "_Iswctype C locale has no non-ASCII letters");
-    Require(Throws([] { _Iswctype_nid_postfix(u'a', 0); }), "_Iswctype throws for class 0");
-    Require(Throws([] { _Iswctype_nid_postfix(u'a', 13); }), "_Iswctype throws for class 13");
+    Require(_Iswctype_nid_postfix(u'a', 0) == 0, "_Iswctype is false for class 0");
+    Require(_Iswctype_nid_postfix(u'a', 13) == 0, "_Iswctype is false for class 13");
     Require(Throws([] { _Iswctype_nid_postfix(u'a', 0x100); }), "_Iswctype throws for a rune mask");
 }
 

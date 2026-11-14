@@ -3,6 +3,9 @@
 ### Functional
 
 - [sceUserServiceGetNpAccountId guest output](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - returning USER_SERVICE_ERROR_INVALID_ARGUMENT for an unwritable account ID pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
+- [sceUserServiceGetIsSpartacusEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - returning `0x80960005` (`USER_SERVICE_ERROR_INVALID_ARGUMENT`) when the `enabled` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+
+- [sceUserServiceGetRegisteredHomeUserIdList guest output](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - returning USER_SERVICE_ERROR_INVALID_ARGUMENT for unwritable user ID or count pointers is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [sceUserServiceInitialize](../../../core/libs/prx/libSceUserService/Export.cpp) - returning `0x80960005` (`USER_SERVICE_ERROR_INVALID_ARGUMENT`) for an unmapped or unreadable parameter pointer is a defensive host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
 
 ### Unsupported account state
