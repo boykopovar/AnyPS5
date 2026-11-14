@@ -164,7 +164,65 @@ static void CheckMutexInitDestroyFaults() {
     Require(scePthreadMutexDestroy(&second) == SCE_OK);
 }
 
+struct PollConsoleCase {
+    std::uint64_t pattern;
+    std::uint32_t mode;
+    int result;
+    std::uint64_t stateAfter;
+};
+
+static std::uint64_t PollState(KernelEventFlag ef) {
+    std::uint64_t state = 0xa5a5a5a5;
+    const int result = sceKernelPollEventFlag(ef, 0xffffffff, EVF_WAITMODE_OR, &state);
+    Require(result == SCE_OK || result == SCE_KERNEL_ERROR_EBUSY);
+    return state;
+}
+
+static void CheckPollEventFlagMatchesConsole() {
+    constexpr std::uint64_t INITIAL = 0x5;
+    constexpr std::uint64_t UNTOUCHED = 0x5a5a5a5a5a5a5a5a;
+    constexpr int OK = SCE_OK;
+    constexpr int BUSY = SCE_KERNEL_ERROR_EBUSY;
+    constexpr int INVALID = SCE_KERNEL_ERROR_EINVAL;
+    constexpr std::uint32_t AND_ALL = EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_ALL;
+    constexpr std::uint32_t OR_ALL = EVF_WAITMODE_OR | EVF_WAITMODE_CLEAR_ALL;
+    constexpr std::uint32_t AND_PAT = EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_PAT;
+    constexpr std::uint32_t OR_PAT = EVF_WAITMODE_OR | EVF_WAITMODE_CLEAR_PAT;
+    constexpr std::uint32_t BOTH_CLEARS = EVF_WAITMODE_CLEAR_ALL | EVF_WAITMODE_CLEAR_PAT;
+    const PollConsoleCase cases[] = {
+        {0x1, EVF_WAITMODE_AND, OK, 0x5},   {0x1, EVF_WAITMODE_OR, OK, 0x5},   {0x1, AND_ALL, OK, 0x0},
+        {0x1, OR_ALL, OK, 0x0},             {0x1, AND_PAT, OK, 0x4},           {0x1, OR_PAT, OK, 0x4},
+        {0x1, EVF_WAITMODE_AND | BOTH_CLEARS, INVALID, 0x5}, {0x1, EVF_WAITMODE_OR | BOTH_CLEARS, INVALID, 0x5},
+        {0x3, EVF_WAITMODE_AND, BUSY, 0x5}, {0x3, EVF_WAITMODE_OR, OK, 0x5},   {0x3, AND_ALL, BUSY, 0x5},
+        {0x3, OR_ALL, OK, 0x0},             {0x3, AND_PAT, BUSY, 0x5},         {0x3, OR_PAT, OK, 0x4},
+        {0x3, EVF_WAITMODE_AND | BOTH_CLEARS, INVALID, 0x5}, {0x3, EVF_WAITMODE_OR | BOTH_CLEARS, INVALID, 0x5},
+        {0x4, EVF_WAITMODE_AND, OK, 0x5},   {0x4, EVF_WAITMODE_OR, OK, 0x5},   {0x4, AND_ALL, OK, 0x0},
+        {0x4, OR_ALL, OK, 0x0},             {0x4, AND_PAT, OK, 0x1},           {0x4, OR_PAT, OK, 0x1},
+        {0x4, EVF_WAITMODE_AND | BOTH_CLEARS, INVALID, 0x5}, {0x4, EVF_WAITMODE_OR | BOTH_CLEARS, INVALID, 0x5},
+        {0xffffffff, EVF_WAITMODE_OR, OK, 0x5}, {0x80000000, EVF_WAITMODE_OR, BUSY, 0x5},
+        {0x0, EVF_WAITMODE_AND, INVALID, 0x5},  {0x1, 0x0, INVALID, 0x5}, {0x1, EVF_WAITMODE_AND | EVF_WAITMODE_OR, INVALID, 0x5},
+    };
+    for (const PollConsoleCase& entry : cases) {
+        KernelEventFlag ef = nullptr;
+        Require(sceKernelCreateEventFlag(&ef, "poll_console", EVF_ATTR_MULTI, INITIAL, nullptr) == SCE_OK);
+        std::uint64_t result = UNTOUCHED;
+        Require(sceKernelPollEventFlag(ef, entry.pattern, entry.mode, &result) == entry.result);
+        Require(result == (entry.result == INVALID ? UNTOUCHED : INITIAL));
+        Require(PollState(ef) == entry.stateAfter);
+        Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+    }
+
+    KernelEventFlag deleted = nullptr;
+    Require(sceKernelCreateEventFlag(&deleted, "poll_deleted", EVF_ATTR_MULTI, INITIAL, nullptr) == SCE_OK);
+    Require(sceKernelDeleteEventFlag(deleted) == SCE_OK);
+    std::uint64_t result = UNTOUCHED;
+    Require(sceKernelPollEventFlag(deleted, 0x1, EVF_WAITMODE_AND, &result) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelPollEventFlag(nullptr, 0x1, EVF_WAITMODE_AND, &result) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelPollEventFlag(reinterpret_cast<KernelEventFlag>(0x1234), 0x1, EVF_WAITMODE_AND, &result) == SCE_KERNEL_ERROR_ESRCH);
+}
+
 int main() {
+    CheckPollEventFlagMatchesConsole();
     CheckMutexInitDestroyFaults();
     CheckTimedRwlockWithReader();
     constexpr int maximum = std::numeric_limits<int>::max();
