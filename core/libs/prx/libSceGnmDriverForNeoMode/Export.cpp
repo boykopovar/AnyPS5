@@ -1,3 +1,4 @@
+#include "prx/libSceGnmDriver/include/CommandWriters.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InventoryExports.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
@@ -104,17 +105,6 @@ bool IndexedIndirectStage(std::uint32_t stage) {
 constexpr std::uint32_t OpSetUconfigReg = 0x79;
 constexpr std::uint32_t IaMultiVgtParam = 0x40000258u;
 
-std::uint32_t* UpdatePsRegisters(std::uint32_t* cmdbuf, const std::uint32_t* regs) {
-    auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, regs[0], 0});
-    at = EmitPacket(at, OpSetShReg, {10, regs[2], regs[3]});
-    at = EmitPacket(at, OpNop, {0xc01e01c4u, regs[4], regs[5]});
-    at = EmitPacket(at, OpNop, {0xc01e01b3u, regs[6], regs[7]});
-    at = EmitPacket(at, OpNop, {0xc01e01b6u, regs[8]});
-    at = EmitPacket(at, OpNop, {0xc01e01b8u, regs[9]});
-    at = EmitPacket(at, OpNop, {0xc01e0203u, regs[10]});
-    return EmitPacket(at, OpNop, {0xc01e008fu, regs[11]});
-}
-
 } // namespace
 
 extern "C" {
@@ -179,34 +169,15 @@ int APS5_VABI sceGnmDingDongForWorkload(std::uint32_t vqueueId, std::uint32_t ne
 }
 
 int APS5_VABI sceGnmDispatchDirect(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t threadsX, std::uint32_t threadsY, std::uint32_t threadsZ, std::uint32_t flags) {
-    if (!cmdbuf || size != 9 || static_cast<std::int32_t>(threadsX | threadsY | threadsZ) < 0) return CommandFailed;
-    cmdbuf[0] = Header(0x15, 4, true, flags & 1);
-    cmdbuf[1] = threadsX;
-    cmdbuf[2] = threadsY;
-    cmdbuf[3] = threadsZ;
-    cmdbuf[4] = (flags & 0x18) + 1;
-    Nop(cmdbuf + 5, 3);
-    return 0;
+    return GnmCommandWriters::DispatchDirect(cmdbuf, size, threadsX, threadsY, threadsZ, flags);
 }
 
 int APS5_VABI sceGnmDispatchIndirect(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t dataOffset, std::uint32_t flags) {
-    if (!cmdbuf || size != 7) return CommandFailed;
-    cmdbuf[0] = Header(0x16, 2, true, flags & 1);
-    cmdbuf[1] = dataOffset;
-    cmdbuf[2] = (flags & 0x18) + 1;
-    Nop(cmdbuf + 3, 3);
-    return 0;
+    return GnmCommandWriters::DispatchIndirect(cmdbuf, size, dataOffset, flags);
 }
 
 int APS5_VABI sceGnmDispatchIndirectOnMec(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t args, std::uint32_t modifier) {
-    if (!cmdbuf || size != 8 || args == 0 || (args & 3) != 0) return CommandFailed;
-    cmdbuf[0] = Header(0x16, 3, true, modifier & 1);
-    cmdbuf[1] = static_cast<std::uint32_t>(args);
-    cmdbuf[2] = static_cast<std::uint32_t>(args >> 32);
-    cmdbuf[3] = (modifier & 0x18) | 1;
-    cmdbuf[4] = Header(OpNop, 3);
-    cmdbuf[5] = 0;
-    return 0;
+    return GnmCommandWriters::DispatchIndirectOnMec(cmdbuf, size, args, modifier);
 }
 
 int APS5_VABI sceGnmDrawIndex(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t indexCount, std::uint64_t indexAddress, std::uint32_t flags, std::uint32_t) {
@@ -623,13 +594,7 @@ int APS5_VABI sceGnmSdmaOpen(void) {
 }
 
 int APS5_VABI sceGnmSetCsShaderWithModifier(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
-    if (!cmdbuf || size <= 0x18 || !regs || (modifier & 0xfffffc3fu) != 0 || regs[1] != 0) return CommandFailed;
-    const std::uint32_t rsrc1 = modifier == 0 ? regs[2] : (regs[2] & 0xfffffc3fu) | modifier;
-    auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x20c, regs[0], 0});
-    at = EmitPacket(at, OpSetShReg, {0x212, rsrc1, regs[3]});
-    at = EmitPacket(at, OpSetShReg, {0x207, regs[4], regs[5], regs[6]});
-    Nop(at, 11);
-    return 0;
+    return GnmCommandWriters::SetCsShaderWithModifier(cmdbuf, size, regs, modifier);
 }
 
 int APS5_VABI sceGnmSetEmbeddedPsShader(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
@@ -665,25 +630,7 @@ int APS5_VABI sceGnmSetEmbeddedVsShader(std::uint32_t* cmdbuf, std::uint32_t, st
 }
 
 int APS5_VABI sceGnmSetPsShader350(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
-    if (!cmdbuf || size <= 0x27) return CommandFailed;
-    if (!regs) {
-        auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, 0, 0});
-        at = EmitPacket(at, OpSetContextReg, {0x203, 0});
-        at = EmitPacket(at, OpSetContextReg, {0x8f, 0xf});
-        Nop(at, 0x1d);
-        return 0;
-    }
-    if (regs[1] != 0) return CommandFailed;
-    auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, regs[0], 0});
-    at = EmitPacket(at, OpSetShReg, {10, regs[2], regs[3]});
-    at = EmitPacket(at, OpSetContextReg, {0x1c4, regs[4], regs[5]});
-    at = EmitPacket(at, OpSetContextReg, {0x1b3, regs[6], regs[7]});
-    at = EmitPacket(at, OpSetContextReg, {0x1b6, regs[8]});
-    at = EmitPacket(at, OpSetContextReg, {0x1b8, regs[9]});
-    at = EmitPacket(at, OpSetContextReg, {0x203, regs[10]});
-    at = EmitPacket(at, OpSetContextReg, {0x8f, regs[11]});
-    Nop(at, 11);
-    return 0;
+    return GnmCommandWriters::SetPsShader350(cmdbuf, size, regs);
 }
 
 int APS5_VABI sceGnmSetResourceRegistrationUserMemory(void) {
@@ -748,64 +695,23 @@ int APS5_VABI sceGnmUnregisterResource(void) {
 }
 
 int APS5_VABI sceGnmUpdateGsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
-    if (!cmdbuf || size < 0x1d || !regs || regs[1] != 0) return CommandFailed;
-    auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x88, regs[0], 0});
-    at = EmitPacket(at, OpSetShReg, {0x8a, regs[2], regs[3]});
-    at = EmitPacket(at, OpNop, {0xc01e02e5u, regs[4]});
-    at = EmitPacket(at, OpNop, {0xc01e029bu, regs[5]});
-    at = EmitPacket(at, OpNop, {0xc01e02e4u, regs[6]});
-    Nop(at, 11);
-    return 0;
+    return GnmCommandWriters::UpdateGsShader(cmdbuf, size, regs);
 }
 
 int APS5_VABI sceGnmUpdateHsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t lsHsConfig) {
-    if (!cmdbuf || size <= 0x1c || !regs || regs[1] != 0) return CommandFailed;
-    auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x108, regs[0], 0});
-    at = EmitPacket(at, OpSetShReg, {0x10a, regs[2], regs[3]});
-    at = EmitPacket(at, OpNop, {0xc01e0286u, regs[5], regs[6]});
-    at = EmitPacket(at, OpNop, {0xc01e02dbu, regs[4]});
-    at = EmitPacket(at, OpNop, {0xc01e02d6u, lsHsConfig});
-    Nop(at, 11);
-    return 0;
+    return GnmCommandWriters::UpdateHsShader(cmdbuf, size, regs, lsHsConfig);
 }
 
 int APS5_VABI sceGnmUpdatePsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
-    if (!cmdbuf || size <= 0x27) return CommandFailed;
-    if (!regs) {
-        auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, 0, 0});
-        at = EmitPacket(at, OpNop, {0xc01e0203u, 0});
-        Nop(at, 0x20);
-        return 0;
-    }
-    if (regs[1] != 0) return CommandFailed;
-    Nop(UpdatePsRegisters(cmdbuf, regs), 11);
-    return 0;
+    return GnmCommandWriters::UpdatePsShader(cmdbuf, size, regs);
 }
 
 int APS5_VABI sceGnmUpdatePsShader350(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
-    if (!cmdbuf || size <= 0x27) return CommandFailed;
-    if (!regs) {
-        auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, 0, 0});
-        at = EmitPacket(at, OpNop, {0xc01e0203u, 0});
-        at = EmitPacket(at, OpSetContextReg, {0x8f, 0xf});
-        Nop(at, 0x1d);
-        return 0;
-    }
-    if (regs[1] != 0) return CommandFailed;
-    Nop(UpdatePsRegisters(cmdbuf, regs), 11);
-    return 0;
+    return GnmCommandWriters::UpdatePsShader350(cmdbuf, size, regs);
 }
 
 int APS5_VABI sceGnmUpdateVsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
-    if (!cmdbuf || size <= 0x1c || !regs || (modifier & 0xfcfffc3fu) != 0 || regs[1] != 0) return CommandFailed;
-    const std::uint32_t rsrc1 = modifier == 0 ? regs[2] : (regs[2] & 0xfcfffc3fu) | modifier;
-    auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x48, regs[0], 0});
-    at = EmitPacket(at, OpSetShReg, {0x4a, rsrc1, regs[3]});
-    at = EmitPacket(at, OpNop, {0xc01e0207u, regs[6]});
-    at = EmitPacket(at, OpNop, {0xc01e01b1u, regs[4]});
-    at = EmitPacket(at, OpNop, {0xc01e01c3u, regs[5]});
-    Nop(at, 11);
-    return 0;
+    return GnmCommandWriters::UpdateVsShader(cmdbuf, size, regs, modifier);
 }
 
 int APS5_VABI sceGnmValidateDisableDiagnostics(void) {

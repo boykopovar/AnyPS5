@@ -1,3 +1,4 @@
+#include "prx/libSceGnmDriver/include/CommandWriters.hpp"
 #include "prx/libSceGnmDriver/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
@@ -739,6 +740,50 @@ int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(void) {
 int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceGnmDispatchDirect_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t threadsX, std::uint32_t threadsY, std::uint32_t threadsZ, std::uint32_t flags) {
+    return GnmCommandWriters::DispatchDirect(cmdbuf, size, threadsX, threadsY, threadsZ, flags);
+}
+
+int APS5_VABI sceGnmDispatchIndirect_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t dataOffset, std::uint32_t flags) {
+    return GnmCommandWriters::DispatchIndirect(cmdbuf, size, dataOffset, flags);
+}
+
+int APS5_VABI sceGnmDispatchIndirectOnMec_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t args, std::uint32_t modifier) {
+    return GnmCommandWriters::DispatchIndirectOnMec(cmdbuf, size, args, modifier);
+}
+
+int APS5_VABI sceGnmSetCsShaderWithModifier_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
+    return GnmCommandWriters::SetCsShaderWithModifier(cmdbuf, size, regs, modifier);
+}
+
+int APS5_VABI sceGnmSetPsShader350_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
+    return GnmCommandWriters::SetPsShader350(cmdbuf, size, regs);
+}
+
+int APS5_VABI sceGnmUpdateGsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
+    return GnmCommandWriters::UpdateGsShader(cmdbuf, size, regs);
+}
+
+int APS5_VABI sceGnmUpdateHsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t lsHsConfig) {
+    return GnmCommandWriters::UpdateHsShader(cmdbuf, size, regs, lsHsConfig);
+}
+
+int APS5_VABI sceGnmUpdatePsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
+    return GnmCommandWriters::UpdatePsShader(cmdbuf, size, regs);
+}
+
+int APS5_VABI sceGnmUpdatePsShader350_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
+    return GnmCommandWriters::UpdatePsShader350(cmdbuf, size, regs);
+}
+
+int APS5_VABI sceGnmUpdateVsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
+    return GnmCommandWriters::UpdateVsShader(cmdbuf, size, regs, modifier);
 }
 
 }
