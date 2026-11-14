@@ -276,6 +276,7 @@ struct SpirvEmitterState {
     std::vector<std::uint32_t> mergePendingVariables;
     std::uint32_t quadPixelUncovered = 0;
     std::uint32_t sampleMaskInputVariable = 0;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> sampleMaskCopies;
     std::uint32_t quadSampleCoverage = 0;
     std::uint32_t sampleOrderWord = 0;
     std::uint32_t alphaCoverageVariable = 0;
