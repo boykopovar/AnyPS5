@@ -795,7 +795,7 @@ MaskFamily familyOf(const std::vector<Region>& regions, const IrValue* mask, std
 
 class GuardProof {
 public:
-    GuardProof(const IrProgram& program, const std::vector<Region>& regions, const BlockSet& uniform, const IrValue* observation, std::span<const IrBlock* const> path = {}) : program(program), regions(regions), uniform(uniform), observation(observation), path(path), waveSize(program.WaveSize()) {}
+    GuardProof(const IrProgram& program, const std::vector<Region>& regions, const BlockSet& uniform, const IrValue* observation, std::span<const IrBlock* const> path = {}) : program(program), regions(regions), uniform(uniform), observation(observation), path(path), observedBlock(path.empty() ? observation->Parent() : path.back()), waveSize(program.WaveSize()) {}
 
     bool ImpliesMask(const IrValue* condition, const IrValue* low, const IrValue* high) {
         return within(condition, Words{low, high}, 0u);
@@ -866,23 +866,33 @@ private:
         return value;
     }
 
-    bool capturedHere(const IrValue* value) const {
-        if (uniform.contains(value->Parent())) return true;
-        const IrBlock* observedBlock = path.empty() ? observation->Parent() : path.back();
-        if (!truth(value->Argument(0)->Resolve(), true) || observedBlock == nullptr || value->Parent() == nullptr) return false;
-        if (value->Parent() == observedBlock) {
+    bool capturedHere(const IrValue* value) {
+        const IrBlock* capture = value->Parent();
+        if (uniform.contains(capture)) return true;
+        if (!truth(value->Argument(0)->Resolve(), true) || observedBlock == nullptr || capture == nullptr) return false;
+        if (capture == observedBlock) {
             if (!path.empty() && observation->Parent() != observedBlock) return true;
-            const auto& instructions = value->Parent()->Instructions();
+            const auto& instructions = capture->Instructions();
             const auto captured = std::find(instructions.begin(), instructions.end(), value);
             const auto observed = std::find(instructions.begin(), instructions.end(), observation);
             return captured != instructions.end() && observed != instructions.end() && std::distance(instructions.begin(), captured) < std::distance(instructions.begin(), observed);
         }
+        for (const auto& [block, dominates] : captureDominance) {
+            if (block == capture) return dominates;
+        }
+        const bool dominates = captureDominatesObservation(capture);
+        captureDominance[nextCapture] = {capture, dominates};
+        nextCapture = (nextCapture + 1u) % captureDominance.size();
+        return dominates;
+    }
+
+    bool captureDominatesObservation(const IrBlock* capture) const {
         BlockSet visited;
         std::vector<const IrBlock*> pending{program.BlockOrder().front()};
         while (!pending.empty()) {
             const IrBlock* block = pending.back();
             pending.pop_back();
-            if (block == value->Parent() || !visited.insert(block).second) continue;
+            if (block == capture || !visited.insert(block).second) continue;
             if (block == observedBlock) return false;
             pending.insert(pending.end(), block->Successors().begin(), block->Successors().end());
         }
@@ -991,8 +1001,11 @@ private:
     const BlockSet& uniform;
     const IrValue* observation;
     std::span<const IrBlock* const> path;
+    const IrBlock* observedBlock;
     std::uint32_t waveSize;
     std::uint32_t remaining = 8192u;
+    std::array<std::pair<const IrBlock*, bool>, 4> captureDominance{};
+    std::size_t nextCapture = 0;
 };
 
 class UnreadLanes;
