@@ -177,13 +177,20 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     device.WaitIdle();
 }
 
+bool SignalingNan(const std::uint32_t* words) {
+    const std::uint32_t magnitude = words[1] & 0x7fffffffu;
+    return magnitude < 0x7ff80000u && (magnitude > 0x7ff00000u || (magnitude == 0x7ff00000u && words[0] != 0u));
+}
+
 void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
+        const bool signaling = SignalingNan(in) || SignalingNan(in + 2u);
         for (std::uint32_t i = 0; i < 16; ++i) {
             std::uint32_t expected = !Ieee && i >= 8u && i < 12u ? MinMaxNoIeee[tid][i - 8u] : Expected[tid][i];
             if (!Ieee && i == 13u && tid == 13u) expected = in[1];
+            if (!Ieee && signaling && (i < 8u || i == 15u) && (i & 1u) != 0u) expected &= ~0x00080000u;
             Expect(tid, out[i], expected, Names[i]);
         }
     }
