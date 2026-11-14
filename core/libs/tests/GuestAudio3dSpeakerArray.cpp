@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -45,6 +46,10 @@ int main() {
     AudioOut2SpeakerArrayHandle handle = nullptr;
     Require(sceAudio3dCreateSpeakerArray(nullptr, &parameters) == INVALID_PARAMETER, "null handle is an invalid parameter");
     Require(sceAudio3dCreateSpeakerArray(&handle, nullptr) == INVALID_PARAMETER, "null parameters are an invalid parameter");
+    errno = 71;
+    Require(sceAudio3dCreateSpeakerArray(reinterpret_cast<AudioOut2SpeakerArrayHandle*>(static_cast<std::uintptr_t>(0x10)), &parameters) == INVALID_PARAMETER && errno == 71, "unmapped handle is an invalid parameter");
+    errno = 71;
+    Require(sceAudio3dCreateSpeakerArray(&handle, reinterpret_cast<const Audio3dSpeakerArrayParameters*>(static_cast<std::uintptr_t>(0x10))) == INVALID_PARAMETER && errno == 71, "unmapped parameters are an invalid parameter");
     Audio3dSpeakerArrayParameters zeroSpeakers = parameters;
     zeroSpeakers.numSpeakers = 0;
     RequireThrows([&] { sceAudio3dCreateSpeakerArray(&handle, &zeroSpeakers); }, "zero speakers parameter is rejected");

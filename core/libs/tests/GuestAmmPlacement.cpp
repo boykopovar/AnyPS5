@@ -29,6 +29,14 @@ int main() {
         Require(start >= arenaBase && multimapEnd <= arenaEnd - occupied, "AMM ranges overlap the used top of the guest arena");
         Require(start % (64ull << 30) == 0, "the AMM range does not start on a 64 GiB boundary");
         Require(GuestArena::GuestArenaHighestFree_nid_no_patch(multimapEnd - start, 64ull << 30) < start, "AMM ranges are not at the top of the free guest arena");
+
+        std::uint64_t start2 = 0;
+        std::uint64_t end2 = 0;
+        std::uint64_t multimapStart2 = 0;
+        std::uint64_t multimapEnd2 = 0;
+        Require(sceAmprAmmGetVirtualAddressRanges(&start2, &end2, &multimapStart2, &multimapEnd2) == 0, "second AMM range query failed");
+        Require(start2 == start && end2 == end && multimapStart2 == multimapStart && multimapEnd2 == multimapEnd, "AMM ranges changed on repeated query");
+
         std::puts("AMM ranges placed below the used top of the guest arena");
         return 0;
     } catch (const std::exception& error) {

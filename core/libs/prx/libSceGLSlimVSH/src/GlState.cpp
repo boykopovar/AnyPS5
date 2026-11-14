@@ -56,6 +56,7 @@ GLenum APS5_VABI glGetError_nid_postfix() {
 
 void APS5_VABI glGetIntegerv_nid_postfix(GLenum name, GLint* values) {
     std::lock_guard lock(mutex);
+    if (values == nullptr) return;
     std::vector<double> data;
     if (!Query_nid_no_patch(name, data)) return;
     for (std::size_t i = 0; i < data.size(); ++i) {
@@ -73,6 +74,7 @@ void APS5_VABI glGetFloatv_nid_postfix(GLenum name, GLfloat* values) {
 
 void APS5_VABI glGetBooleanv_nid_postfix(GLenum name, GLboolean* values) {
     std::lock_guard lock(mutex);
+    if (values == nullptr) return;
     std::vector<double> data;
     if (Query_nid_no_patch(name, data)) for (std::size_t i = 0; i < data.size(); ++i) values[i] = data[i] != 0;
 }
@@ -185,12 +187,14 @@ void APS5_VABI glGetVertexAttribPointerv_nid_postfix(GLuint index, GLenum name, 
     std::lock_guard lock(mutex);
     auto* a = Attrib(index);
     if (!a) return;
+    if (!pointer) { Error_nid_no_patch(0x0500); return; }
     if (name != 0x8645) { Error_nid_no_patch(0x0500); return; }
     *pointer = const_cast<void*>(a->pointer);
 }
 
 void APS5_VABI glGetVertexAttribfv_nid_postfix(GLuint index, GLenum name, GLfloat* values) {
     std::lock_guard lock(mutex);
+    if (!values) return;
     std::vector<double> data;
     if (AttribQuery(index, name, data)) std::copy(data.begin(), data.end(), values);
 }

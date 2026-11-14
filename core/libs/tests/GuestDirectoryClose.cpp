@@ -38,6 +38,7 @@ static void VerifyCloseReuse(const std::filesystem::path& root, const char* scen
         SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     Require((useUnderscoreClose ? _close_nid_postfix(directory) : close_nid_postfix(directory)) == 0);
+    Require((useUnderscoreClose ? _close_nid_postfix(directory) : close_nid_postfix(directory)) == -1);
 
     const int file = sceKernelOpen(filePath.string().c_str(), SCE_KERNEL_O_RDONLY, 0);
     Require(file >= 0);
