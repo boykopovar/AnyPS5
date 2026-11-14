@@ -145,7 +145,13 @@ int APS5_VABI sceFontCreateLibraryWithEdition(const FontMemory* memory, const vo
     const auto freeFn = memory->iface->dealloc;
     auto* lib = static_cast<FontLibNative*>(allocFn(memory->mspace_handle, sizeof(FontLibNative)));
     if (!lib) return SCE_FONT_ERROR_ALLOCATION_FAILED;
-    void* workspace = allocFn(memory->mspace_handle, 0x4000);
+    void* workspace = nullptr;
+    try {
+        workspace = allocFn(memory->mspace_handle, 0x4000);
+    } catch (...) {
+        try { freeFn(memory->mspace_handle, lib); } catch (...) {}
+        throw;
+    }
     if (!workspace) {
         freeFn(memory->mspace_handle, lib);
         return SCE_FONT_ERROR_ALLOCATION_FAILED;
@@ -166,7 +172,14 @@ int APS5_VABI sceFontCreateLibraryWithEdition(const FontMemory* memory, const vo
     lib->list_head_ptr = &lib->list_head;
     lib->list_head = nullptr;
     const auto initFn = lib->sys_driver->init;
-    const int rc = initFn ? initFn(memory, lib) : SCE_FONT_ERROR_INVALID_PARAMETER;
+    int rc;
+    try {
+        rc = initFn ? initFn(memory, lib) : SCE_FONT_ERROR_INVALID_PARAMETER;
+    } catch (...) {
+        try { freeFn(memory->mspace_handle, workspace); } catch (...) {}
+        try { freeFn(memory->mspace_handle, lib); } catch (...) {}
+        throw;
+    }
     if (rc != SCE_FONT_OK) {
         freeFn(memory->mspace_handle, workspace);
         freeFn(memory->mspace_handle, lib);
@@ -221,7 +234,15 @@ int APS5_VABI sceFontCreateRendererWithEdition(const FontMemory* memory, const v
             const auto freeFn = memory->iface->dealloc;
             const auto* selection = static_cast<const RendererSelection*>(createParams);
             void* rendererMemory = allocFn(memory->mspace_handle, selection->size);
-            void* workspace = allocFn(memory->mspace_handle, 0x4000);
+            void* workspace = nullptr;
+            try {
+                workspace = allocFn(memory->mspace_handle, 0x4000);
+            } catch (...) {
+                if (rendererMemory) {
+                    try { freeFn(memory->mspace_handle, rendererMemory); } catch (...) {}
+                }
+                throw;
+            }
             rc = SCE_FONT_ERROR_ALLOCATION_FAILED;
             if (rendererMemory && workspace) {
                 auto* renderer = static_cast<RendererNative*>(rendererMemory);
@@ -242,7 +263,13 @@ int APS5_VABI sceFontCreateRendererWithEdition(const FontMemory* memory, const v
                 renderer->workspace_size = 0x4000;
                 renderer->reserved_a8 = 0;
                 renderer->outline_policy_flag = 0;
-                rc = selection->create_fn ? selection->create_fn(renderer) : SCE_FONT_ERROR_FATAL;
+                try {
+                    rc = selection->create_fn ? selection->create_fn(renderer) : SCE_FONT_ERROR_FATAL;
+                } catch (...) {
+                    try { freeFn(memory->mspace_handle, workspace); } catch (...) {}
+                    try { freeFn(memory->mspace_handle, rendererMemory); } catch (...) {}
+                    throw;
+                }
                 if (rc == SCE_FONT_OK) {
                     if (EffectiveEdition(edition) - 0x930000u < 0x1BD0000u) {
                         renderer->feature_byte_0x0c |= 1u;

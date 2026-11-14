@@ -47,6 +47,51 @@ if(BUILD_TESTING)
         set_tests_properties(guest_font_output_pointers PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
     endif()
+    add_test_executable(guest_font_factory_unwind_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontFactoryUnwind.cpp)
+    target_include_directories(guest_font_factory_unwind_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_font_factory_unwind_tests PRIVATE libSceFont libSceFontFt libc)
+    configure_windows_unwind(guest_font_factory_unwind_tests)
+    add_test(NAME guest_font_factory_unwind_library_success COMMAND guest_font_factory_unwind_tests 0 0)
+    add_test(NAME guest_font_factory_unwind_library_workspace_null COMMAND guest_font_factory_unwind_tests 0 1)
+    add_test(NAME guest_font_factory_unwind_library_workspace_throw COMMAND guest_font_factory_unwind_tests 0 2)
+    add_test(NAME guest_font_factory_unwind_library_callback_error COMMAND guest_font_factory_unwind_tests 0 3)
+    add_test(NAME guest_font_factory_unwind_library_callback_throw COMMAND guest_font_factory_unwind_tests 0 4)
+    add_test(NAME guest_font_factory_unwind_library_callback_cleanup_throw COMMAND guest_font_factory_unwind_tests 0 5)
+    add_test(NAME guest_font_factory_unwind_renderer_success COMMAND guest_font_factory_unwind_tests 1 0)
+    add_test(NAME guest_font_factory_unwind_renderer_workspace_null COMMAND guest_font_factory_unwind_tests 1 1)
+    add_test(NAME guest_font_factory_unwind_renderer_workspace_throw COMMAND guest_font_factory_unwind_tests 1 2)
+    add_test(NAME guest_font_factory_unwind_renderer_callback_error COMMAND guest_font_factory_unwind_tests 1 3)
+    add_test(NAME guest_font_factory_unwind_renderer_callback_throw COMMAND guest_font_factory_unwind_tests 1 4)
+    add_test(NAME guest_font_factory_unwind_renderer_callback_cleanup_throw COMMAND guest_font_factory_unwind_tests 1 5)
+    set_tests_properties(guest_font_factory_unwind_library_success
+        guest_font_factory_unwind_library_workspace_null
+        guest_font_factory_unwind_library_workspace_throw
+        guest_font_factory_unwind_library_callback_error
+        guest_font_factory_unwind_library_callback_throw
+        guest_font_factory_unwind_library_callback_cleanup_throw
+        guest_font_factory_unwind_renderer_success
+        guest_font_factory_unwind_renderer_workspace_null
+        guest_font_factory_unwind_renderer_workspace_throw
+        guest_font_factory_unwind_renderer_callback_error
+        guest_font_factory_unwind_renderer_callback_throw
+        guest_font_factory_unwind_renderer_callback_cleanup_throw PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
+    if(WIN32)
+        set_tests_properties(guest_font_factory_unwind_library_success
+        guest_font_factory_unwind_library_workspace_null
+        guest_font_factory_unwind_library_workspace_throw
+        guest_font_factory_unwind_library_callback_error
+        guest_font_factory_unwind_library_callback_throw
+        guest_font_factory_unwind_library_callback_cleanup_throw
+        guest_font_factory_unwind_renderer_success
+        guest_font_factory_unwind_renderer_workspace_null
+        guest_font_factory_unwind_renderer_workspace_throw
+        guest_font_factory_unwind_renderer_callback_error
+        guest_font_factory_unwind_renderer_callback_throw
+        guest_font_factory_unwind_renderer_callback_cleanup_throw PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>"
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFontFt>")
+    endif()
+
     add_test_executable(guest_font_renderer_lifecycle_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontRendererLifecycle.cpp)
     target_include_directories(guest_font_renderer_lifecycle_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_font_renderer_lifecycle_tests PRIVATE libSceFont libSceFontFt libc)
