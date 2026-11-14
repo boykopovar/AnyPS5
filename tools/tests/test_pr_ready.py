@@ -277,6 +277,37 @@ class MainTests(unittest.TestCase):
                 pr_ready.main([])
         self.assertIn("boom", err.getvalue())
 
+    def test_open_pages_reject_invalid_next_cursors_without_restarting(self):
+        for cursor in (None, "", 17, []):
+            with self.subTest(cursor=cursor):
+                page = {"data": {"repository": {"pullRequests": {"nodes": [node()],
+                        "pageInfo": {"hasNextPage": True, "endCursor": cursor}}}}}
+                calls = []
+                def fake(*args):
+                    calls.append(args)
+                    if len(calls) > 2:
+                        raise ValueError("fixture read budget exceeded")
+                    return json.dumps(page)
+                with patch("pr_ready.pr_labels.gh", fake), self.assertRaisesRegex(ValueError, "no cursor"):
+                    pr_ready.fetch("o/r")
+                self.assertEqual(len(calls), 1)
+
+    def test_open_and_closed_page_cursors_must_advance(self):
+        for closed in (False, True):
+            for cursors in (("repeat", "repeat"), ("first", "second", "first")):
+                with self.subTest(closed=closed, cursors=cursors):
+                    calls = []
+                    def fake(*args):
+                        calls.append(args)
+                        if len(calls) > len(cursors):
+                            raise ValueError("fixture read budget exceeded")
+                        return json.dumps({"data": {"repository": {"pullRequests": {"nodes": [node()],
+                            "pageInfo": {"hasNextPage": True, "endCursor": cursors[len(calls) - 1]}}}}})
+                    action = pr_ready.closed_with_label if closed else pr_ready.fetch
+                    with patch("pr_ready.pr_labels.gh", fake), self.assertRaisesRegex(ValueError, "did not advance"):
+                        action("o/r")
+                    self.assertEqual(len(calls), len(cursors))
+
     def test_pages_are_followed(self):
         first = {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": True, "endCursor": "c1"}, "nodes": [node(number=1)]}}}}
         second = {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [node(number=2)]}}}}
