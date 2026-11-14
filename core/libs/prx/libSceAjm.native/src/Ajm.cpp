@@ -797,10 +797,9 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     if (Resampling(instance)) ResamplerProduce(instance, pcmOutputs, channels, encoding, sampleBytes);
     const auto segmentEnded = [&] { return instance.gapless.totalSamples != 0 && instance.segmentSamples >= instance.gapless.totalSamples; };
     for (;;) {
-        if (segmentEnded()) break;
         if (instance.superframeRemaining == 0) consumed += RiffDataOffset(input.data() + consumed, input.size() - consumed);
         const std::size_t needed = instance.superframeRemaining == 0 ? superframeSize : instance.superframeRemaining;
-        const bool roomForFrame = Resampling(instance) ? pcmOutputs.Room() >= channels * sampleBytes : pcmOutputs.Room() >= frameBytes;
+        const bool roomForFrame = segmentEnded() || (Resampling(instance) ? pcmOutputs.Room() >= channels * sampleBytes : pcmOutputs.Room() >= frameBytes);
         // A PS4 reports which side ran out (probe runs of a title's ATRAC9 stream through libSceAjm's
         // builders): PARTIAL_INPUT when the input ran out, on a superframe boundary or not, with room
         // left; NOT_ENOUGH_ROOM when the room ran out with input left, after however many frames (and
@@ -841,7 +840,6 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
         EmitFrame(instance, pcmOutputs, pcm.data(), frameSamples, channels, sampleBytes);
         if (job.console && (job.flags & RUN_MULTIPLE_FRAMES) == 0) break;
     }
-    if (segmentEnded()) instance.segmentSamples = 0;
 
     if (TraceEnabled()) {
         std::fprintf(stderr, "[ajm] instance %u run flags 0x%llx: %zu input bytes in %u buffers, %zu output bytes in %u buffers, sideband %llu bytes; superframe %d (%d frames), %d channels, %d samples/frame, %d Hz, config %02x %02x %02x %02x -> result 0x%x, decoder status 0x%x, %u frames, consumed %zu, produced %zu, total samples %llu, gapless total %u skip %u skipped %u, input",

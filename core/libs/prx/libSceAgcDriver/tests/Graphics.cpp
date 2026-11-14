@@ -3575,6 +3575,22 @@ void depthCopyPassTests() {
     }
     queue.context[0x000] = 0x104;
     expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "a sample the depth plane does not have");
+    queue.context[0x000] = 0x88;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "without a stencil plane");
+    queue.context[0x011] = 0x20000181;
+    queue.context[0x013] = 0x00002000;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "single-sample R8 uint");
+    queue.context[0x31c] = 0x40404;
+    for (const auto depthInfo : {0x80000183u, 0x80000187u}) {
+        queue.context[0x010] = depthInfo;
+        pass = DecodeDepthCopyPass(queue);
+        const auto samples = depthInfo == 0x80000183u ? 1u : 2u;
+        Require(pass.has_value() && pass->stencil && pass->source.samples == samples && pass->source.stencilAddress == 0x200000 && pass->sample == 0 && pass->color.format == VK_FORMAT_R8_UINT, "a centroid DB stencil copy of a " + std::to_string(samples) + "-sample stencil plane decoded differently");
+        const auto resource = AgcDriver::Graphics::DecodeTextureResource(AgcDriver::Graphics::DepthCopySourceWords(pass->source, true));
+        Require(resource.baseAddress == pass->source.stencilAddress && resource.samples == samples && resource.width == 64 && resource.height == 4 && resource.dccAddress == 0, "the DB stencil copy source descriptor of a " + std::to_string(samples) + "-sample plane does not read the stencil plane without metadata");
+    }
+    queue.context[0x000] = 0x8c;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "stencil copy");
 }
 
 void metadataPassTests() {

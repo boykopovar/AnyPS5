@@ -142,7 +142,6 @@ int APS5_VABI _ZN3WTF4Lock16unlockFairlySlowEv();
 int APS5_VABI _ZN3JSC10JSFunction6createERNS_2VMEPNS_14JSGlobalObjectEiRKN3WTF6StringENS_14NativeFunctionENS_9IntrinsicES9_PKNS_6DOMJIT9SignatureE();
 int APS5_VABI _ZNK9Inspector15RemoteInspector26listingForAutomationTargetERKNS_22RemoteAutomationTargetE();
 int APS5_VABI _ZN9Inspector28InspectorScriptProfilerAgentD2Ev();
-int APS5_VABI _ZN3WTF14FileSystemImpl15getFileDeviceIdERKNS_7CStringE();
 int APS5_VABI _ZN7bmalloc3api16freeLargeVirtualEPvmNS_8HeapKindE();
 int APS5_VABI _ZN3JSC2VM18generatorSpaceSlowEv();
 int APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase6lengthEv();

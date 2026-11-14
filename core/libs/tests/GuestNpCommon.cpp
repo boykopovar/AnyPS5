@@ -194,6 +194,9 @@ static int testIds() {
     NpOnlineId unterminated = onlineId("abcdefghijklmnop");
     unterminated.data[16] = 'q';
     ok &= expect(sceNpIntIsValidOnlineId(nullptr) == 0, "a null online ID is valid");
+    errno = 71;
+    ok &= expect(sceNpIntIsValidOnlineId(reinterpret_cast<const NpOnlineId*>(0x10)) == 0, "an unmapped online ID is valid");
+    ok &= expect(errno == 71, "errno was not preserved for unmapped online ID");
     ok &= expect(sceNpIntIsValidOnlineId(&kestrel) == 1, "kestrel_77 is not valid");
     ok &= expect(sceNpIntIsValidOnlineId(&heron) == 1, "heron-4 is not valid");
     const NpOnlineId sixteen = onlineId("abcdefghijklmnop");

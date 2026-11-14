@@ -449,6 +449,7 @@ public:
                 return false;
             };
             memoryBudget = hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+            pushDescriptors = hasExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
             auto bytes = AgcDriver::QueryBdaByteFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
             auto address = AgcDriver::QueryBdaFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
             const auto queues = function<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
@@ -608,6 +609,7 @@ public:
                 robustness.pNext = address.pNext;
                 address.pNext = &robustness;
             }
+            if (pushDescriptors) extensionsEnabled.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
             VkPhysicalDevicePortabilitySubsetFeaturesKHR portabilityFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
             if (hasExtension(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME)) {
                 VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &portabilityFeatures};
@@ -658,6 +660,8 @@ public:
 
     ~Device() { release(); }
     bool NullDescriptors() const { return nullDescriptors; }
+    bool PushDescriptors() const { return pushDescriptors; }
+    void UsePushDescriptors() { context.pushDescriptors = pushDescriptors; }
     const Context& GetContext() const { return context; }
     bool Graphics() const { return graphics; }
     bool Timestamps() const {
@@ -719,6 +723,7 @@ private:
     std::mutex settleMutex;
     bool nullDescriptors = false;
     bool memoryBudget = false;
+    bool pushDescriptors = false;
 };
 
 using Kind = Recorder::ReadKind;
@@ -1187,6 +1192,88 @@ void changedCopyTests(const Device& device, Recorder& recorder) {
     for (std::uint32_t i = 0; i < words; ++i) {
         Require(stored[i] == expected[i], "changed copy word " + std::to_string(i) + " after a lead: " + std::to_string(stored[i]) + ", expected " + std::to_string(expected[i]));
     }
+}
+
+void boundChangedCopyRun(const Device& device, const Context& context, const std::string& limit) {
+    Recorder recorder(context);
+    constexpr std::uint32_t words = 70001;
+    constexpr VkDeviceSize resultOffset = 4;
+    constexpr VkDeviceSize snapshotOffset = 0x1008;
+    constexpr VkDeviceSize targetOffset = 0x10c;
+    constexpr std::uint32_t guard = 0xa5a5a5a5u;
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    auto result = std::make_shared<Buffer>(context, resultOffset + words * 4u, usage);
+    auto snapshot = std::make_shared<Buffer>(context, snapshotOffset + words * 4u, usage);
+    auto target = std::make_shared<Buffer>(context, targetOffset + words * 4u + 4u, usage);
+    auto counter = std::make_shared<Buffer>(context, 16, usage);
+    std::vector<std::uint32_t> uploaded(words), shader(words), held(words), expected(words);
+    std::uint32_t contested = 0;
+    for (std::uint32_t i = 0; i < words; ++i) {
+        uploaded[i] = i * 2246822519u + 1u;
+        shader[i] = i % 3 == 0 ? uploaded[i] ^ (0x0f0f0f0fu << (8u * (i % 4))) : uploaded[i];
+        held[i] = i % 4 == 1 ? uploaded[i] ^ (0x3c3c3c3cu & (0xffu << (8u * ((i / 12) % 4)))) : uploaded[i];
+        bool overlap = false;
+        for (std::uint32_t shift = 0; shift < 32; shift += 8) {
+            const auto mask = 0xffu << shift;
+            const bool byShader = (shader[i] & mask) != (uploaded[i] & mask);
+            const bool byCpu = (held[i] & mask) != (uploaded[i] & mask);
+            expected[i] |= (byShader && !byCpu ? shader[i] : held[i]) & mask;
+            overlap = overlap || (byShader && byCpu);
+        }
+        contested += overlap ? 1u : 0u;
+    }
+    Require(contested != 0, "the bound changed copy data lacks words both sides changed");
+    std::memset(counter->Bytes().data(), 0, 16);
+    std::memcpy(result->Bytes().data() + resultOffset, shader.data(), words * 4u);
+    std::memcpy(snapshot->Bytes().data() + snapshotOffset, uploaded.data(), words * 4u);
+    std::fill_n(reinterpret_cast<std::uint32_t*>(target->Bytes().data()), targetOffset / 4u, guard);
+    std::memcpy(target->Bytes().data() + targetOffset, held.data(), words * 4u);
+    std::memcpy(target->Bytes().data() + targetOffset + words * 4u, &guard, sizeof(guard));
+    std::unique_lock gpu(GpuMutex());
+    recorder.Activate();
+    Require(recorder.RecordBoundChangedCopy(recorder.Commands(), {result->Handle(), resultOffset}, {snapshot->Handle(), snapshotOffset}, {target->Handle(), targetOffset}, words, counter->Handle()), "the bound changed copy kernel is unavailable");
+    recorder.Keep(result);
+    recorder.Keep(snapshot);
+    recorder.Keep(target);
+    recorder.Keep(counter);
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    for (VkDeviceSize offset = 0; offset < targetOffset; offset += 4) {
+        std::uint32_t word = 0;
+        std::memcpy(&word, target->Bytes().data() + offset, sizeof(word));
+        Require(word == guard, "the bound changed copy wrote byte " + std::to_string(offset) + " ahead of its target range");
+    }
+    std::uint32_t tail = 0;
+    std::memcpy(&tail, target->Bytes().data() + targetOffset + words * 4u, sizeof(tail));
+    Require(tail == guard, "the bound changed copy wrote past its target range");
+    std::vector<std::uint32_t> stored(words);
+    std::memcpy(stored.data(), target->Bytes().data() + targetOffset, words * 4u);
+    for (std::uint32_t i = 0; i < words; ++i) {
+        Require(stored[i] == expected[i], "bound changed copy word " + std::to_string(i) + " with " + limit + ": " + std::to_string(stored[i]) + ", expected " + std::to_string(expected[i]));
+    }
+    std::uint32_t counted = 0;
+    std::memcpy(&counted, counter->Bytes().data(), sizeof(counted));
+    Require(counted == contested, "the bound changed copy with " + limit + " counted " + std::to_string(counted) + " words with bytes both sides changed, expected " + std::to_string(contested));
+    std::cout << "Bound changed copies store the shader's changed bytes over the target's own at unaligned offsets with " << limit << '\n';
+}
+
+bool boundChangedCopyTests(const Device& device) {
+    auto context = device.GetContext();
+    context.pushDescriptors = device.PushDescriptors();
+    if (!context.pushDescriptors) {
+        std::cout << "bound changed copy tests skipped: no push descriptors\n";
+        return false;
+    }
+    boundChangedCopyRun(device, context, "the device limits");
+    auto groups = context;
+    groups.limits.maxComputeWorkGroupCount[0] = 16;
+    boundChangedCopyRun(device, groups, "1024 words per dispatch");
+    auto range = context;
+    const auto alignment = std::max<VkDeviceSize>(range.limits.minStorageBufferOffsetAlignment, sizeof(std::uint32_t));
+    range.limits.maxStorageBufferRange = static_cast<std::uint32_t>(alignment + 1001 * sizeof(std::uint32_t));
+    boundChangedCopyRun(device, range, "1001 words per dispatch");
+    return true;
 }
 
 void readTrackingTests(const Device& device, Recorder& recorder) {
@@ -16396,6 +16483,14 @@ int main(int argc, char** argv) {
         }
 #endif
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
+        const bool boundStaging = argc == 2 && std::string_view(argv[1]) == "--bda-staging-bound-only";
+        if (boundStaging) {
+            if (!device.PushDescriptors()) {
+                std::cout << "skipped, no push descriptors\n";
+                return 77;
+            }
+            device.UsePushDescriptors();
+        }
         Recorder recorder(device.GetContext());
         recorder.Activate();
         if (argc == 2 && std::string_view(argv[1]) == "--command-reuse-only") {
@@ -16528,6 +16623,11 @@ int main(int argc, char** argv) {
             std::cout << "Completion label storage and ordering tests passed\n";
             return 0;
         }
+        if (boundStaging) {
+            if (!bdaStagingTests(device, recorder)) return 77;
+            std::cout << "address-based staging tests passed with push descriptors\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--bda-staging-only") {
             if (!bdaStagingTests(device, recorder)) return 77;
             std::cout << "address-based staging tests passed\n";
@@ -16574,6 +16674,10 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--changed-copy-only") {
             changedCopyTests(device, recorder);
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--bound-changed-copy-only") {
+            gpu.unlock();
+            return boundChangedCopyTests(device) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--window-import-unmap-only") {
             gpu.unlock();
