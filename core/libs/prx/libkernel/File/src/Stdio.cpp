@@ -756,6 +756,21 @@ extern "C" int APS5_VABI pipe2_nid_postfix(int* descriptors, int flags) {
     int mode = _O_BINARY;
     if ((flags & SCE_KERNEL_O_CLOEXEC) != 0) mode |= _O_NOINHERIT;
     const int result = ::_pipe(native, 65536, mode);
+#elif defined(__APPLE__)
+    int result = ::pipe(native);
+    if (result == 0) {
+        for (const int descriptor : native) {
+            if (((flags & SCE_KERNEL_O_CLOEXEC) != 0 && ::fcntl(descriptor, F_SETFD, FD_CLOEXEC) != 0) ||
+                ((flags & SCE_KERNEL_O_NONBLOCK) != 0 && ::fcntl(descriptor, F_SETFL, ::fcntl(descriptor, F_GETFL) | O_NONBLOCK) != 0)) {
+                const int saved = errno;
+                ::close(native[0]);
+                ::close(native[1]);
+                errno = saved;
+                result = -1;
+                break;
+            }
+        }
+    }
 #else
     int hostFlags = 0;
 #ifdef O_CLOEXEC
