@@ -312,6 +312,13 @@ void testVp9PictureMetadata() {
         struct Snapshot { Vp9PictureInfo info{}; std::uint64_t guard = 0xfedcba9876543210ull; } snapshot;
         Videodec2Vp9PictureInfo_nid_no_patch(handle, output.frameBuffer, &snapshot.info);
         check(snapshot.info.thisSize == sizeof(Vp9PictureInfo) && snapshot.guard == 0xfedcba9876543210ull, "internal VP9 snapshot size or boundary differs");
+        errno = 71;
+        checkThrows([&] { Videodec2Vp9PictureInfo_nid_no_patch(handle, output.frameBuffer, reinterpret_cast<Vp9PictureInfo*>(0x10)); });
+        check(errno == 71, "preserves errno");
+        SceVideodec2::Internal::PictureHeader header{};
+        Videodec2PictureHeader_nid_no_patch(handle, output.frameBuffer, &header);
+        checkThrows([&] { Videodec2PictureHeader_nid_no_patch(handle, output.frameBuffer, reinterpret_cast<SceVideodec2::Internal::PictureHeader*>(0x10)); });
+        check(errno == 71, "preserves errno");
         const auto& same = snapshot.info;
         const auto& expected = guarded.info;
         check(same.isValid && same.ptsData == expected.ptsData && same.dtsData == expected.dtsData && same.attachedData == expected.attachedData && same.profile == expected.profile && same.level == expected.level &&

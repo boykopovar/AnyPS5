@@ -4,9 +4,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
 #include <stdexcept>
 
 using NKWebKit::WebCoreAbi::HTTPHeaderField;
+using NKWebKit::WebCoreAbi::OptionalHTTPHeaderField;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
 
@@ -152,11 +154,165 @@ static void TestNull() {
     Require(Throws([&] { _ZN7WebCore15HTTPHeaderFieldC1EON3WTF6StringES3_(nullptr, &nameString, &nameString); }));
 }
 
+static bool Equals(const String& string, std::string_view expected) {
+    if (!string.impl || string.impl->length != expected.size()) return false;
+    if (string.impl->hashAndFlags & 4) return std::memcmp(string.impl->data, expected.data(), expected.size()) == 0;
+    auto* characters = static_cast<const char16_t*>(string.impl->data);
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        if (characters[i] != static_cast<unsigned char>(expected[i])) return false;
+    }
+    return true;
+}
+
+static OptionalHTTPHeaderField Create(StringImpl& name, StringImpl& value) {
+    String nameString(&name);
+    String valueString(&value);
+    auto result = _ZN7WebCore15HTTPHeaderField6createEON3WTF6StringES3_(&nameString, &valueString);
+    nameString.impl = nullptr;
+    valueString.impl = nullptr;
+    return result;
+}
+
+static bool Rejects(const char* name, const char* value) {
+    auto nameImpl = Make(name);
+    auto valueImpl = Make(value);
+    auto result = Create(nameImpl, valueImpl);
+    bool rejected = !result.hasValue && nameImpl.refCount == 4 && valueImpl.refCount == 4;
+    if (result.hasValue) {
+        result.field.name.impl = nullptr;
+        result.field.value.impl = nullptr;
+    }
+    return rejected;
+}
+
+static bool Accepts(const char* value) {
+    auto nameImpl = Make("X");
+    auto valueImpl = Make(value);
+    auto result = Create(nameImpl, valueImpl);
+    bool accepted = result.hasValue && result.field.name.impl == &nameImpl && result.field.value.impl == &valueImpl;
+    if (result.hasValue) {
+        result.field.name.impl = nullptr;
+        result.field.value.impl = nullptr;
+    }
+    return accepted;
+}
+
+static void TestCreateMovesUntrimmedStrings() {
+    auto name = Make("Content-Type");
+    auto value = Make("text/html; charset=utf-8");
+    String nameString(&name);
+    String valueString(&value);
+    auto result = _ZN7WebCore15HTTPHeaderField6createEON3WTF6StringES3_(&nameString, &valueString);
+    Require(result.hasValue);
+    Require(result.field.name.impl == &name && result.field.value.impl == &value);
+    Require(nameString.impl == nullptr && valueString.impl == nullptr);
+    Require(name.refCount == 4 && value.refCount == 4);
+    result.field.name.impl = nullptr;
+    result.field.value.impl = nullptr;
+}
+
+static void TestCreateTrimsWhitespace() {
+    auto name = Make("  X-Foo\t");
+    auto value = Make(" bar ");
+    String nameString(&name);
+    String valueString(&value);
+    {
+        auto result = _ZN7WebCore15HTTPHeaderField6createEON3WTF6StringES3_(&nameString, &valueString);
+        Require(result.hasValue);
+        Require(result.field.name.impl != &name && result.field.value.impl != &value);
+        Require(Equals(result.field.name, "X-Foo") && Equals(result.field.value, "bar"));
+        Require(nameString.impl == &name && valueString.impl == &value);
+        Require(name.refCount == 4 && value.refCount == 4);
+        _ZN7WebCore15HTTPHeaderFieldD1Ev(&result.field);
+    }
+    nameString.impl = nullptr;
+    valueString.impl = nullptr;
+
+    auto paddedName = Make("\tAccept");
+    auto plainValue = Make("*/*");
+    String paddedString(&paddedName);
+    String plainString(&plainValue);
+    auto mixed = _ZN7WebCore15HTTPHeaderField6createEON3WTF6StringES3_(&paddedString, &plainString);
+    Require(mixed.hasValue);
+    Require(Equals(mixed.field.name, "Accept") && mixed.field.name.impl != &paddedName);
+    Require(mixed.field.value.impl == &plainValue && plainString.impl == nullptr);
+    Require(paddedString.impl == &paddedName);
+    paddedString.impl = nullptr;
+    mixed.field.value.impl = nullptr;
+    _ZN7WebCore15HTTPHeaderFieldD1Ev(&mixed.field);
+}
+
+static void TestCreate16BitStrings() {
+    const char16_t nameCharacters[] = u" Accept ";
+    const char16_t valueCharacters[] = u"\"caf\u00e9\"";
+    StringImpl name{4, 8, nameCharacters, 0};
+    StringImpl value{4, 6, valueCharacters, 0};
+    auto result = Create(name, value);
+    Require(result.hasValue);
+    Require(Equals(result.field.name, "Accept"));
+    Require(result.field.value.impl == &value);
+    result.field.value.impl = nullptr;
+    _ZN7WebCore15HTTPHeaderFieldD1Ev(&result.field);
+
+    const char16_t wideValue[] = u"\"\u0100\"";
+    StringImpl acceptName{4, 6, u"Accept", 0};
+    StringImpl wide{4, 3, wideValue, 0};
+    auto rejected = Create(acceptName, wide);
+    Require(!rejected.hasValue);
+}
+
+static void TestCreateRejectsInvalidFields() {
+    Require(Rejects("", "v"));
+    Require(Rejects(" \t ", "v"));
+    Require(Rejects("a b", "v"));
+    Require(Rejects("na:me", "v"));
+    Require(Rejects("name", ""));
+    Require(Rejects("name", " \t "));
+    Require(Rejects("name", "\"unterminated"));
+    Require(Rejects("name", "(open"));
+    Require(Rejects("name", "\"a\\"));
+    Require(Rejects("name", "\x7f"));
+    Require(Rejects("name", "@value"));
+    Require(Rejects("name", "\"bad\x7f\""));
+    Require(Rejects("name", "(bad\x7f)"));
+    Require(Rejects("name", "(a\\"));
+
+    String nullName;
+    String nullValue;
+    auto value = Make("v");
+    String valueString(&value);
+    auto nullNameResult = _ZN7WebCore15HTTPHeaderField6createEON3WTF6StringES3_(&nullName, &valueString);
+    Require(!nullNameResult.hasValue && valueString.impl == &value);
+    valueString.impl = nullptr;
+    auto name = Make("name");
+    String nameString(&name);
+    auto nullValueResult = _ZN7WebCore15HTTPHeaderField6createEON3WTF6StringES3_(&nameString, &nullValue);
+    Require(!nullValueResult.hasValue && nameString.impl == &name);
+    nameString.impl = nullptr;
+}
+
+static void TestCreateValueGrammar() {
+    Require(Accepts("token"));
+    Require(Accepts("a, b; q=0.5"));
+    Require(Accepts("(c (nested))"));
+    Require(Accepts("\"quoted \\\" string\""));
+    Require(Accepts("\"obs \x80\xff\""));
+    Require(Accepts("(obs \x80\xff)"));
+    Require(Accepts("a\x7f"));
+    Require(Accepts("a\"b\" c"));
+    Require(Accepts("\"x\"(y)"));
+}
+
 int main() {
     TestMoveConstruct();
     TestNullStrings();
     TestCopyAndDestroy();
     TestAssign();
     TestNull();
+    TestCreateMovesUntrimmedStrings();
+    TestCreateTrimsWhitespace();
+    TestCreate16BitStrings();
+    TestCreateRejectsInvalidFields();
+    TestCreateValueGrammar();
     return 0;
 }

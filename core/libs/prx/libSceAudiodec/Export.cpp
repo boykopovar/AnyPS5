@@ -318,10 +318,10 @@ int32_t APS5_VABI sceAudiodecDecode(int32_t handle, AudiodecCtrl* ctrl) {
 
     std::vector<std::uint8_t> auData(auInfo.ui_au_size);
     if (!copyIn(auData.data(), auInfo.p_au_addr, auData.size())) return ERROR_INVALID_AU_POINTER;
-    std::vector<std::uint8_t> pcmData(pcmItem.ui_pcm_size);
+    std::vector<std::uint8_t> pcmData;
 
     const Audiodec::DecodeResult decoded = instance->decoder->Decode(auData.data(), static_cast<std::uint32_t>(auData.size()),
-                                                                     pcmData.data(), static_cast<std::uint32_t>(pcmData.size()));
+                                                                     pcmData, pcmItem.ui_pcm_size);
     if (instance->codecType == TYPE_M4AAC) {
         if (instance->surroundChannelInterleaveOrder != 0 && decoded.channels > 2) throw std::runtime_error("M4AAC surround channel interleave order " + std::to_string(instance->surroundChannelInterleaveOrder) + " is not implemented for " + std::to_string(decoded.channels) + " decoded channels");
         info.m4aac.i_result = decoded.status == Audiodec::DecodeStatus::InvalidData ? M4AAC_RESULT_DECODE_ERROR

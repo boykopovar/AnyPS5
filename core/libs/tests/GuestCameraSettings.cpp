@@ -259,8 +259,22 @@ void CheckConfig() {
         Require(extension.formatLevel[0] == 0 && extension.formatLevel[1] == 4 && extension.formatLevel[3] == 4, "the default formats are wrong");
         Require(extension.resolution == 0 && extension.framerate == 60 && extension.width == 0 && extension.baseOption == nullptr, "the default mode is wrong");
     }
+    errno = 71;
+    Require(sceCameraGetConfig(1, reinterpret_cast<CameraConfig*>(0x10)) == ErrorParam, "an unwritable config pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable config pointer");
+    alignas(16) CameraConfig getConfigBuffer[3];
+    std::memset(getConfigBuffer, 0x5a, sizeof(getConfigBuffer));
+    getConfigBuffer[1] = SizedConfig();
+    Require(sceCameraGetConfig(1, &getConfigBuffer[1]) == 0, "reading config to buffer failed");
+    Require(getConfigBuffer[0].sizeThis == 0x5a5a5a5a && getConfigBuffer[1].sizeThis == sizeof(CameraConfig) && getConfigBuffer[1].configType == 1 && getConfigBuffer[2].sizeThis == 0x5a5a5a5a, "adjacent memory was corrupted");
     Require(sceCameraSetConfig(1, &config) == ErrorNotConnected, "a new configuration must report NOT_CONNECTED");
     Require(sceCameraSetConfigInternal(1, &config) == ErrorNotConnected, "an internal configuration must report NOT_CONNECTED");
+    errno = 71;
+    Require(sceCameraSetConfig(1, reinterpret_cast<CameraConfig*>(0x10)) == ErrorParam, "an unreadable config pointer must be rejected");
+    Require(errno == 71, "errno was altered on unreadable config pointer");
+    errno = 71;
+    Require(sceCameraSetConfigInternal(1, reinterpret_cast<CameraConfig*>(0x10)) == ErrorParam, "an unreadable internal config pointer must be rejected");
+    Require(errno == 71, "errno was altered on unreadable internal config pointer");
     config = SizedConfig();
     Require(sceCameraGetDeviceConfig(1, &config) == 0 && config.sizeThis == sizeof(CameraConfig) && config.configType == 0, "the device configuration must be empty");
     Require(config.extension[1].baseOption == nullptr, "the device configuration must be cleared");
