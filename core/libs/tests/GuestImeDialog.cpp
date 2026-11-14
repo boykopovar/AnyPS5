@@ -4,6 +4,7 @@
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -210,6 +211,11 @@ int main() {
     Close();
 
     Require(sceImeDialogGetPanelPositionAndForm(nullptr) == ErrorNotOpened);
+    errno = 71;
+    Require(sceImeDialogGetPanelPositionAndForm(reinterpret_cast<PositionAndForm*>(0x10)) == ErrorNotOpened);
+    Require(errno == 71);
+    PositionAndForm form{};
+    Require(sceImeDialogGetPanelPositionAndForm(&form) == 0 && form.width == 1920 && form.height == 1080);
     std::uint32_t panelWidth = 0;
     std::uint32_t panelHeight = 0;
     Require(sceImeDialogGetPanelSize(nullptr, &panelWidth, &panelHeight) == 0 && panelWidth == 1920 && panelHeight == 1080);

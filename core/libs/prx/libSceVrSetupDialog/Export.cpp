@@ -10,15 +10,10 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
-constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
-constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
 constexpr int VR_SETUP_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x8A7C0001u);
 constexpr int VR_SETUP_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8A7C0002u);
 constexpr int VR_SETUP_DIALOG_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8A7C0003u);
 constexpr int VR_SETUP_DIALOG_ERROR_BUSY = static_cast<int>(0x8A7C0005u);
-constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 
 std::atomic<int> g_status{COMMON_DIALOG_STATUS_NONE};
 
@@ -33,7 +28,12 @@ int APS5_VABI sceVrSetupDialogInitialize(void) {
 }
 
 int APS5_VABI sceVrSetupDialogOpen(const VrSetupDialogParam* param) {
- if (param == nullptr || param->size != sizeof(*param) || param->reserved8 != 0 || param->reserved9 != 0) return VR_SETUP_DIALOG_ERROR_INVALID_ARGUMENT;
+ if (param == nullptr) return VR_SETUP_DIALOG_ERROR_INVALID_ARGUMENT;
+ VrSetupDialogParam localParam{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+ errno = savedErrno;
+ if (!copied || localParam.size != sizeof(localParam) || localParam.reserved8 != 0 || localParam.reserved9 != 0) return VR_SETUP_DIALOG_ERROR_INVALID_ARGUMENT;
  const int status = g_status.load();
  if (status == COMMON_DIALOG_STATUS_NONE) return VR_SETUP_DIALOG_ERROR_NOT_INITIALIZED;
  if (status == COMMON_DIALOG_STATUS_RUNNING) return VR_SETUP_DIALOG_ERROR_BUSY;

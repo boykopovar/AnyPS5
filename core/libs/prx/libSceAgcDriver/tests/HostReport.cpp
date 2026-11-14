@@ -69,6 +69,7 @@ constexpr const char* Golden =
     "vulkan_api: 1.3.280\n"
     "driver: test-driver\n"
     "driver_info: Test 1.2.3\n"
+    "driver_version: unknown\n"
     "driver_version_raw: 0x12345678\n"
     "subgroup_size: 32\n"
     "device_local_mib: 12288\n"
@@ -115,6 +116,28 @@ void MissingFactsAreNamed() {
     Check(failed.find("state: disabled\n") != std::string::npos, "a disabled shader cache is not reported");
     facts.shaderCache = AgcDriver::HostShaderCacheFacts{true, false, 0};
     Check(AgcDriver::FormatHostReport(facts).find("state: absent\n") != std::string::npos, "an absent shader cache directory is not reported");
+}
+
+std::string DecodedDriverVersion(AgcDriver::HostDriverVersionScheme scheme, std::uint32_t version) {
+    auto facts = SampleFacts();
+    facts.gpu->driverVersionScheme = scheme;
+    facts.gpu->driverVersion = version;
+    const auto text = AgcDriver::FormatHostReport(facts);
+    const auto start = text.find("driver_version: ");
+    if (start == std::string::npos) return {};
+    const auto value = start + std::char_traits<char>::length("driver_version: ");
+    return text.substr(value, text.find('\n', value) - value);
+}
+
+void DriverVersionsAreDecoded() {
+    using Scheme = AgcDriver::HostDriverVersionScheme;
+    Check(DecodedDriverVersion(Scheme::Nvidia, 0x9b438000u) == "621.14.0.0", "NVIDIA 621.14 was not decoded");
+    Check(DecodedDriverVersion(Scheme::Nvidia, (580u << 22) | (95u << 14) | (5u << 6) | 1u) == "580.95.5.1", "the lower NVIDIA fields were not decoded");
+    Check(DecodedDriverVersion(Scheme::IntelWindows, 0x0019485cu) == "101.2140", "Intel 101.2140 on Windows was not decoded");
+    Check(DecodedDriverVersion(Scheme::Vulkan, (25u << 22) | (2u << 12) | 8u) == "25.2.8", "a Vulkan-encoded version was not decoded");
+    Check(DecodedDriverVersion(Scheme::Unknown, 0x9b438000u) == "unknown", "a version without a known encoding was decoded");
+    const auto text = AgcDriver::FormatHostReport(SampleFacts());
+    Check(text.find("driver_version: ") < text.find("driver_version_raw: "), "the decoded version does not precede the raw value");
 }
 
 void PathsAndAddressesAreRedacted() {
@@ -263,6 +286,22 @@ void NamedValuesAreRedacted() {
     Check(AgcDriver::RedactHostText("alicia palice", names) == "alicia palice", "a name inside another word was replaced");
     Check(AgcDriver::RedactHostText("alice-pc", names) == "<redacted>-pc", "a name before a dash was kept");
     Check(AgcDriver::RedactHostText("no names here", {}) == "no names here", "text without names changed");
+#ifdef _WIN32
+    Check(AgcDriver::RedactHostText("user AlIcE on WORKSTATION-7", names) == "user <redacted> on <redacted>", "a Windows name in another case was kept");
+    Check(AgcDriver::RedactHostText("Users/ALICE/cache", names) == "Users/<redacted>/cache", "a Windows name in a forward-slash path was kept");
+    Check(AgcDriver::RedactHostText("ALICIA PALICE", names) == "ALICIA PALICE", "a name inside another word was replaced in another case");
+    Check(AgcDriver::RedactHostText("user \xc3\xa9lise", {"\xc3\x89LISE"}) == "user <redacted>", "a UTF-8 name in another case was kept");
+    Check(AgcDriver::RedactHostText("user \xd0\xb8\xd1\x80\xd0\xb8\xd0\xbd\xd0\xb0", {"\xd0\x98\xd0\xa0\xd0\x98\xd0\x9d\xd0\x90"}) == "user <redacted>", "a UTF-8 Cyrillic name in another case was kept");
+    Check(AgcDriver::RedactHostText("user \xd0\xb8\xd1\x80\xd0\xb8\xd0\xbd\xd0\xb0\xd0\xb1", {"\xd0\x98\xd0\xa0\xd0\x98\xd0\x9d\xd0\x90"}) == "user \xd0\xb8\xd1\x80\xd0\xb8\xd0\xbd\xd0\xb0\xd0\xb1", "a name inside a longer word in another script was replaced");
+    Check(AgcDriver::RedactHostText("path Users/\xc3\x89lise/cache", {"\xc3\x89LISE"}) == "path Users/<redacted>/cache", "a UTF-8 name in another case in a path was kept");
+    Check(AgcDriver::RedactHostText("user \xd0\xb8 \x80", {"\xd0\xb8"}).find("\xd0\xb8") == std::string::npos, "a case-exact name in native ANSI text was kept");
+    Check(AgcDriver::RedactHostText("user \xd0\xb8 \x80 \xd0\xb8", {"\xd0\xb8"}).find("\xd0\xb8") == std::string::npos, "a case-exact name in native ANSI contextual text was kept");
+    Check(AgcDriver::RedactHostText("a\x80\x84" "b", {}).find("\x80\x84") != std::string::npos, "a byte the code page cannot represent was changed");
+    Check(AgcDriver::RedactHostText("user \x80 alice", {"alice"}).find("alice") == std::string::npos, "a name in a text the code page cannot represent was kept");
+    Check(AgcDriver::RedactHostText("user \x80 ALICE", {"alice"}).find("ALICE") == std::string::npos, "a name in another case in a text the code page cannot represent was kept");
+#else
+    Check(AgcDriver::RedactHostText("user AlIcE on WORKSTATION-7", names) == "user AlIcE on WORKSTATION-7", "a POSIX name in another case was replaced");
+#endif
     auto facts = SampleFacts();
     facts.redactions = {"alice", "workstation-7"};
     facts.os = "Linux workstation-7 6.1";
@@ -272,6 +311,25 @@ void NamedValuesAreRedacted() {
     Check(text.find("alice") == std::string::npos && text.find("workstation-7") == std::string::npos, "a listed name reached the report");
     Check(text.find("os: Linux <redacted> 6.1\n") != std::string::npos, "the host name was not replaced in the OS line");
     Check(text.find("device: GPU of <redacted>\n") != std::string::npos, "the user name was not replaced in the GPU name");
+#ifdef _WIN32
+    auto mixed = SampleFacts();
+    mixed.redactions = {"alice", "workstation-7"};
+    mixed.environment.push_back({"APS5_NOTE", "user ALICE on Workstation-7 at Users/ALICE/cache"});
+    const auto mixedText = AgcDriver::FormatHostReport(mixed);
+    Check(mixedText.find("ALICE") == std::string::npos && mixedText.find("Workstation-7") == std::string::npos, "a mixed-case name reached the Windows report");
+    Check(mixedText.find("APS5_NOTE: user <redacted> on <redacted> at Users/<redacted>/cache\n") != std::string::npos, "a mixed-case name was not replaced in the Windows report");
+    auto unicode = SampleFacts();
+    unicode.redactions = {"\xc3\x89LISE"};
+    unicode.environment.push_back({"APS5_NOTE", "user \xc3\xa9lise"});
+    const auto unicodeText = AgcDriver::FormatHostReport(unicode);
+    Check(unicodeText.find("\xc3\xa9lise") == std::string::npos, "a UTF-8 name reached the Windows report");
+    Check(unicodeText.find("APS5_NOTE: user <redacted>\n") != std::string::npos, "a UTF-8 name was not replaced in the Windows report");
+    auto ansi = SampleFacts();
+    ansi.redactions = {"\xd0\xb8"};
+    ansi.environment.push_back({"APS5_NOTE", "user \xd0\xb8 \x80 \xd0\xb8"});
+    const auto ansiText = AgcDriver::FormatHostReport(ansi);
+    Check(ansiText.find("\xd0\xb8") == std::string::npos, "a case-exact name reached the Windows report in native ANSI text");
+#endif
 }
 
 void FormattedReportHasNoSensitiveText() {
@@ -297,6 +355,7 @@ int main() {
     GoldenOutput();
     OrderIsStable();
     MissingFactsAreNamed();
+    DriverVersionsAreDecoded();
     PathsAndAddressesAreRedacted();
     NamedValuesAreRedacted();
     SettingIsParsed();
