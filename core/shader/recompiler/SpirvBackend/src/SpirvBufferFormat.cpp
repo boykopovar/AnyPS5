@@ -262,4 +262,26 @@ std::uint32_t GetFormatComponentByteOffset(const SpirvBufferFormatInfo& info, st
     return info.packedBitfield ? 0u : info.componentBitOffset[component] / 8u;
 }
 
+std::uint32_t StoreChannelClass(std::uint32_t code) {
+    if (code < 1u || code > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float)) return 0u;
+    const auto info = GetFormatInfo(static_cast<IrBufferFormat>(code));
+    if (info.packedBitfield || (info.componentCount != 1u && info.componentCount != 2u && info.componentCount != 4u)) return 0u;
+    const auto bits = info.componentBits[0];
+    if (bits != 8u && bits != 16u && bits != 32u) return 0u;
+    for (std::uint32_t component = 1u; component < info.componentCount; ++component) {
+        if (info.componentBits[component] != bits) return 0u;
+    }
+    switch (info.type) {
+        case SpirvFormatComponentType::Uint:
+        case SpirvFormatComponentType::Sint:
+            return info.componentCount | StoreChannelInteger;
+        case SpirvFormatComponentType::Unorm:
+        case SpirvFormatComponentType::Snorm:
+        case SpirvFormatComponentType::Float:
+            return info.componentCount;
+        default:
+            return 0u;
+    }
+}
+
 }
