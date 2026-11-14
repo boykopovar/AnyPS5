@@ -305,11 +305,54 @@ static void TestNumberOfProcessorCores() {
     Require(_ZN3WTF22numberOfProcessorCoresEv() == cores);
 }
 
+extern "C" void RamSizeSysconfForTest_nid_no_patch(std::int64_t (*query)(int));
+
+static std::int64_t SysconfWithMemory(int name) {
+    ++g_sysconfQueries;
+    if (name == 121) return 139888;
+    if (name == 47) return 16384;
+    return -1;
+}
+
+static std::int64_t SysconfWithoutPhysPages(int name) {
+    ++g_sysconfQueries;
+    return name == 47 ? 16384 : -1;
+}
+
+static std::int64_t SysconfWithoutPageSize(int name) {
+    ++g_sysconfQueries;
+    return name == 121 ? 139888 : -1;
+}
+
+static void TestRamSize() {
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithMemory);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF7ramSizeEv() == 139888ULL * 16384ULL);
+    Require(_ZN3WTF7ramSizeEv() == 139888ULL * 16384ULL);
+    Require(g_sysconfQueries == 2);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithoutPhysPages);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+    Require(g_sysconfQueries == 2);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithoutPageSize);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfFailing);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+
+    RamSizeSysconfForTest_nid_no_patch(nullptr);
+    const std::uint64_t ram = _ZN3WTF7ramSizeEv();
+    Require(ram == static_cast<std::uint64_t>(sysconf_nid_postfix(121)) * static_cast<std::uint64_t>(sysconf_nid_postfix(47)));
+    Require(ram >= 1024ULL * 1024ULL * 1024ULL);
+    Require(_ZN3WTF7ramSizeEv() == ram);
+}
+
 static void TestSystem() {
     TestNumberOfProcessorCores();
-
-    std::uint64_t ram = _ZN3WTF7ramSizeEv();
-    Require(ram >= 1024ULL * 1024ULL * 1024ULL);
+    TestRamSize();
 
     std::size_t page = _ZN3WTF8pageSizeEv();
     Require(page == 16384);

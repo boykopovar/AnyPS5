@@ -466,6 +466,9 @@ static void SequenceCreateCase() {
     Require(factory->Create(&starved, 1, 1, 1, 1, "starved") == NoNodes && starved == nullptr);
     Require(exhaust->Wait() == Invalid);
     Require(factory->Destroy(exhaust) == 0);
+    errno = 71;
+    Require(factory->Create(reinterpret_cast<ISequence**>(0x10), 1, 1, 1, 1, "unmapped") == NullArgument);
+    Require(errno == 71);
     ISequence* second = nullptr;
     ISequence* third = nullptr;
     Require(factory->Create(&second, 1, 1, 1, 1, "second") == 0 && second != nullptr);

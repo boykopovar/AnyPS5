@@ -1197,7 +1197,7 @@ class ThreadFilterInputTests(unittest.TestCase):
                         options = [] if target == "samples" else ["--since", str(plain)]
                         result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
                                                  "--libs", str(root), "--thread", "7", *options],
-                                                capture_output=True, text=True, timeout=5)
+                                                capture_output=True, text=True, encoding="utf-8", timeout=5)
                         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                         self.assertEqual(result.stdout, "")
                         self.assertIn(f"{plain}:{2 if header else 1}:", result.stderr)
