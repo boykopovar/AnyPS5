@@ -339,8 +339,8 @@ void RunTextureFormatTests() {
     reject([] { IsBlockCompressed(200); }, "unsupported guest texture format");
     for (const std::uint32_t format : {128u, 129u, 130u, 170u, 172u, 174u, 182u}) Require(IsSrgbTextureFormat(format), "guest format " + std::to_string(format) + " must be an sRGB texture format");
     for (const std::uint32_t format : {1u, 14u, 56u, 71u, 169u, 171u, 173u, 181u}) Require(!IsSrgbTextureFormat(format), "guest format " + std::to_string(format) + " must not be an sRGB texture format");
-    for (const std::uint32_t format : {7u, 13u, 22u, 36u, 50u, 77u, 132u, 133u, 175u, 179u}) Require(IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must sample the same through FORCE_DEGAMMA");
-    for (const std::uint32_t format : {1u, 2u, 14u, 15u, 56u, 57u, 128u, 130u, 169u, 171u, 173u, 181u}) Require(!IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must not sample the same through FORCE_DEGAMMA");
+    for (const std::uint32_t format : {7u, 11u, 13u, 20u, 22u, 28u, 36u, 50u, 51u, 55u, 62u, 70u, 74u, 75u, 77u, 132u, 133u, 135u, 141u, 175u, 179u}) Require(IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must sample the same through FORCE_DEGAMMA");
+    for (const std::uint32_t format : {1u, 2u, 5u, 6u, 14u, 15u, 18u, 19u, 56u, 57u, 60u, 61u, 128u, 130u, 169u, 171u, 173u, 181u}) Require(!IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must not sample the same through FORCE_DEGAMMA");
     convertedDccClearTests();
     singleDccKeysTests();
     packedFloatDccClearTests();

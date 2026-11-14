@@ -207,8 +207,9 @@ bool IsSrgbTextureFormat(std::uint32_t guestFormat) {
 
 bool IgnoresForcedDegamma(std::uint32_t guestFormat) {
     switch (guestFormat) {
-        case 7u: case 8u: case 13u: case 22u: case 23u: case 24u: case 29u: case 36u: case 50u: case 64u: case 65u: case 66u: case 71u: case 77u:
-        case 132u: case 133u: case 134u: case 136u: case 175u: case 176u: case 177u: case 178u: case 179u: case 180u: return true;
+        case 7u: case 8u: case 11u: case 12u: case 13u: case 20u: case 21u: case 22u: case 23u: case 24u: case 27u: case 28u: case 29u: case 36u: case 50u: case 51u: case 54u: case 55u:
+        case 62u: case 63u: case 64u: case 65u: case 66u: case 69u: case 70u: case 71u: case 72u: case 73u: case 74u: case 75u: case 76u: case 77u:
+        case 132u: case 133u: case 134u: case 135u: case 136u: case 141u: case 175u: case 176u: case 177u: case 178u: case 179u: case 180u: return true;
         default: return false;
     }
 }
