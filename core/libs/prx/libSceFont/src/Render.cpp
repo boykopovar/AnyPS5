@@ -560,8 +560,8 @@ int APS5_VABI sceFontGlyphGetMetricsForm(FontGlyph glyph) {
 
 int APS5_VABI sceFontGlyphGetScalePixel(FontGlyph glyph, float* w, float* h) {
     if (!glyph || glyph->magic != GLYPH_MAGIC || (!w && !h)) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (w) *w = glyph->scale_x;
-    if (h) *h = glyph->base_scale;
+    if (w && !CopyOutGuest(w, glyph->scale_x)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (h && !CopyOutGuest(h, glyph->base_scale)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
