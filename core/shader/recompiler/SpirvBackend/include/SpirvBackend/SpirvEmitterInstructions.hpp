@@ -70,6 +70,7 @@ std::uint32_t EmitFPExp2(SpirvEmitterState& state, std::uint32_t arg0);
 std::uint32_t EmitFPLog2(SpirvEmitterState& state, std::uint32_t arg0);
 std::uint32_t EmitFPSin(SpirvEmitterState& state, std::uint32_t arg0);
 std::uint32_t EmitFPCos(SpirvEmitterState& state, std::uint32_t arg0);
+std::uint32_t EmitSampleNanQuery(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitIdentity(SpirvValueEmitContext& ctx, std::uint32_t value);
 void EmitVoid(SpirvValueEmitContext& context);
 void EmitBarrier(SpirvValueEmitContext& ctx, const IrValue& inst);

@@ -1,0 +1,12 @@
+include_guard(GLOBAL)
+
+function(add_patched_runtime_targets target)
+    add_custom_target(${target})
+    set(index 0)
+    foreach(output IN LISTS ARGN)
+        set(driver ${target}_output_${index})
+        add_custom_target(${driver} DEPENDS "${output}")
+        add_dependencies(${target} ${driver})
+        math(EXPR index "${index} + 1")
+    endforeach()
+endfunction()

@@ -9,6 +9,7 @@
 
 - [ERR_print_errors_cb and ERR_print_errors_fp](../../../core/libs/prx/libSceLibreSsl3/src/ErrorPrinting.cpp) - drain the shared libSceLibreSsl error queue with `ERR_get_error` and format each code with `ERR_error_string_n`, writing LibreSSL's `thread:error:file:line:data` shape as `0:<error>::0:` through the callback or a guest `FileStream`; the callback stops on a non-positive result and a null callback or stream throws. The parent queue has no `ERR_get_error_line_data`, so the thread id, file, line and data fields are always empty here. The console and the text formatting are unverified. Closes when: compared with the console.
 - [X509_get0_pubkey](../../../core/libs/prx/libSceLibreSsl3/src/X509PublicKeyAccessors.cpp) - reads the cached public key from the certificate-info key structure; a null certificate, info or key returns null, and a null cached key with encoded SPKI data throws `NotImplemented_nid_no_patch` until SPKI decoding exists. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
+- [AUTHORITY_KEYID_free and X509_CRL_free](../../../core/libs/prx/libSceLibreSsl3/src/X509ItemFree.cpp#L6) - not measured on a PS5; non-null object disposal remains unsupported and throws before dereference. The null no-op follows LibreSSL 4.0.0 [`AUTHORITY_KEYID_free`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_akeya.c#L124-L128), [`X509_CRL_free`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_crl.c#L507-L511) and their [`ASN1_item_free` dispatcher](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/tasn_fre.c#L72-L99).
 - [AES_wrap_key](../../../core/libs/prx/libSceLibreSsl3/src/AesWrap.cpp) - follows [RFC 3394](https://www.rfc-editor.org/rfc/rfc3394) with the default IV `A6A6A6A6A6A6A6A6`, six rounds and the 64-bit counter XORed into the A block; it encrypts through libSceLibreSsl's `AES_encrypt`. Inputs below 16 bytes or not a multiple of 8 return -1 as LibreSSL does (OpenSSL 1.1 returns 0); null key, input or output throws where LibreSSL dereferences it. The PS5 ABI, custom-IV handling and console behaviour are unverified. Closes when: compared with the console.
 - [EVP_EncryptInit](../../../core/libs/prx/libSceLibreSsl3/src/EvpCipherInit.cpp) forwards the four-argument LibreSSL entry point to libSceLibreSsl's `EVP_CipherInit_ex` with encrypt set, so the legacy cipher and context layouts are shared rather than duplicated. A null context throws through the parent, a null cipher on an uninitialised context returns 0, and the parent's cipher checks and callbacks decide the rest. The PS5 ABI and console behaviour are unverified. Closes when: compared with the console.
 - [SSL_get_version](../../../core/libs/prx/libSceLibreSsl3/src/Ssl.cpp) - maps the SSL version field to the LibreSSL strings `TLSv1`, `TLSv1.1`, `TLSv1.2`, `TLSv1.3`, `DTLSv1`, `DTLSv1.2` or `unknown`; a null SSL throws. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
@@ -16,16 +17,15 @@
 - [EVP_PKEY_assign, EVP_PKEY_set1_EC_KEY and EVP_PKEY_get1_RSA](../../../core/libs/prx/libSceLibreSsl3/src/PkeyAccessors.cpp) - the console bodies are unverified. assign stores the type and native key pointer in the 24-byte `EVP_PKEY`; replacing a non-null native key or method throws through `NotImplemented_nid_no_patch` because the type-specific destructor is not modelled. `EVP_PKEY_set1_EC_KEY` assigns the EC key and takes a reference; a null key returns 0. `EVP_PKEY_get1_RSA` returns the RSA key with a reference, queues `EVP_R_EXPECTING_AN_RSA_KEY` and returns null for another key type, and throws for a null key or a null RSA. Closes when: compared with the console.
 - [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation and encrypted transport still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
 
-
 - [OpenSSL_version](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - other firmware revisions are unverified. Selectors 0 through 5 follow the public firmware 13.40 measurements in [discussion #8981](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214); unknown selectors follow LibreSSL 4.0.0 and return `not available`. No independent console test was run.
 
 - [ERR_load_crypto_strings and ERR_peek_last_error](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) have no console execution verification. [Firmware 13.42 modules run on a PC](https://github.com/boykopovar/AnyPS5/pull/9535#issuecomment-6407060914) retained numeric-only output after loaders and matched queue order/overflow; whether the two firmware modules share a queue was not tested. This implementation reads libSceLibreSsl's calling-thread queue.
 
 ### Unknown function info
 
-- [EVP_PKEY_new, EVP_PKEY_free, EVP_PKEY_set1_RSA, EVP_PKEY_copy_parameters](../../../core/libs/prx/libSceLibreSsl3/src/PkeyLifecycle.cpp) - not checked on a console. Native allocation and release follow the 32-byte [LibreSSL 4.0.0 layout and p_lib.c](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp). Allocation failure queues `ERR_R_MALLOC_FAILURE` in the libSceLibreSsl queue without file or line and returns null. Final release of a nonnull method or payload throws and restores the reference instead of calling the method; no native payload destruction is implemented. Empty objects are cleared before release. set1_RSA and copy_parameters throw locally instead of forwarding to the incompatible 56-byte legacy layout. The native RSA producers and get1_RSA remain local throwing stubs. Objects from the two modules must not be mixed.
+- [EVP_PKEY_new, EVP_PKEY_free, EVP_PKEY_set1_RSA, EVP_PKEY_copy_parameters](../../../core/libs/prx/libSceLibreSsl3/src/PkeyLifecycle.cpp) - not checked on a console. Native allocation and release follow the 32-byte [LibreSSL 4.0.0 layout and p_lib.c](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp). Allocation failure queues `ERR_R_MALLOC_FAILURE` in the libSceLibreSsl queue without file or line and returns null. `EVP_PKEY_free` releases `EVP_PKEY_EC` payloads through `EC_KEY_free`; final release of any other nonnull method or payload throws and restores the reference instead of calling the method. `EVP_PKEY_copy_parameters` copies `EC_GROUP` for `EVP_PKEY_EC` keys through `EC_KEY_set_group`; non-EC `copy_parameters` and `set1_RSA` throw locally instead of forwarding to the incompatible 56-byte legacy layout. The native RSA producers and get1_RSA remain local throwing stubs. Objects from the two modules must not be mixed.
 - [Native PKEY forwarding gaps](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) - `X509_get_pubkey` and `PEM_read_bio_PrivateKey` still forward to legacy throwing stubs. `SSL_get_privatekey` forwards to the parent library and returns its legacy PKEY. The consumers `EVP_PKEY_get1_EC_KEY`, `EVP_DigestVerifyInit`, `SSL_CTX_use_PrivateKey`, `SSL_CTX_use_PrivateKey_ASN1`, `SSL_CTX_use_PrivateKey_file` and `SSL_use_PrivateKey_ASN1` do too. Each needs a native wrapper before its legacy implementation can run, to prevent mixing the incompatible PKEY layouts.
-- [libSceLibreSsl3 pending exports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - 19 named callable exports, excluding `OCSP_resp_find_status`, `ASN1_OBJECT_free`, `CRYPTO_memcmp`, `EVP_PKEY_CTX_ctrl`, `EVP_PKEY_CTX_new`, `EVP_PKEY_decrypt`, `EVP_PKEY_decrypt_init`, `EVP_PKEY_encrypt`, `EVP_PKEY_encrypt_init`, `RSA_new`, `RSA_check_key`, `RSA_padding_add_PKCS1_PSS_mgf1`, `EVP_DigestSignInit`, `EVP_DigestSignFinal`, `EVP_SignFinal`, `EVP_VerifyFinal`, `MD5`, `SHA1`, `d2i_ASN1_INTEGER`, `EVP_PKEY_up_ref`, `EC_KEY_up_ref`, `RSA_up_ref`, `SSL_CTX_up_ref`, `SSL_up_ref`, `SSL_SESSION_up_ref`, `SSL_CTX_set_min_proto_version`, `SSL_CTX_set_max_proto_version`, `SSL_get_client_random`, `X509_up_ref`, `X509_get_version`, `EVP_PKEY_get0_RSA`, `EVP_PKEY_get0_DSA`, `EVP_PKEY_get0_DH`, `EVP_MD_CTX_new`, `EVP_MD_CTX_free`, `EVP_DigestInit`, `EVP_sha1`, `EVP_sha224`, `ERR_load_crypto_strings`, `ERR_peek_last_error`, `OpenSSL_version`, `X509_PUBKEY_get0_param`, `OBJ_cmp`, `ASN1_STRING_get0_data`, `ASN1_INTEGER_free`, `X509_get0_extensions`, `X509_get_ext_count`, `X509_get_ext`, `EVP_PKEY_size`, `X509_getm_notBefore`, `X509_getm_notAfter`, `X509_get0_notBefore`, `X509_get0_notAfter`, `X509_get0_signature`, `RSA_get0_key`, `DH_get0_pqg`, `DH_get0_key`, `DSA_get0_pqg`, `DSA_get0_key`, `BIO_up_ref`, `X509_STORE_CTX_free`, `X509_STORE_CTX_new`, `X509_STORE_up_ref` and `OCSP_CERTID_free`, remain unimplemented from the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibreSsl3.c), cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
+- [libSceLibreSsl3 pending exports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - 15 named callable exports, excluding `OCSP_resp_find_status`, `ASN1_OBJECT_free`, `CRYPTO_memcmp`, `EVP_PKEY_CTX_ctrl`, `EVP_PKEY_CTX_new`, `EVP_PKEY_decrypt`, `EVP_PKEY_decrypt_init`, `EVP_PKEY_encrypt`, `EVP_PKEY_encrypt_init`, `RSA_new`, `RSA_check_key`, `RSA_padding_add_PKCS1_PSS_mgf1`, `EVP_DigestSignInit`, `EVP_DigestSignFinal`, `EVP_SignFinal`, `EVP_VerifyFinal`, `MD5`, `SHA1`, `d2i_ASN1_INTEGER`, `EVP_PKEY_up_ref`, `EC_KEY_up_ref`, `RSA_up_ref`, `SSL_CTX_up_ref`, `SSL_up_ref`, `SSL_SESSION_up_ref`, `SSL_CTX_set_min_proto_version`, `SSL_CTX_set_max_proto_version`, `SSL_get_client_random`, `X509_up_ref`, `X509_get_version`, `EVP_PKEY_get0_RSA`, `EVP_PKEY_get0_DSA`, `EVP_PKEY_get0_DH`, `EVP_MD_CTX_new`, `EVP_MD_CTX_free`, `EVP_DigestInit`, `EVP_sha1`, `EVP_sha224`, `ERR_load_crypto_strings`, `ERR_peek_last_error`, `OpenSSL_version`, `X509_PUBKEY_get0_param`, `OBJ_cmp`, `ASN1_STRING_get0_data`, `ASN1_INTEGER_free`, `X509_get0_extensions`, `X509_get_ext_count`, `X509_get_ext`, `EVP_PKEY_size`, `X509_getm_notBefore`, `X509_getm_notAfter`, `X509_get0_notBefore`, `X509_get0_notAfter`, `X509_get0_signature`, `RSA_get0_key`, `DH_get0_pqg`, `DH_get0_key`, `DSA_get0_pqg`, `DSA_get0_key`, `BIO_up_ref`, `X509_STORE_CTX_free`, `X509_STORE_CTX_new`, `X509_STORE_up_ref` and `OCSP_CERTID_free`, remain unimplemented from the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibreSsl3.c), cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
 
 ### Functional
 
@@ -108,21 +108,17 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 64 still-unimplemented callable exports: 61 named and 3 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
-
-
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 55 still-unimplemented callable exports: 51 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
 | `EC_POINT_get_affine_coordinates_GFp` | `+Tu0gXSas9s` |
 | `X509_NAME_add_entry_by_txt` | `0IxWzLyU8PI` |
 | `tls_handshake` | `27Fuliv3Om8` |
-| `AUTHORITY_KEYID_free` | `2bIZM-OfE8Y` |
 | `X509V3_EXT_d2i` | `2l+JidqxyZQ` |
 | `X509_set_pubkey` | `409ieWBMPUk` |
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
 | `SSL_set_accept_state` | `5BoCLZK9mGk` |
-| `X509_CRL_free` | `5PWK0cYOpHs` |
 | `i2d_SSL_SESSION` | `5aSlVeVSKVc` |
 | `tls_read` | `7RvDjfy4gUA` |
 | `EC_POINT_set_affine_coordinates_GFp` | `8AGfaSvdDq4` |
@@ -141,19 +137,15 @@
 | `unknown` | `PBYz0kpXwg8` |
 | `X509_new` | `PNfwr3s6dEs` |
 | `SSL_get0_verified_chain` | `QKIOxHfZLh8` |
-| `EVP_PKEY_derive` | `QYEjNnn6PT4` |
-| `EVP_PKEY_derive_init` | `Ssfu1yw4Em4` |
 | `X509V3_EXT_conf_nid` | `TKGJOgbeyuA` |
 | `X509_sign` | `TpBvY92mrSM` |
 | `SSL_get_peer_quic_transport_params` | `U1dQZ1rXHdA` |
 | `SSL_CTX_set0_chain` | `UHkYqkyfwOs` |
-| `EVP_PKEY2PKCS8` | `UT6E1YgI8mw` |
 | `X509_STORE_load_locations` | `V3JtebYui1A` |
 | `X509_set_issuer_name` | `XK3FmaTS6pg` |
 | `X509_add_ext` | `YJ7bfxMHniE` |
 | `tls_connect_socket` | `ZERQN8ewpgk` |
 | `SSL_CTX_set_quic_method` | `ZFeTGo4ybcw` |
-| `d2i_PKCS8_PRIV_KEY_INFO` | `as+t2ZOg5fw` |
 | `ECDSA_do_sign` | `ba4o0Ih6kSs` |
 | `SSL_CTX_set_ciphersuites` | `bpOQdoGE2es` |
 | `PEM_write_bio_PrivateKey` | `dQE7FIbNsUE` |
@@ -161,13 +153,10 @@
 | `d2i_X509_CRL` | `fVos2kAqfMI` |
 | `tls_write` | `fZJr2OF+KGw` |
 | `PEM_read_bio_PUBKEY` | `gn7mRF71J4k` |
-| `i2d_PKCS8_PRIV_KEY_INFO` | `iFlkTGEbE9k` |
 | `X509_CRL_get_ext_d2i` | `je-ydGAbgFg` |
 | `X509_digest` | `k1AHUWet-oU` |
 | `tls_config_set_ciphers` | `lTdt9OsPAV0` |
 | `SSL_provide_quic_data` | `mhAgol4ETgY` |
-| `d2i_PUBKEY` | `o3Q8yQAMT-k` |
-| `EVP_PKEY_derive_set_peer` | `ovH4WphWIQQ` |
 | `unknown` | `qGsc6uT6p1E` |
 | `X509_add1_ext_i2d` | `s8WMaKNjwvE` |
 | `EC_GROUP_cmp` | `sENJFZ7WbLU` |
@@ -192,3 +181,7 @@
 
 - [OCSP_CERTID_free](../../../core/libs/prx/libSceLibreSsl3/src/OcspCertId.cpp) - console ABI and allocator equivalence are unmeasured. The 32-byte LP64 layout and reverse SEQUENCE field destruction follow LibreSSL 4.0.0 [`ocsp_asn.c`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/ocsp/ocsp_asn.c), `ocsp_local.h`, `asn1/tasn_fre.c` and `asn1/x_algor.c` at the same revision. Existing ASN.1 destructors release the fields through the application heap; static OIDs remain borrowed. Closes when: compared with the console.
 - [OCSP_resp_find_status](../../../core/libs/prx/libSceLibreSsl3/src/OcspFindStatus.cpp) follows [LibreSSL 4.0.0 ocsp_cl.c and ocsp_lib.c](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/ocsp): first matching ID, OID/name/key/serial comparison, ignored algorithm parameters, borrowed status/time outputs and untouched outputs on a miss, including null basic responses. The existing parent OCSP records and `OCSP_single_get0_status` are reused through NID imports. Signed serial comparison is private, ported from `asn1/a_int.c`, using the implemented `ASN1_OCTET_STRING_cmp` for its `ASN1_STRING_cmp` operation; no compare export is added. Null response data, single responses, IDs, algorithms and serials throw where upstream dereferences them. Console layout/ABI equivalence and constructor interoperability are unmeasured. The pending-export count is a recount of Export.cpp stubs. Closes when: compared with the console.
+- [`EVP_PKEY_derive_init`, `EVP_PKEY_derive_set_peer` and `EVP_PKEY_derive`](../../../core/libs/prx/libSceLibreSsl3/src/PkeyContext.cpp) (libSceLibreSsl3) - console ABI and error-queue parity are unverified. They follow LibreSSL 4.0.0 `pmeth_fn.c` and `ec_pmeth.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) for `EVP_PKEY_EC`. Because `libSceLibreSsl` `ECDH_compute_key` rejects short buffers and zeroes long-buffer tails whereas LibreSSL 4.0.0 truncates to `*keylen`, `EcDerive` computes into a 66-byte stack buffer and copies `min(*keylen, secretlen)` without writing past `*keylen`. ECDH KDF (`X9_63`) and cofactor controls are not modelled. Closes when: compared with the console.
+- [`d2i_PUBKEY`, `d2i_PrivateKey_bio`, `d2i_PKCS8_PRIV_KEY_INFO`, `d2i_PKCS8_PRIV_KEY_INFO_bio`, `i2d_PKCS8_PRIV_KEY_INFO`, `PKCS8_PRIV_KEY_INFO_free`, `EVP_PKCS82PKEY` and `EVP_PKEY2PKCS8`](../../../core/libs/prx/libSceLibreSsl3/src/KeyDer.cpp) - console ABI and error-queue parity are unverified. Follows LibreSSL 4.0.0 `x_pubkey.c`, `p8_pkey.c`, `evp_pkey.c` and `a_pkey.c` for RSA and EC P-256/P-384 only (other curves/types fail). `PKCS8_PRIV_KEY_INFO` uses the 32-byte LP64 layout, storing optional `[0]` attributes as raw `Asn1String*` bytes rather than `STACK_OF(X509_ATTRIBUTE)`. `*_bio` reads one definite-length TLV object without over-reading; indefinite-length BER is rejected. RSA keys in `EVP_PKEY` use `RSA_new` and `RsaAsn1Method`. Closes when: compared with the console.
+- [`d2i_RSA_PUBKEY` and `d2i_RSAPublicKey_bio`](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - remain throwing stubs because `RSA_free` in `ParentExports.cpp` still forwards to `libSceLibreSsl`. Closes when: RSA_free distinguishes native LibreSSL3 RSA objects.
+- [`PEM_read_RSAPrivateKey`](../../../core/libs/prx/libSceLibreSsl3/Export.cpp), [`PEM_write_bio_PrivateKey` and `PEM_read_bio_PUBKEY`](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) - remain throwing stubs waiting for the parent library PEM layer. Closes when: the parent PEM layer and key wrappers are implemented.
