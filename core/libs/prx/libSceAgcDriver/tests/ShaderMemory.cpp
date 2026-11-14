@@ -7505,6 +7505,7 @@ void verifyFusedExactArithmetic() {
     struct Counts {
         std::uint32_t exactArithmetic = 0;
         std::uint32_t fmas = 0;
+        std::uint32_t looseFmas = 0;
     };
     const auto count = [](std::span<const std::uint32_t> spirv) {
         std::set<std::uint32_t> exact;
@@ -7515,7 +7516,10 @@ void verifyFusedExactArithmetic() {
             const auto words = spirv[cursor] >> 16u;
             if (op == spv::OpDecorate && words == 3u && spirv[cursor + 2] == spv::DecorationNoContraction) exact.insert(spirv[cursor + 1]);
             if (op == spv::OpFAdd || op == spv::OpFSub || op == spv::OpFMul) arithmetic.push_back(spirv[cursor + 2]);
-            if (op == spv::OpExtInst && words >= 5u && spirv[cursor + 4] == 50u) ++result.fmas;
+            if (op == spv::OpExtInst && words >= 5u && spirv[cursor + 4] == 50u) {
+                ++result.fmas;
+                if (!exact.contains(spirv[cursor + 2])) ++result.looseFmas;
+            }
         }
         result.exactArithmetic = static_cast<std::uint32_t>(std::count_if(arithmetic.begin(), arithmetic.end(), [&](std::uint32_t id) { return exact.contains(id); }));
         return result;
@@ -7524,6 +7528,7 @@ void verifyFusedExactArithmetic() {
     const auto fused = count(pixel(true));
     require(plain.exactArithmetic >= 3u, "fused exact arithmetic: the f32 multiply, add and subtract were not exact operations without the flag");
     require(fused.exactArithmetic == 0u && fused.fmas >= plain.fmas + 3u, "fused exact arithmetic: the f32 multiply, add and subtract did not become fused multiply-adds with the flag");
+    require(plain.looseFmas == 0u && fused.looseFmas == 0u, "fused exact arithmetic: a fused multiply-add is not marked NoContraction, so a driver may rewrite it as an inexact multiply or add and reassociate it");
 }
 
 void verifyHalfWaveReduction() {

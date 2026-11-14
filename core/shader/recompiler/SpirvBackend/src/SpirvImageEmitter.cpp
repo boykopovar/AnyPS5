@@ -541,6 +541,7 @@ std::uint32_t FoldedOffsetCoord(SpirvValueEmitContext& ctx, const ImageEmitAcces
         }
         const auto fused = state.module.AllocateId();
         state.module.AddFunction(spv::OpExtInst, type, fused, GlslStd450(state), GLSLstd450Fma, one, setup.coord, offset);
+        state.module.AddAnnotation(spv::OpDecorate, fused, spv::DecorationNoContraction);
         return fused;
     }
     const auto sum = Binary(state, spv::OpFAdd, type, setup.coord, offset);
@@ -1511,6 +1512,7 @@ void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAcc
             if (state.fusedExactArithmetic) {
                 scaled = state.module.AllocateId();
                 state.module.AddFunction(spv::OpExtInst, TypeF32(state), scaled, GlslStd450(state), GLSLstd450Fma, addressF32, lengthF32, ConstantF32(state, 0x80000000u));
+                state.module.AddAnnotation(spv::OpDecorate, scaled, spv::DecorationNoContraction);
             } else {
                 scaled = Binary(state, spv::OpFMul, TypeF32(state), addressF32, lengthF32);
                 state.module.AddAnnotation(spv::OpDecorate, scaled, spv::DecorationNoContraction);
