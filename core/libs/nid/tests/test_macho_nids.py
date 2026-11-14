@@ -280,6 +280,27 @@ def chain_trie(depth):
     return b"".join(nodes) + bytes(-sum(map(len, nodes)) % 8)
 
 
+def check_freetype_library_version(patcher, directory):
+    assert nid("FT_Library_Version") == "5qqbXOGlHw4"
+    leaked = [
+        ("_FT_Library_Version", 0, 0x100),
+        ("_5qqbXOGlHw4_nid_no_patch_cut", 0, 0x200),
+        ("_sceFreeTypeOtLibraryVersion_nid_no_patch", 0, 0x200),
+    ]
+    result, _ = patch(patcher, directory, "freetype-leak.dylib", build_dylib(leaked, []))
+    assert result.returncode != 0 and "duplicate patched export name: _5qqbXOGlHw4" in result.stdout + result.stderr, (result.returncode, result.stdout, result.stderr)
+    kept = [
+        ("_5qqbXOGlHw4_nid_no_patch_cut", 0, 0x200),
+        ("_sceFreeTypeOtLibraryVersion_nid_no_patch", 0, 0x200),
+    ]
+    result, path = patch(patcher, directory, "freetype-kept.dylib", build_dylib(kept, []))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert exports_of(path.read_bytes()) == {
+        "_5qqbXOGlHw4": (0, 0x200),
+        "_sceFreeTypeOtLibraryVersion_nid_no_patch": (0, 0x200),
+    }, exports_of(path.read_bytes())
+
+
 def check_deep_trie(patcher, directory):
     image = build_dylib([("_puts_nid_postfix", 0, 0x100)], [], trie=chain_trie(200000))
     result, _ = patch(patcher, directory, "deep-trie.dylib", image)
@@ -313,6 +334,7 @@ def main():
         check_preserved(patcher, directory)
         check_export_list(patcher, directory)
         check_refusals(patcher, directory)
+        check_freetype_library_version(patcher, directory)
         check_deep_trie(patcher, directory)
     print("NID patcher Mach-O tests passed")
 
