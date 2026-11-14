@@ -1,7 +1,7 @@
 #pragma once
 
 #include "prx/libc/include/general/VabiMacros.hpp"
-#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+#include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -14,7 +14,7 @@ struct ObjectBase;
 struct Object;
 struct ArrayBase;
 struct Array;
-struct StringBuilder;
+using StringBuilder = NKWebKit::WtfAbi::StringBuilder;
 
 enum class ValueType : int {
     Null = 0,
@@ -193,18 +193,6 @@ struct ArrayBase : Value {
 
 struct Array : ArrayBase {};
 
-struct StringBuilder {
-    mutable NKWebKit::WtfAbi::String string;
-    NKWebKit::WtfAbi::String buffer;
-    unsigned length{0};
-    bool shouldCrashOnOverflow{true};
-
-    StringBuilder() = default;
-    StringBuilder(const StringBuilder&) = delete;
-    StringBuilder& operator=(const StringBuilder&) = delete;
-    StringBuilder(StringBuilder&&) noexcept = default;
-};
-
 static_assert(sizeof(ValueType) == 4);
 static_assert(sizeof(Ref<Value>) == 8);
 static_assert(alignof(Ref<Value>) == 8);
@@ -258,11 +246,7 @@ static_assert(sizeof(ArrayBase) == 40);
 static_assert(alignof(ArrayBase) == 8);
 static_assert(sizeof(Array) == 40);
 static_assert(alignof(Array) == 8);
-static_assert(sizeof(StringBuilder) == 24);
+static_assert(sizeof(StringBuilder) == 40);
 static_assert(alignof(StringBuilder) == 8);
-static_assert(offsetof(StringBuilder, string) == 0);
-static_assert(offsetof(StringBuilder, buffer) == 8);
-static_assert(offsetof(StringBuilder, length) == 16);
-static_assert(offsetof(StringBuilder, shouldCrashOnOverflow) == 20);
 
 }  // namespace NKWebKit::JsonAbi

@@ -38,6 +38,7 @@ void Clear(StringBuilder& builder);
 void DidOverflow(StringBuilder& builder);
 void AllocateBufferUpConvert(StringBuilder& builder, const unsigned char* characters, unsigned requiredLength);
 std::string NumberToString(float number);
+std::string NumberToString(double number);
 std::string NumberToFixedWidthString(double number, unsigned decimalPlaces);
 
 static_assert(sizeof(StringBuilder) == 40);
