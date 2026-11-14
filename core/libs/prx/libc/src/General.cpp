@@ -654,23 +654,39 @@ std::atomic<std::FILE*> g_hostStandardOutputFile{nullptr};
 std::atomic<std::FILE*> g_hostStandardErrorFile{nullptr};
 }
 
+extern "C" void WriteUnbufferedStreamWhole_nid_no_patch(std::FILE* stream) {
+    constexpr long unbuffered = 0x0400;
+    auto* const state = reinterpret_cast<UcrtStreamState*>(stream);
+    ::_lock_file(stream);
+    if ((std::atomic_ref<long>(state->flags).load() & unbuffered) != 0 && state->bufferSize == 2) state->bufferSize = 1;
+    ::_unlock_file(stream);
+}
+
+namespace {
+std::FILE* writingWhole(std::FILE* stream) {
+    if (reinterpret_cast<const UcrtStreamState*>(stream)->bufferSize == 2) WriteUnbufferedStreamWhole_nid_no_patch(stream);
+    return stream;
+}
+}
+
 extern "C" bool AdoptHostStandardStream_nid_no_patch(int standard, int saved) {
     std::fflush(__acrt_iob_func(standard));
     std::FILE* stream = ::_fdopen(saved, "w");
     if (stream == nullptr) return false;
     std::setvbuf(stream, nullptr, _IONBF, 0);
+    WriteUnbufferedStreamWhole_nid_no_patch(stream);
     (standard == 1 ? g_hostStandardOutputFile : g_hostStandardErrorFile).store(stream, std::memory_order_release);
     return true;
 }
 
 extern "C" std::FILE* HostStandardOutputFile_nid_no_patch() {
     if (std::FILE* kept = g_hostStandardOutputFile.load(std::memory_order_acquire)) return kept;
-    return __acrt_iob_func(1);
+    return writingWhole(__acrt_iob_func(1));
 }
 
 extern "C" std::FILE* HostStandardErrorFile_nid_no_patch() {
     if (std::FILE* kept = g_hostStandardErrorFile.load(std::memory_order_acquire)) return kept;
-    return __acrt_iob_func(2);
+    return writingWhole(__acrt_iob_func(2));
 }
 
 namespace {

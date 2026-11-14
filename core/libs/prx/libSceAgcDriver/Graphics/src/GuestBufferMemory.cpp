@@ -6346,20 +6346,28 @@ public:
 
     bool InPlace(std::uint64_t begin, std::uint64_t end, bool use) {
         if (!Enabled()) return false;
-        std::lock_guard lock(mutex);
-        if (!stampsRequested) {
-            Recorder::RequestBatchStamps();
-            policy.report = [](const std::string& line) { std::fprintf(stderr, "%s\n", line.c_str()); };
-            stampsRequested = true;
+        std::vector<std::string> said;
+        bool inPlace = false;
+        {
+            std::lock_guard lock(mutex);
+            if (!stampsRequested) {
+                Recorder::RequestBatchStamps();
+                report.Attach(policy);
+                stampsRequested = true;
+            }
+            const auto [frames, busyMs] = Recorder::FrameGpuBusy();
+            const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            inPlace = policy.InPlace(begin, end, use, frames, busyMs, nowMs);
+            said = report.Take();
         }
-        const auto [frames, busyMs] = Recorder::FrameGpuBusy();
-        const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        return policy.InPlace(begin, end, use, frames, busyMs, nowMs);
+        for (const auto& line : said) AgcDriver::ProfilePrint_nid_no_patch("%s\n", line.c_str());
+        return inPlace;
     }
 
 private:
     std::mutex mutex;
     AdaptiveStaging policy;
+    AdaptiveStagingReport report;
     bool stampsRequested = false;
 };
 

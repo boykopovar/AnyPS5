@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/DispatchIoTrace.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
@@ -5111,8 +5112,7 @@ bool SyncEachDispatch() {
 
 // Debug aid: APS5_TRACE_DISPATCH_IO prints every dispatch's resources (after write-back when synced).
 bool TraceDispatchIo() {
-    static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;
-    return traceIo;
+    return AgcDriver::DispatchIoTrace::Enabled();
 }
 
 void WatchMemory(std::uint64_t programAddress) {
@@ -6569,7 +6569,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
         // finishes the recorder up to that batch's serial. Prints the [address-sync] leases line.
         Graphics::CountLeaseOutcome(false, recorder.Submissions() + 1);
     }
-    if (TraceDispatchIo()) std::fprintf(stderr, "[dispatch-io] %s:%s\n", groupsText, resources->Describe().c_str());
+    if (TraceDispatchIo()) AgcDriver::DispatchIoTrace::Resources(groupsText, resources->Describe());
     WatchMemory(programAddress);
     // The recipe for the caller's dispatch-cache variant (design_cpu_final M4, rule R3): only an
     // object the resource cache serves under this content key (reusable: no lease, no copied
@@ -6708,7 +6708,7 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
         state->recorder->Sync();
         timer.phase(PhaseSync);
     }
-    if (TraceDispatchIo()) std::fprintf(stderr, "[dispatch-io] %s:%s\n", groupsText, hit->resources->Describe().c_str());
+    if (TraceDispatchIo()) AgcDriver::DispatchIoTrace::Resources(groupsText, hit->resources->Describe());
     WatchMemory(programAddress);
     timer.finish(lookupsBefore, groupsText, indirect);
     if (profile) reportRecipes();

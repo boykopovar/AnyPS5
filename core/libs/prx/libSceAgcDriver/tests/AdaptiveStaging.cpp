@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <functional>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -9,6 +10,7 @@
 namespace {
 
 using AgcDriver::Graphics::AdaptiveStaging;
+using AgcDriver::Graphics::AdaptiveStagingReport;
 
 void Require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
@@ -114,6 +116,49 @@ void CheckSmallElementIsNotProbed() {
     Require(!smallInPlace, "a 64 KiB element next to a 202 MiB one was probed in place");
 }
 
+void CheckReportIsHandedOverOutsideTheGate() {
+    AdaptiveStaging gated;
+    AdaptiveStagingReport report;
+    report.Attach(gated);
+    AdaptiveStaging direct;
+    std::vector<std::string> expected;
+    direct.report = [&](const std::string& line) { expected.push_back(line); };
+    std::mutex gate;
+    std::vector<std::string> printed;
+    std::uint64_t frames = 0;
+    double busyMs = 0;
+    std::int64_t nowMs = 1;
+    for (int frame = 0; frame < 1000; ++frame) {
+        std::vector<std::string> said;
+        bool inPlace = false;
+        {
+            std::lock_guard lock(gate);
+            inPlace = gated.InPlace(Begin, End, true, frames, busyMs, nowMs);
+            said = report.Take();
+        }
+        for (auto& line : said) {
+            Require(gate.try_lock(), "a decision line was handed over while the gate was held");
+            gate.unlock();
+            printed.push_back(std::move(line));
+        }
+        Require(direct.InPlace(Begin, End, true, frames, busyMs, nowMs) == inPlace, "collecting the report changed a decision");
+        busyMs += nowMs < 60000 ? (inPlace ? 73.0 : 91.0) : (inPlace ? 300.0 : 200.0);
+        ++frames;
+        nowMs += FrameMs;
+    }
+    Require(report.Take().empty(), "a taken report was handed over twice");
+    Require(printed.size() >= 3, "the collected report has " + std::to_string(printed.size()) + " lines");
+    Require(printed == expected, "the collected report differs from the direct one in text or order");
+    std::uint64_t decisions = 0;
+    std::uint64_t probes = 0;
+    for (const auto& line : printed) {
+        Require(line.rfind("[staging] adaptive: ", 0) == 0 && line.find('\n') == std::string::npos, "a collected line is not one whole decision line: " + line);
+        decisions += line.find(" -> ") != std::string::npos && line.find("next probe in") != std::string::npos ? 1 : 0;
+        probes += line.find("probing again") != std::string::npos ? 1 : 0;
+    }
+    Require(decisions >= 2 && probes >= 1, "the collected report lost a decision or the scene change");
+}
+
 }
 
 int main() {
@@ -124,6 +169,7 @@ int main() {
         CheckBackOffGrowsToTheCap();
         CheckSceneChangeProbesAgain();
         CheckSmallElementIsNotProbed();
+        CheckReportIsHandedOverOutsideTheGate();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

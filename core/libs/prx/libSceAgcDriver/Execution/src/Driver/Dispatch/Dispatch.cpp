@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/DispatchIoTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
@@ -503,18 +504,18 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
     }
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : std::uint64_t{groups[0]} * groups[1] * groups[2] * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
-    static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;
-    if (traceIo) {
-
-        std::string words;
-        if (std::getenv("APS5_TRACE_DISPATCH_IO")[0] == '2') {
+    std::optional<DispatchIoTrace> ioTrace;
+    if (DispatchIoTrace::Enabled()) {
+        char text[96];
+        std::snprintf(text, sizeof(text), "queue=0x%x submission=%llu shader 0x%llx", submission.queue, static_cast<unsigned long long>(submission.serial), static_cast<unsigned long long>(address));
+        std::string header = text;
+        if (DispatchIoTrace::Words()) {
             for (const auto word : userData) {
-                char text[12];
                 std::snprintf(text, sizeof(text), " %08x", word);
-                words += text;
+                header += text;
             }
         }
-        std::fprintf(stderr, "[dispatch-io] queue=0x%x submission=%llu shader 0x%llx%s\n", submission.queue, static_cast<unsigned long long>(submission.serial), static_cast<unsigned long long>(address), words.c_str());
+        ioTrace.emplace(std::move(header));
     }
 
     const auto rethrow = [&](const std::exception& error) {
@@ -576,8 +577,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         const auto queueId = submission.queue;
         itemCommits.fetch_add(1, std::memory_order_relaxed);
-        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, attach, prepareThreads, dataHit, epoch, htileClearCompletion, htileMask] {
+        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, [this, ioHeader = ioTrace ? ioTrace->Detach() : std::string{}, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, attach, prepareThreads, dataHit, epoch, htileClearCompletion, htileMask] {
             DrawPipeline::FollowEpoch(epoch);
+            std::optional<DispatchIoTrace> commitTrace;
+            if (!ioHeader.empty()) commitTrace.emplace(ioHeader);
             GuestMemory::SetCurrentPacket(0x15, queueId);
             const auto& compiledCommit = *result;
             const bool noteWrites = writeEvidenceEnabled() || traceCapSync();
