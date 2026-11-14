@@ -118,18 +118,10 @@ if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(icu_common INTERFACE LINKER:--exclude-libs,libicu_common.a)
 endif()
 
-add_library(icu_i18n STATIC EXCLUDE_FROM_ALL
-    ${ICU_SOURCE_DIR}/i18n/csdetect.cpp
-    ${ICU_SOURCE_DIR}/i18n/csmatch.cpp
-    ${ICU_SOURCE_DIR}/i18n/csr2022.cpp
-    ${ICU_SOURCE_DIR}/i18n/csrecog.cpp
-    ${ICU_SOURCE_DIR}/i18n/csrmbcs.cpp
-    ${ICU_SOURCE_DIR}/i18n/csrsbcs.cpp
-    ${ICU_SOURCE_DIR}/i18n/csrucode.cpp
-    ${ICU_SOURCE_DIR}/i18n/csrutf8.cpp
-    ${ICU_SOURCE_DIR}/i18n/inputext.cpp
-    ${ICU_SOURCE_DIR}/i18n/ucln_in.cpp
-    ${ICU_SOURCE_DIR}/i18n/ucsdet.cpp)
+file(STRINGS ${ICU_SOURCE_DIR}/i18n/sources.txt icu_i18n_sources)
+list(TRANSFORM icu_i18n_sources PREPEND ${ICU_SOURCE_DIR}/i18n/)
+list(REMOVE_DUPLICATES icu_i18n_sources)
+add_library(icu_i18n STATIC EXCLUDE_FROM_ALL ${icu_i18n_sources})
 target_include_directories(icu_i18n SYSTEM PUBLIC ${ICU_SOURCE_DIR}/i18n)
 target_compile_definitions(icu_i18n PRIVATE U_I18N_IMPLEMENTATION UCONFIG_NO_FILE_IO=1)
 target_link_libraries(icu_i18n PUBLIC icu_common)
@@ -137,3 +129,5 @@ set_target_properties(icu_i18n PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIB
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(icu_i18n INTERFACE LINKER:--exclude-libs,libicu_i18n.a)
 endif()
+
+include(${CMAKE_CURRENT_LIST_DIR}/IcuData.cmake)
