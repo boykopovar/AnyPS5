@@ -468,6 +468,7 @@ void CheckBulkAndReset(std::uint32_t context, std::uint32_t channels, const std:
 int main() {
     std::uint32_t context = 0;
     CHECK(sceAjmInitialize(0, &context) == 0);
+    CHECK(sceAjmModuleRegister(context, 2, 0) == 0);
     const std::array<std::vector<std::uint8_t>, 3> streams{FromHex(Aac3), FromHex(Aac4), FromHex(Aac5)};
     for (std::uint32_t channels = 3; channels <= 5; ++channels) {
         const auto& input = streams[channels - 3];

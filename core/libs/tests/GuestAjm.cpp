@@ -1011,6 +1011,55 @@ void TestBatchCancel(std::uint32_t context) {
     Require(sceAjmBatchCancel(context, id + 1) == invalidBatch);
 }
 
+void TestModuleRegistration() {
+    constexpr int invalidContext = static_cast<int>(0x80930002);
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    constexpr int alreadyRegistered = static_cast<int>(0x80930009);
+    constexpr int notRegistered = static_cast<int>(0x8093000A);
+    constexpr int busy = static_cast<int>(0x8093000D);
+    std::uint32_t context = 0;
+    Require(sceAjmInitialize(0, &context) == 0);
+    std::uint32_t untouched = 0xfeedu;
+    Require(sceAjmInstanceCreate(context, 1, 0, &untouched) == notRegistered && untouched == 0xfeedu);
+    Require(sceAjmInstanceCreate(context, 2, 0, &untouched) == notRegistered && untouched == 0xfeedu);
+    Require(sceAjmModuleUnregister(context, 2) == notRegistered);
+    Require(sceAjmModuleRegister(context, 1, 1) == invalidParameter);
+    Require(sceAjmModuleRegister(context, 1, 0) == 0);
+    Require(sceAjmModuleRegister(context, 1, 0) == alreadyRegistered);
+    std::uint32_t first = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &first) == 0);
+    Require(sceAjmModuleUnregister(context, 1) == busy);
+    std::uint32_t second = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &second) == 0);
+    Require(sceAjmInstanceDestroy(context, second) == 0);
+    Require(sceAjmInstanceDestroy(context, first) == 0);
+    Require(sceAjmModuleUnregister(context, 1) == 0);
+    Require(sceAjmModuleUnregister(context, 1) == notRegistered);
+    Require(sceAjmInstanceCreate(context, 1, 0, &untouched) == notRegistered && untouched == 0xfeedu);
+    for (std::uint32_t codec = 0; codec <= 24; ++codec) {
+        const bool known = codec <= 4 || (codec >= 12 && codec <= 14) || codec >= 22;
+        Require(sceAjmModuleRegister(context, codec, 0) == (known ? 0 : invalidParameter));
+        Require(sceAjmModuleUnregister(context, codec) == (known ? 0 : invalidParameter));
+    }
+    for (const std::uint32_t codec : {25u, 31u, 32u, 99u, 0xffffffffu}) {
+        Require(sceAjmModuleRegister(context, codec, 0) == invalidParameter);
+        Require(sceAjmModuleUnregister(context, codec) == invalidParameter);
+    }
+    std::uint32_t other = 0;
+    Require(sceAjmInitialize(0, &other) == 0);
+    Require(sceAjmModuleRegister(context, 1, 0) == 0);
+    Require(sceAjmInstanceCreate(other, 1, 0, &untouched) == notRegistered && untouched == 0xfeedu);
+    Require(sceAjmModuleRegister(other, 1, 0) == 0);
+    Require(sceAjmModuleUnregister(other, 1) == 0);
+    Require(sceAjmModuleRegister(0, 1, 0) == invalidContext);
+    Require(sceAjmModuleRegister(0xffffffffu, 1, 0) == invalidContext);
+    Require(sceAjmModuleUnregister(0, 1) == invalidContext);
+    Require(sceAjmModuleUnregister(0xffffffffu, 1) == invalidContext);
+    Require(sceAjmInstanceCreate(context, 1, 0, &first) == 0);
+    Require(sceAjmFinalize(other) == 0);
+    Require(sceAjmFinalize(context) == 0);
+}
+
 void TestInstanceContextOwnership(std::uint32_t context) {
     constexpr int invalidContext = static_cast<int>(0x80930002);
     constexpr int invalidInstance = static_cast<int>(0x80930003);
@@ -1024,6 +1073,7 @@ void TestInstanceContextOwnership(std::uint32_t context) {
     Require(sceAjmInstanceCreate(context, 24, 0, nullptr) == invalidParameter);
     std::uint32_t other = 0;
     Require(sceAjmInitialize(0, &other) == 0 && other != context);
+    Require(sceAjmModuleRegister(other, 24, 0) == 0);
     std::uint32_t first = 0;
     std::uint32_t second = 0;
     Require(sceAjmInstanceCreate(context, 24, 0, &first) == 0);
@@ -2808,6 +2858,7 @@ int main(int argc, char** argv) {
     Require(sceAjmModuleRegister(context, 0, -1) == invalidParameter);
     Require(sceAjmModuleRegister(context, 0, 0) == 0);
     Require(sceAjmModuleUnregister(context, 0) == 0);
+    for (const std::uint32_t codec : {0u, 1u, 2u, 23u, 24u}) Require(sceAjmModuleRegister(context, codec, 0) == 0);
 
     const std::uint8_t stereo48k[4] = {0xFE, 0x72, 0x1F, 0xF0};
     AjmDecAt9ConfigDataInfo info{};
@@ -2891,4 +2942,5 @@ int main(int argc, char** argv) {
     TestInlineBufferNullAddress(argv[1]);
     Require(sceAjmDecWVorbisCreateHeaderPacket(nullptr) == static_cast<int>(0x8A6E0001));
     Require(sceAjmFinalize(context) == 0);
+    TestModuleRegistration();
 }

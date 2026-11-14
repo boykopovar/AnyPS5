@@ -8,6 +8,7 @@
 namespace {
 
 using Initialize = int (APS5_VABI*)(std::int64_t, std::uint32_t*);
+using ModuleRegister = int (APS5_VABI*)(std::uint32_t, std::uint32_t, std::int64_t);
 using InstanceCreate = int (APS5_VABI*)(std::uint32_t, std::uint32_t, std::uint64_t, std::uint32_t*);
 using InstanceDestroy = int (APS5_VABI*)(std::uint32_t, std::uint32_t);
 using BatchInitialize = int (APS5_VABI*)(void*, std::size_t, AjmBatchInfo*);
@@ -76,6 +77,8 @@ int main(int argc, char** argv) {
         Resolve<BatchStart>(library, "sceAjmBatchStart"),
         Resolve<BatchWait>(library, "sceAjmBatchWait"),
     };
-    if (ajm.initialize(0, &context) != 0 || ajm.instanceCreate(context, 0, 0, &instance) != 0) Fail("AJM setup failed");
+    const auto moduleRegister = Resolve<ModuleRegister>(library, "sceAjmModuleRegister");
+    if (ajm.initialize(0, &context) != 0 || moduleRegister(context, 0, 0) != 0 || ajm.instanceCreate(context, 0, 0, &instance) != 0)
+        Fail("AJM setup failed");
     return 0;
 }

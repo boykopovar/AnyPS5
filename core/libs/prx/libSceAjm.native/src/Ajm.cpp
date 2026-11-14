@@ -37,6 +37,9 @@ constexpr int SCE_AJM_ERROR_INVALID_INSTANCE = static_cast<int>(0x80930003);
 constexpr int SCE_AJM_ERROR_INVALID_BATCH = static_cast<int>(0x80930004);
 constexpr int SCE_AJM_ERROR_INVALID_PARAMETER = static_cast<int>(0x80930005);
 constexpr int SCE_AJM_ERROR_OUT_OF_RESOURCES = static_cast<int>(0x80930007);
+constexpr int SCE_AJM_ERROR_CODEC_ALREADY_REGISTERED = static_cast<int>(0x80930009);
+constexpr int SCE_AJM_ERROR_CODEC_NOT_REGISTERED = static_cast<int>(0x8093000A);
+constexpr int SCE_AJM_ERROR_BUSY = static_cast<int>(0x8093000D);
 constexpr int SCE_AJM_ERROR_MALFORMED_BATCH = static_cast<int>(0x80930011);
 constexpr int SCE_AJM_ERROR_JOB_CREATION = static_cast<int>(0x80930012);
 constexpr int SCE_AJM_ERROR_INVALID_ADDRESS = static_cast<int>(0x80930016);
@@ -54,6 +57,7 @@ constexpr std::uint32_t CODEC_AT9 = 1;
 constexpr std::uint32_t CODEC_M4AAC = 2;
 constexpr std::uint32_t CODEC_PCM = 23;
 constexpr std::uint32_t CODEC_OPUS = 24;
+constexpr std::uint32_t REGISTERABLE_CODECS = 0x1C0701F;
 
 constexpr std::uint32_t M4AAC_CONFIG_ADTS = 1;
 constexpr std::uint32_t M4AAC_CONFIG_RAW = 2;
@@ -194,6 +198,16 @@ std::mutex& g_lock = *new std::mutex();
 std::map<std::uint32_t, std::unique_ptr<Instance>>& g_instances = *new std::map<std::uint32_t, std::unique_ptr<Instance>>();
 std::atomic<std::uint32_t> g_nextContext{1};
 std::atomic<std::uint32_t> g_nextInstance{1};
+std::map<std::uint32_t, std::uint32_t>& g_registeredCodecs = *new std::map<std::uint32_t, std::uint32_t>();
+
+bool Registerable(std::uint32_t codec) {
+    return codec < 32 && ((REGISTERABLE_CODECS >> codec) & 1u);
+}
+
+bool Registered(std::uint32_t context, std::uint32_t codec) {
+    const auto found = g_registeredCodecs.find(context);
+    return Registerable(codec) && found != g_registeredCodecs.end() && (found->second & (1u << codec));
+}
 std::atomic<std::uint32_t> g_nextBatch{1};
 std::mutex& g_batchLock = *new std::mutex();
 std::map<std::uint32_t, std::uint32_t>& g_batches = *new std::map<std::uint32_t, std::uint32_t>();
@@ -1959,15 +1973,23 @@ int APS5_VABI sceAjmFinalize(uint32_t context) {
 }
 
 int APS5_VABI sceAjmModuleRegister(uint32_t context, uint32_t codec, int64_t reserved) {
-    (void)context;
-    (void)codec;
     if (reserved != 0) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
+    if (!Registerable(codec)) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    std::lock_guard lock(g_lock);
+    if (Registered(context, codec)) return SCE_AJM_ERROR_CODEC_ALREADY_REGISTERED;
+    g_registeredCodecs[context] |= 1u << codec;
     return 0;
 }
 
 int APS5_VABI sceAjmModuleUnregister(uint32_t context, uint32_t codec) {
-    (void)context;
-    (void)codec;
+    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
+    if (!Registerable(codec)) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    std::lock_guard lock(g_lock);
+    if (!Registered(context, codec)) return SCE_AJM_ERROR_CODEC_NOT_REGISTERED;
+    for (const auto& [id, instance] : g_instances)
+        if (instance->context == context && instance->codec == codec) return SCE_AJM_ERROR_BUSY;
+    g_registeredCodecs[context] &= ~(1u << codec);
     return 0;
 }
 
@@ -1987,6 +2009,11 @@ int APS5_VABI sceAjmMemoryUnregister(uint32_t context, void* ptr) {
 int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t flags, uint32_t* instance) {
     if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     if (!instance) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (!Registerable(codec)) NotImplemented_nid_no_patch("sceAjmInstanceCreate (a codec id sceAjmModuleRegister refuses)");
+    {
+        std::lock_guard lock(g_lock);
+        if (!Registered(context, codec)) return SCE_AJM_ERROR_CODEC_NOT_REGISTERED;
+    }
     auto created = std::make_unique<Instance>();
     created->context = context;
     created->codec = codec;
@@ -1997,6 +2024,7 @@ int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t fl
     }
     if (codec == CODEC_M4AAC) CheckAacFlags(flags);
     std::lock_guard lock(g_lock);
+    if (!Registered(context, codec)) return SCE_AJM_ERROR_CODEC_NOT_REGISTERED;
     for (std::uint32_t attempt = 0; attempt < 0x4000; ++attempt) {
         const std::uint32_t id = (codec << 14) | (g_nextInstance.fetch_add(1, std::memory_order_relaxed) & 0x3FFF);
         if (g_instances.contains(id)) continue;
