@@ -35,10 +35,15 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 
 namespace {
 
 constexpr int GuestEintr = 4;
+
+const char* CStringData(const Jsc::WtfAbi::CString& string) {
+    return string.buffer ? reinterpret_cast<const char*>(string.buffer + 1) : nullptr;
+}
 
 } // namespace
 
@@ -50,6 +55,13 @@ int APS5_VABI _ZN3WTF14FileSystemImpl12readFromFileEiPci(int handle, char* data,
         if (bytesRead >= 0) return static_cast<int>(bytesRead);
     } while (*__error_nid_postfix() == GuestEintr);
     return -1;
+}
+
+Jsc::WtfAbi::OptionalInt32 APS5_VABI _ZN3WTF14FileSystemImpl15getFileDeviceIdERKNS_7CStringE(const Jsc::WtfAbi::CString* fsFile) {
+    if (!fsFile) throw std::invalid_argument("WTF::FileSystemImpl::getFileDeviceId: null CString reference");
+    FileStat fileStat{};
+    if (stat_nid_postfix(CStringData(*fsFile), &fileStat) == -1) return {};
+    return {true, static_cast<std::int32_t>(fileStat.st_dev)};
 }
 
 }

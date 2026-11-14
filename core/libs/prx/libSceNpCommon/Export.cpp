@@ -134,12 +134,17 @@ int APS5_VABI sceNpUtilCanonicalizeNpIdForPsp2(NpIdFull* npId, std::int32_t repl
 }
 
 int APS5_VABI sceNpIntIsValidOnlineId(const NpOnlineId* onlineId) {
-    if (!onlineId || onlineId->data[ONLINE_ID_MAX_LENGTH] != 0) return 0;
-    const std::size_t length = strnlen(onlineId->data, ONLINE_ID_MAX_LENGTH + 1);
+    if (!onlineId) return 0;
+    NpOnlineId localId{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localId, onlineId, sizeof(localId));
+    errno = savedErrno;
+    if (!copied || localId.data[ONLINE_ID_MAX_LENGTH] != 0) return 0;
+    const std::size_t length = strnlen(localId.data, ONLINE_ID_MAX_LENGTH + 1);
     if (length < 3 || length > ONLINE_ID_MAX_LENGTH) return 0;
-    if (!std::isalnum(static_cast<unsigned char>(onlineId->data[0]))) return 0;
+    if (!std::isalnum(static_cast<unsigned char>(localId.data[0]))) return 0;
     for (std::size_t i = 1; i < length; ++i) {
-        const unsigned char character = static_cast<unsigned char>(onlineId->data[i]);
+        const unsigned char character = static_cast<unsigned char>(localId.data[i]);
         if (!std::isalnum(character) && character != '_' && character != '-') return 0;
     }
     return 1;

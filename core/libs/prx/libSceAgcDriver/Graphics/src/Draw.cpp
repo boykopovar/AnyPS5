@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/VertexPlanScratch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -1973,12 +1974,15 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         inputs.maxIndex += draw.firstVertex;
         inputs.minIndex += draw.firstVertex;
     }
-    std::vector<VertexFetch> fetches;
-    std::vector<std::size_t> fetchValid;
+    const VertexPlanLease planLease;
+    auto& fetches = planLease->fetches;
+    auto& fetchValid = planLease->fetchValid;
+    auto& fetchOf = planLease->fetchOf;
+    auto& zeroed = planLease->zeroed;
     fetches.reserve(attributes.size());
     fetchValid.reserve(attributes.size());
-    std::vector<std::size_t> fetchOf(attributes.size(), 0);
-    std::vector<std::shared_ptr<Buffer>> zeroed(attributes.size());
+    fetchOf.assign(attributes.size(), 0);
+    zeroed.resize(attributes.size());
     const auto& layout = inputs.VertexLayout();
     for (std::size_t i = 0; i < attributes.size(); ++i) {
         const auto& attribute = attributes[i];
@@ -2003,11 +2007,13 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         fetchValid.push_back(args == nullptr && stride != 0 ? static_cast<std::size_t>(std::min(recordBytes, static_cast<std::uint64_t>(bytes))) : bytes);
     }
     const auto soloFetches = SoloZeroPaddedFetchIndices(fetches, fetchValid);
-    std::vector<bool> isSolo(fetches.size(), false);
+    auto& isSolo = planLease->isSolo;
+    auto& plannedFetches = planLease->plannedFetches;
+    auto& plannedOf = planLease->plannedOf;
+    isSolo.assign(fetches.size(), false);
     for (const auto f : soloFetches) isSolo[f] = true;
-    std::vector<VertexFetch> plannedFetches;
     plannedFetches.reserve(fetches.size());
-    std::vector<std::size_t> plannedOf(fetches.size(), 0);
+    plannedOf.assign(fetches.size(), 0);
     for (std::size_t f = 0; f < fetches.size(); ++f) {
         if (isSolo[f]) continue;
         plannedOf[f] = plannedFetches.size();
@@ -2015,8 +2021,8 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     }
     const auto plan = PlanVertexCopies(plannedFetches);
     const auto rangeFrom = args == nullptr && !state.stages.mesh ? VertexCopyStarts(plan, plannedFetches, inputs.minIndex, draw.firstInstance) : std::vector<std::size_t>(plan.copies.size(), 0);
-    std::vector<VkBuffer> rangeHandles;
-    std::vector<VkDeviceSize> rangeOffsets;
+    auto& rangeHandles = planLease->rangeHandles;
+    auto& rangeOffsets = planLease->rangeOffsets;
     rangeHandles.reserve(plan.copies.size());
     rangeOffsets.reserve(plan.copies.size());
     for (std::size_t range = 0; range < plan.copies.size(); ++range) {
@@ -2771,6 +2777,7 @@ void captureInputs(const Context& context, Recorder& recorder, VkCommandBuffer c
     };
     if (bindings != nullptr) {
         for (const auto& snapshot : bindings->snapshots) {
+            if (snapshot.buffer == nullptr) continue;
             const auto bytes = snapshot.Bytes();
             addSample(snapshot.address, bytes.size(), snapshot.buffer->Handle(), snapshot.offset, bytes.data());
         }
@@ -2869,6 +2876,11 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         if (args->countIndirect) passReads.emplace_back(args->countAddress, args->countAddress + 4);
     }
     passReads.insert(passReads.end(), inputs.inPlaceReads.begin(), inputs.inPlaceReads.end());
+    for (const auto& entry : record.moved) {
+        if (entry.inPlace == VK_NULL_HANDLE) continue;
+        const auto begin = entry.address - entry.adjustment;
+        passReads.emplace_back(begin, begin + GuestBufferMemory::ViewBytes(entry.size, entry.adjustment));
+    }
     const auto passImages = resources.StorageImages();
     std::vector<std::pair<VkImage, bool>> passAttachments;
     passAttachments.reserve(record.targets.size());
@@ -3000,7 +3012,18 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, commands, record.pipeline->Layout());
     if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, record.pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
-    pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, record.pushBytes, record.pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
+    std::array<std::byte, PipelinePushConstantBytes> movedPush;
+    const std::array<std::byte, PipelinePushConstantBytes>* pushBytes = record.pushBytes;
+    VkShaderStageFlags pushStages = record.pushStages;
+    if (ShaderResources::MovedPushPatches(record.moved)) {
+        movedPush = pushBytes != nullptr ? *pushBytes : AssemblePushConstants(shaders);
+        if (pushBytes == nullptr) resources.PatchPushConstants(movedPush);
+        if (resources.PatchMovedPushConstants(movedPush, record.moved)) {
+            if (pushBytes == nullptr) pushStages = PushConstantStages(shaders);
+            pushBytes = &movedPush;
+        }
+    }
+    pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, pushBytes, pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     static const bool timeEachDraw = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr;
     auto eachDrawTiming = Recorder::NoTiming;
@@ -3014,7 +3037,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
-        recordStencilReplay(context, recording, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages);
+        recordStencilReplay(context, recording, state, draw, inputs, record.stencilReplay, shaders, resources, pushBytes, pushStages);
         for (const auto& [reference, pipeline] : record.stencilReplay) recorder->Keep(pipeline);
     }
     if (record.pipeline->SplitsFaces()) {
@@ -4521,6 +4544,15 @@ void SetDrawStopAfterResolveForTest(DrawStopForTest stop) {
 
 std::uint64_t AddressDrawReuseVerifications() {
     return addressDrawReuseVerifications().load(std::memory_order_relaxed);
+}
+
+VertexPlanScratchState ThreadVertexPlanScratch() {
+    const auto& scratch = VertexPlanLease::Resting();
+    VertexPlanScratchState state;
+    state.busy = VertexPlanLease::Busy();
+    state.resting = scratch.fetches.size() + scratch.fetchValid.size() + scratch.fetchOf.size() + scratch.zeroed.size() + scratch.isSolo.size() + scratch.plannedFetches.size() + scratch.plannedOf.size() + scratch.rangeHandles.size() + scratch.rangeOffsets.size();
+    state.capacity = scratch.fetches.capacity() + scratch.fetchValid.capacity() + scratch.fetchOf.capacity() + scratch.zeroed.capacity() + scratch.isSolo.capacity() + scratch.plannedFetches.capacity() + scratch.plannedOf.capacity() + scratch.rangeHandles.capacity() + scratch.rangeOffsets.capacity();
+    return state;
 }
 
 bool DrawPipelineEnabled() {
