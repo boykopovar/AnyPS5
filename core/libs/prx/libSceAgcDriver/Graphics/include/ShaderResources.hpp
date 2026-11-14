@@ -612,7 +612,7 @@ private:
         bool committedProved = false;
     };
     bool keepsTemplateRecords() const;
-    void captureValidation();
+    void captureValidation(bool spaceReusable);
     // A surface of this object the fast proof found a foreign image pending over: the element
     // (index into textures, or into storageTextures when `storage`) whose own object stands in for
     // the full walk's lookup (refreshOwnObjects). `viewUncompressed`: a storage-sourced view under

@@ -3046,13 +3046,13 @@ bool LoopGuardEnabled() {
 }
 
 void ShaderResources::noteReusable() {
+    const bool spaceReusable = !htileClear.has_value() && drawBuild && usesBda && bdaReadOnly && !SpaceReuseDisabled() && guestMemory.SpaceOnly() && !guestMemory.HasCopiedWrites() && multisampleSources.empty() && !(bda != nullptr && LoopGuardEnabled());
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
-    captureValidation();
+    captureValidation(spaceReusable);
     reusable = false;
     importsReconcilable = false;
     spaceReuse = false;
     directRegions.clear();
-    const bool spaceReusable = !htileClear.has_value() && drawBuild && usesBda && bdaReadOnly && !SpaceReuseDisabled() && guestMemory.SpaceOnly() && !guestMemory.HasCopiedWrites() && multisampleSources.empty() && !(bda != nullptr && LoopGuardEnabled());
     if (!spaceReusable && (htileClear.has_value() || guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled()))) return;
     if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
     if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
@@ -3631,8 +3631,8 @@ bool ShaderResources::keepsTemplateRecords() const {
 
 // Turns the lookups' records into this object's per-texture validation records (see
 // ValidatedSurface); the last record of an object is the freshest.
-void ShaderResources::captureValidation() {
-    if (!keepsTemplateRecords()) {
+void ShaderResources::captureValidation(bool spaceReusable) {
+    if (!keepsTemplateRecords() && !(spaceReusable && !RuntimeSwitches::Set(RuntimeSwitch::NoSpaceReuseRecords))) {
         validatedTextures.clear();
         lookupLog().clear();
         return;
@@ -4595,7 +4595,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         // The walk proved every object current again: the records move to what it proved, or one
         // spurious stamp (a label sharing a 64 KiB block with a surface's edge) would keep this
         // object on the full walk for good.
-        captureValidation();
+        captureValidation(spaceReuse);
         return true;
     };
     struct OverlappingTag {};
