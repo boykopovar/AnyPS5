@@ -18,6 +18,8 @@ namespace log_file {
 namespace {
 
 constexpr const char VariableName[] = "ANYPS5_LOG_FILE";
+constexpr const char MaxBytesName[] = "ANYPS5_LOG_MAX_BYTES";
+constexpr const char KeepName[] = "ANYPS5_LOG_KEEP";
 constexpr const char WriteFailure[] = "[log] ANYPS5_LOG_FILE: the file can no longer be written; it stops here and the terminal output goes on\n";
 
 std::atomic<Session*> g_session{nullptr};
@@ -37,6 +39,7 @@ Tee::Tee(Handle file, Handle terminalOutput, Handle terminalError, Handle source
 
 Tee::~Tee() {
     Stop();
+    if (_file != NoHandle) Close(_file);
 }
 
 Tee::Stream& Tee::streamOf(int standard) {
@@ -62,11 +65,47 @@ void Tee::toTerminal(Stream& stream, const char* data, std::size_t length) {
     if (!WriteAll(stream.terminal, data, length)) stream.terminalBroken.store(true, std::memory_order_relaxed);
 }
 
-void Tee::toFile(const char* data, std::size_t length) {
-    if (length == 0 || _fileFailed.load(std::memory_order_relaxed)) return;
-    if (WriteAll(_file, data, length)) return;
+void Tee::failFile() {
     _fileFailed.store(true, std::memory_order_relaxed);
     toTerminal(_streams[1], WriteFailure, sizeof(WriteFailure) - 1);
+}
+
+bool Tee::rotate() {
+    Close(_file);
+    _file = NoHandle;
+    if (_keep == 0) {
+        RemoveFile(_path);
+    } else {
+        RemoveFile(RotatedName(_path, _keep));
+        for (unsigned index = _keep; index > 1; --index) RenameFile(RotatedName(_path, index - 1), RotatedName(_path, index));
+        RenameFile(_path, RotatedName(_path, 1));
+    }
+    Handle file = NoHandle;
+    std::string error;
+    if (!OpenAppend(_path, file, error)) return false;
+    _file = file;
+    _fileBytes = FileSize(_file);
+    return true;
+}
+
+void Tee::toFile(const char* data, std::size_t length) {
+    if (length == 0 || _fileFailed.load(std::memory_order_relaxed)) return;
+    if (RotationNeeded(_fileBytes, length, _maxBytes) && !rotate()) {
+        failFile();
+        return;
+    }
+    if (WriteAll(_file, data, length)) {
+        _fileBytes += length;
+        return;
+    }
+    failFile();
+}
+
+void Tee::SetRotation(const std::string& path, std::uint64_t maxBytes, unsigned keep) {
+    _path = path;
+    _maxBytes = maxBytes;
+    _keep = keep;
+    _fileBytes = maxBytes != 0 ? FileSize(_file) : 0;
 }
 
 void Tee::flushCarry(Stream& stream) {
@@ -174,6 +213,58 @@ bool Tee::FileFailed() const {
     return _fileFailed.load(std::memory_order_relaxed);
 }
 
+bool ParseMaxBytes(const char* text, std::uint64_t& value, std::string& error) {
+    constexpr std::uint64_t Smallest = 64u << 10;
+    constexpr std::uint64_t Largest = std::uint64_t{1} << 40;
+    value = 0;
+    error.clear();
+    if (text == nullptr || *text == '\0') return true;
+    std::uint64_t parsed = 0;
+    for (const char* digit = text; *digit != '\0'; ++digit) {
+        if (*digit < '0' || *digit > '9' || parsed > (UINT64_MAX - 9) / 10) {
+            error = std::string(MaxBytesName) + ": \"" + text + "\" is not a byte count";
+            return false;
+        }
+        parsed = parsed * 10 + static_cast<std::uint64_t>(*digit - '0');
+    }
+    if (parsed != 0 && (parsed < Smallest || parsed > Largest)) {
+        error = std::string(MaxBytesName) + ": " + text + " is outside 65536 to 1099511627776 bytes; use 0 to turn the limit off";
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+bool ParseKeep(const char* text, unsigned& value, std::string& error) {
+    constexpr unsigned Default = 3;
+    constexpr unsigned Largest = 100;
+    value = Default;
+    error.clear();
+    if (text == nullptr || *text == '\0') return true;
+    unsigned parsed = 0;
+    for (const char* digit = text; *digit != '\0'; ++digit) {
+        if (*digit < '0' || *digit > '9' || parsed > Largest) {
+            error = std::string(KeepName) + ": \"" + text + "\" is not a count of files between 0 and 100";
+            return false;
+        }
+        parsed = parsed * 10 + static_cast<unsigned>(*digit - '0');
+    }
+    if (parsed > Largest) {
+        error = std::string(KeepName) + ": \"" + text + "\" is not a count of files between 0 and 100";
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+bool RotationNeeded(std::uint64_t size, std::uint64_t length, std::uint64_t maxBytes) {
+    return maxBytes != 0 && size != 0 && size + length > maxBytes;
+}
+
+std::string RotatedName(const std::string& path, unsigned index) {
+    return path + "." + std::to_string(index);
+}
+
 std::unique_ptr<Session> StartFromValue(const char* value, Factory& factory, std::string& error) {
     error.clear();
     if (value == nullptr || *value == '\0') return nullptr;
@@ -206,9 +297,20 @@ private:
     Tee _tee;
 };
 
+bool ReadLimits(std::uint64_t& maxBytes, unsigned& keep, std::string& error) {
+    std::string text;
+    const bool setMax = ReadVariable(MaxBytesName, text);
+    if (!ParseMaxBytes(setMax ? text.c_str() : nullptr, maxBytes, error)) return false;
+    const bool setKeep = ReadVariable(KeepName, text);
+    return ParseKeep(setKeep ? text.c_str() : nullptr, keep, error);
+}
+
 class SystemFactoryImpl final : public Factory {
 public:
     std::unique_ptr<Session> Create(const std::string& path, std::string& error) override {
+        std::uint64_t maxBytes = 0;
+        unsigned keep = 0;
+        if (!ReadLimits(maxBytes, keep, error)) return nullptr;
         Handle file = NoHandle;
         std::string reason;
         if (!OpenAppend(path, file, reason)) {
@@ -241,6 +343,7 @@ public:
 #endif
         }
         auto session = std::make_unique<SystemSession>(file, originalOutput, originalError, output, errors);
+        session->Output().SetRotation(path, maxBytes, keep);
         const std::string note = std::string("[log] ANYPS5_LOG_FILE: appending to this file, process ") + std::to_string(static_cast<long>(
 #ifdef _WIN32
             _getpid()
@@ -293,7 +396,7 @@ namespace {
 
 [[maybe_unused]] const bool g_started = [] {
     std::string value;
-    const bool set = ReadVariable(value);
+    const bool set = ReadPathVariable(value);
     std::string error;
     auto session = StartFromValue(set ? value.c_str() : nullptr, SystemFactory(), error);
     if (!error.empty()) FailStartup(error + "\n");

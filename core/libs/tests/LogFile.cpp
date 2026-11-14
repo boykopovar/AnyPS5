@@ -89,7 +89,7 @@ struct Rig {
 
     ~Rig() {
         tee.reset();
-        for (const Handle handle : {output.read, output.write, errors.read, errors.write, terminalOutput.read, terminalOutput.write, terminalError.read, terminalError.write, file}) Close(handle);
+        for (const Handle handle : {output.read, output.write, errors.read, errors.write, terminalOutput.read, terminalOutput.write, terminalError.read, terminalError.write}) Close(handle);
     }
 };
 
@@ -217,6 +217,122 @@ void AppendKeepsEarlierRuns() {
     Require(Slurp(path) == "first run\nsecond run\n", "opening the file again did not append");
 }
 
+void FilePrimitives() {
+    const auto path = g_directory / "primitives.log";
+    const auto moved = g_directory / "primitives.log.1";
+    Handle file = NoHandle;
+    std::string error;
+    Require(OpenAppend(path.string(), file, error), "open for the size check");
+    Require(WriteAll(file, "twelve bytes", 12), "write for the size check");
+    Require(FileSize(file) == 12, "the size of an open file differs");
+    Require(RenameFile(path.string(), moved.string()), "rename an open file");
+    Require(!std::filesystem::exists(path) && std::filesystem::exists(moved), "the rename left the old name behind");
+    Require(WriteAll(file, "!", 1), "write after the rename");
+    Close(file);
+    Require(Slurp(moved) == "twelve bytes!", "the open file did not follow the rename");
+    Require(RemoveFile(moved.string()), "remove a file");
+    Require(RemoveFile(moved.string()), "removing a missing file is not success");
+    Require(!std::filesystem::exists(moved), "the file is still there after removal");
+}
+
+void MaxBytesValues() {
+    std::uint64_t value = 7;
+    std::string error;
+    Require(ParseMaxBytes(nullptr, value, error) && value == 0 && error.empty(), "an unset limit is not off");
+    Require(ParseMaxBytes("", value, error) && value == 0 && error.empty(), "an empty limit is not off");
+    Require(ParseMaxBytes("0", value, error) && value == 0 && error.empty(), "zero does not turn the limit off");
+    Require(ParseMaxBytes("65536", value, error) && value == 65536, "the smallest limit was refused");
+    Require(ParseMaxBytes("1099511627776", value, error) && value == (std::uint64_t{1} << 40), "the largest limit was refused");
+    for (const char* text : {"-1", "+5", " 5", "1k", "65535", "1099511627777", "99999999999999999999999", "0x10"}) {
+        error.clear();
+        Require(!ParseMaxBytes(text, value, error) && error.find("ANYPS5_LOG_MAX_BYTES") != std::string::npos, text);
+    }
+}
+
+void KeepValues() {
+    unsigned value = 9;
+    std::string error;
+    Require(ParseKeep(nullptr, value, error) && value == 3 && error.empty(), "an unset count is not the default of 3");
+    Require(ParseKeep("", value, error) && value == 3, "an empty count is not the default");
+    Require(ParseKeep("0", value, error) && value == 0, "zero files was refused");
+    Require(ParseKeep("100", value, error) && value == 100, "the largest count was refused");
+    for (const char* text : {"-1", "101", "1000000000000", "x", "3 "}) {
+        error.clear();
+        Require(!ParseKeep(text, value, error) && error.find("ANYPS5_LOG_KEEP") != std::string::npos, text);
+    }
+}
+
+void RotationPolicy() {
+    Require(!RotationNeeded(1000, 1000, 0), "a zero limit rotates");
+    Require(!RotationNeeded(0, 5000, 100), "an empty file rotates before its first line");
+    Require(!RotationNeeded(60, 40, 100), "a write that exactly fills the limit rotates");
+    Require(RotationNeeded(60, 41, 100), "a write past the limit did not rotate");
+    Require(RotationNeeded(10, 5000, 100), "an oversize write into a used file did not rotate first");
+    Require(RotatedName("/var/log/run.log", 2) == "/var/log/run.log.2", "rotated name differs");
+}
+
+void RotatesWhenFull() {
+    const auto path = g_directory / "rotate.log";
+    for (const char* leftover : {"rotate.log", "rotate.log.1", "rotate.log.2", "rotate.log.3"}) RemoveFile((g_directory / leftover).string());
+    Handle file = NoHandle;
+    std::string error;
+    Require(OpenAppend(path.string(), file, error), "open for rotation");
+    Tee tee(file, NoHandle, NoHandle, NoHandle, NoHandle);
+    tee.SetRotation(path.string(), 10, 2);
+    tee.Note("aaaa\n", 5);
+    tee.Note("bbbb\n", 5);
+    tee.Note("cccc\n", 5);
+    tee.Note("dddddddddd\n", 11);
+    tee.Note("e\n", 2);
+    tee.Flush(true);
+    Require(Slurp(path) == "e\n", "the current file does not hold the newest line");
+    Require(Slurp(RotatedName(path.string(), 1)) == "dddddddddd\n", "the first rotated file lacks the last full write");
+    Require(Slurp(RotatedName(path.string(), 2)) == "cccc\n", "the second rotated file lacks the older line");
+    Require(!std::filesystem::exists(RotatedName(path.string(), 3)), "a file beyond the keep count was kept");
+    Require(!tee.FileFailed(), "a rotation was recorded as a failure");
+}
+
+void RotatesNothingWithoutLimit() {
+    const auto path = g_directory / "unlimited.log";
+    Handle file = NoHandle;
+    std::string error;
+    Require(OpenAppend(path.string(), file, error), "open unlimited");
+    Tee tee(file, NoHandle, NoHandle, NoHandle, NoHandle);
+    for (int index = 0; index < 50; ++index) tee.Note("0123456789\n", 11);
+    tee.Flush(true);
+    Require(!std::filesystem::exists(RotatedName(path.string(), 1)), "a file with no limit was rotated");
+    Require(Slurp(path).size() == 550, "a file with no limit lost lines");
+}
+
+void InvalidLimitsStopBeforeOpening() {
+    const auto path = g_directory / "limits-refused.log";
+    std::filesystem::remove(path);
+    std::string error;
+#ifdef _WIN32
+    _putenv_s("ANYPS5_LOG_KEEP", "x");
+#else
+    ::setenv("ANYPS5_LOG_KEEP", "x", 1);
+#endif
+    Require(SystemFactory().Create(path.string(), error) == nullptr, "an invalid keep count started a session");
+    Require(error.find("ANYPS5_LOG_KEEP") != std::string::npos, "the error does not name ANYPS5_LOG_KEEP");
+    Require(!std::filesystem::exists(path), "an invalid keep count created the file");
+#ifdef _WIN32
+    _putenv_s("ANYPS5_LOG_KEEP", "");
+    _putenv_s("ANYPS5_LOG_MAX_BYTES", "12");
+#else
+    ::unsetenv("ANYPS5_LOG_KEEP");
+    ::setenv("ANYPS5_LOG_MAX_BYTES", "12", 1);
+#endif
+    error.clear();
+    Require(SystemFactory().Create(path.string(), error) == nullptr && error.find("ANYPS5_LOG_MAX_BYTES") != std::string::npos, "an invalid byte limit was accepted");
+    Require(!std::filesystem::exists(path), "an invalid byte limit created the file");
+#ifdef _WIN32
+    _putenv_s("ANYPS5_LOG_MAX_BYTES", "");
+#else
+    ::unsetenv("ANYPS5_LOG_MAX_BYTES");
+#endif
+}
+
 void RelativePathUsesWorkingDirectory() {
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(g_directory);
@@ -332,7 +448,7 @@ void FullDiskKeepsTerminal() {
     Require(Drain(terminalOutput.read) == "after the disk is full\n", "the terminal lost output after the file failed");
     const std::string notice = Drain(terminalError.read);
     Require(notice.find("ANYPS5_LOG_FILE") != std::string::npos && notice.find("can no longer be written") != std::string::npos, "the failure was not reported once on the terminal");
-    for (const Handle handle : {output.read, output.write, errors.read, errors.write, terminalOutput.read, terminalOutput.write, terminalError.read, terminalError.write, full}) Close(handle);
+    for (const Handle handle : {output.read, output.write, errors.read, errors.write, terminalOutput.read, terminalOutput.write, terminalError.read, terminalError.write}) Close(handle);
 }
 
 #ifdef _WIN32
@@ -654,6 +770,13 @@ int main(int argc, char** argv) {
     PartialLineAtExit();
     LongLines();
     AppendKeepsEarlierRuns();
+    FilePrimitives();
+    MaxBytesValues();
+    KeepValues();
+    RotationPolicy();
+    RotatesWhenFull();
+    RotatesNothingWithoutLimit();
+    InvalidLimitsStopBeforeOpening();
     RelativePathUsesWorkingDirectory();
     UnopenablePath();
     UnsetCreatesNothing();

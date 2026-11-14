@@ -29,13 +29,17 @@ void RestoreStandard(int standard, Handle original);
 bool IsInteractive(Handle handle);
 void PauseMicroseconds(long microseconds);
 void WriteStandardDirect(int standard, const char* text, std::size_t length);
-bool ReadVariable(std::string& value);
+bool ReadVariable(const char* name, std::string& value);
+bool ReadPathVariable(std::string& value);
 [[noreturn]] void FailStartup(const std::string& message);
 bool WaitReadable(Handle read, int milliseconds);
 long ReadAvailable(Handle read, char* buffer, std::size_t capacity);
 long Pending(Handle read);
 bool WriteAll(Handle destination, const char* data, std::size_t length);
 void Close(Handle handle);
+std::uint64_t FileSize(Handle file);
+bool RenameFile(const std::string& from, const std::string& to);
+bool RemoveFile(const std::string& path);
 
 class Tee {
 public:
@@ -53,6 +57,7 @@ public:
     void CrashWrite(int standard, const char* text, std::size_t length);
     void SignalWrite(int standard, const char* text, std::size_t length);
     void Note(const char* text, std::size_t length);
+    void SetRotation(const std::string& path, std::uint64_t maxBytes, unsigned keep);
     bool FileFailed() const;
 
 private:
@@ -71,11 +76,17 @@ private:
     void pump(Stream& stream);
     void toFile(const char* data, std::size_t length);
     void flushCarry(Stream& stream);
+    bool rotate();
+    void failFile();
     void toTerminal(Stream& stream, const char* data, std::size_t length);
     void run(Stream& stream);
     Stream& streamOf(int standard);
 
     Handle _file;
+    std::string _path;
+    std::uint64_t _maxBytes = 0;
+    std::uint64_t _fileBytes = 0;
+    unsigned _keep = 0;
     Stream _streams[2];
     std::atomic<int> _lock{0};
     std::atomic<bool> _stop{false};
@@ -98,6 +109,11 @@ public:
 
 std::unique_ptr<Session> StartFromValue(const char* value, Factory& factory, std::string& error);
 Factory& SystemFactory();
+
+bool ParseMaxBytes(const char* text, std::uint64_t& value, std::string& error);
+bool ParseKeep(const char* text, unsigned& value, std::string& error);
+bool RotationNeeded(std::uint64_t size, std::uint64_t length, std::uint64_t maxBytes);
+std::string RotatedName(const std::string& path, unsigned index);
 
 bool Active();
 void Flush();
