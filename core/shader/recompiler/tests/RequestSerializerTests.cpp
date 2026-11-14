@@ -202,8 +202,8 @@ void VerifyTessellationInstancePatches() {
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 13u && bytes[4] == 57u);
-    bytes.resize(bytes.size() - 5u);
+    Require(bytes.size() > 13u && bytes[4] == 58u);
+    bytes.resize(bytes.size() - 7u);
     bytes[4] = 56u;
     return EncodeBase64(bytes);
 }
@@ -226,7 +226,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 57u);
+                    Require(bytes[4] == 58u);
                     for (std::size_t missing = 1u; missing <= 5u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -238,7 +238,7 @@ void VerifyTargetOptions() {
                         }
                         Require(rejected);
                     }
-                    bytes.resize(bytes.size() - 5u);
+                    bytes.resize(bytes.size() - 7u);
                     bytes[4] = 56u;
                     const auto legacy56 = serializer.Deserialize(EncodeBase64(bytes));
                     Require(!legacy56.request.target.fixedPushSlots && legacy56.request.target.maxImageArrayLayers == 0u);
@@ -772,7 +772,7 @@ int VerifyVersion56Compatibility() {
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
         auto future = bytes;
-        future[4] = 58u;
+        future[4] = 59u;
         bool futureRejected = false;
         try {
             static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
@@ -1150,7 +1150,31 @@ int VerifyVersion56Compatibility() {
     return 0;
 }
 
+void VerifyFmaOptions() {
+    const ShaderRecompiler::RequestSerializer serializer;
+    for (const bool f16 : {false, true}) {
+        for (const bool f32 : {false, true}) {
+            ShaderRecompiler::RecompileRequest request{};
+            request.target.fmaFloat16 = f16;
+            request.target.fmaFloat32 = f32;
+            const auto encoded = serializer.Serialize(request);
+            auto bytes = DecodeBase64(encoded);
+            Require(bytes.size() > 13u && bytes[4] == 58u);
+            Require(bytes[bytes.size() - 2u] == (f16 ? 1u : 0u) && bytes[bytes.size() - 1u] == (f32 ? 1u : 0u));
+            const auto replay = serializer.Deserialize(encoded);
+            Require(replay.request.target.fmaFloat16 == f16 && replay.request.target.fmaFloat32 == f32);
+            Require(serializer.Serialize(replay.request) == encoded);
+            auto legacy57 = bytes;
+            legacy57.resize(legacy57.size() - 2u);
+            legacy57[4] = 57u;
+            const auto replay57 = serializer.Deserialize(EncodeBase64(legacy57));
+            Require(!replay57.request.target.fmaFloat16 && !replay57.request.target.fmaFloat32);
+        }
+    }
+}
+
 int main() {
     VerifyTargetOptions();
+    VerifyFmaOptions();
     return VerifyVersion56Compatibility();
 }

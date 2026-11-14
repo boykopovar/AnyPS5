@@ -616,6 +616,7 @@ struct VulkanDevice::State {
     bool viewportIndexLayer = false;
     bool imageFormatList = false;
     bool fmaFloat16 = false;
+    bool fmaFloat32 = false;
     bool primitiveListRestart = false;
     bool depthClipControl = false;
     bool graphicsPipelineLibrary = false;
@@ -1830,15 +1831,18 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->float32DenormPreserve = floatControls.shaderDenormPreserveFloat32 == VK_TRUE && floatControls.denormBehaviorIndependence != VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE && std::getenv("APS5_NO_HW_F32_PRESERVE") == nullptr;
     if ((state->float16DenormPreserve || state->float32DenormPreserve) && std::find(state->capabilities.begin(), state->capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDenormPreserve)) == state->capabilities.end()) state->capabilities.push_back(spv::CapabilityDenormPreserve);
     VkPhysicalDeviceShaderFmaFeaturesKHR fmaFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FMA_FEATURES_KHR};
-    if (float16Rte && hasExtension(VK_KHR_SHADER_FMA_EXTENSION_NAME)) {
+    if (hasExtension(VK_KHR_SHADER_FMA_EXTENSION_NAME)) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &fmaFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
     }
     const bool float16Fma = float16Rte && fmaFeatures.shaderFmaFloat16 == VK_TRUE;
+    const bool float32Fma = hasExtension(VK_KHR_SHADER_FMA_EXTENSION_NAME) && fmaFeatures.shaderFmaFloat32 == VK_TRUE && driverId == VK_DRIVER_ID_MESA_RADV;
     fmaFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FMA_FEATURES_KHR};
-    fmaFeatures.shaderFmaFloat16 = VK_TRUE;
+    fmaFeatures.shaderFmaFloat16 = float16Fma ? VK_TRUE : VK_FALSE;
+    fmaFeatures.shaderFmaFloat32 = float32Fma ? VK_TRUE : VK_FALSE;
     state->fmaFloat16 = float16Fma;
-    if (float16Fma) {
+    state->fmaFloat32 = float32Fma;
+    if (float16Fma || float32Fma) {
         deviceExtensions.push_back(VK_KHR_SHADER_FMA_EXTENSION_NAME);
         state->capabilities.push_back(spv::CapabilityFMAKHR);
         state->spirvExtensions.push_back("SPV_KHR_fma");
@@ -2349,7 +2353,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         float16Features.pNext = byteFeatures.pNext;
         byteFeatures.pNext = &float16Features;
     }
-    if (float16Fma) {
+    if (float16Fma || float32Fma) {
         fmaFeatures.pNext = byteFeatures.pNext;
         byteFeatures.pNext = &fmaFeatures;
     }
@@ -4671,6 +4675,8 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     target.float32DenormPreserve = state->float32DenormPreserve;
     target.float16WidenNans = state->float16WidenNans;
     target.float16NarrowNans = state->float16NarrowNans;
+    target.fmaFloat16 = state->fmaFloat16;
+    target.fmaFloat32 = state->fmaFloat32;
     return target;
 }
 
@@ -4878,6 +4884,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.demoteToHelperInvocation = state->demoteToHelperInvocation;
     context.earlyFragmentSampleMaskTestBeforeSampleCounting = state->earlyFragmentSampleMaskTestBeforeSampleCounting;
     context.fmaFloat16 = state->fmaFloat16;
+    context.fmaFloat32 = state->fmaFloat32;
     context.primitiveListRestart = state->primitiveListRestart;
     context.imageViewMinLod = state->imageViewMinLod;
     context.shaderResourceMinLod = state->shaderResourceMinLod;
