@@ -240,10 +240,15 @@ bool WellFormedTitleId(const char* titleId) {
     return titleId != nullptr && std::strlen(titleId) == SYSTEM_SERVICE_TITLE_ID_LENGTH;
 }
 
-int RunningAppId(const std::string& caller, const char* titleId) {
-    if (!WellFormedTitleId(titleId)) return SYSTEM_SERVICE_INVALID_TITLE_APP_ID;
-    if (RunningTitleId() != titleId) NotImplemented_nid_no_patch((caller + ": title other than the running title").c_str());
+int TitleAppId(const char* titleId) {
+    if (!WellFormedTitleId(titleId) || RunningTitleId() != titleId) return SYSTEM_SERVICE_INVALID_TITLE_APP_ID;
     return SYSTEM_SERVICE_RUNNING_APP_ID;
+}
+
+int RunningAppId(const std::string& caller, const char* titleId) {
+    const int appId = TitleAppId(titleId);
+    if (appId == SYSTEM_SERVICE_INVALID_TITLE_APP_ID && WellFormedTitleId(titleId)) NotImplemented_nid_no_patch((caller + ": title other than the running title").c_str());
+    return appId;
 }
 
 template<typename TValue>
@@ -649,25 +654,31 @@ int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void) {
 }
 
 int APS5_VABI sceSystemServiceGetAppId(const char* titleId) {
- return RunningAppId("sceSystemServiceGetAppId", titleId);
+ return TitleAppId(titleId);
 }
 
 int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {
- CopyRunningTitleId("sceSystemServiceGetAppTitleId", appId == SYSTEM_SERVICE_RUNNING_APP_ID, titleId);
+ if (titleId == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+ if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) {
+  titleId[0] = '\0';
+  return LNC_UTIL_ERROR_NO_APP;
+ }
+ CopyRunningTitleId("sceSystemServiceGetAppTitleId", true, titleId);
  return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceLncUtilGetAppTitleId(std::int32_t appId, char* titleId) {
- return sceSystemServiceGetAppTitleId(appId, titleId);
+ CopyRunningTitleId("sceLncUtilGetAppTitleId", appId == SYSTEM_SERVICE_RUNNING_APP_ID, titleId);
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
- return sceSystemServiceGetAppId(titleId);
+ return RunningAppId("sceLncUtilGetAppId", titleId);
 }
 
 int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
  if (!WellFormedTitleId(titleId) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
- static_cast<void>(sceSystemServiceGetAppId(titleId));
+ static_cast<void>(RunningAppId("sceLncUtilIsAppLaunched", titleId));
  *launched = true;
  return SYSTEM_SERVICE_OK;
 }
