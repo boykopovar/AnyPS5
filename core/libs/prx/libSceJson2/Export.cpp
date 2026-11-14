@@ -2308,8 +2308,12 @@ double ParseDecimal(std::string_view text) {
         bool divide = false;
         if (cursor < text.size() && (text[cursor] == '+' || text[cursor] == '-')) divide = text[cursor++] == '-';
         if (!digit(cursor)) return 0;
+        constexpr std::uint32_t MaxExponent = 100000;
         std::uint32_t exponent = 0;
-        while (digit(cursor)) exponent = exponent * 10 + static_cast<unsigned>(text[cursor++] - '0');
+        while (digit(cursor)) {
+            const auto digitValue = static_cast<unsigned>(text[cursor++] - '0');
+            if (exponent < MaxExponent) exponent = exponent * 10 + digitValue;
+        }
         while (exponent-- && magnitude != 0 && !std::isinf(magnitude)) {
             if (divide) magnitude /= 10.0;
             else magnitude *= 10.0;
