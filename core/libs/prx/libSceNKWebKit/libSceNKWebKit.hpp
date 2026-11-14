@@ -3,6 +3,7 @@
 #include "prx/libSceNKWebKit/include/CredentialBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/HTTPHeaderFieldExports.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
+#include "prx/libSceNKWebKit/include/TrackPrivateBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
