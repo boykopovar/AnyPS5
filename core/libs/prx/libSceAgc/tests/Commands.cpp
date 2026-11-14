@@ -184,8 +184,11 @@ void testIndexedIndirectDraws() {
     check(multi == storage.words.data() + expectedSingle.size() && std::equal(expectedMulti.begin(), expectedMulti.end(), multi), "indexed indirect multi draw packet mismatch");
     check(storage.buffer.cursor_up == storage.words.data() + expectedSingle.size() + expectedMulti.size(), "incorrect indexed indirect cursor advance");
     check(sceAgcDcbDrawIndexIndirectMultiGetSize() == expectedMulti.size() * sizeof(std::uint32_t), "indexed indirect multi draw size differs from its packets");
+    Storage console;
+    const auto* unaligned = sceAgcDcbDrawIndexIndirect(&console.buffer, 0x22222222u, 0x3333333344444444ull);
+    const std::array<std::uint32_t, 5> expectedUnaligned{0xc0032500u, 0x22222222u, 0x280, 0x94, 0};
+    check(unaligned == console.words.data() && std::equal(expectedUnaligned.begin(), expectedUnaligned.end(), unaligned), "indexed indirect draw did not encode an unaligned offset and high modifier bits as the console does");
     const auto before = storage.words;
-    expectFailure([&] { sceAgcDcbDrawIndexIndirect(&storage.buffer, 2, 0); });
     expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 1, 8, &count, 16, 0); });
     expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 0, 8, &count, 20, 0); });
     check(storage.words == before, "invalid indexed indirect draw modified packet memory");
@@ -425,6 +428,12 @@ void testDrawPackets() {
     sceAgcDcbDrawIndirect(&flagged.buffer, 0, 0x100);
     sceAgcDcbDrawIndirect(&flagged.buffer, 0, 0x100000100ull);
     check(flagged.words[4] == 0x22u && flagged.words[9] == 2, "DRAW_INDIRECT initiator flags mismatch");
+    Storage console;
+    sceAgcDcbDrawIndirect(&console.buffer, 1, 2);
+    sceAgcDcbDrawIndirect(&console.buffer, 0x22222222u, 0x3333333344444444ull);
+    sceAgcDcbDrawIndexAuto(&console.buffer, 0x22222222u, 0x3333333344444444ull);
+    const std::array<std::uint32_t, 13> consoleExpected{0xc0032400u, 1, 0x280, 0x280, 2, 0xc0032400u, 0x22222222u, 0x280, 0x94, 2, 0xc0012d00u, 0x22222222u, 2};
+    check(std::equal(consoleExpected.begin(), consoleExpected.end(), console.words.begin()) && console.buffer.cursor_up == console.words.data() + consoleExpected.size(), "draws did not encode unaligned offsets and high modifier bits as the console does");
     Storage offset;
     sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 0, 0);
     sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 9, 0);
@@ -442,10 +451,6 @@ void testDrawPackets() {
     rejected.words.fill(0xa5a5a5a5u);
     const auto rejectedWords = rejected.words;
     const auto* rejectedCursor = rejected.buffer.cursor_up;
-    expectFailure([&] { sceAgcDcbDrawIndirect(&rejected.buffer, 2, 0); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbDrawIndirect(&rejected.buffer, 0, 0x200000000ull); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 3, 0); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 0, 4); });
