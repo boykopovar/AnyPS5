@@ -37,6 +37,15 @@ class PresenceTests(unittest.TestCase):
         self.assertEqual(result["libraries"]["groups"][0]["presence"], "both")
         self.assertEqual([(row["name"], row["presence"]) for row in result["shaders"]["groups"]], [("same", "added")])
 
+    def test_missing_group_gets_empty_symbol_lists_on_the_absent_side(self):
+        base = snapshot(libraries=[{"name": "gone", "done_names": ["a"]}])
+        head = snapshot(libraries=[{"name": "new", "todo_names": ["b"]}])
+        rows = {row["name"]: row for row in progress_diff.compare(base, head)["libraries"]["groups"]}
+        self.assertEqual(rows["gone"]["presence"], "removed")
+        self.assertEqual(rows["gone"]["done_names"], {"added": [], "removed": ["a"]})
+        self.assertEqual(rows["new"]["presence"], "added")
+        self.assertEqual(rows["new"]["todo_names"], {"added": ["b"], "removed": []})
+
 
 if __name__ == "__main__":
     unittest.main()
