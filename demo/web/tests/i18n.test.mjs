@@ -98,15 +98,21 @@ test("apply sets lang, dir, text content and attributes for a locale", t => {
   assert.equal(attrNode.attributes["aria-label"], messages.de.themeToggle);
 });
 
-test("apply sets dir=rtl for an rtl locale without shipping one", t => {
-  const fakeDocument = stubDocument([]);
+test("Arabic applies right-to-left direction and persists across reloads", t => {
+  const store = new Map();
+  const fakeDocument = stubDocument([new FakeElement({ i18n: "heroTitle" })]);
   stubGlobal("document", fakeDocument, t);
-  locales.push({ code: "test-rtl", name: "Test RTL", direction: "rtl" });
-  t.after(() => { locales.pop(); });
+  stubGlobal("localStorage", { getItem: key => store.get(key) ?? null, setItem: (key, value) => { store.set(key, value); } }, t);
 
-  apply("test-rtl");
-
-  assert.equal(fakeDocument.documentElement.lang, "test-rtl");
+  set("ar");
+  assert.equal(current(), "ar");
+  assert.equal(fakeDocument.documentElement.lang, "ar");
+  assert.equal(fakeDocument.documentElement.dir, "rtl");
+  assert.equal(fakeDocument.querySelectorAll("[data-i18n]")[0].textContent, messages.ar.heroTitle);
+  assert.match(messages.ar.heroTitle, /\p{Script=Arabic}/u);
+  apply("en");
+  assert.equal(fakeDocument.documentElement.dir, "ltr");
+  apply(current());
   assert.equal(fakeDocument.documentElement.dir, "rtl");
 });
 

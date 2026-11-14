@@ -25,6 +25,13 @@ int main() {
         Require(sceBackupRestoreUtilGetBackupTelemetryInfo() == notInitialized);
         Require(sceBackupRestoreUtilGetRestoreTelemetryInfo() == notInitialized);
         Require(sceBackupRestoreUtilCancelCalcRequiredSize() == notInitialized);
+        Require(sceBackupRestoreUtilCalcRequiredSize() == notInitialized);
+        Require(sceBackupRestoreUtilCancelBackupData() == notInitialized);
+        Require(sceBackupRestoreUtilCancelRestoreData() == notInitialized);
+        Require(sceBackupRestoreUtilDeleteBackupData() == notInitialized);
+        Require(sceBackupRestoreUtilGetRequiredSize() == notInitialized);
+        Require(sceBackupRestoreUtilGetRestoreFailedTitles() == notInitialized);
+        Require(sceBackupRestoreUtilGetTitles() == notInitialized);
     }
     return 0;
 }

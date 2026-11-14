@@ -338,11 +338,6 @@ int APS5_VABI _ZNSt7_MpunctIcED0Ev_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZSt11setiosflagsNSt5_IosbIiE9_FmtflagsE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI __atomic_load_n_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -502,11 +497,6 @@ int APS5_VABI sceLibcInternalUnknown6_113_SlG1FNmy0N0_nid_no_patch() {
 APS5_EXPORT("SlG1FN-y0N0", sceLibcInternalUnknown6_113_SlG1FNmy0N0_nid_no_patch);
 
 int APS5_VABI _ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZSt22_Get_future_error_whati_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
