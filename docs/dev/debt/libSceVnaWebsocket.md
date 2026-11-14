@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-- [`J3fL2giuM+0`, `fxgYzL5aGyw`, `hSnmIgcBCMk` and `t534VXlYZI8`](../../../core/libs/prx/libSceVnaWebsocket/Export.cpp) (libSceVnaWebsocket) - names and signatures are unknown. Read from disassembly of firmware 13.42, not measured on a console: `J3fL2giuM+0` copies 24 bytes from its second argument to its first, bytes 16 to 23 before 0 to 15 (at `0xd0`), and `fxgYzL5aGyw` copies 44 bytes, loading all of them before it stores any (at `0xf0`); both return the first argument. `hSnmIgcBCMk` and `t534VXlYZI8` return their first argument (`mov %rdi,%rax; ret` at `0x910` and `0x940`). What the copied objects are is unknown. A null argument to the two copies, which the module reads or writes through, throws.
+- [`J3fL2giuM+0`, `fxgYzL5aGyw`, `hSnmIgcBCMk` and `t534VXlYZI8`](../../../core/libs/prx/libSceVnaWebsocket/Export.cpp) (libSceVnaWebsocket) - names and signatures are unknown. Read from disassembly of firmware 13.42, not measured on a console: `J3fL2giuM+0` copies 24 bytes from its second argument to its first, bytes 16 to 23 before 0 to 15 (at `0xd0`), and `fxgYzL5aGyw` copies 44 bytes, loading all of them before it stores any (at `0xf0`); both return the first argument. `hSnmIgcBCMk` and `t534VXlYZI8` return their first argument (`mov %rdi,%rax; ret` at `0x910` and `0x940`). What the copied objects are is unknown. A null argument or unmapped pointer to the two copies, which the module reads or writes through, throws.
 
 ### Additional callable exports
 

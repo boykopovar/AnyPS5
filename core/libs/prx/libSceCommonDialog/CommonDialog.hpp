@@ -249,7 +249,21 @@ inline bool ValidateCommonDialogBaseParam(const CommonDialogBaseParam& param, st
 }
 
 constexpr int COMMON_DIALOG_OK = 0;
+constexpr int COMMON_DIALOG_STATUS_NONE = 0;
+constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
+constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
+constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
+constexpr int COMMON_DIALOG_RESULT_OK = 0;
+constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
+constexpr int COMMON_DIALOG_ERROR_NOT_SYSTEM_INITIALIZED = static_cast<int>(0x80B80001);
 constexpr int COMMON_DIALOG_ERROR_ALREADY_SYSTEM_INITIALIZED = static_cast<int>(0x80B80002);
+constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003);
 constexpr int COMMON_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80B80004);
+constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005);
+constexpr int COMMON_DIALOG_ERROR_INVALID_STATE = static_cast<int>(0x80B80006);
+constexpr int COMMON_DIALOG_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80B8000A);
+constexpr int COMMON_DIALOG_ERROR_PARAMETER = COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+constexpr int COMMON_DIALOG_ERROR_NOT_RUNNING = static_cast<int>(0x80B8000B);
+constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000D);
 
 #endif

@@ -1,5 +1,6 @@
 #include "ShaderDiskCache.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "CacheKey.hpp"
 #include "ShaderCachePack.hpp"
 #include "ShaderCacheDirectory.hpp"
@@ -23,6 +24,7 @@
 #include <unistd.h>
 #endif
 #include "ShaderCacheSourceVersion.hpp"
+#include "prx/libc/include/RemoveTree.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -1526,7 +1528,7 @@ public:
         discoverPrebuilt();
         stopping = stopped;
         if (stopping) return;
-        writer = std::thread([this] { run(); });
+        writer = Libc::StartHostThread([this] { run(); });
         runningWriters.fetch_add(1, std::memory_order_acq_rel);
     }
 
@@ -1865,7 +1867,7 @@ private:
             if (!used) used = lastWriteTime(it->path());
             if (used && now - *used > std::chrono::hours(24 * 14)) {
                 std::error_code removeError;
-                std::filesystem::remove_all(it->path(), removeError);
+                RemoveTree(it->path(), removeError);
             }
         }
         error.clear();

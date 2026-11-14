@@ -3,7 +3,9 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <array>
+#include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -88,12 +90,22 @@ int main() {
     Require(std::strcmp(list[2].entitlement_label.data, "ADDONNODIR000001") == 0);
     Require(list[2].status == 4);
 
+    hitNum = 0x5a5a5a5au;
+    errno = EBUSY;
+    Require(sceAppContentGetAddcontInfoList(0, reinterpret_cast<AppContentAddcontInfo*>(std::uintptr_t{0x10}), 1, &hitNum) == ErrorParameter);
+    Require(hitNum == 0x5a5a5a5au && errno == EBUSY);
+    Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == EBUSY);
+
     NpUnifiedEntitlementLabel label0{};
     std::memcpy(label0.data, "ADDON00000000001", 16);
     AppContentAddcontInfo info{};
     Require(sceAppContentGetAddcontInfo(0, &label0, &info) == 0);
     Require(std::strcmp(info.entitlement_label.data, "ADDON00000000001") == 0);
     Require(info.status == 4);
+    errno = EBUSY;
+    Require(sceAppContentGetAddcontInfo(0, &label0, reinterpret_cast<AppContentAddcontInfo*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == EBUSY);
 
     NpUnifiedEntitlementLabel label1{};
     std::memcpy(label1.data, "ADDON00000000002", 16);
@@ -116,6 +128,11 @@ int main() {
 
     AppContentMountPoint mountPointNoDir{};
     Require(sceAppContentAddcontMount(0, &labelNoDir, &mountPointNoDir) == ErrorNotFound);
+
+    errno = EBUSY;
+    Require(sceAppContentAddcontMount(0, &label0, reinterpret_cast<AppContentMountPoint*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == EBUSY);
+    Require(access_nid_postfix("/addcont0/sample.txt", 0) == -1);
 
     AppContentMountPoint mountPoint0{};
     Require(sceAppContentAddcontMount(0, &label0, &mountPoint0) == 0);

@@ -1,19 +1,28 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libwebrtc/include/VideoSinkWants.hpp"
+#include "prx/libwebrtc/include/CallbackListReceivers.hpp"
+#include "prx/libwebrtc/include/RateTracker.hpp"
 #include "prx/libwebrtc/include/AudioCodecInfo.hpp"
+#include "prx/libwebrtc/include/Buffer.hpp"
 #include "prx/libwebrtc/include/AudioDecoder.hpp"
+#include "prx/libwebrtc/include/RtcCertificate.hpp"
 #include "prx/libwebrtc/include/AudioDeviceGeneric.hpp"
+#include "prx/libwebrtc/include/VideoDecoder.hpp"
 #include "prx/libwebrtc/include/AudioEncoder.hpp"
 #include "prx/libwebrtc/include/AudioFrame.hpp"
+#include "prx/libwebrtc/include/CopyOnWriteBuffer.hpp"
 #include "prx/libwebrtc/include/ExpFilter.hpp"
 #include "prx/libwebrtc/include/FieldTrial.hpp"
+#include "prx/libwebrtc/include/RtcpNack.hpp"
 #include "prx/libwebrtc/include/IpAddress.hpp"
 #include "prx/libwebrtc/include/LogMessage.hpp"
 #include "prx/libwebrtc/include/PendingTaskSafetyFlag.hpp"
 #include "prx/libwebrtc/include/RmsLevel.hpp"
 #include "prx/libwebrtc/include/RtcpCommonHeader.hpp"
 #include "prx/libwebrtc/include/RtcpPli.hpp"
+#include "prx/libwebrtc/include/RtcpApp.hpp"
 #include "prx/libwebrtc/include/Opus.hpp"
 #include "prx/libwebrtc/include/RecursiveCriticalSection.hpp"
 #include "prx/libwebrtc/include/CpuFeatures.hpp"
@@ -29,15 +38,20 @@
 #include "prx/libwebrtc/include/CryptoOptions.hpp"
 #include "prx/libwebrtc/include/VideoFrame.hpp"
 #include "prx/libwebrtc/include/PlatformThread.hpp"
+#include "prx/libwebrtc/include/ThreadManager.hpp"
 #include "prx/libwebrtc/include/I420Buffer.hpp"
+#include "prx/libwebrtc/include/VideoFrameBuffer.hpp"
 #include "prx/libwebrtc/include/KeyParams.hpp"
 #include "prx/libwebrtc/include/ColorSpace.hpp"
+#include "prx/libwebrtc/include/SentPacket.hpp"
+#include "prx/libwebrtc/include/VideoEncoderInitEncode.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "prx/libwebrtc/include/VideoFrameDimensions.hpp"
 
 struct WebRtcVadInstance;
 #include "prx/libwebrtc/include/TaskQueueBase.hpp"
+#include "prx/libwebrtc/include/SequenceChecker.hpp"
 
 extern "C" {
 
@@ -49,8 +63,8 @@ int APS5_VABI _ZN6webrtc10CallConfigD1Ev_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown03(void);
 char* APS5_VABI _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(int value, char* buffer);
 int APS5_VABI _ZN3rtc18webrtc_checks_impl8FatalLogEPKciS2_PKNS0_12CheckArgTypeEz_nid_postfix(void);
-int APS5_VABI _ZN6webrtc18callback_list_impl21CallbackListReceiversC1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc19webrtc_logging_impl3LogEPKNS0_10LogArgTypeEz_nid_postfix(void);
+void APS5_VABI _ZN6webrtc18callback_list_impl21CallbackListReceiversC1Ev_nid_postfix(WebRtcCallbackListReceivers* receivers);
+void APS5_VABI _ZN3rtc19webrtc_logging_impl3LogEPKNS0_10LogArgTypeEz_nid_postfix(const WebRtcLogArgType* format, ...);
 bool APS5_VABI _ZN3rtc10LogMessage6IsNoopENS_15LoggingSeverityE_nid_postfix(std::int32_t severity);
 int APS5_VABI _ZN3rtc13SocketAddressC1Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc13SocketAddressaSERKS0__nid_postfix(void);
@@ -80,7 +94,7 @@ int APS5_VABI _ZN6webrtc23PeerConnectionInterface16RTCConfigurationD1Ev_nid_post
 void APS5_VABI _ZN6webrtc13CryptoOptionsC1ERKS0__nid_postfix(WebRtcCryptoOptions* options, const WebRtcCryptoOptions* other);
 int APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(void);
 int APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc14RTCCertificateD1Ev_nid_postfix(void);
+void APS5_VABI _ZN3rtc14RTCCertificateD1Ev_nid_postfix(WebRtcRtcCertificate* certificate);
 WebRtcAudioOptions* APS5_VABI _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(WebRtcAudioOptions* result, const void* source);
 bool APS5_VABI _ZNK3rtc9IPAddresseqERKS0__nid_postfix(const WebRtcIpAddress* address, const WebRtcIpAddress* other);
 const char* APS5_VABI _ZNK6webrtc8RTCError7messageEv_nid_postfix(const WebRtcRtcError* error);
@@ -92,17 +106,17 @@ int APS5_VABI _ZN6webrtc18RtpTransceiverInitD1Ev_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown04(void);
 bool APS5_VABI _ZNK6webrtc21PendingTaskSafetyFlag5aliveEv_nid_postfix(const WebRtcPendingTaskSafetyFlag* flag);
 int APS5_VABI libwebrtcUnknown05(void);
-int APS5_VABI _ZN3rtc17CopyOnWriteBufferC1ERKS0__nid_postfix(void);
-int APS5_VABI _ZN3rtc17CopyOnWriteBufferD1Ev_nid_postfix(void);
+void APS5_VABI _ZN3rtc17CopyOnWriteBufferC1ERKS0__nid_postfix(WebRtcCopyOnWriteBuffer* buffer, const WebRtcCopyOnWriteBuffer* other);
+void APS5_VABI _ZN3rtc17CopyOnWriteBufferD1Ev_nid_postfix(WebRtcCopyOnWriteBuffer* buffer);
 int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(void);
 int APS5_VABI _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc17CopyOnWriteBuffer24UnshareAndEnsureCapacityEm_nid_postfix(void);
-int APS5_VABI _ZN3rtc17CopyOnWriteBufferC1Emm_nid_postfix(void);
+void APS5_VABI _ZN3rtc17CopyOnWriteBuffer24UnshareAndEnsureCapacityEm_nid_postfix(WebRtcCopyOnWriteBuffer* buffer, std::size_t capacity);
+void APS5_VABI _ZN3rtc17CopyOnWriteBufferC1Emm_nid_postfix(WebRtcCopyOnWriteBuffer* buffer, std::size_t size, std::size_t capacity);
 WebRtcTaskQueueBase* APS5_VABI _ZN6webrtc13TaskQueueBase7CurrentEv_nid_postfix(void);
 void APS5_VABI _ZN3rtc10PacketInfoD1Ev_nid_postfix(void* object);
 int APS5_VABI _ZN6webrtc21RtpHeaderExtensionMapC1EN3rtc9ArrayViewIKNS_12RtpExtensionELln4711EEE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(void);
-int APS5_VABI _ZN3rtc6Thread7CurrentEv_nid_postfix(void);
+void* APS5_VABI _ZN3rtc6Thread7CurrentEv_nid_postfix();
 std::int64_t APS5_VABI _ZN3rtc10TimeMillisEv_nid_postfix();
 int APS5_VABI libwebrtcUnknown06(void);
 int APS5_VABI _ZNK6webrtc14RTCStatsReport5beginEv_nid_postfix(void);
@@ -125,7 +139,7 @@ int APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EPNS_22PeerConnectionObser
 int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesC1Ev_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown12(void);
 int APS5_VABI libwebrtcUnknown13(void);
-int APS5_VABI _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(void);
+void APS5_VABI _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(WebRtcSequenceCheckerImpl* checker, bool attachToCurrentThread);
 int APS5_VABI _ZN3rtc15CurrentThreadIdEv_nid_postfix(void);
 void APS5_VABI _ZN6webrtc13TaskQueueBase22CurrentTaskQueueSetterC1EPS0__nid_postfix(WebRtcCurrentTaskQueueSetter* setter, WebRtcTaskQueueBase* taskQueue);
 void APS5_VABI _ZN6webrtc13TaskQueueBase22CurrentTaskQueueSetterD1Ev_nid_postfix(WebRtcCurrentTaskQueueSetter* setter);
@@ -138,14 +152,14 @@ int APS5_VABI _ZN6webrtc10I420Buffer6CreateEiiiii_nid_postfix(void);
 std::uint8_t* APS5_VABI _ZN6webrtc10I420Buffer12MutableDataYEv_nid_postfix(WebRtcI420Buffer* buffer);
 std::uint8_t* APS5_VABI _ZN6webrtc10I420Buffer12MutableDataUEv_nid_postfix(WebRtcI420Buffer* buffer);
 std::uint8_t* APS5_VABI _ZN6webrtc10I420Buffer12MutableDataVEv_nid_postfix(WebRtcI420Buffer* buffer);
-int APS5_VABI _ZN6webrtc19I420BufferInterface6ToI420Ev_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc19I420BufferInterface7GetI420Ev_nid_postfix(void);
+void** APS5_VABI _ZN6webrtc19I420BufferInterface6ToI420Ev_nid_postfix(void** result, WebRtcVideoFrameBuffer* buffer);
+const void* APS5_VABI _ZNK6webrtc19I420BufferInterface7GetI420Ev_nid_postfix(const WebRtcVideoFrameBuffer* buffer);
 int APS5_VABI _ZN6webrtc16VideoFrameBuffer12CropAndScaleEiiiiii_nid_postfix(void);
-int APS5_VABI _ZN6webrtc16VideoFrameBuffer20GetMappedFrameBufferEN3rtc9ArrayViewINS0_4TypeELln4711EEE_nid_postfix(void);
+void** APS5_VABI _ZN6webrtc16VideoFrameBuffer20GetMappedFrameBufferEN3rtc9ArrayViewINS0_4TypeELln4711EEE_nid_postfix(void** result, WebRtcVideoFrameBuffer* buffer, WebRtcVideoFrameBufferTypes types);
 int APS5_VABI libwebrtcUnknown14(void);
-int APS5_VABI _ZNK6webrtc19I420BufferInterface11ChromaWidthEv_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc19I420BufferInterface12ChromaHeightEv_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc16VideoFrameBuffer7GetI420Ev_nid_postfix(void);
+int APS5_VABI _ZNK6webrtc19I420BufferInterface11ChromaWidthEv_nid_postfix(const void* buffer);
+int APS5_VABI _ZNK6webrtc19I420BufferInterface12ChromaHeightEv_nid_postfix(const void* buffer);
+const void* APS5_VABI _ZNK6webrtc16VideoFrameBuffer7GetI420Ev_nid_postfix(const void*);
 int APS5_VABI _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10VideoFrame7Builder22set_video_frame_bufferERKNS_13scoped_refptrINS_16VideoFrameBufferEEE_nid_postfix(void);
 int APS5_VABI _ZNK6webrtc10VideoFrame5widthEv_nid_postfix(const WebRtcVideoFrameDimensions* frame);
@@ -160,10 +174,10 @@ void APS5_VABI _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(WebRtcVideoFrameBu
 void APS5_VABI _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(WebRtcVideoFrameBuilder* builder);
 int APS5_VABI _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10VideoFrameD1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc14VideoSinkWantsC1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc14VideoSinkWantsC1ERKS0__nid_postfix(void);
-int APS5_VABI _ZN3rtc14VideoSinkWantsD1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc10LogMessage6streamEv_nid_postfix(void);
+void APS5_VABI _ZN3rtc14VideoSinkWantsC1Ev_nid_postfix(WebRtcVideoSinkWants* wants);
+void APS5_VABI _ZN3rtc14VideoSinkWantsC1ERKS0__nid_postfix(WebRtcVideoSinkWants* wants, const WebRtcVideoSinkWants* other);
+void APS5_VABI _ZN3rtc14VideoSinkWantsD1Ev_nid_postfix(WebRtcVideoSinkWants* wants);
+WebRtcGuestString* APS5_VABI _ZN3rtc10LogMessage6streamEv_nid_postfix(WebRtcLogMessage* message);
 int APS5_VABI _ZN3rtc10LogMessage17GetMinLogSeverityEv_nid_postfix(void);
 std::int32_t APS5_VABI _ZN3rtc10LogMessage13GetLogToDebugEv_nid_postfix(void);
 void APS5_VABI _ZN3rtc10LogMessage10LogThreadsEb_nid_postfix(bool on);
@@ -172,13 +186,13 @@ void APS5_VABI _ZN3rtc10LogMessage10LogToDebugENS_15LoggingSeverityE_nid_postfix
 void APS5_VABI _ZN3rtc10LogMessage14SetLogToStderrEb_nid_postfix(bool logToStderr);
 void APS5_VABI _ZN3rtc10LogMessage14AddLogToStreamEPNS_7LogSinkENS_15LoggingSeverityE_nid_postfix(WebRtcLogSink* stream, std::int32_t minSeverity);
 void APS5_VABI _ZN3rtc10LogMessage17RemoveLogToStreamEPNS_7LogSinkE_nid_postfix(WebRtcLogSink* stream);
-int APS5_VABI _ZN3rtc7LogSink12OnLogMessageERKNS_10LogLineRefE_nid_postfix(void);
+void APS5_VABI _ZN3rtc7LogSink12OnLogMessageERKNS_10LogLineRefE_nid_postfix(WebRtcLogSink* sink, const WebRtcLogLineRef* line);
 int APS5_VABI libwebrtcUnknown15(void);
 int APS5_VABI libwebrtcUnknown16(void);
 int APS5_VABI libwebrtcUnknown17(void);
 int APS5_VABI libwebrtcUnknown18(void);
-int APS5_VABI _ZN3rtc10LogMessageC1EPKciNS_15LoggingSeverityE_nid_postfix(void);
-int APS5_VABI _ZN3rtc10LogMessageD1Ev_nid_postfix(void);
+void APS5_VABI _ZN3rtc10LogMessageC1EPKciNS_15LoggingSeverityE_nid_postfix(WebRtcLogMessage* message, const char* file, int line, std::int32_t severity);
+void APS5_VABI _ZN3rtc10LogMessageD1Ev_nid_postfix(WebRtcLogMessage* message);
 bool APS5_VABI _ZNK3rtc13SocketAddress10IsCompleteEv_nid_postfix(const WebRtcSocketAddress* address);
 std::uint32_t APS5_VABI _ZNK3rtc9IPAddress27v4AddressAsHostOrderIntegerEv_nid_postfix(const WebRtcIpAddress* address);
 int APS5_VABI libwebrtcUnknown19(void);
@@ -189,10 +203,10 @@ int APS5_VABI _ZN3rtc17AsyncPacketSocketD2Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc17AsyncPacketSocket20NotifyPacketReceivedERKNS_14ReceivedPacketE_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown20(void);
 int APS5_VABI libwebrtcUnknown21(void);
-int APS5_VABI _ZN3rtc10SentPacketC1Ell_nid_postfix(void);
-int APS5_VABI _ZN3rtc10SentPacketC1EllRKNS_10PacketInfoE_nid_postfix(void);
+void APS5_VABI _ZN3rtc10SentPacketC1Ell_nid_postfix(WebRtcSentPacket* packet, std::int64_t packetId, std::int64_t sendTimeMs);
+void APS5_VABI _ZN3rtc10SentPacketC1EllRKNS_10PacketInfoE_nid_postfix(WebRtcSentPacket* packet, std::int64_t packetId, std::int64_t sendTimeMs, const WebRtcPacketInfo* info);
 int APS5_VABI _ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(void);
-int APS5_VABI _ZN3rtc17CopyOnWriteBufferC1Em_nid_postfix(void);
+void APS5_VABI _ZN3rtc17CopyOnWriteBufferC1Em_nid_postfix(WebRtcCopyOnWriteBuffer* buffer, std::size_t size);
 int APS5_VABI _ZN6webrtc17CodecSpecificInfoD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc17CodecSpecificInfoC1Ev_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown22(void);
@@ -201,10 +215,10 @@ int APS5_VABI libwebrtcUnknown23(void);
 int APS5_VABI _ZN6webrtc14SdpVideoFormatC1ERKS0__nid_postfix(void);
 int APS5_VABI _ZN6webrtc14SdpVideoFormatC1EOS0__nid_postfix(void);
 int APS5_VABI _ZN6webrtc14SdpVideoFormatD1Ev_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc12VideoDecoder14GetDecoderInfoEv_nid_postfix(void);
+WebRtcVideoDecoderInfo* APS5_VABI _ZNK6webrtc12VideoDecoder14GetDecoderInfoEv_nid_postfix(WebRtcVideoDecoderInfo* info, const WebRtcVideoDecoder* decoder);
 int APS5_VABI _ZNK6webrtc19VideoDecoderFactory17QueryCodecSupportERKNS_14SdpVideoFormatEb_nid_postfix(void);
 void APS5_VABI _ZN6webrtc12VideoEncoder24SetFecControllerOverrideEPNS_21FecControllerOverrideE_nid_postfix(void* encoder, void* fecControllerOverride);
-int APS5_VABI _ZN6webrtc12VideoEncoder10InitEncodeEPKNS_10VideoCodecEim_nid_postfix(void);
+int APS5_VABI _ZN6webrtc12VideoEncoder10InitEncodeEPKNS_10VideoCodecEim_nid_postfix(WebRtcVideoEncoder* encoder, const WebRtcVideoCodec* codecSettings, int numberOfCores, std::size_t maxPayloadSize);
 int APS5_VABI _ZN6webrtc12VideoEncoder11EncoderInfoC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc12VideoEncoder11EncoderInfoD1Ev_nid_postfix(void);
 void APS5_VABI _ZN6webrtc12VideoEncoder21RateControlParametersD1Ev_nid_postfix(void* object);
@@ -224,9 +238,9 @@ void APS5_VABI _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(
 void APS5_VABI _ZN3rtc9CritScopeD1Ev_nid_postfix(WebRtcCritScope* scope);
 void APS5_VABI _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(WebRtcRecursiveCriticalSection* section);
 void APS5_VABI _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(WebRtcRecursiveCriticalSection* section);
-int APS5_VABI _ZN3rtc13ThreadManager8InstanceEv_nid_postfix(void);
+WebRtcThreadManager* APS5_VABI _ZN3rtc13ThreadManager8InstanceEv_nid_postfix();
 int APS5_VABI _ZN3rtc6Thread15ProcessMessagesEi_nid_postfix(void);
-int APS5_VABI _ZN3rtc13ThreadManager13CurrentThreadEv_nid_postfix(void);
+void* APS5_VABI _ZN3rtc13ThreadManager13CurrentThreadEv_nid_postfix(WebRtcThreadManager* manager);
 int APS5_VABI _ZN3rtc13ThreadManager16SetCurrentThreadEPNS_6ThreadE_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown29(void);
 int APS5_VABI libwebrtcUnknown30(void);
@@ -241,7 +255,7 @@ int APS5_VABI _ZN3rtc6Thread7RestartEv_nid_postfix(void);
 int APS5_VABI _ZN3rtc6Thread12PostTaskImplEN4absl12AnyInvocableIFvvOEEERKN6webrtc13TaskQueueBase14PostTaskTraitsERKNS5_8LocationE_nid_postfix(void);
 int APS5_VABI _ZN3rtc6Thread19PostDelayedTaskImplEN4absl12AnyInvocableIFvvOEEEN6webrtc9TimeDeltaERKNS5_13TaskQueueBase21PostDelayedTaskTraitsERKNS5_8LocationE_nid_postfix(void);
 int APS5_VABI _ZN3rtc6Thread8GetDelayEv_nid_postfix(void);
-int APS5_VABI _ZNK3rtc6Thread9IsCurrentEv_nid_postfix(void);
+bool APS5_VABI _ZNK3rtc6Thread9IsCurrentEv_nid_postfix(const void* thread);
 int APS5_VABI libwebrtcUnknown32(void);
 int APS5_VABI _ZN3rtc16NullSocketServerC1Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc6Thread5StartEv_nid_postfix(void);
@@ -257,30 +271,30 @@ void APS5_VABI _ZNK3rtc24RecursiveCriticalSection5LeaveEv_nid_postfix(const WebR
 void APS5_VABI _ZN3rtc9ExpFilter5ResetEf_nid_postfix(WebRtcExpFilter* filter, float alpha);
 float APS5_VABI _ZN3rtc9ExpFilter5ApplyEff_nid_postfix(WebRtcExpFilter* filter, float exponent, float sample);
 int APS5_VABI _ZNK6webrtc4rtcp10RtcpPacket5BuildEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(void);
+bool APS5_VABI _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRtcRtcpApp* app, const WebRtcRtcpCommonHeader* packet);
+void APS5_VABI _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(WebRtcRtcpApp* app);
+void APS5_VABI _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(WebRtcRtcpApp* app);
 bool APS5_VABI _ZN6webrtc4rtcp12CommonHeader5ParseEPKhm_nid_postfix(WebRtcRtcpCommonHeader* header, const std::uint8_t* buffer, std::size_t size);
 int APS5_VABI libwebrtcUnknown34(void);
 int APS5_VABI _ZN6webrtc4rtcp14CompoundPacketC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp14CompoundPacketD1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp4Nack5ParseERKNS0_12CommonHeaderE_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(void);
+bool APS5_VABI _ZN6webrtc4rtcp4Nack5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRtcRtcpNack* nack, const WebRtcRtcpCommonHeader* packet);
+void APS5_VABI _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(WebRtcRtcpNack* nack);
+void APS5_VABI _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(WebRtcRtcpNack* nack);
 bool APS5_VABI _ZN6webrtc4rtcp3Pli5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRtcRtcpPli* pli, const WebRtcRtcpCommonHeader* packet);
 int APS5_VABI _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(void*);
 int APS5_VABI _ZN6webrtc4rtcp14ReceiverReportC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp4Remb5ParseERKNS0_12CommonHeaderE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp4RembC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp4RembD1Ev_nid_postfix(void);
 std::uint16_t APS5_VABI _ZNK6webrtc4rtcp17TransportFeedback15GetBaseSequenceEv_nid_postfix(const WebRtcRtcpTransportFeedback* feedback);
-int APS5_VABI _ZN6webrtc4rtcp17TransportFeedback5ParseERKNS0_12CommonHeaderE_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp17TransportFeedbackC1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp17TransportFeedbackD1Ev_nid_postfix(void);
+bool APS5_VABI _ZN6webrtc4rtcp17TransportFeedback5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRtcRtcpTransportFeedback* feedback, const WebRtcRtcpCommonHeader* packet);
+void APS5_VABI _ZN6webrtc4rtcp17TransportFeedbackC1Ev_nid_postfix(WebRtcRtcpTransportFeedback* feedback);
+void APS5_VABI _ZN6webrtc4rtcp17TransportFeedbackD1Ev_nid_postfix(WebRtcRtcpTransportFeedback* feedback);
 int APS5_VABI _ZN6webrtc9RtpPacket5ParseEPKhm_nid_postfix(void);
-int APS5_VABI _ZN6webrtc12AudioDecoder6DecodeEPKhmimPsPNS0_10SpeechTypeE_nid_postfix(void);
-int APS5_VABI _ZN6webrtc12AudioDecoder15DecodeRedundantEPKhmimPsPNS0_10SpeechTypeE_nid_postfix(void);
+int APS5_VABI _ZN6webrtc12AudioDecoder6DecodeEPKhmimPsPNS0_10SpeechTypeE_nid_postfix(WebRtcAudioDecoder* decoder, const std::uint8_t* encoded, std::size_t encodedLen, int sampleRateHz, std::size_t maxDecodedBytes, std::int16_t* decoded, std::int32_t* speechType);
+int APS5_VABI _ZN6webrtc12AudioDecoder15DecodeRedundantEPKhmimPsPNS0_10SpeechTypeE_nid_postfix(WebRtcAudioDecoder* decoder, const std::uint8_t* encoded, std::size_t encodedLen, int sampleRateHz, std::size_t maxDecodedBytes, std::int16_t* decoded, std::int32_t* speechType);
 bool APS5_VABI _ZNK6webrtc12AudioDecoder12HasDecodePlcEv_nid_postfix(const WebRtcAudioDecoder* decoder);
 std::size_t APS5_VABI _ZN6webrtc12AudioDecoder9DecodePlcEmPs_nid_postfix(WebRtcAudioDecoder* decoder, std::size_t numFrames, std::int16_t* decoded);
 void APS5_VABI _ZN6webrtc12AudioDecoder11GeneratePlcEmPN3rtc7BufferTIsLb0EEE_nid_postfix(WebRtcAudioDecoder* decoder, std::size_t requestedSamplesPerChannel, WebRtcInt16Buffer* concealmentAudio);
@@ -288,24 +302,24 @@ int APS5_VABI _ZN6webrtc12AudioDecoder9ErrorCodeEv_nid_postfix(WebRtcAudioDecode
 void APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(WebRtcAudioDecoderParseResult* result, WebRtcAudioDecoderParseResult* other);
 int APS5_VABI libwebrtcUnknown35(void);
 void APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(WebRtcAudioDecoderParseResult* result);
-int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(void);
-int APS5_VABI _ZN6webrtc12AudioEncoder6EncodeEjN3rtc9ArrayViewIKsLln4711EEEPNS1_7BufferTIhLb0EEE_nid_postfix(void);
+WebRtcAudioEncodedInfo* APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(WebRtcAudioEncodedInfo* info, const WebRtcAudioEncodedInfo* other);
+void* APS5_VABI _ZN6webrtc12AudioEncoder6EncodeEjN3rtc9ArrayViewIKsLln4711EEEPNS1_7BufferTIhLb0EEE_nid_postfix(void* info, WebRtcAudioEncoder* encoder, std::uint32_t rtpTimestamp, const std::int16_t* audio, std::size_t samples, WebRtcBuffer* encoded);
 bool APS5_VABI _ZNK6webrtc12AudioEncoder6GetDtxEv_nid_postfix(const WebRtcAudioEncoder* encoder);
 void APS5_VABI _ZN6webrtc12AudioEncoder16SetTargetBitrateEi_nid_postfix(WebRtcAudioEncoder* encoder, int targetBps);
 int APS5_VABI libwebrtcUnknown36(void);
 int APS5_VABI libwebrtcUnknown37(void);
 void APS5_VABI _ZN6webrtc12AudioEncoder26DisableAudioNetworkAdaptorEv_nid_postfix(WebRtcAudioEncoder* encoder);
-int APS5_VABI _ZN6webrtc12AudioEncoder45OnReceivedUplinkRecoverablePacketLossFractionEf_nid_postfix(void);
-int APS5_VABI _ZN6webrtc12AudioEncoder28OnReceivedTargetAudioBitrateEi_nid_postfix(void);
-int APS5_VABI _ZN6webrtc12AudioEncoder26OnReceivedUplinkAllocationENS_23BitrateAllocationUpdateE_nid_postfix(void);
+void APS5_VABI _ZN6webrtc12AudioEncoder45OnReceivedUplinkRecoverablePacketLossFractionEf_nid_postfix(void*, float);
+void APS5_VABI _ZN6webrtc12AudioEncoder28OnReceivedTargetAudioBitrateEi_nid_postfix(WebRtcAudioEncoder* encoder, int targetAudioBitrateBps);
+void APS5_VABI _ZN6webrtc12AudioEncoder26OnReceivedUplinkAllocationENS_23BitrateAllocationUpdateE_nid_postfix(WebRtcAudioEncoder* encoder, WebRtcBitrateAllocationUpdate update);
 void APS5_VABI _ZN6webrtc12AudioEncoder13OnReceivedRttEi_nid_postfix(WebRtcAudioEncoder* encoder, int rttMs);
 void APS5_VABI _ZN6webrtc12AudioEncoder18OnReceivedOverheadEm_nid_postfix(WebRtcAudioEncoder* encoder, std::size_t overheadBytesPerPacket);
 void APS5_VABI _ZN6webrtc12AudioEncoder27SetReceiverFrameLengthRangeEii_nid_postfix(WebRtcAudioEncoder* encoder, int minFrameLengthMs, int maxFrameLengthMs);
 WebRtcAnaStats* APS5_VABI _ZNK6webrtc12AudioEncoder11GetANAStatsEv_nid_postfix(WebRtcAnaStats* result, const WebRtcAudioEncoder* encoder);
 void APS5_VABI _ZN6webrtc8ANAStatsC1Ev_nid_postfix(WebRtcAnaStats* stats);
-int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(void);
-int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1Ev_nid_postfix(WebRtcAudioEncodedInfo* info);
+void APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(WebRtcAudioEncodedInfo* info, const WebRtcAudioEncodedInfo* other);
+void APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(WebRtcAudioEncodedInfo* info);
 int APS5_VABI _ZN6webrtc14SdpAudioFormataSERKS0__nid_postfix(void);
 int APS5_VABI _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(void);
 int APS5_VABI _ZN6webrtc14SdpAudioFormatC1EOS0__nid_postfix(void);
@@ -317,7 +331,7 @@ void APS5_VABI _ZN6webrtc14AudioCodecInfoC1Eimiii_nid_postfix(WebRtcAudioCodecIn
 int APS5_VABI _ZN7cricket16CreateVideoCodecERKN6webrtc14SdpVideoFormatE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc13PacketOptionsC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc13PacketOptionsC1ERKS0__nid_postfix(void);
-int APS5_VABI _ZN6webrtc13PacketOptionsD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc13PacketOptionsD1Ev_nid_postfix(void*);
 int APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface5StatsD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigD1Ev_nid_postfix(void);
@@ -337,7 +351,7 @@ std::int16_t* APS5_VABI _ZN6webrtc10AudioFrame12mutable_dataEv_nid_postfix(WebRt
 void APS5_VABI _ZN6webrtc10AudioFrame4MuteEv_nid_postfix(WebRtcAudioFrame* frame);
 void APS5_VABI _ZN6webrtc10AudioFrameC1Ev_nid_postfix(WebRtcAudioFrame* frame);
 WebRtcEchoCanceller3Config* APS5_VABI _ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(WebRtcEchoCanceller3Config* config, const WebRtcEchoCanceller3Config* other);
-int APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1Ev_nid_postfix(WebRtcEchoCanceller3Config* config);
 void APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(WebRtcEchoCanceller3Config* config, const WebRtcEchoCanceller3Config* other);
 int APS5_VABI libwebrtcUnknown41(void);
 bool APS5_VABI _ZN6webrtc11FileWrapper5FlushEv_nid_postfix(WebRtcFileWrapper* wrapper);
@@ -393,11 +407,11 @@ int APS5_VABI _ZN6webrtc7rnn_vad6RnnVad21ComputeVadProbabilityEN3rtc9ArrayViewIK
 void APS5_VABI _ZN6webrtc20AudioFrameOperations4MuteEPNS_10AudioFrameE_nid_postfix(WebRtcAudioFrame* frame);
 int APS5_VABI libwebrtcUnknown44(void);
 int APS5_VABI libwebrtcUnknown45(void);
-int APS5_VABI _ZN3rtc11RateTrackerC1Elm_nid_postfix(void);
+void APS5_VABI _ZN3rtc11RateTrackerC1Elm_nid_postfix(WebRtcRateTracker* tracker, std::int64_t bucketMilliseconds, std::size_t bucketCount);
 int APS5_VABI libwebrtcUnknown46(void);
-int APS5_VABI _ZN3rtc11RateTrackerD1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc11RateTracker10AddSamplesEl_nid_postfix(void);
-int APS5_VABI _ZNK3rtc11RateTracker22ComputeRateForIntervalEl_nid_postfix(void);
+void APS5_VABI _ZN3rtc11RateTrackerD1Ev_nid_postfix(WebRtcRateTracker* tracker);
+void APS5_VABI _ZN3rtc11RateTracker10AddSamplesEl_nid_postfix(WebRtcRateTracker* tracker, std::int64_t sampleCount);
+double APS5_VABI _ZNK3rtc11RateTracker22ComputeRateForIntervalEl_nid_postfix(const WebRtcRateTracker* tracker, std::int64_t intervalMilliseconds);
 int APS5_VABI libwebrtcUnknown47(void);
 void* APS5_VABI _ZNK3rtc14NetworkManager16GetMdnsResponderEv_nid_postfix(const void* manager);
 void* APS5_VABI _ZThn8_NK3rtc14NetworkManager16GetMdnsResponderEv_nid_postfix(const void* provider);
