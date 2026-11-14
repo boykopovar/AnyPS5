@@ -1660,6 +1660,72 @@ void testConditionalWrite() {
     check(memory.read && memory.written && memory.target == 12, "COND_WRITE used a stale poll value or skipped synchronizing its target");
 }
 
+void testConditionalWriteRegisters() {
+    AgcDriver::QueueState state;
+    AgcDriver::QueueState other;
+    alignas(4) std::uint32_t target = 0;
+    const std::array<std::uint32_t, 3> bases{0x2c00u, 0xa000u, 0xc000u};
+    const std::array<std::uint32_t, 3> opcodes{0x76u, 0x69u, 0x79u};
+    const std::array<std::array<std::uint32_t, 3>, 13> comparisons{{
+        {0, 0x34, 1}, {1, 0x35, 1}, {1, 0x34, 0},
+        {2, 0x34, 1}, {2, 0x33, 0}, {3, 0x34, 1}, {3, 0x35, 0},
+        {4, 0x35, 1}, {4, 0x34, 0}, {5, 0x34, 1}, {5, 0x35, 0},
+        {6, 0x33, 1}, {6, 0x34, 0}
+    }};
+    for (std::size_t bank = 0; bank < bases.size(); ++bank) {
+        execute(state, makePacket(opcodes[bank], {0x21, 0x1234}));
+        execute(other, makePacket(opcodes[bank], {0x21, 0x7777, 0x8888}));
+        for (const auto& comparison : comparisons) {
+            target = 0x55;
+            const auto packet = makePacket(0x45, {0x100u | comparison[0], bases[bank] + 0x21, 0, comparison[1], 0xff, low(&target), high(&target), 0x99});
+            execute(state, packet);
+            check(target == (comparison[2] ? 0x99u : 0x55u), "register COND_WRITE comparison or mask mismatch");
+        }
+        auto packet = makePacket(0x45, {3, bases[bank] + 0x21, 0, 0x34, 0xff, bases[bank] + 0x22, 0, 0x4567});
+        check(AgcDriver::Pm4::DecodeStores(packet).empty(), "register COND_WRITE reported a guest memory store");
+        execute(state, packet);
+        const auto& registers = bank == 0 ? state.shader : bank == 1 ? state.context : state.userConfig;
+        const auto& isolated = bank == 0 ? other.shader : bank == 1 ? other.context : other.userConfig;
+        check(registers.at(0x22) == 0x4567 && isolated.at(0x21) == 0x7777 && isolated.at(0x22) == 0x8888, "register COND_WRITE changed the wrong queue or bank");
+        packet[4] = 0x35;
+        packet[8] = 0x9999;
+        execute(state, packet);
+        check(registers.at(0x22) == 0x4567, "failed register COND_WRITE changed its destination");
+        execute(state, makePacket(0x45, {0x103, bases[bank] + 0x22, 0, 0x4567, 0xffffffffu, low(&target), high(&target), 0x66}));
+        check(target == 0x66, "COND_WRITE did not read back its register destination");
+        alignas(4) const std::uint32_t poll = 5;
+        execute(state, makePacket(0x45, {0x13, low(&poll), high(&poll), 5, 0xffffffffu, bases[bank] + 0x22, 0, 0x7654}));
+        check(registers.at(0x22) == 0x7654, "memory-poll COND_WRITE did not update its register destination");
+    }
+    execute(state, makePacket(0x45, {0x3, 0x2c21, 0, 0x34, 0xff, 0xc243, 0, 2}));
+    check(state.indexType == 2, "COND_WRITE bypassed register side effects");
+    for (const auto reg : {0x2000u, 0x2bffu, 0x3000u, 0x9fffu, 0xa400u, 0xbfffu, 0x10000u}) {
+        expectFailure([&] { execute(state, makePacket(0x45, {0x100, reg, 0, 0, 0, low(&target), high(&target), 1})); }, "register-space");
+        expectFailure([&] { execute(state, makePacket(0x45, {0, 0x2c21, 0, 0, 0, reg, 0, 1})); }, "destination");
+    }
+    expectFailure([&] { execute(state, makePacket(0x45, {0x100, 0x2c23, 0, 0, 0, low(&target), high(&target), 1})); }, "known value");
+    expectFailure([&] { execute(state, makePacket(0x45, {0x200, 0x2c21, 0, 0, 0, 0, 0, 1})); }, "destination");
+    expectFailure([&] { execute(state, makePacket(0x45, {0x100, 0x2c21, 1, 0, 0, low(&target), high(&target), 1})); }, "register-space");
+    expectFailure([&] { execute(state, makePacket(0x45, {0, 0x2c21, 0, 0, 0, 0xa021, 1, 1})); }, "destination");
+    AgcDriver::Pm4::Validate(makePacket(0x45, {0x3, 0xa021, 0, 0x34, 0xff, 0x2c22, 0, 1}), 1);
+    AgcDriver::Pm4::Validate(makePacket(0x45, {0x103, 0xc021, 0, 0x34, 0xff, low(&target), high(&target), 1}), 1);
+    for (const auto reg : {0xa022u, 0xc022u}) {
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x45, {0x3, 0x2c21, 0, 0x34, 0xff, reg, 0, 1}), 1); }, "compute queue");
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x45, {0x13, low(&target), high(&target), 0x34, 0xff, reg, 0, 1}), 1); }, "compute queue");
+    }
+    static std::array<std::uint32_t, 3> results{};
+    results.fill(0);
+    auto words = joinPackets({
+        makePacket(0x76, {0x21, 11}), makePacket(0x69, {0x21, 22}), makePacket(0x79, {0x21, 33}),
+        makePacket(0x45, {0x103, 0x2c21, 0, 11, 0xffffffffu, low(&results[0]), high(&results[0]), 1}),
+        makePacket(0x45, {0x103, 0xa021, 0, 22, 0xffffffffu, low(&results[1]), high(&results[1]), 2}),
+        makePacket(0x45, {0x103, 0xc021, 0, 33, 0xffffffffu, low(&results[2]), high(&results[2]), 3})
+    });
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(results == std::array<std::uint32_t, 3>{1, 2, 3}, "COND_WRITE polled before earlier SET register packets in its submission");
+}
+
 void testConditionalWriteSubmission() {
     alignas(4) static std::uint32_t poll = 0;
     static std::array<std::uint32_t, 2> results{};
@@ -2731,6 +2797,7 @@ int main(int argc, char** argv) {
         testAcquireMem();
         testConditionalWrite();
         testConditionalWriteSubmission();
+        testConditionalWriteRegisters();
         testPredication();
         testUnwrittenUserData();
         testDriverSubmission();

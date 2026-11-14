@@ -179,6 +179,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                 const auto packet = std::span(commands).subspan(scan, count);
                 const auto opcode = (header >> 8u) & 0xffu;
                 const auto next = scan + count;
+                if (opcode == 0x45 && ((packet[1] >> 8u) & 3u) == 0) break;
                 if (opcode == 0x15 || opcode == 0x16) {
                     if (count < (opcode == 0x15 ? 5u : 3u)) break;
                     if (scan > from) {

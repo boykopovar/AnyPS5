@@ -537,10 +537,14 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         case 0x45: {
             size(9);
             require((packet[1] & ~0x317u) == 0, "COND_WRITE reserved fields are not implemented");
-            require((packet[1] & 0x10u) != 0, "register-space COND_WRITE poll is not implemented");
+            const bool memoryPoll = (packet[1] & 0x10u) != 0;
+            require(memoryPoll || (packet[3] == 0 && registerBankBase(packet[2]) != 0), "register-space COND_WRITE poll outside modeled banks is not implemented");
             require((packet[1] & 7u) <= 6u, "invalid COND_WRITE compare function");
-            require(((packet[1] >> 8u) & 3u) == 1u, "register or scratch COND_WRITE destination is not implemented");
-            require((packet[2] & 3u) == 0 && (packet[6] & 3u) == 0, "misaligned COND_WRITE address");
+            const auto destination = (packet[1] >> 8u) & 3u;
+            require(destination <= 1u, "scratch or reserved COND_WRITE destination is not implemented");
+            require(destination != 0 || (packet[7] == 0 && registerBankBase(packet[6]) != 0), "COND_WRITE destination outside modeled banks is not implemented");
+            if (destination == 0 && registerBankBase(packet[6]) != ShaderRegisterBase) graphics();
+            require((!memoryPoll || (packet[2] & 3u) == 0) && (destination != 1 || (packet[6] & 3u) == 0), "misaligned COND_WRITE address");
             break;
         }
         case 0x49: {
@@ -820,6 +824,7 @@ std::vector<PacketStore> DecodeStores(std::span<const std::uint32_t> packet) {
         }
         case 0x45: {
             const auto write = DecodeConditionalWrite(packet);
+            if (((packet[1] >> 8u) & 3u) != 1u) return {};
             auto store = known(write.destination, std::as_bytes(std::span(&write.value, 1)));
             store.conditional = true;
             return {store};
@@ -1247,9 +1252,21 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x45: {
             const auto write = DecodeConditionalWrite(packet);
             std::uint32_t value = 0;
-            {
+            if ((packet[1] & 0x10u) != 0) {
                 const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
                 GuestMemory::Read(write.compared, std::as_writable_bytes(std::span(&value, 1)), 4);
+            } else {
+                const auto base = registerBankBase(packet[2]);
+                const auto& bank = base == ShaderRegisterBase ? queue.shader : base == ContextRegisterBase ? queue.context : queue.userConfig;
+                require(base != 0 && bank.contains(packet[2] - base), "COND_WRITE poll register has no known value");
+                value = bank.at(packet[2] - base);
+            }
+            if (((packet[1] >> 8u) & 3u) == 0) {
+                if (waitCompares(packet, false, value)) {
+                    const auto base = registerBankBase(packet[6]);
+                    writeRegister(queue, base == ShaderRegisterBase ? 0x76u : base == ContextRegisterBase ? 0x69u : 0x79u, packet[6] - base, write.value);
+                }
+                return;
             }
             if (waitCompares(packet, false, value)) GuestMemory::Write(write.destination, std::as_bytes(std::span(&write.value, 1)), 4);
             return;
