@@ -1488,10 +1488,12 @@ void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAcc
     for (std::uint32_t component = 0; component < info.componentCount; component++) {
         texelBits += info.componentBits[component];
     }
+    const std::uint32_t elements = HasFlag(mem, RdnaImageSampleFlagGatherEight) ? 8u : 4u;
+    const bool fits = texelBits * elements <= 128u;
     std::uint32_t streamWords[4] = {ConstantU32(state, 0), ConstantU32(state, 0), ConstantU32(state, 0), ConstantU32(state, 0)};
     std::uint32_t rowInside = 0;
     const bool twoDimensional = dimension == RdnaImageDimension::Dim2D;
-    if (texelBits <= 32u) {
+    if (fits) {
         state.module.EmitCapability(spv::CapabilityImageQuery);
         const auto image = LoadSampledImageDescriptor(state, mem.resource);
         const auto size = state.module.AllocateId();
@@ -1536,8 +1538,8 @@ void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAcc
             rowInside = Binary(state, spv::OpSLessThan, TypeBool(state), rawRow, height);
             row = clampInto(rawRow, height);
         }
-        for (std::uint32_t element = 0; element < 4u; element++) {
-            const auto column = clampInto(Binary(state, spv::OpIAdd, TypeI32(state), anchor, ConstantI32(state, static_cast<std::int32_t>(element) - 1)), width);
+        for (std::uint32_t element = 0; element < elements; element++) {
+            const auto column = clampInto(Binary(state, spv::OpIAdd, TypeI32(state), anchor, ConstantI32(state, static_cast<std::int32_t>(element) - static_cast<std::int32_t>(elements / 2u - 1u))), width);
             std::uint32_t coord = column;
             if (twoDimensional) {
                 coord = state.module.AllocateId();
@@ -1563,7 +1565,7 @@ void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAcc
         if (((mem.dmask >> bit) & 1u) == 0u) {
             continue;
         }
-        if (texelBits <= 32u) {
+        if (fits) {
             selected[next] = rowInside != 0u ? Select(state, TypeU32(state), rowInside, streamWords[bit], ConstantU32(state, 0)) : streamWords[bit];
         }
         next++;
