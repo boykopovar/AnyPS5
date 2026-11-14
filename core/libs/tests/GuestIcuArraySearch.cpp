@@ -37,10 +37,19 @@ void TestLastOccurrenceAmongDuplicates() {
     Require(Search(values, 20, 6) == 14, "search: the value after a run of duplicates is found at its own index");
 }
 
+void TestLinearPathAndEmptyArrays() {
+    std::int32_t small[] = {5, 6, 7};
+    Require(Search(small, 3, 6) == 1, "search: the linear path finds a value in a short array");
+    Require(Search(small, 3, 8) == -4, "search: the linear path returns the complement past the end");
+    Require(Search(small, 3, 4) == -1, "search: the linear path returns the complement before the start");
+    Require(Search(small, 0, 1) == -1, "search: an empty array has insertion point zero");
+}
+
 }
 
 int main() {
     TestFoundAndInsertionPoints();
     TestLastOccurrenceAmongDuplicates();
+    TestLinearPathAndEmptyArrays();
     return 0;
 }
