@@ -367,6 +367,17 @@ std::uint64_t fillNoteAfter(const Recorder& recorder, const GuestMemory::Unchang
     return found;
 }
 
+std::uint64_t newestFillNote(const Recorder& recorder, const GuestMemory::UnchangedQuery& range, std::uint64_t floor, std::uint32_t word) {
+    std::uint64_t newest = 0u;
+    bool proves = false;
+    for (const auto& write : recorder.PendingWritesOver(range.address, range.bytes)) {
+        if (write.note <= newest) continue;
+        newest = write.note;
+        proves = write.note >= floor && write.begin <= range.address && write.end >= range.address + range.bytes && write.word == static_cast<std::int64_t>(word);
+    }
+    return proves ? newest : 0u;
+}
+
 bool uniformPlaneTarget(const DepthTarget& target) {
     return target.format == VK_FORMAT_D32_SFLOAT_S8_UINT && target.stencilAddress != 0u && target.htileAddress == 0u;
 }
@@ -1682,11 +1693,11 @@ public:
     bool clearPending = false;
     std::uint64_t clearGeneration = 0u;
     bool clearCompletionQueued = false;
+    std::uint32_t clearDispatchesPending = 0u;
     VkImageAspectFlags clearAspects = 0u;
     std::optional<std::uint32_t> clearPattern;
     std::uint64_t clearFillNote = 0u;
     std::uint64_t clearFillFloor = 0u;
-    std::uint64_t clearStoreStamp = 0u;
     bool clearStored = false;
     std::uint64_t stencilClearGeneration = 0u;
     std::optional<std::uint8_t> stencilClearValue;
@@ -3875,8 +3886,9 @@ bool NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::siz
             const auto& metadata = surface->sampling.initial[1];
             if (surface->target.stencilAddress != 0u) surface->sampling.Refuse("native multisample depth HTILE mask clear of a stencil surface is not implemented");
             else if (nativeBytes != bytes || nativeBytes < metadata.bytes || !GuestMemory::Accessible(reinterpret_cast<const void*>(metadata.address), metadata.bytes) || !GuestMemory::Watched(metadata.address, metadata.bytes)) surface->sampling.Refuse("native multisample depth incomplete or unproven fast-clear transition is not implemented");
-            else if (surface->clearPending || surface->clearGeneration != 0u) surface->sampling.Refuse("overlapping native multisample depth clear transitions are not implemented");
             else {
+                surface->clearGeneration = 0u;
+                surface->clearFillFloor = 0u;
                 surface->clearPending = true;
                 surface->clearCompletionQueued = false;
                 surface->clearAspects = VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -3912,20 +3924,24 @@ void ArmHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
 void QueueHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
     std::lock_guard lock(surfacesMutex());
     for (const auto& surface : surfaces()) {
-        if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress || surface->clearGeneration == 0u || !surface->sampling.refusal.empty()) continue;
-        if (bytes >= surface->sampling.initial[1].bytes) surface->clearCompletionQueued = true;
+        if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress) continue;
+        if (bytes < surface->sampling.initial[1].bytes) continue;
+        ++surface->clearDispatchesPending;
+        if (surface->clearGeneration == 0u || !surface->sampling.refusal.empty()) continue;
+        surface->clearCompletionQueued = true;
     }
 }
 
 void CompleteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
     std::lock_guard lock(surfacesMutex());
     for (const auto& surface : surfaces()) {
-        if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress || surface->clearGeneration == 0u) continue;
+        if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress) continue;
         const auto& metadata = surface->sampling.initial[1];
         if (bytes < metadata.bytes) continue;
+        if (surface->clearDispatchesPending != 0u && --surface->clearDispatchesPending == 0u) surface->clearCompletionQueued = false;
+        if (surface->clearGeneration == 0u) continue;
         Require(GuestMemory::UnchangedSinceCollected(metadata.address, metadata.bytes, surface->clearGeneration), "CPU writes raced native multisample depth clear");
         GuestMemory::MarkWritten(metadata.address, metadata.bytes);
-        surface->clearCompletionQueued = false;
     }
 }
 
@@ -4170,12 +4186,12 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
                 else {
                     const auto* recorder = RecorderFor(surface->context);
                     const auto refill = surface->stencilClearGeneration != 0u && surface->stencilClearValue == value && surface->stencilFillNote == 0u && recorder != nullptr ? fillNoteAfter(*recorder, plane, surface->stencilFillFloor, *value * 0x01010101u) : 0u;
-                    if (surface->stencilClearGeneration != 0u && refill == 0u) surface->sampling.Refuse("overlapping native multisample stencil plane fills are not implemented");
-                    else if (refill != 0u) surface->stencilFillNote = refill;
+                    const auto priorFloor = surface->stencilFillFloor;
+                    if (refill != 0u) surface->stencilFillNote = refill;
                     else {
                         surface->stencilClearGeneration = GuestMemory::CollectWritesUncached(plane.address, plane.bytes);
                         surface->stencilClearValue = *value;
-                        surface->stencilFillNote = recorder != nullptr ? recorder->LastWriteNote(address, bytes) : 0u;
+                        surface->stencilFillNote = recorder != nullptr ? newestFillNote(*recorder, plane, priorFloor, *value * 0x01010101u) : 0u;
                         surface->stencilFillFloor = recorder != nullptr ? recorder->NewestWriteNote(plane.address, plane.bytes) : 0u;
                         surface->stencilStored = GuestMemory::StoredAllSince_nid_no_patch(plane.address, plane.bytes, plane.generation);
                     }
@@ -4189,21 +4205,22 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
             else {
                 const auto* recorder = RecorderFor(surface->context);
                 const auto refill = surface->clearGeneration != 0u && surface->clearPattern == pattern && surface->clearFillNote == 0u && recorder != nullptr ? fillNoteAfter(*recorder, metadata, surface->clearFillFloor, pattern) : 0u;
-                const auto sameStored = [&] {
-                    if (surface->clearGeneration == 0u || surface->clearPattern != pattern) return false;
-                    std::vector<std::uint32_t> words(metadata.bytes / sizeof(std::uint32_t));
-                    std::memcpy(words.data(), reinterpret_cast<const void*>(metadata.address), metadata.bytes);
-                    return std::all_of(words.begin(), words.end(), [&](std::uint32_t word) { return word == pattern; }) && GuestMemory::NewestStamp(metadata.address, metadata.bytes) > surface->clearStoreStamp;
-                };
-                if (surface->clearPending || (surface->clearGeneration != 0u && !surface->clearPattern.has_value())) surface->sampling.Refuse("native multisample depth metadata fill over a pending HTILE clear dispatch is not implemented");
-                else if (surface->clearGeneration != 0u && refill == 0u && !sameStored()) surface->sampling.Refuse("overlapping native multisample depth clear transitions are not implemented");
-                else if (refill != 0u) surface->clearFillNote = refill;
+                const auto priorFloor = surface->clearFillFloor;
+                if (surface->clearPending || (surface->clearGeneration != 0u && !surface->clearPattern.has_value())) {
+                    surface->clearPending = false;
+                    surface->clearCompletionQueued = false;
+                    surface->clearGeneration = 0u;
+                    surface->clearAspects = 0u;
+                    surface->clearFillNote = 0u;
+                    surface->clearFillFloor = 0u;
+                    surface->clearStored = false;
+                }
+                if (refill != 0u) surface->clearFillNote = refill;
                 else {
                     surface->clearGeneration = GuestMemory::CollectWritesUncached(metadata.address, metadata.bytes);
                     surface->clearAspects = VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
                     surface->clearPattern = pattern;
-                    surface->clearStoreStamp = GuestMemory::NewestStamp(metadata.address, metadata.bytes);
-                    surface->clearFillNote = recorder != nullptr ? recorder->LastWriteNote(address, bytes) : 0u;
+                    surface->clearFillNote = recorder != nullptr ? newestFillNote(*recorder, metadata, priorFloor, pattern) : 0u;
                     surface->clearFillFloor = recorder != nullptr ? recorder->NewestWriteNote(metadata.address, metadata.bytes) : 0u;
                     surface->clearStored = GuestMemory::StoredAllSince_nid_no_patch(metadata.address, metadata.bytes, metadata.generation);
                 }
