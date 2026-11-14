@@ -574,7 +574,7 @@ private:
     void storeTrappedOverlaps(const char* reason);
     bool unchangedSinceBaseline(std::uint64_t from, std::uint64_t to) const;
     bool cpuLeftUnchanged(std::uint32_t layer, std::uint64_t from, std::uint64_t to, bool edge) const;
-    void saveBeforeUnwatch();
+    void saveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     void forgetKeptAtUnwatch(std::uint32_t unit);
     bool keptAtUnwatchHolds(std::uint64_t from, std::uint32_t unit) const;
     bool keptForCpu(std::uint32_t unit) const;
