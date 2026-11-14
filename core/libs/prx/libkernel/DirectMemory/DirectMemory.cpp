@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <iterator>
 #include <map>
@@ -1639,6 +1640,8 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
     return 0;
 }
 
+std::atomic<void (*)()> g_retypePause{nullptr};
+
 int DoMtypeprotect(const void* addr, size_t len, int type, int prot, bool requireMappedStart) {
     const int result = DoMprotect(addr, len, prot, requireMappedStart);
     if (result != 0) return result;
@@ -1646,18 +1649,18 @@ int DoMtypeprotect(const void* addr, size_t len, int type, int prot, bool requir
     constexpr auto pageMask = static_cast<std::uintptr_t>(PS5_PAGE_SIZE - 1);
     const auto first = address & ~pageMask;
     const auto end = (address + len + pageMask) & ~pageMask;
+    const auto pool = DirectMemoryPoolLock();
+    std::lock_guard lock(g_directLock);
     std::vector<std::pair<std::uint64_t, std::size_t>> physical;
-    {
-        std::lock_guard lock(g_directLock);
-        auto it = g_directMappings.lower_bound(first);
-        if (it != g_directMappings.begin() && std::prev(it)->second.end > first) --it;
-        for (; it != g_directMappings.end() && it->first < end; ++it) {
-            const auto low = std::max(it->first, first);
-            const auto high = std::min(it->second.end, end);
-            physical.emplace_back(it->second.phys + low - it->first, high - low);
-        }
+    auto it = g_directMappings.lower_bound(first);
+    if (it != g_directMappings.begin() && std::prev(it)->second.end > first) --it;
+    for (; it != g_directMappings.end() && it->first < end; ++it) {
+        const auto low = std::max(it->first, first);
+        const auto high = std::min(it->second.end, end);
+        physical.emplace_back(it->second.phys + low - it->first, high - low);
     }
-    for (const auto& [phys, bytes] : physical) DirectMemoryRetype(static_cast<int64_t>(phys), bytes, type);
+    if (const auto pause = g_retypePause.load(std::memory_order_acquire)) pause();
+    for (const auto& [phys, bytes] : physical) DirectMemoryRetypeLocked(pool, static_cast<int64_t>(phys), bytes, type);
     return result;
 }
 
@@ -1866,6 +1869,10 @@ void UnmapDirectMemoryRange(int64_t start, size_t len) {
         views = PhysicalViews(start, len);
         if (!views.empty() && views.front().address == view.address && views.front().bytes == view.bytes) throw std::runtime_error("released direct memory view survived its unmap");
     }
+}
+
+void DirectMemoryPauseBeforeRetypeForTest(void (*pause)()) {
+    g_retypePause.store(pause, std::memory_order_release);
 }
 
 bool DirectMemoryReleaseClaimed(std::uint64_t first, std::uint64_t last, std::uint64_t* claimEnd) {

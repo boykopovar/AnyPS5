@@ -136,6 +136,12 @@ struct PhysicalMemoryPool {
         _claimFinished.notify_all();
     }
 
+    std::unique_lock<std::mutex> Lock() { return std::unique_lock<std::mutex>(_mutex); }
+
+    void RequireLocked(const std::unique_lock<std::mutex>& lock) const {
+        if (lock.mutex() != &_mutex || !lock.owns_lock()) throw std::logic_error("DirectMemory pool: the caller does not hold the pool lock");
+    }
+
     bool Find(uint64_t offset, bool findNext, int64_t* start, int64_t* end, int* memoryType) {
         if (!start || !end || !memoryType || offset >= kPoolBytes) return false;
         std::lock_guard<std::mutex> lock(_mutex);
@@ -150,10 +156,15 @@ struct PhysicalMemoryPool {
     }
 
     bool Retype(uint64_t start, size_t len, int memoryType) {
+        const auto lock = Lock();
+        return RetypeLocked(lock, start, len, memoryType);
+    }
+
+    bool RetypeLocked(const std::unique_lock<std::mutex>& lock, uint64_t start, size_t len, int memoryType) {
+        RequireLocked(lock);
         uint64_t lo, hi;
         if (!PageSpan(start, len, lo, hi)) return false;
 
-        std::lock_guard<std::mutex> lock(_mutex);
         const bool splitLo = _splitAt(lo);
         try {
             _splitAt(hi);
@@ -361,6 +372,14 @@ bool DirectMemoryFind(int64_t offset, bool findNext, int64_t* start, int64_t* en
 
 void DirectMemoryRetype(int64_t start, size_t len, int memoryType) {
     (void)PhysicalMemoryPool::Instance().Retype(static_cast<uint64_t>(start), len, memoryType);
+}
+
+std::unique_lock<std::mutex> DirectMemoryPoolLock() {
+    return PhysicalMemoryPool::Instance().Lock();
+}
+
+void DirectMemoryRetypeLocked(const std::unique_lock<std::mutex>& pool, int64_t start, size_t len, int memoryType) {
+    (void)PhysicalMemoryPool::Instance().RetypeLocked(pool, static_cast<uint64_t>(start), len, memoryType);
 }
 
 int DirectMemoryLargestFree(int64_t searchStart, int64_t searchEnd, size_t alignment, int64_t* startOut, size_t* sizeOut) {

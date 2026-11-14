@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <mutex>
 #include <vector>
 
 #include "prx/libkernel/KernelErrors.hpp"
@@ -41,6 +42,9 @@ bool DirectMemoryTryAddReleaseClaim(std::uint64_t first, std::uint64_t last);
 void DirectMemoryRemoveReleaseClaim(std::uint64_t first);
 bool DirectMemoryFind(int64_t offset, bool findNext, int64_t* start, int64_t* end, int* memoryType);
 void DirectMemoryRetype(int64_t start, size_t len, int memoryType);
+std::unique_lock<std::mutex> DirectMemoryPoolLock();
+void DirectMemoryRetypeLocked(const std::unique_lock<std::mutex>& pool, int64_t start, size_t len, int memoryType);
+void DirectMemoryPauseBeforeRetypeForTest(void (*pause)());
 int DirectMemoryLargestFree(int64_t searchStart, int64_t searchEnd, size_t alignment, int64_t* startOut, size_t* sizeOut);
 size_t DirectMemoryFreeRun(uint64_t offset, uint64_t limit);
 int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart, size_t alignment);

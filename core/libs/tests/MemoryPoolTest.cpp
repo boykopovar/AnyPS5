@@ -230,6 +230,27 @@ void retype_splits_and_skips_gaps() {
     DirectMemoryFree(0, kPool);
 }
 
+void retype_locked_needs_the_pool_lock() {
+    int64_t a;
+    CHECK(DirectMemoryAlloc(0, kPool, 2 * kPage, 0, 1, &a) == 0 && a == 0);
+    std::mutex other;
+    bool refused = false;
+    try {
+        std::unique_lock<std::mutex> foreign(other);
+        DirectMemoryRetypeLocked(foreign, 0, kPage, 9);
+    } catch (const std::logic_error&) {
+        refused = true;
+    }
+    CHECK(refused && BlockIs(0, 0, 2 * kPage, 1));
+    {
+        const auto pool = DirectMemoryPoolLock();
+        DirectMemoryRetypeLocked(pool, static_cast<int64_t>(kPage), kPage, 9);
+    }
+    CHECK(BlockIs(0, 0, kPage, 1) && BlockIs(kPage, kPage, 2 * kPage, 9));
+    DirectMemoryFree(0, kPool);
+    CHECK(PoolEmpty());
+}
+
 void alloc_backing_bad_alloc_rolls_back() {
     int64_t out = -1;
     g_fault = Fault::BackingBadAlloc;
@@ -352,6 +373,7 @@ const Case kCases[] = {
     {"alloc_skips_a_claimed_release", alloc_skips_a_claimed_release},
     {"claims_wait_for_map_holds", claims_wait_for_map_holds},
     {"retype_splits_and_skips_gaps", retype_splits_and_skips_gaps},
+    {"retype_locked_needs_the_pool_lock", retype_locked_needs_the_pool_lock},
     {"alloc_backing_bad_alloc_rolls_back", alloc_backing_bad_alloc_rolls_back},
     {"alloc_node_bad_alloc_rolls_back", alloc_node_bad_alloc_rolls_back},
     {"alloc_unexpected_exception_propagates", alloc_unexpected_exception_propagates},

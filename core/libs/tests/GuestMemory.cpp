@@ -2605,6 +2605,53 @@ static void CheckFixedMapRacingAReleaseKeepsItsDestination() {
     }
 }
 
+struct ReallocationBeforeRetype {
+    std::int64_t phys;
+    std::size_t bytes;
+    int type;
+    std::thread worker;
+    std::atomic<bool> done{false};
+    int released = -1;
+    int allocated = -1;
+    std::int64_t again = -1;
+};
+
+static ReallocationBeforeRetype* reallocationBeforeRetype = nullptr;
+
+static void ReallocateBeforeTheRetype() {
+    auto* state = reallocationBeforeRetype;
+    if (state == nullptr || state->worker.joinable()) return;
+    state->worker = std::thread([state] {
+        state->released = sceKernelReleaseDirectMemory(state->phys, state->bytes);
+        state->allocated = sceKernelAllocateDirectMemory(state->phys, state->phys + static_cast<std::int64_t>(state->bytes), state->bytes, 0, state->type, &state->again);
+        state->done = true;
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+    while (!state->done && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+}
+
+static void CheckMtypeprotectLeavesAReplacementAllocation() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 3, &phys) == 0);
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, page, 3, 0, phys, 0) == 0);
+    ReallocationBeforeRetype state{phys, page, 5};
+    reallocationBeforeRetype = &state;
+    DirectMemoryPauseBeforeRetypeForTest(&ReallocateBeforeTheRetype);
+    const int retyped = sceKernelMtypeprotect(mapped, page, 4, 3);
+    DirectMemoryPauseBeforeRetypeForTest(nullptr);
+    reallocationBeforeRetype = nullptr;
+    Require(state.worker.joinable());
+    state.worker.join();
+    Require(retyped == 0 && state.released == 0 && state.allocated == 0 && state.again == phys);
+    int type = -1;
+    std::int64_t start = -1;
+    std::int64_t end = -1;
+    Require(sceKernelGetDirectMemoryType(phys, &type, &start, &end) == 0 && type == 5 && start == phys && end == phys + static_cast<std::int64_t>(page));
+    Require(sceKernelReleaseDirectMemory(state.again, page) == 0);
+}
+
 static void CheckSecondDirectMappingWaitsForLeases() {
 #ifdef _WIN32
     constexpr std::size_t page = 0x4000;
@@ -4567,6 +4614,7 @@ int main(int argc, char** argv) {
     CheckConcurrentCheckedReleasesUnmapViewsOnce();
     CheckReleaseExcludesMappingsAndAllocations();
     CheckFixedMapRacingAReleaseKeepsItsDestination();
+    CheckMtypeprotectLeavesAReplacementAllocation();
     CheckPinnedRangeIsLeftOutOfNewLeases();
     CheckBreakingAResidentRunKeepsConcurrentAccesses();
     CheckRemappedDirectMemoryIsChargedOnce();
