@@ -9369,6 +9369,127 @@ void writeBackBlockTests(const Device& device, Recorder& recorder) {
     std::cout << "write-back blocks: ok\n";
 }
 
+void importSegmentMemoTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0 || 65536 % base.hostImportAlignment != 0) {
+        std::cout << "host imports unavailable: import segment memo not tested\n";
+        return;
+    }
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = std::size_t{8} << 20u;
+    constexpr std::size_t offset = piece;
+    constexpr std::size_t registeredEnd = (4u << 20u) + 2 * piece;
+    SetHostImportWindow(window);
+    struct Window {
+        ~Window() { SetHostImportWindow(0); }
+    } restore;
+    GuestTextureResource resource{};
+    resource.width = 1024;
+    resource.height = 1024;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kLinear;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    const auto surfaceBytes = static_cast<std::size_t>(DescribeSurface(resource).guestBytes);
+    Require(surfaceBytes == (4u << 20u) && offset + surfaceBytes <= registeredEnd, "import segment memo: the surface does not fit its pieces");
+#ifdef _WIN32
+    void* reserved = VirtualAlloc(nullptr, 2 * window, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* reserved = std::aligned_alloc(window, 2 * window);
+#endif
+    Require(reserved != nullptr, "cannot allocate the import segment memo block");
+    auto* memory = static_cast<std::uint8_t*>(reinterpret_cast<void*>((reinterpret_cast<std::uintptr_t>(reserved) + window - 1) / window * window));
+    std::memset(memory, 0x5a, window);
+    bool registered = false;
+    const auto registerPieces = [&](bool gpuMapped, std::size_t unmappedPiece) {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t at = 0; at < registeredEnd; at += piece) {
+            if (registered) mutation.Remove(memory + at);
+            mutation.Add(memory + at, piece, true, true, gpuMapped || at / piece != unmappedPiece);
+        }
+        registered = true;
+    };
+    registerPieces(true, 0);
+    ClearHostImports(base.device);
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    resource.baseAddress = reinterpret_cast<std::uint64_t>(memory) + offset;
+    std::string failures;
+    {
+        auto image = StorageTexture::Create(context, detiler, resource, 0);
+        struct Round {
+            bool direct;
+            std::size_t texels;
+            std::size_t made;
+        };
+        const auto round = [&](std::array<std::uint8_t, 4> color) {
+            const auto before = HostImportCounters();
+            const auto range = VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            const auto commands = recorder.Commands();
+            recorder.Keep(image);
+            const VkClearColorValue value{{color[0] / 255.0f, color[1] / 255.0f, color[2] / 255.0f, color[3] / 255.0f}};
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            image->MarkDirty();
+            image->WriteBack();
+            Round result{};
+            result.direct = !image->GuestSnapshotValid();
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            for (std::size_t i = offset; i < offset + surfaceBytes; i += 4) result.texels += std::equal(color.begin(), color.end(), memory + i) ? 1 : 0;
+            const auto after = HostImportCounters();
+            for (std::size_t index = 0; index < ImportRequesterCount; ++index) result.made += after.requesters[index].made - before.requesters[index].made;
+            return result;
+        };
+        const auto check = [&](const char* step, const Round& got, bool direct, std::size_t made) {
+            std::printf("import segment memo, %s: %s write-back, %zu imports made, %zu of %zu texels stored\n", step, got.direct ? "GPU-direct" : "CPU", got.made, got.texels, surfaceBytes / 4);
+            if (got.direct != direct) failures += std::string(step) + ": the write-back took the " + (got.direct ? "GPU-direct" : "CPU") + " path\n";
+            if (got.texels != surfaceBytes / 4) failures += std::string(step) + ": the write-back stored " + std::to_string(got.texels) + " of " + std::to_string(surfaceBytes / 4) + " texels\n";
+            if (made != static_cast<std::size_t>(-1) && got.made != made) failures += std::string(step) + ": the write-back made " + std::to_string(got.made) + " imports, expected " + std::to_string(made) + "\n";
+        };
+        check("first write-back", round({255, 0, 0, 255}), true, 2);
+        check("second write-back, nothing changed", round({0, 255, 0, 255}), true, 0);
+        ClearHostImports(base.device);
+        check("after the host imports were cleared", round({0, 0, 255, 255}), true, 2);
+        registerPieces(false, 33);
+        check("after a piece lost its GPU mapping", round({255, 255, 0, 255}), false, static_cast<std::size_t>(-1));
+        registerPieces(true, 0);
+        check("after the piece was mapped again", round({0, 255, 255, 255}), true, static_cast<std::size_t>(-1));
+        {
+            GuestAllocations::Mutation mutation;
+            for (std::size_t at = 0; at < registeredEnd; at += piece) mutation.Remove(memory + at);
+            mutation.Add(memory, registeredEnd, true, true, true);
+        }
+        check("after the pieces were registered as one allocation", round({255, 0, 255, 255}), true, 1);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(memory);
+            for (std::size_t at = 0; at < registeredEnd; at += piece) mutation.Add(memory + at, piece, true, true, true);
+        }
+        recorder.Sync();
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t at = 0; at < registeredEnd; at += piece) mutation.Remove(memory + at);
+    }
+    ClearHostImports(base.device);
+    recorder.Sync();
+#ifdef _WIN32
+    VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+    std::free(reserved);
+#endif
+    if (!failures.empty()) throw std::runtime_error("import segment memo:\n" + failures);
+    std::cout << "import segment memo: ok\n";
+}
+
 bool flushWaitMipChainTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -16667,6 +16788,14 @@ int main(int argc, char** argv) {
             uploadShadowedSegmentTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--import-segment-memo-only") {
+            if (device.GetContext().hostImportAlignment == 0) {
+                std::cout << "skipped, host imports are unavailable\n";
+                return 77;
+            }
+            importSegmentMemoTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--flush-wait-mip-chain-only") return flushWaitMipChainTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--metadata-pass-only") {
             metadataPassTests(device, recorder);
@@ -16887,6 +17016,7 @@ int main(int argc, char** argv) {
         splitWriteBackTests(device, recorder);
         writeBackBlockTests(device, recorder);
         dccMipWriteBackTests(device, recorder);
+        importSegmentMemoTests(device, recorder);
         flushWaitMipChainTests(device, recorder);
         uploadBlockTests(device, recorder);
         uploadShadowedSegmentTests(device, recorder);

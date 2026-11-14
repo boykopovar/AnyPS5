@@ -654,6 +654,16 @@ private:
         std::uint64_t end;
     };
     std::vector<ImportSegment> importSegments() const;
+    struct SegmentMemo {
+        bool valid = false;
+        std::uint64_t generation = 0;
+        VkDevice device = VK_NULL_HANDLE;
+        std::uint64_t importEpoch = 0;
+        std::uint64_t importRefreshed = 0;
+        std::vector<ImportSegment> segments;
+    };
+    mutable std::mutex segmentMemoMutex;
+    mutable SegmentMemo segmentMemo;
     PaddingSeeds paddingSeeds(std::span<const ImportSegment> segments, const std::vector<CopiedBytes>& copied) const;
     // The direct upload and GPU-direct write-back of the runs through their windows (block units);
     // both return the bytes moved. The upload reads each unit from its unit shadow while fresh,

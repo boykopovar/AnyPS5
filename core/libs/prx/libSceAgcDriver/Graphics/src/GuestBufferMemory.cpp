@@ -7875,6 +7875,15 @@ bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof)
     return state.device == proof.device && state.epoch == proof.epoch && state.refreshedGeneration == proof.refreshedGeneration && !importsStale(context, state);
 }
 
+bool TouchHostImportsIfUnchanged(const Context& context, const HostImportsProof& proof, std::span<const HostImport* const> imports) {
+    if (proof.device == VK_NULL_HANDLE || proof.device != context.device) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != proof.device || state.epoch != proof.epoch || state.refreshedGeneration != proof.refreshedGeneration || importsStale(context, state)) return false;
+    for (const auto* import : imports) import->lastUse = ++state.useCounter;
+    return true;
+}
+
 bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof) {
     if (proof.device == VK_NULL_HANDLE || proof.device != context.device) return false;
     auto& state = Imports();
