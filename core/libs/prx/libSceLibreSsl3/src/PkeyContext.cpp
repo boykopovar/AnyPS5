@@ -1369,18 +1369,25 @@ bool IsNativePkeyMethod_nid_no_patch(const void* method) {
     return method == &RsaAsn1Method || method == &RsaPssAsn1Method;
 }
 
-extern "C" {
+namespace {
 
-LibreSsl3PkeyContext* APS5_VABI EVP_PKEY_CTX_new_nid_postfix(LibreSsl3EvpPkey* key, void* engine) {
-    (void) engine;
-    if (!key || (!key->method && key->type != LibreSsl3PkeyEc)) return nullptr;
-    const auto* asn1Method = static_cast<const LibreSsl3PkeyAsn1Method*>(key->method);
-    const auto* method = key->type == LibreSsl3PkeyEc ? &EcMethod :
-        FindNativePkeyMethod_nid_no_patch(asn1Method->keyType);
-    if (!method) {
-        QueueEvpError(ReasonUnsupportedAlgorithm);
-        return nullptr;
+constexpr std::int32_t PkeyCmac = 894;
+constexpr std::int32_t PkeyDh = 28;
+constexpr std::int32_t PkeyDsa = 116;
+constexpr std::int32_t PkeyEd25519 = 952;
+constexpr std::int32_t PkeyHkdf = 1022;
+constexpr std::int32_t PkeyTls1Prf = 1055;
+constexpr std::int32_t PkeyX25519 = 950;
+
+bool IsLibreSslOnlyPkeyMethod(int keyType) {
+    for (const auto supported : {PkeyCmac, PkeyDh, PkeyDsa, PkeyEd25519, PkeyHkdf, LibreSsl3PkeyHmac, PkeyTls1Prf,
+             PkeyX25519}) {
+        if (keyType == supported) return true;
     }
+    return false;
+}
+
+LibreSsl3PkeyContext* NewPkeyContext(LibreSsl3EvpPkey* key, const LibreSsl3PkeyMethod* method) {
     auto* context = static_cast<LibreSsl3PkeyContext*>(calloc_nid_postfix(1, sizeof(LibreSsl3PkeyContext)));
     if (!context) {
         QueueEvpError(AllocationFailure);
@@ -1394,6 +1401,35 @@ LibreSsl3PkeyContext* APS5_VABI EVP_PKEY_CTX_new_nid_postfix(LibreSsl3EvpPkey* k
         return nullptr;
     }
     return context;
+}
+
+} // namespace
+
+extern "C" {
+
+LibreSsl3PkeyContext* APS5_VABI EVP_PKEY_CTX_new_nid_postfix(LibreSsl3EvpPkey* key, void* engine) {
+    (void) engine;
+    if (!key || (!key->method && key->type != LibreSsl3PkeyEc)) return nullptr;
+    const auto* asn1Method = static_cast<const LibreSsl3PkeyAsn1Method*>(key->method);
+    const auto* method = key->type == LibreSsl3PkeyEc ? &EcMethod :
+        FindNativePkeyMethod_nid_no_patch(asn1Method->keyType);
+    if (!method) {
+        QueueEvpError(ReasonUnsupportedAlgorithm);
+        return nullptr;
+    }
+    return NewPkeyContext(key, method);
+}
+
+LibreSsl3PkeyContext* APS5_VABI EVP_PKEY_CTX_new_id_nid_postfix(int keyType, void* engine) {
+    (void) engine;
+    if (keyType == -1) return nullptr;
+    const auto* method = FindNativePkeyMethod_nid_no_patch(keyType);
+    if (!method) {
+        if (IsLibreSslOnlyPkeyMethod(keyType)) NotImplemented_nid_no_patch(__func__);
+        QueueEvpError(ReasonUnsupportedAlgorithm);
+        return nullptr;
+    }
+    return NewPkeyContext(nullptr, method);
 }
 
 int APS5_VABI EVP_PKEY_derive_init_nid_postfix(LibreSsl3PkeyContext* context) {
