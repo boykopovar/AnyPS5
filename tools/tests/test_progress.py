@@ -407,6 +407,24 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(group["todo_names"], [])
         self.assertEqual(group["inert_names"], [])
 
+    def test_internal_linkage_callbacks_are_not_counted(self):
+        source = (
+            "int APS5_VABI Exported() { return 1; }\n"
+            "static int APS5_VABI StaticCallback() { return 2; }\n"
+            "namespace {\n"
+            "int APS5_VABI AnonCallback() { return 3; }\n"
+            "}\n"
+            "namespace detail {\n"
+            "int APS5_VABI NamedNamespaceExport() { return 4; }\n"
+            "}\n")
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(source, encoding="utf-8")
+            group = progress.scan_library(library)
+        self.assertEqual(group["done_names"], ["Exported", "NamedNamespaceExport"])
+        self.assertEqual(group["todo_names"], [])
+
     def test_stub_marker_inside_raw_literals_does_not_mark_implementation_as_stub(self):
         for prefix in ("", "u8", "u", "U", "L"):
             source = ('int APS5_VABI Ready(int value) {\n'
