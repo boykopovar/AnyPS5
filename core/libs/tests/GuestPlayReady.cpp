@@ -32,6 +32,7 @@ void CheckBufferInit() {
         Require(Filled(buffer, 0, 24, 0) && Filled(buffer, 24, sizeof(buffer), fill), "scePlayReadyBufferInit clears exactly 24 bytes");
     }
     sceBufferInit(nullptr);
+    sceBufferInit(reinterpret_cast<void*>(0x10));
     Require(scePlayReadyBufferInit(nullptr) == InvalidArgument, "scePlayReadyBufferInit rejects a null buffer");
     Require(scePlayReadyBufferInit(reinterpret_cast<void*>(0x10)) == InvalidArgument, "scePlayReadyBufferInit rejects an unwritable buffer");
 }
@@ -52,6 +53,7 @@ void CheckInitParams() {
             Require(Filled(params, 0x138, sizeof(params), fill), "init params leave bytes from 0x138 untouched");
         }
         initialize(nullptr);
+        initialize(reinterpret_cast<void*>(0x10));
     }
 }
 

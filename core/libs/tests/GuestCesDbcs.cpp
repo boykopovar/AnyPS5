@@ -363,6 +363,12 @@ int main() {
     Require(sceCesBig5ToUtf32(big5, Bytes("\xA4\xA4"), 1, nullptr, &wide) == srcBufferEnd);
     Require(sceCesBig5ToUtf32be(eucJp, Bytes("\xA4\xA4"), 2, nullptr, &wide) == invalidParameter);
     Require(sceCesBig5ToUtf32le(big5, Bytes("\xA4\xA4"), 2, nullptr, nullptr) == invalidDstBuffer);
+    Require(sceCesUhcToUtf16(uhc, ga, 2, nullptr, nullptr, 0, nullptr) == invalidDstBuffer);
+    Require(sceCesUhcToUtf16(uhc, ga, 2, &read, &unit, 0, &units) == dstBufferEnd);
+    Require(sceCesUhcToUtf32(uhc, ga, 2, nullptr, nullptr) == invalidDstBuffer);
+    Require(sceCesBig5ToUcs2(big5, Bytes("\xA4\xA4"), 2, nullptr, nullptr) == invalidDstBuffer);
+    Require(sceCesBig5ToUtf16(big5, Bytes("\xA4\xA4"), 2, nullptr, nullptr, 0, nullptr) == invalidDstBuffer);
+    Require(sceCesBig5ToUtf16(big5, Bytes("\xA4\xA4"), 2, &read, &unit, 0, &units) == dstBufferEnd);
 
     RequireEncode(eucKrEncoders, eucKr, 0x20AC, 0, Bytes("\xA2\xE6"), 2);
     RequireEncode(eucKrEncoders, eucKr, 0xB620, unassignedCode, nullptr, 0);
