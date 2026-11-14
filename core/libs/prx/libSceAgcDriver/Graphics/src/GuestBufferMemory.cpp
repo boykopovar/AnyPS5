@@ -5732,21 +5732,53 @@ bool GuestBufferMemory::sparseHeapCandidate(const Region& region) {
     return region.sparseHeap && region.sparse && region.mirror == nullptr && region.direct == nullptr && (region.hostBacked || region.writable) && mirrorsEnabled() && sparseMirrorsEnabled();
 }
 
+ImportRun wholeReleasableRun(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end) {
+    auto run = crossedRun(lease, begin, end);
+    if (run.ranges.empty()) return run;
+    auto first = leasedIndexContaining(lease, begin);
+    auto last = first + run.ranges.size() - 1;
+    while (first > 0 && lease[first - 1]->releasable && continuesRun(*lease[first - 1], *lease[first])) --first;
+    while (last + 1 < lease.size() && lease[last + 1]->releasable && continuesRun(*lease[last], *lease[last + 1])) ++last;
+    run.base = lease[first]->address;
+    run.bytes = lease[last]->address + lease[last]->bytes - run.base;
+    run.ranges.assign(lease.begin() + static_cast<std::ptrdiff_t>(first), lease.begin() + static_cast<std::ptrdiff_t>(last) + 1);
+    return run;
+}
+
 std::shared_ptr<const GuestAllocations::Range> joinedHeapRange(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end) {
-    const auto run = crossedRun(lease, begin, end);
+    const auto run = wholeReleasableRun(lease, begin, end);
     if (run.ranges.size() < 2 || std::any_of(run.ranges.begin(), run.ranges.end(), [](const auto& range) { return !range->releasable; })) return nullptr;
     releaseExpiredJoinedHeaps();
-    auto& joined = JoinedHeaps();
-    std::lock_guard lock(joined.mutex);
-    auto& entry = joined.entries[run.base];
-    bool same = entry.range != nullptr && entry.members.size() == run.ranges.size();
-    for (std::size_t index = 0; same && index < run.ranges.size(); ++index) same = sameRange(entry.members[index], run.ranges[index]);
-    if (!same) {
-        const auto& first = *run.ranges.front();
-        entry.members.assign(run.ranges.begin(), run.ranges.end());
-        entry.range = std::make_shared<const GuestAllocations::Range>(GuestAllocations::Range{run.base, static_cast<std::size_t>(run.bytes), true, first.writable, first.allocationAddress, first.allocationBytes, true, first.gpu, first.backingSerial});
+    std::vector<std::shared_ptr<const GuestAllocations::Range>> superseded;
+    std::shared_ptr<const GuestAllocations::Range> owner;
+    {
+        auto& joined = JoinedHeaps();
+        std::lock_guard lock(joined.mutex);
+        auto& entry = joined.entries[run.base];
+        bool same = entry.range != nullptr && entry.members.size() == run.ranges.size();
+        for (std::size_t index = 0; same && index < run.ranges.size(); ++index) same = sameRange(entry.members[index], run.ranges[index]);
+        if (!same) {
+            const auto& first = *run.ranges.front();
+            entry.members.assign(run.ranges.begin(), run.ranges.end());
+            entry.range = std::make_shared<const GuestAllocations::Range>(GuestAllocations::Range{run.base, static_cast<std::size_t>(run.bytes), true, first.writable, first.allocationAddress, first.allocationBytes, true, first.gpu, first.backingSerial});
+            for (auto it = joined.entries.begin(); it != joined.entries.end();) {
+                const auto& other = it->second.range;
+                if (it->first == run.base || other == nullptr || other->address >= run.base + run.bytes || other->address + other->bytes <= run.base) {
+                    ++it;
+                    continue;
+                }
+                superseded.push_back(std::move(it->second.range));
+                it = joined.entries.erase(it);
+            }
+        }
+        owner = entry.range;
     }
-    return entry.range;
+    if (!superseded.empty()) {
+        auto& state = Mirrors();
+        std::lock_guard lock(state.mutex);
+        ++state.version;
+    }
+    return owner;
 }
 
 bool GuestBufferMemory::bindSparseMirror(Region& region, const GuestAllocations::Lease& lease) {
