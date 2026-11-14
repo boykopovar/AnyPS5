@@ -5,10 +5,12 @@
 #include "prx/libSceFontGs/libSceFontGs.hpp"
 #include <cerrno>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #if defined(__unix__) || defined(__linux__) || defined(__APPLE__)
 #include <sys/mman.h>
@@ -62,6 +64,7 @@ struct TestDrawupPool {
     std::uint32_t entryCount;
     std::uint32_t used;
     std::uint32_t maximum;
+    std::uint8_t* limit;
     TestDrawupEntry entries[1];
 };
 
@@ -174,9 +177,75 @@ struct DrawupFixture {
     ~DrawupFixture() { scePthreadMutexDestroy(&mutex); }
 };
 
+constexpr std::uint32_t GnmBackendOpcodes[21] = {
+    0x47000001, 0x47000002, 0x4700002d, 0x4700002e, 0x470000c0, 0x470000cb, 0x470000ce, 0x470000d1, 0x470000d2, 0x470000d4, 0x470000e0,
+    0x470000e1, 0x470000ec, 0x470000d0, 0x470000e2, 0x470000e3, 0x470000f0, 0x47000003, 0x47000004, 0x4700000b, 0x47000005};
+
+const FontGraphicsBackendList* g_enumeratedList = nullptr;
+void* g_enumeratedDispatch = nullptr;
+
+int APS5_VABI RecordBackendList(void* dispatch, const FontGraphicsBackendList* list) {
+    g_enumeratedDispatch = dispatch;
+    g_enumeratedList = list;
+    return 0x1234;
+}
+
+const FontGraphicsServiceParam* GnmBackend() {
+    return static_cast<const FontGraphicsServiceParam*>(sceFontSelectGraphicsGnm(0));
+}
+
 void GnmSelect() {
     Require(sceFontSelectGraphicsGnm(1) == nullptr);
     Require(sceFontSelectGraphicsGnm(0xffffffff) == nullptr);
+    const FontGraphicsServiceParam* const backend = GnmBackend();
+    Require(backend != nullptr && sceFontSelectGraphicsGnm(0) == backend);
+    Require(backend->tag == 0x0e08 && backend->revision == 4 && backend->level == 0x200);
+    Require(backend->instanceSlot != nullptr && *backend->instanceSlot == nullptr);
+    Require(backend->instanceSize == 0x20000 && backend->reserved14 == 0 && backend->enumerate != nullptr);
+    Require(backend->enumerate(nullptr, RecordBackendList) == 0 && g_enumeratedList == nullptr);
+    std::uint64_t dispatch[0x1c] = {};
+    Require(backend->enumerate(dispatch, RecordBackendList) == 0x400 && g_enumeratedDispatch == dispatch);
+    const auto* const base = reinterpret_cast<const std::uint8_t*>(backend);
+    const FontGraphicsBackendList* const list = g_enumeratedList;
+    Require(reinterpret_cast<const std::uint8_t*>(list) == base + 0x170);
+    Require(list->reserved == 0 && list->count == 21 && reinterpret_cast<const std::uint8_t*>(list->entries) == base + 0x20);
+    for (std::size_t i = 0; i < 21; ++i) {
+        const FontGraphicsBackendEntry& entry = list->entries[i];
+        Require(entry.opcode == GnmBackendOpcodes[i] && entry.reserved == 0 && entry.value != 0);
+        if (entry.opcode == 0x47000003) Require(entry.value == 0x1000000040);
+        else if (entry.opcode == 0x47000004) Require(entry.value == 0x4000000020);
+        else if (entry.opcode == 0x47000002) reinterpret_cast<void(APS5_VABI*)(void*)>(entry.value)(dispatch);
+        else if (entry.opcode == 0x47000005) Require(reinterpret_cast<int(APS5_VABI*)(void*, void*, std::uint64_t)>(entry.value)(nullptr, nullptr, 0) == 0);
+    }
+}
+
+struct GnmAllocations {
+    bool fail = true;
+    int live = 0;
+};
+
+void* APS5_VABI GnmAllocate(void* object, std::uint32_t size) {
+    auto& state = *static_cast<GnmAllocations*>(object);
+    if (state.fail) return nullptr;
+    ++state.live;
+    return std::malloc(size);
+}
+
+void APS5_VABI GnmDeallocate(void* object, void* p) {
+    --static_cast<GnmAllocations*>(object)->live;
+    std::free(p);
+}
+
+void GnmService() {
+    const FontGraphicsServiceParam* const backend = GnmBackend();
+    GnmAllocations allocations;
+    const FontMemoryInterface iface{GnmAllocate, GnmDeallocate, nullptr, nullptr, nullptr, nullptr};
+    FontMemory memory{};
+    Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, &allocations, nullptr, nullptr) == 0);
+    FontGraphicsService* service = nullptr;
+    const int before = g_errorCount;
+    Require(sceFontCreateGraphicsService(&memory, backend, &service) == static_cast<int>(0x80460010));
+    Require(g_errorCount == before + 1 && g_lastError == static_cast<int>(0x80460010) && *backend->instanceSlot == nullptr);
 }
 
 void GnmDrawupImage() {
@@ -505,6 +574,55 @@ void GnmSurfaceInitCases(bool neo) {
     }
 }
 
+struct StructureTextureCase {
+    std::uint32_t resource[8];
+    std::uint32_t base;
+};
+
+const StructureTextureCase StructureTextureCases[5][2] = {
+    {{{0x00001000, 0x00100000, 0x7007c03f, 0x94800849, 0x0007e000, 0, 0, 0}, 0x00001000},
+     {{0x00001000, 0x00100000, 0x7007c03f, 0x94800849, 0x0007e000, 0, 0x01000000, 0}, 0x00001000}},
+    {{{0x00023456, 0x00a00000, 0x700c4063, 0x94d00fac, 0x000ce000, 0, 0, 0}, 0x00023456},
+     {{0x00023456, 0x00a00000, 0x700c4063, 0x94d00fac, 0x000ce000, 0, 0x01000000, 0}, 0x00023456}},
+    {{{0x7fffabc5, 0x1ce00000, 0x710dc77f, 0x94a00fac, 0x00efe000, 0, 0, 0}, 0x7fffabc5},
+     {{0x7fffab8d, 0x1ce00000, 0x710dc77f, 0x94a00fac, 0x00efe000, 0, 0x01000000, 0}, 0x7fffab8d}},
+    {{{0x40000f87, 0x00300000, 0x7031c12b, 0x94200b24, 0x002fe000, 0, 0, 0}, 0x40000f87},
+     {{0x40000f8f, 0x00300000, 0x7031c12b, 0x94200b24, 0x003fe000, 0, 0x01000000, 0}, 0x40000f8f}},
+    {{{0x12345600, 0x00c00000, 0x707fc1ff, 0x95000f2e, 0x003fe000, 0, 0, 0}, 0x12345600},
+     {{0x12345608, 0x00c00000, 0x707fc1ff, 0x95000f2e, 0x003fe000, 0, 0x01000000, 0}, 0x12345608}}};
+
+using GnmStructureTextureHandler = int(APS5_VABI*)(void*, void*, std::uint64_t);
+
+GnmStructureTextureHandler GnmStructureTexture() {
+    const auto* const list = reinterpret_cast<const FontGraphicsBackendList*>(reinterpret_cast<const std::uint8_t*>(GnmBackend()) + 0x170);
+    for (std::int32_t i = 0; i < list->count; ++i)
+        if (list->entries[i].opcode == 0x47000005) return reinterpret_cast<GnmStructureTextureHandler>(list->entries[i].value);
+    return nullptr;
+}
+
+void GnmStructureTextureCases() {
+    const GnmStructureTextureHandler structure = GnmStructureTexture();
+    Require(structure != nullptr);
+    std::uint32_t texture[16];
+    std::memcpy(texture, SurfaceCases[0].texture[0], sizeof(texture));
+    Require(structure(nullptr, texture, 0x100) == 0 && std::memcmp(texture, SurfaceCases[0].texture[0], sizeof(texture)) == 0);
+    for (std::size_t i = 0; i < 5; ++i) {
+        for (std::size_t neo = 0; neo < 2; ++neo) {
+            const StructureTextureCase& expected = StructureTextureCases[i][neo];
+            std::memcpy(texture, SurfaceCases[i].texture[neo], sizeof(texture));
+            std::uint32_t object[24];
+            std::memset(object, 0xcc, sizeof(object));
+            Require(structure(object, texture, SurfaceCases[i].base) == 0x20);
+            for (std::size_t w = 0; w < 16; ++w) Require(object[w] == 0xcccccccc);
+            for (std::size_t w = 0; w < 8; ++w) Require(object[16 + w] == expected.resource[w]);
+            for (std::size_t w = 0; w < 16; ++w) {
+                const std::uint32_t value = w == 0 ? expected.base : w == 7 || w == 9 ? 0 : SurfaceCases[i].texture[neo][w];
+                Require(texture[w] == value);
+            }
+        }
+    }
+}
+
 void WriteParamSfo(const std::filesystem::path& directory, std::uint32_t attribute) {
     const auto metadata = directory / "app0" / "sce_sys";
     std::filesystem::create_directories(metadata);
@@ -567,6 +685,8 @@ int main(int argc, char** argv) {
     GnmDrawupPattern();
     GnmSequences();
     GnmSurfaceValidation();
+    GnmStructureTextureCases();
     GnmSurfaceModes(argv[0]);
+    GnmService();
     sceFontSetGraphicsErrorCallback(nullptr);
 }
