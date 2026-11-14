@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
  try {
   auto device = OpenVulkanTestDevice(); if (!device) return VulkanTestSkipped;
   auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
-  if (!AgcDriver::Graphics::DmaBufImportSelected(context)) return VulkanTestSkipped;
+  if (!AgcDriver::Graphics::DmaBufImportSelected(context)) { std::puts("skipped, the device does not select watched dma-buf imports"); return VulkanTestSkipped; }
   std::uint64_t limit = 0; std::ifstream("/sys/module/udmabuf/parameters/size_limit_mb") >> limit;
   if (limit == 0 || limit >= 128) return VulkanTestSkipped;
   Backing = memfd_create("selected-list-refusal", MFD_CLOEXEC | MFD_ALLOW_SEALING);
