@@ -310,6 +310,7 @@ struct RetainedAddressSpace {
     RetainedAddressSpace* next = nullptr;
 };
 void ClearRetainedSpaces(VkDevice device);
+void ClearUploadCopies(VkDevice device);
 std::size_t RetainedSpaceCount();
 
 struct AddressCopy {
