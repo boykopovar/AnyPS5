@@ -4276,6 +4276,29 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
         Require(std::all_of(contents.begin() + elementBytes, contents.end(), [](std::byte value) { return value == std::byte{0x22}; }), "second draw observed overwritten input");
         snapshotRecorder.NotePendingWrite(element, elementBytes);
         Require(resources.PrepareDrawBindings(snapshotRecorder) == nullptr, "GPU-produced input was replaced with stale CPU memory");
+        {
+            const bool inPlace = std::getenv("APS5_NO_MOVED_BUFFERS_IN_PLACE") == nullptr;
+            constexpr std::uint32_t movedBytes = 256;
+            const auto movedTo = [&](std::uint64_t where) {
+                auto moved = program;
+                moved.bindings[0].guestDescriptor = {static_cast<std::uint32_t>(where), static_cast<std::uint32_t>(where >> 32u) & 0xffffu, movedBytes, 0x31000000u};
+                return moved;
+            };
+            const auto aligned = movedTo(element + 256);
+            const CompiledShader alignedShader{ShaderRecompiler::ShaderStage::Compute, &aligned, 0};
+            const auto moved = resources.MovedReadOnlyBuffers(std::span<const CompiledShader>(&alignedShader, 1), snapshotRecorder, nullptr);
+            Require(moved.has_value() == inPlace, inPlace ? "a moved read-only element behind a pending GPU write was left to a build" : "APS5_NO_MOVED_BUFFERS_IN_PLACE left a moved element behind a pending GPU write on the cached set");
+            if (inPlace) {
+                const auto* import = HostImportFor(snapshotContext, element + 256, movedBytes);
+                Require(import != nullptr && moved->size() == 1 && moved->front().inPlace == import->buffer && moved->front().adjustment == 0 && moved->front().inPlaceOffset == HostImportOffset(*import, element + 256), "a moved element behind a pending GPU write is not bound at its place in the host import");
+                const auto bound = resources.PrepareDrawBindings(snapshotRecorder, *moved);
+                Require(bound != nullptr && bound->snapshots.size() == 1 && bound->snapshots[0].buffer == nullptr && bound->snapshots[0].handle == import->buffer && bound->snapshots[0].offset == moved->front().inPlaceOffset && bound->snapshots[0].bytes == movedBytes, "a moved element behind a pending GPU write was copied by the CPU");
+                Require(snapshotRecorder.PendingReadOverlaps(element + 256, movedBytes), "the in-place read of a moved element was not noted");
+            }
+            const auto unaligned = movedTo(element + 256 + 4);
+            const CompiledShader unalignedShader{ShaderRecompiler::ShaderStage::Compute, &unaligned, 0};
+            Require(snapshotContext.limits.minStorageBufferOffsetAlignment <= 4 || !resources.MovedReadOnlyBuffers(std::span<const CompiledShader>(&unalignedShader, 1), snapshotRecorder, nullptr).has_value(), "a moved element whose offset the shader cannot be told was bound in place");
+        }
         snapshotRecorder.Sync();
     }
     Require(snapshotLifetime.expired(), "draw snapshots outlived their recorder");

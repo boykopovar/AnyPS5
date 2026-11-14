@@ -2137,6 +2137,16 @@ BufferWriteCounters& BufferWrites() {
     return counters;
 }
 
+struct MovedInPlaceCounters {
+    std::atomic<std::uint64_t> taken{0};
+    std::atomic<std::uint64_t> refused{0};
+};
+
+MovedInPlaceCounters& MovedInPlace() {
+    static MovedInPlaceCounters counters;
+    return counters;
+}
+
 }
 
 double ShaderResources::phase(BuildPhase which) {
@@ -6801,14 +6811,51 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
                 if (bytes > maxDrawSnapshotBytes - movedBytes) return std::nullopt;
                 if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return std::nullopt;
-                if (guestMemory.WritesOverlap(begin, bytes) || recorder.PendingWriteOverlaps(begin, bytes) || PendingStorageOverlaps(begin, bytes, nullptr) || AnyShadowedOverlaps(begin, bytes)) return std::nullopt;
+                if (guestMemory.WritesOverlap(begin, bytes) || PendingStorageOverlaps(begin, bytes, nullptr) || AnyShadowedOverlaps(begin, bytes)) return std::nullopt;
+                MovedBuffer entry{index, address, static_cast<std::size_t>(size)};
+                const bool pending = recorder.PendingWriteOverlaps(begin, bytes);
+                if (pending && !movedInPlace(recorder, item, address, size, entry)) return std::nullopt;
                 if (moved.empty()) moved.reserve(allocations.size());
-                moved.push_back({index, address, static_cast<std::size_t>(size)});
-                movedBytes += bytes;
+                moved.push_back(entry);
+                if (!pending) movedBytes += bytes;
             }
         }
     }
     return moved;
+}
+
+bool ShaderResources::movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry) const {
+    static const bool enabled = std::getenv("APS5_NO_MOVED_BUFFERS_IN_PLACE") == nullptr;
+    auto& counters = MovedInPlace();
+    const auto refuse = [&] {
+        counters.refused.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    };
+    if (!enabled || context.hostImportAlignment == 0) return false;
+    const auto* import = HostImportFor(context, address, static_cast<std::size_t>(size));
+    if (import == nullptr) return refuse();
+    const auto offset = HostImportOffset(*import, address);
+    if (offset % 4 != 0) return refuse();
+    const auto adjustment = static_cast<std::uint32_t>(offset % std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4));
+    const bool inData = item.pushByte < 0 && item.dataAllocation >= 0;
+    const auto* data = inData ? &allocations[static_cast<std::size_t>(item.dataAllocation)] : nullptr;
+    const bool told = item.pushByte >= 0 || (data != nullptr && !data->guest && data->buffer != nullptr && item.dataByte < data->size);
+    if (adjustment != item.adjustment && !told) return refuse();
+    const auto begin = address - adjustment;
+    const auto bytes = GuestBufferMemory::ViewBytes(size, adjustment);
+    if (bytes > context.limits.maxStorageBufferRange || begin + bytes > import->base + import->bytes) return refuse();
+    const auto length = static_cast<std::size_t>(bytes);
+    if (guestMemory.WritesOverlap(begin, length) || PendingStorageOverlaps(begin, length, nullptr) || AnyShadowedOverlaps(begin, length)) return refuse();
+    if (recorder.PendingLabelIn(begin, length) || recorder.QueuedStoreOverlaps(begin, length)) return refuse();
+    const auto overlaps = [&](const auto& writer) { return writer->WritesOverlap(begin, length); };
+    if (context.copiedWriters != nullptr && std::any_of(context.copiedWriters->begin(), context.copiedWriters->end(), overlaps)) return refuse();
+    const auto drawWriters = DrawCopiedWriters();
+    if (std::any_of(drawWriters->begin(), drawWriters->end(), overlaps)) return refuse();
+    entry.inPlace = import->buffer;
+    entry.inPlaceOffset = offset - adjustment;
+    entry.adjustment = adjustment;
+    counters.taken.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 const char* ShaderResources::MoveRefusalName(MoveRefusal refusal) {
@@ -6903,17 +6950,40 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         if (result->snapshots.empty()) result->snapshots.reserve(allocations.size());
         result->snapshots.push_back(std::move(snapshot));
     };
+    const auto toldInData = [&](const MovedBuffer& entry, std::size_t data) {
+        const auto& element = allocations[entry.allocation];
+        return entry.inPlace != VK_NULL_HANDLE && element.pushByte < 0 && element.dataAllocation == static_cast<std::int64_t>(data);
+    };
+    const bool inPlaceData = std::any_of(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.inPlace != VK_NULL_HANDLE && allocations[entry.allocation].pushByte < 0; });
     for (std::size_t index = 0; index < allocations.size(); ++index) {
         const auto& item = allocations[index];
         const auto override = std::find_if(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
-        if (override != moved.end() && !override->words.empty()) {
-            auto slice = recorder.DrawUpload(override->size);
-            std::memcpy(slice.bytes, override->words.data(), override->size);
+        const bool words = override != moved.end() && !override->words.empty();
+        const bool offsets = inPlaceData && !item.guest && item.buffer != nullptr && std::any_of(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return toldInData(entry, index); });
+        if (words || (offsets && override == moved.end())) {
+            const auto size = words ? override->size : item.size;
+            auto slice = recorder.DrawUpload(size);
+            if (words) std::memcpy(slice.bytes, override->words.data(), size);
+            else if (!item.dataWords.empty()) std::memcpy(slice.bytes, item.dataWords.data(), std::min(size, item.dataWords.size() * sizeof(std::uint32_t)));
+            else std::memcpy(slice.bytes, item.buffer->Bytes().data(), size);
             for (const auto& patch : dataPatches) {
-                if (patch.allocation == index && patch.byte < override->size) slice.bytes[patch.byte] = static_cast<std::byte>(patch.adjustment);
+                if (patch.allocation == index && patch.byte < size) slice.bytes[patch.byte] = static_cast<std::byte>(patch.adjustment);
+            }
+            if (offsets) {
+                for (const auto& entry : moved) {
+                    if (toldInData(entry, index) && allocations[entry.allocation].dataByte < size) slice.bytes[allocations[entry.allocation].dataByte] = static_cast<std::byte>(entry.adjustment);
+                }
             }
             selected.push_back(index);
-            keep({0, std::move(slice.buffer), slice.offset, override->size});
+            keep({0, std::move(slice.buffer), slice.offset, size});
+            continue;
+        }
+        if (override != moved.end() && override->inPlace != VK_NULL_HANDLE) {
+            const auto begin = override->address - override->adjustment;
+            const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(override->size, override->adjustment));
+            recorder.NotePendingRead(begin, bytes, Recorder::ReadKind::DispatchElement);
+            selected.push_back(index);
+            keep({begin, nullptr, override->inPlaceOffset, bytes, override->inPlace});
             continue;
         }
         std::uint64_t address = item.address;
@@ -6973,7 +7043,9 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     if (selected.empty() && !rebound) return {};
     writeDrawSets(*result, selected, faultRecord);
     recorder.Keep(result);
-    for (const auto& snapshot : result->snapshots) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());
+    for (const auto& snapshot : result->snapshots) {
+        if (snapshot.buffer != nullptr) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());
+    }
     return result;
 }
 
@@ -7033,7 +7105,7 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
                 const auto snapshotIndex = snapshotIndices[binding.allocations[element]];
                 if (snapshotIndex == selected.size()) continue;
                 const auto& snapshot = result.snapshots[snapshotIndex];
-                buffers[offset + element] = wholeDwordRange({snapshot.buffer->Handle(), snapshot.offset, snapshot.bytes});
+                buffers[offset + element] = wholeDwordRange({snapshot.buffer != nullptr ? snapshot.buffer->Handle() : snapshot.handle, snapshot.offset, snapshot.bytes});
             }
         }
     }
@@ -7188,6 +7260,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     const auto elements = counters.elements.load();
     const auto readOnly = counters.readOnly.load();
     AgcDriver::ProfilePrint_nid_no_patch("[buffers] descriptor elements bound (cumulative): %llu total, %llu written, %llu read-only; %llu pending-write notes skipped\n", static_cast<unsigned long long>(elements), static_cast<unsigned long long>(elements - readOnly), static_cast<unsigned long long>(readOnly), static_cast<unsigned long long>(counters.notesSkipped.load()));
+    AgcDriver::ProfilePrint_nid_no_patch("[buffers] moved read-only elements under a recorded GPU write (cumulative): %llu read in place on a cached set, %llu refused and rebuilt\n", static_cast<unsigned long long>(MovedInPlace().taken.load()), static_cast<unsigned long long>(MovedInPlace().refused.load()));
 }
 
 void ShaderResources::CheckFaults() const {
