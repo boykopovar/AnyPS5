@@ -82,9 +82,11 @@ struct DrawEntry {
     std::shared_ptr<DrawEntry> donor;
 };
 
-enum class DrawShapeReuse : std::uint8_t { EqualWords, Relocated, Forwarded, Count };
+enum class DrawShapeReuse : std::uint8_t { EqualWords, Relocated, Forwarded, VertexTables, Count };
 
-enum class DrawShapeMiss : std::uint8_t { NoStage, VertexInputs, UserWord, Memory, Validation, Count };
+enum class DrawShapeMiss : std::uint8_t { NoStage, VertexInputs, UserWord, VertexDecode, VertexLayout, Memory, Validation, Count };
+
+enum class DrawShapeWord : std::uint8_t { VertexTable, Pointer, Value, Read, Count };
 
 struct DrawDataCandidate {
     std::shared_ptr<DispatchVariant> variant;
@@ -92,6 +94,7 @@ struct DrawDataCandidate {
     std::uint64_t key = 0;
     std::uint8_t rank = 0;
     DrawShapeReuse kind = DrawShapeReuse::EqualWords;
+    bool rebased = false;
 };
 
 using DrawDataCandidates = std::vector<std::vector<DrawDataCandidate>>;
@@ -176,6 +179,8 @@ struct DrawEntryCounters {
     std::array<std::uint64_t, static_cast<std::size_t>(DrawShapeReuse::Count)> shapeReuses{};
     std::array<std::uint64_t, static_cast<std::size_t>(DrawShapeMiss::Count)> shapeMisses{};
     std::uint64_t shapeDrawsTried = 0, shapeDraws = 0, shapeIdentityAdmissions = 0, shapeKeysDropped = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(DrawShapeWord::Count)> shapeVertexWords{};
+    std::uint64_t shapeVertexReused = 0, shapeVertexRebased = 0, shapeVertexCaptured = 0, shapeVertexVerified = 0, shapeVertexDiffered = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 
@@ -205,6 +210,7 @@ struct StageCapture {
     ShaderRecompiler::SrtUserDataUse userDataUse;
     std::uint64_t userDataMask = ~std::uint64_t{0};
     std::uint64_t forwardedWords = 0;
+    std::uint64_t vertexTableWords = 0;
 };
 
 struct RelocatableUserWord {

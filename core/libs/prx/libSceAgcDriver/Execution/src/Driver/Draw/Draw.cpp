@@ -145,6 +145,8 @@ struct DrawTail {
     std::shared_ptr<DrawEntry> dataEntry;
     std::vector<std::pair<std::uint64_t, std::shared_ptr<DrawEntry>>> dataEntries;
     std::vector<DrawShapeMiss> shapeMisses;
+    std::vector<DrawShapeWord> shapeWords;
+    std::vector<bool> vertexDecoded;
     std::uint64_t shapeKey = 0;
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
     std::vector<DrawProgram> writablePrograms;
@@ -628,10 +630,21 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             Graphics::ApplyPointSize(graphics, *vertexInfos[i]);
         }
     };
+    tail.vertexDecoded.assign(programs.size(), !registerKey);
     if (!registerKey) {
         for (std::size_t i = 0; i < programs.size(); ++i) decodeVertexInfo(i);
         phaseTiming.Phase(DrawRowDecode);
     }
+    const std::function<bool(std::size_t)> redecodeVertexInfo = [&](std::size_t i) {
+        if (tail.vertexDecoded[i]) return true;
+        try {
+            decodeVertexInfo(i);
+        } catch (const std::exception&) {
+            return false;
+        }
+        tail.vertexDecoded[i] = true;
+        return true;
+    };
     auto& shaderMemory = tail.shaderMemory;
     shaderMemory = std::make_unique<ShaderMemory>(memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter(), &QueryPendingSpan);
     auto& results = tail.results;
@@ -663,12 +676,13 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     auto& stageData = tail.stageData;
     stageData.resize(programs.size());
     tail.shapeMisses.assign(programs.size(), DrawShapeMiss::NoStage);
+    tail.shapeWords.assign(programs.size(), DrawShapeWord::Count);
     auto& drawHit = tail.drawHit;
     auto& verifyHit = tail.verifyHit;
     tail.stageEntries = useDrawEntries && !(graphics.stages.tessellation && !drawParameters.indirect && drawParameters.instanceCount > 1u);
     const bool stageEntries = tail.stageEntries;
     try {
-        lookupDraw(submission, localDevice, graphics, pixel, programs, roles, vertexInfos, stageEntries, registerKey, profile, drawKey, entry, matched, matchedRegions, drawHit, verifyHit, phaseTiming, phaseMs, dataEntries, dataCandidates, stageData, tail.shapeMisses);
+        lookupDraw(submission, localDevice, graphics, pixel, programs, roles, vertexInfos, stageEntries, registerKey, profile, drawKey, entry, matched, matchedRegions, drawHit, verifyHit, phaseTiming, phaseMs, dataEntries, dataCandidates, stageData, tail.shapeMisses, decodeReads, redecodeVertexInfo, tail.shapeWords);
     } catch (...) {
         TraceDrawAttemptException(traceToken, "lookup", submission.serial, submission.queue, packetOffset, std::current_exception());
         throw;
@@ -729,10 +743,10 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             }
             if (!dataCandidates[i].empty() && !verifyDrawDataHits()) {
                 const auto& info = dataCandidates[i].front().variant->vertexInfo;
-                if (info != nullptr) vertexInfos[i] = *info;
+                if (info != nullptr && !tail.vertexDecoded[i]) vertexInfos[i] = *info;
                 continue;
             }
-            decodeVertexInfo(i);
+            if (!tail.vertexDecoded[i]) decodeVertexInfo(i);
             if (matched[i] != nullptr && verifyDrawRecipe() && (vertexInfos[i].has_value() != (matched[i]->vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *matched[i]->vertexInfo)))) {
                 static std::atomic<std::uint64_t> reports{0};
                 if (reports.fetch_add(1) < 20) std::fprintf(stderr, "[draw-cache] verify: stage %zu (program 0x%llx) of a hit has a vertex stage info unlike its variant's\n", i, static_cast<unsigned long long>(programs[i].binary.codeAddress));
@@ -921,18 +935,37 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
         return text;
     };
+    const auto flattenedRuns = [](const std::vector<std::pair<std::uint64_t, std::uint64_t>>& runs, const std::vector<std::uint32_t>& words) {
+        std::vector<std::pair<std::uint64_t, std::uint32_t>> flat;
+        std::size_t word = 0;
+        for (const auto& [begin, end] : runs) {
+            for (auto address = begin; address < end && word < words.size(); address += sizeof(std::uint32_t)) flat.emplace_back(address, words[word++]);
+        }
+        std::sort(flat.begin(), flat.end());
+        return flat;
+    };
+    const auto sameAttributes = [](const ShaderRecompiler::RecompileResult& a, const ShaderRecompiler::RecompileResult& b) {
+        return std::equal(a.vertexAttributes.begin(), a.vertexAttributes.end(), b.vertexAttributes.begin(), b.vertexAttributes.end(), [](const ShaderRecompiler::VertexAttribute& x, const ShaderRecompiler::VertexAttribute& y) { return x.location == y.location && x.components == y.components && x.fetchIndex == y.fetchIndex && x.formatComponents == y.formatComponents && x.resource.fields == y.resource.fields; });
+    };
+    std::uint64_t vertexVerified = 0, vertexDiffered = 0;
     const auto verifyDataStage = [&](std::size_t i, const DispatchVariant& kept, bool moved) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
         std::vector<std::uint32_t> words;
         freshRuns(i, runs, words);
         const auto& compiled = *stageCaptures[i].compiled;
+        const bool tailed = kept.decodeRuns != 0;
         const bool sameBindings = !moved || (compiled.bindings.size() == kept.compiled->bindings.size() && std::equal(compiled.bindings.begin(), compiled.bindings.end(), kept.compiled->bindings.begin(), [](const auto& a, const auto& b) { return a.kind == b.kind && a.role == b.role && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor; }));
-        const char* what = joinedRuns(runs) != joinedRuns(kept.runs) ? "runs" : words != kept.words ? "words" : vertexInfos[i].has_value() != (kept.vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *kept.vertexInfo)) ? "vertex stage info" : compiled.variantId != kept.compiled->variantId ? "variant" : compiled.pushConstants != kept.compiled->pushConstants ? "push constants" : !sameBindings ? "bindings" : moved && compiled.shaderDataUserWords != kept.compiled->shaderDataUserWords ? "forwarded words" : nullptr;
+        const bool sameRuns = tailed ? flattenedRuns(runs, words) == flattenedRuns(kept.runs, kept.words) : joinedRuns(runs) == joinedRuns(kept.runs);
+        const char* what = !sameRuns ? "runs" : !tailed && words != kept.words ? "words" : vertexInfos[i].has_value() != (kept.vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *kept.vertexInfo)) ? "vertex stage info" : compiled.variantId != kept.compiled->variantId ? "variant" : compiled.pushConstants != kept.compiled->pushConstants ? "push constants" : !sameBindings ? "bindings" : moved && compiled.shaderDataUserWords != kept.compiled->shaderDataUserWords ? "forwarded words" : !sameAttributes(compiled, *kept.compiled) ? "vertex attributes" : nullptr;
         ++dataVerified;
+        if (tailed) ++vertexVerified;
         if (what == nullptr) return;
         char message[640];
         std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a data-only hit differs from its full build in its %s (%zu runs / %zu words kept, %zu / %zu fresh; variant 0x%llx / 0x%llx; key 0x%llx, shape 0x%llx; kept%s; fresh%s)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.runs.size(), kept.words.size(), runs.size(), words.size(), static_cast<unsigned long long>(kept.compiled->variantId), static_cast<unsigned long long>(compiled.variantId), static_cast<unsigned long long>(drawKey), static_cast<unsigned long long>(shapeKey), listRuns(joinedRuns(kept.runs)).c_str(), listRuns(joinedRuns(runs)).c_str());
-        throw std::runtime_error(message);
+        if (!tailed) throw std::runtime_error(message);
+        ++vertexDiffered;
+        static std::atomic<std::uint64_t> reports{0};
+        if (reports.fetch_add(1) < 20) std::fprintf(stderr, "[draw-cache] verify: a stage with vertex inputs: %s\n", message);
     };
     const auto verifyStageData = [&](std::size_t i) {
         const auto& hit = stageData[i];
@@ -1022,21 +1055,30 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         counters.dataStagesReused += dataStagesReused;
         counters.dataStagesCompiled += dataStagesCompiled;
         counters.dataVerified += dataVerified;
+        counters.shapeVertexVerified += vertexVerified;
+        counters.shapeVertexDiffered += vertexDiffered;
         if (drawShapeUserWords()) {
             ++counters.shapeDraws;
             counters.shapeDrawsTried += tail.dataEntries.size();
             for (std::size_t i = 0; i < programs.size(); ++i) {
+                const bool vertexInputs = vertexInfos[i] && vertexInfos[i]->resourcesNum != 0;
                 if (const auto* reuse = shapeReuses[i]) {
                     ++counters.shapeHitsByRank[std::min<std::size_t>(reuse->rank, counters.shapeHitsByRank.size() - 1u)];
                     ++counters.shapeReuses[static_cast<std::size_t>(reuse->kind)];
+                    if (vertexInputs) ++counters.shapeVertexReused;
+                    if (reuse->rebased) ++counters.shapeVertexRebased;
                     noteShapeReuse(shapeKey, reuse->key);
                     continue;
                 }
                 if (!shapeCompiled[i]) continue;
                 ++counters.shapeMisses[static_cast<std::size_t>(tail.shapeMisses[i])];
+                if (vertexInputs) {
+                    ++counters.shapeVertexCaptured;
+                    if (i < tail.shapeWords.size() && tail.shapeWords[i] != DrawShapeWord::Count) ++counters.shapeVertexWords[static_cast<std::size_t>(tail.shapeWords[i])];
+                }
                 const auto& capture = stageCaptures[i];
                 if (drawParameters.indirect || capture.compiled == nullptr || !CacheableResult(*capture.compiled)) continue;
-                if (stageIdentitySeen(stageIdentity(shapeKey, i, programs[i], capture))) stageSeenBefore = true;
+                if (stageIdentitySeen(stageIdentity(shapeKey, i, programs[i], capture, vertexInfos[i]))) stageSeenBefore = true;
             }
             if (stageSeenBefore) stageSeenBefore = shapeAdmitsRepeatedStage(shapeKey);
         }
@@ -1490,6 +1532,8 @@ void Driver::restartFinishedDraw(DrawTail& tail) {
     tail.reused.assign(count, false);
     tail.stageData.assign(count, {});
     tail.shapeMisses.assign(count, DrawShapeMiss::NoStage);
+    tail.shapeWords.assign(count, DrawShapeWord::Count);
+    tail.vertexDecoded.assign(count, true);
     tail.dataEntry = nullptr;
     tail.dataEntries.clear();
     tail.drawHit = false;

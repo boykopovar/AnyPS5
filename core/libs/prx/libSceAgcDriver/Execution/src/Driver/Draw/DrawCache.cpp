@@ -42,6 +42,11 @@ bool Driver::drawShapeUserWords() {
     return enabled;
 }
 
+bool Driver::shapeVertexInputStages() {
+    static const bool enabled = drawShapeUserWords() && std::getenv("APS5_NO_SHAPE_VERTEX_INPUT_STAGES") == nullptr;
+    return enabled;
+}
+
 std::size_t Driver::drawShapeKeys() {
     return drawShapeUserWords() ? dispatchVariants() : std::size_t{1};
 }

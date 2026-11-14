@@ -7,7 +7,7 @@
 
 namespace AgcDriver::DriverDetail {
 
-void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<VulkanDevice>& localDevice, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, bool useDrawEntries, bool registerKey, bool profile, std::uint64_t& drawKey, std::shared_ptr<DrawEntry>& entry, std::vector<std::shared_ptr<DispatchVariant>>& matched, std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool& drawHit, bool& verifyHit, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, const std::vector<std::pair<std::uint64_t, std::shared_ptr<DrawEntry>>>& dataEntries, DrawDataCandidates& dataCandidates, std::vector<StageDataHit>& stageData, std::vector<DrawShapeMiss>& shapeMisses) {
+void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<VulkanDevice>& localDevice, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, bool useDrawEntries, bool registerKey, bool profile, std::uint64_t& drawKey, std::shared_ptr<DrawEntry>& entry, std::vector<std::shared_ptr<DispatchVariant>>& matched, std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool& drawHit, bool& verifyHit, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, const std::vector<std::pair<std::uint64_t, std::shared_ptr<DrawEntry>>>& dataEntries, DrawDataCandidates& dataCandidates, std::vector<StageDataHit>& stageData, std::vector<DrawShapeMiss>& shapeMisses, const std::vector<std::vector<Graphics::DecodeRead>>& decodeReads, const std::function<bool(std::size_t)>& decodeVertexInfo, std::vector<DrawShapeWord>& shapeWords) {
     using Role = ShaderRecompiler::ProgramRole;
     if (useDrawEntries) {
         if (!registerKey) {
@@ -261,6 +261,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 auto& candidates = dataCandidates[i];
                 auto miss = DrawShapeMiss::NoStage;
                 std::size_t refusals = 0;
+                std::optional<bool> redecoded;
                 for (std::size_t rank = 0; rank < dataEntries.size() && refusals < MaxRefusals; ++rank) {
                     const auto& remembered = *dataEntries[rank].second;
                     if (remembered.stages.size() != programs.size() || remembered.decode->programs.size() != programs.size()) continue;
@@ -270,16 +271,39 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                         if (refusals >= MaxRefusals) break;
                         if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
                         if ((i == 0 && variant->pushOffset != 0) || std::any_of(candidates.begin(), candidates.end(), [&](const DrawDataCandidate& candidate) { return candidate.variant->pushOffset == variant->pushOffset; })) continue;
-                        const auto kind = shapeUserWordMoves(*variant, was, now, moves);
+                        std::uint32_t refused = 0;
+                        const auto kind = shapeUserWordMoves(*variant, was, now, moves, &refused);
                         if (!kind) {
-                            miss = std::max(miss, variant->vertexInfo != nullptr && variant->vertexInfo->resourcesNum != 0 ? DrawShapeMiss::VertexInputs : DrawShapeMiss::UserWord);
+                            const bool vertexInputs = variant->vertexInfo != nullptr && variant->vertexInfo->resourcesNum != 0;
+                            miss = std::max(miss, vertexInputs && variant->decodeRuns == 0 ? DrawShapeMiss::VertexInputs : DrawShapeMiss::UserWord);
+                            if (vertexInputs && shapeWords[i] == DrawShapeWord::Count) shapeWords[i] = shapeWordKind(*variant, refused, vertexTableMask(*variant->vertexInfo, programs[i].firstUserSgpr));
                             continue;
                         }
-                        if (!movedRunsReadEqual(*variant, moves)) {
+                        const bool tables = *kind == DrawShapeReuse::VertexTables;
+                        if (tables) {
+                            if (!redecoded) redecoded = decodeVertexInfo(i);
+                            if (!*redecoded || !vertexInfos[i]) {
+                                miss = std::max(miss, DrawShapeMiss::VertexDecode);
+                                continue;
+                            }
+                            if (variant->vertexInfo == nullptr || !shapeVertexInputsMatch(*variant->vertexInfo, *vertexInfos[i])) {
+                                miss = std::max(miss, DrawShapeMiss::VertexLayout);
+                                continue;
+                            }
+                        }
+                        if (!movedRunsReadEqual(*variant, moves, tables)) {
                             miss = std::max(miss, DrawShapeMiss::Memory);
                             continue;
                         }
                         auto reused = moves.empty() ? variant : movedShapeVariant(variant, moves);
+                        bool rebased = false;
+                        if (tables) {
+                            if (!rebaseVertexInputs(*reused, *vertexInfos[i], decodeReads[i])) {
+                                miss = std::max(miss, DrawShapeMiss::VertexLayout);
+                                continue;
+                            }
+                            rebased = !reused->vertexPatches.empty();
+                        }
                         std::vector<ShaderRecompiler::MemoryRegion> regions;
                         appendEntryRegions(*reused, regions);
                         auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *reused, regions, imagesFlushed, runsSynced, sampling);
@@ -290,7 +314,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                             continue;
                         }
                         if (reused != variant) applyShaderDataPatches(*reused);
-                        candidates.push_back({std::move(reused), std::move(regions), dataEntries[rank].first, static_cast<std::uint8_t>(rank), *kind});
+                        candidates.push_back({std::move(reused), std::move(regions), dataEntries[rank].first, static_cast<std::uint8_t>(rank), *kind, rebased});
                     }
                 }
                 shapeMisses[i] = miss;

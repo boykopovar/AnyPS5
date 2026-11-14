@@ -170,11 +170,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     const bool complete = capture->plan != nullptr && capture->plan->srtPlanComplete;
     auto mask = complete ? walked | stageCapture.compiled->userDataRegisterReads : ~std::uint64_t{0};
     std::uint64_t fixed = 0;
-    if (vertexInfos[i]) {
-        for (const auto reg : {static_cast<std::uint32_t>(vertexInfos[i]->fetchAttribReg), static_cast<std::uint32_t>(vertexInfos[i]->fetchBufferReg)}) {
-            fixed |= reg + 1u < 64u ? std::uint64_t{3} << reg : ~std::uint64_t{0};
-        }
-    }
+    const auto tables = vertexInfos[i] ? vertexTableMask(*vertexInfos[i], program.firstUserSgpr) : 0;
     if (program.snapshot && program.snapshot->userDataTailRegister) {
         const auto reg = *program.snapshot->userDataTailRegister;
         if (reg >= program.firstUserSgpr) {
@@ -187,11 +183,12 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     if (program.snapshot && StageLinksUserDataCallees(*program.snapshot, program.codeOffset)) {
         fixed = ~std::uint64_t{0};
     }
-    mask |= fixed;
+    mask |= fixed | tables;
     stageCapture.userDataMask = mask;
     const auto read = stageCapture.compiled->userDataRegisterReads;
     const bool forwards = complete && read != ~std::uint64_t{0} && program.hiddenUserWords == 0 && program.binary.stage != Stage::Mesh;
-    stageCapture.forwardedWords = forwards ? read & ~walked & ~fixed : 0;
+    stageCapture.forwardedWords = forwards ? read & ~walked & ~fixed & ~tables : 0;
+    stageCapture.vertexTableWords = complete && vertexInfos[i] && vertexInfos[i]->resourcesNum != 0 && tables != ~std::uint64_t{0} && (tables & fixed) == 0 ? tables : 0;
     phaseTiming.Phase(DrawRowRecompile);
     return stageCapture.compiled;
 } catch (const std::exception& error) {
@@ -257,13 +254,21 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             variant->forwardedWords = stageCapture.forwardedWords;
             if (vertexInfos[i]) variant->vertexInfo = std::make_shared<const ShaderRecompiler::ShaderVertexStageInfo>(*vertexInfos[i]);
 
+            const bool vertexInputs = !decodeReads[i].empty() || (vertexInfos[i] && vertexInfos[i]->resourcesNum != 0);
+            const bool tailed = vertexInputs && shapeVertexInputStages() && stageCapture.vertexTableWords != 0 && !decodeReads[i].empty() && std::all_of(decodeReads[i].begin(), decodeReads[i].end(), [](const Graphics::DecodeRead& read) { return read.size % sizeof(std::uint32_t) == 0; });
             std::vector<ShaderRecompiler::MemoryRegion> regions(stageCapture.regions.begin(), stageCapture.regions.end());
-            for (const auto& read : decodeReads[i]) regions.push_back({read.address, read.Bytes()});
+            if (!tailed) {
+                for (const auto& read : decodeReads[i]) regions.push_back({read.address, read.Bytes()});
+            }
             std::stable_sort(regions.begin(), regions.end(), [](const ShaderRecompiler::MemoryRegion& a, const ShaderRecompiler::MemoryRegion& b) { return a.guestAddress < b.guestAddress; });
-            const bool relocatable = decodeReads[i].empty() && (!vertexInfos[i] || vertexInfos[i]->resourcesNum == 0);
+            const bool relocatable = !vertexInputs || tailed;
             tagVariantRuns(*variant, regions, stageCapture.userDataUse, relocatable, programs[i].hiddenUserWords, stageCapture.supplied);
-            if (relocatable) tagUserValueWords(*variant, programs[i]);
             if (drawStageDataHits() && stageCapture.capture != nullptr && !stageCapture.capture->readTrace.leaves.empty()) recordStageDataPositions(*variant, *stageCapture.capture, decodeReads[i]);
+            if (tailed) {
+                appendDecodeRuns(*variant, decodeReads[i]);
+                variant->vertexTableWords = stageCapture.vertexTableWords;
+            }
+            if (relocatable) tagUserValueWords(*variant, programs[i]);
             if (traceDrawCache() && entry != nullptr && matched[i] == nullptr && i < entry->stages.size()) {
                 const auto& variants = entry->stages[i];
                 const auto front = std::find_if(variants.begin(), variants.end(), [&](const std::shared_ptr<DispatchVariant>& kept) { return kept->pushOffset == variant->pushOffset; });
