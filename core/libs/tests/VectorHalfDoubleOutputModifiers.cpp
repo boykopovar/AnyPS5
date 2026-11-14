@@ -74,18 +74,18 @@ void CheckScaledF16(const std::string& name, std::uint32_t opcode, RdnaOpcode ex
     Require(denormalChecks == expectedDenormalChecks, name + " emitted " + std::to_string(denormalChecks) + " denormal checks, expected " + std::to_string(expectedDenormalChecks));
     Require(specialChecks == 1u, name + " emitted " + std::to_string(specialChecks) + " special checks, expected 1");
 
-    bool denormalSelectUsesSign = false;
+    bool denormalSelectGivesZero = false;
     for (const auto* value : block.Instructions()) {
         if (value->Opcode() == IrOpcode::SelectU32 && value->Argument(0)->Opcode() == IrOpcode::ULessThan32) {
             const auto* cmp = value->Argument(0);
             if (cmp->Argument(1)->HasImmediate() && cmp->Argument(1)->ImmediateU32() == 0x38800000u) {
-                if (value->Argument(1)->Opcode() == IrOpcode::BitwiseAnd32 && value->Argument(1)->Argument(1)->HasImmediate() && value->Argument(1)->Argument(1)->ImmediateU32() == 0x80000000u) {
-                    denormalSelectUsesSign = true;
+                if (value->Argument(1)->HasImmediate() && value->Argument(1)->ImmediateU32() == 0u) {
+                    denormalSelectGivesZero = true;
                 }
             }
         }
     }
-    Require(denormalSelectUsesSign, name + " did not preserve sign on denormal flush");
+    Require(denormalSelectGivesZero, name + " did not scale a zero or denormal result to +0");
 
     if (clamp != 0u) {
         Require(clampOperations == 1u, name + " emitted " + std::to_string(clampOperations) + " clamp operations, expected 1");
@@ -128,18 +128,18 @@ void CheckScaledF64(const std::string& name, std::uint32_t opcode, RdnaOpcode ex
     Require(specialChecks == 1u, name + " emitted " + std::to_string(specialChecks) + " special checks, expected 1");
     Require(constructU64 >= 1u, name + " emitted no ConstructU64");
 
-    bool denormalHighSelectUsesSign = false;
+    std::uint32_t denormalZeroSelects = 0u;
     for (const auto* value : block.Instructions()) {
         if (value->Opcode() == IrOpcode::SelectU32 && value->Argument(0)->Opcode() == IrOpcode::ULessThan32) {
             const auto* cmp = value->Argument(0);
             if (cmp->Argument(1)->HasImmediate() && cmp->Argument(1)->ImmediateU32() == 0x00100000u) {
-                if (value->Argument(1)->Opcode() == IrOpcode::BitwiseAnd32 && value->Argument(1)->Argument(1)->HasImmediate() && value->Argument(1)->Argument(1)->ImmediateU32() == 0x80000000u) {
-                    denormalHighSelectUsesSign = true;
+                if (value->Argument(1)->HasImmediate() && value->Argument(1)->ImmediateU32() == 0u) {
+                    ++denormalZeroSelects;
                 }
             }
         }
     }
-    Require(denormalHighSelectUsesSign, name + " did not preserve sign on denormal flush");
+    Require(denormalZeroSelects >= 2u, name + " did not scale a zero or denormal result to +0 in both halves");
 
     if (clamp != 0u) {
         Require(clampOperations == 1u, name + " emitted " + std::to_string(clampOperations) + " clamp operations, expected 1");
@@ -177,18 +177,18 @@ void CheckScaledF16Bits(const std::string& name, std::uint32_t opcode, RdnaOpcod
     Require(denormalChecks >= 1u, name + " emitted " + std::to_string(denormalChecks) + " denormal checks, expected >= 1");
     Require(specialChecks == 1u, name + " emitted " + std::to_string(specialChecks) + " special checks, expected 1");
 
-    bool denormalSelectUsesSign = false;
+    bool denormalSelectGivesZero = false;
     for (const auto* value : block.Instructions()) {
         if (value->Opcode() == IrOpcode::SelectU32 && value->Argument(0)->Opcode() == IrOpcode::ULessThan32) {
             const auto* cmp = value->Argument(0);
             if (cmp->Argument(1)->HasImmediate() && cmp->Argument(1)->ImmediateU32() == 0x0400u) {
-                if (value->Argument(1)->Opcode() == IrOpcode::BitwiseAnd32 && value->Argument(1)->Argument(1)->HasImmediate() && value->Argument(1)->Argument(1)->ImmediateU32() == 0x8000u) {
-                    denormalSelectUsesSign = true;
+                if (value->Argument(1)->HasImmediate() && value->Argument(1)->ImmediateU32() == 0u) {
+                    denormalSelectGivesZero = true;
                 }
             }
         }
     }
-    Require(denormalSelectUsesSign, name + " did not preserve sign on denormal flush");
+    Require(denormalSelectGivesZero, name + " did not scale a zero or denormal result to +0");
 }
 
 void CheckIgnoredModifiers(const std::string& name, std::uint32_t opcode, RdnaOpcode expectedOpcode, std::uint32_t floatMode, bool ieeeMode, bool ternary = false) {
