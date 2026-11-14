@@ -398,6 +398,9 @@ void CheckAudioOutPorts() {
     Require(handle > 0, "audio out open returns a handle");
     const std::vector<std::int16_t> block(static_cast<std::size_t>(granularity) * 2, 256);
     Require(sceAudio3dAudioOutOutput(0x1234, nullptr) == INVALID_PARAMETER, "the block is checked before the handle");
+    errno = 71;
+    Require(sceAudio3dAudioOutOutput(handle, reinterpret_cast<const void*>(0x10)) == INVALID_PARAMETER, "unreadable output block");
+    Require(errno == 71, "errno preserved after an unreadable output block");
     for (std::uint32_t i = 0; i < parameters.queue_depth; ++i) {
         Require(sceAudio3dAudioOutOutput(handle, block.data()) == 0, "audio out output");
     }
@@ -407,6 +410,9 @@ void CheckAudioOutPorts() {
     Require(sceAudio3dPortFlush(0) == 0, "flush drains the associated ports");
     Require(sceAudio3dAudioOutOutput(handle, block.data()) == 0, "flush resets the pending queue");
     Require(sceAudio3dAudioOutOutputs(nullptr, 0) == INVALID_PARAMETER, "outputs rejects an empty batch");
+    errno = 71;
+    Require(sceAudio3dAudioOutOutputs(reinterpret_cast<AudioOutOutputParam*>(0x10), 1) == INVALID_PARAMETER, "unreadable outputs batch");
+    Require(errno == 71, "errno preserved after an unreadable outputs batch");
     Require(sceAudio3dPortFlush(0) == 0, "flush before outputs");
     AudioOutOutputParam batch[2] = {{handle, block.data()}, {0x1234, block.data()}};
     Require(sceAudio3dAudioOutOutputs(batch, 1) == 0, "outputs one block");
