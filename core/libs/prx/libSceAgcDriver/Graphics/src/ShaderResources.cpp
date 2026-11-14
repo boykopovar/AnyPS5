@@ -1515,7 +1515,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     if (viewed.baseAddress != requested.baseAddress) guestBytes = 0;
     Require(viewed.dimension != TextureDimension::k2DMsaa, "storage image access to a multisampled texture is not implemented");
     const auto viewedBytes = guestBytes != 0 ? guestBytes : SurfaceGuestBytes(viewed);
-    RequireNoMultisampleTarget(viewed.baseAddress, static_cast<std::size_t>(viewedBytes), "a storage image access");
+    RequireNoMultisampleTarget(viewed.baseAddress, static_cast<std::size_t>(viewedBytes), "a storage image access", DepthReadCause::Reuse);
     if (auto depth = DepthSurfaceStorage(context, words, viewed, mip)) return depth;
     if (viewedBytes >= (1ull << 30u)) {
         static std::atomic<std::uint64_t> large{0};
@@ -1900,7 +1900,7 @@ std::shared_ptr<StorageTexture> RepeatStorageSurface(const Context& context, con
     const auto viewed = ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
     Require(viewed.dimension != TextureDimension::k2DMsaa, "storage image access to a multisampled texture is not implemented");
     const auto viewedBytes = SurfaceGuestBytes(viewed);
-    RequireNoMultisampleTarget(viewed.baseAddress, static_cast<std::size_t>(viewedBytes), "a storage image access");
+    RequireNoMultisampleTarget(viewed.baseAddress, static_cast<std::size_t>(viewedBytes), "a storage image access", DepthReadCause::Reuse);
     if (DepthSurfaceStorage(context, {}, viewed, 0) != nullptr) return nullptr;
     if (DepthPlanesStale()) static_cast<void>(FlushDepthPlanes(viewed.baseAddress, static_cast<std::size_t>(viewedBytes), DepthPlaneScope::Overlapped));
     if (auto* recorder = Recorder::Active(); recorder != nullptr) recorder->BoundKeptBytes();
