@@ -6854,6 +6854,17 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
     return moved;
 }
 
+namespace {
+
+bool OldRangePending(std::uint64_t address, std::uint64_t size, std::uint32_t adjustment) {
+    const auto begin = address - adjustment;
+    const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, adjustment));
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{begin, begin + bytes}}};
+    return StorageTexture::AnyPendingOverlaps(range) || AnyShadowedOverlaps(begin, bytes);
+}
+
+}
+
 const char* ShaderResources::MoveRefusalName(MoveRefusal refusal) {
     switch (refusal) {
         case MoveRefusal::None: return "none";
@@ -6864,6 +6875,7 @@ const char* ShaderResources::MoveRefusalName(MoveRefusal refusal) {
         case MoveRefusal::Inaccessible: return "unmapped";
         case MoveRefusal::Overlap: return "pending write";
         case MoveRefusal::Bindings: return "no bindings made";
+        case MoveRefusal::OldInputPending: return "old input pending";
         case MoveRefusal::Count: break;
     }
     return "?";
@@ -6896,6 +6908,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
             if (item.address == address && item.size == size) continue;
             const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
             if (written || empty || item.written) return refuse(MoveRefusal::Written);
+            if (OldRangePending(item.address, item.size, item.adjustment)) return refuse(MoveRefusal::OldInputPending);
             if (size > context.limits.maxStorageBufferRange) return refuse(MoveRefusal::Limit);
             const auto begin = address - item.adjustment;
             const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
@@ -6910,6 +6923,23 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
         }
     }
     return moved;
+}
+
+bool ShaderResources::MovedInputsPending(const CompiledShader& shader) const {
+    if (shader.program == nullptr || usesBda || _set == VK_NULL_HANDLE) return false;
+    for (const auto& binding : shader.program->bindings) {
+        if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+        const auto kept = std::find_if(bindings.begin(), bindings.end(), [&](const Binding& item) { return item.layout.binding == binding.binding; });
+        if (kept == bindings.end() || kept->allocations.size() != binding.count || binding.guestDescriptor.size() != static_cast<std::size_t>(binding.count) * 4u) return false;
+        for (std::uint32_t element = 0; element < binding.count; ++element) {
+            const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
+            const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
+            const auto& item = allocations[kept->allocations[element]];
+            if (!item.guest || (item.address == descriptor.Base48() && item.size == guestBufferBytes(std::span<const std::uint32_t>(words, 4)))) continue;
+            if (OldRangePending(item.address, item.size, item.adjustment)) return true;
+        }
+    }
+    return false;
 }
 
 std::size_t ShaderResources::MaxDrawSnapshotBytes() {
