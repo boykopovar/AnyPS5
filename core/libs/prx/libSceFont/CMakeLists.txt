@@ -67,6 +67,60 @@ if(BUILD_TESTING)
         set_tests_properties(guest_font_writing_metrics PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
     endif()
+    add_test_executable(guest_font_lock_unwind_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontLockUnwind.cpp)
+    target_include_directories(guest_font_lock_unwind_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_font_lock_unwind_tests PRIVATE libSceFont libSceFontFt libc)
+    configure_windows_unwind(guest_font_lock_unwind_tests)
+    add_test(NAME guest_font_lock_unwind_count_success COMMAND guest_font_lock_unwind_tests 0 0)
+    add_test(NAME guest_font_lock_unwind_count_returned_failure COMMAND guest_font_lock_unwind_tests 0 1)
+    add_test(NAME guest_font_lock_unwind_count_throw COMMAND guest_font_lock_unwind_tests 0 2)
+    add_test(NAME guest_font_lock_unwind_index_success COMMAND guest_font_lock_unwind_tests 1 0)
+    add_test(NAME guest_font_lock_unwind_index_returned_failure COMMAND guest_font_lock_unwind_tests 1 1)
+    add_test(NAME guest_font_lock_unwind_index_throw COMMAND guest_font_lock_unwind_tests 1 2)
+    add_test(NAME guest_font_lock_unwind_scale_success COMMAND guest_font_lock_unwind_tests 2 0)
+    add_test(NAME guest_font_lock_unwind_scale_returned_failure COMMAND guest_font_lock_unwind_tests 2 1)
+    add_test(NAME guest_font_lock_unwind_scale_throw COMMAND guest_font_lock_unwind_tests 2 2)
+    add_test(NAME guest_font_lock_unwind_open_handle_success COMMAND guest_font_lock_unwind_tests 3 0)
+    add_test(NAME guest_font_lock_unwind_open_handle_returned_failure COMMAND guest_font_lock_unwind_tests 3 1)
+    add_test(NAME guest_font_lock_unwind_open_handle_throw COMMAND guest_font_lock_unwind_tests 3 2)
+    add_test(NAME guest_font_lock_unwind_clone_handle_success COMMAND guest_font_lock_unwind_tests 4 0)
+    add_test(NAME guest_font_lock_unwind_clone_handle_returned_failure COMMAND guest_font_lock_unwind_tests 4 1)
+    add_test(NAME guest_font_lock_unwind_clone_handle_throw COMMAND guest_font_lock_unwind_tests 4 2)
+    set_tests_properties(guest_font_lock_unwind_count_success
+        guest_font_lock_unwind_count_returned_failure
+        guest_font_lock_unwind_count_throw
+        guest_font_lock_unwind_index_success
+        guest_font_lock_unwind_index_returned_failure
+        guest_font_lock_unwind_index_throw
+        guest_font_lock_unwind_scale_success
+        guest_font_lock_unwind_scale_returned_failure
+        guest_font_lock_unwind_scale_throw
+        guest_font_lock_unwind_open_handle_success
+        guest_font_lock_unwind_open_handle_returned_failure
+        guest_font_lock_unwind_open_handle_throw
+        guest_font_lock_unwind_clone_handle_success
+        guest_font_lock_unwind_clone_handle_returned_failure
+        guest_font_lock_unwind_clone_handle_throw PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
+    if(WIN32)
+        set_tests_properties(guest_font_lock_unwind_count_success
+        guest_font_lock_unwind_count_returned_failure
+        guest_font_lock_unwind_count_throw
+        guest_font_lock_unwind_index_success
+        guest_font_lock_unwind_index_returned_failure
+        guest_font_lock_unwind_index_throw
+        guest_font_lock_unwind_scale_success
+        guest_font_lock_unwind_scale_returned_failure
+        guest_font_lock_unwind_scale_throw
+        guest_font_lock_unwind_open_handle_success
+        guest_font_lock_unwind_open_handle_returned_failure
+        guest_font_lock_unwind_open_handle_throw
+        guest_font_lock_unwind_clone_handle_success
+        guest_font_lock_unwind_clone_handle_returned_failure
+        guest_font_lock_unwind_clone_handle_throw PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>"
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFontFt>")
+    endif()
+
     add_test_executable(guest_font_vertical_layout_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontVerticalLayout.cpp)
     target_include_directories(guest_font_vertical_layout_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_font_vertical_layout_tests PRIVATE libSceFont libSceFontFt libc)

@@ -131,7 +131,13 @@ std::uint32_t ClaimEntry(FontCtxHeader* header, const OpenRequest& request) {
 
 int OpenFontInContext(const OpenRequest& request, std::uint32_t libraryLock, FontHandle* pFontHandle) {
     FontLibNative* library = request.library;
-    FontHandle handle = PrepareHandle(library, *pFontHandle);
+    FontHandle handle;
+    try {
+        handle = PrepareHandle(library, *pFontHandle);
+    } catch (...) {
+        ReleaseLibraryLock(library, libraryLock);
+        throw;
+    }
     if (!handle) {
         ReleaseLibraryLock(library, libraryLock);
         *pFontHandle = nullptr;
@@ -253,9 +259,10 @@ int CallOpenFontObject(FontHandle fontHandle, TCall call) {
     std::uint32_t lockWord = 0;
     auto* entry = AcquireFontCtxEntry(FontContext(library, font), font->open_info.ctx_entry_index, modeLow, &head, &lockWord);
     if (!entry) return SCE_FONT_ERROR_FATAL;
+    const auto unlock = [modeLow, lockWord](FontCtxEntry* current) { ReleaseFontCtxEntryLock(current, modeLow, lockWord); };
+    const std::unique_ptr<FontCtxEntry, decltype(unlock)> lock(entry, unlock);
     FontObj* obj = FindSubFont(head, font->open_info.sub_font_index);
     const int rc = (lockWord & OPEN_BIT) != 0 && (lockWord & COUNT_MASK) != 0 && obj ? call(*library->sys_driver, obj) : SCE_FONT_ERROR_FATAL;
-    ReleaseFontCtxEntryLock(entry, modeLow, lockWord);
     return rc;
 }
 
@@ -329,8 +336,9 @@ int APS5_VABI sceFontOpenFontInstance(FontHandle fontHandle, FontHandle setupFon
         if (pFontHandle) *pFontHandle = nullptr;
         return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     }
+    const auto unlock = [sourceLock](FontHandleNative* current) { ReleaseFontLock(current, sourceLock); };
+    std::unique_ptr<FontHandleNative, decltype(unlock)> lock(source, unlock);
     const auto fail = [&](int rc) {
-        ReleaseFontLock(source, sourceLock);
         if (pFontHandle) *pFontHandle = nullptr;
         return rc;
     };
@@ -396,7 +404,7 @@ int APS5_VABI sceFontOpenFontInstance(FontHandle fontHandle, FontHandle setupFon
         return fail(rc);
     }
     if (owned) LinkFontToLibrary(library, target);
-    ReleaseFontLock(source, sourceLock);
+    lock.reset();
     FontState& targetState = ResetState(target);
     if (FontState* sourceState = TryGetState(fontHandle)) {
         if (sourceState->faceData && !sourceState->faceData->empty()) LoadStateFace(targetState, sourceState->faceData, subFontIndex);
