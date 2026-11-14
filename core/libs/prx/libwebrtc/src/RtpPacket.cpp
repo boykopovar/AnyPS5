@@ -1,3 +1,6 @@
+/* Derived from modules/rtp_rtcp/source/rtp_packet.cc@8d78f5de6c27b2c793039989ea381f1428fb0100 */
+/* Derived from rtc_base/copy_on_write_buffer.h@8d78f5de6c27b2c793039989ea381f1428fb0100 */
+/* Derived from rtc_base/buffer.h@8d78f5de6c27b2c793039989ea381f1428fb0100 */
 /*
  *  Copyright (c) 2016 The WebRTC project authors. All Rights Reserved.
  *
