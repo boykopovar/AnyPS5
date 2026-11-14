@@ -762,7 +762,7 @@ void EmitUnlessInvocationFaulted(SpirvValueEmitContext& ctx, StructuredFunctionS
     auto& state = ctx.state;
     const bool returnsValue = inst.Type() != IrType::Void;
     const auto result = returnsValue ? ctx.Result(inst) : 0u;
-    ctx.definitions.erase(&inst);
+    ctx.definitions.Erase(&inst);
     const auto faulted = BdaInvocationFaulted(state);
     const auto body = state.module.AllocateId();
     const auto skip = state.module.AllocateId();
@@ -778,10 +778,10 @@ void EmitUnlessInvocationFaulted(SpirvValueEmitContext& ctx, StructuredFunctionS
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, merge);
     if (!returnsValue) return;
-    ctx.definitions.erase(&inst);
+    ctx.definitions.Erase(&inst);
     const auto type = TypeId(state, inst.Type());
     state.module.AddFunction(spv::OpPhi, type, result, value, exit, state.module.Constant(spv::OpConstantNull, type), skip);
-    ctx.definitions.emplace(&inst, result);
+    ctx.definitions.Emplace(&inst, result);
 }
 
 void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& functionState, const IrBlock* block) {
