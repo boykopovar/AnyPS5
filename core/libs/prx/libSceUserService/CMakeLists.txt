@@ -76,6 +76,15 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_user_service_abi_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceAbi.cpp)
+    target_include_directories(guest_user_service_abi_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_user_service_abi_tests PRIVATE libSceUserService)
+    add_test(NAME guest_user_service_abi COMMAND guest_user_service_abi_tests)
+    if(WIN32)
+        set_tests_properties(guest_user_service_abi PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
+
     add_test_executable(guest_user_service_profiles_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceProfilesBounds.cpp)
     target_include_directories(guest_user_service_profiles_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_user_service_profiles_bounds_tests PRIVATE libSceUserService libSceSystemService libc)
