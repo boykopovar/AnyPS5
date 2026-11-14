@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <iterator>
 #include <vector>
 
@@ -108,10 +109,63 @@ void CheckUnwritablePriorityOutput() {
 #endif
 }
 
+void CheckEarlyAnswers() {
+    constexpr int FLUSHED = static_cast<int>(0x815D000A);
+    std::uint32_t context = 7;
+    std::vector<std::uint8_t> handle(HANDLE_SIZE, 0xAB);
+    Require(sceSrcUtilityInitializeEx(nullptr) == INVALID_POINTER, "initialize ex needs a context");
+    Require(sceSrcUtilityCreateEx(nullptr, 0, 9, 0, 0, nullptr) == INVALID_POINTER, "create ex checks the context first");
+    Require(sceSrcUtilityCreateEx(&context, 0, 9, 0, 0, nullptr) == INVALID_HANDLE, "create ex checks the handle second");
+    Require(sceSrcUtilityInitialize(0, 9, 0, 0, nullptr) == INVALID_HANDLE, "initialize checks the handle first");
+    const std::vector<std::uint8_t> untouched = handle;
+    for (std::uint32_t channels = 0; channels <= 9; ++channels) {
+        for (std::uint32_t mode = 0; mode <= 3; ++mode) {
+            for (const std::uint32_t input : {0u, 22050u, 48000u, 384000u}) {
+                for (const std::uint32_t output : {0u, 44100u, 192000u, 22050u}) {
+                    const int expected = sceSrcUtilityGetHandleSize(channels, mode, input, output);
+                    if (expected == HANDLE_SIZE) continue;
+                    Require(sceSrcUtilityCreateEx(&context, channels, mode, input, output, handle.data()) == expected, "create ex checks like the handle size");
+                    Require(sceSrcUtilityInitialize(channels, mode, input, output, handle.data()) == expected, "initialize checks like the handle size");
+                }
+            }
+        }
+    }
+    Require(handle == untouched && context == 7, "failed checks write nothing");
+
+    for (void* bad : {static_cast<void*>(nullptr), static_cast<void*>(handle.data())}) {
+        Require(sceSrcUtilityFinalize(bad) == INVALID_HANDLE, "finalize needs an initialized handle");
+        Require(sceSrcUtilityDeleteEx(bad) == INVALID_HANDLE, "delete ex needs an initialized handle");
+        Require(sceSrcUtilityFlush(bad, -1, nullptr, nullptr) == INVALID_HANDLE, "flush checks the handle first");
+        Require(sceSrcUtilityResample(bad, -1) == INVALID_HANDLE, "resample checks the handle first");
+    }
+    std::memcpy(handle.data() + 0x9470, &MAGIC, sizeof(MAGIC));
+    std::uint32_t first = 0;
+    std::uint32_t second = 0;
+    Require(sceSrcUtilityFlush(handle.data(), -1, &first, &second) == INVALID_POINTER, "flush refuses a negative count");
+    Require(sceSrcUtilityFlush(handle.data(), 0, nullptr, &second) == INVALID_POINTER, "flush needs its first pointer");
+    Require(sceSrcUtilityFlush(handle.data(), 0, &first, nullptr) == INVALID_POINTER, "flush needs its second pointer");
+    const std::uint32_t flushed = 2;
+    std::memcpy(handle.data() + 0x30, &flushed, sizeof(flushed));
+    Require(sceSrcUtilityFlush(handle.data(), 0, &first, &second) == FLUSHED, "flush after a flush");
+    Require(sceSrcUtilityResample(handle.data(), -1) == INVALID_POINTER, "resample refuses a negative count");
+    Require(first == 0 && second == 0, "flush checks write nothing");
+
+    Require(sceSrcUtilityGetAjmContext(nullptr, &context) == INVALID_HANDLE && context == 7, "the context needs a handle");
+    Require(sceSrcUtilityGetAjmContext(handle.data(), nullptr) == 0, "a null output is accepted");
+    const std::uint32_t stored = 0x13572468;
+    std::memcpy(handle.data() + 0x9478, &stored, sizeof(stored));
+    Require(sceSrcUtilityGetAjmContext(handle.data(), &context) == 0 && context == stored, "the context is read from the handle");
+    std::vector<std::uint8_t> plain(HANDLE_SIZE, 0);
+    std::memcpy(plain.data() + 0x9478, &stored, sizeof(stored));
+    context = 7;
+    Require(sceSrcUtilityGetAjmContext(plain.data(), &context) == 0 && context == stored, "the magic is not checked");
+}
+
 }
 
 int main() {
     CheckHandleSize();
     CheckPriority();
     CheckUnwritablePriorityOutput();
+    CheckEarlyAnswers();
 }

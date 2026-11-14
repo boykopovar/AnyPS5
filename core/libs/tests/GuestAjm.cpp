@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -1940,11 +1941,11 @@ struct At9Run {
     std::uint32_t reserved;
 };
 
-At9Run RunAt9Job(std::uint32_t context, std::uint32_t instance, std::uint64_t flags, const std::uint8_t* input, std::size_t inputSize) {
+At9Run RunAt9Job(std::uint32_t context, std::uint32_t instance, std::uint64_t flags, const std::uint8_t* input, std::size_t inputSize, std::size_t pcmSamples = 1024) {
     constexpr std::uint64_t runMultipleFrames = 1ull << 12;
     constexpr std::uint64_t sidebandStream = 1ull << 47;
     std::vector<std::uint8_t> batch(4096);
-    std::vector<std::int16_t> pcm(1024);
+    std::vector<std::int16_t> pcm(pcmSamples);
     At9Run decoded{{-1, -1, 0, 0, 0}, 0, 0};
     AjmBatchInfo info{};
     Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
@@ -1957,21 +1958,67 @@ At9Run RunAt9Job(std::uint32_t context, std::uint32_t instance, std::uint64_t fl
 
 void TestAt9GaplessSegments(std::uint32_t context) {
     constexpr std::uint64_t runMultipleFrames = 1ull << 12;
-    std::vector<std::uint8_t> stream(1024, 0);
+    std::vector<std::uint8_t> stream(2048, 0);
     std::memcpy(stream.data(), AT9_MONO_SILENT_SUPERFRAME, sizeof(AT9_MONO_SILENT_SUPERFRAME));
-    std::uint32_t instance = 0;
-    Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
-    const At9Control start{{512, 0, 0}, {0xFE, 0x70, 0x1F, 0xF0}, 0};
-    std::int32_t result[2] = {-1, -1};
-    RunControl(context, instance, CONTROL_START, &start, sizeof(start), result);
-    Require(result[0] == 0);
-    const auto first = RunAt9Job(context, instance, runMultipleFrames, stream.data(), stream.size());
-    Require(first.stream.outputWritten == 512 * 2 && first.frames == 2);
-    Require(first.stream.inputConsumed > 0 && static_cast<std::size_t>(first.stream.inputConsumed) < stream.size());
-    const auto consumed = static_cast<std::size_t>(first.stream.inputConsumed);
-    const auto second = RunAt9Job(context, instance, runMultipleFrames, stream.data() + consumed, stream.size() - consumed);
-    Require(second.stream.outputWritten == 512 * 2 && second.frames == 2);
-    Require(consumed + static_cast<std::size_t>(second.stream.inputConsumed) == stream.size());
+    std::memcpy(stream.data() + 1024, AT9_MONO_SILENT_SUPERFRAME, sizeof(AT9_MONO_SILENT_SUPERFRAME));
+    const auto start = [&](std::uint32_t total) {
+        std::uint32_t instance = 0;
+        Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+        const At9Control control{{total, 0, 0}, {0xFE, 0x70, 0x1F, 0xF0}, 0};
+        std::int32_t result[2] = {-1, -1};
+        RunControl(context, instance, CONTROL_START, &control, sizeof(control), result);
+        Require(result[0] == 0);
+        return instance;
+    };
+    const auto seek = [&](std::uint32_t instance, std::uint32_t total, int reset) {
+        std::vector<std::uint8_t> batch(4096);
+        AjmBatchInfo info{};
+        const GaplessDecode gapless{total, 0, 0};
+        std::int32_t result[2] = {-1, -1};
+        Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+        Require(sceAjmBatchJobSetGaplessDecode(&info, instance, &gapless, reset, result) == 0);
+        Submit(context, info);
+        Require(result[0] == 0);
+    };
+
+    std::uint32_t instance = start(512);
+    const auto first = RunAt9Job(context, instance, runMultipleFrames, stream.data(), 1024);
+    Require(first.stream.outputWritten == 512 * 2 && first.stream.totalDecodedSamples == 512);
+    Require(first.stream.inputConsumed == 1024 && first.frames == 4);
+    const auto second = RunAt9Job(context, instance, runMultipleFrames, stream.data(), 1024);
+    Require(second.stream.outputWritten == 0 && second.stream.totalDecodedSamples == 512);
+    Require(second.stream.inputConsumed == 1024 && second.frames == 4);
+    seek(instance, 512, 0);
+    const auto unchanged = RunAt9Job(context, instance, runMultipleFrames, stream.data(), 1024);
+    Require(unchanged.stream.outputWritten == 0 && unchanged.stream.totalDecodedSamples == 512 && unchanged.stream.inputConsumed == 1024);
+    seek(instance, 512, 1);
+    const auto restarted = RunAt9Job(context, instance, runMultipleFrames, stream.data(), 1024);
+    Require(restarted.stream.outputWritten == 512 * 2 && restarted.stream.totalDecodedSamples == 512 && restarted.stream.inputConsumed == 1024);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+
+    instance = start(300);
+    const auto inside = RunAt9Job(context, instance, runMultipleFrames, stream.data(), 1024);
+    Require(inside.stream.outputWritten == 300 * 2 && inside.stream.totalDecodedSamples == 300);
+    Require(inside.stream.inputConsumed == 1024 && inside.frames == 4);
+    const auto after = RunAt9Job(context, instance, runMultipleFrames, stream.data(), 1024);
+    Require(after.stream.outputWritten == 0 && after.stream.totalDecodedSamples == 300 && after.stream.inputConsumed == 1024);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+
+    instance = start(1500);
+    const auto across = RunAt9Job(context, instance, runMultipleFrames, stream.data(), stream.size(), 2048);
+    Require(across.stream.outputWritten == 1500 * 2 && across.stream.totalDecodedSamples == 1500);
+    Require(across.stream.inputConsumed == 2048 && across.frames == 8);
+    const auto beyond = RunAt9Job(context, instance, runMultipleFrames, stream.data(), 1024);
+    Require(beyond.stream.outputWritten == 0 && beyond.stream.totalDecodedSamples == 1500 && beyond.stream.inputConsumed == 1024);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+
+    instance = start(1100);
+    const auto whole = RunAt9Job(context, instance, runMultipleFrames, stream.data(), 1024);
+    Require(whole.stream.outputWritten == 1024 * 2 && whole.stream.totalDecodedSamples == 1024);
+    const auto tail = RunAt9Job(context, instance, runMultipleFrames, stream.data(), 1024);
+    Require(tail.stream.outputWritten == 76 * 2 && tail.stream.totalDecodedSamples == 1100 && tail.stream.inputConsumed == 1024);
+    const auto none = RunAt9Job(context, instance, runMultipleFrames, stream.data(), 1024);
+    Require(none.stream.outputWritten == 0 && none.stream.totalDecodedSamples == 1100 && none.stream.inputConsumed == 1024);
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
@@ -2004,7 +2051,7 @@ void TestAt9GaplessResetRestartsTotal(std::uint32_t context) {
     Require(sceAjmBatchJobSetGaplessDecode(&info, instance, &longer, 0, setResult) == 0);
     Submit(context, info);
     Require(setResult[0] == 0);
-    const auto third = RunAt9Job(context, instance, runMultipleFrames, stream.data() + second.stream.inputConsumed, stream.size() - static_cast<std::size_t>(second.stream.inputConsumed));
+    const auto third = RunAt9Job(context, instance, runMultipleFrames, stream.data(), stream.size());
     Require(third.stream.totalDecodedSamples == 512 + static_cast<std::uint64_t>(third.stream.outputWritten) / 2);
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
@@ -2120,9 +2167,9 @@ void TestConsoleBufferJobs(std::uint32_t context) {
 
     void* at = sceAjmBatchJobControlBufferRa(batch.data(), instance, version | CONTROL_START, &start, sizeof(start), result, sizeof(result), &context);
     Require(at == batch.data() + 64);
-    Require(BatchWord(batch, 0) == instance << 6 && BatchWord(batch, 4) == 56);
-    Require(BatchWord(batch, 8) == 6 && BatchWord(batch, 24) == 2 && BatchWord(batch, 28) == sizeof(start));
-    Require(BatchWord(batch, 40) == (3u | (0x2000u << 6)) && BatchWord(batch, 44) == 0x6001 && BatchWord(batch, 48) == 18);
+    Require(BatchWord(batch, 0) == (0xCC000000u | (instance << 6)) && BatchWord(batch, 4) == 56);
+    Require(BatchWord(batch, 8) == 0xCDCDCDC6 && BatchWord(batch, 24) == 0xCDCDCDC2 && BatchWord(batch, 28) == sizeof(start));
+    Require(BatchWord(batch, 40) == (0xCC000003u | (0x2000u << 6)) && BatchWord(batch, 44) == 0x6001 && BatchWord(batch, 48) == 0xCDCDCDD2);
     at = sceAjmBatchJobRunBufferRa(at, instance, version | sidebandStream | runMultipleFrames, stream.data(), 1024, pcm.data(), 1024 * 2, &single, sizeof(single), nullptr);
     Require(at == batch.data() + 128);
     Require(BatchWord(batch, 68) == 56 && BatchWord(batch, 72) == 0xCDCDCDC1 && BatchWord(batch, 88) == (0xCC000004u | (0x8000u << 6)) && BatchWord(batch, 96) == 0xCDCDCDD1 && BatchWord(batch, 112) == 0xCDCDCDD2);
@@ -2348,9 +2395,95 @@ void TestRunBufferRaLayout(RunBufferRa runBufferRa) {
     }
 }
 
+using ControlBufferRa = void* (APS5_VABI*)(void*, std::uint32_t, std::uint64_t, const void*, std::size_t, void*, std::size_t, void*);
+using RunSplitBufferRa = void* (APS5_VABI*)(void*, std::uint32_t, std::uint64_t, const AjmBuffer*, std::size_t, const AjmBuffer*, std::size_t, void*, std::size_t, void*);
+
+void TestControlBufferRaLayout(ControlBufferRa controlBufferRa) {
+    std::uint8_t sidebandInput[0x30];
+    std::uint8_t sidebandOutput[0x20];
+    std::uint8_t returnAddress[1];
+    const auto address = [](const void* pointer) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer)); };
+
+    std::vector<std::uint8_t> batch(0x50, 0xCC);
+    Require(controlBufferRa(batch.data(), 0x12345, 0xFFFFFFFFFFFFFFFF, sidebandInput, sizeof(sidebandInput), sidebandOutput, sizeof(sidebandOutput), returnAddress) == batch.data() + 0x40);
+    Require(BatchWord(batch, 0x00) == 0xCC48D140 && BatchWord(batch, 0x04) == 0x38);
+    Require(BatchWord(batch, 0x08) == 0xCCCCCCC6 && BatchWord(batch, 0x0C) == 0 && BatchPointer(batch, 0x10) == address(returnAddress));
+    Require(BatchWord(batch, 0x18) == 0xCCCCCCC2 && BatchWord(batch, 0x1C) == 0x30 && BatchPointer(batch, 0x20) == address(sidebandInput));
+    Require(BatchWord(batch, 0x28) == 0xCC180003 && BatchWord(batch, 0x2C) == 0xE7FF);
+    Require(BatchWord(batch, 0x30) == 0xCCCCCCD2 && BatchWord(batch, 0x34) == 0x20 && BatchPointer(batch, 0x38) == address(sidebandOutput));
+    Require(std::all_of(batch.begin() + 0x40, batch.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+
+    std::fill(batch.begin(), batch.end(), 0xCC);
+    Require(controlBufferRa(batch.data(), 0x12345, 0xFFFFFFFFFFFFFFFF, sidebandInput, sizeof(sidebandInput), sidebandOutput, sizeof(sidebandOutput), nullptr) == batch.data() + 0x30);
+    Require(BatchWord(batch, 0x00) == 0xCC48D140 && BatchWord(batch, 0x04) == 0x28 && BatchWord(batch, 0x08) == 0xCCCCCCC2 && BatchWord(batch, 0x18) == 0xCC180003 && BatchWord(batch, 0x20) == 0xCCCCCCD2);
+
+    const std::pair<std::uint64_t, std::uint64_t> masked[] = {
+        {0x000060000000E7FF, 0xCC1800030000E7FF},
+        {0x0000800000001001, 0xCC00000300000001},
+        {0x8000000000000000, 0xCC00000300000000},
+        {0x0000000000000000, 0xCC00000300000000},
+    };
+    for (const auto& [flags, words] : masked) {
+        std::fill(batch.begin(), batch.end(), 0xCC);
+        Require(controlBufferRa(batch.data(), 0x12345, flags, sidebandInput, sizeof(sidebandInput), sidebandOutput, sizeof(sidebandOutput), returnAddress) == batch.data() + 0x40);
+        Require(BatchWord(batch, 0x28) == static_cast<std::uint32_t>(words >> 32) && BatchWord(batch, 0x2C) == static_cast<std::uint32_t>(words));
+    }
+}
+
+void TestRunSplitBufferRaLayout(RunSplitBufferRa runSplitBufferRa) {
+    std::uint8_t first[0x40];
+    std::uint8_t second[0x60];
+    std::uint8_t third[0x80];
+    std::uint8_t fourth[0xA0];
+    std::uint8_t sideband[0x20];
+    std::uint8_t returnAddress[1];
+    const AjmBuffer inputs[2] = {{first, sizeof(first)}, {second, sizeof(second)}};
+    const AjmBuffer outputs[2] = {{third, sizeof(third)}, {fourth, sizeof(fourth)}};
+    const auto address = [](const void* pointer) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer)); };
+
+    std::vector<std::uint8_t> batch(0x80, 0xCC);
+    Require(runSplitBufferRa(batch.data(), 0x12345, 0xFFFFFFFFFFFFFFFF, inputs, 2, outputs, 2, sideband, sizeof(sideband), returnAddress) == batch.data() + 0x70);
+    Require(BatchWord(batch, 0x00) == 0xCC48D140 && BatchWord(batch, 0x04) == 0x68);
+    Require(BatchWord(batch, 0x08) == 0xCCCCCCC6 && BatchWord(batch, 0x0C) == 0 && BatchPointer(batch, 0x10) == address(returnAddress));
+    Require(BatchWord(batch, 0x18) == 0xCCCCCCC1 && BatchWord(batch, 0x1C) == 0x40 && BatchPointer(batch, 0x20) == address(first));
+    Require(BatchWord(batch, 0x28) == 0xCCCCCCC1 && BatchWord(batch, 0x2C) == 0x60 && BatchPointer(batch, 0x30) == address(second));
+    Require(BatchWord(batch, 0x38) == 0xCC380004 && BatchWord(batch, 0x3C) == 0x1FFF);
+    Require(BatchWord(batch, 0x40) == 0xCCCCCCD1 && BatchWord(batch, 0x44) == 0x80 && BatchPointer(batch, 0x48) == address(third));
+    Require(BatchWord(batch, 0x50) == 0xCCCCCCD1 && BatchWord(batch, 0x54) == 0xA0 && BatchPointer(batch, 0x58) == address(fourth));
+    Require(BatchWord(batch, 0x60) == 0xCCCCCCD2 && BatchWord(batch, 0x64) == 0x20 && BatchPointer(batch, 0x68) == address(sideband));
+    Require(std::all_of(batch.begin() + 0x70, batch.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+
+    std::fill(batch.begin(), batch.end(), 0xCC);
+    Require(runSplitBufferRa(batch.data(), 0x12345, 0xFFFFFFFFFFFFFFFF, inputs, 2, outputs, 2, sideband, sizeof(sideband), nullptr) == batch.data() + 0x60);
+    Require(BatchWord(batch, 0x04) == 0x58 && BatchWord(batch, 0x08) == 0xCCCCCCC1 && BatchWord(batch, 0x28) == 0xCC380004);
+
+    std::fill(batch.begin(), batch.end(), 0xCC);
+    Require(runSplitBufferRa(batch.data(), 0x12345, 0xFFFFFFFFFFFFFFFF, nullptr, 0, nullptr, 0, sideband, sizeof(sideband), returnAddress) == batch.data() + 0x30);
+    Require(BatchWord(batch, 0x04) == 0x28 && BatchWord(batch, 0x08) == 0xCCCCCCC6 && BatchWord(batch, 0x18) == 0xCC380004 && BatchWord(batch, 0x20) == 0xCCCCCCD2);
+    std::fill(batch.begin(), batch.end(), 0xCC);
+    Require(runSplitBufferRa(batch.data(), 0x12345, 0xFFFFFFFFFFFFFFFF, nullptr, 0, nullptr, 0, sideband, sizeof(sideband), nullptr) == batch.data() + 0x20);
+    Require(BatchWord(batch, 0x04) == 0x18 && BatchWord(batch, 0x08) == 0xCC380004 && BatchWord(batch, 0x10) == 0xCCCCCCD2);
+
+    const std::pair<std::uint64_t, std::uint64_t> masked[] = {
+        {0x000060000000E7FF, 0xCC180004000007FF},
+        {0x0000800000001001, 0xCC20000400001001},
+        {0x8000000000000000, 0xCC00000400000000},
+        {0x0000000000000000, 0xCC00000400000000},
+    };
+    for (const auto& [flags, words] : masked) {
+        std::fill(batch.begin(), batch.end(), 0xCC);
+        Require(runSplitBufferRa(batch.data(), 0x12345, flags, inputs, 2, outputs, 2, sideband, sizeof(sideband), returnAddress) == batch.data() + 0x70);
+        Require(BatchWord(batch, 0x38) == static_cast<std::uint32_t>(words >> 32) && BatchWord(batch, 0x3C) == static_cast<std::uint32_t>(words));
+    }
+}
+
 void TestConsoleRunBufferRa(const char* ajmiLibrary) {
     TestRunBufferRaLayout(sceAjmBatchJobRunBufferRa);
     TestRunBufferRaLayout(reinterpret_cast<RunBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobRunBufferRa_nid_disambig1")));
+    TestControlBufferRaLayout(sceAjmBatchJobControlBufferRa);
+    TestControlBufferRaLayout(reinterpret_cast<ControlBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobControlBufferRa_nid_disambig1")));
+    TestRunSplitBufferRaLayout(sceAjmBatchJobRunSplitBufferRa);
+    TestRunSplitBufferRaLayout(reinterpret_cast<RunSplitBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobRunSplitBufferRa_nid_disambig1")));
 }
 
 int StartBufferRefused(std::uint32_t context, const void* batch, std::size_t size, AjmBatchError& error) {
@@ -2731,6 +2864,12 @@ int main(int argc, char** argv) {
     const std::uint8_t badHeader[4] = {0xFD, 0x72, 0x1F, 0xF0};
     Require(sceAjmDecAt9ParseConfigData(badHeader, &info) == invalidParameter);
     Require(sceAjmDecAt9ParseConfigData(nullptr, &info) == invalidParameter);
+    errno = 71;
+    Require(sceAjmDecAt9ParseConfigData(reinterpret_cast<const void*>(0x10), &info) == invalidParameter);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceAjmDecAt9ParseConfigData(stereo48k, reinterpret_cast<AjmDecAt9ConfigDataInfo*>(0x10)) == invalidParameter);
+    Require(errno == 71);
     std::vector<std::uint8_t> batch(4096);
     AjmBatchInfo batchInfo{};
     Require(sceAjmBatchInitialize(batch.data(), batch.size(), &batchInfo) == 0);

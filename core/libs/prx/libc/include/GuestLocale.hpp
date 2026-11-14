@@ -35,6 +35,19 @@ struct Facet {
     std::uint32_t reserved;
 };
 
+struct CtypeFacet {
+    Facet base;
+    const std::int16_t* classification;
+    const std::int16_t* lower;
+    const std::int16_t* upper;
+    std::int32_t deleteTable;
+    std::uint32_t reserved;
+};
+
+static_assert(offsetof(CtypeFacet, lower) == 0x18);
+static_assert(offsetof(CtypeFacet, upper) == 0x20);
+static_assert(sizeof(CtypeFacet) == 0x30);
+
 struct TimeInfo {
     const char* amPm;
     const char* days;
@@ -339,6 +352,7 @@ extern "C" GuestLocale::String* LibcAssignWideCString_nid_no_patch(GuestLocale::
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
 extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
+extern "C" const GuestLocale::CollateVtable* GuestWideCollateVtable_nid_no_patch();
 inline constexpr std::size_t kCodecvtCharVtableSlots = 13;
 static_assert(kCodecvtCharVtableSlots * sizeof(std::uintptr_t) == 104);
 extern "C" std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots];

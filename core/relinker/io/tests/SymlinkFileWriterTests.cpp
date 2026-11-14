@@ -120,11 +120,58 @@ void checkFallbacks(const std::filesystem::path& directory, const TValue& data) 
 }
 
 template<typename TValue>
+void checkUnavailableTemporary(const std::filesystem::path& root, const TValue& data) {
+    if (geteuid() == 0) {
+        std::cout << "Read-only directory checks skipped for root\n";
+        return;
+    }
+    for (const bool linked : {false, true}) {
+        for (const bool limited : {false, true}) {
+            const auto directory = root / ("restricted-" + std::to_string(linked) + "-" + std::to_string(limited));
+            std::filesystem::create_directory(directory);
+            const auto target = directory / "output";
+            const auto output = linked ? root / (directory.filename().string() + "-link") : target;
+            const std::string previous = "previous output";
+            std::ofstream(target, std::ios::binary) << previous;
+            if (linked) std::filesystem::create_symlink(target, output);
+            std::filesystem::permissions(directory, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+            const auto child = fork();
+            if (child == 0) {
+                if (limited) {
+                    rlimit limit{};
+                    if (getrlimit(RLIMIT_FSIZE, &limit) != 0) _exit(3);
+                    limit.rlim_cur = 1;
+                    if (std::signal(SIGXFSZ, SIG_IGN) == SIG_ERR || setrlimit(RLIMIT_FSIZE, &limit) != 0) _exit(4);
+                }
+                try {
+                    Io::FileWriter().Write(output.string(), data);
+                } catch (const Domain::RelinkerException& error) {
+                    _exit(std::string(error.what()) == "Cannot open output file: " + output.string() ? 0 : 5);
+                } catch (...) {
+                    _exit(6);
+                }
+                _exit(7);
+            }
+            int status = 0;
+            const bool waited = child > 0 && waitpid(child, &status, 0) == child;
+            std::filesystem::permissions(directory, std::filesystem::perms::owner_all);
+            require(readFile(target) == previous, "Unavailable temporary file changed the previous output");
+            require(waited && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+                    "Unavailable temporary file did not refuse the write");
+            if (linked) require(std::filesystem::read_symlink(output) == target, "Refused write changed the symlink");
+            for (const auto& entry : std::filesystem::directory_iterator(directory))
+                require(entry.path() == target, "Refused write left a temporary file");
+        }
+    }
+}
+
+template<typename TValue>
 void check(const TValue& data) {
     TemporaryDirectory directory;
     for (const auto& kind : {"absolute", "relative", "chained"})
         checkReplacement(directory.Path, data, kind);
     checkFallbacks(directory.Path, data);
+    checkUnavailableTemporary(directory.Path, data);
 }
 
 }

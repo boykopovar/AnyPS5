@@ -25,6 +25,8 @@ void APS5_VABI _ZN7WebCore15AffineTransformC1Edddddd(WebCore::AffineTransform* s
 void APS5_VABI _ZN7WebCore15AffineTransformC2Edddddd(WebCore::AffineTransform* self, double a, double b, double c, double d, double e, double f);
 WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform15scaleNonUniformEdd( WebCore::AffineTransform* self, double sx, double sy);
 WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform4skewEdd( WebCore::AffineTransform* self, double angleX, double angleY);
+WebCore::VelocityData APS5_VABI _ZN7WebCore22HistoricalVelocityData18velocityForNewDataENS_10FloatPointEdN3WTF13MonotonicTimeE( WebCore::HistoricalVelocityData* self, WebCore::FloatPoint newPosition, double scale, WTF::MonotonicTime timestamp);
+void APS5_VABI _ZN7WebCore15AffineTransform5blendERKS0_d( WebCore::AffineTransform* self, const WebCore::AffineTransform& from, double progress);
 WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform5flipXEv(WebCore::AffineTransform* self);
 WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform5flipYEv(WebCore::AffineTransform* self);
 WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform5scaleERKNS_9FloatSizeE( WebCore::AffineTransform* self, const WebCore::FloatSize& s);

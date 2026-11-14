@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace NKWebKit {
@@ -252,7 +253,7 @@ public:
     void Allow() {
         state = State::Allowed;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(true);
         }
     }
@@ -260,7 +261,7 @@ public:
     void Deny() {
         state = State::Denied;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(false);
         }
     }
@@ -280,7 +281,7 @@ public:
     void Allow() {
         state = State::Allowed;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(true);
         }
     }
@@ -288,7 +289,7 @@ public:
     void Deny() {
         state = State::Denied;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(false);
         }
     }

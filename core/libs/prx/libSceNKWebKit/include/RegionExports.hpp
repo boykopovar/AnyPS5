@@ -515,5 +515,6 @@ WTF::Vector<WebCore::IntRect, 1> APS5_VABI _ZNK7WebCore6Region5rectsEv(const Web
 bool APS5_VABI _ZNK7WebCore6Region8containsERKNS_8IntPointE(const WebCore::Region* self, const WebCore::IntPoint& point);
 bool APS5_VABI _ZNK7WebCore6Region8containsERKS0_(const WebCore::Region* self, const WebCore::Region& other);
 std::uint64_t APS5_VABI _ZNK7WebCore6Region9totalAreaEv(const WebCore::Region* self);
+WebCore::Region APS5_VABI _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(const WebCore::AffineTransform* self, const WebCore::Region& region);
 
 }

@@ -176,6 +176,9 @@ int main(int argc, char** argv) {
         Require(update(-1, nullptr, invalid) == -1 && *error() == 22);
         invalid[0].tv_usec = 1000000;
         Require(update(base, "data", invalid) == -1 && *error() == 22);
+        const auto* unreadableTimes = reinterpret_cast<const KernelTimeval*>(1);
+        Require(update(base, "data", unreadableTimes) == -1 && *error() == 14);
+        Require(update(-100, path.c_str(), unreadableTimes) == -1 && *error() == 14);
         Require(update(base, "data", nullptr) == 0);
         Require(stat(path.c_str(), &info) == 0 && info.st_mtim.tv_sec > 1000000001);
     } else if (test == "symlinkat") {
