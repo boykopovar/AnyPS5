@@ -305,21 +305,6 @@ int APS5_VABI _ZN3rtc15CurrentThreadIdEv_nid_postfix(void) {
     return scePthreadGetthreadid();
 }
 
-int APS5_VABI _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc12EncodedImageC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc12EncodedImageD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc10I420Buffer6CreateEiiiii_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
