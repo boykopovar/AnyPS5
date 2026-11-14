@@ -43,5 +43,6 @@
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
+#include "prx/libSceNKWebKit/include/CacheValidationExports.hpp"
 #include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"
 #include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"

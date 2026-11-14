@@ -170,11 +170,10 @@ void Update(HTTPHeaderMap& map, const String& name, const String& value, bool ad
             UpdateCommonHeader_nid_no_patch(map, known, value, add);
         return;
     }
-    auto& vector = map.uncommon;
-    const auto index = append ? vector.size : Find(vector, [&](const auto& entry) { return Equal(entry.key, name); });
-    if (index == vector.size) Append(vector, UncommonHeader { String(name), String(value) }, 0);
-    else if (add) Replace(vector.buffer[index].value, Join(vector.buffer[index].value, value));
-    else Replace(vector.buffer[index].value, value);
+    if (append)
+        Append(map.uncommon, UncommonHeader { String(name), String(value) }, 0);
+    else
+        UpdateUncommonHeader_nid_no_patch(map, name, value, add);
 }
 
 template<class TEntry, class TMatch>
@@ -197,6 +196,14 @@ void NKWebKit::HttpAbi::UpdateCommonHeader_nid_no_patch(HTTPHeaderMap& map, HTTP
     auto& vector = map.common;
     const auto index = Find(vector, [&](const auto& entry) { return entry.key == name; });
     if (index == vector.size) Append(vector, CommonHeader { name, String(value) }, 6);
+    else if (add) Replace(vector.buffer[index].value, Join(vector.buffer[index].value, value));
+    else Replace(vector.buffer[index].value, value);
+}
+
+void NKWebKit::HttpAbi::UpdateUncommonHeader_nid_no_patch(HTTPHeaderMap& map, const String& name, const String& value, bool add) {
+    auto& vector = map.uncommon;
+    const auto index = Find(vector, [&](const auto& entry) { return Equal(entry.key, name); });
+    if (index == vector.size) Append(vector, UncommonHeader { String(name), String(value) }, 0);
     else if (add) Replace(vector.buffer[index].value, Join(vector.buffer[index].value, value));
     else Replace(vector.buffer[index].value, value);
 }
