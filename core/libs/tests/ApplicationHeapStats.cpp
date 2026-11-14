@@ -36,6 +36,16 @@ int APS5_VABI posixAlign(void** pointer, std::size_t, std::size_t) {
     return 0;
 }
 
+unsigned fullStatsCalls = 0;
+void* lastFullStats = nullptr;
+
+int APS5_VABI fullStats(void* block) {
+    ++fullStatsCalls;
+    lastFullStats = block;
+    if (statsAllocate) ApplicationHeapAllocate_nid_no_patch(16);
+    return 0x2b;
+}
+
 int APS5_VABI statsFast(void* stats) {
     ++statsCalls;
     lastStats = stats;
@@ -71,6 +81,7 @@ TValue read(const std::array<std::byte, TSize>& data, std::size_t offset) {
 int main(int argc, char** argv) {
     std::array<std::byte, 0x40> stats{};
     reject([&] { malloc_stats_fast_nid_postfix(stats.data()); });
+    reject([&] { malloc_stats_nid_postfix(stats.data()); });
     std::array<std::byte, 0x40> process{};
     std::array<std::byte, 0x38> libc{};
     std::array<std::byte, 0x78> replacement{};
@@ -88,21 +99,28 @@ int main(int argc, char** argv) {
     write(replacement, 0x40, &align);
     write(replacement, 0x48, &realign);
     write(replacement, 0x50, &posixAlign);
+    write(replacement, 0x58, &fullStats);
     write(replacement, 0x60, &statsFast);
     write(replacement, 0x68, &usableSize);
     if (argc > 1 && std::strcmp(argv[1], "default") == 0) {
         std::memset(replacement.data() + 0x20, 0, 10 * sizeof(void*));
         ApplicationHeapInitialize_nid_no_patch(process.data());
         require(ApplicationHeapAllocate_nid_no_patch(16) != nullptr);
-        const auto measure = [&] {
+        const auto sample = [&](auto function) {
             stats.fill(std::byte{0x5a});
             write(stats, 0, std::uint16_t{0x28});
             write(stats, 2, std::uint16_t{1});
-            require(malloc_stats_fast_nid_postfix(stats.data()) == 0);
+            require(function(stats.data()) == 0);
             const auto maxSystem = read<std::uint64_t>(stats, 0x08), system = read<std::uint64_t>(stats, 0x10);
             const auto maxInUse = read<std::uint64_t>(stats, 0x18), inUse = read<std::uint64_t>(stats, 0x20);
             require(maxSystem >= system && system >= inUse && maxInUse >= inUse && read<std::uint64_t>(stats, 0x28) == 0x5a5a5a5a5a5a5a5aull);
+            require(read<std::uint32_t>(stats, 4) == 0x5a5a5a5au);
             return std::array<std::uint64_t, 4>{maxSystem, system, maxInUse, inUse};
+        };
+        const auto measure = [&] {
+            const auto fast = sample(malloc_stats_fast_nid_postfix);
+            require(sample(malloc_stats_nid_postfix) == fast);
+            return fast;
         };
         const auto initial = measure();
         require(initial[3] >= 16);
@@ -123,20 +141,24 @@ int main(int argc, char** argv) {
             write(stats, 2, version);
             const auto before = stats;
             require(malloc_stats_fast_nid_postfix(stats.data()) == 1 && stats == before);
+            require(malloc_stats_nid_postfix(stats.data()) == 1 && stats == before);
         }
         reject([&] { malloc_stats_fast_nid_postfix(nullptr); });
-        require(statsCalls == 0);
+        reject([&] { malloc_stats_nid_postfix(nullptr); });
+        require(statsCalls == 0 && fullStatsCalls == 0);
         return 0;
     }
     if (argc > 1 && std::strcmp(argv[1], "missing") == 0) {
+        write(replacement, 0x58, static_cast<void*>(nullptr));
         write(replacement, 0x60, static_cast<void*>(nullptr));
         write(replacement, 0x68, static_cast<void*>(nullptr));
         ApplicationHeapInitialize_nid_no_patch(process.data());
         require(ApplicationHeapAllocate_nid_no_patch(16) == storage.data());
+        reject([&] { malloc_stats_nid_postfix(stats.data()); });
         reject([&] { malloc_stats_fast_nid_postfix(stats.data()); });
         reject([&] { malloc_usable_size_nid_postfix(storage.data()); });
         reject([&] { malloc_usable_size_nid_postfix(nullptr); });
-        require(statsCalls == 0 && usableCalls == 0);
+        require(statsCalls == 0 && fullStatsCalls == 0 && usableCalls == 0);
         return 0;
     }
     ApplicationHeapInitialize_nid_no_patch(process.data());
@@ -147,6 +169,13 @@ int main(int argc, char** argv) {
     statsAllocate = false;
     require(statsCalls == 3);
     require(malloc_stats_fast_nid_postfix(stats.data()) == 0x2a && statsCalls == 4);
+    require(fullStatsCalls == 0);
+    require(malloc_stats_nid_postfix(stats.data()) == 0x2b && fullStatsCalls == 1 && lastFullStats == stats.data() && statsCalls == 4);
+    require(malloc_stats_nid_postfix(nullptr) == 0x2b && fullStatsCalls == 2 && lastFullStats == nullptr);
+    statsAllocate = true;
+    reject([&] { malloc_stats_nid_postfix(stats.data()); });
+    statsAllocate = false;
+    require(fullStatsCalls == 3 && malloc_stats_nid_postfix(stats.data()) == 0x2b && fullStatsCalls == 4);
     require(ApplicationHeapAllocate_nid_no_patch(16) == storage.data());
     require(malloc_usable_size_nid_postfix(storage.data()) == 0x55 && usableCalls == 1 && lastUsable == storage.data());
     require(malloc_usable_size_nid_postfix(nullptr) == 0x55 && usableCalls == 2 && lastUsable == nullptr);

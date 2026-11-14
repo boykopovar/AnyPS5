@@ -15,17 +15,22 @@ sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location("nid_names", ROOT / "tools/nid_names.py")
 NIDS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(NIDS)
-DECLARATION = re.compile(r"(?:\bAPS5_VABI\s+|^[ \t]*[A-Za-z_][\w:*&<> \t]*?[ \t]+)(\w+)\s*\([^;{}]*\)\s*(?:noexcept\s*)?;", re.M)
+DECLARATION = re.compile(r"(?=APS5_VABI|^)(?:\bAPS5_VABI\s+|^[ \t]*[A-Za-z_][\w:*&<> \t]*?[ \t]+)(\w+)\s*\([^;{}]*\)\s*(?:noexcept\s*)?;", re.M)
 DATA_DECLARATION = re.compile(
     r"^[ \t]*extern\s+(?:const\s+)?[A-Za-z_][\w:<>]*(?:\s+(?:const|volatile))?\s+\**\s*(\w+)\s*(?:\[[^;\]\n]*\])?\s*;", re.M
 )
 INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
-TYPE_TOKEN = re.compile(r"\bnamespace\s*([\w:]*)\s*\{|\bextern\s*\{|\b(?:struct|union|class)\s+(\w+)\s*(?:final\s*)?(?::(?!:)[^;{]*)?([;{])|\busing\s+(\w+)\s*=|[{}]")
+TYPE_TOKEN = re.compile(r"(?=[{}censu])(?:\bnamespace\s*([\w:]*)\s*\{|\bextern\s*\{|\b(?:struct|union|class)\s+(\w+)\s*(?:final\s*)?(?::(?!:)[^;{]*)?([;{])|\busing\s+(\w+)\s*=|[{}])")
+TOKENS, _, CODE_TOKEN = NIDS.CPP_TOKEN.pattern.rpartition("|(?P<code>")
+CODE_RUN = re.compile(
+    rf"""{TOKENS}|(?P<code>(?:{CODE_TOKEN[:-1]})(?:\s*(?:(?:[0-9]|\.[0-9])[A-Za-z0-9_.']*|(?!(?:u8|u|U|L)?R?["'])[A-Za-z_][A-Za-z0-9_]*|[^\w\s/"']))*)"""
+)
+MASK = re.compile(r"[^\n]")
 
 
 @cache
 def code(text):
-    return NIDS.CPP_TOKEN.sub(lambda match: match.group() if match.group("code") else re.sub(r"[^\n]", " ", match.group()), text)
+    return CODE_RUN.sub(lambda match: match.group() if match.lastgroup == "code" else MASK.sub(" ", match.group()), text)
 
 
 def declared_types(text):

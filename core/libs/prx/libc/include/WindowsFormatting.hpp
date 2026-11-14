@@ -629,7 +629,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Value(PaddedStringSpec(spec), conversion == '%' ? "%" : text);
             continue;
         }
-        if (!secure) length = ApplicableLength(length, conversion);
+        length = ApplicableLength(length, conversion);
         const bool integerLength = length.empty() || length == "h" || length == "hh" ||
             length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
         if (conversion == 'd' || conversion == 'i') {

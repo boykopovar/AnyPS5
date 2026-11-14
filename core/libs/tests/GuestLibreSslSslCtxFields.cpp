@@ -447,6 +447,18 @@ static void TestNullInternal() {
     f.SessionIdContext(abc, 3, 1);
 }
 
+static void TestAddClientCa() {
+    Fixture f;
+    LibreSslPutError_nid_no_patch(2, 1, 2);
+    Require(SSL_CTX_add_client_CA_nid_postfix(f.Context(), nullptr) == 0);
+    Require(ERR_get_error_nid_postfix() == 0x02001002);
+    f.Verify(0, std::source_location::current());
+    RequireThrows([] { SSL_CTX_add_client_CA_nid_postfix(nullptr, nullptr); });
+    Require(ERR_get_error_nid_postfix() == 0);
+    f.SetCtx<void*>(CtxInternal, nullptr);
+    f.Throws([&] { SSL_CTX_add_client_CA_nid_postfix(f.Context(), nullptr); });
+}
+
 int main() {
     ERR_clear_error_nid_postfix();
     TestOptionsAndMode();
@@ -467,5 +479,6 @@ int main() {
     TestNullContext();
     TestCheckPrivateKey();
     TestNullInternal();
+    TestAddClientCa();
     return 0;
 }

@@ -5,6 +5,7 @@ if(NOT APPLE)
     target_link_options(libSceAudioIn PRIVATE LINKER:--exclude-libs,ALL)
 endif()
 configure_windows_unwind(libSceAudioIn)
+target_link_libraries(libSceAudioIn PRIVATE libScePad)
 
 if(BUILD_TESTING)
     add_test_executable(guest_audio_in_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioIn.cpp)
