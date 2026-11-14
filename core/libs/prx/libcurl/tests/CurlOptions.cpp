@@ -28,7 +28,7 @@ int main() {
     Require(opt_by_id != nullptr);
     Require(opt_by_id->id == CURLOPT_URL);
 
-    const auto* opt_invalid_id = curl_easy_option_by_id_nid_postfix(static_cast<CURLoption>(999999));
+    const auto* opt_invalid_id = curl_easy_option_by_id_nid_postfix(999999);
     Require(opt_invalid_id == nullptr);
 
     int count = 0;
