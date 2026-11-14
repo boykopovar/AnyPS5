@@ -18,6 +18,7 @@ int main() {
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -335,6 +336,7 @@ using Builder = std::vector<std::uint32_t> (*)(std::size_t);
 struct Ceiling {
     double allocations;
     double bytes;
+    std::uint64_t everyDraw;
 };
 
 struct Shape {
@@ -357,6 +359,7 @@ double ReportAllocations(const Shape& shape, std::size_t draws) {
     std::printf("draw allocations [%s] per draw: %.3f (%.1f bytes)\n", shape.name, perDraw, PerDraw(many.bytes, base.bytes, draws));
     auto ordered = many.sites;
     std::sort(ordered.begin(), ordered.end(), [](const SiteCount& left, const SiteCount& right) { return left.count > right.count; });
+    std::uint64_t everyDraw = 0;
     for (const auto& site : ordered) {
         std::uint64_t baseCount = 0;
         std::uint64_t baseBytes = 0;
@@ -367,12 +370,15 @@ double ReportAllocations(const Shape& shape, std::size_t draws) {
             }
         }
         const auto sitePerDraw = PerDraw(site.count, baseCount, draws);
+        everyDraw += static_cast<std::uint64_t>(std::max(0.0, std::floor(sitePerDraw + 0.02)));
         if (sitePerDraw < 0.05) continue;
         std::printf("  site %s: %.3f per draw, %.1f bytes per draw\n", Location(site.caller).c_str(), sitePerDraw, PerDraw(site.bytes, baseBytes, draws));
     }
+    std::printf("draw allocations [%s]: %llu allocations made on every draw, counted per call site\n", shape.name, static_cast<unsigned long long>(everyDraw));
     const auto perDrawBytes = PerDraw(many.bytes, base.bytes, draws);
     const auto& ceiling = std::getenv("APS5_DRAW_PIPELINE") != nullptr ? shape.pipelined : shape.plain;
     if (std::getenv("APS5_DRAW_ALLOCATIONS_NO_LIMIT") == nullptr) {
+        Require(everyDraw <= ceiling.everyDraw, std::string("draw allocations [") + shape.name + "]: call sites allocate " + std::to_string(everyDraw) + " times on every warmed draw, more than the " + std::to_string(ceiling.everyDraw) + " this shape makes");
         const auto maximum = std::getenv("APS5_DRAW_ALLOCATIONS_MAX");
         const auto limit = maximum != nullptr ? std::strtod(maximum, nullptr) : ceiling.allocations;
         Require(perDraw <= limit, std::string("draw allocations [") + shape.name + "]: " + std::to_string(perDraw) + " allocations per warmed draw, more than the limit " + std::to_string(limit));
@@ -425,10 +431,10 @@ int main() {
         Table = &table;
         Output = &output;
         const std::array<Shape, 4> shapes{{
-            {"recipe auto draw", [](std::size_t count) { return Draws(*Vertices, *Target, count); }, false, {45.0, 8100.0}, {48.5, 8200.0}},
-            {"indexed draw, guest indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, IndexBlock->At(0)); }, false, {47.5, 8300.0}, {50.5, 8450.0}},
-            {"indexed draw, image indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, reinterpret_cast<std::uintptr_t>(ImageIndices.data())); }, false, {47.5, 10250.0}, {50.5, 10450.0}},
-            {"compute dispatch", [](std::size_t count) { return Dispatches(*Table, *Output, count); }, true, {13.5, 1150.0}, {16.0, 1500.0}},
+            {"recipe auto draw", [](std::size_t count) { return Draws(*Vertices, *Target, count); }, false, {45.0, 8100.0, 42}, {48.5, 8200.0, 45}},
+            {"indexed draw, guest indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, IndexBlock->At(0)); }, false, {47.5, 8300.0, 44}, {50.5, 8450.0, 47}},
+            {"indexed draw, image indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, reinterpret_cast<std::uintptr_t>(ImageIndices.data())); }, false, {47.5, 10250.0, 44}, {50.5, 10450.0, 47}},
+            {"compute dispatch", [](std::size_t count) { return Dispatches(*Table, *Output, count); }, true, {13.5, 1150.0, 10}, {16.0, 1500.0, 13}},
         }};
         const auto draws = static_cast<std::size_t>(std::max(1, std::atoi(std::getenv("APS5_DRAW_ALLOCATIONS_DRAWS") != nullptr ? std::getenv("APS5_DRAW_ALLOCATIONS_DRAWS") : "256")));
         const auto only = std::getenv("APS5_DRAW_ALLOCATIONS_SHAPE");
