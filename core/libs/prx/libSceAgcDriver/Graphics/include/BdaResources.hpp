@@ -29,6 +29,11 @@ public:
     bool TableGuardCurrent(VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> TakeWrittenPages() const;
+    std::vector<GuestBufferMemory::StorePage> TakeStorePages() const;
+    bool StorePages() const { return pages != nullptr; }
+    void RecordStorePageGather(Recorder& recorder) const;
+    static std::uint32_t StorePageSlots();
     void CheckUse(const BdaResources* record) const;
     void NoteUse(std::uint64_t serial);
     bool TakeFaultSlot(const Context& context);
@@ -80,6 +85,8 @@ private:
     // BdaResources.cpp, which refers to it weakly).
     void checkFault(const BdaResources& record) const;
     void markWrittenPages(const BdaResources& record) const;
+    void collectStorePages() const;
+    void attachStorePages() const;
     void checkSrtGuard(const BdaResources& faults) const;
     std::span<std::byte> faultBytes() const;
     std::shared_ptr<Buffer> table;
@@ -88,11 +95,21 @@ private:
     VkDeviceSize faultOffset = 0;
     bool reportOnly = false;
     std::uint64_t lastUse = 0;
+    bool privateSlot = false;
+    mutable std::unique_ptr<Buffer> pages;
+    VkDevice poolDevice = VK_NULL_HANDLE;
+    std::unique_ptr<Buffer> targets;
+    std::uint32_t pageSlots = 0;
+    std::uint32_t targetCount = 0;
+    std::uint64_t pageBase = 0;
+    mutable bool pagesOverflowed = false;
+    mutable std::vector<GuestBufferMemory::StorePage> storePages;
     std::size_t tableBytes = 0;
     std::uint64_t tableGuardSerial = 0;
     std::vector<ImageTableFaults> imageTables;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
     std::vector<SrtGuardFaults> srtGuards;
+    mutable std::vector<std::pair<std::uint64_t, std::uint64_t>> writtenPages;
 };
 
 }

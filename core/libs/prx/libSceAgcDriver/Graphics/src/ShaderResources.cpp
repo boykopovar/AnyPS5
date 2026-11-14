@@ -7139,6 +7139,10 @@ void ShaderResources::WriteBack() {
     if (unaligned) std::rethrow_exception(unaligned);
 }
 
+bool ShaderResources::StorePages() const {
+    return bda != nullptr && bda->StorePages();
+}
+
 void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     if (bda != nullptr && recorder.Device() == context.device) bda->NoteUse(recorder.OpenSerial());
     // The ranges this use reads in place through their host imports (read-only and written elements
@@ -7168,6 +7172,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     } else {
         guestMemory.RecordCopyBacks(recorder);
     }
+    if (bda) bda->RecordStorePageGather(recorder);
     // Only the written elements' ranges (AddWritable): a read-only element is neither noted here
     // nor marked as a direct write, so CPU reads of its memory never wait for this work.
     recorder.NotePendingWrites(guestMemory.Writes());
@@ -7202,6 +7207,8 @@ void ShaderResources::WriteBackBuffers() {
         } catch (const BdaUnalignedAccess&) {
             unaligned = std::current_exception();
         }
+        guestMemory.NoteAddressStores(bda->TakeWrittenPages());
+        guestMemory.NoteStorePages(bda->TakeStorePages());
     }
     if (!SkipWriteBack()) guestMemory.WriteBack();
     if (unaligned) std::rethrow_exception(unaligned);

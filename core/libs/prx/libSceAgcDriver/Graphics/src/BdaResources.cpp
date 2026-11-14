@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "ImageTableAbi.hpp"
@@ -203,7 +204,7 @@ BdaResources::~BdaResources() {
     auto& arena = found->second;
     arena.holders.erase(this);
     --arena.counts.held;
-    if (!sharedFaultSlots()) {
+    if (!sharedFaultSlots() || privateSlot) {
         arena.counts.slots -= chunk->slots;
         --arena.counts.chunks;
     } else {
@@ -249,7 +250,7 @@ bool BdaResources::TakeFaultSlot(const Context& context) {
     const bool retake = faultDevice != VK_NULL_HANDLE;
     if (!retake) lastUse = arena.finished + 1;
     faultDevice = context.device;
-    const bool shared = sharedFaultSlots();
+    const bool shared = sharedFaultSlots() && !privateSlot;
     const auto slotBytes = shared ? faultSlotBytes(reportOnly) : VkDeviceSize{ShaderRecompiler::BdaAbi::FaultBufferBytes};
     const auto withFree = [&] { return std::find_if(arena.chunks.rbegin(), arena.chunks.rend(), [&](const std::shared_ptr<BdaFaultChunk>& chunk) { return chunk->slotBytes == slotBytes && !chunk->free.empty(); }); };
     auto source = shared ? withFree() : arena.chunks.rend();
@@ -257,7 +258,7 @@ bool BdaResources::TakeFaultSlot(const Context& context) {
     if (shared && source == arena.chunks.rend() && GuestMemory::GpuMutex().HeldByThisThread()) {
         std::vector<BdaResources*> idle;
         for (auto* holder : arena.holders) {
-            if (holder->faultChunk->slotBytes == slotBytes && holder->lastUse <= arena.finished && faultSlotClean(holder->faultBytes())) idle.push_back(holder);
+            if (!holder->privateSlot && holder->faultChunk->slotBytes == slotBytes && holder->lastUse <= arena.finished && faultSlotClean(holder->faultBytes())) idle.push_back(holder);
         }
         if (!idle.empty()) {
             const auto reclaim = (idle.size() + 1) / 2;
@@ -281,7 +282,9 @@ bool BdaResources::TakeFaultSlot(const Context& context) {
         const auto stride = shared ? faultStride(context, slotBytes) : slotBytes;
         const auto slots = shared ? std::max<VkDeviceSize>(1, FaultChunkBytes / stride) : 1;
         chunk = std::make_shared<BdaFaultChunk>();
-        chunk->buffer = std::make_unique<Buffer>(context, static_cast<std::size_t>(stride * slots), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        if (privateSlot) usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        chunk->buffer = std::make_unique<Buffer>(context, static_cast<std::size_t>(stride * slots), usage);
         std::memset(chunk->buffer->Bytes().data(), 0, chunk->buffer->Bytes().size());
         chunk->slots = static_cast<std::size_t>(slots);
         chunk->slotBytes = slotBytes;
@@ -310,7 +313,44 @@ bool BdaResources::TakeFaultSlot(const Context& context) {
     return true;
 }
 
-BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory, bool reportOnly) : BdaResources(context, reportOnly) {
+std::uint32_t BdaResources::StorePageSlots() {
+    static const std::uint32_t slots = [] {
+        const char* value = std::getenv("APS5_BDA_STORE_PAGES");
+        const auto parsed = value != nullptr ? std::strtoull(value, nullptr, 10) : 1024ull;
+        return std::bit_ceil(static_cast<std::uint32_t>(std::clamp<unsigned long long>(parsed, 64, 65536)));
+    }();
+    return slots;
+}
+
+BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory, bool reportOnly) : reportOnly(reportOnly) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    static_assert(std::endian::native == std::endian::little);
+    Require(Abi::FaultBufferBytes <= context.limits.maxStorageBufferRange, "BDA fault buffer exceeds storage buffer range limit");
+    const auto spans = memory.AddressStoreSpans();
+    privateSlot = !spans.empty();
+    TakeFaultSlot(context);
+    if (!spans.empty()) {
+        pageSlots = StorePageSlots();
+        pageBase = spans.front().begin / Abi::StorePageBytes * Abi::StorePageBytes;
+        Require(spans.back().end - pageBase <= Abi::StorePageSpan, "heap mirrors stored through addresses that span more than 16 TiB are not implemented");
+        poolDevice = context.device;
+        if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Device() == context.device) pages = recorder->TakeStorePagePool(Abi::StorePagePoolBytes(pageSlots));
+        if (pages == nullptr) {
+            pages = std::make_unique<Buffer>(context, Abi::StorePagePoolBytes(pageSlots), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+            std::memset(pages->Bytes().data(), 0, Abi::StorePagePoolBytes(pageSlots));
+        }
+        std::vector<std::uint64_t> words;
+        for (const auto& span : spans) {
+            if (!span.resident) continue;
+            words.insert(words.end(), {span.begin, span.end, span.device, 0});
+            ++targetCount;
+        }
+        if (targetCount != 0) {
+            targets = std::make_unique<Buffer>(context, words.size() * sizeof(std::uint64_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+            std::memcpy(targets->Bytes().data(), words.data(), words.size() * sizeof(std::uint64_t));
+        }
+        attachStorePages();
+    }
     const auto cached = memory.CachedAddressTable();
     std::vector<ShaderRecompiler::BdaAbi::Range> built;
     if (!cached.has_value()) built = memory.AddressRanges();
@@ -427,6 +467,53 @@ VkDescriptorBufferInfo BdaResources::Table() const {
     return {table->Handle(), 0, tableBytes};
 }
 
+void BdaResources::attachStorePages() const {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    if (pages == nullptr) return;
+    auto* words = reinterpret_cast<std::uint32_t*>(faultBytes().data());
+    const auto address = pages->DeviceAddress();
+    words[Abi::StorePagesWord] = static_cast<std::uint32_t>(address);
+    words[Abi::StorePagesWord + 1] = static_cast<std::uint32_t>(address >> 32u);
+    words[Abi::StorePageBaseWord] = static_cast<std::uint32_t>(pageBase);
+    words[Abi::StorePageBaseWord + 1] = static_cast<std::uint32_t>(pageBase >> 32u);
+    words[Abi::StorePageSlotsWord] = pageSlots;
+    words[Abi::StorePageOverflowWord] = 0;
+}
+
+void BdaResources::RecordStorePageGather(Recorder& recorder) const {
+    if (pages == nullptr || targetCount == 0) return;
+    recorder.RecordStorePageGather(recorder.Commands(), {faultChunk->buffer->DeviceAddress() + faultOffset, pages->DeviceAddress(), targets->DeviceAddress(), pageBase, targetCount, pageSlots});
+}
+
+std::vector<GuestBufferMemory::StorePage> BdaResources::TakeStorePages() const {
+    return std::exchange(storePages, {});
+}
+
+void BdaResources::collectStorePages() const {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    storePages.clear();
+    if (pages == nullptr) return;
+    auto* faultWords = reinterpret_cast<std::uint32_t*>(faultBytes().data());
+    pagesOverflowed = faultWords[Abi::StorePageOverflowWord] != 0;
+    faultWords[Abi::StorePageOverflowWord] = 0;
+    auto* bytes = pages->Bytes().data();
+    auto* words = reinterpret_cast<std::uint32_t*>(bytes);
+    for (std::uint32_t slot = 0; slot < pageSlots; ++slot) {
+        if (words[slot] == 0) continue;
+        GuestBufferMemory::StorePage page;
+        page.address = pageBase + (static_cast<std::uint64_t>(words[slot] - 1u) << Abi::StorePageShift);
+        auto* data = bytes + Abi::StorePageWord(pageSlots, slot) * sizeof(std::uint32_t);
+        auto* mask = words + Abi::StoreMaskWord(pageSlots, slot);
+        page.data.assign(data, data + Abi::StorePageBytes);
+        std::copy(mask, mask + Abi::StoreMaskWords, page.mask.begin());
+        std::memset(data, 0, Abi::StorePageBytes);
+        std::memset(mask, 0, Abi::StoreMaskWords * sizeof(std::uint32_t));
+        words[slot] = 0;
+        storePages.push_back(std::move(page));
+    }
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Device() == poolDevice) recorder->KeepStorePagePool(std::move(pages));
+}
+
 std::span<const std::byte> BdaResources::TableBytes() const {
     if (table == nullptr) return {};
     return table->Bytes().first(tableBytes);
@@ -477,11 +564,13 @@ void BdaResources::CheckUse(const BdaResources* record) const {
 
 void BdaResources::checkFault(const BdaResources& record) const {
     if (record.faultChunk == nullptr) return;
+    record.collectStorePages();
     if (!reportOnly) markWrittenPages(record);
     ShaderRecompiler::BdaAbi::Fault report{};
     std::memcpy(&report, record.faultBytes().data(), sizeof(report));
     if (report.state == ShaderRecompiler::BdaAbi::FaultState::Empty) {
         Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.otherFaults == 0, "BDA fault record has data without publication");
+        Require(!record.pagesOverflowed, "the GPU stored to more pages of resident heap mirrors in one use than the " + std::to_string(record.pageSlots) + " store pages hold (APS5_BDA_STORE_PAGES)");
         if (!reportOnly) checkSrtGuard(record);
         return;
     }
@@ -492,6 +581,7 @@ void BdaResources::checkFault(const BdaResources& record) const {
         loopGuardTripped.store(true, std::memory_order_relaxed);
         std::fprintf(stderr, "[gpu] loop guard: the loop exit at pc 0x%x of shader 0x%llx ran past %u evaluations\n", report.instruction, static_cast<unsigned long long>(report.address), report.bytes);
         std::memset(record.faultBytes().data(), 0, record.faultBytes().size());
+        record.attachStorePages();
         return;
     }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ImageTable) {
@@ -516,6 +606,10 @@ void BdaResources::checkFault(const BdaResources& record) const {
     std::ostringstream message;
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::UnlinkedCall) {
         message << "shader stage " << report.stage << " called address 0x" << std::hex << report.address << " at program counter 0x" << report.instruction << ", which no linked callee of that call matches";
+        throw std::runtime_error(message.str());
+    }
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::StorePages) {
+        message << "BDA store at 0x" << std::hex << report.address << std::dec << " (" << report.bytes << " bytes, instruction 0x" << std::hex << report.instruction << std::dec << ") into a heap mirror found none of the " << pageSlots << " store pages free (APS5_BDA_STORE_PAGES)";
         throw std::runtime_error(message.str());
     }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::WindowLaneSpill) {
@@ -572,6 +666,10 @@ void BdaResources::checkSrtGuard(const BdaResources& faults) const {
     throw std::runtime_error(message.str());
 }
 
+std::vector<std::pair<std::uint64_t, std::uint64_t>> BdaResources::TakeWrittenPages() const {
+    return std::exchange(writtenPages, {});
+}
+
 void BdaResources::markWrittenPages(const BdaResources& record) const {
     namespace Abi = ShaderRecompiler::BdaAbi;
     auto* words = reinterpret_cast<std::uint32_t*>(record.faultBytes().data());
@@ -588,6 +686,7 @@ void BdaResources::markWrittenPages(const BdaResources& record) const {
             }
         }
         GuestMemory::MarkPossiblyWritten(begin, bytes);
+        writtenPages.emplace_back(begin, end);
     }), "invalid BDA written-page record");
     for (std::uint32_t claim = 0; claim < count; ++claim) {
         const auto slot = words[Abi::WrittenListWord + claim];
