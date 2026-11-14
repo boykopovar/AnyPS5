@@ -3,8 +3,8 @@
 #include <winsock2.h>
 #else
 #include <sys/socket.h>
-#include <cerrno>
 #endif
+#include <cerrno>
 
 #include "SslTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -724,12 +724,14 @@ int APS5_VABI sceSslGetMemoryPoolStats(int sslCtxId, SceSsl::MemoryPoolStats* st
     std::lock_guard lock(state.mutex);
     const auto found = state.contexts.find(sslCtxId);
     if (found == state.contexts.end()) {
-        std::memset(stats, 0, sizeof(*stats));
+        const SceSsl::MemoryPoolStats zeroStats{};
+        if (!GuestCopyOut_nid_no_patch(stats, &zeroStats, sizeof(zeroStats))) return ErrorInvalidValue;
         return ErrorInvalidId;
     }
     auto& pool = found->second->pool;
     std::lock_guard poolLock(pool.mutex);
-    *stats = {pool.size, pool.peak, pool.current, 0};
+    const SceSsl::MemoryPoolStats localStats = {pool.size, pool.peak, pool.current, 0};
+    if (!GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats))) return ErrorInvalidValue;
     return 0;
 }
 
@@ -1246,7 +1248,12 @@ int APS5_VABI sceSslGetNotBefore(int sslCtxId, void* sslCert, SceSsl::RtcTick* b
     if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
     if (!sslCert || !begin) return ErrorInvalidValue;
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
-    begin->tick = TimeToTick(crt->valid_from);
+    SceSsl::RtcTick localTick{};
+    localTick.tick = TimeToTick(crt->valid_from);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(begin, &localTick, sizeof(localTick));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidValue;
     return 0;
 }
 
@@ -1255,7 +1262,12 @@ int APS5_VABI sceSslGetNotAfter(int sslCtxId, void* sslCert, SceSsl::RtcTick* li
     if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
     if (!sslCert || !limit) return ErrorInvalidValue;
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
-    limit->tick = TimeToTick(crt->valid_to);
+    SceSsl::RtcTick localTick{};
+    localTick.tick = TimeToTick(crt->valid_to);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(limit, &localTick, sizeof(localTick));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidValue;
     return 0;
 }
 

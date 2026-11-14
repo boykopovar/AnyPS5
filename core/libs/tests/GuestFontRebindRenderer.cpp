@@ -34,24 +34,33 @@ int main() {
     Require(sceFontSupportExternalFonts(library, 1, 0x52) == SCE_FONT_OK);
     const std::vector<unsigned char> fontData = FontFixture::BuildFont(1, {});
     FontHandle font = nullptr;
+    FontHandle secondFont = nullptr;
     Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, &font) == SCE_FONT_OK);
+    Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, &secondFont) == SCE_FONT_OK);
 
     Require(sceFontRebindRenderer(nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     alignas(16) static unsigned char notAFont[16384] = {};
     Require(sceFontRebindRenderer(reinterpret_cast<FontHandle>(notAFont)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
 
     Require(sceFontRebindRenderer(font) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
+    Require(sceFontRebindRenderer(secondFont) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
 
     FontRenderer renderer = nullptr;
     Require(sceFontCreateRenderer(&memory, sceFontSelectRendererFt(0), &renderer) == SCE_FONT_OK);
     Require(sceFontBindRenderer(font, renderer) == SCE_FONT_OK);
+    Require(sceFontBindRenderer(secondFont, renderer) == SCE_FONT_OK);
     Require(sceFontRebindRenderer(font) == SCE_FONT_OK);
     Require(sceFontRebindRenderer(font) == SCE_FONT_OK);
+    Require(sceFontRebindRenderer(secondFont) == SCE_FONT_OK);
 
     Require(sceFontUnbindRenderer(font) == SCE_FONT_OK);
     Require(sceFontRebindRenderer(font) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
+    Require(sceFontRebindRenderer(secondFont) == SCE_FONT_OK);
+    Require(sceFontUnbindRenderer(secondFont) == SCE_FONT_OK);
+    Require(sceFontRebindRenderer(secondFont) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
 
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_OK);
+    Require(sceFontCloseFont(secondFont) == SCE_FONT_OK);
     Require(sceFontCloseFont(font) == SCE_FONT_OK);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
     Require(allocations == 0);

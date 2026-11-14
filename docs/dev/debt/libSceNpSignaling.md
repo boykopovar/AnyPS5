@@ -10,14 +10,10 @@
 
 - [Offline query subset](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - the eight implemented query exports are not measured on a PS5: signatures and checks follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/d1d0b58cf94e5bfb6a2be406e140dcf1e314853f/src/core/libraries/np/np_signaling/np_signaling.cpp#L172-L819) with no connection or request. `CreateContextA` and `ActivateConnectionA` return `SCE_NP_ERROR_SIGNED_OUT` under the existing libSceNpManager offline model. Console error mapping and validation order remain unverified.
 
+- [sceNpSignalingActivateConnectionA, sceNpSignalingGetPeerNetInfoResult and sceNpSignalingGetLocalNetInfo](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - returning `0x80552715` (`SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT`) with errno preserved for unreadable peer address or net info pointers via `GuestCopyIn_nid_no_patch` is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 - [Unsettled connection and peer queries](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - `sceNpSignalingGetConnectionStatus`, `sceNpSignalingGetConnectionStatistics`, `sceNpSignalingGetConnectionFromPeerAddressA` and `sceNpSignalingGetPeerNetInfoA` have no established console contract for the offline case. Their typed declarations follow the pinned shadPS4 source, but the inactive result, zero counts, context-kind error and validation order are unverified. All four throw through `NotImplemented_nid_no_patch` before examining arguments or state and leave outputs untouched. Closes when: the return values, output writes and check order are established from the firmware module or console measurements.
 
+- [sceNpSignalingGetMemoryInfo](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - a call that passes the checks throws: the pool statistics are not modelled. Initialization and a null output (`INVALID_ARGUMENT`) are checked as in [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/98ef621decb6a35dba62e367a8a89186f5d49dcc/src/core/libraries/np/np_signaling/np_signaling.cpp#L793-L804), whose returned sizes are not reproduced. The three 64-bit fields follow its [memory-info layout](https://github.com/shadps4-emu/shadPS4/blob/98ef621decb6a35dba62e367a8a89186f5d49dcc/src/core/libraries/np/np_types2.h#L1102-L1107); no PS5 layout or behavior measurement was made.
+
 - [sceNpSignalingGetPeerNetInfo](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - a request that passes the checks throws: no peer information request is staged offline. Initialization, null pointers, an invalid NpId (`INVALID_ARGUMENT`) and then the context (`CTX_NOT_FOUND`) are checked in [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/98ef621decb6a35dba62e367a8a89186f5d49dcc/src/core/libraries/np/np_signaling/np_signaling.cpp#L688-L717)'s order. Not measured on a PS5.
-
-### Additional callable export inventory
-
-- [Additional callable exports](../../../core/libs/prx/libSceNpSignaling/Export.cpp) - 1 entry has import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime support, implemented-function increase or title unblock is claimed.
-
-| Name | NID |
-| --- | --- |
-| `sceNpSignalingGetMemoryInfo` | `tOpqyDyMje4` |

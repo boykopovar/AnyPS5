@@ -1,191 +1,29 @@
 #include "prx/libcairo/include/Surface.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include <atomic>
-#include <cmath>
-#include <cstdint>
-#include <limits>
+#include <CairoBackend.h>
+
+#include <memory>
 #include <new>
-#include <vector>
 
 namespace {
 
-constexpr int kSuccess = 0;
-constexpr int kNullPointer = 7;
-constexpr int kInvalidContent = 15;
-constexpr int kInvalidFormat = 16;
-constexpr int kInvalidStride = 24;
-constexpr int kInvalidSize = 32;
-constexpr int kNoMemory = 1;
-constexpr int kColor = 0x1000;
-constexpr int kAlpha = 0x2000;
-constexpr int kColorAlpha = 0x3000;
-constexpr int kImageSurfaceType = 0;
-constexpr int kInvalidFormatValue = -1;
-
-int BitsPerPixel(int format) {
-    switch (format) {
-    case 0: case 1: case 5: return 32;
-    case 2: return 8;
-    case 3: return 1;
-    case 4: return 16;
-    case 6: return 96;
-    case 7: return 128;
-    default: return 0;
-    }
-}
-
-int ContentForFormat(int format) {
-    switch (format) {
-    case 0: case 7: return kColorAlpha;
-    case 2: case 3: return kAlpha;
-    default: return kColor;
-    }
-}
-
-int FormatForContent(int content) {
-    switch (content) {
-    case kColor: return 1;
-    case kAlpha: return 2;
-    case kColorAlpha: return 0;
-    default: return -1;
-    }
-}
-
-int Stride(int format, int width) {
-    const int bits = BitsPerPixel(format);
-    if (!bits || width < 0) return -1;
-
-    const auto bitCount = static_cast<std::int64_t>(width) * bits + 31;
-    if (bitCount > std::numeric_limits<int>::max()) return -1;
-    const auto n = bitCount / 32 * 4;
-    return n > std::numeric_limits<int>::max() ? -1 : static_cast<int>(n);
-}
-
-}
-
-struct CairoSurfaceState {
-    struct UserDataSlot {
-        const CairoUserDataKey* key{};
-        void* data{};
-        CairoDestroyFunc destroy{};
-    };
-    std::vector<UserDataSlot> userData;
-    std::atomic<unsigned> references{1};
-    int status{kSuccess};
-    int format{kInvalidFormatValue};
-    int content{kColor};
-    int width{};
-    int height{};
-    int stride{};
-    unsigned char* data{};
-    bool ownsData{};
-    bool isImage{true};
-    CairoSurface* parent{};
-    double originX{};
-    double originY{};
-    double extentWidth{};
-    double extentHeight{};
-    double scaleX{1};
-    double scaleY{1};
-
-    CairoSurfaceState() = default;
-    explicit CairoSurfaceState(int failure) : status(failure) {}
-    ~CairoSurfaceState();
+struct UserData {
+    void* data;
+    CairoDestroyFunc destroy;
 };
 
-namespace {
-
-CairoSurfaceState* State(CairoSurface* handle) {
-    return reinterpret_cast<CairoSurfaceState*>(handle);
-}
-CairoSurface* Handle(CairoSurfaceState* state) {
-    return reinterpret_cast<CairoSurface*>(state);
-}
-void ReleaseSurface(CairoSurface* surface);
+cairo_surface_t* Backend(CairoSurface* surface) {
+    return reinterpret_cast<cairo_surface_t*>(surface);
 }
 
-CairoSurfaceState::~CairoSurfaceState() {
-    if (ownsData) delete[] data;
-    if (parent) ReleaseSurface(parent);
-    for (auto slot = userData.rbegin(); slot != userData.rend(); ++slot)
-        if (slot->data && slot->destroy) slot->destroy(slot->data);
+CairoSurface* Guest(cairo_surface_t* surface) {
+    return reinterpret_cast<CairoSurface*>(surface);
 }
 
-namespace {
-
-void ReleaseSurface(CairoSurface* surface) {
-    if (!surface || State(surface)->status != kSuccess) return;
-    if (State(surface)->references.fetch_sub(1, std::memory_order_acq_rel) == 1)
-        delete State(surface);
-}
-
-CairoSurfaceState* NewSurface() {
-    return new (std::nothrow) CairoSurfaceState;
-}
-
-CairoSurface* ErrorSurface(int status) {
-    static CairoSurfaceState noMemory{kNoMemory};
-    static CairoSurfaceState nullPointer{kNullPointer};
-    static CairoSurfaceState invalidContent{kInvalidContent};
-    static CairoSurfaceState invalidFormat{kInvalidFormat};
-    static CairoSurfaceState invalidStride{kInvalidStride};
-    static CairoSurfaceState invalidSize{kInvalidSize};
-    switch (status) {
-    case kNullPointer: return Handle(&nullPointer);
-    case kInvalidContent: return Handle(&invalidContent);
-    case kInvalidFormat: return Handle(&invalidFormat);
-    case kInvalidStride: return Handle(&invalidStride);
-    case kInvalidSize: return Handle(&invalidSize);
-    default: return Handle(&noMemory);
-    }
-}
-
-CairoSurface* MakeImage(int format, int width, int height,
-                        int suppliedStride, unsigned char* externalData, bool borrowed) {
-    if (!BitsPerPixel(format)) return ErrorSurface(kInvalidFormat);
-    const int minimumStride = Stride(format, width);
-    const std::int64_t magnitude = suppliedStride < 0
-                                       ? -static_cast<std::int64_t>(suppliedStride)
-                                       : suppliedStride;
-    if (borrowed && (suppliedStride % 4 != 0 ||
-                     (minimumStride >= 0 && magnitude < minimumStride)))
-        return ErrorSurface(kInvalidStride);
-    if (minimumStride < 0 || width > 32767 || height < 0 || height > 32767)
-        return ErrorSurface(kInvalidSize);
-    if (borrowed && format == 7 && width == 0 && magnitude > 0 && magnitude < 16)
-        return ErrorSurface(kNoMemory);
-
-    const bool ownsPixels = !borrowed || (!externalData && width > 0 && height > 0);
-    const int stride = !borrowed && (!width || !height) ? 0 :
-                       ownsPixels ? minimumStride : suppliedStride;
-    if (height && static_cast<std::uint64_t>(height) * stride >
-                      std::numeric_limits<std::size_t>::max())
-        return ErrorSurface(kInvalidSize);
-    auto* result = NewSurface();
-    if (!result) return ErrorSurface(kNoMemory);
-    result->format = format;
-    result->content = ContentForFormat(format);
-    result->width = width;
-    result->height = height;
-    result->stride = stride;
-    result->extentWidth = width;
-    result->extentHeight = height;
-    if (!ownsPixels) {
-        result->data = externalData;
-    } else {
-        const auto size = static_cast<std::size_t>(stride) * height;
-
-        if (size) {
-            result->data = new (std::nothrow) unsigned char[size]();
-            if (!result->data) {
-                delete result;
-                return ErrorSurface(kNoMemory);
-            }
-            result->ownsData = true;
-        }
-    }
-    return Handle(result);
+void DestroyUserData(void* opaque) {
+    const std::unique_ptr<UserData> userData(static_cast<UserData*>(opaque));
+    userData->destroy(userData->data);
 }
 
 }
@@ -193,153 +31,101 @@ CairoSurface* MakeImage(int format, int width, int height,
 extern "C" {
 
 int APS5_VABI cairo_format_stride_for_width(int format, int width) {
-    return Stride(format, width);
+    return aps5_cairo_format_stride_for_width(static_cast<cairo_format_t>(format), width);
 }
 
 CairoSurface* APS5_VABI cairo_image_surface_create(int format, int width, int height) {
-    return MakeImage(format, width, height, 0, nullptr, false);
+    return Guest(aps5_cairo_image_surface_create(static_cast<cairo_format_t>(format), width, height));
 }
 
 CairoSurface* APS5_VABI cairo_image_surface_create_for_data(unsigned char* data, int format,
                                                             int width, int height, int stride) {
-    return MakeImage(format, width, height, stride, data, true);
+    return Guest(aps5_cairo_image_surface_create_for_data(data, static_cast<cairo_format_t>(format),
+                                                          width, height, stride));
 }
 
 unsigned char* APS5_VABI cairo_image_surface_get_data(CairoSurface* surface) {
-    return surface && State(surface)->status == kSuccess && State(surface)->isImage ? State(surface)->data : nullptr;
+    return aps5_cairo_image_surface_get_data(Backend(surface));
 }
 
 int APS5_VABI cairo_image_surface_get_format(CairoSurface* surface) {
-    return surface && State(surface)->status == kSuccess && State(surface)->isImage
-               ? State(surface)->format : kInvalidFormatValue;
+    return aps5_cairo_image_surface_get_format(Backend(surface));
 }
 
 int APS5_VABI cairo_image_surface_get_width(CairoSurface* surface) {
-    return surface && State(surface)->status == kSuccess && State(surface)->isImage ? State(surface)->width : 0;
+    return aps5_cairo_image_surface_get_width(Backend(surface));
 }
 
 int APS5_VABI cairo_image_surface_get_height(CairoSurface* surface) {
-    return surface && State(surface)->status == kSuccess && State(surface)->isImage ? State(surface)->height : 0;
+    return aps5_cairo_image_surface_get_height(Backend(surface));
 }
 
 int APS5_VABI cairo_image_surface_get_stride(CairoSurface* surface) {
-    return surface && State(surface)->status == kSuccess && State(surface)->isImage ? State(surface)->stride : 0;
-}
-
-CairoSurface* APS5_VABI cairo_surface_reference(CairoSurface* surface) {
-    if (surface && State(surface)->status == kSuccess)
-        State(surface)->references.fetch_add(1, std::memory_order_relaxed);
-    return surface;
-}
-
-void APS5_VABI cairo_surface_destroy(CairoSurface* surface) {
-
-    ReleaseSurface(surface);
-}
-
-int APS5_VABI cairo_surface_set_user_data(CairoSurface* surface, const CairoUserDataKey* key,
-                                          void* data, CairoDestroyFunc destroy) {
-    if (!surface) NotImplemented_nid_no_patch(__func__);
-    auto* state = State(surface);
-    if (state->status != kSuccess) return state->status;
-    if (state->references.load(std::memory_order_relaxed) == 0) return 12;
-    CairoSurfaceState::UserDataSlot* selected = nullptr;
-    for (auto& slot : state->userData) {
-        if (slot.key == key) {
-            selected = &slot;
-            break;
-        }
-        if (data && !slot.data) selected = &slot;
-    }
-    if (selected) {
-        if (selected->data && selected->destroy) selected->destroy(selected->data);
-        *selected = data ? CairoSurfaceState::UserDataSlot{key, data, destroy}
-                         : CairoSurfaceState::UserDataSlot{};
-    } else if (data) {
-        if (state->userData.size() == state->userData.max_size()) return kNoMemory;
-        try {
-            state->userData.push_back({key, data, destroy});
-        } catch (const std::bad_alloc&) {
-            return kNoMemory;
-        }
-    }
-    return kSuccess;
-}
-
-int APS5_VABI cairo_surface_status(CairoSurface* surface) {
-    return surface ? State(surface)->status : kNullPointer;
-}
-
-int APS5_VABI cairo_surface_get_type(CairoSurface*) {
-    return kImageSurfaceType;
-}
-
-int APS5_VABI cairo_surface_get_content(CairoSurface* surface) {
-    return surface ? State(surface)->content : kColor;
-}
-
-void APS5_VABI cairo_surface_flush(CairoSurface*) {
-
-}
-
-void APS5_VABI cairo_surface_mark_dirty_rectangle(CairoSurface*, int, int, int, int) {
-
-}
-
-void APS5_VABI cairo_surface_set_device_scale(CairoSurface* surface, double x, double y) {
-    if (!surface || State(surface)->status != kSuccess) return;
-    State(surface)->scaleX = x;
-    State(surface)->scaleY = y;
-}
-
-void APS5_VABI cairo_surface_get_device_scale(CairoSurface* surface, double* x, double* y) {
-    if (x) *x = surface && State(surface)->status == kSuccess ? State(surface)->scaleX : 1;
-    if (y) *y = surface && State(surface)->status == kSuccess ? State(surface)->scaleY : 1;
+    return aps5_cairo_image_surface_get_stride(Backend(surface));
 }
 
 CairoSurface* APS5_VABI cairo_surface_create_similar(CairoSurface* other, int content,
                                                      int width, int height) {
-    if (!other) return ErrorSurface(kNullPointer);
-    if (State(other)->status != kSuccess) return ErrorSurface(State(other)->status);
-    if (width < 0 || height < 0) return ErrorSurface(kInvalidSize);
-    int format = FormatForContent(content);
-    if (format < 0) return ErrorSurface(kInvalidContent);
-    if (State(other)->isImage && content == State(other)->content)
-        format = State(other)->format;
-    const double deviceWidth = static_cast<double>(width) * State(other)->scaleX;
-    const double deviceHeight = static_cast<double>(height) * State(other)->scaleY;
-    if (!std::isfinite(deviceWidth) || !std::isfinite(deviceHeight) ||
-        deviceWidth < 0 || deviceHeight < 0 ||
-        deviceWidth > 32767 || deviceHeight > 32767)
-        return ErrorSurface(kInvalidSize);
-    auto* result = MakeImage(format, static_cast<int>(deviceWidth),
-                            static_cast<int>(deviceHeight), 0, nullptr, false);
-    if (result && State(result)->status == kSuccess) {
-        State(result)->scaleX = State(other)->scaleX;
-        State(result)->scaleY = State(other)->scaleY;
-    }
-    return result;
+    if (!other) NotImplemented_nid_no_patch(__func__);
+    return Guest(aps5_cairo_surface_create_similar(Backend(other), static_cast<cairo_content_t>(content),
+                                                   width, height));
 }
 
 CairoSurface* APS5_VABI cairo_surface_create_for_rectangle(CairoSurface* target,
                                                            double x, double y,
                                                            double width, double height) {
-    if (!target) return ErrorSurface(kNullPointer);
-    if (State(target)->status != kSuccess) return ErrorSurface(State(target)->status);
-    if (width < 0 || height < 0) return ErrorSurface(kInvalidSize);
-    auto* result = NewSurface();
-    if (!result) return ErrorSurface(kNoMemory);
+    if (!target) NotImplemented_nid_no_patch(__func__);
+    return Guest(aps5_cairo_surface_create_for_rectangle(Backend(target), x, y, width, height));
+}
 
-    result->isImage = false;
-    result->content = State(target)->content;
-    result->parent = cairo_surface_reference(target);
-    result->originX = x;
-    result->originY = y;
-    result->extentWidth = width;
-    result->extentHeight = height;
-    result->scaleX = State(target)->scaleX;
-    result->scaleY = State(target)->scaleY;
-    return Handle(result);
+CairoSurface* APS5_VABI cairo_surface_reference(CairoSurface* surface) {
+    return Guest(aps5_cairo_surface_reference(Backend(surface)));
+}
+
+void APS5_VABI cairo_surface_destroy(CairoSurface* surface) {
+    aps5_cairo_surface_destroy(Backend(surface));
+}
+
+void APS5_VABI cairo_surface_flush(CairoSurface* surface) {
+    aps5_cairo_surface_flush(Backend(surface));
+}
+
+int APS5_VABI cairo_surface_get_content(CairoSurface* surface) {
+    return aps5_cairo_surface_get_content(Backend(surface));
+}
+
+int APS5_VABI cairo_surface_get_type(CairoSurface* surface) {
+    return aps5_cairo_surface_get_type(Backend(surface));
+}
+
+void APS5_VABI cairo_surface_get_device_scale(CairoSurface* surface, double* x_scale, double* y_scale) {
+    aps5_cairo_surface_get_device_scale(Backend(surface), x_scale, y_scale);
+}
+
+void APS5_VABI cairo_surface_set_device_scale(CairoSurface* surface, double x_scale, double y_scale) {
+    aps5_cairo_surface_set_device_scale(Backend(surface), x_scale, y_scale);
+}
+
+void APS5_VABI cairo_surface_mark_dirty_rectangle(CairoSurface* surface, int x, int y, int width, int height) {
+    aps5_cairo_surface_mark_dirty_rectangle(Backend(surface), x, y, width, height);
+}
+
+int APS5_VABI cairo_surface_set_user_data(CairoSurface* surface, const CairoUserDataKey* key,
+                                          void* data, CairoDestroyFunc destroy) {
+    const auto* backendKey = reinterpret_cast<const cairo_user_data_key_t*>(key);
+    if (!data || !destroy || aps5_cairo_surface_get_reference_count(Backend(surface)) == 0)
+        return aps5_cairo_surface_set_user_data(Backend(surface), backendKey, data, nullptr);
+    auto userData = std::unique_ptr<UserData>(new (std::nothrow) UserData{data, destroy});
+    if (!userData) return CAIRO_STATUS_NO_MEMORY;
+    const cairo_status_t status = aps5_cairo_surface_set_user_data(Backend(surface), backendKey,
+                                                                   userData.get(), DestroyUserData);
+    if (status == CAIRO_STATUS_SUCCESS) userData.release();
+    return status;
+}
+
+int APS5_VABI cairo_surface_status(CairoSurface* surface) {
+    if (!surface) return CAIRO_STATUS_NULL_POINTER;
+    return aps5_cairo_surface_status(Backend(surface));
 }
 
 }
