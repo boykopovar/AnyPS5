@@ -7,11 +7,12 @@ from pathlib import Path
 CANDIDATES = ("upstream/main", "origin/main", "main")
 
 
-def git(root, *arguments):
+def git(root, *arguments, raw=False):
     result = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false", *arguments],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+                            capture_output=True, encoding=None if raw else "utf-8", errors=None if raw else "replace")
     if result.returncode:
-        raise RuntimeError(f"git {' '.join(arguments[:2])} failed: {result.stderr.strip()}")
+        stderr = result.stderr.decode("utf-8", "replace") if raw else result.stderr
+        raise RuntimeError(f"git {' '.join(arguments[:2])} failed: {stderr.strip()}")
     return result.stdout
 
 
@@ -68,6 +69,35 @@ def differences(old, new, deleted=False):
     return problems
 
 
+def changed_modes(root, base, tip):
+    fields = git(root, "diff", "--raw", "-z", "--no-renames", "--no-relative", "--no-ext-diff",
+                 "--ignore-submodules=none", base, tip, "--", raw=True).split(b"\0")
+    modes = {}
+    for header, path in zip(fields[::2], fields[1::2]):
+        before, after = header[1:].split(maxsplit=2)[:2]
+        if before != after:
+            modes[path] = before.decode("ascii"), after.decode("ascii")
+    return modes
+
+
+def mode_differences(root, old_base, old, new_base, new):
+    old_modes = changed_modes(root, old_base, old)
+    new_modes = changed_modes(root, new_base, new)
+    upstream_modes = changed_modes(root, old_base, new_base) if old_modes and old_base != new_base else {}
+    problems = []
+    for path in sorted(old_modes.keys() | new_modes.keys()):
+        if path in old_modes:
+            before, expected = old_modes[path]
+            base_mode = upstream_modes.get(path, (before, before))[1]
+            actual = new_modes.get(path, (base_mode, base_mode))[1]
+        else:
+            expected, actual = new_modes[path]
+        if expected != actual:
+            name = path.decode("utf-8", "backslashreplace")
+            problems.append(f"{name}: file mode {actual}, expected {expected}")
+    return problems
+
+
 def verify(root, old, new, onto):
     old_base = git(root, "merge-base", old, onto).strip()
     new_base = git(root, "merge-base", new, onto).strip()
@@ -86,6 +116,7 @@ def verify(root, old, new, onto):
         for path, lines in old_deleted.items()
     }
     problems += differences(expected_deleted, new_deleted, deleted=True)
+    problems += mode_differences(root, old_base, old, new_base, new)
     return old_base, count_old, count_new, problems
 
 
@@ -93,7 +124,7 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
-    parser = argparse.ArgumentParser(description="check that a rebased branch kept its added and deleted lines, authors and commits")
+    parser = argparse.ArgumentParser(description="check that a rebased branch kept its added and deleted lines, file modes, authors and commits")
     parser.add_argument("old", help="the branch or commit before the rebase")
     parser.add_argument("new", help="the branch or commit after the rebase")
     parser.add_argument("--onto", help="the branch the new commits sit on (default: upstream/main, then origin/main, then main)")
@@ -110,7 +141,7 @@ def main(argv=None):
     if problems:
         print(f"{len(problems)} difference(s): the rebase changed something other than conflict resolution")
         return 1
-    print("all added and deleted lines, authors and commits are kept")
+    print("all added and deleted lines, file modes, authors and commits are kept")
     return 0
 
 

@@ -240,6 +240,32 @@ int main() {
         Require(sceConvertKeycodeGetCharacter(58, state, 4, &character) == 0 && character == 0);
         Require(sceConvertKeycodeGetCharacter(65535, state, 4, &character) == 0 && character == 0);
     }
+    constexpr std::uint32_t consoleStates[] = {0u, 0x1u, 0x2u, 0x4u, 0x80u, 0x1c000000u};
+    constexpr std::uint32_t layoutZeroStates[] = {0u, 0x1u, 0x2u, 0x80u, 0x1c000000u};
+    for (std::uint32_t type = 1; type <= 10; ++type) {
+        character = u'?';
+        Require(sceConvertKeycodeGetCharacter(4, 0, type, &character) == 0 && character == (type >= 9 ? u'q' : u'a'));
+    }
+    struct ConsoleRow {
+        std::uint32_t keycode;
+        char16_t firstLayout;
+        char16_t ninthLayout;
+    };
+    constexpr ConsoleRow consoleRows[] = {{0x04, u'a', u'q'}, {0x05, u'b', u'b'}, {0x1d, u'z', u'w'}, {0x1e, u'1', u'&'}, {0x28, char16_t{0x0a}, char16_t{0x0a}}, {0x2c, u' ', u' '}};
+    for (const std::uint32_t state : consoleStates) {
+        for (const auto& row : consoleRows) {
+            character = u'?';
+            Require(sceConvertKeycodeGetCharacter(row.keycode, state, 1, &character) == 0 && character == row.firstLayout);
+            character = u'?';
+            Require(sceConvertKeycodeGetCharacter(row.keycode, state, 9, &character) == 0 && character == row.ninthLayout);
+        }
+    }
+    for (const std::uint32_t state : layoutZeroStates) {
+        for (const std::uint32_t keycode : {0x04u, 0x1eu, 0x28u}) {
+            character = u'?';
+            Require(sceConvertKeycodeGetCharacter(keycode, state, 0, &character) == static_cast<int>(0x80BC001Du) && character == u'?');
+        }
+    }
     Require(sceConvertKeycodeGetCharacter(4, 0x200, 4, &character) == 0 && character == u'A');
     Require(sceConvertKeycodeGetCharacter(4, 0x20000, 4, &character) == 0 && character == u'A');
     Require(sceConvertKeycodeGetCharacter(4, 0x20200, 4, &character) == 0 && character == u'a');

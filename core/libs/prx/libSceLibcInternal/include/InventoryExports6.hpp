@@ -38,7 +38,6 @@ int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT
 int APS5_VABI sceLibcPafMspaceGetFooterValue_nid_postfix();
 int APS5_VABI sceLibcInternalMemoryGetWakeAddr_nid_postfix();
 int APS5_VABI _ZNSt7_MpunctIcED0Ev_nid_postfix();
-int APS5_VABI _ZSt11setiosflagsNSt5_IosbIiE9_FmtflagsE_nid_postfix();
 int APS5_VABI __atomic_load_n_nid_postfix();
 void APS5_VABI _ZNSt8messagesIwED0Ev_nid_postfix(void* self);
 int APS5_VABI _ZNSt9exception18_Set_raise_handlerEPFvRKS_E_nid_postfix();

@@ -31,6 +31,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include <cstring>
@@ -51,13 +52,14 @@ int Failure(int error) {
 
 int TemporaryFile(char* pattern, int flags) {
     if (!pattern) return Failure(14);
-    const auto length = std::strlen(pattern);
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(pattern, copy)) return Failure(error);
+    const auto length = copy.size();
     if (length == 0) return Failure(22);
-    if (length >= 1024) return Failure(63);
     auto start = length;
-    while (start > 0 && pattern[start - 1] == 'X') --start;
+    while (start > 0 && copy[start - 1] == 'X') --start;
     const GuestArena::HostWrite destination(pattern + start, length - start);
-    if (!destination.Open()) return Failure(14);
+    if (!destination.Open() || !GuestWritable_nid_no_patch(pattern + start, length - start)) return Failure(14);
     if (start != length) {
         std::random_device random;
         std::uniform_int_distribution<unsigned int> character(0, sizeof(Characters) - 2);
