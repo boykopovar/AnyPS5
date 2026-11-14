@@ -1,3 +1,5 @@
+#include <limits>
+#include <stdexcept>
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
@@ -10,6 +12,8 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <chrono>
+#include <thread>
 #include <vector>
 
 using namespace AgcDriver::Graphics;
@@ -238,6 +242,62 @@ void SharedOwnerCountsOncePerBatch() {
     recorder.Sync();
 }
 
+template<typename Condition>
+bool EventuallyTrue(Condition&& condition) {
+    for (int attempt = 0; attempt < 5000 && !condition(); ++attempt) {
+        for (const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1); std::chrono::steady_clock::now() < until;) std::this_thread::yield();
+    }
+    return condition();
+}
+
+void RetentionGrowsWithoutDuplicates() {
+    mock = MockDevice{};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Recorder recorder(mockContext());
+    std::vector<std::shared_ptr<int>> owners;
+    for (int i = 0; i < 100; ++i) owners.push_back(std::make_shared<int>(i));
+    for (int round = 0; round < 2; ++round) {
+        for (std::size_t i = 0; i < owners.size(); ++i) {
+            recorder.Retain(owners[i]);
+            if (i % 3 == 0) recorder.Keep(std::make_shared<int>(0));
+            if (i % 7 == 0) recorder.Retain(owners[i / 2]);
+        }
+    }
+    for (std::size_t i = 0; i < owners.size(); ++i) Expect(owners[i].use_count() == 2, "owner " + std::to_string(i) + " was retained " + std::to_string(owners[i].use_count() - 1) + " times after the lookup grew");
+    recorder.Submit();
+    for (auto& owner : owners) Expect(owner.use_count() == 2, "submission changed an owner's retention");
+    recorder.Sync();
+    recorder.FlushDeferredReleases();
+    Expect(EventuallyTrue([&] { return std::all_of(owners.begin(), owners.end(), [](const auto& owner) { return owner.use_count() == 1; }); }), "completion did not release a retained owner");
+}
+
+void RetentionAfterFailedSubmission() {
+    mock = MockDevice{};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Recorder recorder(mockContext());
+    auto owner = std::make_shared<int>(1);
+    recorder.Retain(owner);
+    mock.endResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+    bool failed = false;
+    try {
+        recorder.Submit();
+    } catch (const std::exception&) {
+        failed = true;
+    }
+    mock.endResult = VK_SUCCESS;
+    Expect(failed && owner.use_count() == 1, "a failed batch kept its retained owner");
+    recorder.Retain(owner);
+    Expect(owner.use_count() == 2, "the replacement batch did not retain a live owner the failed batch had retained");
+    recorder.Retain(owner);
+    Expect(owner.use_count() == 2, "the replacement batch retained an owner twice");
+    recorder.Submit();
+    Expect(!recorder.Reap() && owner.use_count() == 2, "the replacement batch released its owner before its fence");
+    for (auto& [fence, signaled] : mock.signaled) signaled = true;
+    Expect(recorder.Reap(), "the replacement batch was not retired after its fence");
+    recorder.FlushDeferredReleases();
+    Expect(EventuallyTrue([&] { return owner.use_count() == 1; }), "the replacement batch kept its owner after its fence");
+}
+
 void FailedSubmission(VkResult endResult, VkResult submitResult, VkResult idleResult = VK_ERROR_DEVICE_LOST) {
     mock = MockDevice{};
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -259,7 +319,9 @@ void FailedSubmission(VkResult endResult, VkResult submitResult, VkResult idleRe
             delete object;
         });
         std::weak_ptr<int> released = kept;
-        recorder.Keep(std::move(kept), Budget);
+        recorder.Retain(kept);
+        recorder.KeepBytes(kept.get(), Budget);
+        kept.reset();
         recorder.NoteLabel(address + 8, std::span<const std::byte>(memory).first(4), 2, 0);
         recorder.NoteLabel(address + 16, std::span<const std::byte>(memory).first(Recorder::LabelTableBytes + 4), 3, 0);
         recorder.AfterCompletions(address + 96, std::span<const std::byte>(memory).first(4), 4, 0, false);
@@ -304,11 +366,37 @@ void FailedSubmission(VkResult endResult, VkResult submitResult, VkResult idleRe
 
 int main() {
     try {
+        {
+            mock = MockDevice{};
+            Recorder recorder(mockContext());
+            auto object = std::make_shared<int>(7);
+            std::weak_ptr<int> weak = object;
+            bool refused = false;
+            try { recorder.ReserveRetention(std::numeric_limits<std::size_t>::max()); }
+            catch (const std::length_error&) { refused = true; }
+            Expect(refused && object.use_count() == 1, "a failed retention reservation changed ownership");
+            recorder.ReserveRetention(4);
+            recorder.Retain(object);
+            for (int i = 0; i < 100; ++i) recorder.Retain(object);
+            Expect(object.use_count() == 2, "retention copied an owner more than once per batch");
+            auto other = std::shared_ptr<int>(object.get(), [](int*) {});
+            recorder.Retain(other);
+            Expect(other.use_count() == 2, "retention merged distinct owners at the same address");
+            recorder.Submit();
+            recorder.Retain(object);
+            Expect(object.use_count() == 3, "retention omitted the next batch's owner");
+            object.reset();
+            Expect(!weak.expired(), "retention released an unfinished owner");
+            recorder.Sync();
+            Expect(weak.expired() && other.use_count() == 1, "retention outlived batch completion");
+        }
         OpenBatchUnderBudget();
         InFlightWithinTwiceTheBudget();
         SyncedWithinTwiceTheBudget();
         CountFollowsEveryPath();
         SharedOwnerCountsOncePerBatch();
+        RetentionGrowsWithoutDuplicates();
+        RetentionAfterFailedSubmission();
         FailedSubmission(VK_ERROR_OUT_OF_HOST_MEMORY, VK_SUCCESS);
         FailedSubmission(VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_SUCCESS);
         FailedSubmission(VK_SUCCESS, VK_ERROR_OUT_OF_HOST_MEMORY);

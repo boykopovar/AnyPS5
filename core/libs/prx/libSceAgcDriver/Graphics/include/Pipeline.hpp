@@ -71,6 +71,7 @@ private:
     struct CachedFramebuffer {
         std::vector<VkImageView> views;
         std::vector<std::weak_ptr<void>> owners;
+        std::vector<const void*> ownerPointers;
         std::vector<bool> owned;
         VkExtent2D extent;
         std::uint32_t layers = 1;

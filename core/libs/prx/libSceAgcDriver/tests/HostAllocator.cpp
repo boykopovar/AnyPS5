@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/InlineList.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -182,9 +183,33 @@ void ThreadsEndWithCachedBlocks() {
     delete[] after;
 }
 
+void InlineAttachmentLists() {
+    for (std::size_t count = 0; count < 34; ++count) {
+        auto owner = std::make_shared<int>(7);
+        {
+            AgcDriver::Graphics::InlineList<int, 8> values;
+            AgcDriver::Graphics::InlineList<std::shared_ptr<int>, 8> owners;
+            for (std::size_t index = 0; index < count; ++index) {
+                values.EmplaceBack(static_cast<int>(index));
+                owners.EmplaceBack(owner);
+            }
+            Check(values.Span().size() == count && owners.Span().size() == count, "an attachment list changed size across its inline bound");
+            for (std::size_t index = 0; index < count; ++index) {
+                Check(values.Span()[index] == static_cast<int>(index) && owners.Span()[index] == owner, "an attachment list lost order or ownership at its inline bound");
+            }
+            Check(owner.use_count() == static_cast<long>(count + 1), "an attachment list duplicated an owner while spilling");
+        }
+        Check(owner.use_count() == 1, "an attachment list retained its owners after destruction");
+    }
+    AgcDriver::Graphics::InlineList<int, 0> emptyInline;
+    emptyInline.EmplaceBack(9);
+    Check(emptyInline.Span().size() == 1 && emptyInline.Span()[0] == 9, "an attachment list without inline slots lost its fallback");
+}
+
 }
 
 int main() {
+    InlineAttachmentLists();
     EverySizeRoundTrips();
     SizedDeletesKeepTheirClass();
     BlocksCrossIntoLibstdcxx();

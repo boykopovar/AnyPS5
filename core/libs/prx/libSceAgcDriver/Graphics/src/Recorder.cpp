@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
@@ -2179,6 +2180,11 @@ void Recorder::ensureOpen() {
         dropStaleHoldKept();
         batch->kept.insert(batch->kept.end(), holdKept.begin(), holdKept.end());
         open = std::move(batch);
+        retentionCount = 0;
+        if (++retentionEpoch == 0) {
+            for (auto& slot : retention) slot = {};
+            ++retentionEpoch;
+        }
         open->predictedSerial = submissions + 1;
         try {
             if (open->queue == 0) WriteCheckpointSerial(context, open->commands, open->predictedSerial, open->queue);
@@ -3415,6 +3421,36 @@ std::shared_ptr<DeviceBuffer> Recorder::UploadScratchBuffer(UploadScratch kind, 
         Keep(scratch, bytes);
     }
     return scratch;
+}
+
+void Recorder::ReserveRetention(std::size_t additional) {
+    ensureOpen();
+    if (additional > open->kept.max_size() - open->kept.size()) throw std::length_error("recorded owner count exceeds the batch capacity");
+    prepareRetention(additional);
+    const auto needed = open->kept.size() + additional;
+    if (needed <= open->kept.capacity()) return;
+    const auto grown = open->kept.capacity() <= open->kept.max_size() / 2 ? open->kept.capacity() * 2 : open->kept.max_size();
+    open->kept.reserve(std::max(needed, grown));
+}
+
+void Recorder::prepareRetention(std::size_t additional) {
+    if (additional > retention.max_size() / 2 - retentionCount) throw std::length_error("recorded owner lookup exceeds the batch capacity");
+    const auto needed = (retentionCount + additional) * 2;
+    if (needed <= retention.size()) return;
+    auto capacity = std::max<std::size_t>(64, retention.size());
+    while (capacity < needed) {
+        if (capacity > retention.max_size() / 2) throw std::length_error("recorded owner lookup exceeds the batch capacity");
+        capacity *= 2;
+    }
+    std::vector<RetentionSlot> grown(capacity);
+    const auto mask = grown.size() - 1;
+    for (const auto& slot : retention) {
+        if (slot.epoch != retentionEpoch) continue;
+        auto index = retentionHash(slot.object) & mask;
+        while (grown[index].epoch == retentionEpoch) index = (index + 1) & mask;
+        grown[index] = slot;
+    }
+    retention.swap(grown);
 }
 
 void Recorder::Keep(std::shared_ptr<void> object, std::size_t bytes) {

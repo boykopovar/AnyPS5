@@ -466,6 +466,31 @@ void Imported(AgcDriver::VulkanDevice& device) {
     Settle(device, scene, "import (after)");
 }
 
+void SetSnapshotLimit(const char* mib) {
+#ifdef _WIN32
+    _putenv_s("APS5_DRAW_SNAPSHOT_MAX_MIB", mib);
+#else
+    setenv("APS5_DRAW_SNAPSHOT_MAX_MIB", mib, 1);
+#endif
+}
+
+void ReboundWithoutSnapshot(AgcDriver::VulkanDevice& device) {
+    SetSnapshotLimit("0");
+    auto& scene = NewScene();
+    Build(device, scene);
+    Settle(device, scene, "rebound without snapshot");
+    SetSnapshotLimit("64");
+    {
+        std::lock_guard lock(GuestMemory::GpuMutex());
+        AgcDriver::Graphics::ClearCachedTextures(device.Device());
+    }
+    auto outcome = Draw(device, scene);
+    Require(outcome.rebound >= 1.0 && outcome.brightest == 255u, "rebound without snapshot: the draw after its textures left the cache did not re-bind them and sample the key texel (" + outcome.Describe() + ")");
+    outcome = Draw(device, scene);
+    Require(outcome.brightest == 255u, "rebound without snapshot: the draw after the re-bind lost the key texel (" + outcome.Describe() + ")");
+    Settle(device, scene, "rebound without snapshot (after)");
+}
+
 void ArraySlices(AgcDriver::VulkanDevice& device) {
     auto& scene = NewScene();
     Build(device, scene, true);
@@ -527,7 +552,7 @@ int main(int argc, char** argv) {
         TargetBytes = AgcDriver::Graphics::ColorTargetLayout(TargetWidth, TargetHeight, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4).Bytes();
         GuestBlocks target((TargetBytes + BlockBytes - 1) / BlockBytes * BlockBytes);
         Target = &target;
-        const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 11> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}, {"array", &ArraySlices}, {"overflow", &OverflowedHistory}}};
+        const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 12> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}, {"rebound", &ReboundWithoutSnapshot}, {"array", &ArraySlices}, {"overflow", &OverflowedHistory}}};
         for (const auto& [name, run] : cases) {
             if (!args.empty() && std::find(args.begin(), args.end(), name) == args.end()) continue;
             run(*device);
