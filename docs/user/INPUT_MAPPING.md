@@ -122,6 +122,18 @@ Vibration is not part of the input mapping file. The host-side strength of a con
 
 The identification pulse that tells players' controllers apart is set with `ANYPS5_PAD_IDENTIFY`, described in [Controller identification pulse](USAGE.md#controller-identification-pulse).
 
+## Stable player assignment
+
+By default, connected controllers fill the first free player slot in SDL's discovery order. To keep a controller on the same player after reconnecting or restarting, set `ANYPS5_PAD_PLAYER_1_SERIAL` through `ANYPS5_PAD_PLAYER_4_SERIAL` to the exact SDL serial for each player. Set `ANYPS5_PAD_LOG_CONTROLLER_SERIAL=1` to include serials in the connection log while configuring this; serial logging is off by default. SDL may not expose a serial for every controller or backend. Such controllers, and controllers whose serial is not configured, use the first free unreserved player slot. A configured slot stays reserved while its controller is disconnected, so other controllers do not take that player's place. Assigning the same serial to multiple players stops startup with an error.
+
+For example, to bind two controllers and leave the other player slots automatic:
+
+```sh
+ANYPS5_PAD_PLAYER_1_SERIAL=ABC123 ANYPS5_PAD_PLAYER_2_SERIAL=XYZ789 ./AnyPS5
+```
+
+Serials may differ when a controller is connected through another transport or exposed by a different SDL backend. Check the connection log for the exact value reported by the current host.
+
 ## Analog keyboard input
 
 `StickModifier` has no built-in binding. While a key or mouse button bound to it is held, the keyboard stick bindings tilt the stick by `StickModifierScale` of its range instead of fully, for walking or fine aim. Controller sticks and the mouse stick are not affected, and opposite keys still cancel each other.

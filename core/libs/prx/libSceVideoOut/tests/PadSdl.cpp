@@ -35,6 +35,57 @@ void Forward(const ImeHostPad& pad) {
     forwarded.push_back(pad);
 }
 
+void ConfiguredControllerUsesItsPlayerSlot() {
+    Pad::ControllerSerials configured{};
+    configured[1] = "player-two-serial";
+    Pad::ControllerAssignment assignment(configured);
+    std::array<bool, Pad::ControllerAssignmentSlots> occupied{};
+    Require(assignment.SelectSlot("player-two-serial", occupied) == 1);
+}
+
+void AutomaticControllersSkipReservedPlayerSlots() {
+    Pad::ControllerSerials configured{};
+    configured[1] = "player-two-serial";
+    Pad::ControllerAssignment assignment(configured);
+    std::array<bool, Pad::ControllerAssignmentSlots> occupied{};
+    occupied[0] = true;
+    Require(assignment.SelectSlot("unconfigured-serial", occupied) == 2);
+    Require(assignment.SelectSlot("", occupied) == 2);
+}
+
+void ConnectedSerialCannotClaimAnotherPlayerSlot() {
+    Pad::ControllerAssignment assignment;
+    std::array<bool, Pad::ControllerAssignmentSlots> occupied{};
+    Require(assignment.SelectSlot("controller-serial", occupied) == 0);
+    assignment.Connect(0, "controller-serial");
+    occupied[0] = true;
+    Require(assignment.SelectSlot("controller-serial", occupied) == -1);
+}
+
+void DisconnectedControllerCanReconnectToItsPlayerSlot() {
+    Pad::ControllerSerials configured{};
+    configured[2] = "player-three-serial";
+    Pad::ControllerAssignment assignment(configured);
+    std::array<bool, Pad::ControllerAssignmentSlots> occupied{};
+    Require(assignment.SelectSlot("player-three-serial", occupied) == 2);
+    assignment.Connect(2, "player-three-serial");
+    assignment.Disconnect(2);
+    Require(assignment.SelectSlot("player-three-serial", occupied) == 2);
+}
+
+void DuplicateConfiguredSerialIsRejected() {
+    Pad::ControllerSerials configured{};
+    configured[0] = "same-serial";
+    configured[3] = "same-serial";
+    bool rejected = false;
+    try {
+        static_cast<void>(Pad::ControllerAssignment(configured));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
+}
+
 void HandOff(PadInput& padInput, const DisplayWindow& window, int device) {
     constexpr std::uint32_t Cross = 0x4000;
     constexpr std::uint32_t R2 = 0x0200;
@@ -208,6 +259,11 @@ void InjectedPressAfterUnreadRelease(PadInput& padInput, const DisplayWindow& wi
 }
 
 int main() {
+    ConfiguredControllerUsesItsPlayerSlot();
+    AutomaticControllersSkipReservedPlayerSlots();
+    ConnectedSerialCannotClaimAnotherPlayerSlot();
+    DisconnectedControllerCanReconnectToItsPlayerSlot();
+    DuplicateConfiguredSerialIsRejected();
 #ifdef SDL_JOYSTICK_HIDAPI
     std::puts("pad_sdl: SDL drives controllers through HIDAPI");
 #else
@@ -249,11 +305,28 @@ int main() {
     const int dev0 = SDL_JoystickAttachVirtualEx(&desc);
     Require(dev0 >= 0);
     Require(SDL_IsGameController(dev0));
+    SDL_GameController* serialProbe = SDL_GameControllerOpen(dev0);
+    Require(serialProbe != nullptr);
+    Require(SDL_GameControllerGetSerial(serialProbe) == nullptr);
+    SDL_GameControllerClose(serialProbe);
+
+    const std::array<const char*, Pad::ControllerAssignmentSlots> serialVariables{
+        "ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL",
+        "ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"};
+    for (std::size_t slot = 0; slot < serialVariables.size(); ++slot) {
+        const char* value = slot == 1 ? "reserved-test-serial" : "";
+#ifdef _WIN32
+        Require(_putenv_s(serialVariables[slot], value) == 0);
+#else
+        Require(setenv(serialVariables[slot], value, 1) == 0);
+#endif
+    }
 
     DisplayWindow window;
     PadInput padInput;
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
+    Require(!padInput.SlotOccupied(2));
 
     SDL_Event add0{};
     add0.type = SDL_CONTROLLERDEVICEADDED;
@@ -261,6 +334,7 @@ int main() {
     padInput.HandleEvent(add0, window);
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
+    Require(!padInput.SlotOccupied(2));
 
     desc.name = "Virtual Controller 1";
     const int dev1 = SDL_JoystickAttachVirtualEx(&desc);
@@ -272,9 +346,9 @@ int main() {
     add1.cdevice.which = dev1;
     padInput.HandleEvent(add1, window);
     Require(padInput.SlotOccupied(0));
-    Require(padInput.SlotOccupied(1));
-    Require(!padInput.SlotOccupied(2));
-    Require(Pad::IsConnected(1));
+    Require(!padInput.SlotOccupied(1));
+    Require(padInput.SlotOccupied(2));
+    Require(Pad::IsConnected(2));
 
     const SDL_JoystickID id0 = SDL_JoystickGetDeviceInstanceID(dev0);
     SDL_Event rem0{};
@@ -282,12 +356,14 @@ int main() {
     rem0.cdevice.which = id0;
     padInput.HandleEvent(rem0, window);
     Require(!padInput.SlotOccupied(0));
-    Require(padInput.SlotOccupied(1));
-    Require(Pad::IsConnected(1));
+    Require(!padInput.SlotOccupied(1));
+    Require(padInput.SlotOccupied(2));
+    Require(Pad::IsConnected(2));
 
     padInput.HandleEvent(add0, window);
     Require(padInput.SlotOccupied(0));
-    Require(padInput.SlotOccupied(1));
+    Require(!padInput.SlotOccupied(1));
+    Require(padInput.SlotOccupied(2));
     HandOff(padInput, window, dev0);
 
     const SDL_JoystickID id1 = SDL_JoystickGetDeviceInstanceID(dev1);
@@ -297,11 +373,13 @@ int main() {
     padInput.HandleEvent(rem1, window);
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
-    Require(!Pad::IsConnected(1));
+    Require(!padInput.SlotOccupied(2));
+    Require(!Pad::IsConnected(2));
 
     padInput.HandleEvent(rem0, window);
     Require(!padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
+    Require(!padInput.SlotOccupied(2));
     InjectedAnswer(padInput, window, commandPath);
     InjectedPressAfterUnreadRelease(padInput, window, commandPath, 3, false);
     InjectedPressAfterUnreadRelease(padInput, window, commandPath, 4, true);
