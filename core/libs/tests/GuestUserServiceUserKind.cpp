@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -50,6 +51,9 @@ void CheckSpartacusEnabled() {
     };
     for (const std::int32_t id : ids) {
         Require(sceUserServiceGetIsSpartacusEnabled(id, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        errno = 71;
+        Require(sceUserServiceGetIsSpartacusEnabled(id, reinterpret_cast<bool*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(errno == 71);
         unsigned char bytes[2] = {0x5a, 0x5a};
         bool* enabled = reinterpret_cast<bool*>(bytes);
         Require(sceUserServiceGetIsSpartacusEnabled(id, enabled) == USER_SERVICE_OK);
