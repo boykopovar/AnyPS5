@@ -106,6 +106,8 @@ def package(platform, build, output, version):
     executable = "relinker.exe" if platform == "windows" else "relinker"
     files = [library for library in libraries if library.name in expected]
     licenses = []
+    if "libSceJemspace.prx" in expected:
+        licenses.append((ROOT / "3rdparty/jemalloc/COPYING", "libs/licenses/jemalloc.txt"))
     if "libharfbuzz.prx" in expected:
         licenses.append((ROOT / "3rdparty/harfbuzz/COPYING", "libs/licenses/harfbuzz.txt"))
         licenses.append((ROOT / "3rdparty/harfbuzz/src/ms-use/COPYING", "libs/licenses/harfbuzz-ms-use.txt"))
