@@ -1812,10 +1812,6 @@ int APS5_VABI sceIcuLegacyUnknown_9Z_plus_29sFbhtM_nid_no_patch() {
 }
 APS5_EXPORT("9Z+29sFbhtM", sceIcuLegacyUnknown_9Z_plus_29sFbhtM_nid_no_patch);
 
-int APS5_VABI uprv_isInvariantUString_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6813ICUServiceKeyD1Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4234,10 +4230,6 @@ int APS5_VABI sceIcuLegacyUnknown_PM_plus__minus_qdc3ZUk_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("PM+-qdc3ZUk", sceIcuLegacyUnknown_PM_plus__minus_qdc3ZUk_nid_no_patch);
-
-int APS5_VABI uprv_isInvariantString_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI sceIcuLegacyUnknown_PN_minus_GmlJsZD4_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
