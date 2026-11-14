@@ -81,7 +81,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
     std::uint32_t tlsIndex = 0;
-    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, &tlsIndex, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message, functionSymbolRoots);
+    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, &tlsIndex, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message, functionSymbolRoots, dynamicSection.SyscallContinuations);
     directories[0] = WindowsExportBuilder().BuildExecutable(dynamicSection, image, originalHeaders, tlsIndex, relocations.BaseRelocations, outputName, sections, nextRva, functionSymbolRoots);
     report(8000);
     WindowsTrampolineBuilder().Build(trampolines, image, sections, nextRva);

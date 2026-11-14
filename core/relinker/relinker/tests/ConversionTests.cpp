@@ -3,6 +3,7 @@
 #include <relinker/guest/GuestImage.hpp>
 #include <relinker/analysis/SyscallScanner.hpp>
 #include <relinker/analysis/CodeInstructionCollector.hpp>
+#include <relinker/analysis/RelativeJumpTables.hpp>
 #include <io/BufferUtils.hpp>
 #include <io/NativePath.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
@@ -247,6 +248,13 @@ void scanning() {
     });
     require(instructions.size() == code.size(), "Progress changed image code analysis");
     require(updates > 10 && previous == 10000, "Missing intermediate image analysis progress");
+    std::vector<Domain::CodeRange> unpublished{{7, 9}};
+    reject([&] {
+        Relinker::CodeInstructionCollector().Collect(image, {header}, [](auto completed, auto total) {
+            if (completed == total) throw Domain::RelinkerException("cancelled");
+        }, nullptr, {}, false, &unpublished);
+    });
+    require(unpublished == std::vector<Domain::CodeRange>{{7, 9}}, "Cancelled analysis published ranges");
     std::vector<std::uint8_t> wrappingImage(0x1000);
     Io::WriteU64(wrappingImage, 24, 0x2000);
     wrappingImage[0x200] = 0xc3;
@@ -295,6 +303,91 @@ void scanning() {
     progress.Events.clear();
     reject([&] { scanner->ScanCodeSectionForSyscalls(code, 0, code.size()); });
     require(progress.Events.back().Completed < progress.Events.back().Total, "Failed scan reported completion");
+}
+
+void strongRootsInsideDataTables() {
+    auto image = fixture();
+    Io::WriteU64(image, 64 + 32, 0x36);
+    Io::WriteU64(image, 64 + 40, 0x36);
+    std::fill(image.begin() + 0x1000, image.begin() + 0x1036, 0xcc);
+    const std::array<std::uint8_t, 8> function{0x48, 0x8d, 0x05, 0x11, 0, 0, 0, 0xc3};
+    std::copy(function.begin(), function.end(), image.begin() + 0x1000);
+    const std::array<std::uint8_t, 4> table{0x0f, 0x78, 0x33, 0x1e};
+    std::copy(table.begin(), table.end(), image.begin() + 0x1018);
+    const std::array<std::uint8_t, 6> transfer{0xff, 0x25, 0xca, 0x17, 0, 0};
+    std::copy(transfer.begin(), transfer.end(), image.begin() + 0x1030);
+    Io::WriteU32(image, 0x2684, 3);
+    for (const auto [symbol, address, size] : {std::array<std::uint64_t, 3>{1, 0x1000, 8}, {2, 0x1030, 6}}) {
+        const auto offset = 0x2620 + symbol * 24;
+        image[offset + 4] = 0x12;
+        Io::WriteU16(image, offset + 6, 1);
+        Io::WriteU64(image, offset + 8, address);
+        Io::WriteU64(image, offset + 16, size);
+    }
+    Io::WriteU64(image, 0x2058, 24);
+    Io::WriteU64(image, 0x2700, 0x2800);
+    Io::WriteU64(image, 0x2708, 8);
+    Io::WriteU64(image, 0x2710, 0x1000);
+    const auto headers = Relinker::ElfReader(image).ReadProgramHeaders();
+    const auto tables = Relinker::FindRelativeJumpTables(std::span<const std::uint8_t>(image.data() + 0x1000, 0x36), 0x1000, {{0x1000, 0x1008}, {0x1030, 0x1036}});
+    require(tables.size() == 1 && tables.front().Begin == 0x1018 && tables.front().End == 0x1030, "Strong-root fixture did not contain the expected recognized data table");
+    const Relinker::CodeInstructionCollector collector;
+    const auto accepted = collector.Collect(image, headers);
+    require(std::binary_search(accepted.begin(), accepted.end(), 0x1000) && std::binary_search(accepted.begin(), accepted.end(), 0x1030), "Roots outside the data table were lost");
+    require(std::none_of(accepted.begin(), accepted.end(), [](auto address) { return address >= 0x1018 && address < 0x1030; }), "Recognized data table was decoded as code");
+    const auto refused = [&](const auto& input) {
+        try {
+            collector.Collect(input, Relinker::ElfReader(input).ReadProgramHeaders());
+            throw std::runtime_error("A strong root inside a recognized data table was accepted");
+        } catch (const Domain::RelinkerException& error) {
+            require(std::string(error.what()) == "Code analysis: code entry point lies inside a data table", "A different error hid the data-table root refusal");
+            require(error.FailureOffset == 0x1018, "Data-table root refusal reported the wrong address");
+        }
+    };
+    auto entry = image;
+    Io::WriteU64(entry, 24, 0x1018);
+    refused(entry);
+    for (const auto tag : {12u, 13u}) {
+        auto lifecycle = image;
+        Io::WriteU64(lifecycle, 0x2080, tag);
+        Io::WriteU64(lifecycle, 0x2088, 0x1018);
+        Io::WriteU64(lifecycle, 64 + 2 * 56 + 32, 10 * 16);
+        Io::WriteU64(lifecycle, 64 + 2 * 56 + 40, 10 * 16);
+        refused(lifecycle);
+    }
+    auto indirect = image;
+    Io::WriteU64(indirect, 0x2710, 0x1018);
+    refused(indirect);
+}
+
+void lifecycleRoots() {
+    std::vector<std::uint8_t> image(256);
+    Io::WriteU64(image, 24, 16);
+    image[64] = 0xc3;
+    image[72] = 0xc3;
+    image[80] = 0xc3;
+    Domain::ProgramHeader code{};
+    code.Type = 1;
+    code.Flags = 1;
+    code.Offset = 64;
+    code.FileSize = 17;
+    code.MemorySize = 17;
+    Domain::ProgramHeader dynamic{};
+    dynamic.Type = 2;
+    dynamic.Offset = 128;
+    dynamic.FileSize = 32;
+    dynamic.MemorySize = 32;
+    const std::vector<Domain::ProgramHeader> headers{code, dynamic};
+    const Relinker::CodeInstructionCollector collector;
+    require(collector.Collect(image, headers) == std::vector<Domain::VirtualAddress>{16}, "Absent lifecycle tags introduced a code root");
+    for (const auto tag : {12u, 13u}) {
+        Io::WriteU64(image, 128, tag);
+        for (const auto address : {0u, 8u}) {
+            Io::WriteU64(image, 136, address);
+            require(collector.Collect(image, headers) == std::vector<Domain::VirtualAddress>{address, 16}, "Present lifecycle tag lost its mapped code root");
+            require(collector.CollectRewriteAnchors(image, headers).contains(address), "Present lifecycle tag lost its rewrite anchor");
+        }
+    }
 }
 
 void branchAcrossSignedBoundary() {
@@ -609,6 +702,8 @@ int main() {
         runtimeLifecyclePolicy();
         fixedBase();
         scanning();
+        strongRootsInsideDataTables();
+        lifecycleRoots();
         branchAcrossSignedBoundary();
         diagnosticContext();
         cancellation();
