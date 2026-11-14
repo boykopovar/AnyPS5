@@ -13,6 +13,7 @@
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
 #include "prx/libc/include/WindowsDescriptor.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include <io.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -43,12 +44,11 @@ static bool NativeStatPath(const std::filesystem::path& path, std::filesystem::p
         return true;
     }
     std::error_code error;
-    prepared = std::filesystem::absolute(path, error);
+    prepared = WindowsAbsolutePath_nid_no_patch(path, error);
     if (error) {
         errno = FilesystemError(error);
         return false;
     }
-    prepared = prepared.lexically_normal().make_preferred();
     const auto& native = prepared.native();
     if (native.size() < MAX_PATH || native.starts_with(L"\\\\?\\") || native.starts_with(L"\\\\.\\")) return true;
     prepared = native.starts_with(L"\\\\") ? std::filesystem::path(L"\\\\?\\UNC\\" + native.substr(2))

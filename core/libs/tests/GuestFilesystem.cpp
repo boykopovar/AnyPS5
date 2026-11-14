@@ -570,6 +570,26 @@ static void TestWindowsVerbatimPathLive() {
     RemovePathAlias_nid_no_patch("/verbatim-test");
     ::RemoveDirectoryW(root.c_str());
 }
+
+static void TestWindowsVerbatimUncPath() {
+    std::error_code error;
+    const auto absolute = WindowsAbsolutePath_nid_no_patch(LR"(\\server\share\data\..\levels)", error);
+    Require(!error);
+    Require(absolute.native() == LR"(\\server\share\levels)");
+    const auto plain = NativeVerbatimPath_nid_no_patch(LR"(\\server\share\data\..\levels\intro)", error);
+    Require(!error);
+    Require(plain.native() == LR"(\\server\share\levels\intro)");
+    const auto forward = NativeVerbatimPath_nid_no_patch(L"//server/share/levels/intro", error);
+    Require(!error);
+    Require(forward.native() == LR"(\\server\share\levels\intro)");
+    const auto device = NativeVerbatimPath_nid_no_patch(LR"(\\server\share\nul.txt)", error);
+    Require(!error);
+    Require(device.native() == LR"(\\?\UNC\server\share\nul.txt)");
+    const std::wstring component(120, L'a');
+    const auto longPath = NativeVerbatimPath_nid_no_patch(LR"(\\server\share\)" + component + L"\\" + component, error);
+    Require(!error);
+    Require(longPath.native() == LR"(\\?\UNC\server\share\)" + component + L"\\" + component);
+}
 #endif
 
 static void TestWindowsVerbatimPath() {
@@ -800,6 +820,7 @@ int main() {
     TestRelinkedModuleNameCase();
     TestWindowsVerbatimPath();
 #ifdef _WIN32
+    TestWindowsVerbatimUncPath();
     TestCaseSensitiveHostDirectory();
     TestLongHostPathStat();
 #endif
