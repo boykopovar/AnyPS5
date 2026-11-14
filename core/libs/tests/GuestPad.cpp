@@ -262,6 +262,9 @@ static void CheckHandleQueries(int user, int handle) {
 
     float value = 1.0f;
     Require(scePadGetMotionTimerUnit(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadGetMotionTimerUnit(handle, reinterpret_cast<float*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadGetMotionTimerUnit(closed, &value) == PAD_ERROR_INVALID_HANDLE && value == 0.0f);
     value = 1.0f;
     Require(scePadGetMotionTimerUnit(handle, &value) == notConnected && value == 0.0f);
