@@ -32,11 +32,18 @@ static constexpr int UMTX_OP_SEM_WAIT = 19;
 static constexpr int UMTX_OP_SEM_WAKE = 20;
 static constexpr int UMTX_OP_NWAKE_PRIVATE = 21;
 static constexpr int UMTX_OP_SEM2_WAIT = 23;
+static constexpr int UMTX_OP_SHM = 25;
+static constexpr std::uint64_t UMTX_SHM_CREAT = 0x0001;
+static constexpr std::uint64_t UMTX_SHM_LOOKUP = 0x0002;
+static constexpr std::uint64_t UMTX_SHM_DESTROY = 0x0004;
+static constexpr std::uint64_t UMTX_SHM_ALIVE = 0x0008;
 static constexpr int UMTX_OP_MAX = 27;
 static constexpr std::uint32_t UMTX_ABSTIME = 1;
 static constexpr int CLOCK_MONOTONIC_ID = 4;
 
 static constexpr int GUEST_EPERM = 1;
+static constexpr int GUEST_ESRCH = 3;
+static constexpr int GUEST_ENOTTY = 25;
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EBUSY = 16;
 static constexpr int GUEST_EINVAL = 22;
@@ -580,6 +587,107 @@ static void ConditionWaitRejectsAPriorityProtectedMutexWithoutLeakingAWaiter() {
     Require(condition.hasWaiters == 0);
 }
 
+static constexpr std::size_t SHM_BYTES = 0x4000;
+
+static int Shm(void* key, std::uint64_t flags) {
+    return Umtx(nullptr, UMTX_OP_SHM, flags, key);
+}
+
+static unsigned char* MapShared(int descriptor) {
+    void* mapped = mmap_nid_postfix(nullptr, SHM_BYTES, 0x1 | 0x2, 0x1, descriptor, 0);
+    Require(mapped != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    return static_cast<unsigned char*>(mapped);
+}
+
+static bool SameObject(int first, int second) {
+    FileStat a{};
+    FileStat b{};
+    return _fstat_nid_postfix(first, &a) == 0 && _fstat_nid_postfix(second, &b) == 0 && a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+}
+
+static bool AliveIs(void* address, int error) {
+    try {
+        const int result = Shm(address, UMTX_SHM_ALIVE);
+        return error == 0 ? result == 0 : FailsWith(result, error);
+    } catch (const std::runtime_error&) {
+#ifdef _WIN32
+        return true;
+#else
+        return false;
+#endif
+    }
+}
+
+static void ShmSharesAPageBetweenDescriptorsOfOneKey() {
+    std::uint32_t key = 0;
+    std::uint32_t other = 0;
+    Require(FailsWith(Shm(&key, UMTX_SHM_LOOKUP), GUEST_ESRCH));
+    Require(FailsWith(Shm(&key, UMTX_SHM_DESTROY), GUEST_ESRCH));
+
+    const int created = Shm(&key, UMTX_SHM_CREAT);
+    Require(created >= 0);
+    FileStat status{};
+    Require(_fstat_nid_postfix(created, &status) == 0 && status.st_size == static_cast<std::int64_t>(SHM_BYTES));
+    Require(fcntl_nid_postfix(created, 1) == 1);
+
+    unsigned char* first = MapShared(created);
+    unsigned char* second = MapShared(created);
+    Require(first != second && first[0] == 0 && first[SHM_BYTES - 1] == 0);
+    first[7] = 0x5a;
+    Require(second[7] == 0x5a);
+    second[SHM_BYTES - 1] = 0xa5;
+    Require(first[SHM_BYTES - 1] == 0xa5);
+
+    const int looked = Shm(&key, UMTX_SHM_LOOKUP | 0x100);
+    Require(looked >= 0 && looked != created && SameObject(created, looked));
+    Require(fcntl_nid_postfix(looked, 1) == 1);
+    unsigned char* third = MapShared(looked);
+    Require(third[7] == 0x5a);
+
+    const int again = Shm(&key, UMTX_SHM_CREAT);
+    Require(again >= 0 && again != created && again != looked && SameObject(created, again));
+    Require(FailsWith(Shm(&other, UMTX_SHM_LOOKUP), GUEST_ESRCH));
+    const int separate = Shm(&other, UMTX_SHM_CREAT);
+    Require(separate >= 0 && !SameObject(created, separate));
+
+    Require(close_nid_postfix(created) == 0 && close_nid_postfix(again) == 0);
+    const int reopened = Shm(&key, UMTX_SHM_LOOKUP);
+    Require(reopened >= 0 && SameObject(looked, reopened));
+    Require(close_nid_postfix(reopened) == 0);
+
+    Require(Shm(&key, UMTX_SHM_ALIVE) == 0);
+    Require(Shm(first, UMTX_SHM_ALIVE) == 0);
+    Require(Shm(&key, UMTX_SHM_DESTROY) == 0);
+    Require(FailsWith(Shm(&key, UMTX_SHM_LOOKUP), GUEST_ESRCH));
+    Require(FailsWith(Shm(&key, UMTX_SHM_DESTROY), GUEST_ESRCH));
+    Require(third[7] == 0x5a && first[SHM_BYTES - 1] == 0xa5);
+    Require(AliveIs(first, GUEST_ENOTTY) && AliveIs(third, GUEST_ENOTTY));
+    unsigned char* live = MapShared(separate);
+    Require(AliveIs(live, 0) && AliveIs(&key, 0));
+
+    const int recreated = Shm(&key, UMTX_SHM_CREAT);
+    Require(recreated >= 0 && !SameObject(looked, recreated));
+    unsigned char* fresh = MapShared(recreated);
+    Require(fresh[7] == 0 && AliveIs(fresh, 0) && AliveIs(second, GUEST_ENOTTY));
+
+    for (unsigned char* mapping : {first, second, third, live, fresh}) Require(munmap_nid_postfix(mapping, SHM_BYTES) == 0);
+    Require(Shm(&key, UMTX_SHM_DESTROY) == 0 && Shm(&other, UMTX_SHM_DESTROY) == 0);
+    for (const int descriptor : {looked, separate, recreated}) Require(close_nid_postfix(descriptor) == 0);
+}
+
+static void ShmTakesExactlyOneOperation() {
+    std::uint32_t key = 0;
+    for (const std::uint64_t flags : {std::uint64_t{0}, std::uint64_t{0x10}, UMTX_SHM_CREAT | UMTX_SHM_LOOKUP, UMTX_SHM_LOOKUP | UMTX_SHM_DESTROY,
+                                      UMTX_SHM_CREAT | UMTX_SHM_ALIVE, std::uint64_t{0xf}, std::uint64_t{1} << 32}) {
+        Require(FailsWith(Shm(&key, flags), GUEST_EINVAL));
+    }
+    Require(FailsWith(Shm(&key, UMTX_SHM_LOOKUP), GUEST_ESRCH));
+    Require(FailsWith(Shm(nullptr, UMTX_SHM_CREAT), GUEST_EFAULT));
+    Require(FailsWith(Shm(nullptr, UMTX_SHM_LOOKUP), GUEST_EFAULT));
+    Require(FailsWith(Shm(nullptr, UMTX_SHM_DESTROY), GUEST_EFAULT));
+    Require(FailsWith(Shm(nullptr, UMTX_SHM_ALIVE), GUEST_EFAULT));
+}
+
 int main() {
     ReturnsWhenTheValueDiffers();
     WaitComparesALongAndWaitUintAnInt();
@@ -603,4 +711,6 @@ int main() {
     RwlockReaderPreferenceFollowsTheConsole();
     RwlockDoesNotLoseAWakeupUnderContention();
     ConditionWaitRejectsAPriorityProtectedMutexWithoutLeakingAWaiter();
+    ShmTakesExactlyOneOperation();
+    ShmSharesAPageBetweenDescriptorsOfOneKey();
 }
