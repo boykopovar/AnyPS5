@@ -428,6 +428,10 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
     AgcDriver::ProfilePrint_nid_no_patch("[commits] by kind (10 s):%s\n", kindText.c_str());
     const auto vk = Graphics::TakeVkDrawCounts();
     AgcDriver::ProfilePrint_nid_no_patch("[vkdraw] (10 s): %llu vkCmdDraw, %llu vkCmdDrawIndexed, %llu vkCmdDrawIndirect calls, %llu mesh; draw keys %llu, same as the previous draw %llu, seen within the last 4096 draws %llu; draw shapes (state without per-draw user words) same as the previous %llu, seen within the last 4096 %llu\n", static_cast<unsigned long long>(vk.direct), static_cast<unsigned long long>(vk.indexed), static_cast<unsigned long long>(vk.indirect), static_cast<unsigned long long>(vk.mesh), static_cast<unsigned long long>(drawKeys.Take()), static_cast<unsigned long long>(drawKeysSameAsPrevious.Take()), static_cast<unsigned long long>(drawKeysSeenRecently.Take()), static_cast<unsigned long long>(drawShapesSameAsPrevious.Take()), static_cast<unsigned long long>(drawShapesSeenRecently.Take()));
+    static GuestMemory::CollectCounts reportedCollects{};
+    const auto collects = GuestMemory::CollectCounted();
+    AgcDriver::ProfilePrint_nid_no_patch("[collects] (10 s): %llu GetWriteWatch calls, %llu of them on the committer; %llu collect epochs; %llu collect-memo hits\n", static_cast<unsigned long long>(collects.watchCalls - reportedCollects.watchCalls), static_cast<unsigned long long>(collects.committerWatchCalls - reportedCollects.committerWatchCalls), static_cast<unsigned long long>(collects.epochBumps - reportedCollects.epochBumps), static_cast<unsigned long long>(collects.memoHits - reportedCollects.memoHits));
+    reportedCollects = collects;
     commits = commitNs = commitErrors = enqueued = fullWaitNs = depthSum = wakes = lockWaitNs = 0;
     drains = {};
     drainWaitNs = {};

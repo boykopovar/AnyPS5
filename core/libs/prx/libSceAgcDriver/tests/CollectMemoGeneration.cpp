@@ -572,6 +572,34 @@ void CheckCoverageGapsAndInvalidations() {
     Require(Walked(Base + Block, 3 * Block, probe), "an unwatch retained a merged observation");
 }
 
+#ifdef _WIN32
+void CheckWatchCallsCounted() {
+    BumpCollectEpoch();
+    const auto address = Base + 62 * Block;
+    const auto before = CollectCounted();
+    Require(CollectWrites(address, Block) != 0, "the first collect failed");
+    const auto walked = CollectCounted();
+    Require(walked.watchCalls > before.watchCalls, "a walk was not counted as a write-watch call");
+    Require(walked.committerWatchCalls == before.committerWatchCalls, "a walk off the committer was counted as the committer's");
+    Require(CollectWrites(address, Block) != 0 && CollectCounted().watchCalls == walked.watchCalls, "a memo hit was counted as a write-watch call");
+    std::uint64_t counted = 0;
+    std::uint64_t committer = 0;
+    bool collected = false;
+    std::thread marked([&] {
+        MarkProofThread();
+        BumpCollectEpoch();
+        const auto from = CollectCounted();
+        collected = CollectWrites(address, Block) != 0;
+        const auto to = CollectCounted();
+        counted = to.watchCalls - from.watchCalls;
+        committer = to.committerWatchCalls - from.committerWatchCalls;
+    });
+    marked.join();
+    Require(collected, "the committer's collect failed");
+    Require(counted != 0 && committer == counted, "the committer's write-watch calls were not attributed to it");
+}
+#endif
+
 void CheckCoverageThreadAndDriverWrites() {
     BumpCollectEpoch();
     Require(CollectWrites(Base, 4 * Block) != 0, "the covering collection failed");
@@ -636,6 +664,9 @@ int main(int argc, char** argv) {
         CheckWaiterNeedingLaterTickWalks();
         CheckMappingChangeForcesWalk();
         CheckFailedRequestPublishesNothing();
+#ifdef _WIN32
+        CheckWatchCallsCounted();
+#endif
     } catch (const std::exception& error) {
         std::cerr << "collect memo generation test failed: " << error.what() << "\n";
         return 1;

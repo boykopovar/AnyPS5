@@ -154,6 +154,13 @@ void BreakProofs();
 void MarkProofThread();
 std::uint64_t CollectEpoch();
 std::uint64_t CollectEpochBumps();
+struct CollectCounts {
+    std::uint64_t watchCalls = 0;
+    std::uint64_t committerWatchCalls = 0;
+    std::uint64_t epochBumps = 0;
+    std::uint64_t memoHits = 0;
+};
+CollectCounts CollectCounted();
 std::uint64_t ThreadCollectEpoch();
 std::uint64_t UnwatchSerial();
 std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes);

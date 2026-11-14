@@ -5,9 +5,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
-#ifdef APS5_COUNT_MAPPING_QUERIES
 #include <atomic>
-#endif
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
@@ -38,6 +36,10 @@ public:
         return queries.load(std::memory_order_relaxed);
     }
 #endif
+
+    std::uint64_t CollectWatchCalls() const {
+        return collectWatchCalls.load(std::memory_order_relaxed);
+    }
 
     void* Reserve(void* address, std::size_t bytes) {
         return allocate(GetCurrentProcess(), address, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0);
@@ -960,6 +962,7 @@ private:
     }
 
     bool resetWrites(std::uintptr_t start, std::uintptr_t end) {
+        collectWatchCalls.fetch_add(1, std::memory_order_relaxed);
         if (!anyZero(start, end)) return ResetWriteWatch(reinterpret_cast<void*>(start), end - start) == 0;
         std::vector<void*> written(((end + 4095) & ~std::uintptr_t{4095}) / 4096 - (start & ~std::uintptr_t{4095}) / 4096);
         ULONG_PTR reported = written.size();
@@ -983,6 +986,7 @@ private:
 
     UINT collectOwnedWrites(DWORD flags, void* address, std::size_t bytes, void** pages, ULONG_PTR* count, DWORD* granularity) {
         const auto capacity = *count;
+        collectWatchCalls.fetch_add(1, std::memory_order_relaxed);
         const auto result = watchWrites(flags, address, bytes, pages, count, granularity);
         if (result != 0 || ownedPending.empty()) return result;
         std::sort(pages, pages + *count);
@@ -1681,6 +1685,7 @@ private:
     std::uint64_t collectSystemCalls = 0;
     std::uint64_t collectPieces = 0;
 #endif
+    std::atomic<std::uint64_t> collectWatchCalls{0};
     Ranges freshRanges;
     std::unordered_map<std::uintptr_t, std::array<std::uint64_t, chunkBytes / 4096 / 64>> zeroPages;
     std::map<std::uintptr_t, View> views;
