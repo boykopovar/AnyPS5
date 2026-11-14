@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/TraceRevision.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
@@ -31,6 +32,8 @@ extern char** environ;
 #ifdef __linux__
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #include <sys/uio.h>
+#elif defined(__APPLE__)
+#include "prx/libc/include/specifics/macos/HostMapping.hpp"
 #endif
 
 namespace AgcDriver {
@@ -95,7 +98,7 @@ std::uint64_t flipValue(std::int64_t value) {
     return static_cast<std::uint64_t>(value);
 }
 
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
 std::uint32_t windowsProtection(const HostMapping::Mapping& mapping) {
     if (mapping.executable) return mapping.writable ? 0x40u : mapping.readable ? 0x20u : 0x10u;
     if (mapping.writable) return 0x04u;
@@ -103,6 +106,9 @@ std::uint32_t windowsProtection(const HostMapping::Mapping& mapping) {
 }
 
 bool pageReadable(std::uint64_t address) {
+#ifdef __APPLE__
+    return HostMapping::Readable(address, "frame capture");
+#else
     char byte = 0;
     iovec local{&byte, 1};
     iovec remote{reinterpret_cast<void*>(static_cast<std::uintptr_t>(address)), 1};
@@ -110,6 +116,7 @@ bool pageReadable(std::uint64_t address) {
     if (read == 1) return true;
     if (read < 0 && errno == EFAULT) return false;
     throw std::runtime_error(std::string("frame capture: cannot probe a file mapping with process_vm_readv: ") + (read < 0 ? std::strerror(errno) : "nothing was read"));
+#endif
 }
 
 std::uint64_t fileBackedEnd(const HostMapping::Mapping& mapping) {
@@ -703,7 +710,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
         }
     }
     return result;
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__)
     std::uintptr_t base = 0;
     std::size_t size = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &size);
@@ -717,13 +724,12 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
         const bool host = first < base || end > base + size;
         const auto access = FrameRangeAccess::Readable | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
         HostMapping::Walk(first, end, "frame capture", [&](const HostMapping::Mapping& mapping) {
-            if (!mapping.readable && !mapping.writable && !mapping.executable) return;
-            const auto add = [&](std::uint64_t address, std::uint64_t regionEnd, bool readable) {
+            const auto add = [&](std::uint64_t address, std::uint64_t regionEnd, bool readable, std::uint32_t protection) {
                 if (address >= regionEnd) return;
                 Range range;
                 range.address = address;
                 range.bytes = regionEnd - address;
-                range.protection = windowsProtection(mapping);
+                range.protection = protection;
                 range.access = access;
                 range.readable = readable;
                 if (host) range.kind = FrameRangeKind::Host;
@@ -736,14 +742,22 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
             };
             const auto address = std::max<std::uint64_t>(first, mapping.start);
             const auto regionEnd = std::min<std::uint64_t>(end, mapping.end);
+            if (!mapping.readable && !mapping.writable && !mapping.executable) {
+                std::vector<std::pair<std::uintptr_t, std::uintptr_t>> trapped;
+                GuestWriteWatch::GuestWriteWatchReadTraps_nid_postfix(static_cast<std::uintptr_t>(address), static_cast<std::size_t>(regionEnd - address), [](void* context, std::uintptr_t begin, std::uintptr_t trapEnd) {
+                    static_cast<std::vector<std::pair<std::uintptr_t, std::uintptr_t>>*>(context)->emplace_back(begin, trapEnd);
+                }, &trapped);
+                for (const auto& [begin, trapEnd] : trapped) add(std::max<std::uint64_t>(begin, address), std::min<std::uint64_t>(trapEnd, regionEnd), true, allocation->writable ? 0x04u : 0x02u);
+                return;
+            }
             const auto backed = std::clamp(fileBackedEnd(mapping), address, regionEnd);
-            add(address, backed, mapping.readable);
-            add(backed, regionEnd, false);
+            add(address, backed, mapping.readable, windowsProtection(mapping));
+            add(backed, regionEnd, false, windowsProtection(mapping));
         });
     }
     return result;
 #else
-    throw std::runtime_error("frame capture: guest memory capture is implemented on Windows and Linux only");
+    throw std::runtime_error("frame capture: guest memory capture is implemented on Windows, Linux and macOS only");
 #endif
 }
 
