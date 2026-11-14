@@ -259,7 +259,6 @@ int APS5_VABI _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb();
 int APS5_VABI _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_();
 int APS5_VABI _ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb();
 int APS5_VABI _ZN3WTF8JSONImpl5Value12escapeStringERNS_13StringBuilderENS_10StringViewE();
-int APS5_VABI _ZN3WTF8pageMaskEv();
 void APS5_VABI _ZN7bmalloc11AllIsoHeapsC1ERKSt11scoped_lockIJNS_5MutexEEE(void* self, const void*);
 void APS5_VABI _ZN7bmalloc11AllIsoHeapsC2ERKSt11scoped_lockIJNS_5MutexEEE(void* self, const void*);
 int APS5_VABI _ZN7bmalloc11EnvironmentC1ERKSt11scoped_lockIJNS_5MutexEEE();
