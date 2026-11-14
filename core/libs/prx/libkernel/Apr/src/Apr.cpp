@@ -609,6 +609,24 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
             cursor += bytes;
             continue;
         }
+        if ((first & 0xffu) == 0x28u) {
+            const auto format = first & 0xc0000fffu;
+            if (format != 0x428u && format != 0x528u) throw std::runtime_error("APR: unsupported native read header");
+            const std::uint32_t bytes = format == 0x528u ? 24u : 20u;
+            if (bytes > buffer.offset - cursor) throw std::runtime_error("APR: truncated native read command");
+            std::array<std::uint32_t, 6> words{};
+            std::memcpy(words.data(), buffer.base + cursor, bytes);
+            if ((words[2] & 0x80000000u) != 0u || (words[4] & 0x30000u) != 0u || words[5] > 0xffu)
+                throw std::runtime_error("APR: unsupported native read flags");
+            const auto destination = (static_cast<std::uint64_t>(words[4] & 0xffffu) << 32u) | words[3];
+            const auto size = static_cast<std::uint64_t>(words[1]) + 1u;
+            constexpr std::uint64_t userLimit = 0xf00000000000ull;
+            if (destination > userLimit || size > userLimit - destination) throw std::runtime_error("APR: malformed native read range");
+            const auto offset = (static_cast<std::uint64_t>(words[5]) << 32u) | (words[4] & 0xfffc0000u) | (first >> 12u);
+            _readResolved(Apr::Opcode::ReadFile, Apr::ReadFileCommand{{}, words[2], 0, destination, size, offset}, read);
+            cursor += bytes;
+            continue;
+        }
         if (cursor + sizeof(Apr::CommandHeader) > buffer.offset) throw std::runtime_error("APR: truncated command buffer");
         Apr::CommandHeader header;
         std::memcpy(&header, buffer.base + cursor, sizeof(header));

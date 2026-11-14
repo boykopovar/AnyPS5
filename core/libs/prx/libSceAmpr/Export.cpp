@@ -2,6 +2,7 @@
 #include "prx/libSceAmpr/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
 #include <ctime>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -182,6 +183,10 @@ static bool ValidRead(const void* destination, std::uint64_t length, std::uint64
     constexpr std::uint64_t userLimit = 0xF00000000000ull;
     const auto address = reinterpret_cast<std::uint64_t>(destination);
     return ValidReadLength(length) && address <= userLimit && length <= userLimit - address && ValidReadOffset(offset);
+}
+
+static std::uint32_t ReadFileBytes(std::uint64_t offset) {
+    return offset < 0x100000000ull ? 20u : 24u;
 }
 
 static int AppendRead(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std::uint32_t fileId, const void* destination, std::uint64_t size, std::uint64_t offset) {
@@ -426,7 +431,49 @@ int APS5_VABI sceAmprAprCommandBufferReadFile(Apr::CommandBufferObject* buffer, 
     (void)gatherState;
     (void)scatterState;
     if (!ValidRead(destination, size, offset)) return SCE_KERNEL_ERROR_EINVAL;
-    return AppendRead(buffer, Apr::Opcode::ReadFile, fileId, destination, size, offset);
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    struct RestoreErrno {
+        int saved = errno;
+        ~RestoreErrno() { errno = saved; }
+    } restoreErrno;
+    const auto* function = __func__;
+    const auto field = [buffer](std::size_t member) {
+        return reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(buffer) + member);
+    };
+    const auto load = [&](auto& value, std::size_t member) {
+        if (!GuestCopyIn_nid_no_patch(&value, field(member), sizeof(value))) NotImplemented_nid_no_patch(function);
+    };
+    const auto store = [&](const auto& value, std::size_t member) {
+        if (!GuestCopyOut_nid_no_patch(field(member), &value, sizeof(value))) NotImplemented_nid_no_patch(function);
+    };
+    std::uintptr_t base;
+    load(base, offsetof(Apr::CommandBufferObject, base));
+    if (base == 0) return SCE_KERNEL_ERROR_EPERM;
+    std::uint32_t current;
+    std::uint32_t capacity;
+    load(current, offsetof(Apr::CommandBufferObject, offset));
+    load(capacity, offsetof(Apr::CommandBufferObject, size));
+    const auto bytes = ReadFileBytes(offset);
+    if (capacity < bytes || current > capacity - bytes) return SCE_KERNEL_ERROR_EBUSY;
+    std::uint32_t count;
+    load(count, offsetof(Apr::CommandBufferObject, numCommands));
+    if (count > 0x7ffffffeu) return SCE_KERNEL_ERROR_EINVAL;
+    const auto address = reinterpret_cast<std::uintptr_t>(destination);
+    const std::array<std::uint32_t, 6> command{
+        (bytes == 20u ? 0x428u : 0x528u) | (static_cast<std::uint32_t>(offset) & 0x3ffffu) << 12u,
+        static_cast<std::uint32_t>(size - 1u), fileId & 0x7fffffffu,
+        static_cast<std::uint32_t>(address),
+        (static_cast<std::uint32_t>(offset) & 0xfffc0000u) | static_cast<std::uint32_t>(address >> 32u),
+        static_cast<std::uint32_t>(offset >> 32u)
+    };
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(base + current), command.data(), bytes)) NotImplemented_nid_no_patch(function);
+    load(count, offsetof(Apr::CommandBufferObject, numCommands));
+    store(count + 1u, offsetof(Apr::CommandBufferObject, numCommands));
+    store(current + bytes, offsetof(Apr::CommandBufferObject, offset));
+    std::uint32_t flags;
+    load(flags, 0);
+    store(flags | 0x10000u, 0);
+    return 0;
 }
 
 int APS5_VABI sceAmprAprCommandBufferReadFileGather(Apr::CommandBufferObject* buffer, std::uint64_t* mapState, std::uint64_t* scatterGatherState, std::uint64_t size, std::uint64_t offset) {
@@ -677,8 +724,10 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarkerWithColor(const char*
     return MeasureMarker(text);
 }
 
-uint32_t APS5_VABI sceAmprMeasureCommandSizeReadFile(void) {
-    return sizeof(Apr::ReadFileCommand);
+uint32_t APS5_VABI sceAmprMeasureCommandSizeReadFile(std::uint32_t fileId, const void* destination, std::uint64_t size, std::uint64_t offset) {
+    (void)fileId;
+    if (!ValidRead(destination, size, offset)) return static_cast<std::uint32_t>(SCE_KERNEL_ERROR_EINVAL);
+    return ReadFileBytes(offset);
 }
 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeReadFileGather(std::uint64_t size, std::uint64_t offset) {
