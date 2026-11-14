@@ -12,7 +12,6 @@
 // left unchanged, as in ICU.
 
 #include "prx/libSceIcu/include/LegacyExports.hpp"
-#include "prx/libc/include/General.hpp"
 
 #include <cstring>
 #include <vector>
@@ -43,6 +42,44 @@ void InsertionSort(char* array, std::int32_t length, std::int32_t itemSize, std:
     }
 }
 
+
+// ICU's semi-recursive quicksort: the smaller partition is sorted recursively
+// and the larger one is looped over. The middle item is copied to px and the
+// swap buffer is pw.
+void SubQuickSort(char* array, std::int32_t start, std::int32_t limit, std::int32_t itemSize, std::int32_t (APS5_VABI* cmp)(const void*, const void*, const void*), const void* context, char* px, char* pw) {
+    std::int32_t left, right;
+    do {
+        if ((start + MinQsort) >= limit) {
+            InsertionSort(array + start * itemSize, limit - start, itemSize, cmp, context);
+            break;
+        }
+        left = start;
+        right = limit;
+        std::memcpy(px, array + ((start + limit) / 2) * itemSize, static_cast<std::size_t>(itemSize));
+        do {
+            while (cmp(context, array + left * itemSize, px) < 0) ++left;
+            while (cmp(context, px, array + (right - 1) * itemSize) < 0) --right;
+            if (left < right) {
+                --right;
+                if (left < right) {
+                    std::memcpy(pw, array + left * itemSize, static_cast<std::size_t>(itemSize));
+                    std::memcpy(array + left * itemSize, array + right * itemSize, static_cast<std::size_t>(itemSize));
+                    std::memcpy(array + right * itemSize, pw, static_cast<std::size_t>(itemSize));
+                }
+                ++left;
+            }
+        } while (left < right);
+
+        if ((right - start) < (limit - left)) {
+            if (start < right - 1) SubQuickSort(array, start, right, itemSize, cmp, context, px, pw);
+            start = left;
+        } else {
+            if (left < limit - 1) SubQuickSort(array, left, limit, itemSize, cmp, context, px, pw);
+            limit = right;
+        }
+    } while (start < limit - 1);
+}
+
 }
 
 extern "C" {
@@ -58,8 +95,8 @@ void APS5_VABI uprv_sortArray_nid_postfix(void* array, std::int32_t length, std:
         InsertionSort(static_cast<char*>(array), length, itemSize, cmp, context);
         return;
     }
-    // Non-stable sorts of nine or more items use ICU's quicksort, added in the next commit.
-    NotImplemented_nid_no_patch(__func__);
+    std::vector<char> scratch(2 * static_cast<std::size_t>(itemSize));
+    SubQuickSort(static_cast<char*>(array), 0, length, itemSize, cmp, context, scratch.data(), scratch.data() + itemSize);
 }
 
 }
