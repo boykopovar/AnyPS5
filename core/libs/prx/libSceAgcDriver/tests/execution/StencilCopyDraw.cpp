@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -16,6 +18,14 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -181,9 +191,12 @@ void CopyHoldsTheDrawnStencil(std::uint32_t renderControl, std::uint32_t samples
 
 int main() {
     try {
+        bool twoSamples = false;
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+            const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+            twoSamples = (context.limits.framebufferDepthSampleCounts & context.limits.sampledImageStencilSampleCounts & VK_SAMPLE_COUNT_2_BIT) != 0 && AgcDriver::Graphics::SampleLocationsCompatibleDepth(context, VK_FORMAT_D32_SFLOAT_S8_UINT, 2);
         }
         Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
         Registered(PixelHeader, WhitePixelCode.data(), sizeof(WhitePixelCode), 1);
@@ -191,6 +204,11 @@ int main() {
         AgcDriverResolveShaderAbi_nid_postfix(&PixelHeader.shader, pixelContext, {});
         CopyHoldsTheDrawnStencil(0x88u, 1, "a centroid stencil copy of a one-sample plane");
         CopyHoldsTheDrawnStencil(0x08u, 1, "a sample 0 stencil copy of a one-sample plane");
+        if (!twoSamples) {
+            AgcDriverShutdown_nid_postfix();
+            std::puts("skipped, the device has no sampled 2x D32_SFLOAT_S8_UINT depth targets with custom sample locations, so only the one-sample stencil copies ran");
+            return VulkanTestSkipped;
+        }
         CopyHoldsTheDrawnStencil(0x88u, 2, "a centroid stencil copy of a two-sample plane");
         CopyHoldsTheDrawnStencil(0x108u, 2, "a sample 1 stencil copy of a two-sample plane");
         CopyHoldsTheDrawnStencil(0x88u, 2, "a centroid stencil copy of a two-sample plane into an alternate-swap target written through green", R8UintAlternate, 2);
