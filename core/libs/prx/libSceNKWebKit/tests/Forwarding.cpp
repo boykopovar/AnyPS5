@@ -244,7 +244,13 @@ int main() {
         TestDelete(&_ZN7WebCore17LibWebRTCProviderdlEPv, "_ZN7WebCore17LibWebRTCProviderdlEPv"),
         TestDelete(&_ZN7WebCore17LibWebRTCProviderdaEPv, "_ZN7WebCore17LibWebRTCProviderdaEPv"),
         TestPlacement(&_ZN7WebCore17LibWebRTCProvidernwEmPv, "_ZN7WebCore17LibWebRTCProvidernwEmPv"),
-        TestPlacement(&_ZN7WebCore17LibWebRTCProvidernaEmPv, "_ZN7WebCore17LibWebRTCProvidernaEmPv")
+        TestPlacement(&_ZN7WebCore17LibWebRTCProvidernaEmPv, "_ZN7WebCore17LibWebRTCProvidernaEmPv"),
+        TestAllocation(&_ZN7WebCore6ISOBoxnwEm, &_ZN7WebCore6ISOBoxdlEPv, "_ZN7WebCore6ISOBoxnwEm"),
+        TestAllocation(&_ZN7WebCore6ISOBoxnaEm, &_ZN7WebCore6ISOBoxdaEPv, "_ZN7WebCore6ISOBoxnaEm"),
+        TestDelete(&_ZN7WebCore6ISOBoxdlEPv, "_ZN7WebCore6ISOBoxdlEPv"),
+        TestDelete(&_ZN7WebCore6ISOBoxdaEPv, "_ZN7WebCore6ISOBoxdaEPv"),
+        TestPlacement(&_ZN7WebCore6ISOBoxnwEmPv, "_ZN7WebCore6ISOBoxnwEmPv"),
+        TestPlacement(&_ZN7WebCore6ISOBoxnaEmPv, "_ZN7WebCore6ISOBoxnaEmPv")
     };
 
     return FinishAllocationResults(allocationResults, sizeof(allocationResults) / sizeof(allocationResults[0]));
