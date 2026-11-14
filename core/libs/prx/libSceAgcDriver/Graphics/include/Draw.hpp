@@ -193,6 +193,14 @@ std::uint64_t AddressDrawReuseVerifications();
 enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve = 2 };
 void SetSpaceKeepFailuresForTest(std::uint32_t count);
 void SetDrawStopAfterResolveForTest(DrawStopForTest stop);
+enum class TargetMemoEvent : std::uint8_t {
+    Lookup, Hit, OverlapCached, OverlapComputed, Accept, AcceptWithDepthMiss, DepthHit, AvoidedRefreshLookups,
+    Invalid, ThreadChanged, Descriptor, ResidentGone, ResidentEvicted, DepthOverlap, Metadata,
+    Epoch, Proofs, Pending, Unwatch, Allocations, Surfaces, Released, Claims, Recorder, Device,
+    PostDepthInvalidated, DepthFallback, Admission, RecipeInvalidated, Build, VerifyChecked, Count
+};
+std::uint64_t TargetMemoEvents(TargetMemoEvent event);
+const char* TargetMemoEventName(TargetMemoEvent event);
 std::uint64_t TargetMemoBuildsForTest();
 std::uint64_t TargetMemoHitNanosecondsForTest(const Context& context, const State& state, std::size_t repeats, std::size_t& hits);
 

@@ -21,6 +21,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TracyZone.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileCounter.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "ThreadOwned.hpp"
@@ -3353,11 +3354,6 @@ TargetProof currentTargetProof(const Context& context) {
     return {GuestMemory::CollectEpoch(), GuestMemory::ProofSerial(), StorageTexture::PendingSerial(), GuestMemory::UnwatchSerial(), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), DepthSurfacesSerial(), DepthSurfacesReleased(), MultisampleClaimSerial(), Recorder::Active(), context.device};
 }
 
-enum class ColorMemoEvent {
-    Accept, AcceptWithDepthMiss, Invalid, Descriptor, Resident, DepthOverlap,
-    Epoch, Proofs, Pending, Unwatch, Allocations, Surfaces, Released, Claims, Recorder, Device, Metadata,
-    PostDepthInvalidated, DepthFallback, AvoidedRefreshLookups, Count
-};
 
 struct DepthFootprint {
     std::uint64_t address = 0;
@@ -3377,17 +3373,7 @@ std::optional<DepthFootprint> depthFootprint(const std::optional<DepthTarget>& d
         depth->format == VK_FORMAT_D16_UNORM || depth->format == VK_FORMAT_D16_UNORM_S8_UINT, depth->firstSlice != 0u || depth->lastSlice != 0u};
 }
 
-struct ColorMemoCounts {
-    std::array<std::uint64_t, static_cast<std::size_t>(ColorMemoEvent::Count)> events{};
-    std::uint64_t hits = 0;
-    std::uint64_t overlapsCached = 0;
-    std::uint64_t overlapsComputed = 0;
-    std::uint64_t lookups = 0;
-    std::chrono::steady_clock::time_point reported = std::chrono::steady_clock::now();
-};
-
 struct ColorMemo {
-    ColorMemoCounts counts;
     struct Attachment {
         std::weak_ptr<StorageTexture> resident;
         bool proxied = false;
@@ -3422,36 +3408,60 @@ TargetMemo& ThreadTargetMemo() {
 thread_local std::uint64_t targetMemoBuilds = 0;
 std::atomic<const TargetMemo*> targetMemoOwner{nullptr};
 
-void noteColorMemo(ColorMemoEvent event, std::uint64_t count = 1) {
-    ThreadTargetMemo().colors.counts.events[static_cast<std::size_t>(event)] += count;
+constexpr std::array<const char*, static_cast<std::size_t>(TargetMemoEvent::Count)> TargetMemoEventNames{
+    "lookup", "hit", "overlap cached", "overlap computed", "accept", "accept without depth", "depth hit", "avoided refresh lookups",
+    "invalid", "thread changed", "descriptor", "resident gone", "resident evicted", "depth overlap", "metadata",
+    "epoch", "proofs", "pending", "unwatch", "allocations", "surfaces", "released", "claims", "recorder", "device",
+    "post-depth invalidated", "depth fallback", "admission", "recipe invalidated", "build", "verify checked"
+};
+
+std::array<ProfileCounter, static_cast<std::size_t>(TargetMemoEvent::Count)>& targetMemoEvents() {
+    static std::array<ProfileCounter, static_cast<std::size_t>(TargetMemoEvent::Count)> events;
+    return events;
+}
+
+const bool targetMemoProfiled = std::getenv("APS5_PROFILE_TARGET_MEMO") != nullptr || std::getenv("APS5_PROFILE_DRAW") != nullptr;
+
+void noteTargetMemo(TargetMemoEvent event, std::uint64_t count = 1) {
+    if (targetMemoProfiled) targetMemoEvents()[static_cast<std::size_t>(event)].Add(count);
 #ifdef TRACY_ENABLE
-    static constexpr std::array names{
-        "ColorMemo.Accept", "ColorMemo.AcceptWithDepthMiss", "ColorMemo.Miss.Invalid",
-        "ColorMemo.Miss.Descriptor", "ColorMemo.Miss.Resident", "ColorMemo.Miss.DepthOverlap",
-        "ColorMemo.Miss.Epoch", "ColorMemo.Miss.Proofs", "ColorMemo.Miss.Pending",
-        "ColorMemo.Miss.Unwatch", "ColorMemo.Miss.Allocations", "ColorMemo.Miss.Surfaces",
-        "ColorMemo.Miss.Released", "ColorMemo.Miss.Claims", "ColorMemo.Miss.Recorder", "ColorMemo.Miss.Device", "ColorMemo.Miss.Metadata",
-        "ColorMemo.PostDepthInvalidated", "DepthMemo.Fallback", "ColorMemo.AvoidedRefreshLookups"
-    };
-    static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(ColorMemoEvent::Count)> counts{};
+    static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(TargetMemoEvent::Count)> counts{};
     const auto index = static_cast<std::size_t>(event);
-    TracyCPlotI(names[index], static_cast<std::int64_t>(counts[index].fetch_add(count, std::memory_order_relaxed) + count));
+    TracyCPlotI(TargetMemoEventNames[index], static_cast<std::int64_t>(counts[index].fetch_add(count, std::memory_order_relaxed) + count));
 #endif
+}
+
+void reportTargetMemo() {
+    using Clock = std::chrono::steady_clock;
+    static std::atomic<std::int64_t> reported{Clock::now().time_since_epoch().count()};
+    static std::array<std::uint64_t, static_cast<std::size_t>(TargetMemoEvent::Count)> previous{};
+    const auto now = Clock::now().time_since_epoch().count();
+    auto last = reported.load(std::memory_order_relaxed);
+    if (Clock::duration(now - last) < std::chrono::seconds(10) || !reported.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
+    std::string line;
+    for (std::size_t index = 0; index < previous.size(); ++index) {
+        const auto total = targetMemoEvents()[index].Sum();
+        const auto count = total - previous[index];
+        previous[index] = total;
+        if (count == 0) continue;
+        line += (line.empty() ? " " : ", ") + std::string(TargetMemoEventNames[index]) + " " + std::to_string(count);
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[target-memo] (10 s, all threads):%s\n", line.empty() ? " none" : line.c_str());
 }
 
 bool colorProofMatches(const TargetProof& before, const TargetProof& after) {
     if (before == after) return true;
-    const auto note = [&](bool changed, ColorMemoEvent event) { if (changed) noteColorMemo(event); };
-    note(before.epoch != after.epoch, ColorMemoEvent::Epoch);
-    note(before.proofs != after.proofs, ColorMemoEvent::Proofs);
-    note(before.pending != after.pending, ColorMemoEvent::Pending);
-    note(before.unwatch != after.unwatch, ColorMemoEvent::Unwatch);
-    note(before.allocations != after.allocations, ColorMemoEvent::Allocations);
-    note(before.surfaces != after.surfaces, ColorMemoEvent::Surfaces);
-    note(before.released != after.released, ColorMemoEvent::Released);
-    note(before.claims != after.claims, ColorMemoEvent::Claims);
-    note(before.recorder != after.recorder, ColorMemoEvent::Recorder);
-    note(before.device != after.device, ColorMemoEvent::Device);
+    const auto note = [&](bool changed, TargetMemoEvent event) { if (changed) noteTargetMemo(event); };
+    note(before.epoch != after.epoch, TargetMemoEvent::Epoch);
+    note(before.proofs != after.proofs, TargetMemoEvent::Proofs);
+    note(before.pending != after.pending, TargetMemoEvent::Pending);
+    note(before.unwatch != after.unwatch, TargetMemoEvent::Unwatch);
+    note(before.allocations != after.allocations, TargetMemoEvent::Allocations);
+    note(before.surfaces != after.surfaces, TargetMemoEvent::Surfaces);
+    note(before.released != after.released, TargetMemoEvent::Released);
+    note(before.claims != after.claims, TargetMemoEvent::Claims);
+    note(before.recorder != after.recorder, TargetMemoEvent::Recorder);
+    note(before.device != after.device, TargetMemoEvent::Device);
     return false;
 }
 
@@ -3459,6 +3469,7 @@ bool colorProofMatches(const TargetProof& before, const TargetProof& after) {
 bool ownsTargetMemo(TargetMemo& memo) {
     if (targetMemoOwner.load(std::memory_order_relaxed) == &memo) return true;
     targetMemoOwner.store(&memo, std::memory_order_relaxed);
+    if (memo.colors.valid || memo.depth.valid) noteTargetMemo(TargetMemoEvent::ThreadChanged);
     memo.Invalidate();
     return false;
 }
@@ -3480,12 +3491,13 @@ bool metadataProved(const ColorTarget& color) {
     const bool proved = (color.dccAddress == 0 || GuestMemory::CollectWrites(color.dccAddress, keys) != 0) &&
         (color.chainDccAddress == 0 || GuestMemory::CollectWrites(color.chainDccAddress, keys) != 0) &&
         (color.cmaskAddress == 0 || cmaskProved(color.cmaskAddress, color.cmaskBytes));
-    if (!proved) noteColorMemo(ColorMemoEvent::Metadata);
+    if (!proved) noteTargetMemo(TargetMemoEvent::Metadata);
     return proved;
 }
 
 void rememberTargets(const State& state, std::span<const TargetBinding> targets, std::span<const VkImageView> views, const TargetProof& proof) {
     ++targetMemoBuilds;
+    noteTargetMemo(TargetMemoEvent::Build);
     auto& colors = ThreadTargetMemo().colors;
     auto& depth = ThreadTargetMemo().depth;
     const bool enabled = TargetMemoEnabled() && proof.epoch != 0;
@@ -3506,31 +3518,19 @@ void rememberTargets(const State& state, std::span<const TargetBinding> targets,
     }
 }
 
-void reportColorMemo(ColorMemoCounts& counts) {
-    const auto now = std::chrono::steady_clock::now();
-    if (now - counts.reported <= std::chrono::seconds(10)) return;
-    counts.reported = now;
-    using Event = ColorMemoEvent;
-    const auto at = [&](Event event) { return static_cast<unsigned long long>(counts.events[static_cast<std::size_t>(event)]); };
-    AgcDriver::ProfilePrint_nid_no_patch("[target-memo] (cumulative, this thread): %llu hits (%llu with the depth overlap known, %llu computed), %llu accepted by the draw (%llu without a repeated depth); misses: invalid %llu, proofs %llu (epoch %llu, proofs %llu, pending %llu, unwatch %llu, allocations %llu, surfaces %llu, released %llu, claims %llu, recorder %llu, device %llu), descriptor %llu, resident %llu, depth overlap %llu, metadata %llu; after the hit: depth fallback %llu, invalidated %llu\n",
-        static_cast<unsigned long long>(counts.hits), static_cast<unsigned long long>(counts.overlapsCached), static_cast<unsigned long long>(counts.overlapsComputed), at(Event::Accept), at(Event::AcceptWithDepthMiss),
-        at(Event::Invalid), at(Event::Epoch) + at(Event::Proofs) + at(Event::Pending) + at(Event::Unwatch) + at(Event::Allocations) + at(Event::Surfaces) + at(Event::Released) + at(Event::Claims) + at(Event::Recorder) + at(Event::Device),
-        at(Event::Epoch), at(Event::Proofs), at(Event::Pending), at(Event::Unwatch), at(Event::Allocations), at(Event::Surfaces), at(Event::Released), at(Event::Claims), at(Event::Recorder), at(Event::Device),
-        at(Event::Descriptor), at(Event::Resident), at(Event::DepthOverlap), at(Event::Metadata), at(Event::DepthFallback), at(Event::PostDepthInvalidated));
-}
-
 bool repeatColors(const Context& context, const State& state, const TargetProof& proof, std::vector<TargetBinding>& targets, std::vector<VkImageView>& views) {
     auto& memo = ThreadTargetMemo().colors;
-    auto& counts = memo.counts;
-    if ((++counts.lookups & 4095u) == 0u) reportColorMemo(counts);
+    thread_local std::uint32_t lookups = 0;
+    if (targetMemoProfiled && (++lookups & 4095u) == 0u) reportTargetMemo();
     if (state.colors.empty()) return false;
+    noteTargetMemo(TargetMemoEvent::Lookup);
     if (!memo.valid || !TargetMemoEnabled()) {
-        noteColorMemo(ColorMemoEvent::Invalid);
+        noteTargetMemo(TargetMemoEvent::Invalid);
         return false;
     }
     if (!colorProofMatches(memo.proof, proof)) return false;
     if (memo.descriptors != state.colors) {
-        noteColorMemo(ColorMemoEvent::Descriptor);
+        noteTargetMemo(TargetMemoEvent::Descriptor);
         return false;
     }
     const auto footprint = depthFootprint(state.depth);
@@ -3539,25 +3539,22 @@ bool repeatColors(const Context& context, const State& state, const TargetProof&
         auto& binding = targets[index];
         binding.resident = memo.attachments[index].resident.lock();
         if (binding.resident == nullptr || !binding.resident->Cached()) {
-            noteColorMemo(ColorMemoEvent::Resident);
+            noteTargetMemo(binding.resident == nullptr ? TargetMemoEvent::ResidentGone : TargetMemoEvent::ResidentEvicted);
             return false;
         }
         binding.color = state.colors[index];
         if (VerifyTargetMemo()) Require(overlapKnown ? !colorOverlapsDepth(state, binding) : true, "APS5_VERIFY_TARGET_MEMO: a cached depth overlap differs from its computation");
         if (!overlapKnown && colorOverlapsDepth(state, binding)) {
-            noteColorMemo(ColorMemoEvent::DepthOverlap);
+            noteTargetMemo(TargetMemoEvent::DepthOverlap);
             return false;
         }
         binding.gpuTiling = binding.color.tileMode == ColorTileMode::RenderTarget && context.detiler != nullptr;
         binding.proxied = memo.attachments[index].proxied;
         views.push_back(memo.attachments[index].view);
     }
-    ++counts.hits;
-    if (overlapKnown) ++counts.overlapsCached;
-    else {
-        ++counts.overlapsComputed;
-        memo.clearOfDepth = footprint;
-    }
+    noteTargetMemo(TargetMemoEvent::Hit);
+    noteTargetMemo(overlapKnown ? TargetMemoEvent::OverlapCached : TargetMemoEvent::OverlapComputed);
+    if (!overlapKnown) memo.clearOfDepth = footprint;
     return true;
 }
 
@@ -3789,14 +3786,15 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     };
     if (!repeatedColors) prepareColors();
     const auto prepareDepth = [&] {
-        noteColorMemo(ColorMemoEvent::DepthFallback);
+        noteTargetMemo(TargetMemoEvent::DepthFallback);
         return DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state), overwrittenStencil(state));
     };
     auto depthView = memoActive ? repeatDepth(context, state, repeatedColors ? &targetProof : nullptr) : VkImageView{VK_NULL_HANDLE};
     bool repeatedDepth = state.depth && depthView != VK_NULL_HANDLE;
+    if (repeatedDepth) noteTargetMemo(TargetMemoEvent::DepthHit);
     if (state.depth && !repeatedDepth) depthView = prepareDepth();
     if (repeatedColors && (targetMemoOwner.load(std::memory_order_relaxed) != &ThreadTargetMemo() || !colorProofMatches(targetProof, currentTargetProof(context)) || !std::ranges::all_of(targets, [](const TargetBinding& binding) { return binding.resident->Cached(); }))) {
-        noteColorMemo(ColorMemoEvent::PostDepthInvalidated);
+        noteTargetMemo(TargetMemoEvent::PostDepthInvalidated);
         repeatedColors = false;
         admissionProof = currentTargetProof(context);
         prepareColors();
@@ -3808,13 +3806,12 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             binding.resident->NoteProved();
             binding.resident->NoteUsed();
         }
-        noteColorMemo(ColorMemoEvent::Accept);
-        if (state.depth && !repeatedDepth) noteColorMemo(ColorMemoEvent::AcceptWithDepthMiss);
-#ifdef TRACY_ENABLE
-        if (!VerifyTargetMemo()) noteColorMemo(ColorMemoEvent::AvoidedRefreshLookups, targets.size());
-#endif
+        noteTargetMemo(TargetMemoEvent::Accept);
+        if (state.depth && !repeatedDepth) noteTargetMemo(TargetMemoEvent::AcceptWithDepthMiss);
+        if (!VerifyTargetMemo()) noteTargetMemo(TargetMemoEvent::AvoidedRefreshLookups, targets.size());
     }
     if ((repeatedColors || repeatedDepth) && VerifyTargetMemo()) {
+        noteTargetMemo(TargetMemoEvent::VerifyChecked);
         const auto verifyProof = currentTargetProof(context);
         const auto ownProofBreaks = GuestMemory::OwnProofBreaks();
         const auto ownPendingMoves = StorageTexture::OwnPendingMoves();
@@ -3846,7 +3843,10 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             ThreadTargetMemo().colors.proof == preparedProof && unchangedDepth;
         if (admissionProof == preparedProof) {
             if (!unchanged) rememberTargets(state, targets, targetViews, preparedProof);
-        } else ThreadTargetMemo().Invalidate();
+        } else {
+            noteTargetMemo(TargetMemoEvent::Admission);
+            ThreadTargetMemo().Invalidate();
+        }
     }
     timer.phase(PhasePrepare);
     const bool recordDraws = RecordDraws();
@@ -4657,7 +4657,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     // (FlushPending, the whole-surface collect and UnchangedSince, the key scan). An image gone
     // from the cache is a miss: the ordinary path looks up anew.
     auto& memo = ThreadTargetMemo();
-    static_cast<void>(ownsTargetMemo(memo));
+    if (ownsTargetMemo(memo) && (memo.colors.valid || memo.depth.valid)) noteTargetMemo(TargetMemoEvent::RecipeInvalidated);
     memo.Invalidate();
     std::vector<std::shared_ptr<StorageTexture>> targets;
     targets.reserve(recipe.targets.size());
@@ -4841,6 +4841,14 @@ void SetSpaceKeepFailuresForTest(std::uint32_t count) {
 
 void SetDrawStopAfterResolveForTest(DrawStopForTest stop) {
     stopAfterResolve.store(static_cast<int>(stop), std::memory_order_relaxed);
+}
+
+std::uint64_t TargetMemoEvents(TargetMemoEvent event) {
+    return targetMemoEvents()[static_cast<std::size_t>(event)].Sum();
+}
+
+const char* TargetMemoEventName(TargetMemoEvent event) {
+    return static_cast<std::size_t>(event) < TargetMemoEventNames.size() ? TargetMemoEventNames[static_cast<std::size_t>(event)] : "?";
 }
 
 std::uint64_t TargetMemoBuildsForTest() {

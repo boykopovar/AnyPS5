@@ -192,11 +192,46 @@ std::uint64_t lookups() {
     return std::accumulate(counts.begin(), counts.end(), std::uint64_t{0});
 }
 
+bool memoServes() {
+    static const bool serves = std::getenv("APS5_NO_TARGET_MEMO") == nullptr && std::getenv("APS5_NO_TEXTURE_CACHE") == nullptr && std::getenv("APS5_DRAW_PIPELINE") != nullptr;
+    return serves;
+}
+
+bool memoCounted() {
+    static const bool counted = std::getenv("APS5_PROFILE_TARGET_MEMO") != nullptr || std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    return counted;
+}
+
+struct MemoEvents {
+    std::array<std::uint64_t, static_cast<std::size_t>(TargetMemoEvent::Count)> counts{};
+    MemoEvents() {
+        for (std::size_t index = 0; index < counts.size(); ++index) counts[index] = TargetMemoEvents(static_cast<TargetMemoEvent>(index));
+    }
+    std::uint64_t Moved(TargetMemoEvent event) const { return TargetMemoEvents(event) - counts[static_cast<std::size_t>(event)]; }
+    std::string Text() const {
+        std::string text;
+        for (std::size_t index = 0; index < counts.size(); ++index) {
+            const auto event = static_cast<TargetMemoEvent>(index);
+            if (Moved(event) != 0) text += std::string(text.empty() ? "" : ", ") + TargetMemoEventName(event) + " " + std::to_string(Moved(event));
+        }
+        return text.empty() ? "none" : text;
+    }
+};
+
+void requireMemoEvent(const MemoEvents& before, TargetMemoEvent event, std::uint64_t expected, const std::string& what) {
+    Require(before.Moved(event) == expected, what + ": " + TargetMemoEventName(event) + " counted " + std::to_string(before.Moved(event)) + ", expected " + std::to_string(expected) + " (" + before.Text() + ")");
+}
+
 void arm(AgcDriver::VulkanDevice& device, const ColorTarget& color, const DrawOptions& options = {}) {
     for (int repeat = 0; repeat < 3; ++repeat) draw(device, color, options);
     const auto before = lookups();
+    const MemoEvents events;
     draw(device, color, options);
     Require(!LookupOutcomes::Profiled() || (lookups() != before) == memoResolves(), memoResolves() ? "a draw without the memo did not look up its targets" : "a draw that repeats the previous draw's targets looked them up");
+    const auto served = memoServes() && memoCounted() ? 1u : 0u;
+    requireMemoEvent(events, TargetMemoEvent::Hit, served, "a repeated draw's target memo count");
+    requireMemoEvent(events, TargetMemoEvent::Accept, served, "a repeated draw's target memo count");
+    requireMemoEvent(events, TargetMemoEvent::VerifyChecked, std::getenv("APS5_VERIFY_TARGET_MEMO") != nullptr ? served : 0u, "a repeated draw's target memo count");
 }
 
 struct ProofFields {
@@ -986,7 +1021,10 @@ void colorMemoProofBreak(AgcDriver::VulkanDevice& device) {
     AgcDriver::GuestMemory::BreakProofs();
     requireMoved(before, "proofs", "an explicit proof break");
     depth.clearDepth = 0.625f;
+    const MemoEvents events;
     mustLookUp(device, color, {.scissor = Right, .depth = depth, .compare = VK_COMPARE_OP_ALWAYS}, "a proof break allowed color reuse while depth fell back");
+    requireMemoEvent(events, TargetMemoEvent::Proofs, memoServes() && memoCounted() ? 1u : 0u, "an explicit proof break");
+    requireMemoEvent(events, TargetMemoEvent::Hit, 0u, "an explicit proof break");
     expect(device, color, [](std::uint32_t x) { return x < LeftWidth || x >= Width - LeftWidth ? Drawn : Old; }, "proof-break fallback");
 }
 
@@ -1089,7 +1127,10 @@ void colorMemoResidentEviction(AgcDriver::VulkanDevice& device) {
     }
     requireMoved(before, "", "evicting a clean retained color resident");
     Require(!resident->Cached(), "the negative control did not evict the resident");
+    const MemoEvents events;
     mustLookUp(device, color, {}, "an evicted color resident was reused");
+    requireMemoEvent(events, TargetMemoEvent::ResidentEvicted, memoServes() && memoCounted() ? 1u : 0u, "an evicted color resident");
+    requireMemoEvent(events, TargetMemoEvent::Hit, 0u, "an evicted color resident");
     expect(device, color, [](std::uint32_t x) { return leftOver(x, Old); }, "resident eviction");
 }
 
