@@ -27,7 +27,8 @@ static_assert(PipelineSpecialization::FoldOffsetBase + ShaderInfo::MaxSamplers <
 static_assert(PipelineSpecialization::UnnormalizedBaseLevelBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::MirrorUnnormalizedBase);
 static_assert(PipelineSpecialization::MirrorUnnormalizedBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::MinLodBase);
 static_assert(PipelineSpecialization::MinLodBase + ShaderInfo::MaxImages <= PipelineSpecialization::SamplerLodBiasBase);
-static_assert(PipelineSpecialization::SamplerLodBiasBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::FmaskFormatBase);
+static_assert(PipelineSpecialization::SamplerLodBiasBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::UnnormalizedScaledBase);
+static_assert(PipelineSpecialization::UnnormalizedScaledBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::FmaskFormatBase);
 static_assert(PipelineSpecialization::FmaskFormatBase + ShaderInfo::MaxImages <= PipelineSpecialization::VolumeGatherBase);
 static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
 static_assert(PipelineSpecialization::ImageComponentBase + ShaderInfo::MaxImages <= PipelineSpecialization::NormalizedImageBase);
@@ -299,12 +300,14 @@ struct UnnormalizedProof {
     std::vector<bool> samplers;
     std::vector<bool> images;
     std::vector<bool> imagesAtBaseLevel;
+    std::vector<bool> scaledSamplers;
+    std::vector<bool> imagesScaled;
     std::vector<bool> samplersIgnoreCoordinates;
     std::vector<std::uint32_t> mirroredAxes;
 };
 
 UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapshot& snapshot) {
-    UnnormalizedProof proof{std::vector<bool>(info.samplers.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.samplers.size()), std::vector<std::uint32_t>(info.samplers.size())};
+    UnnormalizedProof proof{std::vector<bool>(info.samplers.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.samplers.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.samplers.size()), std::vector<std::uint32_t>(info.samplers.size())};
     for (std::uint32_t r = 0; r < info.samplers.size(); r++) {
         if (snapshot.samplers.at(r).dwordCount != 4u) fail("sampler descriptor must contain four dwords");
         const auto& sampler = info.samplers[r];
@@ -360,9 +363,12 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
         }
         if (nullMismatch != nullptr) failUnnormalized(nullMismatch);
         proof.samplers[r] = true;
+        const auto& filterWords = snapshot.samplers[r].dwords;
+        const auto spatialFilter = (filterWords[2] >> 20u) & 3u;
         const auto clampX = snapshot.samplers[r].dwords[0] & 7u;
         const auto clampY = (snapshot.samplers[r].dwords[0] >> 3u) & 7u;
         proof.mirroredAxes[r] = (clampX == 1u || clampX == 3u ? 1u : 0u) | (clampY == 1u || clampY == 3u ? 2u : 0u);
+        proof.scaledSamplers[r] = proof.mirroredAxes[r] == 0u && SamplesScaledIfUnnormalized(sampler) && (filterWords[2] & 0x3fffu) == 0u && ((filterWords[2] >> 26u) & 3u) == 1u && spatialFilter == ((filterWords[2] >> 22u) & 3u) && spatialFilter <= 1u && ((filterWords[0] >> 29u) & 3u) == 0u;
     }
     for (std::uint32_t resource = 0; resource < info.images.size(); resource++) {
         bool exact = proof.images[resource];
@@ -373,6 +379,13 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
             exact = proof.samplers[pair.sampler] && (((words[2] >> 26u) & 3u) == 0u || (info.samplers.at(pair.sampler).uses == SamplerUseExplicitLod && (words[1] & 0xfffu) == 0u && (words[2] & 0x3fffu) == 0u));
         }
         proof.imagesAtBaseLevel[resource] = exact;
+        exact = proof.images[resource];
+        for (const auto& pair : info.sampledPairs) {
+            if (!exact) break;
+            if (pair.image != resource) continue;
+            exact = proof.scaledSamplers[pair.sampler];
+        }
+        proof.imagesScaled[resource] = exact;
     }
     return proof;
 }
@@ -445,6 +458,11 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     for (std::uint32_t index = 0; index < info.samplers.size(); ++index) {
         if (FoldsTexelOffsets(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::FoldOffsetBase + index, unnormalized.samplers[index] ? 1u : 0u});
         if (SamplesBaseLevelIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::UnnormalizedBaseLevelBase + index, unnormalized.samplers[index] ? 1u : 0u});
+        if (SamplesScaledIfUnnormalized(info.samplers[index])) {
+            const auto& words = snapshot.samplers[index].dwords;
+            const auto mode = unnormalized.scaledSamplers[index] ? (((words[2] >> 20u) & 3u) == 0u ? 2u : 1u) : 0u;
+            plan.specialization.push_back({PipelineSpecialization::UnnormalizedScaledBase + index, mode == 0u ? 0u : mode | ((words[1] & 0xfffu) << 2u) | (((words[1] >> 12u) & 0xfffu) << 14u)});
+        }
         if (MirrorsIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::MirrorUnnormalizedBase + index, unnormalized.mirroredAxes[index]});
         if (info.samplers[index].table != NoTable) continue;
         const auto bias = unnormalized.samplers[index] ? 0.0f : static_cast<float>(static_cast<std::int32_t>((snapshot.samplers.at(index).dwords[2] & 0x3fffu) ^ 0x2000u) - 0x2000) / 256.0f;
@@ -639,6 +657,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.imageAtomic.push_back(image.atomic);
                 physical.imageUnnormalized.push_back(unnormalized.images.at(resource));
                 physical.imageUnnormalizedBaseLevel.push_back(unnormalized.imagesAtBaseLevel.at(resource));
+                physical.imageUnnormalizedScaled.push_back(unnormalized.imagesScaled.at(resource));
                 physical.imageSamplers.push_back(0u);
                 physical.imageAtomic64.push_back(image.atomic64);
             }
@@ -649,6 +668,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 for (const auto& pair : info.sampledPairs) if (pair.sampler == resource) compare |= info.images.at(pair.image).depthCompare && compareStates.at(pair.image) == 0u;
                 physical.samplerDepthCompare.push_back(compare);
                 physical.samplerUnnormalized.push_back(unnormalized.samplers.at(resource));
+                physical.samplerScaledUnnormalized.push_back(unnormalized.scaledSamplers.at(resource));
                 physical.samplerCoordinatesIgnored.push_back(unnormalized.samplersIgnoreCoordinates.at(resource));
                 const auto mode = 1u << (originals[element] & 1u);
                 physical.samplerIntegerBorder.push_back((samplerIntegerModes.at(resource) & mode) != 0u && (samplerFloatModes.at(resource) & mode) == 0u);

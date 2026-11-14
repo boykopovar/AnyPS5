@@ -3153,7 +3153,7 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
             hash.bytes(binding.guestDescriptor.data(), binding.guestDescriptor.size() * sizeof(std::uint32_t));
             hash.bytes(binding.imageSamplers.data(), binding.imageSamplers.size() * sizeof(binding.imageSamplers[0]));
             hash.bytes(binding.imageShapes.data(), binding.imageShapes.size() * sizeof(binding.imageShapes[0]));
-            for (const auto* set : {&binding.imageWritten, &binding.samplerDepthCompare, &binding.imageDepthCompare, &binding.imageAtomic, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored, &binding.imageUnnormalized, &binding.imageUnnormalizedBaseLevel, &binding.bufferWritten}) hash.bits(*set);
+            for (const auto* set : {&binding.imageWritten, &binding.samplerDepthCompare, &binding.imageDepthCompare, &binding.imageAtomic, &binding.samplerUnnormalized, &binding.samplerScaledUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored, &binding.imageUnnormalized, &binding.imageUnnormalizedBaseLevel, &binding.imageUnnormalizedScaled, &binding.bufferWritten}) hash.bits(*set);
             const auto first = hash.a();
             const auto second = hash.b();
             for (const auto word : {0xc0de7ab1u, static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(first >> 32u), static_cast<std::uint32_t>(second), static_cast<std::uint32_t>(second >> 32u)}) visit(word);
@@ -3181,10 +3181,12 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
         packBits(binding.imageDepthCompare);
         packBits(binding.imageAtomic);
         packBits(binding.samplerUnnormalized);
+        packBits(binding.samplerScaledUnnormalized);
         packBits(binding.samplerIntegerBorder);
         packBits(binding.samplerCoordinatesIgnored);
         packBits(binding.imageUnnormalized);
         packBits(binding.imageUnnormalizedBaseLevel);
+        packBits(binding.imageUnnormalizedScaled);
         // Read-only elements are bound without a write set: an object built for one written set
         // must not serve a build with another (the variant implies it, this makes it explicit).
         packBits(binding.bufferWritten);
@@ -3212,13 +3214,13 @@ void ShaderResources::AppendContentKey(const CompiledShader& shader, bool dataWo
         words += count;
     };
     for (const auto& binding : shader.program->bindings) {
-        addWords(20);
+        addWords(22);
         if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable && binding.guestDescriptor.size() > CompactTableKeyWords) continue;
         addWords(binding.imageSamplers.size() * 2u);
         addWords(binding.imageShapes.size());
         if (binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap && binding.guestDescriptor.size() > CompactTableKeyWords) addWords(5);
         else if ((dataWords && !movableBuffers) || !DataRole(binding.role)) addWords(binding.guestDescriptor.size());
-        for (const auto* bits : {&binding.imageWritten, &binding.samplerDepthCompare, &binding.imageDepthCompare, &binding.imageAtomic, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored, &binding.imageUnnormalized, &binding.imageUnnormalizedBaseLevel, &binding.bufferWritten}) addWords(bits->size() / 32u + (bits->size() % 32u != 0 ? 1u : 0u));
+        for (const auto* bits : {&binding.imageWritten, &binding.samplerDepthCompare, &binding.imageDepthCompare, &binding.imageAtomic, &binding.samplerUnnormalized, &binding.samplerScaledUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored, &binding.imageUnnormalized, &binding.imageUnnormalizedBaseLevel, &binding.imageUnnormalizedScaled, &binding.bufferWritten}) addWords(bits->size() / 32u + (bits->size() % 32u != 0 ? 1u : 0u));
     }
     key.reserve(words);
     VisitContentKey(shader, dataWords, movableBuffers, [&](std::uint32_t word) { key.push_back(word); });
@@ -5676,6 +5678,7 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
         if (capacity > context.limits.maxPerStageDescriptorSamplers) throw std::runtime_error(DescriptorLimitError("shader sampler descriptors exceed per-stage limits", capacity, context.limits.maxPerStageDescriptorSamplers));
         Require(binding.samplerDepthCompare.size() == binding.count, "guest sampler binding is missing depth comparison metadata");
         Require(binding.samplerUnnormalized.empty() || binding.samplerUnnormalized.size() == binding.count, "guest sampler binding has unnormalized coordinate metadata of another size");
+        Require(binding.samplerScaledUnnormalized.empty() || binding.samplerScaledUnnormalized.size() == binding.count, "guest sampler binding has scaled unnormalized coordinate metadata of another size");
         for (std::uint32_t element = 0; element < binding.count; ++element) {
             auto guestWords = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
             std::array<std::uint32_t, 4> normalizedWords{};
@@ -5687,15 +5690,16 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
             const auto words = guestWords;
             const bool compareEnable = binding.samplerDepthCompare.at(element);
             const bool unnormalized = element < binding.samplerUnnormalized.size() && binding.samplerUnnormalized[element];
+            const bool scaled = element < binding.samplerScaledUnnormalized.size() && binding.samplerScaledUnnormalized[element];
             const bool integerBorder = element < binding.samplerIntegerBorder.size() && binding.samplerIntegerBorder[element];
             if (context.samplerCache != nullptr && !SamplerCacheDisabled()) {
-                samplers.push_back(context.samplerCache->Get(context, words, compareEnable, unnormalized, true, integerBorder));
+                samplers.push_back(context.samplerCache->Get(context, words, compareEnable, unnormalized, true, integerBorder, scaled));
             } else {
-                auto resource = DecodeSamplerResource(words, unnormalized, true, integerBorder);
+                auto resource = DecodeSamplerResource(words, unnormalized, true, integerBorder, scaled);
                 resource.compareEnable = compareEnable;
                 samplers.push_back(std::make_shared<Sampler>(context, resource));
             }
-            samplerSources.push_back({{words[0], words[1], words[2], words[3]}, compareEnable, unnormalized, integerBorder});
+            samplerSources.push_back({{words[0], words[1], words[2], words[3]}, compareEnable, unnormalized, integerBorder, scaled});
             item.imageAllocations.push_back(samplers.size() - 1);
         }
         Require(samplers.size() <= context.limits.maxDescriptorSetSamplers, "pipeline sampler descriptors exceed device limits");
@@ -5856,9 +5860,9 @@ void ShaderResources::applySamplerVariants() {
         if (!variant.has_value() && !source.pinnedLod.has_value()) continue;
         const auto words = source.pinnedLod.has_value() ? PinnedLodSamplerWords(variant.has_value() ? *variant : source.words, *source.pinnedLod) : *variant;
         if (context.samplerCache != nullptr && !SamplerCacheDisabled()) {
-            samplers[index] = context.samplerCache->Get(context, words, source.compareEnable, source.unnormalized, true, source.integerBorder);
+            samplers[index] = context.samplerCache->Get(context, words, source.compareEnable, source.unnormalized, true, source.integerBorder, source.scaled);
         } else {
-            auto resource = DecodeSamplerResource(words, source.unnormalized, true, source.integerBorder);
+            auto resource = DecodeSamplerResource(words, source.unnormalized, true, source.integerBorder, source.scaled);
             resource.compareEnable = source.compareEnable;
             samplers[index] = std::make_shared<Sampler>(context, resource);
         }
@@ -5924,10 +5928,11 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             if (element < binding.imageUnnormalized.size() && binding.imageUnnormalized[element]) {
                 const auto range = texture->SampledViewRange(firstLayer);
                 const bool exactAtBase = element < binding.imageUnnormalizedBaseLevel.size() && binding.imageUnnormalizedBaseLevel[element];
+                const bool scaled = resource.baseLevel == 0u && element < binding.imageUnnormalizedScaled.size() && binding.imageUnnormalizedScaled[element];
                 const bool singleLevel = range.levels == 1u && resource.baseLevel == 0u;
-                const bool supported = range.layers == 1u && EffectiveMinLod(resource) == 0.0f && (singleLevel || exactAtBase);
+                const bool supported = range.layers == 1u && EffectiveMinLod(resource) == 0.0f && (singleLevel || exactAtBase || scaled);
                 if (!supported || (range.type != VK_IMAGE_VIEW_TYPE_1D && range.type != VK_IMAGE_VIEW_TYPE_2D)) throw std::runtime_error("AGC graphics: guest texture sampled with unnormalized coordinates is not a single-layer 1D or 2D view without a minimum LOD clamp, and is neither a single-level view at mip 0 nor read only by image_sample_lz through an S# without minimum LOD or bias, which is not implemented (base level " + std::to_string(resource.baseLevel) + ", levels " + std::to_string(range.levels) + ", layers " + std::to_string(range.layers) + ", view type " + std::to_string(static_cast<int>(range.type)) + ")");
-                baseLevel = range.levels > 1u;
+                baseLevel = range.levels > 1u && !scaled;
             }
             RequireFilterMinmax(context, texture->ViewFormat(), binding.imageSamplers[element], shaderSamplers);
             RequireBorderSwizzle(resource.bcSwizzle, binding.imageSamplers[element], shaderSamplers);
@@ -6254,7 +6259,7 @@ void ShaderResources::resolveImageTables() {
         for (std::uint32_t sampler = 0; sampler < table.samplerCount; ++sampler) {
             const auto& source = samplerSources.at(table.firstSampler + sampler);
             samplerKey.insert(samplerKey.end(), source.words.begin(), source.words.end());
-            samplerKey.push_back((source.compareEnable ? 1u : 0u) | (source.unnormalized ? 2u : 0u) | (source.integerBorder ? 4u : 0u));
+            samplerKey.push_back((source.compareEnable ? 1u : 0u) | (source.unnormalized ? 2u : 0u) | (source.integerBorder ? 4u : 0u) | (source.scaled ? 8u : 0u));
         }
         const auto place = [&](std::uint32_t element, std::shared_ptr<Texture> texture, const GuestTextureResource& resource, std::uint64_t guestBytes, bool firstLayer) {
             textures.push_back(std::move(texture));
@@ -6275,7 +6280,7 @@ void ShaderResources::resolveImageTables() {
                     const auto sampler = static_cast<std::uint32_t>(std::countr_zero(mask));
                     if (sampler >= stageSamplers.size()) break;
                     const auto& source = samplerSources.at(table.firstSampler + sampler);
-                    const auto descriptor = DecodeSamplerResource(source.words, source.unnormalized, true, source.integerBorder);
+                    const auto descriptor = DecodeSamplerResource(source.words, source.unnormalized, true, source.integerBorder, source.scaled);
                     const bool border = descriptor.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
                     Require(!border || source.integerBorder == integerImage, "an image table entry's sampler border color numeric class disagrees with its sampled image class, which needs dynamic pairing and is not implemented");
                     Require(!SingleLevelSamplerWords(source.words, true, false).has_value(), "an image table entry paired with anisotropic ANISO_OVERRIDE needs dynamic texture mip-level pairing, which is not implemented");

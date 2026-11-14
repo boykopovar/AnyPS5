@@ -10395,6 +10395,24 @@ void verifyUnnormalizedSamplers() {
     const auto proven = [&](const RecompileResult& result, bool expected) {
         return flags(result, DescriptorRole::GuestSamplers) == std::vector<bool>{expected} && flags(result, DescriptorRole::GuestImages) == std::vector<bool>{expected};
     };
+    const auto scaledFlags = [](const RecompileResult& result, DescriptorRole role) {
+        for (const auto& binding : result.bindings) {
+            if (binding.role == role) return role == DescriptorRole::GuestSamplers ? binding.samplerScaledUnnormalized : binding.imageUnnormalizedScaled;
+        }
+        throw std::runtime_error("unnormalized samplers: the program has no sampler or image binding");
+    };
+    const auto scaledProven = [&](const RecompileResult& result, bool expected) {
+        return scaledFlags(result, DescriptorRole::GuestSamplers) == std::vector<bool>{expected} && scaledFlags(result, DescriptorRole::GuestImages) == std::vector<bool>{expected};
+    };
+    const auto spirvHas = [](std::span<const std::uint32_t> words, std::uint32_t wanted) {
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "unnormalized samplers: truncated SPIR-V instruction");
+            if ((words[cursor] & 0xffffu) == wanted) return true;
+            cursor += count;
+        }
+        return false;
+    };
     const auto auditSpirv = [](std::span<const std::uint32_t> words) {
         std::size_t samples = 0;
         for (std::size_t cursor = 5; cursor < words.size();) {
@@ -10423,7 +10441,16 @@ void verifyUnnormalizedSamplers() {
         const auto result = recompile(program(mimg), userData(unnormalized));
         require(proven(result, true), "unnormalized samplers: a compute image_sample_l, image_sample, image_sample_b, image_sample_cl or image_sample_d was not flagged");
         auditSpirv(result.spirv.Words());
+        require(scaledProven(result, mimg != 0xf0880f08u), "unnormalized samplers: the scaled-unormalized flag disagreed with the instruction");
+        require(spirvHas(result.spirv.Words(), spv::OpImageQuerySizeLod) == (mimg != 0xf0880f08u), "unnormalized samplers: an explicit-LOD unnormalized sample did not query the sampled level's extent");
     }
+
+    const std::array<std::uint32_t, 4> scaledSampler{0x00008036u, 0x00fff000u, 0x05000000u, 0u};
+    const auto scaledResult = recompile(program(0xf0900f08u), userData(scaledSampler));
+    require(proven(scaledResult, true), "scaled unnormalized: image_sample_l through an unnormalized point-mip S# was not flagged");
+    require(scaledProven(scaledResult, true), "scaled unnormalized: image_sample_l through an unnormalized point-mip S# was not flagged scaled");
+    require(scaledProven(recompile(program(0xf0880f08u), userData(scaledSampler)), false), "scaled unnormalized: image_sample_d through an unnormalized point-mip S# was flagged scaled");
+    require(scaledProven(recompile(program(0xf0900f08u), userData(normalized)), false), "scaled unnormalized: image_sample_l through a normalized S# was flagged scaled");
 
     const auto reject = [&](std::uint32_t mimg, const std::array<std::uint32_t, 16>& data, const char* reason, const char* what) {
         expectFailure([&] { static_cast<void>(recompile(program(mimg), data)); }, reason, what);
@@ -10469,17 +10496,64 @@ void verifyUnnormalizedSamplers() {
     const auto foldedSamples = [](std::span<const std::uint32_t> words) {
         std::vector<std::uint32_t> exact;
         std::vector<std::uint32_t> sums;
+        std::vector<std::uint32_t> sumInputs;
         std::vector<std::uint32_t> coordinates;
+        std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> producers;
         for (std::size_t cursor = 5; cursor < words.size();) {
             const auto count = words[cursor] >> 16u;
             require(count != 0 && count <= words.size() - cursor, "unnormalized texel offsets: truncated SPIR-V instruction");
             const auto op = words[cursor] & 0xffffu;
             if (op == spv::OpDecorate && count == 3u && words[cursor + 2] == spv::DecorationNoContraction) exact.push_back(words[cursor + 1]);
-            if (op == spv::OpFAdd) sums.push_back(words[cursor + 2]);
-            if (op == spv::OpImageSampleExplicitLod) coordinates.push_back(words[cursor + 4]);
+            if (op == spv::OpFAdd) {
+                sums.push_back(words[cursor + 2]);
+                sumInputs.push_back(words[cursor + 3]);
+                sumInputs.push_back(words[cursor + 4]);
+            }
+            switch (op) {
+                case spv::OpFAdd:
+                case spv::OpFSub:
+                case spv::OpFMul:
+                case spv::OpFDiv:
+                case spv::OpFNegate:
+                case spv::OpVectorTimesScalar:
+                case spv::OpCompositeExtract:
+                case spv::OpCompositeConstruct:
+                case spv::OpConvertFToS:
+                case spv::OpConvertFToU:
+                case spv::OpConvertUToF:
+                case spv::OpConvertSToF:
+                case spv::OpBitcast:
+                    producers[words[cursor + 2]].assign(words.begin() + cursor + 3, words.begin() + cursor + count);
+                    break;
+                case spv::OpSelect:
+                    producers[words[cursor + 2]].assign(words.begin() + cursor + 4, words.begin() + cursor + count);
+                    break;
+                case spv::OpExtInst:
+                    producers[words[cursor + 2]].assign(words.begin() + cursor + 5, words.begin() + cursor + count);
+                    break;
+                default:
+                    break;
+            }
+            if (op == spv::OpImageSampleExplicitLod && (count <= 5u || (words[cursor + 5] & (spv::ImageOperandsConstOffsetMask | spv::ImageOperandsOffsetMask)) == 0u)) coordinates.push_back(words[cursor + 4]);
             cursor += count;
         }
-        return !coordinates.empty() && std::ranges::all_of(coordinates, [&](std::uint32_t id) { return std::ranges::count(sums, id) != 0 && std::ranges::count(exact, id) != 0; });
+        const auto folded = [&](std::uint32_t id) {
+            if (std::ranges::count(sumInputs, id) != 0) return true;
+            std::vector<std::uint32_t> pending{id};
+            std::set<std::uint32_t> visited{id};
+            while (!pending.empty()) {
+                const auto current = pending.back();
+                pending.pop_back();
+                if (std::ranges::count(exact, current) != 0 && std::ranges::count(sums, current) != 0) return true;
+                const auto found = producers.find(current);
+                if (found == producers.end()) continue;
+                for (const auto operand : found->second) {
+                    if (visited.insert(operand).second) pending.push_back(operand);
+                }
+            }
+            return false;
+        };
+        return !coordinates.empty() && std::ranges::all_of(coordinates, folded);
     };
     const auto sampleMasks = [](std::span<const std::uint32_t> words) {
         std::vector<std::uint32_t> masks;

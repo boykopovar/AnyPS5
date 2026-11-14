@@ -755,6 +755,7 @@ private:
         bool compareEnable = false;
         bool unnormalized = false;
         bool integerBorder = false;
+        bool scaled = false;
         bool singleLevelImage = false;
         bool mipmappedImage = false;
         std::optional<std::uint32_t> pinnedLod;

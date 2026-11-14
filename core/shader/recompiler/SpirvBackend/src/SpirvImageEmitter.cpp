@@ -1965,8 +1965,85 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     };
     std::uint32_t sample = 0;
     const bool alreadyBaseLevel = !hasOffset && opcode == spv::OpImageSampleExplicitLod && operandMask == spv::ImageOperandsLodMask && !HasFlag(mem, RdnaImageSampleFlagLod) && setup.layout.clamp == NoImageComponent;
+    const bool scaledIfUnnormalized = !setup.dref && (operandMask & spv::ImageOperandsLodMask) != 0u && SamplesScaledIfUnnormalized(state.program.Info().samplers.at(mem.sampler));
     const bool baseLevelIfUnnormalized = !setup.dref && !alreadyBaseLevel && SamplesBaseLevelIfUnnormalized(state.program.Info().samplers.at(mem.sampler));
-    if (baseLevelIfUnnormalized) {
+    if (scaledIfUnnormalized) {
+        const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::UnnormalizedScaledBase + mem.sampler, 0u);
+        const auto mode = Binary(state, spv::OpBitwiseAnd, TypeU32(state), selector, ConstantU32(state, 3u));
+        const auto scaled = Binary(state, spv::OpINotEqual, TypeBool(state), mode, ConstantU32(state, 0u));
+        sample = EmitValueIfElse(state, scaled, resultType, [&] {
+            state.module.EmitCapability(spv::CapabilityImageQuery);
+            const auto image = LoadSampledImageDescriptor(state, mem.resource);
+            const auto f32 = TypeF32(state);
+            const auto u32 = TypeU32(state);
+            const auto mask = hasOffset ? foldedMask : operandMask;
+            const auto& arguments = hasOffset ? foldedOperands : operands;
+            auto lodArgument = arguments[(mask & spv::ImageOperandsBiasMask) != 0u ? 1u : 0u];
+            const auto lodField = [&](std::uint32_t shift) {
+                const auto field = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, selector, ConstantU32(state, shift)), ConstantU32(state, 0xfffu));
+                return Binary(state, spv::OpFDiv, f32, Unary(state, spv::OpConvertUToF, f32, field), ConstantF32(state, 0x43800000u));
+            };
+            const auto effectiveLod = state.module.AllocateId();
+            state.module.AddFunction(spv::OpExtInst, f32, effectiveLod, GlslStd450(state), GLSLstd450FClamp, lodArgument, lodField(2u), lodField(14u));
+            const auto level = Unary(state, spv::OpConvertFToS, TypeI32(state), Binary(state, spv::OpFAdd, f32, effectiveLod, ConstantF32(state, 0x3f000000u)));
+            const auto levels = state.module.AllocateId();
+            state.module.AddFunction(spv::OpImageQueryLevels, TypeU32(state), levels, image);
+            const auto lastLevel = Binary(state, spv::OpISub, TypeI32(state), Unary(state, spv::OpBitcast, TypeI32(state), levels), ConstantI32(state, 1));
+            const auto clamped = state.module.AllocateId();
+            state.module.AddFunction(spv::OpExtInst, TypeI32(state), clamped, GlslStd450(state), GLSLstd450SClamp, level, ConstantI32(state, 0), lastLevel);
+            const auto size = state.module.AllocateId();
+            state.module.AddFunction(spv::OpImageQuerySizeLod, ImageViewSizeType(state, access.image.dimension), size, image, clamped);
+            const auto& imageInfo = RdnaImageDimensionInfoFor(access.image.dimension);
+            const auto components = imageInfo.spatialComponents;
+            auto unscaled = hasOffset ? FoldedOffsetCoord(ctx, access, setup) : setup.coord;
+            if (mirrors) unscaled = MirroredUnnormalizedCoord(ctx, setup, unscaled, state.module.SpecializationConstant(u32, PipelineSpecialization::MirrorUnnormalizedBase + mem.sampler, 0u));
+            const auto point = Binary(state, spv::OpIEqual, TypeBool(state), mode, ConstantU32(state, 2u));
+            std::vector<std::uint32_t> scaledComponents;
+            const auto total = imageInfo.coordinateComponents;
+            for (std::uint32_t index = 0; index < total; ++index) {
+                const auto spatial = index < components;
+                const auto source = spatial ? unscaled : setup.coord;
+                auto component = source;
+                if ((spatial && hasOffset ? components : total) != 1u) {
+                    component = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpCompositeExtract, f32, component, source, index);
+                }
+                if (spatial) {
+                    auto extent = size;
+                    if (components != 1u) {
+                        extent = state.module.AllocateId();
+                        state.module.AddFunction(spv::OpCompositeExtract, u32, extent, size, index);
+                    }
+                    const auto extentF = Unary(state, spv::OpConvertUToF, f32, extent);
+                    const auto linear = Binary(state, spv::OpFDiv, f32, component, extentF);
+                    const auto center = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpExtInst, f32, center, GlslStd450(state), GLSLstd450Floor, component);
+                    component = Select(state, f32, point, Binary(state, spv::OpFDiv, f32, Binary(state, spv::OpFAdd, f32, center, ConstantF32(state, 0x3f000000u)), extentF), linear);
+                }
+                scaledComponents.push_back(component);
+            }
+            std::uint32_t scaledCoord = scaledComponents.front();
+            if (total != 1u) {
+                scaledCoord = state.module.AllocateId();
+                std::vector<std::uint32_t> words = {spv::OpCompositeConstruct, TypeF32Vector(state, total), scaledCoord};
+                words.insert(words.end(), scaledComponents.begin(), scaledComponents.end());
+                state.module.AddFunction(words);
+            }
+            auto scaledArguments = arguments;
+            scaledArguments[(mask & spv::ImageOperandsBiasMask) != 0u ? 1u : 0u] = Unary(state, spv::OpConvertSToF, f32, clamped);
+            return emitDirectSample(scaledCoord, mask, scaledArguments, opcode);
+        }, [&] {
+            if (!foldOffset) return emitBiasedSample(setup.coord, operandMask, operands, opcode);
+            if (!offsetOperand) return emitBiasedSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands, opcode);
+            const auto foldSelector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::FoldOffsetBase + mem.sampler, 0u);
+            const auto folded = Binary(state, spv::OpINotEqual, TypeBool(state), foldSelector, ConstantU32(state, 0u));
+            return EmitValueIfElse(state, folded, resultType, [&] {
+                return emitBiasedSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands, opcode);
+            }, [&] {
+                return emitBiasedSample(setup.coord, operandMask, operands, opcode);
+            });
+        });
+    } else if (baseLevelIfUnnormalized) {
         const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::UnnormalizedBaseLevelBase + mem.sampler, 0u);
         const auto unnormalized = Binary(state, spv::OpINotEqual, TypeBool(state), selector, ConstantU32(state, 0u));
         sample = EmitValueIfElse(state, unnormalized, resultType, [&] {

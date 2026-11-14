@@ -92,7 +92,7 @@ static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update
 #if defined(__cpp_lib_atomic_shared_ptr)
 static_assert(sizeof(RecompileResult) == 552, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
-static_assert(sizeof(DescriptorBinding) == 864, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 976, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
@@ -476,8 +476,10 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.bufferAtomic);
     writer.Flags(binding.bufferWritten);
     writer.Flags(binding.samplerUnnormalized);
+    writer.Flags(binding.samplerScaledUnnormalized);
     writer.Flags(binding.imageUnnormalized);
     writer.Flags(binding.imageUnnormalizedBaseLevel);
+    writer.Flags(binding.imageUnnormalizedScaled);
     writer.Flags(binding.samplerIntegerBorder);
     writer.Flags(binding.samplerCoordinatesIgnored);
     writer.Values(std::span<const std::uint64_t>(binding.imageSamplers));
@@ -505,8 +507,10 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.bufferAtomic);
     reader.Flags(binding.bufferWritten);
     reader.Flags(binding.samplerUnnormalized);
+    reader.Flags(binding.samplerScaledUnnormalized);
     reader.Flags(binding.imageUnnormalized);
     reader.Flags(binding.imageUnnormalizedBaseLevel);
+    reader.Flags(binding.imageUnnormalizedScaled);
     reader.Flags(binding.samplerIntegerBorder);
     reader.Flags(binding.samplerCoordinatesIgnored);
     reader.Values(binding.imageSamplers);

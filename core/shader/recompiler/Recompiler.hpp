@@ -708,10 +708,12 @@ struct DescriptorBinding {
     // (a producer that does not fill it) must be treated as written.
     ElementFlags bufferWritten;
     ElementFlags samplerUnnormalized;
+    ElementFlags samplerScaledUnnormalized;
     ElementFlags samplerIntegerBorder;
     ElementFlags samplerCoordinatesIgnored;
     ElementFlags imageUnnormalized;
     ElementFlags imageUnnormalizedBaseLevel;
+    ElementFlags imageUnnormalizedScaled;
     std::vector<std::uint64_t> imageSamplers;
     ElementFlags bufferRead;
     std::vector<std::uint32_t> bufferExtent;
