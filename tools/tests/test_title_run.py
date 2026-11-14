@@ -431,6 +431,18 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(staged, ["Media/Modules/Il2CppUserAssemblies.prx", "Media/Plugins/lib_burst_generated.prx", "eboot.elf", "sce_module/libc.prx"])
         self.assertEqual(title_run.module_dirs({"relink": ["--module-dir"]}), [])
 
+    def test_standard_module_dirs_are_staged_without_a_module_dir(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("eboot.bin", "sce_module/libc.prx", "sce_modules/libfoo.prx", "prx/akcompressor.prx", "prx/readme.txt"):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(elf if name.endswith((".bin", ".prx")) else b"text")
+        expected = ["eboot.elf", "prx/akcompressor.prx", "sce_module/libc.prx", "sce_modules/libfoo.prx"]
+        for index, entry in enumerate(({}, {"relink": ["--module-dir", "prx"]})):
+            target = self.root / f"input{index}"
+            title_run.stage_inputs(source, entry, target)
+            self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*.*")), expected)
+
     def test_module_dirs_keep_every_module_and_empty_directories(self):
         source = package(self.root / "pkg", "PPSA00001")
         elf = b"\x7fELF" + bytes(60)
@@ -482,6 +494,19 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((work / "app0/id1/pak0.pak").read_bytes(), b"PACK")
         self.assertFalse((work / "data/media/clip.mp4").exists())
         self.assertEqual(title_run.stage_files({"app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}, work, None), ["quake/pak0.pak"])
+
+    def test_a_non_ascii_title_name_is_reported_as_utf8(self):
+        package(self.root / "games/PPSA00001", "PPSA00001", name="テスト")
+        out = self.root / "out"
+        build = self.root / "build"
+        build.mkdir()
+        done = subprocess.run([sys.executable, str(Path(title_run.__file__)), "--games", str(self.root / "games"), "--out", str(out),
+                               "--build", str(build), "--runs", "1", "PPSA00001"],
+                              capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"}, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+        stdout = done.stdout.decode("utf-8")
+        self.assertIn("| テスト | PPSA00001 |", stdout)
+        self.assertIn(f"written to {out.resolve()}", stdout)
 
 
 def wait_until(condition, seconds=10):
