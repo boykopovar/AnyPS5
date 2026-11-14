@@ -2210,6 +2210,82 @@ static void TestFrame() {
         caught = true;
     }
     Require(caught);
+
+    Require(WKFrameCopyURL(ref) == nullptr);
+    auto* defaultTitle = WKFrameCopyTitle(ref);
+    Require(defaultTitle != nullptr && WKGetTypeID(defaultTitle) == WKStringGetTypeID() && WKStringGetLength(defaultTitle) == 0);
+    WKRelease(defaultTitle);
+    auto* defaultMime = WKFrameCopyMIMEType(ref);
+    Require(defaultMime != nullptr && WKGetTypeID(defaultMime) == WKStringGetTypeID() && WKStringGetLength(defaultMime) == 0);
+    WKRelease(defaultMime);
+    Require(WKFrameCopyProvisionalURL(ref) == nullptr);
+    Require(WKFrameCopyUnreachableURL(ref) == nullptr);
+    Require(WKFrameGetFrameLoadState(ref) == 2);
+
+    auto* defaultHandle = WKFrameCreateFrameHandle(ref);
+    Require(defaultHandle != nullptr);
+    Require(WKGetTypeID(defaultHandle) == WKFrameHandleGetTypeID());
+    Require(WKFrameHandleGetFrameID(defaultHandle) == 0);
+    WKRelease(defaultHandle);
+
+    frame->frameID = 1001;
+    frame->loadState = 1;
+    frame->url = NKWebKit::Make<NKWebKit::URL>("https://anyps5.org/index.html");
+    frame->title = NKWebKit::String::FromUtf8("AnyPS5 Main Frame");
+    frame->mimeType = NKWebKit::String::FromUtf8("text/html");
+    frame->provisionalURL = NKWebKit::Make<NKWebKit::URL>("https://anyps5.org/provisional");
+    frame->unreachableURL = NKWebKit::Make<NKWebKit::URL>("https://anyps5.org/unreachable");
+
+    Require(WKFrameGetFrameLoadState(ref) == 1);
+
+    auto* handle = WKFrameCreateFrameHandle(ref);
+    Require(handle != nullptr);
+    Require(WKGetTypeID(handle) == WKFrameHandleGetTypeID());
+    Require(WKFrameHandleGetFrameID(handle) == 1001);
+    WKRelease(handle);
+
+    auto* urlRef = WKFrameCopyURL(ref);
+    Require(urlRef != nullptr);
+    Require(WKGetTypeID(urlRef) == WKURLGetTypeID());
+    WKRelease(urlRef);
+
+    auto* titleRef = WKFrameCopyTitle(ref);
+    Require(titleRef != nullptr);
+    Require(WKGetTypeID(titleRef) == WKStringGetTypeID());
+    WKRelease(titleRef);
+
+    auto* mimeRef = WKFrameCopyMIMEType(ref);
+    Require(mimeRef != nullptr);
+    Require(WKGetTypeID(mimeRef) == WKStringGetTypeID());
+    WKRelease(mimeRef);
+
+    auto* provUrlRef = WKFrameCopyProvisionalURL(ref);
+    Require(provUrlRef != nullptr);
+    Require(WKGetTypeID(provUrlRef) == WKURLGetTypeID());
+    WKRelease(provUrlRef);
+
+    auto* unreachUrlRef = WKFrameCopyUnreachableURL(ref);
+    Require(unreachUrlRef != nullptr);
+    Require(WKGetTypeID(unreachUrlRef) == WKURLGetTypeID());
+    WKRelease(unreachUrlRef);
+
+    auto checkThrows = [](auto fn) {
+        bool threw = false;
+        try {
+            fn(nullptr);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+    };
+
+    checkThrows(WKFrameCopyURL);
+    checkThrows(WKFrameCopyTitle);
+    checkThrows(WKFrameCopyMIMEType);
+    checkThrows(WKFrameCopyProvisionalURL);
+    checkThrows(WKFrameCopyUnreachableURL);
+    checkThrows(WKFrameCreateFrameHandle);
+    checkThrows(WKFrameGetFrameLoadState);
 }
 
 static void TestImage() {
