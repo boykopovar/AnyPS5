@@ -31,9 +31,16 @@ void TestFoundAndInsertionPoints() {
     Require(Search(values, 12, 23) == 11, "search: the last value is found at its index");
 }
 
+void TestLastOccurrenceAmongDuplicates() {
+    std::int32_t values[] = {0, 1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 7, 8, 9, 10, 11};
+    Require(Search(values, 20, 5) == 13, "search: a duplicated value returns its last occurrence, for stable insertion");
+    Require(Search(values, 20, 6) == 14, "search: the value after a run of duplicates is found at its own index");
+}
+
 }
 
 int main() {
     TestFoundAndInsertionPoints();
+    TestLastOccurrenceAmongDuplicates();
     return 0;
 }
