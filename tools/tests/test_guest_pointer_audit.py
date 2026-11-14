@@ -35,6 +35,24 @@ class AccessTests(unittest.TestCase):
             ("sceExampleRead", "attr", ["dereference"]),
         ])
 
+    def test_accesses_through_a_cast_are_reported(self):
+        source = (
+            "void APS5_VABI sceExampleInit(void* self) { *static_cast<std::uint8_t*>(self) = 0; }\n"
+            "int APS5_VABI sceExampleMember(void* info) { return reinterpret_cast<Info*>( info )->size; }\n"
+            "int APS5_VABI sceExampleIndex(const void* values) { return static_cast<const int*>(values)[1]; }\n"
+            "int APS5_VABI sceExampleConst(const Info* info) { const_cast<Info*>(info)->size = 0; return 0; }\n"
+            "int APS5_VABI sceExampleNested(void* table) { return (*static_cast<std::map<int, std::vector<int>>*>(table))[0][0]; }\n"
+            "int APS5_VABI sceExampleSize(void* out) { return static_cast<int>(sizeof(*static_cast<Info*>(out))); }\n"
+            "int APS5_VABI sceExamplePassed(void* out) { return Fill(static_cast<Info*>(out)); }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleInit", "self", ["dereference"]),
+            ("sceExampleMember", "info", ["member"]),
+            ("sceExampleIndex", "values", ["index"]),
+            ("sceExampleConst", "info", ["member"]),
+            ("sceExampleNested", "table", ["dereference"]),
+        ])
+
     def test_safe_helpers_and_non_pointer_parameters_are_not_reported(self):
         source = (
             "int APS5_VABI sceExampleOut(std::uint64_t* out) { const std::uint64_t v = 7;\n"
