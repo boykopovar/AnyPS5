@@ -27,6 +27,10 @@ public:
     bool paginationLineGridEnabled = false;
     double gapBetweenPages = 0.0;
     double pageLength = 0.0;
+    bool isPinnedToLeftSide = true;
+    bool isPinnedToRightSide = true;
+    bool isPinnedToTopSide = true;
+    bool isPinnedToBottomSide = true;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};

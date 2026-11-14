@@ -33,6 +33,27 @@ struct SpeakerArray {
 };
 constexpr std::uint32_t SpeakerArrayMagic = 0x53504b41;
 
+constexpr int AmbisonicsErrorInvalidParam = static_cast<int>(0x80268001);
+constexpr std::uint32_t AmbisonicsKindAcn = 0;
+constexpr std::uint32_t AmbisonicsKindFuma = 1;
+constexpr std::int32_t MaxFumaOrder = 3;
+
+struct AmbisonicsEncodeParam {
+    std::uint32_t kind;
+    std::int32_t order;
+};
+
+struct FumaChannel {
+    std::uint32_t acn;
+    double weight;
+};
+
+const FumaChannel FumaChannels[16] = {
+    {0, 1 / std::sqrt(2.0)}, {3, 1}, {1, 1}, {2, 1},
+    {6, 1}, {7, 2 / std::sqrt(3.0)}, {5, 2 / std::sqrt(3.0)}, {8, 2 / std::sqrt(3.0)}, {4, 2 / std::sqrt(3.0)},
+    {12, 1}, {13, std::sqrt(45.0 / 32.0)}, {11, std::sqrt(45.0 / 32.0)}, {14, 3 / std::sqrt(5.0)}, {10, 3 / std::sqrt(5.0)}, {15, std::sqrt(8.0 / 5.0)}, {9, std::sqrt(8.0 / 5.0)},
+};
+
 SpeakerArray& Array(AudioOut2SpeakerArrayHandle handle) {
     auto* array = static_cast<SpeakerArray*>(handle);
     if (array == nullptr || array->magic != SpeakerArrayMagic) throw std::invalid_argument("invalid speaker array handle");
@@ -112,6 +133,33 @@ int APS5_VABI sceAudioOut2GetSpeakerArrayCoefficients(AudioOut2SpeakerArrayHandl
     std::fill_n(coefficients, array.numSpeakers, 0.0f);
     if (array.numSpeakers > 0) coefficients[0] = 1.0f;
     if (array.numSpeakers > 1) coefficients[1] = 1.0f;
+    return 0;
+}
+
+int APS5_VABI sceAudioOut2GetAmbisonicsEncodeCoefficients(const void* params, float* coefficients, AudioOut2Position direction) {
+    const auto* param = static_cast<const AmbisonicsEncodeParam*>(params);
+    if (param == nullptr || coefficients == nullptr) return AmbisonicsErrorInvalidParam;
+    const bool acn = param->kind == AmbisonicsKindAcn;
+    const std::int32_t order = param->order;
+    if (!acn && param->kind != AmbisonicsKindFuma) return AmbisonicsErrorInvalidParam;
+    if (!acn && order > MaxFumaOrder) return AmbisonicsErrorInvalidParam;
+    if (!acn && order < 0) throw std::invalid_argument("negative FuMa ambisonics order " + std::to_string(order));
+    const float lengthSquared = direction.x * direction.x + direction.y * direction.y + direction.z * direction.z;
+    const bool zero = !(lengthSquared > 0.0f);
+    if (acn && (order < 0 || order > static_cast<std::int32_t>(MaxAmbisonicsOrder))) {
+        if (zero) throw std::invalid_argument("zero direction with ambisonics order " + std::to_string(order));
+        return 0;
+    }
+    const auto channels = static_cast<std::uint32_t>((order + 1) * (order + 1));
+    if (zero) {
+        std::fill_n(coefficients, channels, 0.0f);
+        coefficients[0] = acn ? 1.0f : static_cast<float>(FumaChannels[0].weight);
+        return 0;
+    }
+    const AudioOut2Position axes{direction.z, -direction.x, direction.y};
+    for (std::uint32_t channel = 0; channel < channels; ++channel) {
+        coefficients[channel] = acn ? Sn3d(channel, axes) : static_cast<float>(FumaChannels[channel].weight * Sn3d(FumaChannels[channel].acn, axes));
+    }
     return 0;
 }
 
