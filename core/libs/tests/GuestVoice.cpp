@@ -234,6 +234,9 @@ int main() {
     Require(sceVoiceWriteToIPort(input, data, nullptr, 0) == invalidArgument);
     Require(sceVoiceWriteToIPort(input, nullptr, nullptr, 0) == invalidArgument);
     Require(sceVoiceWriteToIPort(input, data, &size, 0) == 0 && size == 0);
+    errno = 71;
+    Require(sceVoiceWriteToIPort(input, data, reinterpret_cast<uint32_t*>(0x10), 0) == invalidArgument);
+    Require(errno == 71);
     Require(sceVoiceDisconnectIPortFromOPort(input, output) == 0);
     Require(sceVoiceDisconnectIPortFromOPort(input, output) == portNotFound);
     Require(sceVoiceDisconnectIPortFromOPort(output, input) == portNotFound);
