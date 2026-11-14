@@ -1,6 +1,7 @@
 #include <elfpatcher/macos/MacOsImage.hpp>
 #include <elfpatcher/macos/MacOsCodeSignature.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
@@ -152,6 +153,28 @@ struct Segment {
 
 std::uint64_t AlignUp(const std::uint64_t value, const std::uint64_t alignment) {
     return (value + alignment - 1) & ~(alignment - 1);
+}
+
+struct ProtectedRange {
+    std::uint32_t Rva;
+    std::uint32_t Size;
+};
+
+std::vector<ProtectedRange> RelroRanges(const std::vector<Domain::ProgramHeader>& headers, const Windows::WindowsLoadImage& image) {
+    std::vector<ProtectedRange> ranges;
+    for (const auto& header : headers) {
+        if (header.Type != PT_GNU_RELRO || header.MemorySize == 0 || !HasWritableLoadCoverage(headers, header)) continue;
+        const auto start = header.MappedAddress & ~(PageSize - 1);
+        const auto end = (header.MappedAddress + header.MemorySize) & ~(PageSize - 1);
+        if (start >= end) continue;
+        const auto rva = image.GetRva(header.MappedAddress, header.MemorySize);
+        if ((rva & (PageSize - 1)) != (header.MappedAddress & (PageSize - 1)))
+            throw Domain::RelinkerException("PT_SCE_RELRO is not page-congruent in the Mach-O image", header.MappedAddress);
+        if (end - start > std::numeric_limits<std::uint32_t>::max())
+            throw Domain::RelinkerException("PT_SCE_RELRO exceeds 4 GiB", header.MappedAddress);
+        ranges.push_back({static_cast<std::uint32_t>(rva - (header.MappedAddress - start)), static_cast<std::uint32_t>(end - start)});
+    }
+    return ranges;
 }
 
 void AppendUleb(std::vector<std::uint8_t>& out, std::uint64_t value) {
@@ -513,6 +536,16 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         guestEnd = std::max<std::uint64_t>(guestEnd, section.Rva + section.MemorySize());
         segments.push_back({std::move(name), section.Rva, section.MemorySize(), protection, std::move(section.Data), {}});
     }
+    const auto relro = RelroRanges(headers, image);
+    for (const auto& range : relro) {
+        for (std::uint64_t page = range.Rva; page < static_cast<std::uint64_t>(range.Rva) + range.Size; page += PageSize) {
+            const auto segment = std::find_if(segments.begin() + static_cast<std::ptrdiff_t>(guestSegments), segments.end(), [page](const Segment& candidate) {
+                return page >= candidate.Rva && page - candidate.Rva < AlignUp(candidate.MemorySize, PageSize);
+            });
+            if (segment == segments.end() || (segment->Protection & VmProtWrite) == 0)
+                throw Domain::RelinkerException("PT_SCE_RELRO page is not in a writable Mach-O segment", page);
+        }
+    }
 
     const auto metaRva = static_cast<std::uint32_t>(AlignUp(guestEnd, PageSize));
     const auto metaSize = MetaHeaders + headers.size() * 56;
@@ -557,6 +590,12 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         input.Binds.push_back({"___aps5_get_pending_module_args_nid_no_patch", metaRva + static_cast<std::uint32_t>(moduleArgsSlot)});
         input.Binds.push_back({"___aps5_set_module_init_result_nid_no_patch", metaRva + static_cast<std::uint32_t>(moduleResultSlot)});
     }
+    std::uint64_t mprotectSlot = 0;
+    if (!relro.empty()) {
+        mprotectSlot = metaEnd;
+        metaEnd += 8;
+        input.Binds.push_back({"_mprotect", metaRva + static_cast<std::uint32_t>(mprotectSlot)});
+    }
     meta.resize(metaEnd, 0);
     for (std::size_t index = 0; index < input.TlsExports.size(); ++index) {
         const auto& variable = input.TlsExports[index];
@@ -569,6 +608,16 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     }
     const auto codeRva = static_cast<std::uint32_t>(AlignUp(metaRva + metaEnd, PageSize));
     Windows::WindowsStubEmitter code(codeRva);
+    const auto protectRelro = [&] {
+        for (const auto& range : relro) {
+            code.Rip({0x48, 0x8d, 0x3d}, range.Rva);
+            code.Emit({0xbe});
+            code.U32(range.Size);
+            code.Emit({0xba, 0x01, 0x00, 0x00, 0x00});
+            code.Rip({0xff, 0x15}, metaRva + static_cast<std::uint32_t>(mprotectSlot));
+            code.Emit({0x85, 0xc0, 0x74, 0x02, 0x0f, 0x0b});
+        }
+    };
 
     if (hasTls) {
         const auto& header = *tls.Tls;
@@ -672,7 +721,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         input.Binds.push_back({"___cxa_atexit", metaRva + static_cast<std::uint32_t>(MetaCxaAtexitSlot)});
     }
 
-    const bool hasInit = hasTls || !input.TlsImports.empty() || input.InitRva != 0 || !input.InitArrayRvas.empty() || hasFini;
+    const bool protectInInit = !input.Executable && !relro.empty();
+    const bool hasInit = hasTls || !input.TlsImports.empty() || input.InitRva != 0 || !input.InitArrayRvas.empty() || hasFini || protectInInit;
     std::vector<Section> dataSections{{"__meta", 0, metaSize, 0, 3}};
     if (hasInit) {
         const auto initStub = code.GetRva();
@@ -692,6 +742,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
             }
             code.Rip({0x48, 0x89, 0x05}, import.Rva);
         }
+        if (protectInInit) protectRelro();
         if (input.InitRva != 0) {
             code.Rip({0xff, 0x15}, metaRva + static_cast<std::uint32_t>(moduleArgsSlot));
             code.Emit({0x48, 0x8b, 0x38, 0x48, 0x8b, 0x70, 0x08, 0x31, 0xd2});
@@ -752,6 +803,15 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         traceEntryPatch = static_cast<std::size_t>(code.GetRva() - codeRva) + prologue.EntryDisplacement;
         for (const auto byte : prologue.Bytes) code.Emit({byte});
     }
+    std::size_t relroEntryPatch = 0;
+    std::uint32_t relroStubRva = 0;
+    if (input.Executable && !relro.empty()) {
+        relroStubRva = code.GetRva();
+        code.Emit({0x57, 0x56, 0x52, 0x51, 0x48, 0x83, 0xec, 0x08});
+        protectRelro();
+        code.Emit({0x48, 0x83, 0xc4, 0x08, 0x59, 0x5a, 0x5e, 0x5f, 0xe9, 0x00, 0x00, 0x00, 0x00});
+        relroEntryPatch = static_cast<std::size_t>(code.GetRva() - codeRva) - 4;
+    }
     const auto metaBytes = meta.size();
     segments.push_back({"__APS5DATA", metaRva, metaBytes, VmProtRead | VmProtWrite, std::move(meta), std::move(dataSections)});
     auto stubs = code.TakeBytes();
@@ -765,8 +825,9 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
             while (used != 0 && data[used - 1] == 0) --used;
             data.resize(used);
         }
-        if (segments[index].Name == "__APS5TEXT" && traceEntryPatch != 0 && data.size() < traceEntryPatch + 4)
-            data.resize(traceEntryPatch + 4, 0);
+        const auto entryPatchEnd = std::max(traceEntryPatch, relroEntryPatch) + 4;
+        if (segments[index].Name == "__APS5TEXT" && (traceEntryPatch != 0 || relroEntryPatch != 0) && data.size() < entryPatchEnd)
+            data.resize(entryPatchEnd, 0);
         data.resize(AlignUp(data.size(), PageSize), 0);
     }
 
@@ -912,22 +973,27 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     constexpr std::size_t LoadCommandReserve = 0x400;
     const auto stubOffset = AlignUp(HeaderSize + commands.size() + LoadCommandReserve, 16);
     const auto traceJump = input.Executable && input.TraceImports;
-    const auto entryOffset = stubOffset + (traceJump ? 5 : 0);
+    const auto preEntry = traceJump || relroStubRva != 0;
+    const auto entryOffset = stubOffset + (preEntry ? 5 : 0);
     if (entryOffset + (input.Executable ? sizeof(EntryStub) : 0) > LoadRva)
         throw Domain::RelinkerException("Mach-O load commands do not fit before the guest image");
     file.resize(LoadRva, 0);
     if (input.Executable) {
-        if (traceJump) {
+        if (preEntry) {
             const auto text = std::find_if(segments.begin(), segments.end(), [](const Segment& segment) { return segment.Name == "__APS5TEXT"; });
-            if (text == segments.end() || traceEntryPatch + 4 > text->Data.size())
-                throw Domain::RelinkerException("Import trace prologue is missing from the Mach-O image");
-            const auto displacement = static_cast<std::int64_t>(entryOffset) - static_cast<std::int64_t>(codeRva + traceEntryPatch + 4);
-            if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
-                throw Domain::RelinkerException("macOS entry stub target is out of rel32 range");
-            Io::WriteU32(text->Data, traceEntryPatch, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
-            const auto jump = static_cast<std::int64_t>(tracePrologueRva) - static_cast<std::int64_t>(stubOffset + 5);
+            const auto patchJump = [&](const std::size_t patch, const std::uint64_t targetRva) {
+                if (text == segments.end() || patch + 4 > text->Data.size())
+                    throw Domain::RelinkerException("macOS pre-entry stub is missing from the Mach-O image");
+                const auto displacement = static_cast<std::int64_t>(targetRva) - static_cast<std::int64_t>(codeRva + patch + 4);
+                if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+                    throw Domain::RelinkerException("macOS entry stub target is out of rel32 range");
+                Io::WriteU32(text->Data, patch, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
+            };
+            if (traceJump) patchJump(traceEntryPatch, relroStubRva != 0 ? relroStubRva : entryOffset);
+            if (relroStubRva != 0) patchJump(relroEntryPatch, entryOffset);
+            const auto jump = static_cast<std::int64_t>(traceJump ? tracePrologueRva : relroStubRva) - static_cast<std::int64_t>(stubOffset + 5);
             if (jump < std::numeric_limits<std::int32_t>::min() || jump > std::numeric_limits<std::int32_t>::max())
-                throw Domain::RelinkerException("Import trace prologue is out of rel32 range");
+                throw Domain::RelinkerException("macOS pre-entry stub is out of rel32 range");
             file[stubOffset] = 0xe9;
             Io::WriteU32(file, stubOffset + 1, static_cast<std::uint32_t>(static_cast<std::int32_t>(jump)));
         }
