@@ -757,6 +757,21 @@ bool LiveGuestThreadExists(std::int64_t tid) {
     return false;
 }
 
+extern "C" bool LiveGuestThreadName_nid_no_patch(std::int64_t tid, char* name, std::size_t capacity) {
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    for (const auto& [id, thread] : registry.threads) {
+        if (GuestThreadEnded(thread) || thread->tid != tid) continue;
+        if (capacity == 0) return true;
+        std::lock_guard nameGuard(thread->nameLock);
+        const std::size_t length = std::min(thread->name.size(), capacity - 1);
+        std::memcpy(name, thread->name.data(), length);
+        name[length] = '\0';
+        return true;
+    }
+    return false;
+}
+
 std::vector<LiveGuestThreadName> LiveGuestThreadNames() {
     scePthreadSelf();
     auto& registry = CpuClocks();
@@ -1592,6 +1607,7 @@ int APS5_VABI scePthreadGetthreadid(void) {
 
 int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
     if (!thread || !name) return SCE_KERNEL_ERROR_EINVAL;
+    if (!LockRegisteredGuestThread(thread)) return SCE_KERNEL_ERROR_ESRCH;
     std::string copy;
     if (const int error = CopyGuestString_nid_no_patch(name, GUEST_THREAD_NAME_CAPACITY, copy))
         return error == 14 ? SCE_KERNEL_ERROR_EFAULT : error == 63 ? SCE_KERNEL_ERROR_ENAMETOOLONG : SCE_KERNEL_ERROR_ENOMEM;

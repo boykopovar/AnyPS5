@@ -1036,11 +1036,6 @@ int APS5_VABI sceKernelGetSystemSwBeta(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetThreadName(uint32_t id, char* name) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelGetUniversalMode(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
