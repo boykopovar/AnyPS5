@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -404,7 +405,7 @@ int APS5_VABI _ZN6icu_689UVector329removeAllERKS0__nid_postfix();
 int APS5_VABI _ZNK6icu_686Locale13isRightToLeftEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_99itJwBBSz0_nid_no_patch();
 int APS5_VABI _ZNK6icu_6813UnicodeString11moveIndex32Eii_nid_postfix();
-int APS5_VABI uprv_stableBinarySearch_nid_postfix();
+std::int32_t APS5_VABI uprv_stableBinarySearch_nid_postfix(char* array, std::int32_t limit, void* item, std::int32_t itemSize, std::int32_t (APS5_VABI* cmp)(const void*, const void*, const void*), const void* context);
 int APS5_VABI ucptrie_toBinary_nid_postfix();
 int APS5_VABI _ZN6icu_6810UnicodeSet13createFromAllERKNS_13UnicodeStringE_nid_postfix();
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIterator7setTextEP5UTextR10UErrorCode_nid_postfix();
@@ -1066,7 +1067,7 @@ int APS5_VABI utext_moveIndex32_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_R_minus_IGqgPKnmA_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_R1umz1ZjrK0_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_R1y2_minus__minus_hQVMY_nid_no_patch();
-int APS5_VABI uprv_sortArray_nid_postfix();
+void APS5_VABI uprv_sortArray_nid_postfix(void* array, std::int32_t length, std::int32_t itemSize, std::int32_t (APS5_VABI* cmp)(const void*, const void*, const void*), const void* context, std::int8_t sortStable, std::int32_t* pErrorCode);
 int APS5_VABI _ZN6icu_6817StringEnumerationC2Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_R5kS2YcFHgs_nid_no_patch();
 int APS5_VABI _ZN6icu_6810NormalizerC1ENS_14ConstChar16PtrEi18UNormalizationMode_nid_postfix();
