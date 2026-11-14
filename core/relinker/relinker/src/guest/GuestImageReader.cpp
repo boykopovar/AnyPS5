@@ -44,7 +44,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     constexpr std::uint32_t sceLibVersion = 0x6fffff01;
     constexpr std::uint32_t note = 4;
     for (const auto& header : image.Headers) {
-        if (header.Type == sceComment || header.Type == sceLibVersion) continue;
+        if (header.Type == 0 || header.Type == sceComment || header.Type == sceLibVersion) continue;
         if (header.Type == note && header.MappedAddress == 0 && header.MemorySize == 0) continue;
         range(header.Offset, header.FileSize);
         if (header.Type == 1) {
@@ -77,6 +77,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::vector<std::uint64_t> needed;
     std::vector<std::uint64_t> moduleImports;
     std::vector<std::uint64_t> ps4ModuleImports;
+    std::set<std::uint64_t> ownModules;
     std::vector<std::uint64_t> moduleExports;
     bool terminated = false;
     for (std::uint64_t offset = dynamic->Offset; dynamic->Offset + dynamic->FileSize - offset >= 16; offset += 16) {
@@ -86,7 +87,10 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (tag == 1) needed.push_back(value);
         else if (tag == 0x61000045) moduleImports.push_back(value);
         else if (tag == 0x6100000f) ps4ModuleImports.push_back(value);
-        else if (tag == 0x6100000d || tag == 0x61000043) moduleExports.push_back(value);
+        else if (tag == 0x6100000d || tag == 0x61000043) {
+            ownModules.insert(value >> 48);
+            moduleExports.push_back(value);
+        }
         else if (tag < 0x60000000 || tag == 0x6ffffef5 || tag == 0x6100003f || (tag >= 0x61000027 && tag <= 0x6100003b)) {
             if (!tags.emplace(tag, value).second) fail("Duplicate dynamic tag " + std::to_string(tag));
         }
@@ -197,9 +201,9 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::map<std::string, std::size_t> exports;
     for (std::uint64_t offset = 0; offset < symSize; offset += 24) {
         auto name = string(Io::ReadU32(bytes, symOffset + offset));
-        const auto library = Io::ReadU16(bytes, symOffset + offset + 6) == 0 ? Domain::ImportModule(name, importModules, neededLibraries) : std::string{};
+        const auto library = Io::ReadU16(bytes, symOffset + offset + 6) == 0 ? Domain::ImportModule(name, importModules, neededLibraries, ownModules) : std::string{};
         if (Io::ReadU16(bytes, symOffset + offset + 6) == 0 && library.empty()) {
-            if (auto declared = Domain::DeclaredImportModule(name, importModules); !declared.empty()) image.Dynamic.UnmatchedImportModules.insert(std::move(declared));
+            if (auto declared = Domain::DeclaredImportModule(name, importModules, ownModules); !declared.empty()) image.Dynamic.UnmatchedImportModules.insert(std::move(declared));
         }
         const auto qualifiedName = name;
         name = name.substr(0, name.find('#'));
@@ -323,7 +327,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                 const auto& symbol = image.Symbols[info >> 32];
                 const bool hasTlsBlock = tls != nullptr && tls->MemorySize != 0;
                 ownTlsBlock = (info >> 32) != 0 && (relocation == 16 || relocation == 17) && symbol.Info == 3 && symbol.Section == 0 && symbol.Value == 0 && hasTlsBlock;
-                if (((info >> 32) == 0 && !hasTlsBlock) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || ((symbol.Info & 15) == 6 && symbol.Section != 0 && !hasTlsBlock) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
+                if (((info >> 32) == 0 && !hasTlsBlock) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || ((symbol.Info & 15) == 6 && symbol.Section != 0 && !hasTlsBlock) || (symbol.Section == 0 && symbol.Name.empty() && (symbol.Info >> 4) != 0) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
             }
             const auto position = output.size();
             output.insert(output.end(), bytes.begin() + offset + index, bytes.begin() + offset + index + 24);

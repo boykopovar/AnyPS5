@@ -14,6 +14,11 @@ struct HistoryItemVectorStorage {
     unsigned size;
 };
 
+struct CachedPage {
+    void* page;
+    double expirationTime;
+};
+
 struct HistoryItem {
     unsigned refCount{};
     WtfAbi::String urlString;
@@ -42,6 +47,8 @@ struct HistoryItem {
 };
 
 static_assert(sizeof(HistoryItemVectorStorage) == 16);
+static_assert(offsetof(CachedPage, page) == 0);
+static_assert(offsetof(CachedPage, expirationTime) == 8);
 static_assert(offsetof(HistoryItem, refCount) == 0);
 static_assert(offsetof(HistoryItem, urlString) == 8);
 static_assert(offsetof(HistoryItem, originalURLString) == 16);
@@ -66,5 +73,8 @@ static_assert(offsetof(HistoryItem, formData) == 144);
 static_assert(offsetof(HistoryItem, formContentType) == 152);
 static_assert(offsetof(HistoryItem, cachedPage) == 160);
 static_assert(offsetof(HistoryItem, pruningReason) == 168);
+
+using HistoryItemChangedHook = void (*)(HistoryItem*);
+extern HistoryItemChangedHook historyItemChangedHook;
 
 }

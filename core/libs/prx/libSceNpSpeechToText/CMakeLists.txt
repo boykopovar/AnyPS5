@@ -1,0 +1,15 @@
+add_library(libSceNpSpeechToText SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpSpeechToText PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNpSpeechToText)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_speech_to_text_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpSpeechToText.cpp)
+    target_include_directories(guest_np_speech_to_text_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_speech_to_text_tests PRIVATE libSceNpSpeechToText libc)
+    configure_windows_unwind(guest_np_speech_to_text_tests)
+    add_test(NAME guest_np_speech_to_text COMMAND guest_np_speech_to_text_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_speech_to_text PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpSpeechToText>")
+    endif()
+endif()
