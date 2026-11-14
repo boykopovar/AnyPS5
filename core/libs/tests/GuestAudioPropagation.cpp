@@ -226,6 +226,12 @@ int main() {
     RequireThrows<std::runtime_error>([&] { sceAudioPropagationSystemQueryMemory(&probeOptions, &probeMemory); }, "unknown GPU memory query returned a size");
 
     AudioPropagationHandle system = 0;
+    errno = 72;
+    Require(sceAudioPropagationSystemCreate(reinterpret_cast<const AudioPropagation::SystemOptions*>(0x10), &memory, &system) == AudioPropagation::ErrorNullPointer, "create with unreadable options");
+    Require(errno == 72, "errno preserved for unreadable create options");
+    errno = 72;
+    Require(sceAudioPropagationSystemCreate(&options, reinterpret_cast<const AudioPropagationSystemMemory*>(0x10), &system) == AudioPropagation::ErrorNullPointer, "create with unreadable memory");
+    Require(errno == 72, "errno preserved for unreadable create memory");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemCreate(&options, &memory, &system); }, "create without cpu memory");
     memory.p_cpu_mem = arena + 1;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemCreate(&options, &memory, &system); }, "misaligned cpu memory");
@@ -268,6 +274,7 @@ int main() {
     Require(sceAudioPropagationSystemEnumHandles(nullptr, 1) == AudioPropagation::ErrorInvalidArgument, "null handle array with capacity");
     AudioPropagationHandle enumerated[2]{};
     Require(sceAudioPropagationSystemEnumHandles(enumerated, 1) == 1 && enumerated[0] == system, "single system enumeration");
+    Require(sceAudioPropagationSystemEnumHandles(reinterpret_cast<AudioPropagationHandle*>(0x10), 1) == AudioPropagation::ErrorNullPointer, "enum handles into an unwritable array");
     AudioPropagationHandle twice = 0;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemCreate(&options, &memory, &twice); }, "second system in the same memory");
 
@@ -291,6 +298,8 @@ int main() {
     AudioPropagationHandle rooms[2]{};
     Require(sceAudioPropagationRoomCreate(system, &rooms[0]) == 0 && sceAudioPropagationRoomCreate(system, &rooms[1]) == 0, "room create failed");
     Require(rooms[0] != 0 && rooms[0] != rooms[1], "room handles are not distinct");
+    AudioPropagationHandle unreadablePortal = 0;
+    Require(sceAudioPropagationPortalCreate(system, reinterpret_cast<const AudioPropagation::PortalParams*>(0x10), &unreadablePortal) == AudioPropagation::ErrorNullPointer, "portal create with unreadable params");
     AudioPropagation::PortalParams portalParams{};
     portalParams.desc = {AudioPropagation::PortalParamsId, AudioPropagation::PortalParamsSize};
     portalParams.rooms[0] = rooms[0];
@@ -515,6 +524,7 @@ int main() {
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, infos, 0); }, "render without infos");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, infos, 3); }, "render exceeds source capacity");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, nullptr, 1); }, "render with null infos");
+    Require(sceAudioPropagationSourceRender(system, reinterpret_cast<AudioPropagation::RenderInfo*>(0x10), 1) == AudioPropagation::ErrorNullPointer, "render with unreadable infos");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system + 16, infos, 1); }, "render on an unknown system");
     infos[1].desc.id = AudioPropagation::RayId;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, infos, 2); }, "render info with a wrong descriptor id");
