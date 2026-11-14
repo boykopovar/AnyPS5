@@ -62,6 +62,11 @@ function(configure_host_test_executable target)
         target_compile_options(${target} PRIVATE -fasynchronous-unwind-tables)
         target_link_options(${target} PRIVATE -static -static-libgcc -static-libstdc++)
     endif()
+    if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.26)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy -t $<TARGET_FILE_DIR:${target}> $<TARGET_RUNTIME_DLLS:${target}>
+            COMMAND_EXPAND_LISTS)
+    endif()
 endfunction()
 
 function(add_asan_test_options test options)
