@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/RunReport.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -20,6 +21,7 @@
 #include <vector>
 
 #ifndef _WIN32
+#include <pthread.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -151,7 +153,7 @@ void SerializeTests() {
     for (const char* part : {"{\n  \"format\": \"anyps5-report\",\n  \"version\": 1,\n  \"generated\": \"2026-10-29T12:00:00Z\",\n  \"anyps5\": {\n    \"commit\": \"40f2a9c3d1b7e5864a0c9d2e7f13b5a8c6d49e01\",\n    \"release\": \"v0.1.3\",\n    \"modified\": false\n  },\n",
                              "  \"game\": {\n    \"titleId\": \"PPSA12345\",\n    \"contentId\": null,\n    \"contentVersion\": \"01.002.000\",\n    \"name\": \"Example \\\"Game\\\"\"\n  },\n",
                              "  \"system\": {\n    \"os\": \"linux\",\n    \"osVersion\": null,\n    \"cpu\": null,\n    \"ramGiB\": null,\n    \"gpu\": null\n  },\n",
-                             "  \"run\": {\n    \"id\": \"0123456789abcdef0123456789abcdef\",\n    \"seconds\": 12.500,\n    \"exit\": \"clean\",\n    \"exitCode\": 0,\n    \"stage\": \"unknown\",\n    \"milestones\": {},\n    \"framesPresented\": 0,\n    \"averageFps\": null,\n    \"fpsWindowSeconds\": null,\n    \"recovered\": false,\n    \"incomplete\": false\n  },\n",
+                             "  \"run\": {\n    \"id\": \"0123456789abcdef0123456789abcdef\",\n    \"seconds\": 12.500,\n    \"exit\": \"clean\",\n    \"exitCode\": 0,\n    \"stage\": \"unknown\",\n    \"milestones\": {},\n    \"framesPresented\": 0,\n    \"averageFps\": null,\n    \"fpsWindowSeconds\": null,\n    \"frameMs\": null,\n    \"recovered\": false,\n    \"incomplete\": false\n  },\n",
                              "  \"coverage\": {\n    \"milestones\": false,\n    \"missing\": false,\n    \"shaders\": false,\n    \"unsupported\": false,\n    \"imageFormats\": false,\n    \"descriptors\": false\n  },\n",
                              "  \"truncated\": {\n    \"functions\": 0,\n    \"unsupported\": 0,\n    \"imageFormats\": 0,\n    \"descriptors\": 0\n  },\n  \"missing\": {\n    \"functions\": []\n  },\n",
                              "  \"shaders\": {\n    \"compiled\": 0,\n    \"failed\": 0,\n    \"unsupported\": [],\n    \"imageFormats\": [],\n    \"descriptors\": []\n  },\n",
@@ -196,8 +198,11 @@ void FinishTests() {
     collector.Finish(RunReport::Exit::Abort, {RunReport::Kind::Other, RunReport::Reason::Crash, std::nullopt}, std::nullopt);
     Require(Read(collector.ReportPath()) == report, "a second finish changed the report");
     std::size_t files = 0;
-    for (const auto& entry : fs::directory_iterator(executable.path)) { static_cast<void>(entry); ++files; }
-    Require(files == 1, "a temporary file was left behind");
+    for (const auto& entry : fs::directory_iterator(executable.path)) {
+        Require(entry.path().extension() != ".tmp", "a temporary file was left behind: " + entry.path().string());
+        ++files;
+    }
+    Require(files == 2 && fs::exists(executable.path / "anyps5-recipe.json"), "the finish must leave only the report and the recipe");
 }
 
 void ConcurrentFinishTests() {
@@ -1150,6 +1155,177 @@ void CoverageOffTest() {
     Require(Contains(text, "\"milestones\": false,\n    \"missing\": false,\n    \"shaders\": false") && !Contains(text, "cacheHits"), "a section the build does not collect is marked as covered: " + text);
 }
 
+void FixedRingTest() {
+    RunReport::FixedRing<int, 3> ring;
+    Require(ring.Size() == 0 && ring.Values().empty(), "an empty ring holds values");
+    ring.Push(1);
+    ring.Push(2);
+    Require(ring.Size() == 2 && ring.Values() == std::vector<int>({1, 2}), "the ring lost values before it was full");
+    ring.Push(3);
+    ring.Push(4);
+    ring.Push(5);
+    Require(ring.Size() == 3 && ring.Values() == std::vector<int>({3, 4, 5}), "a full ring must keep the newest values, oldest first");
+    ring.Push(6);
+    Require(ring.Values() == std::vector<int>({4, 5, 6}), "the ring wrapped incorrectly");
+}
+
+void FramePercentileTest() {
+    const std::vector<double> ten{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    Require(RunReport::FramePercentile(ten, 0.5) == 6.0, "p50 of ten sorted values is the sixth");
+    Require(RunReport::FramePercentile(ten, 0.9) == 10.0, "p90 of ten sorted values is the tenth");
+    Require(RunReport::FramePercentile(ten, 0.99) == 10.0, "p99 must not index past the last value");
+    Require(RunReport::FramePercentile(std::vector<double>{4.5}, 0.99) == 4.5, "one value is every percentile");
+    Require(RunReport::FramePercentile(std::vector<double>{}, 0.5) == 0.0, "no frames give zero");
+}
+
+void FrameRingWiringTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    Require(collector.FrameTimesMilliseconds().empty(), "a run with no frame has frame times");
+    collector.NoteFramePresented();
+    Require(collector.FrameTimesMilliseconds().empty(), "the first frame has no interval yet");
+    for (int index = 0; index < 3; ++index) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        collector.NoteFramePresented();
+    }
+    const auto times = collector.FrameTimesMilliseconds();
+    Require(times.size() == 3, "three intervals were expected, got " + std::to_string(times.size()));
+    for (const double time : times) Require(time >= 15.0, "an interval is shorter than the sleep between presents");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+}
+
+void FrameTimesReportTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteFramePresented();
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(Contains(Read(collector.ReportPath()), "\"frameMs\": null"), "one frame gives no frame percentiles");
+    Directory second, other;
+    RunReport::Collector many(Covered(second.path, other.path, IdB));
+    Require(many.Start(), "the collector did not start");
+    for (int index = 0; index < 4; ++index) {
+        many.NoteFramePresented();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    many.Finish(RunReport::Exit::Clean, {}, 0);
+    const auto text = Read(many.ReportPath());
+    Require(Contains(text, "\"frameMs\": {\n") && Contains(text, "\"p50\": ") && Contains(text, "\"p90\": ") && Contains(text, "\"p99\": "), "frame percentiles are missing: " + text);
+    RunReport::Report report;
+    report.observed.coverage.milestones = false;
+    report.observed.frameMs = RunReport::FrameTimes{1.0, 2.0, 3.0};
+    Require(Contains(RunReport::Serialize(report, RunReport::HostIdentifiers{}), "\"frameMs\": null"), "a run without milestone coverage must not show frame percentiles");
+    report.observed.coverage.milestones = true;
+    Require(Contains(RunReport::Serialize(report, RunReport::HostIdentifiers{}), "\"p99\": 3.000"), "covered frame percentiles must be written");
+}
+
+void CompileTimeTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    collector.NoteCompileTime(5000000);
+    Require(collector.CompileMilliseconds() == 0.0, "compile time before the collector starts must be ignored");
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteCompileTime(2000000);
+    collector.NoteCompileTime(2500000);
+    collector.NoteCompileTime(-1);
+    Require(collector.CompileMilliseconds() == 4.5, "compile times must add up in milliseconds, got " + std::to_string(collector.CompileMilliseconds()));
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+}
+
+void CompileTimeReportTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteCompileTime(4500000);
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(Contains(Read(collector.ReportPath()), "\"compileMs\": 4.500"), "the report lacks the total compile time");
+    Directory second, other;
+    RunReport::Collector off(SettingsFor(second.path, other.path, IdB));
+    Require(off.Start(), "the collector did not start");
+    off.NoteCompileTime(4500000);
+    off.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(!Contains(Read(off.ReportPath()), "compileMs"), "a build that does not collect shaders must not report compile time");
+}
+
+void SlowCompileTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteCompileTime(99000000);
+    collector.NoteCompileTime(100000000);
+    Require(RunReport::SlowCompileNanoseconds == 100000000LL, "the slow threshold is 100 ms");
+    collector.NoteCompileTime(100000001);
+    collector.NoteCompileTime(250000000);
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(Contains(Read(collector.ReportPath()), "\"slowCompiles\": 2"), "compiles above 100 ms must be counted, exactly 100 ms is not slow");
+}
+
+void RecipeRedactionTest() {
+    RunReport::HostIdentifiers host;
+    host.users.push_back("alice");
+    host.words.push_back("alice");
+    Require(RunReport::RedactedValue("PS5", host) == "PS5", "a plain value is kept");
+    Require(RunReport::RedactedValue("/home/bob/games/x", host) == "[redacted]", "an absolute path is redacted");
+    Require(RunReport::RedactedValue("alice-rig", host) == "[redacted]", "a host user name is redacted");
+    Require(RunReport::RedactedValue("", host) == "[redacted]", "an empty value is redacted");
+}
+
+void RecipeEnvironmentTest() {
+    Require(RunReport::RecipeVariableAllowed("ANYPS5_GPU"), "an ANYPS5 variable is kept");
+    Require(!RunReport::RecipeVariableAllowed("PATH"), "a variable outside ANYPS5_ is not recorded");
+    Require(!RunReport::RecipeVariableAllowed("anyps5_gpu"), "the prefix is case sensitive");
+    for (const char* name : {"ANYPS5_API_TOKEN", "ANYPS5_KEYFILE", "ANYPS5_DB_PASSWORD", "ANYPS5_client_secret", "ANYPS5_secret", "ANYPS5_PSN_PASSCODE", "ANYPS5_NP_AUTH", "ANYPS5_SESSION_COOKIE"}) {
+        Require(!RunReport::RecipeVariableAllowed(name), std::string("a secret-named variable was allowed: ") + name);
+    }
+    const RunReport::EnvironmentVariables all{{"ANYPS5_ZETA", "1"}, {"ANYPS5_API_TOKEN", "x"}, {"HOME", "/root"}, {"ANYPS5_ALPHA", "0"}};
+    const auto kept = RunReport::RecipeEnvironment(all);
+    Require(kept == RunReport::EnvironmentVariables({{"ANYPS5_ALPHA", "0"}, {"ANYPS5_ZETA", "1"}}), "the recipe keeps sorted ANYPS5 variables only");
+    for (const auto& [name, value] : RunReport::ProcessEnvironment()) {
+        Require(RunReport::RecipeVariableAllowed(name), "the captured environment holds a name the recipe may not record: " + name);
+    }
+    Require(RunReport::ConfigFileNames({{"ANYPS5_INPUT_CONFIG", "/home/a/pad/input.json"}, {"ANYPS5_GPU", "x"}}) == std::vector<std::string>({"input.json"}),
+            "only the input config is recorded, by file name");
+    Require(RunReport::ConfigFileNames({{"ANYPS5_INPUT_CONFIG", ""}}).empty(), "an empty config path names no file");
+}
+
+void RecipeSerializeTest() {
+    RunReport::HostIdentifiers host;
+    host.users.push_back("alice");
+    host.words.push_back("alice");
+    RunReport::Recipe recipe;
+    recipe.generated = "2026-11-08T10:00:00Z";
+    recipe.runId = std::string(32u, 'a');
+    recipe.build.commit = std::string(40u, 'b');
+    recipe.arguments = {"/home/alice/prx/game.elf", "--aps5-report=on"};
+    recipe.environment = {{"ANYPS5_GPU", "AMD Radeon"}, {"ANYPS5_INPUT_CONFIG", "/home/alice/pad.json"}};
+    recipe.configFiles = {"pad.json"};
+    const auto text = RunReport::SerializeRecipe(recipe, host);
+    Require(Contains(text, "\"format\": \"anyps5-recipe\"") && Contains(text, "\"version\": 1"), "the recipe lacks its format header: " + text);
+    Require(Contains(text, "\"argv\": [\n    \"[redacted]\",\n    \"--aps5-report=on\"\n  ]"), "argv is redacted per value: " + text);
+    Require(Contains(text, "\"ANYPS5_GPU\": \"AMD Radeon\"") && Contains(text, "\"ANYPS5_INPUT_CONFIG\": \"[redacted]\""), "environment values are redacted per value: " + text);
+    Require(Contains(text, "\"configFiles\": [\n    \"pad.json\"\n  ]") && Contains(text, "\"commit\": \"" + std::string(40u, 'b') + "\""), "config names or the build commit are missing: " + text);
+    Require(!Contains(text, "alice"), "a user name reached the recipe: " + text);
+    recipe.environment = {{"ANYPS5_API_TOKEN", "hidden"}};
+    Require(!Contains(RunReport::SerializeRecipe(recipe, host), "hidden"), "a secret variable value reached the recipe");
+}
+
+void RecipeFileTest() {
+    Directory executable, user;
+    auto settings = Covered(executable.path, user.path, IdA);
+    settings.arguments = {"/home/alice/game.elf", "--aps5-report=on"};
+    settings.environment = {{"ANYPS5_GPU", "AMD"}, {"ANYPS5_API_KEY", "hidden"}};
+    settings.configFiles = {"pad.json"};
+    RunReport::Collector collector(settings);
+    Require(collector.Start(), "the collector did not start");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    const auto recipePath = collector.ReportPath().parent_path() / "anyps5-recipe.json";
+    Require(fs::exists(recipePath), "the recipe was not written next to the report");
+    const auto text = Read(recipePath);
+    Require(Contains(text, "\"ANYPS5_GPU\": \"AMD\"") && Contains(text, "\"pad.json\"") && Contains(text, "[redacted]"), "the recipe lacks its captured fields: " + text);
+    Require(!Contains(text, "hidden") && !Contains(text, "ANYPS5_API_KEY"), "a secret reached the recipe file");
+}
+
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1258,6 +1434,26 @@ void ChildMissingFunctionTest() {
     }
 }
 
+void ChildUncaughtMissingFunctionTest() {
+    Directory directory;
+    const int status = RunChild(CopySelf(directory), directory.path, "uncaught-missing-function");
+    Require((WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT) || (WIFEXITED(status) && WEXITSTATUS(status) == 128 + SIGABRT), "the run that left an unimplemented function uncaught did not end through abort");
+    const auto text = Report(directory);
+    for (const char* part : {"\"exit\": \"abort\"", "\"reason\": \"runtime-stop\"", "\"kind\": \"missing-function\"", "\"message\": \"Called sceNpUncaught, which is not implemented.\"", "\"name\": \"sceNpUncaught\"", "\"calls\": 1"}) {
+        Require(Contains(text, part), std::string("the report of the run that ended in std::terminate lacks ") + part + ": " + text);
+    }
+}
+
+void ChildTerminateHandlerExitTest() {
+    Directory directory;
+    const int status = RunChild(CopySelf(directory), directory.path, "terminate-handler-exits");
+    Require(WIFEXITED(status) && WEXITSTATUS(status) == 3, "the run whose own terminate handler exits with 3 did not exit with 3");
+    const auto text = Report(directory);
+    for (const char* part : {"\"exit\": \"clean\"", "\"exitCode\": 3", "\"reason\": \"guest-exit\""}) {
+        Require(Contains(text, part), std::string("the report of the run whose terminate handler exits lacks ") + part + ": " + text);
+    }
+}
+
 void ChildEnabledTest() {
     Directory directory;
     const auto copy = CopySelf(directory);
@@ -1355,6 +1551,19 @@ int main(int argc, char** argv) {
                 LibcRunReportFinishExit_nid_no_patch(0);
                 return 0;
             }
+            if (mode == "uncaught-missing-function") {
+                pthread_t thread;
+                pthread_create(&thread, nullptr, [](void*) -> void* { NotImplemented_nid_no_patch("sceNpUncaught"); return nullptr; }, nullptr);
+                pthread_join(thread, nullptr);
+                return 0;
+            }
+            if (mode == "terminate-handler-exits") {
+                _ZSt13set_terminatePFvvE_nid_postfix([] { LibcExit_nid_no_patch(3); });
+                pthread_t thread;
+                pthread_create(&thread, nullptr, [](void*) -> void* { NotImplemented_nid_no_patch("sceNpHandled"); return nullptr; }, nullptr);
+                pthread_join(thread, nullptr);
+                return 0;
+            }
             if (mode == "caught-missing-function") {
                 try { NotImplemented_nid_no_patch("sceNpCaught_nid_postfix"); } catch (const std::exception&) {}
                 LibcRunReportFinishExit_nid_no_patch(0);
@@ -1413,6 +1622,17 @@ int main(int argc, char** argv) {
         Run("commit-with-hex-name", CommitWithHexNameTest);
         Run("search-only-ancestor", SearchOnlyAncestorTest);
         Run("dropped-entries-are-distinct", DroppedEntriesAreDistinctTest);
+        Run("fixed-ring", FixedRingTest);
+        Run("frame-percentile", FramePercentileTest);
+        Run("frame-ring-wiring", FrameRingWiringTest);
+        Run("frame-times-report", FrameTimesReportTest);
+        Run("compile-time-total", CompileTimeTest);
+        Run("compile-time-report", CompileTimeReportTest);
+        Run("slow-compile-count", SlowCompileTest);
+        Run("recipe-redaction", RecipeRedactionTest);
+        Run("recipe-environment", RecipeEnvironmentTest);
+        Run("recipe-serialize", RecipeSerializeTest);
+        Run("recipe-file", RecipeFileTest);
 #ifndef _WIN32
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
@@ -1421,6 +1641,8 @@ int main(int argc, char** argv) {
         Run("child-gpu", ChildGpuTest);
         Run("child-guest-root-not-fixed-at-load", GuestRootIsNotFixedAtLoadTest);
         Run("child-missing-function", ChildMissingFunctionTest);
+        Run("child-uncaught-missing-function", ChildUncaughtMissingFunctionTest);
+        Run("child-terminate-handler-exits", ChildTerminateHandlerExitTest);
 #endif
         std::printf("run report tests: %d passed, %d failed, %d not run\n", passed, failed, notRun);
         if (passed + failed + notRun == 0) {

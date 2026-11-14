@@ -87,6 +87,7 @@ struct ColorTarget {
     std::uint32_t dccControl = 0;
     std::uint64_t fmaskAddress = 0;
     std::uint32_t fmaskPipeBankXor = 0;
+    std::uint32_t gcnFmaskBytes = 0;
     std::uint32_t partialWriteMask = 0;
     std::uint32_t mergeBlend = 0;
     bool staged = false;
@@ -214,6 +215,7 @@ void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo&
 State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyDepthRemap(const Context& context, State& state);
 void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
+void ApplyReadOnlyDepthBoundsComparison(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel, bool enabled);
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 std::uint32_t StageWaveSize(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
 std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
@@ -265,10 +267,17 @@ struct ColorMetadataPass {
     std::optional<ColorTarget> source;
 };
 std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue);
+struct DepthExpandPass {
+    DepthTarget source;
+    std::uint64_t destination;
+    std::uint64_t stencilDestination = 0;
+};
+std::optional<DepthExpandPass> DecodeDepthExpandPass(const QueueState& queue);
 struct DepthCopyPass {
     DepthTarget source;
     std::uint32_t sample;
     ColorTarget color;
+    bool stencil = false;
 };
 std::optional<DepthCopyPass> DecodeDepthCopyPass(const QueueState& queue);
 std::string DepthMaintenanceRejection(const QueueState& queue);

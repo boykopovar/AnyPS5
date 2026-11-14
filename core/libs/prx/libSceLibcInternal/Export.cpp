@@ -680,11 +680,6 @@ int APS5_VABI _CWcsxfrm_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Call_onceEx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Closreg_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -707,27 +702,12 @@ int APS5_VABI _Deletegloballocale_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Do_call_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Dtento_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Erfc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI _FAtan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FDtento_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -794,16 +774,6 @@ int APS5_VABI _FTgamma_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _FXp_addh_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FXp_addx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 float APS5_VABI _FXp_getw_nid_postfix(const float* parts, int count) {
     if (count == 0) return 0.0f;
     if (count == 1 || parts[0] == 0.0f || parts[1] == 0.0f) return parts[0];
@@ -813,51 +783,6 @@ float APS5_VABI _FXp_getw_nid_postfix(const float* parts, int count) {
     if (count >= 4) tail += parts[3];
     if (head - parts[0] == parts[1]) return head + tail;
     return parts[0] + (parts[1] + tail);
-}
-
-int APS5_VABI _FXp_invx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FXp_ldexpx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FXp_movx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FXp_mulh_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FXp_mulx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FXp_setn_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FXp_setw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FXp_sqrtx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FXp_subx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI _Fac_tidy_nid_postfix() {
@@ -935,11 +860,6 @@ int APS5_VABI _Getdst_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Geterrno_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Getfld_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1009,11 +929,6 @@ int APS5_VABI _LAtan_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _LDtento_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _LErfc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1072,66 +987,6 @@ int APS5_VABI _LTan_nid_postfix() {
 }
 
 int APS5_VABI _LTgamma_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LXp_addh_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LXp_addx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LXp_getw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LXp_invx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LXp_ldexpx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LXp_movx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LXp_mulh_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LXp_mulx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LXp_setn_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LXp_setw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LXp_sqrtx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LXp_subx_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

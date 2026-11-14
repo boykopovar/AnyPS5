@@ -670,6 +670,20 @@ public:
         return true;
     }
 
+    void ReadTraps(std::uintptr_t begin, std::uintptr_t end, void (*trapped)(void*, std::uintptr_t, std::uintptr_t), void* context) {
+        if (!_available || end <= begin || !_trapping.load(std::memory_order_acquire)) return;
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
+        {
+            const Lock lock(_lock);
+            forEachPage(pageStart(begin), pageEnd(end), [&](std::uintptr_t page, std::uint8_t& state) {
+                if ((state & ReadTrapped) == 0) return;
+                if (!runs.empty() && runs.back().second == page) runs.back().second = page + _page;
+                else runs.emplace_back(page, page + _page);
+            });
+        }
+        for (const auto& [runBegin, runEnd] : runs) trapped(context, runBegin, runEnd);
+    }
+
     void ReleaseReads(std::uintptr_t begin, std::uintptr_t end) {
         if (!_available || end <= begin) return;
         const Lock lock(_lock);
@@ -688,6 +702,7 @@ private:
     static constexpr std::uintptr_t FaultAheadBlock = 65536;
     static constexpr std::uint8_t ReadTrapped = 0x80;
     static constexpr std::size_t ResolveSlots = 32;
+    static constexpr std::size_t ResolvingCapacity = 4096;
     static constexpr std::size_t RetrySlots = 64;
     static constexpr unsigned UntrappedRetries = 16;
     static constexpr unsigned GenerationRetries = RetrySlots * UntrappedRetries;
@@ -844,8 +859,10 @@ private:
             auto* state = pageState(page);
             if (state == nullptr) return false;
             if ((*state & ReadTrapped) == 0) return retryUntrapped(page, *state, write);
+            const bool own = resolvingCovers(page, page + _page, Owner::Self) || pthread_equal(pthread_self(), _resolverThread);
             const auto bypass = _bypass.load(std::memory_order_acquire);
-            if (resolvingCovers(page, page + _page, Owner::Self) || pthread_equal(pthread_self(), _resolverThread) || (bypass != nullptr && bypass()) || (!trapCovers(page, page + _page) && !resolvingCovers(page, page + _page, Owner::Any))) {
+            if (own || (bypass != nullptr && bypass()) || (!trapCovers(page, page + _page) && !resolvingCovers(page, page + _page, Owner::Any))) {
+                if (own) deferCovering(page);
                 *state = static_cast<std::uint8_t>(*state & ~ReadTrapped);
                 ++_untrapGeneration;
                 return ::mprotect(reinterpret_cast<void*>(page), _page, untrappedProtection(*state)) == 0;
@@ -871,6 +888,8 @@ private:
     }
 
     void startResolver() {
+        _resolving.reserve(ResolvingCapacity);
+        _deferred.reserve(ResolvingCapacity);
         if (semaphore_create(mach_task_self(), &_wake, SYNC_POLICY_FIFO, 0) != KERN_SUCCESS) return;
         for (auto& slot : _slots)
             if (semaphore_create(mach_task_self(), &slot.done, SYNC_POLICY_FIFO, 0) != KERN_SUCCESS) return;
@@ -916,12 +935,42 @@ private:
         if (taken.empty()) return;
         const auto resolver = _resolver.load(std::memory_order_acquire);
         for (const auto& [first, last] : taken) resolver(first, last);
+        for (;;) {
+            std::pair<std::uintptr_t, std::uintptr_t> deferred;
+            {
+                const Lock lock(_lock);
+                const auto found = std::find_if(_deferred.begin(), _deferred.end(), [&](const Resolving& entry) { return pthread_equal(entry.owner, self); });
+                if (found == _deferred.end()) break;
+                deferred = {found->begin, found->end};
+                _deferred.erase(found);
+                auto [first, last] = _traps.equal_range(deferred.first);
+                while (first != last && first->second != deferred.second) ++first;
+                if (first == last) {
+                    const auto entry = std::find_if(_resolving.begin(), _resolving.end(), [&](const Resolving& resolving) { return resolving.begin == deferred.first && resolving.end == deferred.second && pthread_equal(resolving.owner, self); });
+                    if (entry != _resolving.end()) _resolving.erase(entry);
+                    continue;
+                }
+                _traps.erase(first);
+            }
+            taken.push_back(deferred);
+            resolver(deferred.first, deferred.second);
+        }
         const Lock lock(_lock);
         for (const auto& [first, last] : taken) {
             const auto found = std::find_if(_resolving.begin(), _resolving.end(), [&](const Resolving& entry) { return entry.begin == first && entry.end == last && pthread_equal(entry.owner, self); });
             if (found != _resolving.end()) _resolving.erase(found);
         }
         for (const auto& [first, last] : taken) untrap(first, last);
+    }
+
+    void deferCovering(std::uintptr_t page) {
+        const auto self = pthread_self();
+        for (auto it = _traps.begin(); it != _traps.end() && it->first < page + _page; ++it) {
+            if (it->second <= page || _deferred.size() == _deferred.capacity() || _resolving.size() == _resolving.capacity()) continue;
+            if (std::any_of(_deferred.begin(), _deferred.end(), [&](const Resolving& entry) { return entry.begin == it->first && entry.end == it->second; })) continue;
+            _resolving.push_back({it->first, it->second, self});
+            _deferred.push_back({it->first, it->second, self});
+        }
     }
 
     void waitForResolving(std::uintptr_t begin, std::uintptr_t end) {
@@ -974,21 +1023,15 @@ private:
 
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> takeTraps(std::uintptr_t begin, std::uintptr_t end) {
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> taken;
-        auto first = pageStart(begin);
-        auto last = pageEnd(end);
-        for (bool grew = true; grew;) {
-            grew = false;
-            for (auto it = _traps.begin(); it != _traps.end();) {
-                if (it->first >= last || it->second <= first) {
-                    ++it;
-                    continue;
-                }
-                first = std::min(first, pageStart(it->first));
-                last = std::max(last, pageEnd(it->second));
-                taken.emplace_back(*it);
-                it = _traps.erase(it);
-                grew = true;
+        const auto first = pageStart(begin);
+        const auto last = pageEnd(end);
+        for (auto it = _traps.begin(); it != _traps.end();) {
+            if (it->first >= last || it->second <= first) {
+                ++it;
+                continue;
             }
+            taken.emplace_back(*it);
+            it = _traps.erase(it);
         }
         return taken;
     }
@@ -1115,6 +1158,7 @@ private:
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _hostWrites;
     std::multimap<std::uintptr_t, std::uintptr_t> _traps;
     std::vector<Resolving> _resolving;
+    std::vector<Resolving> _deferred;
     std::array<Retry, RetrySlots> _retries{};
     std::uint64_t _retryUses = 0;
     std::uint64_t _retryGeneration = 0;
@@ -1328,6 +1372,17 @@ bool GuestWriteWatchTrapReads_nid_postfix(std::uintptr_t address, std::size_t by
     static_cast<void>(address);
     static_cast<void>(bytes);
     return false;
+#endif
+}
+
+void GuestWriteWatchReadTraps_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*trapped)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
+#if defined(__APPLE__)
+    if (bytes != 0 && address + bytes > address) Watch::Get().ReadTraps(address, address + bytes, trapped, context);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    static_cast<void>(trapped);
+    static_cast<void>(context);
 #endif
 }
 
