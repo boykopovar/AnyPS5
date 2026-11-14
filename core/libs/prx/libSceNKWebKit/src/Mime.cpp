@@ -1,3 +1,5 @@
+// Derived from Source/WebCore/platform/MIMETypeRegistry.cpp@e12a212a531aeddc11259e8515671cf5188e038d
+// Derived from Source/WebCore/platform/playstation/MIMETypeRegistryPlayStation.cpp@e12a212a531aeddc11259e8515671cf5188e038d
 /*
  * Copyright (C) 2006-2021 Apple Inc. All rights reserved.
  * Copyright (C) 2008, 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
