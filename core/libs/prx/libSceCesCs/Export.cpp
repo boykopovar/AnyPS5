@@ -1460,8 +1460,10 @@ int decodeIso2022(const void* profile, Iso2022State& state, const uint8_t* iso, 
     if (isoMax < 2) return CES_ERROR_SRC_BUFFER_END;
     const uint8_t trail = iso[1];
     if (trail < 0x21 || trail > 0x7F) return CES_ERROR_INVALID_ENCODE;
+    const uint32_t index = (lead - 0x21) * 94 + (trail - 0x21);
+    if (index >= 94 * 94) return CES_ERROR_UNASSIGNED_CODE;
     length = 2;
-    code = jisX0208ToUnicode(isIso2022Rfc1468(profile) ? JisStrict::Sjis : JisStrict::None, (lead - 0x21) * 94 + (trail - 0x21));
+    code = jisX0208ToUnicode(isIso2022Rfc1468(profile) ? JisStrict::Sjis : JisStrict::None, index);
     return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
 }
 
