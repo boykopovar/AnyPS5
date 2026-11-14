@@ -34,7 +34,7 @@ MemoryInfo imageMemoryInfoFromInstruction(const RdnaInstruction& inst) {
     memory.imageDimension = inst.imageDimension;
     memory.imageAddressComponents = inst.imageAddressComponents;
     memory.imageHasMip = inst.op == RdnaOpcode::ImageLoadMip || inst.op == RdnaOpcode::ImageStoreMip || inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn || inst.op == RdnaOpcode::ImageStoreMipPck;
-    memory.imagePacked = inst.op == RdnaOpcode::ImageLoadPck || inst.op == RdnaOpcode::ImageLoadPckSgn || inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn || inst.op == RdnaOpcode::ImageStorePck || inst.op == RdnaOpcode::ImageStoreMipPck || inst.op == RdnaOpcode::ImageGather4hPck;
+    memory.imagePacked = inst.op == RdnaOpcode::ImageLoadPck || inst.op == RdnaOpcode::ImageLoadPckSgn || inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn || inst.op == RdnaOpcode::ImageStorePck || inst.op == RdnaOpcode::ImageStoreMipPck || inst.op == RdnaOpcode::ImageGather4hPck || inst.op == RdnaOpcode::ImageGather8hPck;
     memory.dataSigned = inst.op == RdnaOpcode::ImageLoadPckSgn || inst.op == RdnaOpcode::ImageLoadMipPckSgn;
     memory.imageR128 = inst.imageR128;
     return memory;
@@ -213,13 +213,6 @@ bool TranslationContext::imageGather(const RdnaInstruction& inst) {
         throw std::runtime_error("packed horizontal gather with D16 data is not measured");
     }
     const MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
-    if (inst.op == RdnaOpcode::ImageGather8hPck) {
-        if ((inst.rawWords[0] & 0x00030000u) != 0u) throw std::runtime_error("packed horizontal gather 8h with TFE or LWE is not measured");
-        for (std::uint32_t index = 0; index < memory.dataDwords; ++index) {
-            writeOperand(offsetOperand(inst.destination, index), &ir.Constant(0u));
-        }
-        return true;
-    }
     IrValue* resource = getImageResource(memory);
     IrValue* sampler = getSamplerResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);

@@ -91,7 +91,7 @@ constexpr ImageOpcodeInfo imageOpcodes[] = {
     {0x5fu, RdnaOpcode::ImageGather4CLzO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagOffset, false, true, false},
     {0x61u, RdnaOpcode::ImageGather4h, nullptr, RdnaImageSampleFlagGatherHorizontal, false, true, false},
     {0x62u, RdnaOpcode::ImageGather4hPck, nullptr, RdnaImageSampleFlagGatherHorizontal, false, true, false},
-    {0x63u, RdnaOpcode::ImageGather8hPck, nullptr, RdnaImageSampleFlagGatherHorizontal, false, true, false},
+    {0x63u, RdnaOpcode::ImageGather8hPck, nullptr, RdnaImageSampleFlagGatherHorizontal | RdnaImageSampleFlagGatherEight, false, true, false},
     {0x50u, RdnaOpcode::ImageGather4O, nullptr, RdnaImageSampleFlagOffset, false, true, false},
     {0x54u, RdnaOpcode::ImageGather4LO, nullptr, RdnaImageSampleFlagLod | RdnaImageSampleFlagOffset, false, true, false},
     {0x44u, RdnaOpcode::ImageGather4L, nullptr, RdnaImageSampleFlagLod, false, true, false},
@@ -171,7 +171,7 @@ const ImageOpcodeInfo& lookupOpcode(std::uint32_t opcode) {
 }
 
 void validateFlags(std::uint32_t flags) {
-    constexpr std::uint32_t known = ((1u << 12u) - 1u) | RdnaImageSampleGradientCountMask;
+    constexpr std::uint32_t known = ((1u << 12u) - 1u) | RdnaImageSampleGradientCountMask | RdnaImageSampleFlagGatherEight;
     if ((flags & ~known) != 0u) {
         throw std::runtime_error("unknown image address flags");
     }

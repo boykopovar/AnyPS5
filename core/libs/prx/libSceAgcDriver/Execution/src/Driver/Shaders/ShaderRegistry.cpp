@@ -386,6 +386,7 @@ bool readOnlyMemoryOp(ShaderRecompiler::RdnaOpcode op) {
         case Op::ImageGather4CLzO:
         case Op::ImageGather4h:
         case Op::ImageGather4hPck:
+        case Op::ImageGather8hPck:
         case Op::ImageGather4:
         case Op::ImageGather4B:
         case Op::ImageGather4BCl:

@@ -90,6 +90,7 @@ enum RdnaImageSampleFlag : std::uint32_t {
     RdnaImageSampleFlagGatherHorizontal = 1u << 9u,
     RdnaImageSampleFlagAdjust = 1u << 10u,
     RdnaImageSampleFlagG16 = 1u << 11u,
+    RdnaImageSampleFlagGatherEight = 1u << 14u,
 };
 
 inline constexpr std::uint32_t RdnaImageSampleGradientCountShift = 12u;
