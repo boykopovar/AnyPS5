@@ -15328,6 +15328,7 @@ int main(int argc, char** argv) {
         Require(mock.live == 0, "BDA resources leaked Vulkan objects");
         RunGuestAllocationTests();
         RunUnmappedGapTests();
+        RunPassedMappingTests();
         RunVanishedPageReadTests();
         RunPageBlockTests();
         RunColorTargetLayoutTests();

@@ -30,6 +30,7 @@ void RunUnwatchedMirrorImportTests(const AgcDriver::Graphics::Context& context, 
 void RunGuestAllocationTests();
 void RunGuestLeaseWaitTests();
 void RunUnmappedGapTests();
+void RunPassedMappingTests();
 void RunVanishedPageReadTests();
 void RunPageBlockTests();
 void RunColorTargetLayoutTests();
