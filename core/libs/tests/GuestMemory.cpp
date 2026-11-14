@@ -2652,6 +2652,35 @@ static void CheckMtypeprotectLeavesAReplacementAllocation() {
     Require(sceKernelReleaseDirectMemory(state.again, page) == 0);
 }
 
+static double ReleaseSecondsOfScatteredViews(std::size_t views) {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * views, 0, 0, &phys) == 0);
+    void* reserved = nullptr;
+    Require(sceKernelReserveVirtualRange(&reserved, page * views * 2, 0, 0) == 0);
+    for (std::size_t view = 0; view < views; ++view) {
+        void* at = static_cast<unsigned char*>(reserved) + page * view * 2;
+        Require(sceKernelMapDirectMemory(&at, page, 3, 0x10, phys + static_cast<std::int64_t>(page * view), 0) == 0);
+    }
+    const auto begin = std::chrono::steady_clock::now();
+    Require(sceKernelReleaseDirectMemory(phys, page * views) == 0);
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - begin;
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page * views * 2) == 0);
+    return elapsed.count();
+}
+
+static void CheckReleaseOfManyViewsScalesLinearly() {
+    const auto fastest = [](std::size_t views) {
+        double best = std::numeric_limits<double>::max();
+        for (int round = 0; round < 3; ++round) best = std::min(best, ReleaseSecondsOfScatteredViews(views));
+        return best;
+    };
+    const auto few = fastest(128);
+    const auto many = fastest(2048);
+    if (many >= few * 64) std::fprintf(stderr, "releasing 2048 scattered views took %.6f s, 128 took %.6f s\n", many, few);
+    Require(many < few * 64);
+}
+
 static void CheckSecondDirectMappingWaitsForLeases() {
 #ifdef _WIN32
     constexpr std::size_t page = 0x4000;
@@ -4615,6 +4644,7 @@ int main(int argc, char** argv) {
     CheckReleaseExcludesMappingsAndAllocations();
     CheckFixedMapRacingAReleaseKeepsItsDestination();
     CheckMtypeprotectLeavesAReplacementAllocation();
+    CheckReleaseOfManyViewsScalesLinearly();
     CheckPinnedRangeIsLeftOutOfNewLeases();
     CheckBreakingAResidentRunKeepsConcurrentAccesses();
     CheckRemappedDirectMemoryIsChargedOnce();

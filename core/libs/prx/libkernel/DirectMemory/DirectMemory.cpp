@@ -1843,31 +1843,39 @@ bool DirectMemoryAliased(std::uintptr_t address, std::size_t bytes) {
     return false;
 }
 
-std::vector<DirectMemoryView> PhysicalViews(int64_t start, size_t len) {
-    const auto first = static_cast<std::uint64_t>(start);
-    const auto last = first + len;
-    std::vector<DirectMemoryView> views;
+std::optional<DirectMemoryView> FirstPhysicalView(std::uint64_t first, std::uint64_t last) {
     std::lock_guard lock(g_directLock);
-    for (const auto base : MappingsSharingPhys(first, last)) {
-        const auto& mapping = g_directMappings.at(base);
-        const auto mappingLast = mapping.phys + (mapping.end - base);
-        if (mapping.phys >= last || mappingLast <= first) continue;
-        const auto viewStart = base + (std::max(first, mapping.phys) - mapping.phys);
-        const auto viewEnd = base + (std::min(last, mappingLast) - mapping.phys);
-        if (!views.empty() && views.back().address + views.back().bytes == viewStart) views.back().bytes += viewEnd - viewStart;
-        else views.push_back({viewStart, viewEnd - viewStart});
+    auto span = g_physicalSpans.lower_bound(first);
+    if (span != g_physicalSpans.begin() && std::prev(span)->second.end > first) --span;
+    if (span == g_physicalSpans.end() || span->first >= last) return std::nullopt;
+    auto mapping = g_directMappings.find(span->second.bases.front());
+    if (mapping == g_directMappings.end()) throw std::logic_error("a physical span lists a direct mapping that does not exist");
+    const auto clip = [&](const auto& entry, std::uintptr_t& viewStart, std::uintptr_t& viewEnd) {
+        const auto entryLast = entry.second.phys + (entry.second.end - entry.first);
+        viewStart = entry.first + (std::max(first, entry.second.phys) - entry.second.phys);
+        viewEnd = entry.first + (std::min(last, entryLast) - entry.second.phys);
+    };
+    std::uintptr_t viewStart = 0;
+    std::uintptr_t viewEnd = 0;
+    clip(*mapping, viewStart, viewEnd);
+    for (auto next = std::next(mapping); viewEnd == mapping->second.end && next != g_directMappings.end() && next->first == viewEnd; mapping = next++) {
+        if (next->second.phys < first || next->second.phys >= last) break;
+        std::uintptr_t nextStart = 0;
+        clip(*next, nextStart, viewEnd);
     }
-    return views;
+    return DirectMemoryView{viewStart, viewEnd - viewStart};
 }
 
 void UnmapDirectMemoryRange(int64_t start, size_t len) {
+    const auto first = static_cast<std::uint64_t>(start);
+    const auto last = first + len;
     GuestAllocations::Mutation mutation;
-    for (auto views = PhysicalViews(start, len); !views.empty();) {
-        const auto view = views.front();
-        Trace("unmap released view %p+0x%zx", reinterpret_cast<void*>(view.address), view.bytes);
-        UnmapRegistered(mutation, reinterpret_cast<void*>(view.address), view.bytes);
-        views = PhysicalViews(start, len);
-        if (!views.empty() && views.front().address == view.address && views.front().bytes == view.bytes) throw std::runtime_error("released direct memory view survived its unmap");
+    for (auto view = FirstPhysicalView(first, last); view;) {
+        Trace("unmap released view %p+0x%zx", reinterpret_cast<void*>(view->address), view->bytes);
+        UnmapRegistered(mutation, reinterpret_cast<void*>(view->address), view->bytes);
+        const auto unmapped = *view;
+        view = FirstPhysicalView(first, last);
+        if (view && view->address == unmapped.address && view->bytes == unmapped.bytes) throw std::runtime_error("released direct memory view survived its unmap");
     }
 }
 
