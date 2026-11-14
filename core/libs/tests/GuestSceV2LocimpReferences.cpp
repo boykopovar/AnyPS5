@@ -25,11 +25,20 @@ const void* SceV2OtherType = nullptr;
 int SceV2Selector = 0;
 }
 
+struct AllocatorFailure {};
+struct FreeFailure {};
+static std::size_t gThrowBytes = 0;
+static bool gThrowFree = false;
+static unsigned gThrowFreeCalls = 0;
 static std::size_t gFailBytes = 0;
 static void* gLastFreed = nullptr;
 static void* gLastObject = nullptr;
 
 void* APS5_VABI TestHeapAllocate(std::size_t bytes) {
+    if (bytes == gThrowBytes) {
+        std::fprintf(stderr, "locale copy stage=vector_allocate qualified=%d bytes=%zu object=%p\n", gLastObject != nullptr, bytes, gLastObject);
+        throw AllocatorFailure{};
+    }
     if (bytes == gFailBytes) return nullptr;
     void* pointer = std::malloc(bytes);
     if (bytes == sizeof(GuestLocale::Implementation)) gLastObject = pointer;
@@ -38,6 +47,10 @@ void* APS5_VABI TestHeapAllocate(std::size_t bytes) {
 void APS5_VABI TestHeapFree(void* pointer) {
     gLastFreed = pointer;
     std::free(pointer);
+    if (gThrowFree) {
+        ++gThrowFreeCalls;
+        throw FreeFailure{};
+    }
 }
 void* APS5_VABI TestHeapCalloc(std::size_t count, std::size_t bytes) { return std::calloc(count, bytes); }
 void* APS5_VABI TestHeapReallocate(void* pointer, std::size_t bytes) { return bytes == gFailBytes ? nullptr : std::realloc(pointer, bytes); }
@@ -225,6 +238,26 @@ int main() {
     Require(gLastObject != nullptr && gLastFreed == gLastObject, "a failed _New_Locimp frees the new object");
     Require(Counts(fifth, 1, 1, 0, 0), "a failed _New_Locimp retains nothing");
     gFailBytes = 0;
+
+    for (const bool throwFree : {false, true}) {
+        gLastFreed = nullptr;
+        gLastObject = nullptr;
+        gThrowBytes = 40 * sizeof(GuestLocale::Facet*);
+        gThrowFree = throwFree;
+        gThrowFreeCalls = 0;
+        bool caughtAllocator = false;
+        try {
+            _ZNSt8__sce_v26locale7_Locimp11_New_LocimpERKS1__nid_postfix(owner);
+        } catch (const AllocatorFailure&) {
+            caughtAllocator = true;
+        }
+        gThrowFree = false;
+        gThrowBytes = 0;
+        Require(caughtAllocator, "a throwing vector allocator preserves its exception");
+        Require(gLastObject != nullptr && gLastFreed == gLastObject, "a throwing vector allocator releases the unpublished locale");
+        Require(gThrowFreeCalls == (throwFree ? 1u : 0u), "exception cleanup attempts the object free once");
+        Require(Counts(fifth, 1, 1, 0, 0), "a throwing vector allocation retains no source facet");
+    }
 
     CountingFacet seventh = MakeFacet();
     std::thread([&] { _ZNSt8__sce_v26locale7_Locimp14_Locimp_AddfacEPS1_PNS0_5facetEm_nid_postfix(owner, &seventh.base, 99); }).join();

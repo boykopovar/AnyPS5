@@ -1061,11 +1061,16 @@ GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale7_Locimp11_New_Locim
     if (source == nullptr) throw std::invalid_argument("_Locimp constructor: null source");
     auto* self = static_cast<GuestLocale::Implementation*>(_Znwm_nid_postfix(sizeof(GuestLocale::Implementation)));
     *self = {{&g_sceV2LocimpVtable, 1, 0}, nullptr, source->facetCount, source->category, source->transparent, source->name};
-    if (!CopySceV2Facets(self, source)) {
-        _ZdlPv_nid_postfix(self);
-        _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
+    try {
+        if (CopySceV2Facets(self, source)) return self;
+    } catch (...) {
+        try {
+            _ZdlPv_nid_postfix(self);
+        } catch (...) {}
+        throw;
     }
-    return self;
+    _ZdlPv_nid_postfix(self);
+    _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
 }
 
 void APS5_VABI _ZNSt8__sce_v26locale7_Locimp14_Locimp_AddfacEPS1_PNS0_5facetEm_nid_postfix(GuestLocale::Implementation* self, GuestLocale::Facet* facet, std::size_t id) {
