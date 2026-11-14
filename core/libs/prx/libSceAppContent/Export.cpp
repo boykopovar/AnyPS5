@@ -18,6 +18,12 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#endif
 
 static constexpr int SCE_APP_CONTENT_ERROR_NOT_INITIALIZED = static_cast<int>(0x80D90001);
 static constexpr int SCE_APP_CONTENT_ERROR_PARAMETER = static_cast<int>(0x80D90002);
@@ -157,7 +163,37 @@ int APS5_VABI sceAppContentCheckBundleLicenseOnDisc(uint32_t serviceLabel, const
 int APS5_VABI sceAppContentDownloadDataGetBlockSize(const AppContentMountPoint* mountPoint, size_t* blockSize) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!mountPoint || !blockSize) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    NotImplemented_nid_no_patch(__func__);
+    const auto mount = CopyMountPoint(mountPoint);
+    if (!mount) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!IsDownloadMountPoint(*mount)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
+    const auto directory = ResolvePath_nid_no_patch(mount->data);
+    if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
+    std::uint64_t block = 0;
+#ifdef _WIN32
+    const auto root = std::filesystem::absolute(directory).root_path();
+    DWORD sectorsPerCluster = 0;
+    DWORD bytesPerSector = 0;
+    DWORD freeClusters = 0;
+    DWORD totalClusters = 0;
+    if (root.empty() || !GetDiskFreeSpaceW(root.wstring().c_str(), &sectorsPerCluster, &bytesPerSector, &freeClusters, &totalClusters)) {
+        throw std::runtime_error("sceAppContentDownloadDataGetBlockSize: the host volume did not report a cluster size");
+    }
+    block = static_cast<std::uint64_t>(sectorsPerCluster) * bytesPerSector;
+#else
+    struct stat status {};
+    if (stat(directory.c_str(), &status) != 0 || status.st_blksize <= 0) {
+        throw std::runtime_error("sceAppContentDownloadDataGetBlockSize: the host filesystem did not report a block size");
+    }
+    block = static_cast<std::uint64_t>(status.st_blksize);
+#endif
+    if (block == 0 || block > std::numeric_limits<size_t>::max()) {
+        throw std::runtime_error("sceAppContentDownloadDataGetBlockSize: the host block size does not fit the output");
+    }
+    const std::size_t result = static_cast<std::size_t>(block);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(blockSize, &result, sizeof(result));
+    errno = savedErrno;
+    return copied ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceAppContentGetGameTrialsFlag(uint32_t* gameTrialsFlag) {
