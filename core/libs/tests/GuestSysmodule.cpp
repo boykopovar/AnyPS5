@@ -9,8 +9,12 @@
 #include <cstring>
 #include <initializer_list>
 #include <iterator>
+#include <filesystem>
+#include <fstream>
+#include <random>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
@@ -52,6 +56,7 @@ constexpr std::uint16_t kAcmModuleId = 0x010b;
 constexpr std::uint16_t kTrophy2ModuleId = 0x0110;
 constexpr std::uint16_t kVoiceChatModuleId = 0x0114;
 constexpr std::uint16_t kPerfModuleId = 0x0005;
+constexpr std::uint16_t kNpPartyModuleId = 0x0097;
 constexpr std::uint16_t kVrSetupDialogModuleId = 0x0130;
 constexpr std::uint16_t kProprietaryVoiceChatHelperModuleId = 0x0132;
 constexpr std::uint16_t kPsmlModuleId = 0x0137;
@@ -264,7 +269,7 @@ void CheckUnwindInfo() {
 
 }
 
-void CheckAcceptedIdSet() {
+void CheckAcceptedIdSet(bool ps4) {
     constexpr std::uint16_t kAccepted[] = {
         0x0005, 0x0006, 0x0007, 0x000b, 0x0017, 0x0019, 0x001a, 0x001b, 0x001c, 0x001e, 0x0021, 0x002c,
         0x0038, 0x0081, 0x0083, 0x0084, 0x0085, 0x0088, 0x008a, 0x008b, 0x008c, 0x008d, 0x0095, 0x0096,
@@ -280,12 +285,14 @@ void CheckAcceptedIdSet() {
         0x0135, 0x0136, 0x0137, 0x0138, 0x0139, 0x013a, 0x013b, 0x013c, 0x013d,
     };
     static_assert(sizeof(kAccepted) / sizeof(kAccepted[0]) == 141);
+    constexpr std::uint16_t kPs4Accepted[] = {0x0097, 0x00a2, 0x00b2, 0x00d7};
     constexpr std::uint16_t kAcceptedWithoutName[] = {
         0x0111, 0x0117, 0x011c, 0x011d, 0x011e, 0x011f, 0x0121, 0x0122, 0x0123, 0x0124, 0x0129,
         0x012c, 0x012d, 0x012e, 0x0133, 0x0134, 0x0136, 0x013a, 0x013b, 0x013c, 0x013d,
     };
-    const auto accepted = [&kAccepted](std::uint16_t id) {
-        return std::binary_search(std::begin(kAccepted), std::end(kAccepted), id);
+    const auto accepted = [ps4, &kAccepted, &kPs4Accepted](std::uint16_t id) {
+        if (std::binary_search(std::begin(kAccepted), std::end(kAccepted), id)) return true;
+        return ps4 && std::binary_search(std::begin(kPs4Accepted), std::end(kPs4Accepted), id);
     };
     for (std::uint32_t id = 0; id <= 0xffff; ++id) {
         const std::uint16_t value = static_cast<std::uint16_t>(id);
@@ -302,11 +309,52 @@ void CheckAcceptedIdSet() {
         Require(sceSysmoduleLoadModule(id) == 0);
         Require(sceSysmoduleUnloadModule(id) == 0);
     }
+    if (ps4) {
+        for (const std::uint16_t id : kPs4Accepted) {
+            Require(accepted(id));
+            Require(kModuleTable.find(id) != kModuleTable.end());
+            Require(sceSysmoduleIsLoaded(id) == kModuleUnloaded);
+            Require(sceSysmoduleLoadModule(id) == 0);
+            Require(sceSysmoduleIsLoaded(id) == 0);
+            Require(sceSysmoduleUnloadModule(id) == 0);
+            Require(sceSysmoduleIsLoaded(id) == kModuleUnloaded);
+        }
+    }
 }
 
-int main() {
+void CheckPs4Process(const char* self) {
+    const auto directory = std::filesystem::temp_directory_path() / ("ps4-sysmodule-test-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(directory / "app0" / "sce_sys");
+    struct Entry { std::uint16_t key, format; std::uint32_t length, maximum, offset; };
+    const std::uint32_t header[5] = {0x46535000, 0x0101, 52, 72, 2};
+    const Entry entries[2] = {{0, 0x0204, 8, 8, 0}, {6, 0x0204, 10, 12, 8}};
+    {
+        std::ofstream file(directory / "app0/sce_sys/param.sfo", std::ios::binary);
+        file.write(reinterpret_cast<const char*>(header), sizeof(header));
+        file.write(reinterpret_cast<const char*>(entries), sizeof(entries));
+        file << std::string("TITLE\0TITLE_ID\0\0\0\0\0\0", 20) << std::string("Example\0", 8) << "CUSA00000" << std::string("\0\0\0", 3);
+    }
+#ifdef _WIN32
+    std::wstring executable(32768, L'\0');
+    executable.resize(GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size())));
+    const std::wstring command = L"\"cd /d \"" + directory.wstring() + L"\" && \"" + executable + L"\" ps4-child\"";
+    const int status = _wsystem(command.c_str());
+#else
+    const auto executable = std::filesystem::absolute(self);
+    const std::string command = "cd \"" + directory.string() + "\" && \"" + executable.string() + "\" ps4-child";
+    const int status = std::system(command.c_str());
+#endif
+    std::filesystem::remove_all(directory);
+    Require(status == 0);
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "ps4-child") {
+        CheckAcceptedIdSet(true);
+        return 0;
+    }
     CheckUnknownIds();
-    CheckAcceptedIdSet();
+    CheckAcceptedIdSet(false);
     Require(sceSysmoduleIsLoaded(0) == kInvalidValue);
     Require(sceSysmoduleLoadModule(0) == kInvalidValue);
     Require(sceSysmoduleUnloadModule(0) == kInvalidValue);
@@ -370,6 +418,10 @@ int main() {
     Require(sceSysmoduleIsLoaded(kVoiceChatModuleId) == 0);
     Require(sceSysmoduleUnloadModule(kVoiceChatModuleId) == 0);
     Require(sceSysmoduleIsLoaded(kVoiceChatModuleId) == kModuleUnloaded);
+
+    Require(sceSysmoduleIsLoaded(kNpPartyModuleId) == kInvalidValue);
+    Require(sceSysmoduleUnloadModule(kNpPartyModuleId) == kInvalidValue);
+    Require(sceSysmoduleLoadModule(kNpPartyModuleId) == kInvalidValue);
 
     Require(sceSysmoduleIsLoaded(kPsmlModuleId) == kModuleUnloaded);
     Require(sceSysmoduleUnloadModule(kPsmlModuleId) == kModuleUnloaded);
@@ -500,4 +552,5 @@ int main() {
     moduleResult = -1;
     Require(sceSysmoduleLoadModuleByNameInternal("libSceNoSuchModule", 0, nullptr, 0, &moduleResult) < 0);
     Require(sceKernelStopUnloadModule(byName, 0, nullptr, 0, nullptr, nullptr) == 0);
+    CheckPs4Process(argv[0]);
 }

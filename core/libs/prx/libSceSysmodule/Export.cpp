@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceSysmodule/include/Api.hpp"
 #include <cerrno>
 #include <cstdint>
@@ -46,6 +47,15 @@ bool isMeasuredRejectedInternalId(const std::uint32_t id) {
 
 bool isPublicModuleId(const std::uint16_t id) {
     return std::binary_search(std::begin(kPublicModuleIds), std::end(kPublicModuleIds), id);
+}
+
+bool isPs4ModuleId(const std::uint16_t id) {
+    static const bool ps4Process = sceKernelIsPs4Process() != 0;
+    return ps4Process && std::binary_search(std::begin(kPs4ModuleIds), std::end(kPs4ModuleIds), id);
+}
+
+bool isAcceptedModuleId(const std::uint16_t id) {
+    return isPublicModuleId(id) || isPs4ModuleId(id);
 }
 
 std::mutex gMutex;
@@ -234,7 +244,7 @@ int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t
 }
 
 int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
-    if (!isPublicModuleId(id)) {
+    if (!isAcceptedModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
@@ -250,7 +260,7 @@ int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
 }
 
 int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id) {
-    if (!isPublicModuleId(id)) {
+    if (!isAcceptedModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
@@ -287,7 +297,7 @@ int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, 
 }
 
 int APS5_VABI sceSysmoduleUnloadModule(std::uint16_t id) {
-    if (!isPublicModuleId(id)) {
+    if (!isAcceptedModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
