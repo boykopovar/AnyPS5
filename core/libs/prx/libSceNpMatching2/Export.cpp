@@ -177,8 +177,11 @@ int APS5_VABI sceNpMatching2GetUserInfoList(std::uint16_t ctxId, const void* req
     if (!request || !requestId) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     if (!contexts.contains(ctxId)) return SCE_NP_MATCHING2_ERROR_CONTEXT_NOT_FOUND;
     if ((ctxId & CONTEXT_A_FLAG) != 0) return SCE_NP_MATCHING2_ERROR_INVALID_CONTEXT;
-    std::uint16_t serverId;
-    std::memcpy(&serverId, request, sizeof(serverId));
+    std::uint16_t serverId = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&serverId, request, sizeof(serverId));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     if (serverId == 0) return SCE_NP_MATCHING2_ERROR_INVALID_SERVER_ID;
     NotImplemented_nid_no_patch(__func__);
     return 0;
