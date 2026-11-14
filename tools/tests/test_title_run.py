@@ -337,6 +337,26 @@ class PreparationTests(unittest.TestCase):
         self.assertIsNotNone(again)
         again.close()
 
+    def test_unreadable_catalog_and_comparison_files_are_reported_without_a_traceback(self):
+        import contextlib
+        import io
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        unknown = self.root / "unknown.json"
+        unknown.write_text(json.dumps({"PPSA00001": {"rlink": []}}), encoding="utf-8")
+        invalid = self.root / "invalid.json"
+        invalid.write_text("not json", encoding="utf-8")
+        for option, path, message in (("--titles", self.root / "missing.json", "No such file"), ("--titles", self.root / "games", ""),
+                                      ("--titles", unknown, "unknown field rlink"), ("--titles", invalid, "Expecting value"),
+                                      ("--compare", self.root / "missing.json", "No such file"), ("--compare", invalid, "Expecting value")):
+            with self.subTest(option=option, path=path.name):
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(self.root / "out"), option, str(path)])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(f"error: {option}: ", errors.getvalue())
+                self.assertIn(message, errors.getvalue())
+                self.assertFalse((self.root / "out").exists())
+
     def test_smoke_runs_the_marked_titles(self):
         for title_id in ("PPSA00001", "PPSA00002", "PPSA00003"):
             package(self.root / "games" / title_id, title_id)
