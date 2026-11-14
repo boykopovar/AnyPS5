@@ -2,6 +2,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -36,8 +37,32 @@ template<typename TAction> static void RequireThrows(TAction action, std::source
     Require(false, location);
 }
 
+static void RequireQueued(std::uint64_t reason, std::source_location location = std::source_location::current()) {
+    Require(ERR_get_error_nid_postfix() == (6u << 24 | 0xfffu << 12 | reason), location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
+}
+
 static int allocationsBeforeFailure = -1;
 static int liveBlocks = 0;
+struct LiveAllocation {
+    void* pointer;
+    std::size_t size;
+};
+static std::array<LiveAllocation, 64> liveAllocations{};
+static int recordedAllocations = 0;
+static int recordedReleases = 0;
+static bool checkReleasedData = false;
+static int throwReleaseAfter = 0;
+struct ReleaseFailure {};
+
+static void RecordAllocation(void* pointer, std::size_t size) {
+    if (!pointer) return;
+    auto slot = std::find_if(liveAllocations.begin(), liveAllocations.end(), [](const LiveAllocation& entry) { return !entry.pointer; });
+    Require(slot != liveAllocations.end());
+    *slot = {pointer, size};
+    ++liveBlocks;
+    ++recordedAllocations;
+}
 
 static bool FailAllocation() {
     if (allocationsBeforeFailure < 0) return false;
@@ -47,19 +72,30 @@ static bool FailAllocation() {
 static void* APS5_VABI Allocate(std::size_t bytes) {
     if (FailAllocation()) return nullptr;
     void* const block = std::malloc(bytes ? bytes : 1);
-    if (block) ++liveBlocks;
+    RecordAllocation(block, bytes ? bytes : 1);
     return block;
 }
 
 static void APS5_VABI Release(void* block) {
-    if (block) --liveBlocks;
+    if (block) {
+        const auto slot = std::find_if(liveAllocations.begin(), liveAllocations.end(), [block](const LiveAllocation& entry) { return entry.pointer == block; });
+        Require(slot != liveAllocations.end());
+        if (checkReleasedData) {
+            const auto* bytes = static_cast<const unsigned char*>(block);
+            Require(std::all_of(bytes, bytes + slot->size, [](unsigned char byte) { return byte == 0; }));
+        }
+        *slot = {};
+        --liveBlocks;
+        ++recordedReleases;
+    }
     std::free(block);
+    if (block && throwReleaseAfter > 0 && --throwReleaseAfter == 0) throw ReleaseFailure{};
 }
 
 static void* APS5_VABI AllocateZeroed(std::size_t count, std::size_t bytes) {
     if (FailAllocation()) return nullptr;
     void* const block = std::calloc(count ? count : 1, bytes ? bytes : 1);
-    if (block) ++liveBlocks;
+    RecordAllocation(block, (count ? count : 1) * (bytes ? bytes : 1));
     return block;
 }
 
@@ -147,6 +183,135 @@ static int APS5_VABI CustomCleanup(EvpMdContext*) {
     return 1;
 }
 
+enum class FailureStage { None, Init, Update, Final, Cleanup };
+struct CallbackFailure {
+    FailureStage stage;
+};
+static FailureStage failureStage = FailureStage::None;
+static int failureCall = 0;
+static std::array<int, 5> stageCalls{};
+static EvpMdContext* failedCleanupContext = nullptr;
+static int repeatedFailedCleanup = 0;
+
+static void MaybeFail(FailureStage stage, EvpMdContext* context) {
+    const int call = ++stageCalls[static_cast<std::size_t>(stage)];
+    if (stage == FailureStage::Cleanup && context == failedCleanupContext) ++repeatedFailedCleanup;
+    if (stage != failureStage || call != failureCall) return;
+    if (stage == FailureStage::Cleanup) failedCleanupContext = context;
+    throw CallbackFailure{stage};
+}
+
+static int APS5_VABI FailingInit(EvpMdContext* context) {
+    CustomInit(context);
+    MaybeFail(FailureStage::Init, context);
+    return 1;
+}
+
+static int APS5_VABI FailingUpdate(EvpMdContext* context, const void* data, std::size_t length) {
+    MaybeFail(FailureStage::Update, context);
+    return CustomUpdate(context, data, length);
+}
+
+static int APS5_VABI FailingFinal(EvpMdContext* context, unsigned char* digest) {
+    MaybeFail(FailureStage::Final, context);
+    return CustomFinal(context, digest);
+}
+
+static int APS5_VABI FailingCleanup(EvpMdContext* context) {
+    MaybeFail(FailureStage::Cleanup, context);
+    return CustomCleanup(context);
+}
+
+static void CheckOneShotCleanup(bool hmac, FailureStage stage, int call, int releaseFailure = 0, bool invalidInput = false, bool longKey = false) {
+    Require(liveBlocks == 0);
+    recordedAllocations = recordedReleases = 0;
+    checkReleasedData = true;
+    throwReleaseAfter = releaseFailure;
+    failureStage = stage;
+    failureCall = call;
+    stageCalls = {};
+    failedCleanupContext = nullptr;
+    repeatedFailedCleanup = 0;
+    EvpMd custom{};
+    custom.type = 12345;
+    custom.mdSize = 4;
+    custom.init = FailingInit;
+    custom.update = FailingUpdate;
+    custom.finalize = FailingFinal;
+    custom.cleanup = FailingCleanup;
+    custom.blockSize = 64;
+    custom.contextSize = 16;
+    const EvpMd* method = invalidInput || (releaseFailure != 0 && stage == FailureStage::None) ? EVP_sha256_nid_postfix() : &custom;
+    std::array<unsigned char, 66> output;
+    output.fill(0xa5);
+    unsigned int length = 0x12345678;
+    const std::string key(longKey ? 131 : 1, 'k');
+    bool caughtCallback = false, caughtInput = false, caughtRelease = false;
+    try {
+        if (hmac) {
+            Require(HMAC_nid_postfix(method, key.data(), static_cast<int>(key.size()), invalidInput ? nullptr : reinterpret_cast<const unsigned char*>("x"),
+                1, output.data() + 1, &length) == output.data() + 1);
+        } else {
+            Require(EVP_Digest_nid_postfix(invalidInput ? nullptr : "x", 1, output.data() + 1, &length, method, nullptr) == 1);
+        }
+    } catch (const CallbackFailure& failure) {
+        Require(failure.stage == stage);
+        caughtCallback = true;
+    } catch (const std::invalid_argument&) {
+        caughtInput = true;
+    } catch (const ReleaseFailure&) {
+        caughtRelease = true;
+    }
+    checkReleasedData = false;
+    const int expected = !hmac ? 1 : longKey && call == 1 && (stage == FailureStage::Final || stage == FailureStage::Cleanup) ? 1
+        : invalidInput || releaseFailure != 0 ? 3
+        : stage == FailureStage::Init || stage == FailureStage::Update ? std::min(call, 3) : 3;
+    if (recordedAllocations != expected || recordedReleases != expected || liveBlocks != 0) {
+        std::fprintf(stderr, "one-shot digest cleanup failed: hmac=%d stage=%d call=%d allocations=%d releases=%d live=%d\n",
+            hmac, static_cast<int>(stage), call, recordedAllocations, recordedReleases, liveBlocks);
+        Require(false);
+    }
+    Require(std::all_of(liveAllocations.begin(), liveAllocations.end(), [](const LiveAllocation& entry) { return !entry.pointer; }));
+    Require(caughtInput == invalidInput);
+    Require(caughtCallback == (!invalidInput && stage != FailureStage::None));
+    Require(caughtRelease == (!invalidInput && stage == FailureStage::None && releaseFailure != 0));
+    Require(output.front() == 0xa5 && output.back() == 0xa5);
+    if (invalidInput || stage == FailureStage::Init || stage == FailureStage::Update) {
+        Require(std::all_of(output.begin(), output.end(), [](unsigned char byte) { return byte == 0xa5; }));
+        Require(length == 0x12345678);
+    }
+    Require(repeatedFailedCleanup == 0);
+    if (method == &custom) {
+        const int expectedCleanups = !hmac ? 1 : longKey ? stage == FailureStage::None ? 5
+            : stage == FailureStage::Update ? 4 : 1 : stage == FailureStage::Init || stage == FailureStage::Update ? std::min(call, 3)
+            : stage == FailureStage::Final ? call == 1 ? 3 : 4 : stage == FailureStage::Cleanup && call == 1 ? 3 : 4;
+        Require(stageCalls[4] == expectedCleanups);
+    }
+    if (releaseFailure != 0) Require(throwReleaseAfter == 0);
+    Require(ERR_peek_error_nid_postfix() == 0);
+}
+
+static void OneShotCleanup() {
+    CheckOneShotCleanup(true, FailureStage::None, 0, 0, false, true);
+    CheckOneShotCleanup(true, FailureStage::Update, 4, 0, false, true);
+    CheckOneShotCleanup(true, FailureStage::Final, 1, 0, false, true);
+    CheckOneShotCleanup(true, FailureStage::Cleanup, 1, 0, false, true);
+    for (const bool hmac : {false, true}) {
+        CheckOneShotCleanup(hmac, FailureStage::None, 0);
+        CheckOneShotCleanup(hmac, FailureStage::None, 0, 0, true);
+        CheckOneShotCleanup(hmac, FailureStage::None, 0, 1, true);
+        for (const auto stage : {FailureStage::Init, FailureStage::Update, FailureStage::Final, FailureStage::Cleanup}) {
+            const int calls = !hmac ? 1 : stage == FailureStage::Init ? 2 : stage == FailureStage::Update ? 3
+                : stage == FailureStage::Final ? 2 : 4;
+            for (int call = 1; call <= calls; ++call) CheckOneShotCleanup(hmac, stage, call);
+        }
+        CheckOneShotCleanup(hmac, FailureStage::Update, hmac ? 3 : 1, 1);
+        CheckOneShotCleanup(hmac, FailureStage::Cleanup, 1, 1);
+        for (int release = 1; release <= (hmac ? 3 : 1); ++release)
+            CheckOneShotCleanup(hmac, FailureStage::None, 0, release);
+    }
+}
+
 int main() {
     InitializeHeap();
     const std::vector<unsigned char> empty;
@@ -198,13 +363,16 @@ int main() {
           "e37b6a775dc87dbaa4dfa9f96e5e3ffddebd71f8867289865df5a32d20cdc944b6022cac3c4982b10d5eeb55c3e4de15134676fb6de0446065c97440fa8c6a58"}},
     };
 
+    Require(ERR_peek_error_nid_postfix() == 0);
     Require(EVP_MD_size_nid_postfix(nullptr) == -1);
+    RequireQueued(159);
     Require(EVP_md5_nid_postfix() == algorithms[0].md && EVP_sha512_nid_postfix() == algorithms[3].md);
     for (std::size_t i = 0; i < 4; ++i)
         for (std::size_t j = i + 1; j < 4; ++j) Require(algorithms[i].md != algorithms[j].md);
     for (const auto& algorithm : algorithms) {
         Require(algorithm.md != nullptr);
         Require(EVP_MD_size_nid_postfix(algorithm.md) == algorithm.size);
+        Require(ERR_peek_error_nid_postfix() == 0);
         Require(Field<std::int32_t>(algorithm.md, 0) == algorithm.type);
         Require(Field<std::int32_t>(algorithm.md, 4) == algorithm.pkeyType);
         Require(Field<std::int32_t>(algorithm.md, 8) == algorithm.size);
@@ -278,6 +446,7 @@ int main() {
     EVP_MD_CTX_init_nid_postfix(&context);
     Require(AllZero(&context, sizeof(context)));
     Require(EVP_DigestInit_ex_nid_postfix(&context, nullptr, nullptr) == 0);
+    RequireQueued(139);
     RequireThrows([&] { EVP_DigestUpdate_nid_postfix(&context, abc.data(), abc.size()); });
     RequireThrows([&] { EVP_DigestFinal_ex_nid_postfix(&context, nullptr, nullptr); });
     Require(EVP_DigestInit_ex_nid_postfix(&context, sha256, nullptr) == 1);
@@ -315,6 +484,7 @@ int main() {
     Require(EVP_MD_size_nid_postfix(&custom) == 4);
     custom.mdSize = 65;
     Require(EVP_Digest_nid_postfix(bytes, sizeof(bytes), sum, &sumSize, &custom, nullptr) == 0);
+    RequireQueued(164);
 
     HmacContext hmac {};
     const auto* hmacBytes = reinterpret_cast<const unsigned char*>(&hmac);
@@ -329,11 +499,22 @@ int main() {
     Require(HMAC_Init_ex_nid_postfix(&hmac, "Jefe", 4, sha256, nullptr) == 1);
     Require(HMAC_Init_ex_nid_postfix(&hmac, nullptr, 0, md5, nullptr) == 0);
     Require(HMAC_Init_ex_nid_postfix(&hmac, "Jefe", -1, nullptr, nullptr) == 0);
+    RequireQueued(137);
     Require(HMAC_Init_ex_nid_postfix(&hmac, "Jefe", 4, nullptr, nullptr) == 1);
     const auto question = Bytes("what do ya want for nothing?");
     Require(HMAC_Update_nid_postfix(&hmac, question.data(), question.size()) == 1);
     Require(HMAC_Final_nid_postfix(&hmac, mac, &macSize) == 1 && Hex(mac, macSize) == algorithms[1].macs[1]);
     HMAC_CTX_cleanup_nid_postfix(&hmac);
+
+    for (const int block : {129, -1}) {
+        custom.blockSize = block;
+        HMAC_CTX_init_nid_postfix(&hmac);
+        Require(HMAC_Init_ex_nid_postfix(&hmac, "k", 1, &custom, nullptr) == 0);
+        RequireQueued(136);
+        Require(HMAC_Init_ex_nid_postfix(&hmac, nullptr, 0, nullptr, nullptr) == 0);
+        RequireQueued(111);
+        HMAC_CTX_cleanup_nid_postfix(&hmac);
+    }
 
     std::memset(&hmac, 0x33, sizeof(hmac));
     Require(HMAC_Init_nid_postfix(&hmac, "Jefe", 4, md5) == 1);
@@ -372,20 +553,24 @@ int main() {
     EVP_MD_CTX_init_nid_postfix(&context);
     allocationsBeforeFailure = 0;
     Require(EVP_DigestInit_ex_nid_postfix(&context, sha256, nullptr) == 0);
+    RequireQueued(65);
     Require(AllZero(&context, sizeof(context)) && liveBlocks == 0);
     RequireThrows([&] { EVP_DigestUpdate_nid_postfix(&context, abc.data(), abc.size()); });
     RequireThrows([&] { EVP_DigestFinal_ex_nid_postfix(&context, mac, &macSize); });
     Require(DigestInChunks(context, sha256, abc, 1) == algorithms[1].digests[1] && liveBlocks == 1);
     allocationsBeforeFailure = 0;
     Require(EVP_DigestInit_ex_nid_postfix(&context, sha512, nullptr) == 0);
+    RequireQueued(65);
     Require(AllZero(&context, sizeof(context)) && liveBlocks == 0);
     Require(DigestInChunks(context, sha512, abc, 1) == algorithms[3].digests[1] && liveBlocks == 1);
     Require(EVP_MD_CTX_cleanup_nid_postfix(&context) == 1 && liveBlocks == 0);
 
     allocationsBeforeFailure = 0;
     Require(EVP_MD_CTX_create_nid_postfix() == nullptr && liveBlocks == 0);
+    Require(ERR_peek_error_nid_postfix() == 0);
     allocationsBeforeFailure = 0;
     Require(EVP_Digest_nid_postfix(abc.data(), abc.size(), mac, &macSize, sha256, nullptr) == 0 && liveBlocks == 0);
+    RequireQueued(65);
     Require(EVP_Digest_nid_postfix(abc.data(), abc.size(), mac, &macSize, sha256, nullptr) == 1 && Hex(mac, macSize) == algorithms[1].digests[1]);
 
     for (const std::size_t c : {std::size_t(1), std::size_t(4)}) {
@@ -394,6 +579,7 @@ int main() {
             HMAC_CTX_init_nid_postfix(&hmac);
             allocationsBeforeFailure = failure;
             Require(HMAC_Init_ex_nid_postfix(&hmac, key.data(), static_cast<int>(key.size()), sha256, nullptr) == 0);
+            RequireQueued(65);
             Require(allocationsBeforeFailure == -1 && liveBlocks == failure);
             for (const std::size_t offset : {std::size_t(8), std::size_t(56), std::size_t(104)})
                 Require(Field<void*>(&hmac, offset + 24) || (!Field<const void*>(&hmac, offset) && !Field<void*>(&hmac, offset + 40)));
@@ -404,7 +590,9 @@ int main() {
         }
         allocationsBeforeFailure = 2;
         Require(HMAC_nid_postfix(sha256, key.data(), static_cast<int>(key.size()), message.data(), message.size(), mac, &macSize) == nullptr);
+        RequireQueued(65);
         Require(allocationsBeforeFailure == -1 && liveBlocks == 0);
     }
+    OneShotCleanup();
     return 0;
 }

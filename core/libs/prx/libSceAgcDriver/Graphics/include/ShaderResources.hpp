@@ -25,6 +25,7 @@
 #include <vector>
 
 namespace AgcDriver { class VulkanDevice; }
+namespace AgcDriver::GuestMemory { struct WriteSubscription; }
 
 namespace AgcDriver::Graphics {
 
@@ -32,7 +33,29 @@ class Recorder;
 
 void FlushCachedTextures(VkDevice device);
 void ClearCachedTextures(VkDevice device);
+struct WriteIndexOutcomes {
+    std::uint64_t accepted = 0;
+    std::uint64_t partial = 0;
+    std::uint64_t fallback = 0;
+    std::uint64_t bumped = 0;
+    std::uint64_t lookedUp = 0;
+    std::uint64_t rebound = 0;
+    std::uint64_t compared = 0;
+    std::uint64_t builds = 0;
+};
+WriteIndexOutcomes WriteIndexOutcomesCounted();
 std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage = false);
+struct StorageTextureBudgetSnapshot {
+    std::optional<std::uint32_t> heap;
+    std::uint64_t sampledBytes = 0;
+    std::uint64_t storageBytes = 0;
+    std::uint64_t reserved = 0;
+    std::uint64_t available = 0;
+    std::uint64_t ceiling = 0;
+    std::uint64_t selectedBudget = 0;
+};
+
+StorageTextureBudgetSnapshot CalculateStorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes);
 std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory);
 std::uint64_t StorageTextureCeiling(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported);
 std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes);
@@ -159,6 +182,7 @@ struct ImageTableReuseCounts {
     std::uint64_t variantSurfaces = 0;
     std::uint64_t variantSubstituted = 0;
     std::uint64_t variantRejected = 0;
+    std::uint64_t arrayViewsShared = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
 std::uint64_t SampledTexturesCleared();
@@ -370,6 +394,12 @@ public:
         std::uint64_t bytes = 0;
     };
     static CollectRefusals CollectRefusalCounts();
+    struct PendingFails {
+        std::uint64_t foreign = 0;
+        std::uint64_t snapshot = 0;
+        std::uint64_t t1Eligible = 0;
+    };
+    static PendingFails PendingFailCounts();
     static std::array<std::uint64_t, static_cast<std::size_t>(FastFail::Count)> FullWalkNanoseconds();
     // Why a Pending failure was left to the full walk instead of the own-object refresh (T1, see
     // refreshOwnObjects); Count: it was not.
@@ -412,6 +442,8 @@ private:
         int tileMode = 0;
         std::uint64_t dccAddress = 0;
         bool imageTable = false;
+        std::optional<std::array<std::uint32_t, 8>> storedWords;
+        std::uint32_t storedMip = 0;
     };
     std::vector<DescribedRange> describedRanges;
     struct Allocation {
@@ -575,6 +607,9 @@ private:
         const StorageTexture* source = nullptr;
         bool depth = false;
         bool valid = false;
+        std::uint64_t committedGeneration = 0;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> committed;
+        bool committedProved = false;
     };
     bool keepsTemplateRecords() const;
     void captureValidation();
@@ -600,7 +635,36 @@ private:
     // holds; `reason` receives why the proof failed (Count: it passed), `overlapping` the surfaces
     // of a Pending failure in element order (empty otherwise), `accepted` whether a foreign overlap
     // was accepted by either rule (the verify switch then runs the full walk beside the proof).
-    bool fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted);
+    bool fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted, const std::vector<std::size_t>* only = nullptr, bool withStorage = true);
+    enum class IndexOutcome : std::uint8_t { Accepted, Partial, Fallback };
+    IndexOutcome indexRevalidate(std::span<const CompiledShader> shaders, std::uint64_t serialBefore);
+    void subscribeIndex(std::span<const CompiledShader> shaders);
+    void subscribeBuilt(std::span<const CompiledShader> shaders);
+    void noteIndexProof(std::uint64_t generation, std::uint64_t serialBefore);
+    bool reresolveElements(const std::vector<std::size_t>& elements, std::vector<std::size_t>& replacedElements);
+    struct IndexElement {
+        std::array<std::uint32_t, 8> words{};
+        std::uint32_t count = 0;
+        std::optional<ShaderRecompiler::DescriptorImageShape> shape;
+        bool depthCompare = false;
+        bool known = false;
+    };
+    std::shared_ptr<GuestMemory::WriteSubscription> writeSubscription;
+    std::uint64_t subscribedGeneration = 0;
+    std::uint64_t subscribedPendingSerial = 0;
+    std::vector<std::pair<std::uint64_t, std::size_t>> subscribedBlocks;
+    std::vector<std::size_t> perElementTextures;
+    std::vector<std::size_t> comparedTextures;
+    std::vector<std::size_t> depthCopyTextures;
+    std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> comparedTableSpans;
+    std::vector<IndexElement> indexElements;
+    struct ImagePosition {
+        std::size_t texture;
+        std::size_t position;
+        bool table;
+    };
+    std::vector<ImagePosition> indexImagePositions;
+    bool rebound = false;
     // T1 (design_cpu_final M3): brings the overlapping surfaces' own objects up to date exactly as
     // the full walk's lookups would, in the walk's binding order, without the lookups: a storage
     // image's Refresh (which stores the foreign images over its surface first), a view's source's
@@ -680,6 +744,7 @@ private:
     std::optional<std::pair<std::uint64_t, std::size_t>> htileClear;
     std::vector<std::shared_ptr<Texture>> textures;
     std::vector<bool> textureFirstLayer;
+    std::unordered_set<std::size_t> arrayViewTextures;
     std::vector<bool> textureBaseLevel;
     std::vector<bool> textureSrgb;
     std::vector<std::shared_ptr<StorageTexture>> storageTextures;

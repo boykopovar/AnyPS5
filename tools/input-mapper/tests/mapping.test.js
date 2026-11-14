@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {actions, defaults, mouseValues, padButtons, typesForAction} from '../mapping.js';
+import {actions, chordButtons, defaults, emulatorActions, mouseValues, padButtons, typesForAction} from '../mapping.js';
 import {exportableKeys, keyNames} from '../keys.js';
 import {captureKey} from '../capture.js';
 import {parseIni, serialize, settings, validate, validateSettings} from '../validation.js';
@@ -15,7 +15,12 @@ test('action names and pad button categories agree with the current native parse
     assert.deepEqual([...padButtons].sort(), definitions.filter(match => match[2] === 'Button').map(match => match[1]).sort());
     assert.match(source, /SDL_GetScancodeFromName\(keyName\.c_str\(\)\)/u);
     const keyboardOnly = [...source.matchAll(/if \(action\.control == Pad::InputControl::(\w+)\) \{\s*throw std::runtime_error\("\w+ can only use a keyboard key"\);/gu)].map(match => match[1]);
-    assert.deepEqual(actions.filter(action => typesForAction(action).length === 1).sort(), keyboardOnly.sort());
+    assert.deepEqual(actions.filter(action => !typesForAction(action).includes('MOUSE')).sort(), keyboardOnly.sort());
+    const chordActions = source.match(/bool isEmulatorAction[\s\S]*?return true;/u)[0];
+    assert.deepEqual(actions.filter(action => typesForAction(action).includes('PAD')).sort(),
+        [...chordActions.matchAll(/case Pad::InputControl::(\w+):/gu)].map(match => match[1]).sort());
+    const chordNames = source.match(/Pad::PadButton parsePadButton[\s\S]*?throw/u)[0];
+    assert.deepEqual([...chordButtons].sort(), [...chordNames.matchAll(/normalized == "(\w+)"/gu)].map(match => match[1].toUpperCase()).sort().map(name => chordButtons.find(button => button.toUpperCase() === name)));
     assert.match(source, /if \(action\.control != Pad::InputControl::Button\)/u);
 });
 
@@ -159,7 +164,7 @@ test('all exportable SDL names validate and unsafe comment names are rejected', 
 test('mouse values and action restrictions match the current INI format', () => {
     for (const action of actions) {
         for (const value of mouseValues) {
-            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute'].includes(action));
+            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute', 'ReloadInputMapping'].includes(action));
         }
     }
     assert.ok(validate([binding('Cross', 'MOUSE', 'Button1')]).errors.length);
@@ -167,12 +172,12 @@ test('mouse values and action restrictions match the current INI format', () => 
 
 test('wheel directions only map to pad buttons', () => {
     for (const action of actions) {
-        for (const value of ['Up', 'Down']) {
+        for (const value of ['Up', 'Down', 'Left', 'Right']) {
             assert.equal(validate([binding(action, 'WHEEL', value)]).errors.length === 0, padButtons.has(action));
         }
         assert.deepEqual(typesForAction(action).includes('WHEEL'), padButtons.has(action));
     }
-    assert.ok(validate([binding('Cross', 'WHEEL', 'Left')]).errors.length);
+    assert.ok(validate([binding('Cross', 'WHEEL', 'Sideways')]).errors.length);
 });
 
 test('new utility actions import and round trip without accepting unsupported sources', () => {
@@ -190,7 +195,7 @@ test('new utility actions import and round trip without accepting unsupported so
 
 test('ShowPadStatus is a keyboard-only action with an F9 default that conflicts like any built-in', () => {
     assert.deepEqual(defaults.ShowPadStatus, ['KEY:F9']);
-    assert.deepEqual(typesForAction('ShowPadStatus'), ['KEY']);
+    assert.deepEqual(typesForAction('ShowPadStatus'), ['KEY', 'PAD']);
     assert.equal(serialize([binding('ShowPadStatus', 'KEY', 'F4')]), 'ShowPadStatus = KEY:F4\n');
     assert.equal(serialize([binding(' showpadstatus ', 'key', 'f9')]), 'ShowPadStatus = KEY:F9\n');
     for (const [type, value] of [['MOUSE', 'Left'], ['MOUSE', 'X2'], ['WHEEL', 'Up'], ['WHEEL', 'Down']]) {
@@ -272,6 +277,41 @@ test('captured media and browser keys round trip through INI bindings', () => {
     }
 });
 
+test('capture maps additional letters, digits, numpad, function and special keys', () => {
+    const cases = {
+        KeyB: 'B', KeyC: 'C', KeyD: 'D', KeyE: 'E', KeyF: 'F', KeyG: 'G', KeyH: 'H', KeyI: 'I',
+        KeyJ: 'J', KeyK: 'K', KeyL: 'L', KeyM: 'M', KeyN: 'N', KeyO: 'O', KeyP: 'P',
+        KeyR: 'R', KeyS: 'S', KeyT: 'T', KeyU: 'U', KeyV: 'V', KeyW: 'W', KeyX: 'X',
+        KeyY: 'Y', KeyZ: 'Z',
+        Digit0: '0', Digit2: '2', Digit3: '3', Digit4: '4', Digit5: '5', Digit6: '6',
+        Digit7: '7', Digit8: '8', Digit9: '9',
+        Numpad0: 'Keypad 0', Numpad2: 'Keypad 2', Numpad3: 'Keypad 3', Numpad4: 'Keypad 4',
+        Numpad5: 'Keypad 5', Numpad6: 'Keypad 6', Numpad7: 'Keypad 7', Numpad8: 'Keypad 8',
+        Numpad9: 'Keypad 9',
+        F1: 'F1', F2: 'F2', F3: 'F3', F4: 'F4', F5: 'F5', F6: 'F6', F7: 'F7', F8: 'F8',
+        F9: 'F9', F10: 'F10', F11: 'F11', F12: 'F12', F13: 'F13', F14: 'F14', F15: 'F15',
+        F16: 'F16', F17: 'F17', F18: 'F18', F19: 'F19', F20: 'F20', F21: 'F21', F22: 'F22',
+        F23: 'F23',
+        Minus: '-', BracketLeft: '[', BracketRight: ']', Quote: "'", Backquote: '`',
+        Comma: ',', Period: '.', Slash: '/',
+        CapsLock: 'CapsLock', PrintScreen: 'PrintScreen', ScrollLock: 'ScrollLock', Pause: 'Pause',
+        Insert: 'Insert', Home: 'Home', PageUp: 'PageUp', Delete: 'Delete', End: 'End', PageDown: 'PageDown',
+        ArrowRight: 'Right', ArrowLeft: 'Left', ArrowDown: 'Down',
+        NumLock: 'Numlock',
+        NumpadDivide: 'Keypad /', NumpadMultiply: 'Keypad *', NumpadSubtract: 'Keypad -',
+        NumpadAdd: 'Keypad +', NumpadDecimal: 'Keypad .', NumpadEqual: 'Keypad =', NumpadComma: 'Keypad ,',
+        ContextMenu: 'Application',
+        ControlRight: 'Right Ctrl', ShiftLeft: 'Left Shift', ShiftRight: 'Right Shift',
+        AltLeft: 'Left Alt', MetaLeft: 'Left GUI', MetaRight: 'Right GUI',
+    };
+    for (const [code, value] of Object.entries(cases)) assert.deepEqual(captureKey({code, key: 'ignored'}), {value}, code);
+});
+
+test('capture rejects out-of-range function keys and numpad keys', () => {
+    assert.match(captureKey({code: 'F25'}).error, /This physical key cannot be captured/);
+    assert.match(captureKey({code: 'Numpad10'}).error, /This physical key cannot be captured/);
+});
+
 test('capture rejects missing identifiers, composition and unsafe punctuation', () => {
     for (const event of [{code: 'Unidentified'}, {key: 'a'}, {code: 'IntlBackslash'}, {code: 'Semicolon'}, {code: 'KeyA', isComposing: true}, {code: 'Quote', key: 'Dead'}, {code: 'KeyA', key: 'Process'}]) {
         assert.ok(captureKey(event).error);
@@ -295,4 +335,25 @@ test('extended keypad editing and memory keys capture and round trip', () => {
     }
     assert.deepEqual(captureKey({code: 'Backspace'}), {value: 'Backspace'});
     assert.deepEqual(captureKey({code: 'NumLock'}), {value: 'Numlock'});
+});
+
+test('PAD chords for emulator actions import, normalize and export like the native parser reads them', () => {
+    const result = parseIni('Screenshot = PAD:L1+R1\nToggleFullscreen = pad: r1 + options \nVolumeUp = PAD:TouchPad\n');
+    assert.deepEqual(result.errors, []);
+    assert.deepEqual(result.entries, [binding('Screenshot', 'PAD', 'L1+R1'), binding('ToggleFullscreen', 'PAD', 'R1+Options'),
+        binding('VolumeUp', 'PAD', 'TouchPad')]);
+    assert.equal(serialize(result.entries), 'ToggleFullscreen = PAD:R1+Options\nScreenshot = PAD:L1+R1\nVolumeUp = PAD:TouchPad\n');
+    for (const action of emulatorActions) assert.deepEqual(validate([binding(action, 'PAD', 'Options+Cross')]).errors, []);
+    for (const source of ['Cross = PAD:L1', 'RightStickUp = PAD:L1', 'ToggleMouse = PAD:L1', 'Screenshot = PAD:', 'Screenshot = PAD:L1+',
+        'Screenshot = PAD:L1++R1', 'Screenshot = PAD:L4', 'Screenshot = PAD:Share']) {
+        assert.deepEqual(parseIni(source).errors.map(error => error.line), [1], source);
+    }
+});
+
+test('PAD chords with the same buttons are one binding, as the native parser compares button masks', () => {
+    const result = parseIni('Screenshot = PAD:L1+R1\nScreenshot = PAD:R1+L1+l1\n');
+    assert.deepEqual(result.entries, [binding('Screenshot', 'PAD', 'L1+R1')]);
+    assert.equal(result.warnings.length, 1);
+    assert.match(validate([binding('Screenshot', 'PAD', 'L1+R1'), binding('VolumeUp', 'PAD', 'R1+L1')]).warnings[0].message,
+        /^PAD:L1\+R1 controls Screenshot and VolumeUp\.$/u);
 });

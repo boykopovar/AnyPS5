@@ -20,6 +20,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -573,6 +574,13 @@ void CheckSigreturn() {
     _mm_setcsr(savedMxcsr);
 }
 
+void CheckReboot() {
+    for (const int options : {std::numeric_limits<std::int32_t>::min(), -1, 0, 1, 2, 0x10000, std::numeric_limits<std::int32_t>::max()}) {
+        *__error_nid_postfix() = 73;
+        Require(reboot_nid_postfix(options) == -1 && Error() == 1);
+    }
+}
+
 void CheckSchedSetscheduler() {
     const Pthread self = scePthreadSelf();
     int savedPolicy = 0;
@@ -861,8 +869,11 @@ void CheckAmmMapperCalls() {
     param.fill(0xAAAAAAAAAAAAAAAAull);
     param[0] = 0x10;
     Require(sceKernelMapperGetParam(param.data()) == 0 && param[0] == 0x38 && param[1] == start && param[2] == 0xAAAAAAAAAAAAAAAAull);
+    param.fill(0xAAAAAAAAAAAAAAAAull);
     param[0] = 0x30;
-    Require(MapperCallThrows([&] { sceKernelMapperGetParam(param.data()); }));
+    Require(sceKernelMapperGetParam(param.data()) == 0 && param[5] == 0 && param[6] == 0xAAAAAAAAAAAAAAAAull);
+    param[0] = 0x38;
+    Require(sceKernelMapperGetParam(param.data()) == 0 && param[5] == 0 && param[6] == 0);
 
     std::array<std::uint8_t, 64> commands{};
     std::uint64_t bytes = 0;
@@ -1130,7 +1141,9 @@ static void CheckProcessQueries() {
         Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 3, nullptr) == static_cast<int>(0x8002000E));
     }
     Require(sceKernelGetProcessType(getpid_nid_postfix()) == 0);
-    Require(sceKernelGetProcessType(-1) == 0 && sceKernelGetProcessType(0) == 0);
+    Require(sceKernelGetProcessType(-1) == 0);
+    Require(sceKernelGetProcessType(0) == static_cast<int>(0x80020002));
+    Require(sceKernelGetProcessType(1) == static_cast<int>(0x80020002));
     Require(sceKernelGetProcessType(getpid_nid_postfix() + 1) == static_cast<int>(0x80020003));
 }
 
@@ -1235,6 +1248,85 @@ void CheckUnsupportedPathconf(F fn, int descriptor) {
         Require(fn(descriptor, name) == -1 && Error() == 45);
 }
 
+void CheckRawGetcwdErrors() {
+    std::array<char, 4096> previous{};
+    Require(getcwd_nid_postfix(previous.data(), previous.size()) == previous.data());
+    const std::string directory = "anyps5-getcwd-errors-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(mkdirat_nid_postfix(-100, directory.c_str(), 0755) == 0);
+    Require(chdir_nid_postfix(directory.c_str()) == 0);
+    std::array<char, 4096> expected{};
+    Require(getcwd_nid_postfix(expected.data(), expected.size()) == expected.data());
+    const std::size_t length = std::strlen(expected.data());
+    Require(length >= 2);
+
+    std::array<char, 4096> buffer;
+    buffer.fill('#');
+    Require(__getcwd_nid_postfix(buffer.data(), length) == -1 && Error() == 12);
+    Require(buffer[0] == '#');
+    Require(__getcwd_nid_postfix(buffer.data(), length + 1) == 0);
+    Require(std::strcmp(buffer.data(), expected.data()) == 0);
+
+    Require(__getcwd_nid_postfix(nullptr, 0) == -1 && Error() == 22);
+    Require(__getcwd_nid_postfix(nullptr, 1) == -1 && Error() == 22);
+    Require(__getcwd_nid_postfix(buffer.data(), (std::size_t{1} << 32) + 1) == -1 && Error() == 22);
+
+    GuardedPaths guards;
+    Require(__getcwd_nid_postfix(guards.Unreadable(), buffer.size()) == -1 && Error() == 14);
+    Require(__getcwd_nid_postfix(guards.Crossing(), buffer.size()) == -1 && Error() == 14);
+
+    Require(chdir_nid_postfix(previous.data()) == 0);
+    Require(unlinkat_nid_postfix(-100, directory.c_str(), 0x800) == 0);
+}
+
+#ifndef _WIN32
+void CheckRawGetcwdPathLimit() {
+    std::array<char, 4096> previous{};
+    Require(getcwd_nid_postfix(previous.data(), previous.size()) == previous.data());
+    const std::string root = "anyps5-getcwd-limit-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(mkdirat_nid_postfix(-100, root.c_str(), 0755) == 0);
+    Require(chdir_nid_postfix(root.c_str()) == 0);
+    std::array<char, 4096> current{};
+    Require(getcwd_nid_postfix(current.data(), current.size()) == current.data());
+    std::size_t length = std::strlen(current.data());
+    const std::string component(200, 'd');
+    std::size_t depth = 0;
+    while (1024 - length > 256) {
+        Require(mkdirat_nid_postfix(-100, component.c_str(), 0755) == 0);
+        Require(chdir_nid_postfix(component.c_str()) == 0);
+        length += component.size() + 1;
+        ++depth;
+    }
+
+    std::array<char, 4096> buffer;
+    for (const std::size_t target : {std::size_t{1023}, std::size_t{1024}}) {
+        const std::string leaf(target - length - 1, target == 1023 ? 'a' : 'b');
+        Require(mkdirat_nid_postfix(-100, leaf.c_str(), 0755) == 0);
+        Require(chdir_nid_postfix(leaf.c_str()) == 0);
+        Require(getcwd_nid_postfix(current.data(), current.size()) == current.data());
+        Require(std::strlen(current.data()) == target);
+        buffer.fill('#');
+        if (target == 1023) {
+            Require(__getcwd_nid_postfix(buffer.data(), buffer.size()) == 0);
+            Require(std::strcmp(buffer.data(), current.data()) == 0 && buffer[1024] == '#');
+        } else {
+            Require(__getcwd_nid_postfix(buffer.data(), buffer.size()) == -1 && Error() == 12);
+            Require(std::all_of(buffer.begin(), buffer.end(), [](char c) { return c == '#'; }));
+            Require(__getcwd_nid_postfix(nullptr, buffer.size()) == -1 && Error() == 12);
+        }
+        Require(chdir_nid_postfix("..") == 0);
+        Require(unlinkat_nid_postfix(-100, leaf.c_str(), 0x800) == 0);
+    }
+    for (; depth > 0; --depth) {
+        Require(chdir_nid_postfix("..") == 0);
+        Require(unlinkat_nid_postfix(-100, component.c_str(), 0x800) == 0);
+    }
+    Require(chdir_nid_postfix(previous.data()) == 0);
+    Require(unlinkat_nid_postfix(-100, root.c_str(), 0x800) == 0);
+}
+#endif
+
 void CheckRawGetcwd() {
     std::array<char, 4096> expected{};
     Require(getcwd_nid_postfix(expected.data(), expected.size()) == expected.data());
@@ -1245,7 +1337,7 @@ void CheckRawGetcwd() {
     Require(buffer[std::strlen(expected.data()) + 1] == '#');
 
     std::array<char, 1> shortBuffer{'#'};
-    Require(__getcwd_nid_postfix(shortBuffer.data(), shortBuffer.size()) == -1 && Error() == 34);
+    Require(__getcwd_nid_postfix(shortBuffer.data(), shortBuffer.size()) == -1 && Error() == 22);
     Require(shortBuffer[0] == '#');
     Require(__getcwd_nid_postfix(buffer.data(), 0) == -1 && Error() == 22);
     Require(__getcwd_nid_postfix(nullptr, buffer.size()) == -1 && Error() == 14);
@@ -1300,6 +1392,10 @@ int main() {
 #endif
     Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
+    CheckRawGetcwdErrors();
+#ifndef _WIN32
+    CheckRawGetcwdPathLimit();
+#endif
     CheckRawGetcwd();
     CheckKqueueFromEqueue();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
@@ -1319,6 +1415,7 @@ int main() {
     CheckAmmWrittenWaitsRun();
     CheckAmmMapperCalls();
     CheckAmmWaitConcurrentSubmits();
+    CheckReboot();
     CheckSchedSetscheduler();
     CheckSigreturn();
     CheckKernelEnvironment();
@@ -1665,6 +1762,27 @@ int main() {
     lookup.name = "symbol";
     for (const int missing : {-2147483647 - 1, 1, 2, 3, 100, 2147483647}) {
         Require(kldsym_nid_postfix(missing, 1, &lookup) == -1 && Error() == 2);
+    }
+    Require(swapon_nid_postfix(nullptr) == -1 && Error() == 14);
+    Require(swapon_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && Error() == 14);
+    Require(swapon_nid_postfix("") == -1 && Error() == 2);
+    Require(swapon_nid_postfix((root / "missing").string().c_str()) == -1 && Error() == 2);
+    Require(swapon_nid_postfix((root / "file.txt" / "child").string().c_str()) == -1 && Error() == 20);
+    Require(swapon_nid_postfix((root / std::string(256, 'n')).string().c_str()) == -1 && Error() == 63);
+    Require(swapon_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
+    Require(swapon_nid_postfix(file.c_str()) == -1 && Error() == 15);
+    Require(swapon_nid_postfix(root.string().c_str()) == -1 && Error() == 15);
+    const auto swapFileLink = (root / "swap-file.link").string();
+    const auto swapDirectoryLink = (root / "swap-directory.link").string();
+    const auto swapDangling = (root / "swap-dangling.link").string();
+    if (symlink_nid_postfix("file.txt", swapFileLink.c_str()) == 0) {
+        Require(symlink_nid_postfix(".", swapDirectoryLink.c_str()) == 0);
+        Require(symlink_nid_postfix("swap-missing", swapDangling.c_str()) == 0);
+        Require(swapon_nid_postfix(swapFileLink.c_str()) == -1 && Error() == 15);
+        Require(swapon_nid_postfix(swapDirectoryLink.c_str()) == -1 && Error() == 15);
+        Require(swapon_nid_postfix(swapDangling.c_str()) == -1 && Error() == 2);
+        Require(unlink_nid_postfix(swapFileLink.c_str()) == 0 && unlink_nid_postfix(swapDangling.c_str()) == 0);
+        Require(std::filesystem::remove(swapDirectoryLink));
     }
     const std::string throughFile = (root / "file.txt" / "child").string();
     Require(pathconf_nid_postfix(throughFile.c_str(), 4) == -1 && Error() == 20);
@@ -2113,12 +2231,25 @@ int main() {
     Require(fchown_nid_postfix(-1, 1, 0) == -1 && Error() == 9);
     Require(fchown_nid_postfix(-1, 0, 1) == -1 && Error() == 9);
     Require(fchown_nid_postfix(-1, 1, 1) == -1 && Error() == 9);
+    const int fchownKqueueDescriptor = kqueue_nid_postfix();
+    Require(fchownKqueueDescriptor >= 0);
+    Require(fchown_nid_postfix(fchownKqueueDescriptor, 0, 0) == -1 && Error() == 22);
+    Require(close_nid_postfix(fchownKqueueDescriptor) == 0);
     bool fchownThrew = false;
     try { fchown_nid_postfix(base, 1, 0); } catch (const std::exception&) { fchownThrew = true; }
     Require(fchownThrew);
     fchownThrew = false;
     try { fchown_nid_postfix(base, 0, 1); } catch (const std::exception&) { fchownThrew = true; }
     Require(fchownThrew);
+    const int owned = sceKernelOpen(file.c_str(), SCE_KERNEL_O_RDONLY, 0);
+    Require(owned >= 0);
+    FileStat owner{};
+    Require(fstat_nid_postfix(owned, &owner) == 0);
+    Require(owner.st_uid == static_cast<std::uint32_t>(geteuid_nid_postfix()) && owner.st_gid == static_cast<std::uint32_t>(getegid_nid_postfix()));
+    Require(fchown_nid_postfix(owned, owner.st_uid, owner.st_gid) == 0);
+    Require(stat_nid_postfix(file.c_str(), &owner) == 0 && owner.st_uid == 0 && owner.st_gid == 0);
+    Require(fstat_nid_postfix(base, &owner) == 0 && owner.st_uid == 0 && owner.st_gid == 0);
+    Require(sceKernelClose(owned) == 0);
     FileStat stat{};
     Require(fstatat_nid_postfix(base, "file.txt", &stat, 0) == 0 && (stat.st_mode & 0170000) == 0100000 && stat.st_size == 1);
     Require(fstatat_nid_postfix(base, "other_dir", &stat, 0) == 0 && (stat.st_mode & 0170000) == 0040000);

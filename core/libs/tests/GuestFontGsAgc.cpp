@@ -2,6 +2,7 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libSceFont/libSceFont.hpp"
 #include "prx/libSceFontGs.native/libSceFontGs.native.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -227,6 +228,9 @@ void AgcDrawupImage() {
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 16830.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 0.0f, 0.0f, -4.0f, 8.0f) == InvalidParameter);
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 0.0f, 0.0f, 8.0f, -4.0f) == InvalidParameter);
+        errno = 71;
+        Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, reinterpret_cast<void**>(0x10), 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
+        Require(errno == 71 && f.object.head == nullptr);
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 0.0f, 0.0f, 16834.0f, 16834.0f) == 0);
         Require(out != nullptr);
         const auto* firstRecord = static_cast<const TestDrawupRecord*>(out);
@@ -265,6 +269,9 @@ void AgcDrawupPattern() {
         Require(out == nullptr);
         Require(g_errorCount == before);
         f.surface.initialized = 1;
+        errno = 71;
+        Require(sceFontGraphicsAgcDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, reinterpret_cast<void**>(0x10)) == InvalidParameter);
+        Require(errno == 71 && f.object.head == nullptr);
         Require(sceFontGraphicsAgcDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == 0);
         Require(out != nullptr);
         const auto* record = static_cast<const TestDrawupRecord*>(out);
@@ -329,6 +336,15 @@ void AgcSequences() {
         sequence.commands = nullptr;
         Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, &out2, &count2) == Fatal);
         sequence.commands = saved;
+        auto* const badPointer = reinterpret_cast<void**>(0x10);
+        auto* const badCount = reinterpret_cast<std::uint32_t*>(0x10);
+        errno = 71;
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, badPointer, &count, &out2, &count2) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, badCount, &out2, &count2) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, badPointer, &count2) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, &out2, badCount) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(nullptr, badPointer, nullptr, nullptr, nullptr) == InvalidParameter);
+        Require(errno == 71);
         Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, &out2, &count2) == 0);
         Require(out == firstData && count == 8 && out2 == secondData && count2 == 3);
         Require(g_errorCount == before);
@@ -347,6 +363,11 @@ void AgcSequences() {
         sequence.lock = 1;
         Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(seq, &out, &count) == SequenceLocked);
         sequence.lock = 0;
+        errno = 71;
+        Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(seq, reinterpret_cast<void**>(0x10), &count) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(seq, &out, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(nullptr, reinterpret_cast<void**>(0x10), nullptr) == InvalidParameter);
+        Require(errno == 71);
         Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(seq, &out, &count) == 0);
         Require(out == firstData && count == 0x20);
         Require(g_errorCount == before);
