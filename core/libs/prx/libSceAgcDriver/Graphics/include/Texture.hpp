@@ -866,6 +866,7 @@ private:
     bool pendingFromOthers = false;
     std::vector<DrawnRect> drawnRects;
     std::vector<std::uint64_t> storeNotes;
+    std::vector<std::uint64_t> flushNotes;
     std::uint64_t writtenFlip = 0;
     std::atomic<bool> writtenOccasionally{false};
     std::uint64_t version = 0;
