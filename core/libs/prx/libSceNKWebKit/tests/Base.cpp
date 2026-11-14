@@ -1903,6 +1903,36 @@ static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient21didRunInsecureContentERNS_14SecurityOriginERKN3WTF3URLE();
     _ZN7WebCore22EmptyFrameLoaderClient23dispatchDidReceiveTitleERKNS_19StringWithDirectionE();
     _ZN7WebCore22EmptyFrameLoaderClient36transitionToCommittedFromCachedFrameEPNS_11CachedFrameE();
+
+    const auto reportsNotImplemented = [](const char* symbol, auto call) {
+        try {
+            call();
+        } catch (const std::runtime_error& error) {
+            const std::string expected = std::string(symbol) + " not implemented";
+            if (expected == error.what()) {
+                std::fprintf(stderr, "NotImplemented: %s\n", symbol);
+            } else {
+                std::fprintf(stderr, "Unexpected exception for %s: %s\n", symbol, error.what());
+            }
+            return true;
+        }
+        return false;
+    };
+
+    const bool assignIdentifier = reportsNotImplemented(
+        "_ZN7WebCore22EmptyFrameLoaderClient32assignIdentifierToInitialRequestEmPNS_14DocumentLoaderERKNS_15ResourceRequestE",
+        [] { _ZN7WebCore22EmptyFrameLoaderClient32assignIdentifierToInitialRequestEmPNS_14DocumentLoaderERKNS_15ResourceRequestE(); });
+    const bool updateCachedLoader = reportsNotImplemented(
+        "_ZN7WebCore22EmptyFrameLoaderClient26updateCachedDocumentLoaderERNS_14DocumentLoaderE",
+        [] { _ZN7WebCore22EmptyFrameLoaderClient26updateCachedDocumentLoaderERNS_14DocumentLoaderE(); });
+    const bool unableToImplementPolicy = reportsNotImplemented(
+        "_ZN7WebCore22EmptyFrameLoaderClient31dispatchUnableToImplementPolicyERKNS_13ResourceErrorE",
+        [] { _ZN7WebCore22EmptyFrameLoaderClient31dispatchUnableToImplementPolicyERKNS_13ResourceErrorE(); });
+    const bool setTitle = reportsNotImplemented(
+        "_ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE",
+        [] { _ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE(); });
+
+    Require(!assignIdentifier && !updateCachedLoader && !unableToImplementPolicy && !setTitle);
 }
 
 template <typename Function>

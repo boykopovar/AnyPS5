@@ -1490,7 +1490,7 @@ int APS5_VABI _ZN7WebCore10ISOFullBoxD2Ev();
 int APS5_VABI _ZN7WebCore11DisplayList4ItemD1Ev();
 int APS5_VABI _ZN7WebCore11DisplayList14DrawingContextC1ERKNS_9FloatSizeEPNS0_8Recorder8ObserverE();
 int APS5_VABI _ZN7Nicosia5Scene5StateD2Ev();
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient32assignIdentifierToInitialRequestEmPNS_14DocumentLoaderERKNS_15ResourceRequestE();
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient32assignIdentifierToInitialRequestEmPNS_14DocumentLoaderERKNS_15ResourceRequestE();
 int APS5_VABI _ZN7WebCore4PathC1EOS0_();
 int APS5_VABI _ZN7WebCore33pageConfigurationWithEmptyClientsEN3PAL9SessionIDE();
 int APS5_VABI WKViewPaintToCurrentGLContext();
