@@ -535,10 +535,10 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FQuadph`, `_FRint`, `_FSincos`, `_FTan`, `_FTgamma`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fac_tidy`, `_Fail_s`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Atan`, `_Atqexit`, `_Atthreadexit`, `_CStrftime`, `_CStrxfrm`, `_CWcsxfrm`, `_Closreg`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Deletegloballocale`, `_Dtento`, `_Erfc`, `_FAtan`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FDtento`, `_FErfc`, `_FHypot`, `_FLogpoly`, `_FPlsw`, `_FPmsw`, `_FPow`, `_FQuad`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FQuadph`, `_FRint`, `_FSincos`, `_FTan`, `_FTgamma`, `_FXp_addh`, `_FXp_addx`, `_FXp_invx`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FXp_ldexpx`, `_FXp_movx`, `_FXp_mulh`, `_FXp_mulx`, `_FXp_setn`, `_FXp_setw`, `_FXp_sqrtx`, `_FXp_subx`, `_Fac_tidy`, `_Fail_s`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Deletegloballocale`, `_Erfc`, `_FAtan`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FErfc`, `_FHypot`, `_FLogpoly`, `_FPlsw`, `_FPmsw`, `_FPow`, `_FQuad`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FQuadph`, `_FRint`, `_FSincos`, `_FTan`, `_FTgamma`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fac_tidy`, `_Fail_s`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fgpos`, `_Fofind`, `_Fofree`, `_Fopen`, `_Foprep`, `_Frprep`, `_Fspos`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fwprep`, `_Genld`, `_Gentime`, `_Getcloc`, `_Getctyptab`, `_Getdst`, `_Getfld`, `_Getfloat`, `_Getgloballocale`
 - [_Geterrno](../../../core/libs/prx/libSceLibcInternal/Err.cpp) (libSceLibcInternal) was not compared with the console's `libSceLibcInternal.sprx` and no title was seen calling it. The `int*(void)` prototype is the one the Dinkumware `<errno.h>` declares behind its `errno` macro, taken from that header's public description and not from a linked copy. It returns the calling thread's errno slot of `libc.prx`, the pointer `__error` returns; whether the console's module keeps an errno of its own is unverified
