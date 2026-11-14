@@ -496,6 +496,38 @@ class PreparationTests(unittest.TestCase):
         self.assertIn("| テスト | PPSA00001 |", stdout)
         self.assertIn(f"written to {out.resolve()}", stdout)
 
+    def test_json_comparison_is_the_only_output_on_stdout(self):
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        titles = self.root / "titles.json"
+        titles.write_text(json.dumps({"PPSA00001": {"files": {"app0/pak0.pak": {"content": "pak0.pak"}}}}), encoding="utf-8")
+        previous = self.root / "previous.json"
+        previous.write_text(json.dumps(summary({"PPSA00001": {"name": "Game", "version": "01.000.000", "runs": [run("rendering", fps=30.0)]}})),
+                            encoding="utf-8")
+
+        def prepare(title_id, found, entry, platform, build, work):
+            work.mkdir(parents=True, exist_ok=True)
+            (work / "relink.log").write_text("", encoding="utf-8")
+            return work / title_id
+
+        def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
+            return {"outcome": "exited", "exit_code": 0, "seconds": 0.1, "presents": 0, "fps": 0.0, "first_error": "", "warnings": {},
+                    "frames": [], "report": None, "os": "", "gpu": "", "driver": "", "cpu": ""}
+
+        out = self.root / "out"
+        with tempfile.TemporaryFile("w+", encoding="utf-8") as stdout, tempfile.TemporaryFile("w+", encoding="utf-8") as stderr:
+            with unittest.mock.patch.object(title_run, "prepare", side_effect=prepare), \
+                    unittest.mock.patch.object(title_run, "run_title", side_effect=run_title), \
+                    unittest.mock.patch("sys.stdout", stdout), unittest.mock.patch("sys.stderr", stderr):
+                title_run.main(["--games", str(self.root / "games"), "--out", str(out), "--build", str(self.root / "build"), "--titles", str(titles),
+                                "--runs", "2", "--compare", str(previous), "--json", "PPSA00001"])
+            stdout.seek(0)
+            stderr.seek(0)
+            printed, progress = stdout.read(), stderr.read()
+        self.assertEqual(json.loads(printed)["titles"]["PPSA00001"]["fps"], {"before": 30.0, "now": 0.0})
+        self.assertIn("PPSA00001: --content lacks pak0.pak; running without\n", progress)
+        self.assertIn("PPSA00001 run1: exited\nPPSA00001 run2: exited\n", progress)
+        self.assertIn(f"written to {out.resolve()}", progress)
+
 
 def wait_until(condition, seconds=10):
     deadline = time.monotonic() + seconds
