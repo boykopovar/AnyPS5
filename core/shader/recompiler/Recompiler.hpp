@@ -808,6 +808,7 @@ public:
     }
 
     [[nodiscard]] std::span<const std::uint32_t> Words() const { return holder ? holder->Words() : std::span<const std::uint32_t>{}; }
+    [[nodiscard]] bool Mapped() const { return holder != nullptr && holder->owner != nullptr; }
     [[nodiscard]] SpirvContentHash ContentHash() const {
         if (holder == nullptr) return {};
         if (holder->hashed.load(std::memory_order_acquire)) return {holder->hashLow.load(std::memory_order_relaxed), holder->hashHigh.load(std::memory_order_relaxed)};
