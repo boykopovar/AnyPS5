@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libSceFont/libSceFont.hpp"
@@ -10,7 +11,12 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-#if defined(__unix__) || defined(__linux__) || defined(__APPLE__)
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <sys/mman.h>
 #endif
 
@@ -307,6 +313,66 @@ void GnmDrawupPattern() {
         Require(record->state == 1);
         Require(record->mode == 0x22);
     }
+    {
+        DrawupFixture f;
+        auto* frame = reinterpret_cast<FontGraphicsFrame*>(&f.frame);
+        alignas(void*) std::uint8_t buffer[16];
+        std::memset(buffer, 0xaa, sizeof(buffer));
+        auto** outPtr = reinterpret_cast<void**>(buffer);
+        Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, outPtr) == 0);
+        Require(*outPtr != nullptr);
+        for (std::size_t i = sizeof(void*); i < sizeof(buffer); ++i) {
+            Require(buffer[i] == 0xaa);
+        }
+        std::memset(buffer, 0x55, sizeof(buffer));
+        Require(sceFontGraphicsGnmDrawupFillTexturePattern(nullptr, nullptr, 1, 2, 3, 4, 5, 6, outPtr) == InvalidParameter);
+        Require(*outPtr == nullptr);
+        for (std::size_t i = sizeof(void*); i < sizeof(buffer); ++i) {
+            Require(buffer[i] == 0x55);
+        }
+    }
+    {
+        DrawupFixture f;
+        auto* frame = reinterpret_cast<FontGraphicsFrame*>(&f.frame);
+#ifdef _WIN32
+        void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(page != nullptr);
+#else
+        void* page = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED);
+#endif
+        static void* targetPage = nullptr;
+        static int writeCount = 0;
+        targetPage = page;
+        writeCount = 0;
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch([](std::uintptr_t addr, std::size_t) {
+            if (addr == reinterpret_cast<std::uintptr_t>(targetPage)) {
+                ++writeCount;
+                if (writeCount == 2) {
+#ifdef _WIN32
+                    DWORD oldProtect;
+                    VirtualProtect(targetPage, 4096, PAGE_READONLY, &oldProtect);
+#else
+                    mprotect(targetPage, 4096, PROT_READ);
+#endif
+                }
+            }
+        });
+        errno = 71;
+        const int error = sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, static_cast<void**>(page));
+        Require(error == InvalidParameter);
+        Require(errno == 71);
+        Require(writeCount == 2);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+#ifdef _WIN32
+        DWORD oldProtect;
+        VirtualProtect(page, 4096, PAGE_READWRITE, &oldProtect);
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        mprotect(page, 4096, PROT_READ | PROT_WRITE);
+        munmap(page, 4096);
+#endif
+    }
 }
 
 void GnmSequences() {
@@ -346,6 +412,16 @@ void GnmSequences() {
         Require(sceFontGraphicsSequenceGetGnmCommandsForChain(seq, &out, &count, &out2, &count2) == 0);
         Require(out == firstData && count == 8 && out2 == secondData && count2 == 3);
         Require(g_errorCount == before + 6 && g_lastError == Fatal);
+        count = 0xcccc;
+        out2 = reinterpret_cast<void*>(0xbeef);
+        count2 = 0xdddd;
+        errno = 71;
+        Require(sceFontGraphicsSequenceGetGnmCommandsForChain(seq, reinterpret_cast<void**>(0x10), &count, &out2, &count2) ==
+                InvalidParameter);
+        Require(errno == 71);
+        Require(g_errorCount == before + 6);
+        Require(count == 0 && out2 == nullptr && count2 == 0);
+        errno = 0;
     }
     {
         void* out = reinterpret_cast<void*>(0xdead);
@@ -364,6 +440,13 @@ void GnmSequences() {
         Require(sceFontGraphicsSequenceGetGnmCommandsForSubmit(seq, &out, &count) == 0);
         Require(out == firstData && count == 0x20);
         Require(g_errorCount == before + 4 && g_lastError == SequenceLocked);
+        out = reinterpret_cast<void*>(0xdead);
+        errno = 71;
+        Require(sceFontGraphicsSequenceGetGnmCommandsForSubmit(seq, &out, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidParameter);
+        Require(errno == 71);
+        Require(g_errorCount == before + 4);
+        Require(out == nullptr);
+        errno = 0;
     }
 }
 

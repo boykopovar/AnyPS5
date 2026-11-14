@@ -63,14 +63,14 @@ class ConfigureSeedStdoutTests(unittest.TestCase):
                     configure_seed.main(args)
                 self.assertEqual(error.exception.code, 2)
 
-    @unittest.skipUnless(shutil.which("cmake"), "CMake is required for the seed round trip")
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required for the seed round trip")
     def test_stdout_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             seed = root / "seed.cmake"
             seed.write_text(self.stdout_seed(root)[1], encoding="utf-8")
             (root / "CMakeLists.txt").write_text('cmake_minimum_required(VERSION 3.20)\nproject(seed NONE)\nfile(WRITE "${CMAKE_BINARY_DIR}/value" "${KEEP}")\n')
-            subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build"), "-C", str(seed)], check=True, capture_output=True)
+            subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build"), "-G", "Ninja", "-C", str(seed)], check=True, capture_output=True)
             self.assertEqual((root / "build/value").read_text(), 'semi;quote"dollar$\\path')
 
     def test_stdout_include_and_exclude_are_applied_independently(self):

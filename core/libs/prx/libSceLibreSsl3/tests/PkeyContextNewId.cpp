@@ -58,6 +58,7 @@ void* APS5_VABI Realign_nid_no_patch(void*, std::size_t, std::size_t) { throw st
 int APS5_VABI PosixAlign_nid_no_patch(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned allocation"); }
 
 constexpr std::uint64_t EvpCode(std::uint64_t reason) { return 0x06fff000ULL | reason; }
+constexpr std::uint64_t EcKeysNotSet = 0x10fff08cULL;
 
 void ExpectError(std::uint64_t code) {
     Require(ERR_get_error_nid_postfix() == code);
@@ -124,6 +125,26 @@ void RsaPssContext() {
     Require(allocations.empty());
 }
 
+void EcContext() {
+    auto* context = EVP_PKEY_CTX_new_id_nid_postfix(LibreSsl3PkeyEc, Engine());
+    Require(context != nullptr);
+    Require(context->method == FindNativePkeyMethod_nid_no_patch(LibreSsl3PkeyEc));
+    Require(context->key == nullptr);
+    Require(context->peerKey == nullptr);
+    Require(context->operation == LibreSsl3PkeyOperationUndefined);
+    Require(context->data == nullptr);
+    Require(allocations.size() == 1);
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(EVP_PKEY_derive_init_nid_postfix(context) == 1);
+    Require(context->operation == LibreSsl3PkeyOperationDerive);
+    std::size_t length = 0;
+    Require(EVP_PKEY_derive_nid_postfix(context, nullptr, &length) == 0);
+    Require(length == 0);
+    ExpectError(EcKeysNotSet);
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    Require(allocations.empty());
+}
+
 void EngineIgnored() {
     auto* context = EVP_PKEY_CTX_new_id_nid_postfix(LibreSsl3PkeyRsa, Engine());
     RequireFreshContext(context, LibreSsl3PkeyRsa, LibreSsl3RsaPaddingPkcs1);
@@ -148,7 +169,7 @@ void UnsupportedKeyTypes() {
 }
 
 void LibreSslMethodsWithoutNativeContext() {
-    for (const int keyType : {894, 28, 116, 408, 952, 1022, 855, 1055, 950}) {
+    for (const int keyType : {894, 28, 116, 952, 1022, 855, 1055, 950}) {
         Require(Throws([&] { EVP_PKEY_CTX_new_id_nid_postfix(keyType, nullptr); }));
         Require(ERR_get_error_nid_postfix() == 0);
         Require(allocations.empty());
@@ -182,6 +203,7 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
     RsaContext();
     RsaPssContext();
+    EcContext();
     EngineIgnored();
     UndefinedKeyType();
     UnsupportedKeyTypes();

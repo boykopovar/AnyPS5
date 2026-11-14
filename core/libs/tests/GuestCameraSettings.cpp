@@ -259,6 +259,14 @@ void CheckConfig() {
         Require(extension.formatLevel[0] == 0 && extension.formatLevel[1] == 4 && extension.formatLevel[3] == 4, "the default formats are wrong");
         Require(extension.resolution == 0 && extension.framerate == 60 && extension.width == 0 && extension.baseOption == nullptr, "the default mode is wrong");
     }
+    errno = 71;
+    Require(sceCameraGetConfig(1, reinterpret_cast<CameraConfig*>(0x10)) == ErrorParam, "an unwritable config pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable config pointer");
+    alignas(16) CameraConfig getConfigBuffer[3];
+    std::memset(getConfigBuffer, 0x5a, sizeof(getConfigBuffer));
+    getConfigBuffer[1] = SizedConfig();
+    Require(sceCameraGetConfig(1, &getConfigBuffer[1]) == 0, "reading config to buffer failed");
+    Require(getConfigBuffer[0].sizeThis == 0x5a5a5a5a && getConfigBuffer[1].sizeThis == sizeof(CameraConfig) && getConfigBuffer[1].configType == 1 && getConfigBuffer[2].sizeThis == 0x5a5a5a5a, "adjacent memory was corrupted");
     Require(sceCameraSetConfig(1, &config) == ErrorNotConnected, "a new configuration must report NOT_CONNECTED");
     Require(sceCameraSetConfigInternal(1, &config) == ErrorNotConnected, "an internal configuration must report NOT_CONNECTED");
     config = SizedConfig();
@@ -274,6 +282,14 @@ void CheckConfig() {
     Require(configBuffer[0].sizeThis == 0x5a5a5a5a && configBuffer[1].sizeThis == sizeof(CameraConfig) && configBuffer[2].sizeThis == 0x5a5a5a5a, "adjacent memory was corrupted");
     config = SizedConfig();
     Require(sceCameraGetDeviceConfigWithoutHandle(&config) == 0 && config.sizeThis == 0 && config.configType == 0, "the handleless device configuration must be cleared");
+    errno = 71;
+    Require(sceCameraGetDeviceConfigWithoutHandle(reinterpret_cast<CameraConfig*>(0x10)) == ErrorParam, "an unwritable handleless device config pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable handleless device config pointer");
+    alignas(16) CameraConfig handlelessBuffer[3];
+    std::memset(handlelessBuffer, 0x5a, sizeof(handlelessBuffer));
+    handlelessBuffer[1] = SizedConfig();
+    Require(sceCameraGetDeviceConfigWithoutHandle(&handlelessBuffer[1]) == 0, "reading handleless device config to buffer failed");
+    Require(handlelessBuffer[0].sizeThis == 0x5a5a5a5a && handlelessBuffer[1].sizeThis == 0 && handlelessBuffer[2].sizeThis == 0x5a5a5a5a, "adjacent memory was corrupted");
     config = SizedConfig();
     config.sizeThis = 96;
     Require(sceCameraGetConfig(1, &config) == ErrorParam && sceCameraSetConfig(1, &config) == ErrorParam, "a configuration of the wrong size must be rejected");
