@@ -146,7 +146,18 @@ static void TimedMutex() {
     void* mutex = CreateMutex(tryable);
     Xtime future = RelativeTime(60000);
     Require(_Mtx_timedlock_nid_postfix(&mutex, &future) == success);
-    Require(_Mtx_timedlock_nid_postfix(&mutex, &future) == busy);
+    const auto start = std::chrono::steady_clock::now();
+    Xtime shortDeadline = RelativeTime(100);
+    Require(_Mtx_timedlock_nid_postfix(&mutex, &shortDeadline) == timedout);
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(90));
+    void* plainOwned = CreateMutex(plain);
+    Require(_Mtx_lock_nid_postfix(&plainOwned) == success);
+    const auto plainStart = std::chrono::steady_clock::now();
+    Xtime plainDeadline = RelativeTime(100);
+    Require(_Mtx_timedlock_nid_postfix(&plainOwned, &plainDeadline) == timedout);
+    Require(std::chrono::steady_clock::now() - plainStart >= std::chrono::milliseconds(90));
+    Require(_Mtx_unlock_nid_postfix(&plainOwned) == success);
+    _Mtx_destroy_nid_postfix(&plainOwned);
     Require(_Mtx_unlock_nid_postfix(&mutex) == success);
 
     Require(_Mtx_lock_nid_postfix(&mutex) == success);

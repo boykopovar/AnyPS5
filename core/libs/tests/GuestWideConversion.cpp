@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -100,6 +101,26 @@ static void CheckDinkumwareConversions() {
     CheckConversion<long double>(_WStold_nid_postfix, u"-2.5e1", 3, -25000.0L, 6, 0, "_WStold scales by a power of ten");
 }
 
+template<typename TFloat>
+static void CheckDinkumwareNoConversion(TFloat (APS5_VABI *parse)(const char16_t*, char16_t**, std::int64_t)) {
+    const struct { const char16_t* text; bool negative; } cases[]{
+        {u"", false}, {u" ", false}, {u"z", false}, {u"+", false}, {u"+z", false},
+        {u"-", true}, {u"-z", true}, {u" \t-.", true}, {u"-i", false}, {u"-n", false},
+        {u"-+1", true}, {u"--1", true}, {u"- 5", true}, {u"\t-.", true}, {u"-\u3000", true}
+    };
+    for (const auto& test : cases) {
+        for (const std::int64_t scale : {std::int64_t{0}, std::int64_t{-10}, std::int64_t{10}, std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max()}) {
+            for (const int saved : {0, ERANGE, 97}) for (const bool nullEnd : {false, true}) {
+                char16_t* end = nullptr;
+                *__error_nid_postfix() = saved;
+                const TFloat value = parse(test.text, nullEnd ? nullptr : &end, scale);
+                Require(value == 0 && std::signbit(value) == test.negative, "Dinkumware no-conversion zero sign");
+                Require((nullEnd || end == test.text) && *__error_nid_postfix() == saved, "Dinkumware no-conversion end and errno");
+            }
+        }
+    }
+}
+
 static void CheckClassification() {
     int (APS5_VABI* const classes[])(std::uint32_t) = {
         iswalnum_nid_postfix, iswalpha_nid_postfix, iswcntrl_nid_postfix, iswdigit_nid_postfix,
@@ -122,8 +143,8 @@ static void CheckClassification() {
     Require(_Iswctype_nid_postfix(u'a', 6) != 0 && _Iswctype_nid_postfix(u'a', 10) == 0, "_Iswctype lower and upper");
     Require(_Iswctype_nid_postfix(0x7f, 3) != 0 && _Iswctype_nid_postfix(u'!', 8) != 0, "_Iswctype cntrl and punct");
     Require(_Iswctype_nid_postfix(0xe9, 2) == 0 && _Iswctype_nid_postfix(0x3042, 1) == 0, "_Iswctype C locale has no non-ASCII letters");
-    Require(Throws([] { _Iswctype_nid_postfix(u'a', 0); }), "_Iswctype throws for class 0");
-    Require(Throws([] { _Iswctype_nid_postfix(u'a', 13); }), "_Iswctype throws for class 13");
+    Require(_Iswctype_nid_postfix(u'a', 0) == 0, "_Iswctype is false for class 0");
+    Require(_Iswctype_nid_postfix(u'a', 13) == 0, "_Iswctype is false for class 13");
     Require(Throws([] { _Iswctype_nid_postfix(u'a', 0x100); }), "_Iswctype throws for a rune mask");
 }
 
@@ -428,6 +449,9 @@ int main() {
     CheckShortCharacterFields();
     CheckStoul();
     CheckDinkumwareConversions();
+    CheckDinkumwareNoConversion(_WStod_nid_postfix);
+    CheckDinkumwareNoConversion(_WStof_nid_postfix);
+    CheckDinkumwareNoConversion(_WStold_nid_postfix);
     CheckClassification();
     CheckScan();
     CheckUnsizedScan();

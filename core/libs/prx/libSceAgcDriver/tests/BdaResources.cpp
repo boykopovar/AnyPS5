@@ -134,6 +134,7 @@ void snapshotTableTests(const Context& context, const BdaTestAccess& access) {
             Require(a.memory->CachedAddressTable()->serial == b.memory->CachedAddressTable()->serial && c.memory->CachedAddressTable()->serial != a.memory->CachedAddressTable()->serial, "cached BDA table serials do not follow the build's ranges");
         }
         ClearSnapshotCopies(importing.device);
+        ClearUploadCopies(importing.device);
         auto e = build(first, false, true, snapshotAddress);
         Require(e.snapshot != a.snapshot, "a snapshot copy outlived the teardown of its device's copies");
         for (auto* item : {&a, &b, &c, &d, &e, &plain}) item->memory->WriteBack();
@@ -161,6 +162,7 @@ void snapshotTableTests(const Context& context, const BdaTestAccess& access) {
         for (auto& item : builds) item.memory->WriteBack();
     }
     ClearSnapshotCopies(importing.device);
+    ClearUploadCopies(importing.device);
     change(false);
     ::operator delete(block, std::align_val_t{piece});
 }
@@ -307,6 +309,7 @@ void fixedReadOnlyRangeMirrorTests(const Context& context, const BdaTestAccess& 
     upload(copying, reinterpret_cast<std::uintptr_t>(block), 64, false, 0, "a guest buffer inside a releasable read-only allocation is mirrored as a fixed range");
     registry(false);
     ClearSnapshotCopies(copying.device);
+    ClearUploadCopies(copying.device);
     ::operator delete(block, std::align_val_t{page});
     std::cout << "a guest buffer inside the main image's read-only pages is bound through a fixed mirror; one in the image's writable pages or in a releasable allocation is copied\n";
 }
@@ -732,6 +735,54 @@ void importJoinTests(const Context& context) {
     change(guest, large, false);
     change(guest + 2 * large, large, false);
     Require(HostImportFor(importing, first, 16) == nullptr && HostImportFor(importing, third, 16) == nullptr, "the host imports outlived their ranges");
+    SetHostImportWindow(0);
+    ::operator delete(block, std::align_val_t{window});
+}
+
+void importJoinLargeFirstTests(const Context& context) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = 2 * piece;
+    constexpr std::size_t large = 3 * piece;
+    void* block = ::operator new(large + 4 * piece, std::align_val_t{window});
+    auto* guest = static_cast<std::uint8_t*>(block);
+    std::memset(guest, 0x22, large + 4 * piece);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(window);
+    const auto change = [&](std::uint8_t* range, std::size_t bytes, bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, bytes, true, false, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, range);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto bind = [&](std::uintptr_t address, std::size_t bytes) {
+        GuestBufferMemory plain(importing);
+        plain.AddReadable(address, bytes);
+        plain.Upload(false);
+        std::uint32_t adjustment = 0;
+        const auto view = plain.Descriptor(address, bytes, adjustment);
+        const auto copied = plain.CopiedBytes();
+        plain.WriteBack();
+        return std::pair{view.buffer, copied};
+    };
+    const auto end = first + large;
+    change(guest, large, true);
+    change(guest + large, piece, true);
+    change(guest + large + piece, piece, true);
+    change(guest + large + 2 * piece, piece, true);
+    const auto farCopied = bind(end - 16, 16 + 2 * piece + 16).second;
+    Require(farCopied != 0 && HostImportFor(importing, end - 16, 2 * piece + 32) == nullptr, "a buffer bound from inside a range larger than the import window across more than a window of small ranges was joined");
+    change(guest + large + piece, piece, false);
+    change(guest + large + 2 * piece, piece, false);
+    const auto [joinedBuffer, joinedCopied] = bind(end - 16, 32);
+    const auto* joined = HostImportFor(importing, end - 16, 32);
+    Require(joined != nullptr && joined->base == first && joined->bytes == large + piece && joinedBuffer == joined->buffer && joinedCopied == 0, "a buffer bound from inside a range larger than the import window into the small range after it was not imported over both");
+    const auto [again, againCopied] = bind(end - 16, 32);
+    Require(again == joinedBuffer && againCopied == 0, "a later bind across the joined ranges did not use the joined import");
+    change(guest + large, piece, false);
+    change(guest, large, false);
+    Require(HostImportFor(importing, first, 16) == nullptr && HostImportFor(importing, end, 16) == nullptr, "the host imports outlived their ranges");
     SetHostImportWindow(0);
     ::operator delete(block, std::align_val_t{window});
 }
@@ -4293,6 +4344,7 @@ void RunHeapMirrorUnwatchTests(const Context& context, const BdaTestAccess& acce
     ClearImageMirrors(importing.device);
     ClearHostImports(importing.device);
     ClearSnapshotCopies(importing.device);
+    ClearUploadCopies(importing.device);
 #ifndef _WIN32
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pieces[0].pointer, heapBytes);
 #endif
@@ -4367,6 +4419,7 @@ void RunSparseHeapMirrorUnwatchTests(const Context& context, const BdaTestAccess
     registry(false);
     ClearImageMirrors(context.device);
     ClearSnapshotCopies(context.device);
+    ClearUploadCopies(context.device);
 #ifdef _WIN32
     GuestArena::GuestArenaReset_nid_postfix(guest, reserved);
     GuestArena::GuestArenaRelease_nid_postfix(guest, reserved);
@@ -4424,6 +4477,7 @@ void RunSparseHeapMirrorBudgetTests(const Context& context, const BdaTestAccess&
     registry(false);
     ClearImageMirrors(context.device);
     ClearSnapshotCopies(context.device);
+    ClearUploadCopies(context.device);
 #ifdef _WIN32
     GuestArena::GuestArenaReset_nid_postfix(guest, reserved);
     GuestArena::GuestArenaRelease_nid_postfix(guest, reserved);
@@ -4485,6 +4539,7 @@ void RunHeapMirrorReferenceSizeTests(const Context& context, const BdaTestAccess
     registry(false);
     ClearImageMirrors(context.device);
     ClearSnapshotCopies(context.device);
+    ClearUploadCopies(context.device);
 #ifdef _WIN32
     GuestArena::GuestArenaReset_nid_postfix(guest, heapBytes);
     GuestArena::GuestArenaRelease_nid_postfix(guest, heapBytes);
@@ -4560,6 +4615,7 @@ void RunHeapMirrorRunUnwatchTests(const Context& context, const BdaTestAccess& a
     registry(false);
     ClearImageMirrors(context.device);
     ClearSnapshotCopies(context.device);
+    ClearUploadCopies(context.device);
 #ifdef _WIN32
     GuestArena::GuestArenaReset_nid_postfix(guest, allocated);
     GuestArena::GuestArenaRelease_nid_postfix(guest, allocated);
@@ -4688,6 +4744,7 @@ void RunAddressCopyCapTests(const Context& context, const BdaTestAccess& access,
     ClearImageMirrors(importing.device);
     ClearHostImports(importing.device);
     ClearSnapshotCopies(importing.device);
+    ClearUploadCopies(importing.device);
 #ifndef _WIN32
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pieces[0].pointer, heapBytes);
 #endif
@@ -4787,6 +4844,7 @@ void RunAddressCopyCapMirrorTests(const Context& context, const BdaTestAccess& a
     ClearImageMirrors(importing.device);
     ClearHostImports(importing.device);
     ClearSnapshotCopies(importing.device);
+    ClearUploadCopies(importing.device);
 #ifndef _WIN32
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pieces[1].pointer, mirroredBytes);
 #endif
@@ -4878,6 +4936,7 @@ void RunUnwatchedMirrorImportTests(const Context& context, const BdaTestAccess& 
     ClearImageMirrors(importing.device);
     ClearHostImports(importing.device);
     ClearSnapshotCopies(importing.device);
+    ClearUploadCopies(importing.device);
 #ifndef _WIN32
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pieces[1].pointer, rangeBytes);
 #endif
@@ -5484,6 +5543,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     spaceWriteMergedPastImportTests(context, access);
     spaceReadOverWritableImportTableTests(context);
     importJoinTests(context);
+    importJoinLargeFirstTests(context);
     importWindowKeepsJoinTests(context);
     importCoverageHintBudgetTests(context, access);
     failedImportJoinProbeBudgetTests(context, access);
@@ -5556,4 +5616,5 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     const auto heapCopies = AddressCopyOverflow({{0x10000, 0x30000, 0x18000, nullptr, true, true}, {0x40000, 0x50000, 0x10000, nullptr, true, false}}, 0x2000);
     Require(heapCopies.find("0x10000+0x20000 (0.1 MiB committed, import over the host import budget, heap not fully write-watched)") != std::string::npos && heapCopies.find("0x40000+0x10000 (0.1 MiB committed, heap not fully write-watched)") != std::string::npos, "the copy limit does not name a copied heap's reason");
     ClearSnapshotCopies(context.device);
+    ClearUploadCopies(context.device);
 }
