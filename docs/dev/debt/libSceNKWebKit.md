@@ -61,6 +61,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF::Logger exports](../../../core/libs/prx/libSceNKWebKit/src/WtfLogger.cpp) have no console ABI or behavior verification. They follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Logger.cpp). A null `self`, a null method name or an oversized string throws instead of reproducing the upstream crash. Closes when: compared with a console module.
 
 - [WebCore::Process identifier](../../../core/libs/prx/libSceNKWebKit/src/WebCoreProcess.cpp) (libSceNKWebKit) - the generation-protection check is not modelled: in firmware 13.42 `identifier()` (`0x207100`) crashes before generating when the byte at `0x3369ef8` is 1, and no store to that byte by address was found in the module's code, so what sets it is unknown. The object-identifier counter it draws from is shared in the module with the `HistoryItem` constructors, seven other exports and internal code, none of which is implemented, so identifiers are unique only among implemented callers. The rest follows `system_ex/common_ex/lib/libSceNKWebKit.sprx` 13.42 (SHA-256 `e63acdc164592330a287cf6914c265336b27a357098a449c1609f8f82e104409`; `setIdentifier` at `0x2e3bb0`), read from disassembly, not run. Closes when: measured on a console.
+- [WebCore static state flags](../../../core/libs/prx/libSceNKWebKit/src/PlatformKeyboardEvent.cpp) (libSceNKWebKit) - not compared with a console module. The [console exception](../../../core/libs/prx/libSceNKWebKit/src/PageConsoleClient.cpp) and [audio session](../../../core/libs/prx/libSceNKWebKit/src/PlatformMediaSessionManager.cpp) flags start false and keep the last value set. `getCurrentModifierState` always reports every modifier released, because the PlayStation [currentStateOfModifierKeys](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/libwpe/PlatformKeyboardEventLibWPE.cpp#L1349-L1352) returns the empty set; the modifier set stored by `setCurrentModifierState` is never read. The older `Process::setIdentifier` mangling forwards to the [ObjectIdentifierGeneric export](../../../core/libs/prx/libSceNKWebKit/src/WebCoreProcess.cpp).
 
 - [WTF ICU string transforms](../../../core/libs/prx/libSceNKWebKit/src/WtfStringIcu.cpp) (libSceNKWebKit) - locale case mapping, `String::foldCase` and `normalizedNFC` are not compared with a console module; non-ASCII text goes through `libSceIcu`, whose Unicode data may differ from the console's. `const AtomString&` is read as a pointer to an 8-byte `String` and `StringViewWithUnderlyingString` as a 24-byte `StringView` and `String` pair, per the pinned headers; console layouts are unverified. Behaviour follows [StringImpl.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringImpl.cpp#L351-L689) and [StringView.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringView.cpp#L277-L312). Null references, null characters with a nonzero length, a failing index past the end or on a 16-bit string, and ICU normalizer errors throw where the source asserts.
 - [PAL::fileSizeDescription](../../../core/libs/prx/libSceNKWebKit/src/PalFileSizeFormatter.cpp) (libSceNKWebKit) - not compared with a console module: the device's WebKit revision is unverified. It follows the non-Cocoa branch of pinned WebKit [FileSizeFormatter.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/PAL/pal/FileSizeFormatter.cpp#L35-L46): below 1000 the decimal size and ` bytes`, otherwise `size / 1000.`, `size / 1000000.` or `size / 1000000000.` to one decimal place with ` KB`, ` MB` or ` GB`, formatted by the existing `NumberToFixedWidthString`. The [PS5 11.x source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/PAL/pal/FileSizeFormatter.cpp#L35-L46) returns an `AtomString` from `makeAtomString`; this returns a plain 8-bit `String` that is not in the atom table. Closes when: compared with a console module.
@@ -2765,8 +2766,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore17PageConsoleClient10countResetEPN3JSC14JSGlobalObjectERKN3WTF6StringE` | `lvw1tvNIyoU` |
 | `_ZN7WebCore17PageConsoleClient10profileEndEPN3JSC14JSGlobalObjectERKN3WTF6StringE` | `WCMjIvYqQl8` |
 | `_ZN7WebCore17PageConsoleClient16takeHeapSnapshotEPN3JSC14JSGlobalObjectERKN3WTF6StringE` | `8WH4Pm72J5A` |
-| `_ZN7WebCore17PageConsoleClient21shouldPrintExceptionsEv` | `rbRlgPbLAMY` |
-| `_ZN7WebCore17PageConsoleClient24setShouldPrintExceptionsEb` | `3A1eJRAF6Ic` |
 | `_ZN7WebCore17PageConsoleClient4muteEv` | `iq7Iszogzis` |
 | `_ZN7WebCore17PageConsoleClient4timeEPN3JSC14JSGlobalObjectERKN3WTF6StringE` | `A-ZO370RoSA` |
 | `_ZN7WebCore17PageConsoleClient5countEPN3JSC14JSGlobalObjectERKN3WTF6StringE` | `n-tHH4IKZFM` |
@@ -3215,7 +3214,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore21PageOverlayController32copyAccessibilityAttributesNamesEb` | `eioBaGW46xA` |
 | `_ZN7WebCore21PageOverlayController43copyAccessibilityAttributeBoolValueForPointEN3WTF6StringENS_10FloatPointERb` | `2ZkjWav84Zs` |
 | `_ZN7WebCore21PageOverlayController45copyAccessibilityAttributeStringValueForPointEN3WTF6StringENS_10FloatPointERS2_` | `-Ih6ikmQLbE` |
-| `_ZN7WebCore21PlatformKeyboardEvent23getCurrentModifierStateERbS1_S1_S1_` | `MqLM8CBC9FM` |
 | `_ZN7WebCore21RemoteCommandListener6createERNS_27RemoteCommandListenerClientE` | `x1AP-G3h75A` |
 | `_ZN7WebCore21SQLiteDatabaseTracker24hasTransactionInProgressEv` | `caM6qseCSfI` |
 | `_ZN7WebCore21SQLiteDatabaseTracker35decrementTransactionInProgressCountEv` | `PoPlzSr6JaQ` |
@@ -3516,11 +3514,9 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore27PlatformMediaSessionManager22processSystemWillSleepEv` | `hsNxIw6p60g` |
 | `_ZN7WebCore27PlatformMediaSessionManager24removeAudioCaptureSourceERNS_20PlatformMediaSession18AudioCaptureSourceE` | `xbH8wKcAz6o` |
 | `_ZN7WebCore27PlatformMediaSessionManager26applicationDidBecomeActiveEv` | `4rNrGeXUMCU` |
-| `_ZN7WebCore27PlatformMediaSessionManager28shouldDeactivateAudioSessionEv` | `Y248zKEoozw` |
 | `_ZN7WebCore27PlatformMediaSessionManager29applicationDidEnterBackgroundEb` | `ZlTzqRRuq7o` |
 | `_ZN7WebCore27PlatformMediaSessionManager29applicationWillBecomeInactiveEv` | `xbsFHrTpdoc` |
 | `_ZN7WebCore27PlatformMediaSessionManager30applicationWillEnterForegroundEb` | `Aw3HmCDPjnw` |
-| `_ZN7WebCore27PlatformMediaSessionManager31setShouldDeactivateAudioSessionEb` | `ej7wlPeKlro` |
 | `_ZN7WebCore27PlatformMediaSessionManager32setIsPlayingToAutomotiveHeadUnitEb` | `kYgNNhsYnJA` |
 | `_ZN7WebCore27withinTextUnitOfGranularityERKNS_15VisiblePositionENS_15TextGranularityENS_18SelectionDirectionE` | `3M4Zu3TOlcI` |
 | `_ZN7WebCore28BackingStoreBackendCairoImplC1ERKNS_7IntSizeEf` | `h3up3fILBXA` |

@@ -27,3 +27,7 @@ extern "C" void APS5_VABI _ZN7WebCore7Process13setIdentifierEN3WTF23ObjectIdenti
     processIdentifierSet.store(true);
     processIdentifier.store(identifier);
 }
+
+extern "C" void APS5_VABI _ZN7WebCore7Process13setIdentifierEN3WTF16ObjectIdentifierINS_21ProcessIdentifierTypeEEE(std::uint64_t identifier) {
+    _ZN7WebCore7Process13setIdentifierEN3WTF23ObjectIdentifierGenericINS_21ProcessIdentifierTypeENS1_38ObjectIdentifierMainThreadAccessTraitsEEE(identifier);
+}
