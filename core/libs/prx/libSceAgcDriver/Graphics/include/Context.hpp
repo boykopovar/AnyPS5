@@ -318,6 +318,7 @@ struct Context {
     bool imageViewMinLod = false;
     bool shaderResourceMinLod = false;
     bool shaderImageMinLod = false;
+    bool samplerLodBias = true;
     bool pipelineExecutableInfo = false;
     bool maintenance8 = false;
     bool pushDescriptors = false;

@@ -386,6 +386,7 @@ private:
         append(key, value.meshWindowBuffer);
         append(key, value.hostInterpolationFirst);
         append(key, value.shaderImageMinLod);
+        append(key, value.samplerLodBias);
         append(key, value.float16WidenNans);
         append(key, value.float16NarrowNans);
     }
