@@ -387,6 +387,7 @@ if(BUILD_TESTING)
         set_tests_properties(tools_compile_plan PROPERTIES TIMEOUT 20)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
+        set_tests_properties(export_gap unwrap_self audit_dump PROPERTIES TIMEOUT 30)
         add_test(NAME forced_include_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_forced_include_paths.py
             --cmake "${CMAKE_COMMAND}" --compiler "${CMAKE_CXX_COMPILER}"
