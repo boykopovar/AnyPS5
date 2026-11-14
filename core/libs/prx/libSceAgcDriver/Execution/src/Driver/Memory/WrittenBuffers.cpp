@@ -21,10 +21,11 @@ template<typename TVisit>
 void visitWrittenBuffers(const ShaderRecompiler::RecompileResult& compiled, TVisit&& visit, const ShaderRecompiler::HeapStageWords* heap = nullptr) {
     for (const auto& binding : compiled.bindings) {
         if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
-        for (std::uint32_t element = 0; element < binding.count; ++element) {
-            const auto& guestWords = Graphics::DrawGuestWords(compiled, heap, binding);
+        const auto& guestWords = Graphics::DrawGuestWords(compiled, heap, binding);
+        const auto elements = std::min<std::size_t>(binding.count, guestWords.size() / 4);
+        for (std::uint32_t element = 0; element < elements; ++element) {
             const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
-            if (!written || guestWords.size() < (static_cast<std::size_t>(element) + 1) * 4) continue;
+            if (!written) continue;
             const auto words = std::span<const std::uint32_t>(guestWords).subspan(static_cast<std::size_t>(element) * 4, 4);
             const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
             const auto base = descriptor.Base48();
