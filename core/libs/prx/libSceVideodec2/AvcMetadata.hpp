@@ -33,15 +33,10 @@ struct Sps {
     std::string unsupported;
 };
 
-struct Pps {
-    unsigned sps = 0;
-    std::vector<std::uint8_t> bytes;
-    std::string unsupported;
-};
-
 struct State {
     std::array<std::optional<Sps>, 32> sps;
-    std::array<std::optional<Pps>, 256> pps;
+    std::array<std::optional<unsigned>, 256> pps;
+    std::optional<unsigned> activeSps;
     std::string unsupported;
 };
 
