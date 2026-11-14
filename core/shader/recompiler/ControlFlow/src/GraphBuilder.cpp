@@ -214,7 +214,7 @@ bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJu
         if (load.op != RdnaOpcode::SLoadDwordx2) {
             if (load.op == RdnaOpcode::SWaitcnt) continue;
             if (load.family == RdnaInstructionFamily::VOP1 || load.family == RdnaInstructionFamily::VOP2 ||
-                load.family == RdnaInstructionFamily::VOP3 || load.family == RdnaInstructionFamily::VOPC) {
+                load.family == RdnaInstructionFamily::VOP3 || load.family == RdnaInstructionFamily::VOPC || load.family == RdnaInstructionFamily::VINTRP) {
                 if (load.destination.kind != RdnaOperandKind::ScalarRegister && load.destination2.kind != RdnaOperandKind::ScalarRegister) continue;
             }
             return false;
@@ -224,17 +224,19 @@ bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJu
         ++loadedHigh.reg;
         if (!addsRegister(low, pcReg, load.destination) || !addsRegister(high, pcReg + 1u, loadedHigh)) return false;
         if (pcReg <= loadedHigh.reg && load.destination.reg <= pcReg + 1u) return false;
-        const auto& basePc = program.instructions[loadIndex - 3u];
-        const auto& baseLow = program.instructions[loadIndex - 2u];
-        const auto& baseHigh = program.instructions[loadIndex - 1u];
+        const auto baseReg = load.source0.reg;
+        std::uint32_t baseHighIndex = 0;
+        if (!findLastWriter(program, loadIndex, {baseReg, baseReg + 1u}, baseHighIndex) || baseHighIndex < 2u) return false;
+        const auto& basePc = program.instructions[baseHighIndex - 2u];
+        const auto& baseLow = program.instructions[baseHighIndex - 1u];
+        const auto& baseHigh = program.instructions[baseHighIndex];
         const auto offsetReg = scalarIndex(load.source1);
         std::uint32_t shiftIndex = 0, boundIndex = 0;
         if (offsetReg == NoScalarRegister ||
-            !findLastWriter(program, loadIndex - 3u, {offsetReg}, shiftIndex) ||
+            !findLastWriter(program, loadIndex, {offsetReg}, shiftIndex) ||
             !findLastWriter(program, shiftIndex, {offsetReg}, boundIndex)) return false;
         const auto& shift = program.instructions[shiftIndex];
         const auto& bound = program.instructions[boundIndex];
-        const auto baseReg = load.source0.reg;
         std::uint32_t displacement = 0, carry = 0, shiftAmount = 0, maximum = 0;
         if (basePc.op != RdnaOpcode::SGetpcB64 || !isRegister(basePc.destination, RdnaOperandKind::ScalarRegister, baseReg) ||
             baseLow.op != RdnaOpcode::SAddU32 || !addsImmediate(baseLow, baseReg, displacement) ||
@@ -244,14 +246,15 @@ bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJu
             bound.op != RdnaOpcode::SMinU32 || !sameRegister(bound.destination, load.source1) ||
             !sameRegister(bound.source0, load.source1) || !isImmediate(bound.source1, maximum) || maximum > 255u) return false;
         if (load.source1.kind == RdnaOperandKind::ScalarRegister && load.source1.reg >= baseReg && load.source1.reg <= baseReg + 1u) return false;
+        const auto firstProgramCounter = std::min(basePc.programCounter, bound.programCounter);
         for (const auto& instruction : program.instructions) {
-            if (IsDirectBranchOpcode(instruction.op) && instruction.branchTarget > bound.programCounter && instruction.branchTarget <= branch.programCounter) return false;
+            if (IsDirectBranchOpcode(instruction.op) && instruction.branchTarget > firstProgramCounter && instruction.branchTarget <= branch.programCounter) return false;
         }
         const std::uint64_t table = static_cast<std::uint64_t>(instructionEndProgramCounter(basePc)) + displacement + load.memoryOffset;
         const std::uint64_t byteCount = (static_cast<std::uint64_t>(maximum) + 1u) * 8u;
         if ((table & 3u) != 0u || table > program.code.size_bytes() || byteCount > program.code.size_bytes() - table) return false;
         result.load.programCounter = load.programCounter;
-        result.firstProgramCounter = bound.programCounter;
+        result.firstProgramCounter = firstProgramCounter;
         for (std::uint32_t entry = 0; entry <= maximum; ++entry) {
             const auto word = static_cast<std::size_t>(table / 4u) + entry * 2u;
             const std::uint64_t value = program.code[word] | (static_cast<std::uint64_t>(program.code[word + 1u]) << 32u);
