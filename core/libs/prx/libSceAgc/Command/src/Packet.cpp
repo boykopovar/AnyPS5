@@ -2,10 +2,13 @@
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -53,6 +56,11 @@ std::uint32_t available(const CommandBuffer& buffer, const char* function) {
     return static_cast<std::uint32_t>(count - buffer.reserved_dw);
 }
 
+std::recursive_mutex& allocationLock(const CommandBuffer* buffer) {
+    static std::array<std::recursive_mutex, 64> locks;
+    return locks[(reinterpret_cast<std::uintptr_t>(buffer) >> 4u) % locks.size()];
+}
+
 }
 
 void Reserve(CommandBuffer* buffer, std::uint32_t count, const char* function) {
@@ -66,6 +74,7 @@ void Reserve(CommandBuffer* buffer, std::uint32_t count, const char* function) {
 }
 
 std::uint32_t* Allocate(CommandBuffer* buffer, std::uint32_t count, const char* function) {
+    const std::lock_guard serialized(allocationLock(buffer));
     Reserve(buffer, count, function);
     auto* result = buffer->cursor_up;
     AgcDriverPrepareCommandWrite_nid_no_patch(reinterpret_cast<std::uint64_t>(result), static_cast<std::size_t>(count) * sizeof(std::uint32_t));
