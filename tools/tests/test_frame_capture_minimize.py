@@ -117,6 +117,18 @@ raise SystemExit(7 if failed else 0)
             self.assertEqual([chunk.get("name", chunk["kind"]) for chunk in minimized["chunks"]], ["range", "trigger"])
             self.assertIn("final predicate confirmed 2 times", stdout.getvalue())
 
+    def test_cli_reports_a_non_ascii_output_path_as_utf8(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments, _, _, output = self.empty_cli(root, output=root / "界" / "result")
+            stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                result = frame_capture_minimize.main(arguments)
+                stdout.flush()
+            self.assertEqual(result, 0, stderr.getvalue())
+            self.assertIn(f"wrote {output};", stdout.buffer.getvalue().decode("utf-8"))
+
     def test_cli_refuses_to_reduce_when_the_baseline_does_not_match(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

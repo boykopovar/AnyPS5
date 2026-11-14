@@ -13,9 +13,13 @@ static double D(std::uint64_t bits) { return std::bit_cast<double>(bits); }
 static float F(std::uint32_t bits) { return std::bit_cast<float>(bits); }
 
 static long double X(std::uint16_t signExponent, std::uint64_t mantissa) {
+    volatile std::uint64_t runtimeMantissa = mantissa;
+    volatile std::uint16_t runtimeSignExponent = signExponent;
+    const std::uint64_t storedMantissa = runtimeMantissa;
+    const std::uint16_t storedSignExponent = runtimeSignExponent;
     long double value = 0;
-    std::memcpy(&value, &mantissa, sizeof(mantissa));
-    std::memcpy(reinterpret_cast<unsigned char*>(&value) + 8, &signExponent, sizeof(signExponent));
+    std::memcpy(&value, &storedMantissa, sizeof(storedMantissa));
+    std::memcpy(reinterpret_cast<unsigned char*>(&value) + 8, &storedSignExponent, sizeof(storedSignExponent));
     return value;
 }
 
