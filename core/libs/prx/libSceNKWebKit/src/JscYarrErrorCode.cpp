@@ -1,4 +1,4 @@
-// Derived from Source/JavaScriptCore/yarr/YarrErrorCode.cpp (PS5-WebKit-11.x 80f77e94c63e)
+// Derived from Source/JavaScriptCore/yarr/YarrErrorCode.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2017 Yusuke Suzuki <utatane.tea@gmail.com>.
  *
