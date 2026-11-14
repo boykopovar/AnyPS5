@@ -14,8 +14,9 @@ if(NOT curlMbedDefinitions)
     set(curlMbedDefinitions "")
 endif()
 get_target_property(curlNgBinaryDir nghttp2_static BINARY_DIR)
+set(curlSocketDefinitions "include([=[${CMAKE_CURRENT_SOURCE_DIR}/src/SocketBackend.cmake]=])\n")
 file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/BackendOptions.cmake CONTENT
-    "add_compile_definitions([=[${curlMbedDefinitions}]=] MBEDTLS_ALLOW_PRIVATE_ACCESS NGHTTP2_STATICLIB curl_strequal=host_curl_strequal curl_strnequal=host_curl_strnequal curl_slist_append=host_curl_slist_append curl_slist_free_all=host_curl_slist_free_all curl_easy_escape=host_curl_easy_escape curl_escape=host_curl_escape curl_unescape=host_curl_unescape curl_easy_unescape=host_curl_easy_unescape curl_free=host_curl_free)\ninclude_directories([=[${curlNgBinaryDir}/includes]=])\nset(CMAKE_POSITION_INDEPENDENT_CODE ON)\nif(CMAKE_C_COMPILER_ID MATCHES \"GNU|Clang\")\n    string(APPEND CMAKE_C_FLAGS \" -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=implicit-function-declaration\")\nendif()\n")
+    "${curlSocketDefinitions}add_compile_definitions([=[${curlMbedDefinitions}]=] MBEDTLS_ALLOW_PRIVATE_ACCESS NGHTTP2_STATICLIB curl_strequal=host_curl_strequal curl_strnequal=host_curl_strnequal curl_slist_append=host_curl_slist_append curl_slist_free_all=host_curl_slist_free_all curl_easy_escape=host_curl_easy_escape curl_escape=host_curl_escape curl_unescape=host_curl_unescape curl_easy_unescape=host_curl_easy_unescape curl_free=host_curl_free)\ninclude_directories([=[${curlNgBinaryDir}/includes]=])\nset(CMAKE_POSITION_INDEPENDENT_CODE ON)\nif(CMAKE_C_COMPILER_ID MATCHES \"GNU|Clang\")\n    string(APPEND CMAKE_C_FLAGS \" -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=implicit-function-declaration\")\nendif()\n")
 
 set(curlBackendOptions
     -DCMAKE_C_COMPILER:FILEPATH=${CMAKE_C_COMPILER}
@@ -80,8 +81,12 @@ endif()
 
 add_library(libcurl SHARED EXCLUDE_FROM_ALL
     Export.cpp
+    src/CurlSockets.cpp
     src/FormFree.cpp
 )
+if(WIN32)
+    target_compile_definitions(libcurl PRIVATE FD_SETSIZE=1024)
+endif()
 target_include_directories(libcurl PUBLIC ${curlSourceDir}/include PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libcurl PRIVATE libc libkernel anyps5_curl_backend)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -113,7 +118,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcurl>")
     endif()
 
-    set(curlTestTopics Utility Url SlistMime Options Handles Transfers MimeCallback Allocators)
+    set(curlTestTopics Utility Url SlistMime Options Handles Transfers MimeCallback Allocators Sockets)
     foreach(test_topic IN LISTS curlTestTopics)
         set(test_name guest_curl_${test_topic}_tests)
         string(TOLOWER "${test_topic}" test_slug)
@@ -122,6 +127,9 @@ if(BUILD_TESTING)
         target_link_libraries(${test_name} PRIVATE libcurl libkernel libc)
         if(test_topic MATCHES "^(Transfers|MimeCallback)$")
             target_link_libraries(${test_name} PRIVATE anyps5_curl_backend)
+        endif()
+        if(test_topic STREQUAL "Sockets" AND WIN32)
+            target_link_libraries(${test_name} PRIVATE ws2_32)
         endif()
         configure_windows_unwind(${test_name})
         add_test(NAME guest_curl_${test_slug} COMMAND ${test_name})

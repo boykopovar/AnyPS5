@@ -1,4 +1,5 @@
 #include "prx/libcurl/src/CurlHost.hpp"
+#include "prx/libcurl/src/CurlSockets.hpp"
 #include "prx/libcurl/include/InventoryExports.hpp"
 #include "prx/libcurl/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
@@ -109,6 +110,7 @@ struct CallbackSlot {
 };
 
 struct EasyContext {
+    CurlSockets::Easy sockets;
     std::array<CallbackSlot, 314> slots{};
     void* errorStream = &_Stderr_nid_postfix;
     EasyContext() {
@@ -170,6 +172,7 @@ int Debug(CURL* easy, curl_infotype type, char* buffer, size_t size, void* opaqu
 void BindSeek(CURL* easy, EasyContext* context);
 
 void BindEasy(CURL* easy, EasyContext* context) {
+    CurlSockets::BindEasy_nid_no_patch(easy, &context->sockets);
     BindSeek(easy, context);
     ::curl_easy_setopt(easy, CURLOPT_WRITEDATA, context);
     ::curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, Write);
@@ -427,6 +430,16 @@ long ChunkEnd(void* opaque) {
 }
 
 CURLcode SetEasyPointer(CURL* easy, CURLoption option, void* value, EasyContext* context) {
+    switch (option) {
+    case CURLOPT_OPENSOCKETFUNCTION:
+    case CURLOPT_OPENSOCKETDATA:
+    case CURLOPT_CLOSESOCKETFUNCTION:
+    case CURLOPT_CLOSESOCKETDATA:
+    case CURLOPT_SOCKOPTFUNCTION:
+    case CURLOPT_SOCKOPTDATA:
+        return CurlSockets::SetEasy_nid_no_patch(easy, &context->sockets, option, value);
+    default: break;
+    }
     switch (option) {
     case CURLOPT_WRITEFUNCTION: {
         auto result = ::curl_easy_setopt(easy, option, Write);
@@ -766,10 +779,17 @@ void RebindEasy(CURL* easy, EasyContext* context) {
 }
 
 struct MultiContext {
+    CurlSockets::Multi sockets;
     void* timer = nullptr;
     void* timerData = nullptr;
 };
 std::unordered_map<CURLM*, std::shared_ptr<MultiContext>> multis;
+
+std::shared_ptr<MultiContext> FindMulti(CURLM* multi) {
+    std::lock_guard lock(contextMutex);
+    const auto found = multis.find(multi);
+    return found == multis.end() ? nullptr : found->second;
+}
 
 int Timer(CURLM* multi, long timeout, void* opaque) {
     auto* context = static_cast<MultiContext*>(opaque);
@@ -823,20 +843,30 @@ int APS5_VABI curl_formget_nid_postfix(struct guest_curl_httppost* form, void* a
 }
 
 std::int32_t APS5_VABI curl_multi_socket_action_nid_postfix(CURLM* multi_handle, int s, int ev_bitmask, int* running_handles) {
-    NotImplemented_nid_no_patch(__func__);
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    return CurlSockets::Action_nid_no_patch(multi_handle, &context->sockets, s, ev_bitmask, running_handles, false);
 }
 
 std::int32_t APS5_VABI curl_multi_socket_all_nid_postfix(CURLM* multi_handle, int* running_handles) {
     GuestArena::HostWrite write(running_handles, running_handles ? sizeof(*running_handles) : 0);
-    return ::curl_multi_socket_all(multi_handle, running_handles);
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    const auto result = ::curl_multi_socket_all(multi_handle, running_handles);
+    CurlSockets::Refresh_nid_no_patch(multi_handle, &context->sockets);
+    return result;
 }
 
 std::int32_t APS5_VABI curl_multi_socket_nid_postfix(CURLM* multi_handle, int s, int* running_handles) {
-    NotImplemented_nid_no_patch(__func__);
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    return CurlSockets::Action_nid_no_patch(multi_handle, &context->sockets, s, 0, running_handles, true);
 }
 
 std::int32_t APS5_VABI curl_multi_assign_nid_postfix(CURLM* multi_handle, int sockfd, void* sockptr) {
-    NotImplemented_nid_no_patch(__func__);
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    return CurlSockets::Assign_nid_no_patch(multi_handle, &context->sockets, sockfd, sockptr);
 }
 
 std::int32_t APS5_VABI curl_easy_recv_nid_postfix(CURL* curl, void* buffer, size_t buflen, size_t* n) {
@@ -922,7 +952,11 @@ std::int32_t APS5_VABI curl_easy_perform_nid_postfix(CURL* handle) {
 }
 
 std::int32_t APS5_VABI curl_multi_remove_handle_nid_postfix(CURLM* multi_handle, CURL* easy_handle) {
-    return ::curl_multi_remove_handle(multi_handle, easy_handle);
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    const auto result = ::curl_multi_remove_handle(multi_handle, easy_handle);
+    CurlSockets::Refresh_nid_no_patch(multi_handle, &context->sockets);
+    return result;
 }
 
 std::int32_t APS5_VABI curl_global_sslset_nid_postfix(std::int32_t guestId, const char* name, const guest_curl_ssl_backend*** avail) {
@@ -933,7 +967,11 @@ std::int32_t APS5_VABI curl_global_sslset_nid_postfix(std::int32_t guestId, cons
 
 std::int32_t APS5_VABI curl_multi_perform_nid_postfix(CURLM* multi_handle, int* running_handles) {
     GuestArena::HostWrite write(running_handles, running_handles ? sizeof(*running_handles) : 0);
-    return ::curl_multi_perform(multi_handle, running_handles);
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    const auto result = ::curl_multi_perform(multi_handle, running_handles);
+    CurlSockets::Refresh_nid_no_patch(multi_handle, &context->sockets);
+    return result;
 }
 
 char* APS5_VABI curl_version_nid_postfix() {
@@ -996,13 +1034,6 @@ std::int32_t APS5_VABI curl_easy_setopt_nid_postfix(CURL* handle, std::int32_t g
     case CURLOPT_CONV_FROM_NETWORK_FUNCTION: throw std::invalid_argument("CURLOPT_CONV_FROM_NETWORK_FUNCTION");
     case CURLOPT_CONV_TO_NETWORK_FUNCTION: throw std::invalid_argument("CURLOPT_CONV_TO_NETWORK_FUNCTION");
     case CURLOPT_CONV_FROM_UTF8_FUNCTION: throw std::invalid_argument("CURLOPT_CONV_FROM_UTF8_FUNCTION");
-    case CURLOPT_SOCKOPTFUNCTION:
-    case CURLOPT_OPENSOCKETFUNCTION:
-    case CURLOPT_CLOSESOCKETFUNCTION:
-    case CURLOPT_SOCKOPTDATA:
-    case CURLOPT_OPENSOCKETDATA:
-    case CURLOPT_CLOSESOCKETDATA:
-        NotImplemented_nid_no_patch(__func__);
     default: break;
     }
     if (!::curl_easy_option_by_id(option)) return ::curl_easy_setopt(handle, option);
@@ -1029,10 +1060,10 @@ std::int32_t APS5_VABI curl_easy_setopt_nid_postfix(CURL* handle, std::int32_t g
 std::int32_t APS5_VABI curl_easy_getinfo_nid_postfix(CURL* handle, std::int32_t guestInfo, ...) {
     const auto info = static_cast<CURLINFO>(guestInfo);
     if (!handle) return CURLE_UNKNOWN_OPTION;
-    if (info == CURLINFO_ACTIVESOCKET || info == CURLINFO_LASTSOCKET) NotImplemented_nid_no_patch(__func__);
     CURL_ARGS_START(guestInfo);
     void* output = CURL_ARG(void*);
     CURL_ARGS_END();
+    if (info == CURLINFO_ACTIVESOCKET || info == CURLINFO_LASTSOCKET) return CurlSockets::Active_nid_no_patch(handle, info, output);
     if ((info & CURLINFO_TYPEMASK) == CURLINFO_LONG) {
         long value = 0;
         auto result = ::curl_easy_getinfo(handle, info, output ? &value : nullptr);
@@ -1050,9 +1081,8 @@ std::int32_t APS5_VABI curl_mime_data_nid_postfix(curl_mimepart* part, const cha
 }
 
 std::int32_t APS5_VABI curl_multi_poll_nid_postfix(CURLM* multi_handle, struct guest_curl_waitfd extra_fds[], unsigned int extra_nfds, int timeout_ms, int* ret) {
-    if (extra_nfds) NotImplemented_nid_no_patch(__func__);
-    GuestArena::HostWrite write(ret, ret ? sizeof(*ret) : 0);
-    return ::curl_multi_poll(multi_handle, nullptr, 0, timeout_ms, ret);
+    if (!FindMulti(multi_handle)) return CURLM_BAD_HANDLE;
+    return CurlSockets::Wait_nid_no_patch(multi_handle, extra_fds, extra_nfds, timeout_ms, ret, true);
 }
 
 void APS5_VABI curl_easy_cleanup_nid_postfix(CURL* handle) {
@@ -1159,7 +1189,10 @@ std::int32_t APS5_VABI curl_mime_data_cb_nid_postfix(curl_mimepart* part, std::i
 }
 
 std::int32_t APS5_VABI curl_multi_fdset_nid_postfix(CURLM* multi_handle, guest_fd_set* read_fd_set, guest_fd_set* write_fd_set, guest_fd_set* exc_fd_set, int* max_fd) {
-    NotImplemented_nid_no_patch(__func__);
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    if (!max_fd) NotImplemented_nid_no_patch(__func__);
+    return CurlSockets::Fdset_nid_no_patch(multi_handle, &context->sockets, read_fd_set, write_fd_set, exc_fd_set, max_fd);
 }
 
 std::int32_t APS5_VABI curl_multi_wakeup_nid_postfix(CURLM* multi_handle) {
@@ -1167,9 +1200,8 @@ std::int32_t APS5_VABI curl_multi_wakeup_nid_postfix(CURLM* multi_handle) {
 }
 
 std::int32_t APS5_VABI curl_multi_wait_nid_postfix(CURLM* multi_handle, struct guest_curl_waitfd extra_fds[], unsigned int extra_nfds, int timeout_ms, int* ret) {
-    if (extra_nfds) NotImplemented_nid_no_patch(__func__);
-    GuestArena::HostWrite write(ret, ret ? sizeof(*ret) : 0);
-    return ::curl_multi_wait(multi_handle, nullptr, 0, timeout_ms, ret);
+    if (!FindMulti(multi_handle)) return CURLM_BAD_HANDLE;
+    return CurlSockets::Wait_nid_no_patch(multi_handle, extra_fds, extra_nfds, timeout_ms, ret, false);
 }
 
 const struct guest_curl_easyoption* APS5_VABI curl_easy_option_next_nid_postfix(const struct guest_curl_easyoption* prev) {
@@ -1253,9 +1285,10 @@ std::int32_t APS5_VABI curl_multi_setopt_nid_postfix(CURLM* multi_handle, std::i
         if (found != multis.end()) context = found->second;
     }
     if (!context) return CURLM_BAD_HANDLE;
-    if (option == CURLMOPT_SOCKETFUNCTION || option == CURLMOPT_SOCKETDATA ||
-        option == CURLMOPT_PUSHFUNCTION || option == CURLMOPT_PUSHDATA) NotImplemented_nid_no_patch(__func__);
+    if (option == CURLMOPT_PUSHFUNCTION || option == CURLMOPT_PUSHDATA) NotImplemented_nid_no_patch(__func__);
     switch (option) {
+    case CURLMOPT_SOCKETFUNCTION:
+    case CURLMOPT_SOCKETDATA:
     case CURLMOPT_TIMERFUNCTION:
     case CURLMOPT_TIMERDATA:
     case CURLMOPT_PIPELINING:
@@ -1274,7 +1307,10 @@ std::int32_t APS5_VABI curl_multi_setopt_nid_postfix(CURLM* multi_handle, std::i
     }
     CURL_ARGS_START(guestOption);
     CURLMcode result;
-    if (option == CURLMOPT_TIMERFUNCTION) {
+    if (option == CURLMOPT_SOCKETFUNCTION || option == CURLMOPT_SOCKETDATA) {
+        auto* value = CURL_ARG(void*);
+        result = CurlSockets::SetMulti_nid_no_patch(multi_handle, &context->sockets, option, value);
+    } else if (option == CURLMOPT_TIMERFUNCTION) {
         auto* value = CURL_ARG(void*);
         result = ::curl_multi_setopt(multi_handle, CURLMOPT_TIMERDATA, context.get());
         if (result == CURLM_OK) result = ::curl_multi_setopt(multi_handle, option, value ? Timer : nullptr);
@@ -1411,6 +1447,7 @@ CURLM* APS5_VABI curl_multi_init_nid_postfix() {
     if (!multi) return nullptr;
     try {
         auto context = std::make_shared<MultiContext>();
+        CurlSockets::BindMulti_nid_no_patch(multi, &context->sockets);
         std::lock_guard lock(contextMutex);
         multis.emplace(multi, std::move(context));
     } catch (const std::bad_alloc&) {
