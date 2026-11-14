@@ -658,9 +658,6 @@ void TestUnmappedStalePlaneFlush(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
-// The fixtures below map guest pages with raw VirtualAlloc/mprotect, which GuestMemory's page cache
-// does not see. A freed fixture can leave a stale "readable" run at an address the next one reuses,
-// so every mapping change is followed by the same invalidation the guest allocator makes.
 void ForgetFixturePages(std::uintptr_t address, std::size_t bytes) {
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, bytes);
 }
