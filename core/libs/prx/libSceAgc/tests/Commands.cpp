@@ -1126,10 +1126,12 @@ void testDispatchPackets() {
     const auto* rejectedCursor = rejected.buffer.cursor_up;
     expectFailure([&] { sceAgcCbDispatch(&rejected.buffer, 1, 1, 1, 0x100u); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcAcbDispatchIndirect(&rejected.buffer, reinterpret_cast<const volatile void*>(0x1002ull), 0); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcAcbDispatchIndirect(&rejected.buffer, nullptr, 0); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    Storage maskedIndirect;
+    const auto* maskedPacket = sceAgcAcbDispatchIndirect(&maskedIndirect.buffer, reinterpret_cast<const volatile void*>(0x1002ull), 0xffffffffu);
+    check(maskedPacket[1] == 0x1002u && maskedPacket[2] == 0u && maskedPacket[3] == 0xa079u, "compute DISPATCH_INDIRECT did not mask its modifier");
+    const auto* maskedGraphics = sceAgcDcbDispatchIndirect(&maskedIndirect.buffer, 0x6u, 0xffffffffu);
+    check(maskedGraphics[1] == 0x6u && maskedGraphics[2] == 0xa079u, "graphics DISPATCH_INDIRECT did not mask its modifier");
+    expectFailure([&] { sceAgcAcbDispatchIndirect(nullptr, nullptr, 0); });
     check(sceAgcDcbDispatchIndirectGetSize() == 12 && sceAgcAcbDispatchIndirectGetSize() == 16 && sceAgcCbDispatchGetSize() == 20, "dispatch packet sizes");
 }
 
