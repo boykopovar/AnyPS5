@@ -786,11 +786,26 @@ void TestResolveFailures() {
     Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 2, ids, sizes, &failed) == -1);
     Require(*__error_nid_postfix() == 2 && failed == 1 && ids[1] == 0xffffffffu && sizes[1] == 0);
     Require(sizes[0] == 4);
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 1, ids, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
+    const char* nullElements[]{paths[0], nullptr};
+    ids[0] = ids[1] = 123;
+    sizes[0] = sizes[1] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(nullElements, 2, ids, sizes, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 1 && ids[1] == 0xffffffffu && sizes[1] == 0);
+    const char* emptyElements[]{paths[0], ""};
+    ids[0] = ids[1] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIds(emptyElements, 2, ids, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 1 && ids[1] == 0xffffffffu);
     int results[]{123, 123};
     Require(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 2, ids, sizes, results) == 1);
     Require(results[0] == 0 && results[1] == static_cast<int>(0x80020002));
     Require(ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0);
-    for (const char* invalid : {"ampr_resolve_missing.bin/../ampr_resolve_existing.bin", "ampr_resolve_existing.bin/../ampr_resolve_existing.bin"}) {
+    for (const char* invalid : {"ampr_resolve_missing.bin/../ampr_resolve_existing.bin", "ampr_resolve_existing.bin/../ampr_resolve_existing.bin", "", static_cast<const char*>(nullptr)}) {
         Require(sceKernelAprResolveFilepathsToIds(&invalid, 1, ids, &failed) == -1);
         Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
     }
@@ -809,14 +824,28 @@ void TestResolveForEachVariants() {
     Require(sceKernelAprResolveFilepathsToIdsForEach(paths, 2, ids, results) == 1);
     Require(ids[0] == expected && ids[1] == 0xffffffffu && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
     ids[0] = ids[1] = 123;
+    Require(sceKernelAprResolveFilepathsToIdsForEach(paths, 2, ids, nullptr) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu);
+    ids[0] = ids[1] = 123;
+    std::uint64_t sizes[]{123, 123};
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 2, ids, sizes, nullptr) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0);
+    ids[0] = ids[1] = 123;
     results[0] = results[1] = 123;
     Require(sceKernelAprResolveFilepathsWithPrefixToIdsForEach("ampr_", names, 2, ids, results) == 1);
     Require(ids[0] == expected && ids[1] == 0xffffffffu && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
-    std::uint64_t sizes[]{123, 123};
+    ids[0] = ids[1] = 123;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsForEach("ampr_", names, 2, ids, nullptr) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu);
+    sizes[0] = sizes[1] = 123;
     ids[0] = ids[1] = 123;
     results[0] = results[1] = 123;
     Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizesForEach("ampr_", names, 2, ids, sizes, results) == 1);
     Require(ids[0] == expected && ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0 && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
+    ids[0] = ids[1] = 123;
+    sizes[0] = sizes[1] = 123;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizesForEach("ampr_", names, 2, ids, sizes, nullptr) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0);
     std::remove(paths[0]);
 }
 
@@ -855,6 +884,13 @@ void TestPrefixedResolveWithoutSizes() {
     std::uint32_t untouched[]{0x123456};
     Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), names, 0, untouched, &failed) == 0);
     Require(untouched[0] == 0x123456 && failed == 1);
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(nullptr, names, 0, ids, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), nullptr, 0, ids, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), names, 0, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsToIds(nullptr, 0, ids, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsToIds(names, 0, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(names, 0, ids, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
     std::remove((prefix + "first.bin").c_str());
     std::remove((prefix + "second.bin").c_str());
 }
