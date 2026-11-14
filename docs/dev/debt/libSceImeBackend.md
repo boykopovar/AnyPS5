@@ -7,6 +7,8 @@
 
 ### Functional
 
+- [sceImeBackendGetStatus and the status checks](../../../core/libs/prx/libSceImeBackend/Export.cpp) (libSceImeBackend) - `status` stays 0 in this tree because every conversion call throws, so `GetStatus` answers 1 while the backend is open and the `status >= 2` branches in EnterCharacter, BackspaceCharacter, GetCaretIndex, ModeCaretNext, ModeCaretPrevious, GetCandidateList, GetCandidateListSize, GetCandidateSelect and DeleteCharacter cannot be reached by any test. The 1-to-4 mapping and the errors those branches return come from the 11.00 module, not from a console measurement.
+
 - [`sceImeBackendParamInit`](../../../core/libs/prx/libSceImeBackend/Export.cpp) (libSceImeBackend) - a parameter block at an unmapped guest address is left unwritten and the call returns without an error; the console's result is not measured.
 
 ### Unknown function info

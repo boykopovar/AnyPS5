@@ -128,11 +128,35 @@ void CheckEditing() {
     Require(sceImeBackendClose() == 0);
 }
 
+void CheckStringCapacity() {
+    SceImeBackendParam param = MakeParam();
+    const char16_t initial[] = u"Abcd";
+    param.type = 2;
+    param.initialString = initial;
+    Require(sceImeBackendOpen(&param, nullptr) == 0);
+
+    char16_t text[0x20];
+    for (char16_t& character : text) character = u'~';
+    Require(sceImeBackendGetString(0, text, 4) == 0);
+    Require(text[0] == u'A' && text[1] == u'b' && text[2] == u'c' && text[3] == u'd' && text[4] == 0 && text[5] == u'~');
+
+    for (char16_t& character : text) character = u'~';
+    Require(sceImeBackendGetString(0, text, 2) == 0);
+    Require(text[0] == u'A' && text[1] == u'b' && text[2] == 0 && text[3] == u'~');
+
+    for (char16_t& character : text) character = u'~';
+    Require(sceImeBackendGetConvertString(text) == 0 && text[4] == 0 && text[5] == u'~');
+    Require(sceImeBackendGetConfirmString(text) == 0 && text[4] == 0 && text[5] == u'~');
+
+    Require(sceImeBackendClose() == 0);
+}
+
 }
 
 int main() {
     CheckValidation();
     CheckLifecycle();
     CheckEditing();
+    CheckStringCapacity();
     return 0;
 }
