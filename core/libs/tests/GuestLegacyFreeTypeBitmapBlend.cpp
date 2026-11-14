@@ -1,5 +1,7 @@
 #include "prx/libfreetype/libfreetype.hpp"
 #include "prx/libSceFreeType/libSceFreeType.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "FontFixture.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -61,6 +63,8 @@ static TFunction Import(TModule module, const char* name) {
 struct Api {
     decltype(&FT_Init_FreeType_nid_postfix) initialize;
     decltype(&FT_Done_FreeType_nid_postfix) doneLibrary;
+    decltype(&FT_New_Memory_Face_nid_postfix) newFace;
+    decltype(&FT_Done_Face_nid_postfix) doneFace;
     decltype(&FT_Bitmap_Done_nid_postfix) doneBitmap;
     decltype(&freetypeLegacyBitmapBlend_nid_no_patch) blend;
 };
@@ -223,6 +227,47 @@ static void CheckErrors(const Api& api, FreeType::GuestLibrary* library, FT_Libr
     Require(api.doneBitmap(library, &target) == 0 && FT_Bitmap_Done(nativeLibrary, &native) == 0);
 }
 
+static void CheckGlyphSlotTarget(const Api& api, FreeType::GuestLibrary* library, FT_Library nativeLibrary) {
+    const auto font = FontFixture::BuildFont(1, {});
+    FreeType::GuestFaceRec* face = nullptr;
+    FT_Face nativeFace = nullptr;
+    Require(api.newFace(library, font.data(), static_cast<std::int64_t>(font.size()), 0, &face) == 0);
+    Require(FT_New_Memory_Face(nativeLibrary, font.data(), static_cast<FT_Long>(font.size()), 0, &nativeFace) == 0);
+    FreeType::GuestFace* owner = nullptr;
+    for (const auto& candidate : library->faces) {
+        if (&candidate->rec == face) owner = candidate.get();
+    }
+    Require(owner != nullptr && face->glyph != nullptr);
+    auto& guest = face->glyph->bitmap;
+    auto& native = nativeFace->glyph->bitmap;
+    GuestVector offset{0, 0};
+    FT_Vector nativeOffset{0, 0};
+    const Color color{33, 99, 177, 255};
+    const FT_Color nativeColor{color.blue, color.green, color.red, color.alpha};
+    for (const auto position : std::array<GuestVector, 3>{{{0, 0}, {-192, 320}, {256, -128}}}) {
+        const Source source = MakeSource(FT_PIXEL_MODE_GRAY, 3, 5, false, 19);
+        const FT_Bitmap nativeSource = source.Native();
+        Require(api.blend(library, &source.guest, position, &guest, &offset, color) ==
+                FT_Bitmap_Blend(nativeLibrary, &nativeSource, {static_cast<FT_Pos>(position.x), static_cast<FT_Pos>(position.y)}, &native, &nativeOffset, nativeColor));
+        CheckSame(guest, native, offset, nativeOffset);
+        CheckSame(guest, owner->host->glyph->bitmap, offset, nativeOffset);
+        Require(guest.buffer != nullptr && guest.buffer == owner->host->glyph->bitmap.buffer);
+    }
+    guest.pixel_mode = FT_PIXEL_MODE_GRAY;
+    native.pixel_mode = FT_PIXEL_MODE_GRAY;
+    const Source source = MakeSource(FT_PIXEL_MODE_GRAY, 2, 2, false, 23);
+    const FT_Bitmap nativeSource = source.Native();
+    const auto before = Pixels(guest.buffer, guest.rows, guest.pitch);
+    Require(api.blend(library, &source.guest, {}, &guest, &offset, color) ==
+            FT_Bitmap_Blend(nativeLibrary, &nativeSource, {}, &native, &nativeOffset, nativeColor));
+    Require(Pixels(guest.buffer, guest.rows, guest.pitch) == before);
+    CheckSame(guest, native, offset, nativeOffset);
+    CheckSame(guest, owner->host->glyph->bitmap, offset, nativeOffset);
+    Require(api.doneBitmap(library, &guest) == 0 && FT_Bitmap_Done(nativeLibrary, &native) == 0);
+    Require(owner->host->glyph->bitmap.buffer == nullptr);
+    Require(api.doneFace(face) == 0 && FT_Done_Face(nativeFace) == 0);
+}
+
 static void CheckInPlace(const Api& api, FreeType::GuestLibrary* library, FT_Library nativeLibrary, GuestBitmap* guestTarget, GuestVector* guestOffset) {
     const Source source = MakeSource(FT_PIXEL_MODE_GRAY, 3, 4, false, 31);
     const FT_Bitmap nativeSource = source.Native();
@@ -346,6 +391,8 @@ int main(int argc, char** argv) {
     Api api{};
     api.initialize = Import<decltype(api.initialize)>(base, patched ? "GNsiLzm4SH8" : "FT_Init_FreeType_nid_postfix");
     api.doneLibrary = Import<decltype(api.doneLibrary)>(base, patched ? "dH02CpEEcYk" : "FT_Done_FreeType_nid_postfix");
+    api.newFace = Import<decltype(api.newFace)>(base, patched ? "40Wa2neSLM0" : "FT_New_Memory_Face_nid_postfix");
+    api.doneFace = Import<decltype(api.doneFace)>(base, patched ? "OgFczHko0w8" : "FT_Done_Face_nid_postfix");
     api.doneBitmap = Import<decltype(api.doneBitmap)>(base, patched ? "Mu2upxmY2C8" : "FT_Bitmap_Done_nid_postfix");
     api.blend = Import<decltype(api.blend)>(module, patched ? "C3-qsnriefE" : "C3-qsnriefE_nid_no_patch_cut");
     FreeType::GuestLibrary* library = nullptr;
@@ -354,6 +401,7 @@ int main(int argc, char** argv) {
     CheckSequences(api, library, nativeLibrary);
     CheckErrors(api, library, nativeLibrary);
     CheckInPlaceHost(api, library, nativeLibrary);
+    CheckGlyphSlotTarget(api, library, nativeLibrary);
 #ifdef _WIN32
     CheckGuestMemory(api, kernelApi, library, nativeLibrary);
 #endif
