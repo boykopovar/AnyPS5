@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/LibKernelSysProviders.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -139,7 +140,7 @@ int GuestFileError(int error) {
 }
 
 std::int64_t Fail(int error) {
-    *__error_nid_postfix() = error;
+    *__error_nid_no_patch() = error;
     return -1;
 }
 
@@ -457,7 +458,7 @@ std::int64_t APS5_VABI pwrite_nid_postfix(int d, const void* buf, std::size_t nb
 
 int APS5_VABI sceKernelGetOpenPsIdForSystem(void* id) {
     if (id == nullptr) return GuestEinval;
-    return sceKernelGetOpenPsId(id);
+    return sceKernelGetOpenPsId_nid_no_patch(id);
 }
 
 int APS5_VABI sceKernelGetCpumodeGame(int* mode) {
@@ -524,7 +525,7 @@ int APS5_VABI sceKernelIsPs4Process(void) {
 
 int APS5_VABI get_authinfo_nid_postfix(int pid, KernelAuthInfo* info) {
     if (info == nullptr) return static_cast<int>(Fail(GuestEperm));
-    if (pid != 0 && pid != getpid_nid_postfix()) return static_cast<int>(Fail(GuestEsrch));
+    if (pid != 0 && pid != getpid_nid_no_patch()) return static_cast<int>(Fail(GuestEsrch));
     KernelAuthInfo local{};
     local.capabilities[0] = 0x2000000000000000;
     if (!GuestCopyOut_nid_no_patch(info, &local, sizeof(local))) return static_cast<int>(Fail(GuestEfault));
@@ -542,7 +543,7 @@ int APS5_VABI setlogin_nid_postfix(const char* name) {
 }
 
 int APS5_VABI fstatfs_nid_postfix(int d, KernelStatfs* buf) {
-    return _fstatfs_nid_postfix(d, buf);
+    return _fstatfs_nid_no_patch(d, buf);
 }
 
 int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len) {
@@ -562,13 +563,13 @@ int APS5_VABI getfsstat_nid_postfix(KernelStatfs* buf, std::int64_t bufsize, int
     if (bufsize < 0 || (mode != MntWait && mode != MntNowait)) return static_cast<int>(Fail(GuestEinval));
     if (buf == nullptr || bufsize == 0) return 1;
     if (static_cast<std::size_t>(bufsize) < sizeof(KernelStatfs)) return 0;
-    const int root = open_nid_postfix("/", 0, 0);
+    const int root = open_nid_no_patch("/", 0, 0);
     if (root < 0) return 0;
     KernelStatfs result{};
-    const int status = _fstatfs_nid_postfix(root, &result);
-    const int saved = *__error_nid_postfix();
-    close_nid_postfix(root);
-    *__error_nid_postfix() = saved;
+    const int status = _fstatfs_nid_no_patch(root, &result);
+    const int saved = *__error_nid_no_patch();
+    close_nid_no_patch(root);
+    *__error_nid_no_patch() = saved;
     if (status != 0) return 0;
     if (!GuestCopyOut_nid_no_patch(buf, &result, sizeof(result))) return static_cast<int>(Fail(GuestEfault));
     return 1;
@@ -581,12 +582,12 @@ int APS5_VABI sceKernelGetModuleInfoInternal(KernelModule handle, ModuleInfoEx* 
 }
 
 int APS5_VABI sceKernelGetModuleListInternal(KernelModule* handles, std::size_t count, std::size_t* actual) {
-    return sceKernelGetModuleList(handles, count, actual);
+    return sceKernelGetModuleList_nid_no_patch(handles, count, actual);
 }
 
 KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule(const char* moduleFileName, std::size_t args, const void* argp, std::uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
     (void)flags;
-    return sceKernelLoadStartModule(moduleFileName, args, argp, 0, opt, res);
+    return sceKernelLoadStartModule_nid_no_patch(moduleFileName, args, argp, 0, opt, res);
 }
 
 int APS5_VABI sceKernelIsModuleLoaded(const char* name) {
@@ -601,13 +602,13 @@ int APS5_VABI sceKernelIsModuleLoaded(const char* name) {
     for (std::size_t i = 0; i < count; ++i) {
         ModuleInfo info{};
         info.st_size = sizeof(info);
-        if (sceKernelGetModuleInfo(handles[i], &info) == 0 && std::strncmp(info.name, copy.c_str(), sizeof(info.name)) == 0) return 0;
+        if (sceKernelGetModuleInfo_nid_no_patch(handles[i], &info) == 0 && std::strncmp(info.name, copy.c_str(), sizeof(info.name)) == 0) return 0;
     }
     return SCE_KERNEL_ERROR_ESRCH;
 }
 
 int APS5_VABI fstat_nid_postfix(int d, FileStat* sb) {
-    return static_cast<int>(_fstat_nid_postfix(d, sb));
+    return static_cast<int>(_fstat_nid_no_patch(d, sb));
 }
 
 std::int64_t APS5_VABI readlink_nid_postfix(const char* path, char* buffer, std::size_t size) {
@@ -811,7 +812,7 @@ int APS5_VABI __getcwd_nid_postfix(char* buffer, std::size_t size) {
     if (limit < 2) return static_cast<int>(Fail(GuestEinval));
     std::array<char, GuestPathMax> path{};
     if (getcwd_nid_postfix(path.data(), path.size()) == nullptr) {
-        const int error = *__error_nid_postfix();
+        const int error = *__error_nid_no_patch();
         return static_cast<int>(Fail(error == GuestErange ? GuestEnomem : error));
     }
     const std::size_t required = std::strlen(path.data()) + 1;
@@ -913,7 +914,7 @@ int APS5_VABI swapon_nid_postfix(const char* name) {
     if (const int error = CopyPath(name, copy)) return static_cast<int>(Fail(error));
     if (copy.size() >= GuestPathMax || HasLongComponent(copy)) return static_cast<int>(Fail(GuestEnametoolong));
     FileStat status{};
-    if (stat_nid_postfix(copy.c_str(), &status) != 0) return -1;
+    if (stat_nid_no_patch(copy.c_str(), &status) != 0) return -1;
     constexpr std::uint16_t TypeMask = 0170000;
     constexpr std::uint16_t CharacterDevice = 0020000;
     constexpr std::uint16_t BlockDevice = 0060000;
@@ -1003,7 +1004,7 @@ int APS5_VABI openat_nid_postfix(int fd, const char* path, int flags, ...) {
     if (File::InvalidOpenFlags(flags)) return static_cast<int>(Fail(GuestEinval));
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
-    if (fd == GuestAtFdcwd || copy[0] == '/') return open_nid_postfix(copy.c_str(), flags, mode);
+    if (fd == GuestAtFdcwd || copy[0] == '/') return open_nid_no_patch(copy.c_str(), flags, mode);
     const int result = OpenInDirectory_nid_no_patch(fd, copy.c_str(), flags, static_cast<std::uint16_t>(mode));
     if (result < 0) return static_cast<int>(Fail(result & 0xffff));
     return result;
@@ -1031,7 +1032,7 @@ int APS5_VABI _openat_nid_postfix(int fd, const char* path, int flags, ...) {
 int APS5_VABI mkdirat_nid_postfix(int fd, const char* path, std::uint16_t mode) {
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
-    if (fd == GuestAtFdcwd || copy[0] == '/') return mkdir_nid_postfix(copy.c_str(), mode);
+    if (fd == GuestAtFdcwd || copy[0] == '/') return mkdir_nid_no_patch(copy.c_str(), mode);
     if (copy.size() >= GuestPathMax || HasLongComponent(copy.c_str())) return static_cast<int>(Fail(GuestEnametoolong));
     int error = 0;
     const char* base = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
@@ -1123,7 +1124,7 @@ int APS5_VABI fchown_nid_postfix(int fd, std::uint32_t uid, std::uint32_t gid) {
 
 int APS5_VABI sched_rr_get_interval_nid_postfix(int pid, KernelTimespec* interval) {
     constexpr int GuestEsrch = 3;
-    const int self = getpid_nid_postfix();
+    const int self = getpid_nid_no_patch();
     if (pid != 0 && pid != self) return static_cast<int>(Fail(GuestEsrch));
     const KernelTimespec quantum{0, 94000000};
     if (interval == nullptr || !GuestCopyOut_nid_no_patch(interval, &quantum, sizeof(quantum))) return static_cast<int>(Fail(GuestEfault));
@@ -1132,14 +1133,14 @@ int APS5_VABI sched_rr_get_interval_nid_postfix(int pid, KernelTimespec* interva
 
 int APS5_VABI chown_nid_postfix(const char* path, std::uint32_t uid, std::uint32_t gid) {
     FileStat status{};
-    if (stat_nid_postfix(path, &status) != 0) return -1;
+    if (stat_nid_no_patch(path, &status) != 0) return -1;
     RequireGuestOwner("chown", uid, gid);
     return 0;
 }
 
 int APS5_VABI lchown_nid_postfix(const char* path, std::uint32_t uid, std::uint32_t gid) {
     FileStat status{};
-    if (lstat_nid_postfix(path, &status) != 0) return -1;
+    if (lstat_nid_no_patch(path, &status) != 0) return -1;
     RequireGuestOwner("lchown", uid, gid);
     return 0;
 }
@@ -1156,7 +1157,7 @@ int APS5_VABI fstatat_nid_postfix(int fd, const char* path, FileStat* sb, int fl
     if (flag & ~GuestAtSymlinkNofollow) return static_cast<int>(Fail(GuestEinval));
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
-    if (fd == GuestAtFdcwd || copy[0] == '/') return flag ? lstat_nid_postfix(copy.c_str(), sb) : stat_nid_postfix(copy.c_str(), sb);
+    if (fd == GuestAtFdcwd || copy[0] == '/') return flag ? lstat_nid_no_patch(copy.c_str(), sb) : stat_nid_no_patch(copy.c_str(), sb);
     const int result = StatInDirectory_nid_no_patch(fd, copy.c_str(), sb, flag == 0);
     if (result < 0) return static_cast<int>(Fail(result & 0xffff));
     return 0;
@@ -1172,7 +1173,7 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
     if (flag & ~GuestAtRemovedir) return static_cast<int>(Fail(GuestEinval));
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
-    if (fd == GuestAtFdcwd || copy[0] == '/') return (flag & GuestAtRemovedir) ? rmdir_nid_postfix(copy.c_str()) : unlink_nid_postfix(copy.c_str());
+    if (fd == GuestAtFdcwd || copy[0] == '/') return (flag & GuestAtRemovedir) ? rmdir_nid_no_patch(copy.c_str()) : unlink_nid_no_patch(copy.c_str());
     if (copy.size() >= GuestPathMax || HasLongComponent(copy.c_str())) return static_cast<int>(Fail(GuestEnametoolong));
     int error = 0;
     const char* base = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
@@ -1339,7 +1340,7 @@ int APS5_VABI scePthreadSetDefaultstacksize(std::size_t size) {
 }
 
 void APS5_VABI scePthreadSetName(Pthread thread, const char* name) {
-    pthread_set_name_np_nid_postfix(thread, name);
+    pthread_set_name_np_nid_no_patch(thread, name);
 
 }
 
@@ -1371,12 +1372,12 @@ int APS5_VABI sceKernelTitleWorkaroundIsEnabled2(const KernelTitleWorkaround* wo
 
 int APS5_VABI sceKernelGetProcessType(int pid) {
     if (pid == 0 || pid == 1) return static_cast<int>(0x80020002);
-    if (pid != getpid_nid_postfix() && pid != -1) return static_cast<int>(0x80020003);
+    if (pid != getpid_nid_no_patch() && pid != -1) return static_cast<int>(0x80020003);
     return 0;
 }
 
 int APS5_VABI scePthreadMutexIsowned(PthreadMutex* mutex) {
-    const int owned = pthread_mutex_isowned_np_nid_postfix(mutex);
+    const int owned = pthread_mutex_isowned_np_nid_no_patch(mutex);
     return owned == 0 ? 0 : SceKernelError(owned);
 }
 
@@ -1387,8 +1388,18 @@ int APS5_VABI utrace_nid_postfix(const void* address, std::size_t length) {
 }
 
 int APS5_VABI tcsetsid_nid_postfix(int fd, int pid) {
-    if (pid != getsid_nid_postfix(0)) return static_cast<int>(Fail(GuestEinval));
-    return ioctl_nid_postfix(fd, TerminalSetControlling, nullptr);
+    if (pid != getsid_nid_no_patch(0)) return static_cast<int>(Fail(GuestEinval));
+    return ioctl_nid_no_patch(fd, TerminalSetControlling, nullptr);
+}
+
+int APS5_VABI sceKernelGetPrefixVersion_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceKernelIccGetThermalAlert_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }

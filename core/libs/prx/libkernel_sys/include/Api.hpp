@@ -559,4 +559,7 @@ int APS5_VABI wait4_nid_postfix(int pid, int* status, int options, void* usage);
 int APS5_VABI _openat_nid_postfix(int fd, const char* path, int flags, ...);
 int APS5_VABI __getcwd_nid_postfix(char* buffer, std::size_t size);
 
+int APS5_VABI sceKernelGetPrefixVersion_nid_postfix();
+int APS5_VABI sceKernelIccGetThermalAlert_nid_postfix();
+
 }
