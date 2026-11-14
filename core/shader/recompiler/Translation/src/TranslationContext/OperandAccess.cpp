@@ -166,10 +166,19 @@ IrF32 TranslationContext::flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* 
         return &ir.LogicalAnd(*tiny, ir.IEqual(ir.BitwiseAnd(ir.BitCastU32(*addend), ir.Constant(0x7fffffffu)), ir.Constant(0u)));
     };
     if (afterRounding && roundMode == 0u) {
-        IrValue& scaled = ir.BitwiseAnd(ir.BitCastU32(ir.Emit(IrOpcode::FPMul32, IrType::F32, {&ir.Emit(IrOpcode::FPMul32, IrType::F32, {lhs, &ir.ConstantF32(0x1p64f)}), rhs})), ir.Constant(0x7fffffffu));
+        IrValue& scaledLhs = ir.Emit(IrOpcode::FPMul32, IrType::F32, {lhs, &ir.ConstantF32(0x1p64f)});
+        IrValue& scaled = ir.BitwiseAnd(ir.BitCastU32(ir.Emit(IrOpcode::FPMul32, IrType::F32, {&scaledLhs, rhs})), ir.Constant(0x7fffffffu));
         IrValue* tiny = zeroAddend(&ir.ULessThan(ir.ISub(scaled, ir.Constant(1u)), ir.Constant(0x207fffffu)));
         IrValue& sign = ir.BitwiseAnd(ir.BitwiseXor(lhsBits, rhsBits), ir.Constant(0x80000000u));
-        return IrF32(ir.Emit(IrOpcode::SelectF32, IrType::F32, {tiny, &ir.BitCastF32(sign), product}));
+        IrValue* boundaryBits = &ir.BitwiseOr(sign, ir.Constant(0x00800000u));
+        IrValue* boundary = &ir.IEqual(scaled, ir.Constant(0x20800000u));
+        if (addend != nullptr) {
+            IrValue& scaledSum = ir.BitCastU32(ir.Emit(IrOpcode::FPFma32, IrType::F32, {&scaledLhs, rhs, &ir.Emit(IrOpcode::FPMul32, IrType::F32, {addend, &ir.ConstantF32(0x1p64f)})}));
+            boundaryBits = &ir.BitwiseOr(ir.BitwiseAnd(scaledSum, ir.Constant(0x80000000u)), ir.Constant(0x00800000u));
+            boundary = &ir.IEqual(ir.BitwiseAnd(scaledSum, ir.Constant(0x7fffffffu)), ir.Constant(0x20800000u));
+        }
+        IrValue& rounded = ir.Emit(IrOpcode::SelectF32, IrType::F32, {boundary, &ir.BitCastF32(*boundaryBits), product});
+        return IrF32(ir.Emit(IrOpcode::SelectF32, IrType::F32, {tiny, &ir.BitCastF32(sign), &rounded}));
     }
     const auto exponent = [&](IrValue& bits) -> IrValue& { return ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&bits, &ir.Constant(23u), &ir.Constant(8u)}); };
     const auto significand = [&](IrValue& bits) -> IrValue& { return ir.BitwiseOr(ir.BitwiseAnd(bits, ir.Constant(0x007fffffu)), ir.Constant(0x00800000u)); };
