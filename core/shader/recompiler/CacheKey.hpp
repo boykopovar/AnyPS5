@@ -234,6 +234,7 @@ private:
         append(key, value.stencilOperationValueExport);
         append(key, value.ditheredAlphaToCoverage);
         append(key, value.ditheredAlphaSamples);
+        append(key, static_cast<std::uint8_t>(value.singleSampleDither));
         append(key, value.quadPixelMask);
         append(key, value.quadSampleMask);
         append(key, value.iteratesSamples);

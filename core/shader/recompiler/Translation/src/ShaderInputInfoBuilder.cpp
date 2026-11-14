@@ -165,6 +165,10 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         pixelStorage.psAlphaToCoverage = pixel.alphaToCoverage;
         pixelStorage.psDitheredAlphaToCoverage = pixel.ditheredAlphaToCoverage;
         pixelStorage.psDitheredAlphaSamples = pixel.ditheredAlphaSamples;
+        pixelStorage.psSingleSampleDither = pixel.singleSampleDither;
+        if (pixel.singleSampleDither != SingleSampleDither::None && (!pixel.alphaToCoverage || !pixel.ditheredAlphaToCoverage || pixel.ditheredAlphaSamples != 1u)) throw std::runtime_error("single-sample dither requires enabled single-sample alpha-to-coverage");
+        if (pixel.singleSampleDither != SingleSampleDither::None && pixel.singleSampleDither != SingleSampleDither::E701 && pixel.singleSampleDither != SingleSampleDither::Rounded18701) throw std::runtime_error("unsupported single-sample alpha-to-coverage dither");
+        if (pixel.ditheredAlphaToCoverage && pixel.singleSampleDither == SingleSampleDither::None && pixel.ditheredAlphaSamples != 2u && pixel.ditheredAlphaSamples != 8u) throw std::runtime_error("unsupported dithered alpha-to-coverage sample count");
         pixelStorage.quadPixelMask = pixel.quadPixelMask;
         pixelStorage.quadSampleMask = pixel.quadSampleMask;
         pixelStorage.psIteratesSamples = pixel.iteratesSamples;
