@@ -363,7 +363,11 @@ int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, i
  if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
  const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
  if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
- if (result == 0 && name) NameVirtualRange(*addr, len, name);
+ if (result == 0 && name) {
+  if (!*name) return SCE_KERNEL_ERROR_EFAULT;
+  if (strnlen(name, 32) > 31) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+  NameVirtualRange(*addr, len, name);
+ }
  return result;
 }
 
