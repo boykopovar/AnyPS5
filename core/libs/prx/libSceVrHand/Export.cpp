@@ -3,62 +3,33 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
-#include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-namespace {
-
-constexpr int SCE_VR_HAND_ERROR_NOT_INITIALIZED = static_cast<int>(0x8a870001);
-constexpr int SCE_VR_HAND_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8a870002);
-constexpr int SCE_VR_HAND_ERROR_NOT_STARTED = static_cast<int>(0x8a870003);
-constexpr int SCE_VR_HAND_ERROR_ALREADY_STARTED = static_cast<int>(0x8a870004);
-constexpr int SCE_VR_HAND_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8a870006);
-
-std::mutex g_mutex;
-bool g_initialized = false;
-bool g_started = false;
-
-}
 
 extern "C" {
 
 int APS5_VABI sceVrHandFinalize() {
-    std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_VR_HAND_ERROR_NOT_INITIALIZED;
-    g_started = false;
-    g_initialized = false;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceVrHandGetMesh() {
-    std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_VR_HAND_ERROR_NOT_INITIALIZED;
-    if (!g_started) return SCE_VR_HAND_ERROR_NOT_STARTED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceVrHandGetMeshSize() {
-    std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_VR_HAND_ERROR_NOT_INITIALIZED;
-    if (!g_started) return SCE_VR_HAND_ERROR_NOT_STARTED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceVrHandGetResult() {
-    std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_VR_HAND_ERROR_NOT_INITIALIZED;
-    if (!g_started) return SCE_VR_HAND_ERROR_NOT_STARTED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceVrHandInitialize() {
-    std::lock_guard lock(g_mutex);
-    if (g_initialized) return SCE_VR_HAND_ERROR_ALREADY_INITIALIZED;
-    g_initialized = true;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -83,18 +54,12 @@ int APS5_VABI sceVrHandQueryMemory(const void* param, void* result) {
 }
 
 int APS5_VABI sceVrHandStart() {
-    std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_VR_HAND_ERROR_NOT_INITIALIZED;
-    if (g_started) return SCE_VR_HAND_ERROR_ALREADY_STARTED;
-    g_started = true;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceVrHandStop() {
-    std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_VR_HAND_ERROR_NOT_INITIALIZED;
-    if (!g_started) return SCE_VR_HAND_ERROR_NOT_STARTED;
-    g_started = false;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
