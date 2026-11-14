@@ -4,7 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI _ZSt8_XLgammaf_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEED1Ev_nid_postfix();
 int APS5_VABI _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix();
 int APS5_VABI _ZNSt13basic_istreamIwSt11char_traitsIwEED0Ev_nid_postfix();

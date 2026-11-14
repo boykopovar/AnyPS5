@@ -625,7 +625,13 @@ int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
  if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
- *account_id = 0;
+ const uint64_t localId = 0;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(account_id, &localId, sizeof(localId));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -698,7 +704,13 @@ int APS5_VABI sceUserServiceGetCurrentUserGroupIndex(std::int32_t* index) {
     if (index == nullptr) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
-    *index = 0;
+    const std::int32_t zero = 0;
+    const int savedErrnoZero = errno;
+    const bool copiedZero = GuestCopyOut_nid_no_patch(index, &zero, sizeof(zero));
+    errno = savedErrnoZero;
+    if (!copiedZero) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
     const int descriptor = sceKernelOpen("/system_data/priv/home/user_list.dat", 0, 0);
     if (descriptor < 0) {
         return descriptor;
@@ -717,7 +729,12 @@ int APS5_VABI sceUserServiceGetCurrentUserGroupIndex(std::int32_t* index) {
     if (bytesRead != sizeof(storedIndex)) {
         return SCE_KERNEL_ERROR_EIO;
     }
-    *index = storedIndex;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(index, &storedIndex, sizeof(storedIndex));
+    errno = savedErrno;
+    if (!copied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
     return USER_SERVICE_OK;
 }
 
