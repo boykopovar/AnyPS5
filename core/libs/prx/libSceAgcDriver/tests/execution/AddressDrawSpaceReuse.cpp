@@ -4,8 +4,10 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/EpochProofCounters.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -969,6 +971,33 @@ void LimitPinWait() {
 
 using Case = void (*)(Scene&);
 
+void EpochMirrors(Scene& scene, bool expected) {
+    Require(AgcDriver::Graphics::ShaderResources::EpochProofs() == expected, std::string("address draw space reuse: epoch proofs are ") + (expected ? "off" : "on") + " where the gate expects them " + (expected ? "on" : "off"));
+    auto& counts = AgcDriver::Graphics::EpochProofCounts();
+    scene.Store(scene.constants, 0, 70);
+    Require(scene.DrawnColor() == 70, "address draw space reuse: the draw before the epoch did not read the guest constant");
+    const auto builds = Builds();
+    const auto reused = counts.mirrorReuses.Sum();
+    const auto refreshed = counts.mirrorRefreshes.Sum();
+    const auto seen = [&] { return std::to_string(counts.mirrorReuses.Sum() - reused) + " reused, " + std::to_string(counts.mirrorRefreshes.Sum() - refreshed) + " refreshed"; };
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        scene.Draw();
+        scene.device.WaitIdle();
+        const bool first = expected ? counts.mirrorRefreshes.Sum() - refreshed == 1 && counts.mirrorReuses.Sum() == reused : counts.mirrorRefreshes.Sum() == refreshed && counts.mirrorReuses.Sum() == reused;
+        Require(first, std::string("address draw space reuse: the first retake of a cached space in a collect epoch ") + (expected ? "did not refresh it" : "was counted while epoch proofs are off") + " (" + seen() + ")");
+        scene.Draw();
+        scene.device.WaitIdle();
+    }
+    Require(scene.Color() == 70 && Builds() == builds, "address draw space reuse: the draws inside one collect epoch were not served by the cached build");
+    const bool second = expected ? counts.mirrorRefreshes.Sum() - refreshed == 1 && counts.mirrorReuses.Sum() - reused == 1 : counts.mirrorRefreshes.Sum() == refreshed && counts.mirrorReuses.Sum() == reused;
+    Require(second, std::string("address draw space reuse: ") + (expected ? "the second retake of a cached space in one collect epoch did not reuse the epoch's refresh" : "a cached space reused its epoch's refresh while epoch proofs are off") + " (" + seen() + ")");
+    scene.Store(scene.constants, 0, 30);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(scene.DrawnColor() == 30, "address draw space reuse: a CPU write before a new collect epoch was not seen by the next draw");
+}
+
 struct NamedCase {
     const char* name;
     Case run;
@@ -1008,7 +1037,9 @@ int main(int argc, char** argv) {
     try {
         const std::string mode = argc > 1 ? argv[1] : "";
         const std::string only = mode == "--case" && argc > 2 ? argv[2] : "";
-        Require(mode.empty() || mode == "--off" || mode == "--transitions" || mode == "--verify" || mode == "--held" || !only.empty(), "usage: [--off | --transitions | --verify | --held | --case <name>]");
+        if (mode == "--epoch-mirrors") AgcDriver::GuestMemory::MarkProofThread();
+        const bool epochMirrors = mode == "--epoch-mirrors" && argc > 2 && (std::string(argv[2]) == "on" || std::string(argv[2]) == "off");
+        Require(mode.empty() || epochMirrors || mode == "--off" || mode == "--transitions" || mode == "--verify" || mode == "--held" || !only.empty(), "usage: [--off | --transitions | --verify | --held | --case <name> | --epoch-mirrors on|off]");
         Require(mode != "--verify" || std::getenv("APS5_VERIFY_ADDRESS_DRAW_REUSE") != nullptr, "address draw space reuse: --verify needs APS5_VERIFY_ADDRESS_DRAW_REUSE=1");
         Require(mode != "--held" || std::getenv("APS5_RELEASE_ON_UNLOCK") != nullptr, "address draw space reuse: --held needs APS5_RELEASE_ON_UNLOCK=1");
         LimitPinWait();
@@ -1022,7 +1053,9 @@ int main(int argc, char** argv) {
             }
             const Outcomes outcomes;
             const auto verifiedBefore = AgcDriver::Graphics::AddressDrawReuseVerifications();
-            if (mode == "--off") {
+            if (epochMirrors) {
+                EpochMirrors(scene, std::string(argv[2]) == "on");
+            } else if (mode == "--off") {
                 Disabled(scene);
             } else {
                 const std::span<const NamedCase> cases = mode == "--transitions" ? std::span<const NamedCase>(TransitionCases) : mode == "--held" ? std::span<const NamedCase>(HeldCases) : std::span<const NamedCase>(DefaultCases);
@@ -1042,7 +1075,7 @@ int main(int argc, char** argv) {
             }
             scene.Wait();
         }
-        std::printf("address draw space reuse tests passed%s%s\n", mode.empty() ? "" : " ", only.empty() ? mode.c_str() : only.c_str());
+        std::printf("address draw space reuse tests passed%s%s%s%s\n", mode.empty() ? "" : " ", only.empty() ? mode.c_str() : only.c_str(), epochMirrors ? " " : "", epochMirrors ? argv[2] : "");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/EpochProofCounters.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -499,6 +500,35 @@ int RunKeyWriteAfterMemo(AgcDriver::VulkanDevice& device, std::uint8_t* block, K
         requireKeys(0, KeyBytes, 0xff, "a storage image's first write left its clear keys in place for a guest write beside them");
         std::puts("a storage image's first write stores uncompressed keys beside a guest write in their page");
     }
+    return 0;
+}
+
+int RunEpochProofGate(AgcDriver::VulkanDevice& device, std::uint8_t* block, bool expected) {
+    auto* texels = block;
+    auto* keys = block + KeysOffset;
+    std::memset(texels, 0x55, SurfaceBytes);
+    std::memset(keys, 0xff, KeyBytes);
+    Require(AgcDriver::Graphics::ShaderResources::EpochProofs() == expected, expected ? "epoch proofs are off in a configuration with pipelined draws" : "epoch proofs are on in a configuration without pipelined draws or with APS5_NO_EPOCH_PROOFS");
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(texels, keys));
+    const auto context = device.graphicsContext();
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto image = AgcDriver::Graphics::CachedStorageSurface(context, resource);
+    if (!AgcDriver::GuestMemory::Watched(AddressOf(texels), SurfaceBytes)) {
+        std::puts("epoch proof gate: the surface is not write-watched after the upload: skipped");
+        return VulkanTestSkipped;
+    }
+    for (int lookup = 0; lookup < 2; ++lookup) Require(AgcDriver::Graphics::CachedStorageSurface(context, resource) == image, "epoch proof gate: a repeated lookup made another image");
+    const auto exited = AgcDriver::Graphics::EpochProofCounts().storageReuses.Sum();
+    Require(AgcDriver::Graphics::CachedStorageSurface(context, resource) == image, "epoch proof gate: the measured lookup made another image");
+    Require((AgcDriver::Graphics::EpochProofCounts().storageReuses.Sum() - exited == 1u) == expected, expected ? "epoch proof gate: an unchanged surface proved in this collect epoch was not answered by its epoch proof" : "epoch proof gate: a lookup took the epoch exit while epoch proofs are off");
+    std::memset(texels, 0x66, 256);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto exitedBefore = AgcDriver::Graphics::EpochProofCounts().storageReuses.Sum();
+    const auto provedBefore = StorageTexture::RefreshesProved();
+    Require(AgcDriver::Graphics::CachedStorageSurface(context, resource) == image, "epoch proof gate: the lookup after a CPU write made another image");
+    Require(AgcDriver::Graphics::EpochProofCounts().storageReuses.Sum() == exitedBefore && StorageTexture::RefreshesProved() == provedBefore, "epoch proof gate: a CPU write before a new collect epoch was answered by a proof instead of a refresh");
+    std::printf("epoch proofs %s as expected\n", expected ? "on" : "off");
     return 0;
 }
 
@@ -1031,6 +1061,14 @@ int main(int argc, char** argv) {
         std::optional<GuestBlock> hinted;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 3 && std::string_view(argv[1]) == "--epoch-proof-gate") {
+            if (!AgcDriver::GuestMemory::WriteWatched()) {
+                std::puts("epoch proof gate: no write watching: skipped");
+                return VulkanTestSkipped;
+            }
+            watched.emplace(true);
+            return RunEpochProofGate(*device, watched->Data(), std::string_view(argv[2]) == "on");
+        }
         if (argc == 2) {
             const auto mode = std::find_if(KeyWriteModes.begin(), KeyWriteModes.end(), [&](const KeyWriteMode& entry) { return entry.name == argv[1]; });
             Require(mode != KeyWriteModes.end(), std::string("DCC keys first write: unknown mode ") + argv[1]);

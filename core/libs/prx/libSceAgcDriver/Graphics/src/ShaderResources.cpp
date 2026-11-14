@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
@@ -9,6 +10,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/EpochProofCounters.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
@@ -4097,18 +4100,32 @@ const ShaderRecompiler::DescriptorBinding* ShaderResources::tableImages(std::spa
 }
 
 bool ShaderResources::EpochProofs() {
-    return DrawPipelineEnabled();
+    return !RuntimeSwitches::Set(RuntimeSwitch::NoEpochProofs) && DriverDetail::DrawPipeline::Depth() != 0;
+}
+
+EpochProofCounters& EpochProofCounts() {
+    static EpochProofCounters counters;
+    return counters;
+}
+
+bool EpochProofCountsProfiled() {
+    static const bool profiled = std::getenv("APS5_PROFILE_EPOCH_PROOFS") != nullptr;
+    return profiled;
+}
+
+void ReportEpochProofCounts() {
+    auto& counts = EpochProofCounts();
+    AgcDriver::ProfilePrint_nid_no_patch("[epoch-proofs] (10 s, proofs %s): resource proofs reused %llu, proved %llu; storage refreshes reused %llu; address spaces reused %llu, refreshed %llu\n", ShaderResources::EpochProofs() ? "on" : "off", static_cast<unsigned long long>(counts.resourceReuses.Take()), static_cast<unsigned long long>(counts.resourceProofs.Take()), static_cast<unsigned long long>(counts.storageReuses.Take()), static_cast<unsigned long long>(counts.mirrorReuses.Take()), static_cast<unsigned long long>(counts.mirrorRefreshes.Take()));
 }
 
 namespace {
 void noteEpochProof(bool reused, bool verified, bool failed) {
-    static std::atomic<std::uint64_t> reuses{0}, proofs{0}, checks{0}, failures{0};
-    if (verified) checks.fetch_add(1, std::memory_order_relaxed);
+    (reused ? EpochProofCounts().resourceReuses : EpochProofCounts().resourceProofs).Add();
+    if (!verified) return;
+    static std::atomic<std::uint64_t> checks{0}, failures{0};
     if (failed) failures.fetch_add(1, std::memory_order_relaxed);
-    const auto count = (reused ? reuses : proofs).fetch_add(1, std::memory_order_relaxed) + 1u;
-    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
-    if (!report) return;
-    if (count % 262144u == 0u || (count & (count - 1u)) == 0u) std::fprintf(stderr, "[epoch-proofs] resource proofs: %llu reused the epoch's, %llu proved; verify: %llu checked, %llu failed; storage refreshes reused %llu\n", static_cast<unsigned long long>(reuses.load()), static_cast<unsigned long long>(proofs.load()), static_cast<unsigned long long>(checks.load()), static_cast<unsigned long long>(failures.load()), static_cast<unsigned long long>(StorageTexture::epochRefreshes.load()));
+    const auto count = checks.fetch_add(1, std::memory_order_relaxed) + 1u;
+    if (count % 4096u == 0u || (count & (count - 1u)) == 0u) std::fprintf(stderr, "[epoch-proofs] verify: %llu reused resource proofs checked, %llu failed\n", static_cast<unsigned long long>(count), static_cast<unsigned long long>(failures.load(std::memory_order_relaxed)));
 }
 }
 
