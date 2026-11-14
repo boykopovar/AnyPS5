@@ -147,6 +147,38 @@ void CheckPhiAndIdentity() {
     Require(target->UseCount() == 3);
 }
 
+void CheckPhiPreserveClearsPhiBlocks() {
+    Graph graph(3);
+    auto* target = graph.Value(0);
+    auto* user = graph.Value(1);
+    auto* phi = graph.Value(2);
+    phi->ReplaceOpcode(IrOpcode::Phi);
+    phi->AddPhiOperand(&graph.block, target);
+    phi->AddPhiOperand(&graph.block, target);
+    user->AddArgument(phi);
+    phi->ReplaceUsesWith(target, true);
+    Require(phi->Opcode() == IrOpcode::Identity);
+    Require(phi->ArgumentCount() == 1 && phi->Argument(0) == target);
+    Require(phi->PhiBlockCount() == 0);
+    Require(user->Argument(0) == phi && phi->Resolve() == target);
+}
+
+void CheckPhiInvalidateClearsPhiBlocks() {
+    Graph graph(3);
+    auto* target = graph.Value(0);
+    auto* user = graph.Value(1);
+    auto* phi = graph.Value(2);
+    phi->ReplaceOpcode(IrOpcode::Phi);
+    phi->AddPhiOperand(&graph.block, target);
+    phi->AddPhiOperand(&graph.block, target);
+    user->AddArgument(phi);
+    phi->ReplaceUsesWith(target, false);
+    Require(phi->Opcode() == IrOpcode::Unreachable);
+    Require(phi->PhiBlockCount() == 0);
+    Require(phi->Argument(0) == nullptr && phi->Argument(1) == nullptr);
+    Require(user->Argument(0) == target && target->UseCount() == 1);
+}
+
 void CheckAllocationFailure() {
     for (std::ptrdiff_t failure = 0; failure < 1; ++failure) {
         Graph graph(12);
@@ -243,6 +275,8 @@ int main() {
             {"tail argument removal", CheckTailArgumentRemoval},
             {"self and empty replacement", CheckSelfAndEmpty},
             {"phi and identity rewriting", CheckPhiAndIdentity},
+            {"phi preserve clears phi blocks", CheckPhiPreserveClearsPhiBlocks},
+            {"phi invalidate clears phi blocks", CheckPhiInvalidateClearsPhiBlocks},
             {"allocation failure integrity", CheckAllocationFailure},
             {"geometric use-list growth", CheckGeometricGrowth},
             {"large fan-out", CheckLargeFanOut},
@@ -252,7 +286,7 @@ int main() {
             current = name;
             test();
         }
-        std::puts("8 IR rewrite suites passed; 2000 differential use graphs and 48000 mutation comparisons");
+        std::puts("10 IR rewrite suites passed; 2000 differential use graphs and 48000 mutation comparisons");
         return 0;
     } catch (const std::exception& error) {
         failureAfter = -1;
