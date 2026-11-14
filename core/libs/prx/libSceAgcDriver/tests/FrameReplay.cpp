@@ -524,6 +524,29 @@ void testZeroRewindControlRewritten(const std::filesystem::path& tool) {
     check(capture.replay(tool, Label) == Done, "the replay did not run the tail of a REWIND whose block was rewritten while its control stayed zero");
 }
 
+void testZeroRewindControlRestoredAtPark(const std::filesystem::path& tool) {
+    RewindCapture capture(rewindCaptureDirectory());
+    constexpr std::size_t First = 1;
+    constexpr std::size_t Second = 3;
+    constexpr std::size_t Label = 3 * PageWords;
+    const auto write = capture.writeData(Label, Done);
+    capture.place(0, std::array{RewindHeader, 0u, RewindHeader, 0u});
+    capture.place(Second + 1, write);
+    capture.start();
+    capture.submit(0, Second + 1 + write.size());
+    capture.place(First, std::array{AgcDriver::Pm4::RewindValid});
+    capture.delta(1, {{0, 1}}, {Second});
+    capture.place(Second, std::array{AgcDriver::Pm4::RewindValid});
+    capture.delta(0, {{0, 1}}, {});
+    check(capture.replay(tool, Label) == Done, "the replay did not run the tail of a REWIND whose zero control was restored again once the queue parked on it");
+    const auto json = readFile(rewindCaptureDirectory() / "replay.json");
+    const std::string line(reinterpret_cast<const char*>(json.data()), json.size());
+    constexpr std::string_view Field = "\"park_restores\":";
+    const auto field = line.find(Field);
+    check(field != std::string::npos, "the replay JSON has no park_restores");
+    check(std::strtoull(line.c_str() + field + Field.size(), nullptr, 10) != 0, "the replay did not restore the memory group again once the queue parked on the zero REWIND control");
+}
+
 void testRewindControlsKeptAnywhere(const std::filesystem::path& tool) {
     RewindCapture capture(rewindCaptureDirectory());
     constexpr std::size_t Last = 4 * PageWords - 1;
@@ -1382,9 +1405,9 @@ int main(int argc, char** argv) {
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
         {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"allocation_ranges", testRegisteredRangeBoundaries}};
     const std::map<std::string, void (*)(const std::filesystem::path&)> restored{
-        {"rewind_chained", testChainedRewindGates}, {"rewind_page_start", testRewindControlAtPageStart}, {"rewind_zero_control", testZeroRewindControlRewritten}, {"rewind_in_order", testEarlyReleaseRestoredInOrder}, {"rewind_kept_words", testRewindControlsKeptAnywhere}, {"multisample_depth", testMultisampleDepthPasses}, {"single_sample_depth", testSingleSampleDepthPasses}};
+        {"rewind_chained", testChainedRewindGates}, {"rewind_page_start", testRewindControlAtPageStart}, {"rewind_zero_control", testZeroRewindControlRewritten}, {"rewind_zero_control_parked", testZeroRewindControlRestoredAtPark}, {"rewind_in_order", testEarlyReleaseRestoredInOrder}, {"rewind_kept_words", testRewindControlsKeptAnywhere}, {"multisample_depth", testMultisampleDepthPasses}, {"single_sample_depth", testSingleSampleDepthPasses}};
     if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || rewound.contains(mode) || restored.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_chained|rewind_page_start|rewind_zero_control|rewind_in_order|rewind_kept_words|multisample_depth|single_sample_depth|allocation_ranges]\n");
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_chained|rewind_page_start|rewind_zero_control|rewind_zero_control_parked|rewind_in_order|rewind_kept_words|multisample_depth|single_sample_depth|allocation_ranges]\n");
         return 2;
     }
     int status = 0;

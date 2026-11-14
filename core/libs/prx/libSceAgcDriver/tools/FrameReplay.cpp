@@ -1001,8 +1001,7 @@ struct Replay {
                 if (std::ranges::any_of(held, [&](const auto& wait) { return address < wait.address + wait.bytes && wait.address < address + sizeof(std::uint32_t); })) continue;
                 std::uint32_t value = 0;
                 std::memcpy(&value, bytes.data() + at, sizeof(value));
-                if (again && (value & AgcDriver::Pm4::RewindValid) == 0) continue;
-                if (!again) (std::ranges::binary_search(parked, address) ? releases : controls).emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
+                if (!again || (value & AgcDriver::Pm4::RewindValid) == 0) (std::ranges::binary_search(parked, address) ? releases : controls).emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
                 std::memcpy(target + from, bytes.data() + from, at - from);
                 from = at + sizeof(std::uint32_t);
                 ++keptWords;
