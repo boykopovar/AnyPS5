@@ -698,6 +698,35 @@ static void TestIntRectScaleOverflowGivesIntMin() {
     Require(ir.m_size.m_height == 30);
 }
 
+static bool BackendSizeIs(float width, float height, float scale, int expectedWidth, int expectedHeight) {
+    WebCore::FloatSize size{width, height};
+    WebCore::IntSize result = _ZN7WebCore18ImageBufferBackend20calculateBackendSizeERKNS_9FloatSizeEf(size, scale);
+    return result.m_width == expectedWidth && result.m_height == expectedHeight;
+}
+
+static void TestCalculateBackendSize() {
+    Require(BackendSizeIs(10.2f, 5.1f, 2.0f, 21, 11));
+    Require(BackendSizeIs(100.0f, 50.0f, 1.0f, 100, 50));
+    Require(BackendSizeIs(0.1f, 0.1f, 1.0f, 1, 1));
+    Require(BackendSizeIs(-0.5f, 4.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(0.0f, 10.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(10.0f, -3.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(10.0f, 10.0f, 0.0f, 0, 0));
+    Require(BackendSizeIs(10.0f, 10.0f, -1.0f, 0, 0));
+    Require(BackendSizeIs(3e9f, 10.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(10.0f, 2147483648.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(std::numeric_limits<float>::quiet_NaN(), 10.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(10.0f, std::numeric_limits<float>::infinity(), 1.0f, 0, 0));
+    Require(BackendSizeIs(1073741824.0f, 1.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(1073741823.0f, 1.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(536870912.0f, 1.0f, 1.0f, 536870912, 1));
+    Require(BackendSizeIs(1.0f, 1000000000.0f, 1.0f, 1, 1000000000));
+    Require(BackendSizeIs(70000.0f, 70000.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(32768.0f, 32767.0f, 1.0f, 32768, 32767));
+    Require(BackendSizeIs(32768.0f, 32768.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(1.0f, 1073741824.0f, 1.0f, 0, 0));
+}
+
 int main() {
     TestFloatPoint();
     TestFloatSize();
@@ -714,5 +743,6 @@ int main() {
     TestApplyPerspective();
     TestMatrixTransformOperation();
     TestIntRectScaleOverflowGivesIntMin();
+    TestCalculateBackendSize();
     return 0;
 }
