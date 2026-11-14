@@ -484,6 +484,10 @@ TFloat ExpProduct(TFloat y, TFloat ratio) {
     constexpr Bits magnitude = std::numeric_limits<Bits>::max() >> 1;
     constexpr Bits infinity = std::bit_cast<Bits>(std::numeric_limits<TFloat>::infinity());
     constexpr Bits quiet = Bits{1} << (std::numeric_limits<TFloat>::digits - 2);
+    if constexpr (sizeof(TFloat) == sizeof(float)) {
+        const Bits ratioBits = std::bit_cast<Bits>(ratio);
+        if ((ratioBits & magnitude) > infinity) return std::bit_cast<TFloat>(static_cast<Bits>(ratioBits | quiet));
+    }
     const TFloat product = y * ratio;
     const Bits bits = std::bit_cast<Bits>(y);
     if ((bits & magnitude) > infinity) return std::bit_cast<TFloat>(static_cast<Bits>(bits | quiet));

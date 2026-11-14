@@ -63,6 +63,7 @@ int EncryptUpdate(LibreSslEvpCipherCtx* ctx, unsigned char* out, int* outl, cons
     int buffered = ctx->bufLen;
     const int block = cipher.blockSize;
     if (static_cast<std::size_t>(block) > sizeof(ctx->buf)) {
+        LibreSslPutError_nid_no_patch(6, 0xfff, 136);
         SetLength(outl, 0, function);
         return 0;
     }
@@ -106,14 +107,20 @@ int EncryptFinal(LibreSslEvpCipherCtx* ctx, unsigned char* out, int* outl, const
         return 1;
     }
     const auto block = static_cast<unsigned>(cipher.blockSize);
-    if (block > sizeof(ctx->buf)) return 0;
+    if (block > sizeof(ctx->buf)) {
+        LibreSslPutError_nid_no_patch(6, 0xfff, 136);
+        return 0;
+    }
     if (block == 1) {
         SetLength(outl, 0, function);
         return 1;
     }
     const auto buffered = static_cast<unsigned>(ctx->bufLen);
     if (ctx->flags & CipherFlagNoPadding) {
-        if (buffered) return 0;
+        if (buffered) {
+            LibreSslPutError_nid_no_patch(6, 0xfff, 138);
+            return 0;
+        }
         SetLength(outl, 0, function);
         return 1;
     }
@@ -137,7 +144,10 @@ int DecryptUpdate(LibreSslEvpCipherCtx* ctx, unsigned char* out, int* outl, cons
     }
     if (ctx->flags & CipherFlagNoPadding) return EncryptUpdate(ctx, out, outl, in, inl, function);
     const auto block = static_cast<unsigned>(cipher.blockSize);
-    if (block > sizeof(ctx->final)) return 0;
+    if (block > sizeof(ctx->final)) {
+        LibreSslPutError_nid_no_patch(6, 0xfff, 136);
+        return 0;
+    }
     const bool held = ctx->finalUsed;
     if (held) {
         Copy(out, ctx->final, block, function);
@@ -235,9 +245,18 @@ void APS5_VABI EVP_CIPHER_CTX_free_nid_postfix(LibreSslEvpCipherCtx* ctx) {
 
 int APS5_VABI EVP_CIPHER_CTX_ctrl_nid_postfix(LibreSslEvpCipherCtx* ctx, int type, int arg, void* pointer) {
     if (!ctx) throw std::invalid_argument(std::string(__func__) + ": null context");
-    if (!ctx->cipher || !ctx->cipher->control) return 0;
+    if (!ctx->cipher) {
+        LibreSslPutError_nid_no_patch(6, 0xfff, 131);
+        return 0;
+    }
+    if (!ctx->cipher->control) {
+        LibreSslPutError_nid_no_patch(6, 0xfff, 132);
+        return 0;
+    }
     const int result = ctx->cipher->control(ctx, type, arg, pointer);
-    return result == -1 ? 0 : result;
+    if (result != -1) return result;
+    LibreSslPutError_nid_no_patch(6, 0xfff, 133);
+    return 0;
 }
 
 int APS5_VABI EVP_CipherInit_ex_nid_postfix(LibreSslEvpCipherCtx* ctx, const LibreSslEvpCipher* cipher, void* engine, const unsigned char* key, const unsigned char* iv, int encrypt) {
@@ -258,16 +277,26 @@ int APS5_VABI EVP_CipherInit_ex_nid_postfix(LibreSslEvpCipherCtx* ctx, const Lib
         ctx->cipherData = nullptr;
         if (cipher->contextSize) {
             ctx->cipherData = calloc_nid_postfix(1, static_cast<std::size_t>(cipher->contextSize));
-            if (!ctx->cipherData) return 0;
+            if (!ctx->cipherData) {
+                LibreSslPutError_nid_no_patch(6, 0xfff, 65);
+                return 0;
+            }
         }
         ctx->keyLen = cipher->keyLength;
         ctx->flags &= CipherCtxFlagWrapAllow;
-        if ((cipher->flags & CipherFlagCtrlInit) && !EVP_CIPHER_CTX_ctrl_nid_postfix(ctx, CipherControlInit, 0, nullptr)) return 0;
+        if ((cipher->flags & CipherFlagCtrlInit) && !EVP_CIPHER_CTX_ctrl_nid_postfix(ctx, CipherControlInit, 0, nullptr)) {
+            LibreSslPutError_nid_no_patch(6, 0xfff, 134);
+            return 0;
+        }
     } else if (!engineCipher && !ctx->cipher) {
+        LibreSslPutError_nid_no_patch(6, 0xfff, 131);
         return 0;
     }
     const auto& active = *ctx->cipher;
-    if (active.blockSize != 1 && active.blockSize != 8 && active.blockSize != 16) return 0;
+    if (active.blockSize != 1 && active.blockSize != 8 && active.blockSize != 16) {
+        LibreSslPutError_nid_no_patch(6, 0xfff, 136);
+        return 0;
+    }
     if ((active.flags & CipherModeMask) == CipherModeWrap && !(ctx->flags & CipherCtxFlagWrapAllow)) return 0;
     if (!(active.flags & CipherFlagCustomIv)) {
         const auto ivLength = static_cast<std::size_t>(active.ivLength);
@@ -280,7 +309,10 @@ int APS5_VABI EVP_CipherInit_ex_nid_postfix(LibreSslEvpCipherCtx* ctx, const Lib
             ctx->num = 0;
             [[fallthrough]];
         case CipherModeCbc:
-            if (ivLength > sizeof(ctx->iv)) return 0;
+            if (ivLength > sizeof(ctx->iv)) {
+                LibreSslPutError_nid_no_patch(6, 0xfff, 102);
+                return 0;
+            }
             if (iv) std::memcpy(ctx->oiv, iv, ivLength);
             std::memcpy(ctx->iv, ctx->oiv, ivLength);
             break;

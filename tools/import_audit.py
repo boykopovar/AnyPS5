@@ -331,7 +331,10 @@ def pe_exports(path, data):
             continue
         if rva <= function_rva < rva + size:
             offset, limit = to_offset(function_rva, 1)
-            cstring(data, offset, min(limit, offset + rva + size - function_rva), path, "export forwarder", "ASCII", "strict")
+            forwarder = cstring(data, offset, min(limit, offset + rva + size - function_rva), path, "export forwarder", "ASCII", "strict")
+            module, separator, target = forwarder.partition(".")
+            if not module or not separator or not target or target.startswith("#") and re.fullmatch(r"#[0-9]+", target) is None:
+                raise AuditError(f"{path}: invalid export forwarder {forwarder!r}")
         names.add(name)
     return names
 

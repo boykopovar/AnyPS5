@@ -2,9 +2,11 @@
 #include "prx/libSceLibreSsl3/include/PkeyMethod.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyState.hpp"
 #include "prx/libSceLibreSsl3/include/RsaCrypto.hpp"
+#include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -54,6 +56,7 @@ int APS5_VABI PosixAlign_nid_no_patch(void**, std::size_t, std::size_t) { throw 
 
 constexpr std::uint64_t EvpCode(std::uint64_t reason) { return 0x06fff000ULL | reason; }
 constexpr std::uint64_t RsaCode(std::uint64_t reason) { return 0x04fff000ULL | reason; }
+constexpr std::uint64_t EcCode(std::uint64_t reason) { return 0x10fff000ULL | reason; }
 
 void ExpectErrors(std::initializer_list<std::uint64_t> codes) {
     for (const auto code : codes) Require(ERR_get_error_nid_postfix() == code);
@@ -1102,6 +1105,159 @@ void DigestSignInitWithoutDigest() {
     ReleaseKey(key);
 }
 
+EcKey* NewEcKey(const char* privateScalar, int curve) {
+    auto* key = EC_KEY_new_by_curve_name_nid_postfix(curve);
+    Require(key != nullptr && key->group != nullptr);
+    auto* privateKey = new EcPrivateKey(key->group->curve);
+    Require(mbedtls_mpi_read_string(&privateKey->value, 16, privateScalar) == 0);
+    auto* scalar = BN_new_nid_postfix();
+    Require(scalar != nullptr && BN_hex2bn_nid_postfix(&scalar, privateScalar) > 0);
+    auto* publicKey = EC_POINT_new_nid_postfix(key->group);
+    Require(publicKey != nullptr);
+    Require(EC_POINT_mul_nid_postfix(key->group, publicKey, scalar, nullptr, nullptr, nullptr) == 1);
+    BN_free_nid_postfix(scalar);
+    key->privateKey = privateKey;
+    key->publicKey = publicKey;
+    return key;
+}
+
+LibreSsl3EvpPkey* NewEcPkey(EcKey* ecKey) {
+    auto* key = EVP_PKEY_new_nid_disambig1_nid_postfix();
+    Require(key != nullptr);
+    Require(EVP_PKEY_set1_EC_KEY_nid_postfix(key, reinterpret_cast<LibreSsl3EcKey*>(ecKey)) == 1);
+    EC_KEY_free_nid_postfix(ecKey);
+    return key;
+}
+
+void EcdhDerivation() {
+    constexpr int P256 = 415;
+    constexpr int P384 = 715;
+    constexpr char PrivateA[] = "C88F01F510D9AC3F70A292DAA2316DE544E9AAB8AFE84049C62A9C57862D1433";
+    constexpr char PrivateB[] = "C6EF9C5D78AE012A011164ACB397CE2088685D8F06BF9BE0B283AB46476BEE53";
+    constexpr std::array<unsigned char, 32> Expected {
+        0xd6, 0x84, 0x0f, 0x6b, 0x42, 0xf6, 0xed, 0xaf, 0xd1, 0x31, 0x16, 0xe0, 0xe1, 0x25, 0x65, 0x20,
+        0x2f, 0xef, 0x8e, 0x9e, 0xce, 0x7d, 0xce, 0x03, 0x81, 0x24, 0x64, 0xd0, 0x4b, 0x94, 0x42, 0xde,
+    };
+    auto* first = NewEcPkey(NewEcKey(PrivateA, P256));
+    auto* second = NewEcPkey(NewEcKey(PrivateB, P256));
+    auto* firstContext = EVP_PKEY_CTX_new_nid_postfix(first, nullptr);
+    auto* secondContext = EVP_PKEY_CTX_new_nid_postfix(second, nullptr);
+    Require(firstContext != nullptr && secondContext != nullptr);
+    Require(EVP_PKEY_derive_init_nid_postfix(firstContext) == 1);
+    Require(EVP_PKEY_derive_init_nid_postfix(secondContext) == 1);
+    Require(EVP_PKEY_derive_set_peer_nid_postfix(firstContext, second) == 1);
+    Require(EVP_PKEY_derive_set_peer_nid_postfix(secondContext, first) == 1);
+    std::size_t length = 0;
+    Require(EVP_PKEY_derive_nid_postfix(firstContext, nullptr, &length) == 1 && length == Expected.size());
+    std::array<unsigned char, 64> firstSecret;
+    std::array<unsigned char, 64> secondSecret;
+    firstSecret.fill(0xa5);
+    secondSecret.fill(0xa5);
+    length = 48;
+    Require(EVP_PKEY_derive_nid_postfix(firstContext, firstSecret.data() + 8, &length) == 1);
+    Require(length == Expected.size());
+    Require(std::all_of(firstSecret.begin(), firstSecret.begin() + 8, [](unsigned char v) { return v == 0xa5; }));
+    Require(std::equal(Expected.begin(), Expected.end(), firstSecret.begin() + 8));
+    Require(std::all_of(firstSecret.begin() + 8 + Expected.size(), firstSecret.end(),
+        [](unsigned char value) { return value == 0xa5; }));
+    length = 48;
+    Require(EVP_PKEY_derive_nid_postfix(secondContext, secondSecret.data() + 8, &length) == 1);
+    Require(length == Expected.size());
+    Require(std::all_of(secondSecret.begin(), secondSecret.begin() + 8, [](unsigned char v) { return v == 0xa5; }));
+    Require(std::equal(Expected.begin(), Expected.end(), secondSecret.begin() + 8));
+    Require(std::all_of(secondSecret.begin() + 8 + Expected.size(), secondSecret.end(),
+        [](unsigned char value) { return value == 0xa5; }));
+    std::array<unsigned char, 24> shortSecret;
+    shortSecret.fill(0x5a);
+    length = 8;
+    Require(EVP_PKEY_derive_nid_postfix(firstContext, shortSecret.data() + 8, &length) == 1);
+    Require(length == 8);
+    Require(std::all_of(shortSecret.begin(), shortSecret.begin() + 8, [](unsigned char v) { return v == 0x5a; }));
+    Require(std::equal(shortSecret.begin() + 8, shortSecret.begin() + 16, Expected.begin()));
+    Require(std::all_of(shortSecret.begin() + 16, shortSecret.end(), [](unsigned char v) { return v == 0x5a; }));
+    Require(EVP_PKEY_derive_nid_postfix(firstContext, nullptr, nullptr) == 0);
+    Require(EVP_PKEY_derive_nid_postfix(firstContext, shortSecret.data(), nullptr) == 0);
+    EVP_PKEY_CTX_free_nid_postfix(firstContext);
+    EVP_PKEY_CTX_free_nid_postfix(secondContext);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(first);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(second);
+
+    auto* genAKey = EC_KEY_new_by_curve_name_nid_postfix(P256);
+    auto* genBKey = EC_KEY_new_by_curve_name_nid_postfix(P256);
+    Require(genAKey != nullptr && genBKey != nullptr);
+    Require(EC_KEY_generate_key_nid_postfix(genAKey) == 1);
+    Require(EC_KEY_generate_key_nid_postfix(genBKey) == 1);
+    auto* genA = NewEcPkey(genAKey);
+    auto* genB = NewEcPkey(genBKey);
+    auto* genACtx = EVP_PKEY_CTX_new_nid_postfix(genA, nullptr);
+    auto* genBCtx = EVP_PKEY_CTX_new_nid_postfix(genB, nullptr);
+    Require(genACtx != nullptr && genBCtx != nullptr);
+    Require(EVP_PKEY_derive_init_nid_postfix(genACtx) == 1);
+    Require(EVP_PKEY_derive_init_nid_postfix(genBCtx) == 1);
+    Require(EVP_PKEY_derive_set_peer_nid_postfix(genACtx, genB) == 1);
+    Require(EVP_PKEY_derive_set_peer_nid_postfix(genBCtx, genA) == 1);
+    std::array<unsigned char, 32> genASecret {};
+    std::array<unsigned char, 32> genBSecret {};
+    std::size_t genALen = genASecret.size();
+    std::size_t genBLen = genBSecret.size();
+    Require(EVP_PKEY_derive_nid_postfix(genACtx, genASecret.data(), &genALen) == 1);
+    Require(EVP_PKEY_derive_nid_postfix(genBCtx, genBSecret.data(), &genBLen) == 1);
+    Require(genALen == 32 && genBLen == 32 && genASecret == genBSecret);
+    EVP_PKEY_CTX_free_nid_postfix(genACtx);
+    EVP_PKEY_CTX_free_nid_postfix(genBCtx);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(genA);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(genB);
+
+    first = NewEcPkey(NewEcKey(PrivateA, P256));
+    auto* otherCurve = NewEcPkey(EC_KEY_new_by_curve_name_nid_postfix(P384));
+    firstContext = EVP_PKEY_CTX_new_nid_postfix(first, nullptr);
+    Require(EVP_PKEY_derive_init_nid_postfix(firstContext) == 1);
+    Require(EVP_PKEY_derive_set_peer_nid_postfix(firstContext, otherCurve) == -1);
+    ExpectErrors({EvpCode(153)});
+    Require(EVP_PKEY_derive_nid_postfix(firstContext, nullptr, &length) == 0);
+    ExpectErrors({EcCode(140)});
+    EVP_PKEY_CTX_free_nid_postfix(firstContext);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(first);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(otherCurve);
+
+    first = NewEcPkey(NewEcKey(PrivateA, P256));
+    firstContext = EVP_PKEY_CTX_new_nid_postfix(first, nullptr);
+    Require(EVP_PKEY_derive_nid_postfix(firstContext, nullptr, &length) == -1);
+    ExpectErrors({EvpCode(151)});
+    EVP_PKEY_CTX_free_nid_postfix(firstContext);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(first);
+
+    auto* noPrivateKey = EC_KEY_new_by_curve_name_nid_postfix(P256);
+    auto* noPrivate = NewEcPkey(noPrivateKey);
+    auto* publicPeer = NewEcPkey(NewEcKey(PrivateB, P256));
+    firstContext = EVP_PKEY_CTX_new_nid_postfix(noPrivate, nullptr);
+    Require(EVP_PKEY_derive_init_nid_postfix(firstContext) == 1);
+    Require(EVP_PKEY_derive_set_peer_nid_postfix(firstContext, publicPeer) == 1);
+    length = Expected.size();
+    std::array<unsigned char, 32> secret {};
+    Require(EVP_PKEY_derive_nid_postfix(firstContext, secret.data(), &length) == 0);
+    ExpectErrors({EcCode(140)});
+    EVP_PKEY_CTX_free_nid_postfix(firstContext);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(noPrivate);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(publicPeer);
+
+    auto* source = NewEcPkey(NewEcKey(PrivateA, P256));
+    auto* destination = NewEcPkey(EC_KEY_new_nid_postfix());
+    Require(EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(nullptr, source) == 0);
+    Require(EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(destination, nullptr) == 0);
+    Require(EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(source, destination) == 0);
+    ExpectErrors({EvpCode(103)});
+    auto* rsaKey = NewNativeKey(LibreSsl3PkeyRsa);
+    Require(EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(destination, rsaKey) == 0);
+    ExpectErrors({EvpCode(101)});
+    ReleaseKey(rsaKey);
+    Require(EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(destination, source) == 1);
+    auto* copied = static_cast<EcKey*>(destination->key);
+    Require(copied->group != nullptr && copied->group->curve.nid == P256);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(source);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(destination);
+}
+
 int main() {
     std::array<void*, 10> api{reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch),
         reinterpret_cast<void*>(Calloc_nid_no_patch), reinterpret_cast<void*>(Reallocate_nid_no_patch),
@@ -1129,6 +1285,7 @@ int main() {
     DigestSignatures();
     SignFinalVerifyFinal();
     DigestSignInitWithoutDigest();
+    EcdhDerivation();
     Require(allocations.empty());
     std::puts("LibreSSL3 EVP_PKEY_CTX RSA encryption and signature tests passed");
 }

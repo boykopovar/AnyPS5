@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -19,7 +20,6 @@
 #endif
 #include <windows.h>
 #else
-#include <cerrno>
 #include <fstream>
 #include <sstream>
 #include <sys/mman.h>
@@ -687,7 +687,12 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
   }
   if (result != 0) break;
  }
- if (num_entries_out) *num_entries_out = processed;
+ if (num_entries_out != nullptr) {
+  const int savedErrno = errno;
+  const bool copied = GuestCopyOut_nid_no_patch(num_entries_out, &processed, sizeof(processed));
+  errno = savedErrno;
+  if (!copied) return SCE_KERNEL_ERROR_EFAULT;
+ }
  return result;
 }
 

@@ -185,6 +185,9 @@ static void CheckAngularVelocityDeadband(int handle) {
 }
 
 static void CheckStickDeadZones(int handle) {
+    errno = 71;
+    Require(scePadGetControllerInformation(handle, reinterpret_cast<PadControllerInformation*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     PadControllerInformation info{};
     Require(scePadGetControllerInformation(handle, &info) == PAD_OK);
     Require(info.stickInfo.deadZoneLeft == 13 && info.stickInfo.deadZoneRight == 13);
