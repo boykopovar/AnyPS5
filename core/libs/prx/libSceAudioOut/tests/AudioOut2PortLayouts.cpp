@@ -393,6 +393,27 @@ void TestMeasuredMainPortFormats() {
     Require(sceAudioOut2ContextDestroy(context) == 0);
 }
 
+void TestMeasuredPortCreateErrors() {
+    const auto context = CreateContext();
+    for (const std::uint32_t samplingFreq : {44100u, 96000u, 0u, 1u}) {
+        AudioOut2PortParam params{};
+        params.data_format = 0x100;
+        params.sampling_freq = samplingFreq;
+        AudioOut2PortHandle port = 0;
+        Require(static_cast<std::uint32_t>(sceAudioOut2PortCreate(context, &params, &port)) == 0x8026800A);
+        Require(port != 0);
+    }
+    AudioOut2PortHandle port = 0;
+    Require(static_cast<std::uint32_t>(CreatePort(context, 0x100, &port, 0x100)) == 0x80268002);
+    Require(port != 0);
+    for (const std::uint32_t format : {0x800u, 0x600u, 0x1100u}) {
+        port = 0;
+        Require(static_cast<std::uint32_t>(CreatePort(context, format, &port, 0x100)) == 0x8026800E);
+        Require(port == 0);
+    }
+    Require(sceAudioOut2ContextDestroy(context) == 0);
+}
+
 }
 
 int main() {
@@ -421,5 +442,6 @@ int main() {
     TestPadSpeakerFallbackMute();
     TestPadSpeakerFallbackInvalidStopsTheTitle();
     TestMeasuredMainPortFormats();
+    TestMeasuredPortCreateErrors();
     return 0;
 }

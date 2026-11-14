@@ -36,6 +36,10 @@ static constexpr std::uint32_t FORMAT_CHANNELS_MASK = 0xFu;
 static constexpr std::uint32_t FORMAT_TYPE_MASK = 0x7Fu;
 static constexpr std::uint32_t FORMAT_FIELDS_MASK = 0xFFFu;
 static constexpr std::uint16_t PORT_TYPE_MAIN = 0;
+static constexpr std::uint16_t PORT_TYPE_0X100 = 0x100;
+static constexpr std::uint32_t PORT_SAMPLING_FREQ = 48000;
+static constexpr int PORT_ERROR_TYPE_0X100_FORMAT_0X100 = static_cast<int>(0x80268002);
+static constexpr int PORT_ERROR_SAMPLING_FREQ = static_cast<int>(0x8026800A);
 static constexpr int PORT_ERROR_FORMAT_FLAG_WITHOUT_8_CHANNELS = static_cast<int>(0x80268001);
 static constexpr int PORT_ERROR_UNSUPPORTED_FORMAT = static_cast<int>(0x8026800E);
 
@@ -226,6 +230,16 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
             *port = static_cast<AudioOut2PortHandle>(-1);
             return PORT_ERROR_UNSUPPORTED_FORMAT;
         }
+        if (params->sampling_freq != PORT_SAMPLING_FREQ) {
+            *port = static_cast<AudioOut2PortHandle>(-1);
+            return PORT_ERROR_SAMPLING_FREQ;
+        }
+    } else if (params->port_type == PORT_TYPE_0X100) {
+        if (params->data_format == 0x100u) {
+            *port = static_cast<AudioOut2PortHandle>(-1);
+            return PORT_ERROR_TYPE_0X100_FORMAT_0X100;
+        }
+        if (params->data_format == 0x800u || params->data_format == 0x600u || params->data_format == 0x1100u) return PORT_ERROR_UNSUPPORTED_FORMAT;
     }
     std::lock_guard lock(g_portsLock);
     std::size_t index = 0;
