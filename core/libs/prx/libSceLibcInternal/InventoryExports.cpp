@@ -283,26 +283,6 @@ int APS5_VABI libSceLibcInternalInventory_066_nid_no_patch() {
 }
 APS5_EXPORT("zOPA5qnbW2U", libSceLibcInternalInventory_066_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_067_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("U54NBtdj6UY", libSceLibcInternalInventory_067_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_068_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("7OCTkL2oWyg", libSceLibcInternalInventory_068_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_069_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("log6zy2C9iQ", libSceLibcInternalInventory_069_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_070_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("j7e7EQBD6ZA", libSceLibcInternalInventory_070_nid_no_patch);
-
 int APS5_VABI libSceLibcInternalInventory_071_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

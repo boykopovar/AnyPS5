@@ -384,12 +384,6 @@ int APS5_VABI _ZNSt9exception18_Set_raise_handlerEPFvRKS_E_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI sceLibcInternalUnknown6_089_djHbPEpTFIo_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("djHbPE+TFIo", sceLibcInternalUnknown6_089_djHbPEpTFIo_nid_no_patch);
-
 void APS5_VABI sceLibcInternalUnknown6_090_Oeo9tUbzW7s_nid_no_patch(void* self) {
     (void)self;
 }
@@ -539,11 +533,6 @@ int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE7_UnlockEv_nid_postfix() 
 }
 
 int APS5_VABI _ZNSt7_MpunctIwED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt6_MutexC1Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
