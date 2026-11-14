@@ -2,6 +2,8 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include <stdexcept>
 #ifndef _WIN32
 #include <unistd.h>
@@ -11,6 +13,7 @@
 #include <cstdint>
 #include <limits>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -153,6 +156,122 @@ int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOp
 
 void APS5_VABI _ZN3WTF14FileSystemImpl18unlockAndCloseFileEi(int handle) {
     _ZN3WTF14FileSystemImpl9closeFileERi(handle);
+}
+
+}
+
+// Derived from Source/WTF/wtf/FileSystem.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WTF/wtf/posix/FileSystemPOSIX.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+/*
+ * Copyright (C) 2007-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2015 Canon Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1.  Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ * 2.  Redistributions in binary form must reproduce the above copyright
+ *     notice, this list of conditions and the following disclaimer in the
+ *     documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE AND ITS CONTRIBUTORS "AS IS" AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL APPLE OR ITS CONTRIBUTORS BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+/*
+ * Copyright (C) 2007-2017 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1.  Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ * 2.  Redistributions in binary form must reproduce the above copyright
+ *     notice, this list of conditions and the following disclaimer in the
+ *     documentation and/or other materials provided with the distribution.
+ * 3.  Neither the name of Apple Inc. ("Apple") nor the names of
+ *     its contributors may be used to endorse or promote products derived
+ *     from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE AND ITS CONTRIBUTORS "AS IS" AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL APPLE OR ITS CONTRIBUTORS BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+namespace {
+constexpr int GuestEintr = 4;
+
+const char* PathData(const NKWebKit::WtfAbi::CString& representation) {
+    if (!representation.buffer) throw std::runtime_error("FileSystemImpl: the path has no UTF-8 representation");
+    return reinterpret_cast<const char*>(representation.buffer + 1);
+}
+
+template<class Operation>
+bool LinkPaths(const NKWebKit::WtfAbi::String& targetPath, const NKWebKit::WtfAbi::String& linkPath, Operation operation) {
+    const auto target = _ZNK3WTF6String4utf8ENS_14ConversionModeE(&targetPath, 0);
+    const auto link = _ZNK3WTF6String4utf8ENS_14ConversionModeE(&linkPath, 0);
+    return operation(PathData(target), PathData(link)) == 0;
+}
+
+int ReadFromFile(int handle, void* data, int length) {
+    do {
+        const auto bytesRead = read_nid_postfix(handle, data, static_cast<std::uint64_t>(length));
+        if (bytesRead >= 0) return static_cast<int>(bytesRead);
+    } while (*__error_nid_postfix() == GuestEintr);
+    return -1;
+}
+
+int WriteToFile(int handle, const void* data, int length) {
+    do {
+        const auto bytesWritten = write_nid_postfix(handle, static_cast<const char*>(data), length);
+        if (bytesWritten >= 0) return static_cast<int>(bytesWritten);
+    } while (*__error_nid_postfix() == GuestEintr);
+    return -1;
+}
+
+struct FileCloser {
+    int handle;
+    ~FileCloser() { _ZN3WTF14FileSystemImpl9closeFileERi(handle); }
+};
+}  // namespace
+
+extern "C" {
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl8hardLinkERKNS_6StringES3_(const NKWebKit::WtfAbi::String& targetPath, const NKWebKit::WtfAbi::String& linkPath) {
+    return LinkPaths(targetPath, linkPath, link_nid_postfix);
+}
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_(const NKWebKit::WtfAbi::String& targetPath, const NKWebKit::WtfAbi::String& symbolicLinkPath) {
+    return LinkPaths(targetPath, symbolicLinkPath, symlink_nid_postfix);
+}
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl30appendFileContentsToFileHandleERKNS_6StringERi(const NKWebKit::WtfAbi::String& path, int& target) {
+    FileCloser source{_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(path, 0, true, false)};
+    if (source.handle == -1) return false;
+    constexpr int bufferSize = 1 << 19;
+    std::vector<unsigned char> buffer(bufferSize);
+    while (true) {
+        const int readBytes = ReadFromFile(source.handle, buffer.data(), bufferSize);
+        if (readBytes < 0) return false;
+        if (WriteToFile(target, buffer.data(), readBytes) != readBytes) return false;
+        if (readBytes < bufferSize) return true;
+    }
 }
 
 }
