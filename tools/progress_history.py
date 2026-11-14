@@ -418,6 +418,9 @@ def same_location(first, second):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser()
     parser.add_argument("--since", type=utc_day, help="first UTC day to measure, inclusive (YYYY-MM-DD)")
     parser.add_argument("--until", type=utc_day, help="last UTC day to measure, inclusive (YYYY-MM-DD)")
