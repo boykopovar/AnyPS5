@@ -174,6 +174,10 @@ void convertedDccClearTests() {
         resource.format = format;
         return TextureClearKeys(resource, keys.size() * 256u);
     };
+    reject([&] { read(131u, 0x40); }, "DCC clear code 0001 of converted texture format 131");
+    reject([&] { read(131u, 0x80); }, "DCC clear code 1110 of converted texture format 131");
+    reject([&] { read(131u, 0xc0); }, "DCC clear code 1111 of converted texture format 131");
+    Require(read(131u, 0x00) == DccKeys::Clear0000, "format 131 must keep its 0000 DCC clear code");
     for (const std::uint32_t format : {30u, 34u, 37u, 41u, 44u, 48u}) {
         reject([&] { read(format, 0x40); }, "DCC clear code 0001 of converted texture format " + std::to_string(format));
         reject([&] { read(format, 0x80); }, "DCC clear code 1110 of converted texture format " + std::to_string(format));
@@ -326,6 +330,10 @@ void RunTextureFormatTests() {
     Require(BytesPerElement(34) == BytesPerElement(20), "remapped format 34 must share the width of format 20");
     Require(ResolveTextureFormat(30) == ResolveTextureFormat(20), "format 30 must remap to format 20");
     Require(BytesPerElement(30) == 4u, "remapped format 30 must be four bytes wide");
+    Require(ResolveTextureFormat(131) == VK_FORMAT_R32_UINT && BytesPerElement(131) == 4u && !IsBlockCompressed(131), "format 131 must be held in a four-byte R32_UINT image");
+    Require(IsConvertedTextureFormat(131) && !IsRepackedTextureFormat(131), "format 131 must be converted in the shader and have no repacked copy");
+    Require(ShaderRecompiler::SampledTextureNumericClass(ShaderRecompiler::IrBufferFormat::Format10_10_10_2Float) == ShaderRecompiler::IrTextureNumericClass::Uint, "format 131 must be read as unsigned integer words");
+    Require(ShaderRecompiler::RemapTextureFormat(ShaderRecompiler::IrBufferFormat::Format10_10_10_2Float) == ShaderRecompiler::IrBufferFormat::Format32UInt && ShaderRecompiler::RemapStorageTextureFormat(ShaderRecompiler::IrBufferFormat::Format10_10_10_2Float) == ShaderRecompiler::IrBufferFormat::Format32UInt, "format 131 must remap to a 32-bit unsigned integer format");
     for (std::uint32_t format = 0; format < 512u; ++format) {
         const auto remapped = static_cast<std::uint32_t>(ShaderRecompiler::RemapTextureFormat(static_cast<ShaderRecompiler::IrBufferFormat>(format)));
         if (remapped == format) continue;

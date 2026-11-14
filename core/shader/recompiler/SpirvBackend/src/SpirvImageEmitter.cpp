@@ -1008,6 +1008,9 @@ std::uint32_t PackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& 
     if (info.format == IrBufferFormat::Invalid) {
         return texel;
     }
+    if (info.format == IrBufferFormat::Format10_10_10_2Float) {
+        ctx.Fail(access.inst, "stores a 10_10_10_2 float image, which is not implemented");
+    }
     const bool unorm = info.type == SpirvFormatComponentType::Unorm || info.type == SpirvFormatComponentType::Float;
     if (unorm) {
         RequireConvertedUnormAccess(ctx, access, info);
