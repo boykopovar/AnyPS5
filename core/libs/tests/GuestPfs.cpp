@@ -330,6 +330,27 @@ void ValidateV3() {
     Require(scePfsValidate(&image, 2) == UnsupportedFormat);
 }
 
+void Pread() {
+    PfsHeader header = HeaderV2(4, 0x80000, 0x200);
+    static std::array<std::uint8_t, 0xed0d8> workBuffer{};
+    std::array<std::uint8_t, 0x100> buffer{};
+    Require(scePfsPread(nullptr, 0x100, 0, &header, workBuffer.data()) == InvalidArgument);
+    Require(scePfsPread(nullptr, 0, 0, &header, workBuffer.data()) == InvalidArgument);
+    Require(scePfsPread(buffer.data(), 0, 0, &header, workBuffer.data()) == 0);
+    Require(scePfsPread(buffer.data(), 0, 0, nullptr, workBuffer.data()) == 0);
+    Require(scePfsPread(buffer.data(), 0, 0, &header, nullptr) == 0);
+    Require(scePfsPread(buffer.data(), 0x100, 0, nullptr, workBuffer.data()) == InvalidArgument);
+    Require(scePfsPread(buffer.data(), 0x100, 0, &header, nullptr) == InvalidArgument);
+    Require(scePfsPread(buffer.data(), 0x100, 0x1000000000000ULL, &header, workBuffer.data()) == InvalidArgument);
+    Require(scePfsPread(buffer.data(), 0x100, 0xffffffffffffULL, &header, workBuffer.data()) == OutOfRange);
+    header.magic = 0;
+    Require(scePfsPread(buffer.data(), 0x100, 0, &header, workBuffer.data()) == UnsupportedFormat);
+    header = HeaderV2(4, 0x80000, 0x200);
+    Require(scePfsPread(buffer.data(), 0x100, 0x80000, &header, workBuffer.data()) == OutOfRange);
+    Require(scePfsPread(buffer.data(), 0x80001, 0, &header, workBuffer.data()) == OutOfRange);
+    Require(scePfsPread(buffer.data(), 0x100, 0x7ff01, &header, workBuffer.data()) == OutOfRange);
+}
+
 }
 
 int main() {
@@ -345,6 +366,7 @@ int main() {
     Validate();
     ValidateV2Table();
     ValidateV3();
+    Pread();
     {
         PfsHeader header = HeaderV2(4, 0x80000, 0x200);
         std::uint64_t table[5] = {0, 0x20000, 0x40000, 0x60000, 0x80000};
