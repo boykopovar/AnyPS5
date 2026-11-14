@@ -3908,12 +3908,19 @@ void verifyRegionMerge(bool strided = false, bool benchmark = false) {
 }
 
 
-void verifyNestedSnapshotRetry() {
+void verifyNestedSnapshotRetry(bool sampler) {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Parents = ImageTableAbi::MaxParentKeys / 2u + 1u;
     constexpr std::uint32_t Children = ImageTableAbi::MaxNestedKeys / 2u + 1u;
-    std::vector<std::array<std::uint32_t, 8>> leaves(Children, TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u));
-    const auto child = TableV(leaves.data(), 32u, Children);
+    const std::uint32_t leafDwords = sampler ? 4u : 8u;
+    const auto texture = TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u);
+    const std::array<std::uint32_t, 4> pointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
+    std::vector<std::uint32_t> leaves;
+    for (std::uint32_t leaf = 0; leaf < Children; ++leaf) {
+        if (sampler) leaves.insert(leaves.end(), pointClamp.begin(), pointClamp.end());
+        else leaves.insert(leaves.end(), texture.begin(), texture.end());
+    }
+    const auto child = TableV(leaves.data(), leafDwords * 4u, Children);
     std::vector<std::uint64_t> parents(Parents, reinterpret_cast<std::uintptr_t>(child.data()));
     const auto root = TableV(parents.data(), 8u, Parents);
     std::vector<std::unique_ptr<IrValue>> values;
@@ -3939,17 +3946,25 @@ void verifyNestedSnapshotRetry() {
     plan.descriptorSources[1].tableColumn = parent;
     TableColumn nested;
     nested.heapSource = 1u;
-    nested.stride = 32u;
-    nested.dwordCount = 8u;
+    nested.stride = leafDwords * 4u;
+    nested.dwordCount = leafDwords;
+    nested.sampler = sampler;
     plan.descriptorSources[2].tableColumn = nested;
-    ImageResource image;
-    image.source = 2u;
-    image.table = 0u;
-    image.resourceClass = ImageResourceClass::Sampled;
-    image.dimension = RdnaImageDimension::Dim2D;
-    image.read = true;
-    plan.info.images.push_back(image);
-    plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    if (sampler) {
+        SamplerResource resource;
+        resource.source = 2u;
+        resource.table = 0u;
+        plan.info.samplers.push_back(resource);
+    } else {
+        ImageResource image;
+        image.source = 2u;
+        image.table = 0u;
+        image.resourceClass = ImageResourceClass::Sampled;
+        image.dimension = RdnaImageDimension::Dim2D;
+        image.read = true;
+        plan.info.images.push_back(image);
+        plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    }
     struct Memory {
         std::array<std::pair<std::uint64_t, std::size_t>, 3> ranges;
         std::uint64_t epoch = 0;
@@ -5756,7 +5771,11 @@ bool TableTouched(const std::vector<ShaderRecompiler::MemoryRegion>& regions, co
 
 void verifyScalarAddressRule() {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
-    require(Abi::ScalarAddressDword(0x1000u, 0x23u, 0x41u) == 0x1060u && Abi::ScalarAddressDword(0x1001u, 0x20u, 0u) == 0x1021u, "scalar address rule: the offset and immediate are not dword-aligned on their own");
+    require(Abi::ScalarAddressDword(0x1000u, 0x23u, 0x41u) == 0x1060u, "scalar address rule: the offset and immediate are not dword-aligned on their own");
+    for (const std::uint64_t low : {1u, 2u, 3u}) {
+        require(Abi::ScalarAddressDword(0x1000u + low, 0x20u, 0u) == 0x1020u && Abi::ScalarAddressDword(0x1000u + low, 0x23u, 0x41u) == 0x1060u, ("scalar address rule: a base with low bits " + std::to_string(low) + " is not dword-aligned").c_str());
+        require(Abi::ScalarAddressDword(0xfffffffffffffff0ull + low, 0x8u, 0x4u) == 0xfffffffffffffffcull && !Abi::ScalarAddressDword(0xfffffffffffffff0ull + low, 0x8u, 0x8u).has_value(), ("scalar address rule: a carry past 2^64 from a base with low bits " + std::to_string(low) + " is wrong").c_str());
+    }
     require(Abi::ScalarAddressDword(0x1000u, 0x20u, 0xfffffff0u) == 0x1010u && !Abi::ScalarAddressDword(0x8u, 0x4u, 0xfffffff0u).has_value(), "scalar address rule: a negative immediate is wrong");
     require(!Abi::ScalarAddressDword(0xfffffffffffffff0ull, 0x10u, 0u).has_value() && !Abi::ScalarAddressDword(0xfffffffffffffff0ull, 0x8u, 0x8u).has_value() && Abi::ScalarAddressDword(0xfffffffffffffff0ull, 0x8u, 0x4u) == 0xfffffffffffffffcull, "scalar address rule: a carry past 2^64 is wrong");
     for (const std::uint32_t stride : {4u, 32u, 48u, 0x330u}) {
@@ -5902,11 +5921,12 @@ void verifyPointerImageTable() {
     require(loadedTable.capture->snapshot.tables.tables.at(0).codes == snapshot.codes && loadedTable.capture->snapshot.tables.ranges == tables.ranges, "pointer image table: a base loaded from the SRT with a negative immediate snapshots other records");
     require(loadedTable.result->imageTableReadRanges == compiled.result->imageTableReadRanges, "pointer image table: a negative immediate changed the consumed ranges");
     require(TableCodes(TableMap(*loadedTable.result), 0) == codes, "pointer image table: a loaded base maps other records");
-    root[12] = static_cast<std::uint32_t>(pointer) | 2u;
-    const auto unaligned = CompileTable(loaded);
-    const auto& unalignedCodes = unaligned.capture->snapshot.tables.tables.at(0).codes;
-    require(unalignedCodes.size() == Entries && std::all_of(unalignedCodes.begin(), unalignedCodes.end(), [](std::uint32_t code) { return code == Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped)); }), "pointer image table: a pointer that is not dword-aligned was read");
-    require(unaligned.result->imageTableReadRanges == std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>>{{}}, "pointer image table: an unaligned pointer recorded consumed ranges");
+    for (const std::uint32_t low : {1u, 2u, 3u}) {
+        root[12] = static_cast<std::uint32_t>(pointer) | low;
+        const auto unaligned = CompileTable(loaded);
+        require(unaligned.capture->snapshot.tables.tables.at(0).codes == snapshot.codes && unaligned.capture->snapshot.tables.ranges == tables.ranges, "pointer image table: a pointer off a dword boundary does not read the records at its dword");
+        require(unaligned.result->imageTableReadRanges == compiled.result->imageTableReadRanges, "pointer image table: a pointer off a dword boundary consumed other ranges");
+    }
     root[12] = static_cast<std::uint32_t>(pointer);
 
     const std::vector<std::uint32_t> directCode{0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0xf4000440u, 0xfa000038u, 0x8f128511u, 0xf40c0900u,
@@ -12145,8 +12165,13 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--nested-snapshot-retry") {
-            verifyNestedSnapshotRetry();
+            verifyNestedSnapshotRetry(false);
             std::cout << "Nested snapshot retry preserves parent and child coverage\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--nested-sampler-snapshot-retry") {
+            verifyNestedSnapshotRetry(true);
+            std::cout << "Nested sampler snapshot retry checks the descriptor epoch and preserves parent and child coverage\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {
