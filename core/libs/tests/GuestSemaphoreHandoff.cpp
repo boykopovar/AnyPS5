@@ -27,8 +27,10 @@ static void* APS5_VABI Wait(void* arg) {
 static std::atomic<int> released{0};
 
 static int QueuedCount(KernelSema sem) {
-    std::lock_guard<std::mutex> lock(sem->mutex);
-    return static_cast<int>(sem->queue.size());
+    KernelSemaPrivate* object = KernelSemaObjectForTests_nid_no_patch(sem);
+    Require(object != nullptr);
+    std::lock_guard<std::mutex> lock(object->mutex);
+    return static_cast<int>(object->queue.size());
 }
 
 struct QueuedWaiter {
@@ -88,15 +90,17 @@ static void CheckPassesOverALargerNeed() {
 static void CheckDeletedRefusesFreeTokens() {
     KernelSema sem = nullptr;
     Require(sceKernelCreateSema(&sem, "handoff-deleted", SemaFifo, 2, 2, nullptr) == SCE_OK);
+    KernelSemaPrivate* object = KernelSemaObjectForTests_nid_no_patch(sem);
+    Require(object != nullptr);
     {
-        std::lock_guard<std::mutex> lock(sem->mutex);
-        sem->deleted = true;
+        std::lock_guard<std::mutex> lock(object->mutex);
+        object->deleted = true;
     }
     Require(sceKernelWaitSema(sem, 1, nullptr) == SCE_KERNEL_ERROR_EACCES);
     {
-        std::lock_guard<std::mutex> lock(sem->mutex);
-        Require(sem->tokenCount == 2);
-        sem->deleted = false;
+        std::lock_guard<std::mutex> lock(object->mutex);
+        Require(object->tokenCount == 2);
+        object->deleted = false;
     }
     Require(sceKernelDeleteSema(sem) == SCE_OK);
 }
