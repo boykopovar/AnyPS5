@@ -625,7 +625,13 @@ int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
  if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
- *account_id = 0;
+ const uint64_t localId = 0;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(account_id, &localId, sizeof(localId));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 

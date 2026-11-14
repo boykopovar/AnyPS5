@@ -23,6 +23,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/KeptUnits.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -3202,6 +3203,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
             layerOriginal.assign(trackedLayers, false);
             cancelStoredSaves();
+            releaseUnheldOriginal();
         } else if (!guestBytesStillHeld()) {
             captureGuestBytes(nullptr);
         }
@@ -3262,6 +3264,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
             layerOriginal.assign(trackedLayers, false);
             cancelStoredSaves();
+            releaseUnheldOriginal();
         } else {
             captureGuestBytes(layers);
         }
@@ -4538,9 +4541,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
         layerPending.SetRange(first, count, true);
     }
     const auto pendingSince = GuestMemory::TrackerGeneration();
-    for (std::uint32_t layer = first; layer < first + count; ++layer) {
-        if (!keptForCpu(layer)) layerPendingSince[layer] = pendingSince;
-    }
+    StampUnkeptUnits(keptAtUnwatch, {descriptor.baseAddress, trackedLayerBytes, guestBytes}, layerGeneration, layerPendingSince, first, count, pendingSince);
     // Results of this image now cover the alias's results borrowed into these units: this image
     // stores them, the alias no longer has to (its results, unchanged since the borrow, are in
     // this image's content). An alias written since keeps its own newer results pending.
@@ -4789,6 +4790,7 @@ std::uint64_t StorageTexture::storeDrawnRect(const DrawnArea& area, std::span<co
         if (!copies.empty()) copyBuffer(commands, scratch->Handle(), segment.import->buffer, static_cast<std::uint32_t>(copies.size()), copies.data());
     }
     if (!saveUnits.empty()) {
+        if (original.size() != guestBytes) original.resize(static_cast<std::size_t>(guestBytes));
         const auto saved = savedBytes->Bytes();
         for (const auto unit : saveUnits) {
             const auto offset = static_cast<std::size_t>(layerBegin(unit) - descriptor.baseAddress);
@@ -5239,6 +5241,7 @@ void StorageTexture::forgetSavedOver(std::uint64_t address, std::size_t bytes) {
             cancelStoredSave(unit);
         }
     }
+    releaseUnheldOriginal();
 }
 
 void StorageTexture::saveBeforeUnwatch() {
@@ -5308,6 +5311,12 @@ void StorageTexture::cancelStoredSave(std::uint32_t unit) {
 
 void StorageTexture::cancelStoredSaves() {
     savedTicket.assign(trackedLayers, 0);
+}
+
+void StorageTexture::releaseUnheldOriginal() {
+    if (original.capacity() == 0 || std::any_of(layerOriginal.begin(), layerOriginal.end(), [](bool held) { return held; })) return;
+    std::vector<std::byte>().swap(original);
+    comparedRanges = {};
 }
 
 void StorageTexture::awaitStoredSave(const std::vector<bool>* layers) {
@@ -5959,6 +5968,7 @@ bool StorageTexture::evictStale(std::uint64_t address, std::size_t bytes, std::s
         layerOriginal[layer] = false;
         cancelStoredSave(layer);
     }
+    releaseUnheldOriginal();
     if (!anyLayerPending()) {
         ++dropped;
         staleEvicted.fetch_add(1, std::memory_order_relaxed);
@@ -6255,6 +6265,7 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
     recorder->EndGpuTiming(timing, guestBytes);
     layerOriginal.assign(trackedLayers, false);
     cancelStoredSaves();
+    releaseUnheldOriginal();
     uploadedKeys = keys;
     filledKeys = DccKeys::Uncompressed;
     keyProof = {};
@@ -6402,6 +6413,7 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
     if (watched) {
         layerOriginal.assign(trackedLayers, false);
         cancelStoredSaves();
+        releaseUnheldOriginal();
     }
     uploadedKeys = DccKeys::Uncompressed;
     if (layer != WholeImage && trackedLayers > 1) {
@@ -6543,6 +6555,7 @@ void StorageTexture::MarkWholeWritten() {
     if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
         layerOriginal.assign(trackedLayers, false);
         cancelStoredSaves();
+        releaseUnheldOriginal();
     } else {
         captureGuestBytes(nullptr);
     }
@@ -6567,6 +6580,7 @@ void StorageTexture::MarkUnitsWritten(const std::vector<bool>& units) {
             layerOriginal[unit] = false;
             cancelStoredSave(unit);
         }
+        releaseUnheldOriginal();
     } else {
         captureGuestBytes(&units);
     }
@@ -6716,6 +6730,10 @@ std::optional<DccKeys> StorageTexture::clearHandOver() {
     }
     clearHandOvers.fetch_add(1, std::memory_order_relaxed);
     return keys;
+}
+
+bool StorageTexture::AnyLayerPending() const {
+    return anyLayerPending();
 }
 
 void StorageTexture::supersedeHandedOver(std::uint32_t first, std::uint32_t count) {
@@ -7132,6 +7150,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             layerOriginal[layer] = false;
             cancelStoredSave(layer);
         }
+        releaseUnheldOriginal();
     };
     bool unsavedOutsideWatch = false;
     std::string unsavedCause;

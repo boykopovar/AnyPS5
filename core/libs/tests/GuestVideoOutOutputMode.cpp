@@ -3,6 +3,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -31,6 +32,9 @@ int main() {
     std::memcpy(raw.data(), &options, raw.size());
     for (std::size_t index = 0; index < raw.size(); ++index) Require(raw[index] == (index == 2 ? 0xFF : 0));
     Require(sceVideoOutInitializeOutputOptions(nullptr) == INVALID_ADDRESS);
+    errno = 71;
+    Require(sceVideoOutInitializeOutputOptions(reinterpret_cast<VideoOutOutputOptions*>(0x10)) == INVALID_ADDRESS);
+    Require(errno == 71);
 
     std::array<std::uint8_t, 64> zeroedOpenParam{};
     Require(sceVideoOutOpen(SYSTEM_USER, HMD2_MAIN_BUS, 0, nullptr) == INVALID_VALUE);
