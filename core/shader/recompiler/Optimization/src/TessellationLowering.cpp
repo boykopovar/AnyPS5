@@ -384,8 +384,8 @@ public:
         return evaluate(value, allowDynamic);
     }
 
-    bool IsInvocation(IrValue* value) {
-        const auto address = Evaluate(value, nullptr);
+    bool IsInvocation(IrValue* value, IrValue* predicate = nullptr) {
+        const auto address = Evaluate(value, predicate);
         return address && *address == Affine{1, 0, 0};
     }
 
@@ -623,16 +623,16 @@ private:
     std::unordered_map<IrValue*, bool> independence;
 };
 
-bool FirstInvocationOnly(IrValue* raw, AddressEvaluator& evaluator, std::unordered_set<IrValue*>& path) {
+bool FirstInvocationOnly(IrValue* raw, AddressEvaluator& evaluator, std::unordered_set<IrValue*>& path, IrValue* holding = nullptr) {
     IrValue* value = raw->Resolve();
     if (value->HasImmediate()) return value->Type() == IrType::Bool && !value->ImmediateBool();
     if (!path.insert(value).second) return true;
-    const auto invocation = [&](std::size_t index) { return evaluator.IsInvocation(value->Argument(index)); };
+    const auto invocation = [&](std::size_t index) { return evaluator.IsInvocation(value->Argument(index), holding); };
     const auto immediate = [&](std::size_t index, std::uint32_t expected) { return IsImmediate(value->Argument(index), expected); };
     const bool result = [&] {
         switch (value->Opcode()) {
         case IrOpcode::LogicalAnd:
-            return FirstInvocationOnly(value->Argument(0), evaluator, path) || FirstInvocationOnly(value->Argument(1), evaluator, path);
+            return FirstInvocationOnly(value->Argument(0), evaluator, path, value) || FirstInvocationOnly(value->Argument(1), evaluator, path, value);
         case IrOpcode::ULessThan32:
             return invocation(0) && immediate(1, 1u);
         case IrOpcode::UGreaterThan32:

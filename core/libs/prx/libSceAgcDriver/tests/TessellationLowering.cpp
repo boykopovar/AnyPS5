@@ -786,6 +786,40 @@ bool run(const char* name, const std::function<bool()>& body) {
 int main() {
     bool passed = true;
 
+    passed &= run("a conjunction proves a selected control point is zero for a factor write", [] {
+        Hull hull;
+        auto& lane = hull.builder.Emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& active = hull.builder.Emit(IrOpcode::ULessThan32, IrType::Bool, {&lane, &hull.builder.Constant(4u)});
+        auto& selected = hull.builder.Emit(IrOpcode::SelectU32, IrType::U32, {&active, &hull.invocation(), &hull.builder.Constant(0u)});
+        auto& first = hull.builder.Emit(IrOpcode::UGreaterThan32, IrType::Bool, {&hull.builder.Constant(1u), &selected});
+        auto& predicate = hull.builder.Emit(IrOpcode::LogicalAnd, IrType::Bool, {&active, &first});
+        auto& base = hull.builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&hull.builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::Factor))});
+        auto& offset = hull.builder.IMul(hull.relativePatch(), hull.builder.Constant(16u));
+        static_cast<void>(hull.builder.Emit(IrOpcode::StoreBufferU32, IrType::Void, {&hull.ringResource(), &hull.builder.Constant(0u), &offset, &base, &hull.builder.Constant(1u), &predicate}, MemoryFlags{RingMemory, RingWritePc}));
+        auto tessellation = Tessellation;
+        tessellation.domain = 1u;
+        const auto outcome = Lower(hull.program, tessellation);
+        if (!outcome.lowered) std::fprintf(stderr, "lowering failed: %s\n", outcome.reason.c_str());
+        return outcome.lowered;
+    });
+
+    passed &= run("an unrelated conjunction does not prove a selected control point is zero", [] {
+        Hull hull;
+        auto& lane = hull.builder.Emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& active = hull.builder.Emit(IrOpcode::ULessThan32, IrType::Bool, {&lane, &hull.builder.Constant(4u)});
+        auto& other = hull.builder.Emit(IrOpcode::ULessThan32, IrType::Bool, {&lane, &hull.builder.Constant(3u)});
+        auto& selected = hull.builder.Emit(IrOpcode::SelectU32, IrType::U32, {&other, &hull.invocation(), &hull.builder.Constant(0u)});
+        auto& first = hull.builder.Emit(IrOpcode::UGreaterThan32, IrType::Bool, {&hull.builder.Constant(1u), &selected});
+        auto& predicate = hull.builder.Emit(IrOpcode::LogicalAnd, IrType::Bool, {&active, &first});
+        auto& base = hull.builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&hull.builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::Factor))});
+        auto& offset = hull.builder.IMul(hull.relativePatch(), hull.builder.Constant(16u));
+        static_cast<void>(hull.builder.Emit(IrOpcode::StoreBufferU32, IrType::Void, {&hull.ringResource(), &hull.builder.Constant(0u), &offset, &base, &hull.builder.Constant(1u), &predicate}, MemoryFlags{RingMemory, RingWritePc}));
+        auto tessellation = Tessellation;
+        tessellation.domain = 1u;
+        const auto outcome = Lower(hull.program, tessellation);
+        return !outcome.lowered && outcome.reason.find("not written by control point 0 alone") != std::string::npos;
+    });
+
     passed &= run("a hull read at a computed control-point index keeps the program's address", [] {
         Hull hull;
         auto& address = hull.inPatch(hull.computed(2u, LocalStride));
