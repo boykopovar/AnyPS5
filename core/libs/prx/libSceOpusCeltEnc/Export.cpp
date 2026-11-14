@@ -1,8 +1,12 @@
 #include "prx/libSceOpusCeltEnc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceOpusCeltEnc/include/OpusEncoder.hpp"
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include "prx/libc/include/General.hpp"
 
 namespace {
@@ -52,6 +56,66 @@ constexpr EncoderCodes codes{0x813F0000u, 1u, 2u, 3u, 4u, 5u, 0x10u, 0x0Du, 0x11
 
 OpusEncoderLibrary library("OpusCeltEnc", OPUS_APPLICATION_RESTRICTED_LOWDELAY, OPUS_APPLICATION_RESTRICTED_CELT, codes);
 
+constexpr std::uint32_t priorityErrorOffset = 0x15u;
+constexpr std::uint32_t requestErrorOffset = 0x08u;
+constexpr std::uint32_t streamsErrorOffset = 0x1Bu;
+constexpr std::uint32_t coupledStreamsErrorOffset = 0x1Cu;
+constexpr std::uint32_t mappingErrorOffset = 0x1Du;
+constexpr std::size_t multistreamMagicOffset = 0x98u;
+constexpr std::uint32_t lowestPriority = 20u;
+constexpr std::uint32_t highestPriority = 100u;
+constexpr std::uint32_t firstRequest = 4000u;
+constexpr std::uint32_t requestCount = 48u;
+constexpr int requestMinusOne = -1;
+constexpr int requestMinusTwo = -2;
+constexpr std::uint32_t maximumStreams = 12u;
+constexpr std::array<std::uint32_t, 5> frameFactors{400u, 200u, 100u, 50u, 25u};
+
+int encoderError(std::uint32_t offset) {
+    return static_cast<int>(codes.baseError + offset);
+}
+
+std::uint32_t guestStateWord(const void* state, std::size_t offset) {
+    std::uint32_t word = 0;
+    if (!GuestCopyIn_nid_no_patch(&word, static_cast<const std::uint8_t*>(state) + offset, sizeof word)) throw std::runtime_error("OpusCeltEnc: unreadable state");
+    return word;
+}
+
+bool hasStateMarker(const void* state, std::size_t offset) {
+    return guestStateWord(state, offset) == codes.stateMagic;
+}
+
+bool acceptedPriorityFrame(std::uint32_t rate, std::uint32_t frameSize) {
+    for (const std::uint32_t factor : frameFactors)
+        if (frameSize * factor == rate) return true;
+    return frameSize * 50u == rate * 3u;
+}
+
+bool outsideRequests(int request) {
+    return static_cast<std::uint32_t>(request) - firstRequest >= requestCount;
+}
+
+bool acceptedMultistreamRate(int rate) {
+    return rate == 8000 || rate == 12000 || rate == 16000 || rate == 24000 || rate == 48000;
+}
+
+int multistreamCreateError(const void* state, int sampleRate, int streams, int coupledStreams, const std::uint8_t* mapping, int application) {
+    if (state == nullptr) return encoderError(codes.nullErrorOffset);
+    if (!acceptedMultistreamRate(sampleRate)) return encoderError(codes.rateErrorOffset);
+    const auto streamCount = static_cast<std::uint32_t>(streams);
+    const auto coupledCount = static_cast<std::uint32_t>(coupledStreams);
+    if (streamCount - 1u >= maximumStreams) return encoderError(streamsErrorOffset);
+    if (coupledCount > streamCount) return encoderError(coupledStreamsErrorOffset);
+    const std::uint32_t channels = streamCount + coupledCount;
+    if (channels > maximumStreams) return encoderError(codes.channelsErrorOffset);
+    std::array<std::uint8_t, maximumStreams> entries{};
+    if (!GuestCopyIn_nid_no_patch(entries.data(), mapping, channels)) throw std::runtime_error("OpusCeltEnc: unreadable channel mapping");
+    for (std::uint32_t channel = 0; channel < channels; ++channel)
+        if (std::count(entries.begin(), entries.begin() + channels, channel) != 1) return encoderError(mappingErrorOffset);
+    if (application != OPUS_APPLICATION_RESTRICTED_LOWDELAY) return encoderError(codes.applicationErrorOffset);
+    return 0;
+}
+
 } // namespace
 
 extern "C" {
@@ -81,47 +145,63 @@ int APS5_VABI sceOpusCeltEncEncodeFloat(OpusCeltEncoder* state, const float* sam
 int APS5_VABI sceOpusCeltEncDestroy(OpusCeltEncoder* state) { return library.Destroy(state); }
 
 int APS5_VABI sceOpusCeltEncCtl(OpusCeltEncoder* state, int request, ...) {
-    (void)state;
-    (void)request;
+    if (state == nullptr) return encoderError(codes.nullErrorOffset);
+    if (!hasStateMarker(state, codes.stateMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
+    if (outsideRequests(request) && request != requestMinusOne && request != requestMinusTwo) return encoderError(requestErrorOffset);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceOpusCeltEncEncodeWithPriority(OpusCeltEncoder* state, const std::int16_t* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
-    (void)state;
-    (void)samples;
-    (void)frameSize;
-    (void)data;
-    (void)maxDataBytes;
-    (void)priority;
+    if (state == nullptr) return encoderError(codes.nullErrorOffset);
+    if (samples == nullptr) return encoderError(codes.nullSamplesErrorOffset);
+    if (data == nullptr) return encoderError(codes.nullDataErrorOffset);
+    if (maxDataBytes == 0) return encoderError(codes.sizeErrorOffset);
+    if (priority < lowestPriority || priority > highestPriority) return encoderError(priorityErrorOffset);
+    if (!hasStateMarker(state, codes.stateMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
+    if (!acceptedPriorityFrame(guestStateWord(state, codes.stateRateOffset), static_cast<std::uint32_t>(frameSize))) return encoderError(codes.frameErrorOffset);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceOpusCeltEncEncodeFloatWithPriority(OpusCeltEncoder* state, const float* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
-    (void)state;
-    (void)samples;
-    (void)frameSize;
     (void)data;
     (void)maxDataBytes;
     (void)priority;
+    if (state == nullptr) return encoderError(codes.nullErrorOffset);
+    if (samples == nullptr) return encoderError(codes.nullSamplesErrorOffset);
+    if (frameSize == 0) return encoderError(codes.frameErrorOffset);
+    if (!hasStateMarker(state, codes.stateMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
     NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceOpusCeltEncGetAjmContext(const OpusCeltEncoder* state, std::uint32_t* context) {
+    if (state == nullptr) return encoderError(codes.nullErrorOffset);
+    if (context == nullptr) return 0;
+    std::uint32_t value = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const std::uint8_t*>(state) + 0xD4, sizeof(value));
+    errno = savedErrno;
+    if (!readable) throw std::runtime_error("OpusCeltEnc: unreadable AJM context");
+    const bool writable = GuestCopyOut_nid_no_patch(context, &value, sizeof(value));
+    errno = savedErrno;
+    if (!writable) throw std::runtime_error("OpusCeltEnc: unwritable AJM context");
     return 0;
 }
 
-int APS5_VABI sceOpusCeltEncGetAjmContext() {
+int APS5_VABI sceOpusCeltMultistreamEncCreate(OpusCeltMultistreamEncoder* state, int sampleRate, int streams, int coupledStreams, const std::uint8_t* mapping, int application) {
+    if (const int result = multistreamCreateError(state, sampleRate, streams, coupledStreams, mapping, application); result != 0) return result;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceOpusCeltMultistreamEncCreate() {
+int APS5_VABI sceOpusCeltMultistreamEncCtl(OpusCeltMultistreamEncoder* state, int request, ...) {
+    if (state == nullptr) return encoderError(codes.nullErrorOffset);
+    if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
+    if (outsideRequests(request) && request != requestMinusOne) return encoderError(requestErrorOffset);
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceOpusCeltMultistreamEncCtl() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceOpusCeltMultistreamEncCreateEx() {
+int APS5_VABI sceOpusCeltMultistreamEncCreateEx(const std::uint32_t* context, OpusCeltMultistreamEncoder* state, int sampleRate, int streams, int coupledStreams, const std::uint8_t* mapping, int application) {
+    if (context == nullptr) return encoderError(codes.nullErrorOffset);
+    if (const int result = multistreamCreateError(state, sampleRate, streams, coupledStreams, mapping, application); result != 0) return result;
     NotImplemented_nid_no_patch(__func__);
 }
 

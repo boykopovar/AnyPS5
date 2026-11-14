@@ -1,6 +1,7 @@
 import contextlib
 import errno
 import io
+import json
 import os
 import subprocess
 import struct
@@ -298,6 +299,20 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertIn(missing.name, errors.getvalue())
         self.assertEqual(module.read_bytes(), original)
 
+    def test_top_must_be_positive(self):
+        samples = self.root / "worker.collapsed.txt"
+        samples.write_text("main;libSceAgcDriver.prx+0x1011 1\n", encoding="utf-8")
+        for value in ("0", "-1"):
+            for flags in ((), ("--json",)):
+                with self.subTest(top=value, flags=flags):
+                    errors = io.StringIO()
+                    output = io.StringIO()
+                    with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+                        symbolize_samples.main([str(samples), "--libs", str(self.libs), "--top", value, *flags])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("--top must be positive", errors.getvalue())
+                    self.assertEqual(output.getvalue(), "")
+
     def test_distinct_output_preserves_sample_captures(self):
         record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
         later, earlier, output = (self.root / name for name in ("later.txt", "earlier.txt", "named.txt"))
@@ -375,6 +390,110 @@ class SymbolizeSamplesTests(unittest.TestCase):
         path.write_bytes(data)
         with self.assertRaisesRegex(ValueError, "COFF auxiliary"):
             symbolize_samples.PeModule(path)
+
+    def test_coff_symbols_cross_section_contamination_omits_out_of_bounds_symbols(self):
+        path = self.libs / "two_code.prx"
+        build_pe(path, second_code=True)
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<I", data, 0x800 + 2 * 18 + 8, 0x1841)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertEqual(module.name(0x2850), "late_fn")
+        self.assertIsNone(module.name(0x1010))
+        self.assertEqual(module.name(0x1045), "AgcDriver_long_function_name")
+        self.assertNotIn("short", module.names)
+        inventory_tool = Path(__file__).resolve().parents[1] / "pe_symbol_inventory.py"
+        inventory_proc = subprocess.run([sys.executable, str(inventory_tool), str(path)],
+                                        capture_output=True, text=True, timeout=5)
+        self.assertEqual(inventory_proc.returncode, 0, inventory_proc.stderr)
+        inventory_data = json.loads(inventory_proc.stdout)
+        section1_symbols = inventory_data["code"][0]["symbols"]
+        section2_symbols = inventory_data["code"][1]["symbols"]
+        self.assertEqual([s["name"] for s in section1_symbols],
+                         ["AgcDriver_long_function_name", "static_f"])
+        self.assertEqual([s["name"] for s in section2_symbols], ["late_fn"])
+        samples = self.root / "cross_section_samples.txt"
+        samples.write_text(f"# module two_code.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\ntwo_code.prx+0x2850 10\n",
+                           encoding="utf-8")
+        out = self.root / "cross_section_out.txt"
+        cli_proc = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                   "--libs", str(self.libs), "--out", str(out)],
+                                  capture_output=True, text=True, timeout=5)
+        self.assertEqual(cli_proc.returncode, 0, cli_proc.stderr)
+        self.assertEqual(out.read_text(encoding="utf-8"), "two_code.prx!late_fn 10\n")
+
+    def test_coff_symbols_equal_to_section_size_omitted_without_labeling_next_section(self):
+        path = self.libs / "boundary.prx"
+        build_pe(path, second_code=True)
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<I", data, 0x800 + 2 * 18 + 8, 0x100)
+        sections = 0x58 + 240
+        struct.pack_into("<I", data, sections + 40 + 12, 0x1100)
+        struct.pack_into("<I", data, sections + 40 + 36, 0x60000020)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertNotIn("short", module.names)
+        self.assertIsNone(module.name(0x1100))
+        self.assertEqual(module.name(0x2840), "late_fn")
+
+    def test_coff_symbols_large_offsets_and_overflow_are_omitted(self):
+        path = self.libs / "overflow.prx"
+        build_pe(path)
+        data = bytearray(path.read_bytes())
+        for bad_value in (0x101, 0x1000, 0x80000000, 0xFFFFFFFF):
+            with self.subTest(value=bad_value):
+                struct.pack_into("<I", data, 0x800 + 2 * 18 + 8, bad_value)
+                path.write_bytes(data)
+                module = symbolize_samples.PeModule(path)
+                self.assertNotIn("short", module.names)
+                self.assertIsNone(module.name(0x1010))
+                self.assertEqual(module.name(0x1045), "AgcDriver_long_function_name")
+                for start, end, addresses, _ in module.code:
+                    for addr in addresses:
+                        self.assertGreaterEqual(addr, start)
+                        self.assertLess(addr, end)
+                        self.assertLess(addr, 0x100000000)
+
+    def test_coff_symbols_zero_and_last_in_range_offsets(self):
+        path = self.libs / "edge_offsets.prx"
+        build_pe(path)
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<I", data, 0x800 + 2 * 18 + 8, 0)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertEqual(module.name(0x1000), "short")
+
+        struct.pack_into("<I", data, 0x800 + 2 * 18 + 8, 0xFF)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertEqual(module.name(0x10FF), "short")
+
+    def test_coff_symbols_in_unbacked_virtual_tail_are_retained(self):
+        path = self.libs / "bss_tail.prx"
+        build_pe(path)
+        data = bytearray(path.read_bytes())
+        sections = 0x58 + 240
+        struct.pack_into("<I", data, sections + 8, 0x200)
+        struct.pack_into("<I", data, 0x800 + 2 * 18 + 8, 0x150)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertIn("short", module.names)
+        self.assertEqual(module.name(0x1150), "short")
+
+    def test_coff_symbols_noncode_and_undefined_or_absolute_records_unchanged(self):
+        path = self.libs / "special_symbols.prx"
+        build_pe(path)
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<h", data, 0x800 + 2 * 18 + 12, 0)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertNotIn("short", module.names)
+
+        struct.pack_into("<h", data, 0x800 + 2 * 18 + 12, -1)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertNotIn("short", module.names)
+        self.assertNotIn("data_obj", module.names)
 
     def test_export_table_names_a_module_without_symbols(self):
         module = symbolize_samples.PeModule(self.libs / "libwinpthread-1.dll")
@@ -489,6 +608,110 @@ class SymbolizeSamplesTests(unittest.TestCase):
         inclusive = lines[lines.index("hottest by inclusive:") + 1:]
         self.assertIn("13 260.0%  libSceAgcDriver.prx!short", inclusive[0])
         self.assertIn("5 100.0%  libSceAgcDriver.prx!AgcDriver_long_function_name", inclusive[1])
+
+    def test_address_file_rejects_nonhexadecimal_offsets(self):
+        samples = self.root / "bad-address.txt"
+        for offset in ("0xNOTHEX", "0x", "0x101g", "1011"):
+            with self.subTest(offset=offset):
+                samples.write_text(f"# 5 samples\nMy Game.exe {offset} 5 5\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, r"bad-address\.txt:2:.*hexadecimal offset"):
+                    symbolize_samples.load(samples)
+                result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                         "--libs", str(self.libs)], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("bad-address.txt:2:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+        samples.write_text("# 5 samples\nMy Game.exe 0xABCD 5 5\n", encoding="utf-8")
+        self.assertEqual(symbolize_samples.load(samples).self_counts[("My Game.exe", "0xABCD")], 5)
+
+    def test_collapsed_stack_with_spaced_numeric_module_name_keeps_its_count(self):
+        samples = self.root / "worker.collapsed.txt"
+        stack = "ntdll.dll+0x10;My 2 Game.exe+0x1011"
+        samples.write_text(f"# samples=5 depth=64 truncated=0\n{stack} 5\n", encoding="utf-8")
+        capture = symbolize_samples.load(samples)
+        self.assertEqual(capture.stacks, {stack: 5})
+        self.assertEqual(capture.self_counts, {})
+
+    def test_mixed_sample_records_are_rejected_even_when_counts_are_zero(self):
+        samples = self.root / "mixed.txt"
+        for collapsed_count, address_count in ((3, 7), (0, 7), (3, 0), (0, 0)):
+            for reverse in (False, True):
+                with self.subTest(collapsed=collapsed_count, address=address_count, reverse=reverse):
+                    rows = [f"outer;inner {collapsed_count}", f"libSceAgcDriver.prx 0x1011 {address_count} {address_count}"]
+                    samples.write_text("\n".join(reversed(rows) if reverse else rows), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, r"mixed\.txt:2:.*cannot mix"):
+                        symbolize_samples.load(samples)
+        for rows in (("outer;inner 3", "thread 7 samples 0"),
+                     ("thread 7 samples 0", "outer;inner 3")):
+            samples.write_text("\n".join(rows), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"mixed\.txt:2:.*cannot mix"):
+                symbolize_samples.load(samples)
+        samples.write_text("thread 9 samples 7\nlibSceAgcDriver.prx 0x1011 7 7\nouter;inner 3\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, r"mixed\.txt:3:.*cannot mix"):
+            symbolize_samples.load(samples, thread="7")
+
+    def test_sample_formats_keep_shared_headers_and_empty_baselines(self):
+        samples, earlier = self.root / "samples.txt", self.root / "earlier.txt"
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        earlier.write_text(record + "# no samples yet\n", encoding="utf-8")
+        for row in ("outer;libSceAgcDriver.prx+0x1011 3", "libSceAgcDriver.prx 0x1011 3 3"):
+            with self.subTest(row=row):
+                samples.write_text("# 3 samples\n\n" + record + row + "\n# trailing header\n", encoding="utf-8")
+                lines, errors = self.run_main(samples, "--since", earlier, "--libs", self.libs, "--json")
+                self.assertEqual(errors, "")
+                result = json.loads("\n".join(lines))
+                self.assertEqual(result["samples"], 3)
+                self.assertEqual(result["self"], [{"symbol": "libSceAgcDriver.prx!short", "count": 3}])
+
+    def test_mixed_sample_cli_preserves_inputs_and_output(self):
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        mixed, good, out = (self.root / name for name in ("mixed.txt", "good.txt", "named.txt"))
+        good.write_text(record + "outer;inner 3\n", encoding="utf-8")
+        for reverse in (False, True):
+            rows = ["outer;inner 3", "libSceAgcDriver.prx 0x1011 7 7"]
+            mixed.write_text(record + "\n".join(reversed(rows) if reverse else rows), encoding="utf-8")
+            for role in ("samples", "since"):
+                for flags in ((), ("--json",), ("--json", "--require-matching-window")):
+                    with self.subTest(reverse=reverse, role=role, flags=flags):
+                        source, baseline = (mixed, good) if role == "samples" else (good, mixed)
+                        out.write_bytes(b"previous profile")
+                        before = {path: path.read_bytes() for path in (mixed, good, out)}
+                        result = subprocess.run([sys.executable, "-B", symbolize_samples.__file__, str(source),
+                                                 "--since", str(baseline), "--libs", str(self.libs), "--out", str(out), *flags],
+                                                capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn("mixed.txt:", result.stderr)
+                        self.assertIn("cannot mix", result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+                        self.assertEqual({path: path.read_bytes() for path in before}, before)
+
+    def test_since_rejects_different_capture_formats_before_output(self):
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        collapsed, address, out = (self.root / name for name in ("collapsed.txt", "address.txt", "named.txt"))
+        collapsed.write_text(record + "outer;libSceAgcDriver.prx+0x1011 3\n", encoding="utf-8")
+        address.write_text(record + "libSceAgcDriver.prx 0x1011 3 3\n", encoding="utf-8")
+        for source, baseline in ((collapsed, address), (address, collapsed)):
+            for flags in ((), ("--json",), ("--json", "--require-matching-window")):
+                with self.subTest(source=source.name, flags=flags):
+                    out.write_bytes(b"previous profile")
+                    before = {path: path.read_bytes() for path in (collapsed, address, out)}
+                    output, errors = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                        symbolize_samples.main([str(source), "--since", str(baseline), "--libs", str(self.libs), *flags])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("different data formats", errors.getvalue())
+                    self.assertEqual(output.getvalue(), "")
+                    self.assertEqual({path: path.read_bytes() for path in before}, before)
+        out.write_bytes(b"previous profile")
+        output, errors = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+            symbolize_samples.main([str(collapsed), "--since", str(address), "--libs", str(self.libs), "--out", str(out)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("different data formats", errors.getvalue())
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(out.read_bytes(), b"previous profile")
 
     def test_a_symbol_does_not_reach_into_a_later_code_section(self):
         build_pe(self.libs / "two.prx", second_code=True)
@@ -791,6 +1014,40 @@ class SymbolizeSamplesTests(unittest.TestCase):
                 getattr(later, category)[key] = 5
                 symbolize_samples.validate_window(later, earlier)
 
+    def test_strict_window_rejects_ambiguous_module_records(self):
+        earlier, later = self.root / "earlier.txt", self.root / "later.txt"
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        for frames in ("libSceAgcDriver.prx+0x1011 {count}\n",
+                       "libSceAgcDriver.prx 0x1011 {count} {count}\n"):
+            for timestamp in (TIMESTAMP, TIMESTAMP + 1):
+                with self.subTest(frames=frames, timestamp=timestamp):
+                    earlier.write_text(record * 2 + frames.format(count=4), encoding="utf-8")
+                    later.write_text(record + f"# module LIBSCEAGCDRIVER.PRX {SIZE_OF_IMAGE:#x} {timestamp:#x}\n" +
+                                     frames.format(count=7), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "libSceAgcDriver.prx:.*multiple sampled modules"):
+                        symbolize_samples.validate_window(symbolize_samples.load(later),
+                                                          symbolize_samples.load(earlier))
+
+    def test_strict_window_ambiguous_modules_preserve_files(self):
+        earlier, later, output = [self.root / name for name in ("earlier.txt", "later.txt", "output.txt")]
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        earlier.write_text(record * 2 + "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+        later.write_text(record * 2 + "libSceAgcDriver.prx+0x1011 7\n", encoding="utf-8")
+        output.write_bytes(b"previous output\n")
+        original = {path: path.read_bytes() for path in (earlier, later, output)}
+        for flags in ([], ["--json"]):
+            with self.subTest(flags=flags):
+                result = subprocess.run([sys.executable, symbolize_samples.__file__, str(later),
+                                         "--libs", str(self.libs), "--since", str(earlier), "--out", str(output),
+                                         "--require-matching-window", *flags], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("libSceAgcDriver.prx", result.stderr)
+                self.assertIn("multiple sampled modules", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                for path, content in original.items():
+                    self.assertEqual(path.read_bytes(), content)
+
     def test_strict_window_cli_is_opt_in_and_rejects_before_writing_output(self):
         record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
         later, earlier, output = self.root / "later.txt", self.root / "earlier.txt", self.root / "output.txt"
@@ -808,7 +1065,7 @@ class SymbolizeSamplesTests(unittest.TestCase):
             default = subprocess.run(command + ["--since", str(earlier)], capture_output=True, text=True, timeout=5)
             self.assertEqual(default.returncode, 0, default.stderr)
             self.assertIn("3 samples", default.stdout)
-        later.write_text(record + "libSceAgcDriver.prx+0x1011 7\nlibOther.prx 0x20 1 1\n", encoding="utf-8")
+        later.write_text(record + "libSceAgcDriver.prx+0x1011 7\nlibOther.prx+0x20 1\n", encoding="utf-8")
         earlier.write_text(record + "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
         unrecorded = subprocess.run(command + ["--since", str(earlier), "--require-matching-window"], capture_output=True, text=True, timeout=5)
         self.assertEqual(unrecorded.returncode, 2, unrecorded.stderr)

@@ -10,9 +10,11 @@
 #include <memory>
 #include <list>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 constexpr int ULT_OK = 0;
 constexpr int ULT_ERROR_NULL = -2139029503;
@@ -34,6 +36,22 @@ inline int InitializeOptParam(UltOptParam* optParam) {
     }
     std::memset(optParam, 0, sizeof(*optParam));
     return ULT_OK;
+}
+
+template <std::size_t Size>
+bool CopyUltName(char (&destination)[Size], const char* name) {
+    if (name == nullptr) return true;
+    std::string copy;
+    const int error = CopyGuestString_nid_no_patch(name, Size - 1, copy);
+    if (error == 63) return GuestCopyIn_nid_no_patch(destination, name, Size - 1);
+    if (error != 0) return false;
+    copy.copy(destination, copy.size());
+    return true;
+}
+
+inline bool ClearUltObject(void* object, std::size_t bytes) {
+    static constexpr std::byte zero[4096]{};
+    return GuestCopyOut_nid_no_patch(object, zero, bytes);
 }
 
 struct alignas(8) UltCommonOptParam {
@@ -270,6 +288,12 @@ struct UltThreadIdentity {
     std::uint32_t type = 0;
 };
 
+struct UltWaitRecord {
+    void* thread = nullptr;
+    std::uint32_t type = 0;
+    std::int32_t waitValue = 0;
+};
+
 struct UltMutexState {
     std::mutex _mutex;
     std::condition_variable _available;
@@ -283,11 +307,14 @@ struct UltMutexState {
     std::uint32_t _attribute = 0;
     void* _waitingPool = nullptr;
     char _name[32]{};
+    std::vector<UltWaitRecord> _waiterRecords;
 };
 
 struct UltConditionWaiter {
     std::condition_variable _available;
     bool _signaled = false;
+    UltWaitRecord _record;
+    bool _tracked = false;
 };
 
 struct UltConditionState {
@@ -307,6 +334,7 @@ struct UltSemaphoreState {
     bool _alive = true;
     void* _waitingPool = nullptr;
     char _name[32]{};
+    std::vector<UltWaitRecord> _waiterRecords;
 };
 
 struct UltResourcePoolState {
@@ -344,6 +372,8 @@ struct UltQueueState {
     void* _dataPool = nullptr;
     std::uint32_t _queuedItems = 0;
     char _name[32]{};
+    std::vector<UltWaitRecord> _pusherRecords;
+    std::vector<UltWaitRecord> _popperRecords;
 };
 
 struct UltRuntimeState {

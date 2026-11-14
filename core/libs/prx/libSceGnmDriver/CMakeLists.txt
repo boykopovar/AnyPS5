@@ -1,6 +1,6 @@
 add_library(libSceGnmDriver SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
 target_include_directories(libSceGnmDriver PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceGnmDriver PRIVATE libSceAgcDriver libSceVideoOut)
+target_link_libraries(libSceGnmDriver PRIVATE libSceAgcDriver libSceVideoOut libkernel_sys)
 configure_windows_unwind(libSceGnmDriver)
 
 if(BUILD_TESTING)
@@ -33,5 +33,27 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(gnm_driver_packets gnm_driver_submit_wait PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    add_test_executable(gnm_shader_writer_tests tests/ShaderWriters.cpp)
+    target_include_directories(gnm_shader_writer_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(gnm_shader_writer_tests PRIVATE libSceGnmDriver libc)
+    configure_windows_unwind(gnm_shader_writer_tests)
+    add_test(NAME gnm_shader_writers COMMAND gnm_shader_writer_tests)
+    set_tests_properties(gnm_shader_writers PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(gnm_shader_writers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriver>")
+    endif()
+
+    add_test_executable(gnm_default_state_200_tests tests/DefaultState200.cpp)
+    target_include_directories(gnm_default_state_200_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(gnm_default_state_200_tests PRIVATE libSceGnmDriver libc)
+    configure_windows_unwind(gnm_default_state_200_tests)
+    add_test(NAME gnm_default_state_200 COMMAND gnm_default_state_200_tests)
+    set_tests_properties(gnm_default_state_200 PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(gnm_default_state_200 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriver>")
     endif()
 endif()

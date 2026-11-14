@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include <cerrno>
 #include "prx/libSceUsbStorage/include/InventoryExports.hpp"
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include <algorithm>
@@ -50,15 +51,33 @@ constexpr std::uint8_t DirectoryType = 4;
 constexpr std::uint8_t RegularType = 8;
 constexpr auto RescanInterval = std::chrono::seconds(1);
 
+struct Map {
+    std::string directory;
+    std::string path;
+};
+
 struct Device {
     UsbStorage::HostVolume volume;
-    std::vector<std::string> maps;
+    std::vector<Map> maps;
 };
 
 struct Registration {
     std::int32_t eventType;
     UsbStorageCallback callback;
     void* arg;
+};
+
+struct MapRegistration {
+    std::uint32_t device;
+    std::string directory;
+    UsbStorageCallback callback;
+    void* arg;
+};
+
+struct LostMap {
+    std::uint32_t device;
+    Map map;
+    std::uint64_t flags;
 };
 
 struct DirectoryEntry {
@@ -73,13 +92,15 @@ struct DirectoryScan {
 
 struct Service {
     std::mutex mutex;
-    std::mutex dispatch;
+    std::recursive_mutex dispatch;
     std::condition_variable wake;
     bool initialized = false;
     bool stopping = false;
     Pthread monitor = nullptr;
     std::array<std::optional<Device>, UsbStorage::MaxDevices> devices;
     std::vector<Registration> registrations;
+    std::vector<MapRegistration> availableMaps;
+    std::vector<MapRegistration> unavailableMaps;
     std::map<std::int32_t, DirectoryScan> scans;
     std::int32_t nextDescriptor = 1;
 };
@@ -108,7 +129,7 @@ Device* Find(Service& service, std::uint32_t device) {
     return &*service.devices[device];
 }
 
-void Update(Service& service, std::vector<UsbStorage::HostVolume> volumes, std::vector<UsbStorageEvent>& events) {
+void Update(Service& service, std::vector<UsbStorage::HostVolume> volumes, std::vector<UsbStorageEvent>& events, std::vector<LostMap>& lost) {
     for (std::size_t slot = 0; slot < service.devices.size(); ++slot) {
         auto& device = service.devices[slot];
         if (!device) continue;
@@ -119,6 +140,8 @@ void Update(Service& service, std::vector<UsbStorage::HostVolume> volumes, std::
             volumes.erase(found);
             continue;
         }
+        const std::uint64_t flags = Flags(device->volume);
+        for (const auto& map : device->maps) lost.push_back({static_cast<std::uint32_t>(slot), map, flags});
         events.push_back(Event(UsbStorage::UnmountEvent, slot, device->volume));
         RemovePathAlias_nid_no_patch(MountPoint(slot).c_str());
         device.reset();
@@ -160,6 +183,40 @@ void Dispatch(Service& service, const std::vector<UsbStorageEvent>& events) {
     }
 }
 
+void DispatchMap(Service& service, std::vector<MapRegistration>& registrations, std::uint32_t device, const std::string& directory,
+                 const std::string& path, const UsbStorageEvent& event) {
+    std::vector<MapRegistration> selected;
+    {
+        std::lock_guard lock(service.mutex);
+        for (const auto& registration : registrations) {
+            if (registration.device == device && (registration.directory == directory || "/" + registration.directory == path)) {
+                selected.push_back(registration);
+            }
+        }
+    }
+    for (const auto& registration : selected) {
+        std::lock_guard calling(service.dispatch);
+        void* arg = nullptr;
+        {
+            std::lock_guard lock(service.mutex);
+            const auto current = std::find_if(registrations.begin(), registrations.end(), [&](const auto& entry) {
+                return entry.device == registration.device && entry.directory == registration.directory &&
+                       entry.callback == registration.callback;
+            });
+            if (current == registrations.end()) continue;
+            arg = current->arg;
+        }
+        registration.callback(&event, arg);
+    }
+}
+
+void DispatchLost(Service& service, const std::vector<LostMap>& lost) {
+    for (const auto& entry : lost) {
+        const UsbStorageEvent event{static_cast<std::uint32_t>(UsbStorage::UnmountEvent), entry.device, entry.flags};
+        DispatchMap(service, service.unavailableMaps, entry.device, entry.map.directory, entry.map.path, event);
+    }
+}
+
 void* APS5_VABI Monitor(void*) {
     auto& service = State();
     std::unique_lock lock(service.mutex);
@@ -169,9 +226,11 @@ void* APS5_VABI Monitor(void*) {
         lock.lock();
         if (service.stopping) break;
         std::vector<UsbStorageEvent> events;
-        Update(service, std::move(volumes), events);
+        std::vector<LostMap> lost;
+        Update(service, std::move(volumes), events, lost);
         lock.unlock();
         Dispatch(service, events);
+        DispatchLost(service, lost);
         lock.lock();
     }
     return nullptr;
@@ -204,7 +263,16 @@ std::filesystem::path HostDirectory(const Device& device, const std::vector<std:
     return host;
 }
 
-std::string Map(Device& device, std::uint32_t slot, const char* directory, const char* function) {
+std::string CanonicalDirectory(const char* directory, const char* function) {
+    std::string joined;
+    for (const auto& name : DirectoryNames(directory, function)) {
+        if (!joined.empty()) joined += '/';
+        joined += name;
+    }
+    return joined;
+}
+
+Map MapDirectory(Device& device, std::uint32_t slot, const char* directory, const char* function) {
     const auto names = DirectoryNames(directory, function);
     auto path = MountPoint(slot);
     for (const auto& name : names) path += "/" + name;
@@ -213,11 +281,48 @@ std::string Map(Device& device, std::uint32_t slot, const char* directory, const
         throw std::runtime_error(std::string(function) + ": mapping a directory the device does not hold is not implemented");
     }
     if (path.size() >= UsbStorage::MountPointSize) throw std::runtime_error(std::string(function) + ": a mount point longer than 127 bytes is not implemented");
-    if (std::find(device.maps.begin(), device.maps.end(), path) != device.maps.end()) {
+    std::string canonical;
+    for (const auto& name : names) {
+        if (!canonical.empty()) canonical += '/';
+        canonical += name;
+    }
+    if (std::any_of(device.maps.begin(), device.maps.end(), [&](const auto& map) { return map.directory == canonical; })) {
         throw std::runtime_error(std::string(function) + ": mapping a mapped directory again is not implemented");
     }
-    device.maps.push_back(path);
-    return path;
+    device.maps.push_back({canonical, path});
+    return {std::move(canonical), std::move(path)};
+}
+
+std::int32_t RegisterMapCallback(std::vector<MapRegistration>& registrations, std::uint32_t device, const char* directory,
+                                 UsbStorageCallback callback, void* arg, const char* function) {
+    if (directory == nullptr || callback == nullptr) return UsbStorage::InvalidArgument;
+    const std::string canonical = CanonicalDirectory(directory, function);
+    auto& service = State();
+    std::lock_guard lock(service.mutex);
+    if (!service.initialized) throw std::runtime_error(std::string(function) + ": registering before sceUsbStorageInit is not implemented");
+    const auto existing = std::find_if(registrations.begin(), registrations.end(), [&](const auto& registration) {
+        return registration.device == device && registration.directory == canonical && registration.callback == callback;
+    });
+    if (existing != registrations.end()) throw std::runtime_error(std::string(function) + ": registering a registered callback again is not implemented");
+    registrations.push_back({device, canonical, callback, arg});
+    return 0;
+}
+
+std::int32_t UnregisterMapCallback(std::vector<MapRegistration>& registrations, std::uint32_t device, const char* directory,
+                                   UsbStorageCallback callback, const char* function) {
+    if (directory == nullptr || callback == nullptr) return UsbStorage::InvalidArgument;
+    const std::string canonical = CanonicalDirectory(directory, function);
+    auto& service = State();
+    std::lock_guard lock(service.mutex);
+    const auto found = std::find_if(registrations.begin(), registrations.end(), [&](const auto& registration) {
+        return registration.device == device && registration.directory == canonical && registration.callback == callback;
+    });
+    if (found != registrations.end()) {
+        registrations.erase(found);
+        return 0;
+    }
+    NotImplemented_nid_no_patch(function);
+    return 0;
 }
 
 void WriteMountPoint(char* mountPoint, const std::string& path) {
@@ -256,9 +361,10 @@ std::int32_t APS5_VABI sceUsbStorageInit(void* attr) {
     if (service.stopping) throw std::runtime_error("sceUsbStorageInit: initializing while sceUsbStorageTerm runs is not implemented");
     if (service.initialized) return 0;
     std::vector<UsbStorageEvent> events;
-    Update(service, std::move(volumes), events);
+    std::vector<LostMap> lost;
+    Update(service, std::move(volumes), events, lost);
     if (scePthreadCreate(&service.monitor, nullptr, Monitor, nullptr, "SceUsbStorageMonitor") != 0) {
-        Update(service, {}, events);
+        Update(service, {}, events, lost);
         service.monitor = nullptr;
         throw std::runtime_error("sceUsbStorageInit: scePthreadCreate failed");
     }
@@ -283,8 +389,11 @@ std::int32_t APS5_VABI sceUsbStorageTerm(void) {
     if (scePthreadJoin(monitor, nullptr) != 0) throw std::runtime_error("sceUsbStorageTerm: scePthreadJoin failed");
     std::lock_guard lock(service.mutex);
     std::vector<UsbStorageEvent> events;
-    Update(service, {}, events);
+    std::vector<LostMap> lost;
+    Update(service, {}, events, lost);
     service.registrations.clear();
+    service.availableMaps.clear();
+    service.unavailableMaps.clear();
     service.scans.clear();
     service.monitor = nullptr;
     service.stopping = false;
@@ -335,41 +444,19 @@ std::int32_t APS5_VABI sceUsbStorageUnregisterCallback(std::int32_t eventType, U
 }
 
 std::int32_t APS5_VABI sceUsbStorageRegisterCallbackForMapAvailable(std::uint32_t device, const char* directory, UsbStorageCallback callback, void* arg) {
-    (void)device;
-    (void)arg;
-    if (directory == nullptr || callback == nullptr) {
-        return UsbStorage::InvalidArgument;
-    }
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return RegisterMapCallback(State().availableMaps, device, directory, callback, arg, __func__);
 }
 
 std::int32_t APS5_VABI sceUsbStorageUnregisterCallbackForMapAvailable(std::uint32_t device, const char* directory, UsbStorageCallback callback) {
-    (void)device;
-    if (directory == nullptr || callback == nullptr) {
-        return UsbStorage::InvalidArgument;
-    }
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return UnregisterMapCallback(State().availableMaps, device, directory, callback, __func__);
 }
 
 std::int32_t APS5_VABI sceUsbStorageRegisterCallbackForMapUnavailable(std::uint32_t device, const char* directory, UsbStorageCallback callback, void* arg) {
-    (void)device;
-    (void)arg;
-    if (directory == nullptr || callback == nullptr) {
-        return UsbStorage::InvalidArgument;
-    }
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return RegisterMapCallback(State().unavailableMaps, device, directory, callback, arg, __func__);
 }
 
 std::int32_t APS5_VABI sceUsbStorageUnregisterCallbackForMapUnavailable(std::uint32_t device, const char* directory, UsbStorageCallback callback) {
-    (void)device;
-    if (directory == nullptr || callback == nullptr) {
-        return UsbStorage::InvalidArgument;
-    }
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return UnregisterMapCallback(State().unavailableMaps, device, directory, callback, __func__);
 }
 
 std::int32_t APS5_VABI sceUsbStorageGetDeviceInfo(std::uint32_t device, UsbStorageDeviceInfo* info) {
@@ -392,7 +479,10 @@ std::int32_t APS5_VABI sceUsbStorageGetDeviceInfo(std::uint32_t device, UsbStora
     record.productLength = CopyString(record.product, volume.product, __func__);
     record.serialNumberLength = CopyString(record.serialNumber, volume.serialNumber, __func__);
     record.flags = Flags(volume);
-    std::memcpy(info, &record, sizeof(record));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &record, sizeof(record));
+    errno = savedErrno;
+    if (!copied) return UsbStorage::InvalidArgument;
     return 0;
 }
 
@@ -410,11 +500,14 @@ std::int32_t APS5_VABI sceUsbStorageGetDeviceList(std::uint32_t* devices, std::i
     return 0;
 }
 
-int APS5_VABI sceUsbStorageGetMountPointOfShellCore(uint32_t device, char* mountPoint) {
+std::int32_t APS5_VABI sceUsbStorageGetMountPointOfShellCore(std::uint32_t device, char* mountPoint) {
+    if (mountPoint == nullptr) {
+        return UsbStorage::InvalidArgument;
+    }
     auto& service = State();
     std::lock_guard lock(service.mutex);
-    if (Find(service, device) == nullptr || mountPoint == nullptr) {
-        NotImplemented_nid_no_patch(__func__);
+    if (Find(service, device) == nullptr) {
+        return UsbStorage::DeviceNotFound;
     }
     WriteMountPoint(mountPoint, MountPoint(device));
     return 0;
@@ -426,21 +519,33 @@ bool APS5_VABI sceUsbStorageIsExist(std::uint32_t device, const char* directory,
     std::lock_guard lock(service.mutex);
     const auto* found = Find(service, device);
     std::error_code error;
-    *exists = found != nullptr && std::filesystem::is_directory(HostDirectory(*found, DirectoryNames(directory, __func__)), error) ? 1 : 0;
+    const std::uint8_t local = found != nullptr && std::filesystem::is_directory(HostDirectory(*found, DirectoryNames(directory, __func__)), error) ? 1 : 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(exists, &local, sizeof(local));
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error("sceUsbStorageIsExist: an unwritable output is not implemented");
     return true;
 }
 
 std::int32_t APS5_VABI sceUsbStorageRequestMap(std::uint32_t device, const char* directory, std::int32_t flags,
                                                std::uint64_t volumeSize, char* mountPoint, std::uint64_t* mountId) {
     auto& service = State();
-    std::lock_guard lock(service.mutex);
-    auto* found = Find(service, device);
-    if (found == nullptr) {
-        return UsbStorage::DeviceNotFound;
+    Map map;
+    std::uint64_t volumeFlags = 0;
+    {
+        std::lock_guard lock(service.mutex);
+        auto* found = Find(service, device);
+        if (found == nullptr) {
+            return UsbStorage::DeviceNotFound;
+        }
+        if (flags != 0 || volumeSize != 0) throw std::runtime_error("sceUsbStorageRequestMap: nonzero flags or a volume size are not implemented");
+        map = MapDirectory(*found, device, directory, __func__);
+        volumeFlags = Flags(found->volume);
     }
-    if (flags != 0 || volumeSize != 0) throw std::runtime_error("sceUsbStorageRequestMap: nonzero flags or a volume size are not implemented");
-    WriteMountPoint(mountPoint, Map(*found, device, directory, __func__));
+    WriteMountPoint(mountPoint, map.path);
     if (mountId != nullptr) *mountId = 0;
+    const UsbStorageEvent event{static_cast<std::uint32_t>(UsbStorage::MountEvent), device, volumeFlags};
+    DispatchMap(service, service.availableMaps, device, map.directory, map.path, event);
     return 0;
 }
 
@@ -449,15 +554,27 @@ std::int32_t APS5_VABI sceUsbStorageRequestUnmap(std::uint32_t device, const cha
         return UsbStorage::InvalidArgument;
     }
     auto& service = State();
-    std::lock_guard lock(service.mutex);
-    if (auto* found = Find(service, device)) {
-        const auto map = std::find(found->maps.begin(), found->maps.end(), std::string_view(directory));
-        if (map != found->maps.end()) {
-            found->maps.erase(map);
-            return 0;
+    Map removedMap;
+    bool removed = false;
+    std::uint64_t volumeFlags = 0;
+    {
+        std::lock_guard lock(service.mutex);
+        if (auto* found = Find(service, device)) {
+            const auto map = std::find_if(found->maps.begin(), found->maps.end(), [&](const auto& entry) { return entry.path == directory; });
+            if (map != found->maps.end()) {
+                volumeFlags = Flags(found->volume);
+                removedMap = *map;
+                found->maps.erase(map);
+                removed = true;
+            }
         }
     }
-    NotImplemented_nid_no_patch(__func__);
+    if (!removed) {
+        NotImplemented_nid_no_patch(__func__);
+        return 0;
+    }
+    const UsbStorageEvent event{static_cast<std::uint32_t>(UsbStorage::UnmountEvent), device, volumeFlags};
+    DispatchMap(service, service.unavailableMaps, device, removedMap.directory, removedMap.path, event);
     return 0;
 }
 
@@ -545,14 +662,22 @@ int APS5_VABI sceUsbStorageClearFakeWriteProtection() {
 std::int32_t APS5_VABI sceUsbStorageRequestMapWSB(std::uint32_t device, const char* subpath, std::int32_t flags,
                                                   std::int32_t unknown, char* mountPath, std::int32_t* status) {
     auto& service = State();
-    std::lock_guard lock(service.mutex);
-    auto* found = Find(service, device);
-    if (found == nullptr) {
-        return UsbStorage::DeviceNotFound;
+    Map map;
+    std::uint64_t volumeFlags = 0;
+    {
+        std::lock_guard lock(service.mutex);
+        auto* found = Find(service, device);
+        if (found == nullptr) {
+            return UsbStorage::DeviceNotFound;
+        }
+        if (flags != 0 || unknown != 0) throw std::runtime_error("sceUsbStorageRequestMapWSB: nonzero flags or a nonzero fourth argument are not implemented");
+        map = MapDirectory(*found, device, subpath, __func__);
+        volumeFlags = Flags(found->volume);
     }
-    if (flags != 0 || unknown != 0) throw std::runtime_error("sceUsbStorageRequestMapWSB: nonzero flags or a nonzero fourth argument are not implemented");
-    WriteMountPoint(mountPath, Map(*found, device, subpath, __func__));
+    WriteMountPoint(mountPath, map.path);
     if (status != nullptr) *status = 0;
+    const UsbStorageEvent event{static_cast<std::uint32_t>(UsbStorage::MountEvent), device, volumeFlags};
+    DispatchMap(service, service.availableMaps, device, map.directory, map.path, event);
     return 0;
 }
 

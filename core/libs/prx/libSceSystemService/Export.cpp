@@ -105,7 +105,7 @@ int WriteStatus(bool* status, bool value, const char* function) {
 
 int WriteStatusOrRefuse(bool* status, bool value, int nullOutputError) {
     if (status == nullptr) return nullOutputError;
-    *status = value;
+    if (!GuestCopyOut_nid_no_patch(status, &value, sizeof(value))) return nullOutputError;
     return SYSTEM_SERVICE_OK;
 }
 
@@ -230,7 +230,10 @@ void CopyRunningTitleId(const std::string& caller, bool running, char* destinati
     if (destination == nullptr) throw std::runtime_error(caller + ": null title ID buffer");
     const std::string titleId = RunningTitleId();
     if (titleId.size() >= TitleIdBufferSize) throw std::runtime_error(caller + ": title ID that does not fit 10 bytes");
-    std::memcpy(destination, titleId.c_str(), titleId.size() + 1);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, titleId.c_str(), titleId.size() + 1);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(caller + ": unwritable title ID buffer");
 }
 
 bool WellFormedTitleId(const char* titleId) {
@@ -254,8 +257,22 @@ int AnswerForRunningApp(const std::string& caller, std::int32_t appId, TValue* d
 int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
     if (appIds == nullptr || count == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     if (capacity == 0) throw std::runtime_error(caller + ": a list with no room for the running title");
-    appIds[0] = SYSTEM_SERVICE_RUNNING_APP_ID;
-    *count = 1;
+    std::int32_t currentId = 0;
+    std::uint32_t currentCount = 0;
+    const int savedErrno = errno;
+    const bool valid = GuestCopyIn_nid_no_patch(&currentId, appIds, sizeof(currentId)) &&
+                       GuestCopyOut_nid_no_patch(appIds, &currentId, sizeof(currentId)) &&
+                       GuestCopyIn_nid_no_patch(&currentCount, count, sizeof(currentCount)) &&
+                       GuestCopyOut_nid_no_patch(count, &currentCount, sizeof(currentCount));
+    if (!valid) {
+        errno = savedErrno;
+        return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    }
+    const std::int32_t runningId = SYSTEM_SERVICE_RUNNING_APP_ID;
+    const std::uint32_t one = 1;
+    GuestCopyOut_nid_no_patch(appIds, &runningId, sizeof(runningId));
+    GuestCopyOut_nid_no_patch(count, &one, sizeof(one));
+    errno = savedErrno;
     return SYSTEM_SERVICE_OK;
 }
 
@@ -345,8 +362,14 @@ int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAre
  if (info == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *info = SystemServiceDisplaySafeAreaInfo{};
- info->ratio = 1.0f;
+ SystemServiceDisplaySafeAreaInfo localInfo{};
+ localInfo.ratio = 1.0f;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -370,7 +393,13 @@ int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value) {
  if (value == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *value = false;
+ const bool localValue = false;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(value, &localValue, sizeof(localValue));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -470,13 +499,25 @@ int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, s
     if (userId != static_cast<std::uint32_t>(USER_SERVICE_INITIAL_USER_ID)) {
         NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted for a user other than the logged-in user");
     }
-    *adjusted = 0;
+    const std::uint8_t result = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(adjusted, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) {
+        NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted with an unwritable output");
+    }
     return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
     if (adjusted == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
-    return sceShellCoreUtilIsEyeToEyeDistanceAdjusted(userId, adjusted);
+    std::uint8_t result = 0;
+    const int status = sceShellCoreUtilIsEyeToEyeDistanceAdjusted(userId, &result);
+    if (status != SYSTEM_SERVICE_OK) return status;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(adjusted, &result, sizeof(result));
+    errno = savedErrno;
+    return copied ? SYSTEM_SERVICE_OK : SYSTEM_SERVICE_ERROR_PARAMETER;
 }
 
 bool APS5_VABI sceSystemStateMgrIsBdDriveReady() {

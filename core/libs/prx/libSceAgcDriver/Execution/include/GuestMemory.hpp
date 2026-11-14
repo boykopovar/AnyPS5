@@ -137,7 +137,10 @@ bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::
 // for decisions about which blocks the CPU wrote while a GPU result was pending (a stale answer there
 // stores old texels over reused memory).
 // The epoch is per queue worker: BumpCollectEpoch advances the calling thread's epoch to a value no
-// other thread ever holds (one worker's walk never satisfies another's check) at the hardware
+// other thread ever holds. Each 64 KiB block records the counter value read before its last complete
+// walk, and a request of epoch e is answered by any walk of the block made at or after e, by
+// whichever thread: such a walk started after the bump that produced e. A mapping or unwatch change
+// invalidates every recorded walk. The calling thread's epoch advances at the hardware
 // ordering points of its queue: the start of a submission, a WAIT_REG_MEM the CPU may have satisfied
 // (at entry, polled, timed out, or by another queue's recorded label; a label this queue recorded
 // itself orders no CPU write), a device drain, and before reaping completions outside a submission.
@@ -154,6 +157,13 @@ std::uint64_t CollectEpochBumps();
 std::uint64_t ThreadCollectEpoch();
 std::uint64_t UnwatchSerial();
 std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes);
+struct Observation {
+    enum class Status { Complete, Refused, Uncovered, Failed };
+    Status status = Status::Failed;
+    std::uint64_t generation = 0;
+};
+Observation Observe(std::uint64_t address, std::size_t bytes);
+void SetObservationHookForTest(void (*hook)(int point));
 // The tracker's current generation (every collect and MarkWritten bumps it): a stamp taken after
 // a set of driver stores, for UnchangedSinceCollected to compare against later. Read under the
 // tracker mutex, so every collect that bumped before it has finished its walk and every later

@@ -23,6 +23,7 @@ static Uint128 Make(std::uint64_t high, std::uint64_t low) { return (static_cast
 static void CheckLockFree() {
     alignas(16) unsigned char buffer[32] = {};
     Require(__atomic_is_lock_free_nid_postfix(0, buffer + 1) && __atomic_is_lock_free_nid_postfix(1, buffer + 3));
+    Require(__atomic_is_lock_free_nid_postfix(1, nullptr) && __atomic_is_lock_free_nid_postfix(16, nullptr));
     Require(__atomic_is_lock_free_nid_postfix(2, buffer + 2) && !__atomic_is_lock_free_nid_postfix(2, buffer + 1));
     Require(__atomic_is_lock_free_nid_postfix(4, buffer + 4) && !__atomic_is_lock_free_nid_postfix(4, buffer + 2));
     Require(__atomic_is_lock_free_nid_postfix(8, buffer + 8) && !__atomic_is_lock_free_nid_postfix(8, buffer + 4));
@@ -41,11 +42,13 @@ static void CheckGenericTraps() {
 
 static void CheckSixteenByte() {
     alignas(16) Uint128 value = Make(1, ~0ull);
+    Require(__sync_fetch_and_add_16_nid_postfix(&value, 0) == Make(1, ~0ull) && value == Make(1, ~0ull));
     Require(__sync_fetch_and_add_16_nid_postfix(&value, 1) == Make(1, ~0ull) && value == Make(2, 0));
     Require(__sync_fetch_and_sub_16_nid_postfix(&value, 1) == Make(2, 0) && value == Make(1, ~0ull));
     Require(__sync_fetch_and_and_16_nid_postfix(&value, Make(1, 0xff00)) == Make(1, ~0ull) && value == Make(1, 0xff00));
     Require(__sync_fetch_and_or_16_nid_postfix(&value, Make(4, 0xff)) == Make(1, 0xff00) && value == Make(5, 0xffff));
     Require(__sync_fetch_and_xor_16_nid_postfix(&value, Make(5, 0xf0f0)) == Make(5, 0xffff) && value == Make(0, 0x0f0f));
+    Require(__sync_fetch_and_xor_16_nid_postfix(&value, 0) == Make(0, 0x0f0f) && value == Make(0, 0x0f0f));
     Require(__sync_lock_test_and_set_16_nid_postfix(&value, Make(9, 9)) == Make(0, 0x0f0f) && value == Make(9, 9));
 }
 

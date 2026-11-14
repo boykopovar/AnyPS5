@@ -89,7 +89,7 @@ bool Driver::reapEachPacket() {
 std::uint64_t Driver::batchCap() {
     static const std::uint64_t value = [] {
         const char* text = std::getenv("APS5_BATCH_CAP");
-        return text ? std::strtoull(text, nullptr, 10) : 64ull;
+        return text ? std::strtoull(text, nullptr, 10) : 512ull;
     }();
     return value;
 }
