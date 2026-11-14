@@ -156,7 +156,7 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block) {
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::span<const std::uint32_t> pixelCode, std::uint32_t colorWriteMask = 0xf) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::span<const std::uint32_t> pixelCode, bool blended = false) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::vector<std::uint32_t> vertexUserData(4, 0u);
@@ -187,7 +187,16 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     VkPipelineColorBlendAttachmentState blend{};
-    blend.colorWriteMask = colorWriteMask;
+    blend.colorWriteMask = 0xf;
+    if (blended) {
+        blend.blendEnable = VK_TRUE;
+        blend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        blend.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+        blend.colorBlendOp = VK_BLEND_OP_ADD;
+        blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        blend.alphaBlendOp = VK_BLEND_OP_ADD;
+    }
     state.blends = {blend};
     state.blend = blend;
     state.blendConstants = {};
@@ -727,7 +736,7 @@ void EvictionKeepsPendingModules() {
         Require(device != nullptr, "the device for the pending module test could not be opened");
         device->WaitForPipelineJournalReplay();
         std::memset(target.data, 0, target.bytes);
-        Draw(*device, color, Program(red), 0x7);
+        Draw(*device, color, Program(red), true);
         device->WaitIdle();
         AgcDriver::Graphics::FlushPipelineJournal();
     }

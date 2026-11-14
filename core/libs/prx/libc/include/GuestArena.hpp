@@ -59,6 +59,8 @@ bool GuestArenaCollectWrites_nid_postfix(std::uintptr_t address, std::size_t byt
 bool GuestArenaCollectArmedWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear);
 bool GuestArenaCollectFreshWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear);
 bool GuestArenaHostRegionOverlaps_nid_postfix(std::uintptr_t address, std::size_t bytes);
+std::size_t GuestArenaHostRegions_nid_no_patch(std::uintptr_t* regions, std::size_t capacity);
+bool GuestArenaHostRegionIndexActive_nid_no_patch();
 std::uint64_t GuestArenaCommitGeneration_nid_postfix();
 void GuestArenaSetPrivateMappingObserver_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes, std::uint64_t generation));
 void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection);
@@ -73,6 +75,8 @@ void GuestArenaCompareWhenShared_nid_no_patch(std::uintptr_t address, std::size_
 void GuestArenaCompareResidentWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes);
 void GuestArenaComparedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count);
 void GuestArenaTakeUnreportedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count);
+void GuestArenaKnownZero_nid_no_patch(std::uintptr_t address, std::size_t bytes, void (*zero)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context);
+void GuestArenaForgetKnownZero_nid_no_patch(std::uintptr_t address, std::size_t bytes);
 void GuestArenaForgetSection_nid_postfix(void* section);
 bool GuestArenaBeginHostImport_nid_no_patch(void* pointer, std::size_t bytes);
 void GuestArenaEndHostImport_nid_no_patch(void* pointer, std::size_t bytes);
