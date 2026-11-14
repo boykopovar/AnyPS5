@@ -7111,7 +7111,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
             keep({begin, nullptr, override->inPlaceOffset, bytes, override->inPlace});
             continue;
         }
-        if (override != moved.end() && override->inPlace) {
+        if (override != moved.end() && override->dispatchInPlace) {
             VkDescriptorBufferInfo view{};
             std::uint64_t serial = 0;
             if (!HostImportView(context, override->address, override->size, view, serial)) return {};

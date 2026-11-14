@@ -254,7 +254,7 @@ public:
         std::uint64_t address;
         std::size_t size;
         std::span<const std::uint32_t> words;
-        bool inPlace = false;
+        bool dispatchInPlace = false;
         VkBuffer inPlace = VK_NULL_HANDLE;
         VkDeviceSize inPlaceOffset = 0;
         std::uint32_t adjustment = 0;
