@@ -6420,73 +6420,70 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
     prepared = true;
     resolveOverlays();
     servedInsideBase.clear();
-    std::vector<std::uint32_t> order(regions.size());
-    std::iota(order.begin(), order.end(), 0u);
-    std::sort(order.begin(), order.end(), [&](std::uint32_t left, std::uint32_t right) { return regions[left].begin < regions[right].begin; });
-    // Merged regions stay sparse when either part covered uncommitted pages.
-    const auto mergeBacked = [](Region& into, const Region& from) {
-        if (!into.sparse && !from.sparse) return;
-        auto ranges = into.sparse ? into.backed : decltype(into.backed){{into.begin, into.end}};
-        if (from.sparse) ranges.insert(ranges.end(), from.backed.begin(), from.backed.end());
-        else ranges.emplace_back(from.begin, from.end);
-        std::sort(ranges.begin(), ranges.end());
-        into.backed.clear();
-        for (const auto& range : ranges) {
-            if (!into.backed.empty() && range.first <= into.backed.back().second) into.backed.back().second = std::max(into.backed.back().second, range.second);
-            else into.backed.push_back(range);
-        }
-        const auto end = std::max(into.end, from.end);
-        into.sparse = !(into.backed.size() == 1 && into.backed.front().first <= into.begin && into.backed.front().second >= end);
-        if (!into.sparse) into.backed.clear();
-    };
-    std::vector<Region> merged;
-    merged.reserve(regions.size());
-    for (const auto index : order) {
-        auto& region = regions[index];
-        if (!merged.empty() && region.begin < merged.back().end) {
-            auto& previous = merged.back();
-            if (previous.mirror != nullptr || region.mirror != nullptr) {
-                // A descriptor range inside a mirrored image range binds the mirror's bytes (registered
-                // ranges never overlap, so the other part is such a descriptor; it sorts first when it
-                // starts at the range's base). Writes into a read-only mirror are never stored. One
-                // crossing the mirror's end cannot be served by it: this build copies the range.
-                if (previous.mirror == nullptr) std::swap(previous, region);
-                Require(region.mirror == nullptr, "image mirrors overlap");
-                if (region.begin >= previous.begin && region.end <= previous.end && servesView(previous, std::max(region.lastView, region.begin))) continue;
-                if (previous.mirror->sparse) previous.backed = clipPieces(previous.mirror->committed, previous.begin, previous.end);
-                previous.mirror = nullptr;
-                previous.hostBacked = true;
+    const bool orderedDisjoint = std::adjacent_find(regions.begin(), regions.end(), [](const Region& previous, const Region& next) {
+        return previous.begin >= next.begin || previous.end > next.begin;
+    }) == regions.end();
+    if (!orderedDisjoint) {
+        std::vector<std::uint32_t> order(regions.size());
+        std::iota(order.begin(), order.end(), 0u);
+        std::sort(order.begin(), order.end(), [&](std::uint32_t left, std::uint32_t right) { return regions[left].begin < regions[right].begin; });
+        const auto mergeBacked = [](Region& into, const Region& from) {
+            if (!into.sparse && !from.sparse) return;
+            auto ranges = into.sparse ? into.backed : decltype(into.backed){{into.begin, into.end}};
+            if (from.sparse) ranges.insert(ranges.end(), from.backed.begin(), from.backed.end());
+            else ranges.emplace_back(from.begin, from.end);
+            std::sort(ranges.begin(), ranges.end());
+            into.backed.clear();
+            for (const auto& range : ranges) {
+                if (!into.backed.empty() && range.first <= into.backed.back().second) into.backed.back().second = std::max(into.backed.back().second, range.second);
+                else into.backed.push_back(range);
             }
-            mergeBacked(previous, region);
-            previous.lastView = std::max({previous.lastView, region.lastView, region.begin});
-            if (region.end > previous.end) previous.direct = nullptr;
-            previous.atomic = previous.atomic || region.atomic;
-            previous.swept = previous.swept || region.swept;
-            previous.sparseHeap = previous.sparseHeap || region.sparseHeap;
-            // A range starting before the mirror (only possible after the swap) keeps its prefix; the
-            // earlier merged region ends at or before it, so the merged list stays sorted.
-            previous.begin = std::min(previous.begin, region.begin);
-            if (previous.hostBacked || region.hostBacked) {
-                // Live guest bytes back the merged range, so snapshots inside it add nothing.
-                previous.hostBacked = true;
-                previous.writable = previous.writable || region.writable;
-                previous.snapshot.clear();
+            const auto end = std::max(into.end, from.end);
+            into.sparse = !(into.backed.size() == 1 && into.backed.front().first <= into.begin && into.backed.front().second >= end);
+            if (!into.sparse) into.backed.clear();
+        };
+        std::vector<Region> merged;
+        merged.reserve(regions.size());
+        for (const auto index : order) {
+            auto& region = regions[index];
+            if (!merged.empty() && region.begin < merged.back().end) {
+                auto& previous = merged.back();
+                if (previous.mirror != nullptr || region.mirror != nullptr) {
+                    if (previous.mirror == nullptr) std::swap(previous, region);
+                    Require(region.mirror == nullptr, "image mirrors overlap");
+                    if (region.begin >= previous.begin && region.end <= previous.end && servesView(previous, std::max(region.lastView, region.begin))) continue;
+                    if (previous.mirror->sparse) previous.backed = clipPieces(previous.mirror->committed, previous.begin, previous.end);
+                    previous.mirror = nullptr;
+                    previous.hostBacked = true;
+                }
+                mergeBacked(previous, region);
+                previous.lastView = std::max({previous.lastView, region.lastView, region.begin});
+                if (region.end > previous.end) previous.direct = nullptr;
+                previous.atomic = previous.atomic || region.atomic;
+                previous.swept = previous.swept || region.swept;
+                previous.sparseHeap = previous.sparseHeap || region.sparseHeap;
+                previous.begin = std::min(previous.begin, region.begin);
+                if (previous.hostBacked || region.hostBacked) {
+                    previous.hostBacked = true;
+                    previous.writable = previous.writable || region.writable;
+                    previous.snapshot.clear();
+                    previous.end = std::max(previous.end, region.end);
+                    continue;
+                }
+                Require(previous.writable == region.writable, "writable guest memory overlaps an immutable snapshot");
+                if (!region.writable) {
+                    const auto offset = static_cast<std::size_t>(region.begin - previous.begin);
+                    const auto overlap = static_cast<std::size_t>(std::min(previous.end, region.end) - region.begin);
+                    Require(std::memcmp(previous.snapshot.data() + offset, region.snapshot.data(), overlap) == 0, "inconsistent overlapping guest snapshots");
+                    if (region.end > previous.end) previous.snapshot.insert(previous.snapshot.end(), region.snapshot.begin() + overlap, region.snapshot.end());
+                }
                 previous.end = std::max(previous.end, region.end);
-                continue;
+            } else {
+                merged.push_back(std::move(region));
             }
-            Require(previous.writable == region.writable, "writable guest memory overlaps an immutable snapshot");
-            if (!region.writable) {
-                const auto offset = static_cast<std::size_t>(region.begin - previous.begin);
-                const auto overlap = static_cast<std::size_t>(std::min(previous.end, region.end) - region.begin);
-                Require(std::memcmp(previous.snapshot.data() + offset, region.snapshot.data(), overlap) == 0, "inconsistent overlapping guest snapshots");
-                if (region.end > previous.end) previous.snapshot.insert(previous.snapshot.end(), region.snapshot.begin() + overlap, region.snapshot.end());
-            }
-            previous.end = std::max(previous.end, region.end);
-        } else {
-            merged.push_back(std::move(region));
         }
+        regions = std::move(merged);
     }
-    regions = std::move(merged);
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = std::chrono::steady_clock::now();
     for (auto& region : regions) {
