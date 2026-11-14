@@ -21,7 +21,7 @@ FcBool APS5_VABI FcConfigSubstitute(FcConfig* config, FcPattern* pattern, int ki
 FcResult APS5_VABI FcPatternGetMatrix(const FcPattern* pattern, const char* object, int id, FcMatrix** value);
 int APS5_VABI FcInit();
 FcResult APS5_VABI FcPatternGetString(const FcPattern* pattern, const char* object, int id, FcChar8** value);
-int APS5_VABI FcFontRenderPrepare();
+FcPattern* APS5_VABI FcFontRenderPrepare(FcConfig* config, FcPattern* pattern, FcPattern* font);
 FcBool APS5_VABI FcPatternAddDouble(FcPattern* pattern, const char* object, double value);
 FcPattern* APS5_VABI FcPatternDuplicate(const FcPattern* pattern);
 FcPattern* APS5_VABI FcFontMatch(FcConfig* config, FcPattern* pattern, FcResult* result);
