@@ -300,6 +300,7 @@ class Samples:
         self.self_counts = collections.Counter()
         self.inclusive = collections.Counter()
         self.total = collections.Counter()
+        self.threads = set()
 
 
 def load(path, thread=None):
@@ -323,6 +324,7 @@ def load(path, thread=None):
         if len(parts) == 4 and parts[0] == "thread" and parts[2] == "samples" and parts[1].isdigit() and parts[3].isdigit():
             record_format("address", number)
             current = parts[1]
+            samples.threads.add(current)
             if thread is None or current == thread:
                 samples.total["threads"] += int(parts[3])
             continue
@@ -444,6 +446,8 @@ def main(argv=None):
     parser.add_argument("--require-matching-window", action="store_true",
                         help="with --since, require matching module records and nondecreasing cumulative counters; records cannot prove a common process")
     args = parser.parse_args(argv)
+    if args.top < 1:
+        parser.error("--top must be positive")
     if args.require_matching_window and not args.since:
         parser.error("--require-matching-window needs --since")
     try:
@@ -461,6 +465,8 @@ def symbolize(parser, args):
                 if os.path.realpath(source) == os.path.realpath(output) or (source.exists() and output.exists() and source.samefile(output)):
                     parser.error("symbolized output must be separate from the sample captures")
     samples = load(args.samples, args.thread)
+    if args.thread is not None and samples.threads and args.thread not in samples.threads:
+        raise ValueError(f"{args.samples}: thread {args.thread} is not in the capture (threads: {', '.join(sorted(samples.threads, key=int))})")
     if args.out and not samples.stacks:
         parser.error("--out needs a collapsed-stack file")
     if args.since:

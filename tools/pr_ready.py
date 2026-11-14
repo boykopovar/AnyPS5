@@ -149,10 +149,10 @@ def ranked(prs):
 
 
 def clean(text):
-    text = "".join(ch for ch in text if ch.isprintable()).replace("@", "@​")
-    for char in "[]|`<>*_~":
+    text = "".join(ch for ch in text if ch.isprintable())[:100].replace("@", "@​")
+    for char in "\\[]|`<>*_~":
         text = text.replace(char, "\\" + char)
-    return text[:100]
+    return text
 
 
 def queue_body(queue, total, ready):
