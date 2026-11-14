@@ -3469,6 +3469,7 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
         }
         surface = surfaces().back().get();
     }
+    if (surface->retired) surfacesSerial.fetch_add(1, std::memory_order_release);
     surface->retired = false;
     const auto owner = depthOwners().find({context.device, target.address});
     const bool inherits = owner != depthOwners().end() && owner->second.surface->active->load(std::memory_order_acquire) && !owner->second.surface->retired;
