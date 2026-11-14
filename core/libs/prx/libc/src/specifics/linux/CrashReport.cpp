@@ -1,5 +1,6 @@
 #if defined(__linux__) && defined(__x86_64__)
 #include "prx/libc/include/CallTrace.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/LogFile.hpp"
 
 #include <atomic>
@@ -193,6 +194,7 @@ void Report(int signal, const siginfo_t* info, const ucontext_t* context) {
     line.Text("[libc] fatal ").Text(SignalName(signal)).Text(" (code ").Decimal(static_cast<std::uint64_t>(static_cast<std::uint32_t>(info->si_code))).Text(") at address ");
     line.Hex(reinterpret_cast<std::uint64_t>(info->si_addr), 16).Text(" in thread ").Decimal(static_cast<std::uint64_t>(syscall(SYS_gettid))).Write();
     if (g_mappingsTruncated) line.Text("  mappings truncated after ").Decimal(MappingCapacity).Text(" entries").Write();
+    if (const char* hint = LibcCrashHint_nid_no_patch()) line.Text("  note: ").Text(hint).Write();
     if (context == nullptr) return;
     const greg_t* registers = context->uc_mcontext.gregs;
     const auto rip = static_cast<std::uint64_t>(registers[REG_RIP]);

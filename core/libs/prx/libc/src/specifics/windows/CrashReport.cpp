@@ -389,6 +389,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
         LocalFree(description);
     }
     Report("\nFATAL: unhandled exception 0x%08lx on thread %lu '%s'\n", record->ExceptionCode, GetCurrentThreadId(), threadName);
+    if (const char* hint = LibcCrashHint_nid_no_patch()) Report("  note: %s\n", hint);
     DescribeAddress(context->Rip, line, sizeof(line));
     Report("  rip %s\n", line);
     if (record->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION) {
