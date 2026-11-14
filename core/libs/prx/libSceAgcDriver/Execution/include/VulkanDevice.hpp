@@ -85,6 +85,9 @@ public:
     VulkanDevice& operator=(const VulkanDevice&) = delete;
     std::string DeviceName() const;
     std::string DriverInfo() const;
+    VkDriverId DriverId() const;
+    enum class PipelineBinaryStatus { Unavailable, Disabled, DisabledByDriver, Ready };
+    PipelineBinaryStatus PipelineBinariesStatus() const;
     bool SupportsImageFormat(VkFormat format, VkImageUsageFlags usage) const;
     bool BdaAtomicsUsable() const;
     bool RasterOrderGroupUsable() const;
