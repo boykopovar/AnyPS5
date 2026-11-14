@@ -217,7 +217,6 @@ public:
     VkDescriptorSetLayout FragmentLayout() const { return fragment.layout; }
     bool SplitSets() const { return splitSets; }
     PipelineSetLayouts SetLayouts() const { return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey}; }
-    void RequireGuestBuffers() const { requireGuestBuffers(); }
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
     struct DrawBindings {
         DrawBindings() = default;
@@ -244,6 +243,7 @@ public:
         std::size_t size;
         std::span<const std::uint32_t> words;
     };
+    void RequireGuestBuffers(std::span<const MovedBuffer> moved = {}) const { requireGuestBuffers(moved); }
     struct DrawUse {
         DrawUse() = default;
         DrawUse(const DrawUse&) = delete;
@@ -363,9 +363,9 @@ public:
         ProofFailure failure = ProofFailure::None;
         bool audited = false;
     };
-    bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr);
+    bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr, std::span<const MovedBuffer> moved = {});
     static bool EpochProofs();
-    bool Revalidate(const CompiledShader& shader, ProofReport* report = nullptr) { return Revalidate(std::span<const CompiledShader>(&shader, 1), report); }
+    bool Revalidate(const CompiledShader& shader, ProofReport* report = nullptr, std::span<const MovedBuffer> moved = {}) { return Revalidate(std::span<const CompiledShader>(&shader, 1), report, moved); }
     // The proof a recipe hit runs on its template (design_cpu_final M4): Revalidate by that name.
     bool ProveCurrent(std::span<const CompiledShader> shaders, ProofReport* report = nullptr) { return Revalidate(shaders, report); }
     bool ProveCurrent(const CompiledShader& shader, ProofReport* report = nullptr) { return Revalidate(shader, report); }
@@ -531,6 +531,7 @@ private:
     std::uint64_t guestBufferBytes(std::span<const std::uint32_t> words) const;
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     void requireGuestBuffers(std::span<const MovedBuffer> moved = {}) const;
+    void synchronizeGuestBuffers(std::span<const MovedBuffer> moved = {}) const;
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
     void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags);

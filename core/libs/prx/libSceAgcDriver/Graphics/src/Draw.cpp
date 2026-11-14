@@ -2171,12 +2171,13 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
                     }
                 }
             }
-            const bool valid = spaceHeld && cached->Revalidate(shaders);
-            if (counted && spaceHeld && !valid) reuse = AddressDrawReuse::Revalidation;
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
             bool patched = false;
-            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color, &patched);
+            if (spaceHeld && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color, &patched);
+            const bool moveRefused = spaceHeld && recorder != nullptr && !moved.has_value();
+            const bool valid = spaceHeld && !moveRefused && cached->Revalidate(shaders, nullptr, moved ? std::span<const ShaderResources::MovedBuffer>(*moved) : std::span<const ShaderResources::MovedBuffer>{});
+            if (counted && spaceHeld && !valid && !moveRefused) reuse = AddressDrawReuse::Revalidation;
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
                 if (counted && verifyAddressDrawReuse()) verifyServedSpace(context, state, draw, shaders, snapshots, indexBytes, *cached);
@@ -2186,9 +2187,9 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
                 outcome.kind = KindTemplateHit;
                 countCache(&DrawProfile::cacheHits);
                 if (counted) reuse = AddressDrawReuse::Reused;
-            } else if (valid || inUse) {
-                if (valid && cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
-                if (valid && counted) reuse = patched ? AddressDrawReuse::PatchedData : AddressDrawReuse::MovedBuffer;
+            } else if (valid || moveRefused || inUse) {
+                if ((valid || moveRefused) && cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
+                if ((valid || moveRefused) && counted) reuse = patched ? AddressDrawReuse::PatchedData : AddressDrawReuse::MovedBuffer;
                 countCache(&DrawProfile::cacheMisses);
             } else {
                 if (cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
@@ -2846,7 +2847,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
-    resources.RequireGuestBuffers();
+    resources.RequireGuestBuffers(record.moved);
     if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || captured || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
     if (record.spaceKeep != nullptr) *record.spaceKeep = reserveSpaceKeep(*recorder, resources);
