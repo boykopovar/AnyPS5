@@ -164,7 +164,7 @@ void Same(const std::array<std::byte, 1024>& indirect, const std::array<std::byt
     }
 }
 
-void DrawnOnTheGpu() {
+void DrawnOnTheGpu(bool indexedOnTheGpu) {
     const auto counts = AgcDriver::Graphics::IndirectDrawCounts();
     std::string cpu;
     for (std::size_t path = 1; path < counts.size(); ++path) {
@@ -172,11 +172,19 @@ void DrawnOnTheGpu() {
         if (!cpu.empty()) cpu += ", ";
         cpu += std::to_string(counts[path]) + " " + AgcDriver::Graphics::IndirectDrawPathName(static_cast<AgcDriver::Graphics::IndirectDrawPath>(path));
     }
-    Require(cpu.empty(), "indirect rect-list draws read their records on the CPU: " + cpu);
-    Require(counts[0] == 4, "the GPU drew " + std::to_string(counts[0]) + " indirect rect-list draws from their records, expected 4");
+#ifdef ANYPS5_SETTLED_RECORDS
+    static_cast<void>(indexedOnTheGpu);
+    const auto settled = counts[static_cast<std::size_t>(AgcDriver::Graphics::IndirectDrawPath::Settled)];
+    Require(counts[0] == 0 && settled == 4, "the indirect rect-list draws whose records no batch writes took the GPU-side path " + std::to_string(counts[0]) + " times and read their records on the CPU as: " + cpu + ", expected 4 settled reads");
+#else
+    const std::string expectedCpu = indexedOnTheGpu ? "" : "1 " + std::string(AgcDriver::Graphics::IndirectDrawPathName(AgcDriver::Graphics::IndirectDrawPath::FeatureGap));
+    Require(cpu == expectedCpu, "indirect rect-list draws read their records on the CPU: " + cpu + (expectedCpu.empty() ? std::string() : ", expected only the indexed draw (" + expectedCpu + ")"));
+    const std::uint64_t expectedGpu = indexedOnTheGpu ? 4u : 3u;
+    Require(counts[0] == expectedGpu, "the GPU drew " + std::to_string(counts[0]) + " indirect rect-list draws from their records, expected " + std::to_string(expectedGpu));
+#endif
 }
 
-void IndirectRectListsDrawAsDirectOnes() {
+void IndirectRectListsDrawAsDirectOnes(bool indexedOnTheGpu) {
     DirectMemory.fill(Kept);
     IndirectMemory.fill(Kept);
     EmptyMemory.fill(Kept);
@@ -206,7 +214,7 @@ void IndirectRectListsDrawAsDirectOnes() {
     Same(IndirectInstancedMemory, DirectInstancedMemory, "rect-list draw of 6 vertices and 2 instances");
     Require(Slots(DirectIndexedMemory) == "0 32 32 0", "the direct indexed rect-list draw covered pixels " + Slots(DirectIndexedMemory) + " of the four rectangles, expected only the second and third");
     Same(IndirectIndexedMemory, DirectIndexedMemory, "indexed rect-list draw");
-    DrawnOnTheGpu();
+    DrawnOnTheGpu(indexedOnTheGpu);
 }
 
 }
@@ -218,13 +226,26 @@ int main() {
 #else
         setenv("APS5_PROFILE_DRAW", "1", 1);
 #endif
+#ifndef ANYPS5_SETTLED_RECORDS
+#ifdef _WIN32
+        _putenv_s("APS5_NO_SETTLED_INDIRECT_READ", "1");
+#else
+        setenv("APS5_NO_SETTLED_INDIRECT_READ", "1", 1);
+#endif
+#endif
+        bool indexedOnTheGpu = true;
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+            indexedOnTheGpu = device->DrawIndirectSupport().indexedPatches;
         }
-        IndirectRectListsDrawAsDirectOnes();
+        IndirectRectListsDrawAsDirectOnes(indexedOnTheGpu);
         AgcDriverShutdown_nid_postfix();
-        std::puts("indirect rect-list draws were drawn on the GPU and drew what the direct draw did");
+#ifdef ANYPS5_SETTLED_RECORDS
+        std::puts("indirect rect-list draws over settled records were read on the CPU and drew what the direct draw did");
+#else
+        std::puts(indexedOnTheGpu ? "indirect rect-list draws were drawn on the GPU and drew what the direct draw did" : "indirect rect-list draws drew what the direct draw did, the indexed one from records read on the CPU");
+#endif
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
