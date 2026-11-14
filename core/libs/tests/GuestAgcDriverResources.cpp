@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -129,4 +130,7 @@ int main() {
     std::uint64_t userMemSize = 0;
     Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(&userMemSize) == 0 && userMemSize == 0x4000ull);
     Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(nullptr) == 0x80020065u);
+    errno = 71;
+    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(reinterpret_cast<uint64_t*>(0x10)) == 0x80020065u);
+    Require(errno == 71);
 }
