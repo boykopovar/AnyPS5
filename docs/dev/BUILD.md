@@ -157,6 +157,18 @@ GCC and Clang compile libc with `-ffp-contract=off` whatever the target CPU. Too
 
 The [Sanitizers workflow](../../.github/workflows/sanitizers.yml) builds the full runtime on Ubuntu with `-DANYPS5_ENABLE_ASAN=ON` and UBSan (`-fsanitize=undefined -fno-sanitize=vptr`) nightly at 03:41 UTC, runs every test and can be started manually with `workflow_dispatch`. It builds only the `F16ToF32Unpack`, `F64FmaSubnormals` and `RegistrationPrepareShutdown` AGC execution tests, like the Windows MSYS2 workflow. A test that fails because of the sanitizers themselves, or because of a bug whose fix is still open, is listed with the reason in [sanitizer-known-failures.txt](../../.github/sanitizer-known-failures.txt), one test per line with its sanitizers and the reason. The job summary, written by `tools/sanitizer_report.py`, separates unexpected failures from known ones and names listed tests that passed or did not run, so their entries can be removed. To repeat a run locally, set `ASAN_OPTIONS=detect_leaks=0` and `UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1`, so that undefined behavior fails the test.
 
+Generate a UTF-8 JSON report for each run using the same sanitizer options, test selection and known-failure list. For example, use these commands in Bash with the nightly CTest XML files:
+
+```sh
+python tools/sanitizer_report.py previous.xml --known .github/sanitizer-known-failures.txt --sanitizer address --sanitizer undefined --json > previous.json
+python tools/sanitizer_report.py current.xml --known .github/sanitizer-known-failures.txt --sanitizer address --sanitizer undefined --json > current.json
+python tools/compare_sanitizer_runs.py previous.json current.json
+```
+
+The producer writes JSON even when it exits 1 for unexpected failures. The comparison groups results by test name and prints Markdown. Use `--json` for structured output with format version 1. Previously failing tests that pass, skip, or disappear are shown separately. A changed diagnostic for a test that remains unexpectedly failing is grouped with persistent failures.
+
+The comparison exits 1 if a test is newly unexpected, including when a failing test loses its known-failure exemption. It exits 0 when there are no newly unexpected tests and 2 for invalid or unreadable input. Use `sanitizer_report.py` to check for any unexpected failure in a single run.
+
 Build configuration parameters:
 
 | Flag                                   | Value                                                              |
