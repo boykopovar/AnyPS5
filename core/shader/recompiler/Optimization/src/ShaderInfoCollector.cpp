@@ -310,6 +310,9 @@ void CollectPixelInputs(const IrProgram& program, const ShaderPixelInputInfo* pi
             } else if (inst->Opcode() == IrOpcode::GetInterpolationParameterF16) {
                 const auto input = inst->Argument(0)->Resolve()->ImmediateU32();
                 const bool high = inst->Argument(3)->Resolve()->ImmediateU32() != 0u;
+                if (pixel->InputIsPointSprite(input)) {
+                    throw std::runtime_error("16-bit pixel input " + std::to_string(input) + " takes point sprite coordinates, which is not implemented");
+                }
                 if (!pixel->InputHalfIsDefault(input, high)) {
                     read[input] = true;
                     perVertex[input] = true;
@@ -340,6 +343,21 @@ void CollectPixelInputs(const IrProgram& program, const ShaderPixelInputInfo* pi
             slotPerVertex[slot] = true;
         }
         slotPerVertex[slot] = slotPerVertex[slot] || perVertex[input];
+    }
+    bool pointCoord = false;
+    for (std::uint32_t input = 0; input < pixel->inputNum; input++) {
+        if (!read[input] || !pixel->InputIsPointSprite(input)) continue;
+        if (pixel->InputIsDefault(input) || pixel->InputIsCustom(input) || IsPixelParameterFlat(*pixel, input)) {
+            throw std::runtime_error("pixel input " + std::to_string(input) + " takes point sprite coordinates and is flat, custom or a default value, which is not implemented");
+        }
+        for (std::uint32_t component = 0; component < 4u; ++component) {
+            const auto select = pixel->PointSpriteSelect(component);
+            if (select > 4u) throw std::runtime_error("SPI_INTERP_CONTROL_0 selects reserved point sprite override " + std::to_string(select));
+            pointCoord = pointCoord || select == 2u || select == 3u;
+        }
+    }
+    if (pointCoord) {
+        AddInput(info, StageInputKind::PointCoord, 0, 2, "gl_PointCoord");
     }
     bool smooth = false;
     bool noPerspective = false;

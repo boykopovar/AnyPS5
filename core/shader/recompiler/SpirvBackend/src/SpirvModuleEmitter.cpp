@@ -306,6 +306,28 @@ std::uint32_t EmitAttributeValue(SpirvEmitterState& state, std::uint32_t attr, s
     if (PixelParameterIsDefault(state, attr)) {
         return ConstantU32(state, state.inputInfo.pixel->InputDefaultBits(attr, chan & 3u));
     }
+    if (StageOf(state) == IrShaderStage::Pixel && state.inputInfo.pixel->InputIsPointSprite(attr)) {
+        const auto& pixel = *state.inputInfo.pixel;
+        const auto select = pixel.PointSpriteSelect(chan);
+        if (select == 0u) return ConstantU32(state, 0u);
+        if (select == 1u) return ConstantU32(state, 0x3f800000u);
+        if (select == 2u || select == 3u) {
+            const auto variable = InputVariableForKind(state, StageInputKind::PointCoord);
+            if (variable == 0u) throw std::runtime_error("point sprite coordinates were not declared");
+            const auto pointer = state.module.AllocateId();
+            auto value = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeF32(state)), pointer, variable, ConstantU32(state, select - 2u));
+            state.module.AddFunction(spv::OpLoad, TypeF32(state), value, pointer);
+            if (select == 3u && pixel.PointSpriteTopOne()) {
+                const auto flipped = state.module.AllocateId();
+                state.module.AddFunction(spv::OpFSub, TypeF32(state), flipped, ConstantF32Value(state, 1.0f), value);
+                value = flipped;
+            }
+            const auto bits = state.module.AllocateId();
+            state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
+            return bits;
+        }
+    }
     const auto* input = SpirvInputBindingForParameter(state, attr);
     if (input == nullptr || input->variableId == 0) {
         return ConstantU32(state, 0u);
@@ -375,6 +397,9 @@ std::uint32_t EmitInterpolationParameterValue(SpirvEmitterState& state, std::uin
     }
     if (attr >= state.inputInfo.pixel->inputNum || PixelParameterIsDefault(state, attr)) {
         return mode == 2u ? ConstantU32(state, state.inputInfo.pixel->InputDefaultBits(attr, chan & 3u)) : ConstantU32(state, 0u);
+    }
+    if (state.inputInfo.pixel->InputIsPointSprite(attr) && state.inputInfo.pixel->PointSpriteSelect(chan) != 4u) {
+        return mode == 2u ? EmitAttributeValue(state, attr, chan) : ConstantU32(state, 0u);
     }
     const auto* input = SpirvInputBindingForParameter(state, attr);
     if (input == nullptr) {

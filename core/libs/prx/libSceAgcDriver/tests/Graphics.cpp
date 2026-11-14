@@ -302,9 +302,18 @@ void vertexPointListTests() {
         queue.context[0x1b6] = 2;
         queue.context[0x191] = 0;
         queue.context[0x192] = sprite;
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "point sprite texture coordinates (SPI_PS_INPUT_CNTL PT_SPRITE_TEX) are not implemented");
+        if (sprite == 1u << 17u) {
+            const auto state = AgcDriver::Graphics::DecodeState(queue);
+            Require(state.vertexPoints && state.pointSpriteControl == 0x486au, "PT_SPRITE_TEX did not keep the SPI_INTERP_CONTROL_0 point sprite fields");
+            queue.context[0x192] = 0;
+            Require(AgcDriver::Graphics::DecodeState(queue).pointSpriteControl == 0u, "point sprite fields were kept without a PT_SPRITE_TEX input");
+            queue.context[0x192] = sprite;
+        } else {
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "point sprite texture coordinates of a 16-bit input's second half (SPI_PS_INPUT_CNTL PT_SPRITE_TEX_ATTR1) are not implemented");
+        }
         queue.context[0x1b5] = 0x4869u;
-        Require(AgcDriver::Graphics::DecodeState(queue).vertexPoints, "PT_SPRITE_TEX was refused with point sprites off");
+        const auto off = AgcDriver::Graphics::DecodeState(queue);
+        Require(off.vertexPoints && off.pointSpriteControl == 0u, "PT_SPRITE_TEX was refused or kept with point sprites off");
     }
 }
 

@@ -202,10 +202,26 @@ void VerifyTessellationInstancePatches() {
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 13u && bytes[4] == 57u);
-    bytes.resize(bytes.size() - 5u);
+    Require(bytes.size() > 17u && bytes[4] == 58u);
+    bytes.resize(bytes.size() - 9u);
     bytes[4] = 56u;
     return EncodeBase64(bytes);
+}
+
+void VerifyPointSpriteControl() {
+    const ShaderRecompiler::RequestSerializer serializer;
+    ShaderRecompiler::RecompileRequest request{};
+    request.context.pixel = ShaderRecompiler::ShaderPixelStageInfo{};
+    request.context.pixel->pointSpriteControl = 0x486au;
+    const auto encoded = serializer.Serialize(request);
+    const auto replay = serializer.Deserialize(encoded);
+    Require(replay.request.context.pixel.has_value() && replay.request.context.pixel->pointSpriteControl == 0x486au);
+    Require(serializer.Serialize(replay.request) == encoded);
+    auto bytes = DecodeBase64(encoded);
+    bytes.resize(bytes.size() - 4u);
+    bytes[4] = 57u;
+    const auto version57 = serializer.Deserialize(EncodeBase64(bytes));
+    Require(version57.request.context.pixel.has_value() && version57.request.context.pixel->pointSpriteControl == 0u);
 }
 
 void VerifyTargetOptions() {
@@ -226,7 +242,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 57u);
+                    Require(bytes[4] == 58u);
                     for (std::size_t missing = 1u; missing <= 5u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -238,7 +254,7 @@ void VerifyTargetOptions() {
                         }
                         Require(rejected);
                     }
-                    bytes.resize(bytes.size() - 5u);
+                    bytes.resize(bytes.size() - 9u);
                     bytes[4] = 56u;
                     const auto legacy56 = serializer.Deserialize(EncodeBase64(bytes));
                     Require(!legacy56.request.target.fixedPushSlots && legacy56.request.target.maxImageArrayLayers == 0u);
@@ -772,7 +788,7 @@ int VerifyVersion56Compatibility() {
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
         auto future = bytes;
-        future[4] = 58u;
+        future[4] = 59u;
         bool futureRejected = false;
         try {
             static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
@@ -1152,5 +1168,6 @@ int VerifyVersion56Compatibility() {
 
 int main() {
     VerifyTargetOptions();
+    VerifyPointSpriteControl();
     return VerifyVersion56Compatibility();
 }
