@@ -879,6 +879,7 @@ static void finishThread(PthreadPrivate* self, void* retval) {
     if (const auto callback = threadDtors.load())
         callback();
     ThreadLifecycle::RunKeyDtors();
+    ThreadLifecycle::ReleaseRobustUmutexes();
     {
         std::unique_lock<std::mutex> lk(self->_join_mtx);
         self->_retval = retval;
