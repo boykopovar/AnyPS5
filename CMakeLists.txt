@@ -33,7 +33,7 @@ function(add_test_executable target)
         set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
     endif()
     if(MINGW)
-        target_sources(${target} PRIVATE $<TARGET_OBJECTS:anyps5_windows_test_exit> "${CMAKE_BINARY_DIR}/WindowsManifest.rc")
+        target_sources(${target} PRIVATE $<TARGET_OBJECTS:anyps5_windows_test_exit> $<TARGET_OBJECTS:anyps5_windows_test_manifest>)
         set_property(GLOBAL APPEND PROPERTY ANYPS5_TEST_EXECUTABLES ${target})
         target_link_options(${target} PRIVATE LINKER:--wrap=main)
         target_link_options(${target} PRIVATE LINKER:--disable-high-entropy-va)
@@ -209,6 +209,7 @@ endif()
 
 if(MINGW)
     add_library(anyps5_windows_test_exit OBJECT cmake/WindowsTestExit.cpp)
+    add_library(anyps5_windows_test_manifest OBJECT "${CMAKE_BINARY_DIR}/WindowsManifest.rc")
 endif()
 
 if(BUILD_TESTING)
@@ -381,6 +382,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
+        add_test(NAME tools_compile_plan COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_compile_plan.py)
+        set_tests_properties(tools_compile_plan PROPERTIES TIMEOUT 20)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
         add_test(NAME forced_include_paths COMMAND ${Python3_EXECUTABLE}
