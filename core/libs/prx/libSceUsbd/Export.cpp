@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <climits>
+#include <cerrno>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
@@ -332,11 +333,16 @@ void APS5_VABI sceUsbdFreeDeviceList(void** list, std::int32_t unrefDevices) {
 }
 
 std::int32_t APS5_VABI sceUsbdHandleEventsTimeout(const UsbdTimeval* timeout) {
-    if (timeout == nullptr || timeout->seconds < 0 || timeout->microseconds < 0 || timeout->microseconds >= 1000000) return SCE_USBD_ERROR_INVALID_ARG;
-    if (!ValidTimeout(timeout)) throw std::runtime_error(std::string(__func__) + ": a timeout of more than INT_MAX seconds is not supported");
+    if (timeout == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    UsbdTimeval copy{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&copy, timeout, sizeof(copy));
+    errno = savedErrno;
+    if (!copied || copy.seconds < 0 || copy.microseconds < 0 || copy.microseconds >= 1000000) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!ValidTimeout(&copy)) throw std::runtime_error(std::string(__func__) + ": a timeout of more than INT_MAX seconds is not supported");
     auto& events = Events();
     LockEventsAndClaim(events, __func__);
-    const std::int32_t result = HandleEventsLocked(events, timeout);
+    const std::int32_t result = HandleEventsLocked(events, &copy);
     UnlockEventsAndRelease(events, __func__);
     return result;
 }
