@@ -27,6 +27,7 @@
 #include "CodePoints.hpp"
 #include "Identified.hpp"
 
+#include "prx/libSceIcu/Api.hpp"
 #include "prx/libSceIcu/include/Api.hpp"
 #include "Api.hpp"
 #include "Utf32.hpp"
