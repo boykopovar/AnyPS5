@@ -68,6 +68,17 @@ void topLevelModule() {
         "a module outside any directory was not listed as a file");
 }
 
+void controlCharacters() {
+    const auto executable = std::string("title\n") + '\x1b' + "[2J.exe";
+    const auto module = std::string("prx/module") + '\r' + '\x7f' + ".prx";
+    requireText(print(executable, {module}, {"\tbonus.exe"}),
+        Header + "  |-- title\\x0A\\x1B[2J.exe\n"
+        "  |-- \\x09bonus.exe\n" + Libraries +
+        "        |-- prx/\n"
+        "              |-- module\\x0D\\x7F.prx\n\n",
+        "layout filenames exposed terminal controls");
+}
+
 }
 
 int main() {
@@ -76,6 +87,7 @@ int main() {
         extraExecutables();
         moduleTree();
         topLevelModule();
+        controlCharacters();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
