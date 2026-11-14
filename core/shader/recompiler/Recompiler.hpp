@@ -250,6 +250,7 @@ struct ShaderPixelStageInfo {
     std::array<std::uint8_t, 32> sampleLocations{};
     std::vector<TargetMerge> targetMerges{};
     std::array<std::uint32_t, 4> sampleOrder{};
+    std::uint32_t pointSpriteControl = 0;
 };
 
 struct ShaderVertexBufferResource {

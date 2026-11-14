@@ -218,10 +218,14 @@ void decodePointSize(const QueueState& queue, State& result) {
     const auto interpolation = find(cx, 0x1b5);
     const auto inputs = find(cx, 0x1b6);
     if (interpolation == cx.end() || (interpolation->second & 2u) == 0 || inputs == cx.end()) return;
+    bool sprite = false;
     for (std::uint32_t input = 0; input < (inputs->second & 0x3fu); ++input) {
         const auto control = find(cx, 0x191 + input);
-        Require(control == cx.end() || (control->second & 0x820000u) == 0, "point sprite texture coordinates (SPI_PS_INPUT_CNTL PT_SPRITE_TEX) are not implemented");
+        if (control == cx.end()) continue;
+        Require((control->second & 0x800000u) == 0, "point sprite texture coordinates of a 16-bit input's second half (SPI_PS_INPUT_CNTL PT_SPRITE_TEX_ATTR1) are not implemented");
+        sprite = sprite || (control->second & 0x20000u) != 0;
     }
+    if (sprite) result.pointSpriteControl = interpolation->second & 0x7ffeu;
 }
 
 constexpr std::uint32_t DepthControlMask = ~0x007007f0u;

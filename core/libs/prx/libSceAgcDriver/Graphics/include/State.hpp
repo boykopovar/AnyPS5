@@ -197,6 +197,7 @@ struct State {
     float pointSize = 1.0f;
     float pointSizeMin = 0.0f;
     float pointSizeMax = 0.0f;
+    std::uint32_t pointSpriteControl = 0;
     std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
     bool pixelEarlyZ = false;
     bool pixelKill = false;

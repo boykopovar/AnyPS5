@@ -56,6 +56,7 @@ enum class StageInputKind {
     BaryCoordSmoothSample,
     BaryCoordNoPerspectiveSample,
     SampleMask,
+    PointCoord,
 };
 
 constexpr StageInputKind BarycentricInputOf(StageInputKind kind) {

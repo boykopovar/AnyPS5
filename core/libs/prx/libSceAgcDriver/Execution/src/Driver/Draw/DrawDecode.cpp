@@ -226,6 +226,7 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     product->pixel.ditheredAlphaToCoverage = product->state.ditheredAlphaToCoverage;
     product->pixel.ditheredAlphaSamples = product->state.ditheredAlphaSamples;
     product->pixel.iteratesSamples = product->state.perSampleShading;
+    product->pixel.pointSpriteControl = product->state.pointSpriteControl;
     product->pixel.sampleLocations = Graphics::PixelSampleLocations(product->state, product->pixel);
     return product;
 }

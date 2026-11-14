@@ -198,6 +198,7 @@ struct ShaderPixelInputInfo {
     bool mergeDepthStencilWrites = false;
     bool mergeDepthStencilTests = false;
     std::array<std::uint32_t, 4> sampleOrder{};
+    std::uint32_t pointSpriteControl = 0;
 
     bool HasPositionInput() const {
         return psPosX || psPosY || psPosZ || psPosW;
@@ -250,6 +251,18 @@ struct ShaderPixelInputInfo {
         const auto value = input < 32u ? (interpolatorSettings[input] >> 8u) & 0x3u : 0u;
         const bool one = component == 3u ? (value & 0x1u) != 0u : (value & 0x2u) != 0u;
         return one ? 0x3f800000u : 0u;
+    }
+
+    [[nodiscard]] bool InputIsPointSprite(std::uint32_t input) const {
+        return (pointSpriteControl & 0x2u) != 0u && input < inputNum && input < 32u && (interpolatorSettings[input] & 0x20000u) != 0u;
+    }
+
+    [[nodiscard]] std::uint32_t PointSpriteSelect(std::uint32_t component) const {
+        return (pointSpriteControl >> (2u + 3u * (component & 3u))) & 0x7u;
+    }
+
+    [[nodiscard]] bool PointSpriteTopOne() const {
+        return (pointSpriteControl & 0x4000u) != 0u;
     }
 
     [[nodiscard]] bool InputIsFp16(std::uint32_t input) const {
