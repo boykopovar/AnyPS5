@@ -373,9 +373,9 @@ std::uint64_t recordBytes(std::uint64_t payloadBytes) {
     return padded(sizeof(RecordHeader) + payloadBytes);
 }
 
-bool profiling() {
-    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    return profile;
+bool reporting() {
+    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_PIPELINE_STATS") != nullptr;
+    return report;
 }
 
 thread_local bool replayingHere = false;
@@ -1696,7 +1696,7 @@ void FlushPipelineJournal() {
 }
 
 void ReportPipelineJournal() {
-    if (!profiling() || !Journal::Instance().Enabled()) return;
+    if (!reporting() || !Journal::Instance().Enabled()) return;
     const auto totals = PipelineJournalTotals();
     AgcDriver::ProfilePrint_nid_no_patch("[pipeline-journal] loaded %llu pipelines, %llu modules (%.1f MiB, %.0f ms); replay on %u threads: %llu graphics and %llu compute built, %llu present, %llu skipped (store full), %llu rejected, %llu failed in %.0f ms, holding at most %.1f MiB of modules; recorded this run: %llu graphics, %llu compute, %llu modules (%.1f MiB), %llu write failures, %llu records evicted (%.1f MiB)\n",
                                          static_cast<unsigned long long>(totals.loadedRecipes), static_cast<unsigned long long>(totals.loadedModules), static_cast<double>(totals.loadedBytes) / (1024.0 * 1024.0), totals.loadMs, totals.replayThreads,

@@ -354,6 +354,7 @@ void JournalTests() {
         AgcDriver::Graphics::FlushPipelineJournal();
         const auto after = Snapshot();
         Require(after.store.misses == before.store.misses + 1 && after.store.hits == before.store.hits, "the first draw did not miss the pipeline store exactly once");
+        Require(after.store.drawBuilds == before.store.drawBuilds + 1 + (after.store.uncached - before.store.uncached) && after.store.drawBuildNanoseconds > before.store.drawBuildNanoseconds && after.store.replayBuilds == before.store.replayBuilds, "the first draw's pipeline was not counted as built at the draw");
         Require(after.journal.recordedGraphics == 1 && after.journal.recordedCompute == 1 && after.journal.recordedModules == 3 && after.journal.writeFailures == 0, "the first run did not record one graphics and one compute pipeline with three modules");
         Draw(*device, DecodeTarget(target), Program(red));
         device->WaitIdle();
@@ -361,15 +362,18 @@ void JournalTests() {
         const auto repeated = Snapshot();
         Require(repeated.store.hits == after.store.hits + 1 && repeated.store.misses == after.store.misses, "a repeated draw did not hit the pipeline store");
         Require(repeated.journal.recordedGraphics == 1 && repeated.journal.recordedModules == 3, "a repeated draw recorded its pipeline again");
+        Require(repeated.store.drawBuilds == after.store.drawBuilds, "a repeated draw built its pipeline again");
     }
     Require(std::filesystem::exists(journalPath) && std::filesystem::file_size(journalPath) > 0, "the journal file was not written");
     {
         const auto device = OpenVulkanTestDevice();
         Require(device != nullptr, "the second device could not be opened");
+        const auto opened = Snapshot();
         device->WaitForPipelineJournalReplay();
         const auto replayed = Snapshot();
         Require(replayed.journal.loadedRecipes == 2 && replayed.journal.loadedModules == 3 && replayed.journal.droppedRecords == 0, "the second run did not load the two recorded pipelines and their three modules");
         Require(replayed.journal.replayedGraphics == 1 && replayed.journal.replayedCompute == 1 && replayed.journal.replayRejected == 0 && replayed.journal.replayFailed == 0 && replayed.journal.replayPresent == 0, "the replay did not build one graphics and one compute pipeline");
+        Require(replayed.store.replayBuilds == opened.store.replayBuilds + 1 && replayed.store.drawBuilds == opened.store.drawBuilds, "the replay's graphics pipeline was not counted as one replay build");
         Require(device->ComputePipelinesCreated() == 1, "the replay did not build the compute pipeline on the new device");
         std::memset(compute.data, Fill, compute.bytes);
         const auto words = AddressWords(compute);
@@ -383,6 +387,7 @@ void JournalTests() {
         ExpectTexel(*device, target, redTexel, "second run: the draw through the replayed pipeline");
         const auto drawn = Snapshot();
         Require(drawn.store.hits == replayed.store.hits + 1 && drawn.store.misses == replayed.store.misses, "the second run's draw did not find the replayed pipeline");
+        Require(drawn.store.drawBuilds == replayed.store.drawBuilds, "the second run built a pipeline at its draw although the replay had built it");
         AgcDriver::Graphics::FlushPipelineJournal();
         const auto final = Snapshot();
         Require(final.journal.recordedGraphics == 1 && final.journal.recordedCompute == 1 && final.journal.recordedModules == 3, "the second run recorded pipelines the journal already held");

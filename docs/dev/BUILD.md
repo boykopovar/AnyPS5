@@ -383,6 +383,7 @@ With `APS5_PROFILE_DRAW` set (any value), the driver prints a profile line on st
 | `[rescache] revalidate` | last 10 s |
 | `[texture-cache]` | last 10 s |
 | `[pipecache]` | last 10 s |
+| `[pipelines]` | last 10 s, then from the start after `cumulative:` |
 | `[rescache]` (hits, misses, entries) | from the start |
 | `[vk]` | from the start |
 | `[indirect]` (gpu-side, cpu-side) | from the start |
