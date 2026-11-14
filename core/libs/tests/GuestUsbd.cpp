@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <climits>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -13,6 +14,12 @@
 #include <thread>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -48,6 +55,52 @@ bool Throws(TCall call) {
         return true;
     }
     return false;
+}
+
+void TimeoutGuestMemory() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr, "timeout allocation failed");
+    DWORD previous;
+    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0, "timeout protection failed");
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0, "page size unavailable");
+    const auto page = static_cast<std::size_t>(pageSize);
+    auto* memory = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED, "timeout allocation failed");
+    Require(mprotect(memory + page, page, PROT_NONE) == 0, "timeout protection failed");
+#endif
+    for (const auto invalid : {UsbdTimeval{-1, 0}, UsbdTimeval{0, -1}, UsbdTimeval{0, 1000000}}) {
+        errno = EDOM;
+        Require(sceUsbdHandleEventsTimeout(&invalid) == invalidArgument, "invalid timeout accepted");
+        Require(errno == EDOM, "invalid timeout changed errno");
+    }
+    const UsbdTimeval oversized{static_cast<std::int64_t>(INT_MAX) + 1, 0};
+    Require(Throws([&] { sceUsbdHandleEventsTimeout(&oversized); }), "oversized timeout accepted");
+    const UsbdTimeval zero{};
+    auto* exact = reinterpret_cast<UsbdTimeval*>(memory + page - sizeof(zero));
+    std::memcpy(exact, &zero, sizeof(zero));
+    for (const auto offset : {page, page - sizeof(zero) / 2}) {
+        errno = EDOM;
+        Require(sceUsbdHandleEventsTimeout(reinterpret_cast<const UsbdTimeval*>(memory + offset)) == invalidArgument, "unreadable timeout accepted");
+        Require(errno == EDOM, "timeout copy changed errno");
+    }
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0, "timeout read-only protection failed");
+#else
+    Require(mprotect(memory, page, PROT_READ) == 0, "timeout read-only protection failed");
+#endif
+    Require(sceUsbdHandleEventsTimeout(exact) == 0, "exact read-only timeout failed after refused reads");
+    Require(std::memcmp(exact, &zero, sizeof(zero)) == 0, "timeout was modified");
+#ifdef _WIN32
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0, "timeout release failed");
+#else
+    Require(munmap(memory, page * 2) == 0, "timeout release failed");
+#endif
 }
 
 void APS5_VABI MarkDone(UsbdTransfer* transfer) {
@@ -466,6 +519,7 @@ void CheckTransferFillers() {
 
 int main(int argc, char** argv) {
     Require(sceUsbdInit() == 0, "initialization failed");
+    TimeoutGuestMemory();
     CheckTransferFillers();
     void** list = nullptr;
     const std::int64_t count = sceUsbdGetDeviceList(&list);
