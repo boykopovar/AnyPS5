@@ -1,4 +1,5 @@
 #include "prx/libSceVoice/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -105,8 +106,13 @@ int APS5_VABI sceVoiceInit(const VoiceInitParam* param, std::int32_t version) {
     std::lock_guard lock(voice.mutex);
     if (voice.initialized) return static_cast<std::int32_t>(0x804e0802u);
     if (!param || version != 100) return InvalidArgument;
-    if (param->app_type != 4 && param->app_type != 0x08000000 && param->app_type != 0x10000000 && param->app_type != 0x20000000) return InvalidArgument;
-    voice.appType = param->app_type;
+    VoiceInitParam localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) return InvalidArgument;
+    if (localParam.app_type != 4 && localParam.app_type != 0x08000000 && localParam.app_type != 0x10000000 && localParam.app_type != 0x20000000) return InvalidArgument;
+    voice.appType = localParam.app_type;
     voice.freePorts.clear();
     for (std::uint32_t id = 0; id < 128; ++id) voice.freePorts.push_back(id);
     voice.initialized = true;
