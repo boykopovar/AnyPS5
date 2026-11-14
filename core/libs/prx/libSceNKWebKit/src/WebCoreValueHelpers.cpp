@@ -1,4 +1,6 @@
-// Derived from Source/WebCore/platform/text/LocaleToScriptMapping.cpp, Source/WebCore/loader/ResourceLoadStatistics.cpp and Source/WebCore/page/SettingsBase.cpp (PS5-WebKit-11.x 80f77e94c63e)
+// Derived from Source/WebCore/platform/text/LocaleToScriptMapping.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WebCore/loader/ResourceLoadStatistics.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WebCore/page/SettingsBase.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2011 Google Inc. All rights reserved.
  * Copyright (C) 2021 Apple Inc. All rights reserved.
