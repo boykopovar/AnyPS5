@@ -20,6 +20,7 @@ static constexpr int SCE_NP_MATCHING2_ERROR_INVALID_ROOM_ID = static_cast<int>(0
 static constexpr int SCE_NP_MATCHING2_ERROR_SERVER_NOT_AVAILABLE = static_cast<int>(0x80550C28);
 static constexpr int SCE_NP_MATCHING2_ERROR_SESSION_NOT_FOUND = static_cast<int>(0x80550C3A);
 static constexpr int SCE_NP_MATCHING2_ERROR_INVALID_CONTEXT = static_cast<int>(0x80550C3B);
+static constexpr int SCE_NP_MATCHING2_SIGNALING_ERROR_NOT_INITIALIZED = static_cast<int>(0x80550E01);
 static constexpr int SCE_NP_MATCHING2_SIGNALING_ERROR_CTX_NOT_FOUND = static_cast<int>(0x80550E05);
 static constexpr int SCE_NP_MATCHING2_SIGNALING_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550E15);
 static constexpr int SCE_NP_MATCHING2_SIGNALING_ERROR_PEER_NOT_FOUND = static_cast<int>(0x80550E19);
@@ -94,6 +95,7 @@ int CheckLocal(std::uint16_t ctxId) {
 
 int ConnectionInfo(std::uint16_t ctxId, const void* info) {
     std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!info) return SCE_NP_MATCHING2_SIGNALING_ERROR_INVALID_ARGUMENT;
     return contexts.contains(ctxId) ? SCE_NP_MATCHING2_SIGNALING_ERROR_PEER_NOT_FOUND : SCE_NP_MATCHING2_SIGNALING_ERROR_CTX_NOT_FOUND;
 }
@@ -521,21 +523,29 @@ int APS5_VABI sceNpMatching2SetSignalingOptParam(void) {
 }
 
 int APS5_VABI sceNpMatching2SignalingAbortConnection(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_SIGNALING_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2SignalingCancelPeerNetInfo(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_SIGNALING_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2SignalingEnableManualUdpMode(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_SIGNALING_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2SignalingEstablishConnection(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_SIGNALING_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -553,7 +563,7 @@ int APS5_VABI sceNpMatching2SignalingGetConnectionStatus(std::uint16_t ctxId, st
     (void)peerAddr;
     (void)peerPort;
     std::lock_guard lock(matching2Mutex);
-    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    if (!matching2Initialized) return SCE_NP_MATCHING2_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!connStatus) NotImplemented_nid_no_patch(__func__);
     if (const int error = CheckContext(ctxId)) return error;
     const std::int32_t status = SCE_NP_SIGNALING_CONN_STATUS_INACTIVE;
@@ -570,11 +580,15 @@ extern "C" bool NpMatching2IsInitialized_nid_no_patch() {
 }
 
 int APS5_VABI sceNpMatching2SignalingGetPeerNetInfo(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_SIGNALING_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpMatching2SignalingGetPeerNetInfoResult(void) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_SIGNALING_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
