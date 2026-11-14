@@ -14,9 +14,28 @@ Select or drop multiple app ZIP archives to convert them into one ZIP bundle. Th
 
 The relinker does not extract or decrypt package files. It needs an extracted, decrypted ELF executable and its bundled modules.
 
-The SELF unwrapper refuses containers requiring more than 64 MiB of total alignment padding before allocating the output buffer. This limit counts padding across file-backed and empty segments, not segment data; a refusal preserves the input and any existing output file.
+### SELF size limit
 
-Use a clean ELF executable. Place its bundled ELF modules in `sce_module/`, `sce_modules/`, or `prx/` beside the input executable, or under the parent directory selected with `--sce-module-path <path>`. The option accepts absolute paths and paths relative to the current working directory; do not include the `sce_module` directory itself. Only files directly inside the module directories are processed. SELF/fSELF containers are skipped with a warning; unwrap them before relinking if they need to be included. `tools/unwrap_self.py <input.self> <output.elf>` does that for a decrypted container: it places the segments at the offsets of the SELF segment records and restores `p_offset % p_align == p_vaddr % p_align`, and it refuses a container whose load segments all look encrypted. The relinker, on the command line and in the online converter, skips an ELF module as a backup copy, with a message, when its file name extends the name of another ELF module in the same directory and both have the same SONAME, such as a dumper's `libX.prx.esbak` or `libX.prxbak` beside an ELF `libX.prx`; a single backup beside a SELF container is still relinked. `prx/` can coexist with either `sce_module/` or `sce_modules/`. Both `sce_module/` and `sce_modules/` present is an error. All three absent is an error unless an explicit `--module-dir` is supplied. On Linux, macOS and Windows, when the executable imports `sceKernelLoadStartModule`, a bundled module that neither the executable nor a required module needs is not started at launch; it initializes when the title loads it, with the arguments from `sceKernelLoadStartModule`. Without that import every bundled module starts at launch. On macOS, loading a deferred module that way has not been run.
+The SELF unwrapper refuses a container that needs more than 64 MiB of total alignment padding. It checks this before it allocates the output buffer. The limit counts padding across file-backed and empty segments, not segment data. If it refuses, your input and any existing output file stay untouched.
+
+### Where to put the files
+
+Use a clean ELF executable. Put its bundled ELF modules in `sce_module/`, `sce_modules/`, or `prx/` beside the input executable, or under the parent directory selected with `--sce-module-path <path>`.
+
+- `--sce-module-path` accepts absolute paths and paths relative to the current working directory. Give the parent directory, not the `sce_module` directory itself.
+- Only files directly inside the module directories are processed.
+- SELF/fSELF containers are skipped with a warning. Unwrap them before relinking if they need to be included.
+  - `tools/unwrap_self.py <input.self> <output.elf>` does that for a decrypted container. It places the segments at the offsets of the SELF segment records and restores `p_offset % p_align == p_vaddr % p_align`. It refuses a container whose load segments all look encrypted.
+- Backup copies are skipped with a message, both on the command line and in the online converter. An ELF module counts as a backup when its file name extends the name of another ELF module in the same directory and both have the same SONAME. Example: a dumper's `libX.prx.esbak` or `libX.prxbak` beside an ELF `libX.prx`. A single backup beside a SELF container is still relinked.
+- `prx/` can exist together with either `sce_module/` or `sce_modules/`.
+- Having both `sce_module/` and `sce_modules/` is an error.
+- Having none of the three is an error, unless you give an explicit `--module-dir`.
+
+### Module start-up on Linux, macOS and Windows
+
+If the executable imports `sceKernelLoadStartModule`, a bundled module that neither the executable nor a required module needs is not started at launch. It initializes when the title loads it, with the arguments from `sceKernelLoadStartModule`. Without that import, every bundled module starts at launch. On macOS, loading a deferred module this way has not been run.
+
+### Layout and command
 
 ```text
 source/
@@ -29,11 +48,30 @@ source/
 relinker [options] <input.elf> <output>
 ```
 
-`relinker --dry-run [options] <input.elf> <output>` runs conversion in memory, including bundled modules, extra executables, import analysis and byte patches. It lists every planned output, including registry files, needed-library files, patch manifests, Windows diagnostics and Linux desktop metadata, without creating directories, writing files or changing permissions. Existing outputs are preserved. Conversion failures return `2`, as in a normal run. The output path is still required because it determines the layout. This mode does not check destination write access or probe filesystem aliases of files that do not yet exist; those checks require a normal conversion. `--dry-run` conflicts with `--autorun` and `--verify-patches`.
+### Dry run
 
-An explicit `--module-dir` also works when the module parent has no `sce_module`, `sce_modules` or `prx` directory. For a homebrew bundle with shared libraries beside its executable, use `--module-dir .`; no empty standard directory is required. Without an explicit module directory, the standard-directory requirement remains.
+`relinker --dry-run [options] <input.elf> <output>` runs the conversion in memory, including bundled modules, extra executables, import analysis and byte patches.
 
-A module the executable needs that is not converted is looked for under the module parent directory, outside the module directories. Each SELF container or `ET_SCE_DYNAMIC` ELF found there whose name matches, up to the `.prx`, `.sprx`, `.suprx` or `.debug_prx` suffix (ignoring case with `--windows`, as the guest module match does), is reported after the conversion with the `--module-dir` that would include it; the output still refers to a host library of that name. A file that cannot be read is not reported.
+- It lists every planned output: registry files, needed-library files, patch manifests, Windows diagnostics and Linux desktop metadata.
+- It creates no directories, writes no files and changes no permissions. Existing outputs are kept.
+- Conversion failures return `2`, as in a normal run.
+- The output path is still required because it decides the layout.
+- It does not check write access to the destination, and it does not probe filesystem aliases of files that do not exist yet. Only a normal conversion does those checks.
+- `--dry-run` conflicts with `--autorun` and `--verify-patches`.
+
+### Module directories without a standard name
+
+An explicit `--module-dir` also works when the module parent has no `sce_module`, `sce_modules` or `prx` directory. For a homebrew bundle with shared libraries beside its executable, use `--module-dir .`. No empty standard directory is needed. Without an explicit module directory, the standard-directory requirement remains.
+
+### Needed modules that were not converted
+
+A module the executable needs but that is not converted is looked for under the module parent directory, outside the module directories. A file counts as a match if it is a SELF container or an `ET_SCE_DYNAMIC` ELF whose name matches, up to the `.prx`, `.sprx`, `.suprx` or `.debug_prx` suffix. Case is ignored with `--windows`, as in the guest module match.
+
+- Each match is reported after the conversion, together with the `--module-dir` that would include it.
+- The output still refers to a host library of that name.
+- A file that cannot be read is not reported.
+
+### Example commands
 
 Linux output:
 
@@ -53,13 +91,38 @@ macOS output (x86-64 Mach-O, which runs under Rosetta on Apple silicon):
 relinker --macos source/input.elf eboot
 ```
 
-Add `--to-intel` for Intel hosts, or `--to-rosetta` for Rosetta; a title that runs under Rosetta on Apple silicon is relinked with `--macos --to-rosetta`. `--to-intel` rewrites AMD-specific instructions found in the executable and bundled modules; it cannot translate AMD-specific instructions generated by a title at runtime, so such titles require an AMD host. The output format defaults to Linux ELF regardless of the filename; `.exe` alone does not select Windows.
+The executable and the module libraries carry an ad-hoc code signature, so they run without `codesign`. Signing one again with `codesign -s - -f` or your own identity replaces it. After editing one with `install_name_tool` or `strip`, sign it again.
 
-A converted title is an ordinary program: it runs with your user account's permissions and can read and write whatever your account can, with none of the console's sandbox. Convert and run only titles and modules you trust, and run them as a separate user or in a container or virtual machine to keep them away from your files. Its executable is not placed by address space layout randomization either: Linux loads it at `0x400000` or at the `--linux-fixed-base` address, unless the deprecated `--lazy-binding` keeps it position independent; Windows loads its lowest ELF load page at the preferred `0x400000` when that range is free, or at the `--windows-fixed-base` address, without `DYNAMIC_BASE`; and the macOS executable is written without `MH_PIE`.
+Add `--to-intel` for Intel hosts, or `--to-rosetta` for Rosetta. A title that runs under Rosetta on Apple silicon is relinked with `--macos --to-rosetta`.
 
-Titles run natively, so the host CPU needs the extensions of the PS5's Zen 2 CPU that compiled code uses without checking, among them AVX2, FMA, F16C, BMI1, BMI2, LZCNT and MOVBE. On Linux and Windows a converted title logs the host CPU's extensions at start-up and stops before running any title code, naming the CPU and the missing extensions, if one is absent ([list](../dev/debt/libkernel.md)).
+- `--to-intel` rewrites AMD-specific instructions found in the executable and bundled modules. It cannot translate AMD-specific instructions that a title generates at runtime, so such titles need an AMD host.
+- The output format defaults to Linux ELF whatever the filename is. `.exe` alone does not select Windows.
 
-The executable, registry, Windows import diagnostics, icon and desktop entry output files must not refer to the input executable or a bundled module being converted, including through a hard link or symbolic link. These collisions fail before any output is written. An existing output file can be replaced if it is separate from those inputs. An output path that is an existing directory also fails before any output is written.
+### Security warning
+
+A converted title is an ordinary program. It runs with your user account's permissions and can read and write whatever your account can. It has none of the console's sandbox. Convert and run only titles and modules you trust. Run them as a separate user, or in a container or virtual machine, to keep them away from your files.
+
+Its executable is also not placed by address space layout randomization:
+
+- **Linux:** loaded at `0x400000` or at the `--linux-fixed-base` address, unless the deprecated `--lazy-binding` keeps it position independent.
+- **Windows:** the lowest ELF load page is loaded at the preferred `0x400000` when that range is free, or at the `--windows-fixed-base` address, without `DYNAMIC_BASE`.
+- **macOS:** the executable is written without `MH_PIE`.
+
+### CPU requirements
+
+Titles run natively, so the host CPU needs the extensions of the PS5's Zen 2 CPU that compiled code uses without checking. Among them are AVX2, FMA, F16C, BMI1, BMI2, LZCNT and MOVBE.
+
+On Linux and Windows, a converted title logs the host CPU's extensions at start-up. If one is absent, it stops before running any title code and names the CPU and the missing extensions ([list](../dev/debt/libkernel.md)).
+
+### Output file collisions
+
+The executable, registry, Windows import diagnostics, icon and desktop entry output files must not refer to the input executable or to a bundled module being converted. This includes hard links and symbolic links.
+
+- These collisions fail before any output is written.
+- An existing output file can be replaced if it is separate from those inputs.
+- An output path that is an existing directory also fails before any output is written.
+
+On Linux and macOS, replacing a regular output file requires write access to its directory. If creating the temporary file or replacing the old file fails, you get an error. The previous file is never overwritten in place.
 
 ## Options
 
@@ -79,6 +142,7 @@ All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath`
 | `--macos-fixed-base <address>` | Map the lowest ELF load page of the macOS executable at this fixed address, given in decimal or hexadecimal (`0x`). Requires `--macos`, a 64 KiB-aligned address from `0x20000` through `0x7fffffff0000`, and an image that ends in the macOS user address space. `__PAGEZERO` ends 64 KiB below the address and the Mach-O header occupies those 64 KiB. The executable has no ASLR; an address the process cannot map fails to load. Bundled modules keep their normal placement. |
 | `--to-intel`                  | Convert supported AMD-only instructions in the executable and bundled modules. Unsupported instructions or unreachable conversion stubs cause an error.                                                                                                                                                                                                                                                                                                                     |
 | `--to-rosetta`                | Convert as `--to-intel` does and also lower what Rosetta lacks: ANDN becomes scalar NOT/AND, BLSI, BLSMSK and BLSR become scalar LEA/AND/XOR/NEG sequences, SHLX, SHRX, SARX and RORX become flag-preserving scalar shifts and rotates, BZHI and BEXTR become scalar shift-and-mask sequences, RDSEED becomes RDRAND, CLWB a NOP, XSAVEOPT becomes XSAVE, and RDPID and the ECX of RDTSCP return processor 0. Implies `--to-intel`. Independent of `--macos`: `--macos` alone leaves these instructions as they are. Conflicts with `--windows`. |
+| `--to-avx`                    | Convert as `--to-intel` does and also lower what a CPU with AVX but without AVX2 lacks: ANDN, BLSI, BLSMSK, BLSR, SHLX, SHRX, SARX, RORX, BZHI, BEXTR, MULX, CLWB and RDPID as `--to-rosetta` lowers them, TZCNT and LZCNT become BSF and BSR with a CMOV for a zero source, and MOVBE becomes MOV and BSWAP. VINSERTI128, VEXTRACTI128, VPERM2I128, VPBLENDD, VBROADCASTI128 and the memory forms of VPBROADCASTD and VPBROADCASTQ become their AVX equivalents VINSERTF128, VEXTRACTF128, VPERM2F128, VBLENDPS, VBROADCASTF128, VBROADCASTSS and VBROADCASTSD or VMOVDDUP in place, and 256-bit lane-local integer instructions (additions, logic, compares, packs, unpacks, shuffles within a lane, shifts by an immediate or by an XMM count) run as two 128-bit halves in a stub, and the cross-lane permutes VPERMQ, VPERMPD, VPERMD and VPERMPS, the 256-bit widening moves VPMOVZX and VPMOVSX and the register-source and byte or word broadcasts run in AVX stubs. The Rosetta workarounds for 256-bit stores, scalar compares, masked stores, RDTSCP, XSAVEOPT and RDSEED are not applied. Other AVX2 instructions, F16C, PDEP and PEXT are not lowered yet ([list](../dev/debt/relinker.md)). Implies `--to-intel`. Requires `--macos`, because only the macOS runtime starts without checking the host CPU. |
 | `unused-filter=0`             | Keep all imported NID references.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `unused-filter=1`             | Filter unused non-PLT imports using control-flow and GOT access analysis, treating address-taken code as reachable; preserve PLT imports.                                                                                                                                                                                                                                                                                                                                   |
 | `unused-filter=2`             | Apply strict unused-import analysis and compact the PLT. Unsupported analysis cases cause an error.                                                                                                                                                                                                                                                                                                                                                                         |
@@ -426,15 +490,15 @@ A missing or malformed `trophyNN.ucp` or `udsNN.ucp` turns off only what it prov
 
 ### PlayGo dumps without metadata
 
-When a dump has neither `sce_sys/playgo-chunk.dat` nor `sce_sys/playgo-scenario.json`, AnyPS5 cannot tell which nonzero PlayGo chunk IDs exist. Requests for those IDs stop with an error by default. Set `APS5_PLAYGO_UNLISTED_CHUNKS` to choose an answer for that dump:
+When a dump has neither `sce_sys/playgo-chunk.dat` nor `sce_sys/playgo-scenario.json`, AnyPS5 cannot tell which nonzero PlayGo chunk IDs exist. By default, when `sce_sys` holds no `playgo-` file at all, chunk IDs 0 to 999 answer as installed (`LOCAL_FAST`) and IDs from 1000 up return `SCE_PLAYGO_ERROR_BAD_CHUNK_ID`; the bound of 1000 comes from title runs, not from a console. Set `APS5_PLAYGO_UNLISTED_CHUNKS` to choose another answer for that dump:
 
 | Value | Answer for an unlisted chunk ID | Observed title that needs it |
 |-------|---------------------------------|------------------------------|
-| `installed` | Report it as installed (`LOCAL_FAST`). | High on Life (PPSA15388) needs this to load its saves. |
+| `installed` | Report it as installed (`LOCAL_FAST`). | None known: High on Life (PPSA15388), which needed it to load its saves, asks only IDs 0 to 999, which the default answers. |
 | `absent` | Return `SCE_PLAYGO_ERROR_BAD_CHUNK_ID`. | Sifu (PPSA03001) and Demon Slayer: Kimetsu no Yaiba - The Hinokami Chronicles (PPSA03490) use this result to end their chunk-ID search. With `installed`, PPSA03490 keeps asking about higher chunk IDs forever, so its chunk list grows until startup fails with a `Ran out of memory allocating 5565054976 bytes` error. |
 | A comma-separated list of IDs, e.g. `0,1` | Report those IDs as installed (`LOCAL_FAST`) and every other unlisted ID as absent (`SCE_PLAYGO_ERROR_BAD_CHUNK_ID`). | The Medium (PPSA03718) needs chunks 0 and 1; with `installed` it asks about every ID and UE4 runs out of memory. |
 
-Leave the variable unset to keep the explicit error. A list holds decimal chunk IDs from 0 to 65535 and is added to chunk 0; it only applies when the dump has neither `playgo-chunk.dat` nor `playgo-scenario.json`. Any other value also stops with an error. Dumps that include `playgo-chunk.dat` or `playgo-scenario.json` are unaffected. These title-specific results come from emulator runs and have not been verified against a console.
+Leave the variable unset to keep the default above. A dump with `playgo-scenario.json` but no `playgo-chunk.dat` treats IDs 0 to 999 as listed, and an ID from 1000 up still stops with an error unless the variable is set. A list holds decimal chunk IDs from 0 to 65535 and is added to chunk 0; it only applies when the dump has neither `playgo-chunk.dat` nor `playgo-scenario.json`. Any other value also stops with an error. Dumps that include `playgo-chunk.dat` or `playgo-scenario.json` are unaffected. These title-specific results come from emulator runs and have not been verified against a console.
 
 ### Screenshots
 
@@ -537,7 +601,7 @@ Every run of a converted game writes `anyps5-report.json` when it ends through `
 
 The report is on by default. `--aps5-report=off` on the launch command line or `APS5_REPORT=0` in the environment turns it off, and `--aps5-report=on` or `APS5_REPORT=1` turns it on for a process that is not a converted game; the flag wins over the variable. The game sees the flag in its own arguments. With the report off nothing is collected and nothing is written.
 
-The report is written next to the game's executable. When that folder cannot be written it goes to `reports/<run id>/anyps5-report.json` in the data folder (`$XDG_DATA_HOME/AnyPS5` or `~/.local/share/AnyPS5` on Linux, `%LOCALAPPDATA%\AnyPS5` on Windows, `~/Library/Application Support/AnyPS5` on macOS). On Windows only the guest's `exit` and `_exit` write a report; a return from the entry writes none. A run that is killed, crashes or aborts writes no report.
+The report is written next to the game's executable. When that folder cannot be written it goes to `reports/<run id>/anyps5-report.json` in the data folder (`$XDG_DATA_HOME/AnyPS5` or `~/.local/share/AnyPS5` on Linux, `%LOCALAPPDATA%\AnyPS5` on Windows, `~/Library/Application Support/AnyPS5` on macOS). On Windows only the guest's `exit` and `_exit` write a report; a return from the entry writes none. A run that stops on an exception nothing catches (`std::terminate`), such as a call to a function that is not implemented, writes the report with exit `abort` before the terminate handler runs, or after it when the game installed its own handler. A run that is killed or crashes writes no report.
 
 Which milestones a run records depends on the system:
 
@@ -575,7 +639,7 @@ Limits are listed in the [libc](../dev/debt/libc.md) and [relinker](../dev/debt/
 
 ### Performance overlay
 
-F10 cycles a performance overlay over the presented image through three states: off, page 1 (the table below), page 2 (a detailed page, the second table), then off again. `ANYPS5_OVERLAY=1` shows page 1 from the first frame and `ANYPS5_OVERLAY=2` page 2; F10 then goes on from there. `ANYPS5_OVERLAY=0` is the same as unset. `ANYPS5_OVERLAY_POS` puts it in a corner of the window: `tl` (top left, the default), `tr`, `bl` or `br`. For either variable an empty value is the same as an unset one, and any other value stops the game at its first frame with an error that names the variable. The key can be moved with `TogglePerformanceOverlay` in the [input mapping](INPUT_MAPPING.md). The text scales with the window height, at a whole multiple of its 5x7 pixel font; on an HDR10 swapchain the overlay is drawn at 203 nits.
+F10 cycles a performance overlay over the presented image through three states: off, page 1 (the table below), page 2 (a detailed page, the second table), then off again. `ANYPS5_OVERLAY=1` shows page 1 from the first frame and `ANYPS5_OVERLAY=2` page 2; F10 then goes on from there. `ANYPS5_OVERLAY=0` is the same as unset. `ANYPS5_OVERLAY_POS` puts it in a corner of the window: `tl` (top left, the default), `tr`, `bl` or `br`. For either variable an empty value is the same as an unset one, and any other value stops the game at its first frame with an error that names the variable. The key can be moved with `TogglePerformanceOverlay` in the [input mapping](INPUT_MAPPING.md). The text scales with the window height, at a whole multiple of its 5x7 pixel font; on an HDR10 swapchain the overlay is drawn at 203 nits. `ANYPS5_OVERLAY_SCALE=N` (1 to 8) asks for a text scale N; the overlay still shrinks to fit the window.
 
 | Line | Meaning |
 |------|---------|
@@ -603,7 +667,7 @@ Page 2 is wider, 46 characters, and has no graph. It reads its sources once a se
 | phases | The 5 phases with the most CPU time per frame over the last second, in ms, summed over the driver's threads and named as in the trace summary's `top_phases_ms_per_frame`: a timed scope, or a scope and one of its stages. A scope's time includes the scopes and stages within it, and threads that work at once each count, so the phases can add up to more than `FRAME`. From the trace totals. |
 | `Q0 WAIT MS/FRAME` | Time per frame that queue 0's packet worker waited, in ms: `MEM` in packets that wait for guest memory or for rendering to finish, `LOCK` for the GPU lock, `GPU` in the recorder's syncs and serial waits and in command batches' fence waits. A memory wait that syncs the GPU counts in `MEM` and in `GPU`. From the trace totals. |
 | `RENDER PASSES/FRAME` | Render passes begun per frame; a draw that continues the open pass begins none. From the trace totals; not shown while an `APS5_TRACE_*` variable is set. |
-| `PIPELINES` | `COMPILING`: shader preparations and pipeline-library prebuilds queued or running. `NEW/S`: pipelines created in the last second, as `SHADERS` on page 1. |
+| `PIPELINES` | `COMPILING`: shader preparations and pipeline-library prebuilds queued or running. `NEW/S`: pipelines created in the last second, as `SHADERS` on page 1. `LEFT`: `COMPILING` divided by `NEW/S`, the seconds left at the current rate; shown only while `NEW/S` is above zero. It is an estimate, and it rises when new work arrives. |
 | `HIT %` | `DRAW CACHE`: the share of the draw cache's lookups in the last second that found an entry whose stages all matched. `PIPELINES`: the share of the pipeline cache's lookups that found the pipeline. Each is left out for a second without lookups. |
 | `FLIPS/S`, `PRESENTS/S` | The title's flips per second against the frames presented per second. |
 | `DROPPED/S`, `REPEATED/S` | Per second: flips not presented because no swapchain image was free (the `dropped` count of the `[present]` line of `APS5_PROFILE_DRAW=1`), and presents of the same display buffer as the present before. |

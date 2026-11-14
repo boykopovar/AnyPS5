@@ -1,5 +1,6 @@
 #include "prx/libSceZlib/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "zlib.h"
@@ -130,6 +131,14 @@ std::int32_t APS5_VABI sceZlibGetResult(std::uint64_t requestId, std::uint32_t* 
     const auto found = results.find(requestId);
     if (found == results.end()) return NOT_FOUND;
     const int savedErrno = errno;
+    const GuestArena::HostWrite guardLength(destinationLength, sizeof(found->second.produced));
+    const GuestArena::HostWrite guardStatus(status, sizeof(found->second.status));
+    if (!guardLength.Open() || !guardStatus.Open() ||
+        !GuestWritable_nid_no_patch(destinationLength, sizeof(found->second.produced)) ||
+        !GuestWritable_nid_no_patch(status, sizeof(found->second.status))) {
+        errno = savedErrno;
+        return INVALID_ARGUMENT;
+    }
     const bool copiedLength = GuestCopyOut_nid_no_patch(destinationLength, &found->second.produced, sizeof(found->second.produced));
     const bool copiedStatus = GuestCopyOut_nid_no_patch(status, &found->second.status, sizeof(found->second.status));
     errno = savedErrno;

@@ -11,6 +11,7 @@
 #endif
 
 #include "prx/libSceHttp/include/Client.hpp"
+#include "prx/libSceHttp/src/ClientParsing.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
@@ -47,17 +48,23 @@ std::string Lower(std::string text) {
     return text;
 }
 
-std::string_view Trim(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
-    return text;
-}
-
 std::uint64_t Number(std::string_view text, int base = 10) {
     std::uint64_t number = 0;
     const auto result = std::from_chars(text.data(), text.data() + text.size(), number, base);
     if (text.empty() || result.ec != std::errc{} || result.ptr != text.data() + text.size()) throw HttpFailure("invalid HTTP size");
     return number;
+}
+
+std::uint64_t ContentLength(std::string_view text) {
+    std::optional<std::uint64_t> length;
+    for (;;) {
+        const auto comma = text.find(',');
+        const auto number = Number(Trim(text.substr(0, comma)));
+        if (length && *length != number) throw HttpFailure("conflicting HTTP content lengths");
+        length = number;
+        if (comma == std::string_view::npos) return number;
+        text.remove_prefix(comma + 1);
+    }
 }
 
 std::optional<std::chrono::sys_seconds> HttpDate(const std::string& text) {
@@ -132,10 +139,8 @@ std::pair<std::string, std::string> Field(const std::string& text) {
     const auto colon = text.find(':');
     if (colon == std::string::npos || colon == 0) throw HttpFailure("invalid HTTP field");
     auto name = Lower(text.substr(0, colon));
-    constexpr std::string_view punctuation = "!#$%&'*+-.^_`|~";
     for (const unsigned char byte : name)
-        if (!(byte >= 'a' && byte <= 'z') && !(byte >= '0' && byte <= '9') && punctuation.find(byte) == std::string_view::npos)
-            throw HttpFailure("invalid HTTP field name");
+        if (!IsToken(byte)) throw HttpFailure("invalid HTTP field name");
     std::string value(Trim(std::string_view(text).substr(colon + 1)));
     for (const unsigned char byte : value)
         if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP field value");
@@ -443,7 +448,9 @@ struct HttpClientState : Aps5HttpClient {
                     if (name != "content-range" && name != "content-length" && name != "content-encoding" && name != "transfer-encoding" && name != "location" && name != "etag" && name != "last-modified" && name != "date") continue;
                     if (name == "last-modified" || name == "date") value = CanonicalDate(std::move(value), responseTime);
                     const auto [found, inserted] = headers.emplace(name, value);
-                    if (!inserted && found->second != value) throw HttpFailure("conflicting HTTP headers");
+                    if (!inserted && name == "transfer-encoding") throw HttpFailure("repeated HTTP transfer coding fields");
+                    if (!inserted && found->second != value &&
+                        (name != "content-length" || ContentLength(found->second) != ContentLength(value))) throw HttpFailure("conflicting HTTP headers");
                 }
                 if (status < 100 || status >= 200) break;
                 if (status == 101) throw HttpFailure("HTTP upgrade is not a media file");
@@ -475,7 +482,9 @@ struct HttpClientState : Aps5HttpClient {
                 if (Lower(headers.at("transfer-encoding")) != "chunked") NotImplemented_nid_no_patch("HTTP client HTTP transfer coding");
                 for (;;) {
                     const auto chunk = connection.Line();
-                    const auto count = Number(Trim(std::string_view(chunk).substr(0, chunk.find(';'))), 16);
+                    const auto parsedSize = ChunkSize(chunk);
+                    if (!parsedSize) throw HttpFailure("invalid HTTP chunk size");
+                    const auto count = *parsedSize;
                     if (count == 0) {
                         for (;;) {
                             const auto field = connection.Line();
@@ -490,7 +499,7 @@ struct HttpClientState : Aps5HttpClient {
                     connection.Append(body, count);
                     if (!connection.Line().empty()) throw HttpFailure("invalid HTTP chunk terminator");
                 }
-            } else if (headers.contains("content-length")) connection.Append(body, Number(headers.at("content-length")));
+            } else if (headers.contains("content-length")) connection.Append(body, ContentLength(headers.at("content-length")));
             else connection.UntilClosed(body);
             if (empty) body.clear();
             auto responseEtag = std::move(trailerEtag);
@@ -513,11 +522,18 @@ struct HttpClientState : Aps5HttpClient {
                 const auto& range = headers.at("content-range");
                 const auto dash = range.find('-');
                 const auto slash = range.find('/');
-                if (Lower(range.substr(0, 6)) != "bytes " || dash == std::string::npos || slash <= dash) throw HttpFailure("invalid HTTP content range");
+                if (Lower(range.substr(0, 6)) != "bytes " || dash == std::string::npos || slash == std::string::npos || slash <= dash) throw HttpFailure("invalid HTTP content range");
                 first = Number(std::string_view(range).substr(6, dash - 6));
                 const auto last = Number(std::string_view(range).substr(dash + 1, slash - dash - 1));
-                total = Number(std::string_view(range).substr(slash + 1));
-                if (first != start || last < first || last >= total || last - first + 1 != body.size() || body.size() > length) throw HttpFailure("HTTP range response does not match request");
+                if (first != start || last < first || body.empty() || body.size() > length || last - first != body.size() - 1) throw HttpFailure("HTTP range response does not match request");
+                const auto completeLength = std::string_view(range).substr(slash + 1);
+                if (completeLength == "*") {
+                    full = true;
+                    visited.clear();
+                    continue;
+                }
+                total = Number(completeLength);
+                if (last >= total) throw HttpFailure("HTTP range response does not match request");
             }
             if (total > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) || (initialized && total != size)) throw HttpFailure("HTTP source size changed or is not representable");
             std::string nextEtag = etag;

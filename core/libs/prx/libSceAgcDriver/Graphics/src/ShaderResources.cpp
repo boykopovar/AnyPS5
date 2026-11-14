@@ -6240,6 +6240,7 @@ void ShaderResources::resolveImageTables() {
             GuestTextureResource resource{};
             std::uint64_t guestBytes = 0;
             bool firstLayer = false;
+            std::string rejected;
         };
         const auto decodeEntry = [&](std::uint32_t element, std::span<const std::uint32_t> words) {
             DecodedEntry decoded;
@@ -6249,9 +6250,15 @@ void ShaderResources::resolveImageTables() {
             const bool depthCompare = element < binding.imageDepthCompare.size() && binding.imageDepthCompare[element];
             decoded.firstLayer = shape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray));
             const bool depth1D = depthCompare && ((shape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k1D) || (shape == ShaderRecompiler::DescriptorImageShape::Image2DArray && resource.dimension == TextureDimension::k1DArray));
-            if (!decoded.firstLayer && !depth1D && !MatchesGuestDimension(shape, resource.dimension)) throw std::runtime_error("AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")");
+            if (!decoded.firstLayer && !depth1D && !MatchesGuestDimension(shape, resource.dimension)) {
+                decoded.rejected = "AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")";
+                return decoded;
+            }
             decoded.guestBytes = DescribeSurface(resource).guestBytes;
-            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(decoded.guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(decoded.guestBytes), false).empty()) throw std::runtime_error("AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(decoded.guestBytes) + " bytes) is not mapped");
+            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(decoded.guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(decoded.guestBytes), false).empty()) {
+                decoded.rejected = "AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(decoded.guestBytes) + " bytes) is not mapped";
+                return decoded;
+            }
             static_cast<void>(ResolveTextureFormat(resource.format));
             return decoded;
         };
@@ -6289,8 +6296,11 @@ void ShaderResources::resolveImageTables() {
             try {
                 decoded = decodeEntry(element, words);
             } catch (const std::runtime_error& error) {
-                table.map[faults + element] = rejectTableElement(table, words, error.what());
-                return error.what();
+                decoded.rejected = error.what();
+            }
+            if (!decoded.rejected.empty()) {
+                table.map[faults + element] = rejectTableElement(table, words, decoded.rejected);
+                return decoded.rejected;
             }
             const auto sampled = prepareSampled(element, words, decoded);
             std::shared_ptr<Texture> texture;
@@ -6375,8 +6385,11 @@ void ShaderResources::resolveImageTables() {
             try {
                 decoded = decodeEntry(element, words);
             } catch (const std::runtime_error& error) {
-                table.map[faults + element] = rejectTableElement(table, words, error.what());
-                if (reusable) fresh.elements.push_back({{}, {}, {}, 0, false, true, error.what()});
+                decoded.rejected = error.what();
+            }
+            if (!decoded.rejected.empty()) {
+                table.map[faults + element] = rejectTableElement(table, words, decoded.rejected);
+                if (reusable) fresh.elements.push_back({{}, {}, {}, 0, false, true, decoded.rejected});
                 continue;
             }
             const auto& resource = decoded.resource;

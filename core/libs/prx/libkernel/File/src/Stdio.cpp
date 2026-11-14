@@ -2147,6 +2147,8 @@ int APS5_VABI utimes_nid_postfix(const char* path, const KernelTimeval* times) {
 }
 
 int PosixUtimesAt_nid_no_patch(int directory, const char* path, const KernelTimeval* times) {
+    KernelTimeval local[2];
+    if (!CopyInTimes(times, local)) return PosixFailure(GUEST_EFAULT);
     if (InvalidTimes(times)) return PosixFailure(GUEST_EINVAL);
     std::string copy;
     if (const int error = PathError(path, copy)) return PosixFailure(error);
