@@ -335,7 +335,33 @@ void CheckInvalidNameIsRejected(const char* data, std::size_t size, const std::s
 
 void CheckInvalidNamesAreRejected() {
     const auto before = Tree();
-    for (const char* invalid : {"", ".", "..", "a/b", "a\\b", "c:d"}) {
+    for (const char* invalid : {
+             "",
+             ".",
+             "..",
+             "../",
+             "..\\",
+             "../../",
+             "..\\..\\",
+             "../victim",
+             "..\\victim",
+             "../../escape",
+             "..\\..\\escape",
+             "a/b",
+             "a\\b",
+             "c:d",
+             "dir/..",
+             "dir\\..",
+             "dir/../dir",
+             "dir\\..\\dir",
+             "foo/../../bar",
+             "foo\\..\\..\\bar",
+             "a/../b",
+             "a\\..\\b",
+             "..escape",
+             "escape..",
+             ".../test"
+         }) {
         CheckInvalidNameIsRejected(invalid, std::strlen(invalid) + 1, std::string("\"") + invalid + "\"");
     }
     char unterminated[sizeof(SceSaveDataDirName::data)];
@@ -867,10 +893,31 @@ void CheckMountCapacityAndLifecycle() {
     std::memcpy(names.back().data, "capacity-overflow", sizeof("capacity-overflow"));
     SaveDataMount3 overflow{};
     overflow.dir_name = &names.back();
+    for (const auto mode : {MountReadWrite | MountCreate2, MountReadWrite | MountCreate}) {
+        overflow.mount_mode = mode;
+        SaveDataMountResult rejected;
+        std::memset(&rejected, 0xCE, sizeof(rejected));
+        const auto rejectedBefore = rejected;
+        Check(sceSaveDataMount3(&overflow, &rejected) == SaveDataErrorMountFull, "mount beyond capacity is rejected with mode " + std::to_string(mode));
+        Check(std::memcmp(&rejected, &rejectedBefore, sizeof(rejected)) == 0, "mount beyond capacity preserves result with mode " + std::to_string(mode));
+    }
+    Check(sceSaveDataUmount2(0, &mounted[8].mount_point) == 0, "unmount single capacity slot succeeds");
+    SceSaveDataDirName reclaimedName{};
+    std::memcpy(reclaimedName.data, "capacity-reclaimed", sizeof("capacity-reclaimed"));
+    SaveDataMount3 reclaimedMount{};
+    reclaimedMount.dir_name = &reclaimedName;
+    reclaimedMount.mount_mode = MountReadWrite | MountCreate2;
+    SaveDataMountResult reclaimedResult{};
+    Check(sceSaveDataMount3(&reclaimedMount, &reclaimedResult) == 0, "mount after freeing capacity slot succeeds");
     overflow.mount_mode = MountReadWrite | MountCreate2;
-    SaveDataMountResult rejected{};
-    Check(sceSaveDataMount3(&overflow, &rejected) == SaveDataErrorMountFull, "mount beyond capacity is rejected");
-    for (const auto& mount : mounted) Check(sceSaveDataUmount2(0, &mount.mount_point) == 0, "capacity unmount succeeds");
+    Check(sceSaveDataMount3(&overflow, nullptr) == SaveDataErrorParameter, "mount beyond capacity with null result is parameter error");
+    SaveDataMountResult secondRejected{};
+    Check(sceSaveDataMount3(&overflow, &secondRejected) == SaveDataErrorMountFull, "mount beyond capacity after re-fill is rejected");
+    Check(sceSaveDataUmount2(0, &reclaimedResult.mount_point) == 0, "reclaimed unmount succeeds");
+    for (std::size_t index = 0; index < mounted.size(); ++index) {
+        if (index == 8) continue;
+        Check(sceSaveDataUmount2(0, &mounted[index].mount_point) == 0, "capacity unmount succeeds");
+    }
 }
 
 void CheckHostMountFailures() {
