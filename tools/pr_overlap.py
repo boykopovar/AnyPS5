@@ -26,6 +26,7 @@ PLAIN_DEPENDS = re.compile(r'Depends on[ \t]+(#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))?", re.M)
 MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
+BASE_REF = "refs/pr/base"
 PROGRESS_EVERY = 100
 MAX_REPORT_CHARS = 60000
 EXPORT_PATHS = ("core/libs/prx/*.cpp", ":(exclude,icase)**/test/**", ":(exclude,icase)**/tests/**")
@@ -217,10 +218,15 @@ def open_prs(base):
 
 
 def fetch(base, prs):
-    refspecs = [f"+refs/heads/{base}:refs/pr/base"] + [f"+{pr['sha']}:{pr['ref']}" for pr in prs.values()]
-    for start in range(0, len(refspecs), FETCH_REFS):
-        git("fetch", "--no-tags", "-q", f"https://github.com/{REPO}.git", *refspecs[start:start + FETCH_REFS])
-        progress(f"fetched {min(start + FETCH_REFS, len(refspecs)) - 1}/{len(prs)} pull request heads")
+    remote = f"https://github.com/{REPO}.git"
+    base_sha = git("ls-remote", "--exit-code", remote, f"refs/heads/{base}").split()[0]
+    commits = [base_sha] + [pr["sha"] for pr in prs.values()]
+    for start in range(0, len(commits), FETCH_REFS):
+        git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *commits[start:start + FETCH_REFS])
+        progress(f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
+    for pr in prs.values():
+        pr["ref"] = pr["sha"]
+    return base_sha
 
 
 def merge(*args):
@@ -248,7 +254,7 @@ def merge(*args):
 
 def commit(tree, ref):
     return git("-c", "user.name=pr_overlap", "-c", "user.email=pr_overlap", "commit-tree", tree,
-               "-p", "refs/pr/base", "-p", ref, "-m", "pr_overlap").strip()
+               "-p", BASE_REF, "-p", ref, "-m", "pr_overlap").strip()
 
 
 def exports(diff, prefix="+"):
@@ -413,16 +419,16 @@ def base_exports(ref):
 
 
 def merge_base(ref):
-    bases = git("merge-base", "--all", "refs/pr/base", ref).split()
+    bases = git("merge-base", "--all", BASE_REF, ref).split()
     if len(bases) == 1:
         return bases[0]
     return min(bases, key=lambda base: git("diff", "--name-only", "--no-renames", "-z", base, ref).count("\0"))
 
 
 def scan(pr):
-    tree, conflicted = merge("refs/pr/base", pr["ref"])
+    tree, conflicted = merge(BASE_REF, pr["ref"])
     pr["tree"] = None if conflicted else commit(tree, pr["ref"])
-    old, new = (merge_base(pr["ref"]), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
+    old, new = (merge_base(pr["ref"]), pr["ref"]) if conflicted else (BASE_REF, pr["tree"])
     pr["files"], pr["added"] = set(), set()
     changes = git("diff", "--name-status", "--no-renames", "-z", old, new).split("\0")
     for status, path in zip(changes[::2], changes[1::2]):
@@ -453,7 +459,7 @@ def related(prs, executor):
     mine = prs[0]
     scan(mine)
     others = {n: pr for n, pr in prs.items() if n}
-    base_paths = set(git("ls-tree", "-r", "--name-only", "-z", "refs/pr/base").split("\0"))
+    base_paths = set(git("ls-tree", "-r", "--name-only", "-z", BASE_REF).split("\0"))
     chosen = {}
     mine_files = mine["files"]
     mine_exports = mine["exports"]
@@ -478,7 +484,7 @@ def scan_all(prs, jobs):
 
 
 def hunks(pr, path):
-    diff = git("diff", "-U0", "--no-color", "refs/pr/base", pr["tree"], "--", path)
+    diff = git("diff", "-U0", "--no-color", BASE_REF, pr["tree"], "--", path)
     found = []
     for start, count in HUNK.findall(diff):
         start = max(int(start), 1)
@@ -765,6 +771,7 @@ def describe_failure(error):
 
 
 def main(argv=None):
+    global BASE_REF
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     if hasattr(sys.stderr, "reconfigure"):
@@ -789,11 +796,11 @@ def main(argv=None):
     try:
         REPO = args.repo or upstream()
         prs = open_prs(args.base)
-        fetch(args.base, prs)
+        BASE_REF = fetch(args.base, prs)
         if args.names:
             found = pull_requests_with(args.names, prs, args.jobs)
-            status = main_status(args.names, "refs/pr/base")
-            blob = f'https://github.com/{REPO}/blob/{git("rev-parse", "refs/pr/base").strip()}'
+            status = main_status(args.names, BASE_REF)
+            blob = f'https://github.com/{REPO}/blob/{BASE_REF}'
             print(lookup_report(args.names, found, status, prs, blob), end="")
             return 0
         if args.branch:
@@ -801,14 +808,14 @@ def main(argv=None):
             prs = own(prs, sha)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)
-        current_exports = base_exports("refs/pr/base")
+        current_exports = base_exports(BASE_REF)
         rows = {n: {} for n in prs}
         main_exports = main_export_findings(prs, current_exports)
         pairs = [(0, n) for n in prs if n] if args.branch else combinations(prs, 2)
         for a, b in pairs:
             if found := overlaps(prs, a, b):
                 rows[a][b] = rows[b][a] = found
-        blob = f'https://github.com/{REPO}/blob/{git("rev-parse", "refs/pr/base").strip()}'
+        blob = f'https://github.com/{REPO}/blob/{BASE_REF}'
     except subprocess.CalledProcessError as error:
         raise SystemExit(describe_failure(error))
     except ValueError as error:
