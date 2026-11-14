@@ -2,6 +2,57 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/FontLibrary.cmake)
 add_sce_font_library(libSceFont)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_font_support_unwind_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontSupportUnwind.cpp)
+    target_include_directories(guest_font_support_unwind_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_font_support_unwind_tests PRIVATE libSceFont libSceFontFt libc)
+    configure_windows_unwind(guest_font_support_unwind_tests)
+    add_test(NAME guest_font_support_unwind_external_success COMMAND guest_font_support_unwind_tests 0 0)
+    add_test(NAME guest_font_support_unwind_external_context_null COMMAND guest_font_support_unwind_tests 0 1)
+    add_test(NAME guest_font_support_unwind_external_context_throw COMMAND guest_font_support_unwind_tests 0 2)
+    add_test(NAME guest_font_support_unwind_external_support_error COMMAND guest_font_support_unwind_tests 0 3)
+    add_test(NAME guest_font_support_unwind_external_support_throw COMMAND guest_font_support_unwind_tests 0 4)
+    add_test(NAME guest_font_support_unwind_external_support_cleanup_throw COMMAND guest_font_support_unwind_tests 0 5)
+    add_test(NAME guest_font_support_unwind_external_error_cleanup_throw COMMAND guest_font_support_unwind_tests 0 6)
+    add_test(NAME guest_font_support_unwind_system_success COMMAND guest_font_support_unwind_tests 1 0)
+    add_test(NAME guest_font_support_unwind_system_context_null COMMAND guest_font_support_unwind_tests 1 1)
+    add_test(NAME guest_font_support_unwind_system_context_throw COMMAND guest_font_support_unwind_tests 1 2)
+    add_test(NAME guest_font_support_unwind_system_support_error COMMAND guest_font_support_unwind_tests 1 3)
+    add_test(NAME guest_font_support_unwind_system_support_throw COMMAND guest_font_support_unwind_tests 1 4)
+    add_test(NAME guest_font_support_unwind_system_support_cleanup_throw COMMAND guest_font_support_unwind_tests 1 5)
+    add_test(NAME guest_font_support_unwind_system_error_cleanup_throw COMMAND guest_font_support_unwind_tests 1 6)
+    set_tests_properties(guest_font_support_unwind_external_success
+        guest_font_support_unwind_external_context_null
+        guest_font_support_unwind_external_context_throw
+        guest_font_support_unwind_external_support_error
+        guest_font_support_unwind_external_support_throw
+        guest_font_support_unwind_external_support_cleanup_throw
+        guest_font_support_unwind_external_error_cleanup_throw
+        guest_font_support_unwind_system_success
+        guest_font_support_unwind_system_context_null
+        guest_font_support_unwind_system_context_throw
+        guest_font_support_unwind_system_support_error
+        guest_font_support_unwind_system_support_throw
+        guest_font_support_unwind_system_support_cleanup_throw
+        guest_font_support_unwind_system_error_cleanup_throw PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
+    if(WIN32)
+        set_tests_properties(guest_font_support_unwind_external_success
+        guest_font_support_unwind_external_context_null
+        guest_font_support_unwind_external_context_throw
+        guest_font_support_unwind_external_support_error
+        guest_font_support_unwind_external_support_throw
+        guest_font_support_unwind_external_support_cleanup_throw
+        guest_font_support_unwind_external_error_cleanup_throw
+        guest_font_support_unwind_system_success
+        guest_font_support_unwind_system_context_null
+        guest_font_support_unwind_system_context_throw
+        guest_font_support_unwind_system_support_error
+        guest_font_support_unwind_system_support_throw
+        guest_font_support_unwind_system_support_cleanup_throw
+        guest_font_support_unwind_system_error_cleanup_throw PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>"
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFontFt>")
+    endif()
+
     add_test_executable(guest_font_interface_contracts_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontInterfaceContracts.cpp)
     target_include_directories(guest_font_interface_contracts_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_font_interface_contracts_tests PRIVATE libSceFont libc)

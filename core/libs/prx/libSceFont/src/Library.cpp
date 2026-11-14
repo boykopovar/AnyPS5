@@ -62,24 +62,28 @@ int SupportFonts(FontLibrary library, void* FontLibNative::*slot, std::uint32_t 
     if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
     std::uint32_t previous = 0;
     if (!AcquireLibraryLock(lib, previous)) return SCE_FONT_ERROR_INVALID_LIBRARY;
-    const auto finish = [&](int rc) {
-        ReleaseLibraryLock(lib, previous);
-        return rc;
-    };
-    if (lib->*slot) return finish(SCE_FONT_ERROR_ALREADY_SPECIFIED);
+    const auto unlock = [previous](FontLibNative* current) { ReleaseLibraryLock(current, previous); };
+    const std::unique_ptr<FontLibNative, decltype(unlock)> lock(lib, unlock);
+    if (lib->*slot) return SCE_FONT_ERROR_ALREADY_SPECIFIED;
     void* ctx = CreateFontContext(lib, entries, size);
-    if (!ctx) return finish(SCE_FONT_ERROR_ALLOCATION_FAILED);
+    if (!ctx) return SCE_FONT_ERROR_ALLOCATION_FAILED;
     if (!lib->sys_driver || !lib->sys_driver->support_formats) {
         lib->iface->dealloc(lib->alloc_ctx, ctx);
-        return finish(SCE_FONT_ERROR_INVALID_LIBRARY);
+        return SCE_FONT_ERROR_INVALID_LIBRARY;
     }
-    const int rc = lib->sys_driver->support_formats(lib, formats);
+    int rc;
+    try {
+        rc = lib->sys_driver->support_formats(lib, formats);
+    } catch (...) {
+        try { lib->iface->dealloc(lib->alloc_ctx, ctx); } catch (...) {}
+        throw;
+    }
     if (rc != SCE_FONT_OK) {
         lib->iface->dealloc(lib->alloc_ctx, ctx);
-        return finish(rc);
+        return rc;
     }
     lib->*slot = ctx;
-    return finish(SCE_FONT_OK);
+    return SCE_FONT_OK;
 }
 
 }
