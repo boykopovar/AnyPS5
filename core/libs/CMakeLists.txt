@@ -1714,6 +1714,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_webrtc_file_wrapper PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
     endif()
+
+    add_test_executable(guest_fiber_finalize_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestFiberFinalize.cpp)
+    target_include_directories(guest_fiber_finalize_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_fiber_finalize_tests PRIVATE libSceFiber libc)
+    configure_windows_unwind(guest_fiber_finalize_tests)
+    add_test(NAME guest_fiber_finalize COMMAND guest_fiber_finalize_tests)
+    set_tests_properties(guest_fiber_finalize PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_fiber_finalize PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFiber>")
+    endif()
 endif()
 
 include(prx/libSceBeisobmf/Tests.cmake)
