@@ -59,6 +59,7 @@ bool VideoOutHostResolutionLimited() {
 static constexpr std::uint32_t VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD = 0x00FF0000;
 static constexpr std::size_t VIDEO_OUT_OUTPUT_OPTIONS_FREE_WORD = 3;
 static constexpr int VIDEO_OUT_ERROR_0x8029001C = -2144796644;
+static constexpr int WINDOW_MODE_MARGIN_REFUSED = 4096;
 
 static VideoOutOutputStatus outputStatus(const auto& cfg) {
     VideoOutOutputStatus status{};
@@ -422,11 +423,8 @@ int APS5_VABI sceVideoOutConfigureOutput(int handle, uint64_t mode, const VideoO
 }
 
 int APS5_VABI sceVideoOutSetWindowModeMargins(int handle, int top, int bottom) try {
-    (void)top;
-    (void)bottom;
-    if (!VideoOutDriver::Get().IsOpen(handle)) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
-    }
+    if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (top < 0 || bottom < 0 || top >= WINDOW_MODE_MARGIN_REFUSED || bottom >= WINDOW_MODE_MARGIN_REFUSED) return VIDEO_OUT_ERROR_INVALID_VALUE;
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();

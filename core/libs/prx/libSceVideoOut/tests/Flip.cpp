@@ -615,6 +615,15 @@ void testControls() {
     check(sceVideoOutIsOutputSupported(handle, 0xd000000aull, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE, "unknown output mode is supported");
     check(sceVideoOutConfigureOutput(handle, 0xd000000aull, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE, "unknown output mode was configured");
     check(sceVideoOutConfigureOutput(handle, VIDEO_OUT_OUTPUT_MODE_DEFAULT, nullptr, nullptr, 0) == 0, "default output mode was rejected");
+    for (const int unopened : {-1, 99}) {
+        check(sceVideoOutSetWindowModeMargins(unopened, 0, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "window mode margins on an invalid handle were not refused");
+    }
+    for (const std::pair<int, int> margins : {std::pair{0, 0}, std::pair{100, 100}, std::pair{2000, 2000}, std::pair{2160, 2160}, std::pair{4095, 0}, std::pair{0, 4095}}) {
+        check(sceVideoOutSetWindowModeMargins(handle, margins.first, margins.second) == 0, "window mode margins within the measured range were refused");
+    }
+    for (const std::pair<int, int> margins : {std::pair{-1, -1}, std::pair{4096, 0}, std::pair{0, 4096}, std::pair{65536, 0}, std::pair{0, 65536}, std::pair{100000, 0}, std::pair{0, 100000}}) {
+        check(sceVideoOutSetWindowModeMargins(handle, margins.first, margins.second) == VIDEO_OUT_ERROR_INVALID_VALUE, "window mode margins outside the measured range were accepted");
+    }
     for (int rate = 0; rate <= 2; ++rate) {
         check(sceVideoOutSetFlipRate(handle, rate) == 0 && cfg->flipRate == rate, "flip rate was not applied");
     }
@@ -759,6 +768,7 @@ void testControls() {
     sceVideoOutClose(handle);
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 0); });
     expectFailure([&] { sceVideoOutVrrUnpegFromFixedRate(handle); });
+    check(sceVideoOutSetWindowModeMargins(handle, 0, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "window mode margins on a closed handle were not refused");
     check(owner->GetTriggeredEvents(&event, 1) == 0, "closed port retained pending events");
     check(sceKernelDeleteEqueue(queue) == 0, "event queue deletion failed");
     LibcRunShutdown_nid_postfix();
