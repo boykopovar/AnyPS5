@@ -322,8 +322,6 @@ static int RecordWriteAddressFromCounterPair(Apr::CommandBufferObject* buffer, v
     return AppendCommand(buffer, Apr::Opcode::WriteAddressFromCounterPair, Apr::WriteAddressFromCounterCommand{{}, reinterpret_cast<std::uint64_t>(address), counter, counter + 1u});
 }
 
-static std::atomic_flag sharedPtrSpinLock;
-
 static_assert(sizeof(AmmUsageStatsData) == 0x18);
 static constexpr std::uint16_t AmmPageTablePoolEntries = 512;
 static constexpr std::uint32_t AmmRingIdleFlags = 0x7;
@@ -975,14 +973,6 @@ int APS5_VABI sceAmprAmmWaitCommandBufferCompletion(std::uint32_t id) {
     return AmmSubmitted_nid_no_patch(id) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 }
 
-void APS5_VABI _Unlock_shared_ptr_spin_lock_nid_postfix(void) {
-    sharedPtrSpinLock.clear(std::memory_order_release);
-}
-
-int APS5_VABI _Cnd_init_with_name_nid_postfix(void** handle, const char*) {
-    return _Cnd_init_nid_postfix(handle);
-}
-
 int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKcSE__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -991,15 +981,6 @@ int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3get
 int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
-}
-
-void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void) {
-    while (sharedPtrSpinLock.test_and_set(std::memory_order_acquire)) std::this_thread::yield();
-}
-
-[[noreturn]] void APS5_VABI __cxa_call_unexpected_nid_postfix(void* unwindException) {
-
-    __cxa_call_terminate_nid_postfix(unwindException);
 }
 
 APS5_EXPORT("0hlfW1O4Aa4", sceAmprLocaleconv);
