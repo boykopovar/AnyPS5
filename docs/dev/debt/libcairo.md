@@ -14,6 +14,10 @@
 
 - [FontOptions.cpp](../../../core/libs/prx/libcairo/FontOptions.cpp) implements eight font-option lifecycle, antialias and hint-setting helpers with Cairo-compatible owned state and a protected nil object. Tested on Windows and Linux sanitizers.
 
+### Functional scaled-font metrics
+
+- [ScaledFont.cpp](../../../core/libs/prx/libcairo/ScaledFont.cpp) - No guest-callable export currently creates a native scaled-font handle: `cairo_scaled_font_create` still throws and contexts expose no scaled-font getter. These seven native-backed lifecycle and metric exports therefore require an already valid Cairo-owned handle. Non-null guest UTF-8 is checked copied with a 1 MiB limit. Invalid or unterminated strings, null handles on queries and unreadable output pointers fail through `NotImplementedAt_nid_no_patch`, since source behavior for guest address faults is unknown. Outputs use `GuestCopyOut_nid_no_patch` rather than passing guest pointers to Cairo. Native Cairo 1.18.0 supplies the reference counts and metrics; PS5 hardware behavior is unverified.
+
 ### Functional glyphs
 
 - [Glyph.cpp](../../../core/libs/prx/libcairo/Glyph.cpp) implements `cairo_glyph_free` for null, which Cairo ignores. No export here allocates glyph arrays yet, and `cairo_glyph_allocate` is not in the catalogue, so a non-null array comes from outside this library and still throws through `NotImplemented_nid_no_patch` instead of reaching `free`. Freeing must follow the allocator once `cairo_scaled_font_text_to_glyphs` returns arrays. Unverified on a console.
@@ -33,23 +37,18 @@
 | `cairo_ft_scaled_font_lock_face` | `4gDTaBZH8lo` |
 | `cairo_glyph_path` | `54HrgUIQHOk` |
 | `cairo_set_source_rgb` | `6DvK+OdIPW4` |
-| `cairo_scaled_font_destroy` | `6Y3HHedGzlw` |
 | `cairo_pattern_reference` | `6qRL52tLOII` |
 | `cairo_scaled_font_get_font_options` | `8SOxQrQ7AfQ` |
 | `cairo_in_stroke` | `8zMm0QOWZAA` |
-| `cairo_scaled_font_get_ctm` | `A++pFuyxZPg` |
 | `cairo_set_font_size` | `A-0StSi2AwA` |
 | `cairo_pattern_set_extend` | `Ax867+0HUgA` |
 | `cairo_set_source_rgba` | `BZFvjfb9xDk` |
 | `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
 | `cairo_mask` | `D1KYCZ80Sac` |
-| `cairo_scaled_font_extents` | `FbWFbLUQOys` |
 | `cairo_show_glyphs` | `FnhwGKKZOjU` |
 | `cairo_mesh_pattern_curve_to` | `H9bwCsWw7LA` |
-| `cairo_scaled_font_get_font_matrix` | `HKjYBSCx3mY` |
 | `cairo_mesh_pattern_line_to` | `HTB1uUwgSVQ` |
 | `cairo_font_face_destroy` | `IgBFcd4cF28` |
-| `cairo_scaled_font_text_extents` | `Jk9paxbMQsk` |
 | `cairo_pattern_create_linear` | `K62jNcRGQdY` |
 | `cairo_clip_extents` | `LJNqwiDWTm0` |
 | `cairo_set_scaled_font` | `LUh-6rZhniA` |
@@ -65,7 +64,6 @@
 | `cairo_paint_with_alpha` | `TAIhaLjmAlg` |
 | `cairo_mesh_pattern_begin_patch` | `Ux6XxakVN+8` |
 | `cairo_mesh_pattern_end_patch` | `VBA3H7mYG70` |
-| `cairo_scaled_font_status` | `a5WkqZXnG2w` |
 | `cairo_in_fill` | `akimK5gpdho` |
 | `cairo_set_source` | `bU0QXekwNes` |
 | `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
@@ -80,7 +78,6 @@
 | `cairo_push_group` | `hlh15JjNtWg` |
 | `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
 | `cairo_select_font_face` | `ldk9m5h+-no` |
-| `cairo_scaled_font_reference` | `mb4bdMeFRs8` |
 | `cairo_font_face_reference` | `nqmUW6Z8xLE` |
 | `cairo_scaled_font_text_to_glyphs` | `ojbXRC0CmUo` |
 | `cairo_scaled_font_glyph_extents` | `oy7NcAkex1I` |
