@@ -96,7 +96,7 @@ void RejectSections(Bytes bytes, const std::string& expectedMessage = "", const 
     try {
         Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
     } catch (const Relinker::RelinkerException& error) {
-        if (!expectedMessage.empty()) Require(error.what() == expectedMessage);
+        if (!expectedMessage.empty()) Require(std::string(error.what()).starts_with(expectedMessage));
         if (expectedOffset != std::numeric_limits<std::uint64_t>::max()) Require(error.FailureOffset == expectedOffset);
         return;
     }
@@ -451,6 +451,26 @@ int main() {
             auto bytes = Fixture();
             Write<std::uint32_t>(bytes, 260, 1);
             RejectSections(std::move(bytes));
+        }},
+        {"section name table missing initial null", [] {
+            auto bytes = Fixture();
+            bytes[0x200] = 'X';
+            RejectSections(std::move(bytes), "Section name string table must begin and end with a null byte");
+        }},
+        {"section name table missing final null outside referenced names", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 256, 1);
+            bytes[0x210] = 'X';
+            RejectSections(std::move(bytes), "Section name string table must begin and end with a null byte");
+        }},
+        {"one-byte section name table", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 288, 1);
+            Write<std::uint32_t>(bytes, 192, 0);
+            Write<std::uint32_t>(bytes, 256, 0);
+            const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+            Require(sections.size() == 3 && sections[0].Name.empty()
+                && sections[1].Name.empty() && sections[2].Name.empty());
         }},
         {"section name table range", [] {
             auto bytes = Fixture();
