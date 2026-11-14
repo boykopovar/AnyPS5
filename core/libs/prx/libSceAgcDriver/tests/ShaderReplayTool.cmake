@@ -72,6 +72,26 @@ if(NOT code STREQUAL "0" OR NOT output MATCHES "materialized: [0-9]+ SPIR-V word
     message(FATAL_ERROR "prepared replay with maintenance8 failed: ${code}\n${output}${errors}")
 endif()
 
+foreach(case IN ITEMS "unused;unused" "float;float" "all_bits;all bits")
+    list(GET case 0 file)
+    list(GET case 1 label)
+    execute_process(COMMAND "${TOOL}" --mem "${CAPTURE}/pixel_${file}.req" WORKING_DIRECTORY "${CAPTURE}" OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+    if(NOT output MATCHES "pixel: 3 interpolators, SPI_PS_INPUT_ADDR 0x00001002, front face ${label}[\r\n]"
+            OR NOT output MATCHES "SPI_PS_INPUT_CNTL_0 = 0x00000000"
+            OR NOT output MATCHES "SPI_PS_INPUT_CNTL_1 = 0x00000401"
+            OR NOT output MATCHES "SPI_PS_INPUT_CNTL_2 = 0x00000423"
+            OR output MATCHES "SPI_PS_INPUT_CNTL_3")
+        message(FATAL_ERROR "--mem did not print the pixel inputs of pixel_${file}.req\n${output}${errors}")
+    endif()
+endforeach()
+
+execute_process(COMMAND "${TOOL}" --mem "${CAPTURE}/vertex.req" WORKING_DIRECTORY "${CAPTURE}" OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+if(NOT output MATCHES "vertex: 1 fetched resources, fetch embedded yes"
+        OR NOT output MATCHES "resource 0: V# 22f7e3f8 00280010 000006b7 00032fac, attribute 5, VGPR 12 count 3, fetch index 1"
+        OR output MATCHES "resource 1:")
+    message(FATAL_ERROR "--mem did not print the vertex fetch resources\n${output}${errors}")
+endif()
+
 foreach(mode IN ITEMS --prepare --materialize)
     execute_process(COMMAND "${TOOL}" ${mode} "${CAPTURE}/lds.req" RESULT_VARIABLE code OUTPUT_VARIABLE baseline ERROR_VARIABLE errors)
     if(NOT code STREQUAL "0" OR NOT baseline MATCHES "prepared: [0-9]+ SPIR-V words")
