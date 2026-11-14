@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <new>
 
 #include <ft2build.h>
@@ -491,7 +492,7 @@ int APS5_VABI sceFontGenerateCharGlyph(FontHandle fontHandle, std::uint32_t code
     float scaleH = 0.0f;
     const int rc = GetCharGlyphMetrics(fontHandle, code, &metrics, false, &scaleW, &scaleH);
     if (rc != SCE_FONT_OK) return rc;
-    auto* generated = new (std::nothrow) GeneratedGlyph();
+    std::unique_ptr<GeneratedGlyph> generated(new (std::nothrow) GeneratedGlyph());
     if (!generated) return SCE_FONT_ERROR_ALLOCATION_FAILED;
     generated->codepoint = code;
     generated->metrics = metrics;
@@ -510,7 +511,7 @@ int APS5_VABI sceFontGenerateCharGlyph(FontHandle fontHandle, std::uint32_t code
     generated->owner = fontHandle;
     generated->outline.outline_flags = generated->glyph.flags;
     TrackGeneratedGlyph(&generated->glyph);
-    *pGlyph = &generated->glyph;
+    *pGlyph = &generated.release()->glyph;
     return SCE_FONT_OK;
 }
 
