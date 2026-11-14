@@ -10,6 +10,7 @@
 
 ### Functional
 
+- [Guest pointer safety](../../../core/libs/prx/libSceNpParty/Export.cpp) probes and copies guest parameters and states preserving caller errno across copy faults.
 - [sceNpPartyGetState](../../../core/libs/prx/libSceNpParty/Export.cpp) (libSceNpParty) - returning `0x80552504` (`INVALID_ARGUMENT`) when the `state` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
 
 - [sceNpPartyGetVoiceChatPriority and sceNpPartySetVoiceChatPriority](../../../core/libs/prx/libSceNpParty/Export.cpp) (libSceNpParty) - the 11.00 wrapper confirms the out-pointer check in Get and, in Set, a 32-bit priority accepted only when `priority - 1` is 0 or 1, with `INVALID_ARGUMENT` for every other value. The priority belongs to the local party member, so both return `NOT_IN_PARTY` (`0x80552506`) and write nothing because no party ever exists; this matches the PS4 reimplementation in [PS4Recomp](https://github.com/wie-project/PS4Recomp/blob/main/pkg/runtime/modules/libSceNp/ps4_np_party.c). The console's result for a valid priority after initialization is not measured
