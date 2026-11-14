@@ -115,6 +115,7 @@ std::uint8_t Pad::StickByte(double deflection) {
 Pad::KeyboardMouse::KeyboardMouse(InputConfiguration configuration)
     : configuration(std::move(configuration)),
       pressed(this->configuration.bindings.size()),
+      latched(this->configuration.bindings.size()),
       wheelReleaseTimes(this->configuration.bindings.size()),
       mouse(this->configuration.settings) {}
 
@@ -126,6 +127,7 @@ void Pad::KeyboardMouse::Replace(InputConfiguration next) {
     Release();
     configuration = std::move(next);
     pressed.assign(configuration.bindings.size(), false);
+    latched.assign(configuration.bindings.size(), false);
     wheelReleaseTimes.assign(configuration.bindings.size(), Clock::time_point{});
     mouse = MouseStick(configuration.settings);
 }
@@ -134,12 +136,16 @@ bool Pad::KeyboardMouse::MouseMode() const {
     return mouseMode;
 }
 
+bool Pad::KeyboardMouse::active(std::size_t index) const {
+    return configuration.bindings[index].mode == InputMode::Toggle ? latched[index] : pressed[index];
+}
+
 Pad::KeyboardMouse::StickInput Pad::KeyboardMouse::stickInput() const {
     std::array<bool, 4> negative{};
     std::array<bool, 4> positive{};
     bool modifier = false;
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
-        if (!pressed[index]) continue;
+        if (!active(index)) continue;
         switch (configuration.bindings[index].control) {
             case InputControl::LeftStickLeft: negative[0] = true; break;
             case InputControl::LeftStickRight: positive[0] = true; break;
@@ -166,7 +172,7 @@ std::array<double, 2> Pad::KeyboardMouse::triggerTargets() const {
     std::array<double, 2> targets{};
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
         const auto& binding = configuration.bindings[index];
-        if (!pressed[index] || binding.control != InputControl::Button) continue;
+        if (!active(index) || binding.control != InputControl::Button) continue;
         if (binding.button == PadButton::L2) targets[0] = 1.0;
         if (binding.button == PadButton::R2) targets[1] = 1.0;
     }
@@ -230,6 +236,7 @@ void Pad::KeyboardMouse::SetTitleReadsMouse(bool reads) {
 
 void Pad::KeyboardMouse::Release() {
     std::fill(pressed.begin(), pressed.end(), false);
+    std::fill(latched.begin(), latched.end(), false);
     std::fill(wheelReleaseTimes.begin(), wheelReleaseTimes.end(), Clock::time_point{});
     stickAxes = {};
     triggerAxes = {};
@@ -325,6 +332,7 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
         if (binding.control == InputControl::ToggleMute && keyboard && down && !pressed[index]) requests.toggleMute = true;
         if (binding.control == InputControl::ToggleMouse && down && !pressed[index]) requests.toggleMouse = true;
         if (binding.control == InputControl::ReloadInputMapping && keyboard && down && !pressed[index]) requests.reloadInputMapping = true;
+        if (binding.mode == InputMode::Toggle && down && !pressed[index]) latched[index] = !latched[index];
         pressed[index] = down;
     }
     return requests;
@@ -354,7 +362,7 @@ Pad::InputRequests Pad::KeyboardMouse::PadChordRequests(std::uint32_t buttons) {
 PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const {
     PadInputState state = controller;
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
-        if (!pressed[index]) continue;
+        if (!active(index)) continue;
         const auto& binding = configuration.bindings[index];
         switch (binding.control) {
             case InputControl::Button:

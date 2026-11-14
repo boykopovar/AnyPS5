@@ -774,6 +774,45 @@ void testMouseGyro() {
     check(!keyboard.Compose(PadInputState{}).hasMotion, "the gyro option off leaves the mouse off the gyro");
 }
 
+Pad::InputBinding toggleCircle(SDL_Scancode key) {
+    return Pad::InputBinding{key, Pad::MouseButton::None, Pad::InputControl::Button, Pad::PadButton::Circle, 0, 0, 0, Pad::InputMode::Toggle};
+}
+
+bool circleHeld(const PadInputState& state) {
+    return (state.buttons & static_cast<std::uint32_t>(Pad::PadButton::Circle)) != 0;
+}
+
+void testToggleButton() {
+    auto configuration = defaults();
+    configuration.bindings.push_back(toggleCircle(SDL_SCANCODE_Z));
+    const std::vector<TimedEvent> events{
+        At(100.0, KeyEvent(SDL_SCANCODE_Z, true)),
+        At(200.0, KeyEvent(SDL_SCANCODE_Z, false)),
+        At(400.0, KeyEvent(SDL_SCANCODE_Z, true)),
+        At(500.0, KeyEvent(SDL_SCANCODE_Z, false)),
+    };
+    for (const double poll : Polls) {
+        for (const auto& sample : Simulate(configuration, events, poll, 700.0)) {
+            const bool expected = sample.ms >= 100.0 && sample.ms < 400.0;
+            check(circleHeld(sample.state) == expected, "a toggle latches on at the first press and off at the next press, at " + std::to_string(sample.ms) + " ms");
+        }
+    }
+}
+
+void testToggleFocusLoss() {
+    auto configuration = defaults();
+    configuration.bindings.push_back(toggleCircle(SDL_SCANCODE_Z));
+    const std::vector<TimedEvent> events{
+        At(100.0, KeyEvent(SDL_SCANCODE_Z, true)),
+        At(200.0, KeyEvent(SDL_SCANCODE_Z, false)),
+        At(250.0, PadSimulation::FocusLostEvent()),
+    };
+    for (const auto& sample : Simulate(configuration, events, 10.0, 300.0)) {
+        const bool expected = sample.ms >= 100.0 && sample.ms < 250.0;
+        check(circleHeld(sample.state) == expected, "losing the window focus clears a toggle, at " + std::to_string(sample.ms) + " ms");
+    }
+}
+
 int main() {
     try {
         const std::pair<const char*, std::function<void()>> tests[] = {
@@ -811,7 +850,9 @@ int main() {
             {"default L2", testDefaultL2},
             {"title reads the mouse", testTitleReadsMouse},
             {"mouse stick target", testMouseStickTarget},
-            {"pad chord requests", testPadChordRequests}
+            {"pad chord requests", testPadChordRequests},
+            {"toggle button", testToggleButton},
+            {"toggle focus loss", testToggleFocusLoss}
         };
         for (const auto& [name, test] : tests) {
             test();

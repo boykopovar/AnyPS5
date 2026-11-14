@@ -94,9 +94,11 @@ private:
     StickInput stickInput() const;
     std::array<double, 2> triggerTargets() const;
     bool advanceAxes(Clock::time_point now);
+    bool active(std::size_t index) const;
 
     InputConfiguration configuration;
     std::vector<bool> pressed;
+    std::vector<bool> latched;
     std::vector<Clock::time_point> wheelReleaseTimes;
     MouseStick mouse;
     Clock::time_point lastAdvance{};

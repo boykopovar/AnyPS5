@@ -435,6 +435,40 @@ void triggerRamp() {
     require(rejects("TriggerRampMs = 10\ntriggerrampms = 20\n"), "a trigger ramp given twice is rejected");
 }
 
+void toggleMode() {
+    useConfig("Cross = KEY:F\n");
+    for (const auto& binding : Pad::LoadInputMapping().bindings) {
+        require(binding.mode == Pad::InputMode::Hold, "a source without a modifier holds");
+    }
+    useConfig("Cross = TOGGLE KEY:F\n");
+    bool found = false;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) {
+        if (binding.control != Pad::InputControl::Button || binding.button != Pad::PadButton::Cross) continue;
+        require(binding.mode == Pad::InputMode::Toggle, "a TOGGLE source sets the toggle mode");
+        require(binding.key == SDL_SCANCODE_F, "a TOGGLE source keeps its key");
+        found = true;
+    }
+    require(found, "a TOGGLE source is read");
+    useConfig("Circle = toggle mouse:Right\n");
+    bool mouse = false;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) {
+        if (binding.control != Pad::InputControl::Button || binding.button != Pad::PadButton::Circle) continue;
+        require(binding.mode == Pad::InputMode::Toggle, "the modifier is case-insensitive");
+        require(binding.mouseButton == Pad::MouseButton::Right, "a TOGGLE mouse source keeps its button");
+        mouse = true;
+    }
+    require(mouse, "a TOGGLE mouse source is read");
+}
+
+void toggleReject() {
+    require(rejects("Shake = TOGGLE KEY:X\n"), "TOGGLE on a non-button action is rejected");
+    require(rejects("ToggleMouse = TOGGLE MOUSE:Middle\n"), "TOGGLE on ToggleMouse is rejected");
+    require(rejects("Cross = TOGGLE WHEEL:UP\n"), "TOGGLE on the mouse wheel is rejected");
+    require(rejects("Cross = TOGGLE PAD:Triangle+Circle\n"), "a PAD chord cannot be a pad button source, toggle or not");
+    require(rejects("Cross = TOGGLE\n"), "TOGGLE without a source is rejected");
+    require(rejects("Cross = TOGGLE KEY:NoSuchKey\n"), "TOGGLE with an unknown key is rejected");
+}
+
 void writeProfile(const std::string& titleId, const std::string& text) {
     std::ofstream file(root / Pad::InputProfileName(titleId), std::ios::binary | std::ios::trunc);
     file << text;
@@ -709,6 +743,8 @@ int main() try {
     stickModifier();
     keyboardRamp();
     triggerRamp();
+    toggleMode();
+    toggleReject();
     profileNames();
     profileOverridesShared();
     toggleMouseDefaults();
