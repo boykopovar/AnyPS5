@@ -473,6 +473,28 @@ class TraceDigestTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             trace_digest.validate_interval(first)
 
+    def test_graphics_track_interval_counts_are_preserved(self):
+        first = interval_line(0.0, 30.0, 20.0, 5.0)
+        second = interval_line(30.0, 60.0, 20.0, 5.0)
+        first["graphics_track"] = {
+            "Graphics.RenderPass": 12, "Graphics.RenderPass.Continued": 120,
+            "Graphics.RenderPass.Close.label": 3, "Graphics.RenderPass.Close.raw": 9,
+            "Graphics.Barrier.draw": 240, "Graphics.BarrierMerged.draw": 60,
+            "Graphics.Copy": 4, "Graphics.Copy.bytes": 2 * 1024 * 1024,
+        }
+        second["graphics_track"] = {"Graphics.RenderPass": 6, "Graphics.Copy.bytes": 512 * 1024}
+        for line in (first, second):
+            trace_digest.validate_interval(line)
+        result = trace_digest.digest_intervals([first, second])
+        self.assertEqual(result["intervals"][0]["graphics_track"], first["graphics_track"])
+        text = trace_digest.markdown_intervals(result)
+        self.assertIn("top close reason", text)
+        self.assertIn("| 1 | 12 | 120 | 12 | raw | 240 | 60 | 4 | 2.0 |", text)
+        self.assertIn("| 2 | 6 | 0 | 0 | - | 0 | 0 | 0 | 0.5 |", text)
+        first["graphics_track"] = {"bad": -1}
+        with self.assertRaises(ValueError):
+            trace_digest.validate_interval(first)
+
     def test_empty_summary_jsonl_files_remain_valid(self):
         path = self.trace.with_name("aps5-summary.jsonl")
         for text in ("", "\n \t\r\n"):
@@ -1012,6 +1034,15 @@ class TraceDigestTests(unittest.TestCase):
                 self.assertEqual(output.getvalue(), "")
                 self.assertIn(str(self.stacks) + ":2:", errors.getvalue())
                 self.assertNotIn("Traceback", errors.getvalue())
+
+    def test_stack_weights_are_plain_decimal_digits(self):
+        for count in ("1_0", "+5", "٥"):
+            with self.subTest(count=count):
+                self.stacks.write_text("# header\nworker;draw " + count + "\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, ":2: sample count must be a positive integer"):
+                    trace_digest.load_stacks(self.stacks)
+        self.stacks.write_text("# header\nworker;draw 010\n", encoding="utf-8")
+        self.assertEqual(trace_digest.load_stacks(self.stacks), [(["worker", "draw"], 10)])
 
 
     def test_stacks_self_and_total(self):
