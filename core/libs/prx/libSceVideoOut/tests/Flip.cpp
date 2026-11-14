@@ -1248,14 +1248,14 @@ void testUnopenedEventRegistration() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     check(sceVideoOutAddFlipEvent(0, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "flip event on queue 0 did not return INVALID_EVENT_QUEUE");
     check(sceVideoOutDeleteFlipEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "flip event deletion from queue 0 did not return INVALID_EVENT_QUEUE");
-    expectFailure([&] { sceVideoOutAddVblankEvent(0, handle, nullptr); });
-    expectFailure([&] { sceVideoOutDeleteVblankEvent(0, handle); });
-    expectFailure([&] { sceVideoOutAddPreVblankStartEvent(0, handle, nullptr); });
-    expectFailure([&] { sceVideoOutDeletePreVblankStartEvent(0, handle); });
-    expectFailure([&] { sceVideoOutAddOutputModeEvent(0, handle, nullptr); });
-    expectFailure([&] { sceVideoOutDeleteOutputModeEvent(0, handle); });
-    expectFailure([&] { sceVideoOutAddVrrActiveStatusEvent(0, handle, nullptr); });
-    expectFailure([&] { sceVideoOutDeleteVrrActiveStatusEvent(0, handle); });
+    check(sceVideoOutAddVblankEvent(0, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "vblank event on queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutDeleteVblankEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "vblank event deletion from queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutAddPreVblankStartEvent(0, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "pre-vblank event on queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutDeletePreVblankStartEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "pre-vblank event deletion from queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutAddOutputModeEvent(0, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "output mode event on queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutDeleteOutputModeEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "output mode event deletion from queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutAddVrrActiveStatusEvent(0, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "vrr active status event on queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutDeleteVrrActiveStatusEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "vrr active status event deletion from queue 0 did not return INVALID_EVENT_QUEUE");
 
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == 0, "flip event on an open port was refused");
     check(sceVideoOutAddVblankEvent(eq, handle, nullptr) == 0, "vblank event on an open port was refused");
@@ -1270,10 +1270,10 @@ void testUnopenedEventRegistration() {
     check(sceVideoOutDeleteVrrActiveStatusEvent(eq, handle) == 0, "registered vrr active status event was not deleted");
 
     check(sceVideoOutDeleteFlipEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate flip event deletion on an open port did not return INVALID_EVENT");
-    check(sceVideoOutDeleteVblankEvent(eq, handle) == 0, "duplicate vblank event deletion on an open port failed");
-    check(sceVideoOutDeletePreVblankStartEvent(eq, handle) == 0, "duplicate pre-vblank event deletion on an open port failed");
-    check(sceVideoOutDeleteOutputModeEvent(eq, handle) == 0, "duplicate output mode event deletion on an open port failed");
-    check(sceVideoOutDeleteVrrActiveStatusEvent(eq, handle) == 0, "duplicate vrr active status event deletion on an open port failed");
+    check(sceVideoOutDeleteVblankEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate vblank event deletion on an open port did not return INVALID_EVENT");
+    check(sceVideoOutDeletePreVblankStartEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate pre-vblank event deletion on an open port did not return INVALID_EVENT");
+    check(sceVideoOutDeleteOutputModeEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate output mode event deletion on an open port did not return INVALID_EVENT");
+    check(sceVideoOutDeleteVrrActiveStatusEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate vrr active status event deletion on an open port did not return INVALID_EVENT");
 
     sceVideoOutClose(handle);
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event on a closed port was accepted");
