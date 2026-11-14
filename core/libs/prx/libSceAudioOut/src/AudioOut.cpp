@@ -599,19 +599,32 @@ int APS5_VABI sceAudioOutSetVolume(int handle, std::uint32_t flag, int* vol) {
     if (port == nullptr) {
         return -2144993277;
     }
+    if ((flag & 0xffu) == 0) {
+        return -2144993261;
+    }
     const bool isStd = formatIsStd(port->format);
+    const auto sourceIndex = [isStd](int i) {
+        if (!isStd) return i;
+        if (i == 4) return 6;
+        if (i == 5) return 7;
+        if (i == 6) return 4;
+        if (i == 7) return 5;
+        return i;
+    };
+    for (int i = 0; port->type == PORT_TYPE_MAIN && i < port->channels; i++) {
+        if (((flag >> i) & 1u) == 0) {
+            continue;
+        }
+        const int value = vol[sourceIndex(i)];
+        if (value < 0 || value > 32768) {
+            return -2144993271;
+        }
+    }
     for (int i = 0; i < port->channels; i++, flag >>= 1u) {
         if ((flag & 1u) == 0) {
             continue;
         }
-        int srcIdx = i;
-        if (isStd) {
-            if (i == 4) srcIdx = 6;
-            else if (i == 5) srcIdx = 7;
-            else if (i == 6) srcIdx = 4;
-            else if (i == 7) srcIdx = 5;
-        }
-        port->volume[i] = vol[srcIdx];
+        port->volume[i] = vol[sourceIndex(i)];
     }
     return 0;
 }
