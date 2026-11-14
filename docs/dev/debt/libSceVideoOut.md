@@ -303,6 +303,13 @@
 
 - Focus pause for rumble (host side, not console behaviour): while `ANYPS5_RUMBLE_ON_FOCUS_LOSS` is on and the window has no focus, the motor and non-PS5 trigger rumble requests are dropped and a controller that was rumbling gets one zero-intensity request. Not paused: the PS5 adaptive trigger vibration profiles sent as trigger effects, and the DualSense audio haptics path ([`PadInput.cpp`](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp)), which keeps running while unfocused.
 
+### Mouse touchpad gaps
+
+- [KeyboardMouse](../../../core/libs/prx/libSceVideoOut/src/KeyboardMouse.cpp) - `ANYPS5_MOUSE_TOUCHPAD=1` gives the pad one touch point from the left mouse button. It is not multitouch, has no inertia after release, and does not follow the cursor outside the window. A real touchpad's finger timing and pressure are not modelled.
+
+### Mouse gyro gaps
+
+- [KeyboardMouse](../../../core/libs/prx/libSceVideoOut/src/KeyboardMouse.cpp) - `ANYPS5_MOUSE_GYRO=1` maps captured mouse movement to gyro rates with a fixed scale of 0.001 rad per count; the scale is not calibrated against a real controller, and the accelerometer stays at rest.
 ### Host input mapping gaps
 
 - [PadInput](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) - a `PAD:` chord fires its emulator action and its buttons still reach the title's pad state. Masking the chord buttons while the chord is held is not done, so a chord that uses a button the title needs also reaches the title.
