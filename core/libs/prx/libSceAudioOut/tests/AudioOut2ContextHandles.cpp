@@ -90,6 +90,13 @@ void RequireInvalidContext(AudioOut2ContextHandle context) {
     Require(sceAudioOut2LoContextDestroy(context) == errorInvalidHandle, "a context that does not exist was destroyed through the low-latency call");
 }
 
+void ContextAttributesNullList() {
+    const auto context = CreateContext();
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 0) == static_cast<int>(0x80268001), "an empty null attribute list was not refused with the console code");
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 1) == static_cast<int>(0x80268001), "a null attribute list with a count was not refused with the console code");
+    Require(sceAudioOut2ContextDestroy(context) == 0, "a live context was not destroyed");
+}
+
 void DestroyedContextIsInvalid() {
     const auto context = CreateContext();
     AudioOut2PortHandle port = 0;
@@ -319,6 +326,7 @@ int main() {
     OversizedGrainIsRefused();
     BadGuestPointersAreRefused();
     UncreatedContextIsInvalid();
+    ContextAttributesNullList();
     QueueLevelRejectsUnwritableOutputs();
     DestroyedContextIsInvalid();
     std::filesystem::remove(path);
