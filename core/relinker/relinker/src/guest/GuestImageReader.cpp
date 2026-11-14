@@ -92,7 +92,8 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             moduleExports.push_back(value);
         }
         else if (tag < 0x60000000 || tag == 0x6ffffef5 || tag == 0x6100003f || (tag >= 0x61000027 && tag <= 0x6100003b)) {
-            if (!tags.emplace(tag, value).second) fail("Duplicate dynamic tag " + std::to_string(tag));
+            const auto [entry, inserted] = tags.emplace(tag, value);
+            if (!inserted && entry->second != value) fail("Conflicting duplicate dynamic tag " + std::to_string(tag));
         }
     }
     if (!terminated) fail("Unterminated dynamic segment");
