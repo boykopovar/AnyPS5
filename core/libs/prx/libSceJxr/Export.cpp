@@ -181,8 +181,24 @@ std::int64_t APS5_VABI PKCodecFactory_CreateCodec_nid_postfix(const std::uint32_
     return WmpErrUnsupportedFormat;
 }
 
-int APS5_VABI PKCodecFactory_CreateDecoderFromFile_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKCodecFactory_CreateDecoderFromFile_nid_postfix(const char* filename, void** decoder) {
+    if (!filename) APS5_INVALID_ARG_EX;
+    const char* extension = std::strrchr(filename, '.');
+    if (!extension) return WmpErrUnsupportedFormat;
+    const std::uint32_t* iid = nullptr;
+    auto result = GetImageDecodeIID_nid_postfix(extension, &iid);
+    if (result < 0) return result;
+    Jxr::Stream* stream = nullptr;
+    result = CreateStreamFromFilename_nid_no_patch(&stream, filename, "rb");
+    if (result < 0) return result;
+    result = PKCodecFactory_CreateCodec_nid_postfix(iid, decoder);
+    if (result < 0) return result;
+    auto* created = static_cast<Jxr::ImageDecodeHead*>(*decoder);
+    if (!created || !created->initialize) APS5_INVALID_ARG_EX;
+    result = created->initialize(created, stream);
+    if (result < 0) return result;
+    created->streamOwner = 1;
+    return result;
 }
 
 std::int64_t APS5_VABI PKCodecFactory_CreateFormatConverter_nid_postfix(void** converter) {
@@ -212,7 +228,7 @@ std::int64_t APS5_VABI PKCreateCodecFactory_nid_postfix(void** factory, std::uin
     if (result != WmpErrSuccess) return result;
     auto* value = static_cast<Jxr::CodecFactory*>(*factory);
     value->createCodec = &PKCodecFactory_CreateCodec_nid_postfix;
-    value->createDecoderFromFile = Slot<decltype(value->createDecoderFromFile)>(&PKCodecFactory_CreateDecoderFromFile_nid_postfix);
+    value->createDecoderFromFile = &PKCodecFactory_CreateDecoderFromFile_nid_postfix;
     value->createFormatConverter = &PKCodecFactory_CreateFormatConverter_nid_postfix;
     value->release = Slot<decltype(value->release)>(&PKCreateCodecFactory_Release_nid_postfix);
     return WmpErrSuccess;

@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libSceJxr/Factory.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -18,6 +19,7 @@ constexpr std::int64_t UnsupportedFormat = -106;
 constexpr std::int64_t FileError = -102;
 constexpr const char* FilePath = "guest_jxr_factory_file.bin";
 constexpr const char* MissingPath = "guest_jxr_factory_missing.bin";
+constexpr const char* DecoderPath = "guest_jxr_factory_decoder.Jxr";
 
 bool failAllocation = false;
 int liveBlocks = 0;
@@ -120,6 +122,7 @@ void Codecs() {
     Require(PKCreateCodecFactory_nid_postfix(&raw, 0x0101) == 0 && raw, "codec factory creation fails");
     auto* factory = static_cast<Jxr::CodecFactory*>(raw);
     Require(factory->createCodec != nullptr, "CreateCodec slot");
+    Require(factory->createDecoderFromFile == &PKCodecFactory_CreateDecoderFromFile_nid_postfix, "CreateDecoderFromFile slot");
     Require(factory->createFormatConverter != nullptr, "CreateFormatConverter slot");
     Require(factory->release != nullptr, "Release slot");
     Require(reinterpret_cast<void* const*>(factory)[3] == nullptr && reinterpret_cast<void* const*>(factory)[4] == reinterpret_cast<void*>(factory->release), "Release is not at offset 0x20 behind an empty slot");
@@ -218,6 +221,53 @@ void FileStreams() {
     Require(factory->release(&factory) == 0 && !factory, "factory release fails");
 }
 
+void DecoderFromFile() {
+    void* raw = nullptr;
+    Require(PKCreateCodecFactory_nid_postfix(&raw, 0x0101) == 0 && raw, "codec factory creation fails");
+    auto* factory = static_cast<Jxr::CodecFactory*>(raw);
+    const int blocks = liveBlocks;
+    void* const untouched = reinterpret_cast<void*>(1);
+    void* decoder = untouched;
+
+    for (const char* name : {"guest_jxr_factory_decoder", "guest_jxr_factory.png", "guest_jxr_factory.jx", ".bmp"}) {
+        Require(factory->createDecoderFromFile(name, &decoder) == UnsupportedFormat, "unsupported extension code");
+    }
+    Require(decoder == untouched, "unsupported extension writes the decoder");
+    Require(factory->createDecoderFromFile("guest_jxr_factory_decoder", nullptr) == UnsupportedFormat,
+            "a name without an extension reads the decoder pointer");
+    Require(liveBlocks == blocks, "unsupported extension allocates");
+
+    for (const char* name : {"guest_jxr_factory_missing.WDP", "guest_jxr_factory_missing.hdp", "guest_jxr_factory_missing.jxrx",
+                             "guest_jxr_factory.jxr/missing"}) {
+        Require(factory->createDecoderFromFile(name, &decoder) == FileError, "missing file code");
+        Require(liveBlocks == blocks + 1, "missing file does not keep its stream");
+        liveBlocks = blocks;
+    }
+    Require(decoder == untouched, "missing file writes the decoder");
+
+    auto* file = std::fopen(DecoderPath, "wb");
+    Require(file != nullptr && std::fputs("II", file) >= 0 && std::fclose(file) == 0, "decoder file setup");
+    const auto calls = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        factory->createDecoderFromFile(DecoderPath, &decoder);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && NotImplementedCalls_nid_no_patch() == calls + 1, "existing file does not reach PKImageDecode_Create_WMP");
+    Require(decoder == untouched, "unimplemented decoder creation writes the decoder");
+    Require(liveBlocks == blocks + 1, "stream is not opened before the decoder is created");
+    liveBlocks = blocks;
+    RequireInvalidArgument([&] { factory->createDecoderFromFile(DecoderPath, nullptr); }, "null decoder pointer is accepted");
+    Require(liveBlocks == blocks + 1, "null decoder pointer is rejected before the stream is opened");
+    liveBlocks = blocks;
+    RequireInvalidArgument([&] { factory->createDecoderFromFile(nullptr, &decoder); }, "null file name is accepted");
+    Require(liveBlocks == blocks && decoder == untouched, "null file name allocates or writes");
+    static_cast<void>(std::remove(DecoderPath));
+
+    Require(factory->release(&factory) == 0 && !factory, "codec factory release fails");
+}
+
 }
 
 int main() {
@@ -225,6 +275,7 @@ int main() {
     Factory();
     Codecs();
     FileStreams();
+    DecoderFromFile();
     Require(liveBlocks == 0, "blocks leaked");
     return 0;
 }
