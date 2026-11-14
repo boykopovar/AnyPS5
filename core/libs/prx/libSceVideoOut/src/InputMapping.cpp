@@ -105,6 +105,55 @@ Pad::MouseButton parseMouseButton(std::string_view name) {
     throw std::runtime_error("unknown mouse button '" + std::string(name) + "'");
 }
 
+bool isEmulatorAction(Pad::InputControl control) {
+    switch (control) {
+        case Pad::InputControl::ToggleFullscreen:
+        case Pad::InputControl::TogglePerformanceOverlay:
+        case Pad::InputControl::Screenshot:
+        case Pad::InputControl::ShowPadStatus:
+        case Pad::InputControl::VolumeUp:
+        case Pad::InputControl::VolumeDown:
+        case Pad::InputControl::ToggleMute:
+        case Pad::InputControl::ReloadInputMapping: return true;
+        default: return false;
+    }
+}
+
+Pad::PadButton parsePadButton(std::string_view name) {
+    const auto normalized = upper(name);
+    if (normalized == "CROSS") return Pad::PadButton::Cross;
+    if (normalized == "CIRCLE") return Pad::PadButton::Circle;
+    if (normalized == "TRIANGLE") return Pad::PadButton::Triangle;
+    if (normalized == "SQUARE") return Pad::PadButton::Square;
+    if (normalized == "L1") return Pad::PadButton::L1;
+    if (normalized == "R1") return Pad::PadButton::R1;
+    if (normalized == "L2") return Pad::PadButton::L2;
+    if (normalized == "R2") return Pad::PadButton::R2;
+    if (normalized == "L3") return Pad::PadButton::L3;
+    if (normalized == "R3") return Pad::PadButton::R3;
+    if (normalized == "OPTIONS") return Pad::PadButton::Options;
+    if (normalized == "UP") return Pad::PadButton::Up;
+    if (normalized == "RIGHT") return Pad::PadButton::Right;
+    if (normalized == "DOWN") return Pad::PadButton::Down;
+    if (normalized == "LEFT") return Pad::PadButton::Left;
+    if (normalized == "TOUCHPAD") return Pad::PadButton::TouchPad;
+    throw std::runtime_error("unknown pad button '" + std::string(name) + "'");
+}
+
+std::uint32_t parsePadChord(std::string_view value) {
+    std::uint32_t mask = 0;
+    std::size_t start = 0;
+    while (true) {
+        const auto plus = value.find('+', start);
+        const auto part = trim(value.substr(start, plus == std::string_view::npos ? std::string_view::npos : plus - start));
+        if (part.empty()) throw std::runtime_error("pad chord has an empty button");
+        mask |= static_cast<std::uint32_t>(parsePadButton(part));
+        if (plus == std::string_view::npos) break;
+        start = plus + 1;
+    }
+    return mask;
+}
+
 Pad::InputBinding parseBinding(const InputAction& action, std::string_view source) {
     const auto separator = source.find(':');
     if (separator == std::string_view::npos) throw std::runtime_error("source must use TYPE:VALUE format");
@@ -145,6 +194,10 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
         }
         return {SDL_SCANCODE_UNKNOWN, parseMouseButton(value), action.control, action.button, 0};
     }
+    if (type == "PAD") {
+        if (!isEmulatorAction(action.control)) throw std::runtime_error("PAD chords can only trigger emulator actions");
+        return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, 0, 0, parsePadChord(value)};
+    }
     if (type == "WHEEL") {
         if (action.control != Pad::InputControl::Button) throw std::runtime_error("mouse wheel can only map to a pad button");
         const auto direction = upper(value);
@@ -154,7 +207,7 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
         if (direction == "LEFT") return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, 0, -1};
         throw std::runtime_error("mouse wheel direction must be UP, DOWN, LEFT or RIGHT");
     }
-    throw std::runtime_error("source type must be KEY, MOUSE or WHEEL");
+    throw std::runtime_error("source type must be KEY, MOUSE, WHEEL or PAD");
 }
 
 enum class InputSetting {
@@ -337,7 +390,8 @@ void applyInputStream(Pad::InputConfiguration& configuration, std::istream& file
             const bool duplicate = std::any_of(bindings.begin(), bindings.end(), [&binding](const Pad::InputBinding& existing) {
                 return existing.key == binding.key && existing.mouseButton == binding.mouseButton &&
                     existing.control == binding.control && existing.button == binding.button &&
-                    existing.wheelDirection == binding.wheelDirection && existing.wheelTilt == binding.wheelTilt;
+                    existing.wheelDirection == binding.wheelDirection && existing.wheelTilt == binding.wheelTilt &&
+                    existing.padButtons == binding.padButtons;
             });
             if (!duplicate) bindings.push_back(binding);
         } catch (const std::runtime_error& error) {
@@ -357,6 +411,45 @@ void loadInputFile(Pad::InputConfiguration& configuration, const std::filesystem
 
 void Pad::ApplyInputMapping(InputConfiguration& configuration, std::istream& input, std::string_view source) {
     applyInputStream(configuration, input, source);
+}
+
+namespace {
+
+Pad::InputFileStamp fileStamp(const std::filesystem::path& path) {
+    Pad::InputFileStamp stamp;
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error)) return stamp;
+    stamp.present = true;
+    stamp.modified = std::filesystem::last_write_time(path, error);
+    stamp.size = std::filesystem::file_size(path, error);
+    return stamp;
+}
+
+}
+
+Pad::InputMappingStamp Pad::InputMappingFileStamp(std::string_view titleId) {
+    const auto configured = configuredPath();
+    const std::filesystem::path path = !configured.empty() ? configured : defaultConfigPath();
+    InputMappingStamp stamp;
+    stamp.shared = fileStamp(path);
+    const auto profile = InputProfileName(titleId);
+    if (!profile.empty()) stamp.profile = fileStamp(path.parent_path() / profile);
+    return stamp;
+}
+
+Pad::InputMappingWatch::InputMappingWatch(InputMappingStamp applied) : applied(applied), candidate(applied) {}
+
+bool Pad::InputMappingWatch::Poll(const InputMappingStamp& current) {
+    if (current == applied) {
+        candidate = current;
+        return false;
+    }
+    if (current != candidate) {
+        candidate = current;
+        return false;
+    }
+    applied = current;
+    return true;
 }
 
 Pad::InputMappingStore::InputMappingStore(InputConfiguration initial) : current(std::make_shared<const InputConfiguration>(std::move(initial))) {}

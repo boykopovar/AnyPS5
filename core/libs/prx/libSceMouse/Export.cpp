@@ -2,9 +2,9 @@
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstdint>
-#include <cstring>
 
 extern "C" {
 
@@ -122,7 +122,11 @@ int APS5_VABI sceMouseExtensionRead(std::int32_t handle, void* data, std::uint32
 
 int APS5_VABI sceMouseExtensionReadState(std::int32_t handle, void* state, std::uint32_t size) {
     if (size != MOUSE_EXTENSION_STATE_SIZE || state == nullptr) return MOUSE_ERROR_INVALID_ARG;
-    std::memset(state, 0, MOUSE_EXTENSION_STATE_SIZE);
+    const std::array<std::uint8_t, MOUSE_EXTENSION_STATE_SIZE> empty{};
+    const int savedErrno = errno;
+    const bool cleared = GuestCopyOut_nid_no_patch(state, empty.data(), empty.size());
+    errno = savedErrno;
+    if (!cleared) return MOUSE_ERROR_INVALID_ARG;
     if (const int error = Mouse::CheckRead(handle, state, MOUSE_MAX_DATA_NUM)) return error;
     NotImplemented_nid_no_patch(__func__);
 }
@@ -132,17 +136,11 @@ int APS5_VABI sceMouseExtensionSetConfig(std::int32_t handle, const void* config
 }
 
 int APS5_VABI sceMouseExtensionSetCursor(std::int32_t handle, std::int32_t cursor) {
-    if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
-    if (const int error = Mouse::CheckHandle(handle)) return error;
-    static_cast<void>(cursor);
-    NotImplemented_nid_no_patch(__func__);
+    return Mouse::SetCursor(handle, cursor);
 }
 
 int APS5_VABI sceMouseExtensionGetCursor(std::int32_t handle, void* cursor) {
-    if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
-    if (cursor == nullptr) return MOUSE_ERROR_INVALID_ARG;
-    if (const int error = Mouse::CheckHandle(handle)) return error;
-    NotImplemented_nid_no_patch(__func__);
+    return Mouse::GetCursor(handle, static_cast<std::int32_t*>(cursor));
 }
 
 int APS5_VABI sceMouseExtensionScalePosition(std::uint16_t* position, std::uint16_t scale) {

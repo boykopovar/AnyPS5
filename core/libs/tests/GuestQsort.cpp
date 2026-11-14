@@ -12,9 +12,18 @@
 namespace {
 
 bool failAllocation = false;
+std::size_t allocations = 0;
+std::size_t releases = 0;
 
-void* APS5_VABI Allocate(std::size_t size) { return failAllocation ? nullptr : std::malloc(size); }
-void APS5_VABI Free(void* ptr) { std::free(ptr); }
+void* APS5_VABI Allocate(std::size_t size) {
+    void* pointer = failAllocation ? nullptr : std::malloc(size);
+    if (pointer) ++allocations;
+    return pointer;
+}
+void APS5_VABI Free(void* ptr) {
+    if (ptr) ++releases;
+    std::free(ptr);
+}
 void* APS5_VABI Reallocate(void* ptr, std::size_t size) { return std::realloc(ptr, size); }
 void* APS5_VABI Calloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
 void* APS5_VABI Align(std::size_t, std::size_t size) { return std::malloc(size); }
@@ -654,6 +663,87 @@ bool CheckHeapsortComparisons() {
     }
     return correct;
 }
+
+struct ComparisonFailure {};
+std::size_t mergeComparisons = 0;
+std::size_t mergeFailureAt = 0;
+
+int APS5_VABI ThrowingCompare(const void* left, const void* right) {
+    if (++mergeComparisons == mergeFailureAt) throw ComparisonFailure{};
+    return CompareKeys(left, right);
+}
+
+bool CheckMergesortCleanup() {
+    std::array<Element, 17> original{};
+    for (std::size_t index = 0; index < original.size(); ++index) original[index] = {static_cast<int>((index * 7) % 5), static_cast<int>(index)};
+    auto elements = original;
+    mergeComparisons = 0;
+    if (mergesort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare) != 0) return false;
+    const auto total = mergeComparisons;
+    for (std::size_t failure = 1; failure <= total; ++failure) {
+        elements = original;
+        mergeComparisons = 0;
+        mergeFailureAt = failure;
+        const auto allocated = allocations;
+        const auto released = releases;
+        bool caught = false;
+        try {
+            mergesort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare);
+        } catch (const ComparisonFailure&) {
+            caught = true;
+        }
+        if (!caught || mergeComparisons != failure || allocations != allocated + 1 || releases != released + 1) {
+            std::fprintf(stderr, "mergesort cleanup failed at comparison %zu: caught=%d allocations=%zu releases=%zu\n",
+                failure, caught, allocations - allocated, releases - released);
+            return false;
+        }
+    }
+    mergeFailureAt = 0;
+    elements = original;
+    if (mergesort_nid_postfix(elements.data(), elements.size(), sizeof(Element), CompareKeys) != 0 || allocations != releases) return false;
+    for (std::size_t index = 1; index < elements.size(); ++index) {
+        const auto& previous = elements[index - 1];
+        const auto& current = elements[index];
+        if (previous.key > current.key || (previous.key == current.key && previous.tag > current.tag)) return false;
+    }
+    return true;
+}
+
+bool CheckHeapsortCleanup() {
+    InitializeHeap();
+    std::array<Element, 17> original{};
+    for (std::size_t index = 0; index < original.size(); ++index) original[index] = {static_cast<int>((index * 7) % 5), static_cast<int>(index)};
+    auto elements = original;
+    mergeComparisons = 0;
+    mergeFailureAt = 0;
+    if (heapsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare) != 0) return false;
+    const auto total = mergeComparisons;
+    for (std::size_t failure = 1; failure <= total; ++failure) {
+        elements = original;
+        mergeComparisons = 0;
+        mergeFailureAt = failure;
+        const auto allocated = allocations;
+        const auto released = releases;
+        bool caught = false;
+        try {
+            heapsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare);
+        } catch (const ComparisonFailure&) {
+            caught = true;
+        }
+        if (!caught || mergeComparisons != failure || allocations != allocated + 1 || releases != released + 1) {
+            std::fprintf(stderr, "heapsort cleanup failed at comparison %zu: caught=%d allocations=%zu releases=%zu\n",
+                failure, caught, allocations - allocated, releases - released);
+            mergeFailureAt = 0;
+            return false;
+        }
+    }
+    mergeFailureAt = 0;
+    elements = original;
+    if (heapsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare) != 0 || allocations != releases) return false;
+    for (std::size_t index = 1; index < elements.size(); ++index)
+        if (elements[index - 1].key > elements[index].key) return false;
+    return true;
+}
 }
 
 int main() {
@@ -688,7 +778,9 @@ int main() {
     correct &= CheckMergesort();
     correct &= CheckMergesortComparisons();
     correct &= CheckMergesortUnalignedElements();
+    correct &= CheckMergesortCleanup();
     correct &= CheckHeapsort();
     correct &= CheckHeapsortComparisons();
+    correct &= CheckHeapsortCleanup();
     return correct ? 0 : 1;
 }

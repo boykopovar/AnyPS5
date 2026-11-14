@@ -125,7 +125,11 @@ int APS5_VABI FT_Init_FreeType_nid_postfix(GuestLibrary** alibrary) {
     auto library = std::make_unique<GuestLibrary>();
     const FT_Error error = FT_Init_FreeType(&library->host);
     if (error != 0) return error;
-    *alibrary = library.release();
+    std::unique_ptr<FT_LibraryRec_, decltype(&FT_Done_FreeType)> native(library->host, &FT_Done_FreeType);
+    GuestLibrary* result = library.get();
+    if (!GuestCopyOut_nid_no_patch(alibrary, &result, sizeof(result))) return FT_Err_Invalid_Argument;
+    native.release();
+    library.release();
     return 0;
 }
 

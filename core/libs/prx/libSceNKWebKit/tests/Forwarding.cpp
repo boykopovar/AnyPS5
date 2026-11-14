@@ -232,14 +232,20 @@ int main() {
     Require(reinterpret_cast<Value>(&WKUserMediaPermissionRequestVideoDeviceUIDs)() != nullptr);
     Require(WKMutableArrayCreate() != nullptr);
 
-    const AllocationResult glContextResults[] = {
+    const AllocationResult allocationResults[] = {
         TestAllocation(&_ZN7WebCore9GLContextnwEm, &_ZN7WebCore9GLContextdlEPv, "_ZN7WebCore9GLContextnwEm"),
         TestAllocation(&_ZN7WebCore9GLContextnaEm, &_ZN7WebCore9GLContextdaEPv, "_ZN7WebCore9GLContextnaEm"),
         TestDelete(&_ZN7WebCore9GLContextdlEPv, "_ZN7WebCore9GLContextdlEPv"),
         TestDelete(&_ZN7WebCore9GLContextdaEPv, "_ZN7WebCore9GLContextdaEPv"),
         TestPlacement(&_ZN7WebCore9GLContextnwEmPv, "_ZN7WebCore9GLContextnwEmPv"),
-        TestPlacement(&_ZN7WebCore9GLContextnaEmPv, "_ZN7WebCore9GLContextnaEmPv")
+        TestPlacement(&_ZN7WebCore9GLContextnaEmPv, "_ZN7WebCore9GLContextnaEmPv"),
+        TestAllocation(&_ZN7WebCore17LibWebRTCProvidernwEm, &_ZN7WebCore17LibWebRTCProviderdlEPv, "_ZN7WebCore17LibWebRTCProvidernwEm"),
+        TestAllocation(&_ZN7WebCore17LibWebRTCProvidernaEm, &_ZN7WebCore17LibWebRTCProviderdaEPv, "_ZN7WebCore17LibWebRTCProvidernaEm"),
+        TestDelete(&_ZN7WebCore17LibWebRTCProviderdlEPv, "_ZN7WebCore17LibWebRTCProviderdlEPv"),
+        TestDelete(&_ZN7WebCore17LibWebRTCProviderdaEPv, "_ZN7WebCore17LibWebRTCProviderdaEPv"),
+        TestPlacement(&_ZN7WebCore17LibWebRTCProvidernwEmPv, "_ZN7WebCore17LibWebRTCProvidernwEmPv"),
+        TestPlacement(&_ZN7WebCore17LibWebRTCProvidernaEmPv, "_ZN7WebCore17LibWebRTCProvidernaEmPv")
     };
 
-    return FinishAllocationResults(glContextResults, sizeof(glContextResults) / sizeof(glContextResults[0]));
+    return FinishAllocationResults(allocationResults, sizeof(allocationResults) / sizeof(allocationResults[0]));
 }

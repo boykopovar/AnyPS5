@@ -2,10 +2,13 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 #include <initializer_list>
 
 static constexpr int INVALID_ARGUMENT = static_cast<int>(0x80550003);
@@ -17,6 +20,17 @@ static constexpr int MUTEX_BUSY = static_cast<int>(0x8055800F);
 static bool expect(bool condition, const char* message) {
     if (!condition) std::fprintf(stderr, "%s\n", message);
     return condition;
+}
+
+template <typename F>
+static bool expectRuntimeError(F operation, const char* message) {
+    try {
+        operation();
+    } catch (const std::runtime_error&) {
+        return true;
+    } catch (...) {
+    }
+    return expect(false, message);
 }
 
 static NpOnlineId onlineId(const char* text) {
@@ -109,6 +123,9 @@ static int testIds() {
     ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(nullptr, 0) == UTIL_INVALID_ARGUMENT && sceNpUtilCanonicalizeNpIdForPsp2(nullptr, 1) == UTIL_INVALID_ARGUMENT,
         "canonicalizing a null NpId succeeded");
     NpIdFull loose = npIdWithTag("heron-4", 0x34737000);
+    errno = 71;
+    ok &= expect(sceNpIntGetPlatformType(reinterpret_cast<const NpIdFull*>(0x10)) == INVALID_ARGUMENT, "an unmapped NpId in sceNpIntGetPlatformType");
+    ok &= expect(errno == 71, "errno altered on unmapped NpId in sceNpIntGetPlatformType");
     ok &= expect(sceNpGetPlatformType(&loose) == 0 && sceNpIntGetPlatformType(&loose) == 0, "a tag with opt[4] zero is not platform 0");
     const NpIdFull nearCompanion = npIdWithTag("heron-4", 0x716D6F63);
     ok &= expect(sceNpIntGetPlatformType(&nearCompanion) == INVALID_PLATFORM_TYPE, "comq was taken for comp");
@@ -133,6 +150,39 @@ static int testIds() {
     ok &= expect(sceNpSetPlatformType(&kept, 3) == 0 && std::memcmp(kept.opt, before.opt, 4) == 0 && std::memcmp(kept.reserved, before.reserved, 8) == 0
             && std::memcmp(&kept.handle, &before.handle, sizeof(kept.handle)) == 0,
         "setting a platform type changed bytes outside the tag");
+
+    std::array<std::uint8_t, 12> rawTitleId{};
+    std::array<std::uint8_t, 21> titleIdObject{};
+    for (std::size_t i = 0; i < rawTitleId.size(); ++i) rawTitleId[i] = static_cast<std::uint8_t>(i + 1);
+    std::memcpy(titleIdObject.data() + 8, rawTitleId.data(), rawTitleId.size());
+    ok &= expect(_ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), titleIdObject.data()), "equal title IDs did not compare equal");
+    titleIdObject[8 + 11] = static_cast<std::uint8_t>(rawTitleId.back() ^ 1U);
+    ok &= expect(!_ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), titleIdObject.data()), "different title IDs compared equal");
+    titleIdObject[8 + 11] = rawTitleId.back();
+    titleIdObject[8 + 12] = 1;
+    ok &= expect(_ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), titleIdObject.data()), "title ID comparison read beyond the observed 12-byte range");
+    const auto nearMaximum = reinterpret_cast<const void*>(std::numeric_limits<std::uintptr_t>::max() - 4);
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), nearMaximum); }, "title ID offset overflow did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(nullptr, titleIdObject.data()); }, "null raw title ID did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), nullptr); }, "null title ID object did not throw");
+    const auto unreadable = reinterpret_cast<const void*>(std::uintptr_t{1});
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(unreadable, titleIdObject.data()); }, "unreadable raw title ID did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), unreadable); }, "unreadable title ID object did not throw");
+
+    std::array<std::uint8_t, 136> titleSecretObject{};
+    NpTitleSecret titleSecret{};
+    for (std::size_t i = 0; i < sizeof(titleSecret.data); ++i) titleSecret.data[i] = static_cast<std::uint8_t>(i * 3);
+    std::memcpy(titleSecretObject.data() + 8, titleSecret.data, sizeof(titleSecret.data));
+    ok &= expect(!_ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), &titleSecret), "equal title secrets compared unequal");
+    titleSecretObject[7] = 0xFF;
+    ok &= expect(!_ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), &titleSecret), "title secret comparison included the object prefix");
+    titleSecretObject[8 + 127] ^= 1;
+    ok &= expect(_ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), &titleSecret), "different title secrets compared equal");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(nullptr, &titleSecret); }, "null title secret object did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), nullptr); }, "null raw title secret did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(nearMaximum, &titleSecret); }, "title secret offset overflow did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), unreadable); }, "unreadable raw title secret did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(unreadable, &titleSecret); }, "unreadable title secret object did not throw");
 
     NpOnlineId unterminated = onlineId("abcdefghijklmnop");
     unterminated.data[16] = 'q';

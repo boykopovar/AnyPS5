@@ -15,6 +15,13 @@
 | `Unknown` | `mdH4mANi9GI` |
 | `Unknown` | `o0gGIp1vd6A` |
 
+### Functional
+
+- [sceAudioPropagationSourceGetAudioPath](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `ErrorNullPointer` (`0x8A700003`) when the `outPath` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceAudioPropagationPathGetNumPoints](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `ErrorNullPointer` (`0x8A700003`) when the `count` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceAudioPropagationReportRegisterHandler](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `-1` when the `registration` output pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceAudioPropagationSourceGetAudioPathCount](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `ErrorNullPointer` (`0x8A700003`) when the `count` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+
 ### Silent stubs
 
 - [libSceAudioPropagation](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) lacks acoustic propagation: attributes have no effect, sources expose 36 initially empty, invalid path slots and no rays, rendering preserves the destination mix without adding path contributions, and allocated CPU work memory is mostly unused. Ray results and audio paths accept empty lists and throw otherwise; `sceAudioPropagationSourceCalculateAudioPaths` returns the initial native validation errors, then goes through `NotImplemented_nid_no_patch`, as propagation is not implemented. Room, portal, source and material handles are tracked, but destruction after their system is destroyed silently succeeds without native lifetime semantics being confirmed. Occlusion, reflections and reverb are absent.

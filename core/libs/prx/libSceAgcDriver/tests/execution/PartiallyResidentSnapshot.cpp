@@ -1,3 +1,4 @@
+#include "../PortabilitySubset.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -162,12 +163,13 @@ public:
             enabled.shaderInt64 = VK_TRUE;
             enabled.textureCompressionBC = supported.textureCompressionBC;
             address.pNext = &bytes;
-            const std::array<const char*, 2> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
+            std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos = &queue;
-            device.enabledExtensionCount = static_cast<std::uint32_t>(extensionsEnabled.size());
-            device.ppEnabledExtensionNames = extensionsEnabled.data();
+            AgcDriver::Tests::PortabilitySubset subset;
+            subset.Enable(context.physical, function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties"),
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), extensionsEnabled, device);
             device.pEnabledFeatures = &enabled;
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
             context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
@@ -532,7 +534,7 @@ public:
     TexelFetch& operator=(const TexelFetch&) = delete;
 
     void Run(VkCommandBuffer commands, std::uint32_t groups) const {
-        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+        context.BindComputePipeline(commands, pipeline);
         context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0u, 1u, &set, 0u, nullptr);
         context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groups, 1u, 1u);
     }

@@ -1,17 +1,20 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include <atomic>
+#include <climits>
 #include <cinttypes>
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libSceLibreSsl/include/Bio.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
+#include "src/PemReadBio.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "mbedtls/des.h"
@@ -20,6 +23,129 @@ namespace {
 
 constexpr std::size_t DesScheduleBytes = 128;
 constexpr int CryptoNumLocks = 41;
+constexpr int Asn1Library = 13;
+constexpr int SslLibrary = 20;
+constexpr int ErrorFunctionUnknown = 0xfff;
+constexpr int Asn1BadObjectHeader = 102;
+constexpr int Asn1HeaderTooLong = 123;
+constexpr int Asn1NestedError = 58;
+constexpr int Asn1SequenceNotConstructed = 149;
+constexpr int Asn1TooLong = 155;
+constexpr int Asn1WrongTag = 168;
+constexpr int ErrorAsn1Library = 13;
+
+void PutAsn1Error(int reason) {
+    LibreSslPutError_nid_no_patch(Asn1Library, ErrorFunctionUnknown, reason, __FILE__, __LINE__);
+}
+
+bool ParseX509OuterSequenceHeader(const unsigned char* data, int length) {
+    if (length == 0) {
+        PutAsn1Error(Asn1HeaderTooLong);
+        PutAsn1Error(Asn1BadObjectHeader);
+        PutAsn1Error(Asn1NestedError);
+        return false;
+    }
+
+    std::size_t cursor = 0;
+    const std::size_t available = static_cast<std::size_t>(length);
+    const unsigned char first = data[cursor++];
+    const bool constructed = (first & 0x20) != 0;
+    const int objectClass = first & 0xc0;
+    int tag = first & 0x1f;
+    if (tag == 0x1f) {
+        if (cursor == available) {
+            PutAsn1Error(Asn1HeaderTooLong);
+            PutAsn1Error(Asn1BadObjectHeader);
+            PutAsn1Error(Asn1NestedError);
+            return false;
+        }
+        std::uint64_t highTag = 0;
+        unsigned char byte = data[cursor++];
+        while ((byte & 0x80) != 0) {
+            highTag = (highTag << 7) | (byte & 0x7f);
+            if (cursor == available || highTag > (static_cast<std::uint64_t>(INT_MAX) >> 7)) {
+                PutAsn1Error(Asn1HeaderTooLong);
+                PutAsn1Error(Asn1BadObjectHeader);
+                PutAsn1Error(Asn1NestedError);
+                return false;
+            }
+            byte = data[cursor++];
+        }
+        highTag = (highTag << 7) | (byte & 0x7f);
+        if (highTag > static_cast<std::uint64_t>(INT_MAX)) {
+            PutAsn1Error(Asn1HeaderTooLong);
+            PutAsn1Error(Asn1BadObjectHeader);
+            PutAsn1Error(Asn1NestedError);
+            return false;
+        }
+        tag = static_cast<int>(highTag);
+    }
+
+    if (cursor == available) {
+        PutAsn1Error(Asn1HeaderTooLong);
+        PutAsn1Error(Asn1BadObjectHeader);
+        PutAsn1Error(Asn1NestedError);
+        return false;
+    }
+
+    const unsigned char firstLength = data[cursor++];
+    bool indefinite = false;
+    std::uint64_t contentLength = 0;
+    if (firstLength == 0x80) {
+        indefinite = true;
+        if (!constructed) {
+            PutAsn1Error(Asn1HeaderTooLong);
+            PutAsn1Error(Asn1BadObjectHeader);
+            PutAsn1Error(Asn1NestedError);
+            return false;
+        }
+    } else if ((firstLength & 0x80) == 0) {
+        contentLength = firstLength;
+    } else {
+        std::size_t lengthBytes = firstLength & 0x7f;
+        if (lengthBytes > available - cursor) {
+            PutAsn1Error(Asn1HeaderTooLong);
+            PutAsn1Error(Asn1BadObjectHeader);
+            PutAsn1Error(Asn1NestedError);
+            return false;
+        }
+        while (lengthBytes != 0 && data[cursor] == 0) {
+            ++cursor;
+            --lengthBytes;
+        }
+        if (lengthBytes > sizeof(std::int64_t)) {
+            PutAsn1Error(Asn1HeaderTooLong);
+            PutAsn1Error(Asn1BadObjectHeader);
+            PutAsn1Error(Asn1NestedError);
+            return false;
+        }
+        for (std::size_t index = 0; index < lengthBytes; ++index)
+            contentLength = (contentLength << 8) | data[cursor++];
+        if (contentLength > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+            PutAsn1Error(Asn1HeaderTooLong);
+            PutAsn1Error(Asn1BadObjectHeader);
+            PutAsn1Error(Asn1NestedError);
+            return false;
+        }
+    }
+
+    if (!indefinite && contentLength > available - cursor) {
+        PutAsn1Error(Asn1TooLong);
+        PutAsn1Error(Asn1BadObjectHeader);
+        PutAsn1Error(Asn1NestedError);
+        return false;
+    }
+    if (objectClass != 0 || tag != 16) {
+        PutAsn1Error(Asn1WrongTag);
+        PutAsn1Error(Asn1NestedError);
+        return false;
+    }
+    if (!constructed) {
+        PutAsn1Error(Asn1SequenceNotConstructed);
+        return false;
+    }
+    return true;
+}
 
 static_assert(sizeof(CryptoThreadId) == 16);
 
@@ -43,11 +169,6 @@ static_assert(offsetof(X509Extension, value) == 16);
 extern "C" {
 
 APS5_DUMMY_FUN
-int APS5_VABI BIO_f_ssl_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI BIO_printf_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -58,11 +179,6 @@ int APS5_VABI BIO_write_nid_postfix(LibreSsl::Bio* bio, const void* source, int 
 }
 
 void APS5_VABI CONF_modules_free_nid_postfix(void) {}
-
-int APS5_VABI CONF_modules_load_file_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI CRYPTO_THREADID_set_callback_nid_postfix(void* callback) {
     void* expected = nullptr;
@@ -141,16 +257,6 @@ int APS5_VABI ENGINE_set_default_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-
-int APS5_VABI OBJ_obj2nid_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 void APS5_VABI OCSP_BASICRESP_free_nid_postfix(void* response) {
     if (response != nullptr) NotImplemented_nid_no_patch(__func__);
@@ -203,24 +309,18 @@ int APS5_VABI PEM_X509_INFO_read_bio_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI PEM_read_RSAPrivateKey_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+extern "C" LibreSslX509* PEM_read_X509_impl_nid_no_patch(void* stream, LibreSslX509** certificate,
+                                                         LibreSslPemPasswordCallback passwordCallback,
+                                                         void* userData);
+
+LibreSslX509* APS5_VABI PEM_read_X509_nid_postfix(void* stream, LibreSslX509** certificate,
+                                                 LibreSslPemPasswordCallback passwordCallback, void* userData) {
+    return PEM_read_X509_impl_nid_no_patch(stream, certificate, passwordCallback, userData);
 }
 
-int APS5_VABI PEM_read_X509_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI PEM_read_bio_PrivateKey_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+LibreSslX509* APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(LibreSsl::Bio* bio, LibreSslX509** certificate,
+                                                          LibreSslPemPasswordCallback callback, void* userData) {
+    return LibreSsl::ReadPemRecord(bio, certificate, callback, userData, "TRUSTED CERTIFICATE", __func__);
 }
 
 int APS5_VABI PEM_write_bio_X509_nid_postfix(void) {
@@ -278,11 +378,6 @@ int APS5_VABI SSL_CTX_set_alpn_protos_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_CTX_set_cipher_list_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 
 
 int APS5_VABI SSL_CTX_use_PrivateKey_nid_postfix(LibreSslCtx*, void* pkey) {
@@ -326,9 +421,22 @@ int APS5_VABI SSL_CTX_use_PrivateKey_file_nid_postfix(LibreSslCtx* ctx, const ch
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_CTX_use_certificate_ASN1_nid_postfix(void) {
+int APS5_VABI SSL_CTX_use_certificate_ASN1_nid_postfix(LibreSslCtx* context, int length, const unsigned char* data) {
+    static_cast<void>(context);
+    if (length < 0) {
+        if (length == INT_MIN || data == nullptr || (data[0] & 0x1f) == 0x1f) NotImplemented_nid_no_patch(__func__);
+        PutAsn1Error(Asn1HeaderTooLong);
+        PutAsn1Error(Asn1BadObjectHeader);
+        PutAsn1Error(Asn1NestedError);
+        LibreSslPutError_nid_no_patch(SslLibrary, ErrorFunctionUnknown, ErrorAsn1Library, __FILE__, __LINE__);
+        return 0;
+    }
+    if (length > 0 && data == nullptr) NotImplemented_nid_no_patch(__func__);
+    if (!ParseX509OuterSequenceHeader(data, length)) {
+        LibreSslPutError_nid_no_patch(SslLibrary, ErrorFunctionUnknown, ErrorAsn1Library, __FILE__, __LINE__);
+        return 0;
+    }
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI SSL_CTX_use_certificate_chain_file_nid_postfix(LibreSslCtx* ctx, const char* file) {
@@ -398,11 +506,6 @@ void APS5_VABI SSL_SESSION_free_nid_postfix(void* session) {
 }
 
 int APS5_VABI SSL_accept_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_check_private_key_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -696,11 +799,6 @@ const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t err
     static char unknown[100];
     std::snprintf(unknown, sizeof(unknown), "error number %" PRId64, error);
     return unknown;
-}
-
-int APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 void* APS5_VABI d2i_PKCS12_bio_nid_postfix(LibreSsl::Bio* bio, void** output) {

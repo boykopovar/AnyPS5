@@ -433,7 +433,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPathCount(AudioPropagati
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
     require(count != nullptr, __func__);
-    *count = MaxPaths;
+    if (!copyGuestOut(count, static_cast<std::uint32_t>(MaxPaths))) return ErrorNullPointer;
     return 0;
 }
 
@@ -444,7 +444,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHan
     if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     if (!outPath) return ErrorNullPointer;
     if (index >= MaxPaths) return ErrorInvalidArgument;
-    *outPath = state.sourcePaths.at(source)[index];
+    if (!copyGuestOut(outPath, state.sourcePaths.at(source)[index])) return ErrorNullPointer;
     return 0;
 }
 
@@ -453,7 +453,7 @@ std::int32_t APS5_VABI sceAudioPropagationPathGetNumPoints(AudioPropagationHandl
     std::lock_guard lock(state.mutex);
     requireObject(state, path, Kind::Path, __func__);
     require(count != nullptr, __func__);
-    *count = state.paths.at(path).data.pointCount;
+    if (!copyGuestOut(count, state.paths.at(path).data.pointCount)) return ErrorNullPointer;
     return 0;
 }
 
@@ -705,7 +705,14 @@ int APS5_VABI sceAudioPropagationReportRegisterHandler(std::uint32_t category, R
             slot.userData = userData;
             slot.handler = handler;
             ++slot.generation;
-            if (registration) *registration = &slot;
+            if (registration) {
+                if (!copyGuestOut(registration, &slot)) {
+                    slot.userData = nullptr;
+                    slot.handler = nullptr;
+                    --slot.generation;
+                    return -1;
+                }
+            }
             return 0;
         }
     }

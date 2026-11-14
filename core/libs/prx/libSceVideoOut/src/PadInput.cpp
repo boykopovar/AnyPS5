@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
 #include <filesystem>
 #include <span>
 #include <stdexcept>
@@ -42,6 +43,17 @@ void stopRumble(SDL_GameController* controller) {
     if (SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE) SDL_GameControllerRumbleTriggers(controller, 0, 0, 0);
 }
 
+bool publishInputMapping(Pad::InputMappingStore& mappings, const std::string& titleId) {
+    Pad::InputConfiguration configuration;
+    std::string error;
+    if (!Pad::TryLoadInputMapping(titleId, configuration, error)) {
+        APS5_LOG_ERR("Pad: input mapping reload rejected, the previous mapping stays active: %s", error.c_str());
+        return false;
+    }
+    mappings.Publish(std::move(configuration));
+    return true;
+}
+
 std::string appTitleId() {
     if (!std::filesystem::exists(ResolvePath_nid_no_patch("/app0/sce_sys/param.json")) && !std::filesystem::exists(ResolvePath_nid_no_patch("/app0/sce_sys/param.sfo"))) return {};
     const auto titleId = GetAppTitleId_nid_postfix();
@@ -52,6 +64,7 @@ std::string appTitleId() {
 
 PadInput::PadInput() : PadInput(Pad::LoadInputMapping(appTitleId())) {
     HostVolumeConfigureFromEnvironment_nid_no_patch();
+    startInputMappingWatch();
 }
 
 static_assert(PAD_MAX_CONTROLLERS == AgcDriver::PadStatusSlots, "the pad status panel lists one line per controller slot");
@@ -66,6 +79,8 @@ PadInput::PadInput(Pad::InputConfiguration configuration) : mappings(std::move(c
 }
 
 PadInput::~PadInput() {
+    mappingWatchStop = true;
+    if (mappingWatchThread.joinable()) mappingWatchThread.join();
     for (int i = 0; i < PAD_MAX_CONTROLLERS; ++i) {
         closeController(i);
     }
@@ -371,15 +386,29 @@ void PadInput::applyMappingSnapshot() {
 }
 
 void PadInput::reloadInputMapping() {
-    Pad::InputConfiguration configuration;
-    std::string error;
-    if (!Pad::TryLoadInputMapping(appTitleId(), configuration, error)) {
-        APS5_LOG_ERR("Pad: input mapping reload rejected, the previous mapping stays active: %s", error.c_str());
-        return;
-    }
-    mappings.Publish(std::move(configuration));
+    if (!publishInputMapping(mappings, appTitleId())) return;
     applyMappingSnapshot();
     APS5_LOG_CHARS_OUT("Pad: input mapping reloaded");
+}
+
+void PadInput::startInputMappingWatch() {
+    const char* enabled = std::getenv("ANYPS5_INPUT_WATCH");
+    if (enabled == nullptr || std::string_view(enabled) != "1") return;
+    auto titleId = appTitleId();
+    auto watch = Pad::InputMappingWatch(Pad::InputMappingFileStamp(titleId));
+    mappingWatchThread = std::thread([this, titleId = std::move(titleId), watch = std::move(watch)]() mutable {
+        watchInputMapping(titleId, std::move(watch));
+    });
+    APS5_LOG_CHARS_OUT("Pad: watching the input mapping for changes (ANYPS5_INPUT_WATCH=1)");
+}
+
+void PadInput::watchInputMapping(std::string titleId, Pad::InputMappingWatch watch) {
+    while (!mappingWatchStop) {
+        for (int slice = 0; slice < 10 && !mappingWatchStop; ++slice) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (mappingWatchStop) return;
+        if (!watch.Poll(Pad::InputMappingFileStamp(titleId))) continue;
+        if (publishInputMapping(mappings, titleId)) APS5_LOG_CHARS_OUT("Pad: input mapping reloaded from a file change");
+    }
 }
 
 void PadInput::setMouseMode(bool enabled) {
@@ -489,6 +518,7 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
             if (slots[slot].controller != nullptr && slots[slot].instanceId == which) {
                 slots[slot].state = sampleController(slot);
+                if (slot == 0 && (event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERBUTTONUP)) dispatchPadChords(window);
                 publish(window.FrameNumber(), slot);
                 return;
             }
@@ -511,21 +541,41 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     if (event.type == SDL_KEYDOWN && ImeCapturesKeyboard_nid_postfix()) return;
     if (event.type != SDL_KEYUP && event.type != SDL_MOUSEBUTTONUP && ModalDialogCapturesInput_nid_postfix()) return;
     keyboardMouse.SetTitleReadsMouse(MouseIsOpen_nid_no_patch());
+    static const bool mouseTouchpad = std::getenv("ANYPS5_MOUSE_TOUCHPAD") != nullptr && std::string_view(std::getenv("ANYPS5_MOUSE_TOUCHPAD")) == "1";
+    keyboardMouse.SetMouseTouchpad(mouseTouchpad);
+    static const bool mouseGyro = std::getenv("ANYPS5_MOUSE_GYRO") != nullptr && std::string_view(std::getenv("ANYPS5_MOUSE_GYRO")) == "1";
+    keyboardMouse.SetMouseGyro(mouseGyro);
+    int viewportWidth = 0;
+    int viewportHeight = 0;
+    if (window.Handle() != nullptr) SDL_GetWindowSize(window.Handle(), &viewportWidth, &viewportHeight);
+    keyboardMouse.SetViewport(viewportWidth, viewportHeight);
     const auto requests = keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now());
+    const bool targetsWindow = window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle());
+    applyRequests(requests, targetsWindow, window);
+    if (requests.toggleMouse) setMouseMode(!keyboardMouse.MouseMode());
+    if (event.type != SDL_MOUSEMOTION) publish(window.FrameNumber(), 0);
+}
+
+void PadInput::dispatchPadChords(DisplayWindow& window) {
+    if (ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix()) return;
+    const auto requests = keyboardMouse.PadChordRequests(slots[0].state.buttons);
+    const bool focused = window.Handle() != nullptr && SDL_GetKeyboardFocus() == window.Handle();
+    applyRequests(requests, focused, window);
+}
+
+void PadInput::applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window) {
     if (requests.reloadInputMapping) reloadInputMapping();
-    if (requests.toggleFullscreen && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) window.ToggleFullscreen();
-    if (requests.togglePerformanceOverlay && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverTogglePerformanceOverlay_nid_postfix();
-    if (requests.screenshot && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverRequestScreenshot_nid_postfix();
-    if (requests.showPadStatus && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) {
+    if (requests.toggleFullscreen && windowFocused) window.ToggleFullscreen();
+    if (requests.togglePerformanceOverlay && windowFocused) AgcDriverTogglePerformanceOverlay_nid_postfix();
+    if (requests.screenshot && windowFocused) AgcDriverRequestScreenshot_nid_postfix();
+    if (requests.showPadStatus && windowFocused) {
         AgcDriverPadStatusShow_nid_postfix();
         reportStatus();
     }
-    if (window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) {
+    if (windowFocused) {
         HostVolume volume;
         if (ApplyHostVolumeRequests(requests, &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
     }
-    if (requests.toggleMouse) setMouseMode(!keyboardMouse.MouseMode());
-    if (event.type != SDL_MOUSEMOTION) publish(window.FrameNumber(), 0);
 }
 
 void PadInput::Update(const DisplayWindow& window) {

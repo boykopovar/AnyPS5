@@ -45,6 +45,17 @@ struct WriteIndexOutcomes {
 };
 WriteIndexOutcomes WriteIndexOutcomesCounted();
 std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage = false);
+struct StorageTextureBudgetSnapshot {
+    std::optional<std::uint32_t> heap;
+    std::uint64_t sampledBytes = 0;
+    std::uint64_t storageBytes = 0;
+    std::uint64_t reserved = 0;
+    std::uint64_t available = 0;
+    std::uint64_t ceiling = 0;
+    std::uint64_t selectedBudget = 0;
+};
+
+StorageTextureBudgetSnapshot CalculateStorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes);
 std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory);
 std::uint64_t StorageTextureCeiling(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported);
 std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes);
@@ -593,6 +604,9 @@ private:
         const StorageTexture* source = nullptr;
         bool depth = false;
         bool valid = false;
+        std::uint64_t committedGeneration = 0;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> committed;
+        bool committedProved = false;
     };
     bool keepsTemplateRecords() const;
     void captureValidation();

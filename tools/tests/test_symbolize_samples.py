@@ -595,6 +595,30 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertIn("13 260.0%  libSceAgcDriver.prx!short", inclusive[0])
         self.assertIn("5 100.0%  libSceAgcDriver.prx!AgcDriver_long_function_name", inclusive[1])
 
+    def test_address_file_rejects_nonhexadecimal_offsets(self):
+        samples = self.root / "bad-address.txt"
+        for offset in ("0xNOTHEX", "0x", "0x101g", "1011"):
+            with self.subTest(offset=offset):
+                samples.write_text(f"# 5 samples\nMy Game.exe {offset} 5 5\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, r"bad-address\.txt:2:.*hexadecimal offset"):
+                    symbolize_samples.load(samples)
+                result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                         "--libs", str(self.libs)], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("bad-address.txt:2:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+        samples.write_text("# 5 samples\nMy Game.exe 0xABCD 5 5\n", encoding="utf-8")
+        self.assertEqual(symbolize_samples.load(samples).self_counts[("My Game.exe", "0xABCD")], 5)
+
+    def test_collapsed_stack_with_spaced_numeric_module_name_keeps_its_count(self):
+        samples = self.root / "worker.collapsed.txt"
+        stack = "ntdll.dll+0x10;My 2 Game.exe+0x1011"
+        samples.write_text(f"# samples=5 depth=64 truncated=0\n{stack} 5\n", encoding="utf-8")
+        capture = symbolize_samples.load(samples)
+        self.assertEqual(capture.stacks, {stack: 5})
+        self.assertEqual(capture.self_counts, {})
+
     def test_a_symbol_does_not_reach_into_a_later_code_section(self):
         build_pe(self.libs / "two.prx", second_code=True)
         module = symbolize_samples.PeModule(self.libs / "two.prx")
@@ -895,6 +919,40 @@ class SymbolizeSamplesTests(unittest.TestCase):
                 self.assertFalse(getattr(symbolize_samples.window(later, earlier), category))
                 getattr(later, category)[key] = 5
                 symbolize_samples.validate_window(later, earlier)
+
+    def test_strict_window_rejects_ambiguous_module_records(self):
+        earlier, later = self.root / "earlier.txt", self.root / "later.txt"
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        for frames in ("libSceAgcDriver.prx+0x1011 {count}\n",
+                       "libSceAgcDriver.prx 0x1011 {count} {count}\n"):
+            for timestamp in (TIMESTAMP, TIMESTAMP + 1):
+                with self.subTest(frames=frames, timestamp=timestamp):
+                    earlier.write_text(record * 2 + frames.format(count=4), encoding="utf-8")
+                    later.write_text(record + f"# module LIBSCEAGCDRIVER.PRX {SIZE_OF_IMAGE:#x} {timestamp:#x}\n" +
+                                     frames.format(count=7), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "libSceAgcDriver.prx:.*multiple sampled modules"):
+                        symbolize_samples.validate_window(symbolize_samples.load(later),
+                                                          symbolize_samples.load(earlier))
+
+    def test_strict_window_ambiguous_modules_preserve_files(self):
+        earlier, later, output = [self.root / name for name in ("earlier.txt", "later.txt", "output.txt")]
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        earlier.write_text(record * 2 + "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+        later.write_text(record * 2 + "libSceAgcDriver.prx+0x1011 7\n", encoding="utf-8")
+        output.write_bytes(b"previous output\n")
+        original = {path: path.read_bytes() for path in (earlier, later, output)}
+        for flags in ([], ["--json"]):
+            with self.subTest(flags=flags):
+                result = subprocess.run([sys.executable, symbolize_samples.__file__, str(later),
+                                         "--libs", str(self.libs), "--since", str(earlier), "--out", str(output),
+                                         "--require-matching-window", *flags], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("libSceAgcDriver.prx", result.stderr)
+                self.assertIn("multiple sampled modules", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                for path, content in original.items():
+                    self.assertEqual(path.read_bytes(), content)
 
     def test_strict_window_cli_is_opt_in_and_rejects_before_writing_output(self):
         record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
