@@ -15,6 +15,7 @@
 
 ### Functional
 
+- [sceCameraSetAttribute guest input](../../../core/libs/prx/libSceCamera/src/Attributes.cpp) (libSceCamera) - returning SCE_CAMERA_ERROR_PARAM for an unreadable attribute pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [sceCameraGetWhiteBalance](../../../core/libs/prx/libSceCamera/src/Attributes.cpp) (libSceCamera) - returning SCE_CAMERA_ERROR_PARAM for an unwritable output pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [sceCameraGetDeviceConfig](../../../core/libs/prx/libSceCamera/src/Config.cpp) (libSceCamera) - returning SCE_CAMERA_ERROR_PARAM for an unwritable output pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [sceCameraGetDeviceConfigWithoutHandle](../../../core/libs/prx/libSceCamera/src/Config.cpp) (libSceCamera) - returning SCE_CAMERA_ERROR_PARAM for an unwritable output pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
