@@ -1,5 +1,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/src/WebCoreLayoutUnit.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -11,28 +12,8 @@ namespace WebCore {
 
 namespace {
 
-int ClampToInteger(float value) {
-    if (value >= static_cast<float>(std::numeric_limits<int>::max())) {
-        return std::numeric_limits<int>::max();
-    }
-    if (!(value > static_cast<float>(std::numeric_limits<int>::min()))) {
-        return std::numeric_limits<int>::min();
-    }
-    return static_cast<int>(value);
-}
-
 int TruncateToIntegerOrMin(float value) {
     if (!(value >= -2147483648.0f && value < 2147483648.0f)) {
-        return std::numeric_limits<int>::min();
-    }
-    return static_cast<int>(value);
-}
-
-int ClampToInteger(double value) {
-    if (value >= static_cast<double>(std::numeric_limits<int>::max())) {
-        return std::numeric_limits<int>::max();
-    }
-    if (!(value > static_cast<double>(std::numeric_limits<int>::min()))) {
         return std::numeric_limits<int>::min();
     }
     return static_cast<int>(value);

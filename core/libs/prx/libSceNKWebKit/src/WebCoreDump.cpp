@@ -1,8 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/src/WebCoreLayoutUnit.hpp"
 
-#include <climits>
 #include <cstdint>
 #include <stdexcept>
 
@@ -54,20 +54,13 @@ float ToFloat(WebCore::LayoutUnit value) {
     return static_cast<float>(value.m_value) / FixedPointDenominator;
 }
 
-int SaturatedSum(int a, int b) {
-    long long sum = static_cast<long long>(a) + b;
-    if (sum > INT_MAX) return INT_MAX;
-    if (sum < INT_MIN) return INT_MIN;
-    return static_cast<int>(sum);
-}
-
 int Round(WebCore::LayoutUnit value) {
-    return SaturatedSum(value.m_value, FixedPointDenominator / 2) >> LayoutUnitFractionalBits;
+    return WebCore::SaturatedSum(value.m_value, FixedPointDenominator / 2) >> LayoutUnitFractionalBits;
 }
 
 int SnapSize(WebCore::LayoutUnit size, WebCore::LayoutUnit location) {
     WebCore::LayoutUnit fraction{location.m_value % FixedPointDenominator};
-    return Round(WebCore::LayoutUnit{SaturatedSum(fraction.m_value, size.m_value)}) - Round(fraction);
+    return Round(WebCore::LayoutUnit{WebCore::SaturatedSum(fraction.m_value, size.m_value)}) - Round(fraction);
 }
 
 const char* const kCompositeOperatorNames[] = {
