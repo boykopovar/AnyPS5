@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -101,12 +102,25 @@ static void Forwarding() {
     CheckForward(0, false, false, {0, 100});
 }
 
+static void Unregistered() {
+    RegisterClockGetres_nid_no_patch(nullptr);
+    bool threw = false;
+    try {
+        timespec_getres_nid_postfix(nullptr, 1);
+    } catch (const std::runtime_error& error) {
+        threw = std::strcmp(error.what(), "timespec_getres: libkernel clock_getres is not registered") == 0;
+    }
+    Require(threw);
+    RegisterClockGetres_nid_no_patch(&ClockResolution);
+}
+
 static void Errors() {
     for (const int result : {-1, 1, INT_MIN, INT_MAX, static_cast<int>(0x8002000E)}) {
         for (const bool write : {false, true}) {
             for (const bool null : {false, true}) CheckForward(result, write, null, {7, 7654321});
         }
     }
+    Unregistered();
 }
 
 static void Integration() {

@@ -601,7 +601,7 @@ void RegisterClockGetres_nid_no_patch(ClockGetresFn_nid_no_patch fn) {
 int APS5_VABI timespec_getres_nid_postfix(KernelTimespec* result, int base) {
     if (base != 1) return 0;
     const auto clockGetres = registeredClockGetres.load(std::memory_order_acquire);
-    if (clockGetres == nullptr) NotImplemented_nid_no_patch(__func__);
+    if (clockGetres == nullptr) throw std::runtime_error("timespec_getres: libkernel clock_getres is not registered");
     return clockGetres(0, result) == 0 ? 1 : 0;
 }
 
