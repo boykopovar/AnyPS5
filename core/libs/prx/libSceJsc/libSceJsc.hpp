@@ -9,6 +9,7 @@
 #include "prx/libSceJsc/include/InventoryExports.hpp"
 #include "prx/libSceJsc/include/PlacementNewExports.hpp"
 #include "prx/libSceJsc/include/WtfCpuTimeExports.hpp"
+#include "prx/libSceJsc/include/WtfFileSystemExports.hpp"
 #include "prx/libSceJsc/include/WtfHelperExports.hpp"
 #include "prx/libSceJsc/include/WtfPageBlockExports.hpp"
 #include "prx/libSceJsc/include/WtfRandomExports.hpp"

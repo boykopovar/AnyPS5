@@ -305,21 +305,6 @@ int APS5_VABI _ZN3rtc15CurrentThreadIdEv_nid_postfix(void) {
     return scePthreadGetthreadid();
 }
 
-int APS5_VABI _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc12EncodedImageC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc12EncodedImageD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc10I420Buffer6CreateEiiiii_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -460,16 +445,6 @@ int APS5_VABI _ZN6webrtc14SdpVideoFormatD1Ev_nid_postfix(void) {
 }
 
 int APS5_VABI _ZNK6webrtc19VideoDecoderFactory17QueryCodecSupportERKNS_14SdpVideoFormatEb_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc12VideoEncoder11EncoderInfoC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc12VideoEncoder11EncoderInfoD1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
