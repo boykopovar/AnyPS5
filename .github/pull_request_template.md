@@ -7,7 +7,7 @@
 <!-- Rules behind each item: https://github.com/boykopovar/AnyPS5/blob/main/CONTRIBUTING.md -->
 - [ ] Based on current `main`; no other open PR implements the same functions
 - [ ] One topic per PR; follow-ups go in a new PR
-- [ ] No comments in code except [technical debt](https://github.com/boykopovar/AnyPS5/blob/main/docs/dev/CONVENTIONS.md)
+- [ ] No comments in code except [technical debt](https://github.com/boykopovar/AnyPS5/blob/main/docs/dev/CONVENTIONS.md) and the licence notice of code adapted from upstream (see AGENTS.md)
 - [ ] Unimplemented paths throw (`NotImplemented_nid_no_patch`); silent stubs are listed under Silent stubs in their library's [technical debt](https://github.com/boykopovar/AnyPS5/tree/main/docs/dev/debt) file
 - [ ] No notes, investigation `.md` files or images added to the repository (attach them to this PR)
 - [ ] New third-party code is a submodule built from source
