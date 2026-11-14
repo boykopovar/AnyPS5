@@ -5927,6 +5927,10 @@ bool GuestBufferMemory::RetakeSpace() {
     }
     spaces.hits.fetch_add(1, std::memory_order_relaxed);
     space = std::move(current);
+    if (!space->base.empty()) {
+        const auto begin = space->base.front().begin;
+        StorageTexture::PublishShadowsOnly(begin, static_cast<std::size_t>(space->base.back().end - begin), PublishScope::Whole, "address-based heaps");
+    }
     std::vector<RefreshBlock> blocks;
     const auto epoch = GuestMemory::CollectEpoch();
     const auto proof = GuestMemory::ProofSerial();
