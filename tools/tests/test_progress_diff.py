@@ -88,6 +88,11 @@ class PercentageTests(unittest.TestCase):
                 section = self.section(base_percent, head_percent)
                 self.assertEqual(section["change_percentage_points"], change)
 
+    def test_baseline_and_candidate_percent_are_passed_through_unrounded(self):
+        section = self.section(12.345, 12.349)
+        self.assertEqual(section["baseline_percent"], 12.345)
+        self.assertEqual(section["candidate_percent"], 12.349)
+
 
 if __name__ == "__main__":
     unittest.main()
