@@ -831,7 +831,7 @@ if(BUILD_TESTING)
     add_test(NAME guest_libressl3_obj_obj2txt COMMAND guest_libressl3_obj_obj2txt_tests)
     set_tests_properties(guest_libressl3_obj_obj2txt PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_libressl3_obj_obj2txt_tests PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_libressl3_obj_obj2txt PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
 endif()
