@@ -43,10 +43,23 @@ void TestByteStringSemantics() {
     Require(uprv_isInvariantString_nid_postfix("abc", 0) != 0, "a zero length checks nothing");
 }
 
+void TestUtf16StringSemantics() {
+    const char16_t plain[] = {'A', 'b', ' ', '9', 0};
+    const char16_t variant[] = {'A', 0x00E9, 0};
+    const char16_t exclaim[] = {'!', 0};
+    Require(uprv_isInvariantUString_nid_postfix(plain, -1) != 0, "NUL-terminated invariant UTF-16 string is invariant");
+    Require(uprv_isInvariantUString_nid_postfix(variant, -1) == 0, "a UTF-16 unit above 127 makes the string variant");
+    Require(uprv_isInvariantUString_nid_postfix(exclaim, -1) == 0, "'!' is variant in UTF-16 too");
+    Require(uprv_isInvariantUString_nid_postfix(plain, 0) != 0, "a zero-length UTF-16 string checks nothing");
+    const char16_t withNul[] = {'a', 0, '!'};
+    Require(uprv_isInvariantUString_nid_postfix(withNul, 3) == 0, "a UTF-16 NUL is invariant, and a later '!' still makes a length-limited string variant");
+}
+
 }
 
 int main() {
     TestSingleCharacterSetMatchesTheDocumentedRanges();
     TestByteStringSemantics();
+    TestUtf16StringSemantics();
     return 0;
 }
