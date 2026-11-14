@@ -41,6 +41,52 @@ std::vector<char> Read(const std::filesystem::path& path) {
     return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
 }
 
+int Backup(const char* data) {
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, data, std::strlen(data) + 1);
+    SaveDataBackup backup{};
+    backup.user_id = 0x10000000;
+    backup.dir_name = &name;
+    return sceSaveDataBackup(&backup);
+}
+
+void CheckBackupProgress() {
+    float progress = 0.25f;
+    Check(sceSaveDataGetProgress(&progress) == SaveDataErrorNotInitialized, "progress query before initialize fails with not initialized");
+    Check(progress == 0.25f, "an uninitialized progress query leaves the value untouched");
+    Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes for the progress checks");
+    Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds");
+    Check(progress == 0.0f, "progress reports 0.0f before any backup");
+    progress = 0.25f;
+    Check(sceSaveDataGetProgress(nullptr) == SaveDataErrorParameter, "null progress pointer is rejected");
+    Check(sceSaveDataGetProgress(reinterpret_cast<float*>(0x10)) == SaveDataErrorParameter, "unwritable progress pointer is rejected");
+    Check(progress == 0.25f, "a rejected progress query leaves the value untouched");
+    Check(sceSaveDataBackup(nullptr) == SaveDataErrorParameter, "null backup pointer is rejected");
+    Check(progress == 0.25f, "a rejected backup leaves progress untouched");
+    Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after a rejected backup");
+    Check(progress == 0.0f, "progress reports 0.0f after a rejected backup");
+    Check(Backup("progress") == 0, "a backup succeeds");
+    Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after a backup");
+    Check(progress == 1.0f, "progress reports 1.0f after a backup");
+    Check(sceSaveDataTerminate() == 0, "SaveData terminates after a backup");
+    Check(sceSaveDataGetProgress(&progress) == SaveDataErrorNotInitialized, "progress query after terminate fails with not initialized");
+    Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData reinitializes after the progress checks");
+    Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after reinitialize");
+    Check(progress == 0.0f, "progress does not survive a terminate");
+    Check(Backup("progress") == 0, "a backup succeeds after reinitialize");
+    Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after the second backup");
+    Check(progress == 1.0f, "progress reports 1.0f after the second backup");
+    Check(sceSaveDataClearProgress() == 0, "clear progress succeeds");
+    Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after clear progress");
+    Check(progress == 0.0f, "clear progress resets the value");
+    SaveDataEvent event{};
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, "the first backup queues a completion");
+    Check(event.type == 2 && event.error_code == 0, "the completion reports a successful backup");
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, "the second backup queues a completion");
+    Check(sceSaveDataGetEventResult(nullptr, &event) == SaveDataErrorNotFound, "the rejected backup queues no completion");
+    Check(sceSaveDataTerminate() == 0, "SaveData terminates after the progress checks");
+}
+
 }
 
 int main() {
@@ -58,9 +104,14 @@ int main() {
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds");
     Check(progress == 0.0f, "convert progress reports 0.0f initially");
     Check(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter, "null progress pointer is rejected");
+    Check(sceSaveDataGetConvertProgress(reinterpret_cast<float*>(0x10)) == SaveDataErrorParameter, "unwritable progress pointer is rejected");
     Check(sceSaveDataConvert(nullptr) == SaveDataErrorParameter, "null convert pointer is rejected");
+    Check(sceSaveDataConvert(reinterpret_cast<const SaveDataConvert*>(0x10)) == SaveDataErrorParameter, "unmapped convert pointer is rejected");
     SaveDataConvert nullDir{};
     Check(sceSaveDataConvert(&nullDir) == SaveDataErrorParameter, "null dir_name pointer is rejected");
+    SaveDataConvert unmappedDir{};
+    unmappedDir.dir_name = reinterpret_cast<const SceSaveDataDirName*>(0x10);
+    Check(sceSaveDataConvert(&unmappedDir) == SaveDataErrorParameter, "unmapped dir_name pointer is rejected");
     Check(Convert("missing", sizeof("missing")) == SaveDataErrorNotFound, "a missing save is not found");
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds after failed convert");
     Check(progress < 1.0f, "convert progress is below 1.0f after failed convert");
@@ -86,6 +137,7 @@ int main() {
     Check(Convert(unterminated, sizeof(unterminated)) == SaveDataErrorParameter, "an unterminated name is rejected");
     Check(sceSaveDataTerminate() == 0, "SaveData terminates");
     Check(sceSaveDataGetConvertProgress(&progress) == SaveDataErrorNotInitialized, "query after terminate fails with not initialized");
+    CheckBackupProgress();
 
     std::filesystem::current_path(previous);
     std::error_code error;

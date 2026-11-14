@@ -1,10 +1,13 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommandEncoder.hpp"
 #include "prx/libSceAgcDriver/tests/AllocationFailure.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <csignal>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iostream>
@@ -14,8 +17,11 @@
 #include <memory>
 #include <mutex>
 #include <random>
+#include <source_location>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <vector>
@@ -170,7 +176,7 @@ struct Oracle {
             FakeExpect(commands, "draw " + std::to_string(value) + " 1 " + std::to_string(value / 2) + " 0");
             break;
         case 1:
-            table.cmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, Handle<VkPipeline>(value + 1));
+            CommandEncoder::Unwrap(table.cmdBindPipeline)(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, Handle<VkPipeline>(value + 1));
             FakeExpect(commands, "pipeline 0 " + std::to_string(value + 1));
             break;
         case 2: {
@@ -180,7 +186,7 @@ struct Oracle {
                 viewports[index] = VkViewport{static_cast<float>(value + index), 0.0f, static_cast<float>(index), 1.0f, 0.0f, 1.0f};
                 text += " " + std::to_string(viewports[index].x) + "," + std::to_string(viewports[index].width);
             }
-            table.cmdSetViewport(commands, 0, static_cast<std::uint32_t>(viewports.size()), viewports.data());
+            CommandEncoder::Unwrap(table.cmdSetViewport)(commands, 0, static_cast<std::uint32_t>(viewports.size()), viewports.data());
             std::fill(viewports.begin(), viewports.end(), VkViewport{});
             FakeExpect(commands, text);
             break;
@@ -245,7 +251,7 @@ struct Oracle {
             const std::uint32_t count = 1 + value % 3;
             std::string text = "mask " + std::to_string(first);
             for (std::uint32_t index = 0; index < count; ++index) text += " " + std::to_string(masks[index]);
-            table.cmdSetColorWriteMask(commands, first, count, masks);
+            CommandEncoder::Unwrap(table.cmdSetColorWriteMask)(commands, first, count, masks);
             std::fill(std::begin(masks), std::end(masks), 0u);
             FakeExpect(commands, text);
             break;
@@ -360,7 +366,7 @@ void RandomProgramRecordsWhatInlineRecords(std::uint32_t seed, bool delays) {
 void EveryCommandOfTheTableIsInterposed() {
     static_assert(std::is_standard_layout_v<DeviceFunctions> && sizeof(DeviceFunctions) % sizeof(void*) == 0, "the table must be a plain array of entry points");
     constexpr std::size_t entries = sizeof(DeviceFunctions) / sizeof(void*);
-    const std::size_t notCommands[]{offsetof(DeviceFunctions, updateDescriptorSets) / sizeof(void*), offsetof(DeviceFunctions, allocateDescriptorSets) / sizeof(void*), offsetof(DeviceFunctions, getFenceStatus) / sizeof(void*)};
+    const std::size_t notCommands[]{offsetof(DeviceFunctions, updateDescriptorSets) / sizeof(void*), offsetof(DeviceFunctions, allocateDescriptorSets) / sizeof(void*), offsetof(DeviceFunctions, getFenceStatus) / sizeof(void*), offsetof(DeviceFunctions, createBuffer) / sizeof(void*), offsetof(DeviceFunctions, destroyBuffer) / sizeof(void*), offsetof(DeviceFunctions, getBufferMemoryRequirements) / sizeof(void*), offsetof(DeviceFunctions, bindBufferMemory) / sizeof(void*), offsetof(DeviceFunctions, allocateMemory) / sizeof(void*), offsetof(DeviceFunctions, freeMemory) / sizeof(void*), offsetof(DeviceFunctions, mapMemory) / sizeof(void*), offsetof(DeviceFunctions, unmapMemory) / sizeof(void*)};
     DeviceFunctions table{};
     void* before[entries];
     for (std::size_t index = 0; index < entries; ++index) before[index] = reinterpret_cast<void*>(&FakeDraw);
@@ -666,6 +672,126 @@ void RawCallAfterLookupKeepsOrder() {
     Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0", "draw 3 1 0 0", "draw 4 1 0 0"}}}, "a raw call after a lookup inside a window");
 }
 
+const CommandEncoder::SiteWaits* SiteOf(const std::vector<CommandEncoder::SiteWaits>& sites, const CommandEncoder::WaitSite& site) {
+    const auto wanted = CommandEncoder::Describe(site);
+    const CommandEncoder::SiteWaits* found = nullptr;
+    for (const auto& entry : sites) {
+        if (CommandEncoder::Describe(entry.site) != wanted) continue;
+        Require(found == nullptr, "the wait site " + wanted + " was reported twice");
+        found = &entry;
+    }
+    return found;
+}
+
+void RequireSite(const std::vector<CommandEncoder::SiteWaits>& sites, const CommandEncoder::WaitSite& site, std::uint64_t waits, std::uint64_t flushes) {
+    const auto* entry = SiteOf(sites, site);
+    const auto name = CommandEncoder::Describe(site);
+    Require(entry != nullptr, "no waits were attributed to " + name + "; sites:" + CommandEncoder::Report(sites, sites.size()));
+    Require(entry->waits == waits, name + " waited " + std::to_string(entry->waits) + " times, expected " + std::to_string(waits));
+    Require(entry->flushes == flushes, name + " flushed " + std::to_string(entry->flushes) + " chunks, expected " + std::to_string(flushes));
+    Require(entry->waitNs >= waits * 1'000'000ull, name + " reported " + std::to_string(entry->waitNs) + " ns for " + std::to_string(waits) + " waits on a 2 ms replay");
+}
+
+void SetEnvironment(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+void SitesAreCountedOnlyWhenProfiled() {
+    SetEnvironment("APS5_PROFILE_ENCODER", "0");
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x55);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    const auto commands = Handle<VkCommandBuffer>(0x1800);
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(2)); });
+    encoder.Open(commands, RecordingOf(commands));
+    table.cmdDraw(commands, 1, 1, 0, 0);
+    encoder.Quiesce();
+    encoder.Close();
+    CommandEncoder::SetDelayForTesting({});
+    Require(!encoder.ProfilesSites(), "the encoder profiles its wait sites with APS5_PROFILE_ENCODER=0");
+    Require(encoder.Counts().waits == 1, "the encoder's wait total is not kept without APS5_PROFILE_ENCODER");
+    Require(encoder.WaitsBySite().empty(), "wait sites were counted without APS5_PROFILE_ENCODER:" + CommandEncoder::Report(encoder.WaitsBySite(), CommandEncoder::TrackedSites));
+}
+
+void WaitsAreAttributedToTheirCallSites() {
+    using Wait = CommandEncoder::Wait;
+    using Site = CommandEncoder::WaitSite;
+    SetEnvironment("APS5_PROFILE_ENCODER", "1");
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x53);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    Require(encoder.ProfilesSites(), "the encoder does not profile its wait sites with APS5_PROFILE_ENCODER=1");
+    const auto first = Handle<VkCommandBuffer>(0x1500);
+    const auto second = Handle<VkCommandBuffer>(0x1580);
+    const VkMemoryBarrier link{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    const VkMemoryBarrier chainedBarrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER, &link, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT};
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(2)); });
+    const auto repeated = std::source_location::current();
+    const auto once = std::source_location::current();
+    const auto lookup = std::source_location::current();
+    const auto opened = std::source_location::current();
+    const auto idle = std::source_location::current();
+    encoder.Open(first, RecordingOf(first));
+    for (int round = 0; round < 2; ++round) {
+        table.cmdDraw(first, 1, 1, 0, 0);
+        encoder.Quiesce(repeated);
+    }
+    table.cmdDraw(first, 2, 1, 0, 0);
+    encoder.Quiesce(once);
+    table.cmdDraw(first, 3, 1, 0, 0);
+    table.cmdPipelineBarrier(first, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &chainedBarrier, 0, nullptr, 0, nullptr);
+    table.cmdDraw(first, 4, 1, 0, 0);
+    AgcDriver::Graphics::BeforeCommandLookup(device, lookup);
+    table.cmdDraw(first, 5, 1, 0, 0);
+    encoder.Close();
+    table.cmdDraw(first, 6, 1, 0, 0);
+    encoder.Open(first, RecordingOf(first));
+    table.cmdDraw(first, 7, 1, 0, 0);
+    encoder.Close();
+    encoder.Open(second, RecordingOf(second), opened);
+    encoder.Close();
+    encoder.Quiesce(idle);
+    CommandEncoder::SetDelayForTesting({});
+    const auto sites = encoder.WaitsBySite();
+    RequireSite(sites, Site::At(Wait::Quiesce, repeated), 2, 2);
+    RequireSite(sites, Site::At(Wait::Quiesce, once), 1, 1);
+    RequireSite(sites, Site{Wait::Direct, "cmdPipelineBarrier", 0}, 1, 1);
+    RequireSite(sites, Site::At(Wait::Lookup, lookup), 1, 1);
+    RequireSite(sites, Site{Wait::Behind, "cmdDraw", 0}, 1, 0);
+    RequireSite(sites, Site::At(Wait::Open, opened), 1, 0);
+    Require(SiteOf(sites, Site::At(Wait::Quiesce, idle)) == nullptr, "a quiesce with nothing posted and nothing to flush was attributed a wait");
+    std::uint64_t waits = 0;
+    for (const auto& entry : sites) waits += entry.waits;
+    Require(waits == encoder.Counts().waits, "the waits by site do not add up to the encoder's waits");
+    Require(sites.size() == 6, "expected six wait sites, got:" + CommandEncoder::Report(sites, sites.size()));
+    const auto report = CommandEncoder::Report(sites, 2);
+    Require(report.find("4 more sites") != std::string::npos && report.find(CommandEncoder::Describe(sites.front().site)) != std::string::npos, "the site report does not name the costliest site and the rest:" + report);
+    Require(CommandEncoder::Describe(Site::At(Wait::Lookup, lookup)).find("WaitsAreAttributedToTheirCallSites:" + std::to_string(lookup.line())) != std::string::npos, "a call site is not described by its function and line: " + CommandEncoder::Describe(Site::At(Wait::Lookup, lookup)));
+}
+
+}
+
+void WaitOnTheEncoderThread() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x54);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    const auto commands = Handle<VkCommandBuffer>(0x1700);
+    CommandEncoder::SetDelayForTesting([device] { AgcDriver::Graphics::BeforeCommandLookup(device); });
+    encoder.Open(commands, RecordingOf(commands));
+    table.cmdDraw(commands, 1, 1, 0, 0);
+    encoder.Close();
+    encoder.Quiesce();
+    CommandEncoder::SetDelayForTesting({});
 }
 
 bool Reports(const std::function<void()>& settle) {
@@ -723,7 +849,7 @@ void FailedReplayStaysWithItsRecording() {
     }
     Require(RecordingOf(failing).Failed() && !RecordingOf(healthy).Failed(), "a replay failure was not kept with the recording it happened in");
     Require(Reports([&] { RecordingOf(failing).Report(); }), "a failed replay recorded by a thread that has exited was not reported to the next settle of its recording");
-    Require(!Reports([&] { RecordingOf(failing).Report(); }), "a failed replay was reported twice");
+    Require(Refuses([&] { RecordingOf(failing).Report(); }), "a recording whose replay failure was already reported did not refuse the next settle, or reported the failure again");
     Require(Refuses([&] { RecordingOf(failing).Finish(); }), "finishing a recording whose reported replay failure was not refused, or reported it again");
     Require(!Reports([&] { RecordingOf(healthy).Finish(); }), "finishing a healthy recording reported another recording's failed replay");
     Require(Recorded(failing) == 0, "the encoder recorded " + std::to_string(Recorded(failing)) + " commands into a recording after a replay into it failed");
@@ -750,7 +876,7 @@ void FinishCarriesAnUnreportedFailure() {
     std::thread submitter([&] { carried.store(Reports([&] { RecordingOf(failing).Finish(); })); });
     submitter.join();
     Require(carried.load(), "finishing a recording on another thread did not carry its unreported replay failure");
-    Require(!Reports([&] { RecordingOf(failing).Report(); }), "a failed replay carried by finishing its recording was reported again");
+    Require(Refuses([&] { RecordingOf(failing).Report(); }), "a recording whose failure was carried by finishing it did not refuse the next settle, or reported the failure again");
 }
 
 void DirectCallsSkipAFailedRecording() {
@@ -792,12 +918,15 @@ void AppendFailureKeepsTheWindow() {
     auto& encoder = *attached;
     encoder.Open(commands, RecordingOf(commands));
     table.cmdDraw(commands, 1, 1, 0, 0);
+    const std::vector<std::byte> oversized(128 * 1024);
     bool refused = false;
     try {
-        static_cast<void>(encoder.Append([](const std::byte*, VkCommandBuffer, const DeviceFunctions&) {}, static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max() / 2)));
-    } catch (const std::exception&) {
+        AgcDriver::Tests::SetAllocationFailureCountdown(0);
+        encoder.Emplace([](const std::byte*, VkCommandBuffer, const DeviceFunctions&) {}, std::uint32_t{0}, std::span<const std::byte>(oversized));
+    } catch (const std::bad_alloc&) {
         refused = true;
     }
+    AgcDriver::Tests::SetAllocationFailureCountdown(-1);
     table.cmdDraw(commands, 2, 1, 0, 0);
     encoder.Close();
     encoder.Quiesce();
@@ -829,7 +958,7 @@ void PostingNeverAllocates() {
     CommandEncoder::SetDelayForTesting([&] {
         while (!release.load()) std::this_thread::yield();
     });
-    for (std::uint32_t index = 0; index < 200; ++index) {
+    for (std::uint32_t index = 0; index < 12; ++index) {
         encoder.Open(commands, RecordingOf(commands));
         table.cmdDraw(commands, index, 1, 0, 0);
         bool allocated = false;
@@ -843,14 +972,82 @@ void PostingNeverAllocates() {
         Require(!allocated, "posting chunk " + std::to_string(index) + " allocated memory");
     }
     encoder.Open(commands, RecordingOf(commands));
-    table.cmdDraw(commands, 200, 1, 0, 0);
+    table.cmdDraw(commands, 12, 1, 0, 0);
     release.store(true);
     AgcDriver::Tests::SetAllocationFailureCountdown(0);
     encoder.Quiesce();
     AgcDriver::Tests::SetAllocationFailureCountdown(-1);
     encoder.Close();
     CommandEncoder::SetDelayForTesting({});
-    Require(Recorded(commands) == 201, "the encoder recorded " + std::to_string(Recorded(commands)) + " of 201 commands posted without allocating");
+    Require(Recorded(commands) == 13, "the encoder recorded " + std::to_string(Recorded(commands)) + " of 13 commands posted without allocating");
+}
+
+void PostOne(CommandEncoder& encoder, DeviceFunctions& table, VkCommandBuffer commands, std::uint32_t index) {
+    encoder.Open(commands, RecordingOf(commands));
+    table.cmdDraw(commands, index, 1, 0, 0);
+    encoder.Close();
+}
+
+void BusyFor(std::chrono::nanoseconds span) {
+    const auto until = std::chrono::steady_clock::now() + span;
+    while (std::chrono::steady_clock::now() < until) {}
+}
+
+void EncoderParksBetweenSpacedPosts() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x52);
+    const auto commands = Handle<VkCommandBuffer>(0x1500);
+    constexpr std::uint32_t Posts = 400;
+    CommandEncoder::Statistics counts{};
+    {
+        const auto attached = Attached(device, table);
+        auto& encoder = *attached;
+        for (std::uint32_t index = 0; index < Posts; ++index) {
+            PostOne(encoder, table, commands, index);
+            encoder.Quiesce();
+            BusyFor(std::chrono::microseconds(30));
+        }
+        counts = encoder.Counts();
+    }
+    Require(Recorded(commands) == Posts, "the encoder recorded " + std::to_string(Recorded(commands)) + " of " + std::to_string(Posts) + " spaced posts");
+    Require(counts.parks * 2 >= Posts, "the encoder parked " + std::to_string(counts.parks) + " times between " + std::to_string(Posts) + " posts 30 us apart instead of after each one");
+}
+
+void ProducerAheadOfTheChunkPoolWaits() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x4e);
+    const auto commands = Handle<VkCommandBuffer>(0x1400);
+    constexpr std::uint32_t Windows = 64;
+    std::atomic<bool> release{false};
+    std::atomic<bool> producerDone{false};
+    bool doneWhileHeld = true;
+    CommandEncoder::Statistics counts{};
+    CommandEncoder::SetDelayForTesting([&] {
+        while (!release.load()) std::this_thread::yield();
+    });
+    {
+        const auto attached = Attached(device, table);
+        auto& encoder = *attached;
+        std::thread producer([&] {
+            for (std::uint32_t index = 0; index < Windows; ++index) {
+                encoder.Open(commands, RecordingOf(commands));
+                table.cmdDraw(commands, index, 1, 0, 0);
+                encoder.Close();
+            }
+            producerDone.store(true);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        doneWhileHeld = producerDone.load();
+        release.store(true);
+        producer.join();
+        encoder.Quiesce();
+        counts = encoder.Counts();
+    }
+    CommandEncoder::SetDelayForTesting({});
+    Require(!doneWhileHeld, "a producer posted " + std::to_string(Windows) + " windows ahead of a held encoder without waiting for its chunk pool");
+    Require(Recorded(commands) == Windows && counts.waits != 0, "a producer that waited for the chunk pool recorded " + std::to_string(Recorded(commands)) + " of " + std::to_string(Windows) + " commands after " + std::to_string(counts.waits) + " waits");
 }
 
 void ReplayFailureNeedsNoAllocation() {
@@ -966,8 +1163,263 @@ void QueriesKeepOrderWithTheirRecording() {
     Compare(expected, "queries around nested windows of two recordings");
 }
 
-int main() {
+double NanosecondsSince(std::chrono::steady_clock::time_point start) {
+    return static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+}
+
+std::atomic<std::uint64_t> replayNs{0};
+
+VKAPI_ATTR void VKAPI_CALL BurnDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {
+    BusyFor(std::chrono::nanoseconds(replayNs.load(std::memory_order_relaxed)));
+}
+
+DeviceFunctions BurnTable() {
+    DeviceFunctions table{};
+    table.cmdDraw = &BurnDraw;
+    return table;
+}
+
+struct Pattern {
+    const char* name;
+    std::uint32_t batch;
+    std::uint64_t workNs;
+    std::uint64_t encodeNs;
+    bool waitsInWindow = false;
+    std::uint64_t replayDelayNs = 0;
+};
+
+double RunPattern(const Pattern& pattern, CommandEncoder::Handoff handoff, std::uint32_t draws, CommandEncoder::Statistics& counts) {
+    const auto commands = Handle<VkCommandBuffer>(0x1700);
+    auto table = BurnTable();
+    replayNs.store(pattern.encodeNs, std::memory_order_relaxed);
+    if (pattern.replayDelayNs != 0) CommandEncoder::SetDelayForTesting([delay = pattern.replayDelayNs] { BusyFor(std::chrono::nanoseconds(delay)); });
+    const auto attached = Attached(Handle<VkDevice>(0x57), table);
+    auto& encoder = *attached;
+    const auto start = std::chrono::steady_clock::now();
+    for (std::uint32_t index = 0; index < draws; ++index) {
+        BusyFor(std::chrono::nanoseconds(pattern.workNs));
+        const bool encoded = encoder.Admit(handoff);
+        if (encoded) encoder.Open(commands, RecordingOf(commands));
+        table.cmdDraw(commands, 3, 1, 0, 0);
+        if (pattern.waitsInWindow) encoder.Quiesce();
+        if (encoded) encoder.Close();
+        else encoder.EndInline();
+        if ((index + 1) % pattern.batch == 0) encoder.Quiesce();
+    }
+    encoder.Quiesce();
+    const double ns = NanosecondsSince(start) / draws;
+    CommandEncoder::SetDelayForTesting({});
+    counts = encoder.Counts();
+    return ns;
+}
+
+int HandoffBench() {
+    const Pattern patterns[] = {
+        {"few-draws-per-batch", 3, 1000, 3300},
+        {"few-draws-heavy-encode", 3, 1000, 20000},
+        {"many-draws-per-batch", 512, 4000, 3300},
+        {"wait-in-window-slow-replay", 1000000, 1000, 300, true, 20000},
+    };
+    constexpr std::uint32_t Draws = 40000;
+    for (const auto& pattern : patterns) {
+        for (const auto handoff : {CommandEncoder::Handoff::Never, CommandEncoder::Handoff::Always, CommandEncoder::Handoff::Adaptive}) {
+            const char* name = handoff == CommandEncoder::Handoff::Never ? "inline" : handoff == CommandEncoder::Handoff::Always ? "always" : "adaptive";
+            double best = 0;
+            CommandEncoder::Statistics counts{};
+            for (std::uint32_t round = 0; round < 3; ++round) {
+                Reset();
+                const double ns = RunPattern(pattern, handoff, Draws, counts);
+                if (round == 0 || ns < best) best = ns;
+            }
+            std::cout << "bench " << pattern.name << " " << name << " ns_per_draw=" << best << " inlined_share=" << static_cast<double>(counts.inlined) / Draws << " parks_per_draw=" << static_cast<double>(counts.parks) / Draws << " wait_ns_per_draw=" << static_cast<double>(counts.waitNs) / Draws << "\n";
+        }
+    }
+    return 0;
+}
+
+VKAPI_ATTR void VKAPI_CALL BurnInstanceDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t microseconds) {
+    BusyFor(std::chrono::microseconds(microseconds));
+}
+
+void HandoffChargesTheLastProbeBlocksBacklog() {
+    Reset();
+    const auto commands = Handle<VkCommandBuffer>(0x1780);
+    DeviceFunctions table{};
+    table.cmdDraw = &BurnInstanceDraw;
+    const auto attached = Attached(Handle<VkDevice>(0x58), table);
+    auto& encoder = *attached;
+    constexpr std::uint64_t Backlogged = 12;
+    constexpr std::uint64_t Windows = 2 * CommandEncoder::ProbeWindows + CommandEncoder::SettledSpanMin + 256;
+    std::uint64_t inlined = 0;
+    for (std::uint64_t index = 0; index < Windows; ++index) {
+        const bool encoded = encoder.Admit(CommandEncoder::Handoff::Adaptive);
+        const bool backlogged = index % CommandEncoder::ProbeBlock >= CommandEncoder::ProbeBlock - Backlogged;
+        if (encoded) encoder.Open(commands, RecordingOf(commands));
+        table.cmdDraw(commands, 3, 1, 0, encoded ? (backlogged ? 2000u : 0u) : 50u);
+        if (encoded) {
+            encoder.Close();
+        } else {
+            encoder.EndInline();
+            ++inlined;
+        }
+    }
+    encoder.Quiesce();
+    Require(inlined == Windows - CommandEncoder::ProbeWindows, "the adaptive hand-off recorded " + std::to_string(inlined) + " of " + std::to_string(Windows) + " windows inline, not the " + std::to_string(Windows - CommandEncoder::ProbeWindows) + " outside its encoded probe blocks, so the backlog left by a probe's last encoded block was not charged to it");
+}
+
+void HandoffPolicyFollowsItsMeasuredCost() {
+    constexpr std::uint32_t Draws = 6000;
+    CommandEncoder::Statistics counts{};
+    Reset();
+    RunPattern({"never", 2, 1000, 0}, CommandEncoder::Handoff::Never, Draws, counts);
+    Require(counts.posts == 0 && counts.inlined == Draws, "a draw went through the encoder with the hand-off refused");
+    Reset();
+    RunPattern({"always", 2, 1000, 0}, CommandEncoder::Handoff::Always, Draws, counts);
+    Require(counts.inlined == 0 && counts.posts == Draws, "an always-handoff draw was recorded inline");
+    Reset();
+    RunPattern({"short batches", 2, 1000, 0}, CommandEncoder::Handoff::Adaptive, Draws, counts);
+    Require(counts.inlined * 10 >= static_cast<std::uint64_t>(Draws) * 7, "the adaptive hand-off kept " + std::to_string(Draws - counts.inlined) + " of " + std::to_string(Draws) + " draws on the encoder although each batch cost more to wait for than to record");
+    Reset();
+    RunPattern({"waits in every window", 1000000, 0, 0, true, 20000}, CommandEncoder::Handoff::Adaptive, Draws, counts);
+    Require(counts.inlined * 10 >= static_cast<std::uint64_t>(Draws) * 9, "the adaptive hand-off kept " + std::to_string(Draws - counts.inlined) + " of " + std::to_string(Draws) + " draws on the encoder although every window waited for the encoder thread's own time");
+    Reset();
+    RunPattern({"first block", 64, 0, 0}, CommandEncoder::Handoff::Adaptive, CommandEncoder::ProbeBlock, counts);
+    Require(counts.inlined == 0, "the adaptive hand-off recorded " + std::to_string(counts.inlined) + " draws of its first probe block inline");
+}
+
+struct PolicyRun {
+    CommandEncoder::HandoffPolicy policy;
+    std::uint64_t encoded = 0;
+    std::uint64_t inlined = 0;
+    std::uint64_t outside = 0;
+    std::vector<CommandEncoder::HandoffDecision> decisions;
+
+    void Windows(std::uint64_t count, std::uint64_t encodedNs, std::uint64_t inlineNs, std::uint64_t outsideAfterEncodedNs = 0) {
+        for (std::uint64_t window = 0; window < count; ++window) {
+            const auto choice = policy.Next();
+            if (choice.timed) {
+                policy.ChargeOutside(outside);
+                policy.Charge(choice.encode ? encodedNs : inlineNs);
+            }
+            outside = choice.encode ? outsideAfterEncodedNs : 0;
+            ++(choice.encode ? encoded : inlined);
+            if (policy.Complete()) {
+                policy.ChargeOutside(outside);
+                outside = 0;
+                decisions.push_back(policy.Decide());
+            }
+        }
+    }
+};
+
+void HandoffPolicyDecidesFromTheCostItIsGiven() {
+    constexpr auto Probe = CommandEncoder::ProbeWindows;
+    constexpr auto Half = Probe / 2;
+    constexpr auto Min = CommandEncoder::SettledSpanMin;
+    constexpr auto Max = CommandEncoder::SettledSpanMax;
+    for (const bool encodedWins : {true, false}) {
+        const std::string mode = encodedWins ? "encoded" : "inline";
+        PolicyRun run;
+        const std::uint64_t cheap = 1000;
+        const std::uint64_t dear = 5000;
+        run.Windows(CommandEncoder::ProbeBlock, encodedWins ? cheap : dear, encodedWins ? dear : cheap);
+        Require(run.inlined == 0, "the first probe block of a " + mode + " run was not encoded");
+        run.Windows(Probe - CommandEncoder::ProbeBlock, encodedWins ? cheap : dear, encodedWins ? dear : cheap);
+        Require(run.encoded == Half && run.inlined == Half, "the first probe of a " + mode + " run did not split its windows evenly");
+        Require(run.decisions.size() == 1, "the first probe of a " + mode + " run made " + std::to_string(run.decisions.size()) + " decisions");
+        const auto& first = run.decisions.front();
+        Require(first.encode == encodedWins && first.windows == CommandEncoder::ProbeBlock && first.encodedNs == CommandEncoder::ProbeBlock * (encodedWins ? cheap : dear) && first.inlineNs == CommandEncoder::ProbeBlock * (encodedWins ? dear : cheap) && first.span == Min, "the first decision of a " + mode + " run reported the wrong choice, costs or span");
+        std::uint64_t span = Min;
+        for (std::uint32_t probe = 2; probe <= 8; ++probe) {
+            const auto before = encodedWins ? run.inlined : run.encoded;
+            run.Windows(span + Probe, encodedWins ? cheap : dear, encodedWins ? dear : cheap);
+            Require((encodedWins ? run.inlined : run.encoded) - before == Half, "a settled " + mode + " span and its probe ran the losing mode for " + std::to_string((encodedWins ? run.inlined : run.encoded) - before) + " windows, not one probe's half");
+            span = std::min(Max, span * 2);
+            Require(run.decisions.size() == probe && run.decisions.back().encode == encodedWins && run.decisions.back().span == span, "probe " + std::to_string(probe) + " of a " + mode + " run did not keep its choice and double its span to " + std::to_string(span));
+        }
+        Require(Half * 1000 / (Max + Probe) < 8, "a settled hand-off spends more than 0.8 percent of its windows in the losing mode");
+    }
+    {
+        constexpr std::uint64_t Batch = 512;
+        constexpr std::uint64_t Batches = 12;
+        PolicyRun run;
+        for (std::uint64_t batch = 0; batch < Batches; ++batch) {
+            run.Windows(Batch - 1, 500, 3300);
+            run.Windows(1, 500, 3300, 3300);
+        }
+        const auto windows = Batch * Batches;
+        Require(!run.decisions.empty() && std::ranges::all_of(run.decisions, [](const auto& decision) { return decision.encode; }), "a long-batch run whose encoded windows and batch-end drains cost less than recording inline did not keep the encoder");
+        Require(run.inlined * 100 <= windows * 15, "a long-batch run recorded " + std::to_string(run.inlined) + " of " + std::to_string(windows) + " windows inline although the encoder took each draw's recording off the producer");
+    }
+    {
+        PolicyRun run;
+        run.Windows(Probe, 1000, 1500, 1000);
+        Require(run.decisions.size() == 1 && !run.decisions.back().encode, "waits outside the windows that follow encoded windows were not charged to the encoder");
+        Require(run.decisions.back().encodedNs == CommandEncoder::ProbeBlock * 2000, "an encoded probe block with its outside waits cost " + std::to_string(run.decisions.back().encodedNs) + " ns, not " + std::to_string(CommandEncoder::ProbeBlock * 2000));
+    }
+    {
+        PolicyRun preempted;
+        preempted.Windows(CommandEncoder::ProbeBlock - 1, 1000, 1500);
+        preempted.Windows(1, 4000000, 1500);
+        preempted.Windows(Probe - CommandEncoder::ProbeBlock, 1000, 1500);
+        Require(preempted.decisions.size() == 1 && preempted.decisions.back().encode, "one preempted window in one encoded probe block made the hand-off go inline");
+        PolicyRun everyBlock;
+        for (std::uint64_t block = 0; block < CommandEncoder::ProbeWindows / CommandEncoder::ProbeBlock; ++block) {
+            everyBlock.Windows(CommandEncoder::ProbeBlock - 1, 1000, 1500);
+            everyBlock.Windows(1, block % 2 == 0 ? 100000 : 1500, 1500);
+        }
+        Require(everyBlock.decisions.size() == 1 && !everyBlock.decisions.back().encode, "a wait in every encoded probe block was not charged to the encoder");
+    }
+    {
+        PolicyRun run;
+        run.Windows(Probe, 5000, 1000);
+        run.Windows(Min, 5000, 1000);
+        Require(run.decisions.size() == 1 && !run.decisions.back().encode, "the setup for a final encoded probe block did not settle inline");
+        auto& policy = run.policy;
+        constexpr std::uint64_t Drain = 100000;
+        std::uint64_t outside = 0;
+        for (std::uint64_t window = 0; window < Probe; ++window) {
+            const auto choice = policy.Next();
+            Require(choice.timed, "a probe window was not timed");
+            policy.ChargeOutside(outside);
+            policy.Charge(choice.encode ? 1000 : 1500);
+            outside = choice.encode && window % CommandEncoder::ProbeBlock == CommandEncoder::ProbeBlock - 1 ? Drain : 0;
+        }
+        Require(policy.Complete() && policy.LastEncoded(), "the probe after an inline span did not end with an encoded block");
+        policy.ChargeOutside(outside);
+        const auto decision = policy.Decide();
+        Require(!decision.encode && decision.encodedNs == CommandEncoder::ProbeBlock * 1000 + Drain, "the drain after the final encoded probe block was not charged to it (encoded block " + std::to_string(decision.encodedNs) + " ns)");
+    }
+    {
+        PolicyRun run;
+        run.Windows(Probe, 2000, 2000);
+        Require(run.decisions.size() == 1 && run.decisions.back().encode, "a hand-off that costs exactly what inline recording costs was not kept");
+    }
+    {
+        PolicyRun run;
+        run.Windows(Probe, 1000, 5000);
+        run.Windows(Min + 2048 + 4096 + 8192 + 2 * Max + 6 * Probe, 1000, 5000);
+        Require(run.decisions.back().encode && run.decisions.back().span == Max, "a long encoded run did not settle at the longest span");
+        const auto decided = run.decisions.size();
+        run.Windows(Max + Probe, 5000, 1000);
+        Require(run.decisions.size() == decided + 1 && !run.decisions.back().encode && run.decisions.back().span == Min, "a hand-off that started losing was not dropped within one settled span and probe, with the span reset");
+    }
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc > 1 && std::string(argv[1]) == "--bench") return HandoffBench();
+        if (argc > 1 && std::string(argv[1]) == "--wait-on-the-encoder-thread") {
+            std::signal(SIGABRT, [](int) { std::_Exit(0); });
+            WaitOnTheEncoderThread();
+            std::cerr << "a wait on the encoder thread returned instead of stopping the process\n";
+            return 1;
+        }
+#ifdef _WIN32
+        _putenv_s("APS5_HANDOFF_SPIN_US", "150");
+#else
+        setenv("APS5_HANDOFF_SPIN_US", "150", 1);
+#endif
         for (std::uint32_t seed = 1; seed <= 6; ++seed) RandomProgramRecordsWhatInlineRecords(seed, seed % 2 == 0);
         OtherThreadsRecordDirectlyWhileAWindowIsOpen();
         HookDuringUnencodedOpsWaits();
@@ -988,7 +1440,14 @@ int main() {
         AppendFailureKeepsTheWindow();
         DevicesPastTheSlotsRecordInline();
         PostingNeverAllocates();
+        ProducerAheadOfTheChunkPoolWaits();
+        EncoderParksBetweenSpacedPosts();
         ReplayFailureNeedsNoAllocation();
+        WaitsAreAttributedToTheirCallSites();
+        SitesAreCountedOnlyWhenProfiled();
+        HandoffPolicyFollowsItsMeasuredCost();
+        HandoffChargesTheLastProbeBlocksBacklog();
+        HandoffPolicyDecidesFromTheCostItIsGiven();
         std::cout << "command encoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {

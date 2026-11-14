@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <condition_variable>
 #include <exception>
+#include "prx/libc/include/RunReport.hpp"
 #include <filesystem>
 #include <functional>
 #include <limits>
@@ -646,13 +647,19 @@ public:
         return result;
     }
 
+    static bool GraphicsTrackScope(const std::string_view scope) {
+        return scope == "Graphics.RenderPass" || scope == "Graphics.RenderPass.Continued" ||
+               scope.starts_with("Graphics.RenderPass.Close.") || scope.starts_with("Graphics.Barrier.") ||
+               scope.starts_with("Graphics.BarrierMerged.") || scope == "Graphics.Copy" || scope == "Graphics.Copy.bytes";
+    }
+
     static std::string Summary(const TraceSummary& summary, std::span<const TraceThread::Snapshot> threads, std::span<const Clock::time_point> presents) {
         const auto count = presents.empty() ? std::size_t{0} : presents.size() - 1;
         const auto span = presents.empty() ? Clock::duration{} : presents.back() - presents.front();
         std::vector<double> frames;
         for (std::size_t index = 1; index < presents.size(); ++index) frames.push_back(milliseconds(presents[index] - presents[index - 1]));
         std::sort(frames.begin(), frames.end());
-        const auto percentile = [&](double fraction) { return frames.empty() ? 0.0 : frames[std::min(frames.size() - 1, static_cast<std::size_t>(fraction * static_cast<double>(frames.size())))]; };
+        const auto percentile = [&](double fraction) { return RunReport::FramePercentile(frames, fraction); };
         const double perPresent = count != 0 ? 1.0 / static_cast<double>(count) : 0.0;
 
         std::string output = "{\"commit\":";
@@ -692,6 +699,7 @@ public:
         std::uint64_t encoderCommands = 0;
         std::uint64_t encoderWaits = 0;
         Clock::duration encoderWait{};
+        std::map<std::string, std::uint64_t> graphicsCounts;
         bool dropped = summary.ownedDrawUnbound != 0;
         if (summary.ownedDrawUnbound != 0) ownedCounts["OwnedDraw.unbound"] = summary.ownedDrawUnbound;
         struct DroppedThread {
@@ -719,7 +727,8 @@ public:
                 else if (total.stage == nullptr && scope == EncoderWaitScope) {
                     encoderWaits += total.count;
                     encoderWait += total.length;
-                } else if (scope.starts_with("OwnedDraw.") && total.stage == nullptr) ownedCounts[std::string(scope)] += total.count;
+                } else if (total.stage == nullptr && GraphicsTrackScope(scope)) graphicsCounts[std::string(scope)] += total.count;
+                else if (scope.starts_with("OwnedDraw.") && total.stage == nullptr) ownedCounts[std::string(scope)] += total.count;
                 else if (scope != WorkerWaitScope) phases[Name(total.scope, total.stage)] += total.length;
             }
             if (!thread.name.starts_with(WorkerPrefix)) continue;
@@ -727,6 +736,14 @@ public:
             firstWorker = false;
             AppendString(output, thread.name);
             output += ':' + number(span != Clock::duration{} ? 100.0 * static_cast<double>(busy.count()) / static_cast<double>(span.count()) : 0.0);
+        }
+        output += "},\"phase_totals_ms\":{";
+        bool firstPhase = true;
+        for (const auto& [name, length] : phases) {
+            if (!firstPhase) output += ',';
+            firstPhase = false;
+            AppendString(output, name);
+            output += ':' + number(milliseconds(length));
         }
         output += "},\"top_phases_ms_per_frame\":{";
         std::vector<std::pair<std::string, Clock::duration>> top(phases.begin(), phases.end());
@@ -747,6 +764,15 @@ public:
         }
         output += '}';
         output += ",\"encoder\":{\"posts\":" + std::to_string(encoderPosts) + ",\"commands\":" + std::to_string(encoderCommands) + ",\"waits\":" + std::to_string(encoderWaits) + ",\"wait_ms_per_frame\":" + number(milliseconds(encoderWait) * perPresent) + '}';
+        output += ",\"graphics_track\":{";
+        bool firstGraphics = true;
+        for (const auto& [name, value] : graphicsCounts) {
+            if (!firstGraphics) output += ',';
+            firstGraphics = false;
+            AppendString(output, name);
+            output += ':' + std::to_string(value);
+        }
+        output += '}';
         output += ",\"trace_dropped\":";
         output += dropped ? "true" : "false";
         if (!droppedList.empty()) {
@@ -914,6 +940,11 @@ public:
 
     static void Count(const char* scope) {
         if (Recording()) AgcDriverTraceCount_nid_postfix(scope);
+    }
+
+    static void Amount(const char* scope, std::uint64_t amount) {
+        if (amount == 0 || !Recording()) return;
+        if (auto* thread = Thread()) thread->Count(scope, amount);
     }
 
     static void CountOwnedDraw(const char* scope, std::uint64_t amount = 1);

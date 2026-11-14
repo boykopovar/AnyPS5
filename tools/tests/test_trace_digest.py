@@ -401,6 +401,42 @@ class TraceDigestTests(unittest.TestCase):
                         self.assertEqual(result.stdout, "")
                         self.assertEqual(path.read_bytes(), data)
 
+    def test_summary_jsonl_duplicate_fields_name_the_source_line(self):
+        path = Path(self.directory.name) / "duplicate-summary.jsonl"
+        records = {
+            "commit": '{"commit":"first","commit":"second"}',
+            "p99": '{"frame_ms":{"p99":1,"p99":2}}',
+            "setting": '{"extra":[{"setting":false,"setting":true}]}',
+        }
+        for field, record in records.items():
+            path.write_text("{}\n\n" + record + "\n", encoding="utf-8-sig")
+            for mode in ("capture", "intervals"):
+                with self.subTest(field=field, mode=mode):
+                    with self.assertRaises(ValueError) as raised:
+                        if mode == "capture":
+                            trace_digest.load_summary(path, self.trace)
+                        else:
+                            trace_digest.load_intervals(path)
+                    self.assertEqual(str(raised.exception), f"{path}:3: duplicate JSON field: {field!r}")
+
+    def test_cli_rejects_duplicate_fields_without_partial_output(self):
+        path = self.trace.with_name("aps5-summary.jsonl")
+        encoded = json.dumps(SUMMARY)
+        nested = encoded.replace('"p99": 20.0', '"p99": 1.0, "p99": 20.0')
+        cases = ((encoded[:-1] + ',"commit":"ambiguous"}', [str(self.trace), "--summary", str(path), "--json"]),
+                 (nested, [str(self.trace)]), (nested, [str(path), "--json"]))
+        for record, arguments in cases:
+            original = (record + "\n").encode("utf-8")
+            path.write_bytes(original)
+            with self.subTest(record=record, arguments=arguments):
+                result = subprocess.run([sys.executable, trace_digest.__file__, *arguments],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(f"{path}:1: duplicate JSON field:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(path.read_bytes(), original)
+
     def test_mixed_summary_jsonl_objects_preserve_selection_and_intervals(self):
         path = self.trace.with_name("aps5-summary.jsonl")
         expected = self.json_output(self.trace)
@@ -779,6 +815,30 @@ class TraceDigestTests(unittest.TestCase):
         self.assertIn("worker&#124;&lt;gpu&gt;<br>row &amp; more", rows[2])
         self.assertIn("phase&#124;&lt;tag&gt;<br>next", rows[2])
 
+    def test_markdown_names_and_metadata_cannot_create_report_sections(self):
+        name = "phase\n**Fake section** <tag> [link](https://example.invalid)"
+        result = self.result()
+        result["summary"]["window"]["spec"] = name
+        result["summary"]["gpu"] = name
+        result["slowest_frames"][0]["slices"][0]["name"] = name
+        result["threads"][0]["top"][0]["name"] = name
+        result["top_slices_ms_per_frame"][0]["name"] = name
+        result["longest_waits"][0]["name"] = name
+        result["stacks"]["self"][0]["frame"] = name
+        report = trace_digest.markdown(result)
+        escaped = "phase<br>&#42;&#42;Fake section&#42;&#42; &lt;tag&gt; &#91;link&#93;(https://example.invalid)"
+        self.assertNotIn("\n**Fake section**", report)
+        self.assertGreaterEqual(report.count(escaped), 7)
+
+    def test_markdown_identity_cannot_start_a_heading_or_list(self):
+        result = self.result()
+        for name, escaped in (("# Heading", "&#35; Heading"), ("- item", "&#45; item"),
+                              ("+ item", "&#43; item"), ("1. item", "&#49;. item"),
+                              ("_emphasis_", "&#95;emphasis&#95;"),
+                              ("OwnedDraw.arm_attempt", "OwnedDraw.arm_attempt"), ("GPU-1", "GPU-1")):
+            with self.subTest(name=name):
+                result["summary"]["gpu"] = name
+                self.assertTrue(trace_digest.markdown(result).splitlines()[1].startswith(escaped + ","))
 
     def test_threads_split_busy_and_wait(self):
         threads = {thread["thread"]: thread for thread in self.result()["threads"]}
@@ -1160,6 +1220,23 @@ class IntervalDigestTests(unittest.TestCase):
     def test_window_lines_are_skipped(self):
         self.assertEqual(len(trace_digest.load_intervals(self.path)), 4)
 
+    def test_intervals_symlink_loop_is_reported_without_traceback(self):
+        loop = Path(self.directory.name) / "loop.jsonl"
+        try:
+            loop.symlink_to(loop.name)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symbolic links unavailable: {error}")
+        with self.assertRaisesRegex(ValueError, r"symbolic link loop"):
+            trace_digest.load_intervals(loop)
+        for output in ([], ["--json"]):
+            with self.subTest(output=output):
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(loop), *output],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("symbolic link loop", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def test_utf8_bom_intervals_preserve_the_command_line_digest(self):
         expected = trace_digest.digest_intervals(trace_digest.load_intervals(self.path))
         self.path.write_text(self.path.read_text(encoding="utf-8"), encoding="utf-8-sig")
@@ -1318,6 +1395,19 @@ class IntervalDigestTests(unittest.TestCase):
                 self.assertTrue(all(line.count("|") == 11 for line in rows), rows)
                 cells = [cell.strip() for cell in rows[2].split("|")[1:-1]]
                 self.assertEqual(cells, ["1", "0-30", "1800", "16.6", "18.0", "20.0", "25.0", "5.0", "50 %", escaped + " 7.5"])
+
+    def test_interval_identity_cannot_create_markdown_sections(self):
+        line = interval_line(0.0, 30.0, 20.0, 5.0)
+        name = "GPU\n**Fake section** <tag> [link](https://example.invalid)"
+        line["gpu"] = name
+        result = trace_digest.digest_intervals([line])
+        self.assertEqual(result["identity"]["gpu"], name)
+        report = trace_digest.markdown_intervals(result)
+        self.assertNotIn("\n**Fake section**", report)
+        self.assertIn("GPU<br>&#42;&#42;Fake section&#42;&#42; &lt;tag&gt; &#91;link&#93;(https://example.invalid)", report)
+        line["gpu"] = "  # Heading"
+        self.assertTrue(trace_digest.markdown_intervals(trace_digest.digest_intervals([line])).splitlines()[1]
+                        .startswith("  &#35; Heading,"))
 
     def test_bom_encoded_stacks_load(self):
         with tempfile.TemporaryDirectory() as directory:
