@@ -21,6 +21,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_np_cpp_web_api_matchmaking
             PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_np_cpp_web_api_matchmaking_model_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiMatchmakingModel.cpp)
+    target_include_directories(guest_np_cpp_web_api_matchmaking_model_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_cpp_web_api_matchmaking_model_tests PRIVATE libSceNpCppWebApi libc)
+    configure_windows_unwind(guest_np_cpp_web_api_matchmaking_model_tests)
+    add_test(NAME guest_np_cpp_web_api_matchmaking_model COMMAND guest_np_cpp_web_api_matchmaking_model_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_cpp_web_api_matchmaking_model
+            PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 if(MINGW)
