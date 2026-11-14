@@ -14,8 +14,15 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_audio_in_tests)
     add_test(NAME guest_audio_in_capture COMMAND guest_audio_in_tests capture)
     add_test(NAME guest_audio_in_no_device COMMAND guest_audio_in_tests none)
+
+    add_test_executable(guest_audio_in_port_open_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioInPortOpen.cpp)
+    target_include_directories(guest_audio_in_port_open_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_in_port_open_tests PRIVATE libSceAudioIn libc)
+    configure_windows_unwind(guest_audio_in_port_open_tests)
+    add_test(NAME guest_audio_in_port_open COMMAND guest_audio_in_port_open_tests)
+
     if(WIN32)
-        set_tests_properties(guest_audio_in_capture guest_audio_in_no_device PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_audio_in_capture guest_audio_in_no_device guest_audio_in_port_open PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioIn>")
     endif()
 endif()
