@@ -812,11 +812,13 @@ int APS5_VABI wmemcmp_nid_postfix(const char16_t* s1, const char16_t* s2, size_t
 }
 
 char16_t* APS5_VABI wmemcpy_nid_postfix(char16_t* dest, const char16_t* src, size_t n) {
+    if (n > SIZE_MAX / sizeof(char16_t)) NotImplemented_nid_no_patch(__func__);
     if (n != 0) std::memcpy(dest, src, n * sizeof(char16_t));
     return dest;
 }
 
 char16_t* APS5_VABI wmemmove_nid_postfix(char16_t* dest, const char16_t* src, size_t n) {
+    if (n > SIZE_MAX / sizeof(char16_t)) NotImplemented_nid_no_patch(__func__);
     if (n != 0) std::memmove(dest, src, n * sizeof(char16_t));
     return dest;
 }

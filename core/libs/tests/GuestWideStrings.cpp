@@ -10,12 +10,27 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <stdexcept>
 #include <string>
+
+extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* name, const char*, int) {
+    throw std::runtime_error(name);
+}
 
 namespace {
 
 void require(bool condition) {
     if (!condition) std::abort();
+}
+
+template<typename TCall>
+void requireRejected(TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return;
+    }
+    require(false);
 }
 
 bool same(const char16_t* left, const char16_t* right, std::size_t count) {
@@ -399,6 +414,11 @@ int main() {
     require(wmemmove_nid_postfix(overlap + 1, overlap, 4) == overlap + 1);
     const char16_t shifted[] = {u'1', u'1', u'2', u'3', u'4'};
     require(same(overlap, shifted, 5));
+    char16_t wideDest[4] = {u'w', u'x', u'y', u'z'};
+    const char16_t wideSrc[4] = {u'a', u'b', u'c', u'd'};
+    requireRejected([&] { wmemcpy_nid_postfix(wideDest, wideSrc, (SIZE_MAX / 2) + 2); });
+    requireRejected([&] { wmemmove_nid_postfix(wideDest, wideSrc, (SIZE_MAX / 2) + 2); });
+    require(same(wideDest, u"wxyz", 4));
     require(wmemset_nid_postfix(copy, u'世', 3) == copy && copy[0] == u'世' && copy[2] == u'世' && copy[3] == u'y');
 
     require(wmemchr_nid_postfix(units, u'x', 0) == nullptr);

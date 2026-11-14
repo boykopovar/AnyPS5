@@ -8,8 +8,22 @@
 #include <stdexcept>
 #include <vector>
 
+extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* name, const char*, int) {
+    throw std::runtime_error(name);
+}
+
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+template<typename TCall>
+static void RequireRejected(TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return;
+    }
+    Require(false);
+}
 
 static void CheckMinValue() {
     const std::uint64_t edges[] = {0, 1, 0xffffffff, 0x100000000, 0x7fffffffffffffff, 0x8000000000000000, 0xfffffffffffffffe, 0xffffffffffffffff};
@@ -412,6 +426,25 @@ static void CheckUnsignedMin32Value() {
     Require(__std_min_4u_nid_postfix(repeated, repeated + 4) == 9);
 }
 
+static void CheckReverseCopyLengthRejected() {
+    unsigned char bytes[16];
+    for (int i = 0; i < 16; ++i) bytes[i] = static_cast<unsigned char>(i);
+    unsigned char out[16];
+    std::memset(out, 0xee, sizeof(out));
+    RequireRejected([&] { __std_reverse_copy_trivially_copyable_2_nid_postfix(bytes, bytes + 3, out); });
+    RequireRejected([&] { __std_reverse_copy_trivially_copyable_4_nid_postfix(bytes, bytes + 3, out); });
+    RequireRejected([&] { __std_reverse_copy_trivially_copyable_8_nid_postfix(bytes, bytes + 12, out); });
+    RequireRejected([&] { __std_reverse_copy_trivially_copyable_4_nid_postfix(bytes + 8, bytes, out); });
+    for (const unsigned char byte : out) Require(byte == 0xee);
+
+    const std::uint32_t words[] = {1, 2};
+    std::uint32_t reversedWords[2] = {};
+    __std_reverse_copy_trivially_copyable_4_nid_postfix(words, words + 2, reversedWords);
+    Require(reversedWords[0] == 2 && reversedWords[1] == 1);
+    __std_reverse_copy_trivially_copyable_4_nid_postfix(words, words, reversedWords);
+    Require(reversedWords[0] == 2 && reversedWords[1] == 1);
+}
+
 static void CheckReverseAndSwap() {
     std::uint16_t halves[] = {1, 2, 3, 4, 5};
     __std_reverse_trivially_swappable_2_nid_postfix(halves, halves + 5);
@@ -534,6 +567,7 @@ int main() {
     CheckMinMax();
     CheckMaxValue();
     CheckReverseAndSwap();
+    CheckReverseCopyLengthRejected();
     CheckSignedMin64Value();
     CheckInvalidRanges();
     return 0;
