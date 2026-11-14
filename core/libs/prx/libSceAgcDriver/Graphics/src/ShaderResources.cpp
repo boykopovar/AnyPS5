@@ -7032,7 +7032,9 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
             const bool pending = recorder != nullptr ? recorder->PendingWriteOverlaps(begin, bytes) : Recorder::SnapshotWriteOverlaps(begin, bytes);
             const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{begin, begin + bytes}}};
             if (guestMemory.WritesOverlap(begin, bytes) || pending || StorageTexture::AnyPendingOverlaps(range) || AnyShadowedOverlaps(begin, bytes)) return refuse(MoveRefusal::Overlap);
-            moved.push_back({kept->allocations[element], address, static_cast<std::size_t>(size), {}, inPlace});
+            MovedBuffer entry{kept->allocations[element], address, static_cast<std::size_t>(size)};
+            entry.dispatchInPlace = inPlace;
+            moved.push_back(entry);
             ++proof.buffers;
             if (inPlace) ++proof.inPlace;
             else proof.bytes += bytes;
