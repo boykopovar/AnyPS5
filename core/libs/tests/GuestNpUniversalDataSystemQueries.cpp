@@ -51,10 +51,12 @@ int main() {
     NpUniversalDataSystemMemoryStat memory;
     std::memset(&memory, 0x5a, sizeof(memory));
     CHECK(RejectsArgument([] { sceNpUniversalDataSystemGetMemoryStat(nullptr); }));
+    CHECK(RejectsArgument([] { sceNpUniversalDataSystemGetMemoryStat(reinterpret_cast<NpUniversalDataSystemMemoryStat*>(0x10)); }));
     CHECK(sceNpUniversalDataSystemGetMemoryStat(&memory) == 0 && Zeroed(memory));
     NpUniversalDataSystemStorageStat storage;
     std::memset(&storage, 0x5a, sizeof(storage));
     CHECK(RejectsArgument([] { sceNpUniversalDataSystemGetStorageStat(1, nullptr); }));
+    CHECK(RejectsArgument([] { sceNpUniversalDataSystemGetStorageStat(1, reinterpret_cast<NpUniversalDataSystemStorageStat*>(0x10)); }));
     CHECK(sceNpUniversalDataSystemGetStorageStat(1, &storage) == 0 && Zeroed(storage));
 
     NpUniversalDataSystemEvent* event = nullptr;
