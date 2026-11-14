@@ -221,13 +221,14 @@ int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t
         throw std::runtime_error(std::string("sceSysmoduleGetModuleHandleInternal: failed to open ") + name);
     }
     const auto value = static_cast<KernelModule>(reinterpret_cast<std::intptr_t>(module));
-    gHandles.emplace(id, value);
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(handle, &value, sizeof(value));
     errno = savedErrno;
     if (!copied) {
+        dlclose_nid_postfix(module);
         throw std::runtime_error("sceSysmoduleGetModuleHandleInternal: invalid handle pointer");
     }
+    gHandles.emplace(id, value);
     return 0;
 }
 
@@ -270,14 +271,17 @@ int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, 
     if (!findModuleName(id)) {
         throw std::runtime_error(std::string("sceSysmoduleLoadModuleInternalWithArg: unknown id ") + std::to_string(id));
     }
-    std::lock_guard<std::mutex> lock(gMutex);
-    gLoadCount[id]++;
     if (ret) {
         const int val = 0;
         const int savedErrno = errno;
-        GuestCopyOut_nid_no_patch(ret, &val, sizeof(val));
+        const bool copied = GuestCopyOut_nid_no_patch(ret, &val, sizeof(val));
         errno = savedErrno;
+        if (!copied) {
+            throw std::runtime_error("sceSysmoduleLoadModuleInternalWithArg: invalid ret pointer");
+        }
     }
+    std::lock_guard<std::mutex> lock(gMutex);
+    gLoadCount[id]++;
     return 0;
 }
 
@@ -347,13 +351,16 @@ int APS5_VABI sceSysmoduleUnloadModuleInternalWithArg(std::uint32_t id, int argc
     if (it == gLoadCount.end() || it->second < 1) {
         return SCE_SYSMODULE_ERROR_UNLOADED;
     }
-    it->second--;
     if (ret) {
         const int val = 0;
         const int savedErrno = errno;
-        GuestCopyOut_nid_no_patch(ret, &val, sizeof(val));
+        const bool copied = GuestCopyOut_nid_no_patch(ret, &val, sizeof(val));
         errno = savedErrno;
+        if (!copied) {
+            throw std::runtime_error("sceSysmoduleUnloadModuleInternalWithArg: invalid ret pointer");
+        }
     }
+    it->second--;
     return 0;
 }
 
