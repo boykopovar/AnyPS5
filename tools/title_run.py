@@ -348,10 +348,22 @@ def render_compare(compared):
                     ("Shader cache hits", title["shaders"]["cacheHits"])]
         for label, key in (("Missing functions", "missingFunctions"), ("Unsupported instructions", "unsupportedInstructions")):
             diff = title[key]
-            measures.append((label, title[key + "Count"]))
+            omitted = title[key + "Truncated"]
+            partial = any(isinstance(value, int) and value > 0 for value in omitted.values())
+            measures.append((label + " (retained)" if partial else label, title[key + "Count"]))
+            if partial:
+                measures.append((label + " omitted", omitted))
+                details.append(f"{title['name']} ({title_id}), {label.lower()}: lists are partial; "
+                               "only before and only now describe retained entries, not proof of absence from the other run.")
             if diff and (diff["onlyBefore"] or diff["onlyNow"] or diff["both"]):
                 details.append(f"{title['name']} ({title_id}), {label.lower()}: only before: {names(diff['onlyBefore']) or 'none'}; "
                                f"only now: {names(diff['onlyNow']) or 'none'}; in both: {len(diff['both'])}")
+                field, unit = ("calls", "calls") if key == "missingFunctions" else ("count", "occurrences")
+                before = ", ".join(f"{names([entry])}: {entry[field]}" for entry in diff["onlyBefore"]) or "none"
+                now = ", ".join(f"{names([entry])}: {entry[field]}" for entry in diff["onlyNow"]) or "none"
+                both = ", ".join(f"{names([entry])}: {entry['before']} -> {entry['now']}" for entry in diff["both"]) or "none"
+                details.append(f"{title['name']} ({title_id}), {label.lower()} {unit}: "
+                               f"only before: {before}; only now: {now}; in both: {both}")
         for label, values in measures:
             lines.append("| " + " | ".join([title["name"], title_id, label, display(values["before"]), display(values["now"])]) + " |")
     return lines + [""] + details
