@@ -74,6 +74,17 @@ struct CStringBuffer {
     std::size_t length;
 };
 
+template <typename CharType>
+struct StringBuffer {
+    unsigned length;
+    CharType* data;
+};
+
+static_assert(sizeof(StringBuffer<unsigned char>) == 16);
+static_assert(offsetof(StringBuffer<unsigned char>, length) == 0);
+static_assert(offsetof(StringBuffer<unsigned char>, data) == 8);
+
+bool FreeUnreferenced(StringImpl* impl);
 void Release(StringImpl* impl);
 void Release(CStringBuffer* buffer);
 

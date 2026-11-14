@@ -68,6 +68,7 @@
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -240,13 +241,8 @@ void Deallocate(void* ptr);
 
 namespace NKWebKit::WtfAbi {
 
-void Release(StringImpl* impl) {
-    if (!impl) return;
-    if (impl->refCount != 2) {
-        impl->refCount -= 2;
-        return;
-    }
-    if (impl->hashAndFlags & 48 || (impl->hashAndFlags & 3) == 3) std::terminate();
+bool FreeUnreferenced(StringImpl* impl) {
+    if (impl->hashAndFlags & 48 || (impl->hashAndFlags & 3) == 3) return false;
     switch (impl->hashAndFlags & 3) {
     case 1:
         Deallocate(const_cast<void*>(impl->data));
@@ -256,6 +252,16 @@ void Release(StringImpl* impl) {
         break;
     }
     Deallocate(impl);
+    return true;
+}
+
+void Release(StringImpl* impl) {
+    if (!impl) return;
+    if (impl->refCount != 2) {
+        impl->refCount -= 2;
+        return;
+    }
+    if (!FreeUnreferenced(impl)) std::terminate();
 }
 
 void Release(CStringBuffer* buffer) {
@@ -327,6 +333,15 @@ std::size_t ImplAllocationSize(unsigned length, bool is8Bit) {
 StringImpl* ConstructImpl(void* storage, unsigned length, bool is8Bit, void*& characters) {
     characters = static_cast<unsigned char*>(storage) + 20;
     return new (storage) StringImpl{2, length, characters, is8Bit ? 4U : 0U};
+}
+
+template <typename CharType>
+String AdoptBuffer(NKWebKit::WtfAbi::StringBuffer<CharType>& buffer, bool is8Bit) {
+    if (!buffer.length) return String(EmptyImpl());
+    if (!buffer.data) throw std::invalid_argument("StringImpl::adopt: null characters for a nonempty buffer");
+    auto* impl = new (NKWebKit::Allocate(sizeof(StringImpl))) StringImpl{2, buffer.length, buffer.data, (is8Bit ? 4U : 0U) | 1U};
+    buffer.data = nullptr;
+    return String(impl);
 }
 
 StringImpl* NewImpl(unsigned length, bool is8Bit, void*& characters) {
@@ -674,6 +689,20 @@ String APS5_VABI _ZN3WTF10StringImpl19createUninitializedEjRPh(unsigned length, 
     auto* impl = NewImpl(length, true, output);
     data = static_cast<unsigned char*>(output);
     return String(impl);
+}
+
+void APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_(StringImpl* impl) {
+    if (!impl) throw std::invalid_argument("StringImpl::destroy: null string");
+    if (impl->refCount & 1) throw std::invalid_argument("StringImpl::destroy: static string");
+    if (!NKWebKit::WtfAbi::FreeUnreferenced(impl)) NotImplemented_nid_no_patch(__func__);
+}
+
+String APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIhEE(NKWebKit::WtfAbi::StringBuffer<unsigned char>& buffer) {
+    return AdoptBuffer(buffer, true);
+}
+
+String APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIDsEE(NKWebKit::WtfAbi::StringBuffer<char16_t>& buffer) {
+    return AdoptBuffer(buffer, false);
 }
 
 String APS5_VABI _ZN3WTF10StringImpl20create8BitIfPossibleEPKDsj(const char16_t* data, unsigned length) {

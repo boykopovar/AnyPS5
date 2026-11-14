@@ -66,6 +66,9 @@ std::size_t APS5_VABI _ZN3WTF10StringImpl11reverseFindEDsj(const NKWebKit::WtfAb
 std::int32_t APS5_VABI _ZN3WTF10StringImpl19characterStartingAtEj(const NKWebKit::WtfAbi::StringImpl* self, unsigned index);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl19createUninitializedEjRPDs(unsigned length, char16_t*& data);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl19createUninitializedEjRPh(unsigned length, unsigned char*& data);
+void APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_(NKWebKit::WtfAbi::StringImpl* impl);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIhEE(NKWebKit::WtfAbi::StringBuffer<unsigned char>& buffer);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIDsEE(NKWebKit::WtfAbi::StringBuffer<char16_t>& buffer);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl20create8BitIfPossibleEPKDsj(const char16_t* data, unsigned length);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl23convertToASCIILowercaseEv(const NKWebKit::WtfAbi::StringImpl* self);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl23convertToASCIIUppercaseEv(const NKWebKit::WtfAbi::StringImpl* self);
