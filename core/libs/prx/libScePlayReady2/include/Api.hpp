@@ -1,10 +1,11 @@
 #pragma once
 
+#include <cstdint>
 #include "SceTypes.hpp"
 
 extern "C" {
 
-int APS5_VABI scePlayReadyBufferInitWithData();
+int APS5_VABI scePlayReadyBufferInitWithData(void* buffer, const void* data, std::uint64_t size);
 int APS5_VABI scePlayReadyCloneDecryptContext();
 int APS5_VABI scePlayReadyDebugPrintf();
 int APS5_VABI scePlayReadyDebugSetLevel();
@@ -21,6 +22,6 @@ int APS5_VABI scePlayReadyReaderFreeOpaqueContent();
 int APS5_VABI scePlayReadyReaderRetrieveOpaqueContent();
 int APS5_VABI scePlayReadyReinitialize();
 
-int APS5_VABI scePlayReadyApiSetInitParamFlags();
+int APS5_VABI scePlayReadyApiSetInitParamFlags(void* params, std::uint32_t flags);
 
 }
