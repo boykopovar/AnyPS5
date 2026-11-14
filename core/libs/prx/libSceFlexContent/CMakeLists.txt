@@ -1,0 +1,15 @@
+add_library(libSceFlexContent SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceFlexContent PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceFlexContent)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_flex_content_tests ${LIBS_INCLUDE_DIR}/tests/GuestFlexContent.cpp)
+    target_include_directories(guest_flex_content_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_flex_content_tests PRIVATE libSceFlexContent libc)
+    configure_windows_unwind(guest_flex_content_tests)
+    add_test(NAME guest_flex_content COMMAND guest_flex_content_tests)
+    if(WIN32)
+        set_tests_properties(guest_flex_content PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFlexContent>")
+    endif()
+endif()
