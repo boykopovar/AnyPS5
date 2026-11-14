@@ -16,16 +16,13 @@ endif()
 target_sources(libcairo PRIVATE ScaledFont.cpp)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_cairo_scaled_font_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoScaledFont.cpp)
+    add_test_executable(guest_cairo_scaled_font_tests
+        ${LIBS_INCLUDE_DIR}/tests/GuestCairoScaledFont.cpp ScaledFont.cpp Context.cpp)
     target_include_directories(guest_cairo_scaled_font_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_cairo_scaled_font_tests PRIVATE libcairo libc cairo_backend)
+    target_link_libraries(guest_cairo_scaled_font_tests PRIVATE libc cairo_backend)
     configure_windows_unwind(guest_cairo_scaled_font_tests)
     add_test(NAME guest_cairo_scaled_font COMMAND guest_cairo_scaled_font_tests)
     set_tests_properties(guest_cairo_scaled_font PROPERTIES TIMEOUT 30)
-    if(WIN32)
-        set_tests_properties(guest_cairo_scaled_font PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
-    endif()
 
     add_test_executable(guest_cairo_png_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoPng.cpp)
     target_include_directories(guest_cairo_png_tests PRIVATE ${LIBS_INCLUDE_DIR})
