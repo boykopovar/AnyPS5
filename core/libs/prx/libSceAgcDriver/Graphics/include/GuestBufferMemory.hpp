@@ -91,6 +91,7 @@ ImportProbe ProbeImportWriteProtection(const Context& context);
 ImportProbe ProbeDmaBufImportWriteProtection(const Context& context);
 ImportWatch PrepareImportWatch(const Context& context);
 void SetImportWatch(const Context& context, ImportWatch watch);
+bool DmaBufImportSelected(const Context& context);
 
 enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment, ColorTarget };
 inline constexpr std::size_t ImportRequesterCount = 6;
@@ -122,6 +123,7 @@ void ReportHostImports();
 // (alignment and budget permitting), or null. Bytes at `address` are at `HostImportOffset(*import,
 // address)` in the import's buffer.
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester = ImportRequester::Access);
+bool HostImportUsesDmaBuf(const Context& context, std::uint64_t address, std::size_t bytes);
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
 void RequireGpuLockBeforeImports(const char* where);
 bool ImportsHeldByThisThread();
