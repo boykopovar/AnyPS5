@@ -116,6 +116,19 @@ test('out-of-range and malformed setting values report their line', () => {
     }
 });
 
+test('setting values that underflow to zero are refused like the native parser', () => {
+    for (const value of ['1e-400', '-1e-400', '0.5E-400', '.1e-999', '10e-401']) {
+        const message = 'MouseSmoothingMs must be a number from 0 to 500.';
+        assert.deepEqual(parseIni(`MouseSmoothingMs = ${value}`), {entries: [], settings: [], errors: [{line: 1, message}], warnings: []}, value);
+        assert.deepEqual(validateSettings([{name: 'MouseSmoothingMs', value}]), {errors: [{index: 0, message}], settings: []}, value);
+        assert.throws(() => serialize([], [{name: 'MouseSmoothingMs', value}]), {message}, value);
+    }
+    for (const value of ['0', '0.0', '-0', '0e5', '0.e-400', '00.00E+400', '1e-320']) {
+        assert.deepEqual(parseIni(`MouseSmoothingMs = ${value}`).settings, [{name: 'MouseSmoothingMs', value}], value);
+        assert.equal(serialize([], [{name: 'MouseDeadzoneOffset', value}]), `MouseDeadzoneOffset = ${value}\n`, value);
+    }
+});
+
 test('a setting set more than once is refused like the native parser', () => {
     const result = parseIni('Cross = KEY:F\nMouseSensitivity = 1\nMouseSensitivity = 2\n');
     assert.deepEqual(result.errors, [{line: 3, message: 'MouseSensitivity is set more than once.'}]);
