@@ -257,6 +257,26 @@ static void TestSetExData() {
     Require(internal.quietShutdown == 0);
 }
 
+static void TestGetExData() {
+    int first = 1;
+    int second = 2;
+    char* slots[] = {reinterpret_cast<char*>(&first), reinterpret_cast<char*>(&second)};
+    LibreSslStack stack {2, slots, 0, 2, nullptr};
+    TestCtxInternal internal {};
+    TestCtx ctx {};
+    RequireThrows([] { SSL_CTX_get_ex_data_nid_postfix(nullptr, 0); });
+    RequireThrows([&] { SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 0); });
+    ctx.internal = &internal;
+    Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 0) == nullptr);
+    internal.exData = &stack;
+    Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 0) == &first);
+    Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 1) == &second);
+    Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 2) == nullptr);
+    Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), INT_MIN) == nullptr);
+    internal.quietShutdown = 7;
+    Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 0) == &first);
+}
+
 int main() {
     void* heap[10] {};
     ApplicationHeapRegister_nid_no_patch(heap);
@@ -271,5 +291,6 @@ int main() {
     TestSetPasswordUserdata();
     TestUsePrivateKey();
     TestSetExData();
+    TestGetExData();
     return 0;
 }
