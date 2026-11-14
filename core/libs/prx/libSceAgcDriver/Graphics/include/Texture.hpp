@@ -107,6 +107,8 @@ public:
     VkImageView FirstLayerView() const { return firstLayerView; }
     VkImageView BaseLevelView() const;
     bool HasSrgbView() const { return srgbInfo.has_value(); }
+    bool HasArrayView() const { return arrayInfo.has_value(); }
+    VkImageView ArrayView() const;
     VkImageView SrgbView(bool firstLayer, bool baseLevel) const;
     struct ViewRange {
         VkImageViewType type;
@@ -167,6 +169,10 @@ private:
     float srgbMinLod = 0.0f;
     mutable std::mutex srgbMutex;
     mutable std::array<VkImageView, 3> srgbViews{};
+    std::optional<VkImageViewCreateInfo> arrayInfo;
+    float arrayMinLod = 0.0f;
+    mutable std::mutex arrayMutex;
+    mutable VkImageView arrayView = VK_NULL_HANDLE;
     VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDeviceSize allocationBytes = 0;
     VkDeviceSize countedBytes = 0;

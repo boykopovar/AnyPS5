@@ -20,6 +20,7 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_BARRIER_BATCH",
     "APS5_NO_GUARD_SPANS",
     "APS5_NO_OWNED_DRAW_INPUTS",
+    "APS5_NO_SIZE_ONLY_SURFACE_BYTES",
     "APS5_PIPELINE_DISPATCH_MISSES",
     "APS5_NO_EXTENDED_FAST_PROOFS",
 };
@@ -31,6 +32,7 @@ struct SwitchValues {
             std::getenv("APS5_NO_BARRIER_BATCH") != nullptr,
             std::getenv("APS5_NO_GUARD_SPANS") != nullptr,
             std::getenv("APS5_NO_OWNED_DRAW_INPUTS") != nullptr,
+            std::getenv("APS5_NO_SIZE_ONLY_SURFACE_BYTES") != nullptr,
             std::getenv("APS5_PIPELINE_DISPATCH_MISSES") != nullptr,
             std::getenv("APS5_NO_EXTENDED_FAST_PROOFS") != nullptr,
         };

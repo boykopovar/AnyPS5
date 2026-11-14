@@ -444,6 +444,8 @@ def main(argv=None):
     parser.add_argument("--require-matching-window", action="store_true",
                         help="with --since, require matching module records and nondecreasing cumulative counters; records cannot prove a common process")
     args = parser.parse_args(argv)
+    if args.top < 1:
+        parser.error("--top must be positive")
     if args.require_matching_window and not args.since:
         parser.error("--require-matching-window needs --since")
     try:
