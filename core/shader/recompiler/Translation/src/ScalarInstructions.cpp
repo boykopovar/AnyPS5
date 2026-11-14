@@ -9,7 +9,7 @@ template <typename TWord>
 bool TranslationContext::sU32Mask(const RdnaInstruction& inst, IrOpcode logicalOpcode, bool binary, bool negateRhs, bool negateResult, TWord&& word) {
     const auto& destination = inst.destination;
     const auto execOrVcc = [](const RdnaOperand& operand) { return operand.kind == RdnaOperandKind::ExecLo || operand.kind == RdnaOperandKind::VccLo; };
-    const bool involved = execOrVcc(destination) || execOrVcc(sourceAt(inst, 0u)) || (binary && execOrVcc(sourceAt(inst, 1u)));
+    const bool involved = program.Resources().stage == IrShaderStage::Pixel || execOrVcc(destination) || execOrVcc(sourceAt(inst, 0u)) || (binary && execOrVcc(sourceAt(inst, 1u)));
     const bool exact = maskLanesExact(sourceAt(inst, 0u)) && (!binary || maskLanesExact(sourceAt(inst, 1u)));
     if (program.WaveSize() != 32u || !involved || !exact || (destination.kind != RdnaOperandKind::ScalarRegister && !execOrVcc(destination))) return word();
     IrU1 lane = binary ? u64MaskBinary(inst, logicalOpcode, negateRhs, negateResult) : readMask(sourceAt(inst, 0u));
