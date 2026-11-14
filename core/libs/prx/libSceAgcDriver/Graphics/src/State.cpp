@@ -1721,7 +1721,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         Require(rasterizesSampleZeroOnly(cx, result), "the depth target's sample count differs from the rasterizer's");
         rasterizeSampleZero(result);
     }
-    if (result.depth && result.depth->samples > 1 && result.samples == 1 && (read(cx, 0x292) & 1u) == 0) {
+    if (result.depth && result.depth->samples > 1 && result.samples == 1) {
         Require(!result.alphaToCoverage, "a single-sample scan into a multisampled depth target with alpha-to-coverage is unsupported");
         if (auto reason = singleSampleDepthScanRejection(queue); !reason.empty()) throw std::runtime_error(reason);
         result.samples = result.depth->samples;
