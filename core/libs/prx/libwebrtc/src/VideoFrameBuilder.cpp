@@ -43,11 +43,24 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 
 namespace {
+
+constexpr std::size_t AddRefSlot = 0;
+constexpr std::size_t ReleaseSlot = 1;
+
+void CallReference(void* buffer, std::size_t slot, const char* function) {
+    const void* const* vtable;
+    std::memcpy(&vtable, buffer, sizeof(vtable));
+    if (!vtable || !vtable[slot])
+        throw std::invalid_argument(function);
+    using Reference = void(APS5_VABI*)(const void*);
+    reinterpret_cast<Reference>(const_cast<void*>(vtable[slot]))(buffer);
+}
 
 WebRtcVideoFrameBuilder& Checked(WebRtcVideoFrameBuilder* builder, const char* function) {
     if (!builder)
@@ -56,8 +69,6 @@ WebRtcVideoFrameBuilder& Checked(WebRtcVideoFrameBuilder* builder, const char* f
 }
 
 using BufferRelease = int(APS5_VABI*)(const void*);
-
-constexpr std::size_t ReleaseSlot = 1;
 
 void ReleaseVideoFrameBuffer(void* buffer) {
     if (!buffer)
@@ -102,6 +113,30 @@ WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder15set_ntp_time_
 WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(WebRtcVideoFrameBuilder* builder, std::uint16_t id) {
     Checked(builder, "VideoFrame::Builder::set_id requires a builder").id = id;
     return builder;
+}
+
+WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder22set_video_frame_bufferERKNS_13scoped_refptrINS_16VideoFrameBufferEEE_nid_postfix(WebRtcVideoFrameBuilder* builder, void* const* buffer) {
+    WebRtcVideoFrameBuilder& checked = Checked(builder, "VideoFrame::Builder::set_video_frame_buffer requires a builder");
+    if (!buffer)
+        throw std::invalid_argument("VideoFrame::Builder::set_video_frame_buffer requires a buffer reference");
+    void* const replacement = *buffer;
+    if (replacement)
+        CallReference(replacement, AddRefSlot, "VideoFrame::Builder::set_video_frame_buffer requires a frame buffer with a virtual AddRef");
+    if (checked.videoFrameBuffer)
+        CallReference(checked.videoFrameBuffer, ReleaseSlot, "VideoFrame::Builder::set_video_frame_buffer requires a frame buffer with a virtual Release");
+    checked.videoFrameBuffer = replacement;
+    return builder;
+}
+
+void** APS5_VABI _ZNK6webrtc10VideoFrame18video_frame_bufferEv_nid_postfix(void** result, const WebRtcVideoFrame* frame) {
+    if (!result)
+        throw std::invalid_argument("VideoFrame::video_frame_buffer requires a result");
+    if (!frame)
+        throw std::invalid_argument("VideoFrame::video_frame_buffer requires a frame");
+    if (frame->videoFrameBuffer)
+        CallReference(frame->videoFrameBuffer, AddRefSlot, "VideoFrame::video_frame_buffer requires a frame buffer with a virtual AddRef");
+    *result = frame->videoFrameBuffer;
+    return result;
 }
 
 std::int64_t APS5_VABI _ZNK6webrtc10VideoFrame14render_time_msEv_nid_postfix(const WebRtcVideoFrame* frame) {

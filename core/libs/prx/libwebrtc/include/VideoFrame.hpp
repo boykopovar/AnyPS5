@@ -28,6 +28,7 @@ struct WebRtcVideoFrameBuilder {
 
 static_assert(sizeof(WebRtcOptionalInt64) == 16);
 static_assert(sizeof(WebRtcVideoFrameBuilder) == 192);
+static_assert(offsetof(WebRtcVideoFrameBuilder, videoFrameBuffer) == 8);
 static_assert(offsetof(WebRtcVideoFrameBuilder, timestampUs) == 16);
 static_assert(offsetof(WebRtcVideoFrameBuilder, timestampRtp) == 56);
 static_assert(offsetof(WebRtcVideoFrameBuilder, ntpTimeMs) == 64);
@@ -47,6 +48,7 @@ struct WebRtcVideoFrame {
     std::int64_t timestampUs;
 };
 
+static_assert(offsetof(WebRtcVideoFrame, videoFrameBuffer) == 8);
 static_assert(offsetof(WebRtcVideoFrame, timestampRtp) == 16);
 static_assert(offsetof(WebRtcVideoFrame, ntpTimeMs) == 24);
 static_assert(offsetof(WebRtcVideoFrame, timestampUs) == 32);
