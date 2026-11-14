@@ -148,7 +148,13 @@ int APS5_VABI LibraryInit(const FontMemory* memory, FontLibNative* library) {
     std::memset(ctx, 0, sizeof(FtLibraryContext));
     ctx->allocCtx = allocCtx;
     ctx->iface = memory->iface;
-    auto* ftMemory = static_cast<FT_Memory>(allocFn(allocCtx, sizeof(FT_MemoryRec_)));
+    FT_Memory ftMemory = nullptr;
+    try {
+        ftMemory = static_cast<FT_Memory>(allocFn(allocCtx, sizeof(FT_MemoryRec_)));
+    } catch (...) {
+        try { freeFn(allocCtx, ctx); } catch (...) {}
+        throw;
+    }
     if (!ftMemory) {
         freeFn(allocCtx, ctx);
         return SCE_FONT_ERROR_ALLOCATION_FAILED;
