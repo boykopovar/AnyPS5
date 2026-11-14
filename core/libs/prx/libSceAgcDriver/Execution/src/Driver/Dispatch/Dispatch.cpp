@@ -642,6 +642,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     const bool noteWrites = writeEvidenceEnabled() || traceCapSync();
     const auto keysFill = indirectArguments == 0 && !partialLastGroup ? MatchSgprPatternFill(packet, std::span(snapshot.code).subspan(codeOffset), userData, compute) : std::nullopt;
     const auto filledKeys = keysFill ? KeysFillMemo(keysFill->pattern, false, true) : std::nullopt;
+    if (keysFill) Graphics::RetireMultisampleColorTargetsOnFmaskWrite(keysFill->base, keysFill->bytes);
 
     std::optional<Graphics::DepthPlaneClear> depthPlaneClear;
     if (indirectArguments == 0 && !partialLastGroup) {
