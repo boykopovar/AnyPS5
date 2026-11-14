@@ -1195,9 +1195,15 @@ extern "C" {
 
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name) {
     if (!thread || !entry) throw std::runtime_error("scePthreadCreate: null arg");
-    if (name && std::strlen(name) >= GUEST_THREAD_NAME_CAPACITY) {
-        *thread = nullptr;
-        return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    std::string nameCopy;
+    if (name) {
+        const int error = CopyGuestString_nid_no_patch(name, GUEST_THREAD_NAME_CAPACITY, nameCopy);
+        if (error != 0) {
+            *thread = nullptr;
+            if (error == 63) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+            if (error == 12) return SCE_KERNEL_ERROR_ENOMEM;
+            return SCE_KERNEL_ERROR_EFAULT;
+        }
     }
     if (attr && !*attr) attr = nullptr;
     auto p = std::make_unique<PthreadPrivate>(attr ? *attr : nullptr);
@@ -1213,7 +1219,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     } else if (CurrentGuestState().current) {
         p->scope = CurrentGuestState().current->scope;
     }
-    if (name) p->name = name;
+    if (name) p->name = std::move(nameCopy);
     p->createdSuspended = attr && (*attr)->_createSuspended;
     p->suspended.store(p->createdSuspended, std::memory_order_relaxed);
     p->pendingException.store(0, std::memory_order_relaxed);
