@@ -82,8 +82,11 @@ def skipped_libraries(build):
     enabled = False
     for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
         name, _, value = line.partition(":")
+        on = value.partition("=")[2].strip().upper() in ("ON", "1", "TRUE", "YES", "Y")
+        if name in ("ANYPS5_RELINKER_ONLY", "ANYPS5_BUILD_WASM") and on:
+            return None
         if name in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
-            enabled = enabled or value.partition("=")[2].strip().upper() in ("ON", "1", "TRUE", "YES", "Y")
+            enabled = enabled or on
     return set(SANITIZER_SKIPPED_LIBRARIES) if enabled else set()
 
 
@@ -391,7 +394,7 @@ def main(argv=None):
         every = sorted(built(args.build))
         run = registered(args.build)
         skipped = skipped_libraries(args.build)
-        unbuilt = unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build), skipped)
+        unbuilt = None if skipped is None else unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build), skipped)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
     if args.list:
@@ -412,7 +415,7 @@ def main(argv=None):
         return 1
     for name in sorted(set(unrun) & KNOWN_UNRUN):
         print(f"note: {name} is built and not run, as recorded")
-    for name in sorted(skipped):
+    for name in sorted(skipped or ()):
         print(f"note: {name} is not built in this ASan/TSan configuration")
     for name in stale:
         print(f"error: {name} is run by ctest now; remove it from KNOWN_UNRUN")
@@ -428,7 +431,7 @@ def main(argv=None):
         return 1
     print(f"{len(every)} test executable(s), {len(unrun)} built and not run as recorded, none new")
     if unbuilt is None:
-        print("no core/libs/prx source is compiled in this build; library sources were not checked")
+        print("the core/libs/prx libraries are not part of this build; library sources were not checked")
     else:
         print("every core/libs/prx source that defines an APS5_VABI function is compiled")
     return 0
