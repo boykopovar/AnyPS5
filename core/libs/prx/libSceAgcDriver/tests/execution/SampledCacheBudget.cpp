@@ -897,6 +897,75 @@ void releasedTests(Context context) {
     std::puts("resource cache released texture tests passed");
 }
 
+void pressureReleaseTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    ClearCachedTextures(context.device);
+    auto& cache = SharedResourceCache();
+    cache.Clear();
+    try {
+        Block block(context);
+        auto pinned = ImageResources(context, block, 0, 1, true);
+        const std::weak_ptr<Texture> texture = pinned->SampledTextures().front();
+        const std::weak_ptr<ShaderResources> pinnedSet = pinned;
+        cache.Insert({1}, pinned);
+        Require(cache.Find({1}) == pinned, "the resource cache rejected a descriptor set whose texture is cached");
+        pinned.reset();
+        const auto held = ImageResources(context, block, 1, 1, true);
+        ReleaseTextureCaches(~std::uint64_t{0});
+        Require(cache.Find({1}) == nullptr && pinnedSet.expired(), "a full release of the texture caches kept a cached descriptor set holding a sampled texture");
+        Require(texture.expired(), "a full release of the texture caches left alive a sampled texture only a cached descriptor set held");
+        Require(Sampled(context, block.Surface(1)) == held->SampledTextures().front(), "a full release of the texture caches dropped a sampled texture its caller holds");
+    } catch (...) {
+        cache.Clear();
+        throw;
+    }
+    cache.Clear();
+    ClearCachedTextures(context.device);
+    std::puts("texture cache release of cached descriptor sets passed");
+}
+
+void batchHeldReleaseTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    ClearCachedTextures(context.device);
+    SharedResourceCache().Clear();
+    Block block(context);
+    std::weak_ptr<Texture> texture;
+    std::weak_ptr<ShaderResources> build;
+    {
+        Recorder recorder(context);
+        recorder.Activate();
+        recorder.Commands();
+        auto kept = ImageResources(context, block, 0, 1, true);
+        texture = kept->SampledTextures().front();
+        build = kept;
+        const auto bytes = static_cast<std::size_t>(texture.lock()->AllocationBytes());
+        Require(bytes != 0, "the batch fixture's sampled texture owns no memory");
+        recorder.Keep(std::move(kept));
+        const auto before = recorder.OpenKeptBytes();
+        ReleaseTextureCaches(~std::uint64_t{0});
+        Require(!texture.expired(), "a release freed a sampled texture the open batch still binds");
+        Require(recorder.OpenKeptBytes() >= before + bytes, "a release short of memory did not charge the sampled texture the open batch holds to that batch, so the batch is not submitted to free it");
+        ReleaseTextureCaches(~std::uint64_t{0});
+        Require(recorder.OpenKeptBytes() >= before + bytes && recorder.OpenKeptBytes() < before + 2 * bytes, "a second release charged the same held texture to the open batch twice");
+        recorder.Sync();
+        recorder.FlushDeferredReleases();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!build.expired() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        Require(build.expired(), "the completed batch did not release the build it kept");
+        ReleaseTextureCaches(~std::uint64_t{0});
+        Require(texture.expired(), "a release after the batch holding a sampled texture completed did not free it");
+    }
+    SharedResourceCache().Clear();
+    ClearCachedTextures(context.device);
+    std::puts("texture cache release of textures held by the open batch passed");
+}
+
 void rescanTests(const Context& context) {
     constexpr std::uint32_t SmallSide = 128;
     constexpr std::size_t SmallBytes = std::size_t{SmallSide} * SmallSide * 4u;
@@ -942,22 +1011,27 @@ void frameTests(const Context& context) {
     std::vector<std::weak_ptr<Texture>> made(frame);
     for (std::size_t surface = 0; surface < frame; ++surface) made[surface] = Sampled(context, block.Surface(surface));
     Require(TextureCacheUsage().sampledEntries == capacity, "a frame of " + std::to_string(frame) + " textures left " + std::to_string(TextureCacheUsage().sampledEntries) + " cached, not the " + std::to_string(capacity) + " the budget holds");
-    for (std::size_t surface = capacity; surface < frame; ++surface) Require(made[surface].expired(), "surface " + std::to_string(surface) + ", used once in a frame whose textures fill the cache, was cached in place of an earlier one");
+    for (std::size_t surface = capacity; surface < frame; ++surface) Require(!made[surface].expired(), "surface " + std::to_string(surface) + ", refused by a cache full of this frame's textures, was not kept for the rest of the frame");
     Recorder::CountPresent();
     std::size_t hits = 0;
     for (std::size_t surface = 0; surface < frame; ++surface) {
         const auto again = Sampled(context, block.Surface(surface));
         hits += again == made[surface].lock();
     }
-    Require(hits == capacity, "the next frame over the same " + std::to_string(frame) + " textures found " + std::to_string(hits) + " of them cached, not the " + std::to_string(capacity) + " the cache kept");
+    Require(hits == frame, "the next frame over the same " + std::to_string(frame) + " textures found " + std::to_string(hits) + " of them, not the " + std::to_string(capacity) + " the cache kept and the " + std::to_string(frame - capacity) + " it refused in the frame before");
     auto refused = Sampled(context, block.Surface(frame - 1u));
-    Require(Sampled(context, block.Surface(frame - 1u)) != refused, "a texture used a second time in the frame was cached in place of one of the frame's textures");
+    Require(Sampled(context, block.Surface(frame - 1u)) == refused, "a texture refused by a cache full of this frame's textures was rebuilt on its second use in the frame");
     Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "the texture used a second time left the cache over its budget");
     refused.reset();
     Recorder::CountPresent();
     std::vector<std::weak_ptr<Texture>> moved(frame);
     for (std::size_t surface = 0; surface < frame; ++surface) moved[surface] = Sampled(context, block.Surface(frame + surface));
-    for (std::size_t surface = 0; surface < frame; ++surface) Require(moved[surface].expired(), "surface " + std::to_string(frame + surface) + ", first used in the frame after the cached textures were, was cached in place of one of them");
+    std::uint64_t movedKept = 0;
+    for (const auto& texture : moved) {
+        if (const auto held = texture.lock()) movedKept += held->AllocationBytes();
+    }
+    Require(!moved[0].expired(), "surface " + std::to_string(frame) + ", the first used in the frame after the cached textures were, was not kept for the rest of the frame");
+    Require(movedKept <= Budget, "a frame of " + std::to_string(frame) + " textures the full cache refused kept " + std::to_string(movedKept >> 10u) + " KiB of them, past the " + std::to_string(Budget >> 10u) + " KiB budget");
     Require(TextureCacheUsage().sampledEntries == capacity, "a frame over other textures left " + std::to_string(TextureCacheUsage().sampledEntries) + " of the previous frame's textures cached");
     Recorder::CountPresent();
     for (std::size_t surface = 0; surface < frame; ++surface) moved[surface] = Sampled(context, block.Surface(frame + surface));
@@ -1024,10 +1098,69 @@ void secondUseTests(const Context& context) {
     for (std::size_t surface = 1; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
     Recorder::CountPresent();
     auto first = Sampled(context, block.Surface(capacity));
-    Require(TextureCacheUsage().sampledEntries == capacity && first.use_count() == 1, "the first use in a frame of a texture the cache does not hold was cached in place of one the last frame used");
+    Require(TextureCacheUsage().sampledEntries == capacity, "the first use in a frame of a texture the cache does not hold was cached in place of one the last frame used");
     const auto second = Sampled(context, block.Surface(capacity));
+    Require(second == first, "the second use in a frame of a texture refused on its first use rebuilt it");
     Require(Sampled(context, block.Surface(capacity)) == second, "a texture used a second time in a frame whose least recently used entry is from the last frame was not cached");
     Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "the texture admitted on its second use left the cache over its budget");
+}
+
+void refusedReuseTests(const Context& context) {
+    Block block(context);
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    const auto bytes = Sampled(context, block.Surface(0))->AllocationBytes();
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require(capacity >= 2u && capacity + 1u < Surfaces && TextureCacheUsage().sampledEntries == 1u, "a snapshot of the 256 KiB surface holds " + std::to_string(bytes) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    for (std::size_t surface = 1; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    Recorder::CountPresent();
+    for (std::size_t surface = 0; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    const auto address = block.Surface(capacity);
+    const auto refused = Sampled(context, address);
+    Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "a texture refused by a cache full of this frame's textures took the cache over its budget");
+    for (std::size_t use = 1; use <= 4u; ++use) Require(Sampled(context, address) == refused, "use " + std::to_string(use) + " in the same frame rebuilt a texture the full cache refused");
+    Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "reusing a refused texture took the cache over its budget");
+    std::memset(reinterpret_cast<void*>(address), 0x3c, SurfaceBytes);
+    const auto changed = Sampled(context, address);
+    Require(changed != refused, "a refused texture was reused after its guest memory changed in the same frame");
+    Require(Sampled(context, address) == changed, "the texture rebuilt after a guest write was not reused for the rest of the frame");
+    Recorder::CountPresent();
+    for (std::size_t surface = 0; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    Require(Sampled(context, address) == changed, "a refused texture the next frame used again was rebuilt");
+    Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "a refused texture reused in the next frame took the cache over its budget");
+    Recorder::CountPresent();
+    Sampled(context, block.Surface(0));
+    Require(!changed->Released(), "a refused texture used in the frame that just ended was released at its present");
+    Recorder::CountPresent();
+    Sampled(context, block.Surface(0));
+    Require(changed->Released(), "a refused texture no frame used since was not marked released when the next frame ended");
+    ClearCachedTextures(context.device);
+}
+
+void refusedBudgetTests(const Context& context) {
+    Block block(context);
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    const auto bytes = Sampled(context, block.Surface(0))->AllocationBytes();
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require(capacity >= 2u && (Surfaces - capacity) * bytes > Budget, "a snapshot of the 256 KiB surface holds " + std::to_string(bytes) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    for (std::size_t surface = 1; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    Recorder::CountPresent();
+    for (std::size_t surface = 0; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    std::vector<std::weak_ptr<Texture>> refused;
+    for (std::size_t surface = capacity; surface < Surfaces; ++surface) refused.push_back(Sampled(context, block.Surface(surface)));
+    std::uint64_t kept = 0;
+    std::size_t live = 0;
+    for (const auto& texture : refused) {
+        if (const auto held = texture.lock()) {
+            kept += held->AllocationBytes();
+            ++live;
+        }
+    }
+    Require(kept <= Budget, "a frame that refused " + std::to_string(refused.size()) + " textures kept " + std::to_string(live) + " of them alive, " + std::to_string(kept >> 10u) + " KiB, past the " + std::to_string(Budget >> 10u) + " KiB budget");
+    Require(live != 0u && live < refused.size(), "a frame that refused " + std::to_string(refused.size()) + " textures over the budget kept " + std::to_string(live) + " of them, expected some but not all");
+    Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "refusing a frame of textures past the kept budget took the cache over its budget");
+    ClearCachedTextures(context.device);
 }
 
 void earlyMissTests(const Context& context) {
@@ -1167,6 +1300,37 @@ void VKAPI_PTR ReportPressure(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties
 std::uint64_t ReadStorageBudget(const Context& context) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     return StorageTextureCacheBudget(context);
+}
+
+void VKAPI_PTR ReportFull(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
+    auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
+    for (std::uint32_t heap = 0; heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+        reported->heapBudget[heap] = ReportedBudget;
+        reported->heapUsage[heap] = ReportedBudget;
+    }
+}
+
+void refusedPressureTests(Context context) {
+    const auto unpressed = context;
+    context.memoryProperties2 = &ReportFull;
+    Block block(context);
+    ClearCachedTextures(context.device);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    Recorder::CountPresent();
+    const auto bytes = Sampled(context, block.Surface(0))->AllocationBytes();
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require(capacity >= 2u && capacity < Surfaces, "a snapshot of the 256 KiB surface holds " + std::to_string(bytes) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    for (std::size_t surface = 1; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    Recorder::CountPresent();
+    for (std::size_t surface = 0; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    std::vector<std::weak_ptr<Texture>> refused;
+    for (std::size_t surface = capacity; surface < Surfaces; ++surface) refused.push_back(Sampled(context, block.Surface(surface)));
+    std::size_t live = 0;
+    for (const auto& texture : refused) live += !texture.expired();
+    Require(live == 0u, "a device that reports its memory budget used up kept " + std::to_string(live) + " of " + std::to_string(refused.size()) + " refused textures alive past their use");
+    ClearCachedTextures(context.device);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    SampledTextureCacheBudget(unpressed);
 }
 
 void memoryTests(Context context) {
@@ -1557,6 +1721,8 @@ int main(int argc, char** argv) {
             recycleTests(context);
             heldTests(context);
             releasedTests(context);
+            pressureReleaseTests(context);
+            batchHeldReleaseTests(context);
             rescanTests(context);
             viewEvictionTests(context);
             viewTests(context);
@@ -1564,6 +1730,9 @@ int main(int argc, char** argv) {
             frameTests(context);
             shrinkTests(context);
             secondUseTests(context);
+            refusedReuseTests(context);
+            refusedBudgetTests(context);
+            refusedPressureTests(context);
             earlyMissTests(context);
             collidingKeyTests(context);
             spareAgeTests(context);

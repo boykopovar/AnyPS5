@@ -840,6 +840,7 @@ public:
     void Remove(const Key& key, const ShaderResources* object = nullptr);
     void RemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
     bool TryRemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
+    bool TryRemoveTextures(const std::unordered_set<const Texture*>& held, std::vector<std::shared_ptr<ShaderResources>>* evicted);
     // Moves the entry to the front of the LRU (a recipe hit uses its template without Find, and a
     // hot template must not age out under the recipes that depend on it); false when no entry.
     bool Touch(const Key& key);
