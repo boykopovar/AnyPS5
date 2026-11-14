@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 from pathlib import Path
@@ -796,6 +797,88 @@ class CompareTests(unittest.TestCase):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}], PPSA00002=[{"outcome": "rendering", "fps": 1.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 2.0}], PPSA00003=[{"outcome": "rendering", "fps": 2.0}])
         self.assertEqual(list(feature("compare_runs")(summary, previous)), ["PPSA00001"])
+
+
+class DiagnosticComparisonTests(unittest.TestCase):
+    def run_summary(self, functions=(), instructions=(), functions_omitted=0, instructions_omitted=0):
+        report = {"missing": list(functions), "unsupported": list(instructions),
+                  "truncated": {"functions": functions_omitted, "unsupported": instructions_omitted}}
+        return {"titles": {"PPSA00001": {"name": "Example", "runs": [
+            {"outcome": "rendering", "fps": 60.0, "report": report}]}}}
+
+    def missing(self, name, calls, library="libSceExample"):
+        return {"library": library, "name": name, "calls": calls}
+
+    def instruction(self, count):
+        return {"encoding": "VOP3", "opcode": "V_EXAMPLE", "opcodeValue": 4, "modifiers": None, "count": count}
+
+    def render(self, before, now):
+        return "\n".join(title_run.render_compare(title_run.compare_runs(now, before)))
+
+    def test_changed_calls_are_visible_with_the_same_function_identity(self):
+        before = self.run_summary([self.missing("shared", 3)])
+        small = self.run_summary([self.missing("shared", 5)])
+        large = self.run_summary([self.missing("shared", 3000)])
+        first, second = self.render(before, small), self.render(before, large)
+        self.assertNotEqual(first, second)
+        self.assertIn("libSceExample/shared: 3 -> 5", first)
+        self.assertIn("libSceExample/shared: 3 -> 3000", second)
+
+    def test_aggregated_calls_and_each_presence_category_are_preserved(self):
+        before = self.run_summary([self.missing("shared", 2), self.missing("shared", 5), self.missing("old", 11)])
+        now = self.run_summary([self.missing("shared", 3), self.missing("shared", 6), self.missing("new", 13)])
+        text = self.render(before, now)
+        self.assertIn("missing functions calls:", text)
+        self.assertIn("only before: libSceExample/old: 11", text)
+        self.assertIn("only now: libSceExample/new: 13", text)
+        self.assertIn("in both: libSceExample/shared: 7 -> 9", text)
+
+    def test_instruction_occurrence_counts_are_preserved(self):
+        before = self.run_summary(instructions=[self.instruction(2), self.instruction(5)])
+        now = self.run_summary(instructions=[self.instruction(1000)])
+        text = self.render(before, now)
+        self.assertIn("unsupported instructions occurrences:", text)
+        self.assertIn("V_EXAMPLE (VOP3, opcode value 4): 7 -> 1000", text)
+
+    def test_partial_function_lists_show_retained_and_omitted_counts(self):
+        before = self.run_summary([self.missing("old", 1)], functions_omitted=3)
+        now = self.run_summary([self.missing("new", 1)], functions_omitted=7)
+        text = self.render(before, now)
+        self.assertIn("| Example | PPSA00001 | Missing functions (retained) | 1 | 1 |", text)
+        self.assertIn("| Example | PPSA00001 | Missing functions omitted | 3 | 7 |", text)
+        self.assertIn("missing functions: lists are partial", text)
+        self.assertIn("not proof of absence from the other run", text)
+
+    def test_one_sided_instruction_truncation_preserves_unknown(self):
+        before = self.run_summary(instructions=[self.instruction(1)])
+        before["titles"]["PPSA00001"]["runs"][0]["report"].pop("truncated")
+        now = self.run_summary(instructions=[self.instruction(1)], instructions_omitted=2)
+        text = self.render(before, now)
+        self.assertIn("| Example | PPSA00001 | Unsupported instructions omitted | not recorded | 2 |", text)
+        self.assertIn("unsupported instructions: lists are partial", text)
+
+    def test_complete_and_legacy_empty_lists_keep_the_existing_output(self):
+        complete = self.run_summary()
+        legacy = copy.deepcopy(complete)
+        legacy["titles"]["PPSA00001"]["runs"][0]["report"].pop("truncated")
+        for summary in (complete, legacy):
+            text = self.render(summary, summary)
+            self.assertIn("| Example | PPSA00001 | Missing functions | 0 | 0 |", text)
+            self.assertNotIn("omitted", text)
+            self.assertNotIn("partial", text)
+            self.assertNotIn("missing functions calls:", text)
+
+    def test_rendering_does_not_change_the_json_comparison(self):
+        before = self.run_summary([self.missing("shared", 3)], functions_omitted=2)
+        now = self.run_summary([self.missing("shared", 5)])
+        compared = title_run.compare_runs(now, before)
+        saved = copy.deepcopy(compared)
+        title_run.render_compare(compared)
+        self.assertEqual(compared, saved)
+        document = json.loads(title_run.compare_json(now, before))
+        self.assertEqual(document["titles"], saved)
+        self.assertEqual(saved["PPSA00001"]["missingFunctions"]["both"][0]["before"], 3)
+        self.assertEqual(saved["PPSA00001"]["missingFunctionsTruncated"], {"before": 2, "now": 0})
 
 
 class RunReportTests(unittest.TestCase):
