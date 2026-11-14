@@ -160,6 +160,19 @@ def build_pe(names):
     return bytes(image) + raw + b"\xc3" * (16 * max(1, len(names)))
 
 
+def with_pe_alias_section(image, address, size=16, raw_size=16, first=False):
+    image = bytearray(image)
+    count = struct.unpack_from("<H", image, 0x40 + 6)[0]
+    table = 0x58 + struct.unpack_from("<H", image, 0x40 + 20)[0]
+    offset = len(image)
+    image.extend(bytes(raw_size))
+    entry = struct.pack("<8sIIIIIIHHI", b".alias", size, address, raw_size, offset, 0, 0, 0, 0, 0x40000040)
+    entries = bytes(image[table:table + count * 40])
+    image[table:table + (count + 1) * 40] = entry + entries if first else entries + entry
+    struct.pack_into("<H", image, 0x40 + 6, count + 1)
+    return image
+
+
 def with_pe_optional_header(image, magic, size, count):
     image = bytearray(image)
     optional = 0x58
@@ -2496,6 +2509,52 @@ class ImportAuditTests(unittest.TestCase):
         struct.pack_into("<I", image, 0x58 + 240 + 20, 0x400)
         struct.pack_into("<I", image, 0x58 + 280 + 20, 0x438)
         self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"alpha"})
+
+    def test_pe_metadata_rejects_overlapping_mappings_in_either_order(self):
+        for first in (False, True):
+            for address, raw_size in ((0x1000, 16), (0x1010, 16), (0x102a, 16), (0x1000, 0)):
+                with self.subTest(first=first, address=address, raw_size=raw_size):
+                    image = with_pe_alias_section(build_pe(["alpha"]), address, raw_size=raw_size, first=first)
+                    with self.assertRaisesRegex(import_audit.AuditError, "overlapping PE"):
+                        import_audit.pe_exports(Path("lib.prx"), image)
+        image = with_pe_alias_section(build_pe(["alpha"]), 0x180)
+        reader, _, _ = import_audit.pe_headers(Path("headers.prx"), image)
+        with self.assertRaisesRegex(import_audit.AuditError, "overlapping PE"):
+            reader(0x180, 1)
+
+    def test_pe_string_reads_stop_before_overlap_but_keep_unrelated_mappings(self):
+        image = with_pe_alias_section(build_pe(["alpha"]), 0x1034)
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.pe_exports(Path("lib.prx"), image)
+        for address in (0x1038, 0x1800):
+            with self.subTest(address=address):
+                image = with_pe_alias_section(build_pe(["alpha"]), address)
+                self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"alpha"})
+        for address in (0x1010, 0x1034):
+            with self.subTest(zero_extent=address):
+                image = with_pe_alias_section(build_pe(["alpha"]), address, size=0, raw_size=0)
+                self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"alpha"})
+        image = with_pe_alias_section(build_pe(["alpha"]), 0x1030)
+        reader, _, _ = import_audit.pe_headers(Path("lib.prx"), image)
+        self.assertEqual(reader(0x1028, 8)[0], 0x228)
+        with self.assertRaisesRegex(import_audit.AuditError, "crosses overlapping PE"):
+            reader(0x1028, 9)
+
+    def test_ambiguous_pe_audit_preserves_previous_json_report(self):
+        work = self.work
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        library = work.libs / "libExample.prx"
+        write_registry(registry, [("AAAAAAAAAAA", "libExample.prx")])
+        for first in (False, True):
+            with self.subTest(first=first):
+                library.write_bytes(with_pe_alias_section(build_pe(["AAAAAAAAAAA"]), 0x1000, first=first))
+                report.write_bytes(b"previous audit")
+                code, output, errors = work.run(registry, "--json", str(report))
+                self.assertEqual((code, output), (2, ""))
+                self.assertIn("overlapping PE", errors)
+                self.assertIn(str(library), errors)
+                self.assertNotIn("Traceback", errors)
+                self.assertEqual(report.read_bytes(), b"previous audit")
 
     def test_elf_extended_section_count_keeps_exports(self):
         image = bytearray(exporting("alpha"))
