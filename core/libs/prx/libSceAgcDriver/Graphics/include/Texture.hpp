@@ -327,6 +327,7 @@ public:
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     static bool UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static void SetPublishHookForTest(void (*hook)());
+    static void SetPendingHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
     static constexpr std::uint64_t OccasionalStoreBytes = 1024 * 1024;
     static constexpr std::uint64_t OccasionalWriteFlips = 8;

@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
@@ -261,6 +262,7 @@ struct LiveImages {
 };
 
 std::atomic<void (*)()> publishHookForTest{nullptr};
+std::atomic<void (*)(std::uint64_t, std::size_t)> pendingHookForTest{nullptr};
 
 LiveImages& Live() {
     static LiveImages live;
@@ -4527,7 +4529,11 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
                 if (unsaved[layer]) pendingMiss[layer] = BaselineMiss::SavedBytesDropped;
             }
         }
-        GuestMemory::CollectWritesUncached(layerBegin(first), static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first)));
+        const auto collectFrom = layerBegin(first);
+        const auto collectBytes = static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first));
+        if (const auto hook = pendingHookForTest.load(std::memory_order_acquire)) hook(collectFrom, collectBytes);
+        if (RuntimeSwitches::Set(RuntimeSwitch::NoMemoPendingCollect)) GuestMemory::CollectWritesUncached(collectFrom, collectBytes);
+        else GuestMemory::CollectWrites(collectFrom, collectBytes);
         if (!completionKept.empty()) {
             for (std::uint32_t layer = first; layer < first + count; ++layer) {
                 if (layerPending[layer]) continue;
@@ -5165,6 +5171,10 @@ bool StorageTexture::hashedAtUnwatch(std::uint64_t address, std::size_t bytes) c
 
 void StorageTexture::SetPublishHookForTest(void (*hook)()) {
     publishHookForTest.store(hook, std::memory_order_release);
+}
+
+void StorageTexture::SetPendingHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes)) {
+    pendingHookForTest.store(hook, std::memory_order_release);
 }
 
 bool StorageTexture::UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
