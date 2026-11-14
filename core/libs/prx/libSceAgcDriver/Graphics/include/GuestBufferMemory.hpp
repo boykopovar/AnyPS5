@@ -217,6 +217,7 @@ bool HostImportsReconciledUnchanged(const Context& context, const HostImportsPro
 // The table's identity when it is reconciled with the live registry (one lock), else empty.
 HostImportsProof HostImportsIdentity(const Context& context);
 void SetDeviceLocalFullForTests(bool full);
+bool DeviceLocalFullForTests();
 std::uint64_t StagingShadowsRefused();
 std::uint64_t StagingShadowLimit();
 

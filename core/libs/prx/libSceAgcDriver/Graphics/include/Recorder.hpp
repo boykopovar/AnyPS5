@@ -272,6 +272,40 @@ public:
     OwnedDrawInputProof ArmOwnedDrawInput(std::uint64_t address, std::size_t bytes) const;
     std::shared_ptr<Buffer> ReusableOwnedDrawInput(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived, std::size_t from = 0, std::uint32_t* lowest = nullptr);
     void KeepOwnedDrawInput(std::uint64_t address, std::size_t bytes, const OwnedDrawInputProof& proof, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived, std::size_t from = 0, std::uint32_t lowest = 0);
+    enum class DrawInputCopyRefusal : std::uint8_t { Label, CopiedWriter, Import, Allocation, Untracked, Count };
+    static constexpr std::size_t DrawInputCopyRefusals = static_cast<std::size_t>(DrawInputCopyRefusal::Count);
+    struct DrawInputCopyStatistics {
+        std::uint64_t copies = 0;
+        std::uint64_t bytes = 0;
+        std::uint64_t hits = 0;
+        std::uint64_t passBreaks = 0;
+        std::uint64_t ahead = 0;
+        std::array<std::uint64_t, DrawInputCopyRefusals> refused{};
+    };
+    struct DrawInputCopyOrder {
+        std::uint64_t address = 0;
+        std::size_t bytes = 0;
+        std::size_t from = 0;
+        VkBuffer source = VK_NULL_HANDLE;
+        VkDeviceSize sourceOffset = 0;
+    };
+    static constexpr std::size_t DrawInputCopyBudget = std::size_t{256} << 20u;
+    static constexpr std::size_t DrawInputCopyEntries = 1024;
+    static constexpr std::uint32_t DrawInputCopyIdleLimit = 2;
+    static bool DrawInputCopiesEnabled();
+    static DrawInputCopyStatistics DrawInputCopyCounts();
+    static const char* DrawInputCopyRefusalName(DrawInputCopyRefusal reason);
+    bool RenderPassOpen() const { return open != nullptr && open->renderPass.open; }
+    bool OwesDrawInputCopies() const { return owedDrawInputCopies != 0; }
+    std::size_t DrawInputCopyCount() const { return drawInputCopies.size(); }
+    bool HasDrawInputCopy(std::uint64_t address) const { return drawInputCopies.contains(address); }
+    bool DrawInputCopyRefused(std::uint64_t address, std::size_t bytes, std::size_t from) const;
+    std::shared_ptr<Buffer> ReusableDrawInputCopy(std::uint64_t address, std::size_t bytes, std::size_t from, bool counted = true);
+    void WantDrawInputCopy(std::uint64_t address, std::size_t bytes, std::size_t from);
+    std::vector<DrawInputCopyOrder> OwedDrawInputCopies();
+    void RefuseDrawInputCopy(std::uint64_t address, DrawInputCopyRefusal reason);
+    void SettleDrawInputCopy(std::uint64_t address);
+    void RecordDrawInputCopies(std::span<const DrawInputCopyOrder> orders, bool ahead, bool passOpen);
     static constexpr std::size_t ContainingSnapshotProbes = 16;
     void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0, std::size_t from = 0, std::uint32_t lowest = 0, bool ownedInsertion = false);
     static constexpr std::size_t DrawUploadChunk = std::size_t{1} << 20u;
@@ -678,7 +712,7 @@ public:
     // or APS5_PROFILE_GPU). A class range covers the command with its own barriers (a dispatch's
     // barriers are classes of their own, its program range stays keyed by the program), so the
     // union of every range of a batch and the batch span differ by what no class times ('untimed').
-    enum class CommandClass : std::uint8_t { DispatchLeading = 0, DispatchTrailing, IndirectArguments, LabelRun, Fill, FillClear, Copy, StagingIn, StagingOut, Draw, StorageUpload, StorageWriteBack, DccClear, DccKeyStore, PresentBlit, ShadowPublish, TemplateDataRefresh, Count };
+    enum class CommandClass : std::uint8_t { DispatchLeading = 0, DispatchTrailing, IndirectArguments, LabelRun, Fill, FillClear, Copy, StagingIn, StagingOut, Draw, StorageUpload, StorageWriteBack, DccClear, DccKeyStore, PresentBlit, ShadowPublish, TemplateDataRefresh, DrawInputCopy, Count };
     static constexpr std::uint64_t ClassKey(CommandClass which) { return 0x10 + static_cast<std::uint64_t>(which); }
     std::uint32_t BeginGpuTiming(CommandClass which) { return BeginGpuTiming(ClassKey(which)); }
     static void CountBarriers(CommandClass which, std::uint32_t count = 1);
@@ -1131,6 +1165,29 @@ private:
     std::map<DrawSnapshotKey, IndexRange> indexRanges;
     std::list<DrawSnapshotKey> indexRangeRecency;
     bool ownedDrawInputHolds(std::uint64_t address, std::size_t bytes, const OwnedDrawInputProof& proof) const;
+    struct DrawInputCopy {
+        std::size_t bytes = 0;
+        std::size_t from = 0;
+        std::shared_ptr<Buffer> buffer;
+        std::uint64_t generation = 0;
+        std::uint64_t registryGeneration = 0;
+        std::list<std::uint64_t>::iterator recent;
+        std::size_t held = 0;
+        std::uint32_t idle = 0;
+        bool current = false;
+        bool wanted = false;
+        bool outdated = false;
+        bool refused = false;
+    };
+    std::map<std::uint64_t, DrawInputCopy> drawInputCopies;
+    std::list<std::uint64_t> drawInputCopyRecency;
+    std::size_t drawInputCopyBytes = 0;
+    std::size_t drawInputCopyReach = 0;
+    std::size_t owedDrawInputCopies = 0;
+    void eraseDrawInputCopy(std::map<std::uint64_t, DrawInputCopy>::iterator entry);
+    void setDrawInputCopy(DrawInputCopy& entry, bool wanted, bool current, bool outdated);
+    void outdateDrawInputCopies(std::uint64_t address, std::uint64_t end);
+    void outdateDrawInputCopies();
     bool refreshDrawSnapshot(DrawSnapshot& entry, std::uint64_t address, std::size_t bytes);
     std::shared_ptr<Buffer> containingDrawSnapshot(std::uint64_t address, std::size_t bytes, VkDeviceSize* offset);
     mutable std::weak_ptr<const WriteRanges> publishedWriteRanges;

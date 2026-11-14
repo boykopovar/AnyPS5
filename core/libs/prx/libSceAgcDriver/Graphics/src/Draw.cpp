@@ -864,6 +864,7 @@ struct DrawProfile {
     std::array<std::uint64_t, static_cast<std::size_t>(DrawSkip::Count)> skips{};
     std::array<double, static_cast<std::size_t>(DrawSkip::Count)> skipUs{};
     AddressDrawReuseCounts addressSeen{};
+    Recorder::DrawInputCopyStatistics inputCopiesSeen{};
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 constexpr std::array<const char*, static_cast<std::size_t>(DrawSkip::Count)> DrawSkipNames{"nothing to draw", "prechecked", "thrown"};
@@ -1008,6 +1009,16 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     }
     AgcDriver::ProfilePrint_nid_no_patch("%s\n", line);
     AgcDriver::ProfilePrint_nid_no_patch("[rescache] draws: %llu hits, %llu misses, %llu invalidated, %llu uncacheable; validation memo %llu hits / %llu misses (which key words the misses differ in: the miss churn line)\n", static_cast<unsigned long long>(profile.cacheHits), static_cast<unsigned long long>(profile.cacheMisses), static_cast<unsigned long long>(profile.cacheInvalidated), static_cast<unsigned long long>(profile.uncacheable), static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
+    if (const auto copies = Recorder::DrawInputCopyCounts(); copies.copies != profile.inputCopiesSeen.copies || copies.hits != profile.inputCopiesSeen.hits || copies.refused != profile.inputCopiesSeen.refused) {
+        char copied[512];
+        const auto& seen = profile.inputCopiesSeen;
+        int at = std::snprintf(copied, sizeof(copied), "[draw-inputs] GPU copies behind pending writes (10 s): %llu recorded (%llu ahead of their draw), %.0f KiB, %llu reused by draws, %llu render passes ended for them; left to the CPU copy:", static_cast<unsigned long long>(copies.copies - seen.copies), static_cast<unsigned long long>(copies.ahead - seen.ahead), static_cast<double>(copies.bytes - seen.bytes) / 1024.0, static_cast<unsigned long long>(copies.hits - seen.hits), static_cast<unsigned long long>(copies.passBreaks - seen.passBreaks));
+        for (std::size_t reason = 0; reason < copies.refused.size() && at > 0 && static_cast<std::size_t>(at) < sizeof(copied); ++reason) {
+            at += std::snprintf(copied + at, sizeof(copied) - static_cast<std::size_t>(at), "%s %s %llu", reason == 0 ? "" : ",", Recorder::DrawInputCopyRefusalName(static_cast<Recorder::DrawInputCopyRefusal>(reason)), static_cast<unsigned long long>(copies.refused[reason] - seen.refused[reason]));
+        }
+        AgcDriver::ProfilePrint_nid_no_patch("%s\n", copied);
+        profile.inputCopiesSeen = copies;
+    }
     const auto address = AddressDrawReuseCounters();
     if (address != profile.addressSeen) {
         char reuse[512];
@@ -1567,6 +1578,58 @@ const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address
     return import;
 }
 
+void RefreshDrawInputCopies(const Context& context, bool ahead) {
+    auto* recorder = context.recorder;
+    if (recorder == nullptr || !recorder->OwesDrawInputCopies()) return;
+    const bool passOpen = recorder->RenderPassOpen();
+    auto orders = recorder->OwedDrawInputCopies();
+    std::vector<Recorder::DrawInputCopyOrder> ready;
+    ready.reserve(orders.size());
+    const auto drawWriters = DrawCopiedWriters();
+    for (auto& order : orders) {
+        const auto begin = order.address + order.from;
+        const auto bytes = order.bytes - order.from;
+        StorageTexture::FlushPending(order.address, order.bytes, nullptr, "in-place vertex input");
+        if (!recorder->PendingWriteOverlaps(order.address, order.bytes)) {
+            recorder->SettleDrawInputCopy(order.address);
+            continue;
+        }
+        recorder->FlushKeyStoresOverlapping(order.address, order.bytes);
+        const auto overlaps = [&](const auto& writer) { return writer->WritesOverlap(order.address, order.bytes); };
+        const HostImport* import = nullptr;
+        std::optional<Recorder::DrawInputCopyRefusal> refusal;
+        if (recorder->PendingLabelIn(order.address, order.bytes) || recorder->QueuedStoreOverlaps(order.address, order.bytes)) refusal = Recorder::DrawInputCopyRefusal::Label;
+        else if ((context.copiedWriters != nullptr && std::any_of(context.copiedWriters->begin(), context.copiedWriters->end(), overlaps)) || std::any_of(drawWriters->begin(), drawWriters->end(), overlaps)) refusal = Recorder::DrawInputCopyRefusal::CopiedWriter;
+        else if (HostImportFor(context, begin, bytes) == nullptr) refusal = Recorder::DrawInputCopyRefusal::Import;
+        else if (GuestMemory::CollectWrites(begin, bytes) == 0 && !(WatchedAfterSettle(context, begin, bytes) && GuestMemory::CollectWrites(begin, bytes) != 0)) refusal = Recorder::DrawInputCopyRefusal::Untracked;
+        else if ((import = HostImportFor(context, begin, bytes)) == nullptr) refusal = Recorder::DrawInputCopyRefusal::Import;
+        if (refusal) {
+            recorder->RefuseDrawInputCopy(order.address, *refusal);
+            continue;
+        }
+        order.source = import->buffer;
+        order.sourceOffset = HostImportOffset(*import, begin);
+        ready.push_back(order);
+    }
+    recorder->RecordDrawInputCopies(ready, ahead, passOpen);
+}
+
+std::shared_ptr<Buffer> GpuCopiedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t from) {
+    auto* recorder = context.recorder;
+    if (recorder == nullptr || bytes == 0 || context.drawInputsInPlace || !Recorder::DrawInputCopiesEnabled()) return {};
+    if (!recorder->HasDrawInputCopy(address) && !recorder->PendingWriteOverlaps(address, bytes)) return {};
+    StorageTexture::FlushPending(address, bytes, nullptr, "in-place vertex input");
+    if (recorder->PendingLabelIn(address, bytes) || recorder->QueuedStoreOverlaps(address, bytes) || recorder->QueuedKeyStoreOverlaps(address, bytes)) {
+        recorder->RefuseDrawInputCopy(address, Recorder::DrawInputCopyRefusal::Label);
+        return {};
+    }
+    if (auto reused = recorder->ReusableDrawInputCopy(address, bytes, from)) return reused;
+    if (!recorder->PendingWriteOverlaps(address, bytes) || recorder->DrawInputCopyRefused(address, bytes, from)) return {};
+    recorder->WantDrawInputCopy(address, bytes, from);
+    RefreshDrawInputCopies(context, false);
+    return recorder->ReusableDrawInputCopy(address, bytes, from, false);
+}
+
 InPlaceIndices InPlaceIndexRange(Recorder& recorder, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool skipRestart) {
     const std::span<const std::byte> range(reinterpret_cast<const std::byte*>(address), bytes);
     InPlaceIndices indices;
@@ -1764,6 +1827,7 @@ void requireDrawPlanRepeats(const Context& context, const State& state, const Pm
 
 DrawInputs prepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& drawPlan, DrawTimer& timer, PerformanceTimer& timing) {
     DrawInputs inputs;
+    if (auto* recorder = context.recorder; recorder != nullptr && recorder->OwesDrawInputCopies() && !recorder->RenderPassOpen()) RefreshDrawInputCopies(context, true);
     inputs.indexBytes = drawPlan.indexBytes;
     inputs.fragmentOutputs = drawPlan.fragmentOutputs;
     inputs.shaderStages = drawPlan.shaderStages;
@@ -2034,6 +2098,12 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             rangeHandles.push_back(import->buffer);
             rangeOffsets.push_back(HostImportOffset(*import, begin));
             inputs.inPlaceReads.emplace_back(begin, end);
+            continue;
+        }
+        if (auto copied = GpuCopiedDrawInput(context, begin, bytes, rangeFrom[range])) {
+            rangeHandles.push_back(copied->Handle());
+            rangeOffsets.push_back(0);
+            inputs.vertexBuffers.push_back(std::move(copied));
             continue;
         }
         auto copy = CopyDrawInput(context, context.recorder, begin, bytes, 1, Recorder::SnapshotUse::Vertex, rangeFrom[range]);

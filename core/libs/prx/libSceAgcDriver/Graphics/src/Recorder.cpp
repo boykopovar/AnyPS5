@@ -2555,9 +2555,9 @@ namespace {
 
 constexpr std::uint32_t MaxTimedRanges = 512;
 constexpr std::size_t CommandClasses = static_cast<std::size_t>(Recorder::CommandClass::Count);
-constexpr const char* CommandClassNames[CommandClasses] = {"dispatch-lead", "dispatch-trail", "indirect-args", "label-run", "fill", "fill-clear", "copy", "staging-in", "staging-out", "draw", "storage-upload", "storage-writeback", "dcc-clear", "dcc-keys", "present-blit", "shadow-publish", "template-refresh"};
-constexpr const char* BarrierScopes[CommandClasses] = {"Graphics.Barrier.dispatch-lead", "Graphics.Barrier.dispatch-trail", "Graphics.Barrier.indirect-args", "Graphics.Barrier.label-run", "Graphics.Barrier.fill", "Graphics.Barrier.fill-clear", "Graphics.Barrier.copy", "Graphics.Barrier.staging-in", "Graphics.Barrier.staging-out", "Graphics.Barrier.draw", "Graphics.Barrier.storage-upload", "Graphics.Barrier.storage-writeback", "Graphics.Barrier.dcc-clear", "Graphics.Barrier.dcc-keys", "Graphics.Barrier.present-blit", "Graphics.Barrier.shadow-publish", "Graphics.Barrier.template-refresh"};
-constexpr const char* BarrierMergedScopes[CommandClasses] = {"Graphics.BarrierMerged.dispatch-lead", "Graphics.BarrierMerged.dispatch-trail", "Graphics.BarrierMerged.indirect-args", "Graphics.BarrierMerged.label-run", "Graphics.BarrierMerged.fill", "Graphics.BarrierMerged.fill-clear", "Graphics.BarrierMerged.copy", "Graphics.BarrierMerged.staging-in", "Graphics.BarrierMerged.staging-out", "Graphics.BarrierMerged.draw", "Graphics.BarrierMerged.storage-upload", "Graphics.BarrierMerged.storage-writeback", "Graphics.BarrierMerged.dcc-clear", "Graphics.BarrierMerged.dcc-keys", "Graphics.BarrierMerged.present-blit", "Graphics.BarrierMerged.shadow-publish", "Graphics.BarrierMerged.template-refresh"};
+constexpr const char* CommandClassNames[CommandClasses] = {"dispatch-lead", "dispatch-trail", "indirect-args", "label-run", "fill", "fill-clear", "copy", "staging-in", "staging-out", "draw", "storage-upload", "storage-writeback", "dcc-clear", "dcc-keys", "present-blit", "shadow-publish", "template-refresh", "draw-input-copy"};
+constexpr const char* BarrierScopes[CommandClasses] = {"Graphics.Barrier.dispatch-lead", "Graphics.Barrier.dispatch-trail", "Graphics.Barrier.indirect-args", "Graphics.Barrier.label-run", "Graphics.Barrier.fill", "Graphics.Barrier.fill-clear", "Graphics.Barrier.copy", "Graphics.Barrier.staging-in", "Graphics.Barrier.staging-out", "Graphics.Barrier.draw", "Graphics.Barrier.storage-upload", "Graphics.Barrier.storage-writeback", "Graphics.Barrier.dcc-clear", "Graphics.Barrier.dcc-keys", "Graphics.Barrier.present-blit", "Graphics.Barrier.shadow-publish", "Graphics.Barrier.template-refresh", "Graphics.Barrier.draw-input-copy"};
+constexpr const char* BarrierMergedScopes[CommandClasses] = {"Graphics.BarrierMerged.dispatch-lead", "Graphics.BarrierMerged.dispatch-trail", "Graphics.BarrierMerged.indirect-args", "Graphics.BarrierMerged.label-run", "Graphics.BarrierMerged.fill", "Graphics.BarrierMerged.fill-clear", "Graphics.BarrierMerged.copy", "Graphics.BarrierMerged.staging-in", "Graphics.BarrierMerged.staging-out", "Graphics.BarrierMerged.draw", "Graphics.BarrierMerged.storage-upload", "Graphics.BarrierMerged.storage-writeback", "Graphics.BarrierMerged.dcc-clear", "Graphics.BarrierMerged.dcc-keys", "Graphics.BarrierMerged.present-blit", "Graphics.BarrierMerged.shadow-publish", "Graphics.BarrierMerged.template-refresh", "Graphics.BarrierMerged.draw-input-copy"};
 // [barriers] counters by class (relaxed: only reported) and the [gputime] totals, which the
 // presenter's thread adds to without the GPU mutex (AddGpuTiming).
 std::atomic<std::uint64_t> classBarriers[CommandClasses]{};
@@ -3937,6 +3937,238 @@ void Recorder::KeepOwnedDrawInput(std::uint64_t address, std::size_t bytes, cons
     }
 }
 
+namespace {
+
+std::atomic<std::uint64_t> drawInputCopiesRecorded{0}, drawInputCopyBytesRecorded{0}, drawInputCopyHits{0}, drawInputCopyPassBreaks{0}, drawInputCopiesAhead{0};
+std::array<std::atomic<std::uint64_t>, Recorder::DrawInputCopyRefusals> drawInputCopiesRefused{};
+constexpr std::array<const char*, Recorder::DrawInputCopyRefusals> DrawInputCopyRefusalNames{"label", "copied writer", "no import", "allocation", "untracked"};
+constexpr std::array<const char*, Recorder::DrawInputCopyRefusals> DrawInputCopyRefusalScopes{"Graphics.DrawInputCopy.refused.label", "Graphics.DrawInputCopy.refused.copied-writer", "Graphics.DrawInputCopy.refused.no-import", "Graphics.DrawInputCopy.refused.allocation", "Graphics.DrawInputCopy.refused.untracked"};
+
+}
+
+bool Recorder::DrawInputCopiesEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_DRAW_INPUT_GPU_COPY") == nullptr;
+    return enabled;
+}
+
+Recorder::DrawInputCopyStatistics Recorder::DrawInputCopyCounts() {
+    DrawInputCopyStatistics counts;
+    counts.copies = drawInputCopiesRecorded.load(std::memory_order_relaxed);
+    counts.bytes = drawInputCopyBytesRecorded.load(std::memory_order_relaxed);
+    counts.hits = drawInputCopyHits.load(std::memory_order_relaxed);
+    counts.passBreaks = drawInputCopyPassBreaks.load(std::memory_order_relaxed);
+    counts.ahead = drawInputCopiesAhead.load(std::memory_order_relaxed);
+    for (std::size_t reason = 0; reason < DrawInputCopyRefusals; ++reason) counts.refused[reason] = drawInputCopiesRefused[reason].load(std::memory_order_relaxed);
+    return counts;
+}
+
+const char* Recorder::DrawInputCopyRefusalName(DrawInputCopyRefusal reason) {
+    return DrawInputCopyRefusalNames[static_cast<std::size_t>(reason)];
+}
+
+bool Recorder::DrawInputCopyRefused(std::uint64_t address, std::size_t bytes, std::size_t from) const {
+    const auto found = drawInputCopies.find(address);
+    return found != drawInputCopies.end() && found->second.refused && bytes <= found->second.bytes && found->second.from <= from;
+}
+
+void Recorder::setDrawInputCopy(DrawInputCopy& entry, bool wanted, bool current, bool outdated) {
+    const bool owed = entry.wanted && entry.outdated;
+    entry.wanted = wanted;
+    entry.current = current;
+    entry.outdated = outdated;
+    if (current || outdated) entry.refused = false;
+    const bool owes = wanted && outdated;
+    if (owes && !owed) ++owedDrawInputCopies;
+    if (owed && !owes) --owedDrawInputCopies;
+}
+
+void Recorder::eraseDrawInputCopy(std::map<std::uint64_t, DrawInputCopy>::iterator entry) {
+    setDrawInputCopy(entry->second, false, false, false);
+    drawInputCopyBytes -= entry->second.held;
+    drawInputCopyRecency.erase(entry->second.recent);
+    drawInputCopies.erase(entry);
+}
+
+void Recorder::outdateDrawInputCopies(std::uint64_t address, std::uint64_t end) {
+    if (drawInputCopies.empty()) return;
+    for (auto entry = drawInputCopies.lower_bound(address > drawInputCopyReach ? address - drawInputCopyReach : 0); entry != drawInputCopies.end() && entry->first < end; ++entry) {
+        if (address < entry->first + entry->second.bytes && entry->first + entry->second.from < end) setDrawInputCopy(entry->second, entry->second.wanted, false, true);
+    }
+}
+
+void Recorder::outdateDrawInputCopies() {
+    for (auto& [address, entry] : drawInputCopies) setDrawInputCopy(entry, entry.wanted, false, true);
+}
+
+std::shared_ptr<Buffer> Recorder::ReusableDrawInputCopy(std::uint64_t address, std::size_t bytes, std::size_t from, bool counted) {
+    GuestMemory::AssertGpuLockHeld("reuse draw input copy");
+    Require(from < bytes, "a draw input copy starts past its range");
+    const auto found = drawInputCopies.find(address);
+    if (found == drawInputCopies.end()) return {};
+    auto& entry = found->second;
+    if (!entry.current || entry.buffer == nullptr || entry.bytes < bytes || entry.from > from) return {};
+    const auto held = entry.bytes - entry.from;
+    const bool unchanged = entry.registryGeneration == GuestAllocations::GuestAllocationsGeneration_nid_postfix() && GuestMemory::CollectWrites(address + entry.from, held) != 0 && GuestMemory::UnchangedSince(address + entry.from, held, entry.generation);
+    if (!unchanged) {
+        setDrawInputCopy(entry, entry.wanted, false, entry.outdated);
+        return {};
+    }
+    entry.idle = 0;
+    setDrawInputCopy(entry, true, true, false);
+    drawInputCopyRecency.splice(drawInputCopyRecency.end(), drawInputCopyRecency, entry.recent);
+    if (counted) {
+        drawInputCopyHits.fetch_add(1, std::memory_order_relaxed);
+        PerformanceTrace::Amount("Graphics.DrawInputCopy.hits", 1);
+    }
+    return entry.buffer;
+}
+
+void Recorder::WantDrawInputCopy(std::uint64_t address, std::size_t bytes, std::size_t from) {
+    GuestMemory::AssertGpuLockHeld("want draw input copy");
+    Require(from < bytes && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid draw input copy range");
+    const auto registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    auto found = drawInputCopies.find(address);
+    if (found == drawInputCopies.end()) {
+        while (drawInputCopies.size() >= DrawInputCopyEntries) eraseDrawInputCopy(drawInputCopies.find(drawInputCopyRecency.front()));
+        drawInputCopyRecency.push_back(address);
+        try {
+            found = drawInputCopies.emplace(address, DrawInputCopy{}).first;
+        } catch (...) {
+            drawInputCopyRecency.pop_back();
+            throw;
+        }
+        found->second.recent = std::prev(drawInputCopyRecency.end());
+        found->second.bytes = bytes;
+        found->second.from = from;
+        found->second.registryGeneration = registryGeneration;
+    } else {
+        drawInputCopyRecency.splice(drawInputCopyRecency.end(), drawInputCopyRecency, found->second.recent);
+    }
+    auto& entry = found->second;
+    const bool sameRegistry = entry.registryGeneration == registryGeneration;
+    const auto wideBytes = sameRegistry ? std::max(entry.bytes, bytes) : bytes;
+    const auto wideFrom = sameRegistry ? std::min(entry.from, from) : from;
+    entry.bytes = wideBytes;
+    entry.from = wideFrom;
+    entry.registryGeneration = registryGeneration;
+    drawInputCopyReach = std::max(drawInputCopyReach, entry.bytes);
+    entry.idle = 0;
+    setDrawInputCopy(entry, true, false, true);
+}
+
+std::vector<Recorder::DrawInputCopyOrder> Recorder::OwedDrawInputCopies() {
+    GuestMemory::AssertGpuLockHeld("owed draw input copies");
+    std::vector<DrawInputCopyOrder> orders;
+    if (owedDrawInputCopies == 0) return orders;
+    for (auto& [address, entry] : drawInputCopies) {
+        if (!entry.wanted || !entry.outdated) continue;
+        if (entry.idle >= DrawInputCopyIdleLimit) {
+            setDrawInputCopy(entry, false, false, false);
+            continue;
+        }
+        orders.push_back({address, entry.bytes, entry.from, VK_NULL_HANDLE, 0});
+    }
+    return orders;
+}
+
+void Recorder::RefuseDrawInputCopy(std::uint64_t address, DrawInputCopyRefusal reason) {
+    drawInputCopiesRefused[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
+    PerformanceTrace::Amount(DrawInputCopyRefusalScopes[static_cast<std::size_t>(reason)], 1);
+    if (const auto found = drawInputCopies.find(address); found != drawInputCopies.end()) {
+        ++found->second.idle;
+        setDrawInputCopy(found->second, found->second.wanted, false, false);
+        found->second.refused = true;
+    }
+}
+
+void Recorder::SettleDrawInputCopy(std::uint64_t address) {
+    if (const auto found = drawInputCopies.find(address); found != drawInputCopies.end()) setDrawInputCopy(found->second, found->second.wanted, false, false);
+}
+
+void Recorder::RecordDrawInputCopies(std::span<const DrawInputCopyOrder> orders, bool ahead, bool passOpen) {
+    GuestMemory::AssertGpuLockHeld("record draw input copies");
+    struct Ready {
+        std::map<std::uint64_t, DrawInputCopy>::iterator entry;
+        const DrawInputCopyOrder* order;
+        std::shared_ptr<Buffer> buffer;
+    };
+    std::vector<Ready> ready;
+    ready.reserve(orders.size());
+    for (const auto& order : orders) {
+        const auto found = drawInputCopies.find(order.address);
+        if (found == drawInputCopies.end() || found->second.bytes != order.bytes || found->second.from != order.from) continue;
+        Require(order.source != VK_NULL_HANDLE && order.from < order.bytes, "a draw input copy has no source");
+        auto& entry = found->second;
+        drawInputCopyBytes -= entry.held;
+        entry.held = 0;
+        entry.buffer = nullptr;
+        while (drawInputCopyBytes + order.bytes > DrawInputCopyBudget && !drawInputCopyRecency.empty() && drawInputCopyRecency.front() != order.address) {
+            const auto victim = drawInputCopies.find(drawInputCopyRecency.front());
+            if (std::any_of(ready.begin(), ready.end(), [&](const Ready& taken) { return taken.entry == victim; })) break;
+            eraseDrawInputCopy(victim);
+        }
+        std::shared_ptr<Buffer> buffer;
+        if (drawInputCopyBytes + order.bytes <= DrawInputCopyBudget && !DeviceLocalFullForTests()) {
+            try {
+                buffer = Buffer::WithinDeviceLocalHeadroom(context, order.bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            } catch (const std::exception&) {
+                buffer = nullptr;
+            }
+        }
+        if (buffer == nullptr) {
+            RefuseDrawInputCopy(order.address, DrawInputCopyRefusal::Allocation);
+            continue;
+        }
+        entry.held = order.bytes;
+        drawInputCopyBytes += entry.held;
+        ready.push_back({found, &order, std::move(buffer)});
+    }
+    if (ready.empty()) return;
+    VkAccessFlags covered = 0;
+    const auto commands = Commands(&covered);
+    const auto timing = BeginGpuTiming(CommandClass::DrawInputCopy);
+    if (BarrierValidate()) {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
+        for (const auto& item : ready) reads.emplace_back(item.order->address + item.order->from, item.order->address + item.order->bytes);
+        NoteAccess(CommandClass::DrawInputCopy, Access{reads, {}, {}, VK_PIPELINE_STAGE_TRANSFER_BIT});
+    }
+    constexpr BarrierMask leading{VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT};
+    if (!ElideCovered(CommandClass::DrawInputCopy, leading, covered)) {
+        recordBarrier(commands, leading.srcStage, leading.dstStage, leading.srcAccess, leading.dstAccess);
+        CountBarriers(CommandClass::DrawInputCopy);
+    }
+    const auto registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    std::uint64_t copied = 0;
+    for (auto& item : ready) {
+        auto& entry = item.entry->second;
+        const auto begin = item.order->address + item.order->from;
+        const auto bytes = item.order->bytes - item.order->from;
+        const auto generation = GuestMemory::CollectWrites(begin, bytes);
+        Keep(item.buffer);
+        CopyBuffer(context, commands, item.order->source, item.order->sourceOffset, item.buffer->Handle(), item.order->from, bytes);
+        NotePendingRead(begin, bytes, ReadKind::DrawInput);
+        entry.buffer = std::move(item.buffer);
+        entry.generation = generation;
+        entry.registryGeneration = registryGeneration;
+        ++entry.idle;
+        setDrawInputCopy(entry, entry.wanted, generation != 0, false);
+        copied += bytes;
+    }
+    constexpr VkAccessFlags copiedAccess = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    recordBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, copiedAccess);
+    CountBarriers(CommandClass::DrawInputCopy);
+    EndGpuTiming(timing, copied);
+    drawInputCopiesRecorded.fetch_add(ready.size(), std::memory_order_relaxed);
+    drawInputCopyBytesRecorded.fetch_add(copied, std::memory_order_relaxed);
+    PerformanceTrace::Amount("Graphics.DrawInputCopy.copies", ready.size());
+    PerformanceTrace::Amount("Graphics.DrawInputCopy.bytes", copied);
+    if (ahead) drawInputCopiesAhead.fetch_add(ready.size(), std::memory_order_relaxed);
+    if (passOpen) {
+        drawInputCopyPassBreaks.fetch_add(1, std::memory_order_relaxed);
+        PerformanceTrace::Amount("Graphics.DrawInputCopy.pass-breaks", 1);
+    }
+}
+
 bool Recorder::KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest, std::uint32_t* lowest) {
     const auto found = indexRanges.find({address, use, bytes});
     if (found == indexRanges.end()) return false;
@@ -3987,6 +4219,7 @@ bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel
     const auto end = address + bytes;
     open->writes.emplace_back(address, end);
     open->writeNotes.push_back(++writeNoteCount);
+    outdateDrawInputCopies(address, end);
     if (published != nullptr && !SnapshotCovers(published.get(), address, end)) published = nullptr;
     open->writeValues.push_back(static_cast<std::int16_t>(value));
     open->writeWords.push_back(word);
@@ -4017,6 +4250,7 @@ void Recorder::noteWriteOn(Batch& batch, std::uint64_t address, std::size_t byte
     // moves as well, so a poller re-consults the label table for a completion label.
     batch.writes.emplace_back(address, address + bytes);
     batch.writeNotes.push_back(++writeNoteCount);
+    outdateDrawInputCopies(address, address + bytes);
     if (published != nullptr && !SnapshotCovers(published.get(), address, address + bytes)) published = nullptr;
     batch.writeValues.push_back(-1);
     batch.writeWords.push_back(-1);
@@ -5344,6 +5578,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
 }
 
 void Recorder::discard(std::unique_ptr<Batch> batch) noexcept {
+    outdateDrawInputCopies();
     removeLabels(*batch);
     if (batch->completionLabelCount != 0) completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
     if (batch->completionStoreCount != 0) completionStores.fetch_sub(batch->completionStoreCount, std::memory_order_acq_rel);

@@ -6272,6 +6272,253 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+bool drawInputGpuCopyTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    context.nullDescriptors = device.NullDescriptors();
+    if (context.hostImportAlignment == 0 || !context.nullDescriptors || !AgcDriver::GuestMemory::WriteWatched()) {
+        std::cout << "host imports, null descriptors or write watching unavailable: GPU copies of draw inputs not tested\n";
+        return false;
+    }
+    recorder.Sync();
+    const auto bytes = static_cast<std::size_t>(std::max<VkDeviceSize>(131072, context.hostImportAlignment));
+    auto* block = static_cast<std::uint32_t*>(AllocateWatched(bytes, bytes));
+    Require(block != nullptr, "allocate draw input copy memory");
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    std::vector<std::shared_ptr<ShaderResources>> writers;
+    context.copiedWriters = &writers;
+    context.recorder = &recorder;
+    context.drawInputsInPlace = false;
+    struct Release {
+        const Context& context;
+        Recorder& recorder;
+        std::uint32_t* block;
+        std::size_t bytes;
+        std::vector<std::shared_ptr<ShaderResources>>& writers;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        VkShaderModule module = VK_NULL_HANDLE;
+        std::shared_ptr<ShaderResources> layoutOwner;
+        ~Release() {
+            SetDeviceLocalFullForTests(false);
+            recorder.Sync();
+            writers.clear();
+            DrawCopiedWriters()->clear();
+            if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
+            if (layout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
+            if (module) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            static_cast<void>(HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes));
+            recorder.Sync();
+            ReleaseWatched(block, bytes);
+        }
+    } release{context, recorder, block, bytes, writers};
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    std::memset(block, 0, bytes);
+    if (HostImportFor(context, address, bytes) == nullptr || !WatchedAfterSettle(context, address, bytes)) {
+        std::cout << "the watched block has no watched host import: GPU copies of draw inputs not tested\n";
+        return false;
+    }
+    constexpr std::size_t vertexBytes = 1024;
+    constexpr std::uint32_t words = vertexBytes / 4u;
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+    binding.descriptorSet = 0;
+    binding.binding = 0;
+    binding.count = 1;
+    binding.guestDescriptor = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) & 0xffffu, static_cast<std::uint32_t>(vertexBytes), 0x31000000u};
+    binding.bufferWritten = {true};
+    program.bindings.push_back(binding);
+    const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    release.layoutOwner = std::make_shared<ShaderResources>(context, compute);
+    Require(!release.layoutOwner->HasCopiedWrites(), "the draw input producer did not write its import in place");
+    const auto setLayout = release.layoutOwner->Layout();
+    const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(std::uint32_t)};
+    VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &setLayout;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &push;
+    Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &release.layout), "draw input producer pipeline layout");
+    release.module = CreateShaderModule(context, BUFFER_UPDATE_SPV, sizeof(BUFFER_UPDATE_SPV), "draw input producer shader module");
+    VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, release.module, "main", nullptr};
+    pipelineInfo.layout = release.layout;
+    Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &release.pipeline), "draw input producer pipeline");
+    const auto update = [&](const std::shared_ptr<ShaderResources>& resources, std::uint32_t delta) {
+        const auto commands = recorder.Commands();
+        recorder.Keep(resources);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        context.BindComputePipeline(commands, release.pipeline);
+        resources->Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, release.layout);
+        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, release.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(delta), &delta);
+        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, words, 1, 1);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
+        resources->MarkGpuWrites(recorder);
+    };
+    const auto produce = [&](std::uint32_t delta) { update(std::make_shared<ShaderResources>(context, compute), delta); };
+    const auto readBack = [&](const std::shared_ptr<Buffer>& copy) {
+        auto out = std::make_shared<Buffer>(context, vertexBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        CopyBuffer(context, commands, copy->Handle(), 0, out->Handle(), 0, vertexBytes);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        recorder.Keep(copy);
+        recorder.Keep(out);
+        recorder.Sync();
+        std::vector<std::uint32_t> held(words);
+        std::memcpy(held.data(), out->Bytes().data(), vertexBytes);
+        return held;
+    };
+    const auto holds = [&](const std::vector<std::uint32_t>& held, std::uint32_t base, std::uint32_t from = 0) {
+        for (std::uint32_t word = from; word < words; ++word) {
+            if (held[word] != base + word) return false;
+        }
+        return true;
+    };
+    const auto guestHolds = [&](std::uint32_t base) {
+        for (std::uint32_t word = 0; word < words; ++word) {
+            if (block[word] != base + word) return false;
+        }
+        return true;
+    };
+    using Refusal = Recorder::DrawInputCopyRefusal;
+    const auto refused = [](Refusal reason) { return Recorder::DrawInputCopyCounts().refused[static_cast<std::size_t>(reason)]; };
+    const auto copies = [] { return Recorder::DrawInputCopyCounts().copies; };
+    const auto hits = [] { return Recorder::DrawInputCopyCounts().hits; };
+    for (std::uint32_t word = 0; word < words; ++word) block[word] = 100u + word;
+    Require(GpuCopiedDrawInput(context, address, vertexBytes) == nullptr && recorder.DrawInputCopyCount() == 0, "a draw input free of pending GPU writes was copied on the GPU");
+    produce(7);
+    Require(recorder.PendingWriteOverlaps(address, vertexBytes) && guestHolds(100), "the draw input producer ran before its batch was submitted");
+    auto inPlace = context;
+    inPlace.drawInputsInPlace = true;
+    Require(GpuCopiedDrawInput(inPlace, address, vertexBytes) == nullptr && recorder.DrawInputCopyCount() == 0, "a context that binds draw inputs in place copied one on the GPU");
+    const auto firstCopies = copies();
+    const auto firstHits = hits();
+    const auto firstBytes = Recorder::DrawInputCopyCounts().bytes;
+    const auto submissions = recorder.Submissions();
+    auto first = GpuCopiedDrawInput(context, address, vertexBytes, 64);
+    if (!Recorder::DrawInputCopiesEnabled()) {
+        Require(first == nullptr && copies() == firstCopies && recorder.DrawInputCopyCount() == 0, "a draw input was copied on the GPU with APS5_NO_DRAW_INPUT_GPU_COPY set");
+        const auto waited = CopyDrawInput(context, &recorder, address, vertexBytes, 1, Recorder::SnapshotUse::Vertex);
+        Require(!recorder.PendingWriteOverlaps(address, vertexBytes) && guestHolds(107) && std::memcmp(waited.buffer->Bytes().data(), block, vertexBytes) == 0, "the CPU copy of a draw input did not wait for its producer");
+        return true;
+    }
+    Require(first != nullptr, "a vertex input behind a pending GPU write was not copied on the GPU");
+    Require(recorder.Submissions() == submissions && recorder.PendingWriteOverlaps(address, vertexBytes) && guestHolds(100), "the GPU copy of a draw input waited for its producer");
+    Require(copies() == firstCopies + 1 && Recorder::DrawInputCopyCounts().bytes == firstBytes + vertexBytes - 64 && hits() == firstHits, "the GPU copy of a draw input was not counted once with the bytes it copied");
+    const auto noted = address + 16384;
+    recorder.NotePendingWrite(noted, 256);
+    Require(GpuCopiedDrawInput(context, noted, 256) != nullptr && copies() == firstCopies + 2, "a vertex input under a noted GPU write was not copied on the GPU");
+    const auto read = recorder.DescribePendingRead(noted, 256);
+    Require(read.has_value() && read->kind == Recorder::ReadKind::DrawInput && read->open, "the GPU copy of a draw input noted no read of the open batch");
+    Require(GpuCopiedDrawInput(context, address, vertexBytes, 64) == first && GpuCopiedDrawInput(context, address, 512, 128) == first && hits() == firstHits + 2 && copies() == firstCopies + 2, "a current GPU copy of a draw input was not reused");
+    auto wider = GpuCopiedDrawInput(context, address, vertexBytes);
+    Require(wider != nullptr && wider != first && copies() == firstCopies + 3, "a draw reading below a GPU copy's first byte was served the copy");
+    Require(GpuCopiedDrawInput(context, address, vertexBytes, 64) == wider && copies() == firstCopies + 3, "a widened GPU copy did not serve the range it replaced");
+    Require(holds(readBack(first), 107, 16), "the first GPU copy of a draw input does not hold its producer's bytes");
+    Require(holds(readBack(wider), 107) && guestHolds(107), "the widened GPU copy of a draw input does not hold its producer's bytes");
+    Require(!recorder.PendingWriteOverlaps(address, vertexBytes) && GpuCopiedDrawInput(context, address, vertexBytes) == wider && copies() == firstCopies + 3, "a GPU copy of a draw input was dropped when its producer completed");
+    produce(1);
+    Require(recorder.OwesDrawInputCopies(), "a GPU write over a copied draw input left no copy owed");
+    auto second = GpuCopiedDrawInput(context, address, vertexBytes);
+    Require(second != nullptr && second != wider && copies() == firstCopies + 4 && !recorder.OwesDrawInputCopies(), "a second GPU write did not force a new copy of the draw input");
+    Require(holds(readBack(second), 108), "the copy made after a second GPU write does not hold its bytes");
+    block[5] = 0xdeadu;
+    Require(GpuCopiedDrawInput(context, address, vertexBytes) == nullptr && copies() == firstCopies + 4, "a GPU copy of a draw input outlived a CPU store");
+    block[5] = 108u + 5u;
+    produce(1);
+    auto third = GpuCopiedDrawInput(context, address, vertexBytes);
+    Require(third != nullptr && copies() == firstCopies + 5, "a draw input was not copied on the GPU again after a CPU store and a new GPU write");
+    block[9] = 0xbeefu;
+    auto fourth = GpuCopiedDrawInput(context, address, vertexBytes);
+    Require(fourth != nullptr && fourth != third && copies() == firstCopies + 6, "a CPU store under a pending GPU write did not force a new copy of the draw input");
+    const auto stored = readBack(fourth);
+    Require(stored[9] == 0xbeefu + 1u && stored[8] == 109u + 8u && stored[10] == 109u + 10u, "the copy made after a CPU store under a pending GPU write does not hold the stored bytes");
+    block[9] = 109u + 9u;
+    Require(GpuCopiedDrawInput(context, address, vertexBytes) == nullptr, "a GPU copy of a draw input outlived a CPU store made after its batch");
+    produce(1);
+    Require(recorder.OwesDrawInputCopies() && !recorder.RenderPassOpen(), "a copied draw input a GPU write went over is not owed a copy");
+    const auto aheadCopies = copies();
+    const auto aheadBefore = Recorder::DrawInputCopyCounts().ahead;
+    RefreshDrawInputCopies(context, true);
+    Require(!recorder.OwesDrawInputCopies() && copies() == aheadCopies + 1 && Recorder::DrawInputCopyCounts().ahead == aheadBefore + 1, "an owed draw input was not copied ahead of its draw");
+    const auto aheadHits = hits();
+    auto ahead = GpuCopiedDrawInput(context, address, vertexBytes);
+    Require(ahead != nullptr && copies() == aheadCopies + 1 && hits() == aheadHits + 1, "a draw did not use the copy made ahead of it");
+    Require(holds(readBack(ahead), 110), "the copy made ahead of its draw does not hold its producer's bytes");
+    for (std::uint32_t unused = 0; unused < Recorder::DrawInputCopyIdleLimit; ++unused) {
+        produce(1);
+        RefreshDrawInputCopies(context, true);
+    }
+    Require(copies() == aheadCopies + 1 + Recorder::DrawInputCopyIdleLimit, "an owed draw input no draw used was not copied ahead while it was young");
+    produce(1);
+    RefreshDrawInputCopies(context, true);
+    Require(copies() == aheadCopies + 1 + Recorder::DrawInputCopyIdleLimit && !recorder.OwesDrawInputCopies(), "a draw input no draw used any more is still copied ahead");
+    auto revived = GpuCopiedDrawInput(context, address, vertexBytes);
+    Require(revived != nullptr && copies() == aheadCopies + 2 + Recorder::DrawInputCopyIdleLimit, "a draw input that left the ahead copies was not copied for its draw");
+    recorder.Sync();
+    const auto labelled = address + 8192;
+    const auto* import = HostImportFor(context, labelled, 256);
+    Require(import != nullptr, "the labelled draw input lost its import");
+    const std::array<std::byte, 4> label{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+    static_cast<void>(recorder.Commands());
+    recorder.RecordStore(import->buffer, HostImportOffset(*import, labelled), label, labelled);
+    recorder.NotePendingWrite(labelled, 256);
+    Require(recorder.QueuedStoreOverlaps(labelled, 4), "the label store over a draw input was not queued");
+    const auto labelRefusals = refused(Refusal::Label);
+    const auto labelCopies = copies();
+    Require(GpuCopiedDrawInput(context, labelled, 256) == nullptr && refused(Refusal::Label) == labelRefusals + 1 && copies() == labelCopies, "a draw input under a queued label store was copied on the GPU");
+    recorder.Sync();
+    for (const bool draw : {false, true}) {
+        auto copiedContext = context;
+        copiedContext.hostImportAlignment = 0;
+        copiedContext.dmaBufImport = false;
+        auto copied = std::make_shared<ShaderResources>(copiedContext, compute);
+        Require(copied->HasCopiedWrites(), "the copied writer of a draw input did not take the copied path");
+        auto& pending = draw ? *DrawCopiedWriters() : writers;
+        pending.push_back(copied);
+        const auto before = block[0];
+        update(copied, 1);
+        recorder.OnComplete([copied, &pending] {
+            copied->WriteBackBuffers();
+            std::erase(pending, copied);
+        });
+        const auto writerRefusals = refused(Refusal::CopiedWriter);
+        const auto writerCopies = copies();
+        Require(recorder.PendingWriteOverlaps(address, vertexBytes) && block[0] == before, "the copied writer of a draw input completed before the draw");
+        Require(GpuCopiedDrawInput(context, address, vertexBytes) == nullptr && refused(Refusal::CopiedWriter) == writerRefusals + 1 && copies() == writerCopies, "a draw input a copied writer stores from the CPU was copied on the GPU");
+        const auto waited = CopyDrawInput(context, &recorder, address, vertexBytes, 1, Recorder::SnapshotUse::Vertex);
+        Require(pending.empty() && block[0] == before + 1 && std::memcmp(waited.buffer->Bytes().data(), block, vertexBytes) == 0, "the CPU copy of a draw input behind a copied writer did not wait for its write-back");
+    }
+    produce(1);
+    const auto allocationRefusals = refused(Refusal::Allocation);
+    const auto allocationCopies = copies();
+    const auto expected = block[0] + 1;
+    SetDeviceLocalFullForTests(true);
+    Require(GpuCopiedDrawInput(context, address, vertexBytes) == nullptr && refused(Refusal::Allocation) == allocationRefusals + 1 && copies() == allocationCopies, "a draw input was copied on the GPU with no device memory for it");
+    SetDeviceLocalFullForTests(false);
+    const auto fallback = CopyDrawInput(context, &recorder, address, vertexBytes, 1, Recorder::SnapshotUse::Vertex);
+    Require(block[0] == expected && std::memcmp(fallback.buffer->Bytes().data(), block, vertexBytes) == 0, "the CPU copy of a draw input refused device memory did not wait for its producer");
+    alignas(64) static std::array<std::byte, 256> unregistered{};
+    const auto outside = reinterpret_cast<std::uint64_t>(unregistered.data());
+    recorder.NotePendingWrite(outside, unregistered.size());
+    const auto outsideRefusals = refused(Refusal::Untracked) + refused(Refusal::Import);
+    Require(GpuCopiedDrawInput(context, outside, unregistered.size()) == nullptr && refused(Refusal::Untracked) + refused(Refusal::Import) == outsideRefusals + 1, "memory without a watched host import was copied on the GPU");
+    auto unrecorded = context;
+    unrecorded.recorder = nullptr;
+    Require(GpuCopiedDrawInput(unrecorded, address, vertexBytes) == nullptr, "a draw without a recorder copied its input on the GPU");
+    recorder.Sync();
+    return true;
+}
+
 void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied = false) {
     auto context = device.GetContext();
     constexpr std::size_t bytes = 65536;
@@ -16896,6 +17143,11 @@ int main(int argc, char** argv) {
             std::cout << "Copied draw input tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--draw-input-gpu-copy-only") {
+            if (!drawInputGpuCopyTests(device, recorder)) return 77;
+            std::cout << "GPU-copied draw input tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--repeat-storage-guard-only") {
             repeatStorageGuardTests(device, recorder);
             return 0;
@@ -16990,6 +17242,7 @@ int main(int argc, char** argv) {
         drawInputReuseTests(device, recorder);
         if (AgcDriver::GuestMemory::WriteWatched()) vertexWindowSeriesTests(device, recorder);
         drawInputInPlaceTests(device, recorder);
+        static_cast<void>(drawInputGpuCopyTests(device, recorder));
         RunResidentPresentTests(device.GetContext());
         sliceDirtyTests(device, recorder);
         storeRunTests(device, recorder);
