@@ -1270,22 +1270,29 @@ class DocumentationAssetsTests(unittest.TestCase):
     def test_document_promotion_cli_failure_preserves_assets_and_retry(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source, output = root / "docs", root / "assets"
+            (root / "anchor").mkdir()
+            source, output = root / "anchor" / ".." / "docs", root / "anchor" / ".." / "assets"
             source.mkdir()
             output.mkdir()
             (output / "existing.zip").write_bytes(b"unrelated asset")
             for name in ("A.md", "B.md"):
                 (source / name).write_text(name, encoding="utf-8")
+            promoted_output = package_release.resolve_release_path(output)
+            injected = []
             real_replace = Path.replace
 
             def replace(path, destination):
-                if Path(destination) == output / "B.md":
+                if Path(destination) == promoted_output / "B.md":
+                    self.assertEqual((promoted_output / "A.md").read_bytes(), b"A.md")
+                    self.assertEqual(path.read_bytes(), b"B.md")
+                    injected.append(path.name)
                     raise OSError("document promotion blocked")
                 return real_replace(path, destination)
 
             stdout, stderr = io.StringIO(), io.StringIO()
             with patch.object(Path, "replace", replace), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as caught:
                 package_release.main(["--docs", str(source), "--output", str(output)])
+            self.assertEqual(injected, ["B.md"])
             self.assertEqual(caught.exception.code, 2)
             self.assertEqual(stdout.getvalue(), "")
             self.assertIn("document promotion blocked", stderr.getvalue())
