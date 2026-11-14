@@ -7,6 +7,7 @@
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
 #include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"
+#include "prx/libSceNKWebKit/include/CursorExports.hpp"
 #include "prx/libSceNKWebKit/include/FieldGettersExports.hpp"
 #include "prx/libSceNKWebKit/include/FieldSettersExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorFrontendRouterExports.hpp"
