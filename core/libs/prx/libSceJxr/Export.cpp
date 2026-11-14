@@ -404,15 +404,22 @@ std::int64_t APS5_VABI SetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::siz
 
 std::int64_t APS5_VABI WMPAlloc_nid_postfix(void** memory, std::size_t size) {
     if (!memory) APS5_INVALID_ARG_EX;
-    *memory = calloc_nid_postfix(1, size);
-    return *memory ? WmpErrSuccess : WmpErrOutOfMemory;
+    void* allocated = calloc_nid_postfix(1, size);
+    if (!GuestCopyOut_nid_no_patch(memory, &allocated, sizeof(allocated))) {
+        if (allocated != nullptr) free_nid_postfix(allocated);
+        APS5_INVALID_ARG_EX;
+    }
+    return allocated ? WmpErrSuccess : WmpErrOutOfMemory;
 }
 
 std::int64_t APS5_VABI WMPFree_nid_postfix(void** memory) {
     if (!memory) APS5_INVALID_ARG_EX;
-    if (*memory) {
-        free_nid_postfix(*memory);
-        *memory = nullptr;
+    void* ptr = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&ptr, memory, sizeof(ptr))) APS5_INVALID_ARG_EX;
+    if (ptr != nullptr) {
+        void* nullPtr = nullptr;
+        if (!GuestCopyOut_nid_no_patch(memory, &nullPtr, sizeof(nullPtr))) APS5_INVALID_ARG_EX;
+        free_nid_postfix(ptr);
     }
     return WmpErrSuccess;
 }
