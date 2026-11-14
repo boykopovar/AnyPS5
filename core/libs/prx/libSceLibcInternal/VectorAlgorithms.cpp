@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <emmintrin.h>
 
 namespace {
 
@@ -18,6 +19,65 @@ bool IsValidRange(const void* first, const void* last) {
     const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
     const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
     return endAddress >= beginAddress && (endAddress - beginAddress) % sizeof(TValue) == 0;
+}
+
+template<bool TMinimum>
+__m128 PackedExtremum(__m128 first, __m128 second) {
+    if constexpr (TMinimum) return _mm_min_ps(first, second);
+    else return _mm_max_ps(first, second);
+}
+
+template<bool TMinimum>
+__m128d PackedExtremum(__m128d first, __m128d second) {
+    if constexpr (TMinimum) return _mm_min_pd(first, second);
+    else return _mm_max_pd(first, second);
+}
+
+template<bool TMinimum>
+__m128 ScalarExtremum(__m128 first, __m128 second) {
+    if constexpr (TMinimum) return _mm_min_ss(first, second);
+    else return _mm_max_ss(first, second);
+}
+
+template<bool TMinimum>
+__m128d ScalarExtremum(__m128d first, __m128d second) {
+    if constexpr (TMinimum) return _mm_min_sd(first, second);
+    else return _mm_max_sd(first, second);
+}
+
+template<typename TValue, bool TMinimum>
+TValue ValueExtremum(const void* first, const void* last, const char* name) {
+    if (!first || !last || first == last || !IsValidRange<TValue>(first, last)) NotImplemented_nid_no_patch(name);
+    const auto scalar = [](const unsigned char* address) {
+        if constexpr (sizeof(TValue) == 4) return _mm_set_ss(Read<float>(address));
+        else return _mm_set_sd(Read<double>(address));
+    };
+    const auto packed = [](const unsigned char* address) {
+        if constexpr (sizeof(TValue) == 4) return _mm_loadu_ps(reinterpret_cast<const float*>(address));
+        else return _mm_loadu_pd(reinterpret_cast<const double*>(address));
+    };
+    auto* current = static_cast<const unsigned char*>(first);
+    const auto* end = static_cast<const unsigned char*>(last);
+    auto result = scalar(current);
+    if (end - current >= 16) {
+        result = packed(current);
+        current += 16;
+        while (end - current >= 16) {
+            result = PackedExtremum<TMinimum>(result, packed(current));
+            current += 16;
+        }
+        if constexpr (sizeof(TValue) == 4) {
+            result = PackedExtremum<TMinimum>(result, _mm_shuffle_ps(result, result, _MM_SHUFFLE(1, 0, 3, 2)));
+            result = ScalarExtremum<TMinimum>(result, _mm_shuffle_ps(result, result, _MM_SHUFFLE(3, 3, 1, 1)));
+        } else {
+            result = ScalarExtremum<TMinimum>(result, _mm_unpackhi_pd(result, result));
+        }
+    } else {
+        current += sizeof(TValue);
+    }
+    for (; current != end; current += sizeof(TValue)) result = ScalarExtremum<TMinimum>(scalar(current), result);
+    if constexpr (sizeof(TValue) == 4) return _mm_cvtss_f32(result);
+    else return _mm_cvtsd_f64(result);
 }
 
 template<typename TValue>
@@ -69,10 +129,10 @@ TValue ValueAt(const void* address) {
 
 extern "C" {
 
-float APS5_VABI __std_min_f_nid_postfix(const void* first, const void* last) { return ValueAt<float>(ScanNonEmpty<float>(first, last, true, false, __func__).minimum); }
-double APS5_VABI __std_min_d_nid_postfix(const void* first, const void* last) { return ValueAt<double>(ScanNonEmpty<double>(first, last, true, false, __func__).minimum); }
-float APS5_VABI __std_max_f_nid_postfix(const void* first, const void* last) { return ValueAt<float>(ScanNonEmpty<float>(first, last, false, true, __func__).maximum); }
-double APS5_VABI __std_max_d_nid_postfix(const void* first, const void* last) { return ValueAt<double>(ScanNonEmpty<double>(first, last, false, true, __func__).maximum); }
+float APS5_VABI __std_min_f_nid_postfix(const void* first, const void* last) { return ValueExtremum<float, true>(first, last, __func__); }
+double APS5_VABI __std_min_d_nid_postfix(const void* first, const void* last) { return ValueExtremum<double, true>(first, last, __func__); }
+float APS5_VABI __std_max_f_nid_postfix(const void* first, const void* last) { return ValueExtremum<float, false>(first, last, __func__); }
+double APS5_VABI __std_max_d_nid_postfix(const void* first, const void* last) { return ValueExtremum<double, false>(first, last, __func__); }
 
 MinMaxFloat APS5_VABI __std_minmax_f_nid_postfix(const void* first, const void* last) {
     const MinMaxPointers found = ScanNonEmpty<float>(first, last, true, true, __func__);
