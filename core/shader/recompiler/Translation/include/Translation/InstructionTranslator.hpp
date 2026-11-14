@@ -40,6 +40,7 @@ struct TranslateOptions {
     bool float32FlushToZero = false;
     bool float32FlushDeclared = false;
     bool float32DenormPreserve = false;
+    bool float32SingleNans = false;
     bool float64 = false;
     bool gcnLegacyVertexInputs = false;
     bool nativeFloat16Fma = false;

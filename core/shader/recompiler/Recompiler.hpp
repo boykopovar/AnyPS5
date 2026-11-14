@@ -382,6 +382,7 @@ struct SpirvTarget {
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
     bool meshInlineFunctions = false;
+    bool float32SingleNans = false;
 };
 
 struct BindingLayout {
