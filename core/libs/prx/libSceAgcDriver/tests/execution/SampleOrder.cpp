@@ -65,6 +65,7 @@ namespace {
 using AgcDriver::Graphics::Check;
 using AgcDriver::Graphics::Context;
 using AgcDriver::Graphics::KeptSampleOrder;
+using AgcDriver::Graphics::Recorder;
 using AgcDriver::Graphics::Require;
 using AgcDriver::Graphics::SampleOrder;
 using AgcDriver::Graphics::SampleOrderMethod;
@@ -837,6 +838,36 @@ void Settle(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
+void Settle(AgcDriver::VulkanDevice& device, const Context& context) {
+    if (context.recorder == AgcDriver::VulkanDeviceTestAccess::ContextOf(device).recorder) {
+        Settle(device);
+        return;
+    }
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        context.recorder->Sync();
+    }
+    device.WaitIdle();
+}
+
+struct OwnRecorder {
+    OwnRecorder(Context& context, Recorder* device) : recorder(context), device(device) {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        recorder.Activate();
+        context.recorder = &recorder;
+    }
+    ~OwnRecorder() {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        recorder.Sync();
+        if (device != nullptr) device->Activate();
+    }
+    OwnRecorder(const OwnRecorder&) = delete;
+    OwnRecorder& operator=(const OwnRecorder&) = delete;
+
+    Recorder recorder;
+    Recorder* device;
+};
+
 Vertices Rectangle(float left, float right, float z) {
     return {{left, -1.0f, z, 1.0f}, {right, -1.0f, z, 1.0f}, {right, 1.0f, z, 1.0f}, {left, -1.0f, z, 1.0f}, {right, 1.0f, z, 1.0f}, {left, 1.0f, z, 1.0f}};
 }
@@ -1191,7 +1222,7 @@ Rendered RenderCheckerboard(AgcDriver::VulkanDevice& device, const Context& cont
     colorPass.vertices = &shade;
     colorPass.depthCompare = VK_COMPARE_OP_LESS_OR_EQUAL;
     Draw(device, context, colorPass);
-    Settle(device);
+    Settle(device, context);
     Rendered rendered;
     rendered.color = ReadTarget(context, AgcDriver::Graphics::MultisampleTargetView(context, color), true, samples);
     rendered.depth = ReadDepth(context, depth, samples);
@@ -1461,6 +1492,7 @@ int RenderPassDepthLocations(AgcDriver::VulkanDevice& device) {
     } else {
         std::printf("the device draws through render passes only: the render pass runs are compared with each other\n");
     }
+    OwnRecorder own(passes, context.recorder);
     constexpr std::size_t runs = 4u;
     std::size_t differences = 0;
     for (std::size_t run = 0; run < runs; ++run) {
