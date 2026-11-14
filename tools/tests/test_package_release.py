@@ -1849,7 +1849,7 @@ class ReleaseNotesStagingTests(unittest.TestCase):
             self.assertTrue(full.is_symlink())
             self.assertEqual(target.read_bytes(), b"new")
 
-    def test_promotion_failure_leaves_other_destination_intact(self):
+    def test_promotion_failure_restores_both_destinations(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source, body, full = (root / name for name in ("notes.json", "body", "full"))
@@ -1857,16 +1857,19 @@ class ReleaseNotesStagingTests(unittest.TestCase):
             body.write_bytes(b"old body")
             full.write_bytes(b"old full")
             original_replace = os.replace
+            failed = []
 
             def replace(first, second):
-                if second == body.resolve():
+                if second == body.resolve() and not failed:
+                    failed.append(first)
                     raise OSError("second promotion failed")
                 return original_replace(first, second)
 
             with patch.object(prepare_release_notes.os, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
                 prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(len(failed), 1)
             self.assertEqual(body.read_bytes(), b"old body")
-            self.assertEqual(full.read_bytes(), b"new")
+            self.assertEqual(full.read_bytes(), b"old full")
             self.assertEqual(list(root.glob(".release-notes-*")), [])
 
 
