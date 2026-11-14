@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 #include "tests/FontFixture.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cmath>
 #include <cstdint>
@@ -879,6 +880,12 @@ int main() {
     Require(sceFontGetResolutionDpi(font, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontSetResolutionDpi(font, 0, 300) == SCE_FONT_OK);
     Require(sceFontGetResolutionDpi(font, &hDpi, &vDpi) == SCE_FONT_OK && hDpi == 72 && vDpi == 300);
+    errno = 71;
+    Require(sceFontGetResolutionDpi(font, reinterpret_cast<std::uint32_t*>(0x10), &vDpi) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontGetResolutionDpi(font, &hDpi, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontGetResolutionDpi(nullptr, &hDpi, &vDpi) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && hDpi == 0 && vDpi == 0);
     FontHandleOpaque unopened{};
     hDpi = 1;
