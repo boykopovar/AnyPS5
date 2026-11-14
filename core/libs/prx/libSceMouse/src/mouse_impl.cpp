@@ -307,6 +307,9 @@ int ReadAbsolutePosition(std::int32_t handle, MouseAbsoluteData* data, std::int3
         if (endsRecord[first]) ++kept;
         while (first > 0 && !endsRecord[first - 1]) --first;
     }
+    for (int i = 0; i < first; ++i) {
+        if (samples[i].connected) moveAbsolute(samples[i].x, samples[i].y);
+    }
     int written = 0;
     std::int32_t wheel = 0;
     std::int32_t tilt = 0;

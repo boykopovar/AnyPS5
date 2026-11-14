@@ -121,6 +121,14 @@ int main() {
     Motion(2, 0);
     Motion(4, 0);
     Require(readAbsolute(MOUSE_HANDLE, records, 1) == 1 && records[0].x == 114, "three samples read with num 1 did not share one record with all their motion");
+    Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 100, 100) == MOUSE_OK, "the reset before the discarded record check failed");
+    Motion(10, 0);
+    Button(1, true);
+    Motion(20, 0);
+    Button(1, false);
+    Motion(30, 0);
+    Require(readAbsolute(MOUSE_HANDLE, records, 1) == 1 && records[0].x == 160 && records[0].buttons == 0,
+            "motion from records discarded by num 1 did not move the absolute pointer");
 
     Require(setMode(MOUSE_HANDLE, 0x100) == MOUSE_OK && sceMouseResetAbsolutePosition(MOUSE_HANDLE, 100, 100) == MOUSE_OK, "the precision mode was refused");
     Motion(1, 0);
