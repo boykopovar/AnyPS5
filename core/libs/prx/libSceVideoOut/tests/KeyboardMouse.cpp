@@ -813,6 +813,27 @@ void testToggleFocusLoss() {
     }
 }
 
+void testTurboButton() {
+    auto configuration = defaults();
+    auto turbo = toggleCircle(SDL_SCANCODE_Z);
+    turbo.mode = Pad::InputMode::Turbo;
+    configuration.bindings.push_back(turbo);
+    const std::vector<TimedEvent> events{
+        At(100.0, KeyEvent(SDL_SCANCODE_Z, true)),
+        At(130.0, KeyEvent(SDL_SCANCODE_Z, false)),
+        At(140.0, KeyEvent(SDL_SCANCODE_Z, true)),
+        At(500.0, KeyEvent(SDL_SCANCODE_Z, false)),
+    };
+    for (const double poll : {1.0, 10.0}) {
+        for (const auto& sample : Simulate(configuration, events, poll, 600.0)) {
+            const bool pressing = (sample.ms >= 100.0 && sample.ms < 130.0) || (sample.ms >= 140.0 && sample.ms < 500.0);
+            const double start = sample.ms >= 140.0 ? 140.0 : 100.0;
+            const bool expected = pressing && std::fmod(sample.ms - start, 100.0) < 50.0;
+            check(circleHeld(sample.state) == expected, "a turbo pulses half of each 100 ms period while held, restarting on each press, at " + std::to_string(sample.ms) + " ms");
+        }
+    }
+}
+
 int main() {
     try {
         const std::pair<const char*, std::function<void()>> tests[] = {
@@ -852,7 +873,8 @@ int main() {
             {"mouse stick target", testMouseStickTarget},
             {"pad chord requests", testPadChordRequests},
             {"toggle button", testToggleButton},
-            {"toggle focus loss", testToggleFocusLoss}
+            {"toggle focus loss", testToggleFocusLoss},
+            {"turbo button", testTurboButton}
         };
         for (const auto& [name, test] : tests) {
             test();

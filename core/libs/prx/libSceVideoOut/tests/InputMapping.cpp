@@ -469,6 +469,25 @@ void toggleReject() {
     require(rejects("Cross = TOGGLE KEY:NoSuchKey\n"), "TOGGLE with an unknown key is rejected");
 }
 
+void turboMode() {
+    useConfig("Cross = TURBO KEY:F\n");
+    bool found = false;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) {
+        if (binding.control != Pad::InputControl::Button || binding.button != Pad::PadButton::Cross) continue;
+        require(binding.mode == Pad::InputMode::Turbo, "a TURBO source sets the turbo mode");
+        require(binding.key == SDL_SCANCODE_F, "a TURBO source keeps its key");
+        found = true;
+    }
+    require(found, "a TURBO source is read");
+}
+
+void turboReject() {
+    require(rejects("Shake = TURBO KEY:X\n"), "TURBO on a non-button action is rejected");
+    require(rejects("ToggleMouse = TURBO MOUSE:Middle\n"), "TURBO on ToggleMouse is rejected");
+    require(rejects("Cross = TURBO WHEEL:UP\n"), "TURBO on the mouse wheel is rejected");
+    require(rejects("Cross = TURBO\n"), "TURBO without a source is rejected");
+}
+
 void writeProfile(const std::string& titleId, const std::string& text) {
     std::ofstream file(root / Pad::InputProfileName(titleId), std::ios::binary | std::ios::trunc);
     file << text;
@@ -745,6 +764,8 @@ int main() try {
     triggerRamp();
     toggleMode();
     toggleReject();
+    turboMode();
+    turboReject();
     profileNames();
     profileOverridesShared();
     toggleMouseDefaults();

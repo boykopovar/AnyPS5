@@ -214,14 +214,17 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
     auto mode = Pad::InputMode::Hold;
     auto rest = trim(source);
     const auto space = rest.find_first_of(" \t");
-    if (space != std::string_view::npos && upper(rest.substr(0, space)) == "TOGGLE") {
-        mode = Pad::InputMode::Toggle;
-        rest = trim(rest.substr(space + 1));
+    if (space != std::string_view::npos) {
+        const auto word = upper(rest.substr(0, space));
+        if (word == "TOGGLE") mode = Pad::InputMode::Toggle;
+        if (word == "TURBO") mode = Pad::InputMode::Turbo;
+        if (mode != Pad::InputMode::Hold) rest = trim(rest.substr(space + 1));
     }
     auto binding = parseSource(action, rest);
     if (mode == Pad::InputMode::Hold) return binding;
-    if (action.control != Pad::InputControl::Button) throw std::runtime_error("Toggle can only be used on a pad button");
-    if (binding.wheelDirection != 0 || binding.wheelTilt != 0) throw std::runtime_error("Toggle cannot use the mouse wheel");
+    const auto name = mode == Pad::InputMode::Toggle ? "Toggle" : "Turbo";
+    if (action.control != Pad::InputControl::Button) throw std::runtime_error(std::string(name) + " can only be used on a pad button");
+    if (binding.wheelDirection != 0 || binding.wheelTilt != 0) throw std::runtime_error(std::string(name) + " cannot use the mouse wheel");
     binding.mode = mode;
     return binding;
 }
