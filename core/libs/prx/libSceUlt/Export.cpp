@@ -25,6 +25,11 @@
 #include "SceUltTypes.hpp"
 #include "prx/libSceUlt/src/ReaderWriterLock.hpp"
 
+bool CurrentWaitRecord(UltWaitRecord& record, std::int32_t waitValue);
+void RemoveWaitRecord(std::vector<UltWaitRecord>& records, const UltWaitRecord& record);
+int ValidateWaitRecords(const UltWaitingThreadInfo* records, std::uint32_t capacity);
+int WriteWaitRecords(const std::vector<UltWaitRecord>& records, UltWaitingThreadInfo* destination, std::uint32_t capacity);
+
 namespace {
 
 std::mutex gMutex;
@@ -78,14 +83,20 @@ int QueueTransfer(void* queue, void* data, const void* source, bool push, bool b
     if (!ready()) {
         if (!blocking) return ULT_ERROR_AGAIN;
         auto& waiters = push ? state->_waitingPushers : state->_waitingPoppers;
+        auto& records = push ? state->_pusherRecords : state->_popperRecords;
+        UltWaitRecord record;
+        const bool tracked = CurrentWaitRecord(record, push ? 2 : 1);
+        if (tracked) records.push_back(record);
         ++waiters;
         try {
             (push ? pool._spaceAvailable : state->_dataAvailable).wait(lock, ready);
         } catch (...) {
             --waiters;
+            if (tracked) RemoveWaitRecord(records, record);
             throw;
         }
         --waiters;
+        if (tracked) RemoveWaitRecord(records, record);
         if (!state->_alive) return ULT_ERROR_STATE;
     }
     if (push) {
@@ -191,6 +202,43 @@ UltThreadIdentity UltCurrentThreadIdentity_nid_no_patch() {
     std::uintptr_t thread;
     std::memcpy(&thread, self, sizeof(thread));
     return {reinterpret_cast<void*>(thread), 1};
+}
+
+bool CurrentWaitRecord(UltWaitRecord& record, std::int32_t waitValue) {
+    const UltThreadIdentity identity = UltCurrentThreadIdentity_nid_no_patch();
+    if (identity.thread == nullptr) return false;
+    record = {identity.thread, identity.type, waitValue};
+    return true;
+}
+
+void RemoveWaitRecord(std::vector<UltWaitRecord>& records, const UltWaitRecord& record) {
+    const auto found = std::find_if(records.begin(), records.end(), [&](const auto& entry) {
+        return entry.thread == record.thread && entry.type == record.type;
+    });
+    if (found != records.end()) records.erase(found);
+}
+
+int ValidateWaitRecords(const UltWaitingThreadInfo* records, std::uint32_t capacity) {
+    for (std::uint32_t index = 0; index < capacity; ++index) {
+        std::uint64_t size = 0;
+        if (!GuestCopyIn_nid_no_patch(&size, &records[index].size, sizeof(size))) return ULT_ERROR_NULL;
+        if (size != sizeof(UltWaitingThreadInfo)) return ULT_ERROR_INVALID;
+    }
+    return ULT_OK;
+}
+
+int WriteWaitRecords(const std::vector<UltWaitRecord>& records, UltWaitingThreadInfo* destination, std::uint32_t capacity) {
+    const std::size_t count = std::min<std::size_t>(capacity, records.size());
+    if (count == 0) return ULT_OK;
+    std::vector<UltWaitingThreadInfo> infos(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        infos[index].size = sizeof(UltWaitingThreadInfo);
+        infos[index].thread = records[index].thread;
+        infos[index].threadType = records[index].type;
+        infos[index].waitValue = records[index].waitValue;
+    }
+    if (!GuestCopyOut_nid_no_patch(destination, infos.data(), count * sizeof(UltWaitingThreadInfo))) return ULT_ERROR_NULL;
+    return ULT_OK;
 }
 
 bool UltWaitingPoolExists(void* pool) {
@@ -372,6 +420,9 @@ int APS5_VABI sceUltMutexLock(void* mutex) {
         ++state->_lockCount;
         return ULT_OK;
     }
+    UltWaitRecord record;
+    const bool tracked = CurrentWaitRecord(record, 0);
+    if (tracked) state->_waiterRecords.push_back(record);
     ++state->_waiters;
     try {
         state->_available.wait(lock, [&] {
@@ -379,9 +430,11 @@ int APS5_VABI sceUltMutexLock(void* mutex) {
         });
     } catch (...) {
         --state->_waiters;
+        if (tracked) RemoveWaitRecord(state->_waiterRecords, record);
         throw;
     }
     --state->_waiters;
+    if (tracked) RemoveWaitRecord(state->_waiterRecords, record);
     if (!state->_alive) {
         return ULT_ERROR_STATE;
     }
@@ -541,6 +594,9 @@ int APS5_VABI sceUltConditionVariableWait(void* condition) {
     UltConditionWaiter waiter;
     state->_queue.push_back(&waiter);
     ++state->_waiters;
+    UltWaitRecord conditionRecord;
+    const bool conditionTracked = CurrentWaitRecord(conditionRecord, 0);
+    if (conditionTracked) state->_waiterRecords.push_back(conditionRecord);
     ++held->_conditionWaiters;
     held->_lockCount = 0;
     held->_owner = {};
@@ -549,23 +605,30 @@ int APS5_VABI sceUltConditionVariableWait(void* condition) {
     try {
         waiter._available.wait(lock, [&] { return waiter._signaled || !state->_alive || !held->_alive; });
         if (held->_alive && state->_alive) {
+            UltWaitRecord mutexRecord;
+            const bool mutexTracked = CurrentWaitRecord(mutexRecord, 0);
+            if (mutexTracked) held->_waiterRecords.push_back(mutexRecord);
             ++held->_waiters;
             try {
                 held->_available.wait(lock, [&] { return !held->_alive || held->_lockCount == 0; });
             } catch (...) {
                 --held->_waiters;
+                if (mutexTracked) RemoveWaitRecord(held->_waiterRecords, mutexRecord);
                 throw;
             }
             --held->_waiters;
+            if (mutexTracked) RemoveWaitRecord(held->_waiterRecords, mutexRecord);
         }
     } catch (...) {
         state->_queue.remove(&waiter);
         --state->_waiters;
+        if (conditionTracked) RemoveWaitRecord(state->_waiterRecords, conditionRecord);
         --held->_conditionWaiters;
         throw;
     }
     state->_queue.remove(&waiter);
     --state->_waiters;
+    if (conditionTracked) RemoveWaitRecord(state->_waiterRecords, conditionRecord);
     --held->_conditionWaiters;
     if (!held->_alive || !state->_alive) return ULT_ERROR_STATE;
     held->_owner = owner;
@@ -788,9 +851,19 @@ int APS5_VABI sceUltSemaphoreAcquire(void* semaphore, std::int32_t numResource) 
     if (!state->_alive) {
         return ULT_ERROR_STATE;
     }
-    state->_waiters++;
-    state->_available.wait(lock, [&] { return !state->_alive || state->_resources >= numResource; });
-    state->_waiters--;
+    UltWaitRecord record;
+    const bool tracked = CurrentWaitRecord(record, 0);
+    if (tracked) state->_waiterRecords.push_back(record);
+    ++state->_waiters;
+    try {
+        state->_available.wait(lock, [&] { return !state->_alive || state->_resources >= numResource; });
+    } catch (...) {
+        --state->_waiters;
+        if (tracked) RemoveWaitRecord(state->_waiterRecords, record);
+        throw;
+    }
+    --state->_waiters;
+    if (tracked) RemoveWaitRecord(state->_waiterRecords, record);
     if (!state->_alive) {
         return ULT_ERROR_STATE;
     }
@@ -1086,7 +1159,7 @@ int APS5_VABI sceUltGetConditionVariableInfo(void* object, UltConditionVariableI
     }
     std::lock_guard stateLock(state->_mutex->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
-    if (capacity != 0 && !state->_queue.empty()) NotImplemented_nid_no_patch(__func__);
+    if (const int status = ValidateWaitRecords(waitingThreads, capacity); status != ULT_OK) return status;
     UltConditionVariableInfo localInfo{};
     localInfo.size = sizeof(UltConditionVariableInfo);
     localInfo.object = object;
@@ -1094,7 +1167,7 @@ int APS5_VABI sceUltGetConditionVariableInfo(void* object, UltConditionVariableI
     localInfo.mutex = state->_mutexObject;
     localInfo.waitingThreads = static_cast<std::uint32_t>(state->_queue.size());
     if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
-    return ULT_OK;
+    return WriteWaitRecords(state->_waiterRecords, waitingThreads, capacity);
 }
 
 int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity) {
@@ -1109,12 +1182,7 @@ int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThr
     }
     std::lock_guard stateLock(state->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
-    for (std::uint32_t index = 0; index < capacity; ++index) {
-        std::uint64_t recordSize = 0;
-        if (!GuestCopyIn_nid_no_patch(&recordSize, &waitingThreads[index].size, sizeof(recordSize))) return ULT_ERROR_NULL;
-        if (recordSize != sizeof(UltWaitingThreadInfo)) return ULT_ERROR_INVALID;
-    }
-    if (capacity != 0 && state->_waiters != 0) NotImplemented_nid_no_patch(__func__);
+    if (const int status = ValidateWaitRecords(waitingThreads, capacity); status != ULT_OK) return status;
     if (state->_lockCount != 0 && (state->_attribute != 0 || state->_lockCount > 1 || state->_ownerIdentity.type != 1)) NotImplemented_nid_no_patch(__func__);
     UltMutexInfo localInfo{};
     localInfo.size = sizeof(UltMutexInfo);
@@ -1129,7 +1197,7 @@ int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThr
     const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
     errno = savedErrno;
     if (!copied) return ULT_ERROR_NULL;
-    return ULT_OK;
+    return WriteWaitRecords(state->_waiterRecords, waitingThreads, capacity);
 }
 
 int APS5_VABI sceUltGetQueueDataResourcePoolInfo(void* object, UltQueueDataResourcePoolInfo* info) {
@@ -1173,7 +1241,7 @@ int APS5_VABI sceUltGetQueueInfo(void* object, UltQueueInfo* info, UltWaitingThr
     auto& pool = *state->_pool;
     std::lock_guard poolLock(pool._mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
-    if (capacity != 0 && (state->_waitingPushers != 0 || state->_waitingPoppers != 0)) NotImplemented_nid_no_patch(__func__);
+    if (const int status = ValidateWaitRecords(waitingThreads, capacity); status != ULT_OK) return status;
     UltQueueInfo localInfo{};
     localInfo.size = sizeof(UltQueueInfo);
     localInfo.object = object;
@@ -1185,7 +1253,9 @@ int APS5_VABI sceUltGetQueueInfo(void* object, UltQueueInfo* info, UltWaitingThr
     localInfo.waitingPushers = state->_waitingPushers;
     localInfo.waitingPoppers = state->_waitingPoppers;
     if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
-    return ULT_OK;
+    std::vector<UltWaitRecord> records = state->_pusherRecords;
+    records.insert(records.end(), state->_popperRecords.begin(), state->_popperRecords.end());
+    return WriteWaitRecords(records, waitingThreads, capacity);
 }
 
 int APS5_VABI sceUltGetSemaphoreInfo(void* object, UltSemaphoreInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity) {
@@ -1200,7 +1270,7 @@ int APS5_VABI sceUltGetSemaphoreInfo(void* object, UltSemaphoreInfo* info, UltWa
     }
     std::lock_guard stateLock(state->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
-    if (capacity != 0 && state->_waiters != 0) NotImplemented_nid_no_patch(__func__);
+    if (const int status = ValidateWaitRecords(waitingThreads, capacity); status != ULT_OK) return status;
     UltSemaphoreInfo localInfo{};
     localInfo.size = sizeof(UltSemaphoreInfo);
     localInfo.object = object;
@@ -1209,7 +1279,7 @@ int APS5_VABI sceUltGetSemaphoreInfo(void* object, UltSemaphoreInfo* info, UltWa
     localInfo.resources = static_cast<std::uint32_t>(state->_resources);
     localInfo.waitingThreads = state->_waiters;
     if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
-    return ULT_OK;
+    return WriteWaitRecords(state->_waiterRecords, waitingThreads, capacity);
 }
 
 int APS5_VABI sceUltGetUlthreadInfo(void* object, UltUlthreadInfo* info) {
