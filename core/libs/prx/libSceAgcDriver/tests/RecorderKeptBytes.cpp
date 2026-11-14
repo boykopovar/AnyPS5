@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <exception>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -41,6 +42,8 @@ struct MockDevice {
 };
 
 MockDevice mock;
+std::vector<char> commandOrder;
+std::vector<std::pair<VkPipelineStageFlags, VkAccessFlags>> barrierMasks;
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateCommandBuffers(VkDevice, const VkCommandBufferAllocateInfo*, VkCommandBuffer* commands) {
     *commands = reinterpret_cast<VkCommandBuffer>(mock.next++);
@@ -100,8 +103,11 @@ VKAPI_ATTR VkResult VKAPI_CALL mockDeviceWaitIdle(VkDevice) {
     return mock.idleResult;
 }
 
-VKAPI_ATTR void VKAPI_CALL mockCmdUpdateBuffer(VkCommandBuffer, VkBuffer, VkDeviceSize, VkDeviceSize, const void*) {}
-VKAPI_ATTR void VKAPI_CALL mockCmdPipelineBarrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags, VkDependencyFlags, std::uint32_t, const VkMemoryBarrier*, std::uint32_t, const VkBufferMemoryBarrier*, std::uint32_t, const VkImageMemoryBarrier*) {}
+VKAPI_ATTR void VKAPI_CALL mockCmdUpdateBuffer(VkCommandBuffer, VkBuffer, VkDeviceSize, VkDeviceSize, const void*) { commandOrder.push_back('U'); }
+VKAPI_ATTR void VKAPI_CALL mockCmdPipelineBarrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags dstStage, VkDependencyFlags, std::uint32_t memoryBarrierCount, const VkMemoryBarrier* memoryBarriers, std::uint32_t, const VkBufferMemoryBarrier*, std::uint32_t, const VkImageMemoryBarrier*) {
+    commandOrder.push_back('B');
+    barrierMasks.push_back({dstStage, memoryBarrierCount == 0 ? 0u : memoryBarriers[0].dstAccessMask});
+}
 VKAPI_ATTR void VKAPI_CALL mockCmdBeginQuery(VkCommandBuffer, VkQueryPool, std::uint32_t, VkQueryControlFlags) {}
 VKAPI_ATTR void VKAPI_CALL mockCmdEndQuery(VkCommandBuffer, VkQueryPool, std::uint32_t) {}
 VKAPI_ATTR void VKAPI_CALL mockCmdResetQueryPool(VkCommandBuffer, VkQueryPool, std::uint32_t, std::uint32_t) {}
@@ -238,6 +244,38 @@ void SharedOwnerCountsOncePerBatch() {
     recorder.Sync();
 }
 
+void SeparateStoresOfOneRunAreOrdered() {
+    if (std::getenv("APS5_LABEL_RUNS_INLINE") != nullptr || std::getenv("APS5_NO_LABEL_RUNS") != nullptr) {
+        std::printf("skipping SeparateStoresOfOneRunAreOrdered: APS5_LABEL_RUNS_INLINE/APS5_NO_LABEL_RUNS disables per-batch label runs\n");
+        return;
+    }
+    mock = MockDevice{};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Recorder recorder(mockContext());
+    const auto b1 = reinterpret_cast<VkBuffer>(0x1000);
+    const auto b2 = reinterpret_cast<VkBuffer>(0x2000);
+    const std::array<std::byte, 4> bytes1{};
+    const std::array<std::byte, 4> bytes2{};
+    const std::uint64_t a1 = 0x7f0000000000;
+    const std::uint64_t a2 = 0x7f0000000100;
+    commandOrder.clear();
+    barrierMasks.clear();
+    recorder.RecordStore(b1, 0, bytes1, a1);
+    recorder.RecordStore(b2, 0, bytes2, a2);
+    recorder.Submit();
+    const auto firstUpdate = std::find(commandOrder.begin(), commandOrder.end(), 'U');
+    const auto secondUpdate = firstUpdate == commandOrder.end() ? commandOrder.end() : std::find(std::next(firstUpdate), commandOrder.end(), 'U');
+    const auto barrierBetween = firstUpdate != commandOrder.end() && secondUpdate != commandOrder.end() && std::find(std::next(firstUpdate), secondUpdate, 'B') != secondUpdate;
+    Expect(barrierBetween, "the stores of a run into different buffers are not separated by a barrier");
+    if (barrierBetween) {
+        const auto index = static_cast<std::size_t>(std::count(commandOrder.begin(), firstUpdate, 'B'));
+        const auto& [dstStage, dstAccess] = barrierMasks.at(index);
+        Expect((dstStage & VK_PIPELINE_STAGE_HOST_BIT) != 0u, "the barrier between the stores of a run does not make the earlier store available to the host stage");
+        Expect((dstAccess & VK_ACCESS_HOST_READ_BIT) != 0u, "the barrier between the stores of a run does not make the earlier store readable by the host");
+    }
+    Expect(std::count(commandOrder.begin(), commandOrder.end(), 'U') == 2, "a run of two stores into different buffers did not record exactly two updates");
+}
+
 void FailedSubmission(VkResult endResult, VkResult submitResult, VkResult idleResult = VK_ERROR_DEVICE_LOST) {
     mock = MockDevice{};
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -309,6 +347,7 @@ int main() {
         SyncedWithinTwiceTheBudget();
         CountFollowsEveryPath();
         SharedOwnerCountsOncePerBatch();
+        SeparateStoresOfOneRunAreOrdered();
         FailedSubmission(VK_ERROR_OUT_OF_HOST_MEMORY, VK_SUCCESS);
         FailedSubmission(VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_SUCCESS);
         FailedSubmission(VK_SUCCESS, VK_ERROR_OUT_OF_HOST_MEMORY);

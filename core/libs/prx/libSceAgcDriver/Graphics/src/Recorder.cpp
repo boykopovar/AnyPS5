@@ -2352,9 +2352,12 @@ bool Recorder::closeStoreRun(bool atSubmit) {
                 if (store.dumpTarget != 0) continue;
                 const VkDeviceSize storeEnd = store.offset + store.bytes.size();
                 if (std::any_of(run.recorded.begin(), run.recorded.end(), [&](const auto& earlier) { return std::get<0>(earlier) == store.buffer && store.offset < std::get<2>(earlier) && std::get<1>(earlier) < storeEnd; })) {
-                    recordBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                    recordBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
                     ++barriers;
                     storeWawBarriers.fetch_add(1, std::memory_order_relaxed);
+                } else if (i != first) {
+                    recordBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
+                    ++barriers;
                 }
                 update(commands, store.buffer, store.offset, store.bytes.size(), store.bytes.data());
                 run.recorded.emplace_back(store.buffer, store.offset, storeEnd);
