@@ -106,6 +106,15 @@ int main(int argc, char** argv) {
         const RtcTick westBound{3600000000ull}, westBelow{3599999999ull};
         Require(sceRtcFormatRFC3339Precise(text, &westBound, -60, 6) == 0 && std::strcmp(text, "0001-01-01T00:00:00.000000-01:00") == 0);
         Require(sceRtcFormatRFC3339Precise(text, &westBelow, -60, 6) == static_cast<int>(0x80B50003));
+        const RtcTick yearOneStart{1000000ull}, year2026{63902822400000000ull};
+        Require(sceRtcFormatRFC3339(text, &yearOneStart, 840) == 0 && std::strcmp(text, "0001-01-01T14:00:01.00+14:00") == 0);
+        Require(sceRtcFormatRFC3339(text, &yearOneStart, -720) == static_cast<int>(0x80B50003));
+        Require(sceRtcFormatRFC3339(text, &yearOneStart, 2000) == static_cast<int>(0x80B50003));
+        Require(sceRtcFormatRFC3339(text, &yearOneStart, -2000) == static_cast<int>(0x80B50003));
+        for (const int zone : {0x7fffffff, static_cast<int>(0x80000000), 1000000, -1000000}) {
+            Require(sceRtcFormatRFC3339Precise(text, &year2026, zone, 6) == static_cast<int>(0x80B50003));
+            Require(sceRtcFormatRFC3339Precise(text, &tick, zone, 6) == static_cast<int>(0x80B50003));
+        }
         return 0;
     }
     EnterTitleDirectory("CUSA00000");

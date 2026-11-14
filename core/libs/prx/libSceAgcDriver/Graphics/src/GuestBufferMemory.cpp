@@ -1829,6 +1829,7 @@ ImportRun joinedRun(const GuestAllocations::Lease& lease, std::uint64_t begin, s
     if (run.ranges.empty()) return run;
     if (std::all_of(run.ranges.begin(), run.ranges.end(), [window](const auto& range) { return range->bytes > window; })) return run;
     if (begin == run.base) return run;
+    if (run.ranges.front()->bytes > window && run.bytes - run.ranges.front()->bytes <= window) return run;
     return {};
 }
 
@@ -6086,11 +6087,15 @@ std::uint64_t gpuCopyLimit() {
 
 bool changedCopyBacks(const Context& context) {
     static const bool disabled = std::getenv("APS5_NO_CHANGED_COPY_BACK") != nullptr;
-    return !disabled && context.bufferDeviceAddress;
+    return !disabled && (context.pushDescriptors || context.bufferDeviceAddress);
+}
+
+bool addressedChangedCopyBacks(const Context& context) {
+    return changedCopyBacks(context) && !context.pushDescriptors;
 }
 
 VkBufferUsageFlags gpuCopyUsage(const Context& context, bool addressable) {
-    return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | (addressable || changedCopyBacks(context) ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
+    return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | (addressable || addressedChangedCopyBacks(context) ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
 }
 
 // Device-local staging. A written V# element bound in place makes the shader store into host
@@ -7095,12 +7100,13 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
     std::vector<Region*> shadowed;
     for (auto* region : copies) {
         const auto bytes = static_cast<std::size_t>(region->end - region->begin);
-        if (!changedCopyBacks(context) || region->buffer->DeviceAddress() == 0 || !WritesOverlap(region->begin, bytes)) {
+        const bool addressed = addressedChangedCopyBacks(context);
+        if (!changedCopyBacks(context) || (addressed && region->buffer->DeviceAddress() == 0) || !WritesOverlap(region->begin, bytes)) {
             region->shadowCopy = nullptr;
             continue;
         }
-        if (region->shadowCopy == nullptr) region->shadowCopy = stagingBuffer(context, bytes, gpuCopyUsage(context, true));
-        if (region->shadowCopy == nullptr || region->shadowCopy->DeviceAddress() == 0) {
+        if (region->shadowCopy == nullptr) region->shadowCopy = stagingBuffer(context, bytes, gpuCopyUsage(context, addressed));
+        if (region->shadowCopy == nullptr || (addressed && region->shadowCopy->DeviceAddress() == 0)) {
             region->shadowCopy = nullptr;
             continue;
         }
@@ -7183,16 +7189,22 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
             // would have stored there itself had the range been bindable.
             auto whole = from;
             auto wholeEnd = to;
-            if (region.shadowCopy != nullptr && region.copySourceAddress != 0 && region.begin % 4u == 0 && region.copySourceBase % 4u == 0) {
+            const bool addressed = addressedChangedCopyBacks(context);
+            if (region.shadowCopy != nullptr && (addressed ? region.copySourceAddress != 0 : region.copySource != VK_NULL_HANDLE) && region.begin % 4u == 0 && region.copySourceBase % 4u == 0) {
                 const auto alignedFrom = (from + 3u) & ~std::uint64_t{3};
                 const auto alignedTo = to & ~std::uint64_t{3};
                 static const bool traceDivergence = std::getenv("APS5_TRACE_COPY_BACK") != nullptr;
                 std::shared_ptr<Buffer> counter;
                 if (traceDivergence && alignedFrom < alignedTo) {
-                    counter = std::make_shared<Buffer>(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                    counter = std::make_shared<Buffer>(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (addressed ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u));
                     std::memset(counter->Bytes().data(), 0, 16);
                 }
-                if (alignedFrom < alignedTo && recorder.RecordChangedCopy(commands, region.buffer->DeviceAddress() + (alignedFrom - region.begin), region.shadowCopy->DeviceAddress() + (alignedFrom - region.begin), region.copySourceAddress + (alignedFrom - region.copySourceBase), static_cast<std::uint32_t>((alignedTo - alignedFrom) / 4u), counter != nullptr ? counter->DeviceAddress() : 0)) {
+                const auto dwords = static_cast<std::uint32_t>((alignedTo - alignedFrom) / 4u);
+                const auto recordChanged = [&] {
+                    if (addressed) return recorder.RecordChangedCopy(commands, region.buffer->DeviceAddress() + (alignedFrom - region.begin), region.shadowCopy->DeviceAddress() + (alignedFrom - region.begin), region.copySourceAddress + (alignedFrom - region.copySourceBase), dwords, counter != nullptr ? counter->DeviceAddress() : 0);
+                    return recorder.RecordBoundChangedCopy(commands, {region.buffer->Handle(), alignedFrom - region.begin}, {region.shadowCopy->Handle(), alignedFrom - region.begin}, {region.copySource, alignedFrom - region.copySourceBase}, dwords, counter != nullptr ? counter->Handle() : VK_NULL_HANDLE);
+                };
+                if (alignedFrom < alignedTo && recordChanged()) {
                     if (counter != nullptr) {
                         recorder.Keep(counter);
                         recorder.OnComplete([counter, alignedFrom, alignedTo, regionBegin = region.begin, regionEnd = region.end] {

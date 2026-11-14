@@ -241,6 +241,9 @@ int main() {
     Require(sceVoiceGetMuteFlag(input, &muted) == 0 && !muted);
     Require(sceVoiceSetMuteFlagAll(true) == 0);
     Require(sceVoiceGetMuteFlag(input, &muted) == 0 && muted);
+    errno = 71;
+    Require(sceVoiceGetMuteFlag(input, reinterpret_cast<bool*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(sceVoiceSetMuteFlagAll(false) == 0);
     Require(sceVoiceGetMuteFlag(input, &muted) == 0 && !muted);
     Require(sceVoiceGetMuteFlag(output, &muted) == 0 && muted);
@@ -248,6 +251,9 @@ int main() {
     std::uint32_t portBitrate = 0;
     Require(sceVoiceSetBitRate(input, 7300) == 0);
     Require(sceVoiceGetBitRate(input, &portBitrate) == 0 && portBitrate == 7300);
+    errno = 71;
+    Require(sceVoiceGetBitRate(input, reinterpret_cast<std::uint32_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     VoicePortInfo rateInfo{};
     Require(sceVoiceGetPortInfo(input, &rateInfo) == 0 && rateInfo.frame_size == 19);
     Require(sceVoiceSetBitRate(output + 1, 7300) == portNotFound);
@@ -504,5 +510,57 @@ int main() {
     Require(sceVoiceEnd_nid_postfix() == 0);
     Require(sceVoiceInit(&init, 100) == 0);
     Require(sceVoiceInitHQ(&init, 100) == AlreadyInitialized);
+
+    auto* const unreadableThreads = reinterpret_cast<const VoiceThreadsParams*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceVoiceSetThreadsParams(unreadableThreads) == invalidArgument);
+    Require(errno == 71);
+
+    auto* const unreadableStart = reinterpret_cast<const VoiceStartParam*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceVoiceStart(unreadableStart) == invalidArgument);
+    Require(errno == 71);
+
+    VoicePortParam validPortParam{};
+    validPortParam.port_type = 2;
+    validPortParam.voice.bitrate = 16000;
+    auto* const unwritablePortId = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceVoiceCreatePort(unwritablePortId, &validPortParam) == invalidArgument);
+    Require(errno == 71);
+
+    auto* const unreadablePortParam = reinterpret_cast<const VoicePortParam*>(std::uintptr_t{0x10});
+    std::uint32_t createdPortId = 123;
+    errno = 71;
+    Require(sceVoiceCreatePort(&createdPortId, unreadablePortParam) == invalidArgument);
+    Require(createdPortId == 255);
+    Require(errno == 71);
+
+    const auto guestInput = CreatePort(2, 0.5f);
+    const auto guestOutput = CreatePort(3, 0.5f);
+
+    errno = 71;
+    Require(sceVoiceUpdatePort(guestInput, unreadablePortParam) == invalidArgument);
+    Require(errno == 71);
+
+    errno = 71;
+    Require(sceVoiceUpdatePort(99, unreadablePortParam) == portNotFound);
+    Require(errno == 71);
+
+    std::uint8_t guestData[16]{};
+    auto* const unwritableSize = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceVoiceReadFromOPort(guestOutput, guestData, unwritableSize) == invalidArgument);
+    Require(errno == 71);
+
+    errno = 71;
+    Require(sceVoiceWriteToIPort(guestInput, guestData, unwritableSize, 0) == invalidArgument);
+    Require(errno == 71);
+
+    auto* const unreadableGain = reinterpret_cast<float*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceVoiceDeviceInCustomerData(guestInput, guestData, 0, unreadableGain) == invalidArgument);
+    Require(errno == 71);
+
     Require(sceVoiceEnd_nid_postfix() == 0);
 }

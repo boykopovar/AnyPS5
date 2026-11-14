@@ -806,7 +806,13 @@ public:
                     relative.push_back(inst);
                     continue;
                 }
-                if (IsBase(inst, TessellationBaseKind::PassthroughPrimitive)) Fail("the primitive VGPR is used other than as the passthrough primitive export", 0u);
+                if (IsBase(inst, TessellationBaseKind::PassthroughPrimitive)) {
+                    if (stage == IrShaderStage::TessellationEvaluation && allUsesAreExportData(inst)) {
+                        inst->ReplaceAllUsesWith(&constant(0u));
+                        continue;
+                    }
+                    Fail("the primitive VGPR is used other than as the passthrough primitive export", 0u);
+                }
                 Fail("a tessellation ring base is used outside a lowered ring access", 0u);
             }
         }
@@ -824,6 +830,37 @@ public:
     }
 
 private:
+    bool isExportData(const IrValue* value, const IrValue* user, std::unordered_set<const IrValue*>& visited, bool& reached) const {
+        if (visited.contains(user)) return true;
+        visited.insert(user);
+        if (user->Opcode() == IrOpcode::SetAttribute) {
+            const auto flags = user->Flags<ExportFlags>();
+            const auto& exports = program.Metadata().exportInfo;
+            if (flags.index < exports.size() && exports.at(flags.index).kind == ExportTargetKind::Parameter && user->Argument(0)->Resolve() == value) {
+                reached = true;
+                return true;
+            }
+            return false;
+        }
+        if (user->Opcode() == IrOpcode::CompositeConstructU32x4 || user->Opcode() == IrOpcode::Phi) {
+            if (!user->HasUses()) return false;
+            for (const IrValue* next : user->Uses()) {
+                if (!isExportData(user, next, visited, reached)) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    bool allUsesAreExportData(const IrValue* inst) const {
+        std::unordered_set<const IrValue*> visited;
+        bool reached = false;
+        for (const IrValue* user : inst->Uses()) {
+            if (!isExportData(inst, user, visited, reached)) return false;
+        }
+        return reached;
+    }
+
     void lowerOwnLaneBits() {
         LaneBits laneBits(program);
         for (IrBlock* block : program.BlockOrder()) {

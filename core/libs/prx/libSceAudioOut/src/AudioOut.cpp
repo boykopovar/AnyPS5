@@ -625,7 +625,13 @@ int APS5_VABI sceAudioOutGetLastOutputTime(int handle, std::uint64_t* outputTime
     if (port == nullptr) {
         return -2144993277;
     }
-    *outputTime = port->lastDataOutputTime;
+    const std::uint64_t time = port->lastDataOutputTime;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(outputTime, &time, sizeof(time));
+    errno = savedErrno;
+    if (!copied) {
+        return -2144993276;
+    }
     return 0;
 }
 
@@ -800,8 +806,14 @@ int APS5_VABI sceAudioOutGetSystemState(AudioOutSystemState* state) {
     if (state == nullptr) {
         return -2144993276;
     }
-    *state = {};
-    state->loudness = 0.0f;
+    AudioOutSystemState localState{};
+    localState.loudness = 0.0f;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &localState, sizeof(localState));
+    errno = savedErrno;
+    if (!copied) {
+        return -2144993276;
+    }
     return 0;
 }
 

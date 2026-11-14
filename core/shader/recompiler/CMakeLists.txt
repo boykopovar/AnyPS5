@@ -400,6 +400,23 @@ function(add_shader_recompiler target runtimeTarget)
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endif()
+    if(BUILD_TESTING AND NOT TARGET ir_opcode_traits_tests)
+        add_test_executable(ir_opcode_traits_tests
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/tests/IrOpcodeTraits.cpp"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/src/IrOpcode.cpp")
+        target_include_directories(ir_opcode_traits_tests PRIVATE
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/include")
+        set_target_properties(ir_opcode_traits_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(ir_opcode_traits_tests)
+        add_test(NAME ir_opcode_traits COMMAND ir_opcode_traits_tests)
+        set_tests_properties(ir_opcode_traits PROPERTIES TIMEOUT 20)
+        if(MINGW)
+            target_link_libraries(ir_opcode_traits_tests PRIVATE libc)
+            set_tests_properties(ir_opcode_traits PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
+
     if(BUILD_TESTING AND NOT TARGET shader_memory_decoder_tolerance_tests)
         add_test_executable(shader_memory_decoder_tolerance_tests
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/ShaderMemoryDecoderToleranceTests.cpp")
