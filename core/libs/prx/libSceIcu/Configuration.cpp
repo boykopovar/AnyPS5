@@ -97,6 +97,7 @@ void APS5_VABI u_setTimeZoneFilesDirectory_nid_postfix(const char* path, std::in
 
 
 void APS5_VABI u_cleanup_nid_postfix() {
+    IcuTraceCleanup_nid_no_patch();
     {
         const std::lock_guard lock(MemoryLock);
         Memory = {};
