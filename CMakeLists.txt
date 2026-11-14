@@ -33,7 +33,7 @@ function(add_test_executable target)
         set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
     endif()
     if(MINGW)
-        target_sources(${target} PRIVATE $<TARGET_OBJECTS:anyps5_windows_test_exit> "${CMAKE_BINARY_DIR}/WindowsManifest.rc")
+        target_sources(${target} PRIVATE $<TARGET_OBJECTS:anyps5_windows_test_exit> $<TARGET_OBJECTS:anyps5_windows_test_manifest>)
         set_property(GLOBAL APPEND PROPERTY ANYPS5_TEST_EXECUTABLES ${target})
         target_link_options(${target} PRIVATE LINKER:--wrap=main)
         target_link_options(${target} PRIVATE LINKER:--disable-high-entropy-va)
@@ -209,6 +209,7 @@ endif()
 
 if(MINGW)
     add_library(anyps5_windows_test_exit OBJECT cmake/WindowsTestExit.cpp)
+    add_library(anyps5_windows_test_manifest OBJECT "${CMAKE_BINARY_DIR}/WindowsManifest.rc")
 endif()
 
 if(BUILD_TESTING)
@@ -381,6 +382,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
+        add_test(NAME tools_compile_plan COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_compile_plan.py)
+        set_tests_properties(tools_compile_plan PROPERTIES TIMEOUT 20)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
         add_test(NAME forced_include_paths COMMAND ${Python3_EXECUTABLE}
@@ -416,6 +420,7 @@ if(BUILD_TESTING)
         set_tests_properties(performance_bisect PROPERTIES TIMEOUT 20)
         add_test(NAME emsdk_pin COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_emsdk_pin.py)
+        set_tests_properties(emsdk_pin PROPERTIES TIMEOUT 20)
         set(conventions_wrapped_declarations_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${conventions_wrapped_declarations_source}")
         file(STRINGS "${conventions_wrapped_declarations_source}" conventions_wrapped_declarations_cases REGEX "^class [A-Za-z0-9_]*Tests\\(|^    def test_")
@@ -438,13 +443,16 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME conventions_ci_gate COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_ci_gate.py)
+        set_tests_properties(conventions_ci_gate PROPERTIES TIMEOUT 20)
         add_test(NAME preview_pad_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_preview_pad_timeline.py)
         set_tests_properties(preview_pad_timeline PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_git_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_git.py)
+        set_tests_properties(conventions_git_errors PROPERTIES TIMEOUT 20)
         add_test(NAME tools_base_ref COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_base_ref.py)
+        set_tests_properties(tools_base_ref PROPERTIES TIMEOUT 20)
         add_test(NAME tools_configure_diff COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_compare_configure_checks.py)
         set_tests_properties(tools_configure_diff PROPERTIES TIMEOUT 20)
         add_test(NAME ctest_no_tests_flag COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_ctest_no_tests_flag.py)
@@ -458,6 +466,9 @@ if(BUILD_TESTING)
         add_test(NAME conventions_debt_length COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_length.py)
         set_tests_properties(conventions_debt_length PROPERTIES TIMEOUT 20)
+        add_test(NAME conventions_debt_fragments COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_fragments.py)
+        set_tests_properties(conventions_debt_fragments PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_debt_labels COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_labels.py)
         set_tests_properties(conventions_debt_labels PROPERTIES TIMEOUT 20)
@@ -489,6 +500,7 @@ if(BUILD_TESTING)
         set_tests_properties(tools_pe_inventory PROPERTIES TIMEOUT 20)
         add_test(NAME rebase_verify COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py)
+        set_tests_properties(rebase_verify PROPERTIES TIMEOUT 60)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
         set_tests_properties(check_skips PROPERTIES TIMEOUT 20)
@@ -539,15 +551,19 @@ if(BUILD_TESTING)
         set_tests_properties(relinker_fuzz_configurations PROPERTIES TIMEOUT 30)
         add_test(NAME configure_seed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedTests)
+        set_tests_properties(configure_seed PROPERTIES TIMEOUT 30)
         add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedPathTests)
+        set_tests_properties(configure_seed_paths PROPERTIES TIMEOUT 20)
         add_test(NAME configure_seed_round_trips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedRoundTripTests)
+        set_tests_properties(configure_seed_round_trips PROPERTIES TIMEOUT 30)
         add_test(NAME configure_seed_stdout COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedStdoutTests)
         set_tests_properties(configure_seed_stdout PROPERTIES TIMEOUT 20)
         add_test(NAME configure_seed_parsing COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ChecksParsingTests)
+        set_tests_properties(configure_seed_parsing PROPERTIES TIMEOUT 20)
         add_test(NAME vulkan_validation_gate_reports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ReportTests)
         add_test(NAME vulkan_validation_gate_integration COMMAND ${Python3_EXECUTABLE}
@@ -598,6 +614,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_report.py)
         add_test(NAME agc_test_split COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_agc_test_split.py)
+        add_test(NAME debt_fold COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_fold.py)
         add_test(NAME stubgen_stdout_newlines COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen_stdout_newlines.py)
         add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
@@ -657,6 +675,9 @@ if(BUILD_TESTING)
         add_test(NAME pad_input COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_input.py)
         set_tests_properties(pad_input PROPERTIES TIMEOUT 20)
+        add_test(NAME harfbuzz_icu_script_names COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_harfbuzz_icu_script_names.py)
+        set_tests_properties(harfbuzz_icu_script_names PROPERTIES TIMEOUT 20)
         add_test(NAME stale_conflicts_workflow COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stale_conflicts_workflow.py)
         add_test(NAME pad_timeline COMMAND ${Python3_EXECUTABLE}
@@ -720,18 +741,22 @@ if(BUILD_TESTING)
         set_tests_properties(tools_annotation_symbols_json PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_body_bom COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_body_bom.py)
+        set_tests_properties(conventions_body_bom PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_blob_reads COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_blob_reads.py)
+        set_tests_properties(conventions_blob_reads PROPERTIES TIMEOUT 20)
         add_test(NAME ab_split_csv COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ab_split_csv.py)
         set_tests_properties(ab_split_csv PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_agent_files COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_agent_files.py)
+        set_tests_properties(conventions_agent_files PROPERTIES TIMEOUT 20)
         add_test(NAME tools_nid_offline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_nid_offline.py)
         set_tests_properties(tools_nid_offline PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_alignment COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_alignment.py)
+        set_tests_properties(conventions_alignment PROPERTIES TIMEOUT 20)
         add_test(NAME tools_intervals_complete COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_intervals_complete.py)
         set_tests_properties(tools_intervals_complete PROPERTIES TIMEOUT 20)

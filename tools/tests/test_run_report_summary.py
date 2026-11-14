@@ -39,6 +39,15 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("libSceNpTrophy::sceNpTrophyCreateContext (1 call)", summary)
         self.assertIn("This summary uses only the fields present in the local run report; it does not upload data.", summary)
 
+    def test_summary_names_each_host_os(self):
+        for name, fixture, expected in (("linux", "stop-none.json", "System: Linux, Arch Linux"),
+                                        ("windows", "stop-crash.json", "System: Windows, Windows 11"),
+                                        ("macos", "stop-assert.json", "System: macOS, macOS 14.5")):
+            with self.subTest(os=name):
+                report = self.report(fixture)
+                self.assertEqual(report["system"]["os"], name)
+                self.assertIn(expected, render(report))
+
     def test_summary_marks_uncollected_sections(self):
         report = self.report("stop-missing-function.json")
         report["coverage"]["milestones"] = False
@@ -65,6 +74,30 @@ class RunReportSummaryTests(unittest.TestCase):
         summary = render(report)
         self.assertNotIn("\x1b", summary)
 
+    def test_malformed_numbers_do_not_emit_terminal_control_characters(self):
+        report = self.report("stop-none.json")
+        report["run"]["exitCode"] = "\x1b[2J"
+        report["run"]["seconds"] = "\nInjected line"
+        report["system"]["ramGiB"] = True
+        report["shaders"]["compiled"] = "\x1b[2J"
+        summary = render(report)
+        self.assertNotIn("\x1b", summary)
+        self.assertNotIn("Injected line", summary)
+        self.assertIn("exit code unknown", summary)
+        self.assertIn("after unknown seconds", summary)
+        self.assertIn("unknown GiB RAM", summary)
+        self.assertIn("Shaders: unknown compiled", summary)
+
+    def test_malformed_totals_are_unknown(self):
+        report = self.report("stop-none.json")
+        report["coverage"].update(missing=True, unsupported=True)
+        report["missing"]["functions"] = [{"calls": 2}, {"calls": "\x1b[2J"}]
+        report["shaders"]["unsupported"] = [{"count": 3}, {"count": []}]
+        summary = render(report)
+        self.assertIn("Missing functions: unknown calls across 2 functions", summary)
+        self.assertIn("Unsupported shader instructions: unknown occurrences across 2 instructions", summary)
+        self.assertNotIn("\x1b", summary)
+
     def test_rejects_other_report_formats(self):
         with self.assertRaisesRegex(ValueError, "AnyPS5 run report"):
             render({"format": "other", "version": 1})
@@ -82,6 +115,17 @@ class RunReportSummaryTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0, result.stderr.decode("ascii", errors="backslashreplace"))
         self.assertIn(f"Game: {title} (PPSA12345)", result.stdout.decode("utf-8").splitlines())
+
+    def test_unnamed_instruction_with_opcode_zero_shows_its_number(self):
+        report = self.report("stop-none.json")
+        report["coverage"]["unsupported"] = True
+        report["shaders"]["unsupported"] = [
+            {"encoding": "SOPP", "opcode": None, "opcodeValue": 0, "modifiers": None, "count": 2},
+            {"encoding": "VOP2", "opcode": None, "opcodeValue": None, "modifiers": None, "count": 1},
+        ]
+        summary = render(report)
+        self.assertIn("  - SOPP: 0 (2 occurrences)", summary)
+        self.assertIn("  - VOP2: unknown instruction (1 occurrence)", summary)
 
 
 if __name__ == "__main__":
