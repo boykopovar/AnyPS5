@@ -20,6 +20,7 @@ PARAMETER = re.compile(r"([A-Za-z_][\w:<>,\s]*?(?:[*&]+\s*(?:const\b\s*)?)+)\s*(
 RAW_CALL = re.compile(rf"\b(?:std::|::)?({'|'.join(RAW_CALLS)})\s*\(")
 QUIET_CALL = re.compile(rf"\b({'|'.join((*SAFE, *UNEVALUATED))})\s*\(")
 CAST = re.compile(r"^(?:\(\s*[\w\s:*<>]+\)(?=\s*\S)|(?:reinterpret|static|const)_cast\s*<[^>]*>|\()\s*")
+CAST_TYPE = r"<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>"
 
 
 def split_top_level(text, angles=True):
@@ -107,9 +108,10 @@ def names_parameter(argument, name):
 
 def accesses(body, name):
     word = re.escape(name)
+    operand = rf"(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
     found = []
-    for kind, pattern in (("member", rf"\b{word}\s*->"), ("index", rf"\b{word}\s*\["),
-                          ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{word}\b")):
+    for kind, pattern in (("member", rf"{operand}\s*->"), ("index", rf"{operand}\s*\["),
+                          ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}")):
         found += [(match.end() - 1, kind) for match in re.finditer(pattern, body)]
     for match in RAW_CALL.finditer(body):
         open_paren = match.end() - 1
