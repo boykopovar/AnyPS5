@@ -356,6 +356,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             const auto addressAccess = AddressOpcodeInfoOf(inst->Opcode()).access;
             if ((BufferAccessOf(inst->Opcode()) == BufferAccess::Atomic || addressAccess == AddressAccess::Atomic) && inst->Type() == IrType::U64) {
                 requirements.bufferInt64Atomics = true;
+                requirements.addressInt64Atomics = requirements.addressInt64Atomics || addressAccess == AddressAccess::Atomic;
                 if (!IsSplittableBufferAtomic64(inst)) {
                     requirements.bufferInt64AtomicsExact = true;
                 } else if (!splitOpcode) {

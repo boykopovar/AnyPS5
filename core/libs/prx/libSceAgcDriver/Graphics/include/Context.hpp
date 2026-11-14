@@ -270,6 +270,7 @@ struct Context {
     bool shaderCullDistance = false;
     bool nullDescriptors = false;
     bool bufferInt64Atomics = false;
+    VkDeviceAddress atomicLockTable = 0;
     const PlaceholderImages* placeholderImages = nullptr;
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;

@@ -113,6 +113,7 @@ std::uint32_t ImageVectorType(SpirvEmitterState& state, IrTextureNumericClass nu
 std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image) {
     std::uint32_t sampled = 0;
     std::uint32_t format = spv::ImageFormatUnknown;
+    const bool lockedAtomic64 = image.atomic64 && state.requirements.imageAtomicLocks;
     if (image.resourceClass == ImageResourceClass::Sampled) {
         if (image.atomic) {
             FailEmit("sampled image cannot be atomic");
@@ -127,7 +128,7 @@ std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image) {
             if (image.numericClass != IrTextureNumericClass::Uint) {
                 FailEmit("atomic storage image must be uint");
             }
-            format = image.atomic64 ? spv::ImageFormatR64ui : spv::ImageFormatR32ui;
+            if (!lockedAtomic64) format = image.atomic64 ? spv::ImageFormatR64ui : spv::ImageFormatR32ui;
         }
     } else {
         FailEmit("invalid image resource class");
@@ -140,7 +141,7 @@ std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image) {
             if (info.arrayed != 0u) state.module.EmitCapability(spv::CapabilityImageMSArray);
         }
     }
-    const auto scalar = image.atomic64 ? TypeScalarU64(state) : ImageScalarType(state, image.numericClass);
+    const auto scalar = image.atomic64 && !lockedAtomic64 ? TypeScalarU64(state) : ImageScalarType(state, image.numericClass);
     return state.module.Type(spv::OpTypeImage, scalar, info.spirvDimension, image.depthCompare ? 1u : 0u, info.arrayed, info.multisampled, sampled, format);
 }
 

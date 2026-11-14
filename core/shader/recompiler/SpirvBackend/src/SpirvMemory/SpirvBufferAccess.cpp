@@ -1,4 +1,5 @@
 #include "PipelineSpecialization.hpp"
+#include "RuntimeAbi.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
@@ -162,6 +163,20 @@ std::uint32_t EmitLdsBufferU64Pointer(SpirvEmitterState& state, std::uint32_t in
     }
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassStorageBuffer, TypeScalarU64(state)), pointer, state.ldsBufferU64Variable, ConstantU32(state, 0u), EmitBinaryU32(state, spv::OpShiftRightLogical, EmitAddU32(state, state.ldsBufferBase, index), ConstantU32(state, 1u)));
+    return pointer;
+}
+
+std::uint32_t EmitAtomicLockPointer(SpirvEmitterState& state, std::uint32_t index) {
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto widen = [&](std::uint32_t value) { return Unary(state, spv::OpUConvert, u64, value); };
+    const auto low = state.module.SpecializationConstant(u32, PipelineSpecialization::AtomicLockTableBase, 0u);
+    const auto high = state.module.SpecializationConstant(u32, PipelineSpecialization::AtomicLockTableBase + 1u, 0u);
+    const auto base = Binary(state, spv::OpBitwiseOr, u64, widen(low), Binary(state, spv::OpShiftLeftLogical, u64, widen(high), ConstantU32(state, 32u)));
+    const auto slot = Binary(state, spv::OpBitwiseAnd, u32, index, ConstantU32(state, RuntimeAbi::AtomicLockCount - 1u));
+    const auto address = Binary(state, spv::OpIAdd, u64, base, Binary(state, spv::OpShiftLeftLogical, u64, widen(slot), ConstantU32(state, 2u)));
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, address);
     return pointer;
 }
 
