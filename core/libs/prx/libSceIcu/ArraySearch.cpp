@@ -7,13 +7,11 @@
 //   Copyright (C) 2003-2013, International Business Machines
 //   Corporation and others.  All Rights Reserved.
 //
-// The guest comparator is called directly, as libc's qsort calls its comparator.
 
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 
 namespace {
 
-// ICU's MIN_QSORT: below this many elements the search is linear.
 constexpr std::int32_t MinQsort = 9;
 
 }
