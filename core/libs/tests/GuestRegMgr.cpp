@@ -1,10 +1,20 @@
 #include "prx/libSceRegMgr/include/Api.hpp"
+#include "prx/libSceRegMgr/include/InventoryExports.hpp"
+#include <initializer_list>
+#include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -18,16 +28,129 @@ static bool ReportsNotImplemented(const char* name, TCall call) {
     return false;
 }
 
-int main() {
-    std::int32_t value = 0;
-    Require(ReportsNotImplemented("sceRegMgrNonSysGetInt", [&] { sceRegMgrNonSysGetInt(0, 0, &value); }));
-    Require(ReportsNotImplemented("sceRegMgrNonSysGetInt", [&] { sceRegMgrNonSysGetInt(-1, 1, nullptr); }));
+using SizeCheck = decltype(&libSceRegMgrUnknown_YtmvqKL9PEo_nid_no_patch);
 
+static void CheckSizeOnly(SizeCheck check, std::uint32_t key) {
+    constexpr int nullValue = static_cast<int>(0x800d0202u);
+    constexpr int badSize = static_cast<int>(0x800d0208u);
+    std::uint8_t buffer[0x900];
+    Require(check(key, nullptr, 1) == nullValue);
+    Require(check(key, buffer, 0) == badSize);
+    Require(check(key, buffer, 0x801) == badSize);
+    Require(check(key, buffer, 0xffffffffffffffffull) == badSize);
+    std::memset(buffer, 0xaa, sizeof(buffer));
+    Require(check(key, buffer, 0x800) == badSize);
+    Require(check(key, buffer, 0x7ff) == 0 && buffer[0] == 0xaa);
+}
+
+static void CheckRemovedRangeKeys() {
+    constexpr int unknownKey = static_cast<int>(0x800d0105u);
+    constexpr int nullValue = static_cast<int>(0x800d0202u);
+    constexpr int badSize = static_cast<int>(0x800d0208u);
+    for (const std::uint32_t key : {0x07800000u, 0x07812345u, 0x0783ffffu}) {
+        Require(libSceRegMgrUnknown_JfNNpUQdhQw_nid_no_patch(key) == 0);
+        Require(libSceRegMgrUnknown_x9WN_plus_tFTY34_nid_no_patch(key) == 0);
+        std::uint8_t buffer[0x900];
+        CheckSizeOnly(libSceRegMgrUnknown_YtmvqKL9PEo_nid_no_patch, key);
+        CheckSizeOnly(libSceRegMgrUnknown_x0YJQilTJDo_nid_no_patch, key);
+        std::int32_t word = 7;
+        Require(libSceRegMgrUnknown_csy_minus_cEETOKg_nid_no_patch(key, nullptr) == nullValue);
+        Require(libSceRegMgrUnknown_csy_minus_cEETOKg_nid_no_patch(key, &word) == 0 && word == 0);
+        char text[4] = {'a', 'b', 'c', 'd'};
+        Require(libSceRegMgrUnknown_iHi1Omn25M4_nid_no_patch(key, nullptr, 4) == nullValue);
+        Require(libSceRegMgrUnknown_iHi1Omn25M4_nid_no_patch(key, text, 0) == badSize && text[0] == 'a');
+        Require(libSceRegMgrUnknown_iHi1Omn25M4_nid_no_patch(key, text, 4) == 0 && text[0] == 0 && text[1] == 'b');
+        Require(libSceRegMgrUnknown_wpJW0oIM6rg_nid_no_patch(key, nullptr, 4) == nullValue);
+        std::memset(buffer, 0xaa, sizeof(buffer));
+        Require(libSceRegMgrUnknown_wpJW0oIM6rg_nid_no_patch(key, buffer, 0x801) == badSize && buffer[0] == 0xaa);
+        Require(libSceRegMgrUnknown_wpJW0oIM6rg_nid_no_patch(key, buffer, 0x10) == 0);
+        Require(buffer[0] == 0 && buffer[0xf] == 0 && buffer[0x10] == 0xaa);
+        Require(libSceRegMgrUnknown_wpJW0oIM6rg_nid_no_patch(key, buffer, 0x800) == badSize);
+        Require(libSceRegMgrUnknown_wpJW0oIM6rg_nid_no_patch(key, buffer, 0x7ff) == 0 && buffer[0x7fe] == 0 && buffer[0x7ff] == 0xaa);
+    }
+    for (const std::uint32_t key : {0x077fffffu, 0x07840000u, 0x07000000u, 0x87800000u, 0x08800000u, 0u, 0xffffffffu}) {
+        std::int32_t word = 7;
+        Require(libSceRegMgrUnknown_JfNNpUQdhQw_nid_no_patch(key) == unknownKey);
+        Require(libSceRegMgrUnknown_x9WN_plus_tFTY34_nid_no_patch(key) == unknownKey);
+        Require(libSceRegMgrUnknown_YtmvqKL9PEo_nid_no_patch(key, nullptr, 0) == unknownKey);
+        Require(libSceRegMgrUnknown_x0YJQilTJDo_nid_no_patch(key, nullptr, 0) == unknownKey);
+        Require(libSceRegMgrUnknown_csy_minus_cEETOKg_nid_no_patch(key, &word) == unknownKey && word == 7);
+        Require(libSceRegMgrUnknown_iHi1Omn25M4_nid_no_patch(key, nullptr, 0) == unknownKey);
+        Require(libSceRegMgrUnknown_wpJW0oIM6rg_nid_no_patch(key, nullptr, 0) == unknownKey);
+    }
+}
+
+static void CheckStringPageBoundary() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* pages = static_cast<char*>(VirtualAlloc(nullptr, page * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(pages + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* pages = static_cast<char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE,
+                                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + page, page, PROT_NONE) == 0);
+#endif
+    constexpr int bad = static_cast<int>(0x80820001u);
+    constexpr int absent = static_cast<int>(0x80820002u);
+    char text[32]{};
+    char* input = pages + page - 3;
+    std::memcpy(input, "ok", 3);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2010, input, page * 2) == 0);
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2010, text, sizeof(text)) == 0 && std::strcmp(text, "ok") == 0);
+    Require(sceRegMgrIsChange(0x2010, 0x0d010001u) == 1);
+
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2011, input, std::numeric_limits<std::uint32_t>::max()) == 0);
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2011, text, sizeof(text)) == 0 && std::strcmp(text, "ok") == 0);
+    Require(sceRegMgrIsChange(0x2011, 0x0d010001u) == 1);
+
+    std::memcpy(input, "abc", 3);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2012, input, page * 2) == bad);
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2012, text, sizeof(text)) == absent);
+    Require(sceRegMgrIsChange(0x2012, 0x0d010001u) == 0);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2010, input, page * 2) == bad);
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2010, text, sizeof(text)) == 0 && std::strcmp(text, "ok") == 0);
+    Require(sceRegMgrIsChange(0x2010, 0x0d010001u) == 0);
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, page * 2) == 0);
+#endif
+}
+
+static void CheckStringLengthCap() {
+    std::string input(1024 * 1024 + 1, 'x');
+    char text[16]{};
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2013, input.data(), input.size()) == static_cast<int>(0x80820001u));
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2013, text, sizeof(text)) == static_cast<int>(0x80820002u));
+    Require(sceRegMgrIsChange(0x2013, 0x0d010001u) == 0);
+}
+
+int main() {
+    CheckRemovedRangeKeys();
+    CheckStringPageBoundary();
+    CheckStringLengthCap();
     int32_t intVal = 0;
     char strBuf[64] = {};
     uint8_t binBuf[32] = {};
 
     Require(sceRegMgrGetInt(0x1000, nullptr) == static_cast<int>(0x80820001));
+    Require(sceRegMgrGetInt(0x1000, reinterpret_cast<int32_t*>(0x10)) == static_cast<int>(0x80820002));
     Require(sceRegMgrGetStr(0x1001, nullptr, 10) == static_cast<int>(0x80820001));
     Require(sceRegMgrGetStr(0x1001, strBuf, -1) == static_cast<int>(0x80820001));
     Require(sceRegMgrGetBin(0x1002, nullptr, 10) == static_cast<int>(0x80820001));
@@ -58,21 +181,57 @@ int main() {
     Require(sceRegMgrGetInt(0x2000, &intVal) == 0 && intVal == 0x12345678);
     Require(sceRegMgrSetInt(0x2000, -7) == 0);
     Require(sceRegMgrGetInt(0x2000, &intVal) == 0 && intVal == -7);
+    errno = 71;
+    Require(sceRegMgrGetInt(0x2000, reinterpret_cast<int32_t*>(0x10)) == static_cast<int>(0x80820001));
+    Require(errno == 71);
     Require(sceRegMgrSetStr(0x2001, "hello", 6) == 0);
     std::memset(strBuf, 0, sizeof(strBuf));
     Require(sceRegMgrGetStr(0x2001, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "hello") == 0);
+    errno = 71;
+    Require(sceRegMgrGetStr(0x2001, reinterpret_cast<char*>(0x10), sizeof(strBuf)) == static_cast<int>(0x80820001));
+    Require(errno == 71);
     Require(sceRegMgrSetStr(0x2001, "world", 6) == 0);
     Require(sceRegMgrGetStr(0x2001, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "world") == 0);
+    const auto* unreadableStr = reinterpret_cast<const char*>(0x10);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2006, unreadableStr, 6) == static_cast<int>(0x80820001));
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2006, strBuf, sizeof(strBuf)) == static_cast<int>(0x80820002));
+    Require(sceRegMgrIsChange(0x2006, 0x0d010001u) == 0);
+    Require(sceRegMgrIsChange(0x2001, 0x0d010001u) == 1);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2001, unreadableStr, 6) == static_cast<int>(0x80820001));
+    Require(errno == 71);
+    std::memset(strBuf, 0, sizeof(strBuf));
+    Require(sceRegMgrGetStr(0x2001, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "world") == 0);
+    Require(sceRegMgrIsChange(0x2001, 0x0d010001u) == 0);
     const std::uint8_t data[] = {1, 2, 3, 4};
     Require(sceRegMgrSetBin(0x2002, data, sizeof(data)) == 0);
     std::memset(binBuf, 0, sizeof(binBuf));
     Require(sceRegMgrGetBin(0x2002, binBuf, sizeof(binBuf)) == 0);
     Require(std::memcmp(binBuf, data, sizeof(data)) == 0);
+    errno = 71;
+    Require(sceRegMgrGetBin(0x2002, reinterpret_cast<uint8_t*>(0x10), sizeof(binBuf)) == static_cast<int>(0x80820001));
+    Require(errno == 71);
     const std::uint8_t shorter[] = {9, 8};
     Require(sceRegMgrSetBin(0x2002, shorter, sizeof(shorter)) == 0);
     std::memset(binBuf, 0, sizeof(binBuf));
     Require(sceRegMgrGetBin(0x2002, binBuf, sizeof(binBuf)) == 0);
     Require(binBuf[0] == 9 && binBuf[1] == 8 && binBuf[2] == 0);
+    const auto* unreadableBin = reinterpret_cast<const void*>(0x10);
+    errno = 71;
+    Require(sceRegMgrSetBin(0x2004, unreadableBin, sizeof(data)) == static_cast<int>(0x80820001));
+    Require(errno == 71);
+    Require(sceRegMgrGetBin(0x2004, binBuf, sizeof(binBuf)) == static_cast<int>(0x80820002));
+    Require(sceRegMgrIsChange(0x2004, 0x0d010001u) == 0);
+    Require(sceRegMgrIsChange(0x2002, 0x0d010001u) == 1);
+    errno = 71;
+    Require(sceRegMgrSetBin(0x2002, unreadableBin, sizeof(shorter)) == static_cast<int>(0x80820001));
+    Require(errno == 71);
+    std::memset(binBuf, 0, sizeof(binBuf));
+    Require(sceRegMgrGetBin(0x2002, binBuf, sizeof(binBuf)) == 0);
+    Require(binBuf[0] == 9 && binBuf[1] == 8);
+    Require(sceRegMgrIsChange(0x2002, 0x0d010001u) == 0);
     Require(sceRegMgrSetInt(0x2001, 1) == static_cast<int>(0x80820006));
     Require(sceRegMgrSetStr(0x2000, "x", 2) == static_cast<int>(0x80820006));
     Require(sceRegMgrSetBin(0x2000, data, sizeof(data)) == static_cast<int>(0x80820006));
@@ -84,6 +243,80 @@ int main() {
     Require(sceRegMgrSetStr(static_cast<int32_t>(0xC0808001u), "hi", 3) == 0);
     std::memset(strBuf, 0, sizeof(strBuf));
     Require(sceRegMgrGetStr(3229646849, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "hi") == 0);
+
+    Require(sceRegMgrNonSysGetInt(999999, 0, nullptr) == static_cast<int>(0x800D0202));
+    intVal = 0x55AA;
+    Require(sceRegMgrNonSysGetInt(999999, 0, &intVal) == static_cast<int>(0x80820002));
+    Require(intVal == 0x55AA);
+    Require(sceRegMgrNonSysSetInt(0x3000, 7, 0x1234) == 0);
+    Require(sceRegMgrNonSysGetInt(0x3000, 9, &intVal) == 0 && intVal == 0x1234);
+    Require(sceRegMgrNonSysSetStr(0x3001, 3, "abc", 3) == 0);
+    errno = 71;
+    Require(sceRegMgrNonSysSetStr(0x3008, 3, unreadableStr, 3) == static_cast<int>(0x80820001));
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x3008, strBuf, sizeof(strBuf)) == static_cast<int>(0x80820002));
+    Require(sceRegMgrIsChange(0x3008, 0x0d010001u) == 0);
+    Require(sceRegMgrNonSysGetStr(0x3001, 3, nullptr, 8) == static_cast<int>(0x800D0202));
+    Require(sceRegMgrNonSysGetStr(0x3001, 3, strBuf, 0x801) == static_cast<int>(0x800D0208));
+    Require(sceRegMgrNonSysGetStr(0x3001, 3, strBuf, 0) == static_cast<int>(0x80820004));
+    std::memset(strBuf, 0, sizeof(strBuf));
+    Require(sceRegMgrNonSysGetStr(0x3001, 3, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "abc") == 0);
+    Require(sceRegMgrNonSysSetBin(0x3002, 0, data, sizeof(data)) == 0);
+    Require(sceRegMgrNonSysGetBin(0x3002, 0, nullptr, 8) == static_cast<int>(0x800D0202));
+    Require(sceRegMgrNonSysGetBin(0x3002, 0, binBuf, 0x801) == static_cast<int>(0x800D0208));
+    Require(sceRegMgrNonSysGetBin(0x3002, 0, binBuf, 0) == static_cast<int>(0x80820004));
+    std::memset(binBuf, 0, sizeof(binBuf));
+    Require(sceRegMgrNonSysGetBin(0x3002, 0, binBuf, sizeof(binBuf)) == 0);
+    Require(std::memcmp(binBuf, data, sizeof(data)) == 0);
+    Require(sceRegMgrIsChange(0x3002, 0x0d010001u) == 1);
+    errno = 71;
+    Require(sceRegMgrNonSysSetBin(0x3002, 0, unreadableBin, sizeof(data)) == static_cast<int>(0x80820001));
+    Require(errno == 71);
+    std::memset(binBuf, 0, sizeof(binBuf));
+    Require(sceRegMgrNonSysGetBin(0x3002, 0, binBuf, sizeof(binBuf)) == 0);
+    Require(std::memcmp(binBuf, data, sizeof(data)) == 0);
+    Require(sceRegMgrIsChange(0x3002, 0x0d010001u) == 0);
+    Require(sceRegMgrNonSysSetStr(0x3003, 0, nullptr, 4) == static_cast<int>(0x800D0202));
+    Require(sceRegMgrNonSysSetBin(0x3003, 0, nullptr, 4) == static_cast<int>(0x800D0202));
+    Require(sceRegMgrNonSysSetStr(0x3003, 0, "x", 0x801) == static_cast<int>(0x800D0208));
+    Require(sceRegMgrNonSysSetBin(0x3003, 0, data, 0x801) == static_cast<int>(0x800D0208));
+    Require(sceRegMgrCheckError() == 0);
+    Require(sceRegMgrNonSysCheckError() == 0);
+    Require(sceRegMgrIsInitOK() == 1);
+
+    Require(sceRegMgrSetInt(0x3006, 1) == 0);
+    Require(sceRegMgrIsChange(0x3006, 0x0d010001u) == 1);
+    Require(sceRegMgrIsChange(0x3006, 0x0d010001u) == 0);
+    Require(sceRegMgrSetInt(0x3006, 2) == 0);
+    Require(sceRegMgrIsChange(0x3006, 0x0d010002u) == 1);
+    Require(sceRegMgrIsChange(0x3006, 1u) == 0);
+
+    Require(sceRegMgrSetInt(0x3007, 5) == 0);
+    Require(sceRegMgrIsChange(0x3007, 0x0d010001u) == 1);
+    Require(sceRegMgrSetInt(0x3007, 5) == 0);
+    Require(sceRegMgrIsChange(0x3007, 0x0d010001u) == 0);
+    Require(sceRegMgrIsChange(0x3007, 0x0d010002u) == 1);
+
+    Require(sceRegMgrSetInt(0x3003, 9) == 0);
+    Require(sceRegMgrResetVal(0x3003, 0) == 0);
+    intVal = 0x55AA;
+    Require(sceRegMgrGetInt(0x3003, &intVal) == static_cast<int>(0x80820002));
+    Require(intVal == 0x55AA);
+    Require(sceRegMgrIsChange(0x3003, 0x0d010001u) == 1);
+    Require(sceRegMgrResetVal(0x3004, -1) == 0);
+    Require(sceRegMgrResetVal(static_cast<std::int32_t>(0xC0808003u), 0) == 0);
+    intVal = 0x55AA;
+    Require(sceRegMgrGetInt(static_cast<std::int64_t>(0xC0808003u), &intVal) == static_cast<int>(0x80820002));
+    Require(intVal == 0x55AA);
+
+    Require(sceRegMgrSetInt(static_cast<std::int32_t>(0xC0808002u), 3) == 0);
+    Require(sceRegMgrIsChange(0xC0808002u, 0x0d010001u) == 1);
+
+    Require(ReportsNotImplemented("sceRegMgrGetIntInitVal", [&] { sceRegMgrGetIntInitVal(0x3005, &intVal); }));
+    Require(ReportsNotImplemented("sceRegMgrGetIntInitVal", [&] { sceRegMgrGetIntInitVal(0x3005, nullptr); }));
+    Require(ReportsNotImplemented("sceRegMgrGetStrInitVal", [&] { sceRegMgrGetStrInitVal(); }));
+    Require(ReportsNotImplemented("sceRegMgrGetBinInitVal", [&] { sceRegMgrGetBinInitVal(); }));
+    Require(ReportsNotImplemented("sceRegMgrSrvGetQAFforReg", [&] { sceRegMgrSrvGetQAFforReg(); }));
 
     return 0;
 }

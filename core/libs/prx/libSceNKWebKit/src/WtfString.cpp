@@ -444,7 +444,7 @@ CString CopyCString(const char* data, std::size_t length) {
     return result;
 }
 
-String FromUTF8(const unsigned char* input, std::size_t length) {
+String FromUTF8(const unsigned char* input, std::size_t length, bool replaceInvalid = false) {
     if (length > MaxStringLength) throw std::length_error("WTF UTF-8 input too long");
     if (!input) return String();
     bool ascii = true;
@@ -453,21 +453,27 @@ String FromUTF8(const unsigned char* input, std::size_t length) {
     std::u16string output;
     for (std::size_t i = 0; i < length;) {
         unsigned first = input[i++];
-        unsigned codePoint;
-        unsigned count;
-        unsigned minimum;
+        unsigned codePoint = 0;
+        unsigned count = 0;
         if (first < 128) { output.push_back(static_cast<char16_t>(first)); continue; }
-        if (first >= 0xC2 && first <= 0xDF) { codePoint = first & 31; count = 1; minimum = 0x80; }
-        else if (first >= 0xE0 && first <= 0xEF) { codePoint = first & 15; count = 2; minimum = 0x800; }
-        else if (first >= 0xF0 && first <= 0xF4) { codePoint = first & 7; count = 3; minimum = 0x10000; }
-        else return String();
-        if (count > length - i) return String();
-        for (unsigned j = 0; j < count; ++j) {
-            unsigned next = input[i++];
-            if ((next & 0xC0) != 0x80) return String();
+        if (first >= 0xC2 && first <= 0xDF) { codePoint = first & 31; count = 1; }
+        else if (first >= 0xE0 && first <= 0xEF) { codePoint = first & 15; count = 2; }
+        else if (first >= 0xF0 && first <= 0xF4) { codePoint = first & 7; count = 3; }
+        unsigned lower = first == 0xE0 ? 0xA0 : first == 0xF0 ? 0x90 : 0x80;
+        unsigned upper = first == 0xED ? 0x9F : first == 0xF4 ? 0x8F : 0xBF;
+        unsigned consumed = 0;
+        for (; consumed < count && i < length; ++consumed, ++i) {
+            const unsigned next = input[i];
+            if (next < lower || next > upper) break;
             codePoint = (codePoint << 6) | (next & 63);
+            lower = 0x80;
+            upper = 0xBF;
         }
-        if (codePoint < minimum || codePoint > 0x10FFFF || (codePoint >= 0xD800 && codePoint <= 0xDFFF)) return String();
+        if (!count || consumed != count) {
+            if (!replaceInvalid) return String();
+            output.push_back(u'\uFFFD');
+            continue;
+        }
         if (codePoint < 0x10000) output.push_back(static_cast<char16_t>(codePoint));
         else {
             output.push_back(static_cast<char16_t>(0xD800 + ((codePoint - 0x10000) >> 10)));
@@ -618,6 +624,14 @@ namespace NKWebKit::WtfAbi {
 
 StringImpl* EmptyStringImpl() {
     return EmptyImpl();
+}
+
+StringImpl* CreateUninitialized(unsigned length, bool is8Bit, void*& characters) {
+    return NewImpl(length, is8Bit, characters);
+}
+
+String FromUTF8ReplacingInvalidSequences_nid_no_patch(const unsigned char* input, std::size_t length) {
+    return FromUTF8(input, length, true);
 }
 
 StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters) {
