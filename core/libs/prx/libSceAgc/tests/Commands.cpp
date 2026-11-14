@@ -566,6 +566,27 @@ void testContextState() {
     check(invalid.buffer.cursor_up == growth.destination.words.data(), "failed reservation advanced cursor");
 }
 
+void testCondExecConsoleArguments() {
+    struct Case {
+        std::uintptr_t address;
+        std::uint32_t count;
+        std::array<std::uint32_t, 5> words;
+    };
+    const std::array<Case, 3> cases{{
+        {0x11111111u, 0x22222222u, {0xc0032200u, 0x11111110u, 0u, 0u, 0x2222u}},
+        {1u, 2u, {0xc0032200u, 0u, 0u, 0u, 2u}},
+        {0x1111111122222222ull, 0x44444444u, {0xc0032200u, 0x22222220u, 0x11111111u, 0u, 0x444u}},
+    }};
+    for (const auto write : {sceAgcDcbCondExec, sceAgcAcbCondExec}) {
+        for (const auto& item : cases) {
+            Storage storage;
+            const auto* packet = write(&storage.buffer, reinterpret_cast<const volatile std::uint32_t*>(item.address), item.count);
+            check(packet == storage.words.data() && std::equal(item.words.begin(), item.words.end(), packet), "COND_EXEC packet does not match the console's");
+            check(storage.buffer.cursor_up == storage.words.data() + item.words.size(), "COND_EXEC cursor mismatch");
+        }
+    }
+}
+
 void testFlowPackets() {
     const auto* target = reinterpret_cast<const std::uint32_t*>(0x123456789ab0ull);
     Storage chained;
@@ -1279,6 +1300,7 @@ int main(int argc, char** argv) {
         testIndirectBase();
         testContextState();
         testFlowPackets();
+        testCondExecConsoleArguments();
         testFlip();
         testRegisters();
         testIndirectRegisterPatches();
