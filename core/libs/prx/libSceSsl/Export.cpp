@@ -3,8 +3,8 @@
 #include <winsock2.h>
 #else
 #include <sys/socket.h>
-#include <cerrno>
 #endif
+#include <cerrno>
 
 #include "SslTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -60,6 +60,7 @@ constexpr int ErrorCallbackCheck = static_cast<int>(0x8095f0fd);
 constexpr int ErrorInvalidValue = static_cast<int>(0x8095f007);
 constexpr int ErrorBadLength = static_cast<int>(0x80951773);
 constexpr int ErrorBadRecord = static_cast<int>(0x80951d55);
+constexpr int ErrorNotTls = static_cast<int>(0x80951d78);
 constexpr int ErrorNetBadDescriptor = static_cast<int>(0x80410109);
 constexpr int ErrorNetPipe = static_cast<int>(0x80410120);
 constexpr int ErrorNetReset = static_cast<int>(0x80410136);
@@ -498,9 +499,9 @@ struct Session {
             case MBEDTLS_ERR_NET_CONN_RESET:
                 reset = true;
                 if (operation == Operation::Write) return ErrorNetPipe;
-                if (operation == Operation::Connect) return ErrorSocketClosed;
                 return ErrorNetReset;
             case MBEDTLS_ERR_SSL_CONN_EOF: return operation == Operation::Connect ? ErrorSocketClosed : 0;
+            case MBEDTLS_ERR_SSL_INVALID_RECORD: return operation == Operation::Connect ? ErrorNotTls : 0;
             case MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE: return ErrorFatalAlert;
             case MBEDTLS_ERR_SSL_INVALID_MAC: return operation == Operation::Read ? ErrorBadRecord : 0;
             default: return 0;
@@ -723,12 +724,14 @@ int APS5_VABI sceSslGetMemoryPoolStats(int sslCtxId, SceSsl::MemoryPoolStats* st
     std::lock_guard lock(state.mutex);
     const auto found = state.contexts.find(sslCtxId);
     if (found == state.contexts.end()) {
-        std::memset(stats, 0, sizeof(*stats));
+        const SceSsl::MemoryPoolStats zeroStats{};
+        if (!GuestCopyOut_nid_no_patch(stats, &zeroStats, sizeof(zeroStats))) return ErrorInvalidValue;
         return ErrorInvalidId;
     }
     auto& pool = found->second->pool;
     std::lock_guard poolLock(pool.mutex);
-    *stats = {pool.size, pool.peak, pool.current, 0};
+    const SceSsl::MemoryPoolStats localStats = {pool.size, pool.peak, pool.current, 0};
+    if (!GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats))) return ErrorInvalidValue;
     return 0;
 }
 
@@ -1245,7 +1248,12 @@ int APS5_VABI sceSslGetNotBefore(int sslCtxId, void* sslCert, SceSsl::RtcTick* b
     if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
     if (!sslCert || !begin) return ErrorInvalidValue;
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
-    begin->tick = TimeToTick(crt->valid_from);
+    SceSsl::RtcTick localTick{};
+    localTick.tick = TimeToTick(crt->valid_from);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(begin, &localTick, sizeof(localTick));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidValue;
     return 0;
 }
 
@@ -1254,7 +1262,12 @@ int APS5_VABI sceSslGetNotAfter(int sslCtxId, void* sslCert, SceSsl::RtcTick* li
     if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
     if (!sslCert || !limit) return ErrorInvalidValue;
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
-    limit->tick = TimeToTick(crt->valid_to);
+    SceSsl::RtcTick localTick{};
+    localTick.tick = TimeToTick(crt->valid_to);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(limit, &localTick, sizeof(localTick));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidValue;
     return 0;
 }
 

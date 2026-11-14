@@ -1,6 +1,8 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -8,10 +10,17 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -43,6 +52,20 @@ int Value(std::intptr_t id) {
     int value = -1;
     Require(ksem_getvalue_nid_postfix(id, &value) == 0);
     return value;
+}
+
+template <typename TFinished>
+void WaitForRegisteredWaiters(std::intptr_t id, unsigned expected, TFinished finished) {
+    const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    for (;;) {
+        Require(!finished());
+        if (KsemWaiterCountForTests_nid_no_patch(id) == expected) {
+            Require(!finished());
+            return;
+        }
+        Require(std::chrono::steady_clock::now() < limit);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
 
 void Counting() {
@@ -91,6 +114,55 @@ void Blocking() {
     Require(ksem_post_nid_postfix(id) == 0);
     waiter.join();
     Require(result == 0 && Value(id) == 0);
+    Require(ksem_destroy_nid_postfix(id) == 0);
+}
+
+void AbsoluteTimeouts() {
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 0) == 0);
+    for (const auto seconds : {std::int64_t{0}, std::numeric_limits<std::int64_t>::min()}) {
+        const KernelTimespec expired{seconds, 0};
+        Require(ksem_timedwait_nid_postfix(id, &expired) == -1 && Error() == Etimedout);
+        Require(ksem_post_nid_postfix(id) == 0);
+        Require(ksem_timedwait_nid_postfix(id, &expired) == 0 && Value(id) == 0);
+    }
+    const KernelTimespec future{std::numeric_limits<std::int64_t>::max(), 999999999};
+    std::atomic<bool> completed{false};
+    int result = -2;
+    std::thread waiter([&] {
+        result = ksem_timedwait_nid_postfix(id, &future);
+        completed.store(true, std::memory_order_release);
+    });
+    WaitForRegisteredWaiters(id, 1, [&] { return completed.load(std::memory_order_acquire); });
+    Require(ksem_post_nid_postfix(id) == 0);
+    waiter.join();
+    Require(result == 0 && Value(id) == 0);
+    Require(ksem_destroy_nid_postfix(id) == 0);
+}
+
+void TimedWakeup() {
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 0) == 0);
+    const auto start = std::chrono::steady_clock::now();
+    const auto deadline = FromNow(std::chrono::seconds(5));
+    std::atomic<unsigned> completed{0};
+    std::array<int, 2> results{};
+    std::array<int, 2> errors{};
+    std::array<std::thread, 2> waiters;
+    for (std::size_t index = 0; index < waiters.size(); ++index) {
+        waiters[index] = std::thread([&, index] {
+            results[index] = ksem_timedwait_nid_postfix(id, &deadline);
+            errors[index] = Error();
+            completed.fetch_add(1, std::memory_order_release);
+        });
+    }
+    WaitForRegisteredWaiters(id, 2, [&] { return completed.load(std::memory_order_acquire) != 0; });
+    Require(ksem_post_nid_postfix(id) == 0);
+    for (auto& waiter : waiters) waiter.join();
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(4950));
+    Require((results[0] == 0 && results[1] == -1 && errors[1] == Etimedout) ||
+            (results[1] == 0 && results[0] == -1 && errors[0] == Etimedout));
+    Require(Value(id) == 0);
     Require(ksem_destroy_nid_postfix(id) == 0);
 }
 
@@ -156,9 +228,73 @@ void Limit() {
 
 }
 
+class UnreadablePage {
+public:
+    UnreadablePage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS));
+        Require(memory != nullptr);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0);
+        size = static_cast<std::size_t>(pageSize);
+        memory = static_cast<char*>(mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+#endif
+    }
+
+    ~UnreadablePage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, size);
+#endif
+    }
+
+    UnreadablePage(const UnreadablePage&) = delete;
+    UnreadablePage& operator=(const UnreadablePage&) = delete;
+
+    void* Address() const { return memory; }
+
+private:
+    char* memory = nullptr;
+    std::size_t size = 0;
+};
+
+void BadPointers() {
+    UnreadablePage page;
+    void* const bad[] = {reinterpret_cast<void*>(0x10), page.Address()};
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 0) == 0 && id >= 0);
+    for (void* pointer : bad) {
+        Require(ksem_init_nid_postfix(static_cast<std::intptr_t*>(pointer), 1) == -1 && Error() == Efault);
+        Require(ksem_timedwait_nid_postfix(id, static_cast<const KernelTimespec*>(pointer)) == -1 && Error() == Efault);
+        Require(ksem_timedwait_nid_postfix(-1, static_cast<const KernelTimespec*>(pointer)) == -1 && Error() == Efault);
+    }
+    Require(ksem_destroy_nid_postfix(id) == 0);
+    const auto openDescriptors = [] {
+        std::intptr_t probe = -1;
+        Require(ksem_init_nid_postfix(&probe, 0) == 0);
+        const auto first = probe;
+        Require(ksem_destroy_nid_postfix(probe) == 0);
+        return first;
+    };
+    const auto before = openDescriptors();
+    Require(ksem_init_nid_postfix(reinterpret_cast<std::intptr_t*>(0x10), 1) == -1 && Error() == Efault);
+    Require(openDescriptors() == before);
+    KernelTimespec valid = FromNow(std::chrono::milliseconds(1));
+    Require(ksem_init_nid_postfix(&id, 1) == 0 && ksem_timedwait_nid_postfix(id, &valid) == 0 && ksem_destroy_nid_postfix(id) == 0);
+}
+
 int main() {
+    BadPointers();
     Counting();
     Timed();
+    AbsoluteTimeouts();
+    TimedWakeup();
     Blocking();
     Identifiers();
     Duplicates();

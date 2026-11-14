@@ -3,6 +3,11 @@
 
 #include "SceTypes.hpp"
 
+class RwlockOperations {
+public:
+    static bool LoadAttribute(const PthreadRwlockattr* attr, PthreadRwlockattr& handle);
+};
+
 extern "C" {
 
 int APS5_VABI scePthreadRwlockattrInit(PthreadRwlockattr* attr);

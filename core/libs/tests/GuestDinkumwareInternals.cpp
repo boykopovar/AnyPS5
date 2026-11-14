@@ -209,6 +209,27 @@ void TestStod() {
     CheckStod("0x1.8p0", 0, 1.5, 7, 0, "unscaled hexadecimal");
 }
 
+template<typename TFloat>
+void CheckNoConversion(TFloat (APS5_VABI *parse)(const char*, char**, std::int64_t, int*)) {
+    const struct { const char* text; bool negative; } cases[]{
+        {"", false}, {" ", false}, {"z", false}, {"+", false}, {"+z", false},
+        {"-", true}, {"-z", true}, {" \t-.", true}, {"-i", false}, {"-n", false},
+        {"-+1", true}, {"--1", true}, {"- 5", true}, {"\t-.", true}
+    };
+    for (const auto& test : cases) {
+        for (const std::int64_t scale : {std::int64_t{0}, std::int64_t{-10}, std::int64_t{10}, std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max()}) {
+            for (const int saved : {0, RangeError, 97}) for (const bool nullEnd : {false, true}) for (const bool nullError : {false, true}) {
+                char* end = nullptr;
+                int error = 123;
+                *__error_nid_postfix() = saved;
+                const TFloat value = parse(test.text, nullEnd ? nullptr : &end, scale, nullError ? nullptr : &error);
+                Require(value == 0 && std::signbit(value) == test.negative, "no-conversion zero sign");
+                Require((nullEnd || end == test.text) && error == (nullError ? 123 : 0) && *__error_nid_postfix() == saved, "no-conversion end and errors");
+            }
+        }
+    }
+}
+
 void TestStoll() {
     char* end = nullptr;
     *__error_nid_postfix() = 0;
@@ -690,10 +711,27 @@ void TestLongLogAt53Bits() {
     }
 }
 
+void TestLongLogExports() {
+    Require(SameBits(log10l_nid_postfix(1000.0L), 0xc000000000000000ull, 0x4000), "log10l of 1000 is exactly 3");
+    Require(SameBits(log2l_nid_postfix(8.0L), 0xc000000000000000ull, 0x4000), "log2l of 8 is exactly 3");
+    Require(SameBits(logl_nid_postfix(Extended(0xb333333333333333ull, 0x3ffe)), 0xb69e192709fa762aull, 0xbffd), "logl of the measured fraction");
+    Require(SameBits(logl_nid_postfix(1.0L), 0x0000000000000000ull, 0x0000), "logl of 1 is positive zero");
+    std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 0;
+    Require(SameBits(logl_nid_postfix(0.0L), 0x8000000000000000ull, 0xffff) && *__error_nid_postfix() == RangeError && std::fetestexcept(FE_DIVBYZERO) != 0, "logl of zero");
+    std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 0;
+    Require(SameBits(logl_nid_postfix(-1.0L), 0xc000000000000000ull, 0x7fff) && *__error_nid_postfix() == DomainError && std::fetestexcept(FE_INVALID) != 0, "logl of a negative argument");
+    *__error_nid_postfix() = 0;
+}
+
 }
 
 int main() {
     TestStod();
+    CheckNoConversion(_Stodx_nid_postfix);
+    CheckNoConversion(_Stofx_nid_postfix);
+    CheckNoConversion(_Stoldx_nid_postfix);
     TestHexRange();
     TestUnscaledHexadecimal();
     TestLongDoubleHexadecimalPrecision();
@@ -708,4 +746,5 @@ int main() {
     TestLongDoubleHelpers();
     TestLongLog();
     TestLongLogAt53Bits();
+    TestLongLogExports();
 }

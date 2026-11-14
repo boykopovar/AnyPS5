@@ -1,4 +1,3 @@
-#include "Translation/DispatchInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include "Recompiler.hpp"
 #include <atomic>
@@ -9,15 +8,14 @@
 
 namespace ShaderRecompiler {
 
-void DispatchInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg, const TranslateOptions& options) {
-    throw std::runtime_error("DispatchInstruction not implemented");
-}
-
 void TranslationContext::TranslateInstruction(const RdnaInstruction& decoded) {
     RdnaInstruction instruction = decoded;
     instruction.destination = destinationOperand(decoded);
     currentOpcode = instruction.op;
     currentProgramCounter = instruction.programCounter;
+    currentInstruction = &instruction;
+    vectorsRead.reset();
+    relativeVectorRead = false;
     if (instruction.op == RdnaOpcode::Unknown || instruction.op == RdnaOpcode::Count) {
         throw std::runtime_error("decoded opcode has no IR translation at pc " + std::to_string(instruction.programCounter));
     }
@@ -72,6 +70,8 @@ void TranslationContext::TranslateInstruction(const RdnaInstruction& decoded) {
         target.reg = 255u;
         writeOperand(target, &readRawU32(source).Value());
     }
+    currentInstruction = nullptr;
+    trackInactiveExecHalves(instruction);
 }
 
 namespace {
@@ -126,10 +126,6 @@ DebugProbe DebugProbeConfig() {
     DebugProbe probe = parsed;
     probe.enabled = parsed.enabled && DebugProbeActive();
     return probe;
-}
-
-void DispatchInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("DispatchInstruction not implemented");
 }
 
 }

@@ -168,9 +168,13 @@
 
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/include/Evp.hpp"
+#include "prx/libSceLibreSsl/include/PkeyContext.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
@@ -198,6 +202,15 @@ constexpr std::uint64_t DigestAlgorithmIdAbsent = 0x8;
 constexpr std::int32_t PkeyRsa = 6;
 constexpr std::int32_t PkeyRsa2 = 19;
 constexpr std::int32_t PointerSize = 8;
+constexpr int EvpLibrary = 6;
+constexpr int AnyFunction = 0xfff;
+constexpr int MessageDigestIsNull = 159;
+constexpr int MallocFailure = 65;
+constexpr int InputNotInitialized = 111;
+constexpr int BadBlockLength = 136;
+constexpr int BadKeyLength = 137;
+constexpr int NoDigestSet = 139;
+constexpr int TooLarge = 164;
 
 int APS5_VABI Md5Init(EvpMdContext* context) {
     return MD5_Init_nid_postfix(static_cast<Md5Context*>(context->mdData));
@@ -259,6 +272,11 @@ constexpr EvpMd Sha512 {
     {PkeyRsa, PkeyRsa2, 0, 0, 0}, 128, PointerSize + 216, nullptr,
 };
 
+int Fail(int reason) {
+    LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, reason);
+    return 0;
+}
+
 template<class TContext> TContext& RequireContext(TContext* context, const char* function) {
     if (!context) throw std::invalid_argument(std::string(function) + ": null context");
     return *context;
@@ -266,7 +284,6 @@ template<class TContext> TContext& RequireContext(TContext* context, const char*
 
 void RequireNoEngineOrKey(const EvpMdContext& context, const char* function) {
     if (context.engine) NotImplemented_nid_no_patch((std::string(function) + ": ENGINE").c_str());
-    if (context.pkeyContext) NotImplemented_nid_no_patch((std::string(function) + ": EVP_PKEY_CTX").c_str());
 }
 
 void ReleaseData(EvpMdContext& context) {
@@ -280,6 +297,7 @@ int CleanupContext(EvpMdContext& context, const char* function) {
     RequireNoEngineOrKey(context, function);
     if (context.digest && context.digest->cleanup && !(context.flags & FlagCleaned)) context.digest->cleanup(&context);
     ReleaseData(context);
+    PkeyContextFree_nid_no_patch(static_cast<PkeyContext*>(context.pkeyContext));
     std::memset(&context, 0, sizeof(context));
     return 1;
 }
@@ -289,7 +307,7 @@ int DigestInit(EvpMdContext& context, const EvpMd* type, void* engine, const cha
     if (engine) NotImplemented_nid_no_patch((std::string(function) + ": ENGINE").c_str());
     context.flags &= ~FlagCleaned;
     if (!type) {
-        if (!context.digest) return 0;
+        if (!context.digest) return Fail(NoDigestSet);
         throw std::invalid_argument(std::string(function) + ": null digest type for a context that has one");
     }
     if (context.digest != type) {
@@ -298,9 +316,11 @@ int DigestInit(EvpMdContext& context, const EvpMd* type, void* engine, const cha
             if (type->contextSize < 0) throw std::invalid_argument(std::string(function) + ": negative digest context size");
             context.mdData = malloc_nid_postfix(static_cast<std::size_t>(type->contextSize));
             if (!context.mdData) {
+                PkeyContextFree_nid_no_patch(static_cast<PkeyContext*>(context.pkeyContext));
+                context.pkeyContext = nullptr;
                 context.digest = nullptr;
                 context.update = nullptr;
-                return 0;
+                return Fail(MallocFailure);
             }
             context.update = type->update;
         }
@@ -316,14 +336,15 @@ int DigestUpdate(EvpMdContext& context, const void* data, std::size_t length, co
     return context.update(&context, data, length);
 }
 
-int DigestFinal(EvpMdContext& context, unsigned char* digest, std::uint32_t* size, const char* function) {
+int DigestFinal(EvpMdContext& context, unsigned char* digest, std::uint32_t* size, const char* function, bool* cleanupAttempted = nullptr) {
     if (!context.digest) throw std::invalid_argument(std::string(function) + ": context without a digest");
     const auto* type = context.digest;
-    if (static_cast<std::size_t>(type->mdSize) > MaxDigestSize) return 0;
+    if (static_cast<std::size_t>(type->mdSize) > MaxDigestSize) return Fail(TooLarge);
     if (!type->finalize) throw std::invalid_argument(std::string(function) + ": digest without a final function");
     const int result = type->finalize(&context, digest);
     if (size) *size = static_cast<std::uint32_t>(type->mdSize);
     if (type->cleanup) {
+        if (cleanupAttempted) *cleanupAttempted = true;
         type->cleanup(&context);
         context.flags |= FlagCleaned;
     }
@@ -335,7 +356,7 @@ int DigestFinal(EvpMdContext& context, unsigned char* digest, std::uint32_t* siz
 }
 
 int CopyContext(EvpMdContext& to, const EvpMdContext& from, const char* function) {
-    if (!from.digest) return 0;
+    if (!from.digest) return Fail(InputNotInitialized);
     RequireNoEngineOrKey(from, function);
     void* reused = nullptr;
     if (to.digest == from.digest) {
@@ -351,11 +372,18 @@ int CopyContext(EvpMdContext& to, const EvpMdContext& from, const char* function
         if (!to.mdData) {
             to.digest = nullptr;
             to.update = nullptr;
-            return 0;
+            return Fail(MallocFailure);
         }
         std::memmove(to.mdData, from.mdData, size);
     }
     to.update = from.update;
+    if (from.pkeyContext) {
+        to.pkeyContext = PkeyContextDuplicate_nid_no_patch(static_cast<PkeyContext*>(from.pkeyContext));
+        if (!to.pkeyContext) {
+            CleanupContext(to, function);
+            return 0;
+        }
+    }
     if (to.digest->copy) return to.digest->copy(&to, &from);
     return 1;
 }
@@ -374,7 +402,42 @@ void HmacContextCleanup(HmacContext& context, const char* function) {
     std::memset(&context, 0, sizeof(context));
 }
 
-int HmacInit(HmacContext& context, const void* key, int length, const EvpMd* md, void* engine, const char* function) {
+std::exception_ptr CleanupLocalDigest(EvpMdContext& context, const char* function) {
+    std::exception_ptr failure;
+    try {
+        RequireNoEngineOrKey(context, function);
+        if (context.digest && context.digest->cleanup && !(context.flags & FlagCleaned)) context.digest->cleanup(&context);
+    } catch (...) {
+        failure = std::current_exception();
+    }
+    try {
+        ReleaseData(context);
+    } catch (...) {
+        if (!failure) failure = std::current_exception();
+    }
+    context.mdData = nullptr;
+    auto* pkey = static_cast<PkeyContext*>(context.pkeyContext);
+    context.pkeyContext = nullptr;
+    try {
+        PkeyContextFree_nid_no_patch(pkey);
+    } catch (...) {
+        if (!failure) failure = std::current_exception();
+    }
+    std::memset(&context, 0, sizeof(context));
+    return failure;
+}
+
+void CleanupLocalHmac(HmacContext& context, const char* function) {
+    auto failure = CleanupLocalDigest(context.innerContext, function);
+    const auto outerFailure = CleanupLocalDigest(context.outerContext, function);
+    const auto digestFailure = CleanupLocalDigest(context.mdContext, function);
+    std::memset(&context, 0, sizeof(context));
+    if (!failure) failure = outerFailure;
+    if (!failure) failure = digestFailure;
+    if (failure) std::rethrow_exception(failure);
+}
+
+int HmacInit(HmacContext& context, const void* key, int length, const EvpMd* md, void* engine, const char* function, bool* cleanupAttempted = nullptr) {
     if (md && md != context.md && (!key || length < 0)) return 0;
     bool reset = false;
     if (md) {
@@ -388,13 +451,13 @@ int HmacInit(HmacContext& context, const void* key, int length, const EvpMd* md,
     if (key) {
         reset = true;
         const int block = md->blockSize;
-        if (static_cast<std::size_t>(block) > sizeof(context.key)) return 0;
+        if (static_cast<std::size_t>(block) > sizeof(context.key)) return Fail(BadBlockLength);
         if (block < length) {
             if (!DigestInit(context.mdContext, md, engine, function)) return 0;
             if (!DigestUpdate(context.mdContext, key, static_cast<std::size_t>(length), function)) return 0;
-            if (!DigestFinal(context.mdContext, context.key, &context.keyLength, function)) return 0;
+            if (!DigestFinal(context.mdContext, context.key, &context.keyLength, function, cleanupAttempted)) return 0;
         } else {
-            if (length < 0 || static_cast<std::size_t>(length) > sizeof(context.key)) return 0;
+            if (length < 0 || static_cast<std::size_t>(length) > sizeof(context.key)) return Fail(BadKeyLength);
             std::memcpy(context.key, key, static_cast<std::size_t>(length));
             context.keyLength = static_cast<std::uint32_t>(length);
         }
@@ -410,6 +473,7 @@ int HmacInit(HmacContext& context, const void* key, int length, const EvpMd* md,
         if (!DigestInit(context.outerContext, md, engine, function)) return 0;
         if (!DigestUpdate(context.outerContext, pad, block, function)) return 0;
     }
+    if (cleanupAttempted) *cleanupAttempted = false;
     return CopyContext(context.mdContext, context.innerContext, function) ? 1 : 0;
 }
 
@@ -418,16 +482,21 @@ int HmacUpdate(HmacContext& context, const unsigned char* data, std::size_t leng
     return DigestUpdate(context.mdContext, data, length, function);
 }
 
-int HmacFinal(HmacContext& context, unsigned char* digest, std::uint32_t* length, const char* function) {
+int HmacFinal(HmacContext& context, unsigned char* digest, std::uint32_t* length, const char* function, bool* cleanupAttempted = nullptr) {
     if (!context.md) return 0;
     unsigned char inner[MaxDigestSize];
     std::uint32_t innerLength = 0;
-    if (!DigestFinal(context.mdContext, inner, &innerLength, function)) return 0;
+    if (!DigestFinal(context.mdContext, inner, &innerLength, function, cleanupAttempted)) return 0;
+    if (cleanupAttempted) *cleanupAttempted = false;
     if (!CopyContext(context.mdContext, context.outerContext, function)) return 0;
     if (!DigestUpdate(context.mdContext, inner, innerLength, function)) return 0;
-    if (!DigestFinal(context.mdContext, digest, length, function)) return 0;
+    if (!DigestFinal(context.mdContext, digest, length, function, cleanupAttempted)) return 0;
     return 1;
 }
+}
+
+extern "C" int CopyContext_nid_no_patch(EvpMdContext& to, const EvpMdContext& from, const char* function) {
+    return CopyContext(to, from, function);
 }
 
 extern "C" {
@@ -449,7 +518,11 @@ const EvpMd* APS5_VABI EVP_sha512_nid_postfix(void) {
 }
 
 int APS5_VABI EVP_MD_size_nid_postfix(const EvpMd* md) {
-    return md ? md->mdSize : -1;
+    if (!md) {
+        LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, MessageDigestIsNull);
+        return -1;
+    }
+    return md->mdSize;
 }
 
 void APS5_VABI EVP_MD_CTX_init_nid_postfix(EvpMdContext* context) {
@@ -485,8 +558,16 @@ int APS5_VABI EVP_DigestFinal_ex_nid_postfix(EvpMdContext* context, unsigned cha
 int APS5_VABI EVP_Digest_nid_postfix(const void* data, std::size_t length, unsigned char* digest, std::uint32_t* size, const EvpMd* type, void* engine) {
     EvpMdContext context {};
     context.flags = FlagOneShot;
-    const int result = DigestInit(context, type, engine, __func__) && DigestUpdate(context, data, length, __func__) && DigestFinal(context, digest, size, __func__);
-    CleanupContext(context, __func__);
+    bool cleanupAttempted = false;
+    int result;
+    try {
+        result = DigestInit(context, type, engine, __func__) && DigestUpdate(context, data, length, __func__) && DigestFinal(context, digest, size, __func__, &cleanupAttempted);
+    } catch (...) {
+        if (cleanupAttempted) context.flags |= FlagCleaned;
+        CleanupLocalDigest(context, __func__);
+        throw;
+    }
+    if (const auto failure = CleanupLocalDigest(context, __func__)) std::rethrow_exception(failure);
     return result;
 }
 
@@ -521,8 +602,19 @@ unsigned char* APS5_VABI HMAC_nid_postfix(const EvpMd* md, const void* key, int 
     if (!digest) digest = buffer;
     HmacContext context;
     HmacContextInit(context);
-    const bool ok = HMAC_Init_nid_postfix(&context, key, keyLength, md) && HmacUpdate(context, data, length, __func__) && HmacFinal(context, digest, digestLength, __func__);
-    HmacContextCleanup(context, __func__);
+    bool cleanupAttempted = false;
+    bool ok;
+    try {
+        ok = HmacInit(context, key, keyLength, md, nullptr, "HMAC_Init_nid_postfix", &cleanupAttempted) && HmacUpdate(context, data, length, __func__) && HmacFinal(context, digest, digestLength, __func__, &cleanupAttempted);
+    } catch (...) {
+        if (cleanupAttempted) context.mdContext.flags |= FlagCleaned;
+        try {
+            CleanupLocalHmac(context, __func__);
+        } catch (...) {
+        }
+        throw;
+    }
+    CleanupLocalHmac(context, __func__);
     return ok ? digest : nullptr;
 }
 

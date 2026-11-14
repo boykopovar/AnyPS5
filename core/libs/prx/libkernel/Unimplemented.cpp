@@ -133,12 +133,12 @@ int APS5_VABI sceKernelPrintBacktraceWithModuleInfo(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetProcessAbiType() {
+int APS5_VABI sceKernelProtectDirectMemoryForPID(int64_t offset, size_t len, int prot, int pid) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceKernelProtectDirectMemoryForPID(int64_t offset, size_t len, int prot, int pid) {
+int APS5_VABI sceKernelGetResidentFmemCount(int pid, uint64_t* resident, uint64_t* mapped) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
