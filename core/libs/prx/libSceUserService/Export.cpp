@@ -463,10 +463,36 @@ int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size) {
   return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
  if (size < USER_SERVICE_MAX_USER_NAME_LENGTH + 1) {
-  std::memset(name, 0, size);
+  if (size > 0) {
+   std::array<char, USER_SERVICE_MAX_USER_NAME_LENGTH> zero{};
+   const int savedErrno = errno;
+   const bool copied = GuestCopyOut_nid_no_patch(name, zero.data(), size);
+   errno = savedErrno;
+   if (!copied) {
+    return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+   }
+  }
   return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
  }
- std::strncpy(name, USER_SERVICE_USER_NAMES[index], size);
+ if (size > (1ULL << 47)) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ std::array<char, 256> chunk{};
+ std::strncpy(chunk.data(), USER_SERVICE_USER_NAMES[index], std::min(size, chunk.size()));
+ const int savedErrno = errno;
+ std::size_t offset = 0;
+ while (offset < size) {
+  const std::size_t count = std::min(size - offset, chunk.size());
+  if (!GuestCopyOut_nid_no_patch(name + offset, chunk.data(), count)) {
+   errno = savedErrno;
+   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+  }
+  if (offset == 0) {
+   chunk.fill('\0');
+  }
+  offset += count;
+ }
+ errno = savedErrno;
  return USER_SERVICE_OK;
 }
 

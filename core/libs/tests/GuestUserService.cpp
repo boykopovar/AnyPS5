@@ -146,6 +146,15 @@ int main() {
         const int userId = USER_SERVICE_INITIAL_USER_ID + i;
 
         Require(sceUserServiceGetUserName(userId, nullptr, sizeof(nameBuffer)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        errno = 71;
+        Require(sceUserServiceGetUserName(userId, reinterpret_cast<char*>(0x10), sizeof(nameBuffer)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceUserServiceGetUserName(userId, reinterpret_cast<char*>(0x10), 5) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceUserServiceGetUserName(userId, nameBuffer, static_cast<std::size_t>(-1)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(errno == 71);
 
         for (std::size_t size = 0; size <= USER_SERVICE_MAX_USER_NAME_LENGTH; ++size) {
             std::memset(nameBuffer, 'Z', sizeof(nameBuffer));
