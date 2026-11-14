@@ -173,29 +173,33 @@ static void CheckOpenPanel() {
 
 static void CheckKeyboardResourceIds() {
     constexpr int ConnectionFailed = static_cast<int>(0x80bc0004u);
-    constexpr int InvalidUserId = static_cast<int>(0x80bc0010u);
     constexpr int InvalidAddress = static_cast<int>(0x80bc0031u);
     KeyboardResourceIdArray ids;
-    std::memset(&ids, 0xa5, sizeof(ids));
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&ids);
+    // A PS5 (firmware 11.60, payload process) answers 0x80bc0002 and writes nothing while no keyboard is open, for
+    // every user id it was tried with (-1, 0 and 0x12345678) and for a null array.
+    for (const int32_t user : {1, -1, 0, 0x12345678}) {
+        std::memset(&ids, 0xa5, sizeof(ids));
+        Require(sceImeKeyboardGetResourceId(user, &ids) == NotOpened, "keyboard not opened");
+        for (size_t i = 0; i < sizeof(ids); ++i) Require(bytes[i] == 0xa5, "outputs changed without an open keyboard");
+    }
+    Require(sceImeKeyboardGetResourceId(1, nullptr) == NotOpened, "null resource id array without an open keyboard");
+    KeyboardParam param{};
+    Require(sceImeKeyboardOpen(1, &param) == 0, "keyboard open failed");
     Require(sceImeKeyboardGetResourceId(1, nullptr) == InvalidAddress, "null resource id array");
     Require(sceImeKeyboardGetResourceId(1, reinterpret_cast<KeyboardResourceIdArray*>(0x10)) == InvalidAddress,
             "unwritable resource id array");
-    Require(sceImeKeyboardGetResourceId(-1, &ids) == InvalidUserId, "invalid user");
-    const auto* bytes = reinterpret_cast<const unsigned char*>(&ids);
-    for (size_t i = 0; i < sizeof(ids); ++i) Require(bytes[i] == 0xa5, "outputs changed on argument error");
-    Require(sceImeKeyboardGetResourceId(1, &ids) == NotOpened, "keyboard not opened");
-    Require(ids.user_id == 1, "user not reported for an unopened keyboard");
-    for (uint32_t id : ids.resource_id) Require(id == 0, "resource id reported for an unopened keyboard");
-    KeyboardParam param{};
-    Require(sceImeKeyboardOpen(1, &param) == 0, "keyboard open failed");
     std::memset(&ids, 0xa5, sizeof(ids));
     Require(sceImeKeyboardGetResourceId(1, &ids) == ConnectionFailed, "a keyboard was reported as connected");
     Require(ids.user_id == 1, "user not reported");
     for (uint32_t id : ids.resource_id) Require(id == 0, "resource id reported without a keyboard");
+    std::memset(&ids, 0xa5, sizeof(ids));
     Require(sceImeKeyboardGetResourceId(2, &ids) == NotOpened, "keyboard of another user reported as opened");
-    Require(ids.user_id == 2, "other user not reported");
+    for (size_t i = 0; i < sizeof(ids); ++i) Require(bytes[i] == 0xa5, "outputs changed for another user");
     Require(sceImeKeyboardClose(1) == 0, "keyboard close failed");
+    std::memset(&ids, 0xa5, sizeof(ids));
     Require(sceImeKeyboardGetResourceId(1, &ids) == NotOpened, "closed keyboard reported as opened");
+    for (size_t i = 0; i < sizeof(ids); ++i) Require(bytes[i] == 0xa5, "outputs changed after the close");
 }
 
 static void CheckConsecutiveClauseConversion() {
