@@ -276,6 +276,7 @@ struct DepthCopyPass {
     DepthTarget source;
     std::uint32_t sample;
     ColorTarget color;
+    bool stencil = false;
 };
 std::optional<DepthCopyPass> DecodeDepthCopyPass(const QueueState& queue);
 std::string DepthMaintenanceRejection(const QueueState& queue);

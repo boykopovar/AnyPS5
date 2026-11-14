@@ -111,7 +111,7 @@ struct DepthExpandStatistics {
     std::uint64_t stored = 0;
 };
 DepthExpandStatistics DepthExpandCounts();
-std::array<std::uint32_t, 8> DepthCopySourceWords(const DepthTarget& target);
+std::array<std::uint32_t, 8> DepthCopySourceWords(const DepthTarget& target, bool stencil = false);
 class DepthCopySourceScope {
 public:
     explicit DepthCopySourceScope(bool active);
