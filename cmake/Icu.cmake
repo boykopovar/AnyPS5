@@ -1,5 +1,22 @@
 set(ICU_SOURCE_DIR ${CMAKE_SOURCE_DIR}/3rdparty/icu/icu4c/source)
 
+set(ICU_NORMALIZATION_DIR ${CMAKE_CURRENT_BINARY_DIR}/icu-normalization)
+set(ICU_NORMALIZATION_SOURCE ${ICU_NORMALIZATION_DIR}/CommonData.cpp)
+file(MAKE_DIRECTORY ${ICU_NORMALIZATION_DIR})
+set(ICU_NORMALIZATION_DECLARATIONS "")
+set(ICU_NORMALIZATION_ENTRIES "")
+foreach(ICU_NORMALIZATION_NAME IN ITEMS nfkc nfkc_cf)
+    set(ICU_NORMALIZATION_INPUT ${ICU_SOURCE_DIR}/data/in/${ICU_NORMALIZATION_NAME}.nrm)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${ICU_NORMALIZATION_INPUT})
+    file(READ ${ICU_NORMALIZATION_INPUT} ICU_NORMALIZATION_HEX HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," ICU_NORMALIZATION_BYTES "${ICU_NORMALIZATION_HEX}")
+    string(APPEND ICU_NORMALIZATION_DECLARATIONS
+        "alignas(16) constexpr unsigned char ${ICU_NORMALIZATION_NAME}[]{${ICU_NORMALIZATION_BYTES}};\n")
+    string(APPEND ICU_NORMALIZATION_ENTRIES
+        "    {U_ICUDATA_NAME \"/${ICU_NORMALIZATION_NAME}.nrm\", ${ICU_NORMALIZATION_NAME}},\n")
+endforeach()
+configure_file(${CMAKE_CURRENT_LIST_DIR}/IcuNormalizationData.cpp.in ${ICU_NORMALIZATION_SOURCE} @ONLY)
+
 add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/appendable.cpp
     ${ICU_SOURCE_DIR}/common/bmpset.cpp
@@ -90,7 +107,7 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/utrie_swap.cpp
     ${ICU_SOURCE_DIR}/common/uvector.cpp
     ${ICU_SOURCE_DIR}/common/uvectr32.cpp
-    ${ICU_SOURCE_DIR}/stubdata/stubdata.cpp)
+    ${ICU_NORMALIZATION_SOURCE})
 if(WIN32)
     target_sources(icu_common PRIVATE
         ${ICU_SOURCE_DIR}/common/fixedstring.cpp

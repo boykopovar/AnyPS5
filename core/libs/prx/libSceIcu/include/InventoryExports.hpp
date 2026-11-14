@@ -55,8 +55,6 @@ int APS5_VABI uloc_minimizeSubtags();
 int APS5_VABI uloc_setKeywordValue();
 int APS5_VABI uloc_toLanguageTag();
 int APS5_VABI uloc_toUnicodeLocaleType();
-int APS5_VABI unorm2_getNFKCInstance();
-int APS5_VABI unorm2_getNFKDInstance();
 int APS5_VABI ures_getByKey();
 int APS5_VABI ures_getStringByKey();
 int APS5_VABI ures_open();
