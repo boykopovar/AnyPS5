@@ -22,6 +22,9 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_OWNED_DRAW_INPUTS",
     "APS5_PIPELINE_DISPATCH_MISSES",
     "APS5_NO_EXTENDED_FAST_PROOFS",
+    "APS5_NO_RECORD_ENCODER",
+    "APS5_NO_ADAPTIVE_ENCODER",
+    "APS5_QUIESCED_SEGMENTS",
 };
 
 struct SwitchValues {
@@ -33,6 +36,9 @@ struct SwitchValues {
             std::getenv("APS5_NO_OWNED_DRAW_INPUTS") != nullptr,
             std::getenv("APS5_PIPELINE_DISPATCH_MISSES") != nullptr,
             std::getenv("APS5_NO_EXTENDED_FAST_PROOFS") != nullptr,
+            std::getenv("APS5_NO_RECORD_ENCODER") != nullptr,
+            std::getenv("APS5_NO_ADAPTIVE_ENCODER") != nullptr,
+            std::getenv("APS5_QUIESCED_SEGMENTS") != nullptr,
         };
         for (std::size_t index = 0; index < SwitchCount; ++index) set[index].store(environment[index], std::memory_order_relaxed);
     }

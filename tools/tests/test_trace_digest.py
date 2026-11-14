@@ -469,6 +469,22 @@ class TraceDigestTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             trace_digest.validate_interval(first)
 
+    def test_encoder_interval_counts_are_preserved(self):
+        first = interval_line(0.0, 30.0, 20.0, 5.0)
+        second = interval_line(30.0, 60.0, 20.0, 5.0)
+        first["encoder"] = {"posts": 3100, "commands": 84000, "waits": 23, "wait_ms_per_frame": 0.25}
+        for line in (first, second):
+            trace_digest.validate_interval(line)
+        result = trace_digest.digest_intervals([first, second])
+        self.assertEqual(result["intervals"][0]["encoder"], first["encoder"])
+        text = trace_digest.markdown_intervals(result)
+        self.assertIn("| 1 | 3100 | 84000 | 23 | 0.25 |", text)
+        self.assertIn("| 2 | 0 | 0 | 0 | 0.00 |", text)
+        self.assertNotIn("encoder posts", trace_digest.markdown_intervals(trace_digest.digest_intervals([second])))
+        first["encoder"] = {"waits": -1}
+        with self.assertRaises(ValueError):
+            trace_digest.validate_interval(first)
+
     def test_empty_summary_jsonl_files_remain_valid(self):
         path = self.trace.with_name("aps5-summary.jsonl")
         for text in ("", "\n \t\r\n"):

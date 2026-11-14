@@ -455,6 +455,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeferredDestruction.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MemoryAccounting.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PlaceholderImages.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/CommandEncoder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ParallelCompare.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderInputState.cpp
@@ -1132,3 +1133,44 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(agc_driver_scattered_runs_tests PRIVATE tests/AllocationFailure.cpp)
+target_sources(agc_driver_command_encoder_tests PRIVATE Graphics/src/CommandEncoder.cpp tests/AllocationFailure.cpp)
+if(NOT ANYPS5_AGC_EXECUTION_TESTS OR "CommandEncoder" IN_LIST ANYPS5_AGC_EXECUTION_TESTS)
+    add_test(NAME agc_driver_command_encoder_self_wait COMMAND agc_driver_command_encoder_tests --wait-on-the-encoder-thread)
+    set_tests_properties(agc_driver_command_encoder_self_wait PROPERTIES PASS_REGULAR_EXPRESSION "asked to wait for its own thread" TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_driver_command_encoder_self_wait PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    function(agc_add_encoder_bench suffix)
+        add_test(NAME agc_driver_command_encoder_bench${suffix} COMMAND agc_driver_command_encoder_tests --bench)
+        set_tests_properties(agc_driver_command_encoder_bench${suffix} PROPERTIES TIMEOUT 300)
+        if(ARGN)
+            set_tests_properties(agc_driver_command_encoder_bench${suffix} PROPERTIES ENVIRONMENT "${ARGN}")
+        endif()
+        if(WIN32)
+            set_tests_properties(agc_driver_command_encoder_bench${suffix} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endfunction()
+    agc_add_encoder_bench("")
+    agc_add_encoder_bench(_few_cores APS5_HANDOFF_SPIN_US=0)
+    agc_add_encoder_bench(_idle_spin APS5_ENCODER_IDLE_SPIN_US=100)
+    agc_add_encoder_bench(_few_cores_idle_spin APS5_HANDOFF_SPIN_US=0 APS5_ENCODER_IDLE_SPIN_US=100)
+endif()
+add_library(agc_encoder_guard_accepted OBJECT tests/EncoderGuards.cpp)
+target_include_directories(agc_encoder_guard_accepted PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+foreach(agcEncoderGuard IN ITEMS owning_payload owning_array pointer_argument)
+    string(TOUPPER "${agcEncoderGuard}" agcEncoderGuardDefine)
+    add_library(agc_encoder_guard_${agcEncoderGuard} OBJECT EXCLUDE_FROM_ALL tests/EncoderGuards.cpp)
+    target_include_directories(agc_encoder_guard_${agcEncoderGuard} PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+    target_compile_definitions(agc_encoder_guard_${agcEncoderGuard} PRIVATE APS5_GUARD_${agcEncoderGuardDefine})
+    add_test(NAME agc_encoder_guard_${agcEncoderGuard} COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target agc_encoder_guard_${agcEncoderGuard} --config $<CONFIG>)
+endforeach()
+set_tests_properties(agc_encoder_guard_owning_payload PROPERTIES PASS_REGULAR_EXPRESSION "payload is never destroyed, so it must be trivially destructible")
+set_tests_properties(agc_encoder_guard_owning_array PROPERTIES PASS_REGULAR_EXPRESSION "arrays are copied as bytes, so their elements must be trivially copyable")
+set_tests_properties(agc_encoder_guard_pointer_argument PROPERTIES PASS_REGULAR_EXPRESSION "pointer-to-const argument would be read")
+set_tests_properties(agc_encoder_guard_owning_payload agc_encoder_guard_owning_array agc_encoder_guard_pointer_argument PROPERTIES RESOURCE_LOCK agc_encoder_guard_build TIMEOUT 300)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME agc_encoder_bypass_sites COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_encoder_bypass_sites.py)
+    set_tests_properties(agc_encoder_bypass_sites PROPERTIES TIMEOUT 20)
+endif()

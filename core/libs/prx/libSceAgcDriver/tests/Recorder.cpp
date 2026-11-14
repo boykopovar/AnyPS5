@@ -659,6 +659,11 @@ public:
     ~Device() { release(); }
     bool NullDescriptors() const { return nullDescriptors; }
     const Context& GetContext() const { return context; }
+    DeviceFunctions* UseFunctionTable() {
+        FillDeviceFunctions(context, functions);
+        context.functions = &functions;
+        return &functions;
+    }
     bool Graphics() const { return graphics; }
     bool Timestamps() const {
         std::uint32_t count = 0;
@@ -718,6 +723,7 @@ private:
     bool graphics = false;
     std::mutex settleMutex;
     bool nullDescriptors = false;
+    DeviceFunctions functions{};
     bool memoryBudget = false;
 };
 
@@ -1794,6 +1800,129 @@ void completionWaitTests(const Device& device, Recorder& recorder) {
     recorder.AfterCompletions(base + 4u, cpuValue, 8, 0, false);
     CompletePendingCpuWrites(device.GetContext(), base, sizeof(memory));
     Require(memory[1] == 9u && Recorder::PendingCompletionLabels() == 0, "completion wait: a reader of a label stored behind a completion did not wait for that store");
+}
+
+template<typename Lock>
+void encoderFailureFollowsTheBatchTests(const Device& device, Recorder& recorder, Lock& gpu) {
+    if (!recorder.Encodes()) return;
+    struct AlwaysHandOff {
+        bool adaptive = RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder);
+        AlwaysHandOff() { RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, true); }
+        ~AlwaysHandOff() { RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, adaptive); }
+    } always;
+    const auto& context = device.GetContext();
+    std::atomic<int> failures{0};
+    CommandEncoder::SetDelayForTesting([&] {
+        if (failures.fetch_sub(1) > 0) throw std::runtime_error("injected replay failure");
+    });
+    const auto failOne = [&] {
+        failures.store(1);
+        const auto commands = recorder.Commands();
+        const Recorder::EncodingWindow window(recorder);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    };
+    const auto caught = [](const std::function<void()>& step) -> std::string {
+        try {
+            step();
+            return {};
+        } catch (const std::runtime_error& error) {
+            return error.what();
+        }
+    };
+    gpu.unlock();
+    std::thread producer([&] {
+        std::lock_guard lock(GpuMutex());
+        failOne();
+    });
+    producer.join();
+    gpu.lock();
+    const auto reported = caught([&] { static_cast<void>(recorder.Commands()); });
+    const auto refused = caught([&] { recorder.Submit(); });
+    failOne();
+    std::string submitted;
+    gpu.unlock();
+    std::thread submitter([&] {
+        std::lock_guard lock(GpuMutex());
+        submitted = caught([&] { recorder.Submit(); });
+    });
+    submitter.join();
+    gpu.lock();
+    CommandEncoder::SetDelayForTesting({});
+    Require(reported == "injected replay failure", "a replay failure recorded on another thread reached the next settle of its batch as '" + reported + "'");
+    Require(!refused.empty() && refused != "injected replay failure", "a batch whose replay failure was already reported was submitted or reported again ('" + refused + "')");
+    Require(submitted == "injected replay failure", "Submit on another thread did not carry the batch's unreported replay failure ('" + submitted + "')");
+    RecordMemoryBarrier(context, recorder.Commands(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    recorder.Submit();
+    recorder.Sync();
+    Require(recorder.Idle(), "the recorder did not recover after discarding batches whose replay failed");
+    static_cast<void>(recorder.Commands());
+    std::string inside;
+    {
+        const Recorder::EncodingWindow window(recorder);
+        try {
+            recorder.Submit();
+        } catch (const std::logic_error& error) {
+            inside = error.what();
+        }
+    }
+    Require(!inside.empty(), "a batch was submitted inside an encoding window");
+    recorder.Submit();
+    recorder.Sync();
+    std::cout << "Command encoder failure tests passed\n";
+}
+
+void encoderRuntimeSwitchTests(const Device& device, Recorder& recorder) {
+    if (!recorder.Encodes()) return;
+    const auto& context = device.GetContext();
+    const auto record = [&] {
+        const auto commands = recorder.Commands();
+        const Recorder::EncodingWindow window(recorder);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    };
+    const auto encoded = [&] { return recorder.EncoderCounts().commands; };
+    const bool initial = RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder);
+    const bool adaptive = RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, true);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false);
+    auto before = encoded();
+    record();
+    Require(encoded() > before, "a draw's commands did not go through the encoder with APS5_NO_RECORD_ENCODER unset");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, true);
+    before = encoded();
+    record();
+    Require(encoded() == before, "a draw's commands went through the encoder with APS5_NO_RECORD_ENCODER set");
+    recorder.Submit();
+    recorder.Sync();
+    Require(recorder.Idle(), "a batch recorded without the encoder did not complete");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false);
+    before = encoded();
+    record();
+    Require(encoded() > before, "the encoder did not take over again when APS5_NO_RECORD_ENCODER was unset");
+    recorder.Submit();
+    recorder.Sync();
+    Require(recorder.Idle(), "a batch recorded through the encoder after the switch was unset did not complete");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, initial);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, adaptive);
+    std::cout << "Command encoder runtime switch tests passed\n";
+}
+
+void encoderSlotFallbackTests(const Device& device) {
+    if (!CommandEncoder::Enabled()) return;
+    const auto& context = device.GetContext();
+    std::vector<DeviceFunctions> tables(CommandEncoder::Slots + 1);
+    std::vector<std::unique_ptr<Recorder>> recorders;
+    for (auto& table : tables) {
+        FillDeviceFunctions(context, table);
+        recorders.push_back(std::make_unique<Recorder>(context, false, &table, context.queueFamily));
+    }
+    auto& fallback = *recorders.back();
+    Require(!fallback.Encodes(), "a recorder past the command encoder slots got an encoder");
+    Require(std::ranges::count_if(recorders, [](const auto& recorder) { return recorder->Encodes(); }) != 0, "no recorder with a device table got a command encoder");
+    RecordMemoryBarrier(context, fallback.Commands(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    fallback.Submit();
+    fallback.Sync();
+    Require(fallback.Idle(), "a recorder past the command encoder slots did not complete its batch");
+    std::cout << "Command encoder slot fallback tests passed\n";
 }
 
 int gpuTimingCompletionTests(const Device& device, bool incomplete) {
@@ -11567,6 +11696,22 @@ public:
         return continued;
     }
 
+    void DrawThrough(Recorder& recorder, const DeviceFunctions& table) const {
+        const auto commands = recorder.StartDrawPass(PassKey, true, false, PassAccess{}).commands;
+        recorder.PrepareSampleSlot();
+        begin(commands);
+        recorder.GraphicsState().BindPipeline(context, pipeline, 0);
+        {
+            const Recorder::EncodingWindow window(recorder);
+            table.cmdDraw(commands, 3, 1, 0, 0);
+            recorder.NoteSampledDraw(commands);
+            table.cmdDraw(commands, 3, 1, 0, 0);
+            recorder.EndPassSamples();
+            table.cmdDraw(commands, 3, 1, 0, 0);
+        }
+        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{});
+    }
+
     void Record(CommandState& recording) const {
         const auto commands = recording.Commands();
         begin(commands);
@@ -11575,10 +11720,30 @@ public:
         EndRenderPass(context, commands);
     }
 
+    void DrawEncoded(Recorder& recorder, const Context& encoded) const {
+        const auto start = recorder.StartDrawPass(PassKey, false, false, PassAccess{});
+        Require(start.continued, "an encoded draw did not continue the open cover pass");
+        const Recorder::EncodingWindow window(recorder);
+        recorder.GraphicsState().BindPipeline(encoded, pipeline, 0);
+        encoded.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(start.commands, 3, 1, 0, 0);
+        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{});
+    }
+
+    void DrawEncodedSampled(Recorder& recorder, const Context& encoded) const {
+        const auto start = recorder.StartDrawPass(PassKey, false, false, PassAccess{});
+        Require(start.continued, "an encoded sampled draw did not continue the open cover pass");
+        const Recorder::EncodingWindow window(recorder);
+        recorder.GraphicsState().Invalidate();
+        recorder.GraphicsState().BindPipeline(encoded, pipeline, 0);
+        recorder.NoteSampledDraw(start.commands);
+        encoded.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(start.commands, 3, 1, 0, 0);
+        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{});
+    }
+
     static constexpr std::uint64_t Samples = 64;
+    static constexpr std::uint64_t PassKey = 0xc0de;
 
 private:
-    static constexpr std::uint64_t PassKey = 0xc0de;
     void begin(VkCommandBuffer commands) const {
         if (context.graphicsPipelineLibrary) {
             if (!transitioned) {
@@ -11687,6 +11852,49 @@ void inPassSampleDumpTests(Recorder& recorder, const Context& context, const Cov
     const auto folded = samples(words[0]);
     Require(folded > base && folded == recorder.SamplesTotal(), "segments folded at Submit without a dump were lost");
     if (context.occlusionQueryPrecise) Require(folded == base + passes * CoverPass::Samples, "segments folded at Submit without a dump counted the wrong samples");
+}
+
+void discardedSampleTests(Recorder& recorder, const Context& context, const CoverPass& cover, std::uint64_t* words, std::uint64_t address, VkDeviceAddress target) {
+    const auto passes = [&](std::size_t count) {
+        for (std::size_t i = 0; i < count; ++i) {
+            Require(!cover.Draw(recorder), "a draw after other work continued a pass");
+            recorder.Commands();
+        }
+    };
+    const auto failSubmit = [&] {
+        Recorder::FailNextSubmitsForTest(1u);
+        bool discarded = false;
+        try {
+            recorder.Submit();
+        } catch (const std::exception& error) {
+            discarded = std::string(error.what()).find("injected failure") != std::string::npos;
+        }
+        Recorder::FailNextSubmitsForTest(0u);
+        Require(discarded, "the batch with closed occlusion segments was not discarded");
+    };
+    recorder.Sync();
+    const auto base = recorder.SamplesTotal();
+    passes(2);
+    failSubmit();
+    Require(recorder.SamplesTotal() == base, "the segments of a discarded batch were read");
+    passes(3);
+    recorder.Submit();
+    passes(70);
+    failSubmit();
+    std::fill(words, words + 64, 0);
+    Require(recorder.DumpSamples(target, address), "a dump after a discarded fold was not made on the GPU");
+    recorder.Sync();
+    const auto kept = (words[0] & ~SampleReady) - base;
+    Require((words[0] & SampleReady) != 0 && kept > 0, "a discarded batch that folded the segments of a submitted one lost their samples");
+    Require(recorder.SamplesTotal() - base == kept, "the host total and the dump disagree after a discarded fold");
+    if (context.occlusionQueryPrecise) Require(kept == 3 * CoverPass::Samples, "a discarded batch's segments were counted beside the submitted ones it folded");
+    std::fill(words, words + 64, 0);
+    passes(1);
+    Require(recorder.DumpSamples(target, address), "a dump after a discarded batch was not made on the GPU");
+    recorder.Sync();
+    const auto total = recorder.SamplesTotal();
+    Require((words[0] & ~SampleReady) == total && total > base + kept, "a dump after a discarded batch counted the wrong draws");
+    if (context.occlusionQueryPrecise) Require(total == base + 4 * CoverPass::Samples, "a dump after a discarded batch counted the wrong samples");
 }
 
 bool pendingKeyStoreTests(const Device& device, Recorder& recorder) {
@@ -11955,6 +12163,339 @@ void sampleDumpTests(const Device& device, Recorder& recorder) {
     }
     CoverPass cover(context);
     inPassSampleDumpTests(recorder, context, cover, words, address, target);
+    discardedSampleTests(recorder, context, cover, words, address, target);
+}
+
+void endPassWaitsNameTheirCaller(Recorder& recorder) {
+    static_cast<void>(recorder.Commands());
+}
+
+bool setProfileEncoder(const char* value) {
+#ifdef _WIN32
+    return _putenv_s("APS5_PROFILE_ENCODER", value != nullptr ? value : "") == 0;
+#else
+    return value != nullptr ? setenv("APS5_PROFILE_ENCODER", value, 1) == 0 : unsetenv("APS5_PROFILE_ENCODER") == 0;
+#endif
+}
+
+void encoderPassEndSiteTests(const Device& device) {
+    if (!CommandEncoder::Enabled() || !device.Graphics()) return;
+    auto context = device.GetContext();
+    DeviceFunctions table;
+    FillDeviceFunctions(context, table);
+    const char* configured = std::getenv("APS5_PROFILE_ENCODER");
+    const std::string saved = configured != nullptr ? configured : "";
+    Require(setProfileEncoder("1"), "cannot set APS5_PROFILE_ENCODER");
+    Recorder recorder(context, false, &table, context.queueFamily);
+    setProfileEncoder(configured != nullptr ? saved.c_str() : nullptr);
+    if (!recorder.Encodes()) return;
+    context.functions = &table;
+    CoverPass cover(context);
+    cover.Draw(recorder);
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(20)); });
+    cover.DrawEncoded(recorder, context);
+    endPassWaitsNameTheirCaller(recorder);
+    CommandEncoder::SetDelayForTesting({});
+    recorder.Submit();
+    recorder.Sync();
+    const auto sites = recorder.EncoderWaitsBySite();
+    std::string seen;
+    bool caller = false;
+    for (const auto& site : sites) {
+        const auto name = CommandEncoder::Describe(site.site);
+        seen += name + "; ";
+        Require(name.find("endOpenRenderPass") == std::string::npos && name.find("endSegment") == std::string::npos, "a pass end's wait was attributed to the recorder's own pass end, not its caller: " + seen);
+        caller = caller || (site.site.kind == CommandEncoder::Wait::Quiesce && name.find("endPassWaitsNameTheirCaller") != std::string::npos && site.waits != 0);
+    }
+    Require(caller, "the wait at a pass end was not attributed to the caller of Commands(): " + seen);
+    std::cout << "Command encoder pass-end site tests passed\n";
+}
+
+struct SegmentRun {
+    std::uint64_t counted = 0;
+    std::uint64_t segmentBeginWaits = 0;
+    std::uint64_t committerWaits = 0;
+    std::uint64_t records = 0;
+    double committerMicros = 0;
+};
+
+std::uint64_t encoderWaits(const Recorder& recorder) {
+    std::uint64_t waits = 0;
+    for (const auto& site : recorder.EncoderWaitsBySite()) waits += site.waits;
+    return waits;
+}
+
+SegmentRun encodedSegmentRun(const Device& device, bool quiesced) {
+    auto context = device.GetContext();
+    DeviceFunctions table;
+    FillDeviceFunctions(context, table);
+    const char* configured = std::getenv("APS5_PROFILE_ENCODER");
+    const std::string saved = configured != nullptr ? configured : "";
+    Require(setProfileEncoder("1"), "cannot set APS5_PROFILE_ENCODER");
+    Recorder recorder(context, false, &table, context.queueFamily);
+    setProfileEncoder(configured != nullptr ? saved.c_str() : nullptr);
+    context.functions = &table;
+    const bool adaptive = RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder);
+    const bool segments = RuntimeSwitches::Set(RuntimeSwitch::QuiescedSegments);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, true);
+    RuntimeSwitches::Assign(RuntimeSwitch::QuiescedSegments, quiesced);
+    struct Restore {
+        bool adaptive;
+        bool segments;
+        ~Restore() {
+            CommandEncoder::SetDelayForTesting({});
+            RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, adaptive);
+            RuntimeSwitches::Assign(RuntimeSwitch::QuiescedSegments, segments);
+        }
+    } restore{adaptive, segments};
+    CoverPass cover(context);
+    recorder.CountSamples();
+    const auto base = recorder.SamplesTotal();
+    const auto closedBefore = Recorder::SampleDumpCounts().segments;
+    cover.Draw(recorder);
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(5)); });
+    constexpr std::size_t encodedDraws = 6;
+    const auto waitsBefore = encoderWaits(recorder);
+    const auto recordsBefore = recorder.EncoderCounts().commands;
+    const auto started = std::chrono::steady_clock::now();
+    for (std::size_t i = 0; i < encodedDraws; ++i) {
+        recorder.EndPassSamples();
+        cover.DrawEncodedSampled(recorder, context);
+    }
+    const auto committed = std::chrono::steady_clock::now();
+    const auto waitsAfter = encoderWaits(recorder);
+    const auto recordsAfter = recorder.EncoderCounts().commands;
+    CommandEncoder::SetDelayForTesting({});
+    recorder.Submit();
+    recorder.Sync();
+    SegmentRun run;
+    run.committerWaits = waitsAfter - waitsBefore;
+    run.records = recordsAfter - recordsBefore;
+    run.committerMicros = std::chrono::duration<double, std::micro>(committed - started).count() / encodedDraws;
+    run.counted = recorder.SamplesTotal() - base;
+    Require(Recorder::SampleDumpCounts().segments - closedBefore >= encodedDraws, "the encoded sampled draws did not each close an occlusion segment");
+    for (const auto& site : recorder.EncoderWaitsBySite()) {
+        if (CommandEncoder::Describe(site.site).find("beginSegment") != std::string::npos) run.segmentBeginWaits += site.waits;
+    }
+    if (context.occlusionQueryPrecise) Require(run.counted == (encodedDraws + 1) * CoverPass::Samples, "occlusion segments around encoded draws counted " + std::to_string(run.counted) + " samples, not the " + std::to_string((encodedDraws + 1) * CoverPass::Samples) + " of their draws");
+    Require(run.counted != 0, "occlusion segments around encoded draws counted no samples");
+    return run;
+}
+
+void encoderSegmentQueryTests(const Device& device) {
+    if (!CommandEncoder::Enabled() || !device.Graphics() || !device.GetContext().bufferDeviceAddress) {
+        std::cout << "no command encoder, graphics queue or buffer device addresses: encoded occlusion segments not tested\n";
+        return;
+    }
+    {
+        auto context = device.GetContext();
+        DeviceFunctions table;
+        FillDeviceFunctions(context, table);
+        Recorder probe(context, false, &table, context.queueFamily);
+        if (!probe.Encodes()) return;
+    }
+    const auto encoded = encodedSegmentRun(device, false);
+    Require(encoded.segmentBeginWaits == 0, "an occlusion segment begun inside an encoding window waited for the encoder " + std::to_string(encoded.segmentBeginWaits) + " times");
+    Require(encoded.committerWaits == 0, "sampled draws whose occlusion segments are encoder records waited for the encoder " + std::to_string(encoded.committerWaits) + " times");
+    const auto quiesced = encodedSegmentRun(device, true);
+    Require(encoded.records == quiesced.records + 12, "six encoded sampled draws recorded " + std::to_string(encoded.records) + " encoder records with their occlusion queries and " + std::to_string(quiesced.records) + " without, not two more per draw");
+    Require(quiesced.committerWaits >= 6, "APS5_QUIESCED_SEGMENTS sampled draws waited for the encoder only " + std::to_string(quiesced.committerWaits) + " times");
+    Require(quiesced.segmentBeginWaits != 0, "APS5_QUIESCED_SEGMENTS did not make an occlusion segment's begin wait for the encoder");
+    Require(encoded.counted == quiesced.counted, "encoded occlusion segments counted " + std::to_string(encoded.counted) + " samples, quiesced ones " + std::to_string(quiesced.counted));
+    std::cout << "Command encoder occlusion segment tests passed (begin waits: encoded " << encoded.segmentBeginWaits << ", quiesced " << quiesced.segmentBeginWaits << "; all waits: encoded " << encoded.committerWaits << ", quiesced " << quiesced.committerWaits << "; committer us/draw with a 5 ms encoder: encoded " << encoded.committerMicros << ", quiesced " << quiesced.committerMicros << ")\n";
+}
+
+void encoderAdaptiveSegmentWaitTests(const Device& device) {
+    if (!CommandEncoder::Enabled() || !device.Graphics() || !device.GetContext().bufferDeviceAddress) return;
+    auto context = device.GetContext();
+    DeviceFunctions table;
+    FillDeviceFunctions(context, table);
+    Recorder recorder(context, false, &table, context.queueFamily);
+    if (!recorder.Encodes()) return;
+    context.functions = &table;
+    const bool adaptive = RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder);
+    const bool record = RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder);
+    const bool segments = RuntimeSwitches::Set(RuntimeSwitch::QuiescedSegments);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, false);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false);
+    RuntimeSwitches::Assign(RuntimeSwitch::QuiescedSegments, true);
+    struct Restore {
+        bool adaptive;
+        bool record;
+        bool segments;
+        ~Restore() {
+            CommandEncoder::SetDelayForTesting({});
+            RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, adaptive);
+            RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, record);
+            RuntimeSwitches::Assign(RuntimeSwitch::QuiescedSegments, segments);
+        }
+    } restore{adaptive, record, segments};
+    CoverPass cover(context);
+    recorder.CountSamples();
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::microseconds(200)); });
+    constexpr std::uint64_t Group = 30;
+    constexpr std::uint64_t Draws = 50 * Group;
+    std::uint64_t inlined = 0;
+    for (std::uint64_t group = 0; group < Draws / Group; ++group) {
+        cover.Draw(recorder);
+        const auto before = recorder.EncoderCounts().inlined;
+        for (std::uint64_t i = 0; i < Group; ++i) {
+            recorder.EndPassSamples();
+            cover.DrawEncodedSampled(recorder, context);
+        }
+        inlined += recorder.EncoderCounts().inlined - before;
+        recorder.Submit();
+    }
+    CommandEncoder::SetDelayForTesting({});
+    recorder.Sync();
+    Require(inlined * 10 >= Draws * 8, "the adaptive hand-off recorded only " + std::to_string(inlined) + " of " + std::to_string(Draws) + " sampled draws inline although each encoded one waited at its occlusion segment for a slow encoder");
+    std::cout << "Command encoder adaptive segment wait tests passed (" << inlined << " of " << Draws << " windows inline)\n";
+}
+
+template<typename Step>
+void completesWithin(std::chrono::seconds limit, const std::string& what, Step&& step) {
+    auto done = std::make_shared<std::promise<void>>();
+    auto finished = done->get_future();
+    std::thread([done, &step] {
+        try {
+            step();
+            done->set_value();
+        } catch (...) {
+            done->set_exception(std::current_exception());
+        }
+    }).detach();
+    if (finished.wait_for(limit) != std::future_status::ready) {
+        std::cerr << "AGC graphics: " << what << " did not complete within " << limit.count() << " s\n";
+        std::_Exit(1);
+    }
+    finished.get();
+}
+
+void encoderFailedSegmentTests(const Device& device) {
+    if (!CommandEncoder::Enabled() || !device.Graphics() || !device.GetContext().bufferDeviceAddress) return;
+    auto context = device.GetContext();
+    DeviceFunctions table;
+    FillDeviceFunctions(context, table);
+    Recorder recorder(context, false, &table, context.queueFamily);
+    if (!recorder.Encodes()) return;
+    context.functions = &table;
+    const bool adaptive = RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder);
+    const bool record = RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder);
+    const bool segments = RuntimeSwitches::Set(RuntimeSwitch::QuiescedSegments);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, true);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false);
+    RuntimeSwitches::Assign(RuntimeSwitch::QuiescedSegments, false);
+    std::atomic<int> failures{0};
+    CommandEncoder::SetDelayForTesting([&] {
+        if (failures.fetch_sub(1) > 0) throw std::runtime_error("injected replay failure");
+    });
+    struct Restore {
+        bool adaptive;
+        bool record;
+        bool segments;
+        ~Restore() {
+            CommandEncoder::SetDelayForTesting({});
+            RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, adaptive);
+            RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, record);
+            RuntimeSwitches::Assign(RuntimeSwitch::QuiescedSegments, segments);
+        }
+    } restore{adaptive, record, segments};
+    const auto caught = [](const std::function<void()>& step) -> std::string {
+        try {
+            step();
+            return {};
+        } catch (const std::runtime_error& error) {
+            return error.what();
+        }
+    };
+    const auto recover = [&] {
+        static_cast<void>(caught([&] { recorder.Submit(); }));
+        recorder.Sync();
+    };
+    CoverPass cover(context);
+    recorder.CountSamples();
+    cover.Draw(recorder);
+    recorder.Submit();
+    recorder.Sync();
+    const auto base = recorder.SamplesTotal();
+    Require(base != 0, "the cover draw counted no samples before the failed batch");
+
+    cover.Draw(recorder);
+    recorder.EndPassSamples();
+    failures.store(1);
+    cover.DrawEncodedSampled(recorder, context);
+    recorder.EndPassSamples();
+    const auto submitted = caught([&] { recorder.Submit(); });
+    Require(submitted == "injected replay failure", "a batch whose replay failed after its occlusion segments ended was submitted ('" + submitted + "')");
+    std::uint64_t total = 0;
+    completesWithin(std::chrono::seconds(20), "the sample total after a discarded batch", [&] { total = recorder.SamplesTotal(); });
+    Require(total == base, "the sample total after a discarded batch is " + std::to_string(total) + ", not the " + std::to_string(base) + " of the batches that ran");
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    auto dump = std::make_shared<Buffer>(context, 256, usage);
+    std::memset(dump->Bytes().data(), 0, 256);
+    cover.Draw(recorder);
+    recorder.EndPassSamples();
+    failures.store(1);
+    cover.DrawEncodedSampled(recorder, context);
+    recorder.EndPassSamples();
+    Require(caught([&] { recorder.Submit(); }) == "injected replay failure", "a second batch whose replay failed was submitted");
+    cover.Draw(recorder);
+    Require(recorder.DumpSamples(dump->DeviceAddress(), 0), "the occlusion counters were not dumped on the GPU after a discarded batch");
+    completesWithin(std::chrono::seconds(20), "a GPU sample dump after a discarded batch", [&] {
+        recorder.Submit();
+        recorder.Sync();
+    });
+    std::uint64_t dumped = 0;
+    std::memcpy(&dumped, dump->Bytes().data(), sizeof(dumped));
+    Require((dumped & SampleReady) != 0 && (dumped & ~SampleReady) > base, "the GPU dump after a discarded batch stored " + std::to_string(dumped & ~SampleReady) + " without its ready bit or the draw after it");
+    if (context.occlusionQueryPrecise) Require((dumped & ~SampleReady) == base + CoverPass::Samples, "the GPU dump after a discarded batch counted " + std::to_string(dumped & ~SampleReady) + " samples, not the " + std::to_string(base + CoverPass::Samples) + " of the batches that ran");
+
+    cover.Draw(recorder);
+    recorder.EndPassSamples();
+    failures.store(1);
+    cover.DrawEncodedSampled(recorder, context);
+    recorder.EndPassSamples();
+    VkCommandBuffer commands = VK_NULL_HANDLE;
+    const auto started = caught([&] { commands = recorder.StartDrawPass(CoverPass::PassKey, false, false, PassAccess{}).commands; });
+    Require(started.empty(), "continuing a pass after a replay failure reported it before its occlusion segment began ('" + started + "')");
+    const auto begun = caught([&] { recorder.NoteSampledDraw(commands); });
+    Require(begun == "injected replay failure", "an occlusion segment begun outside an encoding window after a replay failure did not report it ('" + begun + "')");
+    const auto again = caught([&] { recorder.NoteSampledDraw(commands); });
+    Require(again == "AGC graphics: the encoder failed to record this command buffer, so it is not submitted", "a second occlusion segment begun after a caught replay failure was not refused ('" + again + "')");
+    recover();
+
+    cover.Draw(recorder);
+    failures.store(1);
+    cover.DrawEncodedSampled(recorder, context);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, true);
+    const auto inlined = caught([&] { const Recorder::EncodingWindow window(recorder); });
+    const auto reinlined = caught([&] { const Recorder::EncodingWindow window(recorder); });
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false);
+    Require(inlined == "injected replay failure", "an inline window after a replay failure did not report it ('" + inlined + "')");
+    Require(reinlined == "AGC graphics: the encoder failed to record this command buffer, so it is not submitted", "a second inline window after a caught replay failure was not refused ('" + reinlined + "')");
+    recover();
+    const auto posts = recorder.EncoderCounts().posts;
+    cover.Draw(recorder);
+    cover.DrawEncodedSampled(recorder, context);
+    recorder.Submit();
+    recorder.Sync();
+    Require(recorder.EncoderCounts().posts > posts, "the encoder took no window after an inline window reported a replay failure");
+
+    const auto beforeFold = recorder.SamplesTotal();
+    cover.Draw(recorder);
+    recorder.EndPassSamples();
+    recorder.Submit();
+    recorder.Sync();
+    Require(recorder.DumpSamples(dump->DeviceAddress(), 0), "a batch did not fold the occlusion segments of the batch before it");
+    Recorder::FailNextSubmitsForTest(1);
+    const auto folded = caught([&] { recorder.Submit(); });
+    Recorder::FailNextSubmitsForTest(0);
+    Require(folded == "vkQueueSubmit recorder: injected failure", "a batch that folded an earlier batch's occlusion segments was submitted past an injected failure ('" + folded + "')");
+    std::uint64_t afterFold = 0;
+    completesWithin(std::chrono::seconds(20), "the sample total after a discarded batch that folded an earlier batch", [&] { afterFold = recorder.SamplesTotal(); });
+    Require(afterFold > beforeFold, "the samples of a submitted batch folded by a discarded batch were lost (" + std::to_string(afterFold) + " after " + std::to_string(beforeFold) + ")");
+    if (context.occlusionQueryPrecise) Require(afterFold == beforeFold + CoverPass::Samples, "the sample total after a discarded batch that folded an earlier batch is " + std::to_string(afterFold) + ", not " + std::to_string(beforeFold + CoverPass::Samples));
+    std::cout << "Command encoder failed segment tests passed\n";
 }
 
 std::uint32_t uncountedGraphicsBinds = 0;
@@ -12234,6 +12775,139 @@ void graphicsStateTests(const Device& device) {
     statePipelines.clear();
     stateLog.clear();
     std::cout << "graphics state through the recorder passed (" << (suppressing ? "suppressing" : "unsuppressed") << ")\n";
+}
+
+void encodedSegmentCountTest(const Device& device, bool queriesHooked) {
+    const auto& context = device.GetContext();
+    DeviceFunctions table{};
+    FillDeviceFunctions(context, table);
+    if (!queriesHooked) {
+        table.cmdBeginQuery = nullptr;
+        table.cmdEndQuery = nullptr;
+    }
+    Recorder recorder(context, false, &table, context.queueFamily);
+    if (!recorder.Encodes()) return;
+    CoverPass cover(context);
+    recorder.CountSamples();
+    const auto base = recorder.SamplesTotal();
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(1)); });
+    constexpr std::uint64_t passes = 4;
+    for (std::uint64_t i = 0; i < passes; ++i) cover.DrawThrough(recorder, table);
+    recorder.Submit();
+    recorder.Sync();
+    CommandEncoder::SetDelayForTesting({});
+    const auto counted = recorder.SamplesTotal() - base;
+    const std::string kind = queriesHooked ? "encoded" : "raw";
+    Require(counted != 0, "no samples were counted for draws inside " + kind + " occlusion segments");
+    if (context.occlusionQueryPrecise) Require(counted == passes * CoverPass::Samples, kind + " occlusion segments counted " + std::to_string(counted) + " samples, not the " + std::to_string(passes * CoverPass::Samples) + " of the one draw inside each");
+}
+
+PFN_vkCmdBeginQuery countedBeginQuery = nullptr;
+PFN_vkCmdEndQuery countedEndQuery = nullptr;
+std::atomic<std::uint32_t> countedQueries{0};
+
+VKAPI_ATTR void VKAPI_CALL CountBeginQuery(VkCommandBuffer commands, VkQueryPool pool, std::uint32_t query, VkQueryControlFlags flags) {
+    countedQueries.fetch_add(1, std::memory_order_relaxed);
+    countedBeginQuery(commands, pool, query, flags);
+}
+
+VKAPI_ATTR void VKAPI_CALL CountEndQuery(VkCommandBuffer commands, VkQueryPool pool, std::uint32_t query) {
+    countedQueries.fetch_add(1, std::memory_order_relaxed);
+    countedEndQuery(commands, pool, query);
+}
+
+void encodedSegmentFailureTest(const Device& device) {
+    const auto& context = device.GetContext();
+    DeviceFunctions table{};
+    FillDeviceFunctions(context, table);
+    countedBeginQuery = table.cmdBeginQuery;
+    countedEndQuery = table.cmdEndQuery;
+    table.cmdBeginQuery = &CountBeginQuery;
+    table.cmdEndQuery = &CountEndQuery;
+    Recorder recorder(context, false, &table, context.queueFamily);
+    Require(recorder.Encodes(), "a recorder with a device table got no command encoder");
+    recorder.CountSamples();
+    const auto base = recorder.SamplesTotal();
+    std::atomic<int> failures{0};
+    CommandEncoder::SetDelayForTesting([&] {
+        if (failures.fetch_sub(1) > 0) throw std::runtime_error("injected replay failure");
+    });
+    const auto segment = [&](bool fail) -> std::string {
+        recorder.PrepareSampleSlot();
+        const auto commands = recorder.Commands();
+        countedQueries.store(0, std::memory_order_relaxed);
+        if (fail) {
+            failures.store(1);
+            {
+                const Recorder::EncodingWindow window(recorder);
+                const VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT};
+                table.cmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+            }
+            AgcDriver::Graphics::BeforeCommandLookup(context.device);
+        }
+        {
+            const Recorder::EncodingWindow window(recorder);
+            recorder.NoteSampledDraw(commands);
+            recorder.EndPassSamples();
+        }
+        try {
+            recorder.Submit();
+        } catch (const std::runtime_error& error) {
+            return error.what();
+        }
+        return {};
+    };
+    const auto failed = segment(true);
+    const auto failedQueries = countedQueries.load(std::memory_order_relaxed);
+    const auto healthy = segment(false);
+    const auto healthyQueries = countedQueries.load(std::memory_order_relaxed);
+    recorder.Sync();
+    CommandEncoder::SetDelayForTesting({});
+    Require(failed == "injected replay failure", "a batch whose replay failed before its occlusion segment was submitted or refused with '" + failed + "'");
+    Require(failedQueries == 0, "an occlusion segment recorded " + std::to_string(failedQueries) + " query commands into a batch after a replay into it failed");
+    Require(healthy.empty() && healthyQueries == 2, "the batch after a failed one recorded " + std::to_string(healthyQueries) + " of its 2 segment query commands ('" + healthy + "')");
+    Require(recorder.SamplesTotal() == base, "the occlusion segment of a batch whose replay failed was read");
+}
+
+bool encodedSegmentTests(const Device& device) {
+    const auto& context = device.GetContext();
+    DeviceFunctions table{};
+    FillDeviceFunctions(context, table);
+    Recorder recorder(context, false, &table, context.queueFamily);
+    if (!recorder.Encodes()) return false;
+    struct Restore {
+        bool adaptive = RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder);
+        ~Restore() { RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, adaptive); }
+    } restore;
+    RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, true);
+    recorder.CountSamples();
+    const auto base = recorder.SamplesTotal();
+    const auto before = Recorder::SampleDumpCounts().segments;
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(1)); });
+    constexpr std::uint32_t segments = 300;
+    for (std::uint32_t i = 0; i < segments; ++i) {
+        recorder.PrepareSampleSlot();
+        const auto commands = recorder.Commands();
+        const auto counts = recorder.EncoderCounts();
+        {
+            const Recorder::EncodingWindow window(recorder);
+            const VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT};
+            table.cmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+            recorder.NoteSampledDraw(commands);
+            recorder.EndPassSamples();
+        }
+        Require(recorder.EncoderCounts().waits == counts.waits, "an occlusion segment in an encoding window waited for the encoder");
+        Require(recorder.EncoderCounts().commands == counts.commands + 3, "an occlusion segment's queries were not recorded in order through the encoder");
+    }
+    recorder.Submit();
+    recorder.Sync();
+    CommandEncoder::SetDelayForTesting({});
+    Require(Recorder::SampleDumpCounts().segments - before == segments, "the encoded occlusion segments were not all closed");
+    Require(recorder.SamplesTotal() == base, "occlusion segments without draws counted samples");
+    encodedSegmentCountTest(device, true);
+    encodedSegmentCountTest(device, false);
+    encodedSegmentFailureTest(device);
+    return true;
 }
 
 void cmaskPassTests(const Device& device, Recorder& recorder) {
@@ -15123,12 +15797,10 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
     constexpr std::size_t bytes = surfaceA + 65536;
     static_assert(surfaceB <= surfaceA && keyCount <= bytes - surfaceA, "B lies over the first units of A, and B's DCC keys follow A inside the block");
     const auto decided = PrepareImportWatch(base);
-#ifndef _WIN32
     if (watched && decided == ImportWatch::Unwatch) {
         std::cout << "host imports are compared on this device: " << what << " not tested\n";
         return false;
     }
-#endif
     void* block = nullptr;
     if (watched) {
         block = AllocateWatched(bytes, 65536);
@@ -16396,7 +17068,7 @@ int main(int argc, char** argv) {
         }
 #endif
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
-        Recorder recorder(device.GetContext());
+        Recorder recorder(device.GetContext(), false, argc == 1 ? device.UseFunctionTable() : nullptr, device.GetContext().queueFamily);
         recorder.Activate();
         if (argc == 2 && std::string_view(argv[1]) == "--command-reuse-only") {
             if (device.GetContext().hostImportAlignment == 0) return 77;
@@ -16698,6 +17370,18 @@ int main(int argc, char** argv) {
             std::cout << "Occlusion counter dump tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--encoded-segments-only") {
+            if (!device.GetContext().bufferDeviceAddress) {
+                std::cout << "skipped, the device lacks buffer device addresses\n";
+                return 77;
+            }
+            if (!encodedSegmentTests(device)) {
+                std::cout << "skipped, commands are recorded inline\n";
+                return 77;
+            }
+            std::cout << "Encoded occlusion segment tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--graphics-state-only") {
             graphicsStateTests(device);
             return 0;
@@ -16924,7 +17608,18 @@ int main(int argc, char** argv) {
         drawSnapshotPatchTests(device);
         drawSnapshotEpochTests(device);
         gpu.lock();
+        encoderFailureFollowsTheBatchTests(device, recorder, gpu);
+        encoderPassEndSiteTests(device);
+        encoderSegmentQueryTests(device);
+        encoderAdaptiveSegmentWaitTests(device);
+        encoderFailedSegmentTests(device);
+        encoderRuntimeSwitchTests(device, recorder);
+        encoderSlotFallbackTests(device);
         recorder.Activate();
+        const bool drew = vertexTargetRangeTests(device, recorder, false);
+        Require(recorder.Encodes() == CommandEncoder::Enabled(), "the recorder suite's recorder did not follow APS5_RECORD_INLINE");
+        Require(!recorder.Encodes() || !drew || recorder.EncoderCounts().commands != 0, "the recorder suite drew but recorded no command through the encoder");
+        std::cout << "encoder recorded " << recorder.EncoderCounts().commands << " commands\n";
         std::cout << "Recorder read tracking and label tests passed\n";
         return 0;
     }
