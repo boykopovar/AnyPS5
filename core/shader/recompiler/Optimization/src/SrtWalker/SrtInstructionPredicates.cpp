@@ -1,4 +1,5 @@
 #include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
+#include "Optimization/SrtWalker/SrtEvaluator.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -37,6 +38,26 @@ bool LoadedFromMemory(const IrValue& handle) {
         visited.push_back(value);
         if (IsMemoryRead(value->Opcode())) return true;
         for (std::size_t index = 0; index < value->ArgumentCount(); ++index) pending.push_back(value->Argument(index));
+    }
+    return false;
+}
+
+bool AddressLoadedFromMemory(const IrResourcePlan& program, const IrValue& read) {
+    if (read.ArgumentCount() < 2u || read.Argument(0) == nullptr || read.Argument(1) == nullptr) return false;
+    const auto* handle = read.Argument(0)->Resolve();
+    if (LoadedFromMemory(*handle)) return true;
+    std::vector<const IrValue*> pending{read.Argument(1)};
+    std::vector<const IrValue*> visited;
+    while (!pending.empty()) {
+        const auto* value = pending.back();
+        pending.pop_back();
+        if (value == nullptr) continue;
+        value = value->Resolve();
+        if (value->HasImmediate() || std::find(visited.begin(), visited.end(), value) != visited.end()) continue;
+        visited.push_back(value);
+        if (IsMemoryRead(value->Opcode())) return true;
+        if (Evaluator::Reads(program, *value) == EvaluatorReads::Nothing) continue;
+        for (const auto* argument : value->Arguments()) pending.push_back(argument);
     }
     return false;
 }

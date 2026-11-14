@@ -411,7 +411,9 @@ private:
                 if (inst->Opcode() != IrOpcode::ReadConst || inst->ArgumentCount() != 2u || inst->Argument(0)->Resolve()->Opcode() != IrOpcode::GetSrtResource) continue;
                 const IrValue* slot = inst->Argument(1)->Resolve();
                 if (!slot->HasImmediate() || slot->Type() != IrType::U32 || slot->ImmediateU32() >= m_program.Resources().srtReads.size()) fail("resource control flow has an invalid flat SRT slot");
-                if (std::ranges::find(block.flatSlots, slot->ImmediateU32()) == block.flatSlots.end()) block.flatSlots.push_back(slot->ImmediateU32());
+                const auto origin = m_readOrigins.find(inst);
+                auto& slots = origin == m_readOrigins.end() ? block.flatSlots : controlFlow.at(indexOf.at(origin->second)).flatSlots;
+                if (std::ranges::find(slots, slot->ImmediateU32()) == slots.end()) slots.push_back(slot->ImmediateU32());
             }
         }
         std::vector<std::uint8_t> unconditional(order.size());
@@ -1275,7 +1277,18 @@ private:
             m_readOrigins.emplace(copy, origin != m_readOrigins.end() ? origin->second : original.Parent());
             return copy;
         }
-        return EmitBefore(position, original.Opcode(), original.Type(), arguments, original.Flags<std::uint64_t>());
+        IrValue* copy = EmitBefore(position, original.Opcode(), original.Type(), arguments, original.Flags<std::uint64_t>());
+        if (original.Opcode() == IrOpcode::ReadConst && original.ArgumentCount() == 2u && original.Argument(0)->Resolve()->Opcode() == IrOpcode::GetSrtResource) {
+            const auto* slot = original.Argument(1)->Resolve();
+            if (slot->HasImmediate() && slot->Type() == IrType::U32 && slot->ImmediateU32() < m_program.Resources().srtReads.size()) {
+                const auto* read = m_program.Resources().srtReads[slot->ImmediateU32()].value->Resolve();
+                if (read->Opcode() == IrOpcode::LoadAddressU32 && !read->Argument(1)->Resolve()->HasImmediate()) {
+                    const auto origin = m_readOrigins.find(&original);
+                    m_readOrigins.emplace(copy, origin != m_readOrigins.end() ? origin->second : original.Parent());
+                }
+            }
+        }
+        return copy;
     }
 
     bool Dominates(const IrBlock* definition, const IrBlock* use) const {
