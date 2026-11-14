@@ -177,6 +177,7 @@ struct PreparedShaders : PreparedShaderState {
         std::weak_ptr<VulkanDevice> device;
     };
     std::vector<DeferredAbi> deferredAbis;
+    std::size_t resolving = 0;
     bool deferredPreparing = false;
     std::mutex mutex;
     std::condition_variable settled;

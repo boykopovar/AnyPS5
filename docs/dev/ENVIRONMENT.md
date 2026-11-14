@@ -357,6 +357,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_MOVED_BUFFER_TEMPLATES` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | keys the full descriptor words of read-only guest buffers instead of allowing a hit when they move |
 | `APS5_NO_OBSERVATION_GUARD` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | observes every validated range, not only the ranges whose flush hook waited |
 | `APS5_NO_OPPORTUNISTIC_REAP` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | skips retiring already-finished batches before a submit |
+| `APS5_NO_ORDERED_WAITS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitStatistics.cpp` |  | bumps the collect epoch at every memory wait instead of skipping a wait on an unchanged flag an earlier wait already ordered |
 | `APS5_NO_OWNED_DRAW_INPUTS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/RuntimeSwitches.cpp` |  | disables token-based reuse of untracked vertex/index copies; APS5_AB can toggle it |
 | `APS5_NO_OWN_IMAGE_REFRESH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | lets a Pending failure of the fast proof take the full walk instead of the own-object refresh |
 | `APS5_NO_PARALLEL_MIRROR_REFRESH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | disables the mirror-refresh thread pool, so mirror refreshes run on the calling thread |
@@ -406,6 +407,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_SPARSE_HEAP_MIRROR` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | disables sparse heap mirrors, mirroring only whole heap ranges |
 | `APS5_NO_SPARSE_TEXTURE_LEVELS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | gives a sampled texture device memory for every level, also for the levels above its T#'s minimum LOD whose guest memory is not mapped, instead of leaving them unbound in a sparse image |
 | `APS5_NO_STAGE_A_IMAGES` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | leaves every image element to the stage-B full lookup instead of a stage-A record |
+| `APS5_NO_STATE_SUPPRESSION` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | records every graphics pipeline bind and dynamic state command instead of skipping those the command buffer already holds |
 | `APS5_NO_STORAGE_DEDUPE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | looks each identical consecutive storage descriptor up, and refreshes its image, separately |
 | `APS5_NO_STORED_KNOWN_VALUES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | makes a capture wait for the GPU over a store it recorded instead of reading the recorded bytes |
 | `APS5_NO_SYNC_SITES` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | leaves only the per-source and per-thread sync counts, with no per-site attribution |

@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/FsrEasuFrag_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/FsrRcasFrag_spv.h"
@@ -379,11 +380,15 @@ void PresentationUpscaler::draw(VkCommandBuffer commands, Slot& slot, const Targ
     begin.renderArea = {{0, 0}, extent};
     context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
     const auto heapSlot = entry.heapPipeline != VK_NULL_HANDLE ? Graphics::BindlessHeap::For(context).ViewSlot(Graphics::HeapPassSampledKind, &slot, source, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) : std::nullopt;
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, heapSlot ? entry.heapPipeline : entry.pipeline);
+    // Not tracked across passes: suppress = false makes the state emit every command, as before.
+    Graphics::CommandState recording;
+    recording.Begin(commands, false);
+    const VkDynamicState dynamicStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    recording.BindPipeline(context, heapSlot ? entry.heapPipeline : entry.pipeline, Graphics::CommandState::DynamicSlots(dynamicStates));
     const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
     const VkRect2D scissor{{0, 0}, extent};
-    context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
-    context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &scissor);
+    recording.SetViewport(context, viewport);
+    recording.SetScissor(context, scissor);
     if (heapSlot) {
         Graphics::BindlessHeap::For(context).BindDescriptorHeaps(commands);
         HeapPush pushed{};

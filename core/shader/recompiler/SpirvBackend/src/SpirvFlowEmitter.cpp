@@ -454,7 +454,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::SLessThanEqual32: return Invoke(EmitSLessThanEqual32, ctx, inst);
         case IrOpcode::ULessThanEqual32: return Invoke(EmitULessThanEqual32, ctx, inst);
         case IrOpcode::SGreaterThan32: return Invoke(EmitSGreaterThan32, ctx, inst);
-        case IrOpcode::UGreaterThan32: return Invoke(EmitUGreaterThan32, ctx, inst);
+        case IrOpcode::UGreaterThan32: return Invoke(EmitSampleNanQuery, ctx, inst);
         case IrOpcode::UGreaterThan64: return Invoke(EmitUGreaterThan64, ctx, inst);
         case IrOpcode::INotEqual32: return Invoke(EmitINotEqual32, ctx, inst);
         case IrOpcode::INotEqual64: return Invoke(EmitINotEqual64, ctx, inst);
@@ -476,7 +476,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::FPUnordLessThanEqual32: return Invoke(EmitFPUnordLessThanEqual32, ctx, inst);
         case IrOpcode::FPOrdGreaterThanEqual32: return Invoke(EmitFPOrdGreaterThanEqual32, ctx, inst);
         case IrOpcode::FPUnordGreaterThanEqual32: return Invoke(EmitFPUnordGreaterThanEqual32, ctx, inst);
-        case IrOpcode::FPIsNan32: return Invoke(EmitFPIsNan32, ctx, inst);
+        case IrOpcode::FPIsNan32: return Invoke(EmitSampleNanQuery, ctx, inst);
         case IrOpcode::FPCmpClass32: return Invoke(EmitFPCmpClass32, ctx, inst);
         case IrOpcode::FPAdd32: return Invoke(EmitFPAdd32, ctx, inst);
         case IrOpcode::FPSub32: return Invoke(EmitFPSub32, ctx, inst);

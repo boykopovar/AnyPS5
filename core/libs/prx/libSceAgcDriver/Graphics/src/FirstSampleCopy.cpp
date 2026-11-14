@@ -226,14 +226,15 @@ void FirstSampleCopy::Record(Recorder& recorder, Texture& texture) {
     const auto layout = texture.Layout();
     const auto slot = heapPipeline != VK_NULL_HANDLE ? BindlessHeap::For(context).TextureSlot(ShaderRecompiler::RuntimeAbi::FirstImageBinding, &texture, source, layout) : std::nullopt;
     if (slot) {
-        recorder.RecordUncounted([&](VkCommandBuffer commands) {
+        recorder.RecordUncounted([&](CommandState& recording) {
+            const auto commands = recording.Commands();
             BindlessHeap::For(context).BindDescriptorHeaps(commands);
             VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
             begin.renderPass = renderPass;
             begin.framebuffer = framebuffer;
             begin.renderArea = {{0, 0}, extent};
             context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-            context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, heapPipeline);
+            recording.BindPipeline(context, heapPipeline, 0);
             const std::uint32_t pushed = *slot;
             CmdPushData(context, commands, sizeof(pushed), &pushed);
             context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
@@ -241,6 +242,10 @@ void FirstSampleCopy::Record(Recorder& recorder, Texture& texture) {
         });
         return;
     }
+    Record(recorder, source, layout);
+}
+
+void FirstSampleCopy::Record(Recorder& recorder, VkImageView source, VkImageLayout layout) {
     const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolInfo.maxSets = 1;
@@ -264,13 +269,14 @@ void FirstSampleCopy::Record(Recorder& recorder, Texture& texture) {
     write.pImageInfo = &imageInfo;
     context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
     recorder.Keep(pool);
-    recorder.RecordUncounted([&](VkCommandBuffer commands) {
+    recorder.RecordUncounted([&](CommandState& recording) {
+        const auto commands = recording.Commands();
         VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         begin.renderPass = renderPass;
         begin.framebuffer = framebuffer;
         begin.renderArea = {{0, 0}, extent};
         context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        recording.BindPipeline(context, pipeline, 0);
         CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &set, SetBindSite::FirstSampleCopy);
         context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
         context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);

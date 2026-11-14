@@ -66,6 +66,7 @@ bool DepthSurfaceAt(const Context& context, std::span<const std::uint32_t> words
 std::uint64_t HtileDepthClearAddress(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const std::array<std::uint32_t, 3>& numThreads);
 std::size_t HtileDepthClearBytes_nid_no_patch(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::span<const std::uint32_t> packet, std::uint64_t indirectArguments);
 bool NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::size_t nativeBytes = 0u);
+void NoteCopyDestination(std::uint64_t address, std::size_t bytes);
 void ArmHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
 void QueueHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
 void CompleteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);

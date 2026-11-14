@@ -110,7 +110,7 @@ void TextureDetiler::DispatchMultisampleReadback(VkCommandBuffer commands, VkFor
     const auto slot = heapPipeline != VK_NULL_HANDLE ? BindlessHeap::For(context).ViewSlot(HeapPassSampledKind, owner, arrayView) : std::nullopt;
     if (slot) {
         BindlessHeap::For(context).BindDescriptorHeaps(commands);
-        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, heapPipeline);
+        context.BindComputePipeline(commands, heapPipeline);
         const HeapReadbackPush pushed{push, 0u, address + offset, *slot, 0u};
         CmdPushData(context, commands, sizeof(pushed), &pushed);
         context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, static_cast<std::uint32_t>(groupsX), static_cast<std::uint32_t>(groupsY), 1u);
@@ -125,7 +125,7 @@ void TextureDetiler::DispatchMultisampleReadback(VkCommandBuffer commands, VkFor
         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 1u, 0u, 1u, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &image, nullptr, nullptr}
     }};
     context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0u, nullptr);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+    context.BindComputePipeline(commands, pipeline);
     CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, readbackPipelineLayout, 0u, 1u, &set, SetBindSite::ColorTransfer);
     CmdPushConstants(context, commands, readbackPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0u, sizeof(push), push.data());
     context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, static_cast<std::uint32_t>(groupsX), static_cast<std::uint32_t>(groupsY), 1u);

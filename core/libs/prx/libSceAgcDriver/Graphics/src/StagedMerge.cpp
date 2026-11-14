@@ -122,7 +122,7 @@ public:
             const auto targetSlot = temporarySlot ? heap.ViewSlot(HeapPassStorageKind, targetOwner, target) : std::nullopt;
             if (targetSlot) {
                 heap.BindDescriptorHeaps(commands);
-                context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, heapPipeline);
+                context.BindComputePipeline(commands, heapPipeline);
                 const HeapMergePush pushed{push, *temporarySlot, *targetSlot};
                 CmdPushData(context, commands, sizeof(pushed), &pushed);
                 context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, (area.extent.width + 7u) / 8u, (area.extent.height + 7u) / 8u, 1);
@@ -141,7 +141,7 @@ public:
             writes[binding].pImageInfo = &images[binding];
         }
         context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 2, writes.data(), 0, nullptr);
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+        context.BindComputePipeline(commands, pipeline);
         CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, SetBindSite::StagedMerge);
         CmdPushConstants(context, commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
         context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, (area.extent.width + 7u) / 8u, (area.extent.height + 7u) / 8u, 1);

@@ -482,10 +482,14 @@ if(BUILD_TESTING)
     set_tests_properties(agc_snapshot_read_into_staging PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_test(NAME agc_uncounted_passes COMMAND agc_driver_recorder_tests --uncounted-passes-only)
     set_tests_properties(agc_uncounted_passes PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_graphics_state_recorder COMMAND agc_driver_recorder_tests --graphics-state-only)
+    add_test(NAME agc_graphics_state_recorder_unsuppressed COMMAND agc_driver_recorder_tests --graphics-state-only)
+    set_tests_properties(agc_graphics_state_recorder agc_graphics_state_recorder_unsuppressed PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    set_tests_properties(agc_graphics_state_recorder_unsuppressed PROPERTIES ENVIRONMENT "APS5_NO_STATE_SUPPRESSION=1")
     add_test(NAME agc_draw_descriptors COMMAND agc_driver_recorder_tests --draw-descriptors-only)
     set_tests_properties(agc_draw_descriptors PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
     if(WIN32)
-        set_tests_properties(agc_pending_key_stores agc_shadowed_key_stores agc_sample_dumps agc_snapshot_read_into_staging agc_uncounted_passes agc_draw_descriptors PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_pending_key_stores agc_shadowed_key_stores agc_sample_dumps agc_snapshot_read_into_staging agc_uncounted_passes agc_graphics_state_recorder agc_graphics_state_recorder_unsuppressed agc_draw_descriptors PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     set_property(TEST agc_snapshot_read_into_staging APPEND PROPERTY ENVIRONMENT_MODIFICATION

@@ -369,9 +369,9 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     const bool addressed = !heap && sourceAddress != 0 && destinationAddress != 0;
     if (heap) {
         BindlessHeap::For(context).BindDescriptorHeaps(commands);
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, heapPipeline);
+        context.BindComputePipeline(commands, heapPipeline);
     } else if (addressed) {
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thickPipeline, false, true));
+        context.BindComputePipeline(commands, pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thickPipeline, false, true));
     } else {
         const auto set = allocateSet();
         const VkDescriptorBufferInfo sourceInfo{source, sourceDescriptorOffset, sourceRange};
@@ -390,7 +390,7 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
         writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[1].pBufferInfo = &destinationInfo;
         context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thickPipeline));
+        context.BindComputePipeline(commands, pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thickPipeline));
         CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, SetBindSite::Detiler);
     }
     Push push{};
@@ -460,7 +460,7 @@ void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, s
     if (sourceAddress != 0 && destinationAddress != 0 && heapRepackPipeline != VK_NULL_HANDLE && HeapPassesActive(context)) {
         const AddressedRepackPush pushed{repackPush, sourceAddress + sourceDescriptorOffset, destinationAddress + destinationDescriptorOffset};
         BindlessHeap::For(context).BindDescriptorHeaps(commands);
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, heapRepackPipeline);
+        context.BindComputePipeline(commands, heapRepackPipeline);
         CmdPushData(context, commands, sizeof(pushed), &pushed);
         context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, static_cast<std::uint32_t>((std::min(words, rowWords) + 63u) / 64u), static_cast<std::uint32_t>(rows), 1);
         return;
@@ -482,7 +482,7 @@ void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, s
             Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &createInfo, nullptr, &addressedRepackPipeline), "vkCreateComputePipelines repack");
         }
         const AddressedRepackPush pushed{repackPush, sourceAddress + sourceDescriptorOffset, destinationAddress + destinationDescriptorOffset};
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, addressedRepackPipeline);
+        context.BindComputePipeline(commands, addressedRepackPipeline);
         CmdPushConstants(context, commands, addressedRepackLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushed), &pushed);
         context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, static_cast<std::uint32_t>((std::min(words, rowWords) + 63u) / 64u), static_cast<std::uint32_t>(rows), 1);
         return;
@@ -500,7 +500,7 @@ void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, s
         writes[index].pBufferInfo = index == 0 ? &sourceInfo : &destinationInfo;
     }
     context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, repackPipeline);
+    context.BindComputePipeline(commands, repackPipeline);
     CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, SetBindSite::Detiler);
     CmdPushConstants(context, commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(repackPush), repackPush.data());
     context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, static_cast<std::uint32_t>((std::min(words, rowWords) + 63u) / 64u), static_cast<std::uint32_t>(rows), 1);
@@ -604,11 +604,11 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
     const std::array<std::uint32_t, 7> push{static_cast<std::uint32_t>(base), width, height, (width + 1023u) / 1024u, clearWords[0] & mask, elementBytes == 8 ? clearWords[1] : 0u, write ? 1u : 0u};
     if (slot) {
         BindlessHeap::For(context).BindDescriptorHeaps(commands);
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, cmaskHeapPipeline);
+        context.BindComputePipeline(commands, cmaskHeapPipeline);
         const HeapCmaskPush pushed{push, 0u, cmaskAddress + descriptorOffset, errorsAddress, *slot, 0u};
         CmdPushData(context, commands, sizeof(pushed), &pushed);
     } else {
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, cmaskPipeline);
+        context.BindComputePipeline(commands, cmaskPipeline);
         CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, cmaskPipelineLayout, 0, 1, &set, SetBindSite::Detiler);
         CmdPushConstants(context, commands, cmaskPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
     }
@@ -659,7 +659,7 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     if (slot) {
         auto& bindless = BindlessHeap::For(context);
         bindless.BindDescriptorHeaps(commands);
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, heapPipeline);
+        context.BindComputePipeline(commands, heapPipeline);
         const HeapImagePush pushed{push, tiledAddress + descriptorOffset, *slot, 0u};
         CmdPushData(context, commands, sizeof(pushed), &pushed);
     } else {
@@ -681,7 +681,7 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
         writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         writes[1].pImageInfo = &imageInfo;
         context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, target);
+        context.BindComputePipeline(commands, target);
         CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, imagePipelineLayout, 0, 1, &set, SetBindSite::Detiler);
         CmdPushConstants(context, commands, imagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push), &push);
     }

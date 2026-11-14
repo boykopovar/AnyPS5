@@ -898,14 +898,14 @@ struct VulkanDevice::State {
     }
 
     template<typename TFunction>
-    TFunction DeviceFunction(const char* name) const {
-        if (const auto cached = functionCache->Find(name, deviceProc); cached != nullptr) return reinterpret_cast<TFunction>(cached);
+    TFunction DeviceFunction(Graphics::FunctionName name) const {
+        if (const auto cached = functionCache->Find(name.Value(), deviceProc); cached != nullptr) return reinterpret_cast<TFunction>(cached);
         ++Graphics::DeviceProcLookups();
-        const auto function = deviceProc(device, name);
+        const auto function = deviceProc(device, name.Value());
         if (function == nullptr) {
-            throw std::runtime_error(std::string("Vulkan device function missing: ") + name);
+            throw std::runtime_error(std::string("Vulkan device function missing: ") + name.Value());
         }
-        functionCache->Keep(name, deviceProc, function);
+        functionCache->Keep(name.Value(), deviceProc, function);
         return reinterpret_cast<TFunction>(function);
     }
 
@@ -2656,7 +2656,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         const auto host = std::ranges::find_first_of(hosts, available);
         if (std::ranges::find(available, VK_TIME_DOMAIN_DEVICE_KHR) != available.end() && host != hosts.end()) {
             state->hostTimeDomain = *host;
-            state->calibratedTimestamps = state->DeviceFunction<PFN_vkGetCalibratedTimestampsKHR>(khr ? "vkGetCalibratedTimestampsKHR" : "vkGetCalibratedTimestampsEXT");
+            state->calibratedTimestamps = khr ? state->DeviceFunction<PFN_vkGetCalibratedTimestampsKHR>("vkGetCalibratedTimestampsKHR") : state->DeviceFunction<PFN_vkGetCalibratedTimestampsKHR>("vkGetCalibratedTimestampsEXT");
         }
     }
     state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, 0, &state->queue);
@@ -6115,7 +6115,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             recorder.Keep(std::move(checked));
         }
     }
-    context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->pipeline);
+    context.BindComputePipeline(commands, record.objects->pipeline);
     Graphics::NoteHeapRecord(true, record.objects->descriptorHeap);
     if (record.objects->descriptorHeap) {
         resources.BindDescriptorHeaps(commands);
@@ -6231,7 +6231,6 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
                 std::snprintf(text, sizeof(text), "Vulkan dispatch: workgroup count %ux%ux%u%s exceeds device limits %ux%ux%u and the shader takes no workgroup offset", record.x, record.y, record.z, counted, limit[0], limit[1], limit[2]);
                 throw std::runtime_error(text);
             }
-            const auto bindPipeline = context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline");
             const auto dispatchChunk = context.Resolved(&Graphics::DeviceFunctions::cmdDispatch, "vkCmdDispatch");
             bool firstChunk = true;
             for (std::uint32_t zBase = 0; zBase < record.z; zBase += limit[2]) {
@@ -6239,7 +6238,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
                     for (std::uint32_t xBase = 0; xBase < record.x; xBase += limit[0]) {
                         if (!firstChunk) {
                             Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-                            bindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, splitComputePipeline(context, *record.shader->program, *record.objects, {xBase, yBase, zBase}));
+                            context.BindComputePipeline(commands, splitComputePipeline(context, *record.shader->program, *record.objects, {xBase, yBase, zBase}));
                         }
                         firstChunk = false;
                         dispatchChunk(commands, std::min(limit[0], record.x - xBase), std::min(limit[1], record.y - yBase), std::min(limit[2], record.z - zBase));
