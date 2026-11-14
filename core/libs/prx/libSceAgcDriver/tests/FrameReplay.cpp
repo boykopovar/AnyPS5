@@ -917,6 +917,8 @@ void onSharedSection(const std::function<void(const std::function<void(std::byte
         GuestArena::GuestArenaReset_nid_postfix(base, BlockBytes);
         GuestArena::GuestArenaMapDirect_nid_postfix(base, Bytes, backing.section, 0, PAGE_READWRITE);
         GuestArena::GuestArenaMapDirect_nid_postfix(base + Bytes, Bytes, backing.section, 0, PAGE_READWRITE);
+        GuestArena::GuestArenaCompareWhenShared_nid_no_patch(reinterpret_cast<std::uintptr_t>(base), 2 * Bytes);
+        AgcDriver::GuestMemory::Unwatch(at(base), 2 * Bytes);
     });
 #else
     const auto closeFile = [](std::FILE* file) { std::fclose(file); };
@@ -940,11 +942,13 @@ void testUnchangedSectionStoredOnce(const std::filesystem::path& tool) {
         const auto layout = allocate();
         const auto bulk = allocate();
         prepare(bulk.base);
+        check(!AgcDriver::GuestMemory::Watched(at(bulk.base), 4096), "the fixture needs a multi-mapped section block without write-watch coverage, as a title's shared section has");
         auto* const word = reinterpret_cast<std::uint32_t*>(bulk.base);
         auto output = std::make_shared<Output>();
         AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
         std::atomic_ref<std::uint32_t>(*word).store(0, std::memory_order_release);
         flip();
+        check(!AgcDriver::GuestMemory::Watched(at(bulk.base), 4096), "the multi-mapped section block was watched again once the capture started");
         copyFrame(layout.firstCommands, layout, layout.firstTarget);
         std::atomic_ref<std::uint32_t>(*word).store(Stored, std::memory_order_release);
         flip();
