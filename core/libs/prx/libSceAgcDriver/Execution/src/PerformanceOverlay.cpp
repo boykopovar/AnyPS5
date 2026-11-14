@@ -1177,10 +1177,11 @@ OverlayRect PerformanceOverlay::RecordRects(VkCommandBuffer commands, std::size_
     begin.framebuffer = framebuffer;
     begin.renderArea = area;
     context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, drawing);
-    const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
-    context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
-    context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &area);
+    Graphics::CommandState state;
+    state.Begin(commands, false);
+    state.BindPipeline(context, drawing, 0);
+    state.SetViewport(context, {0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f});
+    state.SetScissor(context, area);
     const OverlayParameters parameters{OverlayPalette(format, colorSpace), {static_cast<float>(extent.width), static_cast<float>(extent.height)}};
     context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), &parameters);
     const VkBuffer buffer = slot.rects->Handle();
