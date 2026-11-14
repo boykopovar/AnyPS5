@@ -568,6 +568,91 @@ void rangeFailureInVerify() {
     require(results.front().Status == VerifyStatus::Mismatch && results.front().Detail.find("PT_LOAD") != std::string::npos, "range failure should be a mismatch");
 }
 
+std::vector<std::uint8_t> peFixture() {
+    std::vector<std::uint8_t> bytes(0x600);
+    Io::WriteU16(bytes, 0, 0x5a4d);
+    Io::WriteU32(bytes, 0x3c, 0x80);
+    Io::WriteU32(bytes, 0x80, 0x4550);
+    Io::WriteU16(bytes, 0x84, 0x8664);
+    Io::WriteU16(bytes, 0x86, 2);
+    Io::WriteU16(bytes, 0x94, 240);
+    Io::WriteU16(bytes, 0x98, 0x20b);
+    const auto section = [&](const std::size_t index, const std::uint32_t rva, const std::uint32_t virtualSize, const std::uint32_t rawSize, const std::uint32_t rawOffset) {
+        const auto at = 0x188 + index * 40;
+        Io::WriteU32(bytes, at + 8, virtualSize);
+        Io::WriteU32(bytes, at + 12, rva);
+        Io::WriteU32(bytes, at + 16, rawSize);
+        Io::WriteU32(bytes, at + 20, rawOffset);
+    };
+    section(0, 0x10000, 0x2000, 0x200, 0x400);
+    section(1, 0x12000, 0x1000, 0, 0);
+    bytes[0x400] = 9;
+    bytes[0x401] = 8;
+    bytes[0x5ff] = 7;
+    return bytes;
+}
+
+void verifyWindowsOutput() {
+    const auto patch = [](const std::string& rva, const std::string& expected, const std::string& value, const std::string& target = "main.elf") {
+        return "[[patch]]\ntarget = \"" + target + "\"\nva = 0x1000\n" + (rva.empty() ? "" : "output_rva = " + rva + "\n") + "expected = \"" + expected + "\"\nvalue = \"" + value + "\"\n";
+    };
+    const std::string top = "main_target = \"main.elf\"\n";
+    const auto pe = peFixture();
+    const auto file = ParsePatchFile(header(top + patch("0x10000", "0001", "0908") + patch("0x101ff", "0101", "0700") + patch("0x10300", "ff", "00") + patch("0x12001", "ff", "01")
+                                            + patch("0x13800", "00", "01") + patch("0x11fff", "ffff", "0000") + patch("0x10000", "00", "01", "sce_module/libc.prx") + patch("0x12fff", "ffff", "0000")));
+    require(file.Entries[0].OutputRva == 0x10000, "output_rva was not read");
+    const auto results = VerifyPatches(file, {{"main.elf", pe}}, {}, true);
+    require(results[0].Status == VerifyStatus::Applied && results[0].Offset == 0x400 && results[0].VirtualAddress == 0x1000 && results[0].Detail == "0908", "PE entry in file data: " + results[0].Detail);
+    require(results[1].Status == VerifyStatus::Applied && results[1].Offset == 0x5ff, "PE entry crossing the end of the file data: " + results[1].Detail);
+    require(results[2].Status == VerifyStatus::Applied && results[2].Detail.find("not stored in the file") != std::string::npos, "PE entry in zero fill: " + results[2].Detail);
+    require(results[3].Status == VerifyStatus::Mismatch && results[3].Detail.find("expected 01 found 00") != std::string::npos, "PE entry in a section without file data: " + results[3].Detail);
+    require(results[4].Status == VerifyStatus::Mismatch && results[4].Detail.find("not inside the sections") != std::string::npos, "PE entry outside every section: " + results[4].Detail);
+    require(results[5].Status == VerifyStatus::Applied && results[5].Detail.find("not stored in the file") != std::string::npos, "PE entry across two sections: " + results[5].Detail);
+    require(results[6].Status == VerifyStatus::NotChecked, "PE module entry");
+    require(results[7].Status == VerifyStatus::Mismatch && results[7].Detail.find("not inside the sections") != std::string::npos, "PE entry past the last section: " + results[7].Detail);
+
+    auto unpatched = pe;
+    unpatched[0x400] = 0;
+    unpatched[0x401] = 1;
+    const auto single = ParsePatchFile(header(top + patch("0x10000", "0001", "0908")));
+    const auto missing = VerifyPatches(single, {{"main.elf", unpatched}}, {}, true);
+    require(missing[0].Status == VerifyStatus::Mismatch && missing[0].Detail.find("not applied") != std::string::npos, "unpatched PE output: " + missing[0].Detail);
+    auto truncated = pe;
+    truncated.resize(0x500);
+    const auto cut = VerifyPatches(ParsePatchFile(header(top + patch("0x10100", "00", "01"))), {{"main.elf", truncated}}, {}, true);
+    require(cut[0].Status == VerifyStatus::Mismatch && cut[0].Detail.find("out of bounds") != std::string::npos, "PE section data past the end of the file: " + cut[0].Detail);
+
+    rejects([&] { VerifyPatches(ParsePatchFile(header(top + patch("", "0001", "0908"))), {{"main.elf", pe}}, {}, true); }, "has no output_rva");
+    rejects([&] { VerifyPatches(ParsePatchFile(header(top + "linux_base = 0x400000\n" + patch("0x10000", "0001", "0908"))), {{"main.elf", pe}}, {}, true); }, "has linux_base = 0x400000");
+    rejects([&] { VerifyPatches(ParsePatchFile(header(top + patch("0x10000", "0001", "0908") + patch("0x10001", "01", "08"))), {{"main.elf", pe}}, {}, true); }, "overlaps");
+    for (const char* bad : {"\"0x10000\"", "-1", "0x100000000"}) rejectsText(header(patch(bad, "00", "01")), 5, "output_rva must be an integer from 0 to 0xffffffff");
+    require(ParsePatchFile(header(patch("0xffffffff", "00", "01"))).Entries[0].OutputRva == 0xffffffff, "largest output_rva was not read");
+    auto notPe = pe;
+    Io::WriteU16(notPe, 0x98, 0x10b);
+    rejects([&] { VerifyPatches(single, {{"main.elf", notPe}}, {}, true); }, "verify the input instead");
+    notPe = pe;
+    Io::WriteU16(notPe, 0x86, 0x4000);
+    rejects([&] { VerifyPatches(single, {{"main.elf", notPe}}, {}, true); }, "verify the input instead");
+
+    TestProgress progress;
+    const Conversion converter(progress);
+    ConversionOptions options;
+    options.TargetName = "custom-name.bin";
+    options.Target = TargetSystem::Windows;
+    options.Patches = {entry("custom-name.bin", 0x1001, {0}, {0x90}, "nop"), entry("sce_module/plugin.prx", 0x1002, {0}, {0x41})};
+    const auto converted = converter.Convert(conversionInput(conversionFixture()), options);
+    require(converted.AppliedPatches.size() == 2 && converted.AppliedPatches[0].OutputRva == 0x10001 && !converted.AppliedPatches[1].OutputRva, "Windows conversion did not record the executable entry's output_rva");
+    const auto text = WriteManifest(converted.AppliedPatches, "custom-name.bin", "");
+    require(text.find("va = 0x1001\noutput_rva = 0x10001\n") != std::string::npos && text.find("va = 0x1002\nexpected") != std::string::npos, "manifest output_rva: " + text);
+    const auto verified = VerifyPatches(ParsePatchFile(text), {{"custom-name.bin", converted.Executable}}, {}, true);
+    require(verified[0].Status == VerifyStatus::Applied && verified[1].Status == VerifyStatus::NotChecked, "converted PE output was not verified: " + verified[0].Detail);
+    auto tampered = converted.Executable;
+    tampered[verified[0].Offset] = 0;
+    require(VerifyPatches(ParsePatchFile(text), {{"custom-name.bin", tampered}}, {}, true)[0].Status == VerifyStatus::Mismatch, "tampered PE output was accepted");
+    options.Target = TargetSystem::Linux;
+    require(!converter.Convert(conversionInput(conversionFixture()), options).AppliedPatches[0].OutputRva, "Linux conversion recorded an output_rva");
+}
+
 void manifest() {
     const AppliedPatch first{"main.elf", 0x1000, 0x1000, {0, 1}, {9, 8}, "set \"x\" later", "alpha"};
     const AppliedPatch second{"sce_module/libc.prx", 0x2000, 0x2000, {5}, {6}, "", ""};
@@ -689,6 +774,7 @@ int main() {
         targets();
         verify();
         rangeFailureInVerify();
+        verifyWindowsOutput();
         manifest();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

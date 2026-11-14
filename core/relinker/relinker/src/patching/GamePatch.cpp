@@ -1,6 +1,7 @@
 #include <relinker/patching/GamePatch.hpp>
 #include <domain/Types.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <io/BufferUtils.hpp>
 #include <io/NativePath.hpp>
 #include <algorithm>
 #include <array>
@@ -35,7 +36,7 @@ constexpr std::array<IntegerType, 8> kIntegerTypes{{
 
 constexpr std::array<std::string_view, 8> kIgnoredTopLevelKeys{"relinker_version", "relinker_commit", "config", "config_sha256", "main_target", "linux_base", "settings", "settings_sha256"};
 constexpr std::array<std::string_view, 9> kReservedNames{"format", "relinker_version", "relinker_commit", "config", "config_sha256", "main_target", "linux_base", "settings", "settings_sha256"};
-constexpr std::array<std::string_view, 10> kEntryKeys{"name", "target", "va", "type", "expected", "value", "min", "max", "align", "description"};
+constexpr std::array<std::string_view, 11> kEntryKeys{"name", "target", "va", "output_rva", "type", "expected", "value", "min", "max", "align", "description"};
 
 std::string HexValue(const std::uint64_t value) {
     std::ostringstream stream;
@@ -204,6 +205,11 @@ PatchEntry BuildEntry(const Table& table, const std::size_t headerLine, std::set
     const auto& address = require("va");
     if (address.IsString || address.Number.Negative) FailLine(address.Line, "va must be a nonnegative integer", address.Text);
     entry.VirtualAddress = address.Number.Magnitude;
+    if (const auto* outputRva = Find(table, "output_rva")) {
+        if (outputRva->IsString || outputRva->Number.Negative || outputRva->Number.Magnitude > std::numeric_limits<std::uint32_t>::max())
+            FailLine(outputRva->Line, "output_rva must be an integer from 0 to 0xffffffff", outputRva->Text);
+        entry.OutputRva = static_cast<std::uint32_t>(outputRva->Number.Magnitude);
+    }
     const auto& expected = require("expected");
     const auto& replacement = require("value");
     if (const auto* description = Find(table, "description")) {
@@ -320,6 +326,19 @@ bool IsElfOfType(const std::vector<std::uint8_t>& bytes, const std::uint16_t typ
     return bytes.size() >= 18 && bytes[0] == 0x7f && bytes[1] == 'E' && bytes[2] == 'L' && bytes[3] == 'F' && bytes[16] == (type & 0xff) && bytes[17] == (type >> 8);
 }
 
+void Compare(VerifyResult& result, const PatchEntry& entry, const std::vector<std::uint8_t>& found, const bool outputMode) {
+    const auto& wanted = outputMode ? entry.Value : entry.Expected;
+    const auto& other = outputMode ? entry.Expected : entry.Value;
+    if (found == wanted) {
+        result.Status = outputMode ? VerifyStatus::Applied : VerifyStatus::Applicable;
+        result.Detail = Hex(found);
+    } else if (found == other) {
+        result.Detail = outputMode ? "patch is not applied: found " + Hex(found) : "input already holds the patched value " + Hex(found);
+    } else {
+        result.Detail = "expected " + Hex(wanted) + " found " + Hex(found);
+    }
+}
+
 VerifyResult VerifyOne(const PatchEntry& entry, const EntryRange& resolved, const std::vector<std::uint8_t>& bytes, const bool outputMode) {
     VerifyResult result;
     result.Name = entry.Name;
@@ -331,17 +350,62 @@ VerifyResult VerifyOne(const PatchEntry& entry, const EntryRange& resolved, cons
     }
     result.Offset = resolved.Range->Offset;
     const auto first = bytes.begin() + static_cast<std::ptrdiff_t>(resolved.Range->Offset);
-    const std::vector<std::uint8_t> found(first, first + static_cast<std::ptrdiff_t>(resolved.Range->Length));
-    const auto& wanted = outputMode ? entry.Value : entry.Expected;
-    const auto& other = outputMode ? entry.Expected : entry.Value;
-    if (found == wanted) {
-        result.Status = outputMode ? VerifyStatus::Applied : VerifyStatus::Applicable;
-        result.Detail = Hex(found);
-    } else if (found == other) {
-        result.Detail = outputMode ? "patch is not applied: found " + Hex(found) : "input already holds the patched value " + Hex(found);
-    } else {
-        result.Detail = "expected " + Hex(wanted) + " found " + Hex(found);
+    Compare(result, entry, std::vector<std::uint8_t>(first, first + static_cast<std::ptrdiff_t>(resolved.Range->Length)), outputMode);
+    return result;
+}
+
+struct PeSectionRange {
+    std::uint64_t Rva = 0;
+    std::uint64_t VirtualSize = 0;
+    std::uint64_t RawSize = 0;
+    std::uint64_t RawOffset = 0;
+};
+
+std::optional<std::vector<PeSectionRange>> ReadPeSections(const std::vector<std::uint8_t>& bytes) {
+    if (bytes.size() < 0x40 || bytes[0] != 'M' || bytes[1] != 'Z') return std::nullopt;
+    const std::uint64_t header = Io::ReadU32(bytes, 0x3c);
+    if (header > bytes.size() || bytes.size() - header < 26 || Io::ReadU32(bytes, header) != 0x4550 || Io::ReadU16(bytes, header + 24) != 0x20b) return std::nullopt;
+    const std::uint64_t table = header + 24 + Io::ReadU16(bytes, header + 20);
+    const std::uint64_t count = Io::ReadU16(bytes, header + 6);
+    if (table > bytes.size() || count * 40 > bytes.size() - table) return std::nullopt;
+    std::vector<PeSectionRange> sections;
+    for (std::uint64_t index = 0; index < count; ++index) {
+        const auto at = static_cast<std::size_t>(table + index * 40);
+        sections.push_back({Io::ReadU32(bytes, at + 12), Io::ReadU32(bytes, at + 8), Io::ReadU32(bytes, at + 16), Io::ReadU32(bytes, at + 20)});
     }
+    return sections;
+}
+
+VerifyResult VerifyPeEntry(const PatchEntry& entry, const std::vector<PeSectionRange>& sections, const std::vector<std::uint8_t>& bytes) {
+    VerifyResult result;
+    result.Name = entry.Name;
+    result.Target = entry.Target;
+    result.VirtualAddress = entry.VirtualAddress;
+    std::vector<std::uint8_t> found(entry.Value.size());
+    std::vector<bool> mapped(found.size());
+    bool stored = false;
+    for (const auto& section : sections) {
+        for (std::size_t index = 0; index < found.size(); ++index) {
+            const std::uint64_t rva = std::uint64_t{*entry.OutputRva} + index;
+            if (rva < section.Rva || rva - section.Rva >= section.VirtualSize) continue;
+            mapped[index] = true;
+            const std::uint64_t delta = rva - section.Rva;
+            if (delta >= section.RawSize) continue;
+            if (section.RawOffset > bytes.size() || delta >= bytes.size() - section.RawOffset) {
+                result.Detail = "section file data is out of bounds";
+                return result;
+            }
+            found[index] = bytes[static_cast<std::size_t>(section.RawOffset + delta)];
+            if (index == 0) result.Offset = section.RawOffset + delta;
+            stored = true;
+        }
+    }
+    if (std::find(mapped.begin(), mapped.end(), false) != mapped.end()) {
+        result.Detail = "range is not inside the sections of the PE output";
+        return result;
+    }
+    Compare(result, entry, found, true);
+    if (!stored) result.Detail += " (zero fill, not stored in the file)";
     return result;
 }
 
@@ -551,6 +615,7 @@ std::string WriteManifest(const std::vector<AppliedPatch>& patches, const std::s
         manifest << "\n[[patch]]\n";
         if (!patch.Name.empty()) manifest << "name = " << quoted(patch.Name, "name") << '\n';
         manifest << "target = " << quoted(patch.Target, "target") << "\nva = " << HexValue(patch.VirtualAddress) << '\n';
+        if (patch.OutputRva) manifest << "output_rva = " << HexValue(*patch.OutputRva) << '\n';
         if (patch.Type.empty()) {
             manifest << "expected = \"" << Hex(patch.Expected) << "\"\nvalue = \"" << Hex(patch.Value) << "\"\n";
         } else {
@@ -581,8 +646,12 @@ std::vector<VerifyResult> VerifyPatches(const PatchFile& file, const std::vector
             for (std::size_t other = index + 1; other < executables.size(); ++other)
                 if (executables[index].Name == executables[other].Name) throw Domain::RelinkerException("ambiguous patch target: " + executables[index].Name);
         for (const auto& executable : executables) {
+            if (ReadPeSections(executable.Bytes)) {
+                if (file.LinuxBase) throw Domain::RelinkerException(executable.Name + " is a Windows PE output, but the patch file has linux_base = " + HexValue(*file.LinuxBase) + ": verify the output of the conversion that wrote it");
+                continue;
+            }
             const bool fixed = IsElfOfType(executable.Bytes, Elfpatcher::ET_EXEC);
-            if (!fixed && !IsElfOfType(executable.Bytes, Elfpatcher::ET_DYN)) throw Domain::RelinkerException(executable.Name + " is not a Linux ELF output (PE and Mach-O outputs are not supported): verify the input instead");
+            if (!fixed && !IsElfOfType(executable.Bytes, Elfpatcher::ET_DYN)) throw Domain::RelinkerException(executable.Name + " is not a Linux ELF or Windows PE output (Mach-O outputs are not supported): verify the input instead");
             if (fixed && !file.LinuxBase) throw Domain::RelinkerException(executable.Name + " is an ET_EXEC Linux ELF output, but the patch file has no linux_base: verify the manifest written by its conversion");
             if (!fixed && file.LinuxBase) throw Domain::RelinkerException(executable.Name + " is an ET_DYN Linux ELF output, but the patch file has linux_base = " + HexValue(*file.LinuxBase) + ": verify the output of the conversion that wrote it");
         }
@@ -610,6 +679,23 @@ std::vector<VerifyResult> VerifyPatches(const PatchFile& file, const std::vector
             for (const auto other : indices) {
                 const auto& entry = file.Entries[other];
                 results[other] = {entry.Name, entry.Target, entry.VirtualAddress, 0, VerifyStatus::NotChecked, "module, or executable not named with --executable"};
+                done[other] = true;
+            }
+            continue;
+        }
+        if (const auto sections = outputMode ? ReadPeSections(target->Bytes) : std::nullopt) {
+            std::vector<PatchEntry> own;
+            std::vector<EntryRange> ranges;
+            for (const auto other : indices) {
+                const auto& entry = file.Entries[other];
+                ValidateWidth(entry);
+                if (!entry.OutputRva) throw Domain::RelinkerException(Describe(entry) + " has no output_rva, but " + name + " is a Windows PE output: verify the manifest written by its conversion");
+                own.push_back(entry);
+                ranges.push_back({PatchedRange{*entry.OutputRva, entry.Value.size(), entry.VirtualAddress}, {}});
+            }
+            RejectEntryOverlaps(own, ranges);
+            for (const auto other : indices) {
+                results[other] = VerifyPeEntry(file.Entries[other], *sections, target->Bytes);
                 done[other] = true;
             }
             continue;

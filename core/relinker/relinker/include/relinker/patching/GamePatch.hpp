@@ -36,6 +36,7 @@ struct PatchEntry {
     std::optional<PatchInteger> Max;
     std::optional<PatchInteger> Align;
     std::size_t Line = 0;
+    std::optional<std::uint32_t> OutputRva;
 };
 
 struct PatchFile {
@@ -64,6 +65,7 @@ struct AppliedPatch {
     std::optional<PatchInteger> Min;
     std::optional<PatchInteger> Max;
     std::optional<PatchInteger> Align;
+    std::optional<std::uint32_t> OutputRva;
 };
 
 struct PatchedTarget {
