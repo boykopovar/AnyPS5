@@ -680,6 +680,46 @@ void releasedEpochTests(Context context) {
     std::puts("template over a released texture in the same collect epoch passed");
 }
 
+void epochReuseTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    WatchedSurface surface(context);
+    ClearCachedTextures(context.device);
+    Require(ShaderResources::EpochProofs(), "the default committer configuration does not enable epoch proofs");
+    const auto program = SampledProgram(surface.Address());
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto* bytes = reinterpret_cast<std::uint8_t*>(surface.Address());
+    const auto reused = [&](const char* label) {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        auto resources = std::make_shared<ShaderResources>(context, shader);
+        Require(resources->Reusable() && resources->SampledTextures().size() == 1, label);
+        ShaderResources::ProofReport report{};
+        Require(resources->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast, "a fresh template did not prove current through the full proof");
+        Require(resources->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Full && report.failure == ShaderResources::ProofFailure::None, "an unchanged template in the same collect epoch did not reuse its resource proof");
+        return resources;
+    };
+    ShaderResources::ProofReport report{};
+    auto broken = reused("the proof-invalidation template is not reusable");
+    bytes[0] = static_cast<std::uint8_t>(bytes[0] ^ 0xffu);
+    AgcDriver::GuestMemory::CollectWritesUncached(surface.Address(), SurfaceBytes);
+    AgcDriver::GuestMemory::BreakProofs();
+    Require(!broken->Revalidate(shader, &report), "a template over a surface collected as written before a proof invalidation proved current");
+    Require(Sampled(context, surface.Address()) != broken->SampledTextures().front(), "the lookup after the collected write handed back the stale texture");
+    broken.reset();
+    ClearCachedTextures(context.device);
+    auto advanced = reused("the next-epoch template is not reusable");
+    bytes[0] = static_cast<std::uint8_t>(bytes[0] ^ 0xffu);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(!advanced->Revalidate(shader, &report), "a template over a surface written before the next collect epoch proved current");
+    const auto updated = Sampled(context, surface.Address());
+    Require(updated != advanced->SampledTextures().front(), "the lookup after the write handed back the stale texture");
+    advanced.reset();
+    ClearCachedTextures(context.device);
+    std::puts("resource proof reuse and invalidation passed");
+}
+
 bool lookupChangedTests(Context context) {
     PlaceholderImages placeholders(context);
     context.placeholderImages = &placeholders;
@@ -1587,6 +1627,12 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             releasedEpochTests(context);
             std::puts("resource cache released epoch tests passed");
+            return 0;
+        }
+        if (mode == "resource-epoch-reuse") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            epochReuseTests(context);
+            std::puts("resource cache epoch reuse tests passed");
             return 0;
         }
         if (mode == "resource-lookup-changed") {
