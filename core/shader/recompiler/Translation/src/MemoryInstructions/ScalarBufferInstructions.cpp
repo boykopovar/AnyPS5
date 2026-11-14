@@ -85,6 +85,45 @@ bool TranslationContext::sStore(const RdnaInstruction& inst, bool raw) {
     return true;
 }
 
+bool TranslationContext::sAtomic(const RdnaInstruction& inst, IrOpcode opcode) {
+    // SMEM atomics always target LDS: the base pair holds a byte address, the soffset SGPR is added
+    // to it, and the 21-bit immediate follows the same byte scale as s_load.
+    if (inst.family != RdnaInstructionFamily::SMEM) {
+        throw std::runtime_error("sAtomic requires an SMEM instruction");
+    }
+    MemoryInfo memory;
+    memory.kind = ResourceKind::Lds;
+    memory.offset = inst.memoryOffset;
+    memory.dataDwords = inst.dataDwordCount;
+    memory.dataBits = 32u;
+    memory.componentCount = inst.dataDwordCount;
+    const IrU32 base = readU32(inst.source0);
+    const IrU32 soffset = readU32(inst.source1);
+    const IrU32 address(ir.Emit(IrOpcode::IAdd32, IrType::U32, {&base.Value(), &soffset.Value()}));
+    IrValue& active = ir.GetExec();
+    IrValue* result;
+    const bool wide = IrOpcodeType(opcode) == IrType::U64;
+    if (opcode == IrOpcode::SharedAtomicCmpst32 || opcode == IrOpcode::SharedAtomicCmpst64) {
+        if (wide) {
+            const IrU64 desired = readU64(inst.source2);
+            const IrU64 comparator = readU64(offsetOperand(inst.source2, 2u));
+            result = &ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &desired.Value(), &comparator.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
+        } else {
+            const IrU32 desired = readU32(inst.source2);
+            const IrU32 comparator = readU32(offsetOperand(inst.source2, 1u));
+            result = &ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &desired.Value(), &comparator.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
+        }
+    } else if (wide) {
+        const IrU64 value = readU64(inst.source2);
+        result = &ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &value.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
+    } else {
+        const IrU32 value = readU32(inst.source2);
+        result = &ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &value.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
+    }
+    writeOperand(inst.destination, result);
+    return true;
+}
+
 bool TranslationContext::sScratchLoad(const RdnaInstruction& /*inst*/) {
     throw std::runtime_error("s_scratch_load not yet implemented: wave-uniform or swizzled scratch layout required");
 }

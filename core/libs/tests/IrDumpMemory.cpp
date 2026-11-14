@@ -98,11 +98,31 @@ static void CheckScalarStore() {
     Require(Lines(dump, "LoadAddressU32").empty(), dump + "\nexpected no loads from a store");
 }
 
+static void CheckScalarAtomic() {
+    IrProgram program;
+    Translate(program, {
+        Smem(0x100u, 0x82u, 6u, 0u, 0x18u),
+        Smem(0x110u, 0x81u, 8u, 2u, 0x1cu),
+        Smem(0x120u, 0xa2u, 10u, 4u, 0x20u),
+        Smem(0x130u, 0x8bu, 16u, 0u, 0x24u),
+    });
+    const auto dump = ProgramToString(program);
+    RequireLines(dump, "SharedAtomicIAdd32", {" [pc=0x00000100 off=0x18]"});
+    RequireLines(dump, "SharedAtomicCmpst32", {" [pc=0x00000110 off=0x1c]"});
+    RequireLines(dump, "SharedAtomicIAdd64", {" [pc=0x00000120 off=0x20]"});
+    RequireLines(dump, "SharedAtomicInc32", {" [pc=0x00000130 off=0x24]"});
+    Require(Lines(dump, "IAdd32").size() == 4u, dump + "\nexpected one byte-address add per atomic");
+    Require(Lines(dump, "LoadAddressU32").empty(), dump + "\nexpected no global loads from an LDS atomic");
+    Require(dump.find("SetScalarRegister s6") != std::string::npos, dump + "\nexpected the 32-bit old value in s6");
+    Require(dump.find("SetScalarRegister s10") != std::string::npos, dump + "\nexpected the 64-bit old value in s10");
+}
+
 int main() {
     try {
         CheckOffsets();
         CheckMissingMemoryInfo();
         CheckScalarStore();
+        CheckScalarAtomic();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

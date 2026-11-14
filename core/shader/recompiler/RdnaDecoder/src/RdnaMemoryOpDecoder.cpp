@@ -70,6 +70,32 @@ constexpr MemoryOpcodeInfo smemOpcodes[] = {
     {0x10u, RdnaOpcode::SStoreDword, 1, 32, false, false, false},
     {0x11u, RdnaOpcode::SStoreDwordx2, 2, 32, false, false, false},
     {0x12u, RdnaOpcode::SStoreDwordx4, 4, 32, false, false, false},
+    {0x80u, RdnaOpcode::SAtomicSwap, 1, 32, false, false, false},
+    {0x81u, RdnaOpcode::SAtomicCmpswap, 1, 32, false, false, false},
+    {0x82u, RdnaOpcode::SAtomicAdd, 1, 32, false, false, false},
+    {0x83u, RdnaOpcode::SAtomicSub, 1, 32, false, false, false},
+    {0x84u, RdnaOpcode::SAtomicSmin, 1, 32, false, false, false},
+    {0x85u, RdnaOpcode::SAtomicUmin, 1, 32, false, false, false},
+    {0x86u, RdnaOpcode::SAtomicSmax, 1, 32, false, false, false},
+    {0x87u, RdnaOpcode::SAtomicUmax, 1, 32, false, false, false},
+    {0x88u, RdnaOpcode::SAtomicAnd, 1, 32, false, false, false},
+    {0x89u, RdnaOpcode::SAtomicOr, 1, 32, false, false, false},
+    {0x8au, RdnaOpcode::SAtomicXor, 1, 32, false, false, false},
+    {0x8bu, RdnaOpcode::SAtomicInc, 1, 32, false, false, false},
+    {0x8cu, RdnaOpcode::SAtomicDec, 1, 32, false, false, false},
+    {0xa0u, RdnaOpcode::SAtomicSwapX2, 2, 32, false, false, false},
+    {0xa1u, RdnaOpcode::SAtomicCmpswapX2, 2, 32, false, false, false},
+    {0xa2u, RdnaOpcode::SAtomicAddX2, 2, 32, false, false, false},
+    {0xa3u, RdnaOpcode::SAtomicSubX2, 2, 32, false, false, false},
+    {0xa4u, RdnaOpcode::SAtomicSminX2, 2, 32, false, false, false},
+    {0xa5u, RdnaOpcode::SAtomicUminX2, 2, 32, false, false, false},
+    {0xa6u, RdnaOpcode::SAtomicSmaxX2, 2, 32, false, false, false},
+    {0xa7u, RdnaOpcode::SAtomicUmaxX2, 2, 32, false, false, false},
+    {0xa8u, RdnaOpcode::SAtomicAndX2, 2, 32, false, false, false},
+    {0xa9u, RdnaOpcode::SAtomicOrX2, 2, 32, false, false, false},
+    {0xaau, RdnaOpcode::SAtomicXorX2, 2, 32, false, false, false},
+    {0xabu, RdnaOpcode::SAtomicIncX2, 2, 32, false, false, false},
+    {0xacu, RdnaOpcode::SAtomicDecX2, 2, 32, false, false, false},
 };
 
 constexpr MemoryOpcodeInfo mubufOpcodes[] = {
@@ -590,6 +616,39 @@ bool isSmemStoreOpcode(RdnaOpcode opcode) {
     }
 }
 
+bool isSmemAtomicOpcode(RdnaOpcode opcode) {
+    switch (opcode) {
+        case RdnaOpcode::SAtomicSwap:
+        case RdnaOpcode::SAtomicSwapX2:
+        case RdnaOpcode::SAtomicCmpswap:
+        case RdnaOpcode::SAtomicCmpswapX2:
+        case RdnaOpcode::SAtomicAdd:
+        case RdnaOpcode::SAtomicAddX2:
+        case RdnaOpcode::SAtomicSub:
+        case RdnaOpcode::SAtomicSubX2:
+        case RdnaOpcode::SAtomicSmin:
+        case RdnaOpcode::SAtomicSminX2:
+        case RdnaOpcode::SAtomicUmin:
+        case RdnaOpcode::SAtomicUminX2:
+        case RdnaOpcode::SAtomicSmax:
+        case RdnaOpcode::SAtomicSmaxX2:
+        case RdnaOpcode::SAtomicUmax:
+        case RdnaOpcode::SAtomicUmaxX2:
+        case RdnaOpcode::SAtomicAnd:
+        case RdnaOpcode::SAtomicAndX2:
+        case RdnaOpcode::SAtomicOr:
+        case RdnaOpcode::SAtomicOrX2:
+        case RdnaOpcode::SAtomicXor:
+        case RdnaOpcode::SAtomicXorX2:
+        case RdnaOpcode::SAtomicInc:
+        case RdnaOpcode::SAtomicIncX2:
+        case RdnaOpcode::SAtomicDec:
+        case RdnaOpcode::SAtomicDecX2:
+            return true;
+        default: return false;
+    }
+}
+
 bool isDsSrc2Opcode(RdnaOpcode opcode) {
     switch (opcode) {
         case RdnaOpcode::DsAddSrc2U32:
@@ -798,7 +857,14 @@ RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);
 
-    if (isSmemStoreOpcode(instruction.op)) {
+    if (isSmemAtomicOpcode(instruction.op)) {
+        if (sdst > 105u) {
+            throw std::runtime_error("SMEM atomic data register is not an SGPR");
+        }
+        instruction.source2 = scalarSource(sdst);
+        instruction.destination = scalarDestination(sdst);
+        instruction.sourceCount = 3;
+    } else if (isSmemStoreOpcode(instruction.op)) {
         if (sdst > 105u) {
             throw std::runtime_error("SMEM store data register is not an SGPR");
         }
