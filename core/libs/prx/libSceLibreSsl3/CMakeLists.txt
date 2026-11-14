@@ -73,6 +73,20 @@ target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RsaCrypto
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/EcKey.cpp)
 target_include_directories(libSceLibreSsl3 PRIVATE $<TARGET_PROPERTY:mbedcrypto,INTERFACE_INCLUDE_DIRECTORIES>)
 
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509ExtensionStack.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_x509_extension_stack_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509ExtensionStack.cpp)
+    target_include_directories(guest_libressl3_x509_extension_stack_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_x509_extension_stack_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_x509_extension_stack_tests)
+    add_test(NAME guest_libressl3_x509_extension_stack COMMAND guest_libressl3_x509_extension_stack_tests)
+    set_tests_properties(guest_libressl3_x509_extension_stack PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_x509_extension_stack PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1Values.cpp)
 
 if(BUILD_TESTING)
