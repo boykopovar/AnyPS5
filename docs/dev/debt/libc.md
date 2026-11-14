@@ -1,5 +1,8 @@
 # libc technical debt
 
+- [NID breakpoint table: command input and name lookup](../../../core/libs/prx/libc/src/DebugNidBreakpoints.cpp) (libc): the table only records NIDs from `ANYPS5_DEBUG_NIDS`. No call path consults it, no command channel is read, and no name is resolved through a name table. The command and name parts are not built; they are follow-up pull requests.
+- [NID stop registry](../../../core/libs/prx/libc/src/DebugNidStops.cpp) (libc): `Hit` blocks the calling thread until `Continue` with its id, and holds no registry or table lock while it waits. Nothing checks that the caller holds no host lock, no call path calls `Hit` yet, and there is no timeout, so a stopped thread that another thread waits for stalls the title. The registry holds 64 stops; a full registry returns at once and counts the skipped hit. It keeps at most six argument words, because the relinker does not record how many arguments an import takes.
+### Debugger breakpoints
 ### Silent stubs
 
 - [_Mtx_current_owns](../../../core/libs/prx/libc/src/Threads.cpp) (libSceLibcInternal, implemented in libc, NID `VYQwFs4CC4Y`) returns 1 and ignores its argument. This follows the PS5 12.00 body reading reported in [PR8859](https://github.com/boykopovar/AnyPS5/pull/8859), rather than inspecting host mutex ownership. The firmware observation is attributed to that contributor; other firmware versions and the argument's console type remain unverified.
