@@ -6536,6 +6536,7 @@ void addressSpaceTeardownTests() {
         Require(!memory.HoldsLease(), "completed address-based build kept its own lease");
     }
     AgcDriver::Graphics::ClearImageMirrors(context.device);
+    AgcDriver::Graphics::ClearUploadCopies(context.device);
     GuestHeap::GuestHeapFree_nid_postfix(block);
     Require(AgcDriver::Graphics::LeaseCounters().cacheDrops == before, "device teardown left the cached address space pinning guest allocations");
     Require(mock.live == 0, "address-space teardown test leaked Vulkan objects");

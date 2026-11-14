@@ -5691,6 +5691,109 @@ void verifyImageTableFirstLaneScale() {
     require(codes.size() == 4u && codes[0] == codes[3] && codes[2] == Abi::NullCode && codes[1] != codes[0] && (codes[0] & Abi::PoisonFlag) == 0u && (codes[1] & Abi::PoisonFlag) == 0u, "image table first-lane scale: the table map is wrong");
 }
 
+void verifyImageTableKeyBounds() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    for (std::uint32_t entry = 0; entry < 32u; entry++) heap[entry] = TableT(textures[entry % 2u].bytes.data(), entry % 2u == 0u ? TableFormat8888UNorm : TableFormat32UInt, TableType2D, entry + 1u);
+    const auto userData = TableUserData(guest);
+    const auto wholeWith = [](std::initializer_list<std::uint32_t> words) {
+        std::vector<std::uint32_t> code(TableWholeCode);
+        const auto first = std::find(code.begin(), code.end(), 0x7e200500u);
+        require(first != code.end(), "image table key bounds: the program has no v_readfirstlane key");
+        code.insert(first, words);
+        return code;
+    };
+    const auto columnOf = [](const IrResourcePlan& plan) {
+        require(plan.info.images.size() == 1u && plan.info.images[0].table == 0u, "image table key bounds: the T# was not planned as a table");
+        const auto& column = plan.descriptorSources.at(plan.info.images[0].source).tableColumn;
+        require(column.has_value(), "image table key bounds: the table has no column");
+        return *column;
+    };
+    {
+        FillTableSrt(guest, heap.data(), 32u, 4u);
+        const auto code = wholeWith({0x36000083u, 0x4a000081u, 0x36000083u});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 3u, "image table key bounds: (i + 1) & 3 was bounded below its keys");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 4u && snapshot.records == 4u && !snapshot.outside && snapshot.codes.size() == 4u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: the ring index did not enumerate its four keys");
+        for (std::uint32_t key = 0u; key < 4u; key++) require(TableCovered(compiled.regions, heap[key].data(), sizeof(heap[key])), "image table key bounds: a ring key's record was not captured");
+    }
+    {
+        FillTableSrt(guest, heap.data(), 32u, 4u);
+        const auto code = wholeWith({0x7e007400u, 0x4a000081u, 0x3600009fu});
+        const auto plan = GetResourcePlan(TableRequest(code, userData));
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 31u && Abi::KeyRecords(column.maxKey, column.stride) == 32u, "image table key bounds: (findLSB(m) + 1) & 31 was not bounded to 32 keys");
+    }
+    {
+        FillTableSrt(guest, heap.data(), 32u, 32u);
+        const auto code = wholeWith({0x4a000081u, 0x3600009fu});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 31u, "image table key bounds: a bounded key lost its 32-key bound");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 32u && snapshot.records == 32u && !snapshot.outside && snapshot.codes.size() == 32u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: a bounded key did not enumerate 32 keys");
+        require(TableCovered(compiled.regions, heap[31].data(), sizeof(heap[31])), "image table key bounds: the last bounded key's record was not captured");
+    }
+    {
+        FillTableSrt(guest, heap.data(), 32u, 4u);
+        auto code = TableMaterialCode;
+        const auto scaled = std::find(code.begin(), code.end(), 0x93109010u);
+        require(scaled != code.end(), "image table key bounds: the material program has no key scale");
+        *scaled = 0x87108f10u;
+        code.insert(scaled + 1, 0x81108110u);
+        const auto plan = GetResourcePlan(TableRequest(code, userData));
+        const auto column = columnOf(*plan);
+        require(column.keyDomains.size() == 1u && column.keyDomains[0].stride == 4u, "image table key bounds: an offset add changed the key domain's four-byte stride");
+    }
+    {
+        for (std::uint32_t entry = 0; entry < 128u; entry++) heap[entry] = TableT(textures[entry % 2u].bytes.data(), entry % 2u == 0u ? TableFormat8888UNorm : TableFormat32UInt, TableType2D, entry + 1u);
+        FillTableSrt(guest, heap.data(), 32u, 128u);
+        const auto code = wholeWith({0x260000c0u});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 64u && Abi::KeyRecords(column.maxKey, column.stride) == 65u, "image table key bounds: a v_min_u32 clamp was not bounded to its 65 keys");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 65u && snapshot.records == 65u && !snapshot.outside && snapshot.codes.size() == 65u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: a v_min_u32 clamp did not enumerate 65 keys");
+        require(TableCovered(compiled.regions, heap[64].data(), sizeof(heap[64])), "image table key bounds: the last clamped key's record was not captured");
+    }
+    {
+        FillTableSrt(guest, heap.data(), 32u, 128u);
+        const auto code = wholeWith({0x7e007500u, 0x7e027501u, 0x4a000101u});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 62u && Abi::KeyRecords(column.maxKey, column.stride) == 63u, "image table key bounds: adding two findLSB sentinels was not bounded to their sum");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 63u && snapshot.records == 63u && !snapshot.outside && snapshot.codes.size() == 63u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: adding two findLSB bounds did not enumerate 63 keys");
+        require(TableCovered(compiled.regions, heap[62].data(), sizeof(heap[62])), "image table key bounds: the last summed findLSB key's record was not captured");
+    }
+    {
+        FillTableSrt(guest, heap.data(), 32u, 128u);
+        const auto code = wholeWith({0x7e007500u, 0x280000a8u});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 40u && Abi::KeyRecords(column.maxKey, column.stride) == 41u, "image table key bounds: an unsigned max of a findLSB sentinel and 40 was not bounded to 40");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 41u && snapshot.records == 41u && !snapshot.outside && snapshot.codes.size() == 41u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: the sentinel-preserving unsigned max did not enumerate 41 keys");
+        require(TableCovered(compiled.regions, heap[40].data(), sizeof(heap[40])), "image table key bounds: the unsigned max key's record was not captured");
+    }
+}
+
 void verifyImageTableRegistration() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -12260,6 +12363,7 @@ int main(int argc, char** argv) {
             verifyImageTableSrtKey();
             verifyImageTableMaskedOffset();
             verifyImageTableFirstLaneScale();
+            verifyImageTableKeyBounds();
             verifyImageTableKeyUnion();
             verifyImageTableLateKey();
             verifyImageTableUnkeyedAccess();
@@ -12374,6 +12478,7 @@ int main(int argc, char** argv) {
         verifyTargetFeatureKey();
         verifyImageTableKeys();
         verifyImageTables();
+        verifyImageTableKeyBounds();
         verifySpecializedModuleRelease();
         verifyRebuiltModuleKeepsWords();
         verifyLayerSpecializationRelease();

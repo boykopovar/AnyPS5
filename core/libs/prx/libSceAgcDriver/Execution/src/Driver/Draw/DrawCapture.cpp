@@ -50,10 +50,15 @@ void TraceMaterializationFailure(std::uint64_t token, const Submission& submissi
 
 std::uint64_t UserDataMask(const DrawProgram& program, const std::optional<ShaderRecompiler::ShaderVertexStageInfo>& vertexInfo, std::uint64_t walked, const ShaderRecompiler::RecompileResult& compiled) {
     std::uint64_t mask = walked | compiled.userDataRegisterReads;
-    const auto& tail = program.snapshot->userDataTailRegister;
-    if (tail && *tail >= program.firstUserSgpr) {
-        const auto index = *tail - program.firstUserSgpr;
-        mask |= index + 1u < 64u ? std::uint64_t{3} << index : ~std::uint64_t{0};
+    if (program.snapshot) {
+        const auto& tail = program.snapshot->userDataTailRegister;
+        if (tail && *tail >= program.firstUserSgpr) {
+            const auto index = *tail - program.firstUserSgpr;
+            mask |= index + 1u < 64u ? std::uint64_t{3} << index : ~std::uint64_t{0};
+        } else if (tail) {
+            return ~std::uint64_t{0};
+        }
+        if (StageLinksUserDataCallees(*program.snapshot, program.codeOffset)) return ~std::uint64_t{0};
     }
     if (vertexInfo) {
         for (const auto reg : {static_cast<std::uint32_t>(vertexInfo->fetchAttribReg), static_cast<std::uint32_t>(vertexInfo->fetchBufferReg)}) mask |= reg + 1u < 64u ? std::uint64_t{3} << reg : ~std::uint64_t{0};
@@ -293,7 +298,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     stageCapture.capture = capture;
     timing.Mark("materialize");
     const auto walked = capture->userDataUse.asValue | capture->userDataUse.asBase;
-    stageCapture.userDataMask = walked == 0 ? ~std::uint64_t{0} : UserDataMask(program, context.vertexInfos[i], walked, *stageCapture.compiled);
+    stageCapture.userDataMask = capture->plan == nullptr || !capture->plan->srtPlanComplete ? ~std::uint64_t{0} : UserDataMask(program, context.vertexInfos[i], walked, *stageCapture.compiled);
     context.phaseTiming.Phase(DrawRowRecompile);
     return stageCapture.compiled;
 } catch (const std::exception& error) {

@@ -134,6 +134,7 @@ void snapshotTableTests(const Context& context, const BdaTestAccess& access) {
             Require(a.memory->CachedAddressTable()->serial == b.memory->CachedAddressTable()->serial && c.memory->CachedAddressTable()->serial != a.memory->CachedAddressTable()->serial, "cached BDA table serials do not follow the build's ranges");
         }
         ClearSnapshotCopies(importing.device);
+        ClearUploadCopies(importing.device);
         auto e = build(first, false, true, snapshotAddress);
         Require(e.snapshot != a.snapshot, "a snapshot copy outlived the teardown of its device's copies");
         for (auto* item : {&a, &b, &c, &d, &e, &plain}) item->memory->WriteBack();
@@ -161,6 +162,7 @@ void snapshotTableTests(const Context& context, const BdaTestAccess& access) {
         for (auto& item : builds) item.memory->WriteBack();
     }
     ClearSnapshotCopies(importing.device);
+    ClearUploadCopies(importing.device);
     change(false);
     ::operator delete(block, std::align_val_t{piece});
 }
@@ -307,6 +309,7 @@ void fixedReadOnlyRangeMirrorTests(const Context& context, const BdaTestAccess& 
     upload(copying, reinterpret_cast<std::uintptr_t>(block), 64, false, 0, "a guest buffer inside a releasable read-only allocation is mirrored as a fixed range");
     registry(false);
     ClearSnapshotCopies(copying.device);
+    ClearUploadCopies(copying.device);
     ::operator delete(block, std::align_val_t{page});
     std::cout << "a guest buffer inside the main image's read-only pages is bound through a fixed mirror; one in the image's writable pages or in a releasable allocation is copied\n";
 }
@@ -4296,6 +4299,7 @@ void RunHeapMirrorUnwatchTests(const Context& context, const BdaTestAccess& acce
     ClearImageMirrors(importing.device);
     ClearHostImports(importing.device);
     ClearSnapshotCopies(importing.device);
+    ClearUploadCopies(importing.device);
 #ifndef _WIN32
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pieces[0].pointer, heapBytes);
 #endif
@@ -4370,6 +4374,7 @@ void RunSparseHeapMirrorUnwatchTests(const Context& context, const BdaTestAccess
     registry(false);
     ClearImageMirrors(context.device);
     ClearSnapshotCopies(context.device);
+    ClearUploadCopies(context.device);
 #ifdef _WIN32
     GuestArena::GuestArenaReset_nid_postfix(guest, reserved);
     GuestArena::GuestArenaRelease_nid_postfix(guest, reserved);
@@ -4427,6 +4432,7 @@ void RunSparseHeapMirrorBudgetTests(const Context& context, const BdaTestAccess&
     registry(false);
     ClearImageMirrors(context.device);
     ClearSnapshotCopies(context.device);
+    ClearUploadCopies(context.device);
 #ifdef _WIN32
     GuestArena::GuestArenaReset_nid_postfix(guest, reserved);
     GuestArena::GuestArenaRelease_nid_postfix(guest, reserved);
@@ -4488,6 +4494,7 @@ void RunHeapMirrorReferenceSizeTests(const Context& context, const BdaTestAccess
     registry(false);
     ClearImageMirrors(context.device);
     ClearSnapshotCopies(context.device);
+    ClearUploadCopies(context.device);
 #ifdef _WIN32
     GuestArena::GuestArenaReset_nid_postfix(guest, heapBytes);
     GuestArena::GuestArenaRelease_nid_postfix(guest, heapBytes);
@@ -4563,6 +4570,7 @@ void RunHeapMirrorRunUnwatchTests(const Context& context, const BdaTestAccess& a
     registry(false);
     ClearImageMirrors(context.device);
     ClearSnapshotCopies(context.device);
+    ClearUploadCopies(context.device);
 #ifdef _WIN32
     GuestArena::GuestArenaReset_nid_postfix(guest, allocated);
     GuestArena::GuestArenaRelease_nid_postfix(guest, allocated);
@@ -4691,6 +4699,7 @@ void RunAddressCopyCapTests(const Context& context, const BdaTestAccess& access,
     ClearImageMirrors(importing.device);
     ClearHostImports(importing.device);
     ClearSnapshotCopies(importing.device);
+    ClearUploadCopies(importing.device);
 #ifndef _WIN32
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pieces[0].pointer, heapBytes);
 #endif
@@ -4790,6 +4799,7 @@ void RunAddressCopyCapMirrorTests(const Context& context, const BdaTestAccess& a
     ClearImageMirrors(importing.device);
     ClearHostImports(importing.device);
     ClearSnapshotCopies(importing.device);
+    ClearUploadCopies(importing.device);
 #ifndef _WIN32
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pieces[1].pointer, mirroredBytes);
 #endif
@@ -4881,6 +4891,7 @@ void RunUnwatchedMirrorImportTests(const Context& context, const BdaTestAccess& 
     ClearImageMirrors(importing.device);
     ClearHostImports(importing.device);
     ClearSnapshotCopies(importing.device);
+    ClearUploadCopies(importing.device);
 #ifndef _WIN32
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pieces[1].pointer, rangeBytes);
 #endif
@@ -5560,4 +5571,5 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     const auto heapCopies = AddressCopyOverflow({{0x10000, 0x30000, 0x18000, nullptr, true, true}, {0x40000, 0x50000, 0x10000, nullptr, true, false}}, 0x2000);
     Require(heapCopies.find("0x10000+0x20000 (0.1 MiB committed, import over the host import budget, heap not fully write-watched)") != std::string::npos && heapCopies.find("0x40000+0x10000 (0.1 MiB committed, heap not fully write-watched)") != std::string::npos, "the copy limit does not name a copied heap's reason");
     ClearSnapshotCopies(context.device);
+    ClearUploadCopies(context.device);
 }

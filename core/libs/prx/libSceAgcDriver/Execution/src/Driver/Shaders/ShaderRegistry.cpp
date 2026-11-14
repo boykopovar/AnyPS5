@@ -1144,6 +1144,14 @@ std::shared_ptr<const ShaderRecompiler::LinkedCalls> LinkUserDataCallees(const S
 
 }
 
+bool StageLinksUserDataCallees(const ShaderSnapshot& snapshot, std::size_t codeOffset) {
+    if (!snapshot.prepared) return false;
+    std::lock_guard lock(snapshot.prepared->mutex);
+    return std::any_of(snapshot.prepared->userDataLinks.begin(), snapshot.prepared->userDataLinks.end(), [&](const auto& link) {
+        return link.codeOffset == codeOffset && ((link.linked != nullptr && !link.linked->code.empty()) || !link.callees.empty() || (link.sites != nullptr && (!link.sites->calls.empty() || !link.sites->tableCalls.empty())));
+    });
+}
+
 ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
