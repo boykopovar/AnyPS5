@@ -107,18 +107,6 @@ int APS5_VABI unum_formatDoubleForFields_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI unum_getTextAttribute_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unum_setAttribute_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unum_setTextAttribute_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI unumf_formatDecimal_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -136,18 +124,6 @@ int APS5_VABI unumf_resultGetAllFieldPositions_nid_postfix() {
 }
 
 int APS5_VABI unumf_resultToString_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unumsys_getName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unumsys_isAlgorithmic_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unumsys_openAvailableNames_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

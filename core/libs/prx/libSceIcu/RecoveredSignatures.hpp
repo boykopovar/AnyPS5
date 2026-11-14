@@ -178,6 +178,10 @@ std::int32_t APS5_VABI unum_formatDouble_nid_postfix(const UNumberFormat* format
 std::int32_t APS5_VABI unum_getSymbol_nid_postfix(const UNumberFormat* format, std::int32_t symbol, char16_t* buffer, std::int32_t size, std::int32_t* status);
 UNumberFormat* APS5_VABI unum_open_nid_postfix(std::int32_t style, const char16_t* pattern, std::int32_t patternLength, const char* locale, UParseError* parseError, std::int32_t* status);
 
+std::int32_t APS5_VABI unum_getTextAttribute_nid_postfix(const UNumberFormat* format, std::int32_t attribute, char16_t* result, std::int32_t capacity, std::int32_t* status);
+void APS5_VABI unum_setAttribute_nid_postfix(UNumberFormat* format, std::int32_t attribute, std::int32_t value);
+void APS5_VABI unum_setTextAttribute_nid_postfix(UNumberFormat* format, std::int32_t attribute, const char16_t* value, std::int32_t length, std::int32_t* status);
+
 void APS5_VABI unumf_close_nid_postfix(UNumberFormatter* formatter);
 void APS5_VABI unumf_closeResult_nid_postfix(UFormattedNumber* result);
 UFormattedNumber* APS5_VABI unumf_openResult_nid_postfix(std::int32_t* status);
@@ -185,6 +189,9 @@ UFormattedNumber* APS5_VABI unumf_openResult_nid_postfix(std::int32_t* status);
 void APS5_VABI unumsys_close_nid_postfix(UNumberingSystem* unumsys);
 UNumberingSystem* APS5_VABI unumsys_open_nid_postfix(const char* locale, std::int32_t* status);
 UNumberingSystem* APS5_VABI unumsys_openByName_nid_postfix(const char* name, std::int32_t* status);
+const char* APS5_VABI unumsys_getName_nid_postfix(const UNumberingSystem*);
+std::int8_t APS5_VABI unumsys_isAlgorithmic_nid_postfix(const UNumberingSystem*);
+UEnumeration* APS5_VABI unumsys_openAvailableNames_nid_postfix(std::int32_t*);
 
 void APS5_VABI uplrules_close_nid_postfix(UPluralRules* uplrules);
 UPluralRules* APS5_VABI uplrules_openForType_nid_postfix(const char* locale, std::int32_t type, std::int32_t* status);

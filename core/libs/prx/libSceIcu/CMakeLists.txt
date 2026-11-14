@@ -1,6 +1,7 @@
 add_library(libSceIcu SHARED EXCLUDE_FROM_ALL CharacterDigits.cpp Comparisons.cpp ConstrainedFieldPosition.cpp Enumeration.cpp ErrorName.cpp Export.cpp Invariant.cpp Iterator.cpp Numeric.cpp Set.cpp Tokenize.cpp Unescape.cpp Version.cpp Utf32.cpp JavaUtf8.cpp Compare.cpp Search.cpp Character.cpp Configuration.cpp LocaleCore.cpp Copy.cpp Utf16Search.cpp)
 target_include_directories(libSceIcu PRIVATE ${LIBS_INCLUDE_DIR})
 target_sources(libSceIcu PRIVATE RecoveredInventory.cpp)
+target_sources(libSceIcu PRIVATE NumberFormatBackend.cpp)
 configure_windows_unwind(libSceIcu)
 target_sources(libSceIcu PRIVATE ConverterCallbacks.cpp)
 target_sources(libSceIcu PRIVATE LegacyExports.cpp)
@@ -502,7 +503,110 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_date_pattern_generator_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateTimePatternBehavior.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateTimePatternOracle.cpp)
+    target_include_directories(guest_icu_date_pattern_generator_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_date_pattern_generator_tests PRIVATE libSceIcu libkernel libc icu_i18n Threads::Threads)
+    configure_windows_unwind(guest_icu_date_pattern_generator_tests)
+    add_test(NAME guest_icu_date_pattern_generator_open COMMAND guest_icu_date_pattern_generator_tests)
+    set_tests_properties(guest_icu_date_pattern_generator_open PROPERTIES TIMEOUT 20)
+    foreach(mode literals buffers lifetime memory)
+        add_test(NAME guest_icu_date_pattern_generator_${mode} COMMAND guest_icu_date_pattern_generator_tests ${mode})
+        set_tests_properties(guest_icu_date_pattern_generator_${mode} PROPERTIES TIMEOUT 20)
+    endforeach()
+    add_test_executable(guest_icu_date_pattern_native_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateTimePatternNative.cpp)
+    target_link_libraries(guest_icu_date_pattern_native_tests PRIVATE icu_i18n)
+    configure_host_test_executable(guest_icu_date_pattern_native_tests)
+    add_test(NAME guest_icu_date_pattern_native_data COMMAND guest_icu_date_pattern_native_tests)
+    add_test(NAME guest_icu_date_pattern_manifest COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateTimePatternData.py ${ICU_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${icu_host_icupkg})
+    set_tests_properties(guest_icu_date_pattern_native_data guest_icu_date_pattern_manifest PROPERTIES TIMEOUT 20)
+    set(icu_pattern_patched_dir ${CMAKE_BINARY_DIR}/core/libs/libs)
+    add_custom_target(guest_icu_date_pattern_nid_assets DEPENDS
+        ${icu_pattern_patched_dir}/libSceIcu.prx ${icu_pattern_patched_dir}/libkernel.prx ${icu_pattern_patched_dir}/libc.prx)
+    add_test_executable(guest_icu_date_pattern_nid_tests NO_RUNTIME_DLL_STAGING ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateTimePatternNid.cpp)
+    target_include_directories(guest_icu_date_pattern_nid_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_date_pattern_nid_tests PRIVATE ${CMAKE_DL_LIBS})
+    configure_host_test_executable(guest_icu_date_pattern_nid_tests)
+    add_dependencies(guest_icu_date_pattern_nid_tests guest_icu_date_pattern_nid_assets)
+    add_test(NAME guest_icu_date_pattern_nid COMMAND guest_icu_date_pattern_nid_tests ${icu_pattern_patched_dir}/libSceIcu.prx)
+    set_tests_properties(guest_icu_date_pattern_nid PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_date_pattern_nid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${icu_pattern_patched_dir}")
+        set_tests_properties(guest_icu_date_pattern_generator_open PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        foreach(mode literals buffers lifetime memory)
+            set_tests_properties(guest_icu_date_pattern_generator_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endforeach()
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_numbering_system_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/NumberingSystemBehavior.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/NumberingSystemOracle.cpp)
+    target_include_directories(guest_icu_numbering_system_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_numbering_system_tests PRIVATE libSceIcu libkernel libc icu_i18n)
+    configure_windows_unwind(guest_icu_numbering_system_tests)
+    foreach(mode selection enumeration status memory inaccessible_status cross_kind)
+        add_test(NAME guest_icu_numbering_system_${mode} COMMAND guest_icu_numbering_system_tests ${mode})
+        set_tests_properties(guest_icu_numbering_system_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_icu_numbering_system_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
+    endforeach()
+    add_test_executable(guest_icu_numbering_system_nid_tests NO_RUNTIME_DLL_STAGING ${CMAKE_CURRENT_SOURCE_DIR}/tests/NumberingSystemNid.cpp)
+    target_include_directories(guest_icu_numbering_system_nid_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_numbering_system_nid_tests PRIVATE ${CMAKE_DL_LIBS})
+    configure_host_test_executable(guest_icu_numbering_system_nid_tests)
+    add_dependencies(guest_icu_numbering_system_nid_tests guest_icu_date_pattern_nid_assets)
+    add_test(NAME guest_icu_numbering_system_nid COMMAND guest_icu_numbering_system_nid_tests ${icu_pattern_patched_dir}/libSceIcu.prx)
+    set_tests_properties(guest_icu_numbering_system_nid PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_numbering_system_nid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${icu_pattern_patched_dir}")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_number_format_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/NumberFormatBehavior.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/NumberFormatOracle.cpp)
+    target_include_directories(guest_icu_number_format_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_number_format_tests PRIVATE libSceIcu libkernel libc icu_i18n Threads::Threads)
+    configure_windows_unwind(guest_icu_number_format_tests)
+    set(icu_number_patched_dir ${CMAKE_BINARY_DIR}/core/libs/libs)
+    add_custom_target(guest_icu_number_format_nid_assets DEPENDS
+        ${icu_number_patched_dir}/libSceIcu.prx ${icu_number_patched_dir}/libkernel.prx ${icu_number_patched_dir}/libc.prx)
+    add_test_executable(guest_icu_number_format_nid_tests NO_RUNTIME_DLL_STAGING ${CMAKE_CURRENT_SOURCE_DIR}/tests/NumberFormatNid.cpp)
+    target_include_directories(guest_icu_number_format_nid_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_number_format_nid_tests PRIVATE ${CMAKE_DL_LIBS})
+    configure_host_test_executable(guest_icu_number_format_nid_tests)
+    add_dependencies(guest_icu_number_format_nid_tests guest_icu_number_format_nid_assets)
+    add_test(NAME guest_icu_number_format_nid COMMAND guest_icu_number_format_nid_tests ${icu_number_patched_dir}/libSceIcu.prx)
+    set_tests_properties(guest_icu_number_format_nid PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_number_format_nid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${icu_number_patched_dir}")
+    endif()
+    foreach(mode open format attributes lifetime memory)
+        add_test(NAME guest_icu_number_format_${mode} COMMAND guest_icu_number_format_tests ${mode})
+        set_tests_properties(guest_icu_number_format_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_icu_number_format_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
+    endforeach()
+endif()
+
 set(ICU_RECOVERED_SOURCES
+    NumberingSystemBackend.cpp
+    DateTimePatternGeneratorBackend.cpp
     Calendar.cpp
     Collator.cpp
     DateFormat.cpp
@@ -554,6 +658,42 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_icu_recovered_signatures PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+target_sources(libSceIcu PRIVATE BreakIterator.cpp Data.cpp Configuration.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_break_iterator_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/BreakIterator.cpp)
+    target_include_directories(guest_icu_break_iterator_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_compile_definitions(guest_icu_break_iterator_tests PRIVATE ANYPS5_ICU_BREAK_TEST_DATA="${ICU_SOURCE_DIR}/test/testdata")
+    target_link_libraries(guest_icu_break_iterator_tests PRIVATE libSceIcu libc Threads::Threads)
+    configure_windows_unwind(guest_icu_break_iterator_tests)
+    add_test(NAME guest_icu_break_iterator COMMAND guest_icu_break_iterator_tests)
+    foreach(type RANGE 0 3)
+        add_test(NAME guest_icu_break_unicode_${type} COMMAND guest_icu_break_iterator_tests ${type})
+    endforeach()
+    set(icu_break_tests guest_icu_break_iterator guest_icu_break_unicode_0 guest_icu_break_unicode_1
+        guest_icu_break_unicode_2 guest_icu_break_unicode_3)
+    set_tests_properties(${icu_break_tests} PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(${icu_break_tests} PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_data_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Data.cpp)
+    target_include_directories(guest_icu_data_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_compile_definitions(guest_icu_data_tests PRIVATE ANYPS5_ICU_PACKAGED_DATA="${icu_data_dir}/icudt78l.dat")
+    target_link_libraries(guest_icu_data_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_data_tests)
+    add_test(NAME guest_icu_data_registration COMMAND guest_icu_data_tests registration)
+    add_test(NAME guest_icu_break_allocator COMMAND guest_icu_data_tests)
+    set_tests_properties(guest_icu_data_registration guest_icu_break_allocator PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_data_registration guest_icu_break_allocator PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
 endif()
 

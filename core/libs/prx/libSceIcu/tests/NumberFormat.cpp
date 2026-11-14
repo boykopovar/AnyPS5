@@ -349,8 +349,10 @@ void Run() {
     for (const auto incoming : passing) {
         for (const auto style : inRange) {
             std::int32_t status = incoming;
-            RequireThrows([&] { unum_open_nid_postfix(style, pattern, 4, "en", parseError, &status); });
-            Require(status == incoming);
+            const auto* validPattern = style == 9 ? u"%main: 0: =0=;" : u"0.0";
+            auto* handle = unum_open_nid_postfix(style, validPattern, -1, "en_US", nullptr, &status);
+            Require(handle && status <= 0);
+            unum_close_nid_postfix(handle);
         }
 
         for (const auto style : outOfRange) {
