@@ -310,24 +310,42 @@ namespace {
 
 using AddressRanges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
 
+constexpr std::size_t WalkVerifiedSpans = 8;
+
 struct WalkReads {
     AddressRanges runs;
-    std::uint64_t page = ~std::uint64_t{0};
+    std::array<std::pair<std::uint64_t, std::uint64_t>, WalkVerifiedSpans> verified{};
+    std::size_t verifiedCount = 0;
+    std::size_t verifiedNext = 0;
     bool failed = false;
 
     void Reset() {
         runs.clear();
         failed = false;
-        page = ~std::uint64_t{0};
+        verifiedCount = 0;
+        verifiedNext = 0;
+    }
+
+    bool Verified(std::uint64_t address, std::uint64_t bytes) const {
+        for (std::size_t i = 0; i < verifiedCount; ++i) {
+            if (address >= verified[i].first && address <= verified[i].second && bytes <= verified[i].second - address) return true;
+        }
+        return false;
+    }
+
+    void Verify(std::uint64_t address, std::uint64_t bytes) {
+        verified[verifiedNext] = {address, address + bytes};
+        verifiedNext = (verifiedNext + 1) % WalkVerifiedSpans;
+        verifiedCount = std::min(verifiedCount + 1, WalkVerifiedSpans);
     }
 };
 
 bool readWalkWord(void* context, std::uint64_t address, std::uint32_t* value) {
     auto& reads = *static_cast<WalkReads*>(context);
-    const auto page = address & ~(WalkPageBytes - 1u);
-    const bool crossesPage = (address & (WalkPageBytes - 1u)) > WalkPageBytes - sizeof(*value);
-    if (page != reads.page || crossesPage) {
-        if (GuestMemory::Accessible(reinterpret_cast<const void*>(page), WalkPageBytes)) reads.page = page;
+    if (!reads.Verified(address, sizeof(*value))) {
+        const auto page = address & ~(WalkPageBytes - 1u);
+        const bool crossesPage = (address & (WalkPageBytes - 1u)) > WalkPageBytes - sizeof(*value);
+        if (!crossesPage && GuestMemory::Accessible(reinterpret_cast<const void*>(page), WalkPageBytes)) reads.Verify(page, WalkPageBytes);
         else if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(*value))) {
             reads.failed = true;
             return false;
@@ -340,8 +358,10 @@ bool readWalkWord(void* context, std::uint64_t address, std::uint32_t* value) {
 
 bool walkAccessible(void* context, std::uint64_t address, std::uint64_t bytes) {
     auto& reads = *static_cast<WalkReads*>(context);
+    if (bytes != 0 && reads.Verified(address, bytes)) return true;
     const bool accessible = GuestMemory::Accessible(reinterpret_cast<const void*>(address), static_cast<std::size_t>(bytes));
     if (!accessible) reads.failed = true;
+    else if (bytes != 0) reads.Verify(address, bytes);
     return accessible;
 }
 
