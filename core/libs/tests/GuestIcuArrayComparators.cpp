@@ -20,12 +20,23 @@ std::int32_t CompareUint32(std::uint32_t left, std::uint32_t right) {
     return uprv_uint32Comparator_nid_postfix(nullptr, &left, &right);
 }
 
+std::int32_t CompareUint16(std::uint16_t left, std::uint16_t right) {
+    return uprv_uint16Comparator_nid_postfix(nullptr, &left, &right);
+}
+
 void TestUint32() {
     Require(CompareUint32(1, 2) == -1, "uint32: smaller value sorts first");
     Require(CompareUint32(2, 1) == 1, "uint32: larger value sorts last");
     Require(CompareUint32(7, 7) == 0, "uint32: equal values compare equal");
     Require(CompareUint32(0xFFFFFFFFu, 0) == 1, "uint32: the largest value is above zero without wrapping");
     Require(CompareUint32(0, 0xFFFFFFFFu) == -1, "uint32: zero is below the largest value without wrapping");
+}
+
+void TestUint16() {
+    Require(CompareUint16(0xFFFF, 0) == 65535, "uint16: the difference uses the full 16-bit range");
+    Require(CompareUint16(0, 0xFFFF) == -65535, "uint16: the reverse difference is negative");
+    Require(CompareUint16(3, 3) == 0, "uint16: equal values compare equal");
+    Require(CompareUint16(2, 9) == -7, "uint16: small values subtract exactly");
 }
 
 void TestInt32() {
@@ -42,5 +53,6 @@ void TestInt32() {
 int main() {
     TestInt32();
     TestUint32();
+    TestUint16();
     return 0;
 }
