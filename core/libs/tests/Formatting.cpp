@@ -170,6 +170,25 @@ static void CheckIgnoredLengths() {
     Require(snprintf_nid_postfix(output, sizeof(output), "a%Ln", &written.count) == 1 && written.count == 1 && written.guard == -1);
 }
 
+static void CheckCountInWritableFormat() {
+    using Formatter = int (APS5_VABI*)(char*, size_t, const char*, ...);
+    for (const Formatter format : {&snprintf_nid_postfix, &FormatList}) {
+        char counting[] = "%s%hhn|%d%n|%lln";
+        char output[8];
+        struct { signed char count; char guard; } first = {-1, '!'};
+        int second = -1;
+        long long third = -1;
+        Require(format(output, 4, counting, "abc", &first.count, 42, &second, &third) == 7 && std::strcmp(output, "abc") == 0);
+        Require(first.count == 3 && first.guard == '!' && second == 6 && third == 7);
+    }
+    char line[] = "count: %d%n\n";
+    char output[16];
+    int count = -1;
+    Require(sprintf_nid_postfix(output, line, 7, &count) == 9 && count == 8 && std::strcmp(output, "count: 7\n") == 0);
+    count = -1;
+    Require(printf_nid_postfix(line, 7, &count) == 9 && count == 8);
+}
+
 static void CheckSizeLimits() {
     using Formatter = int (APS5_VABI*)(char*, size_t, const char*, ...);
     for (const Formatter format : {&snprintf_nid_postfix, &FormatList}) {
@@ -781,6 +800,10 @@ static void CheckAllocatingFormat() {
     char* allocated = nullptr;
     Require(asprintf_nid_postfix(&allocated, "%ls:%S:%lc:%d", u"\u00e9", u"ab", 0x20ac, 7) == 11 && std::strcmp(allocated, "\xc3\xa9:ab:\xe2\x82\xac:7") == 0);
     free_nid_postfix(allocated);
+    char counting[] = "%s%n";
+    int count = -1;
+    Require(asprintf_nid_postfix(&allocated, counting, "hey", &count) == 3 && count == 3 && std::strcmp(allocated, "hey") == 0);
+    free_nid_postfix(allocated);
 
 }
 
@@ -893,4 +916,4 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckFloatingScanRange(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckFloatingScanRange(); CheckSizeLimits(); CheckIgnoredLengths(); CheckCountInWritableFormat(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
