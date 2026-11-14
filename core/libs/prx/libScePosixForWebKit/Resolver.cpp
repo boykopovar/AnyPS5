@@ -119,6 +119,7 @@ bool NumericAddress(const char* name, std::array<unsigned char, 4>& address) {
                 *name >= 'a' && *name <= 'f' ? *name - 'a' + 10 :
                 *name >= 'A' && *name <= 'F' ? *name - 'A' + 10 : -1;
             if (next < 0 || next >= base) break;
+            if (value > (std::uint64_t{0xFFFFFFFF} - static_cast<std::uint64_t>(next)) / base) return false;
             value = value * base + next;
             digit = true;
             ++name;
