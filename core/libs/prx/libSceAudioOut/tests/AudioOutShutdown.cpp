@@ -112,6 +112,8 @@ void AdvanceAtExit() {
 void OutputAudioOut() {
     const int port = sceAudioOutOpen(user, 0, 0, grain, frequency, formatS16Stereo);
     if (port <= 0) Fail("port was not opened");
+    int volumes[]{16384, 16384};
+    if (sceAudioOutSetVolume(port, 3, volumes) != 0) Fail("could not enable audio output conversion");
     static std::vector<std::int16_t> data(static_cast<std::size_t>(grain) * 2, 0x1000);
     std::thread([port] {
         for (;;) {

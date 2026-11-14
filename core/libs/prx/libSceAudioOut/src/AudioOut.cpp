@@ -9,6 +9,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -115,6 +116,12 @@ static std::uint32_t checkedBufferSize(std::uint32_t frames, std::uint32_t chann
     return static_cast<std::uint32_t>(size);
 }
 
+struct OutputScratch {
+    std::vector<std::uint8_t> samples;
+    std::vector<float> padMix;
+    std::vector<float> padFrames;
+};
+
 struct Port {
     bool used = false;
     int type = 0;
@@ -130,6 +137,7 @@ struct Port {
     SDL_AudioDeviceID device = 0;
     SDL_AudioSpec spec = {};
     HostGainRamp hostGain;
+    OutputScratch scratch;
 };
 
 static std::mutex g_mutex;
@@ -283,11 +291,11 @@ static const void* prepareBuffer(const Port& port, const void* data, std::vector
     return buf.data();
 }
 
-static std::vector<float> prepareVibration(const Port& port, const void* data) {
+static std::span<const float> prepareVibration(const Port& port, const void* data, OutputScratch& scratch) {
     checkedBufferSize(port.samplesNum, AUDIO_OUT2_PAD_CHANNELS, sizeof(float));
-    std::vector<std::uint8_t> prepared;
-    const auto* samples = prepareBuffer(port, data, prepared);
-    std::vector<float> pad(static_cast<std::size_t>(port.samplesNum) * AUDIO_OUT2_PAD_CHANNELS, 0.0f);
+    const auto* samples = prepareBuffer(port, data, scratch.samples);
+    auto& pad = scratch.padMix;
+    pad.assign(static_cast<std::size_t>(port.samplesNum) * AUDIO_OUT2_PAD_CHANNELS, 0.0f);
     constexpr float unity[2] = {1.0f, 1.0f};
     for (std::uint32_t frame = 0; frame < port.samplesNum; ++frame) {
         float input[2]{};
@@ -307,7 +315,7 @@ static void sleepUs(std::unique_lock<std::mutex>& lock, std::uint64_t us) {
     lock.lock();
 }
 
-static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex>& lock) {
+static void queueAudio(Port& port, const void* data, OutputScratch& scratch, std::unique_lock<std::mutex>& lock) {
     if (data == nullptr) {
         const std::uint64_t waitStart = sceKernelGetProcessTime();
         while (SDL_GetQueuedAudioSize(port.device) > 0) {
@@ -320,19 +328,18 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
         return;
     }
 
-    std::vector<std::uint8_t> prepareBuf;
-    std::vector<float> padFrames;
     const void* queueData = nullptr;
     std::uint32_t queueSize = 0;
     if (port.type == PORT_TYPE_VIBRATION) {
         queueSize = checkedBufferSize(port.samplesNum, port.padLayout.channels, sizeof(float));
-        const auto pad = prepareVibration(port, data);
+        const auto pad = prepareVibration(port, data, scratch);
+        auto& padFrames = scratch.padFrames;
         padFrames.resize(static_cast<std::size_t>(port.samplesNum) * port.padLayout.channels);
         AudioOut2WritePadFrames(pad.data(), port.padLayout, padFrames.data(), port.samplesNum, Pad::RumblePercent());
         queueData = padFrames.data();
     } else {
-        queueData = prepareBuffer(port, data, prepareBuf);
-        queueData = HostGainFilter(port.hostGain, HostVolumeGain_nid_no_patch(), queueData, formatIsFloat(port.format), port.samplesNum, static_cast<unsigned>(port.channels), prepareBuf);
+        queueData = prepareBuffer(port, data, scratch.samples);
+        queueData = HostGainFilter(port.hostGain, HostVolumeGain_nid_no_patch(), queueData, formatIsFloat(port.format), port.samplesNum, static_cast<unsigned>(port.channels), scratch.samples);
         queueSize = checkedBufferSize(port.samplesNum, static_cast<std::uint32_t>(port.channels), bytesPerSample(port.format));
     }
 
@@ -371,11 +378,11 @@ static void paceVirtualPort(Port& port, bool hasData, std::unique_lock<std::mute
     port.virtualQueueEnd += (1000000ULL * port.samplesNum) / port.freq;
 }
 
-static void outputVirtualPort(Port& port, const void* data, std::unique_lock<std::mutex>& lock) {
+static void outputVirtualPort(Port& port, const void* data, OutputScratch& scratch, std::unique_lock<std::mutex>& lock) {
     if (data != nullptr) {
         checkedBufferSize(port.samplesNum, static_cast<std::uint32_t>(port.channels), bytesPerSample(port.format));
     }
-    const auto pad = port.type == PORT_TYPE_VIBRATION && data != nullptr ? prepareVibration(port, data) : std::vector<float>{};
+    const auto pad = port.type == PORT_TYPE_VIBRATION && data != nullptr ? prepareVibration(port, data, scratch) : std::span<const float>{};
     paceVirtualPort(port, data != nullptr, lock);
     const auto source = static_cast<int>(&port - g_ports) + 1;
     if (port.type == PORT_TYPE_VIBRATION && data == nullptr) PadClearLegacyAudioHaptics_nid_postfix(source);
@@ -392,6 +399,24 @@ static void outputVirtualPort(Port& port, const void* data, std::unique_lock<std
             PadQueueLegacyAudioHaptics_nid_postfix(source, start, end, rumble[0], rumble[1]);
             frame += count;
         }
+    }
+}
+
+static void outputWithScratch(Port& port, const void* data, OutputScratch& scratch, std::unique_lock<std::mutex>& lock) {
+    if (port.device == 0) {
+        outputVirtualPort(port, data, scratch, lock);
+    } else {
+        queueAudio(port, data, scratch, lock);
+    }
+}
+
+static void outputPort(Port& port, const void* data, std::unique_lock<std::mutex>& lock) {
+    reopenStoppedDevice(port);
+    if (port.samplesNum > std::numeric_limits<decltype(SDL_AudioSpec::samples)>::max()) [[unlikely]] {
+        OutputScratch temporary;
+        outputWithScratch(port, data, temporary, lock);
+    } else {
+        outputWithScratch(port, data, port.scratch, lock);
     }
 }
 
@@ -534,12 +559,7 @@ int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) try {
         return -2144993277;
     }
 
-    reopenStoppedDevice(*port);
-    if (port->device == 0) {
-        outputVirtualPort(*port, ptr, lock);
-    } else {
-        queueAudio(*port, ptr, lock);
-    }
+    outputPort(*port, ptr, lock);
     if (ptr != nullptr) port->lastDataOutputTime = sceKernelGetProcessTime();
     return static_cast<int>(port->samplesNum);
 } catch (const ProcessShutdown&) {
@@ -572,12 +592,7 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     Port& first = *getPort(param[0].handle);
     for (std::uint32_t i = 0; i < num; i++) {
         Port& port = *getPort(param[i].handle);
-        reopenStoppedDevice(port);
-        if (port.device == 0) {
-            outputVirtualPort(port, param[i].ptr, lock);
-        } else {
-            queueAudio(port, param[i].ptr, lock);
-        }
+        outputPort(port, param[i].ptr, lock);
     }
 
     const std::uint64_t done = sceKernelGetProcessTime();
