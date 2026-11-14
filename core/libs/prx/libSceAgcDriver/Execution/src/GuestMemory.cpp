@@ -2637,6 +2637,18 @@ void SetOwnStoreCompare(bool compare) {
     ownStoreCompare.store(compare, std::memory_order_release);
 }
 
+class OwnStoreFaults {
+public:
+    OwnStoreFaults(std::uint64_t first, std::uint64_t stop) : first(first), bytes(static_cast<std::size_t>(stop - first)) { GuestWriteWatch::GuestWriteWatchBeginOwnStore_nid_postfix(static_cast<std::uintptr_t>(first), bytes); }
+    ~OwnStoreFaults() { GuestWriteWatch::GuestWriteWatchEndOwnStore_nid_postfix(static_cast<std::uintptr_t>(first), bytes); }
+    OwnStoreFaults(const OwnStoreFaults&) = delete;
+    OwnStoreFaults& operator=(const OwnStoreFaults&) = delete;
+
+private:
+    std::uint64_t first;
+    std::size_t bytes;
+};
+
 std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, bool imaged, const std::function<std::pair<std::uint64_t, std::uint64_t>(std::span<std::byte>)>& store, bool complete = true) {
     if (bytes == 0) return 0;
     const auto pinned = pinStoreRanges(address, bytes);
@@ -2673,7 +2685,10 @@ std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, bool imaged, co
         window = WindowCopy{first, {}, image, StampKind::Driver};
     }
     if (!walkWrites(tracker, first, stop, StampKind::Cpu)) return stampStored(tracker, store({}));
-    const auto stored = store(image.empty() ? std::span<std::byte>{} : std::span<std::byte>(image).subspan(static_cast<std::size_t>(address - first), bytes));
+    const auto stored = [&] {
+        const OwnStoreFaults faults(first, stop);
+        return store(image.empty() ? std::span<std::byte>{} : std::span<std::byte>(image).subspan(static_cast<std::size_t>(address - first), bytes));
+    }();
     walkWrites(tracker, first, stop, StampKind::Driver, false, window ? &*window : nullptr);
     return stampStored(tracker, stored);
 }
