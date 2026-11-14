@@ -8,6 +8,7 @@
 namespace ShaderRecompiler {
 
 std::uint32_t RuntimeImageDword(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t member);
+std::uint32_t RuntimeMipCount(SpirvEmitterState& state, std::uint32_t resource);
 std::uint32_t ResourceForDescriptor(const SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource);
 std::uint32_t DescriptorElementPointer(SpirvEmitterState& state, std::uint32_t resultPtrType, std::uint32_t variableId, std::uint32_t arrayIndex, DescriptorBindingKind kind, std::uint32_t resource, const char* variableName);
 std::uint32_t ImageScalarType(SpirvEmitterState& state, IrTextureNumericClass numericClass);
