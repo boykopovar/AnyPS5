@@ -913,7 +913,16 @@ int main() {
     scalePixel = 0.0f;
     Require(sceFontGetFontResolution(font, nullptr, &scalePixel) == SCE_FONT_OK && scalePixel == 15.625f);
     Require(sceFontGetFontResolution(font, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetFontResolution(font, reinterpret_cast<std::uint32_t*>(0x10), &scalePixel) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontGetFontResolution(font, &resolution, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontGetFontResolution(nullptr, &resolution, &scalePixel) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && resolution == 0 && scalePixel == 0.0f);
+    errno = 71;
+    Require(sceFontGetFontResolution(nullptr, reinterpret_cast<std::uint32_t*>(0x10), &scalePixel) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(errno == 71);
     resolution = 1;
     scalePixel = 1.0f;
     Require(sceFontGetFontResolution(&unopened, &resolution, &scalePixel) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && resolution == 0 && scalePixel == 0.0f);

@@ -541,12 +541,13 @@ int APS5_VABI sceFontGetFontResolution(FontHandle fontHandle, std::uint32_t* pRe
         return driver.scale(obj, &unitsPerEm, &scalePixel);
     });
     if (rc != SCE_FONT_OK) {
-        unitsPerEm = 0;
-        scalePixel = 0.0f;
+        if (pResolution) CopyOutGuest(pResolution, std::uint32_t{0});
+        if (pScalePixel) CopyOutGuest(pScalePixel, 0.0f);
+        return rc;
     }
-    if (pResolution) *pResolution = unitsPerEm;
-    if (pScalePixel) *pScalePixel = scalePixel;
-    return rc;
+    if (pResolution && !CopyOutGuest(pResolution, unitsPerEm)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (pScalePixel && !CopyOutGuest(pScalePixel, scalePixel)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontBindRenderer(FontHandle fontHandle, FontRenderer renderer) {
