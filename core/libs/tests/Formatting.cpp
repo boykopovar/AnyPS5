@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <utility>
+#include <tuple>
 #include <iterator>
 #include <climits>
 #include <cmath>
@@ -104,6 +105,25 @@ static void CheckCharacterScanLengths() {
             check(std::strcmp(output.data(), example.first[1] == ' ' ? "ab" : "%lls") == 0, "Character scan normalization changed a literal or scanset");
         }
     }
+}
+
+static void CheckPlainScanResults() {
+#ifndef _WIN32
+    using Scanner = int (APS5_VABI*)(const char*, const char*, ...);
+    for (const Scanner scan : {Scanner{sscanf_nid_postfix}, Scanner{ScanList}}) {
+        for (const auto& [input, format, result] : {std::tuple{"8", "%*d%d%n", 0}, std::tuple{"8 ", "%*d %d%n", 0}, std::tuple{"ab", "%*s%d%n", 0}, std::tuple{"0x", "%i%n", EOF}}) {
+            int value = -7;
+            int count = -7;
+            Require(scan(input, format, &value, &count) == result && value == -7 && count == -7);
+        }
+        unsigned int hex = 0x55555555u;
+        int count = -7;
+        Require(scan("0x", "%x%n", &hex, &count) == EOF && hex == 0x55555555u && count == -7);
+        int first = -7;
+        int second = -7;
+        Require(scan("5 6", "%2$d %1$d", &first, &second) == 0 && first == -7 && second == -7);
+    }
+#endif
 }
 
 static void CheckFloatingScanRange() {
@@ -893,4 +913,4 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckFloatingScanRange(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckFloatingScanRange(); CheckPlainScanResults(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }

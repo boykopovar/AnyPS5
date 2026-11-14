@@ -114,9 +114,11 @@ bool HasNarrowCharacterScan(const char* format) {
     return false;
 }
 
+#ifdef _WIN32
 bool ScansInProcess(const char* format) {
     return HasGuestWideScan(format) || HasNarrowCharacterScan(format);
 }
+#endif
 
 const char* CutAtQuadScanDirective(const char* format, std::string& head) {
     const char* const quad = LibcDetail::FindQuadScanDirective(format);
@@ -766,19 +768,11 @@ int APS5_VABI sprintf_nid_postfix(char* buffer, const char* format, ...) {
 int APS5_VABI vsscanf_nid_postfix(const char* input, const char* format, VaList* args) {
     std::string head;
     format = CutAtQuadScanDirective(format, head);
-    if (ScansInProcess(format)) {
-        LibcDetail::FormatArguments arguments(args);
-        return ScanGuest(input, format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
-    }
 #ifdef _WIN32
-    return LibcDetail::ScanWindows(input, format, args);
-#else
-    std::va_list copy;
-    va_copy(copy, *reinterpret_cast<std::va_list*>(args));
-    const int result = HostVsscanf(input, format, copy);
-    va_end(copy);
-    return result;
+    if (!ScansInProcess(format)) return LibcDetail::ScanWindows(input, format, args);
 #endif
+    LibcDetail::FormatArguments arguments(args);
+    return ScanGuest(input, format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
 }
 
 #ifdef _WIN32
@@ -795,8 +789,7 @@ int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
     va_start(args, format);
     std::string head;
     format = CutAtQuadScanDirective(format, head);
-    const int result = ScansInProcess(format) ? ScanGuest(input, format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
-                                                  : HostVsscanf(input, format, args);
+    const int result = ScanGuest(input, format, false, [&] { return va_arg(args, void*); }, [] { return 0u; });
     va_end(args);
     return result;
 }
