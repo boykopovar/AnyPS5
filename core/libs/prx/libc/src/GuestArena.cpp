@@ -855,7 +855,7 @@ void* PlaceAt(void* pointer, std::size_t bytes, std::uint32_t protection) {
 #if defined(__linux__) || defined(__APPLE__)
 void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection) {
     if (!Arena::Get().Contains(reinterpret_cast<void*>(address), bytes)) throw OutsideArena("set protection", reinterpret_cast<void*>(address), bytes);
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
     if (const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(reinterpret_cast<void*>(address), bytes, PosixProtection(protection)); error != 0)
         throw std::system_error(error, std::generic_category(), "guest arena protection failed");
 #else

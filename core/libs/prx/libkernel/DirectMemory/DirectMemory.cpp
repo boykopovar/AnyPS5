@@ -1530,14 +1530,19 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
         const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(insidePointer, insideBytes, nativeProtection);
         if (error != 0) errno = error;
         const bool protectedPages = error == 0;
-#else
-        bool protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
-#if defined(__linux__)
+#elif defined(__linux__)
+        const auto protect = [&] {
+            const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(insidePointer, insideBytes, nativeProtection);
+            if (error != 0) errno = error;
+            return error == 0;
+        };
+        bool protectedPages = protect();
         if (!protectedPages && errno == ENOMEM) {
             MapUnmappedPages(insidePointer, static_cast<std::size_t>((stackEnd & ~hostPageMask) - inside));
-            protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
+            protectedPages = protect();
         }
-#endif
+#else
+        const bool protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
 #endif
         if (!protectedPages) throw std::system_error(errno, std::generic_category(), "mprotect failed");
         if (inside != requested) RecordProtection(requestedPointer, static_cast<std::size_t>(inside - requested), prot);
@@ -1576,7 +1581,7 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
     for (const auto& [span, spanBytes] : spans) mutation.RequireUnpinned(span, spanBytes);
     for (const auto& [span, spanBytes] : spans) {
         mutation.Protect(span, spanBytes, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, [&] {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
             if (const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(const_cast<void*>(span), spanBytes, nativeProtection); error != 0)
                 throw std::system_error(error, std::generic_category(), "mprotect failed");
 #else
