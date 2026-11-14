@@ -2,11 +2,16 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include <cstddef>
 #include <cstdint>
 
 extern "C" {
 
+WebCore::FourCC APS5_VABI _ZN7WebCore12ISOWebVTTCue11boxTypeNameEv();
+std::size_t APS5_VABI _ZN7WebCore6ISOBox14minimumBoxSizeEv();
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore40defaultTextEncodingNameForSystemLanguageEv();
+WebCore::IntRect APS5_VABI _ZN7WebCore15HitTestLocation12rectForPointERKNS_11LayoutPointEjjjj(const WebCore::LayoutPoint& point, unsigned topPadding, unsigned rightPadding, unsigned bottomPadding, unsigned leftPadding);
 WebCore::FloatPoint APS5_VABI _ZN7WebCore10FloatPoint15narrowPrecisionEdd(double x, double y);
 void APS5_VABI _ZN7WebCore10FloatPoint9normalizeEv(WebCore::FloatPoint* self);
 void APS5_VABI _ZN7WebCore10FloatPointC1ERKNS_8IntPointE(WebCore::FloatPoint* self, const WebCore::IntPoint& p);
