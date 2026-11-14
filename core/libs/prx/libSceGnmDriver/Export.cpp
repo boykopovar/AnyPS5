@@ -118,6 +118,16 @@ std::uint32_t* DefaultState(std::uint32_t* at, std::uint32_t scModeCntl1) {
     return Emit(at, OpSetUconfigReg, {0x200, 0xe0000000u});
 }
 
+std::uint32_t WriteDrawDefaultHardwareState(std::uint32_t* cmd, std::uint32_t size, std::uint32_t scModeCntl1) {
+    if (size < HwInitPacketWords) return 0;
+    auto* at = Emit(cmd, OpContextControl, {0x80000000u, 0x80000000u});
+    at = Emit(at, OpClearState, {0});
+    at = Emit(at, OpAcquireMem, {0x2ec47fc0u, 0xffffffffu, 0, 0, 0, 10});
+    at = DefaultState(at, scModeCntl1);
+    Nop(at, static_cast<std::uint32_t>(cmd + HwInitPacketWords - at) - 1);
+    return HwInitPacketWords;
+}
+
 struct FrameStart {
     std::uint32_t words[HwInitPacketWords]{};
     std::uint32_t size = 0;
@@ -402,14 +412,12 @@ int APS5_VABI sceGnmSetLsShader(std::uint32_t* cmd, std::uint32_t size, const st
     return 0;
 }
 
+std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
+    return WriteDrawDefaultHardwareState(cmd, size, 0x6000000);
+}
+
 std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState175(std::uint32_t* cmd, std::uint32_t size) {
-    if (size < HwInitPacketWords) return 0;
-    auto* at = Emit(cmd, OpContextControl, {0x80000000u, 0x80000000u});
-    at = Emit(at, OpClearState, {0});
-    at = Emit(at, OpAcquireMem, {0x2ec47fc0u, 0xffffffffu, 0, 0, 0, 10});
-    at = DefaultState(at, 0x6020000);
-    Nop(at, static_cast<std::uint32_t>(cmd + HwInitPacketWords - at) - 1);
-    return HwInitPacketWords;
+    return WriteDrawDefaultHardwareState(cmd, size, 0x6020000);
 }
 
 std::uint32_t APS5_VABI sceGnmDispatchInitDefaultHardwareState(std::uint32_t* cmd, std::uint32_t size) {

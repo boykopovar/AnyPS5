@@ -52,6 +52,24 @@ void TestWriters() {
     check(words[0] == Header(0x28, 2) && words[1] == 0x80000000u && words[2] == 0x80000000u && words[3] == Header(0x12, 1) && words[5] == Header(0x58, 6), "the draw default state does not start with CONTEXT_CONTROL, CLEAR_STATE and ACQUIRE_MEM");
     check(WholePackets(words.data(), words.size()), "the draw default state is not whole PM4 packets");
 
+    std::array<std::uint32_t, 0x101> baseWords{};
+    baseWords.fill(0xdeadbeefu);
+    check(sceGnmDrawInitDefaultHardwareState_nid_disambig1(baseWords.data(), 0xff) == 0, "the base draw default state accepted a short buffer");
+    for (const auto word : baseWords) check(word == 0xdeadbeefu, "the base draw default state wrote into a short buffer");
+    check(sceGnmDrawInitDefaultHardwareState_nid_disambig1(baseWords.data(), 0x101) == 0x100, "the base draw default state is not 256 dwords");
+    check(baseWords[0x100] == 0xdeadbeefu, "the base draw default state wrote after 256 dwords");
+    check(baseWords[0] == Header(0x28, 2) && baseWords[1] == 0x80000000u && baseWords[2] == 0x80000000u && baseWords[3] == Header(0x12, 1) && baseWords[5] == Header(0x58, 6), "the base draw default state has the wrong opening packets");
+    check(WholePackets(baseWords.data(), 0x100), "the base draw default state is not whole PM4 packets");
+    std::size_t modeIndex = 0x100;
+    for (std::size_t at = 0; at < 0x100; at += ((baseWords[at] >> 16) & 0x3fffu) + 2) {
+        if (baseWords[at] == Header(0x69, 2) && baseWords[at + 1] == 0x293) {
+            check(modeIndex == 0x100, "the base draw default state writes the mode twice");
+            modeIndex = at + 2;
+        }
+    }
+    check(modeIndex < 0x100 && baseWords[modeIndex] == 0x6000000 && words[modeIndex] == 0x6020000, "the draw modes do not write their expected SC_MODE_CNTL_1 values");
+    for (std::size_t i = 0; i < 0x100; ++i) check(i == modeIndex || baseWords[i] == words[i], "the base and 175 draw states differ outside SC_MODE_CNTL_1");
+
     words.fill(0xdeadbeefu);
     check(sceGnmDispatchInitDefaultHardwareState(words.data(), 0x100) == 0x100, "the dispatch default state is not 256 dwords");
     check(words[0] == (Header(0x76, 2) | 2u) && words[1] == 0x216 && words[2] == 0xffffffffu, "the dispatch default state does not start with a compute SET_SH_REG");
