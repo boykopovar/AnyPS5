@@ -69,6 +69,9 @@ CASES = {
     "top_level_flow_paths": f"name: Test\n\non: {{pull_request: {{paths: ['core/**']}}}}\njobs:\n{GATE}{TESTS}",
     "top_level_flow_paths_of_another_trigger": "name: Test\n\non: {push: {paths: ['core/**']}, pull_request: {branches: [main]}}\njobs:\n" + GATE + TESTS,
     "inline_trigger_list": "name: Test\non: [push, pull_request]\njobs:\n" + TESTS,
+    "block_trigger_list": "name: Test\non:\n  - push\n  - pull_request\njobs:\n" + TESTS,
+    "block_trigger_list_quoted": "name: Test\non:\n  # triggers\n\n- push\n- 'pull_request' # all\njobs:\n" + TESTS,
+    "block_trigger_list_without_pull_requests": "name: Test\non:\n  - push\n  - workflow_dispatch\njobs:\n" + TESTS,
     "other_triggers": workflow("  pull_request_target:\n    types: [opened]\n  push:\n    branches: [main]\n", TESTS),
     "wide_gated": wide(workflow(PULL_REQUEST, "  tests:\n    needs: eligibility\n    if: ${{ needs.eligibility.outputs.tests == 'true' }}\n    runs-on: ubuntu-latest\n")),
     "wide_ungated": wide(workflow(PULL_REQUEST, "  tests:\n    needs: eligibility\n    runs-on: ubuntu-latest\n")),
@@ -201,6 +204,13 @@ class CiGateTests(unittest.TestCase):
 
     def test_inline_trigger_list_fails(self):
         self.assertUngated("inline_trigger_list", "tests")
+
+    def test_block_trigger_list_fails(self):
+        self.assertUngated("block_trigger_list", "tests")
+        self.assertUngated("block_trigger_list_quoted", "tests")
+
+    def test_block_trigger_list_without_pull_requests_passes(self):
+        self.assertGated("block_trigger_list_without_pull_requests")
 
     def test_other_triggers_pass(self):
         self.assertGated("other_triggers")

@@ -553,7 +553,7 @@ class Check:
             lines = [(number, KEY.match(re.sub(r"(^|\s)#.*", "", text))) for number, text in enumerate(source, 1)]
             lines = [(number, len(match[1]), match[2].strip("'\""), match[3] or "") for number, match in lines if match]
             triggers = [entry for entry in lines if entry[1] == 0 and entry[2] == "on"]
-            if not triggers or pull_request_filtered(lines, triggers[0]):
+            if not triggers or pull_request_filtered(lines, triggers[0], source):
                 continue
             for number, name, needs, condition in jobs(lines, source):
                 if name != "eligibility" and ("eligibility" not in needs or "needs.eligibility.outputs." not in condition):
@@ -838,7 +838,7 @@ def flow_mapping(value):
     return result if not stack else {}
 
 
-def pull_request_filtered(lines, trigger):
+def pull_request_filtered(lines, trigger, source):
     _, _, _, value = trigger
     if value:
         if value.lstrip().startswith("{"):
@@ -846,6 +846,17 @@ def pull_request_filtered(lines, trigger):
             return "pull_request" not in triggers or bool({"paths", "paths-ignore"} & flow_mapping(triggers["pull_request"]).keys())
         return "pull_request" not in re.findall(r"[A-Za-z_]+", value)
     triggers = block(lines, lines.index(trigger))
+    if not triggers:
+        items = []
+        for text in source[trigger[0]:]:
+            text = re.sub(r"(^|\s)#.*", "", text).rstrip()
+            if not text:
+                continue
+            item = re.fullmatch(r"\s*-\s+(.*)", text)
+            if not item:
+                break
+            items.append(item[1].strip("'\""))
+        return "pull_request" not in items
     for index, (_, indent, name, value) in enumerate(triggers):
         if name == "pull_request" and indent == triggers[0][1]:
             if value:
