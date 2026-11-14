@@ -72,7 +72,7 @@ constexpr std::array<FormatInfo, 87> kFormatInfoTable {{
     {IrBufferFormat::Format9_9_9_5Float, true, false, false},
     {IrBufferFormat::Format5_6_5UNorm, true, false, false},
     {IrBufferFormat::Format5_5_5_1UNorm, true, false, false},
-    {IrBufferFormat::Format1_5_5_5UNorm, false, false, false},
+    {IrBufferFormat::Format1_5_5_5UNorm, true, false, false},
     {IrBufferFormat::Format4_4_4_4UNorm, true, false, false},
     {IrBufferFormat::Format8_24UNorm, true, false, false},
     {IrBufferFormat::Fmask8_S2_F1, true, false, false},
@@ -160,6 +160,7 @@ IrBufferFormat RemapStorageTextureFormat(IrBufferFormat format) {
     switch (format) {
         case IrBufferFormat::Format5_6_5UNorm:
         case IrBufferFormat::Format5_5_5_1UNorm:
+        case IrBufferFormat::Format1_5_5_5UNorm:
         case IrBufferFormat::Format4_4_4_4UNorm:
             return IrBufferFormat::Format16UInt;
         default:

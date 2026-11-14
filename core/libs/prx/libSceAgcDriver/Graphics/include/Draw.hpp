@@ -111,7 +111,7 @@ MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshA
 // storage cache, the template is gone, the pipeline is gone from the pipeline store, or the
 // template's proof failed (ShaderResources::ProveCurrent; the template is removed from the
 // resource cache and kept by the batch).
-enum class DrawRecipeMiss : std::uint8_t { None, NotRecordable, TargetGone, TemplateGone, ObjectsGone, Proof, Count };
+enum class DrawRecipeMiss : std::uint8_t { None, NotRecordable, TargetGone, TemplateGone, ObjectsGone, Proof, Buffers, Count };
 const char* DrawRecipeMissName(DrawRecipeMiss miss);
 struct DrawRecipeOutcome {
     bool recorded = false;
@@ -190,6 +190,12 @@ using AddressDrawReuseCounts = std::array<std::uint64_t, static_cast<std::size_t
 AddressDrawReuseCounts AddressDrawReuseCounters();
 const char* AddressDrawReuseName(AddressDrawReuse outcome);
 std::uint64_t AddressDrawReuseVerifications();
+struct VertexPlanScratchState {
+    bool busy = false;
+    std::size_t resting = 0;
+    std::size_t capacity = 0;
+};
+VertexPlanScratchState ThreadVertexPlanScratch();
 enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve = 2 };
 void SetSpaceKeepFailuresForTest(std::uint32_t count);
 void SetDrawStopAfterResolveForTest(DrawStopForTest stop);
