@@ -51,6 +51,8 @@ inline constexpr std::uint32_t VertexSelectorsPerDword = 2u;
 inline constexpr std::uint32_t ImageModeMask = 0xffu;
 inline constexpr std::uint32_t CompareStateShift = 9u;
 inline constexpr std::uint32_t CompareStateMask = 0x1fffu;
+inline constexpr std::uint32_t LevelsPastViewShift = 22u;
+inline constexpr std::uint32_t LevelsPastViewMask = 0xfu;
 
 struct ResourceMetadata {
     std::uint32_t binding;

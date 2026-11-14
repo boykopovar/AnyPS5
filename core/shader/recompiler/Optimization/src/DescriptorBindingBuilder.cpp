@@ -20,7 +20,8 @@
 namespace ShaderRecompiler {
 
 static_assert(PipelineSpecialization::ImageBase + ShaderInfo::MaxImages * PipelineSpecialization::ImageWords <= PipelineSpecialization::VertexBase);
-static_assert(PipelineSpecialization::MipCountBase + ShaderInfo::MaxImages <= PipelineSpecialization::StoreQuantizeBase);
+static_assert(PipelineSpecialization::MipCountBase + ShaderInfo::MaxImages <= PipelineSpecialization::LevelsPastViewBase);
+static_assert(PipelineSpecialization::LevelsPastViewBase + ShaderInfo::MaxImages <= PipelineSpecialization::StoreQuantizeBase);
 static_assert(PipelineSpecialization::StoreQuantizeBase + ShaderInfo::MaxImages * PipelineSpecialization::StoreQuantizeWords <= PipelineSpecialization::DescriptorIndexBase);
 static_assert(PipelineSpecialization::CompareBase + ShaderInfo::MaxImages * PipelineSpecialization::CompareWords <= PipelineSpecialization::FoldOffsetBase);
 static_assert(PipelineSpecialization::FoldOffsetBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::UnnormalizedBaseLevelBase);
@@ -537,6 +538,10 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         if (last < first || last - first >= RuntimeAbi::StorageMipSlots) fail("invalid dynamic storage mip range");
         if (!registrationModules) plan.specialization.push_back({PipelineSpecialization::MipCountBase + index, last - first + 1u});
     }
+    for (std::uint32_t index = 0; index < info.images.size() && !registrationModules; ++index) {
+        if (info.images[index].table != NoTable || (info.images[index].levelUses & ImageLevelUseQuery) == 0u) continue;
+        plan.specialization.push_back({PipelineSpecialization::LevelsPastViewBase + index, ResourceMaterializer::LevelsPastChain(snapshot.images.at(index)).levels});
+    }
     plan.bindings.reserve(layout.descriptors.size());
     for (const auto& logical : layout.descriptors) {
         const bool imageHeap = ImageBindingResourceClass(logical.kind) != ImageResourceClass::None;
@@ -638,6 +643,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         if (imageModes[resource] > RuntimeAbi::ImageModeMask) fail("runtime image mode exceeds its metadata field");
         metadata.flags = imageModes[resource] << 1u | (registrationModules ? (compareStates[resource] & RuntimeAbi::CompareStateMask) << RuntimeAbi::CompareStateShift : 0u);
         if (descriptor.dwords[0] == 0u && (descriptor.dwords[1] & 0xffu) == 0u) metadata.flags |= 1u;
+        metadata.flags |= (ResourceMaterializer::LevelsPastChain(descriptor).levels & RuntimeAbi::LevelsPastViewMask) << RuntimeAbi::LevelsPastViewShift;
         plan.imageMetadata.push_back({resource, layout.ImageMetadataDword() + resource * static_cast<std::uint32_t>(sizeof(metadata) / sizeof(std::uint32_t)), metadata});
     }
     if (layout.runtimeStateDwords != 0u) {
