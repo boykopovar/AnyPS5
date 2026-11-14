@@ -1766,7 +1766,8 @@ int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
     return Fail(error == 56 ? 22 : error);
 }
 int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
-    if (address && !length) return Fail(14);
+    std::uint32_t capacity = 0;
+    if (address && !GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity))) return Fail(14);
     const auto listener = Lookup(descriptor);
     if (!listener) return -1;
     if (listener->type != 1) return Fail(22);
@@ -1803,8 +1804,12 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
         if (inheritNonblocking && SetNonBlocking(*accepted)) return -1;
         const int acceptedDescriptor = Install(std::move(accepted));
         if (acceptedDescriptor < 0) return -1;
-        if (address) GuestAddress(peer, address, length);
-        return acceptedDescriptor;
+        if (!address) return acceptedDescriptor;
+        unsigned char name[28]{};
+        GuestAddress(peer, name, &capacity);
+        if (ReportAddress(address, length, name, capacity)) return acceptedDescriptor;
+        GuestSockets::Close(acceptedDescriptor);
+        return Fail(14);
     } catch (const std::bad_alloc&) {
         return Fail(12);
     }
