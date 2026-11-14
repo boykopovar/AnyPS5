@@ -195,7 +195,7 @@ APS5_EXPORT("BgUMBGvhATU", sceFreeTypeOtOutlineEmboldenXY_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline,
                                                        const FreeType::GuestBitmap* bitmap) {
-    return FT_Outline_Get_Bitmap_nid_postfix(library, outline, bitmap);
+    return FreeTypeOutlineGetBitmap_nid_no_patch(library, outline, bitmap);
 }
 APS5_EXPORT("4RRjK-Wd1lU", sceFreeTypeOtOutlineGetBitmap_nid_no_patch);
 
@@ -221,13 +221,13 @@ int APS5_VABI FT_Set_Debug_Hook_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFreeTypeOtSetMMBlendCoordinates_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFreeTypeOtSetMMBlendCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    return FreeTypeSetMMBlendCoordinates_nid_no_patch(face, count, coordinates);
 }
 APS5_EXPORT("zetC8Tp1S8w", sceFreeTypeOtSetMMBlendCoordinates_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    return FreeTypeSetMMDesignCoordinates_nid_no_patch(face, count, coordinates);
 }
 APS5_EXPORT("DAmwG6U7YIc", sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch);
 
@@ -236,13 +236,13 @@ int APS5_VABI sceFreeTypeOtSetRenderer_nid_no_patch() {
 }
 APS5_EXPORT("Yu9oXRVmTTo", sceFreeTypeOtSetRenderer_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtSetVarBlendCoordinates_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFreeTypeOtSetVarBlendCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    return FreeTypeSetVarBlendCoordinates_nid_no_patch(face, count, coordinates);
 }
 APS5_EXPORT("ihIHD8BTNxI", sceFreeTypeOtSetVarBlendCoordinates_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    return FreeTypeSetVarDesignCoordinates_nid_no_patch(face, count, coordinates);
 }
 APS5_EXPORT("yCEJIsjIOO8", sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch);
 

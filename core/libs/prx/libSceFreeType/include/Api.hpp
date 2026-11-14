@@ -129,6 +129,7 @@ std::uint8_t APS5_VABI FT_Face_CheckTrueTypePatents_nid_postfix(FreeType::GuestF
 std::uint8_t APS5_VABI FT_Face_SetUnpatentedHinting_nid_postfix(FreeType::GuestFaceRec* face, std::uint8_t value);
 int APS5_VABI FT_Get_Track_Kerning_nid_postfix(FreeType::GuestFaceRec* face, std::int64_t pointSize, std::int32_t degree, std::int64_t* kerning);
 int APS5_VABI FT_Outline_Get_Bitmap_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline, const FreeType::GuestBitmap* bitmap);
+int APS5_VABI FreeTypeOutlineGetBitmap_nid_no_patch(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline, const FreeType::GuestBitmap* bitmap);
 void* APS5_VABI FT_Get_Sfnt_Table_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t tag);
 void APS5_VABI FT_GlyphSlot_Oblique_nid_postfix(FreeType::GuestGlyphSlotRec* slot);
 void APS5_VABI FT_GlyphSlot_Embolden_nid_postfix(FreeType::GuestGlyphSlotRec* slot);
@@ -148,10 +149,14 @@ int APS5_VABI FT_Open_Face_nid_postfix(FreeType::GuestLibrary* library, const Fr
 int APS5_VABI FT_Get_Var_Blend_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, std::int64_t* coordinates);
 int APS5_VABI FT_Get_Var_Design_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, std::int64_t* coordinates);
 int APS5_VABI FT_Set_MM_Design_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FreeTypeSetMMDesignCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
 int APS5_VABI FT_Set_MM_Blend_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FreeTypeSetMMBlendCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
 int APS5_VABI FT_Set_Var_Blend_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FreeTypeSetVarBlendCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
 int APS5_VABI FT_Get_MM_Var_nid_postfix(FreeType::GuestFaceRec* face, void** master);
 int APS5_VABI FT_Set_Var_Design_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FreeTypeSetVarDesignCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
 int APS5_VABI FT_Get_Multi_Master_nid_postfix(FreeType::GuestFaceRec* face, void* master);
 int APS5_VABI FT_Done_MM_Var_nid_postfix(FreeType::GuestLibrary* library, void* master);
 int APS5_VABI FT_Set_Renderer_nid_postfix(FreeType::GuestLibrary* library, void* renderer, std::uint32_t count, const FreeType::GuestParameter* parameters);
