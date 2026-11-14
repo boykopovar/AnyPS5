@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <cerrno>
 
 namespace {
 
@@ -32,6 +33,10 @@ void TestShellCalls(std::intptr_t expectedHandle) {
     std::int32_t result = untouchedResult;
     Require(sceShellCoreUtilActivateGetStatus(0, nullptr, &result) == shellInvalidArgument && result == untouchedResult);
     Require(sceShellCoreUtilActivateGetStatus(0, &status, nullptr) == shellInvalidArgument && status == static_cast<std::int32_t>(untouchedStatus));
+    errno = 71;
+    Require(sceShellCoreUtilActivateGetStatus(0, reinterpret_cast<std::int32_t*>(0x10), &result) == shellInvalidArgument);
+    Require(sceShellCoreUtilActivateGetStatus(0, &status, reinterpret_cast<std::int32_t*>(0x10)) == shellInvalidArgument);
+    Require(errno == 71);
     Require(sceShellCoreUtilActivateGetStatus(0, &status, &result) == 0 && status == 2 && result == 0);
     Require(sceShellCoreUtilActivateIsActivated(7, nullptr) == shellInvalidArgument);
     bool activated = false;
