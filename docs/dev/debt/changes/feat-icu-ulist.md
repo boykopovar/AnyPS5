@@ -1,0 +1,9 @@
+# libSceIcu
+
+## change [Older callable exports]
+
+- [Older callable exports](../../../core/libs/prx/libSceIcu/LegacyExports.cpp) - 1689 of the 2347 3.20 callable NIDs use ICU 68 names (hashes of `libicuuc`/`libicui18n`/`libicuio` symbols in [ICU 68.2 Ubuntu 20.04](https://github.com/unicode-org/icu/releases/download/release-68-2/icu4c-68_2-Ubuntu20.04-x64.tgz), stripping `_68`; 1293 C++ in `icu_68`); a name match does not show ICU 68's prototype or behavior. `ubidi_getClass`, ten `unorm2_*`, `unorm_compare`, `u_terminateChars`, `u_terminateUChar32s`, `uloc_isRightToLeft`, `uloc_getLCID`, `uloc_getLocaleForLCID`, `uprv_int32Comparator`, `uprv_uint32Comparator`, `uprv_uint16Comparator` (in [ArrayComparators.cpp](../../../core/libs/prx/libSceIcu/ArrayComparators.cpp)), `ulist_*` and [Script.cpp](../../../core/libs/prx/libSceIcu/Script.cpp) are implemented; the rest throw. The other 654 keep placeholder names (650 match no ICU 68.2 symbol). None appears in the later version-labelled inventory; no cross-version compatibility is claimed.
+
+## add Functional
+
+- [String lists](../../../core/libs/prx/libSceIcu/List.cpp) have no console ABI or behavior verification. The fourteen `ulist_*` exports take the signatures of ICU 68.2's internal [ulist.h](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/ulist.h) and follow [ulist.cpp](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/ulist.cpp), whose behavior 78.1 keeps, over its 32-byte `UList` and `UListNode`; the firmware's layouts are unverified. Blocks come from `uprv_malloc` and go back to the release function `u_setMemoryFunctions` installed, else the guest `free`. A null `UErrorCode`, a null enumeration and a null string that ICU would compare throw where ICU dereferences them; a null string that no comparison reaches is not read. Closes when: compared with the console.

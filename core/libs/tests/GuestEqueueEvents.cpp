@@ -87,6 +87,8 @@ static void VerifyPeriodicTimer() {
     Require(count == 1 && sceKernelGetEventId(&events[0]) == 14 && sceKernelGetEventData(&events[0]) >= 1);
     Require(sceKernelDeleteTimerEvent(eq, 14) == SCE_OK);
     const KernelTimespec soon{0, 1000000};
+    Require(sceKernelAddHRTimerEvent(eq, 15, reinterpret_cast<const KernelTimespec*>(1), &second) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(sceKernelAddHRTimerEvent(eq, 15, &soon, &second) == SCE_OK);
     Require(sceKernelWaitEqueue(eq, events, 2, &count, nullptr) == SCE_OK);
     Require(count == 1 && sceKernelGetEventId(&events[0]) == 15 && sceKernelGetEventFilter(&events[0]) == EVFILT_HRTIMER);
@@ -214,6 +216,36 @@ static void VerifyEdgeUserEventReportedOnce() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+template <typename TTrigger>
+static void RequireBothWaitersWake(KernelEqueue eq, uintptr_t ident, TTrigger trigger) {
+    std::chrono::steady_clock::duration waited[2]{};
+    auto wait = [eq, ident, &waited](int index) {
+        const KernelUseconds limit = 5000000;
+        KernelEvent event{};
+        int count = 0;
+        const auto start = std::chrono::steady_clock::now();
+        Require(sceKernelWaitEqueue(eq, &event, 1, &count, &limit) == SCE_OK && count == 1 && sceKernelGetEventId(&event) == ident);
+        waited[index] = std::chrono::steady_clock::now() - start;
+    };
+    std::thread first(wait, 0);
+    std::thread second(wait, 1);
+    SleepAtLeast(std::chrono::milliseconds(50));
+    trigger();
+    first.join();
+    second.join();
+    Require(waited[0] < std::chrono::seconds(2) && waited[1] < std::chrono::seconds(2));
+}
+
+static void VerifyEventWakesEveryWaiter() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "waiters") == SCE_OK);
+    Require(sceKernelAddUserEvent(eq, 4) == SCE_OK);
+    RequireBothWaitersWake(eq, 4, [eq] { Require(sceKernelTriggerUserEvent(eq, 4, nullptr) == SCE_OK); });
+    Require(sceKernelDeleteUserEvent(eq, 4) == SCE_OK);
+    RequireBothWaitersWake(eq, 9, [eq] { Require(sceKernelAddTimerEvent(eq, 9, 50000, nullptr) == SCE_OK); });
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 static void VerifyRepeatedAmprCompletionsAreNotLost() {
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "ampr") == SCE_OK);
@@ -261,6 +293,9 @@ static void VerifyUndrainedTriggersStayBounded() {
     for (int i = 1; i <= kFlood; ++i) {
         Require(EqueueTriggerEvent_nid_postfix(eq, 9, EVFILT_AMPR, data(static_cast<std::uintptr_t>(i))) == SCE_OK);
     }
+    const std::uint64_t expectedDropped = static_cast<std::uint64_t>(kFlood) - (1 + KernelEqueuePrivate::kMaxPendingEvents);
+    KernelEqueueRef bounded = EqueuePin_nid_postfix(eq);
+    Require(bounded && bounded->DroppedPendingEvents() == expectedDropped);
     const int kBound = static_cast<int>(1 + KernelEqueuePrivate::kMaxPendingEvents);
     int total = 0;
     intptr_t last = 0;
@@ -407,7 +442,10 @@ static void VerifyInvalidQueueAttributes() {
     Require(sceKernelCreateEqueue(&untouched, "0123456789012345678901234567890") == SCE_OK && untouched != 0x1234);
     Require(sceKernelDeleteEqueue(untouched) == SCE_OK);
 
+    Require(sceKernelCreateEqueue(&eq, reinterpret_cast<const char*>(1)) == SCE_KERNEL_ERROR_EFAULT && eq == 0);
+    Require(sceKernelCreateEqueue(reinterpret_cast<KernelEqueue*>(1), "bad output") == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelCreateEqueue(&eq, "bounds") == SCE_OK);
+    Require(static_cast<std::uint32_t>(eq) == static_cast<std::uint32_t>(untouched));
     KernelEvent event{};
     int count = -1;
     const KernelUseconds timeout = 0;
@@ -425,6 +463,7 @@ int main() {
     VerifyUserEventReportedOncePerWait();
     VerifyBlockingWaitReportsLevelEventOnce();
     VerifyEdgeUserEventReportedOnce();
+    VerifyEventWakesEveryWaiter();
     VerifyRepeatedAmprCompletionsAreNotLost();
     VerifyUndrainedTriggersStayBounded();
     VerifyAddEventTruncatesPending();

@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -19,7 +20,6 @@
 #endif
 #include <windows.h>
 #else
-#include <cerrno>
 #include <fstream>
 #include <sstream>
 #include <sys/mman.h>
@@ -279,7 +279,12 @@ int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search
   || (len & (PS5_PAGE_SIZE - 1)) || !phys_addr_out
   || (alignment != 0 && (alignment & (PS5_PAGE_SIZE - 1))))
   return SCE_KERNEL_ERROR_EINVAL;
- return DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, memory_type, phys_addr_out);
+ int64_t physical = 0;
+ const int result = DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, memory_type, &physical);
+ if (result != 0) return result;
+ if (GuestCopyOut_nid_no_patch(phys_addr_out, &physical, sizeof(physical))) return 0;
+ DirectMemoryFree(physical, len);
+ return SCE_KERNEL_ERROR_EFAULT;
 }
 
 int APS5_VABI sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
@@ -304,10 +309,11 @@ int APS5_VABI sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, 
  constexpr int SCE_KERNEL_DMQ_FIND_NEXT = 1;
  if (!info || offset < 0) return SCE_KERNEL_ERROR_EINVAL;
  struct DirectMemoryQueryInfo { int64_t start; int64_t end; int memory_type; };
- if (info_size < sizeof(DirectMemoryQueryInfo)) return SCE_KERNEL_ERROR_EINVAL;
+ if (flags == 2 || flags == 4 || info_size == 0) return SCE_KERNEL_ERROR_EINVAL;
+ if ((flags & ~SCE_KERNEL_DMQ_FIND_NEXT) != 0) throw std::runtime_error("sceKernelDirectMemoryQuery: flags other than 0, 1, 2 and 4 are not measured");
  DirectMemoryQueryInfo q{};
  if (!DirectMemoryFind(offset, (flags & SCE_KERNEL_DMQ_FIND_NEXT) != 0, &q.start, &q.end, &q.memory_type)) return SCE_KERNEL_ERROR_EACCES;
- if (!GuestCopyOut_nid_no_patch(info, &q, sizeof(q))) return SCE_KERNEL_ERROR_EFAULT;
+ if (!GuestCopyOut_nid_no_patch(info, &q, std::min(info_size, sizeof(q)))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 
@@ -554,6 +560,7 @@ int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end) {
  std::uintptr_t stackEnd = 0;
  if (!GuestThreadStack(reinterpret_cast<std::uintptr_t>(addr), &stackStart, &stackEnd)) {
   VirtualQueryInfo info{};
+  if (reinterpret_cast<std::uintptr_t>(addr) == ~std::uintptr_t{0}) return SCE_KERNEL_ERROR_EINVAL;
   if (sceKernelVirtualQuery(addr, 0, &info, sizeof(info)) != 0) return SCE_KERNEL_ERROR_EACCES;
  }
  const auto startAddress = reinterpret_cast<void*>(stackStart);
@@ -681,7 +688,12 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
   }
   if (result != 0) break;
  }
- if (num_entries_out) *num_entries_out = processed;
+ if (num_entries_out != nullptr) {
+  const int savedErrno = errno;
+  const bool copied = GuestCopyOut_nid_no_patch(num_entries_out, &processed, sizeof(processed));
+  errno = savedErrno;
+  if (!copied) return SCE_KERNEL_ERROR_EFAULT;
+ }
  return result;
 }
 

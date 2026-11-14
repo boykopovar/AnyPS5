@@ -11,6 +11,7 @@ struct DiagnosticSink {
     void (*unsupportedInstruction)(const char* encoding, const char* opcode, long long opcodeValue, const char* file, int line) = nullptr;
     void (*imageFormat)(unsigned format, const char* name, int status, int usage) = nullptr;
     void (*descriptor)(int type, int status, int usage) = nullptr;
+    void (*compileTime)(long long nanoseconds) = nullptr;
 };
 
 inline std::atomic<const DiagnosticSink*>& DiagnosticSinkSlot() {

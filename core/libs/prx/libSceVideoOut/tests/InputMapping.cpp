@@ -568,6 +568,7 @@ bool sameBinding(const Pad::InputBinding& left, const Pad::InputBinding& right) 
 }
 
 bool sameConfiguration(const Pad::InputConfiguration& left, const Pad::InputConfiguration& right) {
+    if (left.controllerButtons != right.controllerButtons) return false;
     if (left.bindings.size() != right.bindings.size()) return false;
     for (std::size_t index = 0; index < left.bindings.size(); ++index) {
         if (!sameBinding(left.bindings[index], right.bindings[index])) return false;
@@ -620,7 +621,6 @@ void reloadInputMappingAction() {
     require(moved.size() == 2 && hasKey(moved, SDL_SCANCODE_F3) && hasKey(moved, SDL_SCANCODE_F2) && !hasKey(moved, SDL_SCANCODE_F1), "a ReloadInputMapping line replaces F1 and keeps alternates");
     require(rejects("ReloadInputMapping = MOUSE:Left\n"), "ReloadInputMapping refuses a mouse button");
     require(rejects("ReloadInputMapping = WHEEL:Up\n"), "ReloadInputMapping refuses the mouse wheel");
-    require(rejects("ReloadInputMapping = PAD:L1\n"), "ReloadInputMapping refuses a pad source until chords are supported");
 }
 
 void reloadErrorNamesLine() {
@@ -633,6 +633,72 @@ void reloadErrorNamesLine() {
     require(sameConfiguration(configuration, before), "a failed reload does not touch the target configuration");
     useConfig("Cross = KEY:F\n");
     require(Pad::TryLoadInputMapping("", configuration, error) && crossOnKey(configuration, SDL_SCANCODE_F), "a valid file reloads");
+}
+
+std::uint32_t padChordOf(const Pad::InputConfiguration& configuration, Pad::InputControl control) {
+    for (const auto& binding : configuration.bindings) {
+        if (binding.control == control && binding.padButtons != 0) return binding.padButtons;
+    }
+    return 0;
+}
+
+void padChordParse() {
+    useConfig("ToggleFullscreen = PAD:Options+R1\nScreenshot = pad:l1\n");
+    const auto configuration = Pad::LoadInputMapping();
+    const auto fullscreen = static_cast<std::uint32_t>(Pad::PadButton::Options) | static_cast<std::uint32_t>(Pad::PadButton::R1);
+    require(padChordOf(configuration, Pad::InputControl::ToggleFullscreen) == fullscreen, "a pad chord is a mask of its buttons");
+    require(padChordOf(configuration, Pad::InputControl::Screenshot) == static_cast<std::uint32_t>(Pad::PadButton::L1), "a single pad button is a chord");
+    require(keysFor(Pad::InputControl::ToggleFullscreen).size() == 0, "a pad chord does not bind a key");
+    useConfig("ReloadInputMapping = PAD:L1\n");
+    require(padChordOf(Pad::LoadInputMapping(), Pad::InputControl::ReloadInputMapping) == static_cast<std::uint32_t>(Pad::PadButton::L1), "ReloadInputMapping takes a pad chord");
+    require(rejects("Cross = PAD:L1\n"), "a pad chord cannot trigger a pad button");
+    require(rejects("ToggleMouse = PAD:L1\n"), "a pad chord cannot trigger ToggleMouse");
+    require(rejects("ToggleFullscreen = PAD:Options+\n"), "a pad chord with an empty button is rejected");
+    require(rejects("ToggleFullscreen = PAD:+R1\n"), "a pad chord with a leading plus is rejected");
+    require(rejects("ToggleFullscreen = PAD:Nope\n"), "a pad chord with an unknown button is rejected");
+    require(rejects("ToggleFullscreen = PAD:\n"), "an empty pad chord is rejected");
+}
+
+void controllerButtonOverrides() {
+    auto configuration = defaultConfiguration();
+    const auto originalBindings = configuration.bindings.size();
+    const auto& buttons = configuration.controllerButtons;
+    std::string message;
+    require(!buttons[SDL_CONTROLLER_BUTTON_A], "a missing override keeps the controller default");
+    require(applyText(configuration, "sdlbutton: A = circle\nSDLButton:b = None\nSDLButton:paddle1 = R2\n", message), "SDL buttons accept PlayStation button names or None");
+    require(buttons[SDL_CONTROLLER_BUTTON_A] == Pad::PadButton::Circle, "the SDL name and destination are case-insensitive");
+    require(buttons[SDL_CONTROLLER_BUTTON_B] == Pad::PadButton::None, "None disables an SDL button");
+    require(buttons[SDL_CONTROLLER_BUTTON_PADDLE1] == Pad::PadButton::R2, "extra SDL buttons can be assigned");
+    require(configuration.bindings.size() == originalBindings, "controller overrides keep keyboard and mouse bindings");
+    require(applyText(configuration, "SDLButton:a = Cross\n", message), "a title profile can replace an SDL button override");
+    require(buttons[SDL_CONTROLLER_BUTTON_A] == Pad::PadButton::Cross && buttons[SDL_CONTROLLER_BUTTON_B] == Pad::PadButton::None, "a profile keeps other overrides");
+    require(rejects("SDLButton:a = Cross\nSDLButton:A = Circle\n"), "duplicate SDL buttons in one file are rejected");
+    require(rejects("SDLButton:leftx = Cross\n"), "controller axes are not SDL buttons");
+    require(rejects("SDLButton:a = ToggleFullscreen\n"), "controller remaps must target a guest button");
+    require(rejects("SDLButton:a = Cross+Circle\n"), "an SDL button remaps to one destination");
+}
+
+void watchStampsAndDebounce() {
+    useConfig("Cross = KEY:F\n");
+    const auto first = Pad::InputMappingFileStamp("");
+    require(first.shared.present && !first.profile.present, "the shared file has a stamp and a missing profile has none");
+    Pad::InputMappingWatch watch(first);
+    require(!watch.Poll(first), "an unchanged file is not reloaded");
+    useConfig("Cross = KEY:G\nMouseCurve = 2\n");
+    const auto changed = Pad::InputMappingFileStamp("");
+    require(changed != first, "a rewritten file changes its stamp");
+    require(!watch.Poll(changed), "a change waits one poll before it is reloaded");
+    require(watch.Poll(changed), "a settled change is reloaded once");
+    require(!watch.Poll(changed), "a reloaded change is not reloaded again");
+    useConfig("Cross = KEY:H\n");
+    const auto moving = Pad::InputMappingFileStamp("");
+    require(!watch.Poll(moving), "a file still being written is not reloaded");
+    useConfig("Cross = KEY:HH\nCircle = KEY:J\n");
+    const auto settled = Pad::InputMappingFileStamp("");
+    require(!watch.Poll(settled), "a change in the middle of a write restarts the wait");
+    require(watch.Poll(settled), "the last version is reloaded once it settles");
+    std::filesystem::remove(root / "anyps5-input.ini");
+    require(!Pad::InputMappingFileStamp("").shared.present, "a removed file has no stamp");
 }
 
 }
@@ -675,6 +741,9 @@ int main() try {
     parserPartialText();
     reloadInputMappingAction();
     reloadErrorNamesLine();
+    padChordParse();
+    controllerButtonOverrides();
+    watchStampsAndDebounce();
     std::filesystem::remove_all(root);
     std::cout << "input mapping tests passed\n";
     return 0;

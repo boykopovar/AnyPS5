@@ -1,17 +1,25 @@
 #include "prx/libcairo/include/Matrix.hpp"
-#include <cmath>
+
+#include <CairoBackend.h>
+
+#include <bit>
+#include <cstddef>
+
+static_assert(sizeof(CairoMatrix) == sizeof(cairo_matrix_t));
+static_assert(offsetof(CairoMatrix, yx) == offsetof(cairo_matrix_t, yx));
+static_assert(offsetof(CairoMatrix, xy) == offsetof(cairo_matrix_t, xy));
+static_assert(offsetof(CairoMatrix, yy) == offsetof(cairo_matrix_t, yy));
+static_assert(offsetof(CairoMatrix, x0) == offsetof(cairo_matrix_t, x0));
+static_assert(offsetof(CairoMatrix, y0) == offsetof(cairo_matrix_t, y0));
 
 namespace {
 
-CairoMatrix Product(const CairoMatrix& a, const CairoMatrix& b) {
-    return {
-        a.xx * b.xx + a.yx * b.xy,
-        a.xx * b.yx + a.yx * b.yy,
-        a.xy * b.xx + a.yy * b.xy,
-        a.xy * b.yx + a.yy * b.yy,
-        a.x0 * b.xx + a.y0 * b.xy + b.x0,
-        a.x0 * b.yx + a.y0 * b.yy + b.y0
-    };
+cairo_matrix_t Backend(const CairoMatrix& matrix) {
+    return std::bit_cast<cairo_matrix_t>(matrix);
+}
+
+CairoMatrix Guest(const cairo_matrix_t& matrix) {
+    return std::bit_cast<CairoMatrix>(matrix);
 }
 
 }
@@ -19,82 +27,64 @@ CairoMatrix Product(const CairoMatrix& a, const CairoMatrix& b) {
 extern "C" {
 
 void APS5_VABI cairo_matrix_init(CairoMatrix* matrix, double xx, double yx, double xy, double yy, double x0, double y0) {
-    *matrix = {xx, yx, xy, yy, x0, y0};
+    cairo_matrix_t result;
+    aps5_cairo_matrix_init(&result, xx, yx, xy, yy, x0, y0);
+    *matrix = Guest(result);
 }
 
 void APS5_VABI cairo_matrix_init_identity(CairoMatrix* matrix) {
-    *matrix = {1, 0, 0, 1, 0, 0};
+    cairo_matrix_t result;
+    aps5_cairo_matrix_init_identity(&result);
+    *matrix = Guest(result);
 }
 
 void APS5_VABI cairo_matrix_init_translate(CairoMatrix* matrix, double tx, double ty) {
-    *matrix = {1, 0, 0, 1, tx, ty};
+    cairo_matrix_t result;
+    aps5_cairo_matrix_init_translate(&result, tx, ty);
+    *matrix = Guest(result);
 }
 
 void APS5_VABI cairo_matrix_multiply(CairoMatrix* result, const CairoMatrix* a, const CairoMatrix* b) {
-    *result = Product(*a, *b);
+    const cairo_matrix_t left = Backend(*a);
+    const cairo_matrix_t right = Backend(*b);
+    cairo_matrix_t product;
+    aps5_cairo_matrix_multiply(&product, &left, &right);
+    *result = Guest(product);
 }
 
 void APS5_VABI cairo_matrix_translate(CairoMatrix* matrix, double tx, double ty) {
-    const CairoMatrix translation{1, 0, 0, 1, tx, ty};
-    *matrix = Product(translation, *matrix);
+    cairo_matrix_t result = Backend(*matrix);
+    aps5_cairo_matrix_translate(&result, tx, ty);
+    *matrix = Guest(result);
 }
 
 void APS5_VABI cairo_matrix_scale(CairoMatrix* matrix, double sx, double sy) {
-    const CairoMatrix scaling{sx, 0, 0, sy, 0, 0};
-    *matrix = Product(scaling, *matrix);
+    cairo_matrix_t result = Backend(*matrix);
+    aps5_cairo_matrix_scale(&result, sx, sy);
+    *matrix = Guest(result);
 }
 
 void APS5_VABI cairo_matrix_rotate(CairoMatrix* matrix, double radians) {
-    const double c = std::cos(radians);
-    const double s = std::sin(radians);
-    const CairoMatrix rotation{c, s, -s, c, 0, 0};
-    *matrix = Product(rotation, *matrix);
+    cairo_matrix_t result = Backend(*matrix);
+    aps5_cairo_matrix_rotate(&result, radians);
+    *matrix = Guest(result);
 }
 
 int APS5_VABI cairo_matrix_invert(CairoMatrix* matrix) {
-    if (matrix->xy == 0 && matrix->yx == 0) {
-        matrix->x0 = -matrix->x0;
-        matrix->y0 = -matrix->y0;
-        if (matrix->xx != 1) {
-            if (matrix->xx == 0) return 5;
-            matrix->xx = 1 / matrix->xx;
-            matrix->x0 *= matrix->xx;
-        }
-        if (matrix->yy != 1) {
-            if (matrix->yy == 0) return 5;
-            matrix->yy = 1 / matrix->yy;
-            matrix->y0 *= matrix->yy;
-        }
-        return 0;
-    }
-
-    const CairoMatrix original = *matrix;
-    const double determinant = original.xx * original.yy - original.yx * original.xy;
-    if (!std::isfinite(determinant) || determinant == 0) return 5;
-    const double inverse = 1 / determinant;
-    *matrix = {
-        original.yy * inverse,
-        -original.yx * inverse,
-        -original.xy * inverse,
-        original.xx * inverse,
-        (original.xy * original.y0 - original.yy * original.x0) * inverse,
-        (original.yx * original.x0 - original.xx * original.y0) * inverse
-    };
-    return 0;
+    cairo_matrix_t result = Backend(*matrix);
+    const cairo_status_t status = aps5_cairo_matrix_invert(&result);
+    *matrix = Guest(result);
+    return status;
 }
 
 void APS5_VABI cairo_matrix_transform_distance(const CairoMatrix* matrix, double* dx, double* dy) {
-    const double x = *dx;
-    const double y = *dy;
-    *dx = matrix->xx * x + matrix->xy * y;
-    *dy = matrix->yx * x + matrix->yy * y;
+    const cairo_matrix_t backend = Backend(*matrix);
+    aps5_cairo_matrix_transform_distance(&backend, dx, dy);
 }
 
 void APS5_VABI cairo_matrix_transform_point(const CairoMatrix* matrix, double* x, double* y) {
-    const double oldX = *x;
-    const double oldY = *y;
-    *x = matrix->xx * oldX + matrix->xy * oldY + matrix->x0;
-    *y = matrix->yx * oldX + matrix->yy * oldY + matrix->y0;
+    const cairo_matrix_t backend = Backend(*matrix);
+    aps5_cairo_matrix_transform_point(&backend, x, y);
 }
 
 }

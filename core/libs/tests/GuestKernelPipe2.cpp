@@ -37,5 +37,25 @@ int main() {
 
     RequireFailure(pipe2_nid_postfix(nullptr, 0), 14);
     RequireFailure(pipe2_nid_postfix(fds, 0x80000000), 22);
+    RequireFailure(pipe_nid_postfix(nullptr), 14);
+
+    *__error_nid_postfix() = 61;
+    Require(pipe2_nid_postfix(fds, 0x00100000) == 0);
+    Require(*__error_nid_postfix() == 61);
+    Require(close_nid_postfix(fds[0]) == 0);
+    Require(close_nid_postfix(fds[1]) == 0);
+
+    Require(pipe2_nid_postfix(fds, 4 | 0x00100000) == 0);
+    Require(*__error_nid_postfix() == 61);
+    const char payload[] = {'p', 'i', 'n', 'g'};
+    Require(write_nid_postfix(fds[1], payload, sizeof(payload)) == static_cast<std::int64_t>(sizeof(payload)));
+    Require(*__error_nid_postfix() == 61);
+    char received[8]{};
+    Require(read_nid_postfix(fds[0], received, sizeof(received)) == static_cast<std::int64_t>(sizeof(payload)));
+    Require(std::memcmp(received, payload, sizeof(payload)) == 0);
+    RequireFailure(read_nid_postfix(fds[0], received, 1), 35);
+    Require(close_nid_postfix(fds[1]) == 0);
+    Require(read_nid_postfix(fds[0], received, 1) == 0);
+    Require(close_nid_postfix(fds[0]) == 0);
     return 0;
 }
