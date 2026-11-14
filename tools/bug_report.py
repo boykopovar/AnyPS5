@@ -1,7 +1,12 @@
+import argparse
+import getpass
 import json
+import os
 import platform
 from pathlib import Path
 import re
+import socket
+import sys
 import zipfile
 
 
@@ -51,3 +56,35 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None):
         for name, content in members.items():
             bundle.writestr(name, content.encode("utf-8"))
     return sorted(members)
+
+
+def identities():
+    try:
+        user = getpass.getuser()
+    except Exception:
+        user = ""
+    return {"home": str(Path.home()), "user": user, "host": socket.gethostname().split(".")[0]}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Bundle the run report, log and input mapping of an AnyPS5 run, with personal details redacted.")
+    parser.add_argument("--report", default="anyps5-report.json", help="run report to include (default: anyps5-report.json)")
+    parser.add_argument("--log", default=os.environ.get("ANYPS5_LOG_FILE") or None, help="log file to include (default: ANYPS5_LOG_FILE)")
+    default_config = os.environ.get("ANYPS5_INPUT_CONFIG") or ("anyps5-input.ini" if Path("anyps5-input.ini").is_file() else None)
+    parser.add_argument("--input-config", default=default_config, help="input mapping to include (default: ANYPS5_INPUT_CONFIG or ./anyps5-input.ini)")
+    parser.add_argument("--out", default="bug-report.zip", help="bundle to write; an existing file is never overwritten (default: bug-report.zip)")
+    args = parser.parse_args(argv)
+    if not Path(args.report).is_file():
+        print(f"bug_report: no run report at {args.report}", file=sys.stderr)
+        return 1
+    try:
+        names = make_bundle(args.report, args.out, log=args.log, input_config=args.input_config, **identities())
+    except (OSError, ValueError) as error:
+        print(f"bug_report: {error}", file=sys.stderr)
+        return 1
+    print(f"wrote {args.out}: {', '.join(names)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
