@@ -5642,7 +5642,6 @@ int APS5_VABI _ZNK7WebCore19ResourceRequestBase10httpOriginEv();
 int APS5_VABI _ZNK7WebCore19ResourceRequestBase12httpReferrerEv();
 int APS5_VABI _ZNK7WebCore19ResourceRequestBase12isolatedCopyEv();
 int APS5_VABI _ZNK7WebCore19ResourceRequestBase13httpUserAgentEv();
-int APS5_VABI _ZNK7WebCore19ResourceRequestBase13isConditionalEv();
 int APS5_VABI _ZNK7WebCore19ResourceRequestBase15httpContentTypeEv();
 int APS5_VABI _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldENS_14HTTPHeaderNameE();
 int APS5_VABI _ZNK7WebCore19ResourceRequestBase16httpHeaderFieldsEv();

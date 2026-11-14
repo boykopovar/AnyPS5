@@ -30798,10 +30798,6 @@ int APS5_VABI _ZNK7WebCore19ResourceRequestBase13httpUserAgentEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore19ResourceRequestBase13isConditionalEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore19ResourceRequestBase15httpContentTypeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
