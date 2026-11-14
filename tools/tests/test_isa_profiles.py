@@ -118,5 +118,39 @@ class CanonicalXmlFormsTests(unittest.TestCase):
         self.assertEqual(self.forms(), set())
 
 
+class ValidateFormsTests(unittest.TestCase):
+    def test_well_formed_rows_are_returned_unchanged(self):
+        rows = [("S_NOP", "SOPP", "base", 0), ("V_ADD_F32", "VOP2", "base", 3), ("V_ADD_F32", "VOP2", "dpp16", 3),
+                ("V_MOV_B32", "VOP1", "vop3", 0x180)]
+        self.assertIs(isa_profiles.validate_forms(rows), rows)
+
+    def test_malformed_rows_are_rejected(self):
+        for row in (("v_add", "VOP2", "base", 3), ("V_ADD_F32", "VOP9", "base", 3), ("V_ADD_F32", "VOP2", "vop2", 3),
+                    ("V_ADD_F32", "VOP2", "base", -1), ("V_ADD_F32", "VOP2", "base", True),
+                    ("V_ADD_F32", "VOP2", "base", "3")):
+            with self.subTest(row=row), self.assertRaisesRegex(ValueError, "invalid ISA form"):
+                isa_profiles.validate_forms([row])
+
+    def test_modified_forms_are_only_for_vop1_vop2_and_vopc(self):
+        for row in (("S_MOV_B32", "SOP1", "dpp16", 3), ("V_X", "VOP3", "vop3", 1), ("V_X", "VOP3", "dpp8", 1)):
+            with self.subTest(row=row), self.assertRaisesRegex(ValueError, "invalid modified ISA form"):
+                isa_profiles.validate_forms([row])
+
+    def test_same_encoding_and_opcode_twice_is_a_duplicate(self):
+        with self.assertRaisesRegex(ValueError, "duplicate ISA encoding"):
+            isa_profiles.validate_forms([("V_ADD_F32", "VOP2", "base", 3), ("V_SUB_F32", "VOP2", "base", 3)])
+
+    def test_vop3_extensions_share_the_physical_vop3_opcode_space(self):
+        with self.assertRaisesRegex(ValueError, "duplicate ISA encoding"):
+            isa_profiles.validate_forms([("V_MAC_LEGACY_F32", "VOP2", "vop3", 0x106), ("V_FMAC_LEGACY_F32", "VOP3", "base", 0x106)])
+        with self.assertRaisesRegex(ValueError, "duplicate ISA encoding"):
+            isa_profiles.validate_forms([("V_A", "VOP1", "vop3", 0x106), ("V_B", "VOP2", "vop3", 0x106)])
+
+    def test_same_opcode_in_different_encodings_is_allowed(self):
+        rows = [("A", "VOP2", "base", 0x106), ("B", "VOP3", "base", 0x106), ("C", "VOP1", "base", 0x106),
+                ("D", "VOP2", "dpp16", 0x106), ("E", "VOP1", "base", 5), ("F", "VOP1", "vop3", 5)]
+        self.assertIs(isa_profiles.validate_forms(rows), rows)
+
+
 if __name__ == "__main__":
     unittest.main()
