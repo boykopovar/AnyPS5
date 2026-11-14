@@ -1,4 +1,6 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
+#include "prx/libSceNpCppWebApi/include/Internal.hpp"
+#include "NpCppWebApiFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -31,6 +33,7 @@ constexpr std::size_t kVectorSize = 0x48;
 constexpr std::size_t kVectorReferenceCountOffset = 0x38;
 constexpr std::size_t kObjectOffset = 0x00;
 constexpr std::size_t kBodyMagicOffset = 0x00;
+constexpr std::size_t kBodyLibContextOffset = 0x08;
 constexpr std::size_t kBodyReferenceCountOffset = 0x30;
 constexpr std::size_t kBodyElementKindOffset = 0x34;
 constexpr std::size_t kBodyElementsOffset = 0x38;
@@ -100,15 +103,15 @@ TValue LoadIterator(const IteratorStorage& storage, std::size_t offset) {
 }
 
 void TestConstructedStringIsEmpty() {
-    std::uint64_t libContext = 1;
+    NpCppWebApiTest::LibContext libContext;
     Storage storage;
     std::memset(storage.bytes, kFill, sizeof(storage.bytes));
 
-    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(storage.bytes), &libContext);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(storage.bytes), libContext.value());
     Require(Load<std::int32_t>(storage, kReferenceCountOffset) == 0);
     Require(Load<char*>(storage, kBufferOffset) == nullptr);
     Require(Load<std::uint64_t>(storage, kBufferSizeOffset) == 0);
-    Require(Load<void*>(storage, kLibContextOffset) == &libContext);
+    Require(Load<void*>(storage, kLibContextOffset) == libContext.value());
     Require(GuardIntact(storage));
     Require(_ZNK3sce2Np9CppWebApi6Common6String4sizeEv(reinterpret_cast<const CommonString*>(storage.bytes)) == 0);
     Require(_ZNK3sce2Np9CppWebApi6Common6String6lengthEv(reinterpret_cast<const CommonString*>(storage.bytes)) == 0);
@@ -135,10 +138,10 @@ void TestNullLibContextIsStored() {
 }
 
 void TestAppendBuildsAndClearsBuffer() {
-    std::uint64_t libContext = 1;
+    NpCppWebApiTest::LibContext libContext;
     Storage storage;
     std::memset(storage.bytes, kFill, sizeof(storage.bytes));
-    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(storage.bytes), &libContext);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(storage.bytes), libContext.value());
 
     Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(storage.bytes), "rank") == 0);
     Require(std::strcmp(_ZNK3sce2Np9CppWebApi6Common6String5c_strEv(reinterpret_cast<const CommonString*>(storage.bytes)), "rank") == 0);
@@ -156,11 +159,11 @@ void TestAppendBuildsAndClearsBuffer() {
 }
 
 void TestAppendNullKeepsEmpty() {
-    std::uint64_t libContext = 1;
+    NpCppWebApiTest::LibContext libContext;
     Storage storage;
     std::memset(storage.bytes, kFill, sizeof(storage.bytes));
 
-    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(storage.bytes), &libContext);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(storage.bytes), libContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(storage.bytes), nullptr) == kStringInvalidArgument);
     Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(storage.bytes), "") == 0);
     Require(Load<char*>(storage, kBufferOffset) == nullptr);
@@ -170,14 +173,14 @@ void TestAppendNullKeepsEmpty() {
 }
 
 void TestStringCopyFromAndObservers() {
-    std::uint64_t libContext = 1;
-    std::uint64_t sourceContext = 2;
+    NpCppWebApiTest::LibContext libContext;
+    NpCppWebApiTest::LibContext sourceContext;
     Storage storage;
     Storage source;
     std::memset(storage.bytes, kFill, sizeof(storage.bytes));
     std::memset(source.bytes, kFill, sizeof(source.bytes));
 
-    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(storage.bytes), &libContext);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(storage.bytes), libContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6String8copyFromEPKc(reinterpret_cast<CommonString*>(storage.bytes), "alpha") == 0);
     Require(Load<std::uint64_t>(storage, kBufferSizeOffset) == 6);
     Require(_ZNK3sce2Np9CppWebApi6Common6String4sizeEv(reinterpret_cast<const CommonString*>(storage.bytes)) == 5);
@@ -186,7 +189,7 @@ void TestStringCopyFromAndObservers() {
     Require(_ZN3sce2Np9CppWebApi6Common6String8copyFromEPKc(reinterpret_cast<CommonString*>(storage.bytes), nullptr) == kStringInvalidArgument);
     Require(std::strcmp(_ZNK3sce2Np9CppWebApi6Common6String5c_strEv(reinterpret_cast<const CommonString*>(storage.bytes)), "alpha") == 0);
 
-    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(source.bytes), &sourceContext);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(source.bytes), sourceContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(source.bytes), "beta") == 0);
     Require(_ZN3sce2Np9CppWebApi6Common6String8copyFromERKS3_(reinterpret_cast<CommonString*>(storage.bytes), reinterpret_cast<const CommonString*>(source.bytes)) == 0);
     Require(std::strcmp(_ZNK3sce2Np9CppWebApi6Common6String5c_strEv(reinterpret_cast<const CommonString*>(storage.bytes)), "beta") == 0);
@@ -197,7 +200,7 @@ void TestStringCopyFromAndObservers() {
 
     Storage emptySource;
     std::memset(emptySource.bytes, kFill, sizeof(emptySource.bytes));
-    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(emptySource.bytes), &sourceContext);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(emptySource.bytes), sourceContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6String8copyFromERKS3_(reinterpret_cast<CommonString*>(storage.bytes), reinterpret_cast<const CommonString*>(emptySource.bytes)) == 0);
     Require(Load<char*>(storage, kBufferOffset) == nullptr);
     Require(Load<std::uint64_t>(storage, kBufferSizeOffset) == 0);
@@ -207,17 +210,18 @@ void TestStringCopyFromAndObservers() {
     _ZN3sce2Np9CppWebApi6Common6StringC1Ev(reinterpret_cast<CommonString*>(contextLess.bytes));
     Require(Load<void*>(contextLess, kLibContextOffset) == nullptr);
     Require(_ZN3sce2Np9CppWebApi6Common6String8copyFromERKS3_(reinterpret_cast<CommonString*>(contextLess.bytes), reinterpret_cast<const CommonString*>(source.bytes)) == 0);
-    Require(Load<void*>(contextLess, kLibContextOffset) == &sourceContext);
+    Require(Load<void*>(contextLess, kLibContextOffset) == sourceContext.value());
 
     Storage emptyContextLess;
     std::memset(emptyContextLess.bytes, kFill, sizeof(emptyContextLess.bytes));
     _ZN3sce2Np9CppWebApi6Common6StringC1Ev(reinterpret_cast<CommonString*>(emptyContextLess.bytes));
     Require(_ZN3sce2Np9CppWebApi6Common6String8copyFromERKS3_(reinterpret_cast<CommonString*>(emptyContextLess.bytes), reinterpret_cast<const CommonString*>(emptySource.bytes)) == 0);
-    Require(Load<void*>(emptyContextLess, kLibContextOffset) == &sourceContext);
+    Require(Load<void*>(emptyContextLess, kLibContextOffset) == sourceContext.value());
     Require(Load<char*>(emptyContextLess, kBufferOffset) == nullptr);
 
-    _ZN3sce2Np9CppWebApi6Common6String10setContextEPNS2_10LibContextE(reinterpret_cast<CommonString*>(contextLess.bytes), &libContext);
-    Require(Load<void*>(contextLess, kLibContextOffset) == &libContext);
+    _ZN3sce2Np9CppWebApi6Common6String5clearEv(reinterpret_cast<CommonString*>(contextLess.bytes));
+    _ZN3sce2Np9CppWebApi6Common6String10setContextEPNS2_10LibContextE(reinterpret_cast<CommonString*>(contextLess.bytes), libContext.value());
+    Require(Load<void*>(contextLess, kLibContextOffset) == libContext.value());
     Require(Load<std::int32_t>(contextLess, kReferenceCountOffset) == 0);
     Require(_ZN3sce2Np9CppWebApi6Common6String21intrusive_ptr_add_refEPS3_(reinterpret_cast<CommonString*>(contextLess.bytes)) == 1);
     Require(_ZN3sce2Np9CppWebApi6Common6String21intrusive_ptr_add_refEPS3_(reinterpret_cast<CommonString*>(contextLess.bytes)) == 2);
@@ -239,19 +243,19 @@ void TestStringCopyFromAndObservers() {
 }
 
 void TestVectorPushBackCopiesStringContent() {
-    std::uint64_t libContext = 1;
+    NpCppWebApiTest::LibContext libContext;
     VectorStorage vector;
     Storage element;
     std::memset(vector.bytes, kFill, sizeof(vector.bytes));
     std::memset(element.bytes, kFill, sizeof(element.bytes));
 
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(vector.bytes), &libContext);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(vector.bytes), libContext.value());
     Require(VectorGuardIntact(vector));
     std::int32_t referenceCount;
     std::memcpy(&referenceCount, vector.bytes + kVectorReferenceCountOffset, sizeof(referenceCount));
     Require(referenceCount == 0);
 
-    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), &libContext);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), libContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(element.bytes), "privilege") == 0);
     char* elementBuffer = Load<char*>(element, kBufferOffset);
     Require(elementBuffer != nullptr);
@@ -280,7 +284,7 @@ void TestVectorPushBackCopiesStringContent() {
 }
 
 void TestVectorIterationVisitsStringsInOrder() {
-    std::uint64_t libContext = 1;
+    NpCppWebApiTest::LibContext libContext;
     VectorStorage vector;
     IteratorStorage first;
     IteratorStorage last;
@@ -291,7 +295,7 @@ void TestVectorIterationVisitsStringsInOrder() {
     auto* firstIterator = reinterpret_cast<CommonIterator*>(first.bytes);
     auto* lastIterator = reinterpret_cast<CommonIterator*>(last.bytes);
 
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, &libContext);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, libContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE5beginEv(firstIterator, self) == firstIterator);
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv(lastIterator, self) == lastIterator);
     Require(!_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_(firstIterator, lastIterator));
@@ -300,7 +304,7 @@ void TestVectorIterationVisitsStringsInOrder() {
     for (const char* text : texts) {
         Storage element;
         std::memset(element.bytes, kFill, sizeof(element.bytes));
-        _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), &libContext);
+        _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), libContext.value());
         Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(element.bytes), text) == 0);
         Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(self, element.bytes) == 0);
         _ZN3sce2Np9CppWebApi6Common6StringD1Ev(reinterpret_cast<CommonString*>(element.bytes));
@@ -354,12 +358,12 @@ bool EndThrows(const IntrusivePtr* vector) {
 }
 
 void TestVectorIterationRejectsOtherBodies() {
-    std::uint64_t libContext = 1;
+    NpCppWebApiTest::LibContext libContext;
     VectorStorage vector;
     std::memset(vector.bytes, kFill, sizeof(vector.bytes));
     auto* self = reinterpret_cast<IntrusivePtr*>(vector.bytes);
-    const IntrusivePtr empty{nullptr, nullptr, &libContext};
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEEC1EPNS2_10LibContextE(self, &libContext);
+    const IntrusivePtr empty{nullptr, nullptr, libContext.value()};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEEC1EPNS2_10LibContextE(self, libContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEE8pushBackERKS8_(self, &empty) == 0);
     Require(BeginThrows(self));
     Require(EndThrows(self));
@@ -367,11 +371,11 @@ void TestVectorIterationRejectsOtherBodies() {
 }
 
 void TestStringEmptyAndEquals() {
-    std::uint64_t libContext = 1;
+    NpCppWebApiTest::LibContext libContext;
     Storage storage;
     std::memset(storage.bytes, kFill, sizeof(storage.bytes));
 
-    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(storage.bytes), &libContext);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(storage.bytes), libContext.value());
     Require(_ZNK3sce2Np9CppWebApi6Common6String5emptyEv(reinterpret_cast<const CommonString*>(storage.bytes)) == 1);
     Require(_ZN3sce2Np9CppWebApi6Common6StringeqEPKc(reinterpret_cast<const CommonString*>(storage.bytes), "rank") == 0);
 
@@ -389,7 +393,7 @@ int g_elementDeleterCalls = 0;
 void APS5_VABI ElementDeleter(void*) { ++g_elementDeleterCalls; }
 
 void TestIntrusivePtrVectorPushBack() {
-    std::uint64_t libContext = 1;
+    NpCppWebApiTest::LibContext libContext;
     VectorStorage vector;
     std::memset(vector.bytes, kFill, sizeof(vector.bytes));
 
@@ -403,9 +407,9 @@ void TestIntrusivePtrVectorPushBack() {
     auto* deleter = &ElementDeleter;
     std::memcpy(element + 0x00, &object, sizeof(void*));
     std::memcpy(element + 0x08, &deleter, sizeof(void*));
-    std::memcpy(element + 0x10, &libContext, sizeof(void*));
+    std::memcpy(element + 0x10, libContext.value(), sizeof(void*));
 
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(vector.bytes), &libContext);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(vector.bytes), libContext.value());
     Require(VectorGuardIntact(vector));
 
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEE8pushBackERKS8_(reinterpret_cast<IntrusivePtr*>(vector.bytes), element) == 0);
@@ -432,14 +436,14 @@ void TestOfflineResponses() {
 unsigned TestAppendAliased() {
     constexpr std::size_t lengths[] = {0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129};
     unsigned cases = 0, failures = 0, grown = 0;
-    int context = 0;
+    NpCppWebApiTest::LibContext context;
     for (const auto length : lengths) {
         std::string initial(length, 'a');
         for (std::size_t index = 0; index < length; ++index) initial[index] = static_cast<char>('a' + index % 26);
         for (std::size_t offset = 0; offset <= length; ++offset) {
             Storage storage;
             std::memset(storage.bytes, kFill, sizeof(storage.bytes));
-            _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(storage.bytes), &context);
+            _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(storage.bytes), context.value());
             Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(storage.bytes), initial.c_str()) == 0);
             const char* source = _ZNK3sce2Np9CppWebApi6Common6String5c_strEv(reinterpret_cast<const CommonString*>(storage.bytes)) + offset;
             const std::string expected = initial + initial.substr(offset);
@@ -453,7 +457,7 @@ unsigned TestAppendAliased() {
                 ++failures;
             }
             Require(GuardIntact(storage));
-            Require(Load<void*>(storage, kLibContextOffset) == &context);
+            Require(Load<void*>(storage, kLibContextOffset) == context.value());
             Require(Load<std::int32_t>(storage, kReferenceCountOffset) == 0);
             _ZN3sce2Np9CppWebApi6Common6StringD1Ev(reinterpret_cast<CommonString*>(storage.bytes));
             Require(GuardIntact(storage));
@@ -467,13 +471,13 @@ unsigned TestAppendAliased() {
 unsigned TestVectorAliased() {
     unsigned cases = 0, moves = 0;
     for (unsigned sourceIndex = 0; sourceIndex < 4; ++sourceIndex) {
-        int context = 0;
+        NpCppWebApiTest::LibContext context;
         VectorStorage vector;
         Storage element;
         std::memset(vector.bytes, kFill, sizeof(vector.bytes));
         std::memset(element.bytes, kFill, sizeof(element.bytes));
-        _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(vector.bytes), &context);
-        _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), &context);
+        _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(vector.bytes), context.value());
+        _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), context.value());
         Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(element.bytes), "independent string payload") == 0);
         for (unsigned index = 0; index < 4; ++index)
             Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(reinterpret_cast<IntrusivePtr*>(vector.bytes), element.bytes) == 0);
@@ -489,7 +493,7 @@ unsigned TestVectorAliased() {
             const char* original = LoadBody<char*>(after + sourceIndex * kStringSize, kBufferOffset);
             const char* copy = LoadBody<char*>(after + size * kStringSize, kBufferOffset);
             Require(original != copy && std::strcmp(copy, "independent string payload") == 0);
-            Require(LoadBody<void*>(after + size * kStringSize, kLibContextOffset) == &context);
+            Require(LoadBody<void*>(after + size * kStringSize, kLibContextOffset) == context.value());
             Require(LoadBody<std::int32_t>(after + size * kStringSize, kReferenceCountOffset) == 0);
             ++cases;
         }
@@ -508,8 +512,8 @@ unsigned TestVectorAliased() {
 }
 
 void TestVectorCopyFromStrings() {
-    std::uint64_t sourceContext = 1;
-    std::uint64_t targetContext = 2;
+    NpCppWebApiTest::LibContext sourceContext;
+    NpCppWebApiTest::LibContext targetContext;
     VectorStorage source;
     VectorStorage target;
     Storage element;
@@ -517,9 +521,9 @@ void TestVectorCopyFromStrings() {
     std::memset(target.bytes, kFill, sizeof(target.bytes));
     std::memset(element.bytes, kFill, sizeof(element.bytes));
 
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(source.bytes), &sourceContext);
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(target.bytes), &targetContext);
-    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), &sourceContext);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(source.bytes), sourceContext.value());
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(target.bytes), targetContext.value());
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), sourceContext.value());
     const char* payload = "copied string element";
     Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(element.bytes), payload) == 0);
     for (unsigned index = 0; index < 3; ++index)
@@ -559,8 +563,47 @@ void TestVectorCopyFromStrings() {
     Require(GuardIntact(element) && VectorGuardIntact(source) && VectorGuardIntact(target));
 }
 
+void TestVectorCopyAndPushStringWithoutContext() {
+    NpCppWebApiTest::LibContext sourceContext;
+    VectorStorage source;
+    VectorStorage target;
+    Storage element;
+    std::memset(source.bytes, kFill, sizeof(source.bytes));
+    std::memset(target.bytes, kFill, sizeof(target.bytes));
+    std::memset(element.bytes, kFill, sizeof(element.bytes));
+
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(source.bytes), sourceContext.value());
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(target.bytes), nullptr);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), sourceContext.value());
+    const char* const payload = "string without a context";
+    Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(element.bytes), payload) == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(reinterpret_cast<IntrusivePtr*>(source.bytes), reinterpret_cast<const CommonString*>(element.bytes)) == 0);
+
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(reinterpret_cast<IntrusivePtr*>(target.bytes), reinterpret_cast<const IntrusivePtr*>(source.bytes)) == 0);
+    void* targetBody = LoadBody<void*>(target.bytes, kObjectOffset);
+    Require(targetBody != nullptr);
+    Require(LoadBody<void*>(targetBody, kBodyLibContextOffset) == nullptr);
+    Require(LoadBody<std::uint64_t>(targetBody, kBodySizeOffset) == 1);
+    const auto* targetElements = LoadBody<const unsigned char*>(targetBody, kBodyElementsOffset);
+    Require(targetElements != nullptr);
+    Require(LoadBody<char*>(targetElements, kBufferOffset) != nullptr && std::strcmp(LoadBody<char*>(targetElements, kBufferOffset), payload) == 0);
+    Require(LoadBody<void*>(targetElements, kLibContextOffset) == nullptr);
+
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(reinterpret_cast<IntrusivePtr*>(target.bytes), reinterpret_cast<const CommonString*>(element.bytes)) == 0);
+    Require(LoadBody<std::uint64_t>(targetBody, kBodySizeOffset) == 2);
+    targetElements = LoadBody<const unsigned char*>(targetBody, kBodyElementsOffset);
+    const auto* appended = targetElements + kStringSize;
+    Require(LoadBody<char*>(appended, kBufferOffset) != nullptr && std::strcmp(LoadBody<char*>(appended, kBufferOffset), payload) == 0);
+    Require(LoadBody<void*>(appended, kLibContextOffset) == nullptr);
+
+    _ZN3sce2Np9CppWebApi6Common6StringD1Ev(reinterpret_cast<CommonString*>(element.bytes));
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(reinterpret_cast<IntrusivePtr*>(source.bytes));
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(reinterpret_cast<IntrusivePtr*>(target.bytes));
+    Require(GuardIntact(element) && VectorGuardIntact(source) && VectorGuardIntact(target));
+}
+
 void TestVectorCopyFromEmptySourceEndsAtBegin() {
-    std::uint64_t libContext = 1;
+    NpCppWebApiTest::LibContext libContext;
     VectorStorage target;
     IteratorStorage first;
     IteratorStorage last;
@@ -574,10 +617,10 @@ void TestVectorCopyFromEmptySourceEndsAtBegin() {
     std::memcpy(emptyBody, &magic, sizeof(magic));
     std::memcpy(emptyBody + kBodyReferenceCountOffset, &one, sizeof(one));
     std::memcpy(emptyBody + kBodyElementKindOffset, &two, sizeof(two));
-    const IntrusivePtr source{emptyBody, nullptr, &libContext};
+    const IntrusivePtr source{emptyBody, nullptr, libContext.value()};
 
     auto* self = reinterpret_cast<IntrusivePtr*>(target.bytes);
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, &libContext);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, libContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(self, &source) == 0);
     void* emptyTargetBody = LoadBody<void*>(target.bytes, kObjectOffset);
     Require(emptyTargetBody != nullptr);
@@ -601,8 +644,8 @@ void TestVectorCopyFromEmptySourceEndsAtBegin() {
 }
 
 void TestVectorCopyFromResolvesDirectBodies() {
-    std::uint64_t sourceContext = 1;
-    std::uint64_t targetContext = 2;
+    NpCppWebApiTest::LibContext sourceContext;
+    NpCppWebApiTest::LibContext targetContext;
     const char* payload = "direct body payload";
 
     auto* directElements = static_cast<unsigned char*>(std::calloc(1, kStringSize));
@@ -613,7 +656,7 @@ void TestVectorCopyFromResolvesDirectBodies() {
     const std::uint64_t payloadSize = std::strlen(payload) + 1;
     std::memcpy(directElements + kBufferOffset, &directBuffer, sizeof(directBuffer));
     std::memcpy(directElements + kBufferSizeOffset, &payloadSize, sizeof(payloadSize));
-    void* elementContext = &sourceContext;
+    void* elementContext = sourceContext.value();
     std::memcpy(directElements + kLibContextOffset, &elementContext, sizeof(elementContext));
 
     alignas(8) unsigned char sourceBody[0x50];
@@ -637,7 +680,7 @@ void TestVectorCopyFromResolvesDirectBodies() {
     IteratorStorage last;
     std::memset(target.bytes, kFill, sizeof(target.bytes));
     auto* self = reinterpret_cast<IntrusivePtr*>(target.bytes);
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, &targetContext);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, targetContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(self, sourceBody) == 0);
     void* copiedBody = LoadBody<void*>(target.bytes, kObjectOffset);
     Require(copiedBody != nullptr && copiedBody != sourceBody);
@@ -652,7 +695,7 @@ void TestVectorCopyFromResolvesDirectBodies() {
     std::memcpy(targetBody + kBodyElementKindOffset, &kindTwo, sizeof(kindTwo));
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(targetBody, self) == 0);
     Require(LoadBody<std::uint64_t>(targetBody, kBodySizeOffset) == 1);
-    Require(LoadBody<void*>(targetBody, 0x08) == &targetContext);
+    Require(LoadBody<void*>(targetBody, kBodyLibContextOffset) == nullptr);
     auto* directCopied = LoadBody<unsigned char*>(targetBody, kBodyElementsOffset);
     Require(std::strcmp(LoadBody<char*>(directCopied, kBufferOffset), payload) == 0);
     Require(LoadBody<unsigned char*>(targetBody, kBodyElementsOffset) != directElements);
@@ -684,6 +727,7 @@ int main(int argc, char** argv) {
     TestVectorIterationVisitsStringsInOrder();
     TestVectorIterationRejectsOtherBodies();
     TestVectorCopyFromStrings();
+    TestVectorCopyAndPushStringWithoutContext();
     TestVectorCopyFromEmptySourceEndsAtBegin();
     TestVectorCopyFromResolvesDirectBodies();
     TestStringEmptyAndEquals();

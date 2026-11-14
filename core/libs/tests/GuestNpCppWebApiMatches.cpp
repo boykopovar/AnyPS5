@@ -1,4 +1,5 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
+#include "NpCppWebApiFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
@@ -70,15 +71,15 @@ void ObserveDeletion(IntrusivePtr* handle, bool observeOutput = false) {
 }
 
 void TestOwnedFactoryOutput() {
-    std::uint64_t firstContext = 1;
-    std::uint64_t nextContext = 2;
+    NpCppWebApiTest::LibContext firstContext;
+    NpCppWebApiTest::LibContext nextContext;
     IntrusivePtr output{};
-    Require(CreateRemovedPlayer(&firstContext, "first", &output) == 0);
+    Require(CreateRemovedPlayer(firstContext.value(), "first", &output) == 0);
     ObserveDeletion(&output, true);
-    Require(CreateRemovedPlayer(&nextContext, "second", &output) == 0);
+    Require(CreateRemovedPlayer(nextContext.value(), "second", &output) == 0);
     Require(deletionCount == 1);
     Require(output.object != nullptr && output.object != trackedObject);
-    Require(output.deleter != &TrackDeletion && output.libContext == &nextContext);
+    Require(output.deleter != &TrackDeletion && output.libContext == nextContext.value());
     Require(Read<std::int32_t>(static_cast<std::uint8_t*>(output.object), 0) == 1);
     Require(std::strcmp(Read<const char*>(static_cast<std::uint8_t*>(output.object), 24), "second") == 0);
     ReleaseRemovedPlayer(&output);
@@ -86,14 +87,14 @@ void TestOwnedFactoryOutput() {
 }
 
 void TestSharedFactoryOutput() {
-    std::uint64_t context = 1;
+    NpCppWebApiTest::LibContext context;
     IntrusivePtr output{};
     IntrusivePtr owners{};
-    Require(CreateRemovedPlayer(&context, "shared", &output) == 0);
+    Require(CreateRemovedPlayer(context.value(), "shared", &output) == 0);
     ObserveDeletion(&output);
-    ConstructRemovedPlayers(&owners, &context);
+    ConstructRemovedPlayers(&owners, context.value());
     Require(PushRemovedPlayer(&owners, &output) == 0);
-    Require(CreateRemovedPlayer(&context, "replacement", &output) == 0);
+    Require(CreateRemovedPlayer(context.value(), "replacement", &output) == 0);
     Require(deletionCount == 0);
     Require(Read<std::int32_t>(static_cast<std::uint8_t*>(trackedObject), 0) == 1);
     ReleaseRemovedPlayer(&output);
@@ -102,13 +103,13 @@ void TestSharedFactoryOutput() {
 }
 
 void TestRejectedFactoryArguments() {
-    std::uint64_t context = 1;
+    NpCppWebApiTest::LibContext context;
     IntrusivePtr output{};
-    Require(CreateRemovedPlayer(&context, "kept", &output) == 0);
+    Require(CreateRemovedPlayer(context.value(), "kept", &output) == 0);
     ObserveDeletion(&output, true);
     const IntrusivePtr before = output;
     Require(CreateRemovedPlayer(nullptr, "unused", &output) == static_cast<int>(0x80553503));
-    Require(CreateRemovedPlayer(&context, "unused", nullptr) == static_cast<int>(0x80553503));
+    Require(CreateRemovedPlayer(context.value(), "unused", nullptr) == static_cast<int>(0x80553503));
     Require(output.object == before.object && output.deleter == before.deleter && output.libContext == before.libContext);
     Require(deletionCount == 0);
     Require(Read<std::int32_t>(static_cast<std::uint8_t*>(output.object), 0) == 1);
@@ -123,11 +124,11 @@ void TestRejectedFactoryArguments() {
 }
 
 void TestFailedFactoryPayload() {
-    std::uint64_t context = 1;
+    NpCppWebApiTest::LibContext context;
     IntrusivePtr output{};
-    Require(CreateRemovedPlayer(&context, "previous", &output) == 0);
+    Require(CreateRemovedPlayer(context.value(), "previous", &output) == 0);
     ObserveDeletion(&output, true);
-    Require(CreateRemovedPlayer(&context, nullptr, &output) == static_cast<int>(0x80553503));
+    Require(CreateRemovedPlayer(context.value(), nullptr, &output) == static_cast<int>(0x80553503));
     Require(deletionCount == 1);
     Require(output.object != nullptr && output.object != trackedObject);
     Require(Read<std::int32_t>(static_cast<std::uint8_t*>(output.object), 0) == 1);
@@ -136,17 +137,17 @@ void TestFailedFactoryPayload() {
 }
 
 void TestFactoryReleasesMembers() {
-    std::uint64_t context = 1;
+    NpCppWebApiTest::LibContext context;
     IntrusivePtr member{};
     IntrusivePtr members{};
     IntrusivePtr team{};
-    Require(CreateMember(&context, "member", &member) == 0);
-    ConstructMembers(&members, &context);
+    Require(CreateMember(context.value(), "member", &member) == 0);
+    ConstructMembers(&members, context.value());
     Require(PushMember(&members, &member) == 0);
     ObserveDeletion(&members);
-    Require(CreateTeam(&context, "first team", &team) == 0);
+    Require(CreateTeam(context.value(), "first team", &team) == 0);
     Require(SetTeamMembers(team.object, &members) == 0);
-    Require(CreateTeam(&context, "next team", &team) == 0);
+    Require(CreateTeam(context.value(), "next team", &team) == 0);
     Require(deletionCount == 0);
     DestroyMembers(&members);
     Require(deletionCount == 1);
