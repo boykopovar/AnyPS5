@@ -1,0 +1,15 @@
+add_library(libSceWkFontConfig SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceWkFontConfig PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceWkFontConfig)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_wk_font_config_tests ${LIBS_INCLUDE_DIR}/tests/GuestWkFontConfig.cpp)
+    target_include_directories(guest_wk_font_config_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_wk_font_config_tests PRIVATE libSceWkFontConfig libc)
+    configure_windows_unwind(guest_wk_font_config_tests)
+    add_test(NAME guest_wk_font_config COMMAND guest_wk_font_config_tests)
+    if(WIN32)
+        set_tests_properties(guest_wk_font_config PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceWkFontConfig>")
+    endif()
+endif()
