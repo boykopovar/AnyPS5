@@ -5,12 +5,14 @@ import os
 import re
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
@@ -18,6 +20,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import pad_input
 import pad_timeline
 import unwrap_self
+from audit_dump import comparison_path
 from package_release import windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
@@ -398,7 +401,7 @@ def render_markdown(summary, previous=None):
     return "\n".join(lines + [""])
 
 
-def discover(directories, wanted=()):
+def discover(directories, wanted=(), packages=None):
     found = {}
     for directory in directories:
         for param in sorted(Path(directory).glob("**/sce_sys/param.json")):
@@ -411,6 +414,8 @@ def discover(directories, wanted=()):
                 raise ValueError(f"{param}: no titleId")
             if not TITLE_ID.fullmatch(title_id):
                 raise ValueError(f"{param}: titleId {title_id!r} is not a title ID")
+            if packages is not None:
+                packages.append(package)
             if wanted and title_id not in wanted:
                 continue
             if title_id in found:
@@ -495,9 +500,226 @@ def stage_inputs(package, entry, source):
         unwrap_or_copy(package / executable, source / executable)
 
 
+def path_locations(path):
+    return (Path(os.path.abspath(path)), comparison_path(path))
+
+
+def linked_path(path):
+    return path.is_symlink() or (os.name == "nt" and path.exists() and
+                                 path.lstat().st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+class PathChecks:
+    def __init__(self):
+        self.identities = {}
+        self.ancestors = {}
+        self.directories = {}
+
+    def identity(self, path):
+        key = path.parts
+        if key not in self.identities:
+            try:
+                info = path.stat()
+            except (FileNotFoundError, NotADirectoryError):
+                self.identities[key] = None
+            else:
+                self.identities[key] = (info.st_dev, info.st_ino)
+        return self.identities[key]
+
+    def directory(self, path):
+        key = path.parts
+        if key not in self.directories:
+            try:
+                if sys.platform == "linux":
+                    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+                    try:
+                        info = os.fstat(descriptor)
+                        try:
+                            fields = Path(f"/proc/self/fdinfo/{descriptor}").read_text(encoding="ascii").splitlines()
+                        except (OSError, UnicodeError) as error:
+                            raise ValueError(f"cannot determine mount ID for {path}; readable /proc/self/fdinfo is required") from error
+                        mounts = [line.split()[1:] for line in fields if line.startswith("mnt_id:")]
+                        if len(mounts) != 1 or len(mounts[0]) != 1 or not mounts[0][0].isdigit():
+                            raise ValueError(f"cannot determine mount ID for {path}; readable /proc/self/fdinfo is required")
+                        mount = int(mounts[0][0])
+                    finally:
+                        os.close(descriptor)
+                else:
+                    info = path.stat()
+                    if not stat.S_ISDIR(info.st_mode):
+                        raise NotADirectoryError(str(path))
+                    mount = None
+            except (FileNotFoundError, NotADirectoryError):
+                if path.is_dir():
+                    raise ValueError(f"cannot inspect directory {path}; readable /proc/self/fdinfo is required")
+                self.directories[key] = None
+            else:
+                identity = (info.st_dev, info.st_ino)
+                self.identities[key] = identity
+                self.directories[key] = (identity, mount)
+        return self.directories[key]
+
+    def contains(self, directory, path):
+        if path.parts[:len(directory.parts)] == directory.parts:
+            return True
+        identity = self.identity(directory)
+        if identity is None:
+            return False
+        key = path.parts
+        if key not in self.ancestors:
+            self.ancestors[key] = {self.identity(parent) for parent in (path, *path.parents)}
+        return identity in self.ancestors[key]
+
+    def same(self, first, second):
+        identity = self.identity(first)
+        return first.parts == second.parts or (identity is not None and identity == self.identity(second))
+
+
+def check_work_directories(work, output, protected, checks):
+    previous = checks.directory(output)
+    for path in (work.parent, work):
+        current = checks.directory(path)
+        if current is not None and previous is not None and (
+                current[0][0] != previous[0][0] or current[1] != previous[1] or os.path.ismount(path)):
+            raise ValueError(f"work directory {work} crosses a mount boundary at {path}")
+        if current is not None:
+            previous = current
+    root = checks.directory(work)
+    if root is None:
+        return
+    pending = [work]
+    visited = {}
+    while pending:
+        path = pending.pop()
+        directory = checks.directory(path)
+        if directory is None:
+            continue
+        identity, mount = directory
+        if identity[0] != root[0][0] or mount != root[1] or (path != work and os.path.ismount(path)):
+            raise ValueError(f"work directory {work} crosses a mount boundary at {path}")
+        if identity in protected:
+            raise ValueError(f"work directory {work} overlaps an input directory at {path}")
+        if directory in visited:
+            if mount is None and comparison_path(path).parts != comparison_path(visited[directory]).parts:
+                raise ValueError(f"ambiguous directory aliases in work directory {work}: {path}")
+            continue
+        visited[directory] = path
+        with os.scandir(path) as entries:
+            for entry in entries:
+                child = path / entry.name
+                if not linked_path(child) and entry.is_dir(follow_symlinks=False):
+                    pending.append(child)
+
+
+def validate_layout(args, found, ids, titles, source, platform, packages=None):
+    checks = PathChecks()
+    package_trees = list(packages) if packages is not None else [title["package"] for title in found.values()]
+    trees = list(package_trees)
+    files = [args.titles, args.build / "CMakeCache.txt"]
+    content = getattr(args, "content", None)
+    if content is not None:
+        files.extend(content / spec["content"] for title_id in ids
+                     for spec in titles.get(title_id, {}).get("files", {}).values() if "content" in spec)
+    if args.compare:
+        files.append(args.compare)
+    for title_id in ids:
+        for directory in module_dirs(titles.get(title_id, {})):
+            relative = PureWindowsPath(directory)
+            if relative.drive or relative.root or ".." in relative.parts:
+                raise ValueError(f"unsafe module directory for {title_id}: {directory!r}")
+        for executable in titles.get(title_id, {}).get("executables", []):
+            relative = PureWindowsPath(executable)
+            if not relative.parts or relative.drive or relative.root or ".." in relative.parts:
+                raise ValueError(f"unsafe executable path for {title_id}: {executable!r}")
+    for title_id, title in found.items():
+        package = title["package"]
+        files.append(package / "eboot.bin")
+        files.extend((package / "sce_module").glob("*.prx"))
+        files.extend(package / executable for executable in titles.get(title_id, {}).get("executables", []))
+    build_trees = [args.build / "core/relinker", args.build / "core/libs/libs"]
+    pending = [(tree, True) for tree in trees] + [(tree, False) for tree in build_trees]
+    visited = {}
+    protected_directories = set()
+    package_directories = set()
+    while pending:
+        tree, package = pending.pop()
+        directory = checks.directory(tree)
+        if directory is None:
+            continue
+        identity, mount = directory
+        key = (directory, package)
+        if key in visited:
+            if mount is None and comparison_path(tree).parts != comparison_path(visited[key]).parts:
+                raise ValueError(f"ambiguous input directory aliases: {tree}")
+            continue
+        visited[key] = tree
+        protected_directories.add(identity)
+        if package:
+            package_directories.add(identity)
+        with os.scandir(tree) as entries:
+            for entry in entries:
+                path = tree / entry.name
+                directory = entry.is_dir()
+                if linked_path(path):
+                    (trees if directory else files).append(path)
+                    if package and directory:
+                        package_trees.append(path)
+                if directory:
+                    pending.append((path, package))
+    trees.extend(build_trees)
+    if platform == "windows":
+        try:
+            runtime = windows_runtime(args.build)
+        except RuntimeError:
+            pass
+        else:
+            files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
+    directory_inputs = [(path, path_locations(path)) for path in trees]
+    file_inputs = [(path, path_locations(path)) for path in files]
+    containing_inputs = [(path, path_locations(path)) for path in (args.build, source, ROOT)]
+    for path in (args.build, source, ROOT, *(parent for path in files for parent in path.parents)):
+        identity = checks.identity(path)
+        if identity is not None:
+            protected_directories.add(identity)
+    output = path_locations(args.out)
+    if any(checks.identity(parent) in package_directories for destination in output for parent in (destination, *destination.parents)):
+        raise ValueError(f"output directory {args.out} overlaps an input package directory")
+    for path in package_trees:
+        locations = path_locations(path)
+        if any(checks.contains(origin, destination) for destination in output for origin in locations):
+            raise ValueError(f"output directory {args.out} overlaps input {path}")
+    for title_id in ids:
+        work = args.out / "work" / title_id
+        lock = work.with_suffix(".lock")
+        if linked_path(work) or linked_path(lock):
+            raise ValueError(f"unsafe linked work or lock path: {work}")
+        locations = path_locations(work)
+        if any(checks.contains(destination, origin) for destination in locations for origin in output):
+            raise ValueError(f"work directory {work} overlaps output directory {args.out}")
+        for path, origins in directory_inputs:
+            if any(checks.contains(origin, destination) or checks.contains(destination, origin)
+                   for destination in locations for origin in origins):
+                raise ValueError(f"work directory {work} overlaps input {path}")
+        for path, origins in [*file_inputs, *containing_inputs]:
+            if any(checks.contains(destination, origin) for destination in locations for origin in origins):
+                raise ValueError(f"work directory {work} overlaps input {path}")
+        lock_locations = path_locations(lock)
+        for path, origins in [*directory_inputs, *file_inputs, *containing_inputs]:
+            if any(checks.same(destination, origin) for destination in lock_locations for origin in origins):
+                raise ValueError(f"lock file {lock} overlaps input {path}")
+        check_work_directories(work, args.out, protected_directories, checks)
+
+
+def reset_work(work):
+    if linked_path(work):
+        raise OSError(f"unsafe linked work directory: {work}")
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+
+
 def prepare(title_id, found, entry, platform, build, work):
     package = found["package"]
-    shutil.rmtree(work, ignore_errors=True)
     source = work / "input"
     stage_inputs(package, entry, source)
     executable = work / (title_id + (".exe" if platform == "windows" else ""))
@@ -806,20 +1028,25 @@ def main(argv=None):
         args.ids = [title_id for title_id, entry in sorted(titles.items()) if entry.get("smoke")]
         if not args.ids:
             raise SystemExit(f"no title in {args.titles} is marked smoke")
-    found = discover(args.games, args.ids)
+    packages = []
+    found = discover(args.games, args.ids, packages=packages)
     ids = args.ids or sorted(found)
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
         raise SystemExit(f"not found under --games: {', '.join(missing)}")
+    source = source_root(args.build)
+    try:
+        validate_layout(args, found, ids, titles, source, platform, packages=packages)
+    except (OSError, RuntimeError, ValueError) as error:
+        parser.error(f"unsafe title-run layout: {error}")
     locks = {title_id: lock_work(args.out.resolve() / "work" / f"{title_id}.lock") for title_id in ids}
     busy = [title_id for title_id, handle in locks.items() if handle is None]
     if busy:
         raise SystemExit(f"already running in {args.out.resolve() / 'work'}: {', '.join(busy)}")
     if previous and args.ids:
         previous["titles"] = {title_id: title for title_id, title in previous["titles"].items() if title_id in ids}
-    source = source_root(args.build)
     commit = git(source, "rev-parse", "--short", "HEAD")
-    output = args.out.resolve() / f"{commit}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    output = Path(tempfile.mkdtemp(prefix=f"{commit}-{datetime.datetime.now():%Y%m%d-%H%M%S}-", dir=args.out.resolve()))
     summary = {"build": {"commit": commit, "dirty": bool(git(source, "status", "--porcelain", "--untracked-files=no")), "note": args.note},
                "machine": {"os": "", "gpu": "", "driver": "", "cpu": ""}, "runs": args.runs, "seconds": args.seconds or 60,
                "driver_cache": "isolated" if platform == "linux" else "shared (not isolated)", "titles": {}}
@@ -828,6 +1055,10 @@ def main(argv=None):
         seconds = args.seconds or entry.get("seconds", 60)
         work = args.out.resolve() / "work" / title_id
         missing = []
+        try:
+            reset_work(work)
+        except OSError as error:
+            parser.error(f"cannot reset work directory {work}: {error}")
         try:
             executable = prepare(title_id, found[title_id], entry, platform, args.build, work)
             missing = stage_files(entry.get("files", {}), work, args.content) if executable else []
