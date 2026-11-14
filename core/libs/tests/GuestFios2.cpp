@@ -9,6 +9,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -651,13 +652,15 @@ static void CheckOverlayResolve(const std::string& directory) {
     const std::string source = directory + "/ovlsrc";
     std::filesystem::create_directories(base);
     std::filesystem::create_directories(source);
-    for (const char* name : {"/a.txt", "/older.txt", "/newer.txt"}) std::ofstream(source + name) << "source";
-    for (const char* name : {"/b.txt", "/older.txt", "/newer.txt"}) std::ofstream(base + name) << "base";
+    for (const char* name : {"/a.txt", "/older.txt", "/newer.txt", "/equal.txt"}) std::ofstream(source + name) << "source";
+    for (const char* name : {"/b.txt", "/older.txt", "/newer.txt", "/equal.txt"}) std::ofstream(base + name) << "base";
     const auto now = std::filesystem::last_write_time(source + "/a.txt");
     std::filesystem::last_write_time(base + "/older.txt", now - std::chrono::hours(1));
     std::filesystem::last_write_time(source + "/older.txt", now);
     std::filesystem::last_write_time(base + "/newer.txt", now);
     std::filesystem::last_write_time(source + "/newer.txt", now - std::chrono::hours(1));
+    std::filesystem::last_write_time(base + "/equal.txt", now);
+    std::filesystem::last_write_time(source + "/equal.txt", now);
 
     std::int32_t opaque = AddOverlay(0, 5, "/app0/ovltest", source);
     REQUIRE(Resolve(0, "/app0/ovltest/a.txt") == source + "/a.txt");
@@ -686,6 +689,15 @@ static void CheckOverlayResolve(const std::string& directory) {
         REQUIRE(Resolve(0, base + "/newer.txt") == (type == 2 ? base : source) + "/newer.txt");
         REQUIRE(sceFiosOverlayRemove(id) == SCE_FIOS_OK);
     }
+    const std::int32_t newerId = AddOverlay(2, 0, base, source);
+    bool threw = false;
+    try {
+        Resolve(0, base + "/equal.txt");
+    } catch (const std::runtime_error& error) {
+        threw = std::strcmp(error.what(), "OverlayTakesSource: equal timestamps for newer overlay are unmeasured") == 0;
+    }
+    REQUIRE(threw);
+    REQUIRE(sceFiosOverlayRemove(newerId) == SCE_FIOS_OK);
 }
 
 static void CheckDirectories(const std::string& directory) {

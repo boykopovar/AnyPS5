@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstring>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -108,7 +109,7 @@ bool OverlayTakesSource(std::uint8_t type, std::int32_t flag, const std::string&
     if (type != 2) return true;
     SceFiosStat originalStat{};
     if (Fios::StatPath(original, originalStat) != SCE_FIOS_OK) return true;
-    if (sourceStat.modificationDate == originalStat.modificationDate) NotImplemented_nid_no_patch(__func__);
+    if (sourceStat.modificationDate == originalStat.modificationDate) throw std::runtime_error("OverlayTakesSource: equal timestamps for newer overlay are unmeasured");
     return sourceStat.modificationDate > originalStat.modificationDate;
 }
 
