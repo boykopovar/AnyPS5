@@ -82,6 +82,9 @@ def render_events(events, path, start, size, limit):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         description="show APS5_TRACE_MEMORY mapping operations overlapping a guest address range")
     parser.add_argument("trace", type=Path, help="file containing APS5_TRACE_MEMORY stderr output")
