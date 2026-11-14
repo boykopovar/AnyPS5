@@ -117,8 +117,7 @@ if(BUILD_TESTING)
         guest_font_lock_unwind_clone_handle_success
         guest_font_lock_unwind_clone_handle_returned_failure
         guest_font_lock_unwind_clone_handle_throw PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>"
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFontFt>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFontFt>")
     endif()
 
     add_test_executable(guest_font_vertical_layout_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontVerticalLayout.cpp)
