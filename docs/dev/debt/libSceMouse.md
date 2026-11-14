@@ -31,4 +31,3 @@
 ### Silent stubs
 
 - [sceMouseSetHandType and sceMouseSetPointerSpeed](../../../core/libs/prx/libSceMouse/src/mouse_impl.cpp) (libSceMouse) - the value is stored per open handle and nothing reads it: no host cursor speed or hand swap is applied, because the console's driver ioctl and its effect are not modelled.
-
