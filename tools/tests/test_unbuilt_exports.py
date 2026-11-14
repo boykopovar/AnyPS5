@@ -83,6 +83,70 @@ class UnbuiltExportTests(unittest.TestCase):
         })
         self.assertEqual(self.unbuilt(root, ["core/libs/prx/libc/src/exception/Exports.cpp"]), [Path("core/libs/prx/libc/src/exception/Orphan.cpp")])
 
+    def test_documentation_includes_do_not_compile_an_export(self):
+        snippets = (
+            '/* example\n#include "Forgotten.cpp"\n*/\n',
+            'const char* example = R"(\n#include "Forgotten.cpp"\n)";\n',
+            'const char* example = u8R"example(\n#include "Forgotten.cpp"\n)example";\n',
+            '// example \\\n#include "Forgotten.cpp"\n',
+            'const char* example = "#include \\"Forgotten.cpp\\"";\n',
+        )
+        for snippet in snippets:
+            with self.subTest(snippet=snippet):
+                root = self.tree({
+                    "core/libs/prx/libSceExample/Built.cpp": snippet + "int built() { return 0; }\n",
+                    "core/libs/prx/libSceExample/Forgotten.cpp": "int APS5_VABI forgotten() { return 7; }\n",
+                })
+                self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/Built.cpp"]),
+                                 [Path("core/libs/prx/libSceExample/Forgotten.cpp")])
+
+    def test_real_spliced_and_commented_includes_are_transitive(self):
+        root = self.tree({
+            "core/libs/prx/libSceExample/Built.cpp": "int n = 1'000;\n# /* directive */ incl\\\nude /* operand */ \"Included.cpp\"\nchar c = 'x';\n",
+            "core/libs/prx/libSceExample/Included.cpp": '#  include "Nested.cpp"\nint APS5_VABI included() { return 1; }\n',
+            "core/libs/prx/libSceExample/Nested.cpp": "int APS5_VABI nested() { return 2; }\n",
+            "core/libs/prx/libSceExample/Orphan.cpp": "int APS5_VABI orphan() { return 3; }\n",
+        })
+        self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/Built.cpp"]),
+                         [Path("core/libs/prx/libSceExample/Orphan.cpp")])
+
+    def test_comment_and_literal_examples_do_not_define_exports(self):
+        examples = ('/* int APS5_VABI example() { return 0; } */',
+                    '// int APS5_VABI example() { return 0; }',
+                    'const char* text = R"example(int APS5_VABI example() { return 0; })example";',
+                    'const char* text = "int APS5_VABI example() { return 0; }";')
+        for example in examples:
+            with self.subTest(example=example):
+                root = self.tree({
+                    "core/libs/prx/libSceExample/Built.cpp": "",
+                    "core/libs/prx/libSceExample/Example.cpp": example + "\n",
+                })
+                self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/Built.cpp"]), [])
+                file = root / "core/libs/prx/libSceExample/Example.cpp"
+                file.write_text(example + "\nint APS5_VABI real_export() { return 1; }\n", encoding="utf-8")
+                self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/Built.cpp"]),
+                                 [Path("core/libs/prx/libSceExample/Example.cpp")])
+
+    def test_main_reports_exports_hidden_behind_documentation_includes(self):
+        root = self.tree({
+            "core/libs/prx/libSceExample/Built.cpp": '/* example\n#include "Forgotten.cpp"\n*/\n',
+            "core/libs/prx/libSceExample/Forgotten.cpp": "int APS5_VABI forgotten() { return 7; }\n",
+        })
+        for arguments in (["build"], ["build", "--json"]):
+            with self.subTest(arguments=arguments), \
+                    patch.object(check_test_registration, "__file__", str(root / "tools/check_test_registration.py")), \
+                    patch.object(check_test_registration, "built", return_value={"covered_tests"}), \
+                    patch.object(check_test_registration, "registered", return_value={"covered_tests"}), \
+                    patch.object(check_test_registration, "compiled", return_value={(root / "core/libs/prx/libSceExample/Built.cpp").resolve()}), \
+                    patch.object(check_test_registration, "skipped_libraries", return_value=set()), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(check_test_registration.main(arguments), 1)
+            if "--json" in arguments:
+                self.assertEqual(json.loads(output.getvalue())["unbuilt_exports"],
+                                 ["core/libs/prx/libSceExample/Forgotten.cpp"])
+            else:
+                self.assertIn("core/libs/prx/libSceExample/Forgotten.cpp defines APS5_VABI functions but no target compiles it", output.getvalue())
+
     def test_function_try_blocks_still_count_as_definitions(self):
         for suffix in (" try", " noexcept try", "\n        noexcept\n        try"):
             with self.subTest(suffix=suffix):

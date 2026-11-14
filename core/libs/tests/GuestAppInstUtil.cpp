@@ -66,6 +66,11 @@ int main() {
     Require(sceAppInstUtilAppExists(nullptr, &untouched) == nullArgument && untouched == 7, "a null title id was not refused before the initialization check");
     Require(sceAppInstUtilAppExists("PPSA00000", nullptr) == nullArgument, "a null output was not refused before the initialization check");
     Require(sceAppInstUtilAppExists(reinterpret_cast<const char*>(0x10), &untouched) == notInitialized && untouched == 7, "an unreadable title id was read before the initialization check");
+    bool unchanged = true;
+    Require(sceAppInstUtilAppIsInUpdating("PPSA00000", &unchanged) == notInitialized && unchanged, "an update query before initialization was answered");
+    Require(sceAppInstUtilAppIsInUpdating(nullptr, &unchanged) == nullArgument && unchanged, "a null title id was not refused by the update query");
+    Require(sceAppInstUtilAppIsInUpdating("PPSA00000", nullptr) == nullArgument, "a null update flag was not refused");
+    Require(sceAppInstUtilAppIsInUpdating(reinterpret_cast<const char*>(0x10), &unchanged) == notInitialized && unchanged, "an unreadable title id was read by the update query before the initialization check");
 
     Require(sceAppInstUtilTerminate() == 0, "an unbalanced termination failed");
     Require(sceAppInstUtilInitialize() == 0, "initialization after an unbalanced termination failed");
@@ -85,6 +90,9 @@ int main() {
     errno = 71;
     Require(sceAppInstUtilAppExists(reinterpret_cast<const char*>(0x10), &untouched) == nullArgument && untouched == 7, "an unreadable title id was not refused after a host read hook");
     Require(errno == 71, "errno set by a host read hook leaked from an unreadable title id");
+    errno = 71;
+    Require(sceAppInstUtilAppIsInUpdating(reinterpret_cast<const char*>(0x10), &unchanged) == nullArgument && unchanged, "an unreadable title id was not refused by the update query after a host read hook");
+    Require(errno == 71, "errno set by a host read hook leaked from the update query");
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     char* guard = GuardedPageEnd();
     errno = 71;
@@ -104,6 +112,20 @@ int main() {
     Require(sceAppInstUtilAppExists("PPSA0000", &exists) == 0 && exists == 0, "a title id prefix matched");
     exists = 7;
     Require(sceAppInstUtilAppExists("", &exists) == 0 && exists == 0, "an empty title id matched");
+
+    bool updating = true;
+    errno = 71;
+    Require(sceAppInstUtilAppIsInUpdating("PPSA00000", reinterpret_cast<bool*>(0x10)) == nullArgument, "an unwritable update flag was not refused");
+    Require(errno == 71, "errno was not preserved for an unwritable update flag");
+    errno = 71;
+    Require(sceAppInstUtilAppIsInUpdating(reinterpret_cast<const char*>(0x10), &updating) == nullArgument && updating, "an unreadable title id was not refused by the update query");
+    Require(errno == 71, "errno was not preserved for an unreadable title id in the update query");
+    Require(sceAppInstUtilAppIsInUpdating(guard, &updating) == nullArgument && updating, "a title id in a guard page was not refused by the update query");
+    Require(sceAppInstUtilAppIsInUpdating(EndingAt(guard, "PPSA000001", 10), &updating) == 0 && !updating, "the update query read past the title id window");
+    updating = true;
+    Require(sceAppInstUtilAppIsInUpdating("PPSA00000", &updating) == 0 && !updating, "the running title is updating");
+    updating = true;
+    Require(sceAppInstUtilAppIsInUpdating("PPSA00001", &updating) == 0 && !updating, "another title is updating");
 
     Require(sceAppInstUtilTerminate() == 0, "termination failed");
     Require(sceAppInstUtilInitialize() == 0, "initialization after termination failed");

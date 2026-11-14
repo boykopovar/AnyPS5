@@ -138,6 +138,9 @@ int main() {
     Require(sceContentSearchGetContentLastUpdateId(reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
     Require(sceContentSearchGetApplicationLastUpdateId(nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchGetMyApplicationIndex(nullptr) == ErrorInvalidArgument);
+    errno = 71;
+    Require(sceContentSearchGetMyApplicationIndex(reinterpret_cast<std::int32_t*>(0x10)) == ErrorInvalidArgument);
+    Require(errno == 71);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, nullptr, &updateId) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 0, &count, &updateId) == ErrorInvalidArgument);

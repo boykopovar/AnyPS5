@@ -123,6 +123,9 @@ static int testIds() {
     ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(nullptr, 0) == UTIL_INVALID_ARGUMENT && sceNpUtilCanonicalizeNpIdForPsp2(nullptr, 1) == UTIL_INVALID_ARGUMENT,
         "canonicalizing a null NpId succeeded");
     NpIdFull loose = npIdWithTag("heron-4", 0x34737000);
+    errno = 71;
+    ok &= expect(sceNpIntGetPlatformType(reinterpret_cast<const NpIdFull*>(0x10)) == INVALID_ARGUMENT, "an unmapped NpId in sceNpIntGetPlatformType");
+    ok &= expect(errno == 71, "errno altered on unmapped NpId in sceNpIntGetPlatformType");
     ok &= expect(sceNpGetPlatformType(&loose) == 0 && sceNpIntGetPlatformType(&loose) == 0, "a tag with opt[4] zero is not platform 0");
     const NpIdFull nearCompanion = npIdWithTag("heron-4", 0x716D6F63);
     ok &= expect(sceNpIntGetPlatformType(&nearCompanion) == INVALID_PLATFORM_TYPE, "comq was taken for comp");

@@ -91,6 +91,39 @@ results = run(body, rows, wave64=True, ieee=0, dx10_clamp=1,
 Usual workflow: run the instruction on rows that separate the candidate models (edge values, NaN payloads, rounding
 ties), write a model that matches every row, implement it, and put measured rows in the execution test.
 
+## Curated probe catalog
+
+[`probe_catalog.py`](../../tools/hw-oracle/probe_catalog.py) provides a small checked-in set of explicit, reviewable
+instruction probes. The catalog starts with f32 and f16 arithmetic edge cases, including signed zero, NaNs, rounding
+ties, denormals and overflow modes. It does not generate instruction semantics from the ISA form list and it stores no
+expected outputs. A measurement is only the result returned by the configured hardware oracle.
+
+List the curated cases, then generate portable input bundles without a GPU:
+
+```sh
+python3 tools/hw-oracle/probe_catalog.py list
+python3 tools/hw-oracle/probe_catalog.py generate --output-dir /tmp/anyps5-probes \
+  --probe v-add-f32-edge-values
+```
+
+Each generated case directory contains `body.s`, `rows.txt` and `probe.json`. These files can also be passed to
+`hw_oracle.py` directly, with the required floating-point options from `probe.json`.
+
+To run the catalog, provide a user-chosen label for the machine and GPU, then ask for the report summary:
+
+```sh
+python3 tools/hw-oracle/probe_catalog.py run --results-dir measurements --device-label rx-6750-xt
+python3 tools/hw-oracle/probe_catalog.py coverage --results-dir measurements --device-label rx-6750-xt
+```
+
+`run` measures every catalog entry by default; repeat `--probe ID` to select a subset. It does not overwrite an existing
+measurement file. Reports include the hardware-oracle runtime and assembly target, the exact catalog digest, all input
+and output words, and the user-supplied device label. The label is not checked against the physical GPU, and the
+assembly target alone does not identify a GPU model or driver. `coverage` checks the individual probe definition
+digest, inputs and settings. Adding another probe leaves existing measurements valid; editing a probe marks only that
+probe's old report stale. It reports missing, stale or invalid files separately and exits 1 when the selected probe set
+is incomplete. Use `--json` for machine-readable coverage data.
+
 ## Recompiler comparison
 
 The `vulkan` runtime runs the same assembled kernel through the shader recompiler on the Vulkan device instead of on AMD

@@ -143,6 +143,12 @@ int main(int argc, char** argv) {
     bool nullThrew = false;
     try { sceKernelAioSetParam(nullptr, 32, 32, 1, 0x100000, 0x100000); } catch (const std::invalid_argument&) { nullThrew = true; }
     Check(nullThrew);
+    auto* const badParam = reinterpret_cast<KernelAioSchedulingParam*>(1);
+    Check(sceKernelAioSetParam(badParam, 32, 32, 1, 0x100000, 0x100000) == SCE_KERNEL_ERROR_EFAULT);
+    Check(sceKernelAioSetParam(badParam, -1, 32, 1, 0x100000, 0x100000) == SCE_KERNEL_ERROR_EINVAL);
+    bool initializeThrew = false;
+    try { sceKernelAioInitializeParam(badParam); } catch (const std::invalid_argument&) { initializeThrew = true; }
+    Check(initializeThrew);
     Check(sceKernelAioInitializeImpl(schedulingParams.data(), static_cast<std::int32_t>(sizeof(schedulingParams))) == 0);
     std::array<KernelAioSchedulingParam, 4> initParam{};
     initParam.fill({7, 7, 7, 7, 7});
@@ -448,6 +454,31 @@ int main(int argc, char** argv) {
     Check(sceKernelAioWaitRequests(unreadable, 2, kept, 1, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Check(kept[0] == 7 && kept[1] == 7);
     void* readOnly = MapReadOnlyPage();
+    const int submitFd = sceKernelOpen(file.string().c_str(), SCE_KERNEL_O_RDWR, 0);
+    Check(submitFd >= 0);
+    const auto fileContents = [&] {
+        std::ifstream stream(file, std::ios::binary);
+        return std::string{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+    };
+    const std::string beforeSubmits = fileContents();
+    for (void* bad : {static_cast<void*>(unreadable), readOnly}) {
+        for (const auto submit : {sceKernelAioSubmitReadCommands, sceKernelAioSubmitWriteCommands,
+                                 sceKernelAioSubmitReadCommandsMultiple, sceKernelAioSubmitWriteCommandsMultiple}) {
+            for (const std::int32_t size : {1, 2}) {
+                std::array<char, 4> marker = {'m', 'n', 'o', 'p'};
+                KernelAioResult markerResults[2] = {{-1, 0}, {-1, 0}};
+                KernelAioRwRequest markerRequests[2] = {
+                    {0, marker.size(), marker.data(), &markerResults[0], submitFd},
+                    {16, marker.size(), marker.data(), &markerResults[1], submitFd},
+                };
+                Check(submit(markerRequests, size, 1, static_cast<std::int32_t*>(bad)) == SCE_KERNEL_ERROR_EFAULT);
+                Check(std::string(marker.data(), marker.size()) == "mnop");
+                for (const auto& markerResult : markerResults) Check(markerResult.state == 0 && markerResult.return_value == -1);
+            }
+        }
+    }
+    Check(fileContents() == beforeSubmits);
+    Check(sceKernelClose(submitFd) == 0);
     for (void* bad : {static_cast<void*>(unreadable), readOnly}) {
         auto* badState = static_cast<std::int32_t*>(bad);
         const std::int32_t pollId = finished();

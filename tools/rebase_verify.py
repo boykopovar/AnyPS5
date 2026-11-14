@@ -90,6 +90,9 @@ def verify(root, old, new, onto):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="check that a rebased branch kept its added and deleted lines, authors and commits")
     parser.add_argument("old", help="the branch or commit before the rebase")
     parser.add_argument("new", help="the branch or commit after the rebase")

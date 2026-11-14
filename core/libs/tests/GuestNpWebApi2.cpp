@@ -52,6 +52,31 @@ int main() {
     errno = 71;
     Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", nullptr, reinterpret_cast<std::int64_t*>(0x10)) == static_cast<int>(0x80553402));
     Require(errno == 71);
+    std::int64_t requestSentinel = 0x5a5a5a5a5a5a5a5a;
+    Require(sceNpWebApi2CreateRequest(user, nullptr, "/v1/sessions", "GET", nullptr, &requestSentinel) == static_cast<int>(0x80553402));
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", nullptr, "GET", nullptr, &requestSentinel) == static_cast<int>(0x80553402));
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", nullptr, nullptr, &requestSentinel) == static_cast<int>(0x80553402));
+    Require(sceNpWebApi2CreateRequest(user, nullptr, "/v1/sessions", "GET", nullptr, nullptr) == static_cast<int>(0x80553402));
+    const std::uint64_t emptyContent[2] = {0x1000, 0};
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", emptyContent, &requestSentinel) == static_cast<int>(0x80553408));
+    Require(sceNpWebApi2CreateRequest(user, nullptr, "/v1/sessions", "GET", emptyContent, &requestSentinel) == static_cast<int>(0x80553402));
+    errno = 71;
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", reinterpret_cast<const void*>(0x10), &requestSentinel) == static_cast<int>(0x80553402));
+    Require(errno == 71);
+    Require(requestSentinel == 0x5a5a5a5a5a5a5a5a);
+    const std::uint64_t noContent[2] = {0, 0};
+    std::int64_t createdRequest = 0;
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", noContent, &createdRequest) == 0 && createdRequest > 0);
+    Require(sceNpWebApi2DeleteRequest(createdRequest) == 0);
+    const std::uint64_t sizedContent[2] = {0x1000, 16};
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", sizedContent, &createdRequest) == 0 && createdRequest > 0);
+    Require(sceNpWebApi2DeleteRequest(createdRequest) == 0);
+    std::int32_t partIndex = 0x5a5a5a5a;
+    Require(sceNpWebApi2AddMultipartPart(request, nullptr, &partIndex) == static_cast<int>(0x80553402));
+    Require(sceNpWebApi2AddMultipartPart(request, nullptr, nullptr) == static_cast<int>(0x80553402));
+    Require(partIndex == 0x5a5a5a5a);
+    Require(sceNpWebApi2SetMultipartContentType(request, nullptr, "boundary") == static_cast<int>(0x80553402));
+    Require(sceNpWebApi2SetMultipartContentType(request, nullptr, nullptr) == static_cast<int>(0x80553402));
     Require(sceNpWebApi2SetRequestTimeout(request, 30000000) == 0);
     Require(sceNpWebApi2AddWebTraceTag(request, "trace-tag-1") == 0);
     Require(sceNpWebApi2AddWebTraceTag(request, nullptr) == static_cast<int>(0x80553402));
@@ -185,5 +210,10 @@ int main() {
         const auto* dataBytes = reinterpret_cast<const unsigned char*>(readBuffer);
         for (std::size_t index = 0; index < sizeof(readBuffer); ++index) Require(dataBytes[index] == 0xb7);
     }
+    errno = 71;
+    Require(sceNpWebApi2IntInitialize(reinterpret_cast<const NpWebApi2IntInitializeArgs*>(std::uintptr_t{0x10})) == static_cast<int>(0x80553402));
+    Require(errno == 71);
+    Require(sceNpWebApi2IntInitialize2(reinterpret_cast<const NpWebApi2IntInitialize2Args*>(std::uintptr_t{0x10})) == static_cast<int>(0x80553402));
+    Require(errno == 71);
     return 0;
 }

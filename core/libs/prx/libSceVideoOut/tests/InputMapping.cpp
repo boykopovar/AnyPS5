@@ -658,6 +658,29 @@ void padChordParse() {
     require(rejects("ToggleFullscreen = PAD:\n"), "an empty pad chord is rejected");
 }
 
+void watchStampsAndDebounce() {
+    useConfig("Cross = KEY:F\n");
+    const auto first = Pad::InputMappingFileStamp("");
+    require(first.shared.present && !first.profile.present, "the shared file has a stamp and a missing profile has none");
+    Pad::InputMappingWatch watch(first);
+    require(!watch.Poll(first), "an unchanged file is not reloaded");
+    useConfig("Cross = KEY:G\nMouseCurve = 2\n");
+    const auto changed = Pad::InputMappingFileStamp("");
+    require(changed != first, "a rewritten file changes its stamp");
+    require(!watch.Poll(changed), "a change waits one poll before it is reloaded");
+    require(watch.Poll(changed), "a settled change is reloaded once");
+    require(!watch.Poll(changed), "a reloaded change is not reloaded again");
+    useConfig("Cross = KEY:H\n");
+    const auto moving = Pad::InputMappingFileStamp("");
+    require(!watch.Poll(moving), "a file still being written is not reloaded");
+    useConfig("Cross = KEY:HH\nCircle = KEY:J\n");
+    const auto settled = Pad::InputMappingFileStamp("");
+    require(!watch.Poll(settled), "a change in the middle of a write restarts the wait");
+    require(watch.Poll(settled), "the last version is reloaded once it settles");
+    std::filesystem::remove(root / "anyps5-input.ini");
+    require(!Pad::InputMappingFileStamp("").shared.present, "a removed file has no stamp");
+}
+
 }
 
 int main() try {
@@ -699,6 +722,7 @@ int main() try {
     reloadInputMappingAction();
     reloadErrorNamesLine();
     padChordParse();
+    watchStampsAndDebounce();
     std::filesystem::remove_all(root);
     std::cout << "input mapping tests passed\n";
     return 0;

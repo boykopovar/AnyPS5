@@ -223,7 +223,8 @@ int APS5_VABI sceContentSearchGetApplicationLastUpdateId(std::int64_t* lastUpdat
 int APS5_VABI sceContentSearchGetMyApplicationIndex(std::int32_t* index) {
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (index == nullptr) return ErrorInvalidArgument;
-    *index = 0;
+    const std::int32_t zero = 0;
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(index, &zero, sizeof(zero))) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

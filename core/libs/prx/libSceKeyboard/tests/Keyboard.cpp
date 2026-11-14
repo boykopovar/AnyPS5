@@ -144,6 +144,10 @@ int main() {
     Require(sceKeyboardOpen(-1, 0, 0, nullptr) == KEYBOARD_ERROR_INVALID_USER_ID);
     Require(sceKeyboardOpen(0, 0, 0, nullptr) == KEYBOARD_ERROR_UNKNOWN_USER);
     Require(sceKeyboardOpen(InitialUserId, 0, 0, nullptr) == KEYBOARD_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 0) == KEYBOARD_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId + 1, 0, 0) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 1, 0) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 1) == KEYBOARD_ERROR_NO_HANDLE);
     CheckInvalidKeys(true);
     CheckUnconvertedKeys();
     CheckKanaLed();
@@ -261,6 +265,10 @@ int main() {
     Require(sceKeyboardReadState(KEYBOARD_HANDLE, data) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardOpen(InitialUserId, 0, 0, nullptr) == KEYBOARD_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 0) == KEYBOARD_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId + 1, 0, 0) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 1, 0) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 1) == KEYBOARD_ERROR_NO_HANDLE);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].length == 1 && data[0].key_code[0] == 0);
     Require(data[0].connected);
     CheckHistoryWrap();
@@ -284,6 +292,7 @@ int main() {
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].connected);
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);
     Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, &deviceId) == KEYBOARD_ERROR_INVALID_HANDLE && deviceId == -1);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 0) == KEYBOARD_ERROR_NO_HANDLE);
 
     bool threwConnect = false;
     try {

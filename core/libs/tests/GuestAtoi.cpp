@@ -12,6 +12,8 @@ int main() {
     constexpr int SavedError = 1234;
     constexpr Case cases[] = {
         {"0", 0, SavedError},
+        {"-0", 0, SavedError},
+        {"+0", 0, SavedError},
         {"+42", 42, SavedError},
         {" \t\n\r\f\v-0012tail", -12, SavedError},
         {"010", 10, SavedError},
@@ -20,6 +22,8 @@ int main() {
         {"", 0, SavedError},
         {"words", 0, SavedError},
         {" +", 0, SavedError},
+        {"--5", 0, SavedError},
+        {"+-5", 0, SavedError},
         {"2147483647", INT32_MAX, SavedError},
         {"-2147483648", INT32_MIN, SavedError},
         {"2147483648", INT32_MIN, SavedError},
@@ -54,6 +58,9 @@ int main() {
     };
     constexpr WideCase wideCases[] = {
         {"0", 0, SavedError},
+        {"-0", 0, SavedError},
+        {"+0", 0, SavedError},
+        {"--5", 0, SavedError},
         {" \t+42tail", 42, SavedError},
         {"", 0, SavedError},
         {"words", 0, SavedError},

@@ -603,7 +603,7 @@ SpirvBufferFormatInfo ImageConversionFormat(const ImageResource& image) {
     if (format == IrBufferFormat::Invalid) {
         return {};
     }
-    const auto info = GetFormatInfo(format);
+    const auto info = GetImageFormatInfo(format);
     const auto remapped = image.resourceClass == ImageResourceClass::Storage ? RemapStorageTextureFormat(format) : RemapTextureFormat(format);
     if (SampledTextureNumericClass(remapped) != IrTextureNumericClass::Uint || remapped == format || (info.type != SpirvFormatComponentType::Uint && info.type != SpirvFormatComponentType::Unorm && info.type != SpirvFormatComponentType::Float) || !info.packedBitfield || (info.byteSize != 2u && info.byteSize != 4u) || info.componentCount == 0u || info.componentCount > 4u) {
         throw std::runtime_error("image conversion format is not a packed 16-bit or 32-bit unsigned integer, unorm or float format");
@@ -711,7 +711,7 @@ SpirvBufferFormatInfo PackedTexelFormat(SpirvValueEmitContext& ctx, const ImageE
     if (format == IrBufferFormat::Invalid || access.image.depthBits || access.image.conversionFormat != IrBufferFormat::Invalid) {
         ctx.Fail(access.inst, "accesses packed texels of an image without a packed format");
     }
-    const auto info = GetFormatInfo(format);
+    const auto info = GetImageFormatInfo(format);
     if (info.packedBitfield) {
         ctx.Fail(access.inst, "accesses packed texels of a bitfield format");
     }
@@ -1038,7 +1038,7 @@ SpirvBufferFormatInfo SintStorageFormat(const ImageResource& image) {
     if (image.resourceClass != ImageResourceClass::Storage || format == IrBufferFormat::Invalid || SampledTextureNumericClass(format) != IrTextureNumericClass::Sint) {
         return {};
     }
-    const auto info = GetFormatInfo(format);
+    const auto info = GetImageFormatInfo(format);
     if (image.numericClass != IrTextureNumericClass::Uint || info.type != SpirvFormatComponentType::Sint || info.packedBitfield || info.componentCount == 0u || info.byteSize == 12u) {
         throw std::runtime_error("storage image conversion format is not a SINT format written through a UINT view");
     }
@@ -1049,7 +1049,7 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
     auto& state = ctx.state;
     const auto& mem = access.mem;
     const auto sint = SintStorageFormat(access.image);
-    const auto storageFormat = GetFormatInfo(access.image.conversionFormat);
+    const auto storageFormat = GetImageFormatInfo(access.image.conversionFormat);
     const auto float16 = access.image.resourceClass == ImageResourceClass::Storage && access.image.numericClass == IrTextureNumericClass::Uint &&
         (access.image.conversionFormat == IrBufferFormat::Format16Float || access.image.conversionFormat == IrBufferFormat::Format16_16Float || access.image.conversionFormat == IrBufferFormat::Format16_16_16_16Float);
     std::uint32_t values[4] = {};
@@ -1631,7 +1631,7 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     if (gatherConstText != nullptr && !setup.dref) {
         const auto value = static_cast<std::uint32_t>(std::strtoul(gatherConstText, nullptr, 0));
         const bool integer = resultNumericClass == IrTextureNumericClass::Uint || resultNumericClass == IrTextureNumericClass::Sint;
-        const auto component = integer ? ConstantU32(state, value) : ConstantF32(state, std::bit_cast<std::uint32_t>(static_cast<float>(value)));
+        const auto component = resultNumericClass == IrTextureNumericClass::Sint ? ConstantI32(state, std::bit_cast<std::int32_t>(value)) : integer ? ConstantU32(state, value) : ConstantF32(state, std::bit_cast<std::uint32_t>(static_cast<float>(value)));
         gathered = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeConstruct, ImageVectorType(state, resultNumericClass, 4), gathered, component, component, component, component);
     }
@@ -1657,9 +1657,9 @@ void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& acces
     const auto u32 = TypeU32(state);
     const auto ext = [&](std::uint32_t type, std::uint32_t op, std::initializer_list<std::uint32_t> args) {
         const auto value = state.module.AllocateId();
-        std::vector<std::uint32_t> words{spv::OpExtInst, type, value, GlslStd450(state), op};
-        words.insert(words.end(), args.begin(), args.end());
-        state.module.AddFunction(std::span<const std::uint32_t>(words));
+        std::array<std::uint32_t, 8> words{spv::OpExtInst, type, value, GlslStd450(state), op};
+        std::copy(args.begin(), args.end(), words.begin() + 5);
+        state.module.AddFunction(std::span<const std::uint32_t>(words.data(), 5u + args.size()));
         return value;
     };
     const auto extract = [&](std::uint32_t type, std::uint32_t composite, std::uint32_t index) {
@@ -1806,7 +1806,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         EmitEmulatedSample(ctx, access, setup, false);
         return;
     }
-    if (!setup.dref && image.conversionFormat == IrBufferFormat::Format11_11_10UNorm) {
+    if (!setup.dref && IsConvertedUnormTextureFormat(image.conversionFormat)) {
         EmitEmulatedSample(ctx, access, setup, true);
         return;
     }
@@ -2435,7 +2435,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto selector = tables ? tableSelector : state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ImageBase + memory.resource * PipelineSpecialization::ImageWords, 0u);
     const bool returnsValue = inst.Opcode() != IrOpcode::ImageWrite;
     const auto guardedId = returnsValue ? ctx.Result(inst) : 0u;
-    ctx.definitions.erase(&inst);
+    ctx.definitions.Erase(&inst);
     const bool exits = !state.continueTarget;
     const auto guardMerge = samplerGuard != 0u ? state.module.AllocateId() : 0u;
     const auto guardSkip = samplerGuard != 0u ? state.module.AllocateId() : 0u;
@@ -2481,7 +2481,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
         EmitLabel(state, labels[index]);
         emitMode(modes[index]);
         if (returnsValue) incoming.insert(incoming.end(), {ctx.Def(&inst), state.currentLabel});
-        ctx.definitions.erase(&inst);
+        ctx.definitions.Erase(&inst);
         state.module.AddFunction(spv::OpBranch, merge);
     }
     state.runtimeImage = nullptr;
@@ -2507,7 +2507,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
         EmitLabel(state, guardMerge);
         if (returnsValue) state.module.AddFunction(spv::OpPhi, TypeId(state, inst.Type()), guardedId, resultId, merge, ZeroResult(ctx, inst), guardSkip);
     }
-    if (returnsValue) ctx.definitions.emplace(&inst, guardedId);
+    if (returnsValue) ctx.definitions.Emplace(&inst, guardedId);
 }
 
 void EmitGetImageResource(SpirvValueEmitContext& context) {
