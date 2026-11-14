@@ -151,6 +151,27 @@ std::uint64_t headerNumber(const std::string& header, std::string_view key) {
     return std::strtoull(header.c_str() + at + quoted.size(), nullptr, 10);
 }
 
+void requireMemoryInRanges(const FrameCaptureReader& reader) {
+    std::map<std::uint64_t, std::uint64_t> mapped;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind != FrameMemoryKind::Range) continue;
+        auto& end = mapped[chunk.address];
+        end = std::max(end, chunk.address + chunk.bytes);
+    }
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind != FrameMemoryKind::Snapshot && chunk.kind != FrameMemoryKind::Delta) continue;
+        const auto end = chunk.address + chunk.bytes;
+        auto cursor = chunk.address;
+        auto range = mapped.upper_bound(cursor);
+        if (range != mapped.begin()) --range;
+        for (; range != mapped.end() && range->first <= cursor && cursor < end; ++range) cursor = std::max(cursor, range->second);
+        if (cursor >= end) continue;
+        char where[96];
+        std::snprintf(where, sizeof(where), " at 0x%llx (%llu bytes) reaches 0x%llx", static_cast<unsigned long long>(chunk.address), static_cast<unsigned long long>(chunk.bytes), static_cast<unsigned long long>(cursor));
+        throw std::runtime_error(std::string("frame replay: the memory ") + (chunk.kind == FrameMemoryKind::Delta ? "delta of group " + std::to_string(chunk.group) : std::string("snapshot")) + where + ", which no range of the capture maps");
+    }
+}
+
 void restore(const FrameCaptureReader& reader, const FrameMemoryChunk& chunk) {
     reader.Read(chunk, std::span(reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk.address)), static_cast<std::size_t>(chunk.bytes)));
 }
@@ -285,6 +306,7 @@ Skipped restoreMemory(const FrameCaptureReader& reader) {
     std::size_t size = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &size);
     if (!reader.Header().empty() && headerNumber(reader.Header(), "arena_base") != base) throw std::runtime_error("frame replay: the guest arena is at a different address than in the capture");
+    requireMemoryInRanges(reader);
     progress();
     Skipped skipped;
     mapHostRanges(reader, skipped);
@@ -523,11 +545,18 @@ struct Replay {
     bool atCapturedPark(const FrameCall& call) {
         std::array<AgcDriver::AwaitedWait, 64> awaited{};
         const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
-        std::vector<std::uint64_t> parked;
-        for (std::size_t slot = 0; slot < count; ++slot) parked.push_back(awaited[slot].address);
+        const std::size_t fields = reader.Version() >= 3 ? 4 : 1;
+        if (call.values.size() != 2 + fields * call.values[1]) throw std::runtime_error("frame replay: memory delta at call " + std::to_string(call.ordinal) + " lists " + std::to_string(call.values[1]) + " parked waits in " + std::to_string(call.values.size()) + " values");
+        std::vector<std::array<std::uint64_t, 4>> parked;
+        for (std::size_t slot = 0; slot < count; ++slot) {
+            const auto& wait = awaited[slot];
+            parked.push_back(fields == 4 && wait.bytes != 0 ? std::array<std::uint64_t, 4>{wait.address, wait.reference, wait.mask, wait.function | (std::uint64_t{wait.bytes} << 32u)} : std::array<std::uint64_t, 4>{wait.address, 0, 0, 0});
+        }
         std::ranges::sort(parked);
+        std::vector<std::uint64_t> flat;
+        for (const auto& wait : parked) flat.insert(flat.end(), wait.begin(), wait.begin() + static_cast<std::ptrdiff_t>(fields));
         const auto [accepted, completed] = progress();
-        return accepted - completed == call.accepted - call.completed && std::ranges::equal(parked, std::span(call.values).subspan(2));
+        return accepted - completed == call.accepted - call.completed && std::ranges::equal(flat, std::span(call.values).subspan(2));
     }
 
     void restoreAtCapturedPark(const FrameCall& call) {

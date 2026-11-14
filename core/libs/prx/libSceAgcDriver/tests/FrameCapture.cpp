@@ -158,7 +158,7 @@ void testRoundTrip(const std::filesystem::path& directory) {
 
     const FrameCaptureReader reader(directory);
     check(!reader.Truncated(), "a finished capture reads as truncated");
-    check(reader.Version() == 2, "a capture this build wrote reads as calls format " + std::to_string(reader.Version()) + ", not 2");
+    check(reader.Version() == 3, "a capture this build wrote reads as calls format " + std::to_string(reader.Version()) + ", not 3");
     check(reader.Header() == "{\"magic\":\"aps5-frame-capture 1\"}\n", "header does not round-trip");
     check(reader.Calls().size() == calls.size(), "call count does not round-trip");
     for (std::size_t index = 0; index < calls.size(); ++index) check(sameCall(reader.Calls()[index], calls[index]), "call " + std::to_string(index) + " does not round-trip");
@@ -202,14 +202,13 @@ void testTruncated(const std::filesystem::path& source, const std::filesystem::p
     check(reader.Chunks().back().kind != FrameMemoryKind::Delta, "a cut memory chunk is not dropped");
 }
 
-void testVersionOne(const std::filesystem::path& source, const std::filesystem::path& directory) {
+void testOlderVersion(const std::filesystem::path& source, const std::filesystem::path& directory, std::string_view magic, std::uint32_t expected) {
     std::filesystem::remove_all(directory);
     std::filesystem::copy(source, directory, std::filesystem::copy_options::recursive);
-    constexpr std::string_view VersionOne = "aps5-frame-calls 1\n";
     {
         std::fstream file(directory / FrameCaptureWriter::CallsName, std::ios::binary | std::ios::in | std::ios::out);
-        file.write(VersionOne.data(), static_cast<std::streamsize>(VersionOne.size()));
-        check(file.good(), "cannot write the calls format 1 magic");
+        file.write(magic.data(), static_cast<std::streamsize>(magic.size()));
+        check(file.good(), "cannot write the calls format " + std::to_string(expected) + " magic");
     }
     std::uint32_t version = 0;
     std::vector<FrameCall> readBack;
@@ -218,12 +217,12 @@ void testVersionOne(const std::filesystem::path& source, const std::filesystem::
         version = reader.Version();
         readBack = reader.Calls();
     } catch (const std::runtime_error& error) {
-        check(false, std::string("a calls format 1 capture does not read: ") + error.what());
+        check(false, "a calls format " + std::to_string(expected) + " capture does not read: " + error.what());
     }
-    check(version == 1, "a calls format 1 capture reads as format " + std::to_string(version));
+    check(version == expected, "a calls format " + std::to_string(expected) + " capture reads as format " + std::to_string(version));
     const auto calls = sampleCalls();
-    check(readBack.size() == calls.size(), "a calls format 1 capture reads " + std::to_string(readBack.size()) + " calls, not " + std::to_string(calls.size()));
-    for (std::size_t index = 0; index < calls.size(); ++index) check(sameCall(readBack[index], calls[index]), "call " + std::to_string(index) + " of a calls format 1 capture does not round-trip");
+    check(readBack.size() == calls.size(), "a calls format " + std::to_string(expected) + " capture reads " + std::to_string(readBack.size()) + " calls, not " + std::to_string(calls.size()));
+    for (std::size_t index = 0; index < calls.size(); ++index) check(sameCall(readBack[index], calls[index]), "call " + std::to_string(index) + " of a calls format " + std::to_string(expected) + " capture does not round-trip");
 }
 
 void testCorrupt(const std::filesystem::path& source, const std::filesystem::path& directory) {
@@ -238,6 +237,110 @@ void testCorrupt(const std::filesystem::path& source, const std::filesystem::pat
     checkThrows([&] { FrameCaptureReader reader(directory); }, "an unknown call kind does not throw");
     std::ofstream(directory / FrameCaptureWriter::CallsName, std::ios::binary | std::ios::trunc) << "not a capture";
     checkThrows([&] { FrameCaptureReader reader(directory); }, "a file without the magic does not throw");
+}
+
+std::vector<std::byte> filled(std::size_t bytes, std::uint8_t seed) {
+    std::vector<std::byte> result(bytes);
+    for (std::size_t at = 0; at < bytes; ++at) result[at] = static_cast<std::byte>((at * 13 + seed) & 0xff);
+    return result;
+}
+
+std::array<std::uint64_t, 2> collidingHash(std::span<const std::byte>) {
+    return {1, 2};
+}
+
+std::vector<AgcDriver::FrameMemoryChunk> deltaChunks(const FrameCaptureReader& reader) {
+    std::vector<AgcDriver::FrameMemoryChunk> deltas;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind == FrameMemoryKind::Delta) deltas.push_back(chunk);
+    }
+    return deltas;
+}
+
+void testSharedDeltas(const std::filesystem::path& directory) {
+    constexpr std::uint64_t Address = 0x3000000000;
+    const auto first = filled(FrameCaptureWriter::BlockBytes, 1);
+    const auto second = filled(FrameCaptureWriter::BlockBytes, 2);
+    {
+        FrameCaptureWriter writer(directory);
+        writer.WriteDelta(1, 1, Address, first);
+        writer.WriteDelta(2, 2, Address, first);
+        writer.WriteDelta(3, 3, Address, second);
+        writer.WriteDelta(4, 4, Address + 4096, second);
+        writer.WriteDelta(5, 5, Address, second);
+        check(writer.SharedBytes() == 2 * second.size(), "the writer shares " + std::to_string(writer.SharedBytes()) + " bytes, not the two repeated deltas");
+        writer.Finish("{}");
+    }
+    const FrameCaptureReader reader(directory);
+    const auto deltas = deltaChunks(reader);
+    check(deltas.size() == 5, "the shared capture does not read back five deltas");
+    check(deltas[1].offset == deltas[0].offset && deltas[4].offset == deltas[2].offset, "a repeated delta does not share the earlier payload");
+    check(deltas[2].offset != deltas[0].offset && deltas[3].offset != deltas[2].offset, "a changed delta or another address shares a payload");
+    const std::vector<std::vector<std::byte>> expected{first, first, second, second, second};
+    for (std::size_t index = 0; index < deltas.size(); ++index) {
+        check(deltas[index].group == index + 1 && reader.Read(deltas[index]) == expected[index], "shared delta " + std::to_string(index) + " does not read back");
+    }
+}
+
+void testCollidingDeltas(const std::filesystem::path& directory) {
+    constexpr std::uint64_t Address = 0x3000000000;
+    const auto first = filled(FrameCaptureWriter::BlockBytes, 3);
+    const auto second = filled(FrameCaptureWriter::BlockBytes, 4);
+    {
+        FrameCaptureWriter writer(directory, 1, collidingHash);
+        writer.WriteDelta(1, 1, Address, first);
+        writer.WriteDelta(2, 2, Address, second);
+        writer.WriteDelta(3, 3, Address, first);
+        writer.WriteDelta(4, 4, Address, first);
+        check(writer.SharedBytes() == first.size(), "the writer shared a delta whose hash collided with different bytes");
+        writer.Finish("{}");
+    }
+    const FrameCaptureReader reader(directory);
+    const auto deltas = deltaChunks(reader);
+    check(deltas.size() == 4, "the colliding capture does not read back four deltas");
+    check(deltas[1].offset != deltas[0].offset && deltas[2].offset != deltas[1].offset && deltas[3].offset == deltas[2].offset, "a colliding hash decided which deltas share a payload");
+    const std::vector<std::vector<std::byte>> expected{first, second, first, first};
+    for (std::size_t index = 0; index < deltas.size(); ++index) check(reader.Read(deltas[index]) == expected[index], "colliding delta " + std::to_string(index) + " does not read back");
+}
+
+void testMemoryFormatOne(const std::filesystem::path& source, const std::filesystem::path& directory) {
+    std::filesystem::remove_all(directory);
+    std::filesystem::copy(source, directory, std::filesystem::copy_options::recursive);
+    {
+        std::fstream file(directory / FrameCaptureWriter::MemoryName, std::ios::binary | std::ios::in | std::ios::out);
+        file.write(FrameCaptureWriter::MemoryMagicV1.data(), static_cast<std::streamsize>(FrameCaptureWriter::MemoryMagicV1.size()));
+        check(file.good(), "cannot write the memory format 1 magic");
+    }
+    const FrameCaptureReader current(source);
+    const FrameCaptureReader older(directory);
+    check(older.Chunks().size() == current.Chunks().size(), "a memory format 1 capture reads a different number of chunks");
+    for (std::size_t index = 0; index < older.Chunks().size(); ++index) {
+        const auto& chunk = older.Chunks()[index];
+        check(chunk.kind == current.Chunks()[index].kind && chunk.address == current.Chunks()[index].address && chunk.offset == current.Chunks()[index].offset, "memory format 1 chunk " + std::to_string(index) + " does not read as written");
+        if (chunk.kind == FrameMemoryKind::Delta) check(older.Read(chunk) == current.Read(current.Chunks()[index]), "a memory format 1 delta does not read back");
+    }
+}
+
+void writeLastShared(const std::filesystem::path& directory, std::uint64_t value) {
+    std::fstream file(directory / FrameCaptureWriter::MemoryName, std::ios::binary | std::ios::in | std::ios::out);
+    file.seekp(-static_cast<std::streamoff>(sizeof(value)), std::ios::end);
+    file.write(reinterpret_cast<const char*>(&value), sizeof(value));
+    check(file.good(), "cannot rewrite the shared payload field");
+}
+
+void testMalformedReference(const std::filesystem::path& source, const std::filesystem::path& directory) {
+    const FrameCaptureReader reader(source);
+    const auto deltas = deltaChunks(reader);
+    const auto& last = reader.Chunks().back();
+    check(last.offset == deltas[2].offset && last.address == deltas[2].address, "the shared fixture does not end with a shared delta");
+    const std::vector<std::pair<std::uint64_t, std::string>> cases{
+        {deltas[0].offset + 1, "a shared offset inside a payload"}, {deltas[3].offset, "a shared payload of another address"}, {std::uint64_t{1} << 40, "a shared offset past the file"}};
+    for (const auto& [value, what] : cases) {
+        std::filesystem::remove_all(directory);
+        std::filesystem::copy(source, directory, std::filesystem::copy_options::recursive);
+        writeLastShared(directory, value);
+        checkThrowsText([&] { FrameCaptureReader broken(directory); }, "frame capture: ", true, what + " is accepted");
+    }
 }
 
 void testWriter(const std::filesystem::path& directory) {
@@ -400,9 +503,14 @@ int main(int argc, char** argv) {
     testReadAroundRanges();
     testRoundTrip(root / "capture");
     testTruncated(root / "capture", root / "truncated");
-    testVersionOne(root / "capture", root / "version-one");
+    testOlderVersion(root / "capture", root / "version-one", "aps5-frame-calls 1\n", 1);
+    testOlderVersion(root / "capture", root / "version-two", "aps5-frame-calls 2\n", 2);
     testCorrupt(root / "capture", root / "corrupt");
     testWriter(root / "writer");
+    testSharedDeltas(root / "shared");
+    testCollidingDeltas(root / "colliding");
+    testMemoryFormatOne(root / "capture", root / "memory-one");
+    testMalformedReference(root / "shared", root / "malformed");
     std::filesystem::remove_all(root);
     std::puts("frame capture tests passed");
     return 0;
