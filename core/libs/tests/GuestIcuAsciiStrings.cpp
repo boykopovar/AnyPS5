@@ -63,6 +63,32 @@ void TestStrnicmp() {
     Require(uprv_strnicmp_nid_postfix("ab", "abc", 10) == -1, "strnicmp: a shorter string sorts first");
 }
 
+int ReferenceCompare(const char* left, const char* right, std::uint32_t n) {
+    for (std::uint32_t index = 0; index < n; ++index) {
+        const int a = std::tolower(static_cast<unsigned char>(left[index]));
+        const int b = std::tolower(static_cast<unsigned char>(right[index]));
+        if (a != b) return a - b;
+        if (a == 0) return 0;
+    }
+    return 0;
+}
+
+void TestAgainstReference() {
+    const char* samples[] = {"", "a", "A", "abc", "ABC", "Abc", "abd", "ABD", "zz", "ZZ", "[", "\xC3" "x", "x\xE3"};
+    for (const char* left : samples) {
+        for (const char* right : samples) {
+            for (std::uint32_t n = 0; n <= 4; ++n) {
+                const int ours = uprv_strnicmp_nid_postfix(left, right, n);
+                const int expected = ReferenceCompare(left, right, n);
+                Require((ours > 0) == (expected > 0) && (ours < 0) == (expected < 0), "strnicmp agrees in sign with a C-locale reference");
+            }
+            const int full = uprv_stricmp_nid_postfix(left, right);
+            const int expectedFull = ReferenceCompare(left, right, 0xFFFFFFFFu);
+            Require((full > 0) == (expectedFull > 0) && (full < 0) == (expectedFull < 0), "stricmp agrees in sign with a C-locale reference");
+        }
+    }
+}
+
 }
 
 int main() {
@@ -71,5 +97,6 @@ int main() {
     TestAsciiToLower();
     TestStricmp();
     TestStrnicmp();
+    TestAgainstReference();
     return 0;
 }
