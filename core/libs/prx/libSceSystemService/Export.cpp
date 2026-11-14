@@ -136,12 +136,13 @@ HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
     const std::wstring own = HostExecutable::Own("sceSystemServiceLoadExec").wstring();
     HostLaunch launch;
     const std::filesystem::path ownPath(own);
+    std::wstring recorded(32768, L'\0');
+    const DWORD recordedLength = GetEnvironmentVariableW(MainExecutableVariableWide, recorded.data(), static_cast<DWORD>(recorded.size()));
+    const std::filesystem::path main = recordedLength > 0 && recordedLength < recorded.size() ? std::filesystem::path(recorded.substr(0, recordedLength)) : ownPath;
     if (std::strcmp(path, MainExecutable) == 0) {
-        std::wstring main(32768, L'\0');
-        const DWORD mainLength = GetEnvironmentVariableW(MainExecutableVariableWide, main.data(), static_cast<DWORD>(main.size()));
-        launch.executable = mainLength > 0 && mainLength < main.size() ? main.substr(0, mainLength) : own;
+        launch.executable = main.wstring();
     } else {
-        const auto target = ownPath.parent_path() / (HostExecutable::Wide(HostExecutable::ConvertedName(path, UnconvertedExecutable), "sceSystemServiceLoadExec") + ownPath.extension().wstring());
+        const auto target = ownPath.parent_path() / (HostExecutable::Wide(HostExecutable::ConvertedName(path, UnconvertedExecutable), "sceSystemServiceLoadExec") + main.extension().wstring());
         RequireExecutableBeside(ownPath.parent_path(), target, path);
         if (!std::filesystem::is_regular_file(target)) {
             UnconvertedExecutable(std::string(path) + " without its converted executable; relink with --executable " + (path + std::size(ApplicationRoot) - 1));
@@ -177,12 +178,13 @@ struct HostLaunch {
 
 HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
     const auto own = HostExecutable::Own("sceSystemServiceLoadExec");
+    const char* recorded = std::getenv(MainExecutableVariable);
+    const std::filesystem::path main = recorded != nullptr && *recorded != '\0' ? std::filesystem::path(recorded) : own;
     HostLaunch launch;
     if (std::strcmp(path, MainExecutable) == 0) {
-        const char* main = std::getenv(MainExecutableVariable);
-        launch.executable = main != nullptr && *main != '\0' ? main : own.string();
+        launch.executable = main.string();
     } else {
-        const auto target = own.parent_path() / (HostExecutable::ConvertedName(path, UnconvertedExecutable) + own.extension().string());
+        const auto target = own.parent_path() / (HostExecutable::ConvertedName(path, UnconvertedExecutable) + main.extension().string());
         RequireExecutableBeside(own.parent_path(), target, path);
         if (!std::filesystem::is_regular_file(target)) {
             UnconvertedExecutable(std::string(path) + " without its converted executable; relink with --executable " + (path + std::size(ApplicationRoot) - 1));
