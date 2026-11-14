@@ -57,6 +57,7 @@ void RequireOpen() {
     Require(sceSdmaOpen(&handle, buffer.data(), 0x8000, reinterpret_cast<const SdmaOpenParam*>(0x10)) == InvalidArgument);
     Require(errno == 71);
     Require(sceSdmaOpen(&handle, buffer.data(), 0x8000, &param) == 0 && handle);
+    Require(sceSdmaOpen(nullptr, buffer.data(), 0x8000, &param) == InvalidArgument);
     Require(sceSdmaClose(handle) == 0);
     for (std::uint32_t engine = 12; engine < 20; ++engine) {
         param.engine = engine;
