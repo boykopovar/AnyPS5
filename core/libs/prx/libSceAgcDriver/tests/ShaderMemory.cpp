@@ -11546,6 +11546,81 @@ void verifyQuadMaskNeighbourReads() {
         return false;
     };
     require(declares(compile(constant, true, false), spv::OpKill), "a quad mask without neighbour reads did not retain its kill fallback");
+    const auto outputStoresNested = [](const RecompileResult& result) {
+        const auto& words = result.spirv.Words();
+        std::set<std::uint32_t> outputs;
+        std::vector<std::uint32_t> merges;
+        bool stored = false;
+        bool nested = false;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "quad mask: truncated SPIR-V instruction");
+            const auto opcode = static_cast<spv::Op>(words[cursor] & 0xffffu);
+            if (opcode == spv::OpVariable && words[cursor + 3] == spv::StorageClassOutput) outputs.insert(words[cursor + 2]);
+            if (opcode == spv::OpAccessChain && outputs.contains(words[cursor + 3])) outputs.insert(words[cursor + 2]);
+            if (opcode == spv::OpFunction) merges.clear();
+            if (opcode == spv::OpSelectionMerge || opcode == spv::OpLoopMerge) merges.push_back(words[cursor + 1]);
+            if (opcode == spv::OpLabel && !merges.empty() && merges.back() == words[cursor + 1]) merges.pop_back();
+            if (opcode == spv::OpStore && outputs.contains(words[cursor + 1])) {
+                stored = true;
+                nested = nested || !merges.empty();
+            }
+            cursor += count;
+        }
+        require(stored, "quad mask: the pixel program stores no output");
+        return nested;
+    };
+    const auto outputStoresKeepInactiveColor = [](const RecompileResult& result) {
+        const auto& words = result.spirv.Words();
+        std::set<std::uint32_t> outputs;
+        std::set<std::uint32_t> selects;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> stores;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "quad mask: truncated SPIR-V instruction");
+            const auto opcode = static_cast<spv::Op>(words[cursor] & 0xffffu);
+            if (opcode == spv::OpVariable && words[cursor + 3] == spv::StorageClassOutput) outputs.insert(words[cursor + 2]);
+            if (opcode == spv::OpSelect) selects.insert(words[cursor + 2]);
+            if (opcode == spv::OpStore) stores.emplace_back(words[cursor + 1], words[cursor + 2]);
+            cursor += count;
+        }
+        bool stored = false;
+        for (const auto& [pointer, value] : stores) {
+            if (!outputs.contains(pointer)) continue;
+            stored = true;
+            if (!selects.contains(value)) return false;
+        }
+        require(stored, "quad mask: the pixel program stores no output");
+        return true;
+    };
+    {
+        constexpr std::array<std::uint32_t, 3> sampleBarycentrics{0xf800180fu, 0x01000100u, 0xbf810000u};
+        constexpr std::array<std::uint32_t, 2> offsetCapabilities{spv::CapabilityShader, spv::CapabilityInterpolationFunction};
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Fragment, 0x58000u, sampleBarycentrics, 0, {}};
+        request.context.waveSize = 32u;
+        request.context.pixel = ShaderPixelStageInfo{};
+        request.context.pixel->inputAddr = PixelInputBit(PixelInput::PerspectiveSample);
+        request.context.pixel->sampleLocations[0] = 0x26u;
+        request.context.pixel->targetOutputMode[0] = 9u;
+        request.context.pixel->targetExportMapping.fill(0xe4u);
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32u;
+        request.target.fragmentShaderBarycentricEnabled = true;
+        request.target.supportedCapabilities = offsetCapabilities;
+        request.layout.pushConstantSizeBytes = 128u;
+        request.useCache = false;
+        const auto offset = Recompile(request);
+        require(declares(offset, spv::OpExtInst), "the sample barycentric test did not interpolate at an offset");
+        require(!outputStoresNested(offset), "a color export of a pixel program that interpolates at an offset is stored inside an EXEC branch, which lets drivers move the interpolation out of uniform control flow");
+        require(outputStoresKeepInactiveColor(offset), "a color export of a pixel program that interpolates at an offset does not keep an inactive lane's previous color, so a later valid-mask export would show a color written under EXEC clear");
+    }
+    constexpr std::array<std::uint32_t, 6> livePermute{0x7e040284u, 0xdac80000u, 0x01000002u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    for (const bool masked : {false, true}) {
+        require(!outputStoresNested(compile(livePermute, masked, true)), "a color export of a pixel program that reads neighbour lanes is stored inside an EXEC branch, which lets drivers move those reads out of uniform control flow");
+        require(outputStoresKeepInactiveColor(compile(livePermute, masked, true)), "a color export of a pixel program that reads neighbour lanes does not keep an inactive lane's previous color, so a later valid-mask export would show a color written under EXEC clear");
+    }
     for (const auto code : {std::span<const std::uint32_t>(explicitExec), std::span<const std::uint32_t>(constantWqm), std::span<const std::uint32_t>(permute)}) {
         const auto unmasked = compile(code, false, false);
         require(declares(unmasked, spv::OpGroupNonUniformShuffle), "the neighbour-read test did not retain its cross-lane shuffle");
