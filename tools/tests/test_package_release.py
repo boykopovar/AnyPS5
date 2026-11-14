@@ -1872,6 +1872,27 @@ class ReleaseNotesStagingTests(unittest.TestCase):
             self.assertEqual(full.read_bytes(), b"old full")
             self.assertEqual(list(root.glob(".release-notes-*")), [])
 
+    def test_promotion_failure_with_new_outputs_leaves_neither_behind(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = (root / name for name in ("notes.json", "body", "full"))
+            source.write_text(json.dumps({"body": "new"}), encoding="utf-8")
+            original_replace = os.replace
+            failed = []
+
+            def replace(first, second):
+                if second == body.resolve() and not failed:
+                    failed.append(first)
+                    raise OSError("second promotion failed")
+                return original_replace(first, second)
+
+            with patch.object(prepare_release_notes.os, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
+                prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(len(failed), 1)
+            self.assertFalse(body.exists())
+            self.assertFalse(full.exists())
+            self.assertEqual(list(root.glob(".release-notes-*")), [])
+
 
 if __name__ == "__main__":
     unittest.main()
