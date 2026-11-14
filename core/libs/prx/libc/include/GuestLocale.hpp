@@ -369,4 +369,15 @@ inline constexpr std::size_t kMoneyPutCharVtableSlots = 8;
 static_assert(kMoneyPutCharVtableSlots * sizeof(std::uintptr_t) == 64);
 extern "C" std::uintptr_t _ZTVSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyPutCharVtableSlots];
 
+extern "C" char APS5_VABI NumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+extern "C" char APS5_VABI NumpunctDoThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctDoGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctDoFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctDoTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" char APS5_VABI NumpunctDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+extern "C" char APS5_VABI NumpunctThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+
 #endif
