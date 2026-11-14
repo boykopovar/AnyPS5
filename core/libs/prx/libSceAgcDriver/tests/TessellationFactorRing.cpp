@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/State/include/Configuration.hpp"
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -53,6 +54,11 @@ void CheckHsOffchipParam() {
     OffchipOutput output;
     Require(Rejects([&] { sceAgcDriverGetHsOffchipParam(nullptr, &output.buffering); }));
     Require(Rejects([&] { sceAgcDriverGetHsOffchipParam(&output.granularity, nullptr); }));
+    errno = 71;
+    Require(Rejects([&] { sceAgcDriverGetHsOffchipParam(reinterpret_cast<uint16_t*>(0x10), &output.buffering); }));
+    Require(errno == 71);
+    Require(Rejects([&] { sceAgcDriverGetHsOffchipParam(&output.granularity, reinterpret_cast<uint16_t*>(0x10)); }));
+    Require(errno == 71);
 }
 
 void RequireRing(uintptr_t expectedBase, uint32_t expectedSize) {
@@ -79,4 +85,9 @@ int main() {
     RingOutput output;
     Require(Rejects([&] { sceAgcDriverGetTFRing(nullptr, &output.size); }));
     Require(Rejects([&] { sceAgcDriverGetTFRing(&output.base, nullptr); }));
+    errno = 71;
+    Require(Rejects([&] { sceAgcDriverGetTFRing(reinterpret_cast<uintptr_t*>(0x10), &output.size); }));
+    Require(errno == 71);
+    Require(Rejects([&] { sceAgcDriverGetTFRing(&output.base, reinterpret_cast<uint32_t*>(0x10)); }));
+    Require(errno == 71);
 }
