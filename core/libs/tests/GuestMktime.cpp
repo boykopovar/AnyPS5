@@ -22,9 +22,7 @@ static void Require(bool value, const char* message) {
 static bool Equal(const GuestTm& left, const GuestTm& right) {
     return left.tm_sec == right.tm_sec && left.tm_min == right.tm_min && left.tm_hour == right.tm_hour
         && left.tm_mday == right.tm_mday && left.tm_mon == right.tm_mon && left.tm_year == right.tm_year
-        && left.tm_wday == right.tm_wday && left.tm_yday == right.tm_yday && left.tm_isdst == right.tm_isdst
-        && left.tm_gmtoff == right.tm_gmtoff && left.tm_zone != nullptr && right.tm_zone != nullptr
-        && std::strcmp(left.tm_zone, right.tm_zone) == 0;
+        && left.tm_wday == right.tm_wday && left.tm_yday == right.tm_yday && left.tm_isdst == right.tm_isdst;
 }
 
 static void CheckNormalization(Converter convert, std::int64_t timer) {
@@ -36,8 +34,6 @@ static void CheckNormalization(Converter convert, std::int64_t timer) {
     input.tm_wday = -1;
     input.tm_yday = -1;
     input.tm_isdst = -1;
-    input.tm_gmtoff = -1;
-    input.tm_zone = nullptr;
     errno = EOVERFLOW;
     Require(convert(&input) == timer, "mktime returned the wrong timestamp");
     Require(Equal(input, expected), "mktime did not normalize a valid timestamp");
@@ -132,8 +128,6 @@ static void CheckFailure(Converter convert, int hint = -1) {
     input.tm_wday = 4;
     input.tm_yday = 12;
     input.tm_isdst = hint;
-    input.tm_gmtoff = 123;
-    input.tm_zone = "unchanged";
     const GuestTm original = input;
     GuestTm expected = original;
     GuestTm reference = original;
@@ -219,6 +213,49 @@ static void CheckZone(const char* zone) {
     }
 }
 
+constexpr std::size_t ConsoleTmSize = 36;
+
+static GuestTm* FillGuarded(unsigned char (&bytes)[64]) {
+    std::memset(bytes, 0xAA, sizeof(bytes));
+    const int calendar[9] = {0, 0, 12, 23, 9, 126, 0, 0, 0};
+    std::memcpy(bytes, calendar, sizeof(calendar));
+    return reinterpret_cast<GuestTm*>(bytes);
+}
+
+static void RequireGuard(const unsigned char (&bytes)[64], const char* message) {
+    for (std::size_t i = ConsoleTmSize; i < sizeof(bytes); ++i) Require(bytes[i] == 0xAA, message);
+}
+
+static void CheckWritesStayInside() {
+    const std::int64_t timer = 1792756800;
+    alignas(8) unsigned char bytes[64];
+    for (auto convert : {libc_mktime_nid_postfix, mktime_nid_postfix, timegm_nid_postfix}) {
+        Require(convert(FillGuarded(bytes)) != -1, "Conversion of a valid calendar failed");
+        RequireGuard(bytes, "A calendar conversion wrote past the 36-byte struct tm");
+    }
+    for (auto split : {localtime_s_nid_postfix, gmtime_s_nid_postfix, localtime_r_nid_postfix, gmtime_r_nid_postfix}) {
+        GuestTm* time = FillGuarded(bytes);
+        Require(split(&timer, time) == time, "Splitting a valid timestamp failed");
+        RequireGuard(bytes, "A timestamp split wrote past the 36-byte struct tm");
+    }
+    GuestTm* utc = FillGuarded(bytes);
+    Require(gmtime_s_nid_postfix(&timer, utc) == utc && utc->tm_isdst == -1, "gmtime_s did not store tm_isdst -1");
+    utc = FillGuarded(bytes);
+    Require(gmtime_r_nid_postfix(&timer, utc) == utc && utc->tm_isdst == 0, "gmtime_r did not store tm_isdst 0");
+    const GuestTm* shared = gmtime_nid_postfix(&timer);
+    Require(shared != nullptr && shared->tm_isdst == 0, "gmtime did not store tm_isdst 0");
+}
+
+static void CheckGmtimeRoundTrip() {
+    Require(setenv_nid_postfix("TZ", "CET-1CEST", 1) == 0, "Could not set the time zone");
+    tzset_nid_postfix();
+    constexpr std::array<std::int64_t, 2> timers{1000000000, 951825600};
+    for (const auto timer : timers) {
+        GuestTm copy = *gmtime_nid_postfix(&timer);
+        Require(mktime_nid_postfix(&copy) == timer - 3600, "mktime of a gmtime result was not read as standard time");
+    }
+}
+
 static void CheckTimelocalDst() {
     Require(setenv_nid_postfix("TZ", "EST5EDT", 1) == 0, "Could not set EST5EDT zone");
     tzset_nid_postfix();
@@ -250,8 +287,6 @@ static void CheckTimelocalDst() {
     failure.tm_wday = 4;
     failure.tm_yday = 12;
     failure.tm_isdst = 5;
-    failure.tm_gmtoff = 123;
-    failure.tm_zone = "unchanged";
 
     GuestTm expectedFailure = failure;
     expectedFailure.tm_isdst = -1;
@@ -266,6 +301,7 @@ static void CheckTimegm() {
         GuestTm expected{};
         Require(gmtime_s_nid_postfix(&timer, &expected) == &expected, "gmtime conversion failed");
         GuestTm input = expected;
+        expected.tm_isdst = 0;
         input.tm_sec += 60;
         --input.tm_min;
         input.tm_wday = -1;
@@ -293,6 +329,8 @@ static void CheckTimegm() {
 }
 
 int main() {
+    CheckWritesStayInside();
+    CheckGmtimeRoundTrip();
     CheckZone("IST-5:30");
     CheckAvailableDaylightHints();
 #ifdef _WIN32

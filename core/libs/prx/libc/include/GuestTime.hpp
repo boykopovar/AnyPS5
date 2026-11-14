@@ -12,9 +12,5 @@ struct GuestTm {
     int tm_wday;
     int tm_yday;
     int tm_isdst;
-    std::int64_t tm_gmtoff;
-    const char* tm_zone;
 };
-static_assert(offsetof(GuestTm, tm_gmtoff) == 40);
-static_assert(offsetof(GuestTm, tm_zone) == 48);
-static_assert(sizeof(GuestTm) == 56);
+static_assert(sizeof(GuestTm) == 36);

@@ -28,8 +28,6 @@ GuestTm MakeTime() {
     time.tm_sec = 9;
     time.tm_wday = 5;
     time.tm_yday = 274;
-    time.tm_gmtoff = 19800;
-    time.tm_zone = "XYZ";
     return time;
 }
 
@@ -119,14 +117,20 @@ int main() {
     Check("flags and widths", base, "%-d|%_d|%0e|%^a|%#b|%10Y", "%-d|%_d|%0e|%^a|%#b|%10Y");
     Check("modifier before an unknown conversion", base, "%Ea|%Oa|%EE|%OO|%Ek|%EY", "Fri|Fri|%E|%O|%k|2026");
     Check("trailing percent", base, "ab%", "ab%");
-    Check("zone", base, "%z|%Z", "-0300|UTC");
+    Check("zone", base, "%z|%Z", "-0300|");
 
     GuestTm zone = base;
     zone.tm_isdst = 1;
-    zone.tm_gmtoff = -1;
     Check("zone in daylight time", zone, "%z", "-0200");
     zone.tm_isdst = -1;
     Check("zone with unknown daylight time", zone, "%z", "-0300");
+    const std::int64_t moment = 1699992800;
+    GuestTm utc{};
+    if (gmtime_s_nid_postfix(&moment, &utc) != &utc || utc.tm_isdst != -1) {
+        std::fprintf(stderr, "gmtime_s did not store tm_isdst -1\n");
+        correct = false;
+    }
+    Check("zone of a gmtime result", utc, "%z|%Z", "-0300|");
 
     for (int value = -3; value <= 14; ++value) {
         GuestTm time = base;
