@@ -465,7 +465,7 @@ void DefineOutputs(SpirvEmitterState& state) {
                 if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.stencilRefVariable);
                 binding.variableId = state.stencilRefVariable;
             } else {
-                binding.variableId = BuiltIn(state.stencilRefVariable, TypeI32(state), "gl_FragStencilRefARB", spv::BuiltInFragStencilRefEXT);
+                binding.variableId = BuiltIn(state.stencilRefVariable, TypeU32(state), "gl_FragStencilRefARB", spv::BuiltInFragStencilRefEXT);
             }
             break;
         case StageOutputKind::Parameter:
