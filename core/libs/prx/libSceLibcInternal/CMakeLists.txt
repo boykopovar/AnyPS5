@@ -888,3 +888,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
     endif()
 endif()
+
+target_sources(libSceLibcInternal PRIVATE Forwards.cpp)
