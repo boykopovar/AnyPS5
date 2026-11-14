@@ -94,6 +94,7 @@ struct SpirvEmitterState {
     SpirvModule module;
     const IrProgram& program;
     ShaderStageInputInfo inputInfo;
+    std::unordered_map<const IrValue*, std::optional<std::vector<std::uint32_t>>> normalizedSampleImages;
     std::array<std::uint32_t, 11> tessVariables {};
     std::uint32_t tessInnerVariable = 0;
 
