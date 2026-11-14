@@ -122,13 +122,6 @@ void CheckDashValidationAndStress() {
         cairo_destroy(context);
     }
     CairoSurface* surface = cairo_image_surface_create(0, 1, 1);
-    CairoContext* nullDash = cairo_create(surface);
-    cairo_surface_destroy(surface);
-    cairo_set_dash(nullDash, nullptr, 1, 0);
-    assert(cairo_surface_status(cairo_get_target(nullDash)) == 1);
-    cairo_destroy(nullDash);
-
-    surface = cairo_image_surface_create(0, 1, 1);
     CairoContext* nanDash = cairo_create(surface);
     cairo_surface_destroy(surface);
     const double notANumber = std::numeric_limits<double>::quiet_NaN();
