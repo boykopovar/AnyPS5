@@ -1190,8 +1190,13 @@ bool SampleMaskFollowsOrder(const State& state, const SampleOrder& order) {
     return std::ranges::any_of(order, [&](std::uint32_t word) { return (HostSampleBits(mask, word) & full) != mask; });
 }
 
-std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order) {
-    if (!SampleMaskFollowsOrder(state, order)) return QuadSampleMasks(state);
+bool SampleMaskInShader(const State& state, const SampleOrder& order, bool staticMaskStopsShading) {
+    if (SampleMaskFollowsOrder(state, order)) return true;
+    return !staticMaskStopsShading && state.perSampleShading && PartialSampleMask(state) && UniformSampleMask(state);
+}
+
+std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order, bool staticMaskStopsShading) {
+    if (!SampleMaskInShader(state, order, staticMaskStopsShading)) return QuadSampleMasks(state);
     const auto mask = static_cast<std::uint16_t>(state.quadSampleMask[0] & ((1u << state.samples) - 1u));
     return {mask, mask, mask, mask};
 }

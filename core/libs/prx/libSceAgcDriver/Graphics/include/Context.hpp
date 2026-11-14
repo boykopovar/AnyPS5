@@ -313,6 +313,7 @@ struct Context {
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
+    bool staticSampleMaskStopsShading = true;
     bool fmaFloat16 = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
