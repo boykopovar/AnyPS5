@@ -33,6 +33,7 @@ const std::uint32_t* ShaderCode() {
 }
 
 void CheckVs() {
+    Require(sceGnmSetEmbeddedVsShader(nullptr, 0x1d, 0, 0) == -1);
     Require(sceGnmSetEmbeddedVsShader(Fresh(), 0x1d, 0, 0) == 0);
     RequireAt(0, {0xc0027600u, 0x48});
     RequireAt(4, {0xc0027600u, 0x4a, 0xc0000, 4, 0xc0016900u, 0x207, 0, 0xc0016900u, 0x1b1, 0, 0xc0016900u, 0x1c3, 4,
@@ -41,11 +42,14 @@ void CheckVs() {
     const auto* code = ShaderCode();
     Require(code[0] == 0xbeeb0387u && code[10] == 0xf80008cfu && code[11] == 0x03020001u && code[14] == 0xbf810000u);
 
-    Require(sceGnmSetEmbeddedVsShader(Fresh(), 0x1d, 1, 0) == Failure);
-    RequireUntouchedFrom(0);
+    for (const std::uint32_t invalidId : {1u, 2u, 10u, 100u, 0xffffffffu}) {
+        Require(sceGnmSetEmbeddedVsShader(Fresh(), 0x1d, invalidId, 0) == Failure);
+        RequireUntouchedFrom(0);
+    }
 }
 
 void CheckPs() {
+    Require(sceGnmSetEmbeddedPsShader(nullptr, 0x28, 0, 0) == -1);
     Require(sceGnmSetEmbeddedPsShader(Fresh(), 0x28, 0, 0) == 0);
     RequireAt(0, {0xc0027600u, 8});
     RequireAt(4, {0xc0027600u, 10, 0xc0000, 4, 0xc0026900u, 0x1c4, 0, 4, 0xc0026900u, 0x1b3, 2, 2, 0xc0016900u, 0x1b6, 0,
@@ -61,8 +65,10 @@ void CheckPs() {
     const auto* depthOnly = ShaderCode();
     Require(depthOnly != black && depthOnly[1] == 0x7e040280u && depthOnly[2] == 0xf8001803u && depthOnly[4] == 0xbf810000u);
 
-    Require(sceGnmSetEmbeddedPsShader(Fresh(), 0x28, 2, 0) == Failure);
-    RequireUntouchedFrom(0);
+    for (const std::uint32_t invalidId : {2u, 3u, 10u, 100u, 0xffffffffu}) {
+        Require(sceGnmSetEmbeddedPsShader(Fresh(), 0x28, invalidId, 0) == Failure);
+        RequireUntouchedFrom(0);
+    }
 }
 
 } // namespace

@@ -1,4 +1,5 @@
 #include "prx/libSceBluetoothHid/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -39,9 +40,19 @@ std::int32_t APS5_VABI sceBluetoothHidRegisterCallback(BluetoothHidCallback call
     if (!initialized) return NotInitialized;
     if (callback == nullptr) return InvalidArgument;
     if (param != nullptr) {
-        if (param->reserved != 0) return InvalidArgument;
-        if (param->threadParam != nullptr) {
-            if (param->threadParam->reserved != 0) return InvalidArgument;
+        BluetoothHidParam localParam{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+        errno = savedErrno;
+        if (!copied) return InvalidArgument;
+        if (localParam.reserved != 0) return InvalidArgument;
+        if (localParam.threadParam != nullptr) {
+            BluetoothHidThreadParam localThreadParam{};
+            const int savedErrnoThread = errno;
+            const bool copiedThread = GuestCopyIn_nid_no_patch(&localThreadParam, localParam.threadParam, sizeof(localThreadParam));
+            errno = savedErrnoThread;
+            if (!copiedThread) return InvalidArgument;
+            if (localThreadParam.reserved != 0) return InvalidArgument;
             throw std::runtime_error("sceBluetoothHidRegisterCallback: custom worker scheduling is not implemented");
         }
     }
@@ -77,7 +88,9 @@ std::int32_t APS5_VABI sceBluetoothHidUnregisterDevice(std::uint16_t vendorId, s
 
 int APS5_VABI sceBluetoothHidGetDeviceName(std::uint64_t deviceHandle, BluetoothHidDeviceName* name) {
     std::lock_guard lock(stateMutex);
+    (void)deviceHandle;
     if (!initialized) return NotInitialized;
+    if (name == nullptr) return InvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -162,9 +175,21 @@ int APS5_VABI sceBluetoothHidSetFeatureReport(std::uint64_t deviceHandle, std::u
 
 int APS5_VABI sceBluetoothHidThreadParamInitialize(BluetoothHidThreadParam* param, std::int32_t priority, std::uint64_t affinityMask) {
     if (param == nullptr) return InvalidArgument;
-    param->priority = priority;
-    param->affinityMask = affinityMask;
-    param->reserved = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(&param->priority, &priority, sizeof(priority))) {
+        errno = savedErrno;
+        return InvalidArgument;
+    }
+    if (!GuestCopyOut_nid_no_patch(&param->affinityMask, &affinityMask, sizeof(affinityMask))) {
+        errno = savedErrno;
+        return InvalidArgument;
+    }
+    const std::uint32_t zero = 0;
+    if (!GuestCopyOut_nid_no_patch(&param->reserved, &zero, sizeof(zero))) {
+        errno = savedErrno;
+        return InvalidArgument;
+    }
+    errno = savedErrno;
     return 0;
 }
 

@@ -181,8 +181,10 @@ static void TryJoin() {
     std::uint8_t optParam[128];
     std::memset(optParam, 0xff, sizeof(optParam));
     CHECK(_sceUltUlthreadRuntimeOptParamInitialize(nullptr, 0) == Null);
-    CHECK(_sceUltUlthreadRuntimeOptParamInitialize(reinterpret_cast<UltUlthreadRuntimeOptParam*>(optParam), 0) == Ok && optParam[0] == 0);
-    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr) == Ok);
+    std::uint8_t zeroOptParam[128] = {};
+    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, zeroOptParam) == Invalid);
+    CHECK(_sceUltUlthreadRuntimeOptParamInitialize(reinterpret_cast<UltUlthreadRuntimeOptParam*>(optParam), 0) == Ok && optParam[0] == 0x75);
+    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, optParam) == Ok);
     CHECK(_sceUltUlthreadCreate(&thread, "parked", Parked, 0x3C, nullptr, 0, &runtime, nullptr) == Ok);
     while (!gStarted.load(std::memory_order_acquire)) std::this_thread::yield();
 

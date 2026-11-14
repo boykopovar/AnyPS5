@@ -8,8 +8,6 @@
 
 namespace ShaderRecompiler {
 
-void EmitControlFlow(SpirvModule& module, const IrProgram& program);
-
 void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& functionState, const IrProgram& program);
 
 }

@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -58,6 +59,12 @@ void TestBigAppList(TList list) {
     Require(list(nullptr, 2, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
     Require(list(appIds, 2, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
     Require(list(nullptr, 0, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(list(reinterpret_cast<std::int32_t*>(0x10), 2, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    errno = 71;
+    Require(list(appIds, 2, reinterpret_cast<std::uint32_t*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(appIds[0] == Sentinel && appIds[1] == Sentinel && count == 0xdeadbeefu);
 }
 
@@ -82,6 +89,9 @@ void TestRunningAppUser() {
 void TestShellCoreUtilLeafCalls() {
     sceShellCoreUtilLaunchByUriParamInit(nullptr);
     Require(sceShellCoreUtilDebugGetNumberOfCffItems(nullptr) == static_cast<int>(0x80e30005u));
+    errno = 71;
+    Require(sceShellCoreUtilDebugGetNumberOfCffItems(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x80e30005u));
+    Require(errno == 71);
     for (const unsigned char fill : {static_cast<unsigned char>(0xaa), static_cast<unsigned char>(0x00), static_cast<unsigned char>(0xff)}) {
         unsigned char buffer[24];
         std::memset(buffer, fill, sizeof(buffer));
@@ -237,6 +247,9 @@ int main() {
     Require(Throws([] { return sceSystemServiceAddLocalProcessForPsmKit(nullptr, nullptr, nullptr); }));
     Require(Throws([] { return sceSystemServiceKillLocalProcessForPsmKit(1); }));
     Require(sceSystemServiceGetHdrToneMapLuminance(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    errno = 71;
+    Require(sceSystemServiceGetHdrToneMapLuminance(reinterpret_cast<SystemServiceHdrToneMapLuminance*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     SystemServiceHdrToneMapLuminance luminance{-1.0f, -1.0f, -1.0f};
     Require(sceSystemServiceGetHdrToneMapLuminance(&luminance) == SYSTEM_SERVICE_OK);
     Require(luminance.max_full_frame_tone_map_luminance == 100.0f);
@@ -268,16 +281,25 @@ int main() {
     Require(sceSystemServiceGetStatus(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     SystemServiceStatus status;
     std::memset(&status, 0x5a, sizeof(status));
+    errno = 71;
+    Require(sceSystemServiceGetStatus(reinterpret_cast<SystemServiceStatus*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     Require(sceSystemServiceGetStatus(&status) == SYSTEM_SERVICE_OK);
     Require(status.event_num == 0 && !status.is_system_ui_overlaid && !status.is_in_background_execution && !status.is_vr_play_area_overlaid);
     for (unsigned char byte : status.reserved) Require(byte == 0);
     Require(sceSystemServiceGetDisplaySafeAreaInfo(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    errno = 71;
+    Require(sceSystemServiceGetDisplaySafeAreaInfo(reinterpret_cast<SystemServiceDisplaySafeAreaInfo*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     SystemServiceDisplaySafeAreaInfo safeArea;
     std::memset(&safeArea, 0x5a, sizeof(safeArea));
     Require(sceSystemServiceGetDisplaySafeAreaInfo(&safeArea) == SYSTEM_SERVICE_OK);
     Require(safeArea.ratio == 1.0f);
     for (unsigned char byte : safeArea.reserved) Require(byte == 0);
     Require(sceSystemServiceGetNoticeScreenSkipFlag(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    errno = 71;
+    Require(sceSystemServiceGetNoticeScreenSkipFlag(reinterpret_cast<bool*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     bool skip = true;
     Require(sceSystemServiceGetNoticeScreenSkipFlag(&skip) == SYSTEM_SERVICE_OK && !skip);
     Require(sceSystemServiceSetNoticeScreenSkipFlag() == SYSTEM_SERVICE_OK);

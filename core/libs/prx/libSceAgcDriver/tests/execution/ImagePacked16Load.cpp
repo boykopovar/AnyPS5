@@ -2,9 +2,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "Recompiler.hpp"
+#include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -32,9 +35,10 @@ struct Packed {
     const char* name;
 };
 
-constexpr std::array<Packed, 3> Formats{{
+constexpr std::array<Packed, 4> Formats{{
     {133u, {0x001fu, 0x07e0u, 0xf800u, 0x0000u}, "5_6_5_UNORM"},
     {134u, {0x001fu, 0x03e0u, 0x7c00u, 0x8000u}, "1_5_5_5_UNORM"},
+    {135u, {0x0001u, 0x003eu, 0x07c0u, 0xf800u}, "1_5_5_5_UNORM_code135"},
     {136u, {0x000fu, 0x00f0u, 0x0f00u, 0xf000u}, "4_4_4_4_UNORM"},
 }};
 
@@ -85,7 +89,7 @@ void Fill(const Packed& format) {
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t format, std::uint32_t swizzle, std::uint32_t groups) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t format, std::uint32_t swizzle, std::uint32_t groups, bool linear = false) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(24, 0u);
     const auto outputAddress = reinterpret_cast<std::uintptr_t>(Output.data());
@@ -94,6 +98,7 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     std::copy(output.begin(), output.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     std::copy(PointSampler.begin(), PointSampler.end(), userData.begin() + 12);
+    if (linear) userData[14] = 0x00500000u;
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {true, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -133,13 +138,53 @@ void Check(AgcDriver::VulkanDevice& device, const Packed& format, std::uint32_t 
     Verify(format, swizzle, Threads, true, std::string(format.name) + " image_sample_lz " + swizzleName);
 }
 
+void CheckBits(AgcDriver::VulkanDevice& device, const Packed& format, std::uint32_t swizzle) {
+    for (std::uint32_t x = 0; x < Width; ++x) {
+        Texels[x] = x < 16u ? static_cast<std::uint16_t>(1u << x) : x < 32u ? static_cast<std::uint16_t>((x & 1u) != 0u ? 0xffffu : 0u) : static_cast<std::uint16_t>(x * 4051u);
+    }
+    const auto channel = [&](std::uint32_t x, std::uint32_t component) {
+        const auto selector = (swizzle >> (component * 3u)) & 7u;
+        if (selector < 2u) return static_cast<float>(selector);
+        auto mask = format.masks[selector - 4u];
+        if (mask == 0u) mask = format.masks[0];
+        const auto shift = std::countr_zero(mask);
+        return static_cast<float>((Texels[x] & mask) >> shift) / static_cast<float>(mask >> shift);
+    };
+    for (std::uint32_t pass = 0; pass < 3u; ++pass) {
+        alignas(256) std::array<std::uint32_t, 13> sample{
+            0x34060084u, 0x7e280d00u, 0x102828ffu, 0x3b800000u, 0x062828ffu, pass == 2u ? 0x3b400000u : 0x3b000000u,
+            0x7e2a0280u, 0xf09c0f08u, 0x00610a14u, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u, 0xbf810000u,
+        };
+        Run(device, pass == 0u ? std::span<const std::uint32_t>(LoadXyzw) : std::span<const std::uint32_t>(sample), format.format, swizzle, pass == 0u ? Groups : 1u, pass == 2u);
+        for (std::uint32_t x = 0; x < (pass == 0u ? Width : Threads); ++x) {
+            for (std::uint32_t component = 0; component < 4u; ++component) {
+                const auto left = channel(x, component);
+                const auto right = channel(std::min(x + 1u, Width - 1u), component);
+                const auto expected = pass == 2u ? left * 0.75f + right * 0.25f : left;
+                const auto actual = std::bit_cast<float>(Output[x * 4u + component]);
+                Require(std::isfinite(actual) && (expected == 0.0f || expected == 1.0f ? actual == expected : std::abs(actual - expected) <= (1.0f / 255.0f + 0.00001f)), "packed bit walk/sample format " + std::to_string(format.format) + " pass " + std::to_string(pass) + " texel " + std::to_string(x) + " component " + std::to_string(component) + " actual " + std::to_string(actual) + " expected " + std::to_string(expected));
+            }
+        }
+    }
+}
+
 }
 
 int main() {
     try {
+        bool bufferRejected = false;
+        try {
+            static_cast<void>(ShaderRecompiler::GetFormatInfo(ShaderRecompiler::IrBufferFormat::Format1_5_5_5UNorm));
+        } catch (const std::exception& error) {
+            bufferRejected = std::string(error.what()).find("unsupported buffer format 135") != std::string::npos;
+        }
+        Require(bufferRejected, "image-only format 135 was accepted as a buffer format");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         for (const auto& format : Formats) {
+            CheckBits(*device, format, SwizzleXYZW);
+            CheckBits(*device, format, SwizzleZYXW);
+            CheckBits(*device, format, 0x244u);
             Check(*device, format, SwizzleXYZW, "X Y Z W");
             Check(*device, format, SwizzleZYXW, "Z Y X W");
         }

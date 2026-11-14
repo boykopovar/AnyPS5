@@ -442,6 +442,31 @@ void TestUncommon() {
     Require(removeString(&map, empty), "remove empty name");
 }
 
+void TestStringLookup() {
+    using GetString = String (APS5_VABI *)(const Map*, const String&);
+    const auto lookup = std::bit_cast<GetString>(&_ZNK7WebCore13HTTPHeaderMap3getERKN3WTF6StringE);
+    const auto lookupUncommon = std::bit_cast<GetString>(&_ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE);
+    Guarded guarded;
+    auto& map = guarded.map;
+    auto first = Text("first");
+    auto second = Text("second");
+    auto accept = Text("Accept");
+    auto uncommon = Text("X-Test");
+    Require(!lookup(&map, accept).impl && !lookupUncommon(&map, uncommon).impl, "missing values are null");
+    set(&map, accept, first);
+    append(&map, accept, second);
+    set(&map, uncommon, second);
+    Expect(lookup(&map, Wide(u"aCcEpT")), u"first");
+    Require(!lookupUncommon(&map, accept).impl, "common lookup is excluded from uncommon table");
+    Expect(lookup(&map, Wide(u"x-tEsT")), u"second");
+    auto retained = lookupUncommon(&map, uncommon);
+    Require(removeString(&map, uncommon), "remove uncommon key after lookup");
+    Expect(retained, u"second");
+    set(&map, uncommon, Text(""));
+    Require(lookupUncommon(&map, uncommon).impl != nullptr, "empty value is present");
+    RequireThrows([&] { lookup(nullptr, accept); });
+}
+
 void TestGrowth() {
     Guarded guarded;
     auto& map = guarded.map;
@@ -593,10 +618,11 @@ int main(int argc, char** argv) {
         TestValuesAndDuplicates();
         TestNullValues();
         TestUncommon();
+        TestStringLookup();
         TestGrowth();
         TestAliasing();
         TestInvalidStorage();
-        std::puts("HTTPHeaderMap: all 11 exports, 95 names, ABI, growth and lifetime checks passed");
+        std::puts("HTTPHeaderMap: lookup, mutation, 95 names, ABI, growth and lifetime checks passed");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "HTTPHeaderMap unexpected exception: %s\n", error.what());
         return 1;
