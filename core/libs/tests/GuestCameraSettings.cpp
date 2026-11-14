@@ -153,6 +153,12 @@ void CheckGetters() {
     target.sizeThis = 4;
     Require(sceCameraGetAutoExposureGain(1, Channel0, &enable, &target) == ErrorParam, "a target of the wrong size must be rejected");
     Require(sceCameraGetAutoExposureGain(1, Channel0, &enable, nullptr) == 0, "automatic exposure must be readable without a target");
+    errno = 71;
+    Require(sceCameraGetAutoExposureGain(1, Channel0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == ErrorParam, "an unmapped enable pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
+    errno = 71;
+    Require(sceCameraGetAutoExposureGain(1, Channel0, &enable, reinterpret_cast<CameraAutoExposureGainTarget*>(0x10)) == ErrorParam, "an unmapped target pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
 }
 
 void CheckAttribute() {
