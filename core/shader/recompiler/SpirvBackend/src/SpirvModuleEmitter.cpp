@@ -108,6 +108,24 @@ std::uint32_t ReorderedSampleBits(SpirvEmitterState& state, std::uint32_t bits, 
 
 }
 
+std::uint32_t LoadSampleMask(SpirvEmitterState& state, std::uint32_t variable) {
+    const auto value = state.module.AllocateId();
+    if (state.pixelGuestFunc != 0u) {
+        auto copy = std::ranges::find(state.sampleMaskCopies, variable, &std::pair<std::uint32_t, std::uint32_t>::first);
+        if (copy == state.sampleMaskCopies.end()) {
+            const auto privateCopy = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeI32(state)), spv::StorageClassPrivate);
+            if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(privateCopy);
+            copy = state.sampleMaskCopies.insert(state.sampleMaskCopies.end(), {variable, privateCopy});
+        }
+        state.module.AddFunction(spv::OpLoad, TypeI32(state), value, copy->second);
+        return value;
+    }
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeI32(state)), pointer, variable, ConstantU32(state, 0u));
+    state.module.AddFunction(spv::OpLoad, TypeI32(state), value, pointer);
+    return value;
+}
+
 std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std::uint32_t component);
 
 std::uint32_t EmitQuadPixel(SpirvEmitterState& state) {
@@ -256,11 +274,8 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
         return kind == StageInputKind::SampleId ? GuestSampleIndex(state, bits) : bits;
     }
     if (kind == StageInputKind::SampleMask) {
-        const auto pointer = state.module.AllocateId();
-        const auto value = state.module.AllocateId();
+        const auto value = LoadSampleMask(state, variable);
         const auto bits = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeI32(state)), pointer, variable, ConstantU32(state, 0u));
-        state.module.AddFunction(spv::OpLoad, TypeI32(state), value, pointer);
         state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
         return bits;
     }
@@ -1372,6 +1387,13 @@ void EmitPixelEntryPoint(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpFunction, TypeVoid(state), state.mainFunc, spv::FunctionControlMaskNone, TypeFunction(state));
     EmitLabel(state, state.module.AllocateId());
     state.module.AddFunction(spv::OpStore, state.pixelStopFlag, ConstantBool(state, false));
+    for (const auto& [input, copy] : state.sampleMaskCopies) {
+        const auto pointer = state.module.AllocateId();
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeI32(state)), pointer, input, ConstantU32(state, 0u));
+        state.module.AddFunction(spv::OpLoad, TypeI32(state), value, pointer);
+        state.module.AddFunction(spv::OpStore, copy, value);
+    }
     state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.pixelGuestFunc);
     if (state.pixelStopStored) {
         const auto stopped = state.module.AllocateId();
@@ -2015,10 +2037,7 @@ void EmitProgram(SpirvEmitterState& state) {
             const auto row = Select(state, TypeU32(state), lower, bottom, top);
             const auto shift = EmitBinaryU32(state, spv::OpShiftLeftLogical, EmitBinaryU32(state, spv::OpBitwiseAnd, quad, ConstantU32(state, 1u)), ConstantU32(state, 4u));
             const auto covered = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, row, shift), ConstantU32(state, 0xffffu));
-            const auto pointer = state.module.AllocateId();
-            state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeI32(state)), pointer, state.sampleMaskInputVariable, ConstantU32(state, 0u));
-            const auto rasterized = state.module.AllocateId();
-            state.module.AddFunction(spv::OpLoad, TypeI32(state), rasterized, pointer);
+            const auto rasterized = LoadSampleMask(state, state.sampleMaskInputVariable);
             auto guestRasterized = Unary(state, spv::OpBitcast, TypeU32(state), rasterized);
             if (state.sampleOrderWord != 0u) guestRasterized = ReorderedSampleBits(state, guestRasterized, false);
             bit = EmitBinaryU32(state, spv::OpBitwiseAnd, guestRasterized, covered);
