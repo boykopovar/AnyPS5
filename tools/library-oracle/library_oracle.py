@@ -188,6 +188,8 @@ def main(argv=None):
     families = args.families or sorted(FAMILIES)
     modules = args.modules or args.build / "core" / "libs" / "libs" / "unpatched"
     binary = args.replay or default_replay(args.build)
+    if not binary.is_file():
+        raise SystemExit(f"no library_oracle_replay at {binary}; build it with: cmake --build {args.build} --target library_oracle_replay")
     known = load_known(args.known)
     skip = {case for case, (kind, _) in known.items() if kind == "skip"}
     cache = cache_directory(os.environ)

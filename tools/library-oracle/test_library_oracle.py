@@ -61,6 +61,15 @@ class ReplayTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             library_oracle.replay("replay", "modules", "x.golden.tsv", set(), 5, run)
 
+    def test_a_missing_replay_executable_stops_before_fetching(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "library_oracle_replay"
+            with patch.object(library_oracle, "fetch") as fetch, \
+                    self.assertRaisesRegex(SystemExit, f"no library_oracle_replay at {missing}; build it with: cmake --build "):
+                library_oracle.main(["rtc", "--build", directory, "--replay", str(missing)])
+            fetch.assert_not_called()
+
 
 class KnownTests(unittest.TestCase):
     def test_classify_separates_new_known_and_now_matching_findings(self):
