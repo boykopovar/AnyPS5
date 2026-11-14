@@ -123,7 +123,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         sections.push_back({".reloc", nextRva, SectionRead | 0x02000040u, std::move(relocationData)});
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
-    directories[2] = icon ? WindowsIconResourceBuilder().Build(*icon, iconName, sections, nextRva) : PeDirectory{};
+    directories[2] = WindowsIconResourceBuilder().Build(icon, iconName, sections, nextRva);
     report(9500);
     auto result = WindowsPeWriter().Write(sections, entryRva, directories, windowsGui, image.GetImageBase(), fixedBase.has_value(), false);
     report(10000);
