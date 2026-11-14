@@ -1186,6 +1186,7 @@ private:
             return emit(IrOpcode::ISub32, {&value, &emit(IrOpcode::IMul32, {&emit(IrOpcode::UDiv32, {&value, &count}), &count})});
         };
         IrValue* primitive = &emit(IrOpcode::GetBuiltin, {&constant(static_cast<std::uint32_t>(StageInputKind::PrimitiveId)), &constant(0u)});
+        if (stage == IrShaderStage::TessellationControl && tessellation.primitiveIdInstancePatches != 0u) primitive = &remainder(*primitive, tessellation.primitiveIdInstancePatches);
         if (tessellation.instancePatches != 0u && !restartsPerInstance()) {
             IrValue& always = program.CreateValue(IrOpcode::Void, IrType::Bool);
             always.SetImmediateBool(true);

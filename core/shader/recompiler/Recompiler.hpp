@@ -379,6 +379,7 @@ struct SpirvTarget {
     bool meshWindowBuffer = false;
     bool hostInterpolationFirst = false;
     bool shaderImageMinLod = false;
+    bool tessellationPrimitiveIdPerInstance = true;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
 };
@@ -432,6 +433,7 @@ struct TessellationConfiguration {
     std::uint32_t instancePatches = 0;
     bool drawParameters = false;
     bool mergedHull = false;
+    std::uint32_t primitiveIdInstancePatches = 0;
 };
 
 inline constexpr std::uint32_t MeshDrawPushOffsetBytes = 104;
@@ -511,6 +513,11 @@ struct RecompileRequest {
 
 inline std::uint32_t TessellationInstancePatches(const RecompileRequest& request) {
     if (!request.graphics || !request.graphics->tessellation || request.graphics->draw.instanceCount <= 1u || request.graphics->tessellation->breakAtInstance || request.graphics->tessellation->inputControlPoints == 0u) return 0u;
+    return request.graphics->draw.indexCount / request.graphics->tessellation->inputControlPoints;
+}
+
+inline std::uint32_t TessellationPrimitiveIdInstancePatches(const RecompileRequest& request) {
+    if (request.target.tessellationPrimitiveIdPerInstance || !request.graphics || !request.graphics->tessellation || request.graphics->draw.instanceCount <= 1u || request.graphics->tessellation->inputControlPoints == 0u) return 0u;
     return request.graphics->draw.indexCount / request.graphics->tessellation->inputControlPoints;
 }
 

@@ -236,6 +236,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.breakAtInstance = tessellation->breakAtInstance;
             target.instancePatches = tessellation->instancePatches;
             target.drawParameters = tessellation->drawParameters;
+            target.primitiveIdInstancePatches = tessellation->primitiveIdInstancePatches;
             target.mergedHull = tessellation->mergedHull;
             target.geometryItemDwords = stage == ShaderStageKind::TessellationEvaluation && mesh != nullptr ? mesh->esgsItemSize : 0u;
         }

@@ -149,6 +149,7 @@ ShaderStageInputInfo RequestInputInfo(const RecompileRequest& request) {
         tessellationCopy->instancePatches = TessellationInstancePatches(request);
         const auto& capabilities = request.target.supportedCapabilities;
         tessellationCopy->drawParameters = std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDrawParameters)) != capabilities.end();
+        tessellationCopy->primitiveIdInstancePatches = TessellationPrimitiveIdInstancePatches(request);
     }
     const auto* tessellation = tessellationCopy ? &*tessellationCopy : nullptr;
     return BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context, HostSubgroupSize(request), mesh, tessellation);
