@@ -88,10 +88,30 @@ int APS5_VABI sceCameraGetAttribute(std::int32_t handle, CameraAttribute* attrib
 
 int APS5_VABI sceCameraGetAutoExposureGain(std::int32_t handle, std::uint32_t channel, std::uint32_t* enable, CameraAutoExposureGainTarget* option) {
     if (handle < 1 || !Readable(channel) || !enable) return SCE_CAMERA_ERROR_PARAM;
-    if (option && option->sizeThis != sizeof(CameraAutoExposureGainTarget)) return SCE_CAMERA_ERROR_PARAM;
+    if (option) {
+        CameraAutoExposureGainTarget localTarget{};
+        const int savedErrno = errno;
+        const bool copiedIn = GuestCopyIn_nid_no_patch(&localTarget, option, sizeof(localTarget));
+        errno = savedErrno;
+        if (!copiedIn || localTarget.sizeThis != sizeof(CameraAutoExposureGainTarget)) return SCE_CAMERA_ERROR_PARAM;
+    }
     if (!Camera::IsOpen(handle)) return SCE_CAMERA_ERROR_NOT_OPEN;
-    *enable = 0;
-    if (option) *option = {};
+    const std::uint32_t localEnable = 0;
+    const int savedErrno = errno;
+    const bool copiedEnable = GuestCopyOut_nid_no_patch(enable, &localEnable, sizeof(localEnable));
+    if (!copiedEnable) {
+        errno = savedErrno;
+        return SCE_CAMERA_ERROR_PARAM;
+    }
+    if (option) {
+        const CameraAutoExposureGainTarget localTargetOut{};
+        const bool copiedOption = GuestCopyOut_nid_no_patch(option, &localTargetOut, sizeof(localTargetOut));
+        if (!copiedOption) {
+            errno = savedErrno;
+            return SCE_CAMERA_ERROR_PARAM;
+        }
+    }
+    errno = savedErrno;
     return 0;
 }
 
