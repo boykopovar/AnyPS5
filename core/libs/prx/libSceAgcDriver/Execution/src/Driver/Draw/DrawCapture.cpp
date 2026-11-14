@@ -167,25 +167,31 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     }
     timing.Mark("materialize");
     const auto walked = capture->userDataUse.asValue | capture->userDataUse.asBase;
-    auto mask = capture->plan != nullptr && capture->plan->srtPlanComplete ? walked | stageCapture.compiled->userDataRegisterReads : ~std::uint64_t{0};
+    const bool complete = capture->plan != nullptr && capture->plan->srtPlanComplete;
+    auto mask = complete ? walked | stageCapture.compiled->userDataRegisterReads : ~std::uint64_t{0};
+    std::uint64_t fixed = 0;
     if (vertexInfos[i]) {
         for (const auto reg : {static_cast<std::uint32_t>(vertexInfos[i]->fetchAttribReg), static_cast<std::uint32_t>(vertexInfos[i]->fetchBufferReg)}) {
-            mask |= reg + 1u < 64u ? std::uint64_t{3} << reg : ~std::uint64_t{0};
+            fixed |= reg + 1u < 64u ? std::uint64_t{3} << reg : ~std::uint64_t{0};
         }
     }
     if (program.snapshot && program.snapshot->userDataTailRegister) {
         const auto reg = *program.snapshot->userDataTailRegister;
         if (reg >= program.firstUserSgpr) {
             const auto slot = reg - program.firstUserSgpr;
-            mask |= slot + 1u < 64u ? std::uint64_t{3} << slot : ~std::uint64_t{0};
+            fixed |= slot + 1u < 64u ? std::uint64_t{3} << slot : ~std::uint64_t{0};
         } else {
-            mask = ~std::uint64_t{0};
+            fixed = ~std::uint64_t{0};
         }
     }
     if (program.snapshot && StageLinksUserDataCallees(*program.snapshot, program.codeOffset)) {
-        mask = ~std::uint64_t{0};
+        fixed = ~std::uint64_t{0};
     }
+    mask |= fixed;
     stageCapture.userDataMask = mask;
+    const auto read = stageCapture.compiled->userDataRegisterReads;
+    const bool forwards = complete && read != ~std::uint64_t{0} && program.hiddenUserWords == 0 && program.binary.stage != Stage::Mesh;
+    stageCapture.forwardedWords = forwards ? read & ~walked & ~fixed : 0;
     phaseTiming.Phase(DrawRowRecompile);
     return stageCapture.compiled;
 } catch (const std::exception& error) {
@@ -248,6 +254,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             variant->forgetSerial = stageCapture.forgetSerial;
             variant->pushOffset = stageCapture.pushOffset;
             variant->userDataMask = stageCapture.userDataMask;
+            variant->forwardedWords = stageCapture.forwardedWords;
             if (vertexInfos[i]) variant->vertexInfo = std::make_shared<const ShaderRecompiler::ShaderVertexStageInfo>(*vertexInfos[i]);
 
             std::vector<ShaderRecompiler::MemoryRegion> regions(stageCapture.regions.begin(), stageCapture.regions.end());

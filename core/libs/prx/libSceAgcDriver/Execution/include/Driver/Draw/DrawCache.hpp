@@ -82,7 +82,74 @@ struct DrawEntry {
     std::shared_ptr<DrawEntry> donor;
 };
 
-using DrawDataCandidates = std::vector<std::vector<std::pair<std::shared_ptr<DispatchVariant>, std::vector<ShaderRecompiler::MemoryRegion>>>>;
+enum class DrawShapeReuse : std::uint8_t { EqualWords, Relocated, Forwarded, Count };
+
+enum class DrawShapeMiss : std::uint8_t { NoStage, VertexInputs, UserWord, Memory, Validation, Count };
+
+struct DrawDataCandidate {
+    std::shared_ptr<DispatchVariant> variant;
+    std::vector<ShaderRecompiler::MemoryRegion> regions;
+    std::uint64_t key = 0;
+    std::uint8_t rank = 0;
+    DrawShapeReuse kind = DrawShapeReuse::EqualWords;
+};
+
+using DrawDataCandidates = std::vector<std::vector<DrawDataCandidate>>;
+
+struct DrawShapeKeys {
+    static constexpr std::uint8_t WastedLimit = 4;
+    static constexpr std::uint16_t Cooldown = 256;
+    struct Slot {
+        std::uint64_t key = 0;
+        bool repeated = false;
+        bool used = false;
+    };
+    std::array<Slot, MaxDispatchVariants> slots{};
+    std::uint8_t count = 0;
+    std::uint8_t wasted = 0;
+    std::uint16_t cooldown = 0;
+
+    [[nodiscard]] Slot* Find(std::uint64_t key) {
+        const auto found = std::find_if(slots.begin(), slots.begin() + count, [&](const Slot& slot) { return slot.key == key; });
+        return found != slots.begin() + count ? &*found : nullptr;
+    }
+    [[nodiscard]] bool Contains(std::uint64_t key) const {
+        return std::any_of(slots.begin(), slots.begin() + count, [&](const Slot& slot) { return slot.key == key; });
+    }
+    void Erase(std::uint64_t key) {
+        auto* found = Find(key);
+        if (found == nullptr) return;
+        if (found->repeated && !found->used && wasted < WastedLimit && ++wasted == WastedLimit) cooldown = Cooldown;
+        std::move(found + 1, slots.data() + count, found);
+        --count;
+    }
+    void PushFront(Slot slot) {
+        if (auto* held = Find(slot.key)) {
+            slot = *held;
+            std::move(held + 1, slots.data() + count, held);
+            --count;
+        }
+        std::move_backward(slots.begin(), slots.begin() + count, slots.begin() + count + 1);
+        slots[0] = slot;
+        ++count;
+    }
+    void Use(std::uint64_t key) {
+        auto* found = Find(key);
+        if (found == nullptr) return;
+        if (found->repeated) wasted = 0;
+        found->used = true;
+        PushFront(*found);
+    }
+    [[nodiscard]] bool Admits() {
+        if (cooldown == 0) return true;
+        if (--cooldown == 0) wasted = WastedLimit - 1u;
+        return false;
+    }
+};
+
+struct UserWordMove {
+    std::uint32_t index, from, to;
+};
 
 struct StageDataHit {
     std::vector<std::uint32_t> words;
@@ -105,6 +172,10 @@ struct DrawEntryCounters {
     std::uint64_t dataHits = 0, dataStagesReused = 0, dataStagesCompiled = 0, dataVerified = 0;
     std::uint64_t stageDataHits = 0, stageDataWords = 0, stageDataVerified = 0, stageDataInserts = 0, stageDataPositions = 0;
     std::uint64_t recordWordsForwarded = 0, recordStagesRecompiled = 0, recordWordsRefused = 0, recordWordsVerified = 0;
+    std::array<std::uint64_t, MaxDispatchVariants> shapeHitsByRank{};
+    std::array<std::uint64_t, static_cast<std::size_t>(DrawShapeReuse::Count)> shapeReuses{};
+    std::array<std::uint64_t, static_cast<std::size_t>(DrawShapeMiss::Count)> shapeMisses{};
+    std::uint64_t shapeDrawsTried = 0, shapeDraws = 0, shapeIdentityAdmissions = 0, shapeKeysDropped = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 
@@ -133,6 +204,7 @@ struct StageCapture {
     std::uint32_t pushOffset = 0;
     ShaderRecompiler::SrtUserDataUse userDataUse;
     std::uint64_t userDataMask = ~std::uint64_t{0};
+    std::uint64_t forwardedWords = 0;
 };
 
 struct RelocatableUserWord {

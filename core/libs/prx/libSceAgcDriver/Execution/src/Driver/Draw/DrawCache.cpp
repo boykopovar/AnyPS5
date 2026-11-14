@@ -37,6 +37,15 @@ bool Driver::drawStageDataHits() {
     return hits;
 }
 
+bool Driver::drawShapeUserWords() {
+    static const bool enabled = std::getenv("APS5_NO_DRAW_SHAPE_USER_WORDS") == nullptr && !stampValidate();
+    return enabled;
+}
+
+std::size_t Driver::drawShapeKeys() {
+    return drawShapeUserWords() ? dispatchVariants() : std::size_t{1};
+}
+
 bool Driver::verifyDrawDataHits() {
     static const bool verify = std::getenv("APS5_VERIFY_DRAW_DATA_HITS") != nullptr;
     return verify;
@@ -192,17 +201,27 @@ bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
 void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape, bool replaceShape) {
     std::lock_guard cacheLock(drawCacheMutex);
     auto& counters = drawEntryCounters;
+    const auto shapeLimit = drawShapeKeys();
     if (replaceShape && shape != 0) {
         ++counters.shapeUpdates;
-        if (const auto shapeOf = drawShapes.find(shape); shapeOf != drawShapes.end() && shapeOf->second != key) {
-            if (const auto previous = drawCache.find(shapeOf->second); previous != drawCache.end()) {
-                for (const auto& variants : previous->second->stages) {
-                    for (const auto& variant : variants) accountDrawVariant(*variant, false);
+        if (const auto shapeOf = drawShapes.find(shape); shapeOf != drawShapes.end() && !shapeOf->second.Contains(key)) {
+            auto& keys = shapeOf->second;
+            while (keys.count >= shapeLimit) {
+                const auto dropped = keys.slots[keys.count - 1u].key;
+                keys.Erase(dropped);
+                if (shapeLimit > 1) {
+                    ++counters.shapeKeysDropped;
+                    continue;
                 }
-                drawOrder.erase(previous->second->order);
-                drawCache.erase(previous);
+                if (const auto previous = drawCache.find(dropped); previous != drawCache.end()) {
+                    for (const auto& variants : previous->second->stages) {
+                        for (const auto& variant : variants) accountDrawVariant(*variant, false);
+                    }
+                    drawOrder.erase(previous->second->order);
+                    drawCache.erase(previous);
+                }
             }
-            drawShapes.erase(shapeOf);
+            if (keys.count == 0 && shapeLimit == 1) drawShapes.erase(shapeOf);
         }
     } else {
         ++counters.inserts;
@@ -236,7 +255,16 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         }
     }
     replacement->touched = drawCacheHits;
-    if (replacement->decode != nullptr && shape != 0) drawShapes[shape] = key;
+    if (replacement->decode != nullptr && shape != 0) {
+        auto& keys = drawShapes[shape];
+        if (!keys.Contains(key)) {
+            while (keys.count >= shapeLimit) {
+                keys.Erase(keys.slots[keys.count - 1u].key);
+                if (shapeLimit > 1) ++counters.shapeKeysDropped;
+            }
+        }
+        keys.PushFront({key, replaceShape && shapeLimit > 1, false});
+    }
     if (found == drawCache.end()) {
         drawOrder.push_front(key);
         replacement->order = drawOrder.begin();
@@ -253,7 +281,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
             for (const auto& variant : variants) accountDrawVariant(*variant, false);
         }
         if (traceDrawCache()) traceInsert(traceKeysEvicted, last->first);
-        if (const auto shapeOf = drawShapes.find(last->second->shape); shapeOf != drawShapes.end() && shapeOf->second == last->first) drawShapes.erase(shapeOf);
+        forgetShapeKey(last->second->shape, last->first);
         drawOrder.erase(last->second->order);
         drawCache.erase(last);
         ++drawCacheEvictions;
@@ -271,9 +299,31 @@ void Driver::eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>&
     for (const auto& variants : found->second->stages) {
         for (const auto& variant : variants) accountDrawVariant(*variant, false);
     }
-    if (const auto shapeOf = drawShapes.find(found->second->shape); shapeOf != drawShapes.end() && shapeOf->second == key) drawShapes.erase(shapeOf);
+    forgetShapeKey(found->second->shape, key);
     drawOrder.erase(found->second->order);
     drawCache.erase(found);
+}
+
+void Driver::forgetShapeKey(std::uint64_t shape, std::uint64_t key) {
+    const auto shapeOf = drawShapes.find(shape);
+    if (shapeOf == drawShapes.end()) return;
+    shapeOf->second.Erase(key);
+    if (shapeOf->second.count == 0) drawShapes.erase(shapeOf);
+}
+
+void Driver::noteShapeReuse(std::uint64_t shape, std::uint64_t key) {
+    const auto shapeOf = drawShapes.find(shape);
+    if (shapeOf != drawShapes.end()) shapeOf->second.Use(key);
+}
+
+bool Driver::stageIdentitySeen(std::uint64_t identity) {
+    if (!drawStageSightings) drawStageSightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
+    return drawStageSightings->SeenBefore(identity);
+}
+
+bool Driver::shapeAdmitsRepeatedStage(std::uint64_t shape) {
+    const auto shapeOf = drawShapes.find(shape);
+    return shapeOf == drawShapes.end() || shapeOf->second.Admits();
 }
 
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry&) {
