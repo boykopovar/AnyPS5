@@ -48,6 +48,31 @@ std::uint32_t RuntimeImageSwizzle(SpirvEmitterState& state, std::uint32_t resour
     return Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), descriptor, ConstantU32(state, component * 3u)), ConstantU32(state, 7u));
 }
 
+std::uint32_t RuntimeMinLodClamp(SpirvEmitterState& state, std::uint32_t resource) {
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    constexpr auto descriptor = offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t);
+    const auto field = [&](std::uint32_t word, std::uint32_t shift, std::uint32_t mask) {
+        return EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, u32, RuntimeImageDword(state, resource, descriptor + word), ConstantU32(state, shift)), mask);
+    };
+    const auto extremum = [&](GLSLstd450 operation, std::uint32_t left, std::uint32_t right) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, u32, value, GlslStd450(state), operation, left, right);
+        return value;
+    };
+    const auto minLod = field(1u, 8u, 0xfffu);
+    const auto baseLevel = field(3u, 12u, 0xfu);
+    const auto lastLevel = field(3u, 16u, 0xfu);
+    const auto maxMip = field(5u, 4u, 0xfu);
+    const auto boundedLast = Select(state, u32, Binary(state, spv::OpULessThanEqual, boolean, baseLevel, maxMip), extremum(GLSLstd450UMin, lastLevel, maxMip), lastLevel);
+    const auto last = extremum(GLSLstd450UMax, boundedLast, baseLevel);
+    const auto baseLod = Binary(state, spv::OpIMul, u32, baseLevel, ConstantU32(state, 256u));
+    const auto levelLods = Binary(state, spv::OpIMul, u32, Binary(state, spv::OpISub, u32, last, baseLevel), ConstantU32(state, 256u));
+    const auto relative = Binary(state, spv::OpISub, u32, minLod, baseLod);
+    const auto clamp = Select(state, u32, Binary(state, spv::OpUGreaterThan, boolean, minLod, baseLod), extremum(GLSLstd450UMin, relative, levelLods), ConstantU32(state, 0u));
+    return Binary(state, spv::OpFMul, TypeF32(state), Unary(state, spv::OpConvertUToF, TypeF32(state), clamp), ConstantF32(state, std::bit_cast<std::uint32_t>(1.0f / 256.0f)));
+}
+
 std::uint32_t RuntimeSwizzledComponent(SpirvEmitterState& state, std::uint32_t selector, const std::array<std::uint32_t, 4>& components) {
     auto result = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, 1u)), ConstantU32(state, 1u), ConstantU32(state, 0u));
     for (std::uint32_t index = 0u; index < components.size(); ++index) result = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, index + 4u)), components[index], result);
@@ -1850,12 +1875,11 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         return lod;
     };
     const bool descriptorClamp = state.shaderImageMinLod && state.program.Info().images.at(mem.resource).table == NoTable;
-    if (descriptorClamp && state.registrationModules) ctx.Fail(access.inst, "applies its T#'s minimum LOD clamp in the shader, which registration modules do not implement");
     if (setup.layout.clamp != NoImageComponent || descriptorClamp) {
         const auto& capabilities = state.supportedCapabilities;
         if (std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityMinLod)) == capabilities.end()) ctx.Fail(access.inst, "clamps its LOD, which needs the device's shaderResourceMinLod");
         lodClamp = setup.layout.clamp != NoImageComponent ? AddressF32(ctx, access, setup.layout.clamp) : 0u;
-        lodViewClamp = descriptorClamp ? Unary(state, spv::OpBitcast, TypeF32(state), state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MinLodBase + mem.resource, 0u)) : 0u;
+        lodViewClamp = !descriptorClamp ? 0u : state.registrationModules ? RuntimeMinLodClamp(state, mem.resource) : Unary(state, spv::OpBitcast, TypeF32(state), state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MinLodBase + mem.resource, 0u));
         if ((operandMask & spv::ImageOperandsLodMask) != 0u) {
             operands.back() = clampLod(operands.back());
         } else {

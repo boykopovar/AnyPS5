@@ -15,6 +15,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float16ConversionProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FloatFlushProbe.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ImageViewMinLodProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -2209,7 +2210,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     enabled.shaderResourceMinLod = available.shaderResourceMinLod;
     if (enabled.shaderResourceMinLod) state->capabilities.push_back(spv::CapabilityMinLod);
     state->shaderResourceMinLod = enabled.shaderResourceMinLod == VK_TRUE;
-    state->shaderImageMinLod = state->shaderResourceMinLod && !state->imageViewMinLod && !state->graphicsPipelineLibrary;
+    state->shaderImageMinLod = state->shaderResourceMinLod && !state->imageViewMinLod;
     enabled.sampleRateShading = available.sampleRateShading;
     enabled.geometryShader = available.geometryShader;
     state->geometryShader = enabled.geometryShader == VK_TRUE;
@@ -2810,6 +2811,31 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             return text + ")";
         };
         std::fprintf(stderr, "[float-controls] f16 to f32 NaN results: %s; f32 to f16 NaN results: %s (%.0f ms)\n", describe(probe.widen, state->float16WidenNans).c_str(), describe(probe.narrow, state->float16NarrowNans).c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
+    }
+    if (state->imageViewMinLod && state->shaderResourceMinLod && std::getenv("APS5_NO_IMAGE_VIEW_MIN_LOD_PROBE") == nullptr) {
+        const auto probeStart = std::chrono::steady_clock::now();
+        state->probingFloatControls = true;
+        ImageViewMinLodProbeResult probe;
+        std::string failure;
+        try {
+            probe = ProbeImageViewMinLod(*this, Target());
+        } catch (const std::exception& error) {
+            failure = error.what();
+        }
+        state->probingFloatControls = false;
+        Graphics::ClearCachedTextures(state->device);
+        const bool conclusive = failure.empty() && probe.controlCompared != 0u && probe.controlMismatches == 0u;
+        const bool shaderLane = conclusive && probe.mismatches != 0u;
+        if (shaderLane) {
+            state->imageViewMinLod = false;
+            state->shaderImageMinLod = true;
+            state->textureCache.reset();
+            state->textureCache = std::make_unique<Graphics::TextureCache>(buildContext());
+            state->context = buildContext();
+        }
+        const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count();
+        if (!conclusive) std::fprintf(stderr, "[image-lod] T# MIN_LOD in the image view, the probe is inconclusive: %s (%.0f ms)\n", failure.empty() ? "its control without a clamp differs from the Vulkan levels" : failure.c_str(), elapsed);
+        else std::fprintf(stderr, "[image-lod] T# MIN_LOD in the %s (%u of %u image_sample_d_cl probe results through the image view clamp differ from the Vulkan levels, %.0f ms)\n", shaderLane ? "shader" : "image view", probe.mismatches, probe.compared, elapsed);
     }
     // A device without a window is usually replaced by the window's device before the title draws
     // (Driver::AttachWindow): its replay starts at its first draw or dispatch instead, so the
@@ -4671,6 +4697,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     target.float32DenormPreserve = state->float32DenormPreserve;
     target.float16WidenNans = state->float16WidenNans;
     target.float16NarrowNans = state->float16NarrowNans;
+    target.shaderImageMinLod = state->shaderImageMinLod;
     return target;
 }
 

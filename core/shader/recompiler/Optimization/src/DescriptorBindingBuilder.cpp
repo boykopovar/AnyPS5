@@ -506,6 +506,12 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
             }
         }
     }
+    for (std::uint32_t index = 0; index < info.images.size() && shaderImageMinLod; ++index) {
+        if (info.images[index].table != NoTable) continue;
+        const auto clamp = RelativeMinLod(snapshot.images.at(index).dwords)[0];
+        if (clamp != 0u) RequireShaderMinLod(info, snapshot, index, info.runtimeImageModes.at(index).at(imageModes[index]), clamp);
+        if (!registrationModules) plan.specialization.push_back({PipelineSpecialization::MinLodBase + index, std::bit_cast<std::uint32_t>(static_cast<float>(clamp) / 256.0f)});
+    }
     for (std::uint32_t index = 0; index < info.images.size() && !registrationModules; ++index) {
         if (info.images[index].table != NoTable) continue;
         const auto& modes = info.runtimeImageModes.at(index);
@@ -513,12 +519,6 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto first = PipelineSpecialization::ImageBase + index * PipelineSpecialization::ImageWords;
         plan.specialization.push_back({first, imageModes[index]});
         for (std::uint32_t component = 0; component < 4u; ++component) plan.specialization.push_back({first + 1u + component, (snapshot.images.at(index).dwords[3] >> (component * 3u)) & 7u});
-        if (shaderImageMinLod) {
-            const auto& words = snapshot.images.at(index).dwords;
-            const auto clamp = RelativeMinLod(words)[0];
-            if (clamp != 0u) RequireShaderMinLod(info, snapshot, index, modes.at(imageModes[index]), clamp);
-            plan.specialization.push_back({PipelineSpecialization::MinLodBase + index, std::bit_cast<std::uint32_t>(static_cast<float>(clamp) / 256.0f)});
-        }
         const auto& image = info.images[index];
         if (image.resourceClass != ImageResourceClass::Storage || !image.written || image.atomic) continue;
         const auto code = (snapshot.images.at(index).dwords[1] >> 20u) & 0x1ffu;
