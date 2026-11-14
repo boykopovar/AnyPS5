@@ -10933,6 +10933,16 @@ void stencilRefExportTests() {
     }
     pushedRequest.layout = {0u, 0u, 124u, 4u};
     Require(!ShaderRecompiler::MatchesPreparedShader(pushedRequest, *pushedHandle), "a full push budget reused a replay artifact");
+    const auto spilledHandle = ShaderRecompiler::PrepareShader(pushedRequest);
+    Require(ShaderRecompiler::MatchesPreparedShader(pushedRequest, *spilledHandle), "a spilled replay payload did not match its one-dword stage range");
+    const auto spilledCapture = ShaderRecompiler::CaptureResources(pushedRequest, pushedRuntime, *spilledHandle);
+    const auto spilledResult = ShaderRecompiler::MaterializeShader(pushedRequest, *spilledCapture, *spilledHandle);
+    Require(spilledResult->stencilReferenceDword == 0u && spilledResult->pushConstants.size() == sizeof(std::uint32_t), "a full push budget did not reserve the reference after spilling shader data");
+    Require(std::ranges::any_of(spilledResult->bindings, [&](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData && binding.guestDescriptor == std::vector<std::uint32_t>(pushedDepth.begin(), pushedDepth.end()); }), "spilling replay data lost its shader-data binding or payload");
+    pushedRequest.layout = {0u, 0u, 120u, 8u};
+    Require(!ShaderRecompiler::MatchesPreparedShader(pushedRequest, *spilledHandle) && ShaderRecompiler::MatchesPreparedShader(pushedRequest, *pushedHandle), "a replay payload reused the wrong push or storage ABI across its capacity boundary");
+    pushedRequest.layout = {0u, 0u, 124u, 0u};
+    Require(!ShaderRecompiler::MatchesPreparedShader(pushedRequest, *spilledHandle), "a spilled replay artifact accepted an exhausted push range");
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(pushedRequest)); }, "unused push constant dword");
     pushedRequest.layout.pushConstantSizeBytes = 8u;
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(pushedRequest)); }, "crosses a stage slot");
@@ -14784,6 +14794,10 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--push-constant-assembly") {
             pushConstantTests();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--stencil-ref-export") {
+            stencilRefExportTests();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--linear-volume-nonresident") {

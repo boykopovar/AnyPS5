@@ -352,6 +352,8 @@ int main() {
         const std::array<std::uint32_t, 1> colorData{0x3f800000u};
         Draw(*device, userColor, exported, replace(), 3u, 1u, false, {}, {}, Vertices, VertexCode, colorData);
         Check(all, "dynamic reference preserves the adjacent shader-data push payload");
+        Draw(*device, userColor, exported, replace(), 3u, 1u, false, {}, {}, Vertices, VertexCode, colorData, {}, {}, sizeof(std::uint32_t));
+        Check(all, "dynamic reference spills an otherwise full shader-data push payload");
         auto bufferColor = std::vector<std::uint32_t>(alternating.begin(), alternating.end());
         *std::find(bufferColor.begin(), bufferColor.end(), 0x7e0e02f2u) = 0x7e0e0208u;
         bufferColor.insert(bufferColor.begin(), {0xf4200200u, 0xfa000000u, 0xbf8cc07fu});
