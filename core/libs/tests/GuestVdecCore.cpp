@@ -345,6 +345,14 @@ void CheckDecodeArguments() {
     Require(sceVdecCoreTrySyncDecodeWptr(nullptr, &count, &pointers[0], &pointers[1]) == InvalidArgument, "write-pointer try-sync without a decoder");
     Require(sceVdecCoreGetDecodeOutput(nullptr, &frameBuffer, 0, &output, nullptr) == InvalidArgument, "get output without a decoder");
     Require(sceVdecCoreGetDecodeOutput(decoder, &frameBuffer, 0, nullptr, nullptr) == InvalidArgument, "get output without output info");
+    auto* unmappedOutput = reinterpret_cast<VdecCoreOutputInfo*>(static_cast<std::uintptr_t>(0x10));
+    errno = 71;
+    Require(sceVdecCoreGetDecodeOutput(decoder, nullptr, 0, unmappedOutput, nullptr) == InvalidArgument && errno == 71,
+            "an unwritable output info is refused without changing errno");
+    auto* unmappedFrameBuffer = reinterpret_cast<VdecCoreFrameBuffer*>(static_cast<std::uintptr_t>(0x10));
+    errno = 71;
+    Require(sceVdecCoreGetDecodeOutput(decoder, unmappedFrameBuffer, 0, &output, nullptr) == InvalidArgument && errno == 71,
+            "an unreadable frame buffer description is refused without changing errno");
     Require(sceVdecCoreFlushDecodeOutput(nullptr, &count, nullptr) == InvalidArgument, "flush without a decoder");
     Require(count == 7 && pointers[0] == 7 && pointers[1] == 7, "refused calls leave their outputs alone");
 

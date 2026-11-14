@@ -319,6 +319,13 @@ static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
     return ok;
 }
 
+static bool GuestWritable(void* destination, std::size_t size) {
+    const int saved = errno;
+    const bool ok = GuestWritable_nid_no_patch(destination, size);
+    errno = saved;
+    return ok;
+}
+
 int APS5_VABI sceVdecCoreCreateDecoder(const VdecCoreConfigInfo* config, const VdecCoreMemoryInfo*, void*, void** decoder) {
     if (config == nullptr || decoder == nullptr) return VdecCoreErrorInvalidArgument;
     VdecCoreConfigInfo localConfig{};
@@ -378,23 +385,28 @@ int APS5_VABI sceVdecCoreFlushDecodeOutput(void* decoder, std::uint32_t* count, 
 
 int APS5_VABI sceVdecCoreGetDecodeOutput(void* decoder, VdecCoreFrameBuffer* frameBuffer, std::uint32_t, VdecCoreOutputInfo* output, void*) {
     if (decoder == nullptr || output == nullptr) return VdecCoreErrorInvalidArgument;
+    VdecCoreOutputInfo local{};
+    if (!GuestWritable(output, sizeof(local)) || !CopyGuestIn(&local, output, sizeof(local))) return VdecCoreErrorInvalidArgument;
+    VdecCoreFrameBuffer localFrameBuffer{};
+    if (frameBuffer != nullptr && !CopyGuestIn(&localFrameBuffer, frameBuffer, sizeof(localFrameBuffer))) return VdecCoreErrorInvalidArgument;
     auto& target = Lookup(decoder, __func__);
     std::lock_guard outputLock(target.outputMutex);
     AVFrame* frame = nullptr;
     {
         std::lock_guard lock(target.mutex);
         if (target.frames.empty()) {
-            output->frameWidth = target.geometry.width;
-            output->framePitch = AlignUp(target.geometry.width, OutputPitchAlign);
-            output->frameHeight = target.geometry.height;
-            output->pictureCount = 0;
-            output->frameBuffer = nullptr;
-            output->frameFormat = 0;
-            output->reserved0 = 0;
-            output->pictures[0].frameBuffer = nullptr;
-            output->pictures[1].frameBuffer = nullptr;
-            output->lumaBuffer = nullptr;
-            output->chromaBuffer = nullptr;
+            local.frameWidth = target.geometry.width;
+            local.framePitch = AlignUp(target.geometry.width, OutputPitchAlign);
+            local.frameHeight = target.geometry.height;
+            local.pictureCount = 0;
+            local.frameBuffer = nullptr;
+            local.frameFormat = 0;
+            local.reserved0 = 0;
+            local.pictures[0].frameBuffer = nullptr;
+            local.pictures[1].frameBuffer = nullptr;
+            local.lumaBuffer = nullptr;
+            local.chromaBuffer = nullptr;
+            if (!CopyGuestOut(output, &local, sizeof(local))) return VdecCoreErrorInvalidArgument;
             return VdecCoreErrorNoPicture;
         }
         frame = target.frames.front();
@@ -425,15 +437,15 @@ int APS5_VABI sceVdecCoreGetDecodeOutput(void* decoder, VdecCoreFrameBuffer* fra
         std::lock_guard lock(target.mutex);
         lastPts = target.lastPts;
         lastDts = target.lastDts;
-        if (frameBuffer != nullptr && frameBuffer->frameBuffer != nullptr) {
-            destination = static_cast<std::uint8_t*>(frameBuffer->frameBuffer);
-            capacity = frameBuffer->frameBufferSize > 0 ? frameBuffer->frameBufferSize : target.geometry.frameBufferSize;
+        if (frameBuffer != nullptr && localFrameBuffer.frameBuffer != nullptr) {
+            destination = static_cast<std::uint8_t*>(localFrameBuffer.frameBuffer);
+            capacity = localFrameBuffer.frameBufferSize > 0 ? localFrameBuffer.frameBufferSize : target.geometry.frameBufferSize;
         } else if (!target.frameBufferSlots.empty()) {
             destination = static_cast<std::uint8_t*>(target.frameBufferSlots[target.currentSlot % target.frameBufferSlots.size()]);
             ++target.currentSlot;
             capacity = target.geometry.frameBufferSize;
         } else {
-            const std::uint64_t requested = frameBuffer != nullptr && frameBuffer->frameBufferSize > 0 ? frameBuffer->frameBufferSize : target.geometry.frameBufferSize;
+            const std::uint64_t requested = frameBuffer != nullptr && localFrameBuffer.frameBufferSize > 0 ? localFrameBuffer.frameBufferSize : target.geometry.frameBufferSize;
             capacity = std::max<std::uint64_t>(std::uint64_t{pictureSize} + sizeof(VdecCoreHwPictureInfo), requested);
             if (target.fallbackFrameBuffer.size() < capacity) target.fallbackFrameBuffer.resize(static_cast<std::size_t>(capacity));
             destination = target.fallbackFrameBuffer.data();
@@ -463,34 +475,35 @@ int APS5_VABI sceVdecCoreGetDecodeOutput(void* decoder, VdecCoreFrameBuffer* fra
         info->flags = 0x01;
         if (info->cropRight > 0 || info->cropBottom > 0) info->flags |= 0x02;
     }
-    output->frameWidth = alignedWidth;
-    output->framePitch = pitch;
-    output->frameHeight = alignedHeight;
-    output->pictureCount = 1;
-    output->frameBuffer = destination;
-    output->frameFormat = 0;
-    output->reserved0 = 0;
-    output->pictures[0].flags = target.codecType;
-    output->pictures[0].reserved0 = 0;
-    output->pictures[0].pts = pts;
-    output->pictures[0].dts = dts;
-    output->pictures[0].userData = userData;
-    output->pictures[0].pictureInfo = nullptr;
-    output->pictures[0].frameBuffer = destination;
-    output->pictures[0].frameBufferSize = pictureSize;
-    output->pictures[0].framePitch = pitch;
-    output->pictures[0].reserved1 = 0;
-    output->pictures[1].frameBuffer = nullptr;
-    output->aspectRatio = 1;
-    output->sarWidth = sarWidth;
-    output->videoFormat = 5;
-    output->colourPrimaries = 1;
-    output->transferCharacteristics = 1;
-    output->framePitchInBytes = pitch;
-    output->lumaBuffer = destination;
-    output->chromaBuffer = destination + static_cast<std::size_t>(pitch) * alignedHeight;
-    output->videoFullRangeFlag = frame->color_range == AVCOL_RANGE_JPEG ? 1 : 0;
-    output->colourDescriptionPresentFlag = 1;
+    local.frameWidth = alignedWidth;
+    local.framePitch = pitch;
+    local.frameHeight = alignedHeight;
+    local.pictureCount = 1;
+    local.frameBuffer = destination;
+    local.frameFormat = 0;
+    local.reserved0 = 0;
+    local.pictures[0].flags = target.codecType;
+    local.pictures[0].reserved0 = 0;
+    local.pictures[0].pts = pts;
+    local.pictures[0].dts = dts;
+    local.pictures[0].userData = userData;
+    local.pictures[0].pictureInfo = nullptr;
+    local.pictures[0].frameBuffer = destination;
+    local.pictures[0].frameBufferSize = pictureSize;
+    local.pictures[0].framePitch = pitch;
+    local.pictures[0].reserved1 = 0;
+    local.pictures[1].frameBuffer = nullptr;
+    local.aspectRatio = 1;
+    local.sarWidth = sarWidth;
+    local.videoFormat = 5;
+    local.colourPrimaries = 1;
+    local.transferCharacteristics = 1;
+    local.framePitchInBytes = pitch;
+    local.lumaBuffer = destination;
+    local.chromaBuffer = destination + static_cast<std::size_t>(pitch) * alignedHeight;
+    local.videoFullRangeFlag = frame->color_range == AVCOL_RANGE_JPEG ? 1 : 0;
+    local.colourDescriptionPresentFlag = 1;
+    if (!CopyGuestOut(output, &local, sizeof(local))) return VdecCoreErrorInvalidArgument;
     return 0;
 }
 
