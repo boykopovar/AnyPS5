@@ -9,6 +9,8 @@
 
 - [sceImeBackendGetStatus and the status checks](../../../core/libs/prx/libSceImeBackend/Export.cpp) (libSceImeBackend) - `status` stays 0 in this tree because every conversion call throws, so `GetStatus` answers 1 while the backend is open and the `status >= 2` branches in EnterCharacter, BackspaceCharacter, GetCaretIndex, ModeCaretNext, ModeCaretPrevious, GetCandidateList, GetCandidateListSize, GetCandidateSelect and DeleteCharacter cannot be reached by any test. The 1-to-4 mapping and the errors those branches return come from the 11.00 module, not from a console measurement.
 
+- [sceImeBackendGetString, sceImeBackendGetConvertString and sceImeBackendGetConfirmString](../../../core/libs/prx/libSceImeBackend/Export.cpp) (libSceImeBackend) - copy at most the caller's `capacity` characters (`GetString`) and then write a terminator after them, so the guest buffer must hold `capacity + 1` characters; whether the firmware's capacity counts the terminator is not verified, and the two fixed-size getters write at most 0x5a characters plus the terminator with no caller capacity, which is safe here only because the text is limited to 0x1b characters at Open. Neither the one-character difference nor the 0x5a bound is measured on a console.
+
 - [`sceImeBackendParamInit`](../../../core/libs/prx/libSceImeBackend/Export.cpp) (libSceImeBackend) - a parameter block at an unmapped guest address is left unwritten and the call returns without an error; the console's result is not measured.
 
 ### Unknown function info
