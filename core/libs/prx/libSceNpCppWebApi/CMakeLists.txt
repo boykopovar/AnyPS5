@@ -1,5 +1,6 @@
 add_library(libSceNpCppWebApi SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceNpCppWebApi PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceNpCppWebApi PRIVATE libc libkernel)
 configure_windows_unwind(libSceNpCppWebApi)
 
 if(BUILD_TESTING)
@@ -41,7 +42,7 @@ if(BUILD_TESTING)
     endif()
     add_test_executable(guest_np_cpp_web_api_string_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiString.cpp)
     target_include_directories(guest_np_cpp_web_api_string_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_np_cpp_web_api_string_tests PRIVATE libSceNpCppWebApi libc)
+    target_link_libraries(guest_np_cpp_web_api_string_tests PRIVATE libSceNpCppWebApi libc libkernel)
     configure_windows_unwind(guest_np_cpp_web_api_string_tests)
     add_test(NAME guest_np_cpp_web_api_string COMMAND guest_np_cpp_web_api_string_tests)
     add_test_executable(guest_np_cpp_web_api_title_cloud_storage_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiTitleCloudStorage.cpp)
@@ -67,19 +68,21 @@ if(BUILD_TESTING)
         set_tests_properties(guest_np_cpp_web_api_string guest_np_cpp_web_api_alias_append
             guest_np_cpp_web_api_alias_string_vector guest_np_cpp_web_api_alias_intrusive_vector
             guest_np_cpp_web_api_binary
-            PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
 endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_np_cpp_web_api_activities_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiActivities.cpp)
     target_include_directories(guest_np_cpp_web_api_activities_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_np_cpp_web_api_activities_tests PRIVATE libSceNpCppWebApi libc)
+    target_link_libraries(guest_np_cpp_web_api_activities_tests PRIVATE libSceNpCppWebApi libc libkernel)
     configure_windows_unwind(guest_np_cpp_web_api_activities_tests)
     add_test(NAME guest_np_cpp_web_api_activities COMMAND guest_np_cpp_web_api_activities_tests)
     if(WIN32)
         set_tests_properties(guest_np_cpp_web_api_activities
-            PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
 endif()
 
