@@ -3,6 +3,7 @@ import bisect
 import collections
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -140,10 +141,12 @@ class PeModule:
             index += 1 + aux
             if storage not in (IMAGE_SYM_CLASS_EXTERNAL, IMAGE_SYM_CLASS_STATIC) or not 1 <= section <= len(self.sections):
                 continue
-            start, _, _, _, characteristics = self.sections[section - 1]
+            start, section_size, _, _, characteristics = self.sections[section - 1]
             if not characteristics & IMAGE_SCN_CNT_CODE:
                 continue
             if storage == IMAGE_SYM_CLASS_STATIC and (kind >> 4) != 2 and value == 0:
+                continue
+            if value >= section_size:
                 continue
             if name[:4] == b"\0\0\0\0":
                 offset = struct.unpack_from("<I", name, 4)[0]
@@ -316,7 +319,9 @@ def load(path, thread=None):
                 samples.total["threads"] += int(parts[3])
             continue
         fields = line.strip().rsplit(None, 3)
-        if len(fields) == 4 and fields[1].startswith("0x") and fields[2].isdigit() and fields[3].isdigit():
+        if len(fields) == 4 and fields[2].isdigit() and fields[3].isdigit():
+            if re.fullmatch(r"0x[0-9a-fA-F]+", fields[1]) is None:
+                raise ValueError(f"{path}:{number}: expected a hexadecimal offset after the module name")
             if thread is not None and current is None:
                 raise ValueError(f"{path}:{number}: thread filtering requires thread headings in an address capture")
             if thread is None or current == thread:
@@ -350,6 +355,8 @@ def validate_window(later, earlier):
         key = name.lower()
         if key not in later.headers or key not in earlier.headers:
             raise ValueError(f"{name}: matching-window validation needs module records in both captures")
+        if later.headers[key] is False or earlier.headers[key] is False:
+            raise ValueError(f"{name}: multiple sampled modules share this name, so their identities cannot be matched")
         if later.headers[key] != earlier.headers[key]:
             raise ValueError(f"{name}: module identity differs between captures")
     for name in ("stacks", "self_counts", "inclusive", "total"):
