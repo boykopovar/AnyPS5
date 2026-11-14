@@ -107,8 +107,6 @@ void APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationD2Ev();
 void APS5_VABI _ZN7WebCore36registerMemoryReleaseNotifyCallbacksEv();
 void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD1Ev();
 void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD2Ev();
-void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev();
-void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD2Ev();
 void APS5_VABI _ZN7WebCore4IconD1Ev();
 void APS5_VABI _ZN7WebCore4IconD2Ev();
 void APS5_VABI _ZN7bmalloc11IsoTLSEntryD1Ev();
