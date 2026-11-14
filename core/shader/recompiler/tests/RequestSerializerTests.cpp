@@ -202,10 +202,41 @@ void VerifyTessellationInstancePatches() {
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 13u && bytes[4] == 57u);
-    bytes.resize(bytes.size() - 5u);
+    Require(bytes.size() > 13u && bytes[4] == 58u);
+    bytes.resize(bytes.size() - 5u - (request.context.vertex.has_value() ? 4u : 0u));
     bytes[4] = 56u;
     return EncodeBase64(bytes);
+}
+
+void VerifyInstanceStepRate() {
+    const ShaderRecompiler::RequestSerializer serializer;
+    for (const std::uint32_t rate : {1u, 2u, 7u, 0xffffffffu}) {
+        ShaderRecompiler::RecompileRequest request{};
+        request.context.vertex = ShaderRecompiler::ShaderVertexStageInfo{};
+        request.context.vertex->instanceStepRate = rate;
+        const auto encoded = serializer.Serialize(request);
+        const auto replay = serializer.Deserialize(encoded);
+        Require(replay.request.context.vertex.has_value() && replay.request.context.vertex->instanceStepRate == rate);
+        Require(replay.vertex.has_value() && replay.vertex->instanceStepRate == rate);
+        Require(serializer.Serialize(replay.request) == encoded);
+        auto bytes = DecodeBase64(encoded);
+        Require(bytes[4] == 58u);
+        for (std::size_t missing = 1u; missing <= 4u; ++missing) {
+            auto truncated = bytes;
+            truncated.resize(truncated.size() - missing);
+            bool rejected = false;
+            try {
+                static_cast<void>(serializer.Deserialize(EncodeBase64(truncated)));
+            } catch (const std::runtime_error& error) {
+                rejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
+            }
+            Require(rejected);
+        }
+        bytes.resize(bytes.size() - 4u);
+        bytes[4] = 57u;
+        const auto legacy57 = serializer.Deserialize(EncodeBase64(bytes));
+        Require(legacy57.request.context.vertex.has_value() && legacy57.request.context.vertex->instanceStepRate == 1u && legacy57.vertex->instanceStepRate == 1u);
+    }
 }
 
 void VerifyTargetOptions() {
@@ -226,7 +257,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 57u);
+                    Require(bytes[4] == 58u);
                     for (std::size_t missing = 1u; missing <= 5u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -772,7 +803,7 @@ int VerifyVersion56Compatibility() {
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
         auto future = bytes;
-        future[4] = 58u;
+        future[4] = 59u;
         bool futureRejected = false;
         try {
             static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
@@ -1152,5 +1183,6 @@ int VerifyVersion56Compatibility() {
 
 int main() {
     VerifyTargetOptions();
+    VerifyInstanceStepRate();
     return VerifyVersion56Compatibility();
 }
