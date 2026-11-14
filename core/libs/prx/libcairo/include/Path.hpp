@@ -38,6 +38,7 @@ void APS5_VABI cairo_get_current_point(CairoContext* context, double* x, double*
 CairoPath* APS5_VABI cairo_copy_path(CairoContext* context);
 void APS5_VABI cairo_path_extents(CairoContext* context, double* x1, double* y1,
                                  double* x2, double* y2);
+int APS5_VABI cairo_in_fill(CairoContext* context, double x, double y);
 void APS5_VABI cairo_append_path(CairoContext* context, const CairoPath* path);
 void APS5_VABI cairo_path_destroy(CairoPath* path);
 }

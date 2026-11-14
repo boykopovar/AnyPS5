@@ -1,5 +1,7 @@
 #include "prx/libcairo/include/Context.hpp"
 #include "prx/libcairo/include/Path.hpp"
+#include "InFill.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -17,6 +19,8 @@ constexpr int kInvalidMatrix = 5;
 constexpr int kNullPointer = 7;
 constexpr int kInvalidDash = 19;
 constexpr int kInvalidPathData = 9;
+constexpr int kFillRuleWinding = 0;
+constexpr int kFillRuleEvenOdd = 1;
 
 constexpr CairoMatrix kIdentity{1, 0, 0, 1, 0, 0};
 
@@ -190,6 +194,28 @@ void AddCubicRange(PathRange& range, double start, double first, double second, 
     const double root = std::sqrt(discriminant);
     evaluate((-b + root) / (2 * a));
     evaluate((-b - root) / (2 * a));
+}
+
+CairoFixedPoint FixedPoint(const PathEntry& entry, int index) {
+    return {CairoFixedFromDouble_nid_no_patch(entry.points[index]),
+            CairoFixedFromDouble_nid_no_patch(entry.points[index + 1])};
+}
+
+bool FillIsEmpty(const std::vector<PathEntry>& path, std::size_t count) {
+    CairoFixedPoint pen{}, start{};
+    for (std::size_t i = 0; i < count; ++i) {
+        const PathEntry& entry = path[i];
+        if (entry.type == 2) return false;
+        if (entry.type == 3) {
+            pen = start;
+            continue;
+        }
+        const CairoFixedPoint point = FixedPoint(entry, 0);
+        if (entry.type == 1 && (point.x != pen.x || point.y != pen.y)) return false;
+        pen = point;
+        if (entry.type == 0) start = point;
+    }
+    return true;
 }
 
 bool AppendMove(ContextStorage* state, double x, double y) {
@@ -747,6 +773,42 @@ void APS5_VABI cairo_path_extents(CairoContext* context, double* x1, double* y1,
     px2 = usersX.maximum;
     py2 = usersY.maximum;
     store();
+}
+
+int APS5_VABI cairo_in_fill(CairoContext* context, double x, double y) {
+    auto* state = Valid(context);
+    if (!state || !state->path) return 0;
+    const auto& path = *state->path;
+    std::size_t count = path.size();
+    if (count > 0 && path[count - 1].type == 0) --count;
+    if (FillIsEmpty(path, count)) return 0;
+
+    cairo_matrix_transform_point(&state->matrix, &x, &y);
+    double sx = 1, sy = 1;
+    cairo_surface_get_device_scale(state->target, &sx, &sy);
+    x *= sx;
+    y *= sy;
+    if (!std::isfinite(x) || !std::isfinite(y)) NotImplemented_nid_no_patch(__func__);
+
+    CairoInFillState fill = CairoInFillBegin_nid_no_patch(
+        {CairoFixedFromDouble_nid_no_patch(x), CairoFixedFromDouble_nid_no_patch(y)});
+    for (std::size_t i = 0; i < count; ++i) {
+        const PathEntry& entry = path[i];
+        if (entry.type == 0)
+            CairoInFillMoveTo_nid_no_patch(fill, FixedPoint(entry, 0));
+        else if (entry.type == 1)
+            CairoInFillLineTo_nid_no_patch(fill, FixedPoint(entry, 0));
+        else if (entry.type == 2)
+            CairoInFillCurveTo_nid_no_patch(fill, FixedPoint(entry, 0), FixedPoint(entry, 2),
+                                            FixedPoint(entry, 4));
+        else
+            CairoInFillClosePath_nid_no_patch(fill);
+    }
+    CairoInFillClosePath_nid_no_patch(fill);
+    if (fill.onEdge) return 1;
+    if (state->style.fillRule == kFillRuleEvenOdd) return fill.winding & 1;
+    if (state->style.fillRule == kFillRuleWinding) return fill.winding != 0;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI cairo_append_path(CairoContext* context, const CairoPath* path) {

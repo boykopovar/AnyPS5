@@ -87,7 +87,6 @@ int APS5_VABI cairo_paint_with_alpha();
 int APS5_VABI cairo_mesh_pattern_begin_patch();
 int APS5_VABI cairo_mesh_pattern_end_patch();
 int APS5_VABI cairo_scaled_font_status();
-int APS5_VABI cairo_in_fill();
 int APS5_VABI cairo_set_source();
 int APS5_VABI cairo_font_face_get_user_data();
 int APS5_VABI cairo_pattern_create_mesh();
