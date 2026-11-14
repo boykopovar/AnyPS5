@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -991,7 +992,7 @@ int APS5_VABI _ZN6icu_6817StringTrieBuilderC2Ev_nid_postfix();
 int APS5_VABI _ZNK6icu_6815Normalizer2Impl17composeQuickCheckEPKDsS2_aP25UNormalizationCheckResult_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_PLZ_minus_4VHBXKs_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_PM_plus__minus_qdc3ZUk_nid_no_patch();
-int APS5_VABI uprv_isInvariantString_nid_postfix();
+std::int8_t APS5_VABI uprv_isInvariantString_nid_postfix(const char* s, std::int32_t length);
 int APS5_VABI sceIcuLegacyUnknown_PN_minus_GmlJsZD4_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_PPP_minus_EGQo_plus_oo_nid_no_patch();
 int APS5_VABI _ZN6icu_6818UnicodeSetIterator16getStaticClassIDEv_nid_postfix();
