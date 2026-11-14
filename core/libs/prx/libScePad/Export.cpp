@@ -276,7 +276,11 @@ int APS5_VABI scePadGetExtControllerInformation(int handle, void* info) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
  if (!SpecialHandle(handle)) return PAD_ERROR_NOT_PERMITTED;
- std::memset(info, 0, 0x2c);
+ const std::array<std::uint8_t, 0x2c> zero{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(info, zero.data(), zero.size());
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 
