@@ -1468,6 +1468,8 @@ struct WriteTracker {
         }
     };
     std::unordered_map<std::uint64_t, DriverPieces> driverPieces;
+    std::unordered_map<std::uint64_t, std::uint64_t> rewatchStamps;
+    std::atomic<bool> anyRewatchStamp{false};
 
     struct CpuPages {
         std::array<std::uint64_t, WritePagesPerBlock> pages{};
@@ -2279,6 +2281,9 @@ void unwatchLocked(WriteTracker& tracker, std::uint64_t address, std::size_t byt
         unwatchSerial.fetch_add(1, std::memory_order_release);
         bumpSubscriptions(address, bytes, WriteBumpSource::Unwatch);
     }
+    if (bytes != 0 && !tracker.rewatchStamps.empty()) {
+        for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) tracker.rewatchStamps.erase(block);
+    }
 #else
     if (GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(address), bytes)) {
         unwatchSerial.fetch_add(1, std::memory_order_release);
@@ -2358,6 +2363,8 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
         for (auto block = tracker.blockOf(begin); block <= tracker.blockOf(end - 1); ++block) {
             tracker.driverPieces.erase(block);
             tracker.stamp(block, tracker.generation, StampKind::Cpu);
+            tracker.rewatchStamps[block] = tracker.stampOf(block);
+            tracker.anyRewatchStamp.store(true, std::memory_order_release);
         }
         restored = true;
     }
@@ -2466,6 +2473,60 @@ bool WriteWatched() {
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     return tracker.watched;
+}
+
+bool OnlyRewatchedSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || generation == 0) return false;
+    auto& tracker = Tracker();
+    if (!tracker.anyRewatchStamp.load(std::memory_order_acquire)) return false;
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched || !tracker.covers(address, bytes)) return false;
+    bool rewatched = false;
+    for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) {
+        const auto stamp = tracker.stampOf(block);
+        if (stamp <= generation) continue;
+        const auto found = tracker.rewatchStamps.find(block);
+        if (found == tracker.rewatchStamps.end() || found->second != stamp) return false;
+        rewatched = true;
+    }
+    return rewatched;
+}
+
+bool Rewatched(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
+    auto& tracker = Tracker();
+    if (!tracker.anyRewatchStamp.load(std::memory_order_acquire)) return false;
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched || !tracker.covers(address, bytes)) return false;
+    for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) {
+        if (tracker.rewatchStamps.contains(block)) return true;
+    }
+    return false;
+}
+
+void RewatchedBlocks(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> since, std::span<std::uint8_t> rewatched) {
+    std::fill(rewatched.begin(), rewatched.end(), std::uint8_t{0});
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return;
+    auto& tracker = Tracker();
+    if (!tracker.anyRewatchStamp.load(std::memory_order_acquire)) return;
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched) return;
+    const auto end = address + bytes;
+    const auto first = tracker.blockOf(address);
+    for (auto block = first; block <= tracker.blockOf(end - 1); ++block) {
+        const auto k = static_cast<std::size_t>(block - first);
+        if (k >= since.size() || k >= rewatched.size()) break;
+        const auto found = tracker.rewatchStamps.find(block);
+        if (found == tracker.rewatchStamps.end()) continue;
+        const auto begin = std::max(address, tracker.blockBegin(block));
+        const auto stop = std::min<std::uint64_t>(end, tracker.blockBegin(block) + WriteBlockBytes);
+        if (!tracker.covers(begin, static_cast<std::size_t>(stop - begin))) continue;
+        const auto stamp = tracker.stampOf(block);
+        if (since[k] == 0 || (stamp > since[k] && stamp == found->second)) rewatched[k] = 1;
+    }
 }
 
 bool Watched(std::uint64_t address, std::size_t bytes) {

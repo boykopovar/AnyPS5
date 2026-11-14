@@ -3002,89 +3002,217 @@ bool settleStorageImageTests(const Device& device) {
         std::cout << "this device compares every Windows import: a settled import under a storage image not tested\n";
         return false;
     }
-    void* block = AllocateWatched(unit, unit);
-    Require(block != nullptr, "(i) no watched block although write watching is on");
-    struct Release {
-        void* block;
-        ~Release() { ReleaseWatched(block, unit); }
-    } release{block};
-    const auto address = reinterpret_cast<std::uint64_t>(block);
-    std::memset(block, 0x5a, unit);
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Add(block, unit, true, true, true);
-    }
-    TextureDetiler detiler(base);
-    auto context = base;
-    context.detiler = &detiler;
-    GuestTextureResource resource{};
-    resource.baseAddress = address;
-    resource.width = 128;
-    resource.height = 128;
-    resource.mipCount = 1;
-    resource.tileMode = TextureTileMode::kR64KBX;
-    resource.dimension = TextureDimension::k2D;
-    resource.format = 56;
-    resource.dstSelX = 4;
-    resource.dstSelY = 5;
-    resource.dstSelZ = 6;
-    resource.dstSelW = 7;
-    Require(DescribeSurface(resource).guestBytes == unit, "(i) unexpected surface size");
-    Require(Watched(address, unit) && ExistingHostImportFor(context, address, unit) == nullptr, "(i) the block was imported or out of the write watch before the image was made");
-    Recorder recorder(context);
-    recorder.Activate();
-    const auto before = HostImportSettles();
-    {
-        auto image = StorageTexture::Create(context, detiler, resource, 0);
-        const auto* import = ExistingHostImportFor(context, address, unit);
-        Require(import != nullptr && import->unwatched && !Watched(address, unit), "(i) the image's first upload did not import its block compared");
-        const auto decided = [&] {
-            const auto now = HostImportSettles();
-            return now.rewatched != before.rewatched || now.keptCompared != before.keptCompared;
-        };
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (!decided() && std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            HostImportFor(context, address, unit);
+    const auto run = [&](bool cpuStore) {
+        const char* label = cpuStore ? "(ii)" : "(i)";
+        void* block = AllocateWatched(unit, unit);
+        Require(block != nullptr, std::string(label) + " no watched block although write watching is on");
+        struct Release {
+            void* block;
+            ~Release() { ReleaseWatched(block, unit); }
+        } release{block};
+        const auto address = reinterpret_cast<std::uint64_t>(block);
+        std::memset(block, 0x5a, unit);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(block, unit, true, true, true);
         }
-        Require(decided(), "(i) the settle read of the image's import did not finish");
-        const auto after = HostImportSettles();
-        const bool returned = Watched(address, unit);
-        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        const VkClearColorValue value{{1.0f, 0.0f, 0.0f, 1.0f}};
-        const auto commands = recorder.Commands();
-        recorder.Keep(image);
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
-        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-        image->MarkDirty();
-        image->Refresh();
-        image->WriteBack();
-        recorder.Submit();
-        device.WaitQueue();
-        recorder.Sync();
-        std::vector<std::byte> read(unit);
-        AgcDriver::GuestMemory::Read(address, read);
-        std::size_t lost = 0;
-        for (std::size_t at = 0; at < unit; at += 4) {
-            for (std::size_t c = 0; c < 4; ++c) {
-                if (std::to_integer<std::uint8_t>(read[at + c]) == red[c]) continue;
-                ++lost;
-                break;
+        TextureDetiler detiler(base);
+        auto context = base;
+        context.detiler = &detiler;
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = 128;
+        resource.height = 128;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        Require(DescribeSurface(resource).guestBytes == unit, std::string(label) + " unexpected surface size");
+        Require(Watched(address, unit) && ExistingHostImportFor(context, address, unit) == nullptr, std::string(label) + " the block was imported or out of the write watch before the image was made");
+        Recorder recorder(context);
+        recorder.Activate();
+        const auto before = HostImportSettles();
+        const auto confirmsBefore = StorageTexture::RewatchedConfirms();
+        {
+            auto image = StorageTexture::Create(context, detiler, resource, 0);
+            const auto* import = ExistingHostImportFor(context, address, unit);
+            Require(import != nullptr && import->unwatched && !Watched(address, unit), std::string(label) + " the image's first upload did not import its block compared");
+            if (cpuStore) std::memset(block, 0x11, unit);
+            const auto decided = [&] {
+                const auto now = HostImportSettles();
+                return now.rewatched != before.rewatched || now.keptCompared != before.keptCompared;
+            };
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            while (!decided() && std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                HostImportFor(context, address, unit);
+            }
+            Require(decided(), std::string(label) + " the settle read of the image's import did not finish");
+            const auto after = HostImportSettles();
+            const bool returned = Watched(address, unit);
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            const VkClearColorValue value{{1.0f, 0.0f, 0.0f, 1.0f}};
+            const auto commands = recorder.Commands();
+            recorder.Keep(image);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            image->MarkDirty();
+            image->Refresh();
+            image->WriteBack();
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            std::vector<std::byte> read(unit);
+            AgcDriver::GuestMemory::Read(address, read);
+            std::size_t redTexels = 0;
+            std::size_t storedTexels = 0;
+            for (std::size_t at = 0; at < unit; at += 4) {
+                bool isRed = true;
+                for (std::size_t c = 0; c < 4; ++c) isRed = isRed && std::to_integer<std::uint8_t>(read[at + c]) == red[c];
+                if (isRed) ++redTexels;
+                bool isStored = true;
+                for (std::size_t c = 0; c < 4; ++c) isStored = isStored && std::to_integer<std::uint8_t>(read[at + c]) == 0x11;
+                if (isStored) ++storedTexels;
+            }
+            const auto confirms = StorageTexture::RewatchedConfirms() - confirmsBefore;
+            std::cout << label << " the image's import " << (returned ? "returned to the write watch" : "stayed compared") << " after its settle read (" << after.rewatched - before.rewatched << " back in the write watch, " << after.keptCompared - before.keptCompared << " kept compared, " << confirms << " rewatched blocks proved unchanged); after the image's GPU clear " << redTexels << " of " << unit / 4 << " texels are red and " << storedTexels << " hold the CPU's store\n";
+            Require(returned && after.keptCompared == before.keptCompared, std::string(label) + " the settled import under a live storage image did not return to the write watch");
+            if (cpuStore) {
+                Require(storedTexels == unit / 4, std::string(label) + " the CPU's store while the import was compared was lost: " + std::to_string(unit / 4 - storedTexels) + " texels differ");
+            } else {
+                Require(redTexels == unit / 4, std::string(label) + " the refresh after the image's GPU results dropped " + std::to_string(unit / 4 - redTexels) + " of " + std::to_string(unit / 4) + " texels: the import's return to the write watch was taken for a CPU store");
             }
         }
-        std::cout << "(i) the image's import " << (returned ? "returned to the write watch" : "stayed compared") << " after its settle read (" << after.rewatched - before.rewatched << " back in the write watch, " << after.keptCompared - before.keptCompared << " kept compared); the refresh after the image's GPU results lost " << lost << " of " << unit / 4 << " texels\n";
-        Require(lost == 0, "(i) the refresh after the image's GPU results dropped " + std::to_string(lost) + " of " + std::to_string(unit / 4) + " texels: the import's return to the write watch stamped its block as a CPU store after the image took its generation");
-        Require(!returned && after.keptCompared == before.keptCompared + 1, "(i) the settled import under a live storage image returned to the write watch");
-    }
-    recorder.Sync();
-    recorder.FlushDeferredReleases();
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Remove(block);
-    }
-    HostImportFor(context, address, unit);
+        recorder.Sync();
+        recorder.FlushDeferredReleases();
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(block);
+        }
+        HostImportFor(context, address, unit);
+    };
+    run(false);
+    run(true);
     std::cout << "a settled import under a storage image tests passed\n";
+    return true;
+}
+
+bool rewatchUnderImageTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    const auto& base = device.GetContext();
+    constexpr std::size_t block = 65536;
+    constexpr std::size_t size = 32 * block;
+    constexpr std::array<std::uint8_t, 4> red{255, 0, 0, 255};
+    if (base.hostImportAlignment == 0 || base.hostImportAlignment > block || !WriteWatched()) {
+        std::cout << "host imports within 64 KiB or write watching unavailable: a block rewatched under a storage image not tested\n";
+        return false;
+    }
+    std::unique_lock gpu(GpuMutex());
+    PrepareImportWatch(base);
+    if (!settledImportsWatchPrivate(base)) {
+        std::cout << "this device compares every Windows import: a block rewatched under a storage image not tested\n";
+        return false;
+    }
+    const auto run = [&](bool cpuStore) {
+        const std::string label = cpuStore ? "(ii)" : "(i)";
+        void* memory = AllocateWatched(size, block);
+        Require(memory != nullptr, label + " no watched block although write watching is on");
+        struct Release {
+            void* memory;
+            ~Release() { ReleaseWatched(memory, size); }
+        } release{memory};
+        const auto address = reinterpret_cast<std::uint64_t>(memory);
+        std::memset(memory, 0x5a, size);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(memory, size, true, true, true);
+        }
+        TextureDetiler detiler(base);
+        auto context = base;
+        context.detiler = &detiler;
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = 512;
+        resource.height = 1024;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        Require(DescribeSurface(resource).guestBytes == size, label + " unexpected surface size");
+        Recorder recorder(context);
+        recorder.Activate();
+        const auto confirmsBefore = StorageTexture::RewatchedConfirms();
+        {
+            auto image = StorageTexture::Create(context, detiler, resource, 0);
+            Require(Watched(address, size), label + " the image's memory is not write-watched after its upload");
+            Unwatch(address, block);
+            if (cpuStore) std::memset(memory, 0x11, block);
+            const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> ranges{{{address, address + block}}};
+            Rewatch(ranges);
+            Require(Watched(address, size), label + " the first block did not return to the write watch");
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            const VkClearColorValue value{{1.0f, 0.0f, 0.0f, 1.0f}};
+            const auto commands = recorder.Commands();
+            recorder.Keep(image);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            image->MarkDirty();
+            image->Refresh();
+            image->WriteBack();
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            std::vector<std::byte> read(size);
+            AgcDriver::GuestMemory::Read(address, read);
+            const auto texelIs = [&](std::size_t at, const std::array<std::uint8_t, 4>& bytes) {
+                for (std::size_t c = 0; c < 4; ++c) {
+                    if (std::to_integer<std::uint8_t>(read[at + c]) != bytes[c]) return false;
+                }
+                return true;
+            };
+            std::size_t firstRed = 0;
+            std::size_t firstStored = 0;
+            std::size_t restRed = 0;
+            for (std::size_t at = 0; at < size; at += 4) {
+                const bool isRed = texelIs(at, red);
+                if (at < block) {
+                    if (isRed) ++firstRed;
+                    if (texelIs(at, {0x11, 0x11, 0x11, 0x11})) ++firstStored;
+                } else if (isRed) {
+                    ++restRed;
+                }
+            }
+            const auto confirms = StorageTexture::RewatchedConfirms() - confirmsBefore;
+            std::cout << label << " after the GPU clear: first block " << firstRed << " red and " << firstStored << " the CPU's of " << block / 4 << " texels, other blocks " << restRed << " red of " << (size - block) / 4 << "; " << confirms << " rewatched blocks proved unchanged\n";
+            Require(restRed == (size - block) / 4, label + " the GPU clear did not reach the blocks the rewatch left alone");
+            if (cpuStore) {
+                Require(firstStored == block / 4, label + " the CPU's store while the first block was out of the write watch was lost: " + std::to_string(block / 4 - firstStored) + " texels differ");
+            } else {
+                Require(firstRed == block / 4, label + " the rewatch of the first block was taken for a CPU store over the image's results: " + std::to_string(block / 4 - firstRed) + " texels lost");
+                Require(confirms != 0, label + " no rewatched block was proved unchanged");
+            }
+        }
+        recorder.Sync();
+        recorder.FlushDeferredReleases();
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(memory);
+        }
+        HostImportFor(context, address, size);
+    };
+    run(false);
+    run(true);
+    std::cout << "a block rewatched under a storage image tests passed\n";
     return true;
 }
 
@@ -16231,6 +16359,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--settle-earlier-import-only") return settleEarlierImportTests(device) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--settle-retire-only") return settleRetireTests(device) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--settle-storage-image-only") return settleStorageImageTests(device) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--rewatch-under-image-only") return rewatchUnderImageTests(device) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--reimport-bench") return reimportBench(device);
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-cut-only") return hostImportCutTests(device);
 #endif
