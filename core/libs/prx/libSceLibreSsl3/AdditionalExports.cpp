@@ -69,10 +69,6 @@ int APS5_VABI tls_handshake_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI AUTHORITY_KEYID_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509V3_EXT_d2i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -87,10 +83,6 @@ int APS5_VABI tls_accept_socket_nid_postfix() {
 }
 
 int APS5_VABI ERR_print_errors_fp_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI X509_CRL_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

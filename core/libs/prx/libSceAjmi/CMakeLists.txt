@@ -38,7 +38,7 @@ if(BUILD_TESTING)
                     "PATH=path_list_prepend:${UNPATCHED_DIR};PATH=path_list_prepend:${ajmiAliasModuleDir}")
             elseif(APPLE)
                 set_tests_properties(guest_ajmi_batch_${operation}_${variant} PROPERTIES ENVIRONMENT_MODIFICATION
-                    "DYLD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${ajmiAliasModuleDir}")
+                    "DYLD_FALLBACK_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR};DYLD_FALLBACK_LIBRARY_PATH=path_list_prepend:${ajmiAliasModuleDir}")
             else()
                 set_tests_properties(guest_ajmi_batch_${operation}_${variant} PROPERTIES ENVIRONMENT_MODIFICATION
                     "LD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR};LD_LIBRARY_PATH=path_list_prepend:${ajmiAliasModuleDir}")
