@@ -8,6 +8,11 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -192,6 +197,32 @@ static void UndefinedInWebKit() {
     Require(Throws<std::overflow_error>([&] { _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(-1e25, WTF::TimeType::UTCTime); }));
 }
 
+static void LocalTimePointerValidation() {
+    bool local = false;
+    Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("12/25/2000", &local), 977702400000.0));
+    Require(local);
+
+    local = true;
+    Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("Sat, 01 Jan 2000 08:00:00 GMT", &local), 946713600000.0));
+    Require(!local);
+
+    auto* dangling = reinterpret_cast<bool*>(0x10);
+    Require(Throws<std::invalid_argument>([&] { _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("2000", dangling); }));
+#ifdef _WIN32
+    auto* readOnly = static_cast<bool*>(VirtualAlloc(nullptr, sizeof(bool), MEM_RESERVE | MEM_COMMIT, PAGE_READONLY));
+    Require(readOnly != nullptr);
+#else
+    auto* readOnly = static_cast<bool*>(mmap(nullptr, sizeof(bool), PROT_READ, MAP_ANON | MAP_PRIVATE, -1, 0));
+    Require(readOnly != MAP_FAILED);
+#endif
+    Require(Throws<std::invalid_argument>([&] { _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("2000", readOnly); }));
+#ifdef _WIN32
+    Require(VirtualFree(readOnly, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(readOnly, sizeof(bool)) == 0);
+#endif
+}
+
 static void CheckRFC2822(
     unsigned dayOfWeek,
     unsigned day,
@@ -252,5 +283,6 @@ int main() {
     LegacyDates();
     SingleArgumentDates();
     UndefinedInWebKit();
+    LocalTimePointerValidation();
     RFC2822Dates();
 }

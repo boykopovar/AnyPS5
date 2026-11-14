@@ -348,8 +348,16 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
         if (!sweeping) resolving.pop_back();
         __aps5_set_module_init_result_nid_no_patch(0);
     };
+    static std::vector<std::string> skippedSweep;
+    if (reason.empty() && initiating.argp == nullptr && !lists.sweep.empty()) {
+        std::lock_guard lock(initializedLock);
+        if (sweepState == 0 && skippedSweep.empty()) skippedSweep = lists.sweep;
+    } else if (reason.empty() && initiating.argp != nullptr && lists.sweep.empty()) {
+        std::lock_guard lock(initializedLock);
+        if (sweepState == 0) lists.sweep = skippedSweep;
+    }
     bool sweeping = false;
-    if (reason.empty() && !lists.sweep.empty()) {
+    if (reason.empty() && !lists.sweep.empty() && initiating.argp != nullptr) {
         const auto thread = GetCurrentThreadId();
         std::unique_lock lock(initializedLock);
         while (sweepState == 1 && sweepOwner != thread) initializedChanged.wait(lock);
