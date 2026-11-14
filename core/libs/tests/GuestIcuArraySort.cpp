@@ -76,11 +76,26 @@ void TestStableSortOfNineOrMoreItems() {
     }
 }
 
+void TestNonStableQuicksortOrdersKeys() {
+    std::vector<Item> items;
+    std::uint32_t seed = 12345;
+    for (std::int32_t index = 0; index < 60; ++index) {
+        seed = seed * 1103515245u + 12345u;
+        items.push_back(Item{static_cast<std::int32_t>((seed >> 16) % 25), index});
+    }
+    std::int32_t status = 0;
+    uprv_sortArray_nid_postfix(items.data(), static_cast<std::int32_t>(items.size()), sizeof(Item), CompareKeys, nullptr, 0, &status);
+    Require(status == 0, "sortArray quicksort: a valid call succeeds");
+    for (std::size_t index = 1; index < items.size(); ++index)
+        Require(items[index - 1].key <= items[index].key, "sortArray quicksort: keys are ordered");
+}
+
 }
 
 int main() {
     TestArgumentChecks();
     TestStableInsertionKeepsEqualItemsInOrder();
     TestStableSortOfNineOrMoreItems();
+    TestNonStableQuicksortOrdersKeys();
     return 0;
 }
