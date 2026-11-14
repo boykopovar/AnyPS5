@@ -53,6 +53,7 @@
 #include "Cover_frag_spv.h"
 #include "VertexRange_vert_spv.h"
 #include "VertexRangeProducer_frag_spv.h"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
 #include "BdaAbi.hpp"
 #include "ShaderCacheSourceVersion.hpp"
@@ -10721,6 +10722,270 @@ bool pendingKeyRefreshTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+std::vector<std::uint32_t> SingleKeyTexels(std::uint32_t side, const std::vector<std::uint32_t>& tiled) {
+    std::vector<std::uint32_t> expanded(tiled.size());
+    for (std::size_t index = 0; index < tiled.size(); ++index) expanded[index] = tiled[index / 64 * 64];
+    std::vector<std::uint32_t> linear(tiled.size());
+    const ColorTargetLayout layout(side, side, ColorTileMode::RenderTarget, 4);
+    layout.Detile(std::as_bytes(std::span(expanded)), std::as_writable_bytes(std::span(linear)));
+    return linear;
+}
+
+bool singleKeyUploadTests(const Device& device, Recorder& recorder) {
+    using AgcDriver::GuestMemory::MarkWritten;
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: single-key uploads not tested\n";
+        return false;
+    }
+    const auto decided = PrepareImportWatch(base);
+#ifndef _WIN32
+    const auto probe = ProbeImportWriteProtection(base);
+    if (probe.failure != nullptr || probe.writtenAfterSubmit != 0) {
+        std::cout << "the device reports watched host memory written after a GPU read: single-key uploads not tested\n";
+        return false;
+    }
+#endif
+    SetImportWatch(base, ImportWatch::Watch);
+    struct Restore {
+        const Context& context;
+        ImportWatch decided;
+        ~Restore() { SetImportWatch(context, decided); }
+    } restore{base, decided};
+    constexpr std::uint32_t side = 256;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    constexpr std::size_t keyCount = surfaceBytes / 256;
+    constexpr std::size_t bytes = surfaceBytes + 65536;
+    constexpr std::size_t words = surfaceBytes / 4;
+    const bool off = std::getenv("APS5_NO_SINGLE_KEY_GPU_UPLOAD") != nullptr;
+    void* block = AllocateWatched(bytes, 65536);
+    void* spare = block != nullptr ? AllocateWatched(bytes, 65536) : nullptr;
+    if (block == nullptr || spare == nullptr) {
+        if (block != nullptr) ReleaseWatched(block, bytes);
+        std::cout << "no write watching: single-key uploads not tested\n";
+        return false;
+    }
+    struct Release {
+        void* block;
+        void* spare;
+        ~Release() {
+            ReleaseWatched(spare, bytes);
+            ReleaseWatched(block, bytes);
+        }
+    } release{block, spare};
+    auto* texels = static_cast<std::uint8_t*>(block);
+    auto* keys = texels + surfaceBytes;
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } unregister{base, block, address};
+    if (HostImportFor(base, address, bytes) == nullptr || !AgcDriver::GuestMemory::Watched(address, bytes)) {
+        std::cout << "no watched host import: single-key uploads not tested\n";
+        return false;
+    }
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    const auto surfaceAt = [&](std::uint64_t at) {
+        GuestTextureResource resource{};
+        resource.baseAddress = at;
+        resource.width = side;
+        resource.height = side;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        resource.dccAddress = at + surfaceBytes;
+        return resource;
+    };
+    const auto resource = surfaceAt(address);
+    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "the single-key test surface has an unexpected size");
+    std::vector<std::uint32_t> initial(words), mixed(words), uniform(words), partial(words);
+    for (std::size_t index = 0; index < words; ++index) {
+        initial[index] = 0x01000000u + static_cast<std::uint32_t>(index);
+        mixed[index] = index % 64 == 0 ? 0x80000000u | static_cast<std::uint32_t>(index / 64 * 0x00010003u) : 0xdeadbeefu;
+        uniform[index] = index % 64 == 0 ? 0x11223344u : 0xdeadbeefu ^ static_cast<std::uint32_t>(index);
+    }
+    constexpr std::uint32_t fillWord = 0x5a3c0f81u;
+    const auto readImage = [&](StorageTexture& image) {
+        Buffer readback(context, surfaceBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {side, side, 1};
+        context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image.Image(), VK_IMAGE_LAYOUT_GENERAL, readback.Handle(), 1, &copy);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        std::vector<std::uint32_t> read(words);
+        std::memcpy(read.data(), readback.Bytes().data(), surfaceBytes);
+        return read;
+    };
+    const auto requireTexels = [&](StorageTexture& image, const std::vector<std::uint32_t>& expected, const std::string& what) {
+        const auto read = readImage(image);
+        std::size_t wrong = 0;
+        std::size_t first = words;
+        for (std::size_t index = 0; index < words; ++index) {
+            if (read[index] == expected[index]) continue;
+            if (wrong++ == 0) first = index;
+        }
+        char message[320];
+        std::snprintf(message, sizeof(message), "%s: %zu of %zu texels differ from the CPU path's (texel %zu is 0x%08x, expected 0x%08x)", what.c_str(), wrong, words, first, first < words ? read[first] : 0u, first < words ? expected[first] : 0u);
+        Require(wrong == 0, message);
+    };
+    const auto writeOnGpu = [&](std::uint64_t at, const std::vector<std::uint32_t>& data, std::size_t offset, std::size_t size) {
+        const auto* import = HostImportFor(base, at, bytes);
+        Require(import != nullptr, "the single-key test block lost its host import");
+        auto source = std::make_shared<Buffer>(context, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memcpy(source->Bytes().data(), reinterpret_cast<const std::byte*>(data.data()) + offset, size);
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const VkBufferCopy copy{0, HostImportOffset(*import, at + offset), size};
+        context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, source->Handle(), import->buffer, 1, &copy);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
+        recorder.Keep(source);
+        recorder.NotePendingWrite(at + offset, size);
+        MarkWritten(at + offset, size);
+    };
+    const auto fillOnGpu = [&](std::uint32_t word) {
+        const auto* import = HostImportFor(base, address, bytes);
+        Require(import != nullptr, "the single-key test block lost its host import");
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, import->buffer, HostImportOffset(*import, address), surfaceBytes, word);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
+        recorder.NotePendingWordFill(address, surfaceBytes, word);
+        MarkWritten(address, surfaceBytes);
+    };
+    using Fallback = StorageTexture::SingleKeyFallback;
+    const auto cpu = [](const StorageTexture::SingleKeyUploadCounts& counts, Fallback reason) { return counts.cpu[static_cast<std::size_t>(reason)]; };
+    const auto upload = [&](const std::function<StorageTexture&()>& act, std::uint64_t at, std::string what, bool fill, std::optional<Fallback> left = std::nullopt) {
+        const auto syncs = Recorder::SyncCounts();
+        const auto before = StorageTexture::SingleKeyUploads();
+        auto& image = act();
+        const auto after = StorageTexture::SingleKeyUploads();
+        std::string counts = " (GPU " + std::to_string(after.gpu - before.gpu) + ", fill " + std::to_string(after.fill - before.fill) + ", CPU by reason";
+        for (std::size_t reason = 0; reason < after.cpu.size(); ++reason) counts += " " + std::to_string(after.cpu[reason] - before.cpu[reason]);
+        counts += ")";
+        what += counts;
+        Require(image.UploadedKeys() == DccKeys::ClearSingle, what + ": the image was not uploaded under its single keys");
+        if (off) left = Fallback::Switch;
+        if (left.has_value()) {
+            Require(cpu(after, *left) == cpu(before, *left) + 1 && after.gpu == before.gpu && after.fill == before.fill, what + ": the upload was not left to the CPU for " + std::to_string(static_cast<int>(*left)));
+            Require(Recorder::SyncCounts() != syncs, what + ": the CPU upload of texels behind a pending write did not synchronize through the hook");
+            return;
+        }
+        Require(fill ? after.fill == before.fill + 1 && after.gpu == before.gpu : after.gpu == before.gpu + 1 && after.fill == before.fill, what + (fill ? ": the upload was not cleared by the pending word fill" : ": the upload was not decided on the GPU"));
+        Require(Recorder::SyncCounts() == syncs, what + ": the upload synchronized with the GPU");
+        Require(recorder.OpenWriteOverlaps(at, surfaceBytes), what + ": the upload submitted the open batch holding the texels' writer");
+    };
+    const std::vector<std::uint32_t> filled(words, fillWord);
+    for (int mode = 0; mode < (base.singlePassStorage ? 2 : 1); ++mode) {
+        context.singlePassStorage = mode == 1;
+        const std::string variant = mode == 1 ? " (single pass)" : " (linear copy)";
+        std::memcpy(texels, initial.data(), surfaceBytes);
+        std::memset(keys, 0x10, keyCount);
+        recorder.Sync();
+        std::shared_ptr<StorageTexture> image;
+        const auto first = StorageTexture::SingleKeyUploads();
+        image = StorageTexture::Create(context, detiler, resource, 0);
+        const auto created = StorageTexture::SingleKeyUploads();
+        Require(image->UploadedKeys() == DccKeys::ClearSingle && cpu(created, off ? Fallback::Switch : Fallback::Settled) == cpu(first, off ? Fallback::Switch : Fallback::Settled) + 1, "the first upload of settled single-key texels was not left to the CPU" + variant);
+        requireTexels(*image, SingleKeyTexels(side, initial), "the first upload of settled single-key texels" + variant);
+        image.reset();
+        recorder.Sync();
+        const auto refresh = [&]() -> StorageTexture& {
+            image->Refresh();
+            return *image;
+        };
+        writeOnGpu(address, mixed, 0, surfaceBytes);
+        upload([&]() -> StorageTexture& {
+            image = StorageTexture::Create(context, detiler, resource, 0);
+            return *image;
+        }, address, "texels of mixed blocks behind a pending writer" + variant, false);
+        requireTexels(*image, SingleKeyTexels(side, mixed), "texels of mixed blocks behind a pending writer" + variant);
+        writeOnGpu(address, uniform, 0, surfaceBytes);
+        upload(refresh, address, "uniform texels behind a pending writer" + variant, false);
+        requireTexels(*image, SingleKeyTexels(side, uniform), "uniform texels behind a pending writer" + variant);
+        fillOnGpu(fillWord);
+        if (!off) {
+            DccSingleProof proof;
+            Require(PendingSingleFill(resource, surfaceBytes, proof) && proof.uniform && proof.pendingNote != 0, "a pending word fill over the whole surface proved nothing" + variant);
+            std::uint32_t element = 0;
+            std::memcpy(&element, proof.element.data(), sizeof(element));
+            Require(element == fillWord, "the word-fill proof names another texel" + variant);
+            Require(SingleProofHolds(resource, surfaceBytes, AgcDriver::GuestMemory::CollectWrites(address, surfaceBytes), proof), "the word-fill proof did not hold right after it was taken" + variant);
+        }
+        upload(refresh, address, "a pending word fill of the texels" + variant, true);
+        if (!off) {
+            DccSingleProof proof;
+            Require(PendingSingleFill(resource, surfaceBytes, proof), "the pending word fill stopped proving the surface" + variant);
+            recorder.NotePendingWrite(address + 4096, 256);
+            Require(!SingleProofHolds(resource, surfaceBytes, AgcDriver::GuestMemory::CollectWrites(address, surfaceBytes), proof), "a newer write note over the surface left the word-fill proof standing" + variant);
+            DccSingleProof under;
+            Require(!PendingSingleFill(resource, surfaceBytes, under), "a word fill under a newer write still proved the surface" + variant);
+        }
+        requireTexels(*image, SingleKeyTexels(side, filled), "a pending word fill of the texels" + variant);
+        fillOnGpu(fillWord);
+        upload(refresh, address, "a second pending word fill of the texels" + variant, true);
+        partial = filled;
+        for (std::size_t index = 65536 / 4; index < 2 * 65536 / 4; ++index) partial[index] = mixed[index];
+        writeOnGpu(address, partial, 65536, 65536);
+        upload(refresh, address, "a writer recorded after a proved word fill" + variant, false);
+        requireTexels(*image, SingleKeyTexels(side, partial), "a writer recorded after a proved word fill" + variant);
+        if (!off) {
+            fillOnGpu(fillWord);
+            DccSingleProof proof;
+            Require(PendingSingleFill(resource, surfaceBytes, proof), "a pending word fill proved nothing" + variant);
+            recorder.Submit();
+            device.WaitQueue();
+            Require(!SingleProofHolds(resource, surfaceBytes, AgcDriver::GuestMemory::CollectWrites(address, surfaceBytes), proof), "the word-fill proof held after its batch signaled" + variant);
+            recorder.Sync();
+        }
+        image.reset();
+        recorder.Sync();
+    }
+    auto* spareTexels = static_cast<std::uint8_t*>(spare);
+    const auto spareAddress = reinterpret_cast<std::uint64_t>(spare);
+    if (HostImportFor(base, spareAddress, bytes) != nullptr) {
+        std::cout << "unregistered memory has a host import: the fallback without an import is not tested\n";
+        return true;
+    }
+    std::memcpy(spareTexels, mixed.data(), surfaceBytes);
+    std::memset(spareTexels + surfaceBytes, 0x10, keyCount);
+    const auto spareResource = surfaceAt(spareAddress);
+    recorder.NotePendingWrite(spareAddress, surfaceBytes);
+    MarkWritten(spareAddress, surfaceBytes);
+    std::shared_ptr<StorageTexture> image;
+    upload([&]() -> StorageTexture& {
+        image = StorageTexture::Create(context, detiler, spareResource, 0);
+        return *image;
+    }, spareAddress, "single-key texels without an import behind a pending write", false, Fallback::Import);
+    requireTexels(*image, SingleKeyTexels(side, mixed), "single-key texels without an import behind a pending write");
+    image.reset();
+    recorder.Sync();
+    return true;
+}
+
 bool repeatedNeighbourStoreTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     constexpr std::uint32_t width = 1024;
@@ -16552,6 +16817,98 @@ void smallElementDetileTests(Device& device) {
     std::cout << "small element detile tests passed\n";
 }
 
+void singleBlockDetileTests(Device& device) {
+    using namespace SmallElementDetileTest;
+    const auto& context = device.GetContext();
+    TextureDetiler detiler(context);
+    struct Case {
+        TextureTileMode mode;
+        const char* name;
+        std::uint32_t width;
+        std::uint32_t height;
+        std::uint32_t mips;
+        bool tail;
+    };
+    const std::array<Case, 6> cases{{
+        {TextureTileMode::kStandard64KB, "SW_64KB_S", 37, 21, 1, false},
+        {TextureTileMode::kStandard4KB, "SW_4KB_S", 70, 9, 1, false},
+        {TextureTileMode::kR64KBX, "SW_64KB_R_X", 37, 21, 1, false},
+        {TextureTileMode::kLinear, "linear", 37, 5, 1, false},
+        {TextureTileMode::kStandard64KB, "SW_64KB_S tail", 256, 256, 9, true},
+        {TextureTileMode::kR64KBX, "SW_64KB_R_X tail", 256, 256, 9, true},
+    }};
+    DetileWindow single{};
+    single.singleBlocks = true;
+    for (const auto& testCase : cases) {
+        for (const std::uint32_t elementBytes : {1u, 2u, 4u, 8u, 16u}) {
+            if ((testCase.mode == TextureTileMode::kStandard4KB || testCase.mode == TextureTileMode::kStandard64KB) && elementBytes > 2u) continue;
+            const auto layouts = ComputeElementMipLayout(testCase.mode, elementBytes, testCase.width, testCase.height, testCase.mips);
+            std::size_t level = 0;
+            if (testCase.tail) {
+                while (level < layouts.size() && !layouts[level].tail) ++level;
+                Require(level < layouts.size(), std::string("single-block detile test: ") + testCase.name + " has no tail mip");
+            }
+            const auto& mip = layouts[level];
+            const auto tiledBytes = static_cast<std::size_t>(mip.tiledSize);
+            const auto linearBytes = static_cast<std::size_t>(mip.linearSize);
+            const auto what = std::string("single-block detile of ") + testCase.name + " " + std::to_string(elementBytes) + "B " + std::to_string(mip.width) + "x" + std::to_string(mip.height);
+            Buffer tiled(context, tiledBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            Buffer detiled(context, linearBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            fillPattern(tiled.Bytes(), 29u);
+            fillSentinel(detiled.Bytes());
+            std::vector<std::byte> expanded(tiledBytes);
+            for (std::size_t at = 0; at < tiledBytes; ++at) expanded[at] = tiled.Bytes()[at / 256 * 256 + at % elementBytes];
+            std::vector<std::byte> expectedDetile(linearBytes, std::byte{0xa5});
+            std::vector<std::byte> expectedImage(tiledBytes, std::byte{0xa5});
+            for (std::uint32_t y = 0; y < mip.height; ++y) {
+                for (std::uint32_t x = 0; x < mip.width; ++x) {
+                    const auto offset = tiledOffset(testCase.mode, elementBytes, mip, x, y);
+                    const auto linearOffset = y * mip.pitchBytes + x * elementBytes;
+                    for (std::uint32_t byte = 0; byte < elementBytes; ++byte) {
+                        expectedDetile[linearOffset + byte] = expanded[offset + byte];
+                        expectedImage[offset + byte] = expanded[offset + byte];
+                    }
+                }
+            }
+            detiler.BeginBatch();
+            CommandBatch batch(context);
+            const auto commands = batch.Handle();
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            detiler.Dispatch(commands, testCase.mode, elementBytes, tiled.Handle(), 0, detiled.Handle(), 0, mip, false, 0, false, single);
+            hostBarrier(context, commands);
+            batch.SubmitAndWait();
+            requireBytes(detiled.Bytes(), expectedDetile, what + ", buffer detile");
+            const auto format = TextureDetiler::ImageElementFormat(elementBytes);
+            VkFormatProperties properties{};
+            context.formatProperties(context.physical, format, &properties);
+            if (!context.singlePassStorage || (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) == 0) continue;
+            StorageImage image(context, format, mip.width, mip.height);
+            Buffer imageRetiled(context, tiledBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            fillSentinel(imageRetiled.Bytes());
+            detiler.BeginBatch();
+            CommandBatch imageBatch(context);
+            const auto imageCommands = imageBatch.Handle();
+            VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            toGeneral.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toGeneral.image = image.Image();
+            toGeneral.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(imageCommands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
+            RecordMemoryBarrier(context, imageCommands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            detiler.DispatchImage(imageCommands, testCase.mode, elementBytes, tiled.Handle(), 0, image.View(), mip, false, 0, single);
+            RecordMemoryBarrier(context, imageCommands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+            detiler.DispatchImage(imageCommands, testCase.mode, elementBytes, imageRetiled.Handle(), 0, image.View(), mip, true);
+            hostBarrier(context, imageCommands);
+            imageBatch.SubmitAndWait();
+            requireBytes(imageRetiled.Bytes(), expectedImage, what + ", image detile");
+        }
+    }
+    std::cout << "single-block detile tests passed\n";
+}
+
 int main(int argc, char** argv) {
     _ZSt13set_terminatePFvvE_nid_postfix([] {
         std::fflush(nullptr);
@@ -16738,6 +17095,7 @@ int main(int argc, char** argv) {
         std::unique_lock gpu(GpuMutex());
         if (argc == 2 && std::string_view(argv[1]) == "--small-element-detile-only") {
             smallElementDetileTests(device);
+            singleBlockDetileTests(device);
             return 0;
         }
 #ifdef _WIN32
@@ -16843,6 +17201,14 @@ int main(int argc, char** argv) {
                 return 77;
             }
             std::cout << "Refreshes over a pending DCC key store passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--single-key-upload-only") {
+            if (!singleKeyUploadTests(device, recorder)) {
+                std::cout << "skipped, the device imports no watched host memory for single-key uploads\n";
+                return 77;
+            }
+            std::cout << "Single-key storage uploads passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--clear-hand-over-only") {
@@ -17296,6 +17662,7 @@ int main(int argc, char** argv) {
         cmaskPassTests(device, recorder);
         pendingKeyStoreTests(device, recorder);
         shadowedKeyStoreTests(device, recorder);
+        static_cast<void>(singleKeyUploadTests(device, recorder));
         sampleDumpTests(device, recorder);
         copiedDirectOrderingTests(device, recorder);
         copiedWriteBackTests(device, recorder);

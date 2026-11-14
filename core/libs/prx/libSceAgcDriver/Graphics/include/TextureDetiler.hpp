@@ -34,6 +34,7 @@ namespace AgcDriver::Graphics {
         std::uint32_t rowBegin = 0;
         std::uint32_t rowEnd = 0;
         std::uint32_t pipeBankXor = 0;
+        bool singleBlocks = false;
     };
 
     class TextureDetiler {
@@ -51,6 +52,7 @@ namespace AgcDriver::Graphics {
         void DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, VkImageView view, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, const DetileWindow& window = {});
         void DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes, bool depthToFloat = false);
         static VkFormat ImageElementFormat(std::uint32_t elementBytes);
+        static constexpr std::uint32_t SingleBlockBytes = 256;
         // Recycles the descriptor sets of the previous batch; call before recording a new command batch.
         void BeginBatch();
         void DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write);
@@ -61,7 +63,8 @@ namespace AgcDriver::Graphics {
     private:
         VkPipeline multisampleReadbackPipeline(std::uint32_t elementBytes, bool depth);
         VkPipeline multisampleUploadPipeline(std::uint32_t elementBytes);
-        VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false);
+        VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false, bool singleBlocks = false);
+        void checkSingleBlocks(const DetileWindow& window, bool retile, std::uint32_t elementBytes) const;
         void release() noexcept;
         struct DescriptorRing {
             std::vector<VkDescriptorPool> pools;

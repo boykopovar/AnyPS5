@@ -2149,6 +2149,10 @@ void Recorder::CountSync(int source, const void* site) {
     announcedSite = site;
 }
 
+std::array<std::uint64_t, 5> Recorder::SyncCounts() {
+    return {syncCounts[0], syncCounts[1], syncCounts[2], syncCounts[3], syncCounts[4]};
+}
+
 void Recorder::AnnounceSyncSite(const void* site) {
     announcedSite = site;
 }
