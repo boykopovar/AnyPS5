@@ -33,6 +33,15 @@ SDLButton:back = None
 
 Each SDL button can appear once per file. An omitted button keeps its default or its shared-file assignment. These overrides apply to all controller slots. SDL button names are case-insensitive and include `a`, `b`, `x`, `y`, `back`, `start`, `leftshoulder`, `rightshoulder`, `leftstick`, `rightstick`, `dpup`, `dpdown`, `dpleft`, `dpright`, `guide`, `misc1`, `paddle1` through `paddle4`, and `touchpad`, depending on the device. The destination accepts the same button names as `PAD:` chords or `None`. Mapping a button to `L2` or `R2` produces a full trigger press. Sticks and physical analog triggers keep their usual behavior. `PAD:` hotkeys follow the resulting PlayStation button assignments.
 
+### Toggle and turbo bindings
+
+A pad button source can start with `TOGGLE` or `TURBO`, separated by a space, as in `Cross = TOGGLE KEY:F` or `Circle = TURBO MOUSE:Right`. The keyword is not case-sensitive.
+
+- `TOGGLE` latches the button on at each new press and off at the next one. Releasing the key does nothing by itself.
+- `TURBO` pulses the button while the key is held: on for the first half of each period, off for the second half. Each press starts the pulse again. The rate is set by `TurboRateHz`, 10 pulses per second by default.
+
+Both work only with pad buttons such as `Cross` or `R2`. Other actions, the mouse wheel and `PAD:` sources are invalid lines, handled like any other invalid line in the file. Losing the window focus clears a toggled button, like the keys that are held.
+
 ### Reloading the mapping
 
 `ReloadInputMapping` (F1 by default) reads `anyps5-input.ini` and the title's profile again while the game keeps running, so you can try a change without restarting the title. The new file is read completely before anything changes: if it has an error, the previous mapping stays active and the log names the file, the line and the reason. A successful reload replaces the whole mapping at once.
@@ -105,6 +114,7 @@ The same file also accepts these settings, each at most once, in the form `Setti
 | `StickModifierScale` | Number from 0.05 to 1, the tilt of keyboard stick bindings while a `StickModifier` binding is held. | `0.5` |
 | `KeyboardRampMs` | Number from 0 to 2000, the milliseconds a keyboard stick binding takes to move the stick from the center to full tilt. 0 tilts at once. | `0` |
 | `TriggerRampMs` | Number from 0 to 2000, the milliseconds a key or mouse button bound to `L2` or `R2` takes to press the trigger from 0 to full. 0 presses it fully at once. | `0` |
+| `TurboRateHz` | Number from 1 to 30, the pulses per second of a `TURBO` binding. | `10` |
 
 ```ini
 LeftStickDeadzone = 12
