@@ -127,6 +127,17 @@ class MainErrorTests(unittest.TestCase):
         self.assertIn("error:", stderr)
         self.assertIn("percent", stderr)
 
+    def test_missing_file_is_a_parser_error_with_exit_code_2(self):
+        with tempfile.TemporaryDirectory() as directory:
+            head = Path(directory) / "head.json"
+            head.write_text(json.dumps(snapshot()), encoding="utf-8")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                progress_diff.main([str(Path(directory) / "missing.json"), str(head)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("error:", stderr.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
