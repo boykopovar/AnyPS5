@@ -864,6 +864,12 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             break;
         case DescriptorRole::ImageTable:
         case DescriptorRole::ImageStorageTable:
+            physical.imageShapes.reserve(physical.imageShapes.size() + tables->elements.size());
+            physical.imageDepthCompare.reserve(physical.imageDepthCompare.size() + tables->elements.size());
+            physical.imageWritten.reserve(physical.imageWritten.size() + tables->elements.size());
+            physical.imageAtomic.reserve(physical.imageAtomic.size() + tables->elements.size());
+            physical.imageAtomic64.reserve(physical.imageAtomic64.size() + tables->elements.size());
+            physical.imageSamplers.reserve(physical.imageSamplers.size() + tables->elements.size());
             for (const auto& element : tables->elements) {
                 ImageResource shape;
                 shape.dimension = element.dimension;
@@ -881,6 +887,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             physical.count = static_cast<std::uint32_t>(tables->elements.size());
             break;
         case DescriptorRole::SamplerTable:
+            physical.samplerDepthCompare.reserve(physical.samplerDepthCompare.size() + tables->samplers.size());
             for (const auto& element : tables->samplers) physical.samplerDepthCompare.push_back(element.compare);
             physical.count = static_cast<std::uint32_t>(tables->samplers.size());
             break;

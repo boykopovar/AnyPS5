@@ -784,7 +784,7 @@ constexpr std::array<const char*, PhaseCount> DrawPhaseNames{"validate", "vertex
 enum SyncReason : std::size_t { SyncNone, SyncNotResident, SyncNoRecorder, SyncDisabled, SyncCopiedWrites, SyncLease, SyncCount };
 constexpr std::array<const char*, SyncCount> SyncReasonNames{"none", "non-resident target", "no recorder", "disabled", "copied writes", "lease"};
 constexpr std::size_t IndirectPathCount = static_cast<std::size_t>(IndirectDrawPath::Count);
-constexpr std::array<const char*, IndirectPathCount> IndirectDrawPathNames{"gpu-side", "patched SGPR not folded", "fetch offset unknown", "non-vertex path", "GE_INDX_OFFSET", "draw index", "vertex range too large", "feature gap", "pending image results", "pending label or copied write", "not imported", "disabled", "index range not fully readable", "index limit unknown"};
+constexpr std::array<const char*, IndirectPathCount> IndirectDrawPathNames{"gpu-side", "patched SGPR not folded", "fetch offset unknown", "non-vertex path", "GE_INDX_OFFSET", "draw index", "vertex range too large", "feature gap", "pending image results", "pending label or copied write", "not imported", "disabled", "index range not fully readable", "index limit unknown", "records settled"};
 
 // What became of one draw, for the totals.
 struct DrawOutcome {
@@ -3732,6 +3732,8 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             if (context.copiedWriters != nullptr && std::any_of(context.copiedWriters->begin(), context.copiedWriters->end(), overlaps)) return IndirectDrawPath::PendingLabelOrCopy;
             if (std::any_of(DrawCopiedWriters()->begin(), DrawCopiedWriters()->end(), overlaps)) return IndirectDrawPath::PendingLabelOrCopy;
             if ((import = HostImportFor(context, address, bytes)) == nullptr) return IndirectDrawPath::NotImported;
+            static const bool settledReads = std::getenv("APS5_NO_SETTLED_INDIRECT_READ") == nullptr;
+            if (settledReads && recorder != nullptr && recorder->PendingWriteSettled(address, bytes)) return IndirectDrawPath::Settled;
             return IndirectDrawPath::Gpu;
         };
         const auto rangeBytes = args->RangeBytes();
@@ -3745,7 +3747,8 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         else indirect.path = decide(args->arguments, static_cast<std::size_t>(rangeBytes), indirect.argumentImport);
         if (indirect.path == IndirectDrawPath::Gpu && args->countIndirect) {
             Require(context.drawIndirectCount, "indirect draw count without VK_KHR_draw_indirect_count must be resolved by the driver");
-            indirect.path = decide(args->countAddress, 4, indirect.countImport);
+            const auto countPath = decide(args->countAddress, 4, indirect.countImport);
+            if (countPath != IndirectDrawPath::Settled) indirect.path = countPath;
         }
         if (indirect.path != IndirectDrawPath::Gpu) {
             // The reads wait for the producing batch through the flush hook, as the driver's
