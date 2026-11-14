@@ -1082,14 +1082,12 @@ bool APS5_VABI sceShellCoreUtilIsPowerSaveAlertRequested() {
     return 0;
 }
 
-bool APS5_VABI sceShellCoreUtilIsRemotePlayCpuBudgetAcquired() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceShellCoreUtilIsRemotePlayCpuBudgetAcquired() {
+    return static_cast<int>(0x80020000u);
 }
 
-bool APS5_VABI sceShellCoreUtilIsSharePlayCpuBudgetAcquired() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceShellCoreUtilIsSharePlayCpuBudgetAcquired() {
+    return static_cast<int>(0x80020000u);
 }
 
 int APS5_VABI sceShellCoreUtilIsShowCrashReport() {
