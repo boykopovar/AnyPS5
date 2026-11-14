@@ -155,6 +155,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/J0f.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/J1f.cpp
@@ -240,6 +241,8 @@ endfunction()
 cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL run_report_stamp_components [[${runReportRevisionRoot}]])")
 
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
+        TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/BinaryWordIo.cpp)
@@ -1693,6 +1696,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_sce_v2_binary_scaling COMMAND guest_sce_v2_binary_scaling_tests)
     if(WIN32)
         set_tests_properties(guest_sce_v2_binary_scaling PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_sce_v2_extended_precision_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2ExtendedPrecision.cpp)
+    target_include_directories(guest_sce_v2_extended_precision_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_extended_precision_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_extended_precision_tests)
+    add_test(NAME guest_sce_v2_extended_precision COMMAND guest_sce_v2_extended_precision_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_extended_precision PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_qsort_tests ${LIBS_INCLUDE_DIR}/tests/GuestQsort.cpp)
