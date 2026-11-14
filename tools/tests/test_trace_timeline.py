@@ -101,12 +101,12 @@ class TimelineTests(unittest.TestCase):
                 self.assertFalse(out.exists())
 
 
-    def check_input_alias(self, path, output=None):
+    def check_input_alias(self, path, output=None, cwd=None):
         before = path.read_bytes()
         arguments = [sys.executable, str(Path(trace_timeline.__file__)), str(path)]
         if output is not None:
             arguments += ["-o", str(output)]
-        done = subprocess.run(arguments, capture_output=True, text=True)
+        done = subprocess.run(arguments, capture_output=True, text=True, cwd=cwd)
         self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
         self.assertIn("output must not overwrite the input trace", done.stderr)
         self.assertNotIn("wrote ", done.stdout)
@@ -118,7 +118,7 @@ class TimelineTests(unittest.TestCase):
                 path = Path(self.tmp.name) / ("capture" + suffix)
                 path.write_text(json.dumps(document(self.items)), encoding="utf-8")
                 self.check_input_alias(path, path)
-                self.check_input_alias(path, Path(os.path.relpath(path)))
+                self.check_input_alias(path, Path(os.path.relpath(path, path.parent)), cwd=path.parent)
                 if suffix == ".html":
                     self.check_input_alias(path)
 
