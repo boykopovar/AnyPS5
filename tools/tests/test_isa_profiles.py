@@ -1,6 +1,7 @@
 import hashlib
 import sys
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +17,12 @@ def isa_xml(architecture, instructions=""):
 def pinned(**texts):
     hashes = {key: hashlib.sha256(text.encode("utf-8")).hexdigest() for key, text in texts.items()}
     return patch.dict(isa_profiles.ISA_HASHES, hashes)
+
+
+def instruction(name, *encodings):
+    items = "".join(f"<InstructionEncoding><EncodingName>{tag}</EncodingName><Opcode Radix=\"10\">{opcode}</Opcode>"
+                    "</InstructionEncoding>" for tag, opcode in encodings)
+    return f"<Instruction><InstructionName>{name}</InstructionName><InstructionEncodings>{items}</InstructionEncodings></Instruction>"
 
 
 class ValidateIsaXmlTests(unittest.TestCase):
@@ -79,6 +86,36 @@ class CanonicalEncodingTests(unittest.TestCase):
         self.assertIsNone(isa_profiles.canonical_encoding("NOT_A_FORM", None))
         self.assertIsNone(isa_profiles.canonical_encoding("SOP1_VOP_DPP16", None))
         self.assertIsNone(isa_profiles.canonical_encoding("VOP3_VOP_DPP8", None))
+
+
+class CanonicalXmlFormsTests(unittest.TestCase):
+    def forms(self, *instructions):
+        return isa_profiles.canonical_xml_forms(ET.fromstring(isa_xml("AMD RDNA 1", "".join(instructions))))
+
+    def test_one_instruction_yields_base_vop3_and_modified_rows(self):
+        forms = self.forms(instruction("V_ADD_F32", ("ENC_VOP2", 3), ("ENC_VOP3", 259),
+                                       ("VOP2_VOP_DPP16", 3), ("VOP2_VOP_DPP8", 3)))
+        self.assertEqual(forms, {("V_ADD_F32", "VOP2", "base", 3), ("V_ADD_F32", "VOP2", "vop3", 259),
+                                 ("V_ADD_F32", "VOP2", "dpp16", 3), ("V_ADD_F32", "VOP2", "dpp8", 3)})
+
+    def test_vop3_without_a_vop12c_sibling_is_vop3_base(self):
+        self.assertEqual(self.forms(instruction("V_MUL_LO_I32", ("ENC_VOP3", 0x16b))),
+                         {("V_MUL_LO_I32", "VOP3", "base", 0x16b)})
+
+    def test_repeated_literal_positions_collapse_to_one_row(self):
+        forms = self.forms(instruction("V_FMAMK_F32", ("VOP2_INST_LITERAL", 44), ("VOP2_INST_LITERAL", 44)))
+        self.assertEqual(forms, {("V_FMAMK_F32", "VOP2", "base", 44)})
+
+    def test_unknown_encoding_tags_are_skipped(self):
+        forms = self.forms(instruction("S_NOP", ("ENC_SOPP", 0), ("UNKNOWN_TAG", 1)))
+        self.assertEqual(forms, {("S_NOP", "SOPP", "base", 0)})
+
+    def test_missing_instruction_table_is_an_error(self):
+        with self.assertRaisesRegex(ValueError, "ISA XML has no instructions"):
+            isa_profiles.canonical_xml_forms(ET.fromstring("<Spec><ISA/></Spec>"))
+
+    def test_empty_instruction_table_yields_no_forms(self):
+        self.assertEqual(self.forms(), set())
 
 
 if __name__ == "__main__":
