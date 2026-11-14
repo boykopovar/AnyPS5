@@ -46,7 +46,7 @@ extern "C" {
 
 int APS5_VABI FT_Get_MM_Var_nid_postfix(GuestFaceRec* face, void** master) {
     const GuestFace* owner = FaceOf(face);
-    if (owner) RequireLp64(__func__);
+    if (master && owner && owner->host && FT_HAS_MULTIPLE_MASTERS(owner->host)) RequireLp64(__func__);
     FT_MM_Var* native = nullptr;
     const FT_Error error = FT_Get_MM_Var(owner ? owner->host : nullptr, master ? &native : nullptr);
     if (error != 0 || !master) return error;
@@ -116,7 +116,7 @@ int APS5_VABI FT_Set_MM_Design_Coordinates_nid_postfix(GuestFaceRec* face, std::
 
 int APS5_VABI FT_Get_Multi_Master_nid_postfix(GuestFaceRec* face, void* master) {
     const GuestFace* owner = FaceOf(face);
-    if (owner) RequireLp64(__func__);
+    if (master && owner && owner->host && FT_HAS_MULTIPLE_MASTERS(owner->host)) RequireLp64(__func__);
     FT_Multi_Master native{};
     const FT_Error error = FT_Get_Multi_Master(owner ? owner->host : nullptr, master ? &native : nullptr);
     if (error != 0 || !master) return error;
