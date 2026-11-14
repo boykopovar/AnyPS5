@@ -38,9 +38,16 @@ static bool ValidString(const char* text, std::size_t maxLength) {
     return result == 0;
 }
 
-static bool AllZero(const std::uint8_t* bytes, std::size_t size) {
-    for (std::size_t i = 0; i < size; i++) {
-        if (bytes[i] != 0) return false;
+template<class T>
+static bool ReservedZero(const T* entry) {
+    std::array<std::uint8_t, sizeof(T::reserved)> bytes{};
+    const auto* reserved = reinterpret_cast<const std::uint8_t*>(entry) + offsetof(T, reserved);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(bytes.data(), reserved, bytes.size());
+    errno = savedErrno;
+    if (!copied) return false;
+    for (const auto byte : bytes) {
+        if (byte != 0) return false;
     }
     return true;
 }
@@ -192,7 +199,7 @@ int APS5_VABI sceGameLiveStreamingSetSpoilerTag(size_t count, const GameLiveStre
     if (!g_initialized) return ErrorNotInitialized;
     if (tags == nullptr || count > MaxSpoilerTags) return ErrorInvalidArgument;
     for (size_t i = 0; i < count; i++) {
-        if (!AllZero(tags[i].reserved, sizeof(tags[i].reserved))) return ErrorInvalidArgument;
+        if (!ReservedZero(tags + i)) return ErrorInvalidArgument;
     }
     return 0;
 }
@@ -208,7 +215,7 @@ int APS5_VABI sceGameLiveStreamingSetPresetSocialFeedbackCommands(size_t count, 
     if (!g_initialized) return ErrorNotInitialized;
     if (commands == nullptr || count > MaxPresetCommands) return ErrorInvalidArgument;
     for (size_t i = 0; i < count; i++) {
-        if (!AllZero(commands[i].reserved, sizeof(commands[i].reserved))) return ErrorInvalidArgument;
+        if (!ReservedZero(commands + i)) return ErrorInvalidArgument;
     }
     return 0;
 }
@@ -243,7 +250,7 @@ int APS5_VABI sceGameLiveStreamingPostSocialMessage(const char* message) {
 int APS5_VABI sceGameLiveStreamingSetCameraFrameSetting(const GameLiveStreamingCameraFrameSetting* setting) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    if (setting == nullptr || !AllZero(setting->reserved, sizeof(setting->reserved))) return ErrorInvalidArgument;
+    if (setting == nullptr || !ReservedZero(setting)) return ErrorInvalidArgument;
     return 0;
 }
 

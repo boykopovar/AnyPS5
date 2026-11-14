@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -227,20 +228,22 @@ int APS5_VABI ASN1_STRING_to_UTF8_nid_postfix(unsigned char** output, Asn1String
 int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(LibreSsl::Bio* bio, const LibreSslAsn1Object* object) {
     if (!object || !object->data) return LibreSslBioWrite_nid_no_patch(bio, "NULL", 4);
     int capacity = 256;
-    auto* text = static_cast<char*>(malloc_nid_postfix(capacity));
+    const auto release = [&capacity](char* buffer) {
+        std::memset(buffer, 0, capacity);
+        free_nid_postfix(buffer);
+    };
+    std::unique_ptr<char, decltype(release)> text(static_cast<char*>(malloc_nid_postfix(capacity)), release);
     if (!text) return -1;
-    int length = i2t_ASN1_OBJECT_nid_postfix(text, capacity, object);
+    int length = i2t_ASN1_OBJECT_nid_postfix(text.get(), capacity, object);
     if (length > capacity - 1) {
-        std::memset(text, 0, capacity);
-        free_nid_postfix(text);
+        text.reset();
         capacity = length + 1;
-        text = static_cast<char*>(malloc_nid_postfix(capacity));
+        text.reset(static_cast<char*>(malloc_nid_postfix(capacity)));
         if (!text) return -1;
-        length = i2t_ASN1_OBJECT_nid_postfix(text, capacity, object);
+        length = i2t_ASN1_OBJECT_nid_postfix(text.get(), capacity, object);
     }
-    const int written = length <= 0 ? LibreSslBioWrite_nid_no_patch(bio, "<INVALID>", 9) : LibreSslBioWrite_nid_no_patch(bio, text, length);
-    std::memset(text, 0, capacity);
-    free_nid_postfix(text);
+    const int written = length <= 0 ? LibreSslBioWrite_nid_no_patch(bio, "<INVALID>", 9) : LibreSslBioWrite_nid_no_patch(bio, text.get(), length);
+    text.reset();
     return written;
 }
 

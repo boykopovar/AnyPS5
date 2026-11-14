@@ -925,11 +925,6 @@ int APS5_VABI _Getdst_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Geterrno_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Getfld_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;

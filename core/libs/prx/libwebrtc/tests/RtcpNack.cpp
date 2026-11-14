@@ -2,6 +2,8 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -123,6 +125,134 @@ void TestNulls() {
     }
 }
 
+
+using PacketReady = void (APS5_VABI*)(void* function, const std::uint8_t* data, std::size_t size);
+using BlockLength = std::size_t (APS5_VABI*)(const WebRtcRtcpNack*);
+using Create = bool (APS5_VABI*)(const WebRtcRtcpNack*, std::uint8_t*, std::size_t*, std::size_t, void*, PacketReady);
+using DeletingDestructor = void (APS5_VABI*)(WebRtcRtcpNack*);
+
+template<typename TFunction> TFunction Slot(const WebRtcRtcpNack& nack, int slot) {
+    return reinterpret_cast<TFunction>(const_cast<void*>(static_cast<const void* const*>(nack.vtable)[slot]));
+}
+
+struct Sent {
+    std::vector<std::vector<std::uint8_t>> packets;
+};
+
+void APS5_VABI Send(void* function, const std::uint8_t* data, std::size_t size) {
+    static_cast<Sent*>(function)->packets.emplace_back(data, data + size);
+}
+
+template<typename TAction> bool ThrowsInvalidArgument(TAction action) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+WebRtcRtcpNack Constructed() {
+    WebRtcRtcpNack nack;
+    std::memset(&nack, 0xA5, sizeof(nack));
+    _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(&nack);
+    return nack;
+}
+
+const std::vector<std::uint8_t> ThreeItems {0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,0,10,0x80,0x01,0,40,0,0,0xff,0xff,0,2};
+
+std::vector<std::uint8_t> Expected(std::size_t first, std::size_t count) {
+    std::vector<std::uint8_t> packet {0x81, 205, 0, static_cast<std::uint8_t>(2 + count)};
+    packet.insert(packet.end(), ThreeItems.begin(), ThreeItems.begin() + 8);
+    packet.insert(packet.end(), ThreeItems.begin() + 8 + 4 * first, ThreeItems.begin() + 8 + 4 * (first + count));
+    return packet;
+}
+
+void TestConstructor() {
+    WebRtcRtcpNack nack = Constructed();
+    Require(nack.vtable != nullptr && nack.senderSsrc == 0 && nack.mediaSsrc == 0);
+    Require(nack.packed.begin == nullptr && nack.packed.end == nullptr && nack.packed.capacityEnd == nullptr);
+    Require(nack.packetIds.begin == nullptr && nack.packetIds.end == nullptr && nack.packetIds.capacityEnd == nullptr);
+    Require(Slot<BlockLength>(nack, 2)(&nack) == 12);
+    std::uint8_t buffer[4] {0xee, 0xee, 0xee, 0xee};
+    std::size_t index = 0;
+    Require(Slot<Create>(nack, 3)(&nack, buffer, &index, 0, nullptr, nullptr));
+    Require(index == 0 && buffer[0] == 0xee);
+    _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(&nack);
+    Require(allocations.empty());
+}
+
+void TestCreateWritesTheParsedItems() {
+    WebRtcRtcpNack nack = Constructed();
+    Require(Parse(nack, ThreeItems));
+    Require(Slot<BlockLength>(nack, 2)(&nack) == 24);
+    std::vector<std::uint8_t> buffer(40, 0xee);
+    std::size_t index = 4;
+    Require(Slot<Create>(nack, 3)(&nack, buffer.data(), &index, buffer.size(), nullptr, nullptr));
+    const auto expected = Expected(0, 3);
+    Require(index == 4 + expected.size());
+    Require(std::equal(expected.begin(), expected.end(), buffer.begin() + 4));
+    Require(buffer[0] == 0xee && buffer[4 + expected.size()] == 0xee);
+    _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(&nack);
+    Require(allocations.empty());
+}
+
+void TestCreateFragments() {
+    WebRtcRtcpNack nack = Constructed();
+    Require(Parse(nack, ThreeItems));
+    std::vector<std::uint8_t> buffer(20);
+    std::size_t index = 0;
+    Sent sent;
+    Require(Slot<Create>(nack, 3)(&nack, buffer.data(), &index, buffer.size(), &sent, &Send));
+    Require(sent.packets.size() == 1 && sent.packets[0] == Expected(0, 2));
+    const auto last = Expected(2, 1);
+    Require(index == last.size() && std::equal(last.begin(), last.end(), buffer.begin()));
+    index = 6;
+    sent.packets.clear();
+    Require(Slot<Create>(nack, 3)(&nack, buffer.data(), &index, buffer.size(), &sent, &Send));
+    Require(sent.packets.size() == 2 && sent.packets[0].size() == 6 && sent.packets[1] == Expected(0, 2));
+    Require(index == last.size() && std::equal(last.begin(), last.end(), buffer.begin()));
+    _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(&nack);
+    Require(allocations.empty());
+}
+
+void TestCreateWithoutRoom() {
+    WebRtcRtcpNack nack = Constructed();
+    Require(Parse(nack, ThreeItems));
+    std::vector<std::uint8_t> buffer(15, 0xee);
+    std::size_t index = 0;
+    Require(!Slot<Create>(nack, 3)(&nack, buffer.data(), &index, buffer.size(), nullptr, nullptr));
+    Require(index == 0 && buffer[0] == 0xee);
+    buffer.resize(20);
+    index = 8;
+    Require(ThrowsInvalidArgument([&] { Slot<Create>(nack, 3)(&nack, buffer.data(), &index, buffer.size(), nullptr, nullptr); }));
+    index = 21;
+    Require(ThrowsInvalidArgument([&] { Slot<Create>(nack, 3)(&nack, buffer.data(), &index, buffer.size(), nullptr, nullptr); }));
+    _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(&nack);
+    Require(allocations.empty());
+}
+
+void TestDeletingDestructor() {
+    auto* nack = static_cast<WebRtcRtcpNack*>(_Znwm_nid_postfix(sizeof(WebRtcRtcpNack)));
+    _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(nack);
+    Require(Parse(*nack, ThreeItems));
+    Slot<DeletingDestructor>(*nack, 1)(nack);
+    Require(allocations.empty());
+}
+
+void TestLifecycleNulls() {
+    WebRtcRtcpNack nack = Constructed();
+    std::uint8_t buffer[16];
+    std::size_t index = 0;
+    Require(ThrowsInvalidArgument([] { _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(nullptr); }));
+    Require(ThrowsInvalidArgument([] { _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(nullptr); }));
+    Require(ThrowsInvalidArgument([&] { Slot<BlockLength>(nack, 2)(nullptr); }));
+    Require(ThrowsInvalidArgument([&] { Slot<Create>(nack, 3)(nullptr, buffer, &index, 16, nullptr, nullptr); }));
+    Require(ThrowsInvalidArgument([&] { Slot<Create>(nack, 3)(&nack, nullptr, &index, 16, nullptr, nullptr); }));
+    Require(ThrowsInvalidArgument([&] { Slot<Create>(nack, 3)(&nack, buffer, nullptr, 16, nullptr, nullptr); }));
+    _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(&nack);
+}
+
 }
 
 int main(int argc, char**) {
@@ -135,6 +265,12 @@ int main(int argc, char**) {
         if (argc == 1) {
             TestParsing();
             TestNulls();
+            TestConstructor();
+            TestCreateWritesTheParsedItems();
+            TestCreateFragments();
+            TestCreateWithoutRoom();
+            TestDeletingDestructor();
+            TestLifecycleNulls();
         }
         Require(allocations.empty());
     } catch (const std::exception& error) {

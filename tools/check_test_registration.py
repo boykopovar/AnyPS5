@@ -19,6 +19,23 @@ EXPORTED = re.compile(r"\bAPS5_VABI\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*(?:noexcept\s
 INCLUDED_SOURCE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+\.cpp)"', re.M)
 COMPILE_FLAG = re.compile(r"(?:^|\s)[-/]c(?:\s|$)")
 
+CPP_TOKEN = re.compile(
+    r'(?P<comment>//[^\n]*|/\*[\s\S]*?\*/)'
+    r'|(?P<raw>(?:u8|u|U|L)?R"(?P<delimiter>[^\s()\\]{0,16})\([\s\S]*?\)(?P=delimiter)")'
+    r'|(?P<string>(?:u8|u|U|L)?"(?:\\[\s\S]|[^"\\])*")'
+    r"|(?P<char>(?:u8|u|U|L)?'(?:\\[\s\S]|[^'\\])*')"
+    r"|(?P<code>(?:[0-9]|\.[0-9])[A-Za-z0-9_.']*|[A-Za-z_][A-Za-z0-9_]*|\S)")
+
+def cpp_source(text, keep_strings=False):
+    text = text.replace("\\\n", "").replace("\\\r\n", "")
+
+    def mask(match):
+        if match.group("code") is not None or keep_strings and match.group("string") is not None:
+            return match.group()
+        return re.sub(r"[^\n]", " ", match.group())
+
+    return CPP_TOKEN.sub(mask, text)
+
 
 def ninja(build):
     program, generator = None, None
@@ -99,7 +116,7 @@ def unbuilt_exports(root, sources, skipped=()):
             text = source.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for name in INCLUDED_SOURCE.findall(text):
+        for name in INCLUDED_SOURCE.findall(cpp_source(text, keep_strings=True)):
             included = (source.parent / name).resolve()
             if included not in built_sources and included.is_file():
                 built_sources.add(included)
@@ -111,7 +128,7 @@ def unbuilt_exports(root, sources, skipped=()):
             continue
         if any(part in ("tests", "test") for part in relative.parts[1:-1]) or file.resolve() in built_sources:
             continue
-        if EXPORTED.search(file.read_text(encoding="utf-8", errors="replace")):
+        if EXPORTED.search(cpp_source(file.read_text(encoding="utf-8", errors="replace"))):
             unbuilt.append(Path("core/libs/prx") / relative)
     return unbuilt
 

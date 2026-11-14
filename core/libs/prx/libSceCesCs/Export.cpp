@@ -622,7 +622,7 @@ const std::vector<std::pair<uint32_t, uint16_t>>& gb18030Reverse(const Gb18030Ta
     };
     static const auto reverse2000 = build(GB18030_2000);
     static const auto reverse2005 = build(GB18030_2005);
-    return &tables == &GB18030_2005 ? reverse2005 : reverse2000;
+    return tables.edition2005 ? reverse2005 : reverse2000;
 }
 
 int encodeGb18030(const void* profile, const Gb18030Tables& tables, uint32_t code, uint8_t* mbcs, uint32_t& length) {
@@ -1012,34 +1012,35 @@ int decodeJis2004(bool sjis, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& le
             code = 0xFF61 + (lead - 0xA1);
             return 0;
         }
-        if (!((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC))) return CES_ERROR_INVALID_ENCODE;
-        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+        if (!((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC))) return rejectLead(length);
+        if (mbcsMax < 2) return needBytes(2, length);
         int row = 0;
         int cell = 0;
-        if (!sjisToJis(lead, mbcs[1], row, cell)) return CES_ERROR_INVALID_ENCODE;
+        if (!sjisToJis(lead, mbcs[1], row, cell)) return rejectTrail(mbcs[1], 2, length);
         length = 2;
         if (row <= 94) code = JisX0213::PLANE1[(row - 1) * 94 + (cell - 1)];
         else code = JisX0213::PLANE2[(JIS_X0213_PLANE2_ROWS[row - 95] - 1) * 94 + (cell - 1)];
         return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
     if (lead == 0x8E) {
-        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
-        if (mbcs[1] < 0xA1 || mbcs[1] > 0xDF) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 2) return needBytes(2, length);
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xDF) return rejectTrail(mbcs[1], 2, length);
         length = 2;
         code = 0xFF61 + (mbcs[1] - 0xA1);
         return 0;
     }
     if (lead == 0x8F) {
-        if (mbcsMax < 3) return CES_ERROR_SRC_BUFFER_END;
-        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE || mbcs[2] < 0xA1 || mbcs[2] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+        if (stopsAtNul(mbcs, mbcsMax, 1, 3, length)) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 3) return needBytes(3, length);
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE || mbcs[2] < 0xA1 || mbcs[2] > 0xFE) return rejectTrail(mbcs[1], 3, length);
         length = 3;
         const uint32_t cell = (mbcs[1] - 0xA1) * 94 + (mbcs[2] - 0xA1);
         code = isJisX0213Plane2Row(mbcs[1] - 0xA0) ? JisX0213::PLANE2[cell] : JisX0212::TO_UCS2[cell];
         return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
-    if (lead < 0xA1 || lead > 0xFE) return CES_ERROR_INVALID_ENCODE;
-    if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
-    if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+    if (lead < 0xA1 || lead > 0xFE) return rejectLead(length);
+    if (mbcsMax < 2) return needBytes(2, length);
+    if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return rejectTrail(mbcs[1], 2, length);
     length = 2;
     code = JisX0213::PLANE1[(lead - 0xA1) * 94 + (mbcs[1] - 0xA1)];
     return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
