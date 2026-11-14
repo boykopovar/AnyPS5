@@ -693,7 +693,6 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
             *res = {0, 1000};
             return 0;
         default:
-            if (clockId < 0 || clockId >= 32) throw std::runtime_error(std::string(__func__) + ": unsupported clock_id " + std::to_string(clockId));
             *__error_nid_postfix() = GUEST_EINVAL;
             return -1;
     }
