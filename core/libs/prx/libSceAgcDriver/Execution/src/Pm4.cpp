@@ -545,6 +545,14 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         }
         case 0x49: {
             size(8);
+            if (ReleaseWritesBackL2(packet)) {
+                require((packet[1] & 0x00cf0000u) == 0, "RELEASE_MEM GL2 write-back scope, discard or sequence is not implemented");
+                const auto eventType = packet[1] & 0x3fu;
+                const auto eventIndex = (packet[1] >> 8u) & 0xfu;
+                const bool endOfPipe = eventIndex == 5u && (eventType == 0x04u || eventType == 0x14u || eventType == 0x28u || eventType == 0x29u || eventType == 0x2bu || eventType == 0x2du);
+                const bool computeDone = queue != 0 && eventIndex == 6u && eventType == 0x2fu;
+                require(endOfPipe || computeDone, "RELEASE_MEM GL2 write-back event/index is not implemented");
+            }
             const auto dataSelect = packet[2] >> 29u;
             require(dataSelect != 4 || ShaderRecompiler::GcnGuestShaders(), "RELEASE_MEM of the 64-bit system counter (DATA_SEL 4) is not implemented");
             require(dataSelect <= 5, "reserved RELEASE_MEM DATA_SEL");
@@ -686,6 +694,10 @@ std::uint32_t ReadCondition(std::span<const std::uint32_t> packet) {
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
     GuestMemory::Read(address(packet[1], packet[2]), std::as_writable_bytes(std::span(&value, 1)), 4);
     return value;
+}
+
+bool ReleaseWritesBackL2(std::span<const std::uint32_t> packet) {
+    return packet.size() >= 2 && ((packet[0] >> 8u) & 0xffu) == 0x49u && (packet[1] & 0x00200000u) != 0;
 }
 
 std::optional<LabelWrite> DecodeLabelWrite(std::span<const std::uint32_t> packet) {

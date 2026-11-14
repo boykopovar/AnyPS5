@@ -5025,8 +5025,10 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         return scope == PublishScope::None || !AnyShadowedOverlaps(address, bytes);
     };
     if (nothingToStore()) return false;
+    const bool requirePublication = reason != nullptr && std::strcmp(reason, "release") == 0;
     if (AgcDriver::DriverDetail::DrawPipeline::HeldReads(address, bytes)) {
         queuedReadHeld.fetch_add(1, std::memory_order_relaxed);
+        Require(!requirePublication, "RELEASE_MEM GL2 write-back with queued draw reads is not implemented");
         return false;
     }
     std::unique_lock<GuestMemory::GpuMutexType> drawnHold;
@@ -5049,6 +5051,11 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
         const auto* exempt = Refreshing::Get();
+        if (requirePublication) {
+            Require(std::none_of(pending.flushing.begin(), pending.flushing.end(), [&](const StorageTexture* texture) {
+                return texture != except && texture != exempt && (device == VK_NULL_HANDLE || texture->context.device == device) && texture->overlaps(address, bytes);
+            }), "RELEASE_MEM GL2 write-back during another image publication is not implemented");
+        }
         for (auto it = pending.textures.MayOverlap(address, bytes) ? pending.textures.begin() : pending.textures.end(); it != pending.textures.end();) {
             auto* texture = *it;
             if (texture != except && texture != exempt && (device == VK_NULL_HANDLE || texture->context.device == device) && texture->overlaps(address, bytes)) {
@@ -5533,6 +5540,28 @@ void StorageTexture::FlushAllPending(const char* reason, VkDevice device) {
     std::optional<PublishOnCpuScope> onCpu;
     if (reason != nullptr && std::strcmp(reason, "idle") == 0) onCpu.emplace();
     static_cast<void>(FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, reason, PublishScope::Whole, nullptr, false, device));
+}
+
+void StorageTexture::StoreBeforeRelease(VkDevice device) {
+    GuestMemory::AssertGpuLockHeld("StorageTexture::StoreBeforeRelease");
+    constexpr auto bytes = std::numeric_limits<std::size_t>::max();
+    bool imagesPending = false;
+    {
+        auto& pending = Pending();
+        std::lock_guard lock(pending.mutex);
+        const auto sameDevice = [device](const StorageTexture* texture) { return device == VK_NULL_HANDLE || texture->context.device == device; };
+        Require(std::none_of(pending.flushing.begin(), pending.flushing.end(), sameDevice), "RELEASE_MEM GL2 write-back during another image publication is not implemented");
+        imagesPending = std::any_of(pending.textures.begin(), pending.textures.end(), sameDevice);
+    }
+    if (!imagesPending && !DepthPlanesStale() && !AnyShadowedOverlaps(0, bytes)) return;
+    Require(!AgcDriver::DriverDetail::DrawPipeline::HeldReads(0, bytes), "RELEASE_MEM GL2 write-back with queued draw reads is not implemented");
+    static const bool gpuOrdered = std::getenv("APS5_NO_FLUSH_GPU_ORDERED") == nullptr;
+    struct OrderedScope {
+        bool previous;
+        explicit OrderedScope(bool on) : previous(GpuOrderedFlush()) { GpuOrderedFlush() = previous || on; }
+        ~OrderedScope() { GpuOrderedFlush() = previous; }
+    } ordered{gpuOrdered};
+    static_cast<void>(FlushPending(0, bytes, nullptr, "release", PublishScope::Whole, nullptr, false, device));
 }
 
 bool StorageTexture::FlushAllPendingUntil(const char* reason, const std::function<bool()>& stop, VkDevice device) {

@@ -1080,6 +1080,47 @@ void testEventWrite() {
     }
 }
 
+void testReleaseMemWriteback() {
+    const auto release = [](std::uint32_t control) { return makePacket(0x49, {control, 1u << 29u, 0x1000, 0, 1, 0, 0}); };
+    for (const auto control : {0x00200514u, 0x00300514u, 0x0030c514u, 0x0630c528u}) {
+        const auto packet = release(control);
+        check(AgcDriver::Pm4::ReleaseWritesBackL2(packet), "RELEASE_MEM lost an explicit GL2 write-back");
+        for (const auto queue : {0u, 0x20u}) AgcDriver::Pm4::Validate(packet, queue);
+    }
+    for (const auto control : {0x514u, 0x528u, 0x0000c514u, 0x00100514u}) {
+        const auto packet = release(control);
+        AgcDriver::Pm4::Validate(packet, 0);
+        check(!AgcDriver::Pm4::ReleaseWritesBackL2(packet), "RELEASE_MEM without GL2 write-back requested publication");
+    }
+    const auto computeDone = release(0x0020062fu);
+    AgcDriver::Pm4::Validate(computeDone, 0x20);
+    check(AgcDriver::Pm4::ReleaseWritesBackL2(computeDone), "a compute CS_DONE release lost GL2 write-back");
+    for (const auto event : {0x04u, 0x14u, 0x28u, 0x29u, 0x2bu, 0x2du}) {
+        for (const auto queue : {0u, 0x20u}) AgcDriver::Pm4::Validate(release(0x00200500u | event), queue);
+    }
+    expectFailure([&] { AgcDriver::Pm4::Validate(computeDone, 0); }, "RELEASE_MEM GL2 write-back event/index");
+    for (const auto control : {0x0020052fu, 0x00200630u, 0x00200414u, 0x00200614u, 0x00200510u, 0x00200014u}) {
+        for (const auto queue : {0u, 0x20u}) {
+            expectFailure([&] { AgcDriver::Pm4::Validate(release(control), queue); }, "RELEASE_MEM GL2 write-back event/index");
+        }
+    }
+    for (const auto control : {0u, 2u << 24u, 3u << 24u, 4u << 24u}) {
+        const auto packet = makePacket(0x49, {0x00300514, control, 0, 0, 0, 0, 0});
+        AgcDriver::Pm4::Validate(packet, 0);
+        check(AgcDriver::Pm4::ReleaseWritesBackL2(packet), "a release without label data lost GL2 write-back");
+    }
+    for (const auto flags : {0x10000u, 0x20000u, 0x40000u, 0x60000u, 0x80000u, 0x400000u, 0x800000u, 0xc00000u}) {
+        const auto packet = release(0x00200514u | flags);
+        for (const auto queue : {0u, 0x20u}) {
+            expectFailure([&] { AgcDriver::Pm4::Validate(packet, queue); }, "RELEASE_MEM GL2 write-back scope");
+        }
+    }
+    check(!AgcDriver::Pm4::ReleaseWritesBackL2({}), "an empty packet requested GL2 write-back");
+    const auto packet = release(0x00200514u);
+    check(!AgcDriver::Pm4::ReleaseWritesBackL2(std::span<const std::uint32_t>(packet).first(1)), "a header without release control requested GL2 write-back");
+    check(!AgcDriver::Pm4::ReleaseWritesBackL2(makePacket(0x37, {0x00200514, 0x1000, 0, 1})), "WRITE_DATA was classified as a GL2 write-back release");
+}
+
 void testAcquireMem() {
     const auto captured = makePacket(0x58, {0x02007fc0, 0, 0, 0, 0, 10, 0x200});
     AgcDriver::Pm4::Validate(captured, 0);
@@ -2729,6 +2770,7 @@ int main(int argc, char** argv) {
         testReleaseMemDataSelects();
         testGcnReleaseMemSystemCounter();
         testAcquireMem();
+        testReleaseMemWriteback();
         testConditionalWrite();
         testConditionalWriteSubmission();
         testPredication();

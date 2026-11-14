@@ -60,6 +60,14 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
     wroteOnGpu = false;
 
     bool orderedAlready = false;
+    const bool releaseWriteBack = Pm4::ReleaseWritesBackL2(packet);
+    if (releaseWriteBack) {
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        const auto localDevice = device.Load();
+        recordDeferredLabels(localDevice.get(), submission.queue);
+        if (localDevice != nullptr) Graphics::StorageTexture::StoreBeforeRelease(localDevice->Device());
+    }
 
     endOfPipeInterrupt = interrupt.has_value();
     interruptDeferred = false;
@@ -73,7 +81,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
             const auto localDevice = device.Load();
             recordDeferredLabels(localDevice.get(), submission.queue);
-            bool workOpen = Graphics::Recorder::RecordedWorkSinceSubmit() != 0;
+            bool workOpen = releaseWriteBack || Graphics::Recorder::RecordedWorkSinceSubmit() != 0;
             int reason = localDevice != nullptr ? 0 : 1;
             if (label.has_value()) {
                 const auto bytes = label->Bytes();
@@ -114,7 +122,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
     if (!drainAll && !endOfPipeInterrupt && (opcode == 0x49 || opcode == 0x37)) {
         if (const auto label = Pm4::DecodeLabelWrite(packet)) {
             const auto bytes = label->Bytes();
-            if (DeferLabels() && bytes.size() <= DeferredLabel::Capacity && bytes.size() % 4 == 0 && label->address % 4 == 0) {
+            if (!releaseWriteBack && DeferLabels() && bytes.size() <= DeferredLabel::Capacity && bytes.size() % 4 == 0 && label->address % 4 == 0) {
 
                 auto& deferred = deferredLabels();
                 if (deferred.labels.empty()) deferred.since = std::chrono::steady_clock::now();
@@ -484,7 +492,7 @@ void Driver::commitStore(std::uint32_t queue, std::uint64_t address, std::span<c
 
 bool Driver::labelPacketQueues(std::span<const std::uint32_t> packet, std::uint32_t opcode) {
     static const bool ordered = std::getenv("APS5_PIPELINE_DRAIN_LABELS") == nullptr;
-    if (!ordered || !DeferLabels() || (opcode != 0x49 && opcode != 0x37) || !deferredLabels().labels.empty()) return false;
+    if (!ordered || !DeferLabels() || (opcode != 0x49 && opcode != 0x37) || !deferredLabels().labels.empty() || Pm4::ReleaseWritesBackL2(packet)) return false;
     if (Pm4::DecodeLabelWrite(packet).has_value()) return true;
     return opcode == 0x49 && ((packet[2] >> 29u) == 0 || (packet[3] | (static_cast<std::uint64_t>(packet[4]) << 32u)) == 0);
 }
