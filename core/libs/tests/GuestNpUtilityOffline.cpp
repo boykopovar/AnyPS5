@@ -138,6 +138,9 @@ void CheckAppLaunchLink(const char* name, Init init, Finalize finalize, Create c
     Require(create(-1, param, &request) == invalidArgument, name, "user -1 was taken");
     Require(create(1, nullptr, &request) == invalidArgument, name, "a null parameter was taken");
     Require(create(1, param, nullptr) == invalidArgument, name, "a null output was taken");
+    errno = 71;
+    Require(create(1, param, reinterpret_cast<std::int32_t*>(0x10)) == invalidArgument, name, "an unwritable request id output was taken");
+    Require(errno == 71, name, "an unwritable request id changed errno");
     Require(create(1, param, &request) == 0 && request == 1, name, "the first request is not id 1");
     std::int32_t num = -1;
     Require(getNum(request, &num) == 0 && num == 0, name, "the compatible title count was not zero");
@@ -171,6 +174,9 @@ void CheckNpUtilityPayloads() {
     Require(sceNpAppInfoIntCreateRequest(&request) == AppInfoNotInitialized, "sceNpAppInfoIntCreateRequest", "a request was created before initialization");
     Require(sceNpAppInfoIntInitialize(0) == 0, "sceNpAppInfoIntInitialize", "initialization failed");
     Require(sceNpAppInfoIntCreateRequest(nullptr) == AppInfoInvalid, "sceNpAppInfoIntCreateRequest", "a null output was taken");
+    errno = 71;
+    Require(sceNpAppInfoIntCreateRequest(reinterpret_cast<std::int32_t*>(0x10)) == AppInfoInvalid, "sceNpAppInfoIntCreateRequest", "an unwritable request output was taken");
+    Require(errno == 71, "sceNpAppInfoIntCreateRequest", "an unwritable output changed errno");
     Require(sceNpAppInfoIntCreateRequest(&request) == 0 && request == 1, "sceNpAppInfoIntCreateRequest", "the first request is not id 1");
     Require(sceNpAppInfoIntAbortRequest() == 0, "sceNpAppInfoIntAbortRequest", "aborting the request failed");
     Require(sceNpAppInfoIntAbortRequest() == AppInfoInvalid, "sceNpAppInfoIntAbortRequest", "an aborted request was found");
@@ -189,6 +195,9 @@ void CheckNpUtilityPayloads() {
     CheckAppLaunchLink("sceNpAppLaunchLink", sceNpAppLaunchLinkIntInitialize, sceNpAppLaunchLinkIntFinalize, sceNpAppLaunchLinkIntCreateRequest, sceNpAppLaunchLinkIntAbortRequest, sceNpAppLaunchLinkIntDestroyRequest, sceNpAppLaunchLinkIntGetCompatibleTitleIdNum, sceNpAppLaunchLinkIntGetCompatibleTitleIdList, LaunchNotInitialized, LaunchNotFound, LaunchInvalid);
     CheckAppLaunchLink("sceNpAppLaunchLink2", sceNpAppLaunchLink2IntInitialize, sceNpAppLaunchLink2IntFinalize, sceNpAppLaunchLink2IntCreateRequest, sceNpAppLaunchLink2IntAbortRequest, sceNpAppLaunchLink2IntDestroyRequest, sceNpAppLaunchLink2IntGetCompatibleTitleIdNum, sceNpAppLaunchLink2IntGetCompatibleTitleIdList, Launch2NotInitialized, Launch2NotFound, Launch2Invalid);
     Require(sceNpServiceCheckerIntInitialize(0) == 0, "sceNpServiceCheckerIntInitialize", "initialization failed");
+    errno = 71;
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, reinterpret_cast<std::int32_t*>(0x10)) == ServiceInvalid, "sceNpServiceCheckerIntCreateRequest", "an unwritable request output was taken");
+    Require(errno == 71, "sceNpServiceCheckerIntCreateRequest", "an unwritable output changed errno");
     Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &request) == 0 && request == 1, "sceNpServiceCheckerIntCreateRequest", "the first request is not id 1");
     std::uint32_t availability = 0xA5A5A5A5;
     Require(sceNpServiceCheckerIntGetAvailability(request, nullptr, &availability) == ServiceInvalid, "sceNpServiceCheckerIntGetAvailability", "a null NpId was taken");

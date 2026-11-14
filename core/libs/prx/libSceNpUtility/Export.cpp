@@ -119,7 +119,14 @@ int AppLaunchLinkCreateRequest(FamilyState& state, std::int32_t userId, const vo
     if (!state.initialized) return notInitialized;
     const std::int32_t id = state.nextRequest++;
     state.requests.insert(id);
-    if (!GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id))) return invalidArgument;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
+    errno = savedErrno;
+    if (!copied) {
+        state.requests.erase(id);
+        --state.nextRequest;
+        return invalidArgument;
+    }
     return 0;
 }
 
@@ -384,8 +391,16 @@ int APS5_VABI sceNpAppInfoIntCreateRequest(std::int32_t* requestId) {
     std::lock_guard lock(appInfo.mutex);
     if (!appInfo.initialized) return SCE_NP_APP_INFO_ERROR_NOT_INITIALIZED;
     const std::int32_t id = appInfo.nextRequest++;
+    const std::int32_t previousRequest = appInfo.currentRequest;
     appInfo.currentRequest = id;
-    if (!GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id))) return SCE_NP_APP_INFO_ERROR_INVALID_ARGUMENT;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
+    errno = savedErrno;
+    if (!copied) {
+        appInfo.currentRequest = previousRequest;
+        --appInfo.nextRequest;
+        return SCE_NP_APP_INFO_ERROR_INVALID_ARGUMENT;
+    }
     return 0;
 }
 int APS5_VABI sceNpAppInfoIntDestroyRequest(void) {
@@ -634,7 +649,14 @@ int APS5_VABI sceNpServiceCheckerIntCreateRequest(const void* npId, std::int32_t
     if (!serviceChecker1.initialized) return SCE_NP_SERVICE_CHECKER_ERROR_NOT_INITIALIZED;
     const std::int32_t id = serviceChecker1.nextRequest++;
     serviceChecker1.requests.insert(id);
-    if (!GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id))) return SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
+    errno = savedErrno;
+    if (!copied) {
+        serviceChecker1.requests.erase(id);
+        --serviceChecker1.nextRequest;
+        return SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT;
+    }
     return 0;
 }
 int APS5_VABI sceNpServiceCheckerIntDestroyRequest(std::int32_t requestId) {

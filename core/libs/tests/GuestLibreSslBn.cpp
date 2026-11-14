@@ -1,13 +1,30 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
+#include <stdexcept>
 #include <source_location>
 #include <string>
+
+#ifndef _WIN32
+static std::size_t failHostAllocationOfSize = 0;
+void* operator new(std::size_t bytes) {
+    if (bytes != 0 && failHostAllocationOfSize == bytes) {
+        failHostAllocationOfSize = 0;
+        throw std::bad_alloc();
+    }
+    if (void* pointer = std::malloc(bytes ? bytes : 1)) return pointer;
+    throw std::bad_alloc();
+}
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+#endif
 
 using Bn = Bignum;
 using BnCtx = BignumContext;
@@ -79,7 +96,205 @@ static void InitializeHeap() {
     ApplicationHeapRegister_nid_no_patch(api);
 }
 
-int main() {
+struct HeapBlock {
+    void* pointer = nullptr;
+    std::size_t bytes = 0;
+    bool operator==(const HeapBlock&) const = default;
+};
+
+static std::array<HeapBlock, 16> heapBlocks{};
+static std::array<void*, 4> allocationPointers{};
+static std::array<void*, 4> releasePointers{};
+static std::size_t allocationCount = 0;
+static std::size_t releaseCount = 0;
+static std::size_t callocCalls = 0;
+static std::size_t faultCall = 0;
+static std::size_t faultBytes = 0;
+static bool throwAllocation = false;
+static bool throwFree = false;
+
+struct AllocationFailure {};
+struct FreeFailure {};
+
+static void ResetTracking() {
+    allocationPointers = {};
+    releasePointers = {};
+    allocationCount = releaseCount = callocCalls = faultCall = faultBytes = 0;
+    throwAllocation = throwFree = false;
+}
+
+static void* TrackAllocation(void* pointer, std::size_t bytes) {
+    if (!pointer) return nullptr;
+    Require(allocationCount < allocationPointers.size());
+    allocationPointers[allocationCount++] = pointer;
+    for (auto& block : heapBlocks) {
+        if (!block.pointer) {
+            block = {pointer, bytes};
+            return pointer;
+        }
+    }
+    std::abort();
+}
+
+static void* APS5_VABI TestAllocate(std::size_t bytes) {
+    return TrackAllocation(std::malloc(bytes ? bytes : 1), bytes);
+}
+
+static void APS5_VABI TestFree(void* pointer) {
+    if (!pointer) return;
+    HeapBlock* found = nullptr;
+    for (auto& block : heapBlocks) if (block.pointer == pointer) found = &block;
+    Require(found && releaseCount < releasePointers.size());
+    *found = {};
+    releasePointers[releaseCount++] = pointer;
+    std::free(pointer);
+    if (throwFree) throw FreeFailure{};
+}
+
+static void* APS5_VABI TestCalloc(std::size_t count, std::size_t bytes) {
+    if (++callocCalls == faultCall) {
+        faultBytes = count * bytes;
+        if (throwAllocation) throw AllocationFailure{};
+        return nullptr;
+    }
+    return TrackAllocation(std::calloc(count ? count : 1, bytes ? bytes : 1), count * bytes);
+}
+
+static void* APS5_VABI TestReallocate(void*, std::size_t) { throw std::runtime_error("unexpected realloc"); }
+static void* APS5_VABI TestAlign(std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned allocation"); }
+static void* APS5_VABI TestRealign(void*, std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned reallocation"); }
+static int APS5_VABI TestPosixAlign(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected posix_memalign"); }
+
+enum class Operation { Binary, Hexadecimal, Inverse };
+
+static Bn* Convert(Operation operation, Bn*& output) {
+    Bn* result = nullptr;
+    if (operation == Operation::Binary) {
+        const unsigned char bytes[]{1, 2, 3, 4, 5, 6, 7, 8};
+        result = BN_bin2bn_nid_postfix(bytes, sizeof(bytes), output);
+    } else if (operation == Operation::Hexadecimal) {
+        const int consumed = BN_hex2bn_nid_postfix(&output, "102030405060708");
+        Require(consumed == 0 || consumed == 15);
+        return consumed ? output : nullptr;
+    } else {
+        std::uint64_t value = 3;
+        std::uint64_t modulus = 11;
+        Bn a{&value, 1, 1, 0, 2};
+        Bn n{&modulus, 1, 1, 0, 2};
+        result = BN_mod_inverse_nid_postfix(output, &a, &n, nullptr);
+    }
+    if (result) output = result;
+    return result;
+}
+
+static void CheckReleases(Operation operation, bool provided, std::size_t stage, std::size_t expected) {
+    if (allocationCount != expected || releaseCount != (provided ? 0 : expected)) {
+        std::fprintf(stderr, "BIGNUM cleanup failed: operation=%d provided=%d stage=%zu allocations=%zu releases=%zu expected=%zu\n",
+            static_cast<int>(operation), provided, stage, allocationCount, releaseCount, expected);
+        std::abort();
+    }
+    if (!provided && expected) Require(releasePointers[0] == allocationPointers[0]);
+}
+
+static void CheckFault(Operation operation, bool provided, std::size_t stage, bool allocationThrows, bool freeThrows) {
+    ResetTracking();
+    Bn* const original = provided ? BN_new_nid_postfix() : nullptr;
+    Require(!provided || original);
+    Bn* output = original;
+    const auto before = heapBlocks;
+    ResetTracking();
+    faultCall = stage;
+    throwAllocation = allocationThrows;
+    throwFree = freeThrows;
+    Bn* result = nullptr;
+    int caught = 0;
+    try {
+        result = Convert(operation, output);
+    } catch (const AllocationFailure&) {
+        caught = 1;
+    } catch (const FreeFailure&) {
+        caught = 2;
+    } catch (...) {
+        caught = 3;
+    }
+    faultCall = 0;
+    throwAllocation = throwFree = false;
+    const auto expected = !provided && stage == 2 ? 1u : 0u;
+    CheckReleases(operation, provided, stage, expected);
+    Require(callocCalls == stage && faultBytes == (!provided && stage == 1 ? sizeof(Bn) : sizeof(std::uint64_t)));
+    Require(caught == (allocationThrows ? 1 : (freeThrows ? 2 : 0)));
+    Require(!result && output == original && heapBlocks == before);
+    if (provided) Require(original->d == nullptr && original->top == 0 && original->flags == 1);
+    Require(ERR_get_error_nid_postfix() == 0);
+    BN_free_nid_postfix(original);
+    Require(heapBlocks == std::array<HeapBlock, 16>{});
+}
+
+#ifndef _WIN32
+static void CheckHostAllocationFault(bool provided, bool freeThrows) {
+    ResetTracking();
+    Bn* const original = provided ? BN_new_nid_postfix() : nullptr;
+    Require(!provided || original);
+    Bn* output = original;
+    const auto before = heapBlocks;
+    ResetTracking();
+    throwFree = freeThrows;
+    failHostAllocationOfSize = sizeof(std::uint64_t);
+    bool caught = false;
+    try {
+        Convert(Operation::Binary, output);
+    } catch (const std::bad_alloc&) {
+        caught = true;
+    } catch (...) {
+        Require(false);
+    }
+    const bool consumed = failHostAllocationOfSize == 0;
+    failHostAllocationOfSize = 0;
+    throwFree = false;
+    CheckReleases(Operation::Binary, provided, 0, provided ? 0 : 1);
+    Require(caught && consumed && callocCalls == (provided ? 0 : 1));
+    Require(output == original && heapBlocks == before);
+    BN_free_nid_postfix(original);
+    Require(heapBlocks == std::array<HeapBlock, 16>{});
+}
+#endif
+
+static void CleanupFailures() {
+    const std::array<void*, 10> api{
+        reinterpret_cast<void*>(TestAllocate), reinterpret_cast<void*>(TestFree), reinterpret_cast<void*>(TestCalloc),
+        reinterpret_cast<void*>(TestReallocate), reinterpret_cast<void*>(TestAlign), reinterpret_cast<void*>(TestRealign),
+        reinterpret_cast<void*>(TestPosixAlign)};
+    ApplicationHeapRegister_nid_no_patch(api.data());
+#ifndef _WIN32
+    CheckHostAllocationFault(false, false);
+    CheckHostAllocationFault(false, true);
+    CheckHostAllocationFault(true, false);
+#endif
+    for (Operation operation : {Operation::Binary, Operation::Hexadecimal, Operation::Inverse}) {
+        for (bool throwing : {false, true}) {
+            CheckFault(operation, false, 1, throwing, false);
+            CheckFault(operation, true, 1, throwing, false);
+            for (bool freeThrows : {false, true}) CheckFault(operation, false, 2, throwing, freeThrows);
+        }
+        for (bool provided : {false, true}) {
+            ResetTracking();
+            Bn* const original = provided ? BN_new_nid_postfix() : nullptr;
+            Bn* output = original;
+            Bn* const result = Convert(operation, output);
+            Require(result == output && output);
+            Require(!provided || output == original);
+            Require(Hex(output) == (operation == Operation::Inverse ? "4" : "102030405060708"));
+            BN_free_nid_postfix(output);
+            Require(heapBlocks == std::array<HeapBlock, 16>{});
+        }
+    }
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--allocator") == 0) {
+        CleanupFailures();
+        return 0;
+    }
     InitializeHeap();
     Bn* fresh = BN_new_nid_postfix();
     Require(fresh && fresh->top == 0 && fresh->neg == 0 && BN_num_bits_nid_postfix(fresh) == 0);

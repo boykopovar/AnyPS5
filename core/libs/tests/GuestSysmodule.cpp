@@ -59,6 +59,7 @@ constexpr std::uint32_t kAgcDriverModuleId = 0x80000080;
 constexpr std::uint32_t kNgs2InternalModuleId = 0x80000090;
 constexpr std::uint32_t kAgcModuleId = 0x80000094;
 constexpr std::uint32_t kHdrScopesInternalModuleId = 0x800000bd;
+constexpr std::uint32_t kMeasuredInternalUnloadedModuleId = 0x800000c4u;
 
 #ifdef __linux__
 struct Mapping {
@@ -319,6 +320,7 @@ int main() {
     }
 
     Require(sceSysmoduleIsLoadedInternal(0x00ffffffu) == kInvalidValue);
+    Require(sceSysmoduleIsLoadedInternal(kMeasuredInternalUnloadedModuleId) == kModuleUnloaded);
     Require(sceSysmoduleIsLoadedInternal(kFiberModuleId) == kModuleUnloaded);
     Require(sceSysmoduleIsLoaded(kFiberModuleId) == kModuleUnloaded);
     Require(sceSysmoduleLoadModuleInternal(kFiberModuleId) == 0);
@@ -419,9 +421,13 @@ int main() {
     Require(unloadArgResult == -1);
     Require(sceSysmoduleUnloadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, &unloadArgResult) == kModuleUnloaded);
     Require(unloadArgResult == -1);
+    Require(ThrowsRuntimeError([] { sceSysmoduleLoadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, reinterpret_cast<int*>(0x10)); }));
+    Require(sceSysmoduleIsLoadedInternal(kAgcDriverModuleId) == kModuleUnloaded);
     int loadArgResult = -1;
     Require(sceSysmoduleLoadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, &loadArgResult) == 0);
     Require(loadArgResult == 0);
+    Require(sceSysmoduleIsLoadedInternal(kAgcDriverModuleId) == 0);
+    Require(ThrowsRuntimeError([] { sceSysmoduleUnloadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, reinterpret_cast<int*>(0x10)); }));
     Require(sceSysmoduleIsLoadedInternal(kAgcDriverModuleId) == 0);
     Require(sceSysmoduleUnloadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, &unloadArgResult) == 0);
     Require(unloadArgResult == 0);
@@ -450,6 +456,7 @@ int main() {
     Require(sceSysmoduleLoadModule(kFiberModuleId) == 0);
     Require(sceSysmoduleGetModuleHandleInternal(kFiberModuleId, &handle) == 0);
     Require(handle >= 0);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleHandleInternal(kFiberModuleId, reinterpret_cast<std::int32_t*>(0x10)); }));
     std::int32_t again = -1;
     Require(sceSysmoduleGetModuleHandleInternal(kFiberModuleId, &again) == 0);
     Require(again == handle);
@@ -467,6 +474,7 @@ int main() {
     Require(sceSysmoduleIsLoaded(kAudioPropagationModuleId) == kModuleUnloaded);
     Require(sceSysmoduleLoadModule(kAudioPropagationModuleId) == 0);
     Require(sceSysmoduleIsLoaded(kAudioPropagationModuleId) == 0);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleHandleInternal(kAudioPropagationModuleId, reinterpret_cast<std::int32_t*>(0x10)); }));
     Require(sceSysmoduleGetModuleHandleInternal(kAudioPropagationModuleId, &audioPropagationHandle) == 0);
     Require(audioPropagationHandle >= 0);
     void* audioPropagationSymbol = nullptr;

@@ -141,6 +141,7 @@ int main() {
     RequireDecode(profiles[7], 0xA4A2, 0, 0x3042);
     RequireDecode(profiles[4], 0x8FA2AF, 0, 0x02D8);
     RequireDecode(profiles[7], 0x8FA2AF, 0, 0x02D8);
+    RequireDecode(profiles[7], 0x8F00, invalidEncode, 0);
     for (int i = 0; i < 8; ++i) RequireDecode(profiles[i], 0x8E21, invalidEncode, 0);
     RequireEncode(profiles[0], 0x3042, 0, 0x03010402);
     RequireEncode(profiles[0], 0x00A5, 0, 0x5C);

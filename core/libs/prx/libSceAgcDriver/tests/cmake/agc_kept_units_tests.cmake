@@ -1,0 +1,11 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_kept_units_tests tests/KeptUnits.cpp)
+    target_include_directories(agc_kept_units_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_kept_units_tests PRIVATE libc)
+    add_test(NAME agc_kept_units COMMAND agc_kept_units_tests)
+    set_tests_properties(agc_kept_units PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_kept_units PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

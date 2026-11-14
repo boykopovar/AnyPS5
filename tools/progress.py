@@ -148,14 +148,44 @@ def statements(body):
     return parts
 
 
-def inert_statement(statement, wrappers):
+def template_open(tokens, index):
+    before = tokens[index - 1] if index else ""
+    after = tokens[index + 1] if index + 1 < len(tokens) else ""
+    return bool(re.fullmatch(r"[A-Za-z_]\w*", before)) and after not in ("<", "=")
+
+
+def inert_parameters(signature):
+    parameters, nesting, default = set(), [], False
+    text = signature.partition("(")[2].rpartition(")")[0]
+    tokens = [match.group() for match in CPP_TOKEN.finditer(text)]
+    for index, token in enumerate(tokens):
+        if token == "," and not nesting:
+            default = False
+        elif token == "=" and not nesting:
+            default = True
+        elif token == "<" and default and not template_open(tokens, index):
+            continue
+        elif token in ("(", "[", "{", "<"):
+            nesting.append(token)
+        elif token in (")", "]", "}", ">") and nesting:
+            if nesting[-1] == {")": "(", "]": "[", "}": "{", ">": "<"}[token]:
+                nesting.pop()
+        elif not default and not any(part in ("[", "{", "<") for part in nesting):
+            if re.fullmatch(r"[A-Za-z_]\w*", token):
+                parameters.add(token)
+    return parameters
+
+
+def inert_statement(statement, wrappers, parameters):
     if EMPTY_RETURN.fullmatch(statement) or CONST_RETURN.fullmatch(statement) or BARE_THROW.fullmatch(statement):
-        return True
+        returned = re.fullmatch(r"return\s+(\w+)\s*;", statement)
+        return returned is None or returned.group(1) not in parameters
     call = WRAPPER_RETURN.fullmatch(statement)
     return bool(call) and call.group(1) in wrappers
 
 
-def inert_body(body, wrappers):
+def inert_body(body, wrappers, signature):
+    parameters = inert_parameters(signature)
     terminals = 0
     for statement in statements(body):
         statement = statement.strip()
@@ -163,17 +193,17 @@ def inert_body(body, wrappers):
             continue
         if DISCARD.fullmatch(statement):
             continue
-        if terminals or not inert_statement(statement, wrappers):
+        if terminals or not inert_statement(statement, wrappers, parameters):
             return False
         terminals += 1
     return True
 
 
 def inert_wrappers(text):
-    bodies = {m.group(1): text[m.end() - 1:body_end(text, m.end() - 1)] for m in STUB_WRAPPER.finditer(text)}
+    bodies = {m.group(1): (text[m.end() - 1:body_end(text, m.end() - 1)], m.group()) for m in STUB_WRAPPER.finditer(text)}
     names = set()
     while True:
-        found = {name for name, body in bodies.items() if name not in names and inert_body(body, names)}
+        found = {name for name, (body, signature) in bodies.items() if name not in names and inert_body(body, names, signature)}
         if not found:
             return names
         names |= found
@@ -217,7 +247,7 @@ def scan_library(path):
                 todo.add(name)
                 continue
             done.add(name)
-            (inert if inert_body(body, wrappers) else live).add(name)
+            (inert if inert_body(body, wrappers, match.group()) else live).add(name)
     todo -= done
     inert -= live
     group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
@@ -761,7 +791,8 @@ def compare(title, column, unit, base, head):
     icon = "📈" if (exact or delta) > 0 else "📉" if (exact or delta) < 0 else "➖"
     counts = [f"{n:+} {label}" for n, label in ((len(implemented), "implemented"), (len(declared), "declared"),
                                                 (-len(regressed), "reverted"), (-len(removed), "removed")) if n]
-    changes = f', {", ".join(counts)} {unit}' if counts else ""
+    unit = unit[:-1] if len(implemented) + len(declared) + len(regressed) + len(removed) == 1 else unit
+    changes =f', {", ".join(counts)} {unit}' if counts else ""
     lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)
