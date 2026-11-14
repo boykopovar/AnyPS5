@@ -1590,7 +1590,8 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     if (!S_ISDIR(status.st_mode)) return SceErrorFromErrno(GUEST_EINVAL);
     const off_t base = ::lseek(fd, 0, SEEK_CUR);
     if (base < 0) return SceErrorFromErrno(errno);
-    std::vector<char> host(static_cast<std::size_t>(nbytes) < 4096 ? 4096 : static_cast<std::size_t>(nbytes));
+    constexpr std::size_t MaxHostChunk = 64 * 1024;
+    std::vector<char> host(std::min(std::max(static_cast<std::size_t>(nbytes), std::size_t{4096}), MaxHostChunk));
 #ifdef __EMSCRIPTEN__
     const auto read = ::getdents(fd, reinterpret_cast<struct dirent*>(host.data()), host.size());
 #else
