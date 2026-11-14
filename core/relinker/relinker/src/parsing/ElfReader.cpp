@@ -267,7 +267,7 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
             }
         }
 
-        sh.Name = _resolveShdrName(nameOffset, header);
+        sh.Name = sh.Type == SHT_NULL ? "" : _resolveShdrName(nameOffset, header);
 
         headers.push_back(sh);
         offset += header.SectionHeaderEntrySize;
