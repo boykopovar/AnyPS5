@@ -80,6 +80,7 @@ enum RudpOption {
     RUDP_OPTION_FLUSH_TIMEOUT = 17,
     RUDP_OPTION_KEEP_ALIVE_INTERVAL = 18,
     RUDP_OPTION_KEEP_ALIVE_TIMEOUT = 19,
+    RUDP_OPTION_20 = 20,
 };
 
 std::mutex g_mutex;
@@ -392,20 +393,20 @@ int APS5_VABI sceRudpSetOption(int ctxId, int option, const void* value, uint32_
     return 0;
 }
 
-int APS5_VABI sceRudpGetOption(int ctxId, int option, void* value, uint32_t len) {
+int APS5_VABI sceRudpGetOption(int ctxId, int option, void* value, std::uint64_t len) {
     std::lock_guard<std::mutex> lk(g_mutex);
     if (!g_inited) {
         return RUDP_ERROR_NOT_INITIALIZED;
     }
+    if (ctxId < 0 || value == nullptr) return RUDP_ERROR_INVALID_ARGUMENT;
     const auto context = g_ctx.find(ctxId);
     if (context == g_ctx.end()) return RUDP_ERROR_INVALID_CONTEXT_ID;
-    if (option < RUDP_OPTION_MAX_PAYLOAD || option > RUDP_OPTION_KEEP_ALIVE_TIMEOUT) return RUDP_ERROR_INVALID_OPTION;
-    const auto entry = context->second.options.find(option);
-    if (entry == context->second.options.end()) {
-        NotImplemented_nid_no_patch(__func__);
-    }
-    if (value == nullptr || len != sizeof(entry->second)) return RUDP_ERROR_INVALID_ARGUMENT;
-    if (!GuestCopyOut_nid_no_patch(value, &entry->second, sizeof(entry->second))) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (option < RUDP_OPTION_MAX_PAYLOAD || option > RUDP_OPTION_20) return RUDP_ERROR_INVALID_OPTION;
+    std::uint32_t result = 0;
+    if (len != sizeof(result)) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (option == RUDP_OPTION_20) result = static_cast<std::uint32_t>(RUDP_ERROR_NOT_ACCEPTABLE);
+    else if (option != RUDP_OPTION_LAST_ERROR) result = context->second.options.at(option);
+    if (!GuestCopyOut_nid_no_patch(value, &result, sizeof(result))) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
