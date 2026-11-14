@@ -276,6 +276,14 @@ bool TranslationContext::vDivFixupF64(const RdnaInstruction& inst) {
     const IrU32 sign(ir.BitwiseAnd(ir.BitwiseXor(denominator[1].Value(), numerator[1].Value()), ir.Constant(0x80000000u)));
     const std::array<IrU32, 2> zero{IrU32(ir.Constant(0u)), sign};
     const std::array<IrU32, 2> infinity{IrU32(ir.Constant(0u)), IrU32(ir.BitwiseOr(sign.Value(), ir.Constant(0x7ff00000u)))};
+    const std::uint32_t rounding = floatRoundMode(2u);
+    std::array<IrU32, 2> overflow = infinity;
+    if (rounding != 0u) {
+        overflow = {IrU32(roundedLimit(rounding, sign, ir.Constant(0u), ir.Constant(0xffffffffu))),
+            IrU32(ir.BitwiseOr(sign.Value(), roundedLimit(rounding, sign, ir.Constant(0x7ff00000u), ir.Constant(0x7fefffffu))))};
+    }
+    std::array<IrU32, 2> tiny = zero;
+    if (keepsDenormalResults(0x80u) && (rounding == 1u || rounding == 2u)) tiny = {IrU32(roundedLimit(rounding, sign, ir.Constant(1u), ir.Constant(0u))), sign};
     const std::array<IrU32, 2> defaultNan{IrU32(ir.Constant(0u)), IrU32(ir.Constant(0xfff80000u))};
     const IrU32 difference(ir.ISub(exponent(numerator[1]).Value(), exponent(denominator[1]).Value()));
     const IrU1 underflow(ir.Emit(IrOpcode::SLessThan32, IrType::U1, {&difference.Value(), &ir.Constant(static_cast<std::uint32_t>(-1075))}));
@@ -283,8 +291,8 @@ bool TranslationContext::vDivFixupF64(const RdnaInstruction& inst) {
     const auto choose = [&](IrU1 condition, const std::array<IrU32, 2>& word) {
         result = {IrU32(ir.Select(condition.Value(), word[0].Value(), result[0].Value())), IrU32(ir.Select(condition.Value(), word[1].Value(), result[1].Value()))};
     };
-    choose(isNan(quotient), infinity);
-    choose(underflow, zero);
+    choose(IrU1(ir.IEqual(ir.BitwiseAnd(quotient[1].Value(), ir.Constant(0x7ff00000u)), ir.Constant(0x7ff00000u))), overflow);
+    choose(underflow, tiny);
     choose(IrU1(ir.LogicalOr(isInf(denominator).Value(), isZero(numerator).Value())), zero);
     choose(IrU1(ir.LogicalOr(isZero(denominator).Value(), isInf(numerator).Value())), infinity);
     choose(IrU1(ir.LogicalOr(ir.LogicalAnd(isZero(denominator).Value(), isZero(numerator).Value()), ir.LogicalAnd(isInf(denominator).Value(), isInf(numerator).Value()))), defaultNan);

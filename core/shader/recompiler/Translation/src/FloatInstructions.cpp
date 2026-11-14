@@ -221,6 +221,20 @@ std::pair<IrF32, IrU1> TranslationContext::unaryFloatSpecials(IrOpcode opcode, I
     return {IrF32(ir.BitCastF32(value.Value())), invalid};
 }
 
+std::uint32_t TranslationContext::floatRoundMode(std::uint32_t roundShift) const {
+    return floatMode.has_value() ? (floatMode->floatMode >> roundShift) & 3u : 0u;
+}
+
+bool TranslationContext::keepsDenormalResults(std::uint32_t keepBit) const {
+    return floatMode.has_value() && (floatMode->floatMode & keepBit) != 0u;
+}
+
+IrValue& TranslationContext::roundedLimit(std::uint32_t rounding, IrU32 sign, IrValue& away, IrValue& towardZero) {
+    if (rounding != 1u && rounding != 2u) return towardZero;
+    IrValue& negative = ir.INotEqual(sign.Value(), ir.Constant(0u));
+    return rounding == 1u ? ir.Select(negative, towardZero, away) : ir.Select(negative, away, towardZero);
+}
+
 bool TranslationContext::vDivFixupF16(const RdnaInstruction& inst) {
     std::array<IrU32, 3> bits{};
     std::array<IrU32, 3> magnitude{};
@@ -244,7 +258,13 @@ bool TranslationContext::vDivFixupF16(const RdnaInstruction& inst) {
     const auto isZero = [&](std::uint32_t index) { return IrU1(ir.IEqual(magnitude[index].Value(), ir.Constant(0u))); };
     const IrU32 sign(ir.BitwiseAnd(ir.BitwiseXor(bits[1].Value(), bits[2].Value()), ir.Constant(0x8000u)));
     const IrU32 infinity(ir.BitwiseOr(sign.Value(), ir.Constant(0x7c00u)));
-    IrU32 result(ir.Select(isNan(0u).Value(), infinity.Value(), ir.BitwiseOr(sign.Value(), magnitude[0].Value())));
+    const std::uint32_t rounding = floatRoundMode(2u);
+    IrU32 overflow = infinity;
+    if (fp16Overflow() || rounding != 0u) {
+        overflow = IrU32(ir.BitwiseOr(sign.Value(), fp16Overflow() ? ir.Constant(0x7bffu) : roundedLimit(rounding, sign, ir.Constant(0x7c00u), ir.Constant(0x7bffu))));
+    }
+    const IrU1 notFinite(ir.IEqual(ir.BitwiseAnd(magnitude[0].Value(), ir.Constant(0x7c00u)), ir.Constant(0x7c00u)));
+    IrU32 result(ir.Select(notFinite.Value(), overflow.Value(), ir.BitwiseOr(sign.Value(), magnitude[0].Value())));
     result = IrU32(ir.Select(ir.LogicalOr(isInf(1u).Value(), isZero(2u).Value()), sign.Value(), result.Value()));
     result = IrU32(ir.Select(ir.LogicalOr(isZero(1u).Value(), isInf(2u).Value()), infinity.Value(), result.Value()));
     const IrU1 bothZero(ir.LogicalAnd(isZero(1u).Value(), isZero(2u).Value()));
@@ -252,11 +272,6 @@ bool TranslationContext::vDivFixupF16(const RdnaInstruction& inst) {
     result = IrU32(ir.Select(ir.LogicalOr(bothZero.Value(), bothInf.Value()), ir.Constant(0xfe00u), result.Value()));
     result = IrU32(ir.Select(isNan(1u).Value(), quietNan16(bits[1]).Value(), result.Value()));
     result = IrU32(ir.Select(isNan(2u).Value(), quietNan16(bits[2]).Value(), result.Value()));
-    if (fp16Overflow()) {
-        const IrU1 keep(ir.LogicalOr(isZero(1u).Value(), isInf(2u).Value()));
-        const IrU1 overflow(ir.LogicalAnd(ir.IEqual(ir.BitwiseAnd(result.Value(), ir.Constant(0x7fffu)), ir.Constant(0x7c00u)), ir.LogicalNot(keep.Value())));
-        result = IrU32(ir.Select(overflow.Value(), ir.BitwiseOr(ir.BitwiseAnd(result.Value(), ir.Constant(0x8000u)), ir.Constant(0x7bffu)), result.Value()));
-    }
     write16Bits(inst.destination, clampF16Bits(inst.destination, result));
     return true;
 }
@@ -627,11 +642,17 @@ bool TranslationContext::vDivFixupF32(const RdnaInstruction& inst) {
     };
     const IrU32 sign(ir.BitwiseAnd(ir.BitwiseXor(denominator.Value(), numerator.Value()), ir.Constant(0x80000000u)));
     const IrU32 infinity(ir.BitwiseOr(sign.Value(), ir.Constant(0x7f800000u)));
+    const std::uint32_t rounding = floatRoundMode(0u);
+    IrU32 overflow = infinity;
+    if (rounding != 0u) overflow = IrU32(ir.BitwiseOr(sign.Value(), roundedLimit(rounding, sign, ir.Constant(0x7f800000u), ir.Constant(0x7f7fffffu))));
+    IrU32 tiny = sign;
+    if (keepsDenormalResults(0x20u) && (rounding == 1u || rounding == 2u)) tiny = IrU32(ir.BitwiseOr(sign.Value(), roundedLimit(rounding, sign, ir.Constant(1u), ir.Constant(0u))));
     const IrU32 difference(ir.ISub(exponent(numerator).Value(), exponent(denominator).Value()));
     const IrU1 underflow(ir.Emit(IrOpcode::SLessThan32, IrType::U1, {&difference.Value(), &ir.Constant(static_cast<std::uint32_t>(-150))}));
+    const IrU1 notFinite(ir.IEqual(ir.BitwiseAnd(quotient.Value(), ir.Constant(0x7f800000u)), ir.Constant(0x7f800000u)));
     IrU32 result(ir.BitwiseOr(sign.Value(), magnitude(quotient).Value()));
-    result = IrU32(ir.Select(isNan(quotient).Value(), infinity.Value(), result.Value()));
-    result = IrU32(ir.Select(underflow.Value(), sign.Value(), result.Value()));
+    result = IrU32(ir.Select(notFinite.Value(), overflow.Value(), result.Value()));
+    result = IrU32(ir.Select(underflow.Value(), tiny.Value(), result.Value()));
     result = IrU32(ir.Select(ir.LogicalOr(isInf(denominator).Value(), isZero(numerator).Value()), sign.Value(), result.Value()));
     result = IrU32(ir.Select(ir.LogicalOr(isZero(denominator).Value(), isInf(numerator).Value()), infinity.Value(), result.Value()));
     const IrU1 invalid(ir.LogicalOr(ir.LogicalAnd(isZero(denominator).Value(), isZero(numerator).Value()), ir.LogicalAnd(isInf(denominator).Value(), isInf(numerator).Value())));
