@@ -148,17 +148,74 @@ struct alignas(16) TransformationMatrix {
     };
 };
 
-struct MatrixTransformOperation {
+struct OptionalTransformationMatrix {
+    bool m_engaged{false};
+    TransformationMatrix m_value;
+};
+
+struct TransformOperation {
+    enum class OperationType : std::uint32_t {
+        ScaleX,
+        ScaleY,
+        Scale,
+        TranslateX,
+        TranslateY,
+        Translate,
+        Rotate,
+        SkewX,
+        SkewY,
+        Skew,
+        Matrix,
+        ScaleZ,
+        Scale3D,
+        TranslateZ,
+        Translate3D,
+        RotateX,
+        RotateY,
+        Rotate3D,
+        Matrix3D,
+        Perspective,
+        Identity,
+        NoOperation
+    };
+
     void* m_vptr;
     std::uint32_t m_refCount;
-    std::uint8_t m_type;
-    std::uint8_t m_pad[3];
+    OperationType m_type;
+};
+
+struct IdentityTransformOperation : TransformOperation {
+};
+
+struct RotateTransformOperation : TransformOperation {
+    double m_x;
+    double m_y;
+    double m_z;
+    double m_angle;
+};
+
+struct ScaleTransformOperation : TransformOperation {
+    double m_x;
+    double m_y;
+    double m_z;
+};
+
+struct SkewTransformOperation : TransformOperation {
+    double m_angleX;
+    double m_angleY;
+};
+
+struct MatrixTransformOperation : TransformOperation {
     double m_a;
     double m_b;
     double m_c;
     double m_d;
     double m_e;
     double m_f;
+};
+
+struct Matrix3DTransformOperation : TransformOperation {
+    TransformationMatrix m_matrix;
 };
 
 struct Color {
@@ -285,8 +342,23 @@ static_assert(sizeof(OptionalAffineTransform) == 56);
 static_assert(offsetof(OptionalAffineTransform, m_padding) == 1);
 static_assert(offsetof(OptionalAffineTransform, m_value) == 8);
 static_assert(sizeof(TransformationMatrix) == 128);
+static_assert(sizeof(OptionalTransformationMatrix) == 144);
+static_assert(offsetof(OptionalTransformationMatrix, m_value) == 16);
+static_assert(sizeof(TransformOperation) == 16);
+static_assert(offsetof(TransformOperation, m_refCount) == 8);
+static_assert(offsetof(TransformOperation, m_type) == 12);
+static_assert(sizeof(TransformOperation::OperationType) == 4);
+static_assert(static_cast<std::uint32_t>(TransformOperation::OperationType::Rotate) == 6);
+static_assert(static_cast<std::uint32_t>(TransformOperation::OperationType::Matrix) == 10);
+static_assert(static_cast<std::uint32_t>(TransformOperation::OperationType::Matrix3D) == 18);
+static_assert(static_cast<std::uint32_t>(TransformOperation::OperationType::NoOperation) == 21);
+static_assert(sizeof(IdentityTransformOperation) == 16);
+static_assert(sizeof(RotateTransformOperation) == 48);
+static_assert(sizeof(ScaleTransformOperation) == 40);
+static_assert(sizeof(SkewTransformOperation) == 32);
 static_assert(sizeof(MatrixTransformOperation) == 64);
-static_assert(offsetof(MatrixTransformOperation, m_a) == 16);
+static_assert(alignof(Matrix3DTransformOperation) == 16);
+static_assert(sizeof(Matrix3DTransformOperation) == 144);
 static_assert(sizeof(Color) == 8);
 static_assert(sizeof(SRGBA<std::uint8_t>) == 4);
 static_assert(offsetof(SRGBA<std::uint8_t>, alpha) == 3);
