@@ -779,6 +779,7 @@ private:
     std::uint64_t provedEpoch = 0;
     std::uint64_t provedProof = 0;
     std::uint64_t provedPending = 0;
+    std::uint64_t provedRetired = 0;
     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
     // The import table's identity when the direct regions' serials were last proved.
     HostImportsProof importsProof;
