@@ -717,10 +717,10 @@ FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const 
 }
 
 size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, FileStream* stream) {
-    if (size != 0 && count > std::numeric_limits<std::size_t>::max() / size) { errno = EINVAL; return 0; }
+    if (size == 0 || count == 0) return 0;
+    if (count > std::numeric_limits<std::size_t>::max() / size) { errno = EINVAL; return 0; }
     if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetStreamHandle(stream);
-    if (size == 0 || count == 0) return 0;
     stream->Orientation(-1);
     if (!buffer) throw std::runtime_error("fread: null buffer");
     const auto bytes = size * count;
@@ -732,17 +732,22 @@ size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, File
         stream->SyncStatus();
         return count;
     }
-    if (!stream->SwitchToReading()) return 0;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return 0; }
     const auto result = std::fread(buffer, size, count, handle);
+    const int nativeError = errno;
     stream->SyncStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result < count);
     return result;
 }
 
 size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t count, FileStream* stream) {
+    if (size * count == 0) return 0;
     if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetNativeStream(stream);
-    if (size == 0 || count == 0) return 0;
     stream->Orientation(-1);
     if (!buffer) throw std::runtime_error("fwrite: null buffer");
     if (count > std::numeric_limits<std::size_t>::max() / size) throw std::overflow_error("fwrite: buffer size overflow");
@@ -911,6 +916,12 @@ int APS5_VABI fflush_nid_postfix(FileStream* stream) {
     return result;
 }
 
+int APS5_VABI malloc_stats_nid_postfix(void* stats) {
+    return ApplicationHeapStats_nid_no_patch(stats);
+}
+
+void* APS5_VABI _sceLibcGetMallocParam_nid_postfix() { return nullptr; }
+
 int APS5_VABI malloc_stats_fast_nid_postfix(void* stats) {
     return ApplicationHeapStatsFast_nid_no_patch(stats);
 }
@@ -942,6 +953,13 @@ void APS5_VABI __std_free_crt_nid_postfix(void* ptr) {
 
 void APS5_VABI free_nid_postfix(void* ptr) {
     ApplicationHeapFree_nid_no_patch(ptr);
+}
+
+void APS5_VABI freezero_nid_postfix(void* ptr, size_t size) {
+    if (ptr == nullptr) return;
+    auto* bytes = static_cast<volatile unsigned char*>(ptr);
+    for (size_t index = 0; index < size; ++index) bytes[index] = 0;
+    free_nid_postfix(ptr);
 }
 
 void* APS5_VABI realloc_nid_postfix(void* ptr, size_t newSize) {
@@ -1126,43 +1144,6 @@ void* APS5_VABI lsearch_nid_postfix(const void* key, void* base, size_t* count,
     return tail;
 }
 
-int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {
-    if (count <= 1) return 0;
-    if (size == 0) {
-        errno = 22;
-        return -1;
-    }
-    if (!compare) throw std::invalid_argument("heapsort: null comparator");
-    if (!base) throw std::invalid_argument("heapsort: null base");
-    if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("heapsort: array size overflow");
-
-    auto* const bytes = static_cast<unsigned char*>(base);
-    const auto siftDown = [bytes, size, compare](size_t root, size_t n) {
-        size_t current = root;
-        while (2 * current + 1 < n) {
-            size_t child = 2 * current + 1;
-            if (child + 1 < n && compare(bytes + (child + 1) * size, bytes + child * size) > 0) {
-                child = child + 1;
-            }
-            if (compare(bytes + child * size, bytes + current * size) <= 0) {
-                break;
-            }
-            SwapElements(bytes + current * size, bytes + child * size, size);
-            current = child;
-        }
-    };
-
-    for (size_t i = count / 2; i > 0; --i) {
-        siftDown(i - 1, count);
-    }
-    for (size_t i = count - 1; i > 0; --i) {
-        SwapElements(bytes, bytes + i * size, size);
-        siftDown(0, i);
-    }
-
-    return 0;
-}
-
 void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
     if (!base || !compare) return;
     if (size == 0 && count >= 33) throw std::invalid_argument("qsort: zero element size");
@@ -1171,14 +1152,9 @@ void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS
 }
 
 int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestContextCompare compare, void* context) {
-    constexpr size_t RsizeMax = std::numeric_limits<size_t>::max() >> 1;
-    const char* const violation = count > RsizeMax ? "qsort_s : n > RSIZE_MAX"
-        : size > RsizeMax ? "qsort_s : es > RSIZE_MAX"
-        : count != 0 && !base ? "qsort_s : a == NULL"
-        : count != 0 && !compare ? "qsort_s : cmp == NULL"
-        : nullptr;
-    if (violation) {
-        SonyInvokeConstraintHandler(violation, nullptr, 22);
+    constexpr size_t RsizeMax = std::numeric_limits<size_t>::max() >> 3;
+    if (count > RsizeMax || size > RsizeMax || (count != 0 && (!base || !compare))) {
+        SonyInvokeConstraintHandler("qsort_s: bad argument", nullptr, 22);
         return 22;
     }
     if (count == 0) return 0;
