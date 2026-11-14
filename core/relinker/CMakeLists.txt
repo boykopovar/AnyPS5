@@ -192,6 +192,9 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp)
     target_include_directories(native_path_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include)
+    if(WIN32)
+        target_link_libraries(native_path_tests PRIVATE advapi32)
+    endif()
     add_test(NAME native_path COMMAND native_path_tests)
     set_tests_properties(native_path PROPERTIES TIMEOUT 20)
 
@@ -235,6 +238,9 @@ add_executable(relinker
     ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/NativeModules.cpp)
 target_link_libraries(relinker PRIVATE relinker_core)
+if(WIN32)
+    target_link_libraries(relinker PRIVATE advapi32)
+endif()
 target_include_directories(relinker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cli/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
 set_target_properties(relinker PROPERTIES CXX_EXTENSIONS OFF)
 
@@ -530,9 +536,22 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
             ${CMAKE_CURRENT_SOURCE_DIR}/io/include
         )
+        target_link_libraries(windows_file_writer_tests PRIVATE advapi32)
         add_test(NAME windows_file_writer_binary COMMAND windows_file_writer_tests binary)
         add_test(NAME windows_file_writer_text COMMAND windows_file_writer_tests text)
         set_tests_properties(windows_file_writer_binary windows_file_writer_text PROPERTIES TIMEOUT 20)
+        add_test_executable(windows_file_writer_failure_tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/WindowsFileWriterFailureTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
+        )
+        target_include_directories(windows_file_writer_failure_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+        )
+        target_link_libraries(windows_file_writer_failure_tests PRIVATE advapi32)
+        add_test(NAME windows_file_writer_failure_binary COMMAND windows_file_writer_failure_tests binary)
+        add_test(NAME windows_file_writer_failure_text COMMAND windows_file_writer_failure_tests text)
+        set_tests_properties(windows_file_writer_failure_binary windows_file_writer_failure_text PROPERTIES TIMEOUT 20)
     endif()
 
     if(UNIX)
