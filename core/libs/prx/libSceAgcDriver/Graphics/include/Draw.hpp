@@ -179,6 +179,12 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
 std::vector<std::pair<std::uint64_t, std::uint64_t>> PipelinedColorMetadataPassWrites(const ColorMetadataPass& pass);
 bool DrawPipelineEnabled();
 bool CommitTrims();
+struct FragmentOutputLookups {
+    std::uint64_t last = 0;
+    std::uint64_t memo = 0;
+    std::uint64_t validated = 0;
+};
+FragmentOutputLookups ThreadFragmentOutputLookups();
 enum class AddressDrawReuse : std::uint8_t { Reused, Built, NotReadOnly, NotSpaceOnly, SnapshotOutside, PartialOverlap, SnapshotChanged, MovedBuffer, PatchedData, SpaceChanged, InUse, Revalidation, Count };
 using AddressDrawReuseCounts = std::array<std::uint64_t, static_cast<std::size_t>(AddressDrawReuse::Count)>;
 AddressDrawReuseCounts AddressDrawReuseCounters();

@@ -21,6 +21,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -1163,35 +1164,55 @@ std::vector<std::uint64_t>& validationKeyScratch() {
     return key;
 }
 
+struct LastFragmentOutputs {
+    std::vector<std::uint64_t> key;
+    std::uint32_t outputs = 0;
+    bool valid = false;
+    FragmentOutputLookups lookups;
+};
+
+struct LastFragmentOutputsTag {};
+
+bool LastFragmentOutputsEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_LAST_FRAGMENT_OUTPUTS") == nullptr;
+    return enabled;
+}
+
 std::uint32_t CachedFragmentOutputs(const Context& context, std::span<const CompiledShader> shaders, const State& state, bool& memoized, bool& hit) {
     memoized = false;
     hit = false;
     auto& key = validationKeyScratch();
     const bool keyed = ValidationKey(context, shaders, state, key);
     static std::map<std::vector<std::uint64_t>, std::uint32_t> memo;
-    struct LastKeyStorage {};
-    auto& lastKey = HostThreadLocal<std::vector<std::uint64_t>, LastKeyStorage>();
-    thread_local std::uint32_t lastOutputs = 0;
-    thread_local bool lastValid = false;
-    const bool trims = keyed && CommitTrims();
-    if (trims && lastValid && key == lastKey) {
+    auto& last = ThreadScratch<LastFragmentOutputs, LastFragmentOutputsTag>();
+    const bool remembers = keyed && LastFragmentOutputsEnabled();
+    if (remembers && last.valid && key == last.key) {
         memoized = true;
         hit = true;
-        return lastOutputs;
+        ++last.lookups.last;
+        return last.outputs;
     }
+    const auto remember = [&](std::uint32_t outputs) {
+        if (!remembers) return;
+        last.key = key;
+        last.outputs = outputs;
+        last.valid = true;
+    };
     if (keyed) {
         memoized = true;
-        std::lock_guard lock(validationMutex());
-        if (const auto found = memo.find(key); found != memo.end()) {
+        std::optional<std::uint32_t> found;
+        {
+            std::lock_guard lock(validationMutex());
+            if (const auto entry = memo.find(key); entry != memo.end()) found = entry->second;
+        }
+        if (found) {
             hit = true;
-            if (trims) {
-                lastKey = key;
-                lastOutputs = found->second;
-                lastValid = true;
-            }
-            return found->second;
+            ++last.lookups.memo;
+            remember(*found);
+            return *found;
         }
     }
+    ++last.lookups.validated;
     std::uint32_t outputs = 0;
     try {
         for (const auto location : ValidateShaders(shaders, state, context.subgroup, context.fragmentShaderBarycentric, context.descriptorIndexing, context.imageInt64Atomics, context.geometryShader, context.sampleRateShading, context.bufferInt64Atomics, context.shaderClipDistance, context.shaderCullDistance, context.viewportIndexLayer, context.runtimeDescriptorArray, context.demoteToHelperInvocation, context.shaderTerminateInvocation, context.meshShader, context.shaderResourceMinLod, context.fmaFloat16)) {
@@ -1213,6 +1234,7 @@ std::uint32_t CachedFragmentOutputs(const Context& context, std::span<const Comp
         if (memo.size() >= 1024) memo.clear();
         memo.emplace(key, outputs);
     }
+    remember(outputs);
     return outputs;
 }
 
@@ -4484,6 +4506,10 @@ bool DrawPipelineEnabled() {
 
 bool CommitTrims() {
     return DrawPipelineEnabled();
+}
+
+FragmentOutputLookups ThreadFragmentOutputLookups() {
+    return ThreadScratch<LastFragmentOutputs, LastFragmentOutputsTag>().lookups;
 }
 
 
