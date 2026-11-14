@@ -47,5 +47,14 @@ int main() {
     if (Domain::ImportModule("nid#A#B", modules, both) != both[0]) return 6;
     const std::array<std::string, 1> normalizedMono{"libmonosgen-module.prx"};
     if (Domain::ImportModule("nid#A#B", modules, normalizedMono) != normalizedMono[0]) return 43;
+    if (Domain::NeededLibraryName("libSceGnmDriver_padebug.prx") != "libSceGnmDriver.prx") return 90;
+    if (Domain::NeededLibraryName("libSceGnmDriver_padebug.sprx") != "libSceGnmDriver.prx") return 91;
+    if (Domain::ConsoleModuleSuffix("libSceGnmDriver_padebug.prx") || !Domain::ConsoleModuleSuffix("libSceGnmDriver_padebug.sprx")
+        || !Domain::ConsoleModuleSuffix("libc.debug_prx") || Domain::ConsoleModuleSuffix("libc")) return 92;
+    const std::map<std::uint64_t, std::string> gnm{{1, "libSceGnmDriver"}};
+    const std::array<std::string, 1> padebug{"libSceGnmDriver_padebug.prx"};
+    const std::array<std::string, 2> gnmBoth{"libSceGnmDriver_padebug.prx", "libSceGnmDriver.prx"};
+    if (Domain::ImportModule("nid#A#B", gnm, padebug) != padebug[0]) return 93;
+    if (Domain::ImportModule("nid#A#B", gnm, gnmBoth) != gnmBoth[1]) return 94;
     std::cout << "module mapping checks passed\n";
 }

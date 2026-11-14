@@ -80,7 +80,7 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
     _appendElfSym(result.DynSymData, 0, 0, 0, 0, 0, 0);
 
     const bool consoleFileNames = std::any_of(neededLibraries.begin(), neededLibraries.end(),
-        [](const std::string& name) { return Domain::NeededLibraryName(name) != name; });
+        [](const std::string& name) { return Domain::ConsoleModuleSuffix(name); });
 
     auto stripHashSuffix = [](const std::string& value) -> std::string {
         const auto hashPos = value.find('#');

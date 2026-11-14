@@ -197,7 +197,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::vector<std::string> neededLibraries;
     for (const auto offset : needed) neededLibraries.push_back(string(offset));
     const bool consoleFileNames = std::any_of(neededLibraries.begin(), neededLibraries.end(),
-        [](const std::string& name) { return Domain::NeededLibraryName(name) != name; });
+        [](const std::string& name) { return Domain::ConsoleModuleSuffix(name); });
     std::map<std::string, std::size_t> exports;
     for (std::uint64_t offset = 0; offset < symSize; offset += 24) {
         auto name = string(Io::ReadU32(bytes, symOffset + offset));
