@@ -7,3 +7,7 @@
 #include "prx/libcairo/include/Path.hpp"
 #include "prx/libcairo/include/Region.hpp"
 #include "prx/libcairo/include/ScaledFont.hpp"
+#include "prx/libcairo/include/Mesh.hpp"
+#include "prx/libcairo/include/SurfacePattern.hpp"
+#include "prx/libcairo/include/GlyphDrawing.hpp"
+#include "prx/libcairo/include/ContextFontOptions.hpp"

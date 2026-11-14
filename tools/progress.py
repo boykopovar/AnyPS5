@@ -791,7 +791,8 @@ def compare(title, column, unit, base, head):
     icon = "📈" if (exact or delta) > 0 else "📉" if (exact or delta) < 0 else "➖"
     counts = [f"{n:+} {label}" for n, label in ((len(implemented), "implemented"), (len(declared), "declared"),
                                                 (-len(regressed), "reverted"), (-len(removed), "removed")) if n]
-    changes = f', {", ".join(counts)} {unit}' if counts else ""
+    unit = unit[:-1] if len(implemented) + len(declared) + len(regressed) + len(removed) == 1 else unit
+    changes =f', {", ".join(counts)} {unit}' if counts else ""
     lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)

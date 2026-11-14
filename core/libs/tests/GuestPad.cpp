@@ -185,6 +185,9 @@ static void CheckAngularVelocityDeadband(int handle) {
 }
 
 static void CheckStickDeadZones(int handle) {
+    errno = 71;
+    Require(scePadGetControllerInformation(handle, reinterpret_cast<PadControllerInformation*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     PadControllerInformation info{};
     Require(scePadGetControllerInformation(handle, &info) == PAD_OK);
     Require(info.stickInfo.deadZoneLeft == 13 && info.stickInfo.deadZoneRight == 13);
@@ -192,6 +195,9 @@ static void CheckStickDeadZones(int handle) {
 
 static void CheckTouchContact(int handle) {
     Require(scePadReadState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadReadState(handle, reinterpret_cast<PadData*>(std::uintptr_t{0x10})) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadRead_nid_postfix(handle, nullptr, 1) == PAD_ERROR_INVALID_ARG);
     for (const int invalid : {-1, 0, handle + 1, 9999}) {
         Require(scePadReadState(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
@@ -701,6 +707,9 @@ static void CheckRemoteController(int handle) {
     Require(scePadIsRemoteController(handle + 1, &remote) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadIsRemoteController(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(remote);
+    errno = 71;
+    Require(scePadIsRemoteController(handle, reinterpret_cast<bool*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadIsRemoteController(handle, &remote) == PAD_OK);
     Require(!remote);
 }
@@ -990,6 +999,9 @@ static void CheckTriggerEffect(int user, int handle) {
     Require(scePadGetTriggerEffectState(0, &info) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadGetTriggerEffectState(0, nullptr) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadGetTriggerEffectState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadGetTriggerEffectState(handle, reinterpret_cast<PadTriggerEffectStateInformation*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadGetTriggerEffectState(handle, &info) == PAD_OK);
     std::array<std::uint8_t, 120> param{};
     const auto command = [&](int trigger, std::uint32_t mode, const std::array<std::uint8_t, 3>& data) {
