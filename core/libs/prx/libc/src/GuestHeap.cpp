@@ -65,7 +65,7 @@ void shrink(std::atomic<std::size_t>& current, std::size_t bytes) {
 class ArenaHeap {
 public:
     static ArenaHeap& Get() {
-        static ArenaHeap heap;
+        static ArenaHeap& heap = *new ArenaHeap;
         return heap;
     }
 

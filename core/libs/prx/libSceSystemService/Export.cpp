@@ -257,8 +257,22 @@ int AnswerForRunningApp(const std::string& caller, std::int32_t appId, TValue* d
 int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
     if (appIds == nullptr || count == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     if (capacity == 0) throw std::runtime_error(caller + ": a list with no room for the running title");
-    appIds[0] = SYSTEM_SERVICE_RUNNING_APP_ID;
-    *count = 1;
+    std::int32_t currentId = 0;
+    std::uint32_t currentCount = 0;
+    const int savedErrno = errno;
+    const bool valid = GuestCopyIn_nid_no_patch(&currentId, appIds, sizeof(currentId)) &&
+                       GuestCopyOut_nid_no_patch(appIds, &currentId, sizeof(currentId)) &&
+                       GuestCopyIn_nid_no_patch(&currentCount, count, sizeof(currentCount)) &&
+                       GuestCopyOut_nid_no_patch(count, &currentCount, sizeof(currentCount));
+    if (!valid) {
+        errno = savedErrno;
+        return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    }
+    const std::int32_t runningId = SYSTEM_SERVICE_RUNNING_APP_ID;
+    const std::uint32_t one = 1;
+    GuestCopyOut_nid_no_patch(appIds, &runningId, sizeof(runningId));
+    GuestCopyOut_nid_no_patch(count, &one, sizeof(one));
+    errno = savedErrno;
     return SYSTEM_SERVICE_OK;
 }
 
@@ -348,8 +362,14 @@ int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAre
  if (info == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *info = SystemServiceDisplaySafeAreaInfo{};
- info->ratio = 1.0f;
+ SystemServiceDisplaySafeAreaInfo localInfo{};
+ localInfo.ratio = 1.0f;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -362,10 +382,17 @@ int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLumi
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  const auto hdr = AgcDriver::CurrentHostHdr();
- luminance->max_tone_map_luminance = AgcDriver::ToneMapPeakNits(hdr);
- luminance->max_full_frame_tone_map_luminance = hdr.available ? hdr.display.maxFullFrameLuminance : AgcDriver::SdrToneMapLuminanceNits;
- luminance->min_tone_map_luminance = hdr.available ? hdr.display.minLuminance : 0.0f;
- AgcDriverNoteReportedToneMapPeak_nid_postfix(luminance->max_tone_map_luminance);
+ SystemServiceHdrToneMapLuminance localLuminance{};
+ localLuminance.max_tone_map_luminance = AgcDriver::ToneMapPeakNits(hdr);
+ localLuminance.max_full_frame_tone_map_luminance = hdr.available ? hdr.display.maxFullFrameLuminance : AgcDriver::SdrToneMapLuminanceNits;
+ localLuminance.min_tone_map_luminance = hdr.available ? hdr.display.minLuminance : 0.0f;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(luminance, &localLuminance, sizeof(localLuminance));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
+ AgcDriverNoteReportedToneMapPeak_nid_postfix(localLuminance.max_tone_map_luminance);
  return SYSTEM_SERVICE_OK;
 }
 
@@ -373,7 +400,13 @@ int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value) {
  if (value == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *value = false;
+ const bool localValue = false;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(value, &localValue, sizeof(localValue));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -381,7 +414,13 @@ int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status) {
  if (status == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *status = SystemServiceStatus{};
+ SystemServiceStatus localStatus{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(status, &localStatus, sizeof(localStatus));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -1030,7 +1069,11 @@ int APS5_VABI sceShellCoreUtilRemoveCffConfigFile(void) {
 
 int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(std::uint32_t* count) {
     if (count == nullptr) return static_cast<int>(0x80e30005);
-    *count = 50;
+    const std::uint32_t localCount = 50;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(count, &localCount, sizeof(localCount));
+    errno = savedErrno;
+    if (!copied) return static_cast<int>(0x80e30005);
     return 0;
 }
 

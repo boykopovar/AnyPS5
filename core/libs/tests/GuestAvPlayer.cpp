@@ -2,6 +2,8 @@
 #include <cerrno>
 #include <algorithm>
 #include <array>
+#include <memory>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -24,6 +26,7 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#include <pthread.h>
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -1254,6 +1257,12 @@ void TestWithoutAllocators() {
     errno = 71;
     Check(sceAvPlayerInitEx(&extended, reinterpret_cast<AvPlayerInternal**>(0x10)) == InvalidParams, "extended init rejected unwritable handle");
     Check(errno == 71, "errno preserved");
+    AvPlayerInternal* unused = nullptr;
+    extended.default_language = reinterpret_cast<const char*>(0x10);
+    Check(sceAvPlayerInitEx(&extended, &unused) == InvalidParams && unused == nullptr, "extended init accepted an unmapped default language");
+    init.default_language = reinterpret_cast<const char*>(0x10);
+    Check(sceAvPlayerInit(&init) == nullptr, "init accepted an unmapped default language");
+    Check(errno == 71, "errno preserved across an unmapped default language");
     Check(sceAvPlayerClose(handle) == 0, "close failed");
 }
 
@@ -1523,7 +1532,7 @@ void TestLoopWarningAtPlayback() {
         Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop timing frame missing");
         Check(FrameIndex(frame.timestamp) == index % FrameCount, "loop timing frame out of order");
         const int loops = index / FrameCount;
-        if (loops > 0) Check(WaitFor([&] { return events.Count(EventWarning, LoopingBack) >= loops; }), "loop timing warning missing");
+        Check(events.Count(EventWarning, LoopingBack) >= loops, "loop frame handed out before its warning");
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
         Check(events.Count(EventWarning, LoopingBack) == loops, "loop warning did not match the playback boundary");
     }
@@ -1612,6 +1621,52 @@ void TestLoopWarningSharedByStreams() {
     Check(WaitFor([&] { return events.Seen(EventPause); }), "shared loop timing pause event missing");
     Check(events.Count(EventWarning, LoopingBack) == 1, "audio and video reported the same loop more than once");
     Check(sceAvPlayerClose(player) == 0, "shared loop timing close failed");
+}
+
+void TestLoopWarningWaitsForOldPassAudio() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "old-pass audio loop init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "old-pass audio loop source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "old-pass audio loop ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "old-pass audio loop video failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "old-pass audio loop audio failed");
+    Check(sceAvPlayerSetLooping(player, 1) == 0, "old-pass audio loop looping failed");
+    Check(sceAvPlayerStart(player) == 0, "old-pass audio loop start failed");
+    Check(WaitFor([&] { return events.Seen(EventPlay); }), "old-pass audio loop play missing");
+    AvPlayerFrameInfoEx frame{};
+    AvPlayerFrameInfo sound{};
+    std::uint64_t lastAudio = 0;
+    bool audioWrapped = false;
+    bool lastVideoFrame = false;
+    Check(WaitFor([&] {
+        if (sceAvPlayerGetVideoDataEx(player, &frame)) {
+            CheckVideoFrame(frame);
+            lastVideoFrame = FrameIndex(frame.timestamp) == FrameCount - 1;
+            if (lastVideoFrame) return true;
+        }
+        if (sceAvPlayerGetAudioData(player, &sound)) {
+            CheckEnglishAudio(sound);
+            audioWrapped = sound.timestamp < lastAudio;
+            lastAudio = sound.timestamp;
+        }
+        return audioWrapped;
+    }), "old-pass audio loop never reached the end of the first pass");
+    Check(lastVideoFrame && !audioWrapped, "old-pass audio loop: audio crossed the boundary before the video's last frame");
+    WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }, 100);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Check(events.Count(EventWarning, LoopingBack) == 0, "loop warning delivered while the old pass still had audio to hand out");
+    Check(WaitFor([&] {
+        if (!sceAvPlayerGetAudioData(player, &sound)) return false;
+        CheckEnglishAudio(sound);
+        audioWrapped = sound.timestamp < lastAudio;
+        lastAudio = sound.timestamp;
+        if (!audioWrapped) Check(events.Count(EventWarning, LoopingBack) == 0, "loop warning delivered before the old pass's last audio frame");
+        return audioWrapped;
+    }), "old-pass audio loop audio never wrapped");
+    Check(events.Count(EventWarning, LoopingBack) == 1, "loop audio frame handed out before its warning");
+    Check(sceAvPlayerClose(player) == 0, "old-pass audio loop close failed");
 }
 
 void TestNoSyncVideoCanLeadAudioClock() {
@@ -1740,12 +1795,28 @@ struct ClosingEvents {
     AvPlayerInternal* player = nullptr;
     AvPlayerInternal* replacement = nullptr;
     std::int32_t closeEvent;
+    std::shared_ptr<std::atomic<bool>> controllerExited = std::make_shared<std::atomic<bool>>(false);
     bool closed = false;
 };
 
-void APS5_VABI CloseOnEvent(void* object, std::int32_t id, std::int32_t, void*) {
+void MarkControllerExited(void* flag) {
+    static_cast<std::atomic<bool>*>(flag)->store(true, std::memory_order_release);
+}
+
+pthread_key_t ControllerExitKey() {
+    static const pthread_key_t key = [] {
+        pthread_key_t created{};
+        Check(pthread_key_create(&created, MarkControllerExited) == 0, "controller exit key creation failed");
+        return created;
+    }();
+    return key;
+}
+
+void APS5_VABI CloseOnEvent(void* object, std::int32_t id, std::int32_t, void* data) {
     auto& events = *static_cast<ClosingEvents*>(object);
     if (id != events.closeEvent) return;
+    if (id == EventWarning) Check(data != nullptr && *static_cast<std::int32_t*>(data) == LoopingBack, "callback-close warning is not the loop warning");
+    Check(pthread_setspecific(ControllerExitKey(), events.controllerExited.get()) == 0, "controller exit key set failed");
     std::lock_guard lock(events.mutex);
     Check(sceAvPlayerClose(events.player) == 0, "close from event callback failed");
     events.player = nullptr;
@@ -1767,9 +1838,24 @@ void TestCloseFromEventCallback(std::int32_t event) {
         Check(events.player != nullptr, "callback-close init failed");
         Check(sceAvPlayerAddSource(events.player, "/app0/avplayer.mp4") == 0, "callback-close source failed");
     }
+    if (event == EventWarning) {
+        Check(WaitFor([&] {
+            std::lock_guard lock(events.mutex);
+            return sceAvPlayerStreamCount(events.player) > 0;
+        }), "callback-close loop source never became ready");
+        std::lock_guard lock(events.mutex);
+        Check(sceAvPlayerEnableStream(events.player, VideoStream) == 0, "callback-close loop video failed");
+        Check(sceAvPlayerSetAvSyncMode(events.player, 1) == 0, "callback-close loop sync mode failed");
+        Check(sceAvPlayerSetLooping(events.player, 1) == 0, "callback-close loop looping failed");
+        Check(sceAvPlayerStart(events.player) == 0, "callback-close loop start failed");
+    }
     Check(WaitFor([&] {
         std::lock_guard lock(events.mutex);
         if (events.closed) return true;
+        if (event == EventWarning) {
+            AvPlayerFrameInfoEx video{};
+            if (sceAvPlayerGetVideoDataEx(events.player, &video)) CheckVideoFrame(video);
+        }
         if (event == EventStop) {
             AvPlayerFrameInfoEx video{};
             AvPlayerFrameInfo audio{};
@@ -1778,6 +1864,7 @@ void TestCloseFromEventCallback(std::int32_t event) {
         }
         return false;
     }), "event callback did not finish closing the player");
+    Check(WaitFor([&] { return events.controllerExited->load(std::memory_order_acquire); }), "closed player's event thread did not exit");
     {
         std::lock_guard lock(events.mutex);
         Check(sceAvPlayerClose(events.replacement) == 0, "replacement player close failed");
@@ -2318,6 +2405,7 @@ int main(int argc, char** argv) {
             WriteMovie();
             TestCloseFromEventCallback(EventReady);
             TestCloseFromEventCallback(EventStop);
+            TestCloseFromEventCallback(EventWarning);
             std::puts("AvPlayer callback close tests passed");
             return 0;
         }
@@ -2333,6 +2421,7 @@ int main(int argc, char** argv) {
         TestLoopWarningAtPlayback();
         TestAudioLoopWarningAtPlayback();
         TestLoopWarningSharedByStreams();
+        TestLoopWarningWaitsForOldPassAudio();
         TestPlayback();
         TestVp9OpusPlayback();
         TestChangeStream();
@@ -2356,6 +2445,39 @@ int main(int argc, char** argv) {
         TestAudioEofClockRebase();
         TestAudioClockAdvancesAfterEof();
         TestTrailingVideoAfterShortAudio();
+        {
+            errno = 71;
+            Check(sceAvPlayerInit(reinterpret_cast<AvPlayerInitData*>(static_cast<std::uintptr_t>(0x10))) == nullptr && errno == 71,
+                  "unreadable init data must return null without changing errno");
+            AvPlayerInternal* badHandle = nullptr;
+            errno = 71;
+            Check(sceAvPlayerInitEx(reinterpret_cast<const AvPlayerInitDataEx*>(static_cast<std::uintptr_t>(0x10)), &badHandle) ==
+                      AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+                      badHandle == nullptr && errno == 71,
+                  "unreadable extended init data must fail without changing errno");
+            AvPlayerInitData init{};
+            init.num_output_video_framebuffers = 2;
+            AvPlayerInternal* player = sceAvPlayerInit(&init);
+            Check(player != nullptr, "valid init creates player");
+            errno = 71;
+            Check(sceAvPlayerAddSourceEx(player, 0, reinterpret_cast<const AvPlayerSourceDetails*>(static_cast<std::uintptr_t>(0x10))) ==
+                      AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+                      errno == 71,
+                  "unreadable source details must fail without changing errno");
+            AvPlayerSourceDetails badUri{};
+            badUri.uri.name = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
+            badUri.uri.length = 8;
+            errno = 71;
+            Check(sceAvPlayerAddSourceEx(player, 0, &badUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS && errno == 71,
+                  "unreadable source URI must fail without changing errno");
+            AvPlayerSourceDetails oversizedUri{};
+            oversizedUri.uri.name = "movie.mp4";
+            oversizedUri.uri.length = 0xFFFFFFFFu;
+            errno = 71;
+            Check(sceAvPlayerAddSourceEx(player, 0, &oversizedUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS && errno == 71,
+                  "oversized source URI length must fail without allocating");
+            Check(sceAvPlayerClose(player) == 0, "close player");
+        }
         std::puts("AvPlayer tests passed");
         return 0;
     } catch (const std::exception& error) {

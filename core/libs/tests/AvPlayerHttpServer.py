@@ -239,6 +239,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        if path.startswith("/transfer-fields/"):
+            self.transfer_fields(path)
+            return
         if path.startswith("/sync/"):
             ready = stalled[path.removeprefix("/sync/")].wait(2)
             self.send_response(200 if ready else 500)
@@ -541,6 +544,47 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+
+    def transfer_fields(self, path):
+        _, _, mode, name, _ = path.split("/")
+        content = pathlib.Path("app0", "payload.bin").read_bytes() if mode != "empty" else b""
+        start = 0
+        end = len(content)
+        if mode == "range":
+            match = re.fullmatch(r"bytes=(\d+)-(\d+)", self.headers.get("Range", ""))
+            assert match is not None
+            start, last = map(int, match.groups())
+            end = min(start + 512, last + 1, len(content))
+            if start:
+                assert self.headers.get("If-Range") == '"transfer-v1"'
+        body = content[start:end]
+        fields = {
+            "single": ["chunked"],
+            "case": ["ChUnKeD"],
+            "ows": [" \tchunked\t "],
+            "repeat": ["chunked", "chunked"],
+            "repeat-ows": ["chunked", " \tchunked\t "],
+            "repeat-field-case": ["chunked", "chunked"],
+            "triple": ["chunked", "chunked", "chunked"],
+            "joined": ["chunked, chunked"],
+            "mixed-case": ["chunked", "Chunked"],
+            "before": ["gzip", "chunked"],
+            "after": ["chunked", "gzip"],
+            "empty": ["chunked", ""],
+            "late-repeat": ["chunked", "chunked"] if start else ["chunked"],
+        }
+        self.send_response(206 if mode == "range" else 200)
+        if mode == "range":
+            self.send_header("Content-Range", f"bytes {start}-{end - 1}/{len(content)}")
+        self.send_header("ETag", '"transfer-v1"')
+        for index, value in enumerate(fields[name]):
+            field = "tRaNsFeR-EnCoDiNg" if name == "repeat-field-case" and index else "Transfer-Encoding"
+            self.send_header(field, value)
+        self.send_header("Connection", "close")
+        self.end_headers()
+        if body:
+            self.wfile.write(f"{len(body):X}\r\n".encode() + body + b"\r\n")
+        self.wfile.write(b"0\r\n\r\n")
 
 with Server(("127.0.0.1", 0), Handler) as server, Server(("127.0.0.1", 0), Handler) as destination:
     server.redirect_authority = destination.redirect_authority = f"127.0.0.1:{destination.server_port}"
