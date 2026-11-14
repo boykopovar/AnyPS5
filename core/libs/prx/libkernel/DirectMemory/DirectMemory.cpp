@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <iterator>
 #include <map>
@@ -1485,29 +1486,33 @@ static int FindImagesOverlapping(dl_phdr_info* image, std::size_t, void* data) {
 }
 #endif
 
-int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) {
-    Trace("protect %p+0x%zx prot=0x%x", addr, len, prot);
-    const auto address = reinterpret_cast<std::uintptr_t>(addr);
+static bool OnGuestThreadStack(std::uintptr_t address, std::size_t len, int prot, std::uintptr_t* stackStart, std::uintptr_t* stackEnd) {
+    return (prot & GuestProtGpuReadWrite) == 0 && GuestThreadStack(address, stackStart, stackEnd) && address >= *stackStart && address + len <= *stackEnd;
+}
+
+static bool HostStackPage(std::uintptr_t page) {
+    return !GuestThreadStackHostRanges(page, page + PS5_PAGE_SIZE).empty();
+}
+
+static void GuestPageBounds(std::uintptr_t address, std::size_t len, std::uintptr_t* first, std::uintptr_t* end) {
     constexpr auto pageMask = static_cast<std::uintptr_t>(PS5_PAGE_SIZE - 1);
-    const auto limit = std::numeric_limits<std::uintptr_t>::max();
-    if (address == 0 || len == 0 || len > limit - address || address + len > limit - pageMask) throw std::invalid_argument("Invalid guest memory protection range");
-    auto first = address & ~pageMask;
-    auto end = (address + len + pageMask) & ~pageMask;
+    *first = address & ~pageMask;
+    *end = (address + len + pageMask) & ~pageMask;
 #ifdef __APPLE__
-    GuestAllocations::GuestAllocationsGuestPages_nid_postfix(address, len, PS5_PAGE_SIZE, &first, &end);
+    GuestAllocations::GuestAllocationsGuestPages_nid_postfix(address, len, PS5_PAGE_SIZE, first, end);
 #endif
-    auto bytes = static_cast<std::size_t>(end - first);
-    const void* pointer = reinterpret_cast<const void*>(first);
+}
+
+static void ProtectStackRange(std::uintptr_t address, std::size_t len, int prot, std::uintptr_t stackStart, std::uintptr_t stackEnd) {
+    std::uintptr_t first = 0;
+    std::uintptr_t end = 0;
+    GuestPageBounds(address, len, &first, &end);
     const auto nativeProtection = LinuxProtFromSce(prot);
-    if (GuestThreadStackHostRangeOverlaps(address, address + len))
-        throw std::system_error(EACCES, std::generic_category(), "mprotect overlaps host-only guest thread stack pages");
-    std::uintptr_t stackStart = 0;
-    std::uintptr_t stackEnd = 0;
-    if ((prot & GuestProtGpuReadWrite) == 0 && GuestThreadStack(address, &stackStart, &stackEnd) && address >= stackStart && address + len <= stackEnd) {
+    {
         constexpr std::uintptr_t hostPageMask = 0xfff;
         const auto requested = std::max(first, (stackStart + hostPageMask) & ~hostPageMask);
         const auto insideEnd = std::min(end, stackEnd & ~hostPageMask);
-        if (requested >= insideEnd) return 0;
+        if (requested >= insideEnd) return;
         auto* requestedPointer = reinterpret_cast<void*>(requested);
         const auto requestedBytes = static_cast<std::size_t>(insideEnd - requested);
 #ifdef _WIN32
@@ -1516,7 +1521,7 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
         const auto inside = hostStack && !reserveBottom ? AboveStackGuard(requested, insideEnd) : requested;
         if (inside == insideEnd) {
             RecordProtection(requestedPointer, requestedBytes, prot);
-            return 0;
+            return;
         }
 #else
         const auto inside = requested;
@@ -1544,35 +1549,48 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
         NoteGuestStackProtection(inside, insideBytes, (prot & 3) == 3);
         GuestAllocations::GuestAllocationsInvalidate_nid_postfix(inside, insideBytes);
         RecordProtection(insidePointer, insideBytes, prot);
-        return 0;
     }
+}
+
+static int ProtectRegisteredRanges(const std::vector<std::pair<std::uintptr_t, std::uintptr_t>>& ranges, int prot, bool requireMappedStart) {
+    const auto nativeProtection = LinuxProtFromSce(prot);
+    if (requireMappedStart && ranges.empty()) return SCE_KERNEL_ERROR_EINVAL;
     GuestAllocations::Mutation mutation;
-#ifdef _WIN32
-    for (auto cursor = first; cursor < end;) {
-        MEMORY_BASIC_INFORMATION view{};
-        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &view, sizeof(view)) != sizeof(view)) throw std::runtime_error("Cannot query guest memory protection range");
-        if (view.Type == MEM_IMAGE) {
-            if (view.AllocationBase == GetModuleHandleW(nullptr)) mutation.RegisterMainImage();
-            else if (IsGuestModuleImage(view.AllocationBase)) mutation.RegisterImage(view.AllocationBase);
-            else if (cursor == first) throw std::invalid_argument("Memory protection of a foreign image is not supported");
-        }
-        if (view.Type == MEM_MAPPED && (nativeProtection & ~PosixRightsFromWin(view.AllocationProtect)) != 0)
-            throw std::system_error(EACCES, std::generic_category(), "mprotect above the maximum protection of a mapped view");
-        cursor = reinterpret_cast<std::uintptr_t>(view.BaseAddress) + view.RegionSize;
-    }
-#else
-    mutation.RegisterMainImage();
-    GuestImageSearch search{.start = first, .end = end, .pageSize = static_cast<std::uintptr_t>(::sysconf(_SC_PAGESIZE))};
-    dl_iterate_phdr(FindImagesOverlapping, &search);
-    for (const auto& image : search.images) {
-        if (image.guestModule) mutation.RegisterImage(reinterpret_cast<const void*>(image.base));
-        else if (image.containsStart) throw std::invalid_argument("Memory protection of a foreign image is not supported");
-    }
-    mutation.TrimToRegistered(PS5_PAGE_SIZE, pointer, bytes);
-#endif
     std::vector<std::pair<const void*, std::size_t>> spans;
-    mutation.ForRegistered(pointer, bytes, [&](const void* span, std::size_t spanBytes) { spans.emplace_back(span, spanBytes); });
-    if (requireMappedStart && (spans.empty() || spans.front().first != pointer)) return SCE_KERNEL_ERROR_EINVAL;
+    for (std::size_t index = 0; index < ranges.size(); ++index) {
+        const auto [address, rangeEnd] = ranges[index];
+        std::uintptr_t first = 0;
+        std::uintptr_t end = 0;
+        GuestPageBounds(address, rangeEnd - address, &first, &end);
+        auto bytes = static_cast<std::size_t>(end - first);
+        const void* pointer = reinterpret_cast<const void*>(first);
+#ifdef _WIN32
+        for (auto cursor = first; cursor < end;) {
+            MEMORY_BASIC_INFORMATION view{};
+            if (VirtualQuery(reinterpret_cast<const void*>(cursor), &view, sizeof(view)) != sizeof(view)) throw std::runtime_error("Cannot query guest memory protection range");
+            if (view.Type == MEM_IMAGE) {
+                if (view.AllocationBase == GetModuleHandleW(nullptr)) mutation.RegisterMainImage();
+                else if (IsGuestModuleImage(view.AllocationBase)) mutation.RegisterImage(view.AllocationBase);
+                else if (cursor == first) throw std::invalid_argument("Memory protection of a foreign image is not supported");
+            }
+            if (view.Type == MEM_MAPPED && (nativeProtection & ~PosixRightsFromWin(view.AllocationProtect)) != 0)
+                throw std::system_error(EACCES, std::generic_category(), "mprotect above the maximum protection of a mapped view");
+            cursor = reinterpret_cast<std::uintptr_t>(view.BaseAddress) + view.RegionSize;
+        }
+#else
+        mutation.RegisterMainImage();
+        GuestImageSearch search{.start = first, .end = end, .pageSize = static_cast<std::uintptr_t>(::sysconf(_SC_PAGESIZE))};
+        dl_iterate_phdr(FindImagesOverlapping, &search);
+        for (const auto& image : search.images) {
+            if (image.guestModule) mutation.RegisterImage(reinterpret_cast<const void*>(image.base));
+            else if (image.containsStart) throw std::invalid_argument("Memory protection of a foreign image is not supported");
+        }
+        mutation.TrimToRegistered(PS5_PAGE_SIZE, pointer, bytes);
+#endif
+        const auto before = spans.size();
+        mutation.ForRegistered(pointer, bytes, [&](const void* span, std::size_t spanBytes) { spans.emplace_back(span, spanBytes); });
+        if (requireMappedStart && index == 0 && (spans.size() == before || spans[before].first != pointer)) return SCE_KERNEL_ERROR_EINVAL;
+    }
     for (const auto& [span, spanBytes] : spans) mutation.RequireUnpinned(span, spanBytes);
     for (const auto& [span, spanBytes] : spans) {
         mutation.Protect(span, spanBytes, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, [&] {
@@ -1585,6 +1603,45 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
         });
         RecordProtection(span, spanBytes, prot);
     }
+    return 0;
+}
+
+int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) {
+    Trace("protect %p+0x%zx prot=0x%x", addr, len, prot);
+    const auto address = reinterpret_cast<std::uintptr_t>(addr);
+    constexpr auto pageMask = static_cast<std::uintptr_t>(PS5_PAGE_SIZE - 1);
+    const auto limit = std::numeric_limits<std::uintptr_t>::max();
+    if (address == 0 || len == 0 || len > limit - address || address + len > limit - pageMask) throw std::invalid_argument("Invalid guest memory protection range");
+    std::uintptr_t first = 0;
+    std::uintptr_t end = 0;
+    GuestPageBounds(address, len, &first, &end);
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> parts;
+    auto cursor = address;
+    for (const auto& [low, high] : GuestThreadStackHostRanges(first, end)) {
+        if (requireMappedStart && low <= address && address < high) return SCE_KERNEL_ERROR_EINVAL;
+        if (cursor < std::min(low, address + len)) parts.emplace_back(cursor, std::min(low, address + len));
+        cursor = std::max(cursor, high);
+    }
+    if (cursor < address + len) parts.emplace_back(cursor, address + len);
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> registered;
+    std::vector<std::array<std::uintptr_t, 4>> stacks;
+    for (auto [low, high] : parts) {
+        std::uintptr_t stackStart = 0;
+        std::uintptr_t stackEnd = 0;
+        if (OnGuestThreadStack(low, high - low, prot, &stackStart, &stackEnd)) {
+            stacks.push_back({low, high, stackStart, stackEnd});
+            continue;
+        }
+        if (HostStackPage(low & ~pageMask)) {
+            if (requireMappedStart && low == address) return SCE_KERNEL_ERROR_EINVAL;
+            low = (low + pageMask) & ~pageMask;
+        }
+        if (HostStackPage((high - 1) & ~pageMask)) high = (high - 1) & ~pageMask;
+        if (low < high) registered.emplace_back(low, high);
+    }
+    if (!registered.empty() || stacks.empty())
+        if (const int result = ProtectRegisteredRanges(registered, prot, requireMappedStart && (registered.empty() || registered.front().first == address)); result != 0) return result;
+    for (const auto& [low, high, stackStart, stackEnd] : stacks) ProtectStackRange(low, high - low, prot, stackStart, stackEnd);
     return 0;
 }
 

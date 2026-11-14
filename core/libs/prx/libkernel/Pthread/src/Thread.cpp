@@ -553,22 +553,26 @@ bool GuestThreadStack(std::uintptr_t address, std::uintptr_t* start, std::uintpt
     return false;
 }
 
-bool GuestThreadStackHostRangeOverlaps(std::uintptr_t start, std::uintptr_t end) {
+std::vector<std::pair<std::uintptr_t, std::uintptr_t>> GuestThreadStackHostRanges(std::uintptr_t start, std::uintptr_t end) {
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> ranges;
 #if defined(__linux__)
     std::lock_guard lock(guestStackMappingsLock);
     auto it = guestStackMappings.upper_bound(start);
     if (it != guestStackMappings.begin()) --it;
     for (; it != guestStackMappings.end() && it->first < end; ++it) {
-        const auto mappingStart = it->first;
         const auto& stack = it->second;
-        if (start < stack.stackStart && end > mappingStart) return true;
-        if (start < stack.mappingEnd && end > stack.stackEnd) return true;
+        for (const auto& [low, high] : {std::pair{it->first, stack.stackStart}, std::pair{stack.stackEnd, stack.mappingEnd}})
+            if (start < high && end > low) ranges.emplace_back(std::max(start, low), std::min(end, high));
     }
 #else
     (void)start;
     (void)end;
 #endif
-    return false;
+    return ranges;
+}
+
+bool GuestThreadStackHostRangeOverlaps(std::uintptr_t start, std::uintptr_t end) {
+    return !GuestThreadStackHostRanges(start, end).empty();
 }
 
 struct CpuClockRegistry {

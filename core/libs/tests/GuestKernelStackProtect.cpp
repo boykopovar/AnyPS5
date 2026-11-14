@@ -8,6 +8,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <memory>
+#ifdef __linux__
+#include "prx/libc/include/GuestAllocations.hpp"
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -215,6 +219,46 @@ static void CheckPeerStackRemap() {
 }
 #endif
 
+#ifdef __linux__
+struct PinProbe {
+    std::shared_ptr<const GuestAllocations::Range> pin;
+    std::uintptr_t earlier = 0;
+    std::uint64_t earlierBefore = 0;
+    bool earlierChanged = false;
+    unsigned waits = 0;
+};
+
+static PinProbe pinProbe;
+
+static bool ReleaseStackPin(std::uintptr_t, std::size_t) {
+    ++pinProbe.waits;
+    if (QueryPage(pinProbe.earlier).raw != pinProbe.earlierBefore) pinProbe.earlierChanged = true;
+    pinProbe.pin.reset();
+    return true;
+}
+
+static void CheckPinnedLaterPart(std::uintptr_t low) {
+    auto stack = GuestAllocations::GuestAllocationsLookup_nid_postfix(low, false);
+    Require(stack != nullptr && stack->allocationAddress % Page == 0 && stack->allocationAddress > Page);
+    const auto earlier = static_cast<std::uintptr_t>(stack->allocationAddress) - Page;
+    Require(GuestAllocations::GuestAllocationsLookup_nid_postfix(earlier, false) == nullptr);
+    Require(mmap_nid_postfix(reinterpret_cast<void*>(earlier), Page, 3, 0x1012, -1, 0) == reinterpret_cast<void*>(earlier));
+    pinProbe.earlier = earlier;
+    pinProbe.earlierBefore = QueryPage(earlier).raw;
+    pinProbe.pin = std::move(stack);
+    GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(&ReleaseStackPin);
+    const int protectedRange = mprotect_nid_postfix(reinterpret_cast<void*>(earlier), low + GuardBytes - earlier, 0x11);
+    GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(nullptr);
+    Require(protectedRange == 0);
+    Require(pinProbe.waits != 0);
+    Require(!pinProbe.earlierChanged);
+    Require(!QueryPage(earlier).writable && !QueryPage(low).writable);
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(low), GuardBytes, 3) == 0);
+    Require(QueryPage(low).writable);
+    Require(munmap_nid_postfix(reinterpret_cast<void*>(earlier), Page) == 0);
+}
+#endif
+
 static void* APS5_VABI Worker(void* arg) {
     auto& passed = *static_cast<std::atomic<bool>*>(arg);
     int local = 0;
@@ -232,7 +276,7 @@ static void* APS5_VABI Worker(void* arg) {
     }
     Require(hostGuard != 0);
     const auto hostGuardBefore = QueryPage(hostGuard).raw;
-    Require(mprotect_nid_postfix(reinterpret_cast<void*>(hostGuard), Page, 3) == -1);
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(hostGuard), Page, 3) == 0);
     Require(QueryPage(hostGuard).raw == hostGuardBefore);
 #endif
     auto* guard = reinterpret_cast<volatile unsigned char*>(low);
@@ -255,19 +299,27 @@ static void* APS5_VABI Worker(void* arg) {
     static_cast<volatile unsigned char*>(start)[0] = 3;
     const auto outside = reinterpret_cast<std::uintptr_t>(start) & ~(Page - 1);
     if (outside >= Page) {
-        const int straddle = mprotect_nid_postfix(reinterpret_cast<void*>(outside - Page), 2 * Page, 3);
+        Require(mprotect_nid_postfix(reinterpret_cast<void*>(outside - Page), 2 * Page, 3) == 0);
         Require(QueryPage(below).raw == belowBefore);
-#ifndef __linux__
-        Require(straddle == 0);
-#else
-        (void)straddle;
+#ifdef __linux__
+        Require(mprotect_nid_postfix(reinterpret_cast<void*>(outside - Page), 3 * Page, 1) == 0);
+        Require(QueryPage(below).raw == belowBefore);
+        Require(!QueryPage(outside + Page).writable);
+        Require(mprotect_nid_postfix(start, GuardBytes, 3) == 0);
+        Require(QueryPage(outside + Page).writable);
 #endif
+        Require(mprotect_nid_postfix(reinterpret_cast<void*>(outside - Page), 2 * Page, 0x11) == 0);
+        Require(QueryPage(below).raw == belowBefore);
+        Require(mprotect_nid_postfix(start, GuardBytes, 3) == 0);
     }
     const auto stackBytes = reinterpret_cast<std::uintptr_t>(end) - reinterpret_cast<std::uintptr_t>(start);
     Require(mprotect_nid_postfix(start, stackBytes, 0xc2) == 0);
     Require(QueryPage(low).writable);
     static_cast<volatile unsigned char*>(start)[0] = 4;
     Require(mprotect_nid_postfix(start, stackBytes, 3) == 0);
+#ifdef __linux__
+    CheckPinnedLaterPart(low);
+#endif
 #ifdef _WIN32
     CheckFixedStackRemap(low, start);
 #endif
