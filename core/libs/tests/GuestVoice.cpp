@@ -272,7 +272,14 @@ int main() {
     Require(sceVoiceGetMuteFlag(input, &muted) == 0 && muted);
     Require(sceVoiceGetVolume(input, &volume) == 0 && volume == 0.75f);
     Require(sceVoiceGetBitRate(input, &portBitrate) == 0 && portBitrate == 14400);
+    rateInfo.edge = reinterpret_cast<std::uint32_t*>(0x1234);
+    rateInfo.edge_count = 0x5a;
+    rateInfo.reserved = 0x7b;
     Require(sceVoiceGetPortInfo(input, &rateInfo) == 0 && rateInfo.frame_size == 27);
+    Require(rateInfo.edge == reinterpret_cast<std::uint32_t*>(0x1234) && rateInfo.edge_count == 0x5a && rateInfo.reserved == 0x7b);
+    errno = 71;
+    Require(sceVoiceGetPortInfo(input, reinterpret_cast<VoicePortInfo*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     update.voice.bitrate = 1;
     RequireThrows([&] { sceVoiceUpdatePort(input, &update); });
     Require(sceVoiceGetBitRate(input, &portBitrate) == 0 && portBitrate == 14400);
