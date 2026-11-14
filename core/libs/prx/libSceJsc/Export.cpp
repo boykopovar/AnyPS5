@@ -1617,10 +1617,6 @@ int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF6Logger9observersEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF6String23make16BitFrom8BitSourceEPKhm() {
     NotImplemented_nid_no_patch(__func__);
 }
